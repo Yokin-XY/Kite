@@ -2,6 +2,7 @@ package com.kite.app.diagnostics
 
 import android.content.Context
 import android.webkit.ConsoleMessage
+import com.kite.app.recipe.KiteRecipe
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
@@ -12,12 +13,18 @@ class KiteDiagnostics(context: Context) {
     private val errorsLog = File(diagnosticsDir, "webview-errors.jsonl")
     private val capabilitiesFile = File(diagnosticsDir, "webview-capabilities.json")
     private val statusFile = File(diagnosticsDir, "last-webapp-status.json")
+    private val recipeSaveLog = File(diagnosticsDir, "recipe-save.log")
+    private val recipeEventsLog = File(diagnosticsDir, "recipe-events.jsonl")
+    private val bridgeEventsLog = File(diagnosticsDir, "bridge-events.jsonl")
 
     init {
         consoleLog.createNewFile()
         errorsLog.createNewFile()
         capabilitiesFile.createNewFile()
         statusFile.createNewFile()
+        recipeSaveLog.createNewFile()
+        recipeEventsLog.createNewFile()
+        bridgeEventsLog.createNewFile()
     }
 
     fun logConsole(message: ConsoleMessage) {
@@ -45,6 +52,46 @@ class KiteDiagnostics(context: Context) {
         consoleLog.appendText("${Instant.now()} LOCAL_SERVER $message\n")
     }
 
+    fun logRecipeSaved(recipe: KiteRecipe) {
+        recipeSaveLog.appendText(
+            "${Instant.now()} id=${recipe.id} name=${recipe.name} type=${recipe.type} defaultUrl=${recipe.defaultUrl}\n"
+        )
+        logRecipeEvent("saved", recipe)
+    }
+
+    fun logRecipeSaveError(recipe: KiteRecipe, error: Throwable) {
+        logRecipeEvent("save_failed", recipe, mapOf("error" to error.message.orEmpty()))
+    }
+
+    fun logRecipeAction(recipe: KiteRecipe, action: String, details: Map<String, String> = emptyMap()) {
+        logRecipeEvent(action, recipe, details)
+    }
+
+    fun logRecipeEvent(event: String, recipe: KiteRecipe?, details: Map<String, String> = emptyMap()) {
+        recipeEventsLog.appendText(
+            JSONObject()
+                .put("at", Instant.now().toString())
+                .put("event", event)
+                .put("recipeId", recipe?.id ?: JSONObject.NULL)
+                .put("recipeName", recipe?.name ?: JSONObject.NULL)
+                .put("recipeType", recipe?.type ?: JSONObject.NULL)
+                .apply { details.forEach { (key, value) -> put(key, value) } }
+                .toString() + "\n"
+        )
+    }
+
+    fun logBridgeEvent(event: String, recipe: KiteRecipe?, details: Map<String, String> = emptyMap()) {
+        bridgeEventsLog.appendText(
+            JSONObject()
+                .put("at", Instant.now().toString())
+                .put("event", event)
+                .put("recipeId", recipe?.id ?: JSONObject.NULL)
+                .put("recipeName", recipe?.name ?: JSONObject.NULL)
+                .apply { details.forEach { (key, value) -> put(key, value) } }
+                .toString() + "\n"
+        )
+    }
+
     fun writeWebAppStatus(
         url: String,
         title: String?,
@@ -56,12 +103,15 @@ class KiteDiagnostics(context: Context) {
         statusFile.writeText(
             JSONObject()
                 .put("at", Instant.now().toString())
+                .put("openedAt", Instant.now().toString())
                 .put("url", url)
                 .put("title", title ?: JSONObject.NULL)
                 .put("state", state)
                 .put("recipeId", recipeId ?: JSONObject.NULL)
                 .put("recipeName", recipeName ?: JSONObject.NULL)
                 .put("openSource", openSource ?: JSONObject.NULL)
+                .put("source", openSource ?: JSONObject.NULL)
+                .put("openTarget", if (url.contains("127.0.0.1") || url.contains("localhost")) "kite_web_shell" else "system_browser")
                 .toString(2)
         )
     }

@@ -19,6 +19,10 @@ class KiteWebShell(
     private val diagnostics: KiteDiagnostics,
     private val onStatus: (String) -> Unit
 ) {
+    private var currentRecipeId: String? = null
+    private var currentRecipeName: String? = null
+    private var currentOpenSource: String? = null
+
     init {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -46,7 +50,14 @@ class KiteWebShell(
             }
 
             override fun onPageFinished(view: WebView, url: String) {
-                diagnostics.writeWebAppStatus(url, view.title, "loaded")
+                diagnostics.writeWebAppStatus(
+                    url = url,
+                    title = view.title ?: currentRecipeName,
+                    state = "loaded",
+                    recipeId = currentRecipeId,
+                    recipeName = currentRecipeName,
+                    openSource = currentOpenSource
+                )
                 onStatus("Loaded: $url")
             }
 
@@ -67,7 +78,15 @@ class KiteWebShell(
         }
     }
 
-    fun open(url: String) {
+    fun open(
+        url: String,
+        recipeId: String? = null,
+        recipeName: String? = null,
+        openSource: String? = null
+    ) {
+        currentRecipeId = recipeId
+        currentRecipeName = recipeName
+        currentOpenSource = openSource
         if (isLocalUrl(url)) {
             webView.loadUrl(url)
         } else {

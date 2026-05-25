@@ -2,20 +2,18 @@
   "id": "hermes-webui",
   "name": "Hermes WebUI",
   "description": "启动 Hermes 图形化工作台",
+  "type": "command_web",
   "icon": "hermes",
   "taskLabel": "Hermes",
   "defaultUrl": "http://127.0.0.1:8648",
-  "shortcut": true,
+  "shortcut": false,
+  "status": "unknown",
   "taskMode": "separate",
   "steps": [
     {
       "type": "shell",
       "cmd": "hermes-web-ui start --port 8648",
       "wait": true
-    },
-    {
-      "type": "healthcheck",
-      "url": "http://127.0.0.1:8648/health"
     },
     {
       "type": "open_web",

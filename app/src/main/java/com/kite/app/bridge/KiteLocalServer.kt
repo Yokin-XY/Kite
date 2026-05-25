@@ -69,7 +69,7 @@ class KiteLocalServer(
                     JSONObject()
                         .put("ok", true)
                         .put("app", "Kite")
-                        .put("version", "0.2")
+                        .put("version", "0.3")
                         .put("server", "running")
                 )
 
