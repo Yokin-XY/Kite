@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="936" viewBox="0 0 432 936">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#0f172a" flood-opacity=".11"/>
+    </filter>
+  </defs>
+  <rect width="432" height="936" fill="#f8fafc"/>
+  <text x="26" y="58" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#0f172a">Kite</text>
+  <text x="26" y="86" font-family="Arial, sans-serif" font-size="16" fill="#64748b">配置表控制台</text>
+  <text x="327" y="64" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" fill="#0f172a">⌕</text>
+  <rect x="354" y="24" width="58" height="58" rx="20" fill="#6d43e6" filter="url(#shadow)"/>
+  <text x="383" y="64" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#fff">+</text>
+
+  <rect x="26" y="114" width="92" height="42" rx="21" fill="#6d43e6"/>
+  <text x="72" y="141" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="700" fill="#fff">▦ 全部 6</text>
+  <rect x="130" y="114" width="110" height="42" rx="21" fill="#fff" stroke="#e2e8f0"/>
+  <text x="185" y="141" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">▶ 运行中 2</text>
+  <rect x="252" y="114" width="110" height="42" rx="21" fill="#fff" stroke="#e2e8f0"/>
+  <text x="307" y="141" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" fill="#0f172a">■ 已停止 1</text>
+
+  <g transform="translate(14 178)">
+    <rect width="197" height="197" rx="24" fill="#fff" stroke="#e2e8f0" filter="url(#shadow)"/>
+    <rect x="10" y="10" width="40" height="40" rx="14" fill="#e8f8ee" stroke="#beeacd"/>
+    <text x="30" y="37" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#059669">羽</text>
+    <rect x="116" y="14" width="70" height="24" rx="12" fill="#e8f8ee" stroke="#beeacd"/>
+    <text x="151" y="31" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#059669">● 运行中</text>
+    <text x="10" y="74" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#0f172a">Hermes WebUI</text>
+    <text x="10" y="96" font-family="Arial, sans-serif" font-size="12" fill="#64748b">启动 Hermes 图形化工作台</text>
+    <rect x="10" y="110" width="146" height="24" rx="10" fill="#e8f8ee" stroke="#beeacd"/>
+    <text x="83" y="127" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#059669">127.0.0.1:8648</text>
+    <rect x="10" y="150" width="126" height="34" rx="13" fill="#059669"/>
+    <text x="73" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">启动 / 打开</text>
+    <rect x="144" y="150" width="40" height="34" rx="13" fill="#fff" stroke="#e2e8f0"/>
+    <text x="164" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0f172a">编辑</text>
+  </g>
+
+  <g transform="translate(221 178)">
+    <rect width="197" height="197" rx="24" fill="#fff" stroke="#e2e8f0" filter="url(#shadow)"/>
+    <rect x="10" y="10" width="40" height="40" rx="14" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="30" y="35" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#2563eb">OCR</text>
+    <rect x="116" y="14" width="70" height="24" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="151" y="31" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#475569">■ 停止</text>
+    <text x="10" y="74" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#0f172a">OCR</text>
+    <text x="10" y="96" font-family="Arial, sans-serif" font-size="12" fill="#64748b">识别图片和文档中的文字</text>
+    <rect x="10" y="110" width="146" height="24" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="83" y="127" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#2563eb">127.0.0.1:7861</text>
+    <rect x="10" y="150" width="126" height="34" rx="13" fill="#2563eb"/>
+    <text x="73" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">启动</text>
+    <rect x="144" y="150" width="40" height="34" rx="13" fill="#fff" stroke="#e2e8f0"/>
+    <text x="164" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0f172a">编辑</text>
+  </g>
+
+  <g transform="translate(14 389)">
+    <rect width="197" height="197" rx="24" fill="#fff" stroke="#e2e8f0" filter="url(#shadow)"/>
+    <rect x="10" y="10" width="40" height="40" rx="14" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="30" y="36" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#2563eb">Py</text>
+    <rect x="116" y="14" width="70" height="24" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="151" y="31" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#2563eb">● 就绪</text>
+    <text x="10" y="74" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#0f172a">Python</text>
+    <text x="10" y="96" font-family="Arial, sans-serif" font-size="12" fill="#64748b">Python API 和脚本服务</text>
+    <rect x="10" y="110" width="146" height="24" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="83" y="127" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#2563eb">127.0.0.1:8000</text>
+    <rect x="10" y="150" width="126" height="34" rx="13" fill="#2563eb"/>
+    <text x="73" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">启动</text>
+    <rect x="144" y="150" width="40" height="34" rx="13" fill="#fff" stroke="#e2e8f0"/>
+    <text x="164" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0f172a">编辑</text>
+  </g>
+
+  <g transform="translate(221 389)">
+    <rect width="197" height="197" rx="24" fill="#fff" stroke="#e2e8f0" filter="url(#shadow)"/>
+    <rect x="10" y="10" width="40" height="40" rx="14" fill="#f1edff" stroke="#d7ccff"/>
+    <text x="30" y="37" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#6d43e6">文</text>
+    <rect x="116" y="14" width="70" height="24" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="151" y="31" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#2563eb">● 就绪</text>
+    <text x="10" y="74" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#0f172a">文件</text>
+    <text x="10" y="96" font-family="Arial, sans-serif" font-size="12" fill="#64748b">打开本地文件工作台</text>
+    <rect x="10" y="110" width="146" height="24" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="83" y="127" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#2563eb">127.0.0.1:8080</text>
+    <rect x="10" y="150" width="126" height="34" rx="13" fill="#2563eb"/>
+    <text x="73" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">打开</text>
+    <rect x="144" y="150" width="40" height="34" rx="13" fill="#fff" stroke="#e2e8f0"/>
+    <text x="164" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0f172a">编辑</text>
+  </g>
+
+  <g transform="translate(14 600)">
+    <rect width="197" height="197" rx="24" fill="#fff" stroke="#e2e8f0" filter="url(#shadow)"/>
+    <rect x="10" y="10" width="40" height="40" rx="14" fill="#e8f8ee" stroke="#beeacd"/>
+    <text x="30" y="36" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#059669">&gt;_</text>
+    <rect x="116" y="14" width="70" height="24" rx="12" fill="#e8f8ee" stroke="#beeacd"/>
+    <text x="151" y="31" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#059669">● 运行</text>
+    <text x="10" y="74" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#0f172a">Codex UI</text>
+    <text x="10" y="96" font-family="Arial, sans-serif" font-size="12" fill="#64748b">AI 编程助手工作台</text>
+    <rect x="10" y="110" width="146" height="24" rx="10" fill="#e8f8ee" stroke="#beeacd"/>
+    <text x="83" y="127" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#059669">127.0.0.1:3000</text>
+    <rect x="10" y="150" width="126" height="34" rx="13" fill="#059669"/>
+    <text x="73" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">打开</text>
+    <rect x="144" y="150" width="40" height="34" rx="13" fill="#fff" stroke="#e2e8f0"/>
+    <text x="164" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0f172a">编辑</text>
+  </g>
+
+  <g transform="translate(221 600)">
+    <rect width="197" height="197" rx="24" fill="#fff" stroke="#e2e8f0" filter="url(#shadow)"/>
+    <rect x="10" y="10" width="40" height="40" rx="14" fill="#fff0e8" stroke="#fed7aa"/>
+    <text x="30" y="37" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#ea580c">日</text>
+    <rect x="116" y="14" width="70" height="24" rx="12" fill="#f8fafc" stroke="#e2e8f0"/>
+    <text x="151" y="31" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#475569">■ 停止</text>
+    <text x="10" y="74" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#0f172a">日志</text>
+    <text x="10" y="96" font-family="Arial, sans-serif" font-size="12" fill="#64748b">查看和搜索应用日志</text>
+    <rect x="10" y="110" width="146" height="24" rx="10" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="83" y="127" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#2563eb">127.0.0.1:5601</text>
+    <rect x="10" y="150" width="126" height="34" rx="13" fill="#2563eb"/>
+    <text x="73" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">启动</text>
+    <rect x="144" y="150" width="40" height="34" rx="13" fill="#fff" stroke="#e2e8f0"/>
+    <text x="164" y="172" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#0f172a">编辑</text>
+  </g>
+
+  <rect x="0" y="850" width="432" height="86" fill="#fff"/>
+  <text x="54" y="884" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#6d43e6">▦</text>
+  <text x="54" y="910" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#6d43e6">配置</text>
+  <text x="162" y="884" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#64748b">▤</text>
+  <text x="162" y="910" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">模板</text>
+  <text x="270" y="884" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#64748b">⌁</text>
+  <text x="270" y="910" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">活动</text>
+  <text x="378" y="884" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#64748b">⚙</text>
+  <text x="378" y="910" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">设置</text>
+</svg>
