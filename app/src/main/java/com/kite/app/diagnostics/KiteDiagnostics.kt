@@ -3,12 +3,14 @@ package com.kite.app.diagnostics
 import android.content.Context
 import android.webkit.ConsoleMessage
 import com.kite.app.recipe.KiteRecipe
+import com.kite.app.recipe.KiteRunReport
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
 
 class KiteDiagnostics(context: Context) {
     private val diagnosticsDir = File(context.filesDir, "diagnostics").apply { mkdirs() }
+    private val recipeRunsDir = File(context.filesDir, "recipe-runs").apply { mkdirs() }
     private val consoleLog = File(diagnosticsDir, "webview-console.log")
     private val errorsLog = File(diagnosticsDir, "webview-errors.jsonl")
     private val capabilitiesFile = File(diagnosticsDir, "webview-capabilities.json")
@@ -92,6 +94,14 @@ class KiteDiagnostics(context: Context) {
         )
     }
 
+    fun writeRunReport(report: KiteRunReport): File {
+        val fileName = "${report.runId.ifBlank { report.requestId.ifBlank { "run_${Instant.now().toEpochMilli()}" } }}.json"
+            .replace(Regex("[^a-zA-Z0-9_.-]"), "_")
+        val target = File(recipeRunsDir, fileName)
+        target.writeText(report.toJson().toString(2))
+        return target
+    }
+
     fun writeWebAppStatus(
         url: String,
         title: String?,
@@ -139,4 +149,6 @@ class KiteDiagnostics(context: Context) {
         .put("clipboard", "planned_android_bridge")
         .put("filePicker", "planned_android_bridge")
         .put("diagnosticsPath", "files/diagnostics/")
+        .put("recipeRunsPath", "files/recipe-runs/")
+        .put("recipeProtocolVersion", KiteRecipe.PROTOCOL_VERSION)
 }

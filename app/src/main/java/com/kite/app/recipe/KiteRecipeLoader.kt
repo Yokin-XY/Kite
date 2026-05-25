@@ -13,11 +13,15 @@ class KiteRecipeLoader(
     private val diagnostics: KiteDiagnostics
 ) {
     private val userRecipeDir = File(context.filesDir, "recipes").apply { mkdirs() }
+    private val importedRecipeDir = File(userRecipeDir, "imported").apply { mkdirs() }
+    private val runReportsDir = File(context.filesDir, "recipe-runs").apply { mkdirs() }
 
     fun loadAllRecipes(): List<KiteRecipe> {
-        val assets = loadAssetRecipes()
-        val users = loadUserRecipes()
-        return (assets + users).distinctBy { it.id }
+        val merged = linkedMapOf<String, KiteRecipe>()
+        loadAssetRecipes().forEach { merged[it.id] = it }
+        loadImportedRecipes().forEach { merged[it.id] = it }
+        loadUserRecipes().forEach { merged[it.id] = it }
+        return merged.values.toList()
     }
 
     fun loadSampleRecipeJson(): String = readAsset("recipes/hermes-webui.json")
@@ -38,12 +42,16 @@ class KiteRecipeLoader(
 
     fun userRecipesPath(): String = userRecipeDir.absolutePath
 
+    fun importedRecipesPath(): String = importedRecipeDir.absolutePath
+
+    fun runReportsPath(): String = runReportsDir.absolutePath
+
     private fun loadAssetRecipes(): List<KiteRecipe> {
         val recipeFiles = context.assets.list("recipes").orEmpty()
             .filter { it.endsWith(".json", ignoreCase = true) }
         return recipeFiles.mapNotNull { name ->
             runCatching {
-                KiteRecipe.fromJson(JSONObject(readAsset("recipes/$name")), source = "asset")
+                KiteRecipe.fromJson(JSONObject(readAsset("recipes/$name")), source = KiteRecipe.SOURCE_ASSETS)
             }.onFailure {
                 diagnostics.logRecipeEvent("asset_load_failed", null, mapOf("file" to name, "error" to it.message.orEmpty()))
             }.getOrNull()
@@ -55,9 +63,20 @@ class KiteRecipeLoader(
             .orEmpty()
             .mapNotNull { file ->
                 runCatching {
-                    KiteRecipe.fromJson(JSONObject(file.readText()), source = "user")
+                    KiteRecipe.fromJson(JSONObject(file.readText()), source = KiteRecipe.SOURCE_USER)
                 }.onFailure {
                     diagnostics.logRecipeEvent("user_load_failed", null, mapOf("file" to file.name, "error" to it.message.orEmpty()))
+                }.getOrNull()
+            }
+
+    private fun loadImportedRecipes(): List<KiteRecipe> =
+        importedRecipeDir.listFiles { file -> file.isFile && file.extension.equals("json", ignoreCase = true) }
+            .orEmpty()
+            .mapNotNull { file ->
+                runCatching {
+                    KiteRecipe.fromJson(JSONObject(file.readText()), source = KiteRecipe.SOURCE_IMPORTED)
+                }.onFailure {
+                    diagnostics.logRecipeEvent("imported_load_failed", null, mapOf("file" to file.name, "error" to it.message.orEmpty()))
                 }.getOrNull()
             }
 
@@ -69,16 +88,19 @@ class KiteRecipeLoader(
         val steps = when (input.type) {
             KiteRecipe.TYPE_COMMAND_WEB -> listOf(
                 KiteRecipeStep(
+                    id = "step_start_$id",
                     type = KiteRecipe.STEP_SHELL,
                     cmd = input.command.trim(),
-                    wait = true
+                    runMode = KiteRecipe.RUN_MODE_WAIT,
+                    outputPolicy = KiteOutputPolicy()
                 ),
-                KiteRecipeStep(type = KiteRecipe.STEP_OPEN_WEB, url = defaultUrl)
+                KiteRecipeStep(id = "step_open_$id", type = KiteRecipe.STEP_OPEN_WEB, url = defaultUrl)
             )
 
-            else -> listOf(KiteRecipeStep(type = KiteRecipe.STEP_OPEN_WEB, url = defaultUrl))
+            else -> listOf(KiteRecipeStep(id = "step_open_$id", type = KiteRecipe.STEP_OPEN_WEB, url = defaultUrl))
         }
         return KiteRecipe(
+            schemaVersion = KiteRecipe.PROTOCOL_VERSION,
             id = id,
             name = input.name.trim(),
             description = input.description.ifBlank { defaultDescription(input.type) },
@@ -89,7 +111,7 @@ class KiteRecipeLoader(
             icon = iconFor(input.type),
             taskLabel = input.name.trim(),
             taskMode = "separate",
-            source = "user",
+            source = KiteRecipe.SOURCE_USER,
             steps = steps
         ).also {
             diagnostics.logRecipeEvent("recipe_built", it, mapOf("createdAt" to now))
@@ -124,7 +146,7 @@ class KiteRecipeLoader(
 
     private fun iconFor(type: String): String = when (type) {
         KiteRecipe.TYPE_COMMAND_WEB -> ">_"
-        KiteRecipe.TYPE_START_SERVICE -> "▶"
+        KiteRecipe.TYPE_START_SERVICE -> "▷"
         KiteRecipe.TYPE_TEMPLATE -> "▦"
         else -> "◎"
     }

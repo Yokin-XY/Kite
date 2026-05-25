@@ -25,6 +25,7 @@ import com.kite.app.bridge.KiteLocalServer
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeLoader
+import com.kite.app.recipe.KiteRunReport
 import com.kite.app.recipe.NewRecipeInput
 import com.kite.app.web.KiteWebShell
 
@@ -212,20 +213,74 @@ class MainActivity : Activity() {
     }
 
     private fun handleBridgeResult(recipe: KiteRecipe, result: BridgeResult) {
-        if (result.ok || result.accepted) {
-            recipeStates[recipe.id] = RecipeRunState.Opened
-            diagnostics.logRecipeAction(recipe, "bridge_ok_open_web")
-            openWeb(recipe.openWebUrl(), "recipe_card", recipe)
-        } else {
+        val report = result.runReport
+        if (report != null) {
+            diagnostics.writeRunReport(report)
+        }
+
+        if (result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE) {
             recipeStates[recipe.id] = RecipeRunState.BridgeUnavailable
             diagnostics.logRecipeAction(
                 recipe,
                 "bridge_unavailable",
-                mapOf("message" to result.message.take(500))
+                mapOf("requestId" to result.requestId.orEmpty(), "message" to result.message.take(500))
             )
             Toast.makeText(this, "桥接不可用，未执行命令", Toast.LENGTH_SHORT).show()
             showConsole()
+            return
         }
+
+        if (report?.hasMismatch() == true) {
+            recipeStates[recipe.id] = RecipeRunState.Stopped
+            diagnostics.logRecipeAction(
+                recipe,
+                "bridge_result_mismatch",
+                mapOf("requestId" to report.requestId, "runId" to report.runId)
+            )
+            Toast.makeText(this, "执行结果不匹配，已记录运行报告", Toast.LENGTH_SHORT).show()
+            showConsole()
+            return
+        }
+
+        val nextUrl = report?.openWebUrlIfFinished()
+        if (nextUrl != null) {
+            recipeStates[recipe.id] = RecipeRunState.Opened
+            diagnostics.logRecipeAction(
+                recipe,
+                "bridge_report_open_web",
+                mapOf("requestId" to report.requestId, "runId" to report.runId, "url" to nextUrl)
+            )
+            openWeb(nextUrl, "recipe_card", recipe)
+            return
+        }
+
+        if (report != null && (!report.ok || report.status == KiteRunReport.STATUS_FAILED)) {
+            recipeStates[recipe.id] = RecipeRunState.Stopped
+            diagnostics.logRecipeAction(
+                recipe,
+                "bridge_failed",
+                mapOf("requestId" to report.requestId, "runId" to report.runId, "message" to result.message.take(500))
+            )
+            Toast.makeText(this, "执行失败，已记录运行报告", Toast.LENGTH_SHORT).show()
+            showConsole()
+            return
+        }
+
+        if (result.ok || result.accepted) {
+            recipeStates[recipe.id] = RecipeRunState.Opened
+            diagnostics.logRecipeAction(recipe, "bridge_ok_open_web", mapOf("requestId" to result.requestId.orEmpty()))
+            openWeb(result.nextActionUrl ?: recipe.openWebUrl(), "recipe_card", recipe)
+            return
+        }
+
+        recipeStates[recipe.id] = RecipeRunState.BridgeUnavailable
+        diagnostics.logRecipeAction(
+            recipe,
+            "bridge_unavailable",
+            mapOf("requestId" to result.requestId.orEmpty(), "message" to result.message.take(500))
+        )
+        Toast.makeText(this, "桥接不可用，未执行命令", Toast.LENGTH_SHORT).show()
+        showConsole()
     }
 
     private fun showCreateConfig() {

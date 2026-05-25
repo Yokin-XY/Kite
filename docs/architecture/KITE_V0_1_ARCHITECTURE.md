@@ -380,3 +380,39 @@ Suggested files:
 ```
 
 这些日志先归 Kite 管理，不强依赖 KF 共享目录。后续如果需要让 Hermes / Codex / KF 侧 AI 直接读取，再规划同步到 KF 共享诊断目录或通过 Kite Bridge Protocol 暴露。
+## 十五、V0.3.1 Recipe Protocol and Recipe Assistant
+
+V0.3.1 将 Kite Recipe 从“首页卡片数据”升级为开放工作流单元。Recipe 必须能被 Kite 保存和展示，也必须能被 KF Bridge 理解、执行并返回结构化 Run Report。
+
+本阶段新增两份协议文档：
+
+```text
+docs/protocol/KITE_RECIPE_PROTOCOL_V0_1.md
+docs/protocol/KITE_BRIDGE_PROTOCOL_V0_1.md
+```
+
+核心边界：
+
+```text
+Kite 不执行 shell。
+Kite 保存、展示、调用 Recipe。
+KF Runtime / KF Bridge 执行 shell / service / command。
+Kite 根据 Run Report 消费 nextAction，例如打开 Web 工作台。
+```
+
+Recipe 存储分层：
+
+```text
+assets/recipes/             官方内置，只读
+files/recipes/              用户创建，可编辑
+files/recipes/imported/     未来导入
+files/recipe-runs/          运行报告摘要
+```
+
+冲突优先级：
+
+```text
+user > imported > assets
+```
+
+Recipe Assistant 是后续预留的 AI 辅助配置层。它读取 recipe 草稿和 Run Report，根据 `lastMeaningfulOutput` 建议 `expected` 规则，根据输出 URL 建议 `defaultUrl` 和 `open_web` step。普通用户不需要理解命令成功规则，官方 Recipe、分享 Recipe 和 Recipe Assistant 承担主要配置成本。

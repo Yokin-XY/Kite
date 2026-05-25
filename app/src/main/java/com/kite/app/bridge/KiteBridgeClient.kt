@@ -1,11 +1,13 @@
 package com.kite.app.bridge
 
 import com.kite.app.diagnostics.KiteDiagnostics
+import com.kite.app.recipe.KiteOutputPolicy
 import com.kite.app.recipe.KiteRecipe
-import org.json.JSONArray
+import com.kite.app.recipe.KiteRunReport
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 import kotlin.concurrent.thread
 
 class KiteBridgeClient(
@@ -15,28 +17,44 @@ class KiteBridgeClient(
     fun runRecipe(recipe: KiteRecipe, callback: (BridgeResult) -> Unit) {
         val shellSteps = recipe.steps.filter { it.type == KiteRecipe.STEP_SHELL && !it.cmd.isNullOrBlank() }
         if (shellSteps.isEmpty()) {
-            callback(BridgeResult(ok = true, accepted = true, message = "no_shell_step"))
+            callback(
+                BridgeResult(
+                    ok = true,
+                    accepted = true,
+                    status = "no_shell_step",
+                    message = "no_shell_step"
+                )
+            )
             return
         }
 
+        val requestId = newRequestId()
         val payload = JSONObject()
-            .put("recipeId", recipe.id)
-            .put("recipeName", recipe.name)
-            .put("steps", JSONArray().apply {
-                shellSteps.forEach { put(it.toJson()) }
-            })
+            .put("protocolVersion", KiteRecipe.PROTOCOL_VERSION)
+            .put("requestId", requestId)
+            .put("recipe", recipe.toJson())
 
-        diagnostics.logBridgeEvent("request_sent", recipe, mapOf("endpoint" to "$baseUrl/run-recipe"))
-        postJsonAsync("/run-recipe", payload, recipe, callback)
+        diagnostics.logBridgeEvent(
+            "request_sent",
+            recipe,
+            mapOf("endpoint" to "$baseUrl/run-recipe", "requestId" to requestId)
+        )
+        postJsonAsync("/run-recipe", payload, recipe, requestId, callback)
     }
 
     fun runCommand(recipe: KiteRecipe, command: String, callback: (BridgeResult) -> Unit) {
+        val requestId = newRequestId()
         val payload = JSONObject()
-            .put("recipeId", recipe.id)
-            .put("recipeName", recipe.name)
+            .put("protocolVersion", KiteRecipe.PROTOCOL_VERSION)
+            .put("requestId", requestId)
             .put("cmd", command)
-        diagnostics.logBridgeEvent("command_request_sent", recipe, mapOf("endpoint" to "$baseUrl/run-command"))
-        postJsonAsync("/run-command", payload, recipe, callback)
+            .put("outputPolicy", KiteOutputPolicy().toJson())
+        diagnostics.logBridgeEvent(
+            "command_request_sent",
+            recipe,
+            mapOf("endpoint" to "$baseUrl/run-command", "requestId" to requestId)
+        )
+        postJsonAsync("/run-command", payload, recipe, requestId, callback)
     }
 
     fun checkStatus(callback: (BridgeResult) -> Unit) {
@@ -51,9 +69,23 @@ class KiteBridgeClient(
                     ?.bufferedReader()
                     ?.use { it.readText() }
                     .orEmpty()
-                callback(BridgeResult(ok = code in 200..299, accepted = code in 200..299, message = body))
+                callback(
+                    BridgeResult(
+                        ok = code in 200..299,
+                        accepted = code in 200..299,
+                        status = if (code in 200..299) "ready" else "failed",
+                        message = body,
+                    )
+                )
             }.onFailure {
-                callback(BridgeResult(ok = false, accepted = false, message = it.message ?: "bridge_unavailable"))
+                callback(
+                    BridgeResult(
+                        ok = false,
+                        accepted = false,
+                        status = KiteRunReport.STATUS_BRIDGE_UNAVAILABLE,
+                        message = it.message ?: KiteRunReport.STATUS_BRIDGE_UNAVAILABLE
+                    )
+                )
             }
         }
     }
@@ -62,6 +94,7 @@ class KiteBridgeClient(
         path: String,
         payload: JSONObject,
         recipe: KiteRecipe,
+        requestId: String,
         callback: (BridgeResult) -> Unit
     ) {
         thread(name = "KiteBridgeClient", isDaemon = true) {
@@ -79,23 +112,56 @@ class KiteBridgeClient(
                     ?.bufferedReader()
                     ?.use { it.readText() }
                     .orEmpty()
-                BridgeResult(
-                    ok = code in 200..299,
-                    accepted = code in 200..299 && body.contains("accepted", ignoreCase = true),
-                    message = body.ifBlank { "http_$code" }
-                )
+                val report = KiteRunReport.fromJsonOrNull(body)
+                if (report != null) {
+                    BridgeResult(
+                        ok = code in 200..299 && report.ok,
+                        accepted = report.status in setOf(
+                            KiteRunReport.STATUS_ACCEPTED,
+                            KiteRunReport.STATUS_RUNNING,
+                            KiteRunReport.STATUS_FINISHED
+                        ),
+                        status = report.status,
+                        message = body.ifBlank { "http_$code" },
+                        requestId = report.requestId.ifBlank { requestId },
+                        runReport = report,
+                        nextActionUrl = report.nextAction?.url
+                    )
+                } else {
+                    BridgeResult(
+                        ok = code in 200..299,
+                        accepted = code in 200..299 && body.contains("accepted", ignoreCase = true),
+                        status = if (code in 200..299) "accepted" else "failed",
+                        message = body.ifBlank { "http_$code" },
+                        requestId = requestId
+                    )
+                }
             }.getOrElse {
-                BridgeResult(ok = false, accepted = false, message = it.message ?: "bridge_unavailable")
+                BridgeResult(
+                    ok = false,
+                    accepted = false,
+                    status = KiteRunReport.STATUS_BRIDGE_UNAVAILABLE,
+                    message = it.message ?: KiteRunReport.STATUS_BRIDGE_UNAVAILABLE,
+                    requestId = requestId
+                )
             }
 
             diagnostics.logBridgeEvent(
-                event = if (result.ok) "response_ok" else "response_failed",
+                event = if (result.ok || result.accepted) "response_ok" else "response_failed",
                 recipe = recipe,
-                details = mapOf("message" to result.message.take(500))
+                details = mapOf(
+                    "requestId" to result.requestId.orEmpty(),
+                    "runId" to (result.runReport?.runId ?: ""),
+                    "status" to result.status,
+                    "nextAction" to result.nextActionUrl.orEmpty(),
+                    "message" to result.message.take(500)
+                )
             )
             callback(result)
         }
     }
+
+    private fun newRequestId(): String = "req_${UUID.randomUUID().toString().replace("-", "")}"
 
     companion object {
         const val DEFAULT_BASE_URL = "http://127.0.0.1:8799"
@@ -106,5 +172,9 @@ class KiteBridgeClient(
 data class BridgeResult(
     val ok: Boolean,
     val accepted: Boolean,
-    val message: String
+    val status: String,
+    val message: String,
+    val requestId: String? = null,
+    val runReport: KiteRunReport? = null,
+    val nextActionUrl: String? = null
 )
