@@ -56,7 +56,7 @@ class KiteDiagnostics(context: Context) {
 
     fun logRecipeSaved(recipe: KiteRecipe) {
         recipeSaveLog.appendText(
-            "${Instant.now()} id=${recipe.id} name=${recipe.name} type=${recipe.type} defaultUrl=${recipe.defaultUrl}\n"
+            "${Instant.now()} id=${recipe.id} name=${recipe.name} type=${recipe.type} defaultUrl=${recipe.defaultUrl} runtimeSource=${recipe.runtimeSource} icon=${recipe.icon.name} accent=${recipe.card.accent}\n"
         )
         logRecipeEvent("saved", recipe)
     }
@@ -77,6 +77,10 @@ class KiteDiagnostics(context: Context) {
                 .put("recipeId", recipe?.id ?: JSONObject.NULL)
                 .put("recipeName", recipe?.name ?: JSONObject.NULL)
                 .put("recipeType", recipe?.type ?: JSONObject.NULL)
+                .put("runtimeSource", recipe?.runtimeSource ?: JSONObject.NULL)
+                .put("icon", recipe?.icon?.name ?: JSONObject.NULL)
+                .put("cardAccent", recipe?.card?.accent ?: JSONObject.NULL)
+                .put("cardStatus", recipe?.card?.status ?: JSONObject.NULL)
                 .apply { details.forEach { (key, value) -> put(key, value) } }
                 .toString() + "\n"
         )

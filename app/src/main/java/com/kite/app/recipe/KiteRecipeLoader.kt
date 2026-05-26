@@ -51,9 +51,18 @@ class KiteRecipeLoader(
             .filter { it.endsWith(".json", ignoreCase = true) }
         return recipeFiles.mapNotNull { name ->
             runCatching {
-                KiteRecipe.fromJson(JSONObject(readAsset("recipes/$name")), source = KiteRecipe.SOURCE_ASSETS)
+                val recipe = KiteRecipe.fromJson(
+                    JSONObject(readAsset("recipes/$name")),
+                    runtimeSource = KiteRecipe.SOURCE_ASSETS
+                )
+                logRecipeLoaded(recipe)
+                recipe
             }.onFailure {
-                diagnostics.logRecipeEvent("asset_load_failed", null, mapOf("file" to name, "error" to it.message.orEmpty()))
+                diagnostics.logRecipeEvent(
+                    "recipe_load_error",
+                    null,
+                    mapOf("runtimeSource" to KiteRecipe.SOURCE_ASSETS, "file" to name, "error" to it.message.orEmpty())
+                )
             }.getOrNull()
         }
     }
@@ -63,9 +72,15 @@ class KiteRecipeLoader(
             .orEmpty()
             .mapNotNull { file ->
                 runCatching {
-                    KiteRecipe.fromJson(JSONObject(file.readText()), source = KiteRecipe.SOURCE_USER)
+                    val recipe = KiteRecipe.fromJson(JSONObject(file.readText()), runtimeSource = KiteRecipe.SOURCE_USER)
+                    logRecipeLoaded(recipe)
+                    recipe
                 }.onFailure {
-                    diagnostics.logRecipeEvent("user_load_failed", null, mapOf("file" to file.name, "error" to it.message.orEmpty()))
+                    diagnostics.logRecipeEvent(
+                        "recipe_load_error",
+                        null,
+                        mapOf("runtimeSource" to KiteRecipe.SOURCE_USER, "file" to file.name, "error" to it.message.orEmpty())
+                    )
                 }.getOrNull()
             }
 
@@ -74,9 +89,15 @@ class KiteRecipeLoader(
             .orEmpty()
             .mapNotNull { file ->
                 runCatching {
-                    KiteRecipe.fromJson(JSONObject(file.readText()), source = KiteRecipe.SOURCE_IMPORTED)
+                    val recipe = KiteRecipe.fromJson(JSONObject(file.readText()), runtimeSource = KiteRecipe.SOURCE_IMPORTED)
+                    logRecipeLoaded(recipe)
+                    recipe
                 }.onFailure {
-                    diagnostics.logRecipeEvent("imported_load_failed", null, mapOf("file" to file.name, "error" to it.message.orEmpty()))
+                    diagnostics.logRecipeEvent(
+                        "recipe_load_error",
+                        null,
+                        mapOf("runtimeSource" to KiteRecipe.SOURCE_IMPORTED, "file" to file.name, "error" to it.message.orEmpty())
+                    )
                 }.getOrNull()
             }
 
@@ -85,6 +106,7 @@ class KiteRecipeLoader(
         val baseId = slug(input.name).ifBlank { "recipe" }
         val id = uniqueId(baseId)
         val defaultUrl = input.url.trim()
+        val iconName = input.iconName.ifBlank { KiteRecipeIcon.defaultNameForType(input.type) }
         val steps = when (input.type) {
             KiteRecipe.TYPE_COMMAND_WEB -> listOf(
                 KiteRecipeStep(
@@ -107,14 +129,23 @@ class KiteRecipeLoader(
             type = input.type,
             defaultUrl = defaultUrl,
             shortcut = input.shortcut,
-            status = "unknown",
-            icon = iconFor(input.type),
+            icon = KiteRecipeIcon(type = "builtin", name = KiteRecipeIcon.normalizeName(iconName, input.type)),
+            card = KiteRecipeCard(accent = KiteRecipeCard.defaultAccentForType(input.type), status = "unknown"),
+            execution = KiteExecution.steps(steps),
             taskLabel = input.name.trim(),
             taskMode = "separate",
-            source = KiteRecipe.SOURCE_USER,
-            steps = steps
+            runtimeSource = KiteRecipe.SOURCE_USER
         ).also {
-            diagnostics.logRecipeEvent("recipe_built", it, mapOf("createdAt" to now))
+            diagnostics.logRecipeEvent(
+                "recipe_built",
+                it,
+                mapOf(
+                    "createdAt" to now,
+                    "runtimeSource" to it.runtimeSource,
+                    "icon" to it.icon.name,
+                    "accent" to it.card.accent
+                )
+            )
         }
     }
 
@@ -139,16 +170,22 @@ class KiteRecipeLoader(
 
     private fun defaultDescription(type: String): String = when (type) {
         KiteRecipe.TYPE_COMMAND_WEB -> "执行命令后打开网页工作台"
+        KiteRecipe.TYPE_SCRIPT_WEB -> "运行脚本并打开网页工作台"
         KiteRecipe.TYPE_START_SERVICE -> "启动本地服务工作台"
         KiteRecipe.TYPE_TEMPLATE -> "配置模板"
         else -> "打开网页工作台"
     }
 
-    private fun iconFor(type: String): String = when (type) {
-        KiteRecipe.TYPE_COMMAND_WEB -> ">_"
-        KiteRecipe.TYPE_START_SERVICE -> "▷"
-        KiteRecipe.TYPE_TEMPLATE -> "▦"
-        else -> "◎"
+    private fun logRecipeLoaded(recipe: KiteRecipe) {
+        diagnostics.logRecipeEvent(
+            "recipe_loaded",
+            recipe,
+            mapOf(
+                "runtimeSource" to recipe.runtimeSource,
+                "icon" to recipe.icon.name,
+                "accent" to recipe.card.accent
+            )
+        )
     }
 
     private fun readAsset(assetPath: String): String =
@@ -161,5 +198,6 @@ data class NewRecipeInput(
     val url: String,
     val command: String,
     val shortcut: Boolean,
+    val iconName: String = "",
     val description: String = ""
 )

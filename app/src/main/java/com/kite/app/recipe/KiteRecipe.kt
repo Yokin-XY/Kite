@@ -11,13 +11,20 @@ data class KiteRecipe(
     val type: String,
     val defaultUrl: String,
     val shortcut: Boolean,
-    val status: String,
-    val icon: String = "",
+    val icon: KiteRecipeIcon = KiteRecipeIcon.defaultForType(type),
+    val card: KiteRecipeCard = KiteRecipeCard.defaultForType(type),
+    val execution: KiteExecution = KiteExecution.steps(emptyList()),
+    val expected: KiteExpectedResult? = null,
     val taskLabel: String = "",
     val taskMode: String = "",
-    val source: String = SOURCE_ASSETS,
-    val steps: List<KiteRecipeStep> = emptyList()
+    val runtimeSource: String = SOURCE_ASSETS
 ) {
+    val steps: List<KiteRecipeStep>
+        get() = execution.steps
+
+    val status: String
+        get() = card.status
+
     fun hasShellStep(): Boolean = steps.any { it.type == STEP_SHELL && !it.cmd.isNullOrBlank() }
 
     fun openWebUrl(): String = steps.firstOrNull { it.type == STEP_OPEN_WEB && !it.url.isNullOrBlank() }?.url
@@ -31,14 +38,14 @@ data class KiteRecipe(
         .put("type", type)
         .put("defaultUrl", defaultUrl)
         .put("shortcut", shortcut)
-        .put("status", status)
-        .put("icon", icon)
-        .put("taskLabel", taskLabel)
-        .put("taskMode", taskMode)
-        .put("source", source)
-        .put("steps", JSONArray().apply {
-            steps.forEach { put(it.toJson()) }
-        })
+        .put("icon", icon.toJson())
+        .put("card", card.toJson())
+        .put("execution", execution.toJson())
+        .apply {
+            if (expected != null) put("expected", expected.toJson())
+            if (taskLabel.isNotBlank()) put("taskLabel", taskLabel)
+            if (taskMode.isNotBlank()) put("taskMode", taskMode)
+        }
 
     companion object {
         const val PROTOCOL_VERSION = 1
@@ -46,7 +53,12 @@ data class KiteRecipe(
         const val TYPE_OPEN_URL = "open_url"
         const val TYPE_START_SERVICE = "start_service"
         const val TYPE_COMMAND_WEB = "command_web"
+        const val TYPE_SCRIPT_WEB = "script_web"
         const val TYPE_TEMPLATE = "template"
+
+        const val EXECUTION_STEPS = "steps"
+        const val EXECUTION_SCRIPT = "script"
+        const val EXECUTION_ANDROID_ACTION = "android_action"
 
         const val STEP_OPEN_WEB = "open_web"
         const val STEP_SHELL = "shell"
@@ -61,34 +73,205 @@ data class KiteRecipe(
         const val SOURCE_IMPORTED = "imported"
         const val SOURCE_REMOTE = "remote"
 
-        fun fromJson(json: JSONObject, source: String): KiteRecipe {
-            val stepsJson = json.optJSONArray("steps") ?: JSONArray()
-            val steps = buildList {
-                for (index in 0 until stepsJson.length()) {
-                    add(KiteRecipeStep.fromJson(stepsJson.getJSONObject(index), index))
-                }
-            }
+        fun fromJson(json: JSONObject, runtimeSource: String): KiteRecipe {
+            val type = json.optString("type", TYPE_OPEN_URL)
+            val execution = parseExecution(json)
+            val icon = parseIcon(json, type)
+            val card = parseCard(json, type)
             return KiteRecipe(
                 schemaVersion = json.optInt("schemaVersion", PROTOCOL_VERSION),
                 id = json.getString("id"),
                 name = json.getString("name"),
                 description = json.optString("description"),
-                type = json.optString("type", TYPE_OPEN_URL),
+                type = type,
                 defaultUrl = json.getString("defaultUrl"),
                 shortcut = json.optBoolean("shortcut", false),
-                status = json.optString("status", "unknown"),
-                icon = json.optString("icon"),
+                icon = icon,
+                card = card,
+                execution = execution,
+                expected = json.optJSONObject("expected")?.let { KiteExpectedResult.fromJson(it) },
                 taskLabel = json.optString("taskLabel"),
                 taskMode = json.optString("taskMode"),
-                source = json.optString("source").ifBlank { normalizeSource(source) },
-                steps = steps
+                runtimeSource = normalizeSource(runtimeSource)
             )
+        }
+
+        private fun parseExecution(json: JSONObject): KiteExecution {
+            val executionJson = json.optJSONObject("execution")
+            if (executionJson != null) return KiteExecution.fromJson(executionJson)
+
+            val legacySteps = parseSteps(json.optJSONArray("steps") ?: JSONArray())
+            return KiteExecution(mode = EXECUTION_STEPS, steps = legacySteps)
+        }
+
+        private fun parseIcon(json: JSONObject, type: String): KiteRecipeIcon {
+            val iconJson = json.optJSONObject("icon")
+            if (iconJson != null) return KiteRecipeIcon.fromJson(iconJson, type)
+
+            val legacyIcon = json.optString("icon")
+            return if (legacyIcon.isNotBlank()) {
+                KiteRecipeIcon(type = "builtin", name = KiteRecipeIcon.normalizeName(legacyIcon, type))
+            } else {
+                KiteRecipeIcon.defaultForType(type)
+            }
+        }
+
+        private fun parseCard(json: JSONObject, type: String): KiteRecipeCard {
+            val cardJson = json.optJSONObject("card")
+            if (cardJson != null) return KiteRecipeCard.fromJson(cardJson, type)
+
+            return KiteRecipeCard(
+                accent = KiteRecipeCard.defaultAccentForType(type),
+                status = json.optString("status", "unknown")
+            )
+        }
+
+        internal fun parseSteps(stepsJson: JSONArray): List<KiteRecipeStep> = buildList {
+            for (index in 0 until stepsJson.length()) {
+                add(KiteRecipeStep.fromJson(stepsJson.getJSONObject(index), index))
+            }
         }
 
         private fun normalizeSource(source: String): String = when (source) {
             "asset" -> SOURCE_ASSETS
-            else -> source
+            SOURCE_ASSETS, SOURCE_USER, SOURCE_IMPORTED, SOURCE_REMOTE -> source
+            else -> SOURCE_USER
         }
+    }
+}
+
+data class KiteRecipeIcon(
+    val type: String = "builtin",
+    val name: String = ICON_DEFAULT
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("type", type)
+        .put("name", name)
+
+    companion object {
+        const val ICON_TERMINAL = "terminal"
+        const val ICON_WEB = "web"
+        const val ICON_BOT = "bot"
+        const val ICON_FILE = "file"
+        const val ICON_MUSIC = "music"
+        const val ICON_SHOPPING = "shopping"
+        const val ICON_LOGS = "logs"
+        const val ICON_TOOLS = "tools"
+        const val ICON_CODE = "code"
+        const val ICON_SERVER = "server"
+        const val ICON_DEFAULT = "default"
+
+        val BUILTIN = listOf(
+            ICON_TERMINAL,
+            ICON_WEB,
+            ICON_BOT,
+            ICON_FILE,
+            ICON_MUSIC,
+            ICON_SHOPPING,
+            ICON_LOGS,
+            ICON_TOOLS,
+            ICON_CODE,
+            ICON_SERVER,
+            ICON_DEFAULT
+        )
+
+        fun fromJson(json: JSONObject, recipeType: String): KiteRecipeIcon = KiteRecipeIcon(
+            type = json.optString("type", "builtin"),
+            name = normalizeName(json.optString("name"), recipeType)
+        )
+
+        fun defaultForType(recipeType: String): KiteRecipeIcon = KiteRecipeIcon(
+            type = "builtin",
+            name = defaultNameForType(recipeType)
+        )
+
+        fun defaultNameForType(recipeType: String): String = when (recipeType) {
+            KiteRecipe.TYPE_OPEN_URL -> ICON_WEB
+            KiteRecipe.TYPE_SCRIPT_WEB, KiteRecipe.TYPE_COMMAND_WEB -> ICON_TERMINAL
+            KiteRecipe.TYPE_START_SERVICE -> ICON_SERVER
+            KiteRecipe.TYPE_TEMPLATE -> ICON_TOOLS
+            else -> ICON_DEFAULT
+        }
+
+        fun normalizeName(name: String, recipeType: String): String {
+            val normalized = when (name.trim().lowercase()) {
+                "hermes" -> ICON_TERMINAL
+                ">_", "terminal", "cmd", "shell" -> ICON_TERMINAL
+                "web", "globe", "link" -> ICON_WEB
+                "folder", "files" -> ICON_FILE
+                "log" -> ICON_LOGS
+                "service", "play" -> ICON_SERVER
+                "鈻?", "鈼?", "鈱?", "鈿?", "羽" -> defaultNameForType(recipeType)
+                else -> name.trim().lowercase()
+            }
+            return if (normalized in BUILTIN) normalized else defaultNameForType(recipeType)
+        }
+    }
+}
+
+data class KiteRecipeCard(
+    val accent: String = "blue",
+    val status: String = "unknown"
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("accent", accent)
+        .put("status", status)
+
+    companion object {
+        fun fromJson(json: JSONObject, recipeType: String): KiteRecipeCard = KiteRecipeCard(
+            accent = json.optString("accent").ifBlank { defaultAccentForType(recipeType) },
+            status = json.optString("status", "unknown")
+        )
+
+        fun defaultForType(recipeType: String): KiteRecipeCard = KiteRecipeCard(
+            accent = defaultAccentForType(recipeType),
+            status = "unknown"
+        )
+
+        fun defaultAccentForType(recipeType: String): String = when (recipeType) {
+            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_SCRIPT_WEB -> "green"
+            KiteRecipe.TYPE_START_SERVICE -> "blue"
+            KiteRecipe.TYPE_TEMPLATE -> "purple"
+            else -> "blue"
+        }
+    }
+}
+
+data class KiteExecution(
+    val mode: String,
+    val steps: List<KiteRecipeStep> = emptyList(),
+    val script: String? = null,
+    val workdir: String? = null,
+    val timeoutMs: Long? = null,
+    val action: String? = null,
+    val params: JSONObject? = null
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("mode", mode)
+        .apply {
+            if (steps.isNotEmpty()) {
+                put("steps", JSONArray().apply { steps.forEach { put(it.toJson()) } })
+            }
+            if (!script.isNullOrBlank()) put("script", script)
+            if (!workdir.isNullOrBlank()) put("workdir", workdir)
+            if (timeoutMs != null) put("timeoutMs", timeoutMs)
+            if (!action.isNullOrBlank()) put("action", action)
+            if (params != null) put("params", params)
+        }
+
+    companion object {
+        fun steps(steps: List<KiteRecipeStep>): KiteExecution =
+            KiteExecution(mode = KiteRecipe.EXECUTION_STEPS, steps = steps)
+
+        fun fromJson(json: JSONObject): KiteExecution = KiteExecution(
+            mode = json.optString("mode", KiteRecipe.EXECUTION_STEPS),
+            steps = KiteRecipe.parseSteps(json.optJSONArray("steps") ?: JSONArray()),
+            script = json.optString("script").ifBlank { null },
+            workdir = json.optString("workdir").ifBlank { null },
+            timeoutMs = if (json.has("timeoutMs")) json.optLong("timeoutMs") else null,
+            action = json.optString("action").ifBlank { null },
+            params = json.optJSONObject("params")
+        )
     }
 }
 
@@ -97,6 +280,9 @@ data class KiteRecipeStep(
     val type: String,
     val cmd: String? = null,
     val runMode: String? = null,
+    val workdir: String? = null,
+    val timeoutMs: Long? = null,
+    val delayAfterMs: Long? = null,
     val expected: KiteExpectedResult? = null,
     val outputPolicy: KiteOutputPolicy? = null,
     val url: String? = null,
@@ -108,6 +294,9 @@ data class KiteRecipeStep(
         .apply {
             if (!cmd.isNullOrBlank()) put("cmd", cmd)
             if (!runMode.isNullOrBlank()) put("runMode", runMode)
+            if (!workdir.isNullOrBlank()) put("workdir", workdir)
+            if (timeoutMs != null) put("timeoutMs", timeoutMs)
+            if (delayAfterMs != null) put("delayAfterMs", delayAfterMs)
             if (expected != null) put("expected", expected.toJson())
             if (outputPolicy != null) put("outputPolicy", outputPolicy.toJson())
             if (!url.isNullOrBlank()) put("url", url)
@@ -125,6 +314,9 @@ data class KiteRecipeStep(
                 type = type,
                 cmd = json.optString("cmd").ifBlank { null },
                 runMode = runMode,
+                workdir = json.optString("workdir").ifBlank { null },
+                timeoutMs = if (json.has("timeoutMs")) json.optLong("timeoutMs") else null,
+                delayAfterMs = if (json.has("delayAfterMs")) json.optLong("delayAfterMs") else null,
                 expected = json.optJSONObject("expected")?.let { KiteExpectedResult.fromJson(it) },
                 outputPolicy = json.optJSONObject("outputPolicy")?.let { KiteOutputPolicy.fromJson(it) }
                     ?: if (type == KiteRecipe.STEP_SHELL) KiteOutputPolicy() else null,
