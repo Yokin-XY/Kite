@@ -387,6 +387,9 @@ data class KiteRunReport(
     fun openWebUrlIfFinished(): String? =
         nextAction?.takeIf { status == STATUS_FINISHED && ok && it.type == KiteRecipe.STEP_OPEN_WEB }?.url
 
+    fun openWebUrlIfPresent(): String? =
+        nextAction?.takeIf { it.type == KiteRecipe.STEP_OPEN_WEB && !it.url.isNullOrBlank() }?.url
+
     fun hasMismatch(): Boolean = steps.any { it.matchResult?.enabled == true && it.matchResult.matched == false }
 
     companion object {

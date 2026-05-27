@@ -98,6 +98,51 @@ class KiteDiagnostics(context: Context) {
         )
     }
 
+    fun logBridgeRawResponse(recipe: KiteRecipe?, requestId: String, statusCode: Int, body: String) {
+        logBridgeEvent(
+            "bridge_raw_response",
+            recipe,
+            mapOf(
+                "requestId" to requestId,
+                "statusCode" to statusCode.toString(),
+                "body" to body.take(4000)
+            )
+        )
+    }
+
+    fun logParsedRunReport(recipe: KiteRecipe?, report: KiteRunReport) {
+        logBridgeEvent(
+            "parsed_run_report",
+            recipe,
+            mapOf(
+                "requestId" to report.requestId,
+                "runId" to report.runId,
+                "status" to report.status,
+                "ok" to report.ok.toString(),
+                "steps" to report.steps.size.toString(),
+                "nextActionType" to (report.nextAction?.type ?: ""),
+                "nextActionUrl" to (report.nextAction?.url ?: ""),
+                "hasMismatch" to report.hasMismatch().toString()
+            )
+        )
+    }
+
+    fun logOpenWebAttempt(recipe: KiteRecipe?, url: String, source: String) {
+        logBridgeEvent(
+            "open_web_attempted",
+            recipe,
+            mapOf("url" to url, "source" to source)
+        )
+    }
+
+    fun logOpenWebFailed(recipe: KiteRecipe?, url: String, reason: String) {
+        logBridgeEvent(
+            "open_web_failed",
+            recipe,
+            mapOf("url" to url, "reason" to reason)
+        )
+    }
+
     fun writeRunReport(report: KiteRunReport): File {
         val fileName = "${report.runId.ifBlank { report.requestId.ifBlank { "run_${Instant.now().toEpochMilli()}" } }}.json"
             .replace(Regex("[^a-zA-Z0-9_.-]"), "_")

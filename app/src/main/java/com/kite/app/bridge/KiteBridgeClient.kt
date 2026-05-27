@@ -112,8 +112,10 @@ class KiteBridgeClient(
                     ?.bufferedReader()
                     ?.use { it.readText() }
                     .orEmpty()
+                diagnostics.logBridgeRawResponse(recipe, requestId, code, body)
                 val report = KiteRunReport.fromJsonOrNull(body)
                 if (report != null) {
+                    diagnostics.logParsedRunReport(recipe, report)
                     BridgeResult(
                         ok = code in 200..299 && report.ok,
                         accepted = report.status in setOf(
@@ -125,7 +127,7 @@ class KiteBridgeClient(
                         message = body.ifBlank { "http_$code" },
                         requestId = report.requestId.ifBlank { requestId },
                         runReport = report,
-                        nextActionUrl = report.nextAction?.url
+                        nextActionUrl = report.openWebUrlIfPresent()
                     )
                 } else {
                     BridgeResult(

@@ -220,6 +220,32 @@ class MainActivity : Activity() {
             return
         }
 
+        val bridgeNextUrl = report?.openWebUrlIfPresent() ?: result.nextActionUrl
+        if (!bridgeNextUrl.isNullOrBlank()) {
+            diagnostics.logRecipeAction(
+                recipe,
+                "next_action_detected",
+                mapOf(
+                    "requestId" to (report?.requestId ?: result.requestId).orEmpty(),
+                    "status" to (report?.status ?: result.status),
+                    "ok" to (report?.ok ?: result.ok).toString(),
+                    "url" to bridgeNextUrl,
+                    "hasMismatch" to (report?.hasMismatch() == true).toString()
+                )
+            )
+            if (report?.hasMismatch() == true) {
+                diagnostics.logRecipeAction(
+                    recipe,
+                    "bridge_result_mismatch_warning",
+                    mapOf("requestId" to report.requestId, "url" to bridgeNextUrl)
+                )
+                Toast.makeText(this, "结果不匹配，仍按返回入口打开", Toast.LENGTH_SHORT).show()
+            }
+            recipeStates[recipe.id] = RecipeRunState.Opened
+            openWeb(bridgeNextUrl, "bridge_next_action", recipe)
+            return
+        }
+
         if (report?.hasMismatch() == true) {
             recipeStates[recipe.id] = RecipeRunState.Stopped
             diagnostics.logRecipeAction(recipe, "bridge_result_mismatch", mapOf("requestId" to report.requestId))
@@ -388,6 +414,7 @@ class MainActivity : Activity() {
 
     private fun openWeb(url: String, source: String, recipe: KiteRecipe? = null) {
         val target = url.trim().ifBlank { DEFAULT_LOCAL_URL }
+        diagnostics.logOpenWebAttempt(recipe, target, source)
         diagnostics.writeWebAppStatus(
             url = target,
             title = recipe?.name,
@@ -396,7 +423,12 @@ class MainActivity : Activity() {
             recipeName = recipe?.name,
             openSource = source
         )
-        showWorkbench(target, source, recipe)
+        runCatching {
+            showWorkbench(target, source, recipe)
+        }.onFailure {
+            diagnostics.logOpenWebFailed(recipe, target, it.message.orEmpty())
+            Toast.makeText(this, "打开工作台失败：${it.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun showWorkbench(url: String, source: String, recipe: KiteRecipe?) {
