@@ -18,6 +18,7 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import com.kite.app.bridge.BridgeErrorType
 import com.kite.app.bridge.BridgeResult
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.bridge.KiteLocalServer
@@ -28,6 +29,9 @@ import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRunReport
 import com.kite.app.recipe.NewRecipeInput
 import com.kite.app.web.KiteWebShell
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
     private lateinit var diagnostics: KiteDiagnostics
@@ -245,12 +249,117 @@ class MainActivity : Activity() {
             nextActionUrl = previousState.nextActionUrl
         )
         showConsole()
-        val callback: (BridgeResult) -> Unit = { result -> runOnUiThread { handleStopResult(recipe, previousState, result) } }
+        val callback: (BridgeResult) -> Unit = { result -> runOnUiThread { handleStopResultV2(recipe, previousState, result) } }
+        diagnostics.logBridgeEvent(
+            "stop_request_sent",
+            recipe,
+            mapOf(
+                "runId" to previousState.runId.orEmpty(),
+                "pid" to previousState.pid.orEmpty(),
+                "strategy" to if (!previousState.runId.isNullOrBlank()) "stop-run" else "stop-recipe"
+            )
+        )
+        if (!previousState.runId.isNullOrBlank()) {
+            bridgeClient.stopRun(recipe, previousState.runId, callback)
+        } else {
+            diagnostics.logBridgeEvent(
+                "stop_missing_run_id_fallback",
+                recipe,
+                mapOf("recipeId" to recipe.id, "message" to "missing runId, fallback to stop-recipe")
+            )
+            bridgeClient.stopRecipe(recipe, callback)
+        }
+    }
+
+    private fun retryStopRequestAfterStableBridge(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
+        diagnostics.logBridgeEvent("stop_timeout_bridge_stable_retry", recipe, mapOf("runId" to previousState.runId.orEmpty()))
+        val callback: (BridgeResult) -> Unit = { retryResult ->
+            runOnUiThread { handleStopResultV2(recipe, previousState, retryResult, retriedAfterStableBridge = true) }
+        }
         if (!previousState.runId.isNullOrBlank()) {
             bridgeClient.stopRun(recipe, previousState.runId, callback)
         } else {
             bridgeClient.stopRecipe(recipe, callback)
         }
+    }
+
+    private fun handleStopResultV2(
+        recipe: KiteRecipe,
+        previousState: RecipeRuntimeState,
+        result: BridgeResult,
+        retriedAfterStableBridge: Boolean = false
+    ) {
+        val report = result.runReport
+        if (report != null) diagnostics.writeRunReport(report)
+        diagnostics.logBridgeEvent(
+            "stop_response_parsed",
+            recipe,
+            mapOf(
+                "requestId" to result.requestId.orEmpty(),
+                "runId" to (report?.runId ?: previousState.runId).orEmpty(),
+                "status" to result.status,
+                "ok" to result.ok.toString(),
+                "errorType" to result.errorType.name,
+                "message" to result.message.take(500)
+            )
+        )
+        if ((result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
+            setRuntimeState(recipe, RecipeRunStatus.Stopped)
+            diagnostics.logBridgeEvent("stop_success", recipe, mapOf("runId" to previousState.runId.orEmpty()))
+            showConsole()
+            return
+        }
+
+        if (result.errorType == BridgeErrorType.Timeout && !retriedAfterStableBridge) {
+            diagnostics.logBridgeEvent("stop_timeout", recipe, mapOf("runId" to previousState.runId.orEmpty()))
+            bridgeClient.checkStatus { status ->
+                runOnUiThread {
+                    if (status.ok || status.accepted) {
+                        retryStopRequestAfterStableBridge(recipe, previousState)
+                    } else {
+                        diagnostics.logBridgeEvent("stop_connection_error", recipe, mapOf("message" to status.message.take(500)))
+                        setRuntimeState(recipe, RecipeRunStatus.BridgeUnavailable, runId = previousState.runId, pid = previousState.pid, lastError = "Bridge 连接失败")
+                        showConsole()
+                    }
+                }
+            }
+            return
+        }
+
+        val errorMessage = when (result.errorType) {
+            BridgeErrorType.Timeout -> {
+                diagnostics.logBridgeEvent("stop_timeout", recipe, mapOf("runId" to previousState.runId.orEmpty()))
+                "停止超时，Bridge 未及时响应"
+            }
+            BridgeErrorType.ConnectionError -> {
+                diagnostics.logBridgeEvent("stop_connection_error", recipe, mapOf("message" to result.message.take(500)))
+                "Bridge 连接失败"
+            }
+            BridgeErrorType.UnsupportedEndpoint -> {
+                diagnostics.logBridgeEvent("stop_unsupported_endpoint", recipe, mapOf("message" to result.message.take(500)))
+                "停止接口暂不可用"
+            }
+            BridgeErrorType.ParseError -> {
+                diagnostics.logBridgeEvent("stop_parse_error", recipe, mapOf("raw" to result.rawBody.take(1000)))
+                "停止响应解析失败"
+            }
+            BridgeErrorType.BridgeFailed, BridgeErrorType.None -> {
+                diagnostics.logBridgeEvent("stop_bridge_failed", recipe, mapOf("message" to result.message.take(500)))
+                result.runReport?.lastMeaningfulOutput() ?: result.message.ifBlank { "Bridge 返回停止失败" }
+            }
+        }
+        diagnostics.logLifecycleEvent(
+            recipe,
+            "stop_failed",
+            previousState.runId,
+            previousState.pid,
+            previousState.status.name,
+            previousState.lastMeaningfulOutput,
+            errorMessage
+        )
+        runtimeStates[recipe.id] = previousState.copy(updatedAt = System.currentTimeMillis(), lastError = errorMessage)
+        Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show()
+        showConsole()
     }
 
     private fun handleStopResult(recipe: KiteRecipe, previousState: RecipeRuntimeState, result: BridgeResult) {
@@ -314,15 +423,16 @@ class MainActivity : Activity() {
             if (report?.hasMismatch() == true) {
                 diagnostics.logRecipeAction(recipe, "bridge_result_mismatch_warning", mapOf("requestId" to requestId, "url" to nextUrl))
             }
+            val successStatus = successfulStatus(report, lastOutput)
             setRuntimeState(
                 recipe,
-                successfulStatus(report, lastOutput),
+                if (successStatus == RecipeRunStatus.AlreadyRunning) RecipeRunStatus.AlreadyRunning else RecipeRunStatus.Running,
                 runId = runId,
                 pid = pid,
                 lastMeaningfulOutput = lastOutput,
                 nextActionUrl = nextUrl
             )
-            openWeb(nextUrl, "bridge_next_action", recipe)
+            waitForWebReady(recipe, nextUrl, successStatus, runId, pid, lastOutput)
             return
         }
 
@@ -352,6 +462,78 @@ class MainActivity : Activity() {
         Toast.makeText(this, "桥接不可用，未执行命令", Toast.LENGTH_SHORT).show()
         showConsole()
     }
+
+    private fun waitForWebReady(
+        recipe: KiteRecipe,
+        url: String,
+        finalStatus: RecipeRunStatus,
+        runId: String?,
+        pid: String?,
+        lastOutput: String?
+    ) {
+        if (!shouldProbeWebReady(url)) {
+            diagnostics.logBridgeEvent("open_web_after_ready", recipe, mapOf("url" to url, "mode" to "probe_skipped"))
+            setRuntimeState(recipe, finalStatus, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, nextActionUrl = url)
+            openWeb(url, "bridge_next_action", recipe)
+            return
+        }
+
+        diagnostics.logBridgeEvent("web_ready_probe_start", recipe, mapOf("url" to url, "runId" to runId.orEmpty()))
+        thread(name = "KiteWebReadyProbe", isDaemon = true) {
+            val deadline = System.currentTimeMillis() + WEB_READY_TIMEOUT_MS
+            var attempt = 0
+            var ready = false
+            var lastError = ""
+            while (System.currentTimeMillis() < deadline && !ready) {
+                attempt += 1
+                val result = runCatching {
+                    val connection = URL(url).openConnection() as HttpURLConnection
+                    connection.connectTimeout = WEB_READY_CONNECT_TIMEOUT_MS
+                    connection.readTimeout = WEB_READY_READ_TIMEOUT_MS
+                    connection.requestMethod = "GET"
+                    connection.instanceFollowRedirects = false
+                    val code = connection.responseCode
+                    connection.disconnect()
+                    code
+                }
+                ready = result.isSuccess
+                lastError = result.exceptionOrNull()?.message.orEmpty()
+                if (!ready) Thread.sleep(WEB_READY_INTERVAL_MS)
+            }
+            runOnUiThread {
+                if (ready) {
+                    diagnostics.logBridgeEvent("web_ready_probe_success", recipe, mapOf("url" to url, "attempts" to attempt.toString()))
+                    diagnostics.logBridgeEvent("open_web_after_ready", recipe, mapOf("url" to url, "runId" to runId.orEmpty()))
+                    setRuntimeState(recipe, finalStatus, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, nextActionUrl = url)
+                    openWeb(url, "bridge_next_action_ready", recipe)
+                } else {
+                    diagnostics.logBridgeEvent(
+                        "web_ready_probe_timeout",
+                        recipe,
+                        mapOf("url" to url, "attempts" to attempt.toString(), "lastError" to lastError.take(500))
+                    )
+                    setRuntimeState(
+                        recipe,
+                        RecipeRunStatus.Running,
+                        runId = runId,
+                        pid = pid,
+                        lastMeaningfulOutput = lastOutput,
+                        lastError = "服务启动中，网页暂不可用",
+                        nextActionUrl = url
+                    )
+                    Toast.makeText(this, "服务启动中，网页暂不可用", Toast.LENGTH_SHORT).show()
+                    showConsole()
+                }
+            }
+        }
+    }
+
+    private fun shouldProbeWebReady(url: String): Boolean =
+        runCatching {
+            val parsed = URL(url)
+            parsed.protocol.equals("http", ignoreCase = true) &&
+                (parsed.host == "127.0.0.1" || parsed.host.equals("localhost", ignoreCase = true))
+        }.getOrDefault(false)
 
     private fun successfulStatus(report: KiteRunReport?, output: String?): RecipeRunStatus =
         if (report?.status == KiteRunReport.STATUS_ALREADY_RUNNING || output.orEmpty().contains("already_running", true)) {
@@ -996,6 +1178,10 @@ class MainActivity : Activity() {
 
     companion object {
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
+        private const val WEB_READY_TIMEOUT_MS = 8000L
+        private const val WEB_READY_INTERVAL_MS = 700L
+        private const val WEB_READY_CONNECT_TIMEOUT_MS = 700
+        private const val WEB_READY_READ_TIMEOUT_MS = 700
         private val BG = Color.rgb(248, 250, 252)
         private val TEXT_DARK = Color.rgb(15, 23, 42)
         private val TEXT_MUTED = Color.rgb(100, 116, 139)

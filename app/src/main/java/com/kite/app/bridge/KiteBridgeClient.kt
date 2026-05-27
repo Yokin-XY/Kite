@@ -5,7 +5,9 @@ import com.kite.app.recipe.KiteOutputPolicy
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRunReport
 import org.json.JSONObject
+import java.net.ConnectException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.UUID
 import kotlin.concurrent.thread
@@ -142,6 +144,17 @@ class KiteBridgeClient(
                     ?.use { it.readText() }
                     .orEmpty()
                 diagnostics.logBridgeRawResponse(recipe, requestId, code, body)
+                if (path.startsWith("/stop")) {
+                    diagnostics.logBridgeEvent(
+                        "stop_response_raw",
+                        recipe,
+                        mapOf(
+                            "requestId" to requestId,
+                            "httpCode" to code.toString(),
+                            "rawBody" to body.take(2000)
+                        )
+                    )
+                }
                 val report = KiteRunReport.fromJsonOrNull(body)
                 if (report != null) {
                     diagnostics.logParsedRunReport(recipe, report)
@@ -161,21 +174,50 @@ class KiteBridgeClient(
                         nextActionUrl = report.openWebUrlIfPresent()
                     )
                 } else {
+                    val json = runCatching { JSONObject(body) }.getOrNull()
+                    val expectedJson = body.trimStart().startsWith("{") || body.trimStart().startsWith("[")
+                    if (expectedJson && json == null) {
+                        return@runCatching BridgeResult(
+                            ok = false,
+                            accepted = false,
+                            status = "parse_error",
+                            message = body.ifBlank { "parse_error" },
+                            requestId = requestId,
+                            errorType = BridgeErrorType.ParseError,
+                            rawBody = body
+                        )
+                    }
+                    val simpleStatus = json?.optString("status").orEmpty().ifBlank {
+                        if (code in 200..299) "accepted" else "failed"
+                    }
+                    val simpleOk = json?.optBoolean("ok", code in 200..299) ?: (code in 200..299)
                     BridgeResult(
-                        ok = code in 200..299,
-                        accepted = code in 200..299 && body.contains("accepted", ignoreCase = true),
-                        status = if (code in 200..299) "accepted" else "failed",
+                        ok = simpleOk && code in 200..299,
+                        accepted = code in 200..299 && (simpleOk || body.contains("accepted", ignoreCase = true)),
+                        status = simpleStatus,
                         message = body.ifBlank { "http_$code" },
-                        requestId = requestId
+                        requestId = requestId,
+                        errorType = when (code) {
+                            404, 405 -> BridgeErrorType.UnsupportedEndpoint
+                            in 200..299 -> BridgeErrorType.None
+                            else -> BridgeErrorType.BridgeFailed
+                        },
+                        rawBody = body
                     )
                 }
             }.getOrElse {
+                val errorType = when (it) {
+                    is SocketTimeoutException -> BridgeErrorType.Timeout
+                    is ConnectException -> BridgeErrorType.ConnectionError
+                    else -> BridgeErrorType.ConnectionError
+                }
                 BridgeResult(
                     ok = false,
                     accepted = false,
                     status = KiteRunReport.STATUS_BRIDGE_UNAVAILABLE,
                     message = it.message ?: KiteRunReport.STATUS_BRIDGE_UNAVAILABLE,
-                    requestId = requestId
+                    requestId = requestId,
+                    errorType = errorType
                 )
             }
 
@@ -187,6 +229,7 @@ class KiteBridgeClient(
                     "runId" to (result.runReport?.runId ?: ""),
                     "pid" to (result.runReport?.pid ?: ""),
                     "status" to result.status,
+                    "errorType" to result.errorType.name,
                     "nextAction" to result.nextActionUrl.orEmpty(),
                     "message" to result.message.take(500)
                 )
@@ -199,8 +242,17 @@ class KiteBridgeClient(
 
     companion object {
         const val DEFAULT_BASE_URL = "http://127.0.0.1:8799"
-        private const val TIMEOUT_MS = 1200
+        private const val TIMEOUT_MS = 5000
     }
+}
+
+enum class BridgeErrorType {
+    None,
+    Timeout,
+    ConnectionError,
+    UnsupportedEndpoint,
+    ParseError,
+    BridgeFailed
 }
 
 data class BridgeResult(
@@ -210,5 +262,7 @@ data class BridgeResult(
     val message: String,
     val requestId: String? = null,
     val runReport: KiteRunReport? = null,
-    val nextActionUrl: String? = null
+    val nextActionUrl: String? = null,
+    val errorType: BridgeErrorType = BridgeErrorType.None,
+    val rawBody: String = ""
 )
