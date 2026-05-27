@@ -1,6 +1,7 @@
 package com.kite.app
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -43,18 +44,28 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
 
     private lateinit var nameInput: EditText
+    private lateinit var descriptionInput: EditText
     private lateinit var urlInput: EditText
     private lateinit var commandInput: EditText
+    private lateinit var workdirInput: EditText
+    private lateinit var expectedInput: EditText
     private lateinit var shortcutSwitch: Switch
     private lateinit var commandFieldContainer: View
+    private lateinit var urlFieldContainer: View
+    private lateinit var workdirFieldContainer: View
+    private lateinit var expectedFieldContainer: View
+    private lateinit var runModeFieldContainer: View
     private lateinit var typeContainer: LinearLayout
     private lateinit var iconContainer: LinearLayout
+    private lateinit var runModeContainer: LinearLayout
 
     private val runtimeStates = mutableMapOf<String, RecipeRuntimeState>()
     private var currentScreen: Screen = Screen.Console
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var selectedType = KiteRecipe.TYPE_OPEN_URL
     private var selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_OPEN_URL)
+    private var selectedRunMode = KiteRecipe.RUN_MODE_DETACHED
+    private var editingRecipe: KiteRecipe? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -176,13 +187,17 @@ class MainActivity : Activity() {
         })
         addView(cardTitle(recipe.name))
         addView(cardDescription(recipe.description.ifBlank { "打开本地工作台" }))
-        addView(urlPill(recipe.defaultUrl, recipe.card.accent == "green"))
-        runtimeState.failureSummary()?.let { addView(failureSummary(it)) }
+        if (recipe.defaultUrl.isNotBlank()) {
+            addView(urlPill(recipe.defaultUrl, recipe.card.accent == "green"))
+        }
+        runtimeState.feedbackSummary()?.let {
+            addView(runtimeFeedback(it, runtimeState.status == RecipeRunStatus.Failed || runtimeState.status == RecipeRunStatus.BridgeUnavailable))
+        }
         addView(row {
             addView(primaryAction(primaryLabel(recipe, runtimeState), recipe.card.accent == "green", runtimeState.isBusy()) {
                 handleRecipeAction(recipe)
             })
-            addView(editAction { showRecipeDetail(recipe) })
+            addView(editAction { showRecipeEditor(recipe) })
         })
     }
 
@@ -576,12 +591,18 @@ class MainActivity : Activity() {
         diagnostics.logLifecycleEvent(recipe, status.lifecycleEvent, runId, pid, status.name, lastMeaningfulOutput, lastError)
     }
 
-    private fun showCreateConfig() {
+    private fun showCreateConfig() = showRecipeForm(null)
+
+    private fun showRecipeEditor(recipe: KiteRecipe) = showRecipeForm(recipe)
+
+    private fun showRecipeForm(recipe: KiteRecipe?) {
         currentScreen = Screen.CreateConfig
-        selectedType = KiteRecipe.TYPE_OPEN_URL
-        selectedIconName = KiteRecipeIcon.defaultNameForType(selectedType)
+        editingRecipe = recipe
+        selectedType = recipe?.type ?: KiteRecipe.TYPE_OPEN_URL
+        selectedIconName = recipe?.icon?.name?.ifBlank { null } ?: KiteRecipeIcon.defaultNameForType(selectedType)
+        selectedRunMode = recipe?.firstShellStep()?.runMode?.let { KiteRecipe.normalizeRunMode(it, null) } ?: defaultRunModeForType(selectedType)
         root.removeAllViews()
-        root.addView(createTopBar())
+        root.addView(createTopBar(if (recipe == null) "新建配置" else "编辑配置"))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -591,7 +612,7 @@ class MainActivity : Activity() {
                 addView(typeContainer)
                 renderTypeOptions()
                 addView(sectionTitle("2. 基础信息"))
-                addView(formPanel())
+                addView(formPanel(recipe))
             })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomActions())
@@ -610,26 +631,46 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun formPanel(): View = LinearLayout(this).apply {
+    private fun formPanel(recipe: KiteRecipe?): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(24), dp(24), dp(24), dp(20))
         background = roundedBox(Color.WHITE, BORDER, dp(28).toFloat())
         elevation = dp(1).toFloat()
 
         nameInput = editInput("例如：Hermes WebUI")
+        descriptionInput = editInput("例如：启动 Hermes 图形化工作台")
         urlInput = editInput("例如：http://127.0.0.1:8648")
         commandInput = editInput("例如：hermes-web-ui start --port 8648")
+        workdirInput = editInput("例如：/workspace/hermes（可选）")
+        expectedInput = editInput("例如：ready（可选）")
 
         addView(labeledField("名称", nameInput))
-        commandFieldContainer = labeledField("命令", commandInput).apply {
-            visibility = if (selectedType.requiresServiceCommand()) View.VISIBLE else View.GONE
-        }
+        addView(labeledField("描述", descriptionInput))
+        commandFieldContainer = labeledField("启动命令", commandInput)
         addView(commandFieldContainer)
-        addView(labeledField("地址", urlInput))
+        workdirFieldContainer = labeledField("执行位置（可选）", workdirInput)
+        addView(workdirFieldContainer)
+        runModeFieldContainer = runModeChooser()
+        addView(runModeFieldContainer)
+        urlFieldContainer = labeledField("地址 / 打开网页（可选）", urlInput)
+        addView(urlFieldContainer)
+        expectedFieldContainer = labeledField("预期输出（可选）", expectedInput)
+        addView(expectedFieldContainer)
         addView(iconChooser())
         addView(toggleRow())
         addView(divider())
-        addView(navigationRow("高级设置（可选）"))
+        if (recipe != null) {
+            addView(navigationRow("查看原始 JSON") { showRecipeRawJson(recipe) })
+            if (recipe.runtimeSource == KiteRecipe.SOURCE_USER) {
+                addView(deleteRow(recipe))
+            }
+        } else {
+            addView(navigationRow("高级设置（可选）") {
+                Toast.makeText(context, "高级设置后续开放", Toast.LENGTH_SHORT).show()
+            })
+        }
+        prefillRecipeForm(recipe)
+        updateDynamicFieldVisibility()
     }
 
     private fun iconChooser(): View = LinearLayout(this).apply {
@@ -659,46 +700,115 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun saveNewRecipe() {
+    private fun runModeChooser(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, 0, 0, dp(18))
+        addView(TextView(context).apply {
+            text = "运行方式"
+            textSize = 15f
+            setTextColor(TEXT_DARK)
+        })
+        runModeContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        addView(runModeContainer)
+        renderRunModeOptions()
+    }
+
+    private fun renderRunModeOptions() {
+        if (!::runModeContainer.isInitialized) return
+        runModeContainer.removeAllViews()
+        runModeContainer.addView(runModeChip("普通命令：等待结束", KiteRecipe.RUN_MODE_ATTACHED, selectedRunMode == KiteRecipe.RUN_MODE_ATTACHED))
+        runModeContainer.addView(runModeChip("后台服务：启动后保持运行", KiteRecipe.RUN_MODE_DETACHED, selectedRunMode == KiteRecipe.RUN_MODE_DETACHED))
+    }
+
+    private fun runModeChip(label: String, value: String, selected: Boolean): TextView = TextView(this).apply {
+        text = label
+        textSize = 12.5f
+        gravity = Gravity.CENTER
+        setTextColor(if (selected) Color.WHITE else TEXT_DARK)
+        background = roundedBox(if (selected) PURPLE else Color.WHITE, if (selected) PURPLE else BORDER, dp(16).toFloat())
+        layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f).apply { setMargins(0, 0, dp(8), 0) }
+        setOnClickListener {
+            selectedRunMode = value
+            renderRunModeOptions()
+        }
+    }
+
+    private fun prefillRecipeForm(recipe: KiteRecipe?) {
+        val shellStep = recipe?.firstShellStep()
+        val openUrl = recipe?.openWebUrl().orEmpty()
+        nameInput.setText(recipe?.name.orEmpty())
+        descriptionInput.setText(recipe?.description.orEmpty())
+        commandInput.setText(shellStep?.cmd.orEmpty())
+        workdirInput.setText(shellStep?.workdir ?: recipe?.execution?.workdir.orEmpty())
+        urlInput.setText(openUrl)
+        expectedInput.setText(shellStep?.expected?.text ?: recipe?.expected?.text.orEmpty())
+        shortcutSwitch.isChecked = recipe?.shortcut ?: false
+    }
+
+    private fun updateDynamicFieldVisibility() {
+        val hasShell = selectedType.requiresServiceCommand()
+        if (::commandFieldContainer.isInitialized) commandFieldContainer.visibility = if (hasShell) View.VISIBLE else View.GONE
+        if (::workdirFieldContainer.isInitialized) workdirFieldContainer.visibility = if (hasShell) View.VISIBLE else View.GONE
+        if (::runModeFieldContainer.isInitialized) runModeFieldContainer.visibility = if (hasShell) View.VISIBLE else View.GONE
+        if (::expectedFieldContainer.isInitialized) expectedFieldContainer.visibility = if (hasShell) View.VISIBLE else View.GONE
+        if (::urlFieldContainer.isInitialized) urlFieldContainer.visibility = if (selectedType == KiteRecipe.TYPE_TEMPLATE) View.GONE else View.VISIBLE
+    }
+
+    private fun defaultRunModeForType(type: String): String =
+        if (type.requiresServiceCommand()) KiteRecipe.RUN_MODE_DETACHED else KiteRecipe.RUN_MODE_ATTACHED
+
+    private fun saveRecipeForm() {
         val name = nameInput.text?.toString().orEmpty().trim()
         val url = urlInput.text?.toString().orEmpty().trim()
         val command = commandInput.text?.toString().orEmpty().trim()
+        val description = descriptionInput.text?.toString().orEmpty().trim()
+        val workdir = workdirInput.text?.toString().orEmpty().trim()
+        val expectedText = expectedInput.text?.toString().orEmpty().trim()
         if (name.isBlank()) {
             Toast.makeText(this, "请输入名称", Toast.LENGTH_SHORT).show()
             return
         }
-        if (url.isBlank()) {
+        if ((selectedType == KiteRecipe.TYPE_OPEN_URL || selectedType == KiteRecipe.TYPE_COMMAND_WEB || selectedType == KiteRecipe.TYPE_SCRIPT_WEB) && url.isBlank()) {
             Toast.makeText(this, "请输入地址", Toast.LENGTH_SHORT).show()
             return
         }
         if (selectedType.requiresServiceCommand() && command.isBlank()) {
-            Toast.makeText(this, "请输入命令", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "请输入启动命令", Toast.LENGTH_SHORT).show()
             return
         }
 
         runCatching {
             recipeLoader.saveUserRecipe(
                 NewRecipeInput(
+                    id = editingRecipe?.id,
                     type = selectedType,
                     name = name,
                     url = url,
                     command = command,
                     shortcut = shortcutSwitch.isChecked,
-                    iconName = selectedIconName
+                    iconName = selectedIconName,
+                    description = description,
+                    workdir = workdir,
+                    runMode = selectedRunMode,
+                    expectedText = expectedText
                 )
             )
         }.onSuccess {
             Toast.makeText(this, "已保存配置", Toast.LENGTH_SHORT).show()
+            editingRecipe = null
             showConsole()
         }.onFailure {
             Toast.makeText(this, "保存失败：${it.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun showRecipeDetail(recipe: KiteRecipe) {
+    private fun showRecipeRawJson(recipe: KiteRecipe) {
         currentScreen = Screen.RecipeDetail
         root.removeAllViews()
-        root.addView(topBar("配置详情") { showConsole() })
+        root.addView(topBar("原始 JSON") { showRecipeEditor(recipe) })
         root.addView(ScrollView(this).apply {
             addView(TextView(context).apply {
                 text = recipe.toJson().toString(2)
@@ -739,19 +849,19 @@ class MainActivity : Activity() {
         webShell.open(url, recipeId = recipe?.id, recipeName = recipe?.name, openSource = source)
     }
 
-    private fun createTopBar(): View = row {
+    private fun createTopBar(title: String): View = row {
         setPadding(dp(24), dp(22), dp(24), dp(14))
         gravity = Gravity.CENTER_VERTICAL
         addView(iconButton("‹", dp(44), Color.TRANSPARENT, TEXT_DARK, dp(16)) { showConsole() })
         addView(TextView(context).apply {
-            text = "新建配置"
+            text = title
             textSize = 25f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(TEXT_DARK)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
-        addView(iconButton("✓", dp(44), Color.TRANSPARENT, PURPLE, dp(16)) { saveNewRecipe() })
+        addView(iconButton("✓", dp(44), Color.TRANSPARENT, PURPLE, dp(16)) { saveRecipeForm() })
     }
 
     private fun topBar(title: String, onBack: () -> Unit): View = row {
@@ -802,11 +912,11 @@ class MainActivity : Activity() {
             setOnClickListener {
                 selectedType = option.type
                 selectedIconName = KiteRecipeIcon.defaultNameForType(selectedType)
+                selectedRunMode = defaultRunModeForType(selectedType)
                 renderTypeOptions()
                 renderIconOptions()
-                if (::commandFieldContainer.isInitialized) {
-                    commandFieldContainer.visibility = if (selectedType.requiresServiceCommand()) View.VISIBLE else View.GONE
-                }
+                renderRunModeOptions()
+                updateDynamicFieldVisibility()
             }
         }
 
@@ -859,7 +969,7 @@ class MainActivity : Activity() {
         addView(shortcutSwitch)
     }
 
-    private fun navigationRow(label: String): View = row {
+    private fun navigationRow(label: String, onClick: (() -> Unit)? = null): View = row {
         setPadding(0, dp(20), 0, 0)
         addView(TextView(context).apply {
             text = label
@@ -872,6 +982,39 @@ class MainActivity : Activity() {
             textSize = 28f
             setTextColor(TEXT_MUTED)
         })
+        if (onClick != null) setOnClickListener { onClick() }
+    }
+
+    private fun deleteRow(recipe: KiteRecipe): View = row {
+        setPadding(0, dp(18), 0, 0)
+        addView(TextView(context).apply {
+            text = "删除配置"
+            textSize = 16f
+            setTextColor(Color.rgb(185, 28, 28))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        setOnClickListener { confirmDeleteRecipe(recipe) }
+    }
+
+    private fun confirmDeleteRecipe(recipe: KiteRecipe) {
+        if (recipe.runtimeSource != KiteRecipe.SOURCE_USER) {
+            Toast.makeText(this, "内置配置暂不可删除", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("删除配置")
+            .setMessage("确定删除 ${recipe.name}？")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("删除") { _, _ ->
+                if (recipeLoader.deleteUserRecipe(recipe)) {
+                    runtimeStates.remove(recipe.id)
+                    Toast.makeText(this, "已删除配置", Toast.LENGTH_SHORT).show()
+                    showConsole()
+                } else {
+                    Toast.makeText(this, "删除失败", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .show()
     }
 
     private fun bottomActions(): View = row {
@@ -894,7 +1037,7 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             background = roundedBox(PURPLE, PURPLE, dp(19).toFloat())
             layoutParams = LinearLayout.LayoutParams(0, dp(62), 1.1f)
-            setOnClickListener { saveNewRecipe() }
+            setOnClickListener { saveRecipeForm() }
         })
     }
 
@@ -1006,6 +1149,16 @@ class MainActivity : Activity() {
         textSize = 10.5f
         includeFontPadding = false
         setTextColor(Color.rgb(185, 28, 28))
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        setPadding(0, 0, 0, dp(5))
+    }
+
+    private fun runtimeFeedback(text: String, isError: Boolean): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 10.5f
+        includeFontPadding = false
+        setTextColor(if (isError) Color.rgb(185, 28, 28) else TEXT_MUTED)
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         setPadding(0, 0, 0, dp(5))
@@ -1136,6 +1289,13 @@ class MainActivity : Activity() {
             else -> null
         }?.take(80)
 
+        fun feedbackSummary(): String? = when {
+            !lastError.isNullOrBlank() -> lastError
+            !lastMeaningfulOutput.isNullOrBlank() -> lastMeaningfulOutput
+            status == RecipeRunStatus.BridgeUnavailable -> "桥接不可用"
+            else -> null
+        }?.take(80)
+
         companion object {
             fun fromRecipeStatus(recipeId: String, status: String): RecipeRuntimeState =
                 RecipeRuntimeState(recipeId = recipeId, status = RecipeRunStatus.fromRecipeStatus(status))
@@ -1174,7 +1334,7 @@ class MainActivity : Activity() {
     }
 
     private fun String.requiresServiceCommand(): Boolean =
-        this == KiteRecipe.TYPE_COMMAND_WEB || this == KiteRecipe.TYPE_START_SERVICE
+        this == KiteRecipe.TYPE_COMMAND_WEB || this == KiteRecipe.TYPE_SCRIPT_WEB || this == KiteRecipe.TYPE_START_SERVICE
 
     companion object {
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"

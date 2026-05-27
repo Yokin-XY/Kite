@@ -40,6 +40,18 @@ class KiteRecipeLoader(
         return recipe
     }
 
+    fun deleteUserRecipe(recipe: KiteRecipe): Boolean {
+        if (recipe.runtimeSource != KiteRecipe.SOURCE_USER) return false
+        val target = File(userRecipeDir, "${recipe.id}.json")
+        val deleted = target.exists() && target.delete()
+        diagnostics.logRecipeEvent(
+            if (deleted) "recipe_delete_success" else "recipe_delete_failed",
+            recipe,
+            mapOf("runtimeSource" to recipe.runtimeSource, "file" to target.name)
+        )
+        return deleted
+    }
+
     fun userRecipesPath(): String = userRecipeDir.absolutePath
 
     fun importedRecipesPath(): String = importedRecipeDir.absolutePath
@@ -104,22 +116,36 @@ class KiteRecipeLoader(
     private fun buildRecipe(input: NewRecipeInput): KiteRecipe {
         val now = Instant.now().toString()
         val baseId = slug(input.name).ifBlank { "recipe" }
-        val id = uniqueId(baseId)
+        val id = input.id?.takeIf { it.isNotBlank() } ?: uniqueId(baseId)
         val defaultUrl = input.url.trim()
         val iconName = input.iconName.ifBlank { KiteRecipeIcon.defaultNameForType(input.type) }
-        val steps = when (input.type) {
-            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_START_SERVICE -> listOf(
-                KiteRecipeStep(
-                    id = "step_start_$id",
-                    type = KiteRecipe.STEP_SHELL,
-                    cmd = input.command.trim(),
-                    runMode = KiteRecipe.RUN_MODE_DETACHED,
-                    outputPolicy = KiteOutputPolicy()
-                ),
-                KiteRecipeStep(id = "step_open_$id", type = KiteRecipe.STEP_OPEN_WEB, url = defaultUrl)
+        val runMode = KiteRecipe.normalizeRunMode(input.runMode) ?: KiteRecipe.RUN_MODE_DETACHED
+        val expected = input.expectedText.trim().takeIf { it.isNotBlank() }?.let {
+            KiteExpectedResult(mode = "contains", text = it, source = KiteRecipe.OUTPUT_LAST_MEANINGFUL)
+        }
+        val shellStep = if (input.command.isNotBlank()) {
+            KiteRecipeStep(
+                id = "step_start_$id",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = input.command.trim(),
+                runMode = runMode,
+                workdir = input.workdir.trim().ifBlank { null },
+                expected = expected,
+                outputPolicy = KiteOutputPolicy()
             )
-
-            else -> listOf(KiteRecipeStep(id = "step_open_$id", type = KiteRecipe.STEP_OPEN_WEB, url = defaultUrl))
+        } else {
+            null
+        }
+        val openWebStep = if (defaultUrl.isNotBlank()) {
+            KiteRecipeStep(id = "step_open_$id", type = KiteRecipe.STEP_OPEN_WEB, url = defaultUrl)
+        } else {
+            null
+        }
+        val steps = when (input.type) {
+            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_SCRIPT_WEB -> listOfNotNull(shellStep, openWebStep)
+            KiteRecipe.TYPE_START_SERVICE -> listOfNotNull(shellStep, openWebStep)
+            KiteRecipe.TYPE_TEMPLATE -> emptyList()
+            else -> listOfNotNull(openWebStep)
         }
         return KiteRecipe(
             schemaVersion = KiteRecipe.PROTOCOL_VERSION,
@@ -171,7 +197,7 @@ class KiteRecipeLoader(
     private fun defaultDescription(type: String): String = when (type) {
         KiteRecipe.TYPE_COMMAND_WEB -> "执行命令后打开网页工作台"
         KiteRecipe.TYPE_SCRIPT_WEB -> "运行脚本并打开网页工作台"
-        KiteRecipe.TYPE_START_SERVICE -> "启动本地服务工作台"
+        KiteRecipe.TYPE_START_SERVICE -> "启动本地服务"
         KiteRecipe.TYPE_TEMPLATE -> "配置模板"
         else -> "打开网页工作台"
     }
@@ -193,11 +219,15 @@ class KiteRecipeLoader(
 }
 
 data class NewRecipeInput(
+    val id: String? = null,
     val type: String,
     val name: String,
     val url: String,
     val command: String,
     val shortcut: Boolean,
     val iconName: String = "",
-    val description: String = ""
+    val description: String = "",
+    val workdir: String = "",
+    val runMode: String = KiteRecipe.RUN_MODE_DETACHED,
+    val expectedText: String = ""
 )

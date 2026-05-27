@@ -30,6 +30,8 @@ data class KiteRecipe(
     fun openWebUrl(): String = steps.firstOrNull { it.type == STEP_OPEN_WEB && !it.url.isNullOrBlank() }?.url
         ?: defaultUrl
 
+    fun firstShellStep(): KiteRecipeStep? = steps.firstOrNull { it.type == STEP_SHELL }
+
     fun toJson(): JSONObject = JSONObject()
         .put("schemaVersion", schemaVersion)
         .put("id", id)
@@ -63,8 +65,10 @@ data class KiteRecipe(
         const val STEP_OPEN_WEB = "open_web"
         const val STEP_SHELL = "shell"
 
+        const val RUN_MODE_ATTACHED = "attached"
         const val RUN_MODE_WAIT = "wait"
         const val RUN_MODE_DETACHED = "detached"
+        const val RUN_MODE_BACKGROUND = "background"
 
         const val OUTPUT_LAST_MEANINGFUL = "lastMeaningfulOutput"
 
@@ -84,7 +88,7 @@ data class KiteRecipe(
                 name = json.getString("name"),
                 description = json.optString("description"),
                 type = type,
-                defaultUrl = json.getString("defaultUrl"),
+                defaultUrl = json.optString("defaultUrl"),
                 shortcut = json.optBoolean("shortcut", false),
                 icon = icon,
                 card = card,
@@ -129,6 +133,16 @@ data class KiteRecipe(
         internal fun parseSteps(stepsJson: JSONArray): List<KiteRecipeStep> = buildList {
             for (index in 0 until stepsJson.length()) {
                 add(KiteRecipeStep.fromJson(stepsJson.getJSONObject(index), index))
+            }
+        }
+
+        fun normalizeRunMode(runMode: String?, legacyWait: Boolean? = null): String? {
+            val normalized = runMode?.trim()?.lowercase().orEmpty()
+            return when {
+                normalized == RUN_MODE_ATTACHED || normalized == RUN_MODE_WAIT -> RUN_MODE_ATTACHED
+                normalized == RUN_MODE_DETACHED || normalized == RUN_MODE_BACKGROUND -> RUN_MODE_DETACHED
+                legacyWait == true -> RUN_MODE_ATTACHED
+                else -> null
             }
         }
 
@@ -201,7 +215,7 @@ data class KiteRecipeIcon(
                 "folder", "files" -> ICON_FILE
                 "log" -> ICON_LOGS
                 "service", "play" -> ICON_SERVER
-                "鈻?", "鈼?", "鈱?", "鈿?", "羽" -> defaultNameForType(recipeType)
+                "", "占位", "默认" -> defaultNameForType(recipeType)
                 else -> name.trim().lowercase()
             }
             return if (normalized in BUILTIN) normalized else defaultNameForType(recipeType)
@@ -293,7 +307,7 @@ data class KiteRecipeStep(
         .put("type", type)
         .apply {
             if (!cmd.isNullOrBlank()) put("cmd", cmd)
-            if (!runMode.isNullOrBlank()) put("runMode", runMode)
+            KiteRecipe.normalizeRunMode(runMode)?.let { put("runMode", it) }
             if (!workdir.isNullOrBlank()) put("workdir", workdir)
             if (timeoutMs != null) put("timeoutMs", timeoutMs)
             if (delayAfterMs != null) put("delayAfterMs", delayAfterMs)
@@ -306,9 +320,7 @@ data class KiteRecipeStep(
         fun fromJson(json: JSONObject, index: Int = 0): KiteRecipeStep {
             val type = json.getString("type")
             val legacyWait = if (json.has("wait")) json.optBoolean("wait") else null
-            val runMode = json.optString("runMode").ifBlank {
-                if (legacyWait == true) KiteRecipe.RUN_MODE_WAIT else null
-            }
+            val runMode = KiteRecipe.normalizeRunMode(json.optString("runMode"), legacyWait)
             return KiteRecipeStep(
                 id = json.optString("id").ifBlank { "step_${index + 1}_$type" },
                 type = type,
