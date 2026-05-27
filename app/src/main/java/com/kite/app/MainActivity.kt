@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.text.Editable
+import android.text.TextWatcher
 import android.os.Bundle
 import android.text.TextUtils
 import android.view.Gravity
@@ -27,8 +29,10 @@ import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeLoader
+import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.recipe.KiteRunReport
 import com.kite.app.recipe.NewRecipeInput
+import com.kite.app.recipe.NewRecipeStepInput
 import com.kite.app.web.KiteWebShell
 import java.net.HttpURLConnection
 import java.net.URL
@@ -58,6 +62,7 @@ class MainActivity : Activity() {
     private lateinit var typeContainer: LinearLayout
     private lateinit var iconContainer: LinearLayout
     private lateinit var runModeContainer: LinearLayout
+    private lateinit var stepsContainer: LinearLayout
 
     private val runtimeStates = mutableMapOf<String, RecipeRuntimeState>()
     private var currentScreen: Screen = Screen.Console
@@ -66,6 +71,7 @@ class MainActivity : Activity() {
     private var selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_OPEN_URL)
     private var selectedRunMode = KiteRecipe.RUN_MODE_DETACHED
     private var editingRecipe: KiteRecipe? = null
+    private val formSteps = mutableListOf<RecipeStepDraft>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -598,7 +604,9 @@ class MainActivity : Activity() {
     private fun showRecipeForm(recipe: KiteRecipe?) {
         currentScreen = Screen.CreateConfig
         editingRecipe = recipe
-        selectedType = recipe?.type ?: KiteRecipe.TYPE_OPEN_URL
+        formSteps.clear()
+        formSteps.addAll(recipe?.steps?.map { RecipeStepDraft.fromStep(it) } ?: listOf(RecipeStepDraft.openWeb()))
+        selectedType = inferTypeFromDrafts()
         selectedIconName = recipe?.icon?.name?.ifBlank { null } ?: KiteRecipeIcon.defaultNameForType(selectedType)
         selectedRunMode = recipe?.firstShellStep()?.runMode?.let { KiteRecipe.normalizeRunMode(it, null) } ?: defaultRunModeForType(selectedType)
         root.removeAllViews()
@@ -607,11 +615,7 @@ class MainActivity : Activity() {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(24), dp(8), dp(24), dp(132))
-                addView(sectionTitle("1. 类型"))
-                typeContainer = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-                addView(typeContainer)
-                renderTypeOptions()
-                addView(sectionTitle("2. 基础信息"))
+                addView(sectionTitle("1. 基础信息"))
                 addView(formPanel(recipe))
             })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -646,17 +650,8 @@ class MainActivity : Activity() {
 
         addView(labeledField("名称", nameInput))
         addView(labeledField("描述", descriptionInput))
-        commandFieldContainer = labeledField("启动命令", commandInput)
-        addView(commandFieldContainer)
-        workdirFieldContainer = labeledField("执行位置（可选）", workdirInput)
-        addView(workdirFieldContainer)
-        runModeFieldContainer = runModeChooser()
-        addView(runModeFieldContainer)
-        urlFieldContainer = labeledField("地址 / 打开网页（可选）", urlInput)
-        addView(urlFieldContainer)
-        expectedFieldContainer = labeledField("预期输出（可选）", expectedInput)
-        addView(expectedFieldContainer)
         addView(iconChooser())
+        addView(executionStepsEditor())
         addView(toggleRow())
         addView(divider())
         if (recipe != null) {
@@ -670,7 +665,6 @@ class MainActivity : Activity() {
             })
         }
         prefillRecipeForm(recipe)
-        updateDynamicFieldVisibility()
     }
 
     private fun iconChooser(): View = LinearLayout(this).apply {
@@ -695,10 +689,153 @@ class MainActivity : Activity() {
     private fun renderIconOptions() {
         if (!::iconContainer.isInitialized) return
         iconContainer.removeAllViews()
-        listOf("web", "terminal", "bot", "file", "tools").forEach { iconName ->
+        listOf("web", "terminal", "bot", "file", "more").forEach { iconName ->
             iconContainer.addView(iconChip(iconName, selectedIconName == iconName))
         }
     }
+
+    private fun executionStepsEditor(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, 0, 0, dp(18))
+        addView(TextView(context).apply {
+            text = "执行步骤"
+            textSize = 15f
+            setTextColor(TEXT_DARK)
+        })
+        addView(TextView(context).apply {
+            text = "可添加多条命令，也可以添加打开网页步骤。Kite 只保存配置，命令交给 KF Bridge 执行。"
+            textSize = 12f
+            setTextColor(TEXT_MUTED)
+            setPadding(0, dp(6), 0, dp(10))
+        })
+        stepsContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        addView(stepsContainer)
+        addView(row {
+            addView(secondaryStepButton("添加命令") {
+                formSteps.add(RecipeStepDraft.shell())
+                renderStepOptions()
+            })
+            addView(secondaryStepButton("添加打开网页") {
+                formSteps.add(RecipeStepDraft.openWeb())
+                renderStepOptions()
+            })
+        })
+        renderStepOptions()
+    }
+
+    private fun renderStepOptions() {
+        if (!::stepsContainer.isInitialized) return
+        stepsContainer.removeAllViews()
+        if (formSteps.isEmpty()) {
+            stepsContainer.addView(TextView(this).apply {
+                text = "还没有步骤，请添加命令或打开网页。"
+                textSize = 13f
+                setTextColor(TEXT_MUTED)
+                setPadding(0, dp(8), 0, dp(12))
+            })
+            return
+        }
+        formSteps.forEachIndexed { index, draft ->
+            stepsContainer.addView(stepEditorCard(index, draft))
+        }
+    }
+
+    private fun stepEditorCard(index: Int, draft: RecipeStepDraft): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(14), dp(12), dp(14), dp(12))
+        background = roundedBox(Color.rgb(249, 250, 252), BORDER, dp(16).toFloat())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { setMargins(0, 0, 0, dp(10)) }
+
+        addView(row {
+            addView(TextView(context).apply {
+                text = if (draft.type == KiteRecipe.STEP_SHELL) "命令步骤 ${index + 1}" else "打开网页 ${index + 1}"
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(TEXT_DARK)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(context).apply {
+                text = "删除"
+                textSize = 13f
+                setTextColor(ORANGE)
+                setPadding(dp(10), dp(4), 0, dp(4))
+                setOnClickListener {
+                    formSteps.removeAt(index)
+                    renderStepOptions()
+                }
+            })
+        })
+
+        if (draft.type == KiteRecipe.STEP_SHELL) {
+            addView(stepInput("命令", "例如：hermes-web-ui start --port 8648", draft.command) { draft.command = it })
+            addView(stepInput("执行位置（可选）", "例如：/workspace/hermes", draft.workdir) { draft.workdir = it })
+            addView(stepRunModeChooser(draft))
+            addView(stepInput("预期输出（可选）", "例如：ready", draft.expectedText) { draft.expectedText = it })
+        } else {
+            addView(stepInput("打开地址", "例如：http://127.0.0.1:8648", draft.url) { draft.url = it })
+        }
+    }
+
+    private fun stepInput(label: String, hintText: String, value: String, onChanged: (String) -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(10), 0, 0)
+            addView(TextView(context).apply {
+                text = label
+                textSize = 12.5f
+                setTextColor(TEXT_MUTED)
+            })
+            addView(editInput(hintText).apply {
+                setText(value)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
+                    setMargins(0, dp(6), 0, 0)
+                }
+                addTextChangedListener(simpleTextWatcher { onChanged(it) })
+            })
+        }
+
+    private fun stepRunModeChooser(draft: RecipeStepDraft): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, dp(10), 0, 0)
+        addView(TextView(context).apply {
+            text = "运行方式"
+            textSize = 12.5f
+            setTextColor(TEXT_MUTED)
+        })
+        addView(row {
+            addView(stepRunModeChip("等待结束", KiteRecipe.RUN_MODE_ATTACHED, draft))
+            addView(stepRunModeChip("后台服务", KiteRecipe.RUN_MODE_DETACHED, draft))
+        })
+    }
+
+    private fun stepRunModeChip(label: String, value: String, draft: RecipeStepDraft): TextView =
+        TextView(this).apply {
+            val selected = draft.runMode == value
+            text = label
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(if (selected) Color.WHITE else TEXT_DARK)
+            background = roundedBox(if (selected) PURPLE else Color.WHITE, if (selected) PURPLE else BORDER, dp(14).toFloat())
+            layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f).apply { setMargins(0, dp(8), dp(8), 0) }
+            setOnClickListener {
+                draft.runMode = value
+                renderStepOptions()
+            }
+        }
+
+    private fun secondaryStepButton(label: String, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(PURPLE)
+            background = roundedBox(Color.WHITE, PURPLE, dp(16).toFloat())
+            layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(0, dp(8), dp(8), 0) }
+            setOnClickListener { onClick() }
+        }
 
     private fun runModeChooser(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -760,23 +897,40 @@ class MainActivity : Activity() {
     private fun defaultRunModeForType(type: String): String =
         if (type.requiresServiceCommand()) KiteRecipe.RUN_MODE_DETACHED else KiteRecipe.RUN_MODE_ATTACHED
 
+    private fun inferTypeFromDrafts(steps: List<RecipeStepDraft> = formSteps): String {
+        val hasShell = steps.any { it.type == KiteRecipe.STEP_SHELL && it.command.isNotBlank() }
+        val hasOpenWeb = steps.any { it.type == KiteRecipe.STEP_OPEN_WEB && it.url.isNotBlank() }
+        return when {
+            hasShell && hasOpenWeb -> KiteRecipe.TYPE_COMMAND_WEB
+            hasShell -> KiteRecipe.TYPE_START_SERVICE
+            hasOpenWeb -> KiteRecipe.TYPE_OPEN_URL
+            else -> KiteRecipe.TYPE_TEMPLATE
+        }
+    }
+
     private fun saveRecipeForm() {
         val name = nameInput.text?.toString().orEmpty().trim()
-        val url = urlInput.text?.toString().orEmpty().trim()
-        val command = commandInput.text?.toString().orEmpty().trim()
         val description = descriptionInput.text?.toString().orEmpty().trim()
-        val workdir = workdirInput.text?.toString().orEmpty().trim()
-        val expectedText = expectedInput.text?.toString().orEmpty().trim()
+        val normalizedSteps = formSteps.filter {
+            (it.type == KiteRecipe.STEP_SHELL && it.command.isNotBlank()) ||
+                (it.type == KiteRecipe.STEP_OPEN_WEB && it.url.isNotBlank())
+        }
+        val inferredType = inferTypeFromDrafts(normalizedSteps)
+        val defaultUrl = normalizedSteps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB }?.url.orEmpty()
         if (name.isBlank()) {
             Toast.makeText(this, "请输入名称", Toast.LENGTH_SHORT).show()
             return
         }
-        if ((selectedType == KiteRecipe.TYPE_OPEN_URL || selectedType == KiteRecipe.TYPE_COMMAND_WEB || selectedType == KiteRecipe.TYPE_SCRIPT_WEB) && url.isBlank()) {
-            Toast.makeText(this, "请输入地址", Toast.LENGTH_SHORT).show()
+        if (normalizedSteps.isEmpty()) {
+            Toast.makeText(this, "请至少添加一个命令或打开网页步骤", Toast.LENGTH_SHORT).show()
             return
         }
-        if (selectedType.requiresServiceCommand() && command.isBlank()) {
-            Toast.makeText(this, "请输入启动命令", Toast.LENGTH_SHORT).show()
+        if (normalizedSteps.any { it.type == KiteRecipe.STEP_OPEN_WEB && it.url.isBlank() }) {
+            Toast.makeText(this, "请填写打开网页地址", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (normalizedSteps.any { it.type == KiteRecipe.STEP_SHELL && it.command.isBlank() }) {
+            Toast.makeText(this, "请填写命令", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -784,16 +938,14 @@ class MainActivity : Activity() {
             recipeLoader.saveUserRecipe(
                 NewRecipeInput(
                     id = editingRecipe?.id,
-                    type = selectedType,
+                    type = inferredType,
                     name = name,
-                    url = url,
-                    command = command,
+                    url = defaultUrl,
+                    command = "",
                     shortcut = shortcutSwitch.isChecked,
                     iconName = selectedIconName,
                     description = description,
-                    workdir = workdir,
-                    runMode = selectedRunMode,
-                    expectedText = expectedText
+                    steps = normalizedSteps.map { it.toInput() }
                 )
             )
         }.onSuccess {
@@ -957,6 +1109,15 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun simpleTextWatcher(onChanged: (String) -> Unit): TextWatcher =
+        object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                onChanged(s?.toString().orEmpty())
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        }
+
     private fun toggleRow(): View = row {
         setPadding(0, dp(10), 0, dp(16))
         addView(TextView(context).apply {
@@ -1110,6 +1271,7 @@ class MainActivity : Activity() {
         "tools" -> "⚙"
         "code" -> "{ }"
         "server" -> "▷"
+        "more" -> "…"
         else -> "◎"
     }
 
@@ -1262,6 +1424,40 @@ class MainActivity : Activity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private data class TypeOption(val type: String, val icon: String, val label: String)
+
+    private data class RecipeStepDraft(
+        val type: String,
+        var command: String = "",
+        var url: String = "",
+        var workdir: String = "",
+        var runMode: String = KiteRecipe.RUN_MODE_DETACHED,
+        var expectedText: String = ""
+    ) {
+        fun toInput(): NewRecipeStepInput = NewRecipeStepInput(
+            type = type,
+            command = command,
+            url = url,
+            workdir = workdir,
+            runMode = runMode,
+            expectedText = expectedText
+        )
+
+        companion object {
+            fun shell(): RecipeStepDraft = RecipeStepDraft(type = KiteRecipe.STEP_SHELL)
+
+            fun openWeb(): RecipeStepDraft = RecipeStepDraft(type = KiteRecipe.STEP_OPEN_WEB)
+
+            fun fromStep(step: KiteRecipeStep): RecipeStepDraft =
+                RecipeStepDraft(
+                    type = step.type,
+                    command = step.cmd.orEmpty(),
+                    url = step.url.orEmpty(),
+                    workdir = step.workdir.orEmpty(),
+                    runMode = KiteRecipe.normalizeRunMode(step.runMode) ?: KiteRecipe.RUN_MODE_DETACHED,
+                    expectedText = step.expected?.text.orEmpty()
+                )
+        }
+    }
 
     private enum class Screen {
         Console,

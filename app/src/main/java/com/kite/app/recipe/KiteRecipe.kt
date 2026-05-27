@@ -173,6 +173,7 @@ data class KiteRecipeIcon(
         const val ICON_TOOLS = "tools"
         const val ICON_CODE = "code"
         const val ICON_SERVER = "server"
+        const val ICON_MORE = "more"
         const val ICON_DEFAULT = "default"
 
         val BUILTIN = listOf(
@@ -186,6 +187,7 @@ data class KiteRecipeIcon(
             ICON_TOOLS,
             ICON_CODE,
             ICON_SERVER,
+            ICON_MORE,
             ICON_DEFAULT
         )
 
@@ -215,6 +217,7 @@ data class KiteRecipeIcon(
                 "folder", "files" -> ICON_FILE
                 "log" -> ICON_LOGS
                 "service", "play" -> ICON_SERVER
+                "more" -> ICON_MORE
                 "", "占位", "默认" -> defaultNameForType(recipeType)
                 else -> name.trim().lowercase()
             }

@@ -117,46 +117,25 @@ class KiteRecipeLoader(
         val now = Instant.now().toString()
         val baseId = slug(input.name).ifBlank { "recipe" }
         val id = input.id?.takeIf { it.isNotBlank() } ?: uniqueId(baseId)
-        val defaultUrl = input.url.trim()
-        val iconName = input.iconName.ifBlank { KiteRecipeIcon.defaultNameForType(input.type) }
-        val runMode = KiteRecipe.normalizeRunMode(input.runMode) ?: KiteRecipe.RUN_MODE_DETACHED
-        val expected = input.expectedText.trim().takeIf { it.isNotBlank() }?.let {
-            KiteExpectedResult(mode = "contains", text = it, source = KiteRecipe.OUTPUT_LAST_MEANINGFUL)
+        val explicitSteps = input.steps.mapIndexedNotNull { index, step ->
+            buildStep(id, index, step)
         }
-        val shellStep = if (input.command.isNotBlank()) {
-            KiteRecipeStep(
-                id = "step_start_$id",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = input.command.trim(),
-                runMode = runMode,
-                workdir = input.workdir.trim().ifBlank { null },
-                expected = expected,
-                outputPolicy = KiteOutputPolicy()
-            )
-        } else {
-            null
+        val defaultUrl = input.url.trim().ifBlank {
+            explicitSteps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB && !it.url.isNullOrBlank() }?.url.orEmpty()
         }
-        val openWebStep = if (defaultUrl.isNotBlank()) {
-            KiteRecipeStep(id = "step_open_$id", type = KiteRecipe.STEP_OPEN_WEB, url = defaultUrl)
-        } else {
-            null
-        }
-        val steps = when (input.type) {
-            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_SCRIPT_WEB -> listOfNotNull(shellStep, openWebStep)
-            KiteRecipe.TYPE_START_SERVICE -> listOfNotNull(shellStep, openWebStep)
-            KiteRecipe.TYPE_TEMPLATE -> emptyList()
-            else -> listOfNotNull(openWebStep)
-        }
+        val inferredType = inferType(input.type, explicitSteps, defaultUrl)
+        val iconName = input.iconName.ifBlank { KiteRecipeIcon.defaultNameForType(inferredType) }
+        val steps = explicitSteps.ifEmpty { legacySteps(id, input, defaultUrl) }
         return KiteRecipe(
             schemaVersion = KiteRecipe.PROTOCOL_VERSION,
             id = id,
             name = input.name.trim(),
-            description = input.description.ifBlank { defaultDescription(input.type) },
-            type = input.type,
+            description = input.description.ifBlank { defaultDescription(inferredType) },
+            type = inferredType,
             defaultUrl = defaultUrl,
             shortcut = input.shortcut,
-            icon = KiteRecipeIcon(type = "builtin", name = KiteRecipeIcon.normalizeName(iconName, input.type)),
-            card = KiteRecipeCard(accent = KiteRecipeCard.defaultAccentForType(input.type), status = "unknown"),
+            icon = KiteRecipeIcon(type = "builtin", name = KiteRecipeIcon.normalizeName(iconName, inferredType)),
+            card = KiteRecipeCard(accent = KiteRecipeCard.defaultAccentForType(inferredType), status = "unknown"),
             execution = KiteExecution.steps(steps),
             taskLabel = input.name.trim(),
             taskMode = "separate",
@@ -172,6 +151,77 @@ class KiteRecipeLoader(
                     "accent" to it.card.accent
                 )
             )
+        }
+    }
+
+    private fun buildStep(recipeId: String, index: Int, input: NewRecipeStepInput): KiteRecipeStep? {
+        return when (input.type) {
+            KiteRecipe.STEP_SHELL -> {
+                val command = input.command.trim()
+                if (command.isBlank()) return null
+                val expected = input.expectedText.trim().takeIf { it.isNotBlank() }?.let {
+                    KiteExpectedResult(mode = "contains", text = it, source = KiteRecipe.OUTPUT_LAST_MEANINGFUL)
+                }
+                KiteRecipeStep(
+                    id = input.id.ifBlank { "step_cmd_${index + 1}_$recipeId" },
+                    type = KiteRecipe.STEP_SHELL,
+                    cmd = command,
+                    runMode = KiteRecipe.normalizeRunMode(input.runMode) ?: KiteRecipe.RUN_MODE_DETACHED,
+                    workdir = input.workdir.trim().ifBlank { null },
+                    expected = expected,
+                    outputPolicy = KiteOutputPolicy()
+                )
+            }
+
+            KiteRecipe.STEP_OPEN_WEB -> {
+                val url = input.url.trim()
+                if (url.isBlank()) return null
+                KiteRecipeStep(
+                    id = input.id.ifBlank { "step_open_${index + 1}_$recipeId" },
+                    type = KiteRecipe.STEP_OPEN_WEB,
+                    url = url
+                )
+            }
+
+            else -> null
+        }
+    }
+
+    private fun legacySteps(recipeId: String, input: NewRecipeInput, defaultUrl: String): List<KiteRecipeStep> {
+        val expected = input.expectedText.trim().takeIf { it.isNotBlank() }?.let {
+            KiteExpectedResult(mode = "contains", text = it, source = KiteRecipe.OUTPUT_LAST_MEANINGFUL)
+        }
+        val shellStep = input.command.trim().takeIf { it.isNotBlank() }?.let {
+            KiteRecipeStep(
+                id = "step_start_$recipeId",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = it,
+                runMode = KiteRecipe.normalizeRunMode(input.runMode) ?: KiteRecipe.RUN_MODE_DETACHED,
+                workdir = input.workdir.trim().ifBlank { null },
+                expected = expected,
+                outputPolicy = KiteOutputPolicy()
+            )
+        }
+        val openWebStep = defaultUrl.takeIf { it.isNotBlank() }?.let {
+            KiteRecipeStep(id = "step_open_$recipeId", type = KiteRecipe.STEP_OPEN_WEB, url = it)
+        }
+        return when (input.type) {
+            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_SCRIPT_WEB -> listOfNotNull(shellStep, openWebStep)
+            KiteRecipe.TYPE_START_SERVICE -> listOfNotNull(shellStep, openWebStep)
+            KiteRecipe.TYPE_TEMPLATE -> emptyList()
+            else -> listOfNotNull(openWebStep)
+        }
+    }
+
+    private fun inferType(requestedType: String, steps: List<KiteRecipeStep>, defaultUrl: String): String {
+        if (requestedType == KiteRecipe.TYPE_TEMPLATE) return KiteRecipe.TYPE_TEMPLATE
+        val hasShell = steps.any { it.type == KiteRecipe.STEP_SHELL }
+        val hasOpenWeb = steps.any { it.type == KiteRecipe.STEP_OPEN_WEB } || defaultUrl.isNotBlank()
+        return when {
+            hasShell && hasOpenWeb -> KiteRecipe.TYPE_COMMAND_WEB
+            hasShell -> KiteRecipe.TYPE_START_SERVICE
+            hasOpenWeb -> KiteRecipe.TYPE_OPEN_URL
+            else -> KiteRecipe.TYPE_TEMPLATE
         }
     }
 
@@ -227,6 +277,17 @@ data class NewRecipeInput(
     val shortcut: Boolean,
     val iconName: String = "",
     val description: String = "",
+    val workdir: String = "",
+    val runMode: String = KiteRecipe.RUN_MODE_DETACHED,
+    val expectedText: String = "",
+    val steps: List<NewRecipeStepInput> = emptyList()
+)
+
+data class NewRecipeStepInput(
+    val id: String = "",
+    val type: String,
+    val command: String = "",
+    val url: String = "",
     val workdir: String = "",
     val runMode: String = KiteRecipe.RUN_MODE_DETACHED,
     val expectedText: String = ""
