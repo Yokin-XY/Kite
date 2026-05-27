@@ -2,6 +2,7 @@ package com.kite.app.recipe
 
 import android.content.Context
 import com.kite.app.diagnostics.KiteDiagnostics
+import com.kite.app.dropzone.KiteDropZoneManager
 import org.json.JSONObject
 import java.io.File
 import java.text.Normalizer
@@ -101,7 +102,13 @@ class KiteRecipeLoader(
             .orEmpty()
             .mapNotNull { file ->
                 runCatching {
-                    val recipe = KiteRecipe.fromJson(JSONObject(file.readText()), runtimeSource = KiteRecipe.SOURCE_IMPORTED)
+                    val json = JSONObject(file.readText())
+                    val source = if (json.has(KiteDropZoneManager.DROPZONE_METADATA)) {
+                        KiteRecipe.SOURCE_DROPZONE
+                    } else {
+                        KiteRecipe.SOURCE_IMPORTED
+                    }
+                    val recipe = KiteRecipe.fromJson(json, runtimeSource = source)
                     logRecipeLoaded(recipe)
                     recipe
                 }.onFailure {

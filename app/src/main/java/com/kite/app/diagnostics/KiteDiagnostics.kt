@@ -18,6 +18,7 @@ class KiteDiagnostics(context: Context) {
     private val recipeSaveLog = File(diagnosticsDir, "recipe-save.log")
     private val recipeEventsLog = File(diagnosticsDir, "recipe-events.jsonl")
     private val bridgeEventsLog = File(diagnosticsDir, "bridge-events.jsonl")
+    private val dropZoneEventsLog = File(diagnosticsDir, "dropzone-events.jsonl")
 
     init {
         consoleLog.createNewFile()
@@ -27,6 +28,7 @@ class KiteDiagnostics(context: Context) {
         recipeSaveLog.createNewFile()
         recipeEventsLog.createNewFile()
         bridgeEventsLog.createNewFile()
+        dropZoneEventsLog.createNewFile()
     }
 
     fun logConsole(message: ConsoleMessage) {
@@ -116,6 +118,25 @@ class KiteDiagnostics(context: Context) {
                 .put("event", event)
                 .put("recipeId", recipe?.id ?: JSONObject.NULL)
                 .put("recipeName", recipe?.name ?: JSONObject.NULL)
+                .apply { details.forEach { (key, value) -> put(key, value) } }
+                .toString() + "\n"
+        )
+    }
+
+    fun logDropZoneEvent(
+        event: String,
+        path: String? = null,
+        recipeId: String? = null,
+        reason: String? = null,
+        details: Map<String, String> = emptyMap()
+    ) {
+        dropZoneEventsLog.appendText(
+            JSONObject()
+                .put("at", Instant.now().toString())
+                .put("event", event)
+                .put("path", path ?: JSONObject.NULL)
+                .put("recipeId", recipeId ?: JSONObject.NULL)
+                .put("reason", reason ?: JSONObject.NULL)
                 .apply { details.forEach { (key, value) -> put(key, value) } }
                 .toString() + "\n"
         )

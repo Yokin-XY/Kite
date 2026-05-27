@@ -75,6 +75,7 @@ data class KiteRecipe(
         const val SOURCE_ASSETS = "assets"
         const val SOURCE_USER = "user"
         const val SOURCE_IMPORTED = "imported"
+        const val SOURCE_DROPZONE = "dropzone"
         const val SOURCE_REMOTE = "remote"
 
         fun fromJson(json: JSONObject, runtimeSource: String): KiteRecipe {
@@ -148,7 +149,7 @@ data class KiteRecipe(
 
         private fun normalizeSource(source: String): String = when (source) {
             "asset" -> SOURCE_ASSETS
-            SOURCE_ASSETS, SOURCE_USER, SOURCE_IMPORTED, SOURCE_REMOTE -> source
+            SOURCE_ASSETS, SOURCE_USER, SOURCE_IMPORTED, SOURCE_DROPZONE, SOURCE_REMOTE -> source
             else -> SOURCE_USER
         }
     }

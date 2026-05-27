@@ -2,12 +2,18 @@ package com.kite.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.text.Editable
 import android.text.TextWatcher
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -26,6 +32,8 @@ import com.kite.app.bridge.BridgeResult
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.bridge.KiteLocalServer
 import com.kite.app.diagnostics.KiteDiagnostics
+import com.kite.app.dropzone.DropZoneStatus
+import com.kite.app.dropzone.KiteDropZoneManager
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeLoader
@@ -41,6 +49,7 @@ import kotlin.concurrent.thread
 class MainActivity : Activity() {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
+    private lateinit var dropZoneManager: KiteDropZoneManager
     private lateinit var bridgeClient: KiteBridgeClient
     private lateinit var webShell: KiteWebShell
     private lateinit var localServer: KiteLocalServer
@@ -71,6 +80,7 @@ class MainActivity : Activity() {
     private var selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_OPEN_URL)
     private var selectedRunMode = KiteRecipe.RUN_MODE_DETACHED
     private var editingRecipe: KiteRecipe? = null
+    private var dropZoneStatus: DropZoneStatus = DropZoneStatus(available = false, message = "投放区尚未检查")
     private val formSteps = mutableListOf<RecipeStepDraft>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,6 +88,8 @@ class MainActivity : Activity() {
         diagnostics = KiteDiagnostics(this)
         diagnostics.writeCapabilityReport()
         recipeLoader = KiteRecipeLoader(this, diagnostics)
+        dropZoneManager = KiteDropZoneManager(this, diagnostics)
+        dropZoneStatus = dropZoneManager.prepareDropZone()
         bridgeClient = KiteBridgeClient(diagnostics)
         webView = WebView(this)
         webShell = KiteWebShell(this, webView, diagnostics) { }
@@ -90,6 +102,9 @@ class MainActivity : Activity() {
         }
         setContentView(root)
         showConsole()
+        if (!dropZoneStatus.available) {
+            Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onDestroy() {
@@ -102,8 +117,49 @@ class MainActivity : Activity() {
         if (currentScreen != Screen.Console) showConsole() else super.onBackPressed()
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_DROPZONE_STORAGE) {
+            val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            diagnostics.logDropZoneEvent(
+                if (granted) "dropzone_permission_granted" else "dropzone_permission_missing",
+                path = dropZoneStatus.rootPath,
+                reason = if (granted) "" else "storage_permission_denied"
+            )
+            dropZoneStatus = dropZoneManager.prepareDropZone()
+            Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_SHORT).show()
+            if (currentScreen == Screen.Console) showConsole()
+        }
+    }
+
+    private fun refreshDropZoneRecipes() {
+        thread {
+            val result = dropZoneManager.scanAndImport()
+            runOnUiThread {
+                Toast.makeText(this, result.message, Toast.LENGTH_SHORT).show()
+                showConsole()
+            }
+        }
+    }
+
+    private fun requestDropZoneAccess() {
+        if (Build.VERSION.SDK_INT <= 32 &&
+            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQUEST_DROPZONE_STORAGE)
+            return
+        }
+        startActivity(
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")
+            )
+        )
+    }
+
     private fun showConsole() {
         currentScreen = Screen.Console
+        dropZoneStatus = dropZoneManager.prepareDropZone()
         currentRecipes = recipeLoader.loadAllRecipes()
         currentRecipes.forEach { recipe ->
             runtimeStates.putIfAbsent(recipe.id, RecipeRuntimeState.fromRecipeStatus(recipe.id, recipe.status))
@@ -157,6 +213,31 @@ class MainActivity : Activity() {
                 addView(chip("■  已停止 $stopped", false))
             })
         })
+        addView(dropZoneControlRow())
+    }
+
+    private fun dropZoneControlRow(): View = row {
+        setPadding(0, dp(12), 0, 0)
+        addView(TextView(context).apply {
+            text = if (dropZoneStatus.available) {
+                "投放区：Download/Kite/recipes"
+            } else {
+                dropZoneStatus.message
+            }
+            textSize = 12f
+            setTextColor(if (dropZoneStatus.available) TEXT_MUTED else Color.rgb(185, 28, 28))
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        addView(dropZoneButton("刷新配置") { refreshDropZoneRecipes() })
+        if (!dropZoneStatus.available) {
+            addView(dropZoneButton("授权") { requestDropZoneAccess() }.apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply {
+                    setMargins(dp(8), 0, 0, 0)
+                }
+            })
+        }
     }
 
     private fun recipeGrid(): View {
@@ -1380,6 +1461,20 @@ class MainActivity : Activity() {
             .apply { setMargins(0, 0, dp(10), 0) }
     }
 
+    private fun dropZoneButton(text: String, onClick: () -> Unit): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextColor(PURPLE)
+        setPadding(dp(12), 0, dp(12), 0)
+        background = roundedBox(Color.WHITE, BORDER, dp(17).toFloat())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply {
+            setMargins(dp(8), 0, 0, 0)
+        }
+        setOnClickListener { onClick() }
+    }
+
     private fun divider(): View = View(this).apply {
         setBackgroundColor(BORDER)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
@@ -1538,6 +1633,7 @@ class MainActivity : Activity() {
         private const val WEB_READY_INTERVAL_MS = 700L
         private const val WEB_READY_CONNECT_TIMEOUT_MS = 700
         private const val WEB_READY_READ_TIMEOUT_MS = 700
+        private const val REQUEST_DROPZONE_STORAGE = 801
         private val BG = Color.rgb(248, 250, 252)
         private val TEXT_DARK = Color.rgb(15, 23, 42)
         private val TEXT_MUTED = Color.rgb(100, 116, 139)
