@@ -369,6 +369,7 @@ data class KiteRunReport(
     val recipeId: String,
     val status: String,
     val ok: Boolean,
+    val pid: String? = null,
     val steps: List<KiteStepReport> = emptyList(),
     val nextAction: KiteNextAction? = null
 ) {
@@ -381,6 +382,7 @@ data class KiteRunReport(
         .put("ok", ok)
         .put("steps", JSONArray().apply { steps.forEach { put(it.toJson()) } })
         .apply {
+            if (!pid.isNullOrBlank()) put("pid", pid)
             if (nextAction != null) put("nextAction", nextAction.toJson())
         }
 
@@ -392,11 +394,20 @@ data class KiteRunReport(
 
     fun hasMismatch(): Boolean = steps.any { it.matchResult?.enabled == true && it.matchResult.matched == false }
 
+    fun lastMeaningfulOutput(): String? =
+        steps.asReversed().firstNotNullOfOrNull { step ->
+            step.lastMeaningfulOutput.ifBlank {
+                step.stderrTail.ifBlank { step.stdoutTail }
+            }.ifBlank { null }
+        }
+
     companion object {
         const val STATUS_ACCEPTED = "accepted"
         const val STATUS_RUNNING = "running"
+        const val STATUS_ALREADY_RUNNING = "already_running"
         const val STATUS_FINISHED = "finished"
         const val STATUS_FAILED = "failed"
+        const val STATUS_STOPPED = "stopped"
         const val STATUS_BRIDGE_UNAVAILABLE = "bridge_unavailable"
 
         fun fromJsonOrNull(raw: String): KiteRunReport? = runCatching {
@@ -417,6 +428,7 @@ data class KiteRunReport(
                 recipeId = json.optString("recipeId"),
                 status = json.optString("status", STATUS_FAILED),
                 ok = json.optBoolean("ok", false),
+                pid = json.optString("pid").ifBlank { null },
                 steps = steps,
                 nextAction = json.optJSONObject("nextAction")?.let { KiteNextAction.fromJson(it) }
             )

@@ -46,7 +46,7 @@ class MainActivity : Activity() {
     private lateinit var typeContainer: LinearLayout
     private lateinit var iconContainer: LinearLayout
 
-    private val recipeStates = mutableMapOf<String, RecipeRunState>()
+    private val runtimeStates = mutableMapOf<String, RecipeRuntimeState>()
     private var currentScreen: Screen = Screen.Console
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var selectedType = KiteRecipe.TYPE_OPEN_URL
@@ -84,7 +84,9 @@ class MainActivity : Activity() {
     private fun showConsole() {
         currentScreen = Screen.Console
         currentRecipes = recipeLoader.loadAllRecipes()
-        currentRecipes.forEach { recipeStates.putIfAbsent(it.id, RecipeRunState.fromRecipeStatus(it.status)) }
+        currentRecipes.forEach { recipe ->
+            runtimeStates.putIfAbsent(recipe.id, RecipeRuntimeState.fromRecipeStatus(recipe.id, recipe.status))
+        }
         root.removeAllViews()
         root.addView(consoleHeader())
         root.addView(recipeGrid(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -125,11 +127,13 @@ class MainActivity : Activity() {
             isHorizontalScrollBarEnabled = false
             setPadding(0, dp(20), 0, 0)
             addView(row {
-                val opened = recipeStates.values.count { it == RecipeRunState.Opened }
-                val stopped = recipeStates.values.count { it == RecipeRunState.Stopped || it == RecipeRunState.BridgeUnavailable }
-                addView(chip("▦ 全部 ${currentRecipes.size}", true))
-                addView(chip("▶ 已打开 $opened", false))
-                addView(chip("■ 已停止 $stopped", false))
+                val opened = runtimeStates.values.count { it.status in RecipeRunStatus.activeStatuses }
+                val stopped = runtimeStates.values.count {
+                    it.status == RecipeRunStatus.Stopped || it.status == RecipeRunStatus.BridgeUnavailable
+                }
+                addView(chip("▦  全部 ${currentRecipes.size}", true))
+                addView(chip("▶  已打开 $opened", false))
+                addView(chip("■  已停止 $stopped", false))
             })
         })
     }
@@ -144,7 +148,7 @@ class MainActivity : Activity() {
         currentRecipes.forEach { recipe ->
             grid.addView(recipeCard(recipe), GridLayout.LayoutParams().apply {
                 width = 0
-                height = dp(188)
+                height = dp(190)
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
                 setMargins(dp(6), dp(6), dp(6), dp(10))
             })
@@ -154,6 +158,7 @@ class MainActivity : Activity() {
     }
 
     private fun recipeCard(recipe: KiteRecipe): View = LinearLayout(this).apply {
+        val runtimeState = runtimeStateFor(recipe)
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), dp(12), dp(12), dp(10))
         background = roundedBox(Color.WHITE, BORDER, dp(24).toFloat())
@@ -163,13 +168,14 @@ class MainActivity : Activity() {
             gravity = Gravity.TOP
             addView(iconTile(recipe.icon.name, accentFor(recipe), tintBackground(accentFor(recipe))))
             addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
-            addView(stateTag(recipeStates[recipe.id] ?: RecipeRunState.Unknown))
+            addView(stateTag(runtimeState))
         })
         addView(cardTitle(recipe.name))
         addView(cardDescription(recipe.description.ifBlank { "打开本地工作台" }))
         addView(urlPill(recipe.defaultUrl, recipe.card.accent == "green"))
+        runtimeState.failureSummary()?.let { addView(failureSummary(it)) }
         addView(row {
-            addView(primaryAction(primaryLabel(recipe), recipe.card.accent == "green") {
+            addView(primaryAction(primaryLabel(recipe, runtimeState), recipe.card.accent == "green", runtimeState.isBusy()) {
                 handleRecipeAction(recipe)
             })
             addView(editAction { showRecipeDetail(recipe) })
@@ -177,107 +183,215 @@ class MainActivity : Activity() {
     }
 
     private fun handleRecipeAction(recipe: KiteRecipe) {
-        diagnostics.logRecipeAction(recipe, "card_click", mapOf("type" to recipe.type))
+        val state = runtimeStateFor(recipe)
+        diagnostics.logRecipeAction(recipe, "card_click", mapOf("type" to recipe.type, "status" to state.status.name))
+        if (state.isBusy()) return
+        if (state.isActive()) {
+            stopRecipe(recipe, state)
+            return
+        }
+
         when (recipe.type) {
             KiteRecipe.TYPE_OPEN_URL, KiteRecipe.TYPE_TEMPLATE -> {
-                recipeStates[recipe.id] = RecipeRunState.Opened
+                setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = recipe.openWebUrl())
                 openWeb(recipe.openWebUrl(), "recipe_card", recipe)
             }
 
             KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_START_SERVICE, KiteRecipe.TYPE_SCRIPT_WEB -> {
                 if (recipe.hasShellStep()) {
-                    recipeStates[recipe.id] = RecipeRunState.Starting
-                    showConsole()
-                    bridgeClient.runRecipe(recipe) { result ->
-                        runOnUiThread { handleBridgeResult(recipe, result) }
-                    }
+                    startRecipe(recipe, state)
                 } else {
-                    recipeStates[recipe.id] = RecipeRunState.Opened
+                    setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = recipe.openWebUrl())
                     openWeb(recipe.openWebUrl(), "recipe_card", recipe)
                 }
             }
 
             else -> {
-                recipeStates[recipe.id] = RecipeRunState.Stopped
+                setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = "unsupported_recipe_type")
                 Toast.makeText(this, "暂不支持的配置类型", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
+    private fun startRecipe(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
+        if (previousState.status == RecipeRunStatus.Failed || previousState.status == RecipeRunStatus.BridgeUnavailable) {
+            diagnostics.logLifecycleEvent(recipe, "retry", previousState.runId, previousState.pid, previousState.status.name)
+        }
+        if (previousState.hasRunBinding()) {
+            diagnostics.logLifecycleEvent(
+                recipe,
+                "cleanup_skipped",
+                previousState.runId,
+                previousState.pid,
+                previousState.status.name,
+                previousState.lastMeaningfulOutput,
+                previousState.lastError
+            )
+        }
+        setRuntimeState(recipe, RecipeRunStatus.Starting)
+        showConsole()
+        bridgeClient.runRecipe(recipe) { result ->
+            runOnUiThread { handleBridgeResult(recipe, result) }
+        }
+    }
+
+    private fun stopRecipe(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
+        setRuntimeState(
+            recipe,
+            RecipeRunStatus.Stopping,
+            runId = previousState.runId,
+            pid = previousState.pid,
+            lastMeaningfulOutput = previousState.lastMeaningfulOutput,
+            nextActionUrl = previousState.nextActionUrl
+        )
+        showConsole()
+        val callback: (BridgeResult) -> Unit = { result -> runOnUiThread { handleStopResult(recipe, previousState, result) } }
+        if (!previousState.runId.isNullOrBlank()) {
+            bridgeClient.stopRun(recipe, previousState.runId, callback)
+        } else {
+            bridgeClient.stopRecipe(recipe, callback)
+        }
+    }
+
+    private fun handleStopResult(recipe: KiteRecipe, previousState: RecipeRuntimeState, result: BridgeResult) {
+        val report = result.runReport
+        if (report != null) diagnostics.writeRunReport(report)
+        if ((result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
+            setRuntimeState(recipe, RecipeRunStatus.Stopped)
+            showConsole()
+            return
+        }
+
+        diagnostics.logLifecycleEvent(
+            recipe,
+            "stop_unavailable",
+            previousState.runId,
+            previousState.pid,
+            previousState.status.name,
+            previousState.lastMeaningfulOutput,
+            result.message
+        )
+        runtimeStates[recipe.id] = previousState.copy(updatedAt = System.currentTimeMillis(), lastError = "停止接口暂不可用")
+        Toast.makeText(this, "停止接口暂不可用", Toast.LENGTH_SHORT).show()
+        showConsole()
+    }
+
     private fun handleBridgeResult(recipe: KiteRecipe, result: BridgeResult) {
         val report = result.runReport
         if (report != null) diagnostics.writeRunReport(report)
+        val requestId = (report?.requestId ?: result.requestId).orEmpty()
+        val runId = report?.runId ?: result.requestId
+        val lastOutput = report?.lastMeaningfulOutput()
+        val pid = report?.pid ?: extractPid(lastOutput) ?: extractPid(result.message)
 
         if (result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE) {
-            recipeStates[recipe.id] = RecipeRunState.BridgeUnavailable
+            setRuntimeState(recipe, RecipeRunStatus.BridgeUnavailable, runId = runId, pid = pid, lastError = result.message)
             diagnostics.logRecipeAction(
                 recipe,
                 "bridge_unavailable",
-                mapOf("requestId" to result.requestId.orEmpty(), "message" to result.message.take(500))
+                mapOf("requestId" to requestId, "message" to result.message.take(500))
             )
             Toast.makeText(this, "桥接不可用，未执行命令", Toast.LENGTH_SHORT).show()
             showConsole()
             return
         }
 
-        val bridgeNextUrl = report?.openWebUrlIfPresent() ?: result.nextActionUrl
-        if (!bridgeNextUrl.isNullOrBlank()) {
+        val nextUrl = report?.openWebUrlIfPresent() ?: result.nextActionUrl
+        if (!nextUrl.isNullOrBlank()) {
             diagnostics.logRecipeAction(
                 recipe,
                 "next_action_detected",
                 mapOf(
-                    "requestId" to (report?.requestId ?: result.requestId).orEmpty(),
+                    "requestId" to requestId,
+                    "runId" to runId.orEmpty(),
+                    "pid" to pid.orEmpty(),
                     "status" to (report?.status ?: result.status),
                     "ok" to (report?.ok ?: result.ok).toString(),
-                    "url" to bridgeNextUrl,
+                    "url" to nextUrl,
                     "hasMismatch" to (report?.hasMismatch() == true).toString()
                 )
             )
             if (report?.hasMismatch() == true) {
-                diagnostics.logRecipeAction(
-                    recipe,
-                    "bridge_result_mismatch_warning",
-                    mapOf("requestId" to report.requestId, "url" to bridgeNextUrl)
-                )
-                Toast.makeText(this, "结果不匹配，仍按返回入口打开", Toast.LENGTH_SHORT).show()
+                diagnostics.logRecipeAction(recipe, "bridge_result_mismatch_warning", mapOf("requestId" to requestId, "url" to nextUrl))
             }
-            recipeStates[recipe.id] = RecipeRunState.Opened
-            openWeb(bridgeNextUrl, "bridge_next_action", recipe)
+            setRuntimeState(
+                recipe,
+                successfulStatus(report, lastOutput),
+                runId = runId,
+                pid = pid,
+                lastMeaningfulOutput = lastOutput,
+                nextActionUrl = nextUrl
+            )
+            openWeb(nextUrl, "bridge_next_action", recipe)
             return
         }
 
         if (report?.hasMismatch() == true) {
-            recipeStates[recipe.id] = RecipeRunState.Stopped
-            diagnostics.logRecipeAction(recipe, "bridge_result_mismatch", mapOf("requestId" to report.requestId))
+            setRuntimeState(recipe, RecipeRunStatus.Failed, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, lastError = "result_mismatch")
+            diagnostics.logRecipeAction(recipe, "bridge_result_mismatch", mapOf("requestId" to requestId))
             Toast.makeText(this, "执行结果不匹配，已记录运行报告", Toast.LENGTH_SHORT).show()
             showConsole()
             return
         }
 
-        val nextUrl = report?.openWebUrlIfFinished()
-        if (nextUrl != null) {
-            recipeStates[recipe.id] = RecipeRunState.Opened
-            openWeb(nextUrl, "recipe_card", recipe)
-            return
-        }
-
         if (report != null && (!report.ok || report.status == KiteRunReport.STATUS_FAILED)) {
-            recipeStates[recipe.id] = RecipeRunState.Stopped
-            diagnostics.logRecipeAction(recipe, "bridge_failed", mapOf("requestId" to report.requestId))
+            setRuntimeState(recipe, RecipeRunStatus.Failed, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, lastError = result.message)
+            diagnostics.logRecipeAction(recipe, "bridge_failed", mapOf("requestId" to requestId, "message" to result.message.take(500)))
             Toast.makeText(this, "执行失败，已记录运行报告", Toast.LENGTH_SHORT).show()
             showConsole()
             return
         }
 
         if (result.ok || result.accepted) {
-            recipeStates[recipe.id] = RecipeRunState.Opened
-            openWeb(result.nextActionUrl ?: recipe.openWebUrl(), "recipe_card", recipe)
+            setRuntimeState(recipe, successfulStatus(report, lastOutput), runId = runId, pid = pid, lastMeaningfulOutput = lastOutput)
+            showConsole()
             return
         }
 
-        recipeStates[recipe.id] = RecipeRunState.BridgeUnavailable
+        setRuntimeState(recipe, RecipeRunStatus.BridgeUnavailable, runId = runId, pid = pid, lastError = result.message)
         Toast.makeText(this, "桥接不可用，未执行命令", Toast.LENGTH_SHORT).show()
         showConsole()
+    }
+
+    private fun successfulStatus(report: KiteRunReport?, output: String?): RecipeRunStatus =
+        if (report?.status == KiteRunReport.STATUS_ALREADY_RUNNING || output.orEmpty().contains("already_running", true)) {
+            RecipeRunStatus.AlreadyRunning
+        } else if (report?.status == KiteRunReport.STATUS_RUNNING || report?.status == KiteRunReport.STATUS_ACCEPTED) {
+            RecipeRunStatus.Running
+        } else {
+            RecipeRunStatus.Opened
+        }
+
+    private fun extractPid(text: String?): String? {
+        val value = text ?: return null
+        val match = Regex("""pid\s*[:=]\s*(\d+)|pid\s+(\d+)""", RegexOption.IGNORE_CASE).find(value) ?: return null
+        return match.groupValues.drop(1).firstOrNull { it.isNotBlank() }
+    }
+
+    private fun runtimeStateFor(recipe: KiteRecipe): RecipeRuntimeState =
+        runtimeStates[recipe.id] ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, recipe.status).also {
+            runtimeStates[recipe.id] = it
+        }
+
+    private fun setRuntimeState(
+        recipe: KiteRecipe,
+        status: RecipeRunStatus,
+        runId: String? = null,
+        pid: String? = null,
+        lastMeaningfulOutput: String? = null,
+        lastError: String? = null,
+        nextActionUrl: String? = null
+    ) {
+        runtimeStates[recipe.id] = RecipeRuntimeState(
+            recipeId = recipe.id,
+            status = status,
+            runId = runId,
+            pid = pid,
+            lastMeaningfulOutput = lastMeaningfulOutput,
+            lastError = lastError,
+            nextActionUrl = nextActionUrl
+        )
+        diagnostics.logLifecycleEvent(recipe, status.lifecycleEvent, runId, pid, status.name, lastMeaningfulOutput, lastError)
     }
 
     private fun showCreateConfig() {
@@ -348,15 +462,17 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(8), 0, 0)
         }
-        addView(iconContainer)
+        addView(HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(iconContainer)
+        })
         renderIconOptions()
     }
 
     private fun renderIconOptions() {
         if (!::iconContainer.isInitialized) return
         iconContainer.removeAllViews()
-        val icons = listOf("web", "terminal", "bot", "file", "tools")
-        icons.forEach { iconName ->
+        listOf("web", "terminal", "bot", "file", "tools").forEach { iconName ->
             iconContainer.addView(iconChip(iconName, selectedIconName == iconName))
         }
     }
@@ -473,44 +589,33 @@ class MainActivity : Activity() {
 
     private fun sectionTitle(text: String): TextView = TextView(this).apply {
         this.text = text
-        textSize = 19f
+        textSize = 20f
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(TEXT_DARK)
-        setPadding(0, dp(22), 0, dp(14))
+        setPadding(0, dp(30), 0, dp(14))
     }
 
-    private fun optionCard(option: TypeOption, selected: Boolean, rightMargin: Boolean): View =
+    private fun optionCard(option: TypeOption, selected: Boolean, hasRightMargin: Boolean): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(6), dp(8), dp(6), dp(7))
-            background = roundedBox(
-                fill = Color.WHITE,
-                stroke = if (selected) PURPLE else BORDER,
-                radius = dp(18).toFloat(),
-                strokeWidth = if (selected) dp(2) else dp(1)
-            )
-            elevation = dp(1).toFloat()
-            layoutParams = LinearLayout.LayoutParams(0, dp(78), 1f).apply {
-                setMargins(0, dp(2), if (rightMargin) dp(8) else 0, dp(2))
+            setPadding(dp(10), dp(12), dp(10), dp(12))
+            background = roundedBox(Color.WHITE, if (selected) PURPLE else BORDER, dp(18).toFloat(), dp(if (selected) 2 else 1))
+            layoutParams = LinearLayout.LayoutParams(0, dp(98), 1f).apply {
+                if (hasRightMargin) setMargins(0, 0, dp(10), 0)
             }
             addView(TextView(context).apply {
                 text = iconGlyph(option.icon)
                 textSize = 20f
-                includeFontPadding = false
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(if (selected) PURPLE else TEXT_MUTED)
                 gravity = Gravity.CENTER
+                setTextColor(if (selected) PURPLE else TEXT_MUTED)
             })
             addView(TextView(context).apply {
                 text = option.label
-                textSize = 12f
-                includeFontPadding = false
-                setTextColor(if (selected) PURPLE else TEXT_DARK)
+                textSize = 13.5f
                 gravity = Gravity.CENTER
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(7), 0, 0)
+                setTextColor(if (selected) PURPLE else TEXT_DARK)
+                setPadding(0, dp(8), 0, 0)
             })
             setOnClickListener {
                 selectedType = option.type
@@ -518,26 +623,18 @@ class MainActivity : Activity() {
                 renderTypeOptions()
                 renderIconOptions()
                 if (::commandFieldContainer.isInitialized) {
-                    commandFieldContainer.visibility =
-                        if (selectedType == KiteRecipe.TYPE_COMMAND_WEB) View.VISIBLE else View.GONE
+                    commandFieldContainer.visibility = if (selectedType == KiteRecipe.TYPE_COMMAND_WEB) View.VISIBLE else View.GONE
                 }
             }
         }
 
-    private fun iconChip(iconName: String, selected: Boolean): View = TextView(this).apply {
+    private fun iconChip(iconName: String, selected: Boolean): TextView = TextView(this).apply {
         text = iconGlyph(iconName)
-        textSize = 17f
-        includeFontPadding = false
+        textSize = 15f
         gravity = Gravity.CENTER
-        typeface = Typeface.DEFAULT_BOLD
         setTextColor(if (selected) PURPLE else TEXT_MUTED)
-        background = roundedBox(
-            if (selected) Color.rgb(243, 239, 255) else Color.WHITE,
-            if (selected) PURPLE else BORDER,
-            dp(14).toFloat(),
-            if (selected) dp(2) else dp(1)
-        )
-        layoutParams = LinearLayout.LayoutParams(dp(42), dp(38)).apply { setMargins(0, 0, dp(8), 0) }
+        background = roundedBox(if (selected) Color.rgb(244, 240, 255) else Color.WHITE, if (selected) PURPLE else BORDER, dp(14).toFloat())
+        layoutParams = LinearLayout.LayoutParams(dp(44), dp(38)).apply { setMargins(0, 0, dp(8), 0) }
         setOnClickListener {
             selectedIconName = iconName
             renderIconOptions()
@@ -546,7 +643,7 @@ class MainActivity : Activity() {
 
     private fun labeledField(label: String, input: EditText): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, 0, 0, dp(20))
+        setPadding(0, 0, 0, dp(18))
         addView(TextView(context).apply {
             text = label
             textSize = 15f
@@ -687,18 +784,18 @@ class MainActivity : Activity() {
         "logs" -> "日"
         "tools" -> "⚙"
         "code" -> "{ }"
-        "server" -> "▶"
-        else -> "◆"
+        "server" -> "▷"
+        else -> "◎"
     }
 
-    private fun stateTag(state: RecipeRunState): TextView = TextView(this).apply {
-        text = state.label
+    private fun stateTag(state: RecipeRuntimeState): TextView = TextView(this).apply {
+        text = state.status.label
         textSize = 10.5f
         includeFontPadding = false
         typeface = Typeface.DEFAULT_BOLD
-        setTextColor(state.textColor)
+        setTextColor(state.status.textColor)
         setPadding(dp(7), dp(4), dp(7), dp(4))
-        background = roundedBox(state.bgColor, state.borderColor, dp(14).toFloat())
+        background = roundedBox(state.status.bgColor, state.status.borderColor, dp(14).toFloat())
     }
 
     private fun cardTitle(text: String): TextView = TextView(this).apply {
@@ -722,6 +819,16 @@ class MainActivity : Activity() {
         setPadding(0, dp(5), 0, 0)
     }
 
+    private fun failureSummary(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 10.5f
+        includeFontPadding = false
+        setTextColor(Color.rgb(185, 28, 28))
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        setPadding(0, 0, 0, dp(5))
+    }
+
     private fun urlPill(url: String, active: Boolean): TextView = TextView(this).apply {
         text = url
         textSize = 10.5f
@@ -739,17 +846,20 @@ class MainActivity : Activity() {
             .apply { setMargins(0, dp(6), 0, dp(7)) }
     }
 
-    private fun primaryAction(text: String, green: Boolean, onClick: () -> Unit): View = TextView(this).apply {
-        this.text = text
-        textSize = 11.5f
-        includeFontPadding = false
-        gravity = Gravity.CENTER
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(Color.WHITE)
-        background = roundedBox(if (green) STATUS_GREEN else BLUE, if (green) STATUS_GREEN else BLUE, dp(12).toFloat())
-        layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { setMargins(0, 0, dp(6), 0) }
-        setOnClickListener { onClick() }
-    }
+    private fun primaryAction(text: String, green: Boolean, disabled: Boolean = false, onClick: () -> Unit): View =
+        TextView(this).apply {
+            this.text = text
+            textSize = 11.5f
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            alpha = if (disabled) 0.62f else 1f
+            background = roundedBox(if (green) STATUS_GREEN else BLUE, if (green) STATUS_GREEN else BLUE, dp(12).toFloat())
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { setMargins(0, 0, dp(6), 0) }
+            isEnabled = !disabled
+            if (!disabled) setOnClickListener { onClick() }
+        }
 
     private fun editAction(onClick: () -> Unit): View = TextView(this).apply {
         text = "编辑"
@@ -804,9 +914,14 @@ class MainActivity : Activity() {
         else -> BLUE
     }
 
-    private fun primaryLabel(recipe: KiteRecipe): String = when (recipe.type) {
-        KiteRecipe.TYPE_OPEN_URL, KiteRecipe.TYPE_TEMPLATE -> "打开"
-        else -> "启动 / 打开"
+    private fun primaryLabel(recipe: KiteRecipe, state: RecipeRuntimeState): String = when (state.status) {
+        RecipeRunStatus.Starting -> "启动中"
+        RecipeRunStatus.Stopping -> "停止中"
+        RecipeRunStatus.Running, RecipeRunStatus.AlreadyRunning, RecipeRunStatus.Opened -> "停止"
+        RecipeRunStatus.Failed, RecipeRunStatus.BridgeUnavailable -> "重试"
+        RecipeRunStatus.Unknown, RecipeRunStatus.Stopped -> {
+            if (recipe.type == KiteRecipe.TYPE_OPEN_URL || recipe.type == KiteRecipe.TYPE_TEMPLATE) "打开" else "启动"
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -820,21 +935,56 @@ class MainActivity : Activity() {
         CreateConfig
     }
 
-    private enum class RecipeRunState(
+    private data class RecipeRuntimeState(
+        val recipeId: String,
+        val status: RecipeRunStatus,
+        val runId: String? = null,
+        val pid: String? = null,
+        val lastMeaningfulOutput: String? = null,
+        val lastError: String? = null,
+        val nextActionUrl: String? = null,
+        val updatedAt: Long = System.currentTimeMillis()
+    ) {
+        fun isBusy(): Boolean = status == RecipeRunStatus.Starting || status == RecipeRunStatus.Stopping
+        fun isActive(): Boolean = status in RecipeRunStatus.activeStatuses
+        fun hasRunBinding(): Boolean = !runId.isNullOrBlank() || !pid.isNullOrBlank()
+        fun failureSummary(): String? = when (status) {
+            RecipeRunStatus.Failed -> lastError ?: lastMeaningfulOutput
+            RecipeRunStatus.BridgeUnavailable -> lastError ?: "桥接不可用"
+            else -> null
+        }?.take(80)
+
+        companion object {
+            fun fromRecipeStatus(recipeId: String, status: String): RecipeRuntimeState =
+                RecipeRuntimeState(recipeId = recipeId, status = RecipeRunStatus.fromRecipeStatus(status))
+        }
+    }
+
+    private enum class RecipeRunStatus(
         val label: String,
         val textColor: Int,
         val bgColor: Int,
-        val borderColor: Int
+        val borderColor: Int,
+        val lifecycleEvent: String
     ) {
-        Unknown("未启动", Color.rgb(71, 85, 105), Color.rgb(248, 250, 252), BORDER),
-        Starting("启动中", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205)),
-        Opened("已打开", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205)),
-        Stopped("已停止", Color.rgb(71, 85, 105), Color.rgb(248, 250, 252), BORDER),
-        BridgeUnavailable("桥接不可用", Color.rgb(185, 28, 28), Color.rgb(254, 242, 242), Color.rgb(254, 202, 202));
+        Unknown("未启动", Color.rgb(71, 85, 105), Color.rgb(248, 250, 252), BORDER, "unknown"),
+        Stopped("未启动", Color.rgb(71, 85, 105), Color.rgb(248, 250, 252), BORDER, "stopped"),
+        Starting("启动中", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205), "starting"),
+        Running("运行中", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205), "running"),
+        AlreadyRunning("已运行", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205), "already_running"),
+        Opened("已打开", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205), "opened"),
+        Failed("启动失败", Color.rgb(185, 28, 28), Color.rgb(254, 242, 242), Color.rgb(254, 202, 202), "failed"),
+        Stopping("停止中", ORANGE, Color.rgb(255, 247, 237), Color.rgb(254, 215, 170), "stopping"),
+        BridgeUnavailable("桥接不可用", Color.rgb(185, 28, 28), Color.rgb(254, 242, 242), Color.rgb(254, 202, 202), "bridge_unavailable");
 
         companion object {
-            fun fromRecipeStatus(status: String): RecipeRunState = when (status) {
-                "opened", "running" -> Opened
+            val activeStatuses = setOf(Running, AlreadyRunning, Opened)
+
+            fun fromRecipeStatus(status: String): RecipeRunStatus = when (status) {
+                "opened" -> Opened
+                "running" -> Running
+                "already_running" -> AlreadyRunning
+                "failed" -> Failed
                 "stopped" -> Stopped
                 else -> Unknown
             }

@@ -57,6 +57,35 @@ class KiteBridgeClient(
         postJsonAsync("/run-command", payload, recipe, requestId, callback)
     }
 
+    fun stopRun(recipe: KiteRecipe, runId: String, callback: (BridgeResult) -> Unit) {
+        val requestId = newRequestId()
+        val payload = JSONObject()
+            .put("protocolVersion", KiteRecipe.PROTOCOL_VERSION)
+            .put("requestId", requestId)
+            .put("recipeId", recipe.id)
+            .put("runId", runId)
+        diagnostics.logBridgeEvent(
+            "stop_run_request_sent",
+            recipe,
+            mapOf("endpoint" to "$baseUrl/stop-run", "requestId" to requestId, "runId" to runId)
+        )
+        postJsonAsync("/stop-run", payload, recipe, requestId, callback)
+    }
+
+    fun stopRecipe(recipe: KiteRecipe, callback: (BridgeResult) -> Unit) {
+        val requestId = newRequestId()
+        val payload = JSONObject()
+            .put("protocolVersion", KiteRecipe.PROTOCOL_VERSION)
+            .put("requestId", requestId)
+            .put("recipeId", recipe.id)
+        diagnostics.logBridgeEvent(
+            "stop_recipe_request_sent",
+            recipe,
+            mapOf("endpoint" to "$baseUrl/stop-recipe", "requestId" to requestId)
+        )
+        postJsonAsync("/stop-recipe", payload, recipe, requestId, callback)
+    }
+
     fun checkStatus(callback: (BridgeResult) -> Unit) {
         thread(name = "KiteBridgeStatus", isDaemon = true) {
             runCatching {
@@ -121,6 +150,8 @@ class KiteBridgeClient(
                         accepted = report.status in setOf(
                             KiteRunReport.STATUS_ACCEPTED,
                             KiteRunReport.STATUS_RUNNING,
+                            KiteRunReport.STATUS_ALREADY_RUNNING,
+                            KiteRunReport.STATUS_STOPPED,
                             KiteRunReport.STATUS_FINISHED
                         ),
                         status = report.status,
@@ -154,6 +185,7 @@ class KiteBridgeClient(
                 details = mapOf(
                     "requestId" to result.requestId.orEmpty(),
                     "runId" to (result.runReport?.runId ?: ""),
+                    "pid" to (result.runReport?.pid ?: ""),
                     "status" to result.status,
                     "nextAction" to result.nextActionUrl.orEmpty(),
                     "message" to result.message.take(500)

@@ -69,6 +69,29 @@ class KiteDiagnostics(context: Context) {
         logRecipeEvent(action, recipe, details)
     }
 
+    fun logLifecycleEvent(
+        recipe: KiteRecipe?,
+        event: String,
+        runId: String? = null,
+        pid: String? = null,
+        status: String? = null,
+        lastMeaningfulOutput: String? = null,
+        lastError: String? = null
+    ) {
+        logRecipeEvent(
+            "recipe_lifecycle_event",
+            recipe,
+            mapOf(
+                "lifecycle" to event,
+                "runId" to runId.orEmpty(),
+                "pid" to pid.orEmpty(),
+                "status" to status.orEmpty(),
+                "lastMeaningfulOutput" to lastMeaningfulOutput.orEmpty().take(1000),
+                "lastError" to lastError.orEmpty().take(1000)
+            )
+        )
+    }
+
     fun logRecipeEvent(event: String, recipe: KiteRecipe?, details: Map<String, String> = emptyMap()) {
         recipeEventsLog.appendText(
             JSONObject()
@@ -117,6 +140,7 @@ class KiteDiagnostics(context: Context) {
             mapOf(
                 "requestId" to report.requestId,
                 "runId" to report.runId,
+                "pid" to report.pid.orEmpty(),
                 "status" to report.status,
                 "ok" to report.ok.toString(),
                 "steps" to report.steps.size.toString(),
