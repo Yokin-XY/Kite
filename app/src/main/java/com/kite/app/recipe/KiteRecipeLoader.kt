@@ -108,12 +108,12 @@ class KiteRecipeLoader(
         val defaultUrl = input.url.trim()
         val iconName = input.iconName.ifBlank { KiteRecipeIcon.defaultNameForType(input.type) }
         val steps = when (input.type) {
-            KiteRecipe.TYPE_COMMAND_WEB -> listOf(
+            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_START_SERVICE -> listOf(
                 KiteRecipeStep(
                     id = "step_start_$id",
                     type = KiteRecipe.STEP_SHELL,
                     cmd = input.command.trim(),
-                    runMode = KiteRecipe.RUN_MODE_WAIT,
+                    runMode = KiteRecipe.RUN_MODE_DETACHED,
                     outputPolicy = KiteOutputPolicy()
                 ),
                 KiteRecipeStep(id = "step_open_$id", type = KiteRecipe.STEP_OPEN_WEB, url = defaultUrl)

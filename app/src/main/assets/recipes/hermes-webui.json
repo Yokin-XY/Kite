@@ -23,7 +23,7 @@
         "id": "step_start_hermes",
         "type": "shell",
         "cmd": "hermes-web-ui start --port 8648",
-        "runMode": "wait",
+        "runMode": "detached",
         "expected": {
           "mode": "contains",
           "text": "ready",

@@ -440,7 +440,7 @@ class MainActivity : Activity() {
 
         addView(labeledField("名称", nameInput))
         commandFieldContainer = labeledField("命令", commandInput).apply {
-            visibility = if (selectedType == KiteRecipe.TYPE_COMMAND_WEB) View.VISIBLE else View.GONE
+            visibility = if (selectedType.requiresServiceCommand()) View.VISIBLE else View.GONE
         }
         addView(commandFieldContainer)
         addView(labeledField("地址", urlInput))
@@ -489,7 +489,7 @@ class MainActivity : Activity() {
             Toast.makeText(this, "请输入地址", Toast.LENGTH_SHORT).show()
             return
         }
-        if (selectedType == KiteRecipe.TYPE_COMMAND_WEB && command.isBlank()) {
+        if (selectedType.requiresServiceCommand() && command.isBlank()) {
             Toast.makeText(this, "请输入命令", Toast.LENGTH_SHORT).show()
             return
         }
@@ -623,7 +623,7 @@ class MainActivity : Activity() {
                 renderTypeOptions()
                 renderIconOptions()
                 if (::commandFieldContainer.isInitialized) {
-                    commandFieldContainer.visibility = if (selectedType == KiteRecipe.TYPE_COMMAND_WEB) View.VISIBLE else View.GONE
+                    commandFieldContainer.visibility = if (selectedType.requiresServiceCommand()) View.VISIBLE else View.GONE
                 }
             }
         }
@@ -990,6 +990,9 @@ class MainActivity : Activity() {
             }
         }
     }
+
+    private fun String.requiresServiceCommand(): Boolean =
+        this == KiteRecipe.TYPE_COMMAND_WEB || this == KiteRecipe.TYPE_START_SERVICE
 
     companion object {
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
