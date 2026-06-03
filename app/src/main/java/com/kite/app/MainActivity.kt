@@ -270,7 +270,7 @@ class MainActivity : Activity() {
 
     private fun consoleHeader(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(26), dp(24), dp(26), dp(12))
+        setPadding(dp(18), dp(24), dp(18), dp(12))
         addView(row {
             gravity = Gravity.CENTER_VERTICAL
             addView(LinearLayout(context).apply {
@@ -288,14 +288,18 @@ class MainActivity : Activity() {
                     setTextColor(tokens.textSecondary)
                 })
             })
-            addView(iconButton("⌕", dp(48), Color.TRANSPARENT, tokens.textPrimary, dp(18)) {
+            addView(iconButton("⌕", dp(62), Color.TRANSPARENT, tokens.textPrimary, dp(18)) {
                 Toast.makeText(context, "搜索稍后接入", Toast.LENGTH_SHORT).show()
             }.apply {
-                layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
-                    setMargins(0, 0, dp(12), 0)
+                layoutParams = LinearLayout.LayoutParams(dp(62), dp(62)).apply {
+                    setMargins(0, -dp(3), dp(8), 0)
                 }
             })
-            addView(iconButton("+", dp(58), tokens.primaryStrong, tokens.buttonText, dp(20)) { showCreateConfig() })
+            addView(iconButton("+", dp(50), tokens.primaryStrong, tokens.buttonText, dp(18)) { showCreateConfig() }.apply {
+                layoutParams = LinearLayout.LayoutParams(dp(50), dp(50)).apply {
+                    setMargins(0, -dp(6), 0, 0)
+                }
+            })
         })
 
         addView(HorizontalScrollView(context).apply {
@@ -1016,7 +1020,7 @@ class MainActivity : Activity() {
 
     private fun stepsPanel(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, dp(10), 0, dp(8))
+        setPadding(0, dp(12), 0, dp(12))
         addView(executionStepsEditor())
     }
 
@@ -1062,14 +1066,15 @@ class MainActivity : Activity() {
 
         addView(TextView(context).apply {
             text = "✎"
-            textSize = 10f
+            textSize = 16.5f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
+            includeFontPadding = false
             setTextColor(tokens.primaryStrong)
             background = roundedBox(tokens.surfaceElevated, Color.TRANSPARENT, dp(17).toFloat(), 0)
             elevation = dp(5).toFloat()
-        }, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.BOTTOM or Gravity.RIGHT).apply {
-            setMargins(0, 0, -dp(2), -dp(2))
+        }, FrameLayout.LayoutParams(dp(17), dp(17), Gravity.BOTTOM or Gravity.RIGHT).apply {
+            setMargins(0, 0, -dp(8), dp(9))
         })
 
         setOnClickListener {
@@ -1084,10 +1089,10 @@ class MainActivity : Activity() {
         val shell = draft.type == KiteRecipe.STEP_SHELL
         val color = if (shell) tokens.primaryStrong else tokens.success
         background = roundedBox(tintBackground(color), Color.TRANSPARENT, dp(11).toFloat(), 0)
-        layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
+        layoutParams = LinearLayout.LayoutParams(dp(38), dp(38))
         addView(TextView(context).apply {
             text = if (shell) ">_" else "◎"
-            textSize = if (shell) 13f else 13.5f
+            textSize = if (shell) 14f else 14.5f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(color)
@@ -1096,7 +1101,7 @@ class MainActivity : Activity() {
 
     private fun executionStepsEditor(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, 0, 0, dp(6))
+        setPadding(0, 0, 0, dp(9))
         stepsContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -1163,7 +1168,7 @@ class MainActivity : Activity() {
     }
 
     private fun emptyStepState(): View = View(this).apply {
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8))
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(14))
     }
 
     private fun addStepButton(): TextView = TextView(this).apply {
@@ -1172,9 +1177,9 @@ class MainActivity : Activity() {
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         setTextColor(tokens.primaryStrong)
-        background = dashedRoundedBox(tokens.surface, tokens.primaryStrong, dp(18).toFloat())
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
-            setMargins(0, dp(10), 0, dp(2))
+        background = dashedRoundedBox(tokens.surface, tokens.primaryStrong, dp(21).toFloat())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)).apply {
+            setMargins(0, dp(14), 0, dp(4))
         }
         setOnClickListener { showStepDialog() }
     }
@@ -1186,18 +1191,18 @@ class MainActivity : Activity() {
         setOnClickListener { showStepDialog(index, draft.copy()) }
 
         addView(row {
-            setPadding(0, dp(6), 0, dp(6))
+            setPadding(0, dp(10), 0, dp(10))
             addView(TextView(context).apply {
                 text = "${index + 1}"
                 textSize = 10f
                 setTextColor(tokens.textSecondary)
                 gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(dp(18), dp(32)).apply { setMargins(0, 0, dp(11), 0) }
+                layoutParams = LinearLayout.LayoutParams(dp(18), dp(38)).apply { setMargins(0, 0, dp(11), 0) }
             })
             addView(actionIconTile(draft))
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(11), 0, 0, 0)
+                setPadding(dp(11), dp(2), 0, 0)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 addView(TextView(context).apply {
                     text = stepTypeLabel(draft)
@@ -1219,7 +1224,7 @@ class MainActivity : Activity() {
                 textSize = 13.5f
                 setTextColor(tokens.textTertiary)
                 gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(dp(28), dp(32))
+                layoutParams = LinearLayout.LayoutParams(dp(28), dp(38))
             })
         })
         addView(divider().apply {
@@ -1991,9 +1996,14 @@ class MainActivity : Activity() {
     private fun iconButton(text: String, size: Int, fill: Int, textColor: Int, radius: Int, onClick: () -> Unit): TextView =
         TextView(this).apply {
             this.text = text
-            textSize = if (text == "+") 30f else 24f
+            textSize = when (text) {
+                "+" -> 38f
+                "⌕" -> 37f
+                else -> 24f
+            }
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
+            includeFontPadding = false
             setTextColor(textColor)
             background = roundedBox(fill, fill, radius.toFloat())
             if (fill != Color.TRANSPARENT) elevation = dp(4).toFloat()
