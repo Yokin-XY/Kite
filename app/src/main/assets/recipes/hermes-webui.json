@@ -11,7 +11,7 @@
     "name": "terminal"
   },
   "card": {
-    "accent": "green",
+    "accent": "primary",
     "status": "unknown"
   },
   "taskLabel": "Hermes",

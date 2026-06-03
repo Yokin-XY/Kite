@@ -137,11 +137,17 @@ object KiteTheme {
 
     fun accent(name: String?, tokens: ThemeTokens): KiteTone =
         when (name?.lowercase()) {
+            "primary", "theme", "workflow" -> KiteTone(
+                tokens.primaryStrong,
+                tokens.primarySoft,
+                tokens.primarySubtle,
+                tokens.primarySoft
+            )
             "green" -> KiteTone(tokens.success, tokens.successSoft, tokens.primarySubtle, tokens.successBorder)
             "purple" -> KiteTone(tokens.primaryStrong, tokens.primarySoft, tokens.primarySubtle, tokens.primarySoft)
             "orange" -> KiteTone(tokens.warning, tokens.warningSoft, tokens.warningSoft, tokens.warningBorder)
             "blue" -> KiteTone(tokens.info, tokens.infoSoft, tokens.infoSoft, tokens.infoBorder)
-            else -> KiteTone(tokens.info, tokens.infoSoft, tokens.infoSoft, tokens.infoBorder)
+            else -> KiteTone(tokens.primaryStrong, tokens.primarySoft, tokens.primarySubtle, tokens.primarySoft)
         }
 
     fun blend(foreground: Int, background: Int, amount: Float): Int {

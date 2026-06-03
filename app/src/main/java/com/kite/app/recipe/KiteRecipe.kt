@@ -228,7 +228,7 @@ data class KiteRecipeIcon(
 }
 
 data class KiteRecipeCard(
-    val accent: String = "blue",
+    val accent: String = "primary",
     val status: String = "unknown"
 ) {
     fun toJson(): JSONObject = JSONObject()
@@ -246,46 +246,27 @@ data class KiteRecipeCard(
             status = "unknown"
         )
 
-        fun defaultAccentForType(recipeType: String): String = when (recipeType) {
-            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_SCRIPT_WEB, KiteRecipe.TYPE_START_SERVICE -> "green"
-            KiteRecipe.TYPE_TEMPLATE -> "purple"
-            else -> "blue"
-        }
+        @Suppress("UNUSED_PARAMETER")
+        fun defaultAccentForType(recipeType: String): String = ACCENT_PRIMARY
 
-        fun defaultAccentForIcon(iconName: String, recipeType: String): String = when (KiteRecipeIcon.normalizeName(iconName, recipeType)) {
-            KiteRecipeIcon.ICON_TERMINAL,
-            KiteRecipeIcon.ICON_SERVER,
-            KiteRecipeIcon.ICON_CODE,
-            KiteRecipeIcon.ICON_BOT -> "green"
-            KiteRecipeIcon.ICON_LOGS,
-            KiteRecipeIcon.ICON_MUSIC,
-            KiteRecipeIcon.ICON_SHOPPING -> "orange"
-            KiteRecipeIcon.ICON_TOOLS,
-            KiteRecipeIcon.ICON_MORE,
-            KiteRecipeIcon.ICON_DEFAULT -> "purple"
-            KiteRecipeIcon.ICON_WEB,
-            KiteRecipeIcon.ICON_FILE -> "blue"
-            else -> defaultAccentForType(recipeType)
-        }
+        @Suppress("UNUSED_PARAMETER")
+        fun defaultAccentForIcon(iconName: String, recipeType: String): String = ACCENT_PRIMARY
 
         fun resolvedAccentFor(iconName: String, recipeType: String, storedAccent: String?): String {
             val recommended = defaultAccentForIcon(iconName, recipeType)
             val normalized = normalizeAccent(storedAccent)
             if (normalized.isBlank()) return recommended
-            if (isWorkflowRecipe(recipeType) && normalized in LEGACY_WORKFLOW_ACCENTS) return recommended
+            if (normalized in LEGACY_GENERATED_ACCENTS) return recommended
             return if (normalized in SUPPORTED_ACCENTS) normalized else recommended
         }
 
-        private val SUPPORTED_ACCENTS = setOf("green", "blue", "purple", "orange")
-        private val LEGACY_WORKFLOW_ACCENTS = setOf("blue", "teal", "cyan")
+        private const val ACCENT_PRIMARY = "primary"
+        private val SUPPORTED_ACCENTS = setOf(ACCENT_PRIMARY, "theme", "workflow", "green", "blue", "purple", "orange")
+        private val LEGACY_GENERATED_ACCENTS = setOf("green", "blue", "purple", "orange", "teal", "cyan")
 
         private fun normalizeAccent(accent: String?): String =
             accent?.trim()?.lowercase().orEmpty()
 
-        private fun isWorkflowRecipe(recipeType: String): Boolean =
-            recipeType == KiteRecipe.TYPE_COMMAND_WEB ||
-                recipeType == KiteRecipe.TYPE_SCRIPT_WEB ||
-                recipeType == KiteRecipe.TYPE_START_SERVICE
     }
 }
 
