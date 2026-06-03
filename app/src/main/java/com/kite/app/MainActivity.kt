@@ -467,7 +467,7 @@ class MainActivity : Activity() {
         currentRecipes.forEach { recipe ->
             grid.addView(recipeCard(recipe), GridLayout.LayoutParams().apply {
                 width = 0
-                height = dp(190)
+                height = dp(170)
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
                 setMargins(dp(6), dp(6), dp(6), dp(10))
             })
@@ -491,13 +491,8 @@ class MainActivity : Activity() {
             addView(stateTag(runtimeState))
         })
         addView(cardTitle(recipe.name))
-        addView(cardDescription(recipe.description.ifBlank { "打开本地工作台" }))
-        if (recipe.defaultUrl.isNotBlank()) {
-            addView(urlPill(recipe.defaultUrl, accentName))
-        }
-        runtimeState.feedbackSummary()?.let {
-            addView(runtimeFeedback(it, runtimeState.status == RecipeRunStatus.Failed || runtimeState.status == RecipeRunStatus.BridgeUnavailable))
-        }
+        addView(cardInfoSlot(recipe, runtimeState, accentName))
+        addView(View(context), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         addView(row {
             addView(primaryAction(primaryLabel(recipe, runtimeState), accentName, runtimeState.isBusy()) {
                 handleRecipeAction(recipe)
@@ -505,6 +500,22 @@ class MainActivity : Activity() {
             addView(editAction { showRecipeEditor(recipe) })
         })
     }
+
+    private fun cardInfoSlot(recipe: KiteRecipe, runtimeState: RecipeRuntimeState, accentName: String): View =
+        LinearLayout(this).apply {
+            val isProblem = runtimeState.status == RecipeRunStatus.Failed || runtimeState.status == RecipeRunStatus.BridgeUnavailable
+            val feedback = runtimeState.feedbackSummary()
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.BOTTOM or Gravity.START
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(32))
+                .apply { setMargins(0, dp(6), 0, dp(4)) }
+
+            when {
+                isProblem && !feedback.isNullOrBlank() -> addView(runtimeFeedback(feedback, true))
+                recipe.defaultUrl.isNotBlank() -> addView(urlPill(recipe.defaultUrl, accentName))
+                !feedback.isNullOrBlank() -> addView(runtimeFeedback(feedback, false))
+            }
+        }
 
     private fun handleRecipeAction(recipe: KiteRecipe) {
         val state = runtimeStateFor(recipe)
@@ -2036,17 +2047,17 @@ class MainActivity : Activity() {
     private fun stateTag(state: RecipeRuntimeState): TextView = TextView(this).apply {
         val colors = statusColors(state.status)
         text = state.status.label
-        textSize = 10.5f
+        textSize = 9.5f
         includeFontPadding = false
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(colors.text)
-        setPadding(dp(7), dp(4), dp(7), dp(4))
+        setPadding(dp(6), dp(3), dp(6), dp(3))
         background = roundedBox(colors.background, colors.border, dp(14).toFloat())
     }
 
     private fun cardTitle(text: String): TextView = TextView(this).apply {
         this.text = text
-        textSize = 16f
+        textSize = 15f
         includeFontPadding = false
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(tokens.textPrimary)
@@ -2082,13 +2093,13 @@ class MainActivity : Activity() {
         setTextColor(if (isError) tokens.danger else tokens.textSecondary)
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
-        setPadding(0, 0, 0, dp(5))
+        setPadding(0, 0, 0, 0)
     }
 
     private fun urlPill(url: String, accent: String): TextView = TextView(this).apply {
         val tone = KiteTheme.accent(accent, tokens)
         text = url
-        textSize = 10.5f
+        textSize = 10f
         includeFontPadding = false
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
@@ -2096,7 +2107,7 @@ class MainActivity : Activity() {
         setPadding(dp(7), dp(4), dp(7), dp(4))
         background = roundedBox(tone.soft, tone.border, dp(10).toFloat())
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            .apply { setMargins(0, dp(6), 0, dp(7)) }
+            .apply { setMargins(0, 0, 0, 0) }
     }
 
     private fun primaryAction(text: String, accent: String, disabled: Boolean = false, onClick: () -> Unit): View =
