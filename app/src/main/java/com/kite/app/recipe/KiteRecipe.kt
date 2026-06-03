@@ -82,7 +82,7 @@ data class KiteRecipe(
             val type = json.optString("type", TYPE_OPEN_URL)
             val execution = parseExecution(json)
             val icon = parseIcon(json, type)
-            val card = parseCard(json, type)
+            val card = parseCard(json, type, icon.name)
             return KiteRecipe(
                 schemaVersion = json.optInt("schemaVersion", PROTOCOL_VERSION),
                 id = json.getString("id"),
@@ -121,12 +121,12 @@ data class KiteRecipe(
             }
         }
 
-        private fun parseCard(json: JSONObject, type: String): KiteRecipeCard {
+        private fun parseCard(json: JSONObject, type: String, iconName: String): KiteRecipeCard {
             val cardJson = json.optJSONObject("card")
-            if (cardJson != null) return KiteRecipeCard.fromJson(cardJson, type)
+            if (cardJson != null) return KiteRecipeCard.fromJson(cardJson, type, iconName)
 
             return KiteRecipeCard(
-                accent = KiteRecipeCard.defaultAccentForType(type),
+                accent = KiteRecipeCard.resolvedAccentFor(iconName, type, json.optString("accent")),
                 status = json.optString("status", "unknown")
             )
         }
@@ -236,22 +236,56 @@ data class KiteRecipeCard(
         .put("status", status)
 
     companion object {
-        fun fromJson(json: JSONObject, recipeType: String): KiteRecipeCard = KiteRecipeCard(
-            accent = json.optString("accent").ifBlank { defaultAccentForType(recipeType) },
+        fun fromJson(json: JSONObject, recipeType: String, iconName: String): KiteRecipeCard = KiteRecipeCard(
+            accent = resolvedAccentFor(iconName, recipeType, json.optString("accent")),
             status = json.optString("status", "unknown")
         )
 
         fun defaultForType(recipeType: String): KiteRecipeCard = KiteRecipeCard(
-            accent = defaultAccentForType(recipeType),
+            accent = defaultAccentForIcon(KiteRecipeIcon.defaultNameForType(recipeType), recipeType),
             status = "unknown"
         )
 
         fun defaultAccentForType(recipeType: String): String = when (recipeType) {
-            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_SCRIPT_WEB -> "green"
-            KiteRecipe.TYPE_START_SERVICE -> "blue"
+            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_SCRIPT_WEB, KiteRecipe.TYPE_START_SERVICE -> "green"
             KiteRecipe.TYPE_TEMPLATE -> "purple"
             else -> "blue"
         }
+
+        fun defaultAccentForIcon(iconName: String, recipeType: String): String = when (KiteRecipeIcon.normalizeName(iconName, recipeType)) {
+            KiteRecipeIcon.ICON_TERMINAL,
+            KiteRecipeIcon.ICON_SERVER,
+            KiteRecipeIcon.ICON_CODE,
+            KiteRecipeIcon.ICON_BOT -> "green"
+            KiteRecipeIcon.ICON_LOGS,
+            KiteRecipeIcon.ICON_MUSIC,
+            KiteRecipeIcon.ICON_SHOPPING -> "orange"
+            KiteRecipeIcon.ICON_TOOLS,
+            KiteRecipeIcon.ICON_MORE,
+            KiteRecipeIcon.ICON_DEFAULT -> "purple"
+            KiteRecipeIcon.ICON_WEB,
+            KiteRecipeIcon.ICON_FILE -> "blue"
+            else -> defaultAccentForType(recipeType)
+        }
+
+        fun resolvedAccentFor(iconName: String, recipeType: String, storedAccent: String?): String {
+            val recommended = defaultAccentForIcon(iconName, recipeType)
+            val normalized = normalizeAccent(storedAccent)
+            if (normalized.isBlank()) return recommended
+            if (isWorkflowRecipe(recipeType) && normalized in LEGACY_WORKFLOW_ACCENTS) return recommended
+            return if (normalized in SUPPORTED_ACCENTS) normalized else recommended
+        }
+
+        private val SUPPORTED_ACCENTS = setOf("green", "blue", "purple", "orange")
+        private val LEGACY_WORKFLOW_ACCENTS = setOf("blue", "teal", "cyan")
+
+        private fun normalizeAccent(accent: String?): String =
+            accent?.trim()?.lowercase().orEmpty()
+
+        private fun isWorkflowRecipe(recipeType: String): Boolean =
+            recipeType == KiteRecipe.TYPE_COMMAND_WEB ||
+                recipeType == KiteRecipe.TYPE_SCRIPT_WEB ||
+                recipeType == KiteRecipe.TYPE_START_SERVICE
     }
 }
 

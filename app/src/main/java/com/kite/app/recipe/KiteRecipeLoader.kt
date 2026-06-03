@@ -3,6 +3,7 @@ package com.kite.app.recipe
 import android.content.Context
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.KiteDropZoneManager
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.text.Normalizer
@@ -83,42 +84,103 @@ class KiteRecipeLoader(
     private fun loadUserRecipes(): List<KiteRecipe> =
         userRecipeDir.listFiles { file -> file.isFile && file.extension.equals("json", ignoreCase = true) }
             .orEmpty()
-            .mapNotNull { file ->
-                runCatching {
-                    val recipe = KiteRecipe.fromJson(JSONObject(file.readText()), runtimeSource = KiteRecipe.SOURCE_USER)
-                    logRecipeLoaded(recipe)
-                    recipe
-                }.onFailure {
-                    diagnostics.logRecipeEvent(
-                        "recipe_load_error",
-                        null,
-                        mapOf("runtimeSource" to KiteRecipe.SOURCE_USER, "file" to file.name, "error" to it.message.orEmpty())
-                    )
-                }.getOrNull()
-            }
+            .mapNotNull { file -> loadRecipeFile(file, KiteRecipe.SOURCE_USER, canonicalize = true) }
 
     private fun loadImportedRecipes(): List<KiteRecipe> =
         importedRecipeDir.listFiles { file -> file.isFile && file.extension.equals("json", ignoreCase = true) }
             .orEmpty()
             .mapNotNull { file ->
-                runCatching {
+                val source = runCatching {
                     val json = JSONObject(file.readText())
-                    val source = if (json.has(KiteDropZoneManager.DROPZONE_METADATA)) {
-                        KiteRecipe.SOURCE_DROPZONE
-                    } else {
-                        KiteRecipe.SOURCE_IMPORTED
-                    }
-                    val recipe = KiteRecipe.fromJson(json, runtimeSource = source)
-                    logRecipeLoaded(recipe)
-                    recipe
-                }.onFailure {
-                    diagnostics.logRecipeEvent(
-                        "recipe_load_error",
-                        null,
-                        mapOf("runtimeSource" to KiteRecipe.SOURCE_IMPORTED, "file" to file.name, "error" to it.message.orEmpty())
-                    )
-                }.getOrNull()
+                    if (json.has(KiteDropZoneManager.DROPZONE_METADATA)) KiteRecipe.SOURCE_DROPZONE else KiteRecipe.SOURCE_IMPORTED
+                }.getOrDefault(KiteRecipe.SOURCE_IMPORTED)
+                loadRecipeFile(file, source, canonicalize = true)
             }
+
+    private fun loadRecipeFile(file: File, runtimeSource: String, canonicalize: Boolean): KiteRecipe? {
+        return runCatching {
+            val json = JSONObject(file.readText())
+            var recipe = KiteRecipe.fromJson(json, runtimeSource = runtimeSource)
+            if (canonicalize) {
+                recipe = canonicalizeRecipeFile(file, json, recipe)
+            }
+            logRecipeLoaded(recipe)
+            recipe
+        }.onFailure {
+            diagnostics.logRecipeEvent(
+                "recipe_load_error",
+                null,
+                mapOf("runtimeSource" to runtimeSource, "file" to file.name, "error" to it.message.orEmpty())
+            )
+        }.getOrNull()
+    }
+
+    private fun canonicalizeRecipeFile(file: File, originalJson: JSONObject, recipe: KiteRecipe): KiteRecipe {
+        if (!needsCanonicalization(originalJson, recipe)) return recipe
+        val canonicalRecipe = canonicalRecipeFor(recipe)
+
+        runCatching {
+            val canonicalJson = canonicalRecipe.toJson()
+            originalJson.optJSONObject(KiteDropZoneManager.DROPZONE_METADATA)?.let {
+                canonicalJson.put(KiteDropZoneManager.DROPZONE_METADATA, it)
+            }
+            file.writeText(canonicalJson.toString(2))
+            diagnostics.logRecipeEvent(
+                "recipe_canonicalized",
+                canonicalRecipe,
+                mapOf(
+                    "file" to file.name,
+                    "runtimeSource" to canonicalRecipe.runtimeSource,
+                    "reason" to canonicalizationReasons(originalJson, recipe).joinToString(",")
+                )
+            )
+        }.onFailure {
+            diagnostics.logRecipeEvent(
+                "recipe_canonicalize_failed",
+                recipe,
+                mapOf("file" to file.name, "error" to it.message.orEmpty())
+            )
+        }
+        return canonicalRecipe
+    }
+
+    private fun needsCanonicalization(json: JSONObject, recipe: KiteRecipe): Boolean =
+        canonicalizationReasons(json, recipe).isNotEmpty()
+
+    private fun canonicalizationReasons(json: JSONObject, recipe: KiteRecipe): List<String> = buildList {
+        if (json.optInt("schemaVersion", 0) != KiteRecipe.PROTOCOL_VERSION) add("schemaVersion")
+        if (!json.has("icon") || json.optJSONObject("icon") == null) add("icon")
+        if (!json.has("card") || json.optJSONObject("card") == null) add("card")
+        if (!json.has("execution") || json.optJSONObject("execution") == null) add("execution")
+        if (json.has("steps")) add("legacy_steps")
+        if (containsLegacyRunMode(json.optJSONObject("execution")?.optJSONArray("steps") ?: JSONArray())) {
+            add("legacy_runMode")
+        }
+        if (hasLegacyGeneratedAccent(recipe)) add("legacy_accent")
+    }
+
+    private fun canonicalRecipeFor(recipe: KiteRecipe): KiteRecipe {
+        val resolvedAccent = KiteRecipeCard.resolvedAccentFor(recipe.icon.name, recipe.type, recipe.card.accent)
+        if (recipe.card.accent == resolvedAccent) return recipe
+        return recipe.copy(
+            card = recipe.card.copy(
+                accent = resolvedAccent
+            )
+        )
+    }
+
+    private fun hasLegacyGeneratedAccent(recipe: KiteRecipe): Boolean =
+        recipe.card.accent != KiteRecipeCard.resolvedAccentFor(recipe.icon.name, recipe.type, recipe.card.accent)
+
+    private fun containsLegacyRunMode(steps: JSONArray): Boolean {
+        for (index in 0 until steps.length()) {
+            val step = steps.optJSONObject(index) ?: continue
+            if (step.has("wait")) return true
+            val runMode = step.optString("runMode")
+            if (runMode == KiteRecipe.RUN_MODE_WAIT || runMode == KiteRecipe.RUN_MODE_BACKGROUND) return true
+        }
+        return false
+    }
 
     private fun buildRecipe(input: NewRecipeInput): KiteRecipe {
         val now = Instant.now().toString()
@@ -132,6 +194,7 @@ class KiteRecipeLoader(
         }
         val inferredType = inferType(input.type, explicitSteps, defaultUrl)
         val iconName = input.iconName.ifBlank { KiteRecipeIcon.defaultNameForType(inferredType) }
+        val normalizedIcon = KiteRecipeIcon.normalizeName(iconName, inferredType)
         val steps = explicitSteps.ifEmpty { legacySteps(id, input, defaultUrl) }
         return KiteRecipe(
             schemaVersion = KiteRecipe.PROTOCOL_VERSION,
@@ -141,8 +204,8 @@ class KiteRecipeLoader(
             type = inferredType,
             defaultUrl = defaultUrl,
             shortcut = input.shortcut,
-            icon = KiteRecipeIcon(type = "builtin", name = KiteRecipeIcon.normalizeName(iconName, inferredType)),
-            card = KiteRecipeCard(accent = KiteRecipeCard.defaultAccentForType(inferredType), status = "unknown"),
+            icon = KiteRecipeIcon(type = "builtin", name = normalizedIcon),
+            card = KiteRecipeCard(accent = KiteRecipeCard.defaultAccentForIcon(normalizedIcon, inferredType), status = "unknown"),
             execution = KiteExecution.steps(steps),
             taskLabel = input.name.trim(),
             taskMode = "separate",

@@ -2,11 +2,14 @@ package com.kite.app
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.Manifest
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.text.Editable
@@ -20,6 +23,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
@@ -35,12 +39,16 @@ import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.DropZoneStatus
 import com.kite.app.dropzone.KiteDropZoneManager
 import com.kite.app.recipe.KiteRecipe
+import com.kite.app.recipe.KiteRecipeCard
 import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.recipe.KiteRunReport
 import com.kite.app.recipe.NewRecipeInput
 import com.kite.app.recipe.NewRecipeStepInput
+import com.kite.app.theme.KiteTheme
+import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeTokens
 import com.kite.app.web.KiteWebShell
 import java.net.HttpURLConnection
 import java.net.URL
@@ -53,6 +61,7 @@ class MainActivity : Activity() {
     private lateinit var bridgeClient: KiteBridgeClient
     private lateinit var webShell: KiteWebShell
     private lateinit var localServer: KiteLocalServer
+    private lateinit var themeStore: SharedPreferences
     private lateinit var root: LinearLayout
     private lateinit var webView: WebView
 
@@ -81,12 +90,18 @@ class MainActivity : Activity() {
     private var selectedRunMode = KiteRecipe.RUN_MODE_DETACHED
     private var editingRecipe: KiteRecipe? = null
     private var dropZoneStatus: DropZoneStatus = DropZoneStatus(available = false, message = "投放区尚未检查")
+    private var isDropZoneRefreshing = false
+    private var themeConfig = ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
+    private var tokens = KiteTheme.resolve(themeConfig)
     private val formSteps = mutableListOf<RecipeStepDraft>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         diagnostics = KiteDiagnostics(this)
         diagnostics.writeCapabilityReport()
+        themeStore = getSharedPreferences("kite_theme", MODE_PRIVATE)
+        themeConfig = loadThemeConfig()
+        tokens = KiteTheme.resolve(themeConfig)
         recipeLoader = KiteRecipeLoader(this, diagnostics)
         dropZoneManager = KiteDropZoneManager(this, diagnostics)
         dropZoneStatus = dropZoneManager.prepareDropZone()
@@ -98,7 +113,7 @@ class MainActivity : Activity() {
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(BG)
+            setBackgroundColor(tokens.pageBackground)
         }
         setContentView(root)
         showConsole()
@@ -114,7 +129,27 @@ class MainActivity : Activity() {
 
     @Deprecated("Use OnBackPressedDispatcher in a future AndroidX Activity migration.")
     override fun onBackPressed() {
-        if (currentScreen != Screen.Console) showConsole() else super.onBackPressed()
+        when (currentScreen) {
+            Screen.ThemeSettings -> showSettings()
+            Screen.Settings -> showConsole()
+            else -> if (currentScreen != Screen.Console) showConsole() else super.onBackPressed()
+        }
+    }
+
+    private fun loadThemeConfig(): ThemeConfig =
+        ThemeConfig(
+            themeColor = themeStore.getInt("theme_color", KiteTheme.defaultThemeColor),
+            backgroundColor = themeStore.getInt("background_color", KiteTheme.defaultBackgroundColor)
+        )
+
+    private fun saveThemeConfig(config: ThemeConfig) {
+        themeConfig = config
+        tokens = KiteTheme.resolve(config)
+        themeStore.edit()
+            .putInt("theme_color", config.themeColor)
+            .putInt("background_color", config.backgroundColor)
+            .apply()
+        if (::root.isInitialized) root.setBackgroundColor(tokens.pageBackground)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -133,9 +168,17 @@ class MainActivity : Activity() {
     }
 
     private fun refreshDropZoneRecipes() {
+        if (isDropZoneRefreshing) {
+            Toast.makeText(this, "正在刷新配置，请稍候", Toast.LENGTH_SHORT).show()
+            return
+        }
+        isDropZoneRefreshing = true
+        if (currentScreen == Screen.Console) showConsole()
+        Toast.makeText(this, "正在刷新 Kite 投放区", Toast.LENGTH_SHORT).show()
         thread {
             val result = dropZoneManager.scanAndImport()
             runOnUiThread {
+                isDropZoneRefreshing = false
                 Toast.makeText(this, result.message, Toast.LENGTH_SHORT).show()
                 showConsole()
             }
@@ -164,9 +207,64 @@ class MainActivity : Activity() {
         currentRecipes.forEach { recipe ->
             runtimeStates.putIfAbsent(recipe.id, RecipeRuntimeState.fromRecipeStatus(recipe.id, recipe.status))
         }
+        root.setBackgroundColor(tokens.pageBackground)
         root.removeAllViews()
         root.addView(consoleHeader())
         root.addView(recipeGrid(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(bottomNavigation())
+    }
+
+    private fun showSettings() {
+        currentScreen = Screen.Settings
+        root.setBackgroundColor(tokens.pageBackground)
+        root.removeAllViews()
+        root.addView(topBar("设置") { showConsole() })
+        root.addView(ScrollView(this).apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(22), dp(18), dp(22), dp(96))
+                addView(settingsRow("主题", "主题色、背景色和卡片色彩") { showThemeSettings() })
+                addView(settingsRow("投放区", dropZoneStatus.message) {
+                    if (dropZoneStatus.available) refreshDropZoneRecipes() else requestDropZoneAccess()
+                }.apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { setMargins(0, dp(12), 0, 0) }
+                })
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(bottomNavigation())
+    }
+
+    private fun showThemeSettings() {
+        currentScreen = Screen.ThemeSettings
+        root.setBackgroundColor(tokens.pageBackground)
+        root.removeAllViews()
+        root.addView(topBar("主题") { showSettings() })
+        root.addView(ScrollView(this).apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(22), dp(18), dp(22), dp(96))
+                addView(sectionTitle("主题色"))
+                addView(colorPresetRow(
+                    KiteTheme.themeColorChoices.map { it.label to it.color },
+                    themeConfig.themeColor
+                ) { color ->
+                    saveThemeConfig(themeConfig.copy(themeColor = color))
+                    showThemeSettings()
+                })
+                addView(sectionTitle("背景色").apply { setPadding(0, dp(24), 0, dp(16)) })
+                addView(colorPresetRow(
+                    KiteTheme.backgroundColorChoices.map { it.label to it.color },
+                    themeConfig.backgroundColor
+                ) { color ->
+                    saveThemeConfig(themeConfig.copy(backgroundColor = color))
+                    showThemeSettings()
+                })
+                addView(themePreviewCard())
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomNavigation())
     }
 
@@ -182,22 +280,22 @@ class MainActivity : Activity() {
                     text = "Kite"
                     textSize = 31f
                     typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(TEXT_DARK)
+                    setTextColor(tokens.textPrimary)
                 })
                 addView(TextView(context).apply {
                     text = "配置表控制台"
                     textSize = 14f
-                    setTextColor(TEXT_MUTED)
+                    setTextColor(tokens.textSecondary)
                 })
             })
-            addView(iconButton("⌕", dp(48), Color.TRANSPARENT, TEXT_DARK, dp(18)) {
+            addView(iconButton("⌕", dp(48), Color.TRANSPARENT, tokens.textPrimary, dp(18)) {
                 Toast.makeText(context, "搜索稍后接入", Toast.LENGTH_SHORT).show()
             }.apply {
                 layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
                     setMargins(0, 0, dp(12), 0)
                 }
             })
-            addView(iconButton("+", dp(58), PURPLE, Color.WHITE, dp(20)) { showCreateConfig() })
+            addView(iconButton("+", dp(58), tokens.primaryStrong, tokens.buttonText, dp(20)) { showCreateConfig() })
         })
 
         addView(HorizontalScrollView(context).apply {
@@ -225,12 +323,15 @@ class MainActivity : Activity() {
                 dropZoneStatus.message
             }
             textSize = 12f
-            setTextColor(if (dropZoneStatus.available) TEXT_MUTED else Color.rgb(185, 28, 28))
+            setTextColor(if (dropZoneStatus.available) tokens.textSecondary else tokens.danger)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
-        addView(dropZoneButton("刷新配置") { refreshDropZoneRecipes() })
+        addView(dropZoneButton(if (isDropZoneRefreshing) "刷新中..." else "刷新配置") { refreshDropZoneRecipes() }.apply {
+            isEnabled = !isDropZoneRefreshing
+            alpha = if (isDropZoneRefreshing) 0.62f else 1f
+        })
         if (!dropZoneStatus.available) {
             addView(dropZoneButton("授权") { requestDropZoneAccess() }.apply {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply {
@@ -238,6 +339,122 @@ class MainActivity : Activity() {
                 }
             })
         }
+    }
+
+    private fun settingsRow(title: String, subtitle: String, onClick: () -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(16), dp(16), dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
+            elevation = dp(1).toFloat()
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply {
+                    text = title
+                    textSize = 16f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                })
+                addView(TextView(context).apply {
+                    text = subtitle
+                    textSize = 12.5f
+                    setTextColor(tokens.textSecondary)
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(4), 0, 0)
+                })
+            })
+            addView(TextView(context).apply {
+                text = "›"
+                textSize = 24f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textTertiary)
+                layoutParams = LinearLayout.LayoutParams(dp(28), dp(42))
+            })
+            setOnClickListener { onClick() }
+        }
+
+    private fun colorPresetRow(
+        options: List<Pair<String, Int>>,
+        selectedColor: Int,
+        onSelect: (Int) -> Unit
+    ): View = HorizontalScrollView(this).apply {
+        isHorizontalScrollBarEnabled = false
+        addView(row {
+            options.forEach { (label, color) ->
+                addView(colorPresetChip(label, color, color == selectedColor) { onSelect(color) })
+            }
+        })
+    }
+
+    private fun colorPresetChip(label: String, color: Int, selected: Boolean, onClick: () -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, dp(12), 0)
+            background = roundedBox(
+                if (selected) tokens.primarySubtle else tokens.surface,
+                if (selected) tokens.primaryStrong else tokens.border,
+                dp(18).toFloat(),
+                dp(if (selected) 2 else 1)
+            )
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)).apply {
+                setMargins(0, 0, dp(10), 0)
+            }
+            addView(View(context).apply {
+                background = roundedBox(color, color, dp(9).toFloat())
+                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply {
+                    setMargins(0, 0, dp(8), 0)
+                }
+            })
+            addView(TextView(context).apply {
+                text = label
+                textSize = 12.5f
+                typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                setTextColor(if (selected) tokens.primaryText else tokens.textSecondary)
+            })
+            setOnClickListener { onClick() }
+        }
+
+    private fun themePreviewCard(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(18), dp(18), dp(18), dp(18))
+        background = roundedBox(tokens.cardBackground, tokens.border, dp(24).toFloat())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, dp(26), 0, 0)
+        }
+        addView(row {
+            addView(iconTile("terminal", tokens.primaryStrong, tokens.primarySoft))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), 0, 0, 0)
+                addView(TextView(context).apply {
+                    text = "主题预览"
+                    textSize = 16f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                })
+                addView(TextView(context).apply {
+                    text = "按钮、卡片和辅助信息会跟随这里的颜色。"
+                    textSize = 12f
+                    setTextColor(tokens.textSecondary)
+                    setPadding(0, dp(3), 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        })
+        addView(TextView(context).apply {
+            text = "启动 / 打开"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.buttonText)
+            background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(14).toFloat())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
+                setMargins(0, dp(16), 0, 0)
+            }
+        })
     }
 
     private fun recipeGrid(): View {
@@ -261,9 +478,10 @@ class MainActivity : Activity() {
 
     private fun recipeCard(recipe: KiteRecipe): View = LinearLayout(this).apply {
         val runtimeState = runtimeStateFor(recipe)
+        val accentName = displayAccentName(recipe)
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), dp(12), dp(12), dp(10))
-        background = roundedBox(Color.WHITE, BORDER, dp(24).toFloat())
+        background = roundedBox(tokens.cardBackground, tokens.border, dp(24).toFloat())
         elevation = dp(2).toFloat()
 
         addView(row {
@@ -275,13 +493,13 @@ class MainActivity : Activity() {
         addView(cardTitle(recipe.name))
         addView(cardDescription(recipe.description.ifBlank { "打开本地工作台" }))
         if (recipe.defaultUrl.isNotBlank()) {
-            addView(urlPill(recipe.defaultUrl, recipe.card.accent == "green"))
+            addView(urlPill(recipe.defaultUrl, accentName))
         }
         runtimeState.feedbackSummary()?.let {
             addView(runtimeFeedback(it, runtimeState.status == RecipeRunStatus.Failed || runtimeState.status == RecipeRunStatus.BridgeUnavailable))
         }
         addView(row {
-            addView(primaryAction(primaryLabel(recipe, runtimeState), recipe.card.accent == "green", runtimeState.isBusy()) {
+            addView(primaryAction(primaryLabel(recipe, runtimeState), accentName, runtimeState.isBusy()) {
                 handleRecipeAction(recipe)
             })
             addView(editAction { showRecipeEditor(recipe) })
@@ -686,8 +904,8 @@ class MainActivity : Activity() {
         currentScreen = Screen.CreateConfig
         editingRecipe = recipe
         formSteps.clear()
-        formSteps.addAll(recipe?.steps?.map { RecipeStepDraft.fromStep(it) } ?: listOf(RecipeStepDraft.openWeb()))
-        selectedType = inferTypeFromDrafts()
+        formSteps.addAll(recipe?.steps?.map { RecipeStepDraft.fromStep(it) } ?: emptyList())
+        selectedType = recipe?.let { inferTypeFromDrafts() } ?: KiteRecipe.TYPE_COMMAND_WEB
         selectedIconName = recipe?.icon?.name?.ifBlank { null } ?: KiteRecipeIcon.defaultNameForType(selectedType)
         selectedRunMode = recipe?.firstShellStep()?.runMode?.let { KiteRecipe.normalizeRunMode(it, null) } ?: defaultRunModeForType(selectedType)
         root.removeAllViews()
@@ -695,12 +913,23 @@ class MainActivity : Activity() {
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(24), dp(8), dp(24), dp(132))
-                addView(sectionTitle("1. 基础信息"))
-                addView(formPanel(recipe))
+        setPadding(dp(24), dp(30), dp(24), dp(92))
+                addView(formPanel())
+                addView(formDivider())
+                addView(sectionTitle("动作流程"))
+                addView(stepsPanel())
+                if (recipe != null) {
+                    addView(formDivider())
+                    addView(navigationRow("查看原始 JSON") { showRecipeRawJson(recipe) }.apply {
+                        setPadding(0, dp(16), 0, dp(8))
+                    })
+                    if (recipe.runtimeSource == KiteRecipe.SOURCE_USER) {
+                        addView(deleteRow(recipe))
+                    }
+                }
             })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(bottomActions())
+        prefillRecipeForm(recipe)
     }
 
     private fun renderTypeOptions() {
@@ -716,23 +945,50 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun formPanel(recipe: KiteRecipe?): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(24), dp(24), dp(24), dp(20))
-        background = roundedBox(Color.WHITE, BORDER, dp(28).toFloat())
-        elevation = dp(1).toFloat()
-
+    private fun formPanel(): View = row {
+        setPadding(0, dp(8), 0, dp(30))
+        gravity = Gravity.CENTER_VERTICAL
         nameInput = editInput("例如：Hermes WebUI")
         descriptionInput = editInput("例如：启动 Hermes 图形化工作台")
         urlInput = editInput("例如：http://127.0.0.1:8648")
         commandInput = editInput("例如：hermes-web-ui start --port 8648")
         workdirInput = editInput("例如：/workspace/hermes（可选）")
         expectedInput = editInput("例如：ready（可选）")
+        shortcutSwitch = Switch(context).apply { isChecked = false }
 
-        addView(labeledField("名称", nameInput))
-        addView(labeledField("描述", descriptionInput))
-        addView(iconChooser())
-        addView(executionStepsEditor())
+        addView(largeRecipeIconTile())
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(nameInput.apply {
+                hint = "Hermes 工作台"
+                textSize = 14.5f
+                includeFontPadding = false
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+                setHintTextColor(tokens.textTertiary)
+                setSingleLine(true)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 0, 0, 0)
+                background = null
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30))
+            })
+            addView(TextView(context).apply {
+                text = "点击图标可更换 ›"
+                textSize = 8.8f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(5), 0, 0)
+            })
+        })
+    }
+
+    private fun appearancePanel(recipe: KiteRecipe?): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(16), dp(14), dp(16), dp(10))
+        background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+        elevation = 0f
+
         addView(toggleRow())
         addView(divider())
         if (recipe != null) {
@@ -745,20 +1001,25 @@ class MainActivity : Activity() {
                 Toast.makeText(context, "高级设置后续开放", Toast.LENGTH_SHORT).show()
             })
         }
-        prefillRecipeForm(recipe)
+    }
+
+    private fun stepsPanel(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, dp(10), 0, dp(8))
+        addView(executionStepsEditor())
     }
 
     private fun iconChooser(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, 0, 0, dp(18))
+        setPadding(0, 0, 0, dp(9))
         addView(TextView(context).apply {
             text = "图标"
-            textSize = 15f
-            setTextColor(TEXT_DARK)
+            textSize = 13f
+            setTextColor(tokens.textPrimary)
         })
         iconContainer = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(8), 0, 0)
+            setPadding(0, dp(7), 0, 0)
         }
         addView(HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
@@ -775,34 +1036,106 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun largeRecipeIconTile(): View = FrameLayout(this).apply {
+        background = roundedBox(tokens.primarySubtle, Color.TRANSPARENT, dp(18).toFloat(), 0)
+        layoutParams = LinearLayout.LayoutParams(dp(58), dp(58))
+
+        val glyph = TextView(context).apply {
+            text = displayIconGlyph(selectedIconName)
+            textSize = 19.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.primaryStrong)
+        }
+        addView(glyph, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        addView(TextView(context).apply {
+            text = "✎"
+            textSize = 10f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.primaryStrong)
+            background = roundedBox(tokens.surfaceElevated, Color.TRANSPARENT, dp(17).toFloat(), 0)
+            elevation = dp(5).toFloat()
+        }, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.BOTTOM or Gravity.RIGHT).apply {
+            setMargins(0, 0, -dp(2), -dp(2))
+        })
+
+        setOnClickListener {
+            val names = listOf("terminal", "web", "bot", "file", "tools", "server", "code", "default")
+            val nextIndex = (names.indexOf(selectedIconName).takeIf { it >= 0 } ?: 0) + 1
+            selectedIconName = names[nextIndex % names.size]
+            glyph.text = displayIconGlyph(selectedIconName)
+        }
+    }
+
+    private fun actionIconTile(draft: RecipeStepDraft): View = FrameLayout(this).apply {
+        val shell = draft.type == KiteRecipe.STEP_SHELL
+        val color = if (shell) tokens.primaryStrong else tokens.success
+        background = roundedBox(tintBackground(color), Color.TRANSPARENT, dp(11).toFloat(), 0)
+        layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
+        addView(TextView(context).apply {
+            text = if (shell) ">_" else "◎"
+            textSize = if (shell) 13f else 13.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(color)
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
     private fun executionStepsEditor(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, 0, 0, dp(18))
-        addView(TextView(context).apply {
-            text = "执行步骤"
-            textSize = 15f
-            setTextColor(TEXT_DARK)
-        })
-        addView(TextView(context).apply {
-            text = "可添加多条命令，也可以添加打开网页步骤。Kite 只保存配置，命令交给 KF Bridge 执行。"
-            textSize = 12f
-            setTextColor(TEXT_MUTED)
-            setPadding(0, dp(6), 0, dp(10))
-        })
+        setPadding(0, 0, 0, dp(6))
         stepsContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
         addView(stepsContainer)
-        addView(row {
-            addView(secondaryStepButton("添加命令") {
-                formSteps.add(RecipeStepDraft.shell())
-                renderStepOptions()
-            })
-            addView(secondaryStepButton("添加打开网页") {
-                formSteps.add(RecipeStepDraft.openWeb())
-                renderStepOptions()
-            })
+        addView(addStepButton())
+        renderStepOptions()
+    }
+
+    private fun stepPresetRow(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(0, 0, 0, dp(8))
+        addView(stepPresetChip("打开网页") {
+            applyStepTemplate(KiteRecipe.TYPE_OPEN_URL)
         })
+        addView(stepPresetChip("命令 + 网页") {
+            applyStepTemplate(KiteRecipe.TYPE_COMMAND_WEB)
+        })
+        addView(stepPresetChip("启动服务") {
+            applyStepTemplate(KiteRecipe.TYPE_START_SERVICE)
+        })
+    }
+
+    private fun stepPresetChip(label: String, onClick: () -> Unit): TextView = TextView(this).apply {
+        text = label
+        textSize = 10.5f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextColor(tokens.primaryStrong)
+        setPadding(dp(9), 0, dp(9), 0)
+        background = roundedBox(tokens.primarySubtle, tokens.primarySoft, dp(14).toFloat())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
+            setMargins(0, 0, dp(7), 0)
+        }
+        setOnClickListener { onClick() }
+    }
+
+    private fun applyStepTemplate(type: String) {
+        formSteps.clear()
+        when (type) {
+            KiteRecipe.TYPE_COMMAND_WEB -> {
+                formSteps.add(RecipeStepDraft.shell())
+                formSteps.add(RecipeStepDraft.openWeb())
+            }
+            KiteRecipe.TYPE_START_SERVICE -> formSteps.add(RecipeStepDraft.shell())
+            else -> formSteps.add(RecipeStepDraft.openWeb())
+        }
+        selectedType = type
+        selectedRunMode = defaultRunModeForType(type)
+        selectedIconName = KiteRecipeIcon.defaultNameForType(type)
+        renderIconOptions()
         renderStepOptions()
     }
 
@@ -810,38 +1143,350 @@ class MainActivity : Activity() {
         if (!::stepsContainer.isInitialized) return
         stepsContainer.removeAllViews()
         if (formSteps.isEmpty()) {
-            stepsContainer.addView(TextView(this).apply {
-                text = "还没有步骤，请添加命令或打开网页。"
-                textSize = 13f
-                setTextColor(TEXT_MUTED)
-                setPadding(0, dp(8), 0, dp(12))
-            })
+            stepsContainer.addView(emptyStepState())
             return
         }
         formSteps.forEachIndexed { index, draft ->
-            stepsContainer.addView(stepEditorCard(index, draft))
+            stepsContainer.addView(stepSummaryCard(index, draft))
         }
     }
 
+    private fun emptyStepState(): View = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8))
+    }
+
+    private fun addStepButton(): TextView = TextView(this).apply {
+        text = "+  添加动作"
+        textSize = 11.5f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        setTextColor(tokens.primaryStrong)
+        background = dashedRoundedBox(tokens.surface, tokens.primaryStrong, dp(18).toFloat())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
+            setMargins(0, dp(10), 0, dp(2))
+        }
+        setOnClickListener { showStepDialog() }
+    }
+
+    private fun stepSummaryCard(index: Int, draft: RecipeStepDraft): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, 0, 0, 0)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        setOnClickListener { showStepDialog(index, draft.copy()) }
+
+        addView(row {
+            setPadding(0, dp(6), 0, dp(6))
+            addView(TextView(context).apply {
+                text = "${index + 1}"
+                textSize = 10f
+                setTextColor(tokens.textSecondary)
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(18), dp(32)).apply { setMargins(0, 0, dp(11), 0) }
+            })
+            addView(actionIconTile(draft))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(11), 0, 0, 0)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply {
+                    text = stepTypeLabel(draft)
+                    textSize = 11.8f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                })
+                addView(TextView(context).apply {
+                    text = stepSummaryText(draft)
+                    textSize = 10f
+                    setTextColor(tokens.textSecondary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(2), 0, 0)
+                })
+            })
+            addView(TextView(context).apply {
+                text = "☰"
+                textSize = 13.5f
+                setTextColor(tokens.textTertiary)
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(28), dp(32))
+            })
+        })
+        addView(divider().apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                setMargins(0, 0, 0, 0)
+            }
+        })
+    }
+
+    private fun stepTypeLabel(draft: RecipeStepDraft): String =
+        if (draft.type == KiteRecipe.STEP_SHELL) "运行命令" else "打开网页"
+
+    private fun stepSummaryText(draft: RecipeStepDraft): String =
+        if (draft.type == KiteRecipe.STEP_SHELL) {
+            draft.command.ifBlank { "未填写命令" }
+        } else {
+            draft.url.ifBlank { "未填写打开地址" }
+        }
+
+    private fun showStepDialog(editIndex: Int? = null, initial: RecipeStepDraft? = null) {
+        val dialog = Dialog(this)
+        val draft = initial ?: RecipeStepDraft.shell()
+        var selectedAction = if (draft.type == KiteRecipe.STEP_OPEN_WEB) KiteRecipe.STEP_OPEN_WEB else KiteRecipe.STEP_SHELL
+        var commandValue = draft.command
+        var urlValue = draft.url
+        var workdirValue = draft.workdir
+        var expectedValue = draft.expectedText
+        var runModeValue = draft.runMode.ifBlank { KiteRecipe.RUN_MODE_DETACHED }
+
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+        }
+        val tabRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(24), dp(22), dp(38))
+        }
+        val contentScroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            addView(content)
+        }
+
+        fun renderContent() {
+            renderStepDialogContent(content, selectedAction, commandValue, urlValue, workdirValue, expectedValue, runModeValue,
+                onCommand = { commandValue = it },
+                onUrl = { urlValue = it },
+                onWorkdir = { workdirValue = it },
+                onExpected = { expectedValue = it },
+                onRunMode = {
+                    runModeValue = it
+                    renderContent()
+                }
+            )
+        }
+
+        fun dialogTab(label: String, value: String): TextView = TextView(this).apply {
+            val selected = selectedAction == value
+            text = label
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(if (selected) tokens.primaryStrong else tokens.textSecondary)
+            background = roundedBox(if (selected) tokens.primarySubtle else Color.TRANSPARENT, Color.TRANSPARENT, dp(21).toFloat())
+            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f)
+            setOnClickListener {
+                selectedAction = value
+                renderDialogTabs(tabRow, ::dialogTab)
+                renderContent()
+            }
+        }
+
+        page.addView(row {
+            setPadding(dp(8), dp(14), dp(16), dp(10))
+            gravity = Gravity.CENTER_VERTICAL
+            addView(iconButton("‹", dp(38), Color.TRANSPARENT, tokens.primaryStrong, dp(15)) { dialog.dismiss() })
+            addView(TextView(context).apply {
+                text = if (editIndex == null) "添加动作" else "编辑动作"
+                textSize = 16f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textPrimary)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(context).apply {
+                text = if (editIndex == null) "添加" else "保存"
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.primaryStrong)
+                layoutParams = LinearLayout.LayoutParams(dp(54), dp(42))
+                setOnClickListener {
+                    if (selectedAction == "more") {
+                        Toast.makeText(context, "更多动作后续开放", Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
+                    }
+                    val next = if (selectedAction == KiteRecipe.STEP_SHELL) {
+                        if (commandValue.isBlank()) {
+                            Toast.makeText(context, "请填写命令", Toast.LENGTH_SHORT).show()
+                            return@setOnClickListener
+                        }
+                        RecipeStepDraft.shell().apply {
+                            command = commandValue.trim()
+                            workdir = workdirValue.trim()
+                            expectedText = expectedValue.trim()
+                            runMode = runModeValue
+                        }
+                    } else {
+                        if (urlValue.isBlank()) {
+                            Toast.makeText(context, "请填写网页地址", Toast.LENGTH_SHORT).show()
+                            return@setOnClickListener
+                        }
+                        RecipeStepDraft.openWeb().apply {
+                            url = urlValue.trim()
+                        }
+                    }
+                    if (editIndex == null) {
+                        formSteps.add(next)
+                    } else {
+                        formSteps[editIndex] = next
+                    }
+                    selectedType = inferTypeFromDrafts()
+                    renderStepOptions()
+                    dialog.dismiss()
+                }
+            })
+        })
+        page.addView(divider())
+        page.addView(contentScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        content.addView(TextView(this).apply {
+            text = "选择动作类型"
+            textSize = 12f
+            setTextColor(tokens.textPrimary)
+            setPadding(0, 0, 0, dp(12))
+        })
+        content.addView(tabRow.apply {
+            background = roundedBox(tokens.surface, tokens.border, dp(23).toFloat())
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
+                setMargins(0, 0, 0, dp(22))
+            }
+        })
+        content.addView(divider().apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                setMargins(0, 0, 0, dp(20))
+            }
+        })
+
+        renderDialogTabs(tabRow, ::dialogTab)
+        renderContent()
+        dialog.setContentView(page)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.WHITE))
+        dialog.show()
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    }
+
+    private fun renderDialogTabs(tabRow: LinearLayout, tabFactory: (String, String) -> TextView) {
+        tabRow.removeAllViews()
+        tabRow.addView(tabFactory(">_ 命令", KiteRecipe.STEP_SHELL))
+        tabRow.addView(tabFactory("◎ 网页", KiteRecipe.STEP_OPEN_WEB))
+        tabRow.addView(tabFactory("⋯ 更多", "more"))
+    }
+
+    private fun renderStepDialogContent(
+        container: LinearLayout,
+        selectedAction: String,
+        commandValue: String,
+        urlValue: String,
+        workdirValue: String,
+        expectedValue: String,
+        runModeValue: String,
+        onCommand: (String) -> Unit,
+        onUrl: (String) -> Unit,
+        onWorkdir: (String) -> Unit,
+        onExpected: (String) -> Unit,
+        onRunMode: (String) -> Unit
+    ) {
+        while (container.childCount > 3) {
+            container.removeViewAt(3)
+        }
+        when (selectedAction) {
+            KiteRecipe.STEP_SHELL -> {
+                container.addView(dialogInput("命令", "hermes-web-ui start --port 8648", commandValue, onCommand))
+                container.addView(dialogInput("执行位置（可选）", "/workspace/hermes", workdirValue, onWorkdir))
+                container.addView(dialogRunModeChooser(runModeValue, onRunMode))
+                container.addView(dialogInput("预期输出（可选）", "命令最后输出包含这段文字时，认为匹配成功", expectedValue, onExpected))
+            }
+            KiteRecipe.STEP_OPEN_WEB -> {
+                container.addView(dialogInput("网页地址", "http://127.0.0.1:8648", urlValue, onUrl))
+            }
+            else -> {
+                container.addView(TextView(this).apply {
+                    text = "更多动作会用于打开 App、文件投递、Android 原生动作等。"
+                    textSize = 15f
+                    setTextColor(tokens.textSecondary)
+                    setPadding(0, dp(12), 0, dp(10))
+                })
+            }
+        }
+    }
+
+    private fun dialogInput(label: String, hintText: String, value: String, onChanged: (String) -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(20))
+            addView(TextView(context).apply {
+                text = label
+                textSize = 12.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+                setPadding(0, 0, 0, dp(8))
+            })
+            addView(EditText(context).apply {
+                hint = hintText
+                setText(value)
+                textSize = 12.5f
+                setTextColor(tokens.textPrimary)
+                setHintTextColor(tokens.textTertiary)
+                setSingleLine(true)
+                setPadding(dp(12), 0, dp(12), 0)
+                background = roundedBox(tokens.inputBackground, tokens.border, dp(12).toFloat())
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44))
+                addTextChangedListener(simpleTextWatcher { onChanged(it) })
+            })
+        }
+
+    private fun dialogRunModeChooser(selectedRunMode: String, onRunMode: (String) -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(20))
+            addView(TextView(context).apply {
+                text = "运行方式"
+                textSize = 12.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+                setPadding(0, 0, 0, dp(8))
+            })
+            addView(row {
+                background = roundedBox(tokens.surface, tokens.border, dp(22).toFloat())
+                setPadding(dp(3), dp(3), dp(3), dp(3))
+                addView(dialogRunModeChip("等待结束", KiteRecipe.RUN_MODE_ATTACHED, selectedRunMode, onRunMode))
+                addView(dialogRunModeChip("后台运行", KiteRecipe.RUN_MODE_DETACHED, selectedRunMode, onRunMode))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+        }
+
+    private fun dialogRunModeChip(label: String, value: String, selectedRunMode: String, onRunMode: (String) -> Unit): TextView =
+        TextView(this).apply {
+            val selected = selectedRunMode == value
+            text = label
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(if (selected) tokens.primaryStrong else tokens.textPrimary)
+            background = roundedBox(if (selected) tokens.primarySubtle else Color.TRANSPARENT, Color.TRANSPARENT, dp(20).toFloat())
+            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f)
+            setOnClickListener { onRunMode(value) }
+        }
+
     private fun stepEditorCard(index: Int, draft: RecipeStepDraft): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(14), dp(12), dp(14), dp(12))
-        background = roundedBox(Color.rgb(249, 250, 252), BORDER, dp(16).toFloat())
+        setPadding(dp(10), dp(9), dp(10), dp(7))
+        background = roundedBox(tokens.surfaceElevated, tokens.border, dp(13).toFloat())
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            .apply { setMargins(0, 0, 0, dp(10)) }
+            .apply { setMargins(0, 0, 0, dp(7)) }
 
         addView(row {
             addView(TextView(context).apply {
                 text = if (draft.type == KiteRecipe.STEP_SHELL) "命令步骤 ${index + 1}" else "打开网页 ${index + 1}"
-                textSize = 14f
+                textSize = 12.5f
                 typeface = Typeface.DEFAULT_BOLD
-                setTextColor(TEXT_DARK)
+                setTextColor(tokens.textPrimary)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
             addView(TextView(context).apply {
                 text = "删除"
-                textSize = 13f
-                setTextColor(ORANGE)
+                textSize = 11.5f
+                setTextColor(tokens.warning)
                 setPadding(dp(10), dp(4), 0, dp(4))
                 setOnClickListener {
                     formSteps.removeAt(index)
@@ -863,16 +1508,16 @@ class MainActivity : Activity() {
     private fun stepInput(label: String, hintText: String, value: String, onChanged: (String) -> Unit): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(10), 0, 0)
+            setPadding(0, dp(6), 0, 0)
             addView(TextView(context).apply {
                 text = label
-                textSize = 12.5f
-                setTextColor(TEXT_MUTED)
+                textSize = 11f
+                setTextColor(tokens.textSecondary)
             })
             addView(editInput(hintText).apply {
                 setText(value)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
-                    setMargins(0, dp(6), 0, 0)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38)).apply {
+                    setMargins(0, dp(4), 0, 0)
                 }
                 addTextChangedListener(simpleTextWatcher { onChanged(it) })
             })
@@ -880,11 +1525,11 @@ class MainActivity : Activity() {
 
     private fun stepRunModeChooser(draft: RecipeStepDraft): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, dp(10), 0, 0)
+        setPadding(0, dp(6), 0, 0)
         addView(TextView(context).apply {
             text = "运行方式"
-            textSize = 12.5f
-            setTextColor(TEXT_MUTED)
+            textSize = 11f
+            setTextColor(tokens.textSecondary)
         })
         addView(row {
             addView(stepRunModeChip("等待结束", KiteRecipe.RUN_MODE_ATTACHED, draft))
@@ -896,11 +1541,11 @@ class MainActivity : Activity() {
         TextView(this).apply {
             val selected = draft.runMode == value
             text = label
-            textSize = 12f
+            textSize = 10.8f
             gravity = Gravity.CENTER
-            setTextColor(if (selected) Color.WHITE else TEXT_DARK)
-            background = roundedBox(if (selected) PURPLE else Color.WHITE, if (selected) PURPLE else BORDER, dp(14).toFloat())
-            layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f).apply { setMargins(0, dp(8), dp(8), 0) }
+            setTextColor(if (selected) tokens.buttonText else tokens.textPrimary)
+            background = roundedBox(if (selected) tokens.primaryStrong else tokens.surface, if (selected) tokens.primaryStrong else tokens.border, dp(14).toFloat())
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { setMargins(0, dp(5), dp(7), 0) }
             setOnClickListener {
                 draft.runMode = value
                 renderStepOptions()
@@ -910,11 +1555,11 @@ class MainActivity : Activity() {
     private fun secondaryStepButton(label: String, onClick: () -> Unit): TextView =
         TextView(this).apply {
             text = label
-            textSize = 14f
+            textSize = 11.5f
             gravity = Gravity.CENTER
-            setTextColor(PURPLE)
-            background = roundedBox(Color.WHITE, PURPLE, dp(16).toFloat())
-            layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(0, dp(8), dp(8), 0) }
+            setTextColor(tokens.primaryStrong)
+            background = roundedBox(tokens.surface, tokens.primarySoft, dp(13).toFloat())
+            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply { setMargins(0, dp(5), dp(7), 0) }
             setOnClickListener { onClick() }
         }
 
@@ -924,7 +1569,7 @@ class MainActivity : Activity() {
         addView(TextView(context).apply {
             text = "运行方式"
             textSize = 15f
-            setTextColor(TEXT_DARK)
+            setTextColor(tokens.textPrimary)
         })
         runModeContainer = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -945,8 +1590,8 @@ class MainActivity : Activity() {
         text = label
         textSize = 12.5f
         gravity = Gravity.CENTER
-        setTextColor(if (selected) Color.WHITE else TEXT_DARK)
-        background = roundedBox(if (selected) PURPLE else Color.WHITE, if (selected) PURPLE else BORDER, dp(16).toFloat())
+        setTextColor(if (selected) tokens.buttonText else tokens.textPrimary)
+        background = roundedBox(if (selected) tokens.primaryStrong else tokens.surface, if (selected) tokens.primaryStrong else tokens.border, dp(16).toFloat())
         layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f).apply { setMargins(0, 0, dp(8), 0) }
         setOnClickListener {
             selectedRunMode = value
@@ -957,7 +1602,8 @@ class MainActivity : Activity() {
     private fun prefillRecipeForm(recipe: KiteRecipe?) {
         val shellStep = recipe?.firstShellStep()
         val openUrl = recipe?.openWebUrl().orEmpty()
-        nameInput.setText(recipe?.name.orEmpty())
+        nameInput.setText(recipe?.name ?: "Hermes 工作台")
+        nameInput.setSelection(nameInput.text?.length ?: 0)
         descriptionInput.setText(recipe?.description.orEmpty())
         commandInput.setText(shellStep?.cmd.orEmpty())
         workdirInput.setText(shellStep?.workdir ?: recipe?.execution?.workdir.orEmpty())
@@ -992,28 +1638,27 @@ class MainActivity : Activity() {
     private fun saveRecipeForm() {
         val name = nameInput.text?.toString().orEmpty().trim()
         val description = descriptionInput.text?.toString().orEmpty().trim()
-        val normalizedSteps = formSteps.filter {
-            (it.type == KiteRecipe.STEP_SHELL && it.command.isNotBlank()) ||
-                (it.type == KiteRecipe.STEP_OPEN_WEB && it.url.isNotBlank())
-        }
-        val inferredType = inferTypeFromDrafts(normalizedSteps)
-        val defaultUrl = normalizedSteps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB }?.url.orEmpty()
         if (name.isBlank()) {
             Toast.makeText(this, "请输入名称", Toast.LENGTH_SHORT).show()
             return
         }
-        if (normalizedSteps.isEmpty()) {
+        if (formSteps.isEmpty()) {
             Toast.makeText(this, "请至少添加一个命令或打开网页步骤", Toast.LENGTH_SHORT).show()
             return
         }
-        if (normalizedSteps.any { it.type == KiteRecipe.STEP_OPEN_WEB && it.url.isBlank() }) {
-            Toast.makeText(this, "请填写打开网页地址", Toast.LENGTH_SHORT).show()
-            return
+        formSteps.forEachIndexed { index, step ->
+            if (step.type == KiteRecipe.STEP_OPEN_WEB && step.url.isBlank()) {
+                Toast.makeText(this, "第 ${index + 1} 个打开网页步骤缺少地址", Toast.LENGTH_SHORT).show()
+                return
+            }
+            if (step.type == KiteRecipe.STEP_SHELL && step.command.isBlank()) {
+                Toast.makeText(this, "第 ${index + 1} 个命令步骤缺少命令", Toast.LENGTH_SHORT).show()
+                return
+            }
         }
-        if (normalizedSteps.any { it.type == KiteRecipe.STEP_SHELL && it.command.isBlank() }) {
-            Toast.makeText(this, "请填写命令", Toast.LENGTH_SHORT).show()
-            return
-        }
+        val normalizedSteps = formSteps.toList()
+        val inferredType = inferTypeFromDrafts(normalizedSteps)
+        val defaultUrl = normalizedSteps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB }?.url.orEmpty()
 
         runCatching {
             recipeLoader.saveUserRecipe(
@@ -1046,7 +1691,7 @@ class MainActivity : Activity() {
             addView(TextView(context).apply {
                 text = recipe.toJson().toString(2)
                 textSize = 14f
-                setTextColor(TEXT_DARK)
+                setTextColor(tokens.textPrimary)
                 setPadding(dp(24), dp(20), dp(24), dp(28))
                 typeface = Typeface.MONOSPACE
             })
@@ -1074,6 +1719,7 @@ class MainActivity : Activity() {
 
     private fun showWorkbench(url: String, source: String, recipe: KiteRecipe?) {
         currentScreen = Screen.Workbench
+        root.setBackgroundColor(tokens.pageBackground)
         root.removeAllViews()
         root.addView(topBar("Kite 工作台") { showConsole() })
         val parent = webView.parent
@@ -1083,29 +1729,37 @@ class MainActivity : Activity() {
     }
 
     private fun createTopBar(title: String): View = row {
-        setPadding(dp(24), dp(22), dp(24), dp(14))
+        setPadding(0, dp(18), dp(22), dp(10))
         gravity = Gravity.CENTER_VERTICAL
-        addView(iconButton("‹", dp(44), Color.TRANSPARENT, TEXT_DARK, dp(16)) { showConsole() })
+        addView(iconButton("‹", dp(40), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { showConsole() })
         addView(TextView(context).apply {
             text = title
-            textSize = 25f
+            textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(TEXT_DARK)
+            setTextColor(tokens.textPrimary)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
-        addView(iconButton("✓", dp(44), Color.TRANSPARENT, PURPLE, dp(16)) { saveRecipeForm() })
+        addView(TextView(context).apply {
+            text = "保存"
+            textSize = 17f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.primaryStrong)
+            layoutParams = LinearLayout.LayoutParams(dp(54), dp(42))
+            setOnClickListener { saveRecipeForm() }
+        })
     }
 
     private fun topBar(title: String, onBack: () -> Unit): View = row {
         setPadding(dp(18), dp(14), dp(18), dp(10))
         gravity = Gravity.CENTER_VERTICAL
-        addView(iconButton("‹", dp(44), Color.TRANSPARENT, TEXT_DARK, dp(16)) { onBack() })
+        addView(iconButton("‹", dp(44), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { onBack() })
         addView(TextView(context).apply {
             text = title
             textSize = 22f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(TEXT_DARK)
+            setTextColor(tokens.textPrimary)
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
@@ -1114,10 +1768,10 @@ class MainActivity : Activity() {
 
     private fun sectionTitle(text: String): TextView = TextView(this).apply {
         this.text = text
-        textSize = 20f
+        textSize = 13.5f
         typeface = Typeface.DEFAULT_BOLD
-        setTextColor(TEXT_DARK)
-        setPadding(0, dp(30), 0, dp(14))
+        setTextColor(tokens.textPrimary)
+        setPadding(0, 0, 0, dp(12))
     }
 
     private fun optionCard(option: TypeOption, selected: Boolean, hasRightMargin: Boolean): View =
@@ -1125,7 +1779,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(10), dp(12), dp(10), dp(12))
-            background = roundedBox(Color.WHITE, if (selected) PURPLE else BORDER, dp(18).toFloat(), dp(if (selected) 2 else 1))
+            background = roundedBox(tokens.surface, if (selected) tokens.primaryStrong else tokens.border, dp(18).toFloat(), dp(if (selected) 2 else 1))
             layoutParams = LinearLayout.LayoutParams(0, dp(98), 1f).apply {
                 if (hasRightMargin) setMargins(0, 0, dp(10), 0)
             }
@@ -1133,13 +1787,13 @@ class MainActivity : Activity() {
                 text = iconGlyph(option.icon)
                 textSize = 20f
                 gravity = Gravity.CENTER
-                setTextColor(if (selected) PURPLE else TEXT_MUTED)
+                setTextColor(if (selected) tokens.primaryStrong else tokens.textSecondary)
             })
             addView(TextView(context).apply {
                 text = option.label
                 textSize = 13.5f
                 gravity = Gravity.CENTER
-                setTextColor(if (selected) PURPLE else TEXT_DARK)
+                setTextColor(if (selected) tokens.primaryStrong else tokens.textPrimary)
                 setPadding(0, dp(8), 0, 0)
             })
             setOnClickListener {
@@ -1157,10 +1811,14 @@ class MainActivity : Activity() {
         text = iconGlyph(iconName)
         textSize = 15f
         gravity = Gravity.CENTER
-        setTextColor(if (selected) PURPLE else TEXT_MUTED)
-        background = roundedBox(if (selected) Color.rgb(244, 240, 255) else Color.WHITE, if (selected) PURPLE else BORDER, dp(14).toFloat())
+        setTextColor(if (selected) tokens.primaryStrong else tokens.textSecondary)
+        background = roundedBox(if (selected) tokens.primarySubtle else tokens.surface, if (selected) tokens.primaryStrong else tokens.border, dp(14).toFloat())
         layoutParams = LinearLayout.LayoutParams(dp(44), dp(38)).apply { setMargins(0, 0, dp(8), 0) }
         setOnClickListener {
+            if (iconName == "more") {
+                Toast.makeText(context, "自定义图标后续开放", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             selectedIconName = iconName
             renderIconOptions()
         }
@@ -1168,25 +1826,25 @@ class MainActivity : Activity() {
 
     private fun labeledField(label: String, input: EditText): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, 0, 0, dp(18))
+        setPadding(0, 0, 0, dp(8))
         addView(TextView(context).apply {
             text = label
-            textSize = 15f
-            setTextColor(TEXT_DARK)
+            textSize = 13f
+            setTextColor(tokens.textPrimary)
         })
         addView(input)
     }
 
     private fun editInput(hintText: String): EditText = EditText(this).apply {
         hint = hintText
-        textSize = 16f
+        textSize = 13.5f
         setSingleLine(true)
-        setTextColor(TEXT_DARK)
-        setHintTextColor(Color.rgb(148, 163, 184))
-        setPadding(dp(14), 0, dp(14), 0)
-        background = roundedBox(Color.WHITE, BORDER, dp(16).toFloat())
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58)).apply {
-            setMargins(0, dp(8), 0, 0)
+        setTextColor(tokens.textPrimary)
+        setHintTextColor(tokens.textTertiary)
+        setPadding(dp(11), 0, dp(11), 0)
+        background = roundedBox(tokens.inputBackground, tokens.border, dp(12).toFloat())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
+            setMargins(0, dp(5), 0, 0)
         }
     }
 
@@ -1200,11 +1858,11 @@ class MainActivity : Activity() {
         }
 
     private fun toggleRow(): View = row {
-        setPadding(0, dp(10), 0, dp(16))
+        setPadding(0, dp(3), 0, dp(8))
         addView(TextView(context).apply {
             text = "创建快捷方式到桌面"
-            textSize = 16f
-            setTextColor(TEXT_DARK)
+            textSize = 13f
+            setTextColor(tokens.textPrimary)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         shortcutSwitch = Switch(context).apply { isChecked = false }
@@ -1212,27 +1870,27 @@ class MainActivity : Activity() {
     }
 
     private fun navigationRow(label: String, onClick: (() -> Unit)? = null): View = row {
-        setPadding(0, dp(20), 0, 0)
+        setPadding(0, dp(10), 0, 0)
         addView(TextView(context).apply {
             text = label
-            textSize = 16f
-            setTextColor(TEXT_DARK)
+            textSize = 13f
+            setTextColor(tokens.textPrimary)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         addView(TextView(context).apply {
             text = "›"
-            textSize = 28f
-            setTextColor(TEXT_MUTED)
+            textSize = 24f
+            setTextColor(tokens.textSecondary)
         })
         if (onClick != null) setOnClickListener { onClick() }
     }
 
     private fun deleteRow(recipe: KiteRecipe): View = row {
-        setPadding(0, dp(18), 0, 0)
+        setPadding(0, dp(10), 0, 0)
         addView(TextView(context).apply {
             text = "删除配置"
-            textSize = 16f
-            setTextColor(Color.rgb(185, 28, 28))
+            textSize = 13f
+            setTextColor(tokens.danger)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         setOnClickListener { confirmDeleteRecipe(recipe) }
@@ -1260,39 +1918,40 @@ class MainActivity : Activity() {
     }
 
     private fun bottomActions(): View = row {
-        setPadding(dp(24), dp(16), dp(24), dp(24))
+        setPadding(dp(22), dp(5), dp(22), dp(7))
         setBackgroundColor(Color.WHITE)
+        addView(View(context), LinearLayout.LayoutParams(0, dp(1), 1f))
         addView(TextView(context).apply {
             text = "取消"
-            textSize = 18f
+            textSize = 12.5f
             gravity = Gravity.CENTER
-            setTextColor(TEXT_DARK)
-            background = roundedBox(Color.rgb(241, 245, 249), Color.rgb(241, 245, 249), dp(19).toFloat())
-            layoutParams = LinearLayout.LayoutParams(0, dp(62), 0.9f).apply { setMargins(0, 0, dp(18), 0) }
+            setTextColor(tokens.textPrimary)
+            background = roundedBox(tokens.surfaceElevated, tokens.surfaceElevated, dp(11).toFloat())
+            layoutParams = LinearLayout.LayoutParams(dp(86), dp(32)).apply { setMargins(0, 0, dp(10), 0) }
             setOnClickListener { showConsole() }
         })
         addView(TextView(context).apply {
             text = "保存"
-            textSize = 18f
+            textSize = 12.5f
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            background = roundedBox(PURPLE, PURPLE, dp(19).toFloat())
-            layoutParams = LinearLayout.LayoutParams(0, dp(62), 1.1f)
+            setTextColor(tokens.buttonText)
+            background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(11).toFloat())
+            layoutParams = LinearLayout.LayoutParams(dp(116), dp(32))
             setOnClickListener { saveRecipeForm() }
         })
     }
 
     private fun bottomNavigation(): View = row {
         setPadding(dp(16), dp(8), dp(16), dp(8))
-        setBackgroundColor(Color.WHITE)
-        addView(navItem("▦", "配置", true))
-        addView(navItem("▤", "模板", false))
-        addView(navItem("⌁", "活动", false))
-        addView(navItem("⚙", "设置", false))
+        setBackgroundColor(tokens.surfaceElevated)
+        addView(navItem("▦", "配置", currentScreen == Screen.Console) { showConsole() })
+        addView(navItem("▤", "模板", false) { Toast.makeText(this@MainActivity, "模板后续开放", Toast.LENGTH_SHORT).show() })
+        addView(navItem("⌁", "活动", false) { Toast.makeText(this@MainActivity, "活动后续开放", Toast.LENGTH_SHORT).show() })
+        addView(navItem("⚙", "设置", currentScreen == Screen.Settings || currentScreen == Screen.ThemeSettings) { showSettings() })
     }
 
-    private fun navItem(icon: String, label: String, selected: Boolean): View = LinearLayout(this).apply {
+    private fun navItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
         layoutParams = LinearLayout.LayoutParams(0, dp(58), 1f)
@@ -1300,15 +1959,16 @@ class MainActivity : Activity() {
             text = icon
             textSize = 20f
             gravity = Gravity.CENTER
-            setTextColor(if (selected) PURPLE else TEXT_MUTED)
+            setTextColor(if (selected) tokens.primaryStrong else tokens.textSecondary)
         })
         addView(TextView(context).apply {
             text = label
             textSize = 11f
             gravity = Gravity.CENTER
             typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            setTextColor(if (selected) PURPLE else TEXT_MUTED)
+            setTextColor(if (selected) tokens.primaryStrong else tokens.textSecondary)
         })
+        setOnClickListener { onClick() }
     }
 
     private fun row(content: LinearLayout.() -> Unit): LinearLayout = LinearLayout(this).apply {
@@ -1320,7 +1980,7 @@ class MainActivity : Activity() {
     private fun iconButton(text: String, size: Int, fill: Int, textColor: Int, radius: Int, onClick: () -> Unit): TextView =
         TextView(this).apply {
             this.text = text
-            textSize = if (text == "+") 30f else 28f
+            textSize = if (text == "+") 30f else 24f
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(textColor)
@@ -1356,14 +2016,32 @@ class MainActivity : Activity() {
         else -> "◎"
     }
 
+    private fun displayIconGlyph(iconName: String): String = when (iconName) {
+        "terminal", "code", "server" -> "▣"
+        else -> iconGlyph(iconName)
+    }
+
+    private fun statusColors(status: RecipeRunStatus): SemanticColors = when (status) {
+        RecipeRunStatus.Starting,
+        RecipeRunStatus.Running,
+        RecipeRunStatus.AlreadyRunning,
+        RecipeRunStatus.Opened -> SemanticColors(tokens.success, tokens.successSoft, tokens.successBorder)
+        RecipeRunStatus.Stopping -> SemanticColors(tokens.warning, tokens.warningSoft, tokens.warningBorder)
+        RecipeRunStatus.Failed,
+        RecipeRunStatus.BridgeUnavailable -> SemanticColors(tokens.danger, tokens.dangerSoft, tokens.dangerBorder)
+        RecipeRunStatus.Unknown,
+        RecipeRunStatus.Stopped -> SemanticColors(tokens.textSecondary, tokens.surface, tokens.border)
+    }
+
     private fun stateTag(state: RecipeRuntimeState): TextView = TextView(this).apply {
+        val colors = statusColors(state.status)
         text = state.status.label
         textSize = 10.5f
         includeFontPadding = false
         typeface = Typeface.DEFAULT_BOLD
-        setTextColor(state.status.textColor)
+        setTextColor(colors.text)
         setPadding(dp(7), dp(4), dp(7), dp(4))
-        background = roundedBox(state.status.bgColor, state.status.borderColor, dp(14).toFloat())
+        background = roundedBox(colors.background, colors.border, dp(14).toFloat())
     }
 
     private fun cardTitle(text: String): TextView = TextView(this).apply {
@@ -1371,7 +2049,7 @@ class MainActivity : Activity() {
         textSize = 16f
         includeFontPadding = false
         typeface = Typeface.DEFAULT_BOLD
-        setTextColor(TEXT_DARK)
+        setTextColor(tokens.textPrimary)
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         setPadding(0, dp(8), 0, 0)
@@ -1381,7 +2059,7 @@ class MainActivity : Activity() {
         this.text = text
         textSize = 11.5f
         includeFontPadding = false
-        setTextColor(TEXT_MUTED)
+        setTextColor(tokens.textSecondary)
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         setPadding(0, dp(5), 0, 0)
@@ -1391,7 +2069,7 @@ class MainActivity : Activity() {
         this.text = text
         textSize = 10.5f
         includeFontPadding = false
-        setTextColor(Color.rgb(185, 28, 28))
+        setTextColor(tokens.danger)
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         setPadding(0, 0, 0, dp(5))
@@ -1401,39 +2079,37 @@ class MainActivity : Activity() {
         this.text = text
         textSize = 10.5f
         includeFontPadding = false
-        setTextColor(if (isError) Color.rgb(185, 28, 28) else TEXT_MUTED)
+        setTextColor(if (isError) tokens.danger else tokens.textSecondary)
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
         setPadding(0, 0, 0, dp(5))
     }
 
-    private fun urlPill(url: String, active: Boolean): TextView = TextView(this).apply {
+    private fun urlPill(url: String, accent: String): TextView = TextView(this).apply {
+        val tone = KiteTheme.accent(accent, tokens)
         text = url
         textSize = 10.5f
         includeFontPadding = false
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
-        setTextColor(if (active) STATUS_GREEN else BLUE)
+        setTextColor(tone.strong)
         setPadding(dp(7), dp(4), dp(7), dp(4))
-        background = roundedBox(
-            if (active) Color.rgb(232, 248, 238) else Color.rgb(239, 246, 255),
-            if (active) Color.rgb(190, 234, 205) else Color.rgb(191, 219, 254),
-            dp(10).toFloat()
-        )
+        background = roundedBox(tone.soft, tone.border, dp(10).toFloat())
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             .apply { setMargins(0, dp(6), 0, dp(7)) }
     }
 
-    private fun primaryAction(text: String, green: Boolean, disabled: Boolean = false, onClick: () -> Unit): View =
+    private fun primaryAction(text: String, accent: String, disabled: Boolean = false, onClick: () -> Unit): View =
         TextView(this).apply {
             this.text = text
             textSize = 11.5f
             includeFontPadding = false
             gravity = Gravity.CENTER
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
+            setTextColor(tokens.buttonText)
             alpha = if (disabled) 0.62f else 1f
-            background = roundedBox(if (green) STATUS_GREEN else BLUE, if (green) STATUS_GREEN else BLUE, dp(12).toFloat())
+            val fill = KiteTheme.accent(accent, tokens).strong
+            background = roundedBox(fill, fill, dp(12).toFloat())
             layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { setMargins(0, 0, dp(6), 0) }
             isEnabled = !disabled
             if (!disabled) setOnClickListener { onClick() }
@@ -1444,21 +2120,21 @@ class MainActivity : Activity() {
         textSize = 11.5f
         includeFontPadding = false
         gravity = Gravity.CENTER
-        setTextColor(TEXT_DARK)
-        background = roundedBox(Color.WHITE, BORDER, dp(12).toFloat())
+        setTextColor(tokens.textPrimary)
+        background = roundedBox(tokens.surface, tokens.border, dp(12).toFloat())
         layoutParams = LinearLayout.LayoutParams(dp(38), dp(30))
         setOnClickListener { onClick() }
     }
 
     private fun chip(text: String, selected: Boolean): TextView = TextView(this).apply {
         this.text = text
-        textSize = 14f
+        textSize = 13f
         typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-        setTextColor(if (selected) Color.WHITE else TEXT_DARK)
-        setPadding(dp(18), dp(9), dp(18), dp(9))
-        background = roundedBox(if (selected) PURPLE else Color.WHITE, if (selected) PURPLE else BORDER, dp(24).toFloat())
+        setTextColor(if (selected) tokens.buttonText else tokens.textPrimary)
+        setPadding(dp(13), dp(8), dp(13), dp(8))
+        background = roundedBox(if (selected) tokens.primaryStrong else tokens.surface, if (selected) tokens.primaryStrong else tokens.border, dp(24).toFloat())
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            .apply { setMargins(0, 0, dp(10), 0) }
+            .apply { setMargins(0, 0, dp(8), 0) }
     }
 
     private fun dropZoneButton(text: String, onClick: () -> Unit): TextView = TextView(this).apply {
@@ -1466,9 +2142,9 @@ class MainActivity : Activity() {
         textSize = 12f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
-        setTextColor(PURPLE)
+        setTextColor(tokens.primaryStrong)
         setPadding(dp(12), 0, dp(12), 0)
-        background = roundedBox(Color.WHITE, BORDER, dp(17).toFloat())
+        background = roundedBox(tokens.surface, tokens.border, dp(17).toFloat())
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply {
             setMargins(dp(8), 0, 0, 0)
         }
@@ -1476,8 +2152,14 @@ class MainActivity : Activity() {
     }
 
     private fun divider(): View = View(this).apply {
-        setBackgroundColor(BORDER)
+        setBackgroundColor(tokens.border)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+    }
+
+    private fun formDivider(): View = divider().apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+            setMargins(0, dp(8), 0, dp(34))
+        }
     }
 
     private fun roundedBox(fill: Int, stroke: Int, radius: Float, strokeWidth: Int = dp(1)): GradientDrawable =
@@ -1487,24 +2169,21 @@ class MainActivity : Activity() {
             setStroke(strokeWidth, stroke)
         }
 
-    private fun tintBackground(color: Int): Int = Color.rgb(
-        Color.red(color) + ((255 - Color.red(color)) * 0.88).toInt(),
-        Color.green(color) + ((255 - Color.green(color)) * 0.88).toInt(),
-        Color.blue(color) + ((255 - Color.blue(color)) * 0.88).toInt()
-    )
+    private fun dashedRoundedBox(fill: Int, stroke: Int, radius: Float): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = radius
+            setStroke(dp(1), stroke, dp(7).toFloat(), dp(5).toFloat())
+        }
 
-    private fun tintBackgroundBorder(color: Int): Int = Color.rgb(
-        Color.red(color) + ((255 - Color.red(color)) * 0.72).toInt(),
-        Color.green(color) + ((255 - Color.green(color)) * 0.72).toInt(),
-        Color.blue(color) + ((255 - Color.blue(color)) * 0.72).toInt()
-    )
+    private fun tintBackground(color: Int): Int = KiteTheme.tint(color, 0.88f)
 
-    private fun accentFor(recipe: KiteRecipe): Int = when (recipe.card.accent) {
-        "green" -> STATUS_GREEN
-        "purple" -> PURPLE
-        "orange" -> ORANGE
-        else -> BLUE
-    }
+    private fun tintBackgroundBorder(color: Int): Int = KiteTheme.tint(color, 0.72f)
+
+    private fun displayAccentName(recipe: KiteRecipe): String =
+        KiteRecipeCard.resolvedAccentFor(recipe.icon.name, recipe.type, recipe.card.accent)
+
+    private fun accentFor(recipe: KiteRecipe): Int = KiteTheme.accent(displayAccentName(recipe), tokens).strong
 
     private fun primaryLabel(recipe: KiteRecipe, state: RecipeRuntimeState): String = when (state.status) {
         RecipeRunStatus.Starting -> "启动中"
@@ -1554,11 +2233,19 @@ class MainActivity : Activity() {
         }
     }
 
+    private data class SemanticColors(
+        val text: Int,
+        val background: Int,
+        val border: Int
+    )
+
     private enum class Screen {
         Console,
         Workbench,
         RecipeDetail,
-        CreateConfig
+        CreateConfig,
+        Settings,
+        ThemeSettings
     }
 
     private data class RecipeRuntimeState(
@@ -1595,20 +2282,17 @@ class MainActivity : Activity() {
 
     private enum class RecipeRunStatus(
         val label: String,
-        val textColor: Int,
-        val bgColor: Int,
-        val borderColor: Int,
         val lifecycleEvent: String
     ) {
-        Unknown("未启动", Color.rgb(71, 85, 105), Color.rgb(248, 250, 252), BORDER, "unknown"),
-        Stopped("未启动", Color.rgb(71, 85, 105), Color.rgb(248, 250, 252), BORDER, "stopped"),
-        Starting("启动中", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205), "starting"),
-        Running("运行中", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205), "running"),
-        AlreadyRunning("已运行", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205), "already_running"),
-        Opened("已打开", STATUS_GREEN, Color.rgb(232, 248, 238), Color.rgb(190, 234, 205), "opened"),
-        Failed("启动失败", Color.rgb(185, 28, 28), Color.rgb(254, 242, 242), Color.rgb(254, 202, 202), "failed"),
-        Stopping("停止中", ORANGE, Color.rgb(255, 247, 237), Color.rgb(254, 215, 170), "stopping"),
-        BridgeUnavailable("桥接不可用", Color.rgb(185, 28, 28), Color.rgb(254, 242, 242), Color.rgb(254, 202, 202), "bridge_unavailable");
+        Unknown("未启动", "unknown"),
+        Stopped("未启动", "stopped"),
+        Starting("启动中", "starting"),
+        Running("运行中", "running"),
+        AlreadyRunning("已运行", "already_running"),
+        Opened("已打开", "opened"),
+        Failed("启动失败", "failed"),
+        Stopping("停止中", "stopping"),
+        BridgeUnavailable("桥接不可用", "bridge_unavailable");
 
         companion object {
             val activeStatuses = setOf(Running, AlreadyRunning, Opened)
@@ -1634,13 +2318,5 @@ class MainActivity : Activity() {
         private const val WEB_READY_CONNECT_TIMEOUT_MS = 700
         private const val WEB_READY_READ_TIMEOUT_MS = 700
         private const val REQUEST_DROPZONE_STORAGE = 801
-        private val BG = Color.rgb(248, 250, 252)
-        private val TEXT_DARK = Color.rgb(15, 23, 42)
-        private val TEXT_MUTED = Color.rgb(100, 116, 139)
-        private val BORDER = Color.rgb(226, 232, 240)
-        private val PURPLE = Color.rgb(109, 67, 230)
-        private val STATUS_GREEN = Color.rgb(5, 150, 105)
-        private val BLUE = Color.rgb(37, 99, 235)
-        private val ORANGE = Color.rgb(234, 88, 12)
     }
 }
