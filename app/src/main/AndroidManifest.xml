@@ -22,6 +22,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
 
     <application
         android:name="com.kftest.app.foundation.bootstrap.KFApplication"
@@ -66,6 +67,19 @@
         </activity>
 
         <activity
+            android:name="com.kite.app.CardRunActivity"
+            android:alwaysRetainTaskState="true"
+            android:clearTaskOnLaunch="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:documentLaunchMode="always"
+            android:excludeFromRecents="false"
+            android:exported="true"
+            android:finishOnTaskLaunch="false"
+            android:label="Kite 卡片"
+            android:launchMode="standard"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name="com.kftest.app.ui.logs.LogActivity"
             android:exported="false"
             android:label="KFShell 日志" />
@@ -95,5 +109,9 @@
                 <action android:name="com.kftest.app.action.REGISTER_CONTROLLED_LEASE_PROBE" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name="com.kite.app.CardShortcutPinnedReceiver"
+            android:exported="false" />
     </application>
 </manifest>

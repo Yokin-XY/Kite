@@ -7,9 +7,13 @@ import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.json.JSONObject
 import java.io.BufferedInputStream
+import java.io.FilterInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.util.zip.GZIPInputStream
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * 负责把 APK 内的运行时资源落到应用私有目录。
@@ -37,6 +41,47 @@ object AssetExtractor {
     private const val LOGS_DIR = "logs"
     private const val ROOTFS_READY_MARKER = ".kf-rootfs-ready"
     private const val PERMISSION_MASK = 0x1FF
+    private const val PROGRESS_EMIT_INTERVAL_MS = 500L
+
+    enum class RootfsExtractionPhase {
+        IDLE,
+        PREPARING,
+        EXTRACTING,
+        VERIFYING,
+        READY,
+        FAILED
+    }
+
+    data class RootfsExtractionProgress(
+        val phase: RootfsExtractionPhase = RootfsExtractionPhase.IDLE,
+        val sourceLabel: String = "",
+        val bytesRead: Long = 0L,
+        val totalBytes: Long = 0L,
+        val entriesExtracted: Int = 0,
+        val currentEntry: String = "",
+        val message: String = "",
+        val errorMessage: String? = null,
+        val startedAt: Long = 0L,
+        val updatedAt: Long = System.currentTimeMillis()
+    ) {
+        val percent: Int?
+            get() {
+                if (totalBytes <= 0L) return null
+                return ((bytesRead.coerceAtMost(totalBytes) * 100L) / totalBytes).toInt().coerceIn(0, 100)
+            }
+
+        val active: Boolean
+            get() = phase == RootfsExtractionPhase.PREPARING ||
+                phase == RootfsExtractionPhase.EXTRACTING ||
+                phase == RootfsExtractionPhase.VERIFYING
+
+        companion object {
+            fun idle(): RootfsExtractionProgress = RootfsExtractionProgress()
+        }
+    }
+
+    private val _rootfsProgress = MutableStateFlow(RootfsExtractionProgress.idle())
+    val rootfsProgress: StateFlow<RootfsExtractionProgress> = _rootfsProgress
 
     data class RuntimeLayout(
         val profile: BaseImageProfile,
@@ -291,10 +336,22 @@ object AssetExtractor {
         val readyMarker = File(destinationDir, ROOTFS_READY_MARKER)
         if (File(destinationDir, "bin/bash").exists() && readyMarker.exists()) {
             Logger.i("AssetExtractor", "基础 rootfs 已就绪，跳过解压 (${profile.label})")
+            publishRootfsProgress(
+                phase = RootfsExtractionPhase.READY,
+                sourceLabel = profile.label,
+                message = "基础 rootfs 已就绪"
+            )
             return
         }
 
         Logger.i("AssetExtractor", "开始准备基础 rootfs: ${profile.label} -> ${destinationDir.absolutePath}")
+        val startedAt = System.currentTimeMillis()
+        publishRootfsProgress(
+            phase = RootfsExtractionPhase.PREPARING,
+            sourceLabel = profile.label,
+            message = "正在准备系统镜像",
+            startedAt = startedAt
+        )
 
         val rootfsAsset = findFirstExistingAsset(context, profile.rootfsAssetCandidates)
 
@@ -302,59 +359,145 @@ object AssetExtractor {
             Logger.i("AssetExtractor", "APK 中未找到 ${profile.label} 的 rootfs 资源，尝试从 exchange 导入")
             val exchangeSource = resolveExchangeRootfsSource(context, profile)
             if (exchangeSource != null) {
-                importRootfsFromExchange(exchangeSource, destinationDir, readyMarker)
+                importRootfsFromExchange(exchangeSource, destinationDir, readyMarker, startedAt)
                 return
             }
-            throw IllegalStateException("APK 中未找到 ${profile.label} 的 rootfs 资源，且 exchange 中无可用源")
+            val message = "APK 中未找到 ${profile.label} 的 rootfs 资源，且 exchange 中无可用源"
+            publishRootfsProgress(
+                phase = RootfsExtractionPhase.FAILED,
+                sourceLabel = profile.label,
+                message = "系统镜像缺失",
+                errorMessage = message,
+                startedAt = startedAt
+            )
+            throw IllegalStateException(message)
         }
 
         deleteRecursively(destinationDir)
         destinationDir.mkdirs()
 
         try {
-            extractTarAsset(context, rootfsAsset, destinationDir)
+            extractTarAsset(context, rootfsAsset, destinationDir, startedAt)
         } catch (throwable: Throwable) {
             Logger.e("AssetExtractor", "rootfs 解压失败: ${throwable.message}")
             deleteRecursively(destinationDir)
+            publishRootfsProgress(
+                phase = RootfsExtractionPhase.FAILED,
+                sourceLabel = rootfsAsset,
+                message = "基础镜像解压失败，下次会清理后重新解压",
+                errorMessage = throwable.message ?: throwable.javaClass.simpleName,
+                startedAt = startedAt
+            )
             throw IllegalStateException("基础镜像解压失败", throwable)
         }
 
+        publishRootfsProgress(
+            phase = RootfsExtractionPhase.VERIFYING,
+            sourceLabel = rootfsAsset,
+            message = "正在校验系统镜像",
+            startedAt = startedAt
+        )
         if (!File(destinationDir, "bin/bash").exists()) {
             deleteRecursively(destinationDir)
-            throw IllegalStateException("基础镜像不完整，缺少 bin/bash")
+            val message = "基础镜像不完整，缺少 bin/bash"
+            publishRootfsProgress(
+                phase = RootfsExtractionPhase.FAILED,
+                sourceLabel = rootfsAsset,
+                message = "系统镜像校验失败，下次会重新解压",
+                errorMessage = message,
+                startedAt = startedAt
+            )
+            throw IllegalStateException(message)
         }
 
         readyMarker.writeText("ready\n")
+        publishRootfsProgress(
+            phase = RootfsExtractionPhase.READY,
+            sourceLabel = rootfsAsset,
+            message = "基础 rootfs 解压完成",
+            bytesRead = _rootfsProgress.value.bytesRead,
+            totalBytes = _rootfsProgress.value.totalBytes,
+            entriesExtracted = _rootfsProgress.value.entriesExtracted,
+            startedAt = startedAt
+        )
         Logger.i("AssetExtractor", "基础 rootfs 解压完成")
     }
 
-    private fun extractTarAsset(context: Context, assetPath: String, destinationDir: File) {
-        val deferredHardLinks = mutableListOf<DeferredHardLink>()
+    private fun extractTarAsset(context: Context, assetPath: String, destinationDir: File, startedAt: Long) {
         val isCompressedTar = assetPath.endsWith(".gz")
 
         context.assets.open(assetPath).use { assetInput ->
-            val archiveInput = if (isCompressedTar) {
-                GZIPInputStream(BufferedInputStream(assetInput))
+            val totalBytes = runCatching { assetInput.available().toLong() }.getOrDefault(0L)
+            val countingInput = CountingInputStream(BufferedInputStream(assetInput))
+            val archiveInput: InputStream = if (isCompressedTar) {
+                GZIPInputStream(countingInput)
             } else {
-                BufferedInputStream(assetInput)
+                countingInput
             }
 
-            TarArchiveInputStream(archiveInput).use { tarInput ->
-                while (true) {
-                    val entry = tarInput.nextTarEntry ?: break
-                    extractEntry(tarInput, destinationDir, entry, deferredHardLinks)
+            extractTarStream(
+                archiveInput = archiveInput,
+                destinationDir = destinationDir,
+                sourceLabel = assetPath,
+                totalBytes = totalBytes,
+                startedAt = startedAt,
+                bytesRead = { countingInput.bytesRead }
+            )
+        }
+    }
+
+    private fun extractTarStream(
+        archiveInput: InputStream,
+        destinationDir: File,
+        sourceLabel: String,
+        totalBytes: Long,
+        startedAt: Long,
+        bytesRead: () -> Long
+    ) {
+        val deferredHardLinks = mutableListOf<DeferredHardLink>()
+        var entriesExtracted = 0
+        var currentEntry = ""
+        var lastEmitAt = 0L
+
+        fun emitProgress(force: Boolean = false) {
+            val now = System.currentTimeMillis()
+            if (!force && now - lastEmitAt < PROGRESS_EMIT_INTERVAL_MS) return
+            lastEmitAt = now
+            publishRootfsProgress(
+                phase = RootfsExtractionPhase.EXTRACTING,
+                sourceLabel = sourceLabel,
+                bytesRead = bytesRead(),
+                totalBytes = totalBytes,
+                entriesExtracted = entriesExtracted,
+                currentEntry = currentEntry,
+                message = if (currentEntry.isBlank()) "正在解压系统镜像" else "正在解压 $currentEntry",
+                startedAt = startedAt
+            )
+        }
+
+        TarArchiveInputStream(archiveInput).use { tarInput ->
+            emitProgress(force = true)
+            while (true) {
+                val entry = tarInput.nextTarEntry ?: break
+                currentEntry = entry.name
+                entriesExtracted += 1
+                emitProgress(force = true)
+                extractEntry(tarInput, destinationDir, entry, deferredHardLinks) {
+                    emitProgress(force = false)
                 }
             }
         }
 
         materializeDeferredHardLinks(destinationDir, deferredHardLinks)
+        emitProgress(force = true)
     }
 
     private fun extractEntry(
         tarInput: TarArchiveInputStream,
         destinationDir: File,
         entry: TarArchiveEntry,
-        deferredHardLinks: MutableList<DeferredHardLink>
+        deferredHardLinks: MutableList<DeferredHardLink>,
+        onProgress: () -> Unit
     ) {
         val outputFile = resolveEntryFile(destinationDir, entry.name)
 
@@ -385,7 +528,7 @@ object AssetExtractor {
             }
 
             entry.isFile -> {
-                writeRegularFile(tarInput, outputFile, entry.mode)
+                writeRegularFile(tarInput, outputFile, entry.mode, onProgress)
             }
 
             else -> {
@@ -397,11 +540,18 @@ object AssetExtractor {
     private fun writeRegularFile(
         tarInput: TarArchiveInputStream,
         outputFile: File,
-        mode: Int
+        mode: Int,
+        onProgress: () -> Unit
     ) {
         outputFile.parentFile?.mkdirs()
         FileOutputStream(outputFile).use { output ->
-            tarInput.copyTo(output)
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = tarInput.read(buffer)
+                if (read <= 0) break
+                output.write(buffer, 0, read)
+                onProgress()
+            }
         }
         applyModeIfPossible(outputFile, mode)
     }
@@ -540,41 +690,69 @@ object AssetExtractor {
         return null
     }
 
-    private fun importRootfsFromExchange(source: File, destinationDir: File, readyMarker: File) {
+    private fun importRootfsFromExchange(source: File, destinationDir: File, readyMarker: File, startedAt: Long) {
         Logger.i("AssetExtractor", "从 exchange 导入 rootfs: ${source.absolutePath} -> ${destinationDir.absolutePath}")
         deleteRecursively(destinationDir)
         destinationDir.mkdirs()
         try {
             val isCompressed = source.name.endsWith(".gz")
-            if (isCompressed) {
-                GZIPInputStream(BufferedInputStream(source.inputStream())).use { gzipInput ->
-                    TarArchiveInputStream(gzipInput).use { tarInput ->
-                        while (true) {
-                            val entry = tarInput.nextTarEntry ?: break
-                            extractEntry(tarInput, destinationDir, entry, mutableListOf())
-                        }
-                    }
-                }
+            val countingInput = CountingInputStream(BufferedInputStream(source.inputStream()))
+            val archiveInput: InputStream = if (isCompressed) {
+                GZIPInputStream(countingInput)
             } else {
-                BufferedInputStream(source.inputStream()).use { bufferedInput ->
-                    TarArchiveInputStream(bufferedInput).use { tarInput ->
-                        while (true) {
-                            val entry = tarInput.nextTarEntry ?: break
-                            extractEntry(tarInput, destinationDir, entry, mutableListOf())
-                        }
-                    }
-                }
+                countingInput
             }
+            extractTarStream(
+                archiveInput = archiveInput,
+                destinationDir = destinationDir,
+                sourceLabel = source.name,
+                totalBytes = source.length(),
+                startedAt = startedAt,
+                bytesRead = { countingInput.bytesRead }
+            )
         } catch (throwable: Throwable) {
             Logger.e("AssetExtractor", "exchange rootfs 导入失败: ${throwable.message}")
             deleteRecursively(destinationDir)
+            publishRootfsProgress(
+                phase = RootfsExtractionPhase.FAILED,
+                sourceLabel = source.name,
+                message = "exchange rootfs 导入失败，下次会重新导入",
+                errorMessage = throwable.message ?: throwable.javaClass.simpleName,
+                startedAt = startedAt
+            )
             throw IllegalStateException("exchange rootfs 导入失败", throwable)
         }
+        publishRootfsProgress(
+            phase = RootfsExtractionPhase.VERIFYING,
+            sourceLabel = source.name,
+            message = "正在校验 exchange rootfs",
+            bytesRead = _rootfsProgress.value.bytesRead,
+            totalBytes = _rootfsProgress.value.totalBytes,
+            entriesExtracted = _rootfsProgress.value.entriesExtracted,
+            startedAt = startedAt
+        )
         if (!File(destinationDir, "bin/bash").exists()) {
             deleteRecursively(destinationDir)
-            throw IllegalStateException("exchange rootfs 不完整，缺少 bin/bash")
+            val message = "exchange rootfs 不完整，缺少 bin/bash"
+            publishRootfsProgress(
+                phase = RootfsExtractionPhase.FAILED,
+                sourceLabel = source.name,
+                message = "exchange rootfs 校验失败，下次会重新导入",
+                errorMessage = message,
+                startedAt = startedAt
+            )
+            throw IllegalStateException(message)
         }
         readyMarker.writeText("ready\n")
+        publishRootfsProgress(
+            phase = RootfsExtractionPhase.READY,
+            sourceLabel = source.name,
+            message = "exchange rootfs 导入完成",
+            bytesRead = _rootfsProgress.value.bytesRead,
+            totalBytes = _rootfsProgress.value.totalBytes,
+            entriesExtracted = _rootfsProgress.value.entriesExtracted,
+            startedAt = startedAt
+        )
         Logger.i("AssetExtractor", "exchange rootfs 导入完成")
     }
 
@@ -610,5 +788,47 @@ object AssetExtractor {
         return runCatching {
             canonicalPath != absolutePath
         }.getOrDefault(false)
+    }
+
+    private fun publishRootfsProgress(
+        phase: RootfsExtractionPhase,
+        sourceLabel: String = "",
+        bytesRead: Long = 0L,
+        totalBytes: Long = 0L,
+        entriesExtracted: Int = 0,
+        currentEntry: String = "",
+        message: String = "",
+        errorMessage: String? = null,
+        startedAt: Long = _rootfsProgress.value.startedAt
+    ) {
+        _rootfsProgress.value = RootfsExtractionProgress(
+            phase = phase,
+            sourceLabel = sourceLabel,
+            bytesRead = bytesRead,
+            totalBytes = totalBytes,
+            entriesExtracted = entriesExtracted,
+            currentEntry = currentEntry,
+            message = message,
+            errorMessage = errorMessage,
+            startedAt = startedAt,
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    private class CountingInputStream(input: InputStream) : FilterInputStream(input) {
+        var bytesRead: Long = 0L
+            private set
+
+        override fun read(): Int {
+            val result = super.read()
+            if (result >= 0) bytesRead += 1
+            return result
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            val read = super.read(buffer, offset, length)
+            if (read > 0) bytesRead += read.toLong()
+            return read
+        }
     }
 }

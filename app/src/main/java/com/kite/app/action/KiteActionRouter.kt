@@ -14,20 +14,8 @@ class KiteActionRouter {
             ?: return KiteActionRoute.Unsupported(recipe, actionName, "missing_action")
         val actionRecipe = recipe.asExecutionRecipe(actionName)
 
-        val nativeStep = action.steps.firstOrNull { it.type == KiteRecipe.STEP_ANDROID_ACTION }
-        if (nativeStep != null) {
-            val nextUrl = firstOpenWebUrl(action.steps)
-            return KiteActionRoute.NativeAction(actionRecipe, actionName, nativeStep, nextUrl)
-        }
-
-        val shellSteps = action.steps.filter { it.type == KiteRecipe.STEP_SHELL && !it.cmd.isNullOrBlank() }
-        if (shellSteps.isNotEmpty()) {
+        if (action.steps.isNotEmpty()) {
             return KiteActionRoute.RunRecipe(actionRecipe, actionName, action)
-        }
-
-        val terminalStep = action.steps.firstOrNull { it.type == KiteRecipe.STEP_TERMINAL }
-        if (terminalStep != null) {
-            return KiteActionRoute.Unsupported(actionRecipe, actionName, "terminal_step_not_connected")
         }
 
         val openUrl = firstOpenWebUrl(action.steps)

@@ -318,6 +318,7 @@ class KiteRecipeLoader(
             defaultUrl = defaultUrl,
             shortcut = input.shortcut,
             icon = KiteRecipeIcon(type = "builtin", name = normalizedIcon),
+            launch = KiteLaunchConfig(openInstance = input.openInstanceOnStart),
             execution = KiteExecution.steps(steps),
             actions = KiteRecipe.defaultActionsFor(steps, defaultUrl),
             taskLabel = input.name.trim(),
@@ -352,16 +353,11 @@ class KiteRecipeLoader(
             KiteRecipe.STEP_SHELL -> {
                 val command = input.command.trim()
                 if (command.isBlank()) return null
-                val expected = input.expectedText.trim().takeIf { it.isNotBlank() }?.let {
-                    KiteExpectedResult(mode = "contains", text = it, source = KiteRecipe.OUTPUT_LAST_MEANINGFUL)
-                }
                 KiteRecipeStep(
                     id = input.id.ifBlank { "step_cmd_${index + 1}_$recipeId" },
                     type = KiteRecipe.STEP_SHELL,
                     cmd = command,
-                    runMode = KiteRecipe.normalizeRunMode(input.runMode) ?: KiteRecipe.RUN_MODE_DETACHED,
                     workdir = input.workdir.trim().ifBlank { null },
-                    expected = expected,
                     outputPolicy = KiteOutputPolicy()
                 )
             }
@@ -535,6 +531,7 @@ data class NewRecipeInput(
     val url: String,
     val command: String,
     val shortcut: Boolean,
+    val openInstanceOnStart: Boolean = false,
     val iconName: String = "",
     val description: String = "",
     val workdir: String = "",
@@ -548,7 +545,5 @@ data class NewRecipeStepInput(
     val type: String,
     val command: String = "",
     val url: String = "",
-    val workdir: String = "",
-    val runMode: String = KiteRecipe.RUN_MODE_DETACHED,
-    val expectedText: String = ""
+    val workdir: String = ""
 )

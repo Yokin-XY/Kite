@@ -2,6 +2,7 @@ package com.kftest.app.foundation.bootstrap
 
 import android.content.Context
 import com.kftest.app.foundation.logging.Logger
+import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kftest.app.foundation.service.BackgroundRuntimeHost
 import com.kftest.app.foundation.service.KFShellService
 import com.kftest.app.foundation.terminal.TerminalRuntimeHost
@@ -93,9 +94,11 @@ object BootstrapCoordinator {
                     finishedAt = System.currentTimeMillis(),
                     lastError = null
                 )
+                RuntimeBootstrapProgress.ready()
                 Logger.i(LOG_TAG, "启动协调完成")
             }.onFailure { error ->
                 Logger.e(LOG_TAG, "启动协调失败: ${error.message}")
+                RuntimeBootstrapProgress.failed(error.message ?: error.javaClass.simpleName)
                 _snapshot.value = _snapshot.value.copy(
                     stage = BootstrapStage.FAILED,
                     finishedAt = System.currentTimeMillis(),

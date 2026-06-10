@@ -14,6 +14,7 @@ data class KiteRecipe(
     val shortcut: Boolean,
     val icon: KiteRecipeIcon = KiteRecipeIcon.defaultForType(type),
     val card: KiteRecipeCard = KiteRecipeCard.defaultForType(type),
+    val launch: KiteLaunchConfig = KiteLaunchConfig(),
     val execution: KiteExecution = KiteExecution.steps(emptyList()),
     val actions: Map<String, KiteRecipeAction> = emptyMap(),
     val expected: KiteExpectedResult? = null,
@@ -64,6 +65,9 @@ data class KiteRecipe(
                 .put("category", normalizeCategory(category))
                 .put("icon", icon.toJson())
         )
+        .apply {
+            if (!launch.isDefault()) put("launch", launch.toJson())
+        }
         .put("recipe", JSONArray().apply {
             mainRecipeSteps().forEach { put(it.toJson()) }
         })
@@ -130,6 +134,10 @@ data class KiteRecipe(
         const val RUN_MODE_DETACHED = "detached"
         const val RUN_MODE_BACKGROUND = "background"
 
+        const val SURFACE_MODE_AUTO = "auto"
+        const val SURFACE_MODE_PANEL = "panel"
+        const val SURFACE_MODE_SILENT = "silent"
+
         const val OUTPUT_LAST_MEANINGFUL = "lastMeaningfulOutput"
 
         const val SOURCE_ASSETS = "assets"
@@ -174,6 +182,7 @@ data class KiteRecipe(
                 shortcut = header?.optBoolean("shortcut") ?: json.optBoolean("shortcut", false),
                 icon = icon,
                 card = KiteRecipeCard.defaultForType(type),
+                launch = KiteLaunchConfig.fromJson(json.optJSONObject("launch")),
                 execution = execution,
                 actions = actions,
                 expected = expected,
@@ -281,6 +290,13 @@ data class KiteRecipe(
                 else -> null
             }
         }
+
+        fun normalizeSurfaceMode(surfaceMode: String?): String =
+            when (surfaceMode?.trim()?.lowercase()) {
+                SURFACE_MODE_PANEL -> SURFACE_MODE_PANEL
+                SURFACE_MODE_SILENT -> SURFACE_MODE_SILENT
+                else -> SURFACE_MODE_AUTO
+            }
 
         private fun normalizeSource(source: String): String = when (source) {
             "asset" -> SOURCE_ASSETS
@@ -410,6 +426,20 @@ data class KiteRecipeCard(
     }
 }
 
+data class KiteLaunchConfig(
+    val openInstance: Boolean = false
+) {
+    fun isDefault(): Boolean = !openInstance
+
+    fun toJson(): JSONObject = JSONObject()
+        .put("openInstance", openInstance)
+
+    companion object {
+        fun fromJson(json: JSONObject?): KiteLaunchConfig =
+            KiteLaunchConfig(openInstance = json?.optBoolean("openInstance", false) ?: false)
+    }
+}
+
 data class KiteExecution(
     val mode: String,
     val steps: List<KiteRecipeStep> = emptyList(),
@@ -482,6 +512,7 @@ data class KiteRecipeStep(
     val text: String? = null,
     val session: String? = null,
     val runMode: String? = null,
+    val surfaceMode: String = KiteRecipe.SURFACE_MODE_AUTO,
     val workdir: String? = null,
     val timeoutMs: Long? = null,
     val delayAfterMs: Long? = null,
@@ -498,6 +529,7 @@ data class KiteRecipeStep(
             if (params != null) put("params", params)
             if (!text.isNullOrBlank()) put("text", text)
             if (!session.isNullOrBlank()) put("session", session)
+            if (surfaceMode != KiteRecipe.SURFACE_MODE_AUTO) put("surfaceMode", surfaceMode)
             if (!workdir.isNullOrBlank()) put("workdir", workdir)
             if (timeoutMs != null) put("timeoutMs", timeoutMs)
             if (delayAfterMs != null) put("delayAfterMs", delayAfterMs)
@@ -509,6 +541,7 @@ data class KiteRecipeStep(
             val type = json.getString("type")
             val legacyWait = if (json.has("wait")) json.optBoolean("wait") else null
             val runMode = KiteRecipe.normalizeRunMode(json.optString("runMode"), legacyWait)
+            val surfaceMode = KiteRecipe.normalizeSurfaceMode(json.optString("surfaceMode"))
             return KiteRecipeStep(
                 id = json.optString("id").ifBlank { "step_${index + 1}_$type" },
                 type = type,
@@ -518,6 +551,7 @@ data class KiteRecipeStep(
                 text = json.optString("text").ifBlank { null },
                 session = json.optString("session").ifBlank { null },
                 runMode = runMode,
+                surfaceMode = surfaceMode,
                 workdir = json.optString("workdir").ifBlank { null },
                 timeoutMs = if (json.has("timeoutMs")) json.optLong("timeoutMs") else null,
                 delayAfterMs = if (json.has("delayAfterMs")) json.optLong("delayAfterMs") else null,

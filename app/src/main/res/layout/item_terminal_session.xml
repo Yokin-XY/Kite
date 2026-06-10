@@ -89,6 +89,7 @@
         </LinearLayout>
 
         <ImageView
+            android:id="@+id/ivSessionItemChevron"
             android:layout_width="18dp"
             android:layout_height="18dp"
             android:layout_marginStart="10dp"
@@ -96,6 +97,7 @@
     </LinearLayout>
 
     <View
+        android:id="@+id/sessionItemDivider"
         android:layout_width="match_parent"
         android:layout_height="1dp"
         android:background="@color/terminal_page_line" />

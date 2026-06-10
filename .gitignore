@@ -6,3 +6,5 @@ local.properties
 .idea/
 .DS_Store
 /kite-*.png
+/card-run-*.png
+/terminal-*-check.png

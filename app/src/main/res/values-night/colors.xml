@@ -20,14 +20,14 @@
     <color name="chip_bg">#24303C</color>
     <color name="input_bg">#101820</color>
 
-    <color name="terminal_page_bg">#0D131A</color>
-    <color name="terminal_page_header">#141C25</color>
-    <color name="terminal_page_surface">#111821</color>
-    <color name="terminal_page_text">#F2F6FB</color>
-    <color name="terminal_page_subtext">#99A6B5</color>
-    <color name="terminal_page_line">#22303D</color>
-    <color name="terminal_page_green">#1FAE6B</color>
-    <color name="terminal_page_blue">#4A8CFF</color>
-    <color name="terminal_page_gray_chip">#3B4A58</color>
-    <color name="terminal_page_input_bg">#16212C</color>
+    <color name="terminal_page_bg">#F2F3F5</color>
+    <color name="terminal_page_header">#E8EBEE</color>
+    <color name="terminal_page_surface">#FFFFFF</color>
+    <color name="terminal_page_text">#1F2329</color>
+    <color name="terminal_page_subtext">#6F7783</color>
+    <color name="terminal_page_line">#E1E5EA</color>
+    <color name="terminal_page_green">#16965A</color>
+    <color name="terminal_page_blue">#3B82F6</color>
+    <color name="terminal_page_gray_chip">#C9CED6</color>
+    <color name="terminal_page_input_bg">#F4F6F8</color>
 </resources>

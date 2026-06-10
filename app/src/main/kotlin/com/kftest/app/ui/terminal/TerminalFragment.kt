@@ -29,6 +29,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.GridLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.Scroller
@@ -1639,14 +1640,25 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             false
         )
         val root = itemView.findViewById<View>(R.id.sessionRowRoot)
+        val iconCard = itemView.findViewById<MaterialCardView>(R.id.cardSessionItemIcon)
+        val iconView = itemView.findViewById<ImageView>(R.id.ivSessionItemIcon)
+        val chevronView = itemView.findViewById<ImageView>(R.id.ivSessionItemChevron)
+        val divider = itemView.findViewById<View>(R.id.sessionItemDivider)
         val statusCard = itemView.findViewById<MaterialCardView>(R.id.cardSessionItemStatus)
         val titleView = itemView.findViewById<TextView>(R.id.tvSessionItemTitle)
         val timeView = itemView.findViewById<TextView>(R.id.tvSessionItemTime)
         val statusView = itemView.findViewById<TextView>(R.id.tvSessionItemStatus)
 
         val (bgColorRes, textColorRes, labelText) = badge
+        root.setBackgroundColor(color(R.color.terminal_page_surface))
+        iconCard.setCardBackgroundColor(color(R.color.terminal_page_green))
+        iconView.setColorFilter(color(R.color.terminal_page_surface))
+        chevronView.setColorFilter(color(R.color.terminal_page_subtext))
+        divider.setBackgroundColor(color(R.color.terminal_page_line))
         statusCard.setCardBackgroundColor(color(bgColorRes))
         statusView.setTextColor(color(textColorRes))
+        titleView.setTextColor(color(R.color.terminal_page_text))
+        timeView.setTextColor(color(R.color.terminal_page_subtext))
 
         titleView.text = title
         if (timeText.isNullOrBlank()) {

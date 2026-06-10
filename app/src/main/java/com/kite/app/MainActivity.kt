@@ -1,7 +1,10 @@
 package com.kite.app
 
+import android.app.ActivityManager
 import android.app.Dialog
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -25,6 +28,7 @@ import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
@@ -39,12 +43,20 @@ import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.DropZoneStatus
 import com.kite.app.dropzone.KiteDropZoneManager
 import com.kite.app.recipe.KiteRecipe
+import com.kite.app.recipe.KiteExecution
+import com.kite.app.recipe.KiteRecipeAction
 import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.recipe.KiteRunReport
+import com.kite.app.recipe.KiteStepReport
 import com.kite.app.recipe.NewRecipeInput
 import com.kite.app.recipe.NewRecipeStepInput
+import com.kite.app.run.CardRunState as RecipeRuntimeState
+import com.kite.app.run.CardRunSurface
+import com.kite.app.run.CardRunStatus as RecipeRunStatus
+import com.kite.app.run.CardRunStore
+import com.kite.app.run.PendingTerminalFlow
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
@@ -52,7 +64,12 @@ import com.kite.app.web.KiteWebShell
 import com.kftest.app.foundation.bootstrap.BootstrapCoordinator
 import com.kftest.app.foundation.bootstrap.BootstrapSnapshot
 import com.kftest.app.foundation.bootstrap.BootstrapStage
+import com.kftest.app.foundation.runtime.AssetExtractor
+import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
+import com.kftest.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
 import com.kftest.app.foundation.terminal.TerminalRuntimeHost
+import com.kftest.app.foundation.terminal.TerminalRuntimeRegistry
+import com.kftest.app.foundation.workspace.ManagedTerminalStatus
 import com.kftest.app.foundation.toolchain.ToolchainPackInstaller
 import com.kftest.app.foundation.workspace.KFWorkspaceManager
 import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
@@ -69,13 +86,14 @@ import java.net.URL
 import kotlin.concurrent.thread
 import kotlinx.coroutines.launch
 
-class MainActivity : AppCompatActivity(), TerminalChromeHost {
+open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
     private lateinit var bridgeClient: KiteBridgeClient
     private lateinit var webShell: KiteWebShell
     private lateinit var localServer: KiteLocalServer
+    private lateinit var cardLocalSettings: CardLocalSettingsStore
     private lateinit var themeStore: SharedPreferences
     private lateinit var root: LinearLayout
     private lateinit var webView: WebView
@@ -85,25 +103,22 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private lateinit var urlInput: EditText
     private lateinit var commandInput: EditText
     private lateinit var workdirInput: EditText
-    private lateinit var expectedInput: EditText
     private lateinit var shortcutSwitch: Switch
+    private lateinit var launchInstanceSwitch: Switch
     private lateinit var commandFieldContainer: View
     private lateinit var urlFieldContainer: View
     private lateinit var workdirFieldContainer: View
-    private lateinit var expectedFieldContainer: View
-    private lateinit var runModeFieldContainer: View
     private lateinit var typeContainer: LinearLayout
     private lateinit var iconContainer: LinearLayout
-    private lateinit var runModeContainer: LinearLayout
     private lateinit var stepsContainer: LinearLayout
 
     private val runtimeStates = mutableMapOf<String, RecipeRuntimeState>()
+    private val activeRunInstanceIds = mutableMapOf<String, String>()
     private val actionRouter = KiteActionRouter()
     private var currentScreen: Screen = Screen.Console
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var selectedType = KiteRecipe.TYPE_OPEN_URL
     private var selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_OPEN_URL)
-    private var selectedRunMode = KiteRecipe.RUN_MODE_DETACHED
     private var editingRecipe: KiteRecipe? = null
     private var dropZoneStatus: DropZoneStatus = DropZoneStatus(available = false, message = "投放区尚未检查")
     private var isDropZoneRefreshing = false
@@ -115,6 +130,21 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var kfRuntimeBootstrapRequested = false
     private var ubuntuRuntimeState = UbuntuRuntimeUiState.hidden()
     private val formSteps = mutableListOf<RecipeStepDraft>()
+    private var pendingTerminalFlow: PendingTerminalFlow? = null
+    private var localServerStarted = false
+    private var consumedCardRunLaunchKey: String? = null
+    private var focusedRunRecipeId: String? = null
+    private var focusedRunInstanceId: String? = null
+    private var latestBootstrapSnapshot = BootstrapCoordinator.snapshot.value
+    private var latestRootfsProgress = AssetExtractor.rootfsProgress.value
+    private var latestRuntimeBootstrapProgress = RuntimeBootstrapProgress.snapshot.value
+    private var ubuntuRuntimeDialog: Dialog? = null
+    private var runtimePanelTitleView: TextView? = null
+    private var runtimePanelDetailView: TextView? = null
+    private var runtimePanelProgressBar: ProgressBar? = null
+    private var runtimePanelProgressTextView: TextView? = null
+    private var runtimePanelActionButton: TextView? = null
+    private var autoOpenedRootfsRunAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -130,8 +160,12 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         bridgeClient = KiteBridgeClient(diagnostics, applicationContext)
         webView = WebView(this)
         webShell = KiteWebShell(this, webView, diagnostics) { }
+        cardLocalSettings = CardLocalSettingsStore(this)
         localServer = KiteLocalServer(applicationContext, diagnostics) { url -> runOnUiThread { openWeb(url, "endpoint") } }
-        localServer.start()
+        if (shouldStartLocalServer()) {
+            localServer.start()
+            localServerStarted = true
+        }
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -139,15 +173,29 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         setContentView(root)
         observeUbuntuBootstrapState()
+        observeRootfsExtractionProgress()
+        observeRuntimeBootstrapProgress()
+        observeTerminalFlowSignals()
         showConsole()
+        handleCardRunLaunchIntent(intent)
         refreshUbuntuRuntimeState()
         if (!dropZoneStatus.available) {
             Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_LONG).show()
         }
     }
 
+    protected open fun shouldStartLocalServer(): Boolean = true
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleCardRunLaunchIntent(intent)
+    }
+
     override fun onDestroy() {
-        localServer.stop()
+        if (localServerStarted) {
+            localServer.stop()
+        }
         super.onDestroy()
     }
 
@@ -163,16 +211,134 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     override fun onPostResume() {
         super.onPostResume()
-        if (currentScreen == Screen.Terminal) {
-            ensureKfRuntimeBootstrap()
+    }
+
+    private fun handleCardRunLaunchIntent(sourceIntent: Intent?) {
+        val recipeId = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_RECIPE_ID).orEmpty()
+        if (recipeId.isBlank()) return
+
+        val instanceId = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: CardRunIntents.newInstanceId(recipeId)
+        val autoStart = sourceIntent?.getBooleanExtra(CardRunIntents.EXTRA_AUTO_START, true) ?: true
+        val launchSource = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_LAUNCH_SOURCE).orEmpty()
+        val launchKey = "$recipeId:$instanceId:$autoStart:$launchSource"
+        if (consumedCardRunLaunchKey == launchKey) return
+        consumedCardRunLaunchKey = launchKey
+
+        val recipes = recipeLoader.loadAllRecipes()
+        currentRecipes = recipes
+        val recipe = recipes.firstOrNull { it.id == recipeId }
+        if (recipe == null) {
+            Toast.makeText(this, "未找到卡片：$recipeId", Toast.LENGTH_SHORT).show()
+            diagnostics.logRecipeEvent("card_run_launch_missing_recipe", null, mapOf("recipeId" to recipeId))
+            return
+        }
+
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = instanceId
+        title = recipe.name
+        applyCardTaskDescription(recipe)
+        val state = CardRunStore.get(instanceId) ?: CardRunStore.start(recipe, instanceId)
+        activeRunInstanceIds[recipe.id] = state.instanceId
+        runtimeStates[recipe.id] = state
+        diagnostics.logRecipeAction(
+            recipe,
+            "card_run_task_launch",
+            mapOf(
+                "instanceId" to instanceId,
+                "source" to launchSource,
+                "autoStart" to autoStart.toString()
+            )
+        )
+
+        if (autoStart) {
+            startRecipe(recipe, state, instanceId)
+        } else {
+            showConsole()
         }
     }
+
+    @Suppress("DEPRECATION")
+    private fun applyCardTaskDescription(recipe: KiteRecipe) {
+        setTaskDescription(
+            ActivityManager.TaskDescription(
+                recipe.name.ifBlank { "Kite 卡片" },
+                CardShortcutManager.iconBitmap(recipe),
+                opaqueColor(tokens.primaryStrong)
+            )
+        )
+    }
+
+    private fun opaqueColor(color: Int): Int =
+        Color.rgb(Color.red(color), Color.green(color), Color.blue(color))
 
     private fun observeUbuntuBootstrapState() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 BootstrapCoordinator.snapshot.collect { snapshot ->
-                    setUbuntuRuntimeState(snapshot.toUbuntuRuntimeUiState() ?: return@collect)
+                    latestBootstrapSnapshot = snapshot
+                    setUbuntuRuntimeState(buildUbuntuRuntimeUiState() ?: return@collect)
+                }
+            }
+        }
+    }
+
+    private fun observeRootfsExtractionProgress() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                AssetExtractor.rootfsProgress.collect { progress ->
+                    latestRootfsProgress = progress
+                    setUbuntuRuntimeState(buildUbuntuRuntimeUiState() ?: return@collect)
+                }
+            }
+        }
+    }
+
+    private fun observeRuntimeBootstrapProgress() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                RuntimeBootstrapProgress.snapshot.collect { progress ->
+                    latestRuntimeBootstrapProgress = progress
+                    setUbuntuRuntimeState(buildUbuntuRuntimeUiState() ?: return@collect)
+                }
+            }
+        }
+    }
+
+    private fun observeTerminalFlowSignals() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                TerminalRuntimeRegistry.entries.collect { entries ->
+                    val pending = pendingTerminalFlow ?: return@collect
+                    val terminal = entries.firstOrNull { it.sessionId == pending.sessionId } ?: return@collect
+                    if (terminal.status !in terminalFlowFinishedStatuses) return@collect
+                    val activeRun = CardRunStore.get(pending.instanceId)
+                    if (activeRun == null || activeRun.recipeId != pending.recipeId) {
+                        pendingTerminalFlow = null
+                        return@collect
+                    }
+
+                    pendingTerminalFlow = null
+                    val recipe = currentRecipes.firstOrNull { it.id == pending.recipeId }
+                        ?: recipeLoader.loadAllRecipes().firstOrNull { it.id == pending.recipeId }
+                        ?: return@collect
+                    diagnostics.logRecipeAction(
+                        recipe,
+                        "terminal_step_finished",
+                        mapOf(
+                            "sessionId" to pending.sessionId,
+                            "status" to terminal.status.name,
+                            "exitCode" to (terminal.lastExitCode?.toString() ?: "")
+                        )
+                    )
+                    executeRecipeStep(
+                        recipe = recipe,
+                        stepIndex = pending.nextStepIndex,
+                        runId = pending.sessionId,
+                        pid = terminal.lastPid?.toString(),
+                        lastOutput = "终端已结束：${terminal.status.label}"
+                    )
                 }
             }
         }
@@ -204,12 +370,124 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun setUbuntuRuntimeState(state: UbuntuRuntimeUiState) {
+        val previous = ubuntuRuntimeState
         if (ubuntuRuntimeState == state) return
         ubuntuRuntimeState = state
-        if (::root.isInitialized && currentScreen == Screen.Console) {
+        renderUbuntuRuntimePanelState()
+        maybeAutoShowUbuntuRuntimePanel(state)
+        if (::root.isInitialized && currentScreen == Screen.Console && shouldRefreshConsoleForRuntimeState(previous, state)) {
             showConsole()
         }
     }
+
+    private fun shouldRefreshConsoleForRuntimeState(previous: UbuntuRuntimeUiState, next: UbuntuRuntimeUiState): Boolean {
+        if (previous.visible != next.visible) return true
+        if (previous.title != next.title) return true
+        if (previous.isProblem != next.isProblem) return true
+        if (previous.blocksUbuntuActions != next.blocksUbuntuActions) return true
+        if (previous.showProgress != next.showProgress) return true
+        val previousPercent = previous.progressPercent
+        val nextPercent = next.progressPercent
+        if (previousPercent != null && nextPercent != null) {
+            return kotlin.math.abs(nextPercent - previousPercent) >= 5
+        }
+        return previous.progressText.isBlank() != next.progressText.isBlank()
+    }
+
+    private fun buildUbuntuRuntimeUiState(): UbuntuRuntimeUiState? {
+        latestRootfsProgress.toUbuntuRuntimeUiState()?.let { return it }
+        latestRuntimeBootstrapProgress.toUbuntuRuntimeUiState()?.let { return it }
+        return latestBootstrapSnapshot.toUbuntuRuntimeUiState()
+    }
+
+    private fun RuntimeBootstrapProgressSnapshot.toUbuntuRuntimeUiState(): UbuntuRuntimeUiState? {
+        if (!active) {
+            if (percent == 100 && latestBootstrapSnapshot.stage == BootstrapStage.READY) {
+                return UbuntuRuntimeUiState.hidden()
+            }
+            return null
+        }
+        return UbuntuRuntimeUiState(
+            title = title.ifBlank { "正在部署 Ubuntu" },
+            detail = detail.ifBlank { "正在执行当前初始化步骤。" },
+            blocksUbuntuActions = true,
+            isProblem = false,
+            progressPercent = percent,
+            progressText = percent?.let { "总进度 $it%" }.orEmpty(),
+            showProgress = percent != null
+        )
+    }
+
+    private fun AssetExtractor.RootfsExtractionProgress.toUbuntuRuntimeUiState(): UbuntuRuntimeUiState? {
+        val progressLabel = progressLabel()
+        return when (phase) {
+            AssetExtractor.RootfsExtractionPhase.PREPARING,
+            AssetExtractor.RootfsExtractionPhase.EXTRACTING,
+            AssetExtractor.RootfsExtractionPhase.VERIFYING -> UbuntuRuntimeUiState(
+                title = when (phase) {
+                    AssetExtractor.RootfsExtractionPhase.VERIFYING -> "正在校验 Ubuntu 系统镜像"
+                    else -> "正在解压 Ubuntu 系统镜像"
+                },
+                detail = message.ifBlank {
+                    if (entriesExtracted > 0) "已处理 $entriesExtracted 个文件，完成后会自动继续启动。" else "正在准备系统镜像，完成后会自动继续启动。"
+                },
+                blocksUbuntuActions = true,
+                isProblem = false,
+                progressPercent = percent?.let { 5 + (it * 45 / 100) },
+                progressText = progressLabel,
+                showProgress = true,
+                autoOpenPanel = phase != AssetExtractor.RootfsExtractionPhase.VERIFYING
+            )
+
+            AssetExtractor.RootfsExtractionPhase.FAILED -> UbuntuRuntimeUiState(
+                title = "Ubuntu 部署失败",
+                detail = listOfNotNull(
+                    errorMessage?.takeIf { it.isNotBlank() },
+                    "未完成的 rootfs 不会被当作成功使用，下次启动会清理后重新解压。"
+                ).joinToString("\n"),
+                blocksUbuntuActions = false,
+                isProblem = true,
+                progressPercent = percent,
+                progressText = progressLabel,
+                showProgress = progressLabel.isNotBlank(),
+                canRetry = true
+            )
+
+            AssetExtractor.RootfsExtractionPhase.READY -> {
+                when (latestBootstrapSnapshot.stage) {
+                    BootstrapStage.ROOTFS_EXTRACTING,
+                    BootstrapStage.BASE_BOOTSTRAP -> {
+                        if (latestRuntimeBootstrapProgress.active) {
+                            null
+                        } else {
+                            UbuntuRuntimeUiState(
+                                title = "正在初始化基础环境",
+                                detail = "系统镜像已经解压完成，正在补齐 apt、dpkg 和常用基础工具。这个阶段可能比解压更久，完成后会继续准备工作区。",
+                                blocksUbuntuActions = true,
+                                isProblem = false,
+                                progressPercent = 55,
+                                progressText = "总进度 55%",
+                                showProgress = true
+                            )
+                        }
+                    }
+                    BootstrapStage.IDLE,
+                    BootstrapStage.READY -> UbuntuRuntimeUiState.hidden()
+                    else -> null
+                }
+            }
+
+            AssetExtractor.RootfsExtractionPhase.IDLE -> null
+        }
+    }
+
+    private fun AssetExtractor.RootfsExtractionProgress.progressLabel(): String =
+        when {
+            percent != null -> "rootfs 解压 $percent% · 已处理 $entriesExtracted 个文件"
+            entriesExtracted > 0 -> "已处理 $entriesExtracted 个文件"
+            bytesRead > 0L -> "已读取 ${formatBytes(bytesRead)}"
+            else -> ""
+        }
 
     private fun BootstrapSnapshot.toUbuntuRuntimeUiState(): UbuntuRuntimeUiState? =
         when (stage) {
@@ -236,9 +514,20 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 },
                 detail = "\u90e8\u7f72\u671f\u95f4 Ubuntu \u5361\u7247\u6682\u65f6\u9501\u5b9a\uff0c\u5b8c\u6210\u540e\u4f1a\u81ea\u52a8\u6062\u590d\u3002",
                 blocksUbuntuActions = true,
-                isProblem = false
+                isProblem = false,
+                showProgress = stage == BootstrapStage.ROOTFS_EXTRACTING,
+                progressText = if (stage == BootstrapStage.ROOTFS_EXTRACTING) "正在等待解压进度" else ""
             )
         }
+
+    private fun formatBytes(bytes: Long): String {
+        if (bytes < 1024L) return "${bytes}B"
+        val kb = bytes / 1024.0
+        if (kb < 1024.0) return String.format("%.1fKB", kb)
+        val mb = kb / 1024.0
+        if (mb < 1024.0) return String.format("%.1fMB", mb)
+        return String.format("%.1fGB", mb / 1024.0)
+    }
 
     private fun loadThemeConfig(): ThemeConfig =
         ThemeConfig(
@@ -314,7 +603,14 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         dropZoneStatus = dropZoneManager.prepareDropZone()
         currentRecipes = recipeLoader.loadAllRecipes()
         currentRecipes.forEach { recipe ->
-            runtimeStates.putIfAbsent(recipe.id, RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown"))
+            runtimeStates[recipe.id] = CardRunStore.currentForRecipe(recipe.id)
+                ?: runtimeStates[recipe.id]
+                    ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown")
+        }
+        val focusedRecipe = focusedRunRecipe()
+        if (this is CardRunActivity && focusedRecipe != null) {
+            showCardRunSurface(focusedRecipe)
+            return
         }
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
@@ -324,18 +620,22 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         root.addView(bottomNavigation())
     }
 
+    private fun focusedRunRecipe(): KiteRecipe? {
+        val recipeId = focusedRunRecipeId?.takeIf { it.isNotBlank() } ?: return null
+        return currentRecipes.firstOrNull { it.id == recipeId }
+            ?: recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
+    }
+
     private fun showTerminal() {
         val currentTerminalFragment = supportFragmentManager.findFragmentByTag(TERMINAL_FRAGMENT_TAG) as? TerminalFragment
         if (currentScreen == Screen.Terminal && currentTerminalFragment?.isAdded == true) {
             applyKiteTerminalTheme()
-            ensureKfRuntimeBootstrap()
             terminalBottomNavigation?.visibility = if (isTerminalDetailMode) View.GONE else View.VISIBLE
             return
         }
         currentScreen = Screen.Terminal
         isTerminalDetailMode = false
         applyKiteTerminalTheme()
-        ensureKfRuntimeBootstrap()
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen(detachTerminal = false)
         val container = FrameLayout(this).apply {
@@ -459,12 +759,7 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(context).apply {
-                    text = "Kite"
-                    textSize = 31f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                })
+                addView(systemTitleButton())
                 addView(TextView(context).apply {
                     text = "配置表控制台"
                     textSize = 14f
@@ -498,6 +793,48 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 addView(chip("■  已停止 $stopped", false))
             })
         })
+    }
+
+    private fun systemTitleButton(): View = row {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, 0, dp(8), 0)
+        addView(TextView(context).apply {
+            text = "Kite"
+            textSize = 31f
+            typeface = Typeface.DEFAULT_BOLD
+            includeFontPadding = false
+            setTextColor(tokens.textPrimary)
+        })
+        addView(systemStatusPill(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
+            setMargins(dp(10), dp(2), 0, 0)
+        })
+        setOnClickListener { showUbuntuRuntimePanel(auto = false) }
+    }
+
+    private fun systemStatusPill(): TextView = TextView(this).apply {
+        val state = ubuntuRuntimeState
+        text = systemStatusLabel(state)
+        textSize = 10.5f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        val color = when {
+            state.isProblem -> tokens.danger
+            state.blocksUbuntuActions -> tokens.primaryStrong
+            state.visible -> tokens.textSecondary
+            else -> tokens.success
+        }
+        setTextColor(color)
+        setPadding(dp(8), 0, dp(8), 0)
+        background = roundedBox(tintBackground(color), tintBackgroundBorder(color), dp(13).toFloat())
+    }
+
+    private fun systemStatusLabel(state: UbuntuRuntimeUiState): String = when {
+        state.isProblem -> "异常"
+        state.showProgress && state.progressPercent != null -> "解压 ${state.progressPercent}%"
+        state.blocksUbuntuActions -> "部署中"
+        state.visible -> "未部署"
+        else -> "就绪"
     }
 
     private fun dropZoneControlRow(): View = row {
@@ -550,6 +887,637 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setTextColor(tokens.textSecondary)
                 setPadding(0, dp(4), 0, 0)
             })
+            addView(runtimeProgressView(state, compact = true))
+            setOnClickListener { showUbuntuRuntimePanel(auto = false) }
+        }
+    }
+
+    private fun showCardRunSurface(recipe: KiteRecipe) {
+        currentScreen = Screen.CardRun
+        root.setBackgroundColor(tokens.pageBackground)
+        clearRootForScreen()
+        val state = focusedRunInstanceId
+            ?.let { CardRunStore.get(it) }
+            ?: runtimeStateFor(recipe)
+        root.addView(cardRunTopBar(recipe, state))
+        root.addView(ScrollView(this).apply {
+            addView(cardRunContent(state))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    private fun cardRunTopBar(recipe: KiteRecipe, state: RecipeRuntimeState): View = FrameLayout(this).apply {
+        setPadding(dp(18), dp(10), dp(18), dp(4))
+        addView(cardRunControlPill(recipe, state), FrameLayout.LayoutParams(dp(83), dp(29), Gravity.RIGHT or Gravity.CENTER_VERTICAL))
+    }
+
+    private fun cardRunControlPill(recipe: KiteRecipe, state: RecipeRuntimeState): View = row {
+        gravity = Gravity.CENTER
+        setPadding(dp(2), dp(2), dp(2), dp(2))
+        background = roundedBox(tokens.surfaceElevated, tokens.border, dp(15).toFloat())
+        elevation = dp(2).toFloat()
+        addView(cardRunPillButton("•••") { showCardRunMenu(recipe, state) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        addView(View(context).apply {
+            setBackgroundColor(tokens.border)
+            layoutParams = LinearLayout.LayoutParams(dp(1), dp(17))
+        })
+        addView(cardRunPillButton("◎") { closeCardRunTask() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+    }
+
+    private fun cardRunPillButton(textValue: String, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = textValue
+            textSize = if (textValue == "◎") 15f else 13f
+            typeface = Typeface.DEFAULT_BOLD
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textPrimary)
+            background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(12).toFloat(), 0)
+            setOnClickListener { onClick() }
+        }
+
+    private fun cardRunContent(state: RecipeRuntimeState): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(12), dp(18), dp(28))
+            when (state.surface) {
+                CardRunSurface.Terminal -> addView(cardRunPlaceholderPanel("终端", state.terminalSessionId ?: "还没有终端会话。"))
+                CardRunSurface.Web -> addView(cardRunPlaceholderPanel("网页", state.nextActionUrl ?: "还没有网页地址。"))
+                else -> addView(cardRunReportPanel(state))
+            }
+        }
+
+    private fun cardRunStatusPanel(recipe: KiteRecipe, state: RecipeRuntimeState): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(15), dp(16), dp(15))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+            addView(row {
+                addView(TextView(context).apply {
+                    text = state.status.label
+                    textSize = 16f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(if (state.failureSummary() != null) tokens.danger else tokens.textPrimary)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                addView(TextView(context).apply {
+                    text = if (state.stepCount > 0) "${(state.currentStepIndex + 1).coerceAtLeast(0)}/${state.stepCount}" else "--"
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    setTextColor(tokens.textSecondary)
+                    background = roundedBox(tokens.surface, tokens.border, dp(13).toFloat())
+                    layoutParams = LinearLayout.LayoutParams(dp(52), dp(26))
+                })
+            })
+            addView(TextView(context).apply {
+                text = cardRunStatusDetail(state)
+                textSize = 12.5f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(8), 0, 0)
+            })
+            addView(row {
+                setPadding(0, dp(14), 0, 0)
+                addView(primaryAction(if (state.isBusy()) "运行中" else "重新执行", displayAccentName(recipe), state.isBusy()) {
+                    startRecipe(recipe, state, focusedRunInstanceId)
+                })
+            })
+        }
+
+    private fun cardRunStatusDetail(state: RecipeRuntimeState): String {
+        val stepText = if (state.stepCount > 0 && state.currentStepIndex >= 0) {
+            "步骤 ${state.currentStepIndex + 1}/${state.stepCount}"
+        } else {
+            "等待执行"
+        }
+        val binding = listOfNotNull(
+            state.runId?.takeIf { it.isNotBlank() }?.let { "run=$it" },
+            state.pid?.takeIf { it.isNotBlank() }?.let { "pid=$it" },
+            state.terminalSessionId?.takeIf { it.isNotBlank() }?.let { "terminal=$it" }
+        ).joinToString(" · ")
+        return listOf(stepText, state.surface.label, binding.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ")
+    }
+
+    private fun cardRunReportPanel(state: RecipeRuntimeState): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, 0)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, 0, 0, 0)
+            }
+            addView(TextView(context).apply {
+                text = "SH 报告"
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = cardRunReportText(state)
+                textSize = 12.5f
+                setTextColor(if (state.failureSummary() != null) tokens.danger else tokens.textSecondary)
+                setLineSpacing(dp(3).toFloat(), 1f)
+                setPadding(0, dp(10), 0, 0)
+            })
+        }
+
+    private fun cardRunReportText(state: RecipeRuntimeState): String {
+        val lines = mutableListOf<String>()
+        val error = state.lastError.orEmpty().trim()
+        val output = state.lastMeaningfulOutput.orEmpty().trim()
+        val shellReport = state.shellReportText.orEmpty().trim()
+        val hasReport = shellReport.isNotBlank()
+        lines += "状态：${state.status.label}"
+        lines += "位置：${state.surface.label}"
+        lines += cardRunStatusDetail(state)
+        commandHintFor(state)?.let { lines += "解释：$it" }
+        if (hasReport) {
+            lines += shellReport
+        } else {
+            if (error.isNotBlank()) lines += "错误：$error"
+            if (output.isNotBlank() && output != error) lines += "输出：$output"
+        }
+        if (!state.nextActionUrl.isNullOrBlank()) lines += "网页：${state.nextActionUrl}"
+        if (!hasReport && error.isBlank() && output.isBlank() && state.nextActionUrl.isNullOrBlank()) {
+            lines += "暂无输出。一次性命令请使用“等待结束”，例如 python3 -V。"
+        }
+        return lines.joinToString("\n")
+    }
+
+    private fun commandHintFor(state: RecipeRuntimeState): String? {
+        val text = listOfNotNull(state.lastError, state.lastMeaningfulOutput, state.shellReportText).joinToString("\n")
+        val missingCommand = Regex("""(?:^|\n).*?:\s*([A-Za-z0-9_.+-]+): command not found""")
+            .find(text)
+            ?.groupValues
+            ?.getOrNull(1)
+        return when {
+            text.contains("python: command not found", ignoreCase = true) ->
+                "当前环境没有 python 这个别名。先试 python3 -V；如果以后想直接用 python，可以再补一个别名。"
+            text.contains("python3: command not found", ignoreCase = true) ->
+                "当前环境没有 Python 3，需要先安装 Python。"
+            missingCommand != null ->
+                "没有找到命令：$missingCommand。一般是还没安装、命令名写错，或者当前环境的 PATH 没包含它。"
+            text.contains("Permission denied", ignoreCase = true) ->
+                "权限不足，或者这个文件还没有执行权限。"
+            text.contains("No such file or directory", ignoreCase = true) ->
+                "路径或文件不存在，先检查命令里的目录和文件名。"
+            text.contains("timed out", ignoreCase = true) || text.contains("timeout", ignoreCase = true) ->
+                "命令超时，可能还在等待输入、网络、服务启动，或者命令本身卡住了。"
+            else -> null
+        }
+    }
+
+    private fun shellReportText(report: KiteRunReport?, recipe: KiteRecipe): String? {
+        val shellSteps = report?.steps?.filter { it.type == KiteRecipe.STEP_SHELL }.orEmpty()
+        if (shellSteps.isEmpty()) return null
+        val recipeStepsById = recipe.steps.associateBy { it.id }
+        return shellSteps.joinToString("\n\n") { stepReport ->
+            val recipeStep = recipeStepsById[stepReport.stepId]
+            shellStepReportText(stepReport, recipeStep)
+        }
+    }
+
+    private fun shellStepReportText(report: KiteStepReport, step: KiteRecipeStep?): String {
+        val lines = mutableListOf<String>()
+        step?.cmd?.takeIf { it.isNotBlank() }?.let { lines += "命令：$it" }
+        lines += "结果：${shellReportStatusLabel(report)}"
+        report.exitCode?.let { lines += "退出码：$it（0 表示命令成功结束）" }
+        report.lastMeaningfulOutput.trim().takeIf { it.isNotBlank() }?.let { lines += "有效输出：$it" }
+        val rawOutput = report.stdoutTail.trim()
+        if (rawOutput.isNotBlank() && rawOutput != report.lastMeaningfulOutput.trim()) {
+            lines += "原始输出：\n$rawOutput"
+        }
+        report.stderrTail.trim().takeIf { it.isNotBlank() && it != rawOutput }?.let { lines += "错误输出：$it" }
+        report.matchResult?.takeIf { it.enabled }?.let { match ->
+            lines += "匹配：${if (match.matched) "通过" else "未通过"}（${match.text}）"
+        }
+        if (rawOutput.isBlank() && report.lastMeaningfulOutput.isBlank()) {
+            lines += "输出：命令没有打印内容。"
+        }
+        return lines.joinToString("\n")
+    }
+
+    private fun shellReportStatusLabel(report: KiteStepReport): String =
+        when {
+            report.status == KiteRunReport.STATUS_FINISHED && report.exitCode == 0 -> "成功"
+            report.status == KiteRunReport.STATUS_RUNNING -> "已启动"
+            report.status == KiteRunReport.STATUS_STOPPED -> "已停止"
+            report.status == KiteRunReport.STATUS_FAILED -> "失败"
+            else -> report.status
+        }
+
+    private fun showCardRunMenu(recipe: KiteRecipe, state: RecipeRuntimeState) {
+        val dialog = Dialog(this)
+        val sheetFill = Color.WHITE
+        val tileFill = Color.rgb(244, 244, 246)
+        val primaryText = Color.rgb(20, 20, 24)
+        val secondaryText = Color.rgb(105, 105, 112)
+        val dividerColor = Color.rgb(232, 232, 236)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, 0)
+            background = roundedTopBox(sheetFill, sheetFill, dp(18).toFloat())
+            addView(cardRunMenuHeader(recipe, primaryText, secondaryText))
+            addView(cardRunMenuDivider(dividerColor))
+            addView(cardRunMenuActionRow(
+                listOf(
+                    CardRunMenuAction("↻", "刷新") {
+                        dialog.dismiss()
+                        showCardRunSurface(recipe)
+                    },
+                    CardRunMenuAction("↺", "重新执行") {
+                        dialog.dismiss()
+                        startRecipe(recipe, state, focusedRunInstanceId)
+                    },
+                    CardRunMenuAction("⧉", "复制报告") {
+                        copyCardRunReport(state)
+                        dialog.dismiss()
+                    },
+                    CardRunMenuAction("⊙", "关闭实例") {
+                        dialog.dismiss()
+                        closeCardRunTask()
+                    }
+                ),
+                tileFill,
+                primaryText,
+                secondaryText
+            ))
+            addView(cardRunMenuDivider(dividerColor))
+            addView(cardRunMenuActionRow(
+                listOf(
+                    CardRunMenuAction("SH", "SH 报告") {
+                        dialog.dismiss()
+                        selectCardRunSurface(recipe, CardRunSurface.Report)
+                    },
+                    CardRunMenuAction(">_", "终端") {
+                        dialog.dismiss()
+                        selectCardRunSurface(recipe, CardRunSurface.Terminal)
+                    },
+                    CardRunMenuAction("◎", "网页") {
+                        dialog.dismiss()
+                        selectCardRunSurface(recipe, CardRunSurface.Web)
+                    }
+                ),
+                tileFill,
+                primaryText,
+                secondaryText
+            ))
+            addView(cardRunMenuDivider(dividerColor))
+            addView(cardRunMenuCancel(dialog, secondaryText))
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.decorView?.setPadding(0, 0, 0, 0)
+        dialog.window?.setGravity(Gravity.BOTTOM)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private data class CardRunMenuAction(
+        val icon: String,
+        val label: String,
+        val onClick: () -> Unit
+    )
+
+    private fun cardRunMenuHeader(recipe: KiteRecipe, primaryText: Int, secondaryText: Int): View =
+        row {
+            setPadding(dp(18), dp(14), dp(18), dp(12))
+            addView(TextView(context).apply {
+                text = iconGlyph(recipe.icon.name)
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                background = roundedBox(accentFor(recipe), accentFor(recipe), dp(18).toFloat())
+                layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply {
+                    setMargins(0, 0, dp(12), 0)
+                }
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(context).apply {
+                    text = recipe.name.ifBlank { "Kite 卡片" }
+                    textSize = 14.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(primaryText)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                })
+                addView(TextView(context).apply {
+                    text = "Kite 卡片实例"
+                    textSize = 11.5f
+                    setTextColor(secondaryText)
+                    setPadding(0, dp(2), 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(context).apply {
+                text = "›"
+                textSize = 22f
+                gravity = Gravity.CENTER
+                setTextColor(secondaryText)
+                layoutParams = LinearLayout.LayoutParams(dp(24), dp(36))
+            })
+        }
+
+    private fun cardRunMenuSectionTitle(title: String, textColor: Int): TextView =
+        TextView(this).apply {
+            text = title
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(textColor)
+            setPadding(dp(22), dp(18), dp(22), dp(8))
+        }
+
+    private fun cardRunMenuActionRow(
+        actions: List<CardRunMenuAction>,
+        tileFill: Int,
+        primaryText: Int,
+        secondaryText: Int
+    ): View = row {
+        gravity = Gravity.TOP
+        setPadding(dp(16), dp(10), dp(16), dp(10))
+        actions.forEach { action ->
+            addView(cardRunMenuActionButton(action, tileFill, primaryText, secondaryText), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        repeat((4 - actions.size).coerceAtLeast(0)) {
+            addView(View(context), LinearLayout.LayoutParams(0, dp(1), 1f))
+        }
+    }
+
+    private fun cardRunMenuActionButton(
+        action: CardRunMenuAction,
+        tileFill: Int,
+        primaryText: Int,
+        secondaryText: Int
+    ): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(4), 0, dp(4), 0)
+            addView(TextView(context).apply {
+                text = action.icon
+                textSize = if (action.icon.length <= 2) 18f else 14f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(primaryText)
+                background = roundedBox(tileFill, tileFill, dp(11).toFloat())
+                layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+            })
+            addView(TextView(context).apply {
+                text = action.label
+                textSize = 10.5f
+                gravity = Gravity.CENTER
+                setTextColor(secondaryText)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(5), 0, 0)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            setOnClickListener { action.onClick() }
+        }
+
+    private fun cardRunMenuDivider(color: Int): View =
+        View(this).apply {
+            setBackgroundColor(color)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+        }
+
+    private fun cardRunMenuCancel(dialog: Dialog, textColor: Int): View =
+        TextView(this).apply {
+            text = "取消"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(textColor)
+            setPadding(0, dp(13), 0, dp(13))
+            setOnClickListener { dialog.dismiss() }
+        }
+
+    private fun selectCardRunSurface(recipe: KiteRecipe, surface: CardRunSurface) {
+        val instanceId = focusedRunInstanceId
+            ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
+            ?: CardRunStore.start(recipe).also { focusedRunInstanceId = it.instanceId }.instanceId
+        CardRunStore.selectSurface(instanceId, surface)?.let { state ->
+            runtimeStates[recipe.id] = state
+        }
+        showCardRunSurface(recipe)
+    }
+
+    private fun cardRunPlaceholderPanel(title: String, detail: String): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(15), dp(16), dp(15))
+            background = roundedBox(tokens.surfaceElevated, tokens.border, dp(18).toFloat())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, dp(12), 0, 0)
+            }
+            addView(TextView(context).apply {
+                text = title
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = detail
+                textSize = 12.5f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(10), 0, 0)
+            })
+        }
+
+    private fun menuRow(label: String, onClick: () -> Unit): View =
+        TextView(this).apply {
+            text = label
+            textSize = 14f
+            gravity = Gravity.CENTER_VERTICAL
+            setTextColor(tokens.textPrimary)
+            setPadding(dp(12), 0, dp(12), 0)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
+            setOnClickListener { onClick() }
+        }
+
+    private fun copyCardRunReport(state: RecipeRuntimeState) {
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText("Kite 执行报告", cardRunReportText(state)))
+        Toast.makeText(this, "已复制执行报告", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun closeCardRunTask() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            finishAndRemoveTask()
+        } else {
+            finish()
+        }
+    }
+
+    private fun runtimeProgressView(state: UbuntuRuntimeUiState, compact: Boolean): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (state.showProgress) View.VISIBLE else View.GONE
+            setPadding(0, dp(if (compact) 8 else 14), 0, 0)
+            addView(ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100
+                progress = state.progressPercent ?: 0
+                isIndeterminate = state.progressPercent == null
+                progressDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
+                indeterminateDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (compact) 5 else 7))
+            })
+            if (state.progressText.isNotBlank()) {
+                addView(TextView(context).apply {
+                    text = state.progressText
+                    textSize = if (compact) 10.5f else 12f
+                    setTextColor(tokens.textSecondary)
+                    setPadding(0, dp(5), 0, 0)
+                })
+            }
+        }
+
+    private fun maybeAutoShowUbuntuRuntimePanel(state: UbuntuRuntimeUiState) {
+        val startedAt = latestRootfsProgress.startedAt
+        if (!state.autoOpenPanel || startedAt <= 0L || autoOpenedRootfsRunAt == startedAt) return
+        autoOpenedRootfsRunAt = startedAt
+        showUbuntuRuntimePanel(auto = true)
+    }
+
+    private fun showUbuntuRuntimePanel(auto: Boolean) {
+        val existing = ubuntuRuntimeDialog
+        if (existing?.isShowing == true) {
+            renderUbuntuRuntimePanelState()
+            return
+        }
+
+        val dialog = Dialog(this)
+        ubuntuRuntimeDialog = dialog
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+            background = roundedBox(tokens.pageBackground, tokens.border, dp(24).toFloat())
+        }
+
+        content.addView(row {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(context).apply {
+                text = "系统状态"
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(context).apply {
+                text = "×"
+                textSize = 24f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(tokens.textSecondary)
+                background = roundedBox(tokens.surface, tokens.border, dp(18).toFloat())
+                layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
+                setOnClickListener { dialog.dismiss() }
+            })
+        })
+
+        content.addView(TextView(this).apply {
+            runtimePanelTitleView = this
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(tokens.textPrimary)
+            setPadding(0, dp(22), 0, 0)
+        })
+        content.addView(TextView(this).apply {
+            runtimePanelDetailView = this
+            textSize = 12.5f
+            setTextColor(tokens.textSecondary)
+            setLineSpacing(dp(2).toFloat(), 1f)
+            setPadding(0, dp(8), 0, 0)
+        })
+        content.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            runtimePanelProgressBar = this
+            max = 100
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(7)).apply {
+                setMargins(0, dp(18), 0, 0)
+            }
+        })
+        content.addView(TextView(this).apply {
+            runtimePanelProgressTextView = this
+            textSize = 12f
+            setTextColor(tokens.textSecondary)
+            setPadding(0, dp(7), 0, 0)
+        })
+        content.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        content.addView(TextView(this).apply {
+            runtimePanelActionButton = this
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.buttonText)
+            background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(14).toFloat())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
+            setOnClickListener { handleRuntimePanelAction() }
+        })
+
+        dialog.setContentView(content)
+        dialog.setOnDismissListener {
+            if (ubuntuRuntimeDialog == dialog) {
+                ubuntuRuntimeDialog = null
+                runtimePanelTitleView = null
+                runtimePanelDetailView = null
+                runtimePanelProgressBar = null
+                runtimePanelProgressTextView = null
+                runtimePanelActionButton = null
+            }
+        }
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setGravity(Gravity.TOP)
+        dialog.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            (resources.displayMetrics.heightPixels * 0.61f).toInt()
+        )
+        renderUbuntuRuntimePanelState()
+    }
+
+    private fun renderUbuntuRuntimePanelState() {
+        val dialog = ubuntuRuntimeDialog
+        if (dialog?.isShowing != true) return
+        val state = ubuntuRuntimeState
+        runtimePanelTitleView?.apply {
+            text = if (state.visible) state.title else "Kite 系统就绪"
+            setTextColor(if (state.isProblem) tokens.danger else tokens.textPrimary)
+        }
+        runtimePanelDetailView?.text = if (state.visible) {
+            state.detail
+        } else {
+            "Ubuntu 系统镜像已经准备好，可以启动卡片、终端或网页流程。"
+        }
+        runtimePanelProgressBar?.apply {
+            visibility = if (state.showProgress) View.VISIBLE else View.GONE
+            isIndeterminate = state.progressPercent == null
+            progress = state.progressPercent ?: 0
+            progressDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
+            indeterminateDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
+        }
+        runtimePanelProgressTextView?.apply {
+            text = state.progressText
+            visibility = if (state.showProgress && state.progressText.isNotBlank()) View.VISIBLE else View.GONE
+        }
+        runtimePanelActionButton?.apply {
+            val shouldRetry = state.canRetry || (state.visible && !state.blocksUbuntuActions)
+            text = if (shouldRetry) "重新检查 / 继续部署" else "关闭"
+            background = roundedBox(
+                if (shouldRetry) tokens.primaryStrong else tokens.surface,
+                if (shouldRetry) tokens.primaryStrong else tokens.border,
+                dp(14).toFloat()
+            )
+            setTextColor(if (shouldRetry) tokens.buttonText else tokens.textPrimary)
+        }
+    }
+
+    private fun handleRuntimePanelAction() {
+        val state = ubuntuRuntimeState
+        if (state.canRetry || (state.visible && !state.blocksUbuntuActions)) {
+            ubuntuRuntimeDialog?.dismiss()
+            kfRuntimeBootstrapRequested = false
+            ensureKfRuntimeBootstrap()
+        } else {
+            ubuntuRuntimeDialog?.dismiss()
         }
     }
 
@@ -753,6 +1721,18 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         val actionName = if (state.isActive()) KiteRecipe.ACTION_STOP else KiteRecipe.ACTION_START
+        if (actionName == KiteRecipe.ACTION_START && shouldOpenCardRunTaskFromHome(recipe)) {
+            diagnostics.logRecipeAction(recipe, "card_run_task_requested", mapOf("source" to CardRunIntents.SOURCE_CARD))
+            startActivity(
+                CardRunIntents.launchIntent(
+                    context = this,
+                    recipeId = recipe.id,
+                    launchSource = CardRunIntents.SOURCE_CARD,
+                    autoStart = true
+                )
+            )
+            return
+        }
         when (val route = actionRouter.route(recipe, actionName)) {
             is KiteActionRoute.StopRecipe -> stopRecipe(recipe, state)
             is KiteActionRoute.RunRecipe -> startRecipe(route.recipe, state)
@@ -767,6 +1747,9 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
         }
     }
+
+    private fun shouldOpenCardRunTaskFromHome(recipe: KiteRecipe): Boolean =
+        this !is CardRunActivity && recipe.launch.openInstance
 
     private fun runNativeAction(recipe: KiteRecipe, route: KiteActionRoute.NativeAction) {
         when (route.step.action) {
@@ -789,38 +1772,13 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
-    private fun handleRecipeAction(recipe: KiteRecipe) {
-        val state = runtimeStateFor(recipe)
-        diagnostics.logRecipeAction(recipe, "card_click", mapOf("type" to recipe.type, "status" to state.status.name))
-        if (state.isBusy()) return
-        if (state.isActive()) {
-            stopRecipe(recipe, state)
-            return
-        }
+    private fun handleRecipeAction(recipe: KiteRecipe) = handleRecipeActionWithRouter(recipe)
 
-        when (recipe.type) {
-            KiteRecipe.TYPE_OPEN_URL, KiteRecipe.TYPE_TEMPLATE -> {
-                setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = recipe.openWebUrl())
-                openWeb(recipe.openWebUrl(), "recipe_card", recipe)
-            }
-
-            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_START_SERVICE, KiteRecipe.TYPE_SCRIPT_WEB -> {
-                if (recipe.hasShellStep()) {
-                    startRecipe(recipe, state)
-                } else {
-                    setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = recipe.openWebUrl())
-                    openWeb(recipe.openWebUrl(), "recipe_card", recipe)
-                }
-            }
-
-            else -> {
-                setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = "unsupported_recipe_type")
-                Toast.makeText(this, "暂不支持的配置类型", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun startRecipe(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
+    private fun startRecipe(
+        recipe: KiteRecipe,
+        previousState: RecipeRuntimeState,
+        preferredInstanceId: String? = null
+    ) {
         if (previousState.status == RecipeRunStatus.Failed || previousState.status == RecipeRunStatus.BridgeUnavailable) {
             diagnostics.logLifecycleEvent(recipe, "retry", previousState.runId, previousState.pid, previousState.status.name)
         }
@@ -835,16 +1793,43 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 previousState.lastError
             )
         }
+        CardRunStore.start(
+            recipe,
+            preferredInstanceId ?: activeRunInstanceIds[recipe.id] ?: CardRunIntents.newInstanceId(recipe.id)
+        ).also {
+            activeRunInstanceIds[recipe.id] = it.instanceId
+            runtimeStates[recipe.id] = it
+        }
         setRuntimeState(
             recipe,
             RecipeRunStatus.Starting,
-            lastMeaningfulOutput = "\u6b63\u5728\u51c6\u5907 Ubuntu"
+            lastMeaningfulOutput = "正在启动流程"
         )
         showConsole()
+        executeRecipeStep(recipe, stepIndex = 0)
+    }
+
+    private fun runUbuntuStepWhenReady(
+        recipe: KiteRecipe,
+        stepIndex: Int,
+        runId: String?,
+        pid: String?,
+        surface: CardRunSurface,
+        onReady: () -> Unit
+    ) {
+        setRuntimeState(
+            recipe,
+            RecipeRunStatus.Running,
+            surface = surface,
+            currentStepIndex = stepIndex,
+            runId = runId,
+            pid = pid,
+            lastMeaningfulOutput = "正在准备 Ubuntu"
+        )
         setUbuntuRuntimeState(
             UbuntuRuntimeUiState(
                 title = "\u6b63\u5728\u90e8\u7f72 Ubuntu",
-                detail = "\u6b63\u5728\u68c0\u67e5\u7cfb\u7edf\u955c\u50cf\u548c\u5bb9\u5668\uff0c\u90e8\u7f72\u671f\u95f4 Ubuntu \u5361\u7247\u6682\u65f6\u9501\u5b9a\u3002",
+                detail = "当前步骤需要 Ubuntu，正在检查系统镜像、工作区和容器。",
                 blocksUbuntuActions = true,
                 isProblem = false
             )
@@ -876,9 +1861,7 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
             ready.onSuccess {
                 runOnUiThread { setUbuntuRuntimeState(UbuntuRuntimeUiState.hidden()) }
-                bridgeClient.runRecipe(recipe) { result ->
-                    runOnUiThread { handleBridgeResult(recipe, result) }
-                }
+                runOnUiThread { onReady() }
             }.onFailure { error ->
                 val message = "Ubuntu \u73af\u5883\u672a\u5c31\u7eea: ${error.message ?: error.javaClass.simpleName}"
                 runOnUiThread {
@@ -890,7 +1873,14 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                             isProblem = true
                         )
                     )
-                    setRuntimeState(recipe, RecipeRunStatus.BridgeUnavailable, lastError = message)
+                    setRuntimeState(
+                        recipe,
+                        RecipeRunStatus.BridgeUnavailable,
+                        currentStepIndex = stepIndex,
+                        runId = runId,
+                        pid = pid,
+                        lastError = message
+                    )
                     diagnostics.logBridgeEvent(
                         "ubuntu_preflight_failed",
                         recipe,
@@ -900,6 +1890,344 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     showConsole()
                 }
             }
+        }
+    }
+
+    private fun executeRecipeStep(
+        recipe: KiteRecipe,
+        stepIndex: Int,
+        runId: String? = null,
+        pid: String? = null,
+        lastOutput: String? = null
+    ) {
+        val steps = recipe.steps
+        if (stepIndex >= steps.size) {
+            setRuntimeState(
+                recipe,
+                if (!pid.isNullOrBlank()) RecipeRunStatus.Running else RecipeRunStatus.Completed,
+                currentStepIndex = stepIndex,
+                runId = runId,
+                pid = pid,
+                lastMeaningfulOutput = lastOutput ?: "流程已完成"
+            )
+            showConsole()
+            return
+        }
+
+        val step = steps[stepIndex]
+        when (step.type) {
+            KiteRecipe.STEP_SHELL -> runUbuntuStepWhenReady(recipe, stepIndex, runId, pid, CardRunSurface.Report) {
+                executeShellRecipeStep(recipe, step, stepIndex, runId, pid)
+            }
+            KiteRecipe.STEP_TERMINAL -> runUbuntuStepWhenReady(recipe, stepIndex, runId, pid, CardRunSurface.Terminal) {
+                executeTerminalRecipeStep(recipe, step, stepIndex)
+            }
+            KiteRecipe.STEP_OPEN_WEB -> {
+                val url = step.url.orEmpty().ifBlank { recipe.defaultUrl }
+                if (url.isBlank()) {
+                    setRuntimeState(
+                        recipe,
+                        RecipeRunStatus.Failed,
+                        currentStepIndex = stepIndex,
+                        runId = runId,
+                        pid = pid,
+                        lastError = "open_web_missing_url"
+                    )
+                    Toast.makeText(this, "打开网页步骤缺少地址", Toast.LENGTH_SHORT).show()
+                    showConsole()
+                    return
+                }
+                setRuntimeState(
+                    recipe,
+                    if (!pid.isNullOrBlank()) RecipeRunStatus.Running else RecipeRunStatus.Opened,
+                    surface = CardRunSurface.Web,
+                    currentStepIndex = stepIndex,
+                    runId = runId,
+                    pid = pid,
+                    lastMeaningfulOutput = lastOutput,
+                    nextActionUrl = url
+                )
+                if (shouldOpenStepSurface(step)) {
+                    openWeb(url, "recipe_sequence", recipe)
+                } else {
+                    diagnostics.logRecipeAction(
+                        recipe,
+                        "open_web_surface_suppressed",
+                        mapOf("stepIndex" to stepIndex.toString(), "url" to url)
+                    )
+                }
+                if (stepIndex < steps.lastIndex) {
+                    executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput)
+                } else if (!shouldOpenStepSurface(step)) {
+                    showConsole()
+                }
+            }
+            KiteRecipe.STEP_ANDROID_ACTION -> executeAndroidRecipeStep(recipe, step, stepIndex, runId, pid, lastOutput)
+            else -> {
+                setRuntimeState(
+                    recipe,
+                    RecipeRunStatus.Failed,
+                    surface = surfaceForStep(step),
+                    currentStepIndex = stepIndex,
+                    runId = runId,
+                    pid = pid,
+                    lastError = "unsupported_step:${step.type}"
+                )
+                Toast.makeText(this, "暂不支持的步骤：${step.type}", Toast.LENGTH_SHORT).show()
+                showConsole()
+            }
+        }
+    }
+
+    private fun surfaceForStep(step: KiteRecipeStep): CardRunSurface = when (step.type) {
+        KiteRecipe.STEP_OPEN_WEB -> CardRunSurface.Web
+        KiteRecipe.STEP_TERMINAL -> CardRunSurface.Terminal
+        KiteRecipe.STEP_SHELL,
+        KiteRecipe.STEP_ANDROID_ACTION -> CardRunSurface.Report
+        else -> CardRunSurface.Summary
+    }
+
+    private fun shouldOpenStepSurface(step: KiteRecipeStep): Boolean =
+        when (KiteRecipe.normalizeSurfaceMode(step.surfaceMode)) {
+            KiteRecipe.SURFACE_MODE_PANEL -> true
+            KiteRecipe.SURFACE_MODE_SILENT -> false
+            else -> step.type == KiteRecipe.STEP_OPEN_WEB || step.type == KiteRecipe.STEP_TERMINAL
+        }
+
+    private fun executeShellRecipeStep(
+        recipe: KiteRecipe,
+        step: KiteRecipeStep,
+        stepIndex: Int,
+        previousRunId: String?,
+        previousPid: String?
+    ) {
+        if (step.cmd.isNullOrBlank()) {
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Failed,
+                surface = CardRunSurface.Report,
+                currentStepIndex = stepIndex,
+                runId = previousRunId,
+                pid = previousPid,
+                lastError = "shell_missing_command"
+            )
+            Toast.makeText(this, "sh 命令步骤缺少命令", Toast.LENGTH_SHORT).show()
+            showConsole()
+            return
+        }
+        val stepRecipe = recipe.copy(
+            execution = KiteExecution.steps(listOf(step)),
+            actions = linkedMapOf(
+                KiteRecipe.ACTION_START to KiteRecipeAction(
+                    id = KiteRecipe.ACTION_START,
+                    steps = listOf(step),
+                    expected = step.expected ?: recipe.expected
+                )
+            ),
+            expected = step.expected ?: recipe.expected
+        )
+        setRuntimeState(
+            recipe,
+            RecipeRunStatus.Running,
+            surface = CardRunSurface.Report,
+            currentStepIndex = stepIndex,
+            runId = previousRunId,
+            pid = previousPid,
+            lastMeaningfulOutput = "正在执行 sh：${step.cmd.take(80)}",
+            shellReportText = "命令：${step.cmd}\n结果：执行中"
+        )
+        showConsole()
+        bridgeClient.runRecipe(stepRecipe) { result ->
+            runOnUiThread {
+                handleSequenceShellResult(recipe, stepIndex, result)
+            }
+        }
+    }
+
+    private fun executeAndroidRecipeStep(
+        recipe: KiteRecipe,
+        step: KiteRecipeStep,
+        stepIndex: Int,
+        runId: String?,
+        pid: String?,
+        lastOutput: String?
+    ) {
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Running,
+                surface = CardRunSurface.Report,
+                currentStepIndex = stepIndex,
+                runId = runId,
+                pid = pid,
+            lastMeaningfulOutput = "正在执行安卓动作：${step.action.orEmpty()}"
+        )
+        when (step.action) {
+            KiteRecipe.ANDROID_ACTION_PREPARE_AI_ENV -> {
+                ToolchainPackInstaller.prepareAiEnv(applicationContext)
+                executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput ?: "安卓动作完成：prepare_ai_env")
+            }
+            KiteRecipe.ANDROID_ACTION_TOOLCHAIN_DOCTOR -> {
+                ToolchainPackInstaller.doctor(applicationContext)
+                executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput ?: "安卓动作完成：toolchain_doctor")
+            }
+            else -> {
+                setRuntimeState(
+                    recipe,
+                    RecipeRunStatus.Failed,
+                    surface = CardRunSurface.Report,
+                    currentStepIndex = stepIndex,
+                    runId = runId,
+                    pid = pid,
+                    lastError = "unsupported_android_action"
+                )
+                Toast.makeText(this, "unsupported_android_action", Toast.LENGTH_SHORT).show()
+                showConsole()
+            }
+        }
+    }
+
+    private fun handleSequenceShellResult(
+        recipe: KiteRecipe,
+        stepIndex: Int,
+        result: BridgeResult
+    ) {
+        val report = result.runReport
+        if (report != null) diagnostics.writeRunReport(report)
+        val requestId = (report?.requestId ?: result.requestId).orEmpty()
+        val runId = report?.runId ?: result.requestId
+        val lastOutput = report?.lastMeaningfulOutput()
+        val shellReport = shellReportText(report, recipe)
+        val pid = report?.pid ?: extractPid(lastOutput) ?: extractPid(result.message)
+
+        if (result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE) {
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.BridgeUnavailable,
+                currentStepIndex = stepIndex,
+                runId = runId,
+                pid = pid,
+                shellReportText = shellReport,
+                lastError = result.message
+            )
+            diagnostics.logRecipeAction(recipe, "sequence_shell_bridge_unavailable", mapOf("requestId" to requestId))
+            Toast.makeText(this, "Ubuntu 命令通道不可用", Toast.LENGTH_SHORT).show()
+            showConsole()
+            return
+        }
+
+        if (report?.hasMismatch() == true || report?.ok == false || report?.status == KiteRunReport.STATUS_FAILED || (!result.ok && !result.accepted)) {
+            val message = report?.lastMeaningfulOutput() ?: result.message.ifBlank { "sh 命令执行失败" }
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Failed,
+                currentStepIndex = stepIndex,
+                runId = runId,
+                pid = pid,
+                lastMeaningfulOutput = lastOutput,
+                shellReportText = shellReport,
+                lastError = message
+            )
+            diagnostics.logRecipeAction(
+                recipe,
+                "sequence_shell_failed",
+                mapOf("requestId" to requestId, "status" to result.status, "message" to message.take(500))
+            )
+            Toast.makeText(this, message.take(120), Toast.LENGTH_SHORT).show()
+            showConsole()
+            return
+        }
+
+        diagnostics.logRecipeAction(
+            recipe,
+            "sequence_shell_ok",
+            mapOf("requestId" to requestId, "status" to result.status, "stepIndex" to stepIndex.toString())
+        )
+        setRuntimeState(
+            recipe,
+            RecipeRunStatus.Running,
+            surface = CardRunSurface.Report,
+            currentStepIndex = stepIndex,
+            runId = runId,
+            pid = pid,
+            lastMeaningfulOutput = lastOutput,
+            shellReportText = shellReport
+        )
+        executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput)
+    }
+
+    private fun executeTerminalRecipeStep(
+        recipe: KiteRecipe,
+        step: KiteRecipeStep,
+        stepIndex: Int
+    ) {
+        val text = step.text.orEmpty().ifBlank { step.cmd.orEmpty() }
+        val appContext = applicationContext
+        val record = runCatching {
+            val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
+            KFWorkspaceManager.createShellSession(
+                context = appContext,
+                spaceId = space.id,
+                title = "${recipe.name} 配置"
+            )
+        }.getOrElse { error ->
+            val message = "创建终端失败：${error.message ?: error.javaClass.simpleName}"
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Failed,
+                surface = CardRunSurface.Report,
+                currentStepIndex = stepIndex,
+                lastError = message
+            )
+            Toast.makeText(this, message.take(120), Toast.LENGTH_SHORT).show()
+            showConsole()
+            return
+        }
+
+        val instanceId = CardRunStore.currentForRecipe(recipe.id)?.instanceId
+            ?: CardRunStore.start(recipe).also { runtimeStates[recipe.id] = it }.instanceId
+        pendingTerminalFlow = PendingTerminalFlow(
+            recipeId = recipe.id,
+            instanceId = instanceId,
+            sessionId = record.id,
+            nextStepIndex = stepIndex + 1
+        )
+        setRuntimeState(
+            recipe,
+            RecipeRunStatus.WaitingTerminal,
+            surface = CardRunSurface.Terminal,
+            currentStepIndex = stepIndex,
+            runId = record.id,
+            terminalSessionId = record.id,
+            lastMeaningfulOutput = "等待终端完成：${record.title}"
+        )
+        diagnostics.logRecipeAction(
+            recipe,
+            "terminal_step_started",
+            mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
+        )
+        val openSurface = shouldOpenStepSurface(step)
+        if (openSurface) {
+            showTerminal()
+        } else {
+            diagnostics.logRecipeAction(
+                recipe,
+                "terminal_surface_suppressed",
+                mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
+            )
+            showConsole()
+        }
+        TerminalRuntimeHost.switchToSession(appContext, record.id)
+        if (text.isNotBlank()) {
+            root.postDelayed(
+                {
+                    TerminalRuntimeHost.sendCommand(
+                        appContext = appContext,
+                        command = if (text.endsWith("\n")) text else "$text\n",
+                        sessionId = record.id
+                    )
+                },
+                TERMINAL_STEP_COMMAND_DELAY_MS
+            )
         }
     }
 
@@ -1021,7 +2349,17 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             previousState.lastMeaningfulOutput,
             errorMessage
         )
-        runtimeStates[recipe.id] = previousState.copy(updatedAt = System.currentTimeMillis(), lastError = errorMessage)
+        runtimeStates[recipe.id] = CardRunStore.update(
+            recipe = recipe,
+            status = previousState.status,
+            currentStepIndex = previousState.currentStepIndex,
+            runId = previousState.runId,
+            terminalSessionId = previousState.terminalSessionId,
+            pid = previousState.pid,
+            lastMeaningfulOutput = previousState.lastMeaningfulOutput,
+            lastError = errorMessage,
+            nextActionUrl = previousState.nextActionUrl
+        )
         Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show()
         showConsole()
     }
@@ -1044,7 +2382,17 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             previousState.lastMeaningfulOutput,
             result.message
         )
-        runtimeStates[recipe.id] = previousState.copy(updatedAt = System.currentTimeMillis(), lastError = "停止接口暂不可用")
+        runtimeStates[recipe.id] = CardRunStore.update(
+            recipe = recipe,
+            status = previousState.status,
+            currentStepIndex = previousState.currentStepIndex,
+            runId = previousState.runId,
+            terminalSessionId = previousState.terminalSessionId,
+            pid = previousState.pid,
+            lastMeaningfulOutput = previousState.lastMeaningfulOutput,
+            lastError = "停止接口暂不可用",
+            nextActionUrl = previousState.nextActionUrl
+        )
         Toast.makeText(this, "停止接口暂不可用", Toast.LENGTH_SHORT).show()
         showConsole()
     }
@@ -1055,10 +2403,11 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val requestId = (report?.requestId ?: result.requestId).orEmpty()
         val runId = report?.runId ?: result.requestId
         val lastOutput = report?.lastMeaningfulOutput()
+        val shellReport = shellReportText(report, recipe)
         val pid = report?.pid ?: extractPid(lastOutput) ?: extractPid(result.message)
 
         if (result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE) {
-            setRuntimeState(recipe, RecipeRunStatus.BridgeUnavailable, runId = runId, pid = pid, lastError = result.message)
+            setRuntimeState(recipe, RecipeRunStatus.BridgeUnavailable, runId = runId, pid = pid, shellReportText = shellReport, lastError = result.message)
             diagnostics.logRecipeAction(
                 recipe,
                 "bridge_unavailable",
@@ -1094,6 +2443,7 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 runId = runId,
                 pid = pid,
                 lastMeaningfulOutput = lastOutput,
+                shellReportText = shellReport,
                 nextActionUrl = nextUrl
             )
             waitForWebReady(recipe, nextUrl, successStatus, runId, pid, lastOutput)
@@ -1101,7 +2451,7 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         if (report?.hasMismatch() == true) {
-            setRuntimeState(recipe, RecipeRunStatus.Failed, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, lastError = "result_mismatch")
+            setRuntimeState(recipe, RecipeRunStatus.Failed, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, shellReportText = shellReport, lastError = "result_mismatch")
             diagnostics.logRecipeAction(recipe, "bridge_result_mismatch", mapOf("requestId" to requestId))
             Toast.makeText(this, "执行结果不匹配，已记录运行报告", Toast.LENGTH_SHORT).show()
             showConsole()
@@ -1109,7 +2459,7 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         if (report != null && (!report.ok || report.status == KiteRunReport.STATUS_FAILED)) {
-            setRuntimeState(recipe, RecipeRunStatus.Failed, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, lastError = result.message)
+            setRuntimeState(recipe, RecipeRunStatus.Failed, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, shellReportText = shellReport, lastError = result.message)
             diagnostics.logRecipeAction(recipe, "bridge_failed", mapOf("requestId" to requestId, "message" to result.message.take(500)))
             Toast.makeText(this, "执行失败，已记录运行报告", Toast.LENGTH_SHORT).show()
             showConsole()
@@ -1117,7 +2467,7 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         if (result.ok || result.accepted) {
-            setRuntimeState(recipe, successfulStatus(report, lastOutput), runId = runId, pid = pid, lastMeaningfulOutput = lastOutput)
+            setRuntimeState(recipe, successfulStatus(report, lastOutput), runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, shellReportText = shellReport)
             showConsole()
             return
         }
@@ -1216,29 +2566,54 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun runtimeStateFor(recipe: KiteRecipe): RecipeRuntimeState =
-        runtimeStates[recipe.id] ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown").also {
+        activeRunInstanceIds[recipe.id]
+            ?.let { CardRunStore.get(it) }
+            ?.also {
+                runtimeStates[recipe.id] = it
+            }
+            ?: CardRunStore.currentForRecipe(recipe.id)?.also {
+            runtimeStates[recipe.id] = it
+        } ?: runtimeStates[recipe.id] ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown").also {
             runtimeStates[recipe.id] = it
         }
 
     private fun setRuntimeState(
         recipe: KiteRecipe,
         status: RecipeRunStatus,
+        surface: CardRunSurface? = null,
+        currentStepIndex: Int? = null,
         runId: String? = null,
+        terminalSessionId: String? = null,
         pid: String? = null,
         lastMeaningfulOutput: String? = null,
         lastError: String? = null,
+        shellReportText: String? = null,
         nextActionUrl: String? = null
     ) {
-        runtimeStates[recipe.id] = RecipeRuntimeState(
-            recipeId = recipe.id,
+        val state = CardRunStore.update(
+            recipe = recipe,
             status = status,
+            instanceId = activeRunInstanceIds[recipe.id],
+            surface = surface,
+            currentStepIndex = currentStepIndex,
             runId = runId,
+            terminalSessionId = terminalSessionId,
             pid = pid,
             lastMeaningfulOutput = lastMeaningfulOutput,
             lastError = lastError,
+            shellReportText = shellReportText,
             nextActionUrl = nextActionUrl
         )
-        diagnostics.logLifecycleEvent(recipe, status.lifecycleEvent, runId, pid, status.name, lastMeaningfulOutput, lastError)
+        runtimeStates[recipe.id] = state
+        diagnostics.logLifecycleEvent(
+            recipe,
+            status.lifecycleEvent,
+            state.runId,
+            state.pid,
+            status.name,
+            state.lastMeaningfulOutput,
+            state.lastError
+        )
     }
 
     private fun showCreateConfig() = showRecipeForm(null)
@@ -1252,17 +2627,19 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         formSteps.addAll(recipe?.steps?.map { RecipeStepDraft.fromStep(it) } ?: emptyList())
         selectedType = recipe?.let { inferTypeFromDrafts() } ?: KiteRecipe.TYPE_COMMAND_WEB
         selectedIconName = recipe?.icon?.name?.ifBlank { null } ?: KiteRecipeIcon.defaultNameForType(selectedType)
-        selectedRunMode = recipe?.firstShellStep()?.runMode?.let { KiteRecipe.normalizeRunMode(it, null) } ?: defaultRunModeForType(selectedType)
         clearRootForScreen()
         root.addView(createTopBar(if (recipe == null) "新建配置" else "编辑配置"))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-        setPadding(dp(24), dp(30), dp(24), dp(92))
+                setPadding(dp(24), dp(30), dp(24), dp(92))
                 addView(formPanel())
                 addView(formDivider())
                 addView(sectionTitle("动作流程"))
                 addView(stepsPanel())
+                addView(formDivider())
+                addView(sectionTitle("启动配置"))
+                addView(launchOptionsPanel())
                 if (recipe != null) {
                     addView(formDivider())
                     addView(navigationRow("查看原始 JSON") { showRecipeRawJson(recipe) }.apply {
@@ -1296,8 +2673,6 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         urlInput = editInput("例如：http://127.0.0.1:8648")
         commandInput = editInput("例如：hermes-web-ui start --port 8648")
         workdirInput = editInput("例如：/workspace/hermes（可选）")
-        expectedInput = editInput("例如：ready（可选）")
-        shortcutSwitch = Switch(context).apply { isChecked = false }
 
         addView(largeRecipeIconTile())
         addView(LinearLayout(context).apply {
@@ -1305,7 +2680,7 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setPadding(dp(16), 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             addView(nameInput.apply {
-                hint = "Hermes 工作台"
+                hint = "输入卡片名称"
                 textSize = 14.5f
                 includeFontPadding = false
                 typeface = Typeface.DEFAULT_BOLD
@@ -1316,6 +2691,10 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setPadding(0, 0, 0, 0)
                 background = null
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30))
+            })
+            addView(View(context).apply {
+                setBackgroundColor(Color.BLACK)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
             })
             addView(TextView(context).apply {
                 text = "点击图标可更换 ›"
@@ -1475,7 +2854,6 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             else -> formSteps.add(RecipeStepDraft.openWeb())
         }
         selectedType = type
-        selectedRunMode = defaultRunModeForType(type)
         selectedIconName = KiteRecipeIcon.defaultNameForType(type)
         renderIconOptions()
         renderStepOptions()
@@ -1558,7 +2936,7 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setMargins(0, 0, 0, 0)
             }
         })
-    }
+        }
 
     private fun stepTypeLabel(draft: RecipeStepDraft): String =
         when (draft.type) {
@@ -1585,8 +2963,6 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         var commandValue = draft.command
         var urlValue = draft.url
         var workdirValue = draft.workdir
-        var expectedValue = draft.expectedText
-        var runModeValue = draft.runMode.ifBlank { KiteRecipe.RUN_MODE_DETACHED }
 
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1603,15 +2979,15 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         fun renderContent() {
-            renderStepDialogContent(content, selectedAction, commandValue, urlValue, workdirValue, expectedValue, runModeValue,
+            renderStepDialogContent(
+                content,
+                selectedAction,
+                commandValue,
+                urlValue,
+                workdirValue,
                 onCommand = { commandValue = it },
                 onUrl = { urlValue = it },
-                onWorkdir = { workdirValue = it },
-                onExpected = { expectedValue = it },
-                onRunMode = {
-                    runModeValue = it
-                    renderContent()
-                }
+                onWorkdir = { workdirValue = it }
             )
         }
 
@@ -1673,8 +3049,6 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                             RecipeStepDraft.shell().apply {
                                 command = commandValue.trim()
                                 workdir = workdirValue.trim()
-                                expectedText = expectedValue.trim()
-                                runMode = runModeValue
                             }
                         }
                         else -> {
@@ -1742,13 +3116,9 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         commandValue: String,
         urlValue: String,
         workdirValue: String,
-        expectedValue: String,
-        runModeValue: String,
         onCommand: (String) -> Unit,
         onUrl: (String) -> Unit,
-        onWorkdir: (String) -> Unit,
-        onExpected: (String) -> Unit,
-        onRunMode: (String) -> Unit
+        onWorkdir: (String) -> Unit
     ) {
         while (container.childCount > 3) {
             container.removeViewAt(3)
@@ -1760,8 +3130,6 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             KiteRecipe.STEP_SHELL -> {
                 container.addView(dialogInput("sh 命令", "hermes-web-ui start --port 8648", commandValue, onCommand))
                 container.addView(dialogInput("执行位置（可选）", "/workspace/hermes", workdirValue, onWorkdir))
-                container.addView(dialogRunModeChooser(runModeValue, onRunMode))
-                container.addView(dialogInput("预期输出（可选）", "命令最后输出包含这段文字时，认为匹配成功", expectedValue, onExpected))
             }
             KiteRecipe.STEP_OPEN_WEB -> {
                 container.addView(dialogInput("网页地址", "http://127.0.0.1:8648", urlValue, onUrl))
@@ -1802,203 +3170,26 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
         }
 
-    private fun dialogRunModeChooser(selectedRunMode: String, onRunMode: (String) -> Unit): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 0, 0, dp(20))
-            addView(TextView(context).apply {
-                text = "运行方式"
-                textSize = 12.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-                setPadding(0, 0, 0, dp(8))
-            })
-            addView(row {
-                background = roundedBox(tokens.surface, tokens.border, dp(22).toFloat())
-                setPadding(dp(3), dp(3), dp(3), dp(3))
-                addView(dialogRunModeChip("等待结束", KiteRecipe.RUN_MODE_ATTACHED, selectedRunMode, onRunMode))
-                addView(dialogRunModeChip("后台运行", KiteRecipe.RUN_MODE_DETACHED, selectedRunMode, onRunMode))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
-        }
-
-    private fun dialogRunModeChip(label: String, value: String, selectedRunMode: String, onRunMode: (String) -> Unit): TextView =
-        TextView(this).apply {
-            val selected = selectedRunMode == value
-            text = label
-            textSize = 12.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(if (selected) tokens.primaryStrong else tokens.textPrimary)
-            background = roundedBox(if (selected) tokens.primarySubtle else Color.TRANSPARENT, Color.TRANSPARENT, dp(20).toFloat())
-            layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f)
-            setOnClickListener { onRunMode(value) }
-        }
-
-    private fun stepEditorCard(index: Int, draft: RecipeStepDraft): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(10), dp(9), dp(10), dp(7))
-        background = roundedBox(tokens.surfaceElevated, tokens.border, dp(13).toFloat())
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            .apply { setMargins(0, 0, 0, dp(7)) }
-
-        addView(row {
-            addView(TextView(context).apply {
-                text = when (draft.type) {
-                    KiteRecipe.STEP_TERMINAL -> "终端 ${index + 1}"
-                    KiteRecipe.STEP_SHELL -> "sh 命令 ${index + 1}"
-                    else -> "打开网页 ${index + 1}"
-                }
-                textSize = 12.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(TextView(context).apply {
-                text = "删除"
-                textSize = 11.5f
-                setTextColor(tokens.warning)
-                setPadding(dp(10), dp(4), 0, dp(4))
-                setOnClickListener {
-                    formSteps.removeAt(index)
-                    renderStepOptions()
-                }
-            })
-        })
-
-        when (draft.type) {
-            KiteRecipe.STEP_TERMINAL -> {
-                addView(stepInput("终端输入", "例如：claude", draft.command) { draft.command = it })
-            }
-            KiteRecipe.STEP_SHELL -> {
-                addView(stepInput("sh 命令", "例如：hermes-web-ui start --port 8648", draft.command) { draft.command = it })
-                addView(stepInput("执行位置（可选）", "例如：/workspace/hermes", draft.workdir) { draft.workdir = it })
-                addView(stepRunModeChooser(draft))
-                addView(stepInput("预期输出（可选）", "例如：ready", draft.expectedText) { draft.expectedText = it })
-            }
-            else -> {
-                addView(stepInput("打开地址", "例如：http://127.0.0.1:8648", draft.url) { draft.url = it })
-            }
-        }
-    }
-
-    private fun stepInput(label: String, hintText: String, value: String, onChanged: (String) -> Unit): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(6), 0, 0)
-            addView(TextView(context).apply {
-                text = label
-                textSize = 11f
-                setTextColor(tokens.textSecondary)
-            })
-            addView(editInput(hintText).apply {
-                setText(value)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38)).apply {
-                    setMargins(0, dp(4), 0, 0)
-                }
-                addTextChangedListener(simpleTextWatcher { onChanged(it) })
-            })
-        }
-
-    private fun stepRunModeChooser(draft: RecipeStepDraft): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(0, dp(6), 0, 0)
-        addView(TextView(context).apply {
-            text = "运行方式"
-            textSize = 11f
-            setTextColor(tokens.textSecondary)
-        })
-        addView(row {
-            addView(stepRunModeChip("等待结束", KiteRecipe.RUN_MODE_ATTACHED, draft))
-            addView(stepRunModeChip("后台服务", KiteRecipe.RUN_MODE_DETACHED, draft))
-        })
-    }
-
-    private fun stepRunModeChip(label: String, value: String, draft: RecipeStepDraft): TextView =
-        TextView(this).apply {
-            val selected = draft.runMode == value
-            text = label
-            textSize = 10.8f
-            gravity = Gravity.CENTER
-            setTextColor(if (selected) tokens.buttonText else tokens.textPrimary)
-            background = roundedBox(if (selected) tokens.primaryStrong else tokens.surface, if (selected) tokens.primaryStrong else tokens.border, dp(14).toFloat())
-            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { setMargins(0, dp(5), dp(7), 0) }
-            setOnClickListener {
-                draft.runMode = value
-                renderStepOptions()
-            }
-        }
-
-    private fun secondaryStepButton(label: String, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            textSize = 11.5f
-            gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
-            background = roundedBox(tokens.surface, tokens.primarySoft, dp(13).toFloat())
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply { setMargins(0, dp(5), dp(7), 0) }
-            setOnClickListener { onClick() }
-        }
-
-    private fun runModeChooser(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(0, 0, 0, dp(18))
-        addView(TextView(context).apply {
-            text = "运行方式"
-            textSize = 15f
-            setTextColor(tokens.textPrimary)
-        })
-        runModeContainer = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(8), 0, 0)
-        }
-        addView(runModeContainer)
-        renderRunModeOptions()
-    }
-
-    private fun renderRunModeOptions() {
-        if (!::runModeContainer.isInitialized) return
-        runModeContainer.removeAllViews()
-        runModeContainer.addView(runModeChip("普通命令：等待结束", KiteRecipe.RUN_MODE_ATTACHED, selectedRunMode == KiteRecipe.RUN_MODE_ATTACHED))
-        runModeContainer.addView(runModeChip("后台服务：启动后保持运行", KiteRecipe.RUN_MODE_DETACHED, selectedRunMode == KiteRecipe.RUN_MODE_DETACHED))
-    }
-
-    private fun runModeChip(label: String, value: String, selected: Boolean): TextView = TextView(this).apply {
-        text = label
-        textSize = 12.5f
-        gravity = Gravity.CENTER
-        setTextColor(if (selected) tokens.buttonText else tokens.textPrimary)
-        background = roundedBox(if (selected) tokens.primaryStrong else tokens.surface, if (selected) tokens.primaryStrong else tokens.border, dp(16).toFloat())
-        layoutParams = LinearLayout.LayoutParams(0, dp(42), 1f).apply { setMargins(0, 0, dp(8), 0) }
-        setOnClickListener {
-            selectedRunMode = value
-            renderRunModeOptions()
-        }
-    }
-
     private fun prefillRecipeForm(recipe: KiteRecipe?) {
         val shellStep = recipe?.firstShellStep()
         val openUrl = recipe?.openWebUrl().orEmpty()
-        nameInput.setText(recipe?.name ?: "Hermes 工作台")
+        nameInput.setText(recipe?.name.orEmpty())
         nameInput.setSelection(nameInput.text?.length ?: 0)
         descriptionInput.setText(recipe?.description.orEmpty())
         commandInput.setText(shellStep?.cmd.orEmpty())
         workdirInput.setText(shellStep?.workdir ?: recipe?.execution?.workdir.orEmpty())
         urlInput.setText(openUrl)
-        expectedInput.setText(shellStep?.expected?.text ?: recipe?.expected?.text.orEmpty())
-        shortcutSwitch.isChecked = recipe?.shortcut ?: false
+        val recipeId = recipe?.id.orEmpty()
+        shortcutSwitch.isChecked = recipeId.isNotBlank() && cardLocalSettings.shortcutRequested(recipeId)
+        launchInstanceSwitch.isChecked = recipe?.launch?.openInstance == true
     }
 
     private fun updateDynamicFieldVisibility() {
         val hasShell = selectedType.requiresServiceCommand()
         if (::commandFieldContainer.isInitialized) commandFieldContainer.visibility = if (hasShell) View.VISIBLE else View.GONE
         if (::workdirFieldContainer.isInitialized) workdirFieldContainer.visibility = if (hasShell) View.VISIBLE else View.GONE
-        if (::runModeFieldContainer.isInitialized) runModeFieldContainer.visibility = if (hasShell) View.VISIBLE else View.GONE
-        if (::expectedFieldContainer.isInitialized) expectedFieldContainer.visibility = if (hasShell) View.VISIBLE else View.GONE
         if (::urlFieldContainer.isInitialized) urlFieldContainer.visibility = if (selectedType == KiteRecipe.TYPE_TEMPLATE) View.GONE else View.VISIBLE
     }
-
-    private fun defaultRunModeForType(type: String): String =
-        if (type.requiresServiceCommand()) KiteRecipe.RUN_MODE_DETACHED else KiteRecipe.RUN_MODE_ATTACHED
 
     private fun inferTypeFromDrafts(steps: List<RecipeStepDraft> = formSteps): String {
         val hasShell = steps.any {
@@ -2041,6 +3232,14 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val normalizedSteps = formSteps.toList()
         val inferredType = inferTypeFromDrafts(normalizedSteps)
         val defaultUrl = normalizedSteps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB }?.url.orEmpty()
+        val requestShortcut = shortcutSwitch.isChecked
+        val openInstanceOnStart = launchInstanceSwitch.isChecked
+        val previousShortcutRequested = editingRecipe?.id
+            ?.takeIf { it.isNotBlank() }
+            ?.let { recipeId ->
+                cardLocalSettings.shortcutRequested(recipeId) ||
+                    CardShortcutManager.hasPinnedShortcut(this, recipeId)
+            } == true
 
         runCatching {
             recipeLoader.saveUserRecipe(
@@ -2050,13 +3249,28 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     name = name,
                     url = defaultUrl,
                     command = "",
-                    shortcut = shortcutSwitch.isChecked,
+                    shortcut = false,
+                    openInstanceOnStart = openInstanceOnStart,
                     iconName = selectedIconName,
                     description = description,
                     steps = normalizedSteps.map { it.toInput() }
                 )
             )
-        }.onSuccess {
+        }.onSuccess { savedRecipe ->
+            val shortcutAlreadyKnown = previousShortcutRequested ||
+                cardLocalSettings.shortcutRequested(savedRecipe.id) ||
+                CardShortcutManager.hasPinnedShortcut(this, savedRecipe.id)
+            if (requestShortcut && !shortcutAlreadyKnown) {
+                val requested = CardShortcutManager.requestPinnedShortcut(this, savedRecipe)
+                if (requested) {
+                    cardLocalSettings.setShortcutRequested(savedRecipe.id, true)
+                    Toast.makeText(this, "已提交桌面快捷方式申请", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "当前桌面不支持自动创建快捷方式", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                cardLocalSettings.setShortcutRequested(savedRecipe.id, requestShortcut || shortcutAlreadyKnown)
+            }
             Toast.makeText(this, "已保存配置", Toast.LENGTH_SHORT).show()
             editingRecipe = null
             showConsole()
@@ -2103,7 +3317,11 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         currentScreen = Screen.Workbench
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
-        root.addView(topBar("Kite 工作台") { showConsole() })
+        if (this is CardRunActivity && recipe != null) {
+            root.addView(cardRunTopBar(recipe, runtimeStateFor(recipe)))
+        } else {
+            root.addView(topBar("Kite 工作台") { showConsole() })
+        }
         val parent = webView.parent
         if (parent is ViewGroup) parent.removeView(webView)
         root.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -2181,10 +3399,8 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setOnClickListener {
                 selectedType = option.type
                 selectedIconName = KiteRecipeIcon.defaultNameForType(selectedType)
-                selectedRunMode = defaultRunModeForType(selectedType)
                 renderTypeOptions()
                 renderIconOptions()
-                renderRunModeOptions()
                 updateDynamicFieldVisibility()
             }
         }
@@ -2249,6 +3465,47 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         })
         shortcutSwitch = Switch(context).apply { isChecked = false }
         addView(shortcutSwitch)
+    }
+
+    private fun launchOptionsPanel(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, 0, 0, dp(8))
+        addView(localSwitchRow(
+            title = "启动时打开独立实例页",
+            detail = "从首页启动这张卡片时进入独立最近任务；关闭后就在首页内执行。"
+        ) {
+            launchInstanceSwitch = it
+        })
+        addView(divider())
+        addView(localSwitchRow(
+            title = "申请桌面图标",
+            detail = "保存后向桌面发起创建申请，删除快捷方式后不做回收。"
+        ) {
+            shortcutSwitch = it
+        })
+    }
+
+    private fun localSwitchRow(title: String, detail: String, bind: (Switch) -> Unit): View = row {
+        setPadding(0, dp(4), 0, dp(4))
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(context).apply {
+                text = title
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = detail
+                textSize = 10.8f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(2), dp(8), 0)
+            })
+        })
+        val switch = Switch(context).apply { isChecked = false }
+        bind(switch)
+        addView(switch)
     }
 
     private fun navigationRow(label: String, onClick: (() -> Unit)? = null): View = row {
@@ -2470,8 +3727,10 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun statusColors(status: RecipeRunStatus): SemanticColors = when (status) {
         RecipeRunStatus.Starting,
         RecipeRunStatus.Running,
+        RecipeRunStatus.WaitingTerminal,
         RecipeRunStatus.AlreadyRunning,
-        RecipeRunStatus.Opened -> SemanticColors(tokens.success, tokens.successSoft, tokens.successBorder)
+        RecipeRunStatus.Opened,
+        RecipeRunStatus.Completed -> SemanticColors(tokens.success, tokens.successSoft, tokens.successBorder)
         RecipeRunStatus.Stopping -> SemanticColors(tokens.warning, tokens.warningSoft, tokens.warningBorder)
         RecipeRunStatus.Failed,
         RecipeRunStatus.BridgeUnavailable -> SemanticColors(tokens.danger, tokens.dangerSoft, tokens.dangerBorder)
@@ -2615,6 +3874,13 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setStroke(strokeWidth, stroke)
         }
 
+    private fun roundedTopBox(fill: Int, stroke: Int, radius: Float, strokeWidth: Int = dp(1)): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
+            setStroke(strokeWidth, stroke)
+        }
+
     private fun dashedRoundedBox(fill: Int, stroke: Int, radius: Float): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
@@ -2633,16 +3899,19 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun primaryLabelForAction(state: RecipeRuntimeState): String = when (state.status) {
         RecipeRunStatus.Starting -> "\u542f\u52a8\u4e2d"
+        RecipeRunStatus.WaitingTerminal -> "等待终端"
         RecipeRunStatus.Stopping -> "\u505c\u6b62\u4e2d"
         RecipeRunStatus.Running, RecipeRunStatus.AlreadyRunning -> "\u505c\u6b62"
-        RecipeRunStatus.Opened, RecipeRunStatus.Failed, RecipeRunStatus.BridgeUnavailable,
+        RecipeRunStatus.Opened, RecipeRunStatus.Completed, RecipeRunStatus.Failed, RecipeRunStatus.BridgeUnavailable,
         RecipeRunStatus.Unknown, RecipeRunStatus.Stopped -> "\u542f\u52a8"
     }
 
     private fun primaryLabel(recipe: KiteRecipe, state: RecipeRuntimeState): String = when (state.status) {
         RecipeRunStatus.Starting -> "启动中"
+        RecipeRunStatus.WaitingTerminal -> "等待终端"
         RecipeRunStatus.Stopping -> "停止中"
         RecipeRunStatus.Running, RecipeRunStatus.AlreadyRunning, RecipeRunStatus.Opened -> "停止"
+        RecipeRunStatus.Completed -> "重跑"
         RecipeRunStatus.Failed, RecipeRunStatus.BridgeUnavailable -> "重试"
         RecipeRunStatus.Unknown, RecipeRunStatus.Stopped -> {
             if (recipe.type == KiteRecipe.TYPE_OPEN_URL || recipe.type == KiteRecipe.TYPE_TEMPLATE) "打开" else "启动"
@@ -2657,17 +3926,13 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val type: String,
         var command: String = "",
         var url: String = "",
-        var workdir: String = "",
-        var runMode: String = KiteRecipe.RUN_MODE_DETACHED,
-        var expectedText: String = ""
+        var workdir: String = ""
     ) {
         fun toInput(): NewRecipeStepInput = NewRecipeStepInput(
             type = type,
             command = command,
             url = url,
-            workdir = workdir,
-            runMode = runMode,
-            expectedText = expectedText
+            workdir = workdir
         )
 
         companion object {
@@ -2682,9 +3947,7 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     type = step.type,
                     command = (step.cmd ?: step.text).orEmpty().trimEnd('\n'),
                     url = step.url.orEmpty(),
-                    workdir = step.workdir.orEmpty(),
-                    runMode = KiteRecipe.normalizeRunMode(step.runMode) ?: KiteRecipe.RUN_MODE_DETACHED,
-                    expectedText = step.expected?.text.orEmpty()
+                    workdir = step.workdir.orEmpty()
                 )
         }
     }
@@ -2700,7 +3963,12 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val detail: String,
         val blocksUbuntuActions: Boolean,
         val isProblem: Boolean,
-        val visible: Boolean = true
+        val visible: Boolean = true,
+        val progressPercent: Int? = null,
+        val progressText: String = "",
+        val showProgress: Boolean = false,
+        val canRetry: Boolean = false,
+        val autoOpenPanel: Boolean = false
     ) {
         companion object {
             fun hidden(): UbuntuRuntimeUiState =
@@ -2718,70 +3986,11 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         Console,
         Terminal,
         Workbench,
+        CardRun,
         RecipeDetail,
         CreateConfig,
         Settings,
         ThemeSettings
-    }
-
-    private data class RecipeRuntimeState(
-        val recipeId: String,
-        val status: RecipeRunStatus,
-        val runId: String? = null,
-        val pid: String? = null,
-        val lastMeaningfulOutput: String? = null,
-        val lastError: String? = null,
-        val nextActionUrl: String? = null,
-        val updatedAt: Long = System.currentTimeMillis()
-    ) {
-        fun isBusy(): Boolean = status == RecipeRunStatus.Starting || status == RecipeRunStatus.Stopping
-        fun isActive(): Boolean = status in RecipeRunStatus.activeStatuses
-        fun hasRunBinding(): Boolean = !runId.isNullOrBlank() || !pid.isNullOrBlank()
-        fun failureSummary(): String? = when (status) {
-            RecipeRunStatus.Failed -> lastError ?: lastMeaningfulOutput
-            RecipeRunStatus.BridgeUnavailable -> lastError ?: "桥接不可用"
-            else -> null
-        }?.take(80)
-
-        fun feedbackSummary(): String? = when {
-            !lastError.isNullOrBlank() -> lastError
-            !lastMeaningfulOutput.isNullOrBlank() -> lastMeaningfulOutput
-            status == RecipeRunStatus.BridgeUnavailable -> "桥接不可用"
-            else -> null
-        }?.take(80)
-
-        companion object {
-            fun fromRecipeStatus(recipeId: String, status: String): RecipeRuntimeState =
-                RecipeRuntimeState(recipeId = recipeId, status = RecipeRunStatus.fromRecipeStatus(status))
-        }
-    }
-
-    private enum class RecipeRunStatus(
-        val label: String,
-        val lifecycleEvent: String
-    ) {
-        Unknown("未启动", "unknown"),
-        Stopped("未启动", "stopped"),
-        Starting("启动中", "starting"),
-        Running("运行中", "running"),
-        AlreadyRunning("已运行", "already_running"),
-        Opened("已打开", "opened"),
-        Failed("启动失败", "failed"),
-        Stopping("停止中", "stopping"),
-        BridgeUnavailable("桥接不可用", "bridge_unavailable");
-
-        companion object {
-            val activeStatuses = setOf(Running, AlreadyRunning)
-
-            fun fromRecipeStatus(status: String): RecipeRunStatus = when (status) {
-                "opened" -> Opened
-                "running" -> Running
-                "already_running" -> AlreadyRunning
-                "failed" -> Failed
-                "stopped" -> Stopped
-                else -> Unknown
-            }
-        }
     }
 
     override fun setTerminalDetailMode(enabled: Boolean) {
@@ -2805,6 +4014,12 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val WEB_READY_INTERVAL_MS = 700L
         private const val WEB_READY_CONNECT_TIMEOUT_MS = 700
         private const val WEB_READY_READ_TIMEOUT_MS = 700
+        private const val TERMINAL_STEP_COMMAND_DELAY_MS = 650L
         private const val REQUEST_DROPZONE_STORAGE = 801
+        private val terminalFlowFinishedStatuses = setOf(
+            ManagedTerminalStatus.EXITED,
+            ManagedTerminalStatus.FAILED,
+            ManagedTerminalStatus.STOPPED
+        )
     }
 }

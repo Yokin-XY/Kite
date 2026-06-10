@@ -147,14 +147,17 @@ object KFContainerManager {
 
     private inline fun <T> traceStage(stage: String, block: () -> T): T {
         val startedAt = SystemClock.elapsedRealtime()
+        RuntimeBootstrapProgress.stageStarted(stage)
         Logger.i("ContainerManager", "阶段开始: $stage")
         return try {
             block().also {
                 val durationMs = SystemClock.elapsedRealtime() - startedAt
+                RuntimeBootstrapProgress.stageCompleted(stage)
                 Logger.i("ContainerManager", "阶段完成: $stage, cost=${durationMs}ms")
             }
         } catch (error: Throwable) {
             val durationMs = SystemClock.elapsedRealtime() - startedAt
+            RuntimeBootstrapProgress.failed(error.message ?: error.javaClass.simpleName)
             Logger.e(
                 "ContainerManager",
                 "阶段失败: $stage, cost=${durationMs}ms, error=${error.message}"
@@ -1503,10 +1506,17 @@ object KFContainerManager {
             .redirectErrorStream(true)
             .start()
 
-        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val output = StringBuilder()
+        process.inputStream.bufferedReader().useLines { lines ->
+            lines.forEach { line ->
+                output.append(line).append('\n')
+                RuntimeBootstrapProgress.baseBootstrapOutput(line)
+            }
+        }
         val exitCode = process.waitFor()
         if (exitCode != 0) {
             Logger.e("ContainerManager", "基础镜像自举安装失败，exitCode=$exitCode, output=$output")
+            RuntimeBootstrapProgress.failed("基础镜像基础工具安装失败，exitCode=$exitCode")
             throw IllegalStateException("基础镜像基础工具安装失败")
         }
     }
