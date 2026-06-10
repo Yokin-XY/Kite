@@ -1,49 +1,22 @@
 {
-  "schemaVersion": 1,
-  "id": "hermes-webui",
-  "name": "Hermes WebUI",
-  "description": "启动 Hermes 图形化工作台",
-  "type": "script_web",
-  "defaultUrl": "http://127.0.0.1:8648",
-  "shortcut": false,
-  "icon": {
-    "type": "builtin",
-    "name": "terminal"
+  "base": {
+    "id": "",
+    "name": "Hermes WebUI",
+    "description": "\u542f\u52a8 Hermes \u56fe\u5f62\u5316\u5de5\u4f5c\u53f0",
+    "category": "uncategorized",
+    "icon": {
+      "type": "builtin",
+      "name": "terminal"
+    }
   },
-  "card": {
-    "accent": "primary",
-    "status": "unknown"
-  },
-  "taskLabel": "Hermes",
-  "taskMode": "separate",
-  "execution": {
-    "mode": "steps",
-    "steps": [
-      {
-        "id": "step_start_hermes",
-        "type": "shell",
-        "cmd": "hermes-web-ui start --port 8648",
-        "runMode": "detached",
-        "expected": {
-          "mode": "contains",
-          "text": "ready",
-          "source": "lastMeaningfulOutput"
-        },
-        "outputPolicy": {
-          "mode": "lastMeaningfulOutput",
-          "tailChars": 2000
-        }
-      },
-      {
-        "id": "step_open_hermes",
-        "type": "open_web",
-        "url": "http://127.0.0.1:8648"
-      }
-    ]
-  },
-  "expected": {
-    "mode": "contains",
-    "text": "ready",
-    "source": "lastMeaningfulOutput"
-  }
+  "recipe": [
+    {
+      "type": "shell",
+      "cmd": "hermes-web-ui start --port 8648"
+    },
+    {
+      "type": "open_web",
+      "url": "http://127.0.0.1:8648"
+    }
+  ]
 }

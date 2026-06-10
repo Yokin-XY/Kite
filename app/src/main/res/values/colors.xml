@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#E67B39</color>
+    <color name="primary_dark">#A44B16</color>
+    <color name="accent">#28B78D</color>
+    <color name="ic_launcher_background">#111A22</color>
+
+    <color name="background">#F2F3F5</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_alt">#F5F7FA</color>
+    <color name="outline">#D9E0E7</color>
+
+    <color name="terminal_bg">#081219</color>
+    <color name="terminal_text">#D8F88D</color>
+
+    <color name="text_primary">#1F2329</color>
+    <color name="text_secondary">#6D7782</color>
+    <color name="success">#168A53</color>
+    <color name="warning">#9C6B00</color>
+    <color name="error">#C45454</color>
+    <color name="chip_bg">#E8EDF3</color>
+    <color name="input_bg">#F4F6F8</color>
+
+    <color name="terminal_page_bg">#F2F3F5</color>
+    <color name="terminal_page_header">#E8EBEE</color>
+    <color name="terminal_page_surface">#FFFFFF</color>
+    <color name="terminal_page_text">#1F2329</color>
+    <color name="terminal_page_subtext">#6F7783</color>
+    <color name="terminal_page_line">#E1E5EA</color>
+    <color name="terminal_page_green">#16965A</color>
+    <color name="terminal_page_blue">#3B82F6</color>
+    <color name="terminal_page_gray_chip">#C9CED6</color>
+    <color name="terminal_page_input_bg">#F4F6F8</color>
+
+    <color name="task_page_tile_green">#16965A</color>
+    <color name="task_page_tile_blue">#4E80E6</color>
+    <color name="task_page_tile_red">#D96C63</color>
+    <color name="task_page_chip_green_bg">#E8F7EF</color>
+    <color name="task_page_chip_green_text">#178A55</color>
+    <color name="task_page_chip_gray_bg">#EEF1F5</color>
+    <color name="task_page_chip_gray_text">#717985</color>
+    <color name="task_page_chip_red_bg">#FBEAEC</color>
+    <color name="task_page_chip_red_text">#C1535B</color>
+</resources>

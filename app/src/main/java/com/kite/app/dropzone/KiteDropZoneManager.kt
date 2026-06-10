@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Environment
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.recipe.KiteRecipe
+import com.kftest.app.foundation.runtime.ExternalExchangeManager
 import org.json.JSONObject
 import java.io.File
 import java.text.Normalizer
@@ -29,22 +30,11 @@ class KiteDropZoneManager(
     private val context: Context,
     private val diagnostics: KiteDiagnostics
 ) {
-    private val privateRecipesDir = File(context.filesDir, "recipes").apply { mkdirs() }
-    private val privateImportedDir = File(privateRecipesDir, "imported").apply { mkdirs() }
-
     fun prepareDropZone(): DropZoneStatus {
-        diagnostics.logDropZoneEvent("dropzone_create_started", path = rootDir().absolutePath)
-        if (Environment.getExternalStorageState() != Environment.MEDIA_MOUNTED) {
-            diagnostics.logDropZoneEvent(
-                "dropzone_create_failed",
-                path = rootDir().absolutePath,
-                reason = "external_storage_not_mounted"
-            )
-            return unavailable("Kite 投放区不可用，请检查存储权限")
-        }
-
         return runCatching {
-            listOf(rootDir(), recipesDir(), importedDir(), logsDir()).forEach { dir ->
+            val root = rootDir()
+            val cards = cardsDir()
+            listOf(root, cards, importedDir(), logsDir(), legacyRecipesDir()).forEach { dir ->
                 if (!dir.exists() && !dir.mkdirs()) {
                     error("mkdir_failed:${dir.absolutePath}")
                 }
@@ -52,21 +42,22 @@ class KiteDropZoneManager(
                     error("not_directory:${dir.absolutePath}")
                 }
             }
-            if (!recipesDir().canRead()) error("recipes_not_readable")
-            diagnostics.logDropZoneEvent("dropzone_ready", path = recipesDir().absolutePath)
+            if (!cards.canRead()) error("cards_not_readable")
+            diagnostics.logDropZoneEvent("dropzone_ready", path = cards.absolutePath)
             DropZoneStatus(
                 available = true,
-                rootPath = rootDir().absolutePath,
-                recipesPath = recipesDir().absolutePath,
-                message = "投放区已就绪：Download/Kite/recipes"
+                rootPath = root.absolutePath,
+                recipesPath = cards.absolutePath,
+                message = "共享卡片目录：${cards.absolutePath}"
             )
         }.getOrElse { error ->
+            val rootPath = runCatching { rootDir().absolutePath }.getOrDefault("")
             diagnostics.logDropZoneEvent(
                 "dropzone_create_failed",
-                path = rootDir().absolutePath,
+                path = rootPath,
                 reason = error.message.orEmpty()
             )
-            unavailable("Kite 投放区不可用，请检查存储权限")
+            unavailable("Kite 共享区不可用，请检查存储权限", rootPath = rootPath)
         }
     }
 
@@ -81,12 +72,13 @@ class KiteDropZoneManager(
             return DropZoneScanResult(0, 0, 0, status.message)
         }
 
-        diagnostics.logDropZoneEvent("dropzone_scan_started", path = recipesDir().absolutePath)
+        val cards = cardsDir()
+        diagnostics.logDropZoneEvent("dropzone_scan_started", path = cards.absolutePath)
         var imported = 0
         var skipped = 0
         var invalid = 0
 
-        recipeCandidates().forEach { candidate ->
+        legacyRecipeCandidates().forEach { candidate ->
             diagnostics.logDropZoneEvent("dropzone_recipe_found", path = candidate.absolutePath)
             val result = importCandidate(candidate)
             when (result) {
@@ -98,7 +90,7 @@ class KiteDropZoneManager(
 
         diagnostics.logDropZoneEvent(
             "dropzone_scan_finished",
-            path = recipesDir().absolutePath,
+            path = cards.absolutePath,
             details = mapOf(
                 "imported" to imported.toString(),
                 "skipped" to skipped.toString(),
@@ -106,12 +98,13 @@ class KiteDropZoneManager(
             )
         )
 
+        val sharedCount = sharedRecipeCandidates().size
         val message = when {
-            imported > 0 && invalid > 0 -> "导入 $imported 个配置，跳过 $invalid 个无效配置"
-            imported > 0 -> "导入 $imported 个配置"
-            invalid > 0 -> "没有导入新配置，跳过 $invalid 个无效配置"
-            skipped > 0 -> "没有发现新配置"
-            else -> "没有发现新配置"
+            imported > 0 && invalid > 0 -> "已加入 $imported 个卡片，跳过 $invalid 个无效文件；当前 $sharedCount 个"
+            imported > 0 -> "已加入 $imported 个卡片；当前 $sharedCount 个"
+            invalid > 0 -> "已刷新共享卡片目录，跳过 $invalid 个无效文件；当前 $sharedCount 个"
+            skipped > 0 -> "已刷新共享卡片目录；当前 $sharedCount 个"
+            else -> "已刷新共享卡片目录；当前 $sharedCount 个"
         }
         return DropZoneScanResult(imported, skipped, invalid, message)
     }
@@ -124,14 +117,24 @@ class KiteDropZoneManager(
                 diagnostics.logDropZoneEvent(
                     "dropzone_recipe_invalid",
                     path = recipeFile.absolutePath,
-                    recipeId = json.optString("id"),
+                    recipeId = recipeIdFromJson(json),
                     reason = validationError
                 )
                 return ImportResult.Invalid
             }
 
-            val recipeId = json.getString("id")
-            if (File(privateRecipesDir, "${safeFileName(recipeId)}.json").exists()) {
+            val recipeId = recipeIdFromJson(json).ifBlank { recipeFile.nameWithoutExtension }
+            if (sharedRecipeAlreadyAvailable(recipeId, recipeFile.absolutePath)) {
+                diagnostics.logDropZoneEvent(
+                    "dropzone_recipe_skipped",
+                    path = recipeFile.absolutePath,
+                    recipeId = recipeId,
+                    reason = "recipe_already_in_shared_cards"
+                )
+                return ImportResult.Skipped
+            }
+            val target = uniqueTargetFile(cardsDir(), "${safeFileName(recipeId)}.json")
+            if (target.exists()) {
                 diagnostics.logDropZoneEvent(
                     "dropzone_recipe_skipped",
                     path = recipeFile.absolutePath,
@@ -149,12 +152,12 @@ class KiteDropZoneManager(
                     .put("sourceDir", recipeFile.parentFile?.absolutePath.orEmpty())
                     .put("importedAt", Instant.now().toString())
             )
-            File(privateImportedDir, "${safeFileName(recipeId)}.json").writeText(enriched.toString(2))
+            target.writeText(enriched.toString(2))
             diagnostics.logDropZoneEvent(
                 "dropzone_recipe_imported",
                 path = recipeFile.absolutePath,
                 recipeId = recipeId,
-                details = mapOf("target" to File(privateImportedDir, "${safeFileName(recipeId)}.json").absolutePath)
+                details = mapOf("target" to target.absolutePath)
             )
             ImportResult.Imported
         }.getOrElse { error ->
@@ -168,17 +171,41 @@ class KiteDropZoneManager(
     }
 
     private fun validateRecipe(json: JSONObject): String? {
-        if (!json.has("schemaVersion")) return "missing_schemaVersion"
-        if (json.optString("id").isBlank()) return "missing_id"
-        if (json.optString("name").isBlank()) return "missing_name"
-        if (!json.has("execution")) return "missing_execution"
-        val execution = json.optJSONObject("execution") ?: return "invalid_execution"
-        if (execution.optString("mode").isBlank()) return "missing_execution_mode"
+        val recipe = json.optJSONArray("recipe")
+        val hasRecipe = recipe != null && recipe.length() > 0
+        val actions = json.optJSONObject("actions")
+        val hasActions = actions != null && actions.length() > 0
+        if (!json.has("execution") && !hasActions && !hasRecipe) return "missing_recipe"
+        val execution = json.optJSONObject("execution")
+        if (execution != null && execution.optString("mode").isBlank()) return "missing_execution_mode"
+        if (json.has("execution") && execution == null) return "invalid_execution"
         return null
     }
 
-    private fun recipeCandidates(): List<File> {
-        val root = recipesDir()
+    private fun legacyRecipeCandidates(): List<File> {
+        val root = legacyRecipesDir()
+        if (!root.exists()) return emptyList()
+        val directJson = root.listFiles { file ->
+            file.isFile && file.extension.equals("json", ignoreCase = true)
+        }.orEmpty()
+        val packJson = root.listFiles { file -> file.isDirectory }
+            .orEmpty()
+            .map { File(it, "recipe.json") }
+            .filter { it.isFile }
+        return (directJson.toList() + packJson).distinctBy { it.absolutePath }
+    }
+
+    private fun sharedRecipeAlreadyAvailable(recipeId: String, sourcePath: String): Boolean =
+        sharedRecipeCandidates().any { file ->
+            runCatching {
+                val json = JSONObject(file.readText())
+                recipeIdFromJson(json) == recipeId ||
+                    json.optJSONObject(DROPZONE_METADATA)?.optString("sourcePath") == sourcePath
+            }.getOrDefault(false)
+        }
+
+    private fun sharedRecipeCandidates(): List<File> {
+        val root = cardsDir()
         val directJson = root.listFiles { file ->
             file.isFile && file.extension.equals("json", ignoreCase = true)
         }.orEmpty()
@@ -190,16 +217,36 @@ class KiteDropZoneManager(
     }
 
     private fun rootDir(): File =
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Kite")
+        ExternalExchangeManager.ensureExchangeDir(context)
 
-    private fun recipesDir(): File = File(rootDir(), "recipes")
+    private fun cardsDir(): File =
+        ExternalExchangeManager.ensureCardsDir(context)
 
-    private fun importedDir(): File = File(rootDir(), "imported")
+    private fun legacyRecipesDir(): File =
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Kite/recipes")
+
+    private fun importedDir(): File =
+        ExternalExchangeManager.ensureImportsDir(context)
 
     private fun logsDir(): File = File(rootDir(), "logs")
 
-    private fun unavailable(message: String): DropZoneStatus =
-        DropZoneStatus(available = false, rootPath = rootDir().absolutePath, recipesPath = recipesDir().absolutePath, message = message)
+    private fun unavailable(
+        message: String,
+        rootPath: String = runCatching { rootDir().absolutePath }.getOrDefault(""),
+        recipesPath: String = runCatching { cardsDir().absolutePath }.getOrDefault("")
+    ): DropZoneStatus =
+        DropZoneStatus(available = false, rootPath = rootPath, recipesPath = recipesPath, message = message)
+
+    private fun uniqueTargetFile(directory: File, fileName: String): File {
+        val safeName = safeFileName(fileName.removeSuffix(".json")).ifBlank { "card" }
+        var candidate = File(directory, "$safeName.json")
+        var suffix = 2
+        while (candidate.exists()) {
+            candidate = File(directory, "$safeName-$suffix.json")
+            suffix += 1
+        }
+        return candidate
+    }
 
     private fun safeFileName(input: String): String {
         val normalized = Normalizer.normalize(input.lowercase(Locale.US), Normalizer.Form.NFD)
@@ -209,6 +256,9 @@ class KiteDropZoneManager(
             .trim('-', '.')
             .ifBlank { "recipe" }
     }
+
+    private fun recipeIdFromJson(json: JSONObject): String =
+        json.optJSONObject("base")?.optString("id").orEmpty().ifBlank { json.optString("id") }
 
     private enum class ImportResult {
         Imported,

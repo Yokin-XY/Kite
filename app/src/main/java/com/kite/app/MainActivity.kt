@@ -1,7 +1,5 @@
 package com.kite.app
 
-import android.app.Activity
-import android.app.AlertDialog
 import android.app.Dialog
 import android.Manifest
 import android.content.Intent
@@ -31,6 +29,8 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import com.kite.app.action.KiteActionRoute
+import com.kite.app.action.KiteActionRouter
 import com.kite.app.bridge.BridgeErrorType
 import com.kite.app.bridge.BridgeResult
 import com.kite.app.bridge.KiteBridgeClient
@@ -39,7 +39,6 @@ import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.DropZoneStatus
 import com.kite.app.dropzone.KiteDropZoneManager
 import com.kite.app.recipe.KiteRecipe
-import com.kite.app.recipe.KiteRecipeCard
 import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
@@ -50,11 +49,27 @@ import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.web.KiteWebShell
+import com.kftest.app.foundation.bootstrap.BootstrapCoordinator
+import com.kftest.app.foundation.bootstrap.BootstrapSnapshot
+import com.kftest.app.foundation.bootstrap.BootstrapStage
+import com.kftest.app.foundation.terminal.TerminalRuntimeHost
+import com.kftest.app.foundation.toolchain.ToolchainPackInstaller
+import com.kftest.app.foundation.workspace.KFWorkspaceManager
+import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kftest.app.ui.terminal.KiteTerminalShellTheme
+import com.kftest.app.ui.terminal.TerminalChromeHost
+import com.kftest.app.ui.terminal.TerminalFragment
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.concurrent.thread
+import kotlinx.coroutines.launch
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
@@ -83,6 +98,7 @@ class MainActivity : Activity() {
     private lateinit var stepsContainer: LinearLayout
 
     private val runtimeStates = mutableMapOf<String, RecipeRuntimeState>()
+    private val actionRouter = KiteActionRouter()
     private var currentScreen: Screen = Screen.Console
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var selectedType = KiteRecipe.TYPE_OPEN_URL
@@ -93,6 +109,11 @@ class MainActivity : Activity() {
     private var isDropZoneRefreshing = false
     private var themeConfig = ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
     private var tokens = KiteTheme.resolve(themeConfig)
+    private val terminalContainerId = View.generateViewId()
+    private var terminalBottomNavigation: View? = null
+    private var isTerminalDetailMode = false
+    private var kfRuntimeBootstrapRequested = false
+    private var ubuntuRuntimeState = UbuntuRuntimeUiState.hidden()
     private val formSteps = mutableListOf<RecipeStepDraft>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,13 +123,14 @@ class MainActivity : Activity() {
         themeStore = getSharedPreferences("kite_theme", MODE_PRIVATE)
         themeConfig = loadThemeConfig()
         tokens = KiteTheme.resolve(themeConfig)
+        applyKiteTerminalTheme()
         recipeLoader = KiteRecipeLoader(this, diagnostics)
         dropZoneManager = KiteDropZoneManager(this, diagnostics)
         dropZoneStatus = dropZoneManager.prepareDropZone()
-        bridgeClient = KiteBridgeClient(diagnostics)
+        bridgeClient = KiteBridgeClient(diagnostics, applicationContext)
         webView = WebView(this)
         webShell = KiteWebShell(this, webView, diagnostics) { }
-        localServer = KiteLocalServer(diagnostics) { url -> runOnUiThread { openWeb(url, "endpoint") } }
+        localServer = KiteLocalServer(applicationContext, diagnostics) { url -> runOnUiThread { openWeb(url, "endpoint") } }
         localServer.start()
 
         root = LinearLayout(this).apply {
@@ -116,7 +138,9 @@ class MainActivity : Activity() {
             setBackgroundColor(tokens.pageBackground)
         }
         setContentView(root)
+        observeUbuntuBootstrapState()
         showConsole()
+        refreshUbuntuRuntimeState()
         if (!dropZoneStatus.available) {
             Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_LONG).show()
         }
@@ -132,9 +156,89 @@ class MainActivity : Activity() {
         when (currentScreen) {
             Screen.ThemeSettings -> showSettings()
             Screen.Settings -> showConsole()
+            Screen.Terminal -> if (isTerminalDetailMode) super.onBackPressed() else showConsole()
             else -> if (currentScreen != Screen.Console) showConsole() else super.onBackPressed()
         }
     }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        if (currentScreen == Screen.Terminal) {
+            ensureKfRuntimeBootstrap()
+        }
+    }
+
+    private fun observeUbuntuBootstrapState() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                BootstrapCoordinator.snapshot.collect { snapshot ->
+                    setUbuntuRuntimeState(snapshot.toUbuntuRuntimeUiState() ?: return@collect)
+                }
+            }
+        }
+    }
+
+    private fun refreshUbuntuRuntimeState() {
+        thread(name = "KiteUbuntuRuntimeCheck", isDaemon = true) {
+            val state = runCatching {
+                if (WorkSurfaceRuntimeBridge.isBaseImageReady(applicationContext)) {
+                    UbuntuRuntimeUiState.hidden()
+                } else {
+                    UbuntuRuntimeUiState(
+                        title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u672a\u90e8\u7f72",
+                        detail = "\u9996\u6b21\u542f\u52a8 Ubuntu \u5361\u7247\u6216\u7ec8\u7aef\u65f6\u4f1a\u5148\u89e3\u538b\u7cfb\u7edf\u955c\u50cf\u3002",
+                        blocksUbuntuActions = false,
+                        isProblem = false
+                    )
+                }
+            }.getOrElse { error ->
+                UbuntuRuntimeUiState(
+                    title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u72b6\u6001\u672a\u77e5",
+                    detail = error.message ?: error.javaClass.simpleName,
+                    blocksUbuntuActions = false,
+                    isProblem = true
+                )
+            }
+            runOnUiThread { setUbuntuRuntimeState(state) }
+        }
+    }
+
+    private fun setUbuntuRuntimeState(state: UbuntuRuntimeUiState) {
+        if (ubuntuRuntimeState == state) return
+        ubuntuRuntimeState = state
+        if (::root.isInitialized && currentScreen == Screen.Console) {
+            showConsole()
+        }
+    }
+
+    private fun BootstrapSnapshot.toUbuntuRuntimeUiState(): UbuntuRuntimeUiState? =
+        when (stage) {
+            BootstrapStage.IDLE -> null
+            BootstrapStage.READY -> UbuntuRuntimeUiState.hidden()
+            BootstrapStage.FAILED -> UbuntuRuntimeUiState(
+                title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u90e8\u7f72\u5931\u8d25",
+                detail = lastError ?: "\u521d\u59cb\u5316\u8fc7\u7a0b\u4e2d\u51fa\u73b0\u672a\u77e5\u9519\u8bef\u3002",
+                blocksUbuntuActions = false,
+                isProblem = true
+            )
+            BootstrapStage.SERVICE_REQUESTED,
+            BootstrapStage.ROOTFS_EXTRACTING,
+            BootstrapStage.BASE_BOOTSTRAP,
+            BootstrapStage.SPACE_READY,
+            BootstrapStage.TERMINAL_WARMING -> UbuntuRuntimeUiState(
+                title = when (stage) {
+                    BootstrapStage.SERVICE_REQUESTED -> "\u6b63\u5728\u5524\u8d77 Ubuntu \u8fd0\u884c\u73af\u5883"
+                    BootstrapStage.ROOTFS_EXTRACTING -> "\u6b63\u5728\u89e3\u538b\u7cfb\u7edf\u955c\u50cf"
+                    BootstrapStage.BASE_BOOTSTRAP -> "\u6b63\u5728\u521d\u59cb\u5316\u57fa\u7840\u73af\u5883"
+                    BootstrapStage.SPACE_READY -> "\u6b63\u5728\u51c6\u5907\u5de5\u4f5c\u533a"
+                    BootstrapStage.TERMINAL_WARMING -> "\u6b63\u5728\u9884\u70ed\u7ec8\u7aef"
+                    else -> "\u6b63\u5728\u90e8\u7f72 Ubuntu"
+                },
+                detail = "\u90e8\u7f72\u671f\u95f4 Ubuntu \u5361\u7247\u6682\u65f6\u9501\u5b9a\uff0c\u5b8c\u6210\u540e\u4f1a\u81ea\u52a8\u6062\u590d\u3002",
+                blocksUbuntuActions = true,
+                isProblem = false
+            )
+        }
 
     private fun loadThemeConfig(): ThemeConfig =
         ThemeConfig(
@@ -145,6 +249,7 @@ class MainActivity : Activity() {
     private fun saveThemeConfig(config: ThemeConfig) {
         themeConfig = config
         tokens = KiteTheme.resolve(config)
+        applyKiteTerminalTheme()
         themeStore.edit()
             .putInt("theme_color", config.themeColor)
             .putInt("background_color", config.backgroundColor)
@@ -167,14 +272,18 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun refreshDropZoneRecipes() {
+    private fun refreshDropZoneRecipes(showToast: Boolean = true) {
         if (isDropZoneRefreshing) {
-            Toast.makeText(this, "正在刷新配置，请稍候", Toast.LENGTH_SHORT).show()
+            if (showToast) {
+                Toast.makeText(this, "正在刷新配置，请稍候", Toast.LENGTH_SHORT).show()
+            }
             return
         }
         isDropZoneRefreshing = true
-        if (currentScreen == Screen.Console) showConsole()
-        Toast.makeText(this, "正在刷新 Kite 投放区", Toast.LENGTH_SHORT).show()
+        if (currentScreen == Screen.Console && showToast) showConsole()
+        if (showToast) {
+            Toast.makeText(this, "正在刷新 Kite 投放区", Toast.LENGTH_SHORT).show()
+        }
         thread {
             val result = dropZoneManager.scanAndImport()
             runOnUiThread {
@@ -205,19 +314,93 @@ class MainActivity : Activity() {
         dropZoneStatus = dropZoneManager.prepareDropZone()
         currentRecipes = recipeLoader.loadAllRecipes()
         currentRecipes.forEach { recipe ->
-            runtimeStates.putIfAbsent(recipe.id, RecipeRuntimeState.fromRecipeStatus(recipe.id, recipe.status))
+            runtimeStates.putIfAbsent(recipe.id, RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown"))
         }
         root.setBackgroundColor(tokens.pageBackground)
-        root.removeAllViews()
+        clearRootForScreen()
         root.addView(consoleHeader())
+        ubuntuRuntimeBanner()?.let { root.addView(it) }
         root.addView(recipeGrid(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomNavigation())
+    }
+
+    private fun showTerminal() {
+        val currentTerminalFragment = supportFragmentManager.findFragmentByTag(TERMINAL_FRAGMENT_TAG) as? TerminalFragment
+        if (currentScreen == Screen.Terminal && currentTerminalFragment?.isAdded == true) {
+            applyKiteTerminalTheme()
+            ensureKfRuntimeBootstrap()
+            terminalBottomNavigation?.visibility = if (isTerminalDetailMode) View.GONE else View.VISIBLE
+            return
+        }
+        currentScreen = Screen.Terminal
+        isTerminalDetailMode = false
+        applyKiteTerminalTheme()
+        ensureKfRuntimeBootstrap()
+        root.setBackgroundColor(tokens.pageBackground)
+        clearRootForScreen(detachTerminal = false)
+        val container = FrameLayout(this).apply {
+            id = terminalContainerId
+            setBackgroundColor(tokens.pageBackground)
+        }
+        root.addView(container, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        terminalBottomNavigation = bottomNavigation().also { nav ->
+            root.addView(nav)
+        }
+
+        val fragment = currentTerminalFragment ?: TerminalFragment()
+        supportFragmentManager.beginTransaction().apply {
+            when {
+                fragment.isDetached -> attach(fragment)
+                fragment.isAdded -> show(fragment)
+                else -> add(terminalContainerId, fragment, TERMINAL_FRAGMENT_TAG)
+            }
+        }.commitNowAllowingStateLoss()
+    }
+
+    private fun ensureKfRuntimeBootstrap() {
+        if (kfRuntimeBootstrapRequested) {
+            return
+        }
+        kfRuntimeBootstrapRequested = true
+        BootstrapCoordinator.ensureStarted(applicationContext)
+    }
+
+    private fun clearRootForScreen(detachTerminal: Boolean = true) {
+        terminalBottomNavigation = null
+        if (detachTerminal) {
+            (supportFragmentManager.findFragmentByTag(TERMINAL_FRAGMENT_TAG) as? TerminalFragment)?.let { fragment ->
+                if (fragment.isAdded && !fragment.isDetached) {
+                    supportFragmentManager.beginTransaction()
+                        .detach(fragment)
+                        .commitNowAllowingStateLoss()
+                }
+            }
+        }
+        root.removeAllViews()
+    }
+
+    private fun applyKiteTerminalTheme() {
+        KiteTerminalShellTheme.apply(
+            KiteTerminalShellTheme.Palette(
+                pageBackground = tokens.pageBackground,
+                header = tokens.surfaceElevated,
+                surface = tokens.surface,
+                textPrimary = tokens.textPrimary,
+                textSecondary = tokens.textSecondary,
+                border = tokens.border,
+                accent = tokens.primaryStrong,
+                accentSoft = tokens.primarySoft,
+                grayChip = tokens.textTertiary,
+                inputBackground = tokens.inputBackground,
+                danger = tokens.danger
+            )
+        )
     }
 
     private fun showSettings() {
         currentScreen = Screen.Settings
         root.setBackgroundColor(tokens.pageBackground)
-        root.removeAllViews()
+        clearRootForScreen()
         root.addView(topBar("设置") { showConsole() })
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
@@ -240,7 +423,7 @@ class MainActivity : Activity() {
     private fun showThemeSettings() {
         currentScreen = Screen.ThemeSettings
         root.setBackgroundColor(tokens.pageBackground)
-        root.removeAllViews()
+        clearRootForScreen()
         root.addView(topBar("主题") { showSettings() })
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
@@ -315,14 +498,13 @@ class MainActivity : Activity() {
                 addView(chip("■  已停止 $stopped", false))
             })
         })
-        addView(dropZoneControlRow())
     }
 
     private fun dropZoneControlRow(): View = row {
         setPadding(0, dp(12), 0, 0)
         addView(TextView(context).apply {
             text = if (dropZoneStatus.available) {
-                "投放区：Download/Kite/recipes"
+                "卡片目录：${dropZoneStatus.recipesPath}"
             } else {
                 dropZoneStatus.message
             }
@@ -332,7 +514,7 @@ class MainActivity : Activity() {
             ellipsize = TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
-        addView(dropZoneButton(if (isDropZoneRefreshing) "刷新中..." else "刷新配置") { refreshDropZoneRecipes() }.apply {
+        addView(dropZoneButton(if (isDropZoneRefreshing) "刷新中..." else "刷新卡片") { refreshDropZoneRecipes() }.apply {
             isEnabled = !isDropZoneRefreshing
             alpha = if (isDropZoneRefreshing) 0.62f else 1f
         })
@@ -341,6 +523,32 @@ class MainActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply {
                     setMargins(dp(8), 0, 0, 0)
                 }
+            })
+        }
+    }
+
+    private fun ubuntuRuntimeBanner(): View? {
+        val state = ubuntuRuntimeState
+        if (!state.visible) return null
+        val border = if (state.isProblem) tokens.danger else tokens.border
+        val titleColor = if (state.isProblem) tokens.danger else tokens.textPrimary
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundedBox(tokens.surfaceElevated, border, dp(16).toFloat())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { setMargins(dp(18), 0, dp(18), dp(10)) }
+            addView(TextView(context).apply {
+                text = state.title
+                textSize = 13.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(titleColor)
+            })
+            addView(TextView(context).apply {
+                text = state.detail
+                textSize = 12f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(4), 0, 0)
             })
         }
     }
@@ -462,7 +670,15 @@ class MainActivity : Activity() {
     }
 
     private fun recipeGrid(): View {
-        val scroll = ScrollView(this)
+        val swipeRefresh = SwipeRefreshLayout(this).apply {
+            setColorSchemeColors(tokens.primaryStrong)
+            setProgressBackgroundColorSchemeColor(tokens.surfaceElevated)
+            isRefreshing = isDropZoneRefreshing
+            setOnRefreshListener { refreshDropZoneRecipes(showToast = false) }
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+        }
         val grid = GridLayout(this).apply {
             columnCount = 2
             setPadding(dp(18), dp(8), dp(18), dp(92))
@@ -477,12 +693,14 @@ class MainActivity : Activity() {
             })
         }
         scroll.addView(grid)
-        return scroll
+        swipeRefresh.addView(scroll, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        return swipeRefresh
     }
 
     private fun recipeCard(recipe: KiteRecipe): View = LinearLayout(this).apply {
         val runtimeState = runtimeStateFor(recipe)
         val accentName = displayAccentName(recipe)
+        val ubuntuBlocked = isUbuntuActionBlocked(recipe)
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), dp(12), dp(12), dp(10))
         background = roundedBox(tokens.cardBackground, tokens.border, dp(24).toFloat())
@@ -498,12 +716,16 @@ class MainActivity : Activity() {
         addView(cardInfoSlot(recipe, runtimeState, accentName))
         addView(View(context), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         addView(row {
-            addView(primaryAction(primaryLabel(recipe, runtimeState), accentName, runtimeState.isBusy()) {
-                handleRecipeAction(recipe)
+            val label = if (ubuntuBlocked) "\u90e8\u7f72\u4e2d" else primaryLabelForAction(runtimeState)
+            addView(primaryAction(label, accentName, runtimeState.isBusy() || ubuntuBlocked) {
+                handleRecipeActionWithRouter(recipe)
             })
             addView(editAction { showRecipeEditor(recipe) })
         })
     }
+
+    private fun isUbuntuActionBlocked(recipe: KiteRecipe): Boolean =
+        ubuntuRuntimeState.blocksUbuntuActions && recipe.hasUbuntuStep()
 
     private fun cardInfoSlot(recipe: KiteRecipe, runtimeState: RecipeRuntimeState, accentName: String): View =
         LinearLayout(this).apply {
@@ -520,6 +742,52 @@ class MainActivity : Activity() {
                 !feedback.isNullOrBlank() -> addView(runtimeFeedback(feedback, false))
             }
         }
+
+    private fun handleRecipeActionWithRouter(recipe: KiteRecipe) {
+        val state = runtimeStateFor(recipe)
+        diagnostics.logRecipeAction(recipe, "card_click", mapOf("type" to recipe.type, "status" to state.status.name))
+        if (state.isBusy()) return
+        if (isUbuntuActionBlocked(recipe)) {
+            Toast.makeText(this, ubuntuRuntimeState.title, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val actionName = if (state.isActive()) KiteRecipe.ACTION_STOP else KiteRecipe.ACTION_START
+        when (val route = actionRouter.route(recipe, actionName)) {
+            is KiteActionRoute.StopRecipe -> stopRecipe(recipe, state)
+            is KiteActionRoute.RunRecipe -> startRecipe(route.recipe, state)
+            is KiteActionRoute.OpenWeb -> {
+                setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = route.url)
+                openWeb(route.url, "recipe_card", recipe)
+            }
+            is KiteActionRoute.NativeAction -> runNativeAction(recipe, route)
+            is KiteActionRoute.Unsupported -> {
+                setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = route.reason)
+                Toast.makeText(this, route.reason, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun runNativeAction(recipe: KiteRecipe, route: KiteActionRoute.NativeAction) {
+        when (route.step.action) {
+            KiteRecipe.ANDROID_ACTION_PREPARE_AI_ENV -> {
+                ToolchainPackInstaller.prepareAiEnv(applicationContext)
+                val url = route.nextUrl ?: recipe.openWebUrl(route.actionName)
+                setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = url)
+                if (url.isNotBlank()) openWeb(url, "recipe_card", recipe)
+            }
+            KiteRecipe.ANDROID_ACTION_TOOLCHAIN_DOCTOR -> {
+                ToolchainPackInstaller.doctor(applicationContext)
+                val url = route.nextUrl ?: recipe.openWebUrl(route.actionName)
+                setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = url)
+                if (url.isNotBlank()) openWeb(url, "recipe_card", recipe)
+            }
+            else -> {
+                setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = "unsupported_android_action")
+                Toast.makeText(this, "unsupported_android_action", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     private fun handleRecipeAction(recipe: KiteRecipe) {
         val state = runtimeStateFor(recipe)
@@ -567,10 +835,71 @@ class MainActivity : Activity() {
                 previousState.lastError
             )
         }
-        setRuntimeState(recipe, RecipeRunStatus.Starting)
+        setRuntimeState(
+            recipe,
+            RecipeRunStatus.Starting,
+            lastMeaningfulOutput = "\u6b63\u5728\u51c6\u5907 Ubuntu"
+        )
         showConsole()
-        bridgeClient.runRecipe(recipe) { result ->
-            runOnUiThread { handleBridgeResult(recipe, result) }
+        setUbuntuRuntimeState(
+            UbuntuRuntimeUiState(
+                title = "\u6b63\u5728\u90e8\u7f72 Ubuntu",
+                detail = "\u6b63\u5728\u68c0\u67e5\u7cfb\u7edf\u955c\u50cf\u548c\u5bb9\u5668\uff0c\u90e8\u7f72\u671f\u95f4 Ubuntu \u5361\u7247\u6682\u65f6\u9501\u5b9a\u3002",
+                blocksUbuntuActions = true,
+                isProblem = false
+            )
+        )
+        thread(name = "KiteUbuntuPreflight", isDaemon = true) {
+            val context = applicationContext
+            val ready = runCatching {
+                val baseReady = WorkSurfaceRuntimeBridge.isBaseImageReady(context)
+                diagnostics.logBridgeEvent(
+                    "ubuntu_preflight_start",
+                    recipe,
+                    mapOf("baseImageReady" to baseReady.toString())
+                )
+                WorkSurfaceRuntimeBridge.ensureBaseImageReady(context)
+                runOnUiThread {
+                    setUbuntuRuntimeState(
+                        UbuntuRuntimeUiState(
+                            title = "\u6b63\u5728\u51c6\u5907 Ubuntu \u5de5\u4f5c\u533a",
+                            detail = "\u7cfb\u7edf\u955c\u50cf\u5df2\u5c31\u7eea\uff0c\u6b63\u5728\u521d\u59cb\u5316\u9ed8\u8ba4\u7a7a\u95f4\u548c\u5bb9\u5668\u3002",
+                            blocksUbuntuActions = true,
+                            isProblem = false
+                        )
+                    )
+                }
+                KFWorkspaceManager.ensureDefaultSpace(context)
+                WorkSurfaceRuntimeBridge.ensureDefaultContainer(context)
+                TerminalRuntimeHost.refreshRuntimeSnapshot(context)
+                diagnostics.logBridgeEvent("ubuntu_preflight_ok", recipe)
+            }
+            ready.onSuccess {
+                runOnUiThread { setUbuntuRuntimeState(UbuntuRuntimeUiState.hidden()) }
+                bridgeClient.runRecipe(recipe) { result ->
+                    runOnUiThread { handleBridgeResult(recipe, result) }
+                }
+            }.onFailure { error ->
+                val message = "Ubuntu \u73af\u5883\u672a\u5c31\u7eea: ${error.message ?: error.javaClass.simpleName}"
+                runOnUiThread {
+                    setUbuntuRuntimeState(
+                        UbuntuRuntimeUiState(
+                            title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u90e8\u7f72\u5931\u8d25",
+                            detail = message,
+                            blocksUbuntuActions = false,
+                            isProblem = true
+                        )
+                    )
+                    setRuntimeState(recipe, RecipeRunStatus.BridgeUnavailable, lastError = message)
+                    diagnostics.logBridgeEvent(
+                        "ubuntu_preflight_failed",
+                        recipe,
+                        mapOf("message" to message.take(500))
+                    )
+                    Toast.makeText(this, message.take(120), Toast.LENGTH_SHORT).show()
+                    showConsole()
+                }
+            }
         }
     }
 
@@ -847,16 +1176,17 @@ class MainActivity : Activity() {
                         recipe,
                         mapOf("url" to url, "attempts" to attempt.toString(), "lastError" to lastError.take(500))
                     )
+                    val message = "\u670d\u52a1\u672a\u54cd\u5e94\uff0c\u8bf7\u786e\u8ba4\u542f\u52a8\u65e5\u5fd7"
                     setRuntimeState(
                         recipe,
-                        RecipeRunStatus.Running,
+                        RecipeRunStatus.Failed,
                         runId = runId,
                         pid = pid,
                         lastMeaningfulOutput = lastOutput,
-                        lastError = "服务启动中，网页暂不可用",
+                        lastError = message,
                         nextActionUrl = url
                     )
-                    Toast.makeText(this, "服务启动中，网页暂不可用", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
                     showConsole()
                 }
             }
@@ -886,7 +1216,7 @@ class MainActivity : Activity() {
     }
 
     private fun runtimeStateFor(recipe: KiteRecipe): RecipeRuntimeState =
-        runtimeStates[recipe.id] ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, recipe.status).also {
+        runtimeStates[recipe.id] ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown").also {
             runtimeStates[recipe.id] = it
         }
 
@@ -923,7 +1253,7 @@ class MainActivity : Activity() {
         selectedType = recipe?.let { inferTypeFromDrafts() } ?: KiteRecipe.TYPE_COMMAND_WEB
         selectedIconName = recipe?.icon?.name?.ifBlank { null } ?: KiteRecipeIcon.defaultNameForType(selectedType)
         selectedRunMode = recipe?.firstShellStep()?.runMode?.let { KiteRecipe.normalizeRunMode(it, null) } ?: defaultRunModeForType(selectedType)
-        root.removeAllViews()
+        clearRootForScreen()
         root.addView(createTopBar(if (recipe == null) "新建配置" else "编辑配置"))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
@@ -938,9 +1268,7 @@ class MainActivity : Activity() {
                     addView(navigationRow("查看原始 JSON") { showRecipeRawJson(recipe) }.apply {
                         setPadding(0, dp(16), 0, dp(8))
                     })
-                    if (recipe.runtimeSource == KiteRecipe.SOURCE_USER) {
-                        addView(deleteRow(recipe))
-                    }
+                    addView(deleteRow(recipe))
                 }
             })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -1008,9 +1336,7 @@ class MainActivity : Activity() {
         addView(divider())
         if (recipe != null) {
             addView(navigationRow("查看原始 JSON") { showRecipeRawJson(recipe) })
-            if (recipe.runtimeSource == KiteRecipe.SOURCE_USER) {
-                addView(deleteRow(recipe))
-            }
+            addView(deleteRow(recipe))
         } else {
             addView(navigationRow("高级设置（可选）") {
                 Toast.makeText(context, "高级设置后续开放", Toast.LENGTH_SHORT).show()
@@ -1235,19 +1561,27 @@ class MainActivity : Activity() {
     }
 
     private fun stepTypeLabel(draft: RecipeStepDraft): String =
-        if (draft.type == KiteRecipe.STEP_SHELL) "运行命令" else "打开网页"
+        when (draft.type) {
+            KiteRecipe.STEP_TERMINAL -> "终端"
+            KiteRecipe.STEP_SHELL -> "sh 命令"
+            else -> "打开网页"
+        }
 
     private fun stepSummaryText(draft: RecipeStepDraft): String =
-        if (draft.type == KiteRecipe.STEP_SHELL) {
-            draft.command.ifBlank { "未填写命令" }
-        } else {
-            draft.url.ifBlank { "未填写打开地址" }
+        when (draft.type) {
+            KiteRecipe.STEP_TERMINAL -> draft.command.ifBlank { "未填写终端输入" }
+            KiteRecipe.STEP_SHELL -> draft.command.ifBlank { "未填写 sh 命令" }
+            else -> draft.url.ifBlank { "未填写打开地址" }
         }
 
     private fun showStepDialog(editIndex: Int? = null, initial: RecipeStepDraft? = null) {
         val dialog = Dialog(this)
         val draft = initial ?: RecipeStepDraft.shell()
-        var selectedAction = if (draft.type == KiteRecipe.STEP_OPEN_WEB) KiteRecipe.STEP_OPEN_WEB else KiteRecipe.STEP_SHELL
+        var selectedAction = when (draft.type) {
+            KiteRecipe.STEP_TERMINAL -> KiteRecipe.STEP_TERMINAL
+            KiteRecipe.STEP_OPEN_WEB -> KiteRecipe.STEP_OPEN_WEB
+            else -> KiteRecipe.STEP_SHELL
+        }
         var commandValue = draft.command
         var urlValue = draft.url
         var workdirValue = draft.workdir
@@ -1321,24 +1655,36 @@ class MainActivity : Activity() {
                         Toast.makeText(context, "更多动作后续开放", Toast.LENGTH_SHORT).show()
                         return@setOnClickListener
                     }
-                    val next = if (selectedAction == KiteRecipe.STEP_SHELL) {
-                        if (commandValue.isBlank()) {
-                            Toast.makeText(context, "请填写命令", Toast.LENGTH_SHORT).show()
-                            return@setOnClickListener
+                    val next = when (selectedAction) {
+                        KiteRecipe.STEP_TERMINAL -> {
+                            if (commandValue.isBlank()) {
+                                Toast.makeText(context, "请填写终端输入", Toast.LENGTH_SHORT).show()
+                                return@setOnClickListener
+                            }
+                            RecipeStepDraft.terminal().apply {
+                                command = commandValue.trim()
+                            }
                         }
-                        RecipeStepDraft.shell().apply {
-                            command = commandValue.trim()
-                            workdir = workdirValue.trim()
-                            expectedText = expectedValue.trim()
-                            runMode = runModeValue
+                        KiteRecipe.STEP_SHELL -> {
+                            if (commandValue.isBlank()) {
+                                Toast.makeText(context, "请填写 sh 命令", Toast.LENGTH_SHORT).show()
+                                return@setOnClickListener
+                            }
+                            RecipeStepDraft.shell().apply {
+                                command = commandValue.trim()
+                                workdir = workdirValue.trim()
+                                expectedText = expectedValue.trim()
+                                runMode = runModeValue
+                            }
                         }
-                    } else {
-                        if (urlValue.isBlank()) {
-                            Toast.makeText(context, "请填写网页地址", Toast.LENGTH_SHORT).show()
-                            return@setOnClickListener
-                        }
-                        RecipeStepDraft.openWeb().apply {
-                            url = urlValue.trim()
+                        else -> {
+                            if (urlValue.isBlank()) {
+                                Toast.makeText(context, "请填写网页地址", Toast.LENGTH_SHORT).show()
+                                return@setOnClickListener
+                            }
+                            RecipeStepDraft.openWeb().apply {
+                                url = urlValue.trim()
+                            }
                         }
                     }
                     if (editIndex == null) {
@@ -1384,7 +1730,8 @@ class MainActivity : Activity() {
 
     private fun renderDialogTabs(tabRow: LinearLayout, tabFactory: (String, String) -> TextView) {
         tabRow.removeAllViews()
-        tabRow.addView(tabFactory(">_ 命令", KiteRecipe.STEP_SHELL))
+        tabRow.addView(tabFactory(">_ 终端", KiteRecipe.STEP_TERMINAL))
+        tabRow.addView(tabFactory("sh 命令", KiteRecipe.STEP_SHELL))
         tabRow.addView(tabFactory("◎ 网页", KiteRecipe.STEP_OPEN_WEB))
         tabRow.addView(tabFactory("⋯ 更多", "more"))
     }
@@ -1407,8 +1754,11 @@ class MainActivity : Activity() {
             container.removeViewAt(3)
         }
         when (selectedAction) {
+            KiteRecipe.STEP_TERMINAL -> {
+                container.addView(dialogInput("终端输入", "claude", commandValue, onCommand))
+            }
             KiteRecipe.STEP_SHELL -> {
-                container.addView(dialogInput("命令", "hermes-web-ui start --port 8648", commandValue, onCommand))
+                container.addView(dialogInput("sh 命令", "hermes-web-ui start --port 8648", commandValue, onCommand))
                 container.addView(dialogInput("执行位置（可选）", "/workspace/hermes", workdirValue, onWorkdir))
                 container.addView(dialogRunModeChooser(runModeValue, onRunMode))
                 container.addView(dialogInput("预期输出（可选）", "命令最后输出包含这段文字时，认为匹配成功", expectedValue, onExpected))
@@ -1493,7 +1843,11 @@ class MainActivity : Activity() {
 
         addView(row {
             addView(TextView(context).apply {
-                text = if (draft.type == KiteRecipe.STEP_SHELL) "命令步骤 ${index + 1}" else "打开网页 ${index + 1}"
+                text = when (draft.type) {
+                    KiteRecipe.STEP_TERMINAL -> "终端 ${index + 1}"
+                    KiteRecipe.STEP_SHELL -> "sh 命令 ${index + 1}"
+                    else -> "打开网页 ${index + 1}"
+                }
                 textSize = 12.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(tokens.textPrimary)
@@ -1511,13 +1865,19 @@ class MainActivity : Activity() {
             })
         })
 
-        if (draft.type == KiteRecipe.STEP_SHELL) {
-            addView(stepInput("命令", "例如：hermes-web-ui start --port 8648", draft.command) { draft.command = it })
-            addView(stepInput("执行位置（可选）", "例如：/workspace/hermes", draft.workdir) { draft.workdir = it })
-            addView(stepRunModeChooser(draft))
-            addView(stepInput("预期输出（可选）", "例如：ready", draft.expectedText) { draft.expectedText = it })
-        } else {
-            addView(stepInput("打开地址", "例如：http://127.0.0.1:8648", draft.url) { draft.url = it })
+        when (draft.type) {
+            KiteRecipe.STEP_TERMINAL -> {
+                addView(stepInput("终端输入", "例如：claude", draft.command) { draft.command = it })
+            }
+            KiteRecipe.STEP_SHELL -> {
+                addView(stepInput("sh 命令", "例如：hermes-web-ui start --port 8648", draft.command) { draft.command = it })
+                addView(stepInput("执行位置（可选）", "例如：/workspace/hermes", draft.workdir) { draft.workdir = it })
+                addView(stepRunModeChooser(draft))
+                addView(stepInput("预期输出（可选）", "例如：ready", draft.expectedText) { draft.expectedText = it })
+            }
+            else -> {
+                addView(stepInput("打开地址", "例如：http://127.0.0.1:8648", draft.url) { draft.url = it })
+            }
         }
     }
 
@@ -1641,7 +2001,9 @@ class MainActivity : Activity() {
         if (type.requiresServiceCommand()) KiteRecipe.RUN_MODE_DETACHED else KiteRecipe.RUN_MODE_ATTACHED
 
     private fun inferTypeFromDrafts(steps: List<RecipeStepDraft> = formSteps): String {
-        val hasShell = steps.any { it.type == KiteRecipe.STEP_SHELL && it.command.isNotBlank() }
+        val hasShell = steps.any {
+            (it.type == KiteRecipe.STEP_SHELL || it.type == KiteRecipe.STEP_TERMINAL) && it.command.isNotBlank()
+        }
         val hasOpenWeb = steps.any { it.type == KiteRecipe.STEP_OPEN_WEB && it.url.isNotBlank() }
         return when {
             hasShell && hasOpenWeb -> KiteRecipe.TYPE_COMMAND_WEB
@@ -1668,7 +2030,11 @@ class MainActivity : Activity() {
                 return
             }
             if (step.type == KiteRecipe.STEP_SHELL && step.command.isBlank()) {
-                Toast.makeText(this, "第 ${index + 1} 个命令步骤缺少命令", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "第 ${index + 1} 个 sh 命令步骤缺少命令", Toast.LENGTH_SHORT).show()
+                return
+            }
+            if (step.type == KiteRecipe.STEP_TERMINAL && step.command.isBlank()) {
+                Toast.makeText(this, "第 ${index + 1} 个终端步骤缺少输入", Toast.LENGTH_SHORT).show()
                 return
             }
         }
@@ -1701,7 +2067,7 @@ class MainActivity : Activity() {
 
     private fun showRecipeRawJson(recipe: KiteRecipe) {
         currentScreen = Screen.RecipeDetail
-        root.removeAllViews()
+        clearRootForScreen()
         root.addView(topBar("原始 JSON") { showRecipeEditor(recipe) })
         root.addView(ScrollView(this).apply {
             addView(TextView(context).apply {
@@ -1736,7 +2102,7 @@ class MainActivity : Activity() {
     private fun showWorkbench(url: String, source: String, recipe: KiteRecipe?) {
         currentScreen = Screen.Workbench
         root.setBackgroundColor(tokens.pageBackground)
-        root.removeAllViews()
+        clearRootForScreen()
         root.addView(topBar("Kite 工作台") { showConsole() })
         val parent = webView.parent
         if (parent is ViewGroup) parent.removeView(webView)
@@ -1901,36 +2267,95 @@ class MainActivity : Activity() {
         if (onClick != null) setOnClickListener { onClick() }
     }
 
-    private fun deleteRow(recipe: KiteRecipe): View = row {
-        setPadding(0, dp(10), 0, 0)
+    private fun deleteRow(recipe: KiteRecipe): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        setPadding(dp(16), 0, dp(16), 0)
+        background = roundedBox(Color.WHITE, Color.rgb(229, 231, 235), dp(18).toFloat())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)).apply {
+            setMargins(0, dp(28), 0, 0)
+        }
         addView(TextView(context).apply {
             text = "删除配置"
-            textSize = 13f
-            setTextColor(tokens.danger)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(242, 85, 74))
+            includeFontPadding = false
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         })
-        setOnClickListener { confirmDeleteRecipe(recipe) }
+        setOnClickListener { showDeleteRecipeConfirmSheet(recipe) }
     }
 
-    private fun confirmDeleteRecipe(recipe: KiteRecipe) {
-        if (recipe.runtimeSource != KiteRecipe.SOURCE_USER) {
-            Toast.makeText(this, "内置配置暂不可删除", Toast.LENGTH_SHORT).show()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("删除配置")
-            .setMessage("确定删除 ${recipe.name}？")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("删除") { _, _ ->
-                if (recipeLoader.deleteUserRecipe(recipe)) {
-                    runtimeStates.remove(recipe.id)
-                    Toast.makeText(this, "已删除配置", Toast.LENGTH_SHORT).show()
-                    showConsole()
-                } else {
-                    Toast.makeText(this, "删除失败", Toast.LENGTH_SHORT).show()
+    private fun showDeleteRecipeConfirmSheet(recipe: KiteRecipe) {
+        val dialog = Dialog(this)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(18), dp(22), dp(24))
+            background = roundedBox(tokens.pageBackground, tokens.pageBackground, dp(24).toFloat())
+            addView(TextView(context).apply {
+                text = "⌫"
+                textSize = 27f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.danger)
+                background = roundedBox(KiteTheme.tint(tokens.danger, 0.88f), KiteTheme.tint(tokens.danger, 0.88f), dp(24).toFloat())
+                layoutParams = LinearLayout.LayoutParams(dp(54), dp(54)).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    setMargins(0, 0, 0, dp(12))
                 }
-            }
-            .show()
+            })
+            addView(TextView(context).apply {
+                text = "删除配置？"
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textPrimary)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
+            addView(TextView(context).apply {
+                text = "这将删除该配置文件及所有动作，且无法撤销。"
+                textSize = 12.5f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(8), 0, dp(18))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
+            addView(TextView(context).apply {
+                text = "取消"
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textPrimary)
+                background = roundedBox(tokens.surface, tokens.border, dp(12).toFloat())
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
+                    setMargins(0, 0, 0, dp(10))
+                }
+                setOnClickListener { dialog.dismiss() }
+            })
+            addView(TextView(context).apply {
+                text = "删除配置"
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                background = roundedBox(tokens.danger, tokens.danger, dp(12).toFloat())
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
+                setOnClickListener {
+                    val deleted = recipeLoader.deleteRecipe(recipe)
+                    dialog.dismiss()
+                    if (deleted) {
+                        runtimeStates.remove(recipe.id)
+                        Toast.makeText(this@MainActivity, "已删除配置", Toast.LENGTH_SHORT).show()
+                        showConsole()
+                    } else {
+                        Toast.makeText(this@MainActivity, "删除失败", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setGravity(Gravity.BOTTOM)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
     private fun bottomActions(): View = row {
@@ -1962,7 +2387,7 @@ class MainActivity : Activity() {
         setPadding(dp(16), dp(8), dp(16), dp(8))
         setBackgroundColor(tokens.surfaceElevated)
         addView(navItem("▦", "配置", currentScreen == Screen.Console) { showConsole() })
-        addView(navItem("▤", "模板", false) { Toast.makeText(this@MainActivity, "模板后续开放", Toast.LENGTH_SHORT).show() })
+        addView(navItem(">_", "终端", currentScreen == Screen.Terminal) { showTerminal() })
         addView(navItem("⌁", "活动", false) { Toast.makeText(this@MainActivity, "活动后续开放", Toast.LENGTH_SHORT).show() })
         addView(navItem("⚙", "设置", currentScreen == Screen.Settings || currentScreen == Screen.ThemeSettings) { showSettings() })
     }
@@ -2202,9 +2627,17 @@ class MainActivity : Activity() {
     private fun tintBackgroundBorder(color: Int): Int = KiteTheme.tint(color, 0.72f)
 
     private fun displayAccentName(recipe: KiteRecipe): String =
-        KiteRecipeCard.resolvedAccentFor(recipe.icon.name, recipe.type, recipe.card.accent)
+        "primary"
 
     private fun accentFor(recipe: KiteRecipe): Int = KiteTheme.accent(displayAccentName(recipe), tokens).strong
+
+    private fun primaryLabelForAction(state: RecipeRuntimeState): String = when (state.status) {
+        RecipeRunStatus.Starting -> "\u542f\u52a8\u4e2d"
+        RecipeRunStatus.Stopping -> "\u505c\u6b62\u4e2d"
+        RecipeRunStatus.Running, RecipeRunStatus.AlreadyRunning -> "\u505c\u6b62"
+        RecipeRunStatus.Opened, RecipeRunStatus.Failed, RecipeRunStatus.BridgeUnavailable,
+        RecipeRunStatus.Unknown, RecipeRunStatus.Stopped -> "\u542f\u52a8"
+    }
 
     private fun primaryLabel(recipe: KiteRecipe, state: RecipeRuntimeState): String = when (state.status) {
         RecipeRunStatus.Starting -> "启动中"
@@ -2238,6 +2671,8 @@ class MainActivity : Activity() {
         )
 
         companion object {
+            fun terminal(): RecipeStepDraft = RecipeStepDraft(type = KiteRecipe.STEP_TERMINAL)
+
             fun shell(): RecipeStepDraft = RecipeStepDraft(type = KiteRecipe.STEP_SHELL)
 
             fun openWeb(): RecipeStepDraft = RecipeStepDraft(type = KiteRecipe.STEP_OPEN_WEB)
@@ -2245,7 +2680,7 @@ class MainActivity : Activity() {
             fun fromStep(step: KiteRecipeStep): RecipeStepDraft =
                 RecipeStepDraft(
                     type = step.type,
-                    command = step.cmd.orEmpty(),
+                    command = (step.cmd ?: step.text).orEmpty().trimEnd('\n'),
                     url = step.url.orEmpty(),
                     workdir = step.workdir.orEmpty(),
                     runMode = KiteRecipe.normalizeRunMode(step.runMode) ?: KiteRecipe.RUN_MODE_DETACHED,
@@ -2260,8 +2695,28 @@ class MainActivity : Activity() {
         val border: Int
     )
 
+    private data class UbuntuRuntimeUiState(
+        val title: String,
+        val detail: String,
+        val blocksUbuntuActions: Boolean,
+        val isProblem: Boolean,
+        val visible: Boolean = true
+    ) {
+        companion object {
+            fun hidden(): UbuntuRuntimeUiState =
+                UbuntuRuntimeUiState(
+                    title = "",
+                    detail = "",
+                    blocksUbuntuActions = false,
+                    isProblem = false,
+                    visible = false
+                )
+        }
+    }
+
     private enum class Screen {
         Console,
+        Terminal,
         Workbench,
         RecipeDetail,
         CreateConfig,
@@ -2316,7 +2771,7 @@ class MainActivity : Activity() {
         BridgeUnavailable("桥接不可用", "bridge_unavailable");
 
         companion object {
-            val activeStatuses = setOf(Running, AlreadyRunning, Opened)
+            val activeStatuses = setOf(Running, AlreadyRunning)
 
             fun fromRecipeStatus(status: String): RecipeRunStatus = when (status) {
                 "opened" -> Opened
@@ -2329,10 +2784,22 @@ class MainActivity : Activity() {
         }
     }
 
+    override fun setTerminalDetailMode(enabled: Boolean) {
+        isTerminalDetailMode = enabled
+        terminalBottomNavigation?.visibility = if (enabled) View.GONE else View.VISIBLE
+    }
+
+    override fun openTerminalSession(sessionId: String) {
+        showTerminal()
+        (supportFragmentManager.findFragmentByTag(TERMINAL_FRAGMENT_TAG) as? TerminalFragment)
+            ?.openSessionFromExternal(sessionId)
+    }
+
     private fun String.requiresServiceCommand(): Boolean =
         this == KiteRecipe.TYPE_COMMAND_WEB || this == KiteRecipe.TYPE_SCRIPT_WEB || this == KiteRecipe.TYPE_START_SERVICE
 
     companion object {
+        private const val TERMINAL_FRAGMENT_TAG = "kite-terminal"
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
         private const val WEB_READY_TIMEOUT_MS = 8000L
         private const val WEB_READY_INTERVAL_MS = 700L

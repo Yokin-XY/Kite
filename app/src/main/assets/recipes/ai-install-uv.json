@@ -1,0 +1,19 @@
+{
+  "base": {
+    "id": "",
+    "name": "AI Tool: uv",
+    "description": "Install or repair uv inside Ubuntu through the official standalone installer, with a source reachability and download speed check before install.",
+    "category": "uncategorized",
+    "icon": {
+      "type": "builtin",
+      "name": "code"
+    }
+  },
+  "recipe": [
+    {
+      "type": "shell",
+      "cmd": "set -euo pipefail\nif ! command -v curl >/dev/null 2>&1; then apt-get update && apt-get install -y curl ca-certificates; fi\nURL=https://astral.sh/uv/install.sh\nTMP=/workspace/.kf/downloads/uv-install.sh\nmkdir -p /workspace/.kf/downloads /workspace/.kf/bin\nMETRICS=$(curl -L --fail --connect-timeout 8 --max-time 45 -w '%{http_code} %{speed_download} %{size_download}' -o $TMP $URL)\nset -- $METRICS\nHTTP=$1\nSPEED=${2%.*}\nBYTES=${3%.*}\necho [kite] uv source http=$HTTP speed=${SPEED}Bps bytes=$BYTES\ntest $BYTES -gt 1000\ntest $SPEED -ge 1024\nUV_INSTALL_DIR=/workspace/.kf/bin UV_NO_MODIFY_PATH=1 sh $TMP\nexport PATH=/workspace/.kf/bin:$PATH\nuv --version\necho kite_uv_install_ok",
+      "workdir": "/workspace"
+    }
+  ]
+}

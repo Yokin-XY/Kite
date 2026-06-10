@@ -1,0 +1,182 @@
+diff --git a/src/GNUmakefile b/src/GNUmakefile
+--- a/src/GNUmakefile
++++ b/src/GNUmakefile
+@@
+ 	extension/hidden_files/hidden_files.o \
+ 	extension/mountinfo/mountinfo.o \
++	extension/kf_procfs/kf_procfs.o \
+ 	extension/port_switch/port_switch.o \
+diff --git a/src/cli/cli.c b/src/cli/cli.c
+--- a/src/cli/cli.c
++++ b/src/cli/cli.c
+@@
+ 	if (NULL == getenv("PROOT_NO_MOUNTINFO"))
+ 		initialize_extension(tracee, mountinfo_callback, NULL);
++
++	if (NULL == getenv("PROOT_NO_KF_PROCFS"))
++		initialize_extension(tracee, kf_procfs_callback, NULL);
+ 
+ 	/* Start the first tracee.  */
+diff --git a/src/extension/extension.h b/src/extension/extension.h
+--- a/src/extension/extension.h
++++ b/src/extension/extension.h
+@@
+ extern int ashmem_memfd_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ extern int mountinfo_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
++extern int kf_procfs_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ 
+ #endif /* EXTENSION_H */
+diff --git a/src/extension/kf_procfs/kf_procfs.c b/src/extension/kf_procfs/kf_procfs.c
+new file mode 100644
+--- /dev/null
++++ b/src/extension/kf_procfs/kf_procfs.c
+@@
++#include "extension/extension.h"
++
++#include <errno.h>
++#include <limits.h>
++#include <stdbool.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++static bool parse_proc_pid_path(const char *path, long *pid, const char **leaf)
++{
++	const char *cursor;
++	char *end = NULL;
++
++	if (path == NULL || strncmp(path, "/proc/", 6) != 0)
++		return false;
++
++	cursor = path + 6;
++	if (*cursor < '0' || *cursor > '9')
++		return false;
++
++	errno = 0;
++	long parsed = strtol(cursor, &end, 10);
++	if (errno != 0 || end == cursor || parsed <= 0)
++		return false;
++
++	if (*end == '\0') {
++		*pid = parsed;
++		*leaf = "";
++		return true;
++	}
++
++	if (*end != '/')
++		return false;
++
++	*pid = parsed;
++	*leaf = end + 1;
++	return true;
++}
++
++static bool is_supported_leaf(const char *leaf)
++{
++	return strcmp(leaf, "stat") == 0 ||
++		strcmp(leaf, "status") == 0 ||
++		strcmp(leaf, "cmdline") == 0 ||
++		strcmp(leaf, "comm") == 0 ||
++		strcmp(leaf, "statm") == 0 ||
++		strcmp(leaf, "cwd") == 0 ||
++		strcmp(leaf, "exe") == 0;
++}
++
++static bool projection_path_exists(const char *path, bool want_dir)
++{
++	struct stat st;
++	if (stat(path, &st) != 0)
++		return false;
++	return want_dir ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode);
++}
++
++static bool preview_is_command(const char *preview, const char *command)
++{
++	size_t len;
++
++	if (preview == NULL || command == NULL)
++		return false;
++
++	len = strlen(command);
++	return strncmp(preview, command, len) == 0 &&
++		(preview[len] == '\0' || preview[len] == ' ');
++}
++
++static bool path_basename_is(const char *path, const char *name)
++{
++	const char *slash;
++
++	if (path == NULL || name == NULL)
++		return false;
++
++	slash = strrchr(path, '/');
++	return strcmp(slash != NULL ? slash + 1 : path, name) == 0;
++}
++
++static bool is_resource_view_tracee(Extension *extension)
++{
++	Tracee *tracee = TRACEE(extension);
++	const char *preview = tracee->kf_exec_argv_preview;
++	const char *exe = tracee->exe;
++
++	return (preview != NULL && (
++			strstr(preview, "kf-resource-sampler") != NULL ||
++			preview_is_command(preview, "ps aux") ||
++			preview_is_command(preview, "top"))) ||
++		(exe != NULL && (
++			strstr(exe, "kf-resource-sampler") != NULL ||
++			path_basename_is(exe, "top")));
++}
++
++static void maybe_project_proc_path(Extension *extension, char path[PATH_MAX])
++{
++	const char *root = getenv("KF_PROCFS_PROJECTION_ROOT");
++	if (root == NULL || root[0] == '\0')
++		return;
++
++	long pid = 0;
++	const char *leaf = NULL;
++	if (!parse_proc_pid_path(path, &pid, &leaf))
++		return;
++
++	char projected[PATH_MAX];
++	if (leaf[0] == '\0') {
++		if (snprintf(projected, sizeof(projected), "%s/%ld", root, pid) >= (int) sizeof(projected))
++			return;
++		if (projection_path_exists(projected, true))
++			strncpy(path, projected, PATH_MAX);
++		return;
++	}
++
++	if (strchr(leaf, '/') != NULL || !is_supported_leaf(leaf))
++		return;
++
++	/* KF resource views deliberately read the kernel procfs for
++	 * stat/statm of already-known RUNNING PIDs. Without this exception it
++	 * would read the KF projection itself and feed zero RSS/CPU values back
++	 * into the process table.
++	 */
++	if (is_resource_view_tracee(extension) &&
++			(strcmp(leaf, "stat") == 0 || strcmp(leaf, "statm") == 0))
++		return;
++
++	if (snprintf(projected, sizeof(projected), "%s/%ld/%s", root, pid, leaf) >= (int) sizeof(projected))
++		return;
++
++	if (projection_path_exists(projected, false))
++		strncpy(path, projected, PATH_MAX);
++}
++
++int kf_procfs_callback(Extension *extension UNUSED, ExtensionEvent event,
++		intptr_t data1, intptr_t data2 UNUSED)
++{
++	switch (event) {
++	case TRANSLATED_PATH:
++		maybe_project_proc_path(extension, (char *) data1);
++		return 0;
++	default:
++		return 0;
++	}
++}

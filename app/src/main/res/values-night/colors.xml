@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#E67B39</color>
+    <color name="primary_dark">#A44B16</color>
+    <color name="accent">#63D2B0</color>
+
+    <color name="background">#0E1319</color>
+    <color name="surface">#171E27</color>
+    <color name="surface_alt">#202A35</color>
+    <color name="outline">#32404F</color>
+
+    <color name="terminal_bg">#081219</color>
+    <color name="terminal_text">#D8F88D</color>
+
+    <color name="text_primary">#F6F8FB</color>
+    <color name="text_secondary">#AAB5C2</color>
+    <color name="success">#45C46C</color>
+    <color name="warning">#F2B84B</color>
+    <color name="error">#FF7A7A</color>
+    <color name="chip_bg">#24303C</color>
+    <color name="input_bg">#101820</color>
+
+    <color name="terminal_page_bg">#0D131A</color>
+    <color name="terminal_page_header">#141C25</color>
+    <color name="terminal_page_surface">#111821</color>
+    <color name="terminal_page_text">#F2F6FB</color>
+    <color name="terminal_page_subtext">#99A6B5</color>
+    <color name="terminal_page_line">#22303D</color>
+    <color name="terminal_page_green">#1FAE6B</color>
+    <color name="terminal_page_blue">#4A8CFF</color>
+    <color name="terminal_page_gray_chip">#3B4A58</color>
+    <color name="terminal_page_input_bg">#16212C</color>
+</resources>

@@ -1,0 +1,587 @@
+diff --git a/src/GNUmakefile b/src/GNUmakefile
+index 9603557..81d266d 100644
+--- a/src/GNUmakefile
++++ b/src/GNUmakefile
+@@ -51,6 +51,7 @@ OBJECTS += \
+ 	tracee/event.o		\
+ 	tracee/seccomp.o        \
+ 	tracee/statx.o		\
++	tracee/telemetry.o	\
+ 	ptrace/ptrace.o		\
+ 	ptrace/user.o		\
+ 	ptrace/wait.o		\
+diff --git a/src/execve/enter.c b/src/execve/enter.c
+index c562d14..5b52e4a 100644
+--- a/src/execve/enter.c
++++ b/src/execve/enter.c
+@@ -41,6 +41,7 @@
+ #include "path/temp.h"
+ #include "path/binding.h"
+ #include "tracee/tracee.h"
++#include "tracee/telemetry.h"
+ #include "syscall/syscall.h"
+ #include "syscall/sysnum.h"
+ #include "arch.h"
+@@ -615,6 +616,8 @@ int translate_execve_enter(Tracee *tracee)
+ 	if (status < 0)
+ 		return status;
+ 
++	kf_telemetry_capture_exec_argv(tracee);
++
+ 	/* Remember the user path before it is overwritten by
+ 	 * expand_shebang().  This "raw" path is useful to fix the
+ 	 * value of AT_EXECFN and /proc/{@tracee->pid}/comm.  */
+diff --git a/src/execve/exit.c b/src/execve/exit.c
+index d58d3e9..e1145cb 100644
+--- a/src/execve/exit.c
++++ b/src/execve/exit.c
+@@ -36,6 +36,7 @@
+ #include "tracee/reg.h"
+ #include "tracee/abi.h"
+ #include "tracee/mem.h"
++#include "tracee/telemetry.h"
+ #include "syscall/sysnum.h"
+ #include "execve/auxv.h"
+ #include "path/binding.h"
+@@ -488,6 +489,17 @@ void translate_execve_exit(Tracee *tracee)
+ 		talloc_set_name_const(tracee->exe, "$exe");
+ 	}
+ 
++	kf_telemetry_emit_lifecycle_event(tracee,
++					"ExecDetected",
++					"RUNNING",
++					"syscall_execve_exit",
++					tracee->exe,
++					tracee->kf_exec_argv_hash,
++					tracee->kf_exec_argv_preview,
++					tracee->fs != NULL ? tracee->fs->cwd : NULL,
++					-1,
++					0);
++
+ 	/* New processes have no heap.  */
+ 	if (talloc_reference_count(tracee->heap) >= 1) {
+ 		talloc_unlink(tracee, tracee->heap);
+diff --git a/src/extension/ashmem_memfd/ashmem_memfd.c b/src/extension/ashmem_memfd/ashmem_memfd.c
+index df3f3b5..0d0e22c 100644
+--- a/src/extension/ashmem_memfd/ashmem_memfd.c
++++ b/src/extension/ashmem_memfd/ashmem_memfd.c
+@@ -1,8 +1,15 @@
+ #include <stdlib.h>
+ #include <signal.h>
+ #include <unistd.h>
++#include <string.h>
+ #include <sys/syscall.h>  /* __NR_memfd_create,  */
++#include <sys/ioctl.h>    /* _IO, _IOW,  */
++#if __has_include(<linux/ashmem.h>)
+ #include <linux/ashmem.h> /* ASHMEM_GET_SIZE,  */
++#else
++#define ASHMEM_SET_SIZE _IOW('a', 3, size_t)
++#define ASHMEM_GET_SIZE _IO('a', 4)
++#endif
+ #include <linux/memfd.h>  /* MFD_CLOEXEC  */
+ 
+ #include <talloc.h>
+diff --git a/src/tracee/event.c b/src/tracee/event.c
+index 6c241b5..cefc056 100644
+--- a/src/tracee/event.c
++++ b/src/tracee/event.c
+@@ -38,6 +38,7 @@
+ #include "tracee/event.h"
+ #include "tracee/seccomp.h"
+ #include "tracee/mem.h"
++#include "tracee/telemetry.h"
+ #include "cli/note.h"
+ #include "path/path.h"
+ #include "path/binding.h"
+@@ -427,6 +428,16 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
+ 		VERBOSE(tracee, 1,
+ 			"vpid %" PRIu64 ": exited with status %d",
+ 			tracee->vpid, last_exit_status);
++		kf_telemetry_emit_lifecycle_event(tracee,
++						"TraceeExited",
++						"EXITED",
++						"tracee_wait_exited",
++						tracee->exe,
++						tracee->kf_exec_argv_hash,
++						tracee->kf_exec_argv_preview,
++						tracee->fs != NULL ? tracee->fs->cwd : NULL,
++						last_exit_status,
++						0);
+ 		terminate_tracee(tracee);
+ 	}
+ 	else if (WIFSIGNALED(tracee_status)) {
+@@ -434,6 +445,16 @@ int handle_tracee_event(Tracee *tracee, int tracee_status)
+ 		VERBOSE(tracee, (int) (tracee->vpid != 1),
+ 			"vpid %" PRIu64 ": terminated with signal %d",
+ 			tracee->vpid, WTERMSIG(tracee_status));
++		kf_telemetry_emit_lifecycle_event(tracee,
++						"TraceeSignaled",
++						"SIGNALED",
++						"tracee_wait_signaled",
++						tracee->exe,
++						tracee->kf_exec_argv_hash,
++						tracee->kf_exec_argv_preview,
++						tracee->fs != NULL ? tracee->fs->cwd : NULL,
++						-1,
++						WTERMSIG(tracee_status));
+ 		terminate_tracee(tracee);
+ 	}
+ 	else if (WIFSTOPPED(tracee_status)) {
+diff --git a/src/tracee/telemetry.c b/src/tracee/telemetry.c
+new file mode 100644
+index 0000000..b985db5
+--- /dev/null
++++ b/src/tracee/telemetry.c
+@@ -0,0 +1,300 @@
++/* -*- c-set-style: "K&R"; c-basic-offset: 8 -*- */
++
++#include <errno.h>
++#include <fcntl.h>
++#include <inttypes.h>
++#include <limits.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <time.h>
++#include <unistd.h>
++#include <talloc.h>
++
++#include "execve/aoxp.h"
++#include "tracee/reg.h"
++#include "tracee/telemetry.h"
++
++#define KF_TELEMETRY_SCHEMA "kf_proot_lifecycle_event_v1"
++#define KF_TELEMETRY_COST_LEVEL "lifecycle_low"
++#define KF_TELEMETRY_ARGV_PREVIEW_MAX 192
++#define KF_TELEMETRY_ARGV_PARTS_MAX 4
++#define KF_TELEMETRY_MAX_BYTES (8LL * 1024LL * 1024LL)
++#define KF_TELEMETRY_ARCHIVE_COUNT 3
++#define KF_TELEMETRY_ROTATE_CHECK_INTERVAL 128
++
++static long long proot_start_ms = 0;
++static char telemetry_session_id[64] = "";
++static unsigned int telemetry_rotate_counter = KF_TELEMETRY_ROTATE_CHECK_INTERVAL;
++
++static uint64_t fnv1a64_update(uint64_t hash, const char *value)
++{
++	const unsigned char *cursor = (const unsigned char *) value;
++
++	while (cursor != NULL && *cursor != '\0') {
++		hash ^= (uint64_t) *cursor++;
++		hash *= 1099511628211ULL;
++	}
++
++	return hash;
++}
++
++static void hash_to_short_hex(char output[17], uint64_t hash)
++{
++	snprintf(output, 17, "%016" PRIx64, hash);
++}
++
++static long long now_ms()
++{
++	struct timespec ts;
++
++	if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
++		return 0;
++
++	return ((long long) ts.tv_sec * 1000LL) + (ts.tv_nsec / 1000000LL);
++}
++
++static const char *session_id()
++{
++	if (proot_start_ms == 0)
++		proot_start_ms = now_ms();
++	if (telemetry_session_id[0] == '\0')
++		snprintf(telemetry_session_id, sizeof(telemetry_session_id),
++			 "%d-%lld", getpid(), proot_start_ms);
++	return telemetry_session_id;
++}
++
++static const char *telemetry_path()
++{
++	static int initialized = 0;
++	static const char *path = NULL;
++
++	if (!initialized) {
++		path = getenv("KF_PROOT_TELEMETRY_PATH");
++		if (path != NULL && path[0] == '\0')
++			path = NULL;
++		initialized = 1;
++	}
++
++	return path;
++}
++
++static int telemetry_archive_path(char *buffer, size_t buffer_size,
++				  const char *path, int index)
++{
++	if (snprintf(buffer, buffer_size, "%s.%d", path, index) >= (int) buffer_size)
++		return -1;
++	return 0;
++}
++
++static void maybe_rotate_telemetry_file(const char *path)
++{
++	struct stat st;
++	char current[PATH_MAX];
++	char next[PATH_MAX];
++	int index;
++
++	if (path == NULL)
++		return;
++
++	if (telemetry_rotate_counter < KF_TELEMETRY_ROTATE_CHECK_INTERVAL) {
++		telemetry_rotate_counter++;
++		return;
++	}
++	telemetry_rotate_counter = 0;
++
++	if (stat(path, &st) != 0 || st.st_size < KF_TELEMETRY_MAX_BYTES)
++		return;
++
++	for (index = KF_TELEMETRY_ARCHIVE_COUNT; index >= 1; index--) {
++		if (telemetry_archive_path(current, sizeof(current), path, index) != 0)
++			return;
++
++		if (index == KF_TELEMETRY_ARCHIVE_COUNT) {
++			(void) unlink(current);
++			continue;
++		}
++
++		if (telemetry_archive_path(next, sizeof(next), path, index + 1) != 0)
++			return;
++		(void) rename(current, next);
++	}
++
++	if (telemetry_archive_path(current, sizeof(current), path, 1) != 0)
++		return;
++	(void) rename(path, current);
++}
++
++static void json_string(FILE *stream, const char *value)
++{
++	const unsigned char *cursor = (const unsigned char *) value;
++
++	fputc('"', stream);
++	while (cursor != NULL && *cursor != '\0') {
++		switch (*cursor) {
++		case '\\':
++		case '"':
++			fputc('\\', stream);
++			fputc(*cursor, stream);
++			break;
++		case '\b':
++			fputs("\\b", stream);
++			break;
++		case '\f':
++			fputs("\\f", stream);
++			break;
++		case '\n':
++			fputs("\\n", stream);
++			break;
++		case '\r':
++			fputs("\\r", stream);
++			break;
++		case '\t':
++			fputs("\\t", stream);
++			break;
++		default:
++			if (*cursor < 0x20)
++				fprintf(stream, "\\u%04x", *cursor);
++			else
++				fputc(*cursor, stream);
++			break;
++		}
++		cursor++;
++	}
++	fputc('"', stream);
++}
++
++static void json_key_string(FILE *stream, const char *key, const char *value)
++{
++	fprintf(stream, ",\"%s\":", key);
++	if (value == NULL)
++		fputs("null", stream);
++	else
++		json_string(stream, value);
++}
++
++static const char *env_value(const char *env, const char *key)
++{
++	size_t key_len;
++
++	if (env == NULL || key == NULL)
++		return NULL;
++
++	key_len = strlen(key);
++	if (strncmp(env, key, key_len) != 0 || env[key_len] != '=')
++		return NULL;
++
++	return env + key_len + 1;
++}
++
++void kf_telemetry_capture_exec_argv(Tracee *tracee)
++{
++	ArrayOfXPointers *argv;
++	ArrayOfXPointers *envp;
++	char preview[KF_TELEMETRY_ARGV_PREVIEW_MAX + 1] = "";
++	uint64_t hash = 1469598103934665603ULL;
++	char hash_hex[17];
++	size_t used = 0;
++	size_t i;
++	int status;
++
++	if (tracee == NULL)
++		return;
++
++	status = fetch_array_of_xpointers(tracee, &argv, SYSARG_2, 0);
++	if (status < 0)
++		return;
++
++	for (i = 0; i < KF_TELEMETRY_ARGV_PARTS_MAX; i++) {
++		char *part = NULL;
++		size_t part_len;
++
++		status = read_xpointee_as_string(argv, i, &part);
++		if (status < 0 || part == NULL)
++			break;
++
++		hash = fnv1a64_update(hash, part);
++		hash = fnv1a64_update(hash, "\0");
++
++		if (used < KF_TELEMETRY_ARGV_PREVIEW_MAX) {
++			size_t available;
++			if (used > 0)
++				preview[used++] = ' ';
++			available = KF_TELEMETRY_ARGV_PREVIEW_MAX - used;
++			part_len = strlen(part);
++			if (part_len > available)
++				part_len = available;
++			memcpy(preview + used, part, part_len);
++			used += part_len;
++			preview[used] = '\0';
++		}
++	}
++
++	hash_to_short_hex(hash_hex, hash);
++
++	talloc_unlink(tracee, tracee->kf_exec_argv_preview);
++	talloc_unlink(tracee, tracee->kf_exec_argv_hash);
++	talloc_unlink(tracee, tracee->kf_runtime_id);
++	talloc_unlink(tracee, tracee->kf_unit_id);
++	tracee->kf_exec_argv_preview = talloc_strdup(tracee, preview);
++	tracee->kf_exec_argv_hash = talloc_strdup(tracee, hash_hex);
++	tracee->kf_runtime_id = NULL;
++	tracee->kf_unit_id = NULL;
++
++	status = fetch_array_of_xpointers(tracee, &envp, SYSARG_3, 0);
++	if (status < 0)
++		return;
++
++	for (i = 0; i < envp->length; i++) {
++		char *env = NULL;
++		const char *runtime_id;
++		const char *unit_id;
++
++		status = read_xpointee_as_string(envp, i, &env);
++		if (status < 0 || env == NULL)
++			break;
++
++		runtime_id = env_value(env, "KF_RUNTIME_ID");
++		if (runtime_id != NULL) {
++			talloc_unlink(tracee, tracee->kf_runtime_id);
++			tracee->kf_runtime_id = talloc_strdup(tracee, runtime_id);
++		}
++
++		unit_id = env_value(env, "KF_UNIT_ID");
++		if (unit_id != NULL) {
++			talloc_unlink(tracee, tracee->kf_unit_id);
++			tracee->kf_unit_id = talloc_strdup(tracee, unit_id);
++		}
++	}
++}
++
++void kf_telemetry_emit_lifecycle_event(const Tracee *tracee,
++					const char *event_type,
++					const char *state,
++					const char *source_hook,
++					const char *executable,
++					const char *argv_hash,
++					const char *argv_preview,
++					const char *cwd,
++					int exit_code,
++					int signal_number)
++{
++	const char *path = telemetry_path();
++	FILE *stream;
++	int fd;
++	const Tracee *parent;
++	pid_t pgid;
++	pid_t sid;
++
++	if (path == NULL || tracee == NULL || event_type == NULL)
++		return;
++
++	maybe_rotate_telemetry_file(path);
++
++	fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
++	if (fd < 0)
++		return;
++
++	stream = fdopen(fd, "a");
++	if (stream == NULL) {
++		close(fd);
++		return;
++	}
++
++	parent = tracee->parent;
++	pgid = getpgid(tracee->pid);
++	sid = getsid(tracee->pid);
++
++	fputc('{', stream);
++	fprintf(stream, "\"schema\":\"%s\"", KF_TELEMETRY_SCHEMA);
++	json_key_string(stream, "eventType", event_type);
++	fprintf(stream, ",\"timestampMs\":%lld", now_ms());
++	json_key_string(stream, "telemetrySessionId", session_id());
++	fprintf(stream, ",\"prootStartMs\":%lld", proot_start_ms);
++	fprintf(stream, ",\"prootPid\":%d", getpid());
++	fprintf(stream, ",\"traceePid\":%d", tracee->pid);
++	fprintf(stream, ",\"traceeVpid\":%" PRIu64, tracee->vpid);
++	if (pgid > 0)
++		fprintf(stream, ",\"processGroupId\":%d", pgid);
++	else
++		fputs(",\"processGroupId\":null", stream);
++	if (sid > 0)
++		fprintf(stream, ",\"sessionId\":%d", sid);
++	else
++		fputs(",\"sessionId\":null", stream);
++	if (parent != NULL) {
++		fprintf(stream, ",\"parentTraceePid\":%d", parent->pid);
++		fprintf(stream, ",\"parentTraceeVpid\":%" PRIu64, parent->vpid);
++	}
++	else {
++		fputs(",\"parentTraceePid\":null", stream);
++		fputs(",\"parentTraceeVpid\":null", stream);
++	}
++	json_key_string(stream, "state", state);
++	json_key_string(stream, "sourceHook", source_hook);
++	json_key_string(stream, "costLevel", KF_TELEMETRY_COST_LEVEL);
++	json_key_string(stream, "executable", executable);
++	json_key_string(stream, "argvHash", argv_hash);
++	json_key_string(stream, "argvPreview", argv_preview);
++	json_key_string(stream, "cwd", cwd);
++	json_key_string(stream, "kfRuntimeId", tracee->kf_runtime_id);
++	json_key_string(stream, "kfUnitId", tracee->kf_unit_id);
++	if (exit_code >= 0)
++		fprintf(stream, ",\"exitCode\":%d", exit_code);
++	else
++		fputs(",\"exitCode\":null", stream);
++	if (signal_number > 0)
++		fprintf(stream, ",\"signal\":%d", signal_number);
++	else
++		fputs(",\"signal\":null", stream);
++	fputs("}\n", stream);
++
++	(void) fclose(stream);
++}
+diff --git a/src/tracee/telemetry.h b/src/tracee/telemetry.h
+new file mode 100644
+index 0000000..644597d
+--- /dev/null
++++ b/src/tracee/telemetry.h
+@@ -0,0 +1,31 @@
++/* -*- c-set-style: "K&R"; c-basic-offset: 8 -*- */
++
++#ifndef TRACEE_TELEMETRY_H
++#define TRACEE_TELEMETRY_H
++
++#include <sched.h>
++#include <signal.h>
++#include "tracee/tracee.h"
++
++extern void kf_telemetry_capture_exec_argv(Tracee *tracee);
++extern void kf_telemetry_emit_lifecycle_event(const Tracee *tracee,
++					const char *event_type,
++					const char *state,
++					const char *source_hook,
++					const char *executable,
++					const char *argv_hash,
++					const char *argv_preview,
++					const char *cwd,
++					int exit_code,
++					int signal_number);
++
++static inline const char *kf_telemetry_fork_event_type(word_t clone_flags)
++{
++	if ((clone_flags & CLONE_VFORK) != 0)
++		return "VforkDetected";
++	if (clone_flags == 0 || (clone_flags & 0xff) == SIGCHLD)
++		return "ForkDetected";
++	return "CloneDetected";
++}
++
++#endif /* TRACEE_TELEMETRY_H */
+diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
+index 861f7d8..b63c1cc 100644
+--- a/src/tracee/tracee.c
++++ b/src/tracee/tracee.c
+@@ -36,6 +36,7 @@
+ #include "tracee/tracee.h"
+ #include "tracee/reg.h"
+ #include "tracee/mem.h"
++#include "tracee/telemetry.h"
+ #include "path/binding.h"
+ #include "syscall/sysnum.h"
+ #include "tracee/event.h"
+@@ -595,6 +596,29 @@ int new_child(Tracee *parent, word_t clone_flags)
+ 
+ 	inherit_extensions(child, parent, clone_flags);
+ 
++	child->kf_exec_argv_hash = parent->kf_exec_argv_hash != NULL
++		? talloc_strdup(child, parent->kf_exec_argv_hash)
++		: NULL;
++	child->kf_exec_argv_preview = parent->kf_exec_argv_preview != NULL
++		? talloc_strdup(child, parent->kf_exec_argv_preview)
++		: NULL;
++	child->kf_runtime_id = parent->kf_runtime_id != NULL
++		? talloc_strdup(child, parent->kf_runtime_id)
++		: NULL;
++	child->kf_unit_id = parent->kf_unit_id != NULL
++		? talloc_strdup(child, parent->kf_unit_id)
++		: NULL;
++
++	kf_telemetry_emit_lifecycle_event(child,
++					kf_telemetry_fork_event_type(clone_flags),
++					"RUNNING",
++					"ptrace_new_child",
++					child->exe,
++					child->kf_exec_argv_hash,
++					child->kf_exec_argv_preview,
++					child->fs != NULL ? child->fs->cwd : NULL,
++					-1,
++					0);
++
+ 	/* Restart the child tracee if it was already alive but
+ 	 * stopped until that moment.  */
+ 	if (child->sigstop == SIGSTOP_PENDING) {
+diff --git a/src/tracee/tracee.h b/src/tracee/tracee.h
+index 0214b58..7d7e396 100644
+--- a/src/tracee/tracee.h
++++ b/src/tracee/tracee.h
+@@ -298,6 +298,13 @@ typedef struct tracee {
+ 	char *new_exe;
+ 	char *host_exe;
+ 
++	/* Short command identity captured during execve sysenter and emitted
++	 * only after a successful execve sysexit. */
++	char *kf_exec_argv_hash;
++	char *kf_exec_argv_preview;
++	char *kf_runtime_id;
++	char *kf_unit_id;
++
+ 
+ 	/**********************************************************************
+ 	 * Shared or private resources, depending on the (re-)configuration   *

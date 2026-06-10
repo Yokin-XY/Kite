@@ -11,8 +11,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url "https://jitpack.io" }
     }
 }
 
 rootProject.name = "Kite"
 include ":app"
+include ":terminal-view-local"

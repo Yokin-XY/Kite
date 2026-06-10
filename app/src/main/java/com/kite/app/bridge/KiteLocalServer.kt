@@ -1,6 +1,8 @@
 package com.kite.app.bridge
 
+import android.content.Context
 import com.kite.app.diagnostics.KiteDiagnostics
+import com.kftest.app.foundation.toolchain.ToolchainPackInstaller
 import org.json.JSONObject
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -9,9 +11,12 @@ import java.util.Locale
 import kotlin.concurrent.thread
 
 class KiteLocalServer(
+    context: Context,
     private val diagnostics: KiteDiagnostics,
     private val openWeb: (String) -> Unit
 ) {
+    private val appContext = context.applicationContext
+
     @Volatile
     private var serverSocket: ServerSocket? = null
 
@@ -79,6 +84,27 @@ class KiteLocalServer(
                     diagnostics.capabilitiesJson()
                 )
 
+                method == "GET" && path == "/toolchain" -> writeHtml(
+                    client,
+                    200,
+                    toolchainPageHtml()
+                )
+
+                method == "GET" && path == "/toolchain/status" -> {
+                    ToolchainPackInstaller.refreshState(appContext)
+                    writeJson(client, 200, ToolchainPackInstaller.state.value.toJson())
+                }
+
+                method == "POST" && path == "/toolchain/prepare" -> {
+                    ToolchainPackInstaller.prepareAiEnv(appContext)
+                    writeJson(client, 202, JSONObject().put("ok", true).put("accepted", true).put("action", "prepare_ai_env"))
+                }
+
+                method == "POST" && path == "/toolchain/doctor" -> {
+                    ToolchainPackInstaller.doctor(appContext)
+                    writeJson(client, 202, JSONObject().put("ok", true).put("accepted", true).put("action", "toolchain_doctor"))
+                }
+
                 method == "POST" && path == "/open-web" -> {
                     val url = runCatching { JSONObject(request.body).getString("url") }.getOrNull()
                     if (url.isNullOrBlank()) {
@@ -144,10 +170,18 @@ class KiteLocalServer(
         writeRawJson(socket, status, json.toString())
     }
 
+    private fun writeHtml(socket: Socket, status: Int, body: String) {
+        writeRaw(socket, status, "text/html; charset=utf-8", body)
+    }
+
     private fun writeRawJson(socket: Socket, status: Int, body: String) {
+        writeRaw(socket, status, "application/json; charset=utf-8", body)
+    }
+
+    private fun writeRaw(socket: Socket, status: Int, contentType: String, body: String) {
         val bytes = body.toByteArray(Charsets.UTF_8)
         socket.getOutputStream().write(
-            "HTTP/1.1 $status ${statusText(status)}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+            "HTTP/1.1 $status ${statusText(status)}\r\nContent-Type: $contentType\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
                 .toByteArray(Charsets.UTF_8)
         )
         socket.getOutputStream().write(bytes)
@@ -159,6 +193,78 @@ class KiteLocalServer(
         404 -> "Not Found"
         else -> "OK"
     }
+
+    private fun toolchainPageHtml(): String = """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>KF AI Toolchain</title>
+          <style>
+            :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+            body { margin: 0; padding: 18px; background: #f6f7f9; color: #172033; }
+            main { max-width: 760px; margin: 0 auto; }
+            h1 { font-size: 22px; margin: 0 0 8px; }
+            p { color: #5d667a; line-height: 1.45; }
+            .panel { background: #fff; border: 1px solid #dfe3ea; border-radius: 8px; padding: 14px; margin-top: 12px; }
+            .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+            button { border: 0; border-radius: 8px; padding: 11px 14px; background: #16856a; color: white; font-weight: 700; }
+            button.secondary { background: #354052; }
+            pre { white-space: pre-wrap; word-break: break-word; max-height: 46vh; overflow: auto; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 8px; }
+            .status { font-weight: 800; }
+            @media (prefers-color-scheme: dark) {
+              body { background: #111318; color: #eef2f7; }
+              .panel { background: #1b2029; border-color: #303846; }
+              p { color: #aeb7c7; }
+            }
+          </style>
+        </head>
+        <body>
+          <main>
+            <h1>AI/Dev environment completion</h1>
+            <p>Installs or repairs Node 24 LTS, uv, pnpm, Python venv/pip support, adb/fastboot, and common CLI tools inside the KF Ubuntu workspace.</p>
+            <div class="panel">
+              <div>Phase: <span id="phase" class="status">loading</span></div>
+              <div>Action: <span id="action">--</span></div>
+              <div>Summary: <span id="summary">--</span></div>
+              <div>Exit: <span id="exit">--</span></div>
+              <div>Log: <span id="log">--</span></div>
+              <div class="row">
+                <button onclick="postAction('/toolchain/prepare')">Start one-click completion</button>
+                <button class="secondary" onclick="postAction('/toolchain/doctor')">Run doctor</button>
+              </div>
+            </div>
+            <div class="panel">
+              <pre id="preview">Waiting for status...</pre>
+            </div>
+          </main>
+          <script>
+            async function postAction(path) {
+              await fetch(path, { method: 'POST' });
+              await refresh();
+            }
+            async function refresh() {
+              try {
+                const res = await fetch('/toolchain/status?ts=' + Date.now());
+                const s = await res.json();
+                document.getElementById('phase').textContent = s.phase || '--';
+                document.getElementById('action').textContent = s.action || '--';
+                document.getElementById('summary').textContent = s.summary || '--';
+                document.getElementById('exit').textContent = (s.exitCode === null || s.exitCode === undefined) ? '--' : s.exitCode;
+                document.getElementById('log').textContent = s.logPath || '--';
+                document.getElementById('preview').textContent = s.outputPreview || 'No output yet.';
+              } catch (e) {
+                document.getElementById('phase').textContent = 'error';
+                document.getElementById('preview').textContent = String(e);
+              }
+            }
+            refresh();
+            setInterval(refresh, 1500);
+          </script>
+        </body>
+        </html>
+    """.trimIndent()
 
     companion object {
         private const val DEFAULT_PORT = 8791

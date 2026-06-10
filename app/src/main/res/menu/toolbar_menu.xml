@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_files"
+        android:icon="@android:drawable/ic_menu_upload"
+        android:title="@string/files_exchange"
+        app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_logs"
+        android:icon="@android:drawable/ic_menu_info_details"
+        android:title="@string/log_title"
+        app:showAsAction="ifRoom" />
+
+</menu>

@@ -1,0 +1,50 @@
+{
+  "packId": "ai-dev-pack",
+  "displayName": "AI development environment",
+  "version": 14,
+  "description": "Official KFShell toolchain pack for AI and developer workflows.",
+  "installScript": "install.sh",
+  "installTarget": "/workspace/.kf/toolchains",
+  "binTarget": "/workspace/.kf/bin",
+  "env": {
+    "UV_LINK_MODE": "copy"
+  },
+  "packages": {
+    "node": {
+      "version": "24.15.0",
+      "file": "packages/node-v24.15.0-linux-arm64.tar.xz",
+      "source": "https://nodejs.org/dist/v24.15.0/"
+    },
+    "uv": {
+      "version": "0.11.1",
+      "file": "packages/uv-aarch64-unknown-linux-gnu.tar.gz",
+      "source": "https://github.com/astral-sh/uv/releases/tag/0.11.1"
+    },
+    "pnpm": {
+      "version": "10.33.2",
+      "file": "packages/pnpm-10.33.2.tgz",
+      "source": "https://registry.npmjs.org/pnpm/-/pnpm-10.33.2.tgz"
+    },
+    "adb": {
+      "version": "managed-apt",
+      "source": "Ubuntu apt packages adb + fastboot"
+    }
+  },
+  "aptPackages": [
+    "python3-pip",
+    "python3-venv",
+    "pkg-config",
+    "bzip2",
+    "less",
+    "gnupg",
+    "tree",
+    "rsync",
+    "zstd",
+    "zip",
+    "fd-find",
+    "jq",
+    "ripgrep",
+    "adb",
+    "fastboot"
+  ]
+}
