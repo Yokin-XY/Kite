@@ -174,6 +174,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var autoOpenedRootfsRunAt = 0L
     private var lastWorkbenchUrl: String? = null
     private var lastShellProgressRenderAt = 0L
+    private var resourcePageView: View? = null
+    private var resourcePageNavView: View? = null
+    private var resourceSectionHost: LinearLayout? = null
+    private var resourceSearchBar: ResourceSearchBar? = null
+    private var resourceSearchQuery: String = ""
+    private var resourceSectionsRenderKey: String = ""
+    private var resourceSectionsDirty = true
+    private var cachedResourceCatalog: List<ResourceItem>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -641,6 +649,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         themeConfig = config
         tokens = KiteTheme.resolve(config)
         applyKiteTerminalTheme()
+        invalidateResourceUiCache()
         themeStore.edit()
             .putInt("theme_color", config.themeColor)
             .putInt("background_color", config.backgroundColor)
@@ -1008,35 +1017,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun showResources() {
         currentResourceDetailId = null
         currentScreen = Screen.Resources
-        ToolchainPackInstaller.refreshState(applicationContext)
-        val resources = resourceCatalog()
-        lateinit var sectionHost: LinearLayout
-        fun renderResourceSections(query: String) {
-            val cleanQuery = query.trim()
-            val visibleResources = if (cleanQuery.isBlank()) {
-                resources
-            } else {
-                resources.filter { it.matchesResourceQuery(cleanQuery) }
-            }
-            sectionHost.removeAllViews()
-            sectionHost.addView(resourceSection(
-                title = "精选推荐",
-                items = visibleResources.filter { it.section == "精选推荐" }
-            ))
-            sectionHost.addView(resourceSection(
-                title = "快速开始",
-                items = visibleResources.filter { it.section == "快速开始" }
-            ))
-            sectionHost.addView(resourceSection(
-                title = "更多资源",
-                items = visibleResources.filter { it.section == "更多资源" }
-            ))
-            if (visibleResources.isEmpty()) {
-                sectionHost.addView(resourceSearchEmptyState(cleanQuery))
-            }
-        }
         root.setBackgroundColor(tokens.pageBackground)
+        val page = ensureResourcePage()
+        val nav = ensureResourcePageNav()
+        refreshResourceSections(forceCatalogRefresh = false)
+        showBottomNavigationImmediately(nav)
+        if (page.parent === root && nav.parent === root) {
+            return
+        }
         clearRootForScreen()
+        detachFromParent(page)
+        detachFromParent(nav)
+        root.addView(page, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(nav)
+    }
+
+    private fun ensureResourcePage(): View {
+        resourcePageView?.let { return it }
         val resourceScroll = ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1044,26 +1041,120 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 addView(resourceHeader())
                 addView(resourceHero())
                 addView(resourceCategoryChips())
-                sectionHost = LinearLayout(context).apply {
+                resourceSectionHost = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                 }
-                addView(sectionHost)
+                addView(resourceSectionHost)
             })
         }
-        renderResourceSections("")
         val searchPill = ResourceSearchBar(this) { query ->
-            renderResourceSections(query)
+            resourceSearchQuery = query
+            refreshResourceSections(query = query)
         }
-        val nav = bottomNavigation()
-        attachResourceScrollChrome(resourceScroll, nav, searchPill)
-        root.addView(FrameLayout(this).apply {
+        resourceSearchBar = searchPill
+        return FrameLayout(this).apply {
             addView(resourceScroll, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
             addView(searchPill)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(nav)
+        }.also {
+            resourcePageView = it
+        }
+    }
+
+    private fun ensureResourcePageNav(): View {
+        resourcePageNavView?.let { return it }
+        return bottomNavigation().also { nav ->
+            resourcePageNavView = nav
+            val resourceScroll = ((resourcePageView as? FrameLayout)?.getChildAt(0) as? ScrollView)
+            if (resourceScroll != null && resourceSearchBar != null) {
+                attachResourceScrollChrome(resourceScroll, nav, resourceSearchBar!!)
+            }
+        }
+    }
+
+    private fun refreshResourceSections(
+        query: String = resourceSearchQuery,
+        forceCatalogRefresh: Boolean = false
+    ): Boolean {
+        val sectionHost = resourceSectionHost ?: return false
+        val resources = resourceCatalog(forceRefresh = forceCatalogRefresh)
+        val cleanQuery = query.trim()
+        val visibleResources = if (cleanQuery.isBlank()) {
+            resources
+        } else {
+            resources.filter { it.matchesResourceQuery(cleanQuery) }
+        }
+        val renderKey = buildResourceSectionsRenderKey(cleanQuery, visibleResources)
+        if (!forceCatalogRefresh && !resourceSectionsDirty && resourceSectionsRenderKey == renderKey) {
+            return true
+        }
+        sectionHost.removeAllViews()
+        sectionHost.addView(resourceSection(
+            title = "精选推荐",
+            items = visibleResources.filter { it.section == "精选推荐" }
+        ))
+        sectionHost.addView(resourceSection(
+            title = "快速开始",
+            items = visibleResources.filter { it.section == "快速开始" }
+        ))
+        sectionHost.addView(resourceSection(
+            title = "更多资源",
+            items = visibleResources.filter { it.section == "更多资源" }
+        ))
+        if (visibleResources.isEmpty()) {
+            sectionHost.addView(resourceSearchEmptyState(cleanQuery))
+        }
+        resourceSectionsRenderKey = renderKey
+        resourceSectionsDirty = false
+        return true
+    }
+
+    private fun buildResourceSectionsRenderKey(query: String, resources: List<ResourceItem>): String =
+        buildString {
+            append(query)
+            resources.forEach { item ->
+                append('|')
+                append(item.id)
+                append(':')
+                append(item.stateLabel)
+                append(':')
+                append(item.actionLabel)
+                append(':')
+                append(item.actionEnabled)
+            }
+        }
+
+    private fun showBottomNavigationImmediately(nav: View) {
+        nav.animate().cancel()
+        nav.visibility = View.VISIBLE
+        nav.translationY = 0f
+        nav.alpha = 1f
+    }
+
+    private fun detachFromParent(view: View) {
+        (view.parent as? ViewGroup)?.removeView(view)
+    }
+
+    private fun clearResourcePageCache() {
+        resourcePageView = null
+        resourcePageNavView = null
+        resourceSectionHost = null
+        resourceSearchBar = null
+        resourceSearchQuery = ""
+        resourceSectionsRenderKey = ""
+        resourceSectionsDirty = true
+    }
+
+    private fun invalidateResourceCatalogCache() {
+        cachedResourceCatalog = null
+        resourceSectionsDirty = true
+    }
+
+    private fun invalidateResourceUiCache() {
+        clearResourcePageCache()
+        invalidateResourceCatalogCache()
     }
 
     private fun resourceHeader(): View = row {
@@ -1525,7 +1616,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun showResourceDetail(resourceId: String) {
-        val item = resourceCatalog().firstOrNull { it.id == resourceId } ?: return
+        val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId } ?: return
         currentResourceDetailId = resourceId
         currentScreen = Screen.ResourceDetail
         root.setBackgroundColor(tokens.pageBackground)
@@ -1937,6 +2028,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 val recipe = resourceUninstallRecipe(item)
                 if (recipe == null) {
                     resourceInstallStore.clear(item.id)
+                    invalidateResourceCatalogCache()
                     Toast.makeText(this, "已移除 ${item.name} 的安装记录", Toast.LENGTH_SHORT).show()
                     showResources()
                 } else {
@@ -2038,12 +2130,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun startResourceInstall(item: ResourceItem, recipe: KiteRecipe) {
         resourceInstallStore.markInstalling(item.id)
+        invalidateResourceCatalogCache()
         startResourceRun(item, recipe, stageBundledResource = item.isBundledResource())
+        refreshResourceScreenIfVisible()
     }
 
     private fun startResourceUninstall(item: ResourceItem, recipe: KiteRecipe) {
         resourceInstallStore.markUninstalling(item.id)
+        invalidateResourceCatalogCache()
         startResourceRun(item, recipe, stageBundledResource = false)
+        refreshResourceScreenIfVisible()
     }
 
     private fun startResourceRun(item: ResourceItem, recipe: KiteRecipe, stageBundledResource: Boolean) {
@@ -2110,8 +2206,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun refreshResourceScreenIfVisible() {
         if (this is CardRunActivity || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
+        invalidateResourceCatalogCache()
         when (currentScreen) {
-            Screen.Resources -> showResources()
+            Screen.Resources -> {
+                if (!refreshResourceSections(forceCatalogRefresh = true)) {
+                    showResources()
+                }
+            }
             Screen.ResourceDetail -> currentResourceDetailId?.let { showResourceDetail(it) }
             else -> Unit
         }
@@ -2141,20 +2242,25 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun markResourceRunSuccess(recipe: KiteRecipe, runId: String?, summary: String?) {
         when (resourceOperationForRecipe(recipe)) {
             KiteResourceInstallRecipes.OP_INSTALL -> markResourceInstallSuccess(recipe, runId, summary)
-            KiteResourceInstallRecipes.OP_UNINSTALL -> resourceIdForRecipe(recipe)?.let { resourceInstallStore.clear(it) }
+            KiteResourceInstallRecipes.OP_UNINSTALL -> resourceIdForRecipe(recipe)?.let {
+                resourceInstallStore.clear(it)
+                invalidateResourceCatalogCache()
+            }
         }
     }
 
     private fun markResourceInstallSuccess(recipe: KiteRecipe, runId: String?, summary: String?) {
         val resourceId = resourceIdForRecipe(recipe) ?: return
-        val version = resourceCatalog().firstOrNull { it.id == resourceId }?.version.orEmpty()
+        val version = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }?.version.orEmpty()
         resourceInstallStore.markInstalled(resourceId, version, runId, summary)
+        invalidateResourceCatalogCache()
     }
 
     private fun markResourceInstallFailed(recipe: KiteRecipe, runId: String?, reason: String?) {
         val resourceId = resourceIdForRecipe(recipe) ?: return
         val operation = resourceOperationForRecipe(recipe) ?: KiteResourceInstallStore.OP_INSTALL
         resourceInstallStore.markFailed(resourceId, operation, runId, reason)
+        invalidateResourceCatalogCache()
     }
 
     private fun normalizeStaleResourceState(resourceId: String) {
@@ -2176,7 +2282,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
-    private fun resourceCatalog(): List<ResourceItem> {
+    private fun resourceCatalog(forceRefresh: Boolean = false): List<ResourceItem> {
+        cachedResourceCatalog?.let { cached ->
+            if (!forceRefresh) return cached
+        }
+        ToolchainPackInstaller.refreshState(applicationContext)
         listOf(RESOURCE_NODE_RUNTIME, RESOURCE_KF_TOOL_ENV, RESOURCE_HERMES_WEBUI)
             .forEach { normalizeStaleResourceState(it) }
         val toolchain = ToolchainPackInstaller.state.value
@@ -2247,7 +2357,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             hermesInstallFailed -> "安装失败"
             else -> "未下载"
         }
-        return listOf(
+        val catalog = listOf(
             ResourceItem(
                 id = RESOURCE_NODE_RUNTIME,
                 name = "Node.js",
@@ -2372,6 +2482,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 steps = listOf(ResourceStep("android", "打开日志页", "open resource logs"))
             )
         )
+        cachedResourceCatalog = catalog
+        return catalog
     }
 
     private fun consoleHeader(): View = LinearLayout(this).apply {
