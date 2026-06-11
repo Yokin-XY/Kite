@@ -1,6 +1,7 @@
 package com.kftest.app.foundation.terminal
 
 import android.content.Context
+import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kftest.app.foundation.bootstrap.KFApplication
 import com.kftest.app.foundation.capability.CapabilityCallerType
 import com.kftest.app.foundation.capability.CapabilityDomain
@@ -90,6 +91,7 @@ class TerminalSessionController(
         parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job])
     )
     private val sessionHolders = LinkedHashMap<String, SessionHolder>()
+    private val launchEnvOverrides = LinkedHashMap<String, Map<String, String>>()
     private val transcriptMirrorRequested = AtomicLong(0L)
     private val transcriptMirrorFlushed = AtomicLong(0L)
     private val transcriptMirrorCoalesced = AtomicLong(0L)
@@ -98,6 +100,21 @@ class TerminalSessionController(
 
     @Volatile
     private var persistedSessionsReconciled = false
+
+    private fun Array<String>.withOverrides(overrides: Map<String, String>?): Array<String> {
+        if (overrides.isNullOrEmpty()) return this
+        val merged = linkedMapOf<String, String>()
+        forEach { entry ->
+            val separator = entry.indexOf('=')
+            if (separator > 0) {
+                merged[entry.substring(0, separator)] = entry.substring(separator + 1)
+            }
+        }
+        overrides.forEach { (key, value) ->
+            if (key.isNotBlank()) merged[key] = value
+        }
+        return merged.map { (key, value) -> "$key=$value" }.toTypedArray()
+    }
 
     private fun TerminalSession.validPid(): Int? = pid.takeIf { it > 0 }
 
@@ -339,6 +356,11 @@ class TerminalSessionController(
                 uiCallbacks.showSessionNote("切换终端失败：${error.message ?: "未知错误"}")
             }
         }
+    }
+
+    fun setLaunchEnvironmentOverrides(sessionId: String, overrides: Map<String, String>) {
+        if (sessionId.isBlank() || overrides.isEmpty()) return
+        launchEnvOverrides[sessionId] = overrides
     }
 
     /**
@@ -843,12 +865,16 @@ class TerminalSessionController(
             // 终端会话属于工作面动作；真正的容器 launch 配置统一经 bridge 向建房层索取。
             WorkSurfaceRuntimeBridge.buildTerminalLaunchConfig(appContext)
         }
+        val browserEnv = withContext(Dispatchers.IO) {
+            KiteBrowserProxyInstaller.defaultEnvironment(appContext, "terminal_page")
+        }
+        val sessionEnvOverrides = browserEnv + launchEnvOverrides.remove(record.id).orEmpty()
 
         val session = TerminalSession(
             config.executablePath,
             config.workingDirectory,
             config.args,
-            config.env,
+            config.env.withOverrides(sessionEnvOverrides),
             TRANSCRIPT_ROWS,
             this
         ).apply {

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.tool.env",
+  "base": {
+    "name": "工具环境合集",
+    "description": "pnpm、uv、adb 与常用命令合集",
+    "version": "v14",
+    "icon": {
+      "type": "text",
+      "value": ">_"
+    }
+  },
+  "display": {
+    "sections": [
+      "more"
+    ],
+    "tags": [
+      "tool",
+      "node",
+      "pnpm",
+      "uv",
+      "adb"
+    ]
+  },
+  "source": {
+    "type": "bundled",
+    "asset": "toolchain/ai-dev-pack"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.tool.env",
+    "installRoot": "/workspace/.kf/software/kite.tool.env",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "install.sh --install"
+      }
+    ],
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "remove software root and tool wrappers"
+      }
+    ]
+  }
+}

@@ -71,6 +71,14 @@ object TerminalRuntimeHost {
         ensureController(appContext).switchToSession(sessionId)
     }
 
+    fun setLaunchEnvironmentOverrides(
+        appContext: Context,
+        sessionId: String,
+        overrides: Map<String, String>
+    ) {
+        ensureController(appContext).setLaunchEnvironmentOverrides(sessionId, overrides)
+    }
+
     fun sendCommand(appContext: Context, command: String, sessionId: String? = null) {
         ensureController(appContext).sendCommandToSession(sessionId, command)
     }

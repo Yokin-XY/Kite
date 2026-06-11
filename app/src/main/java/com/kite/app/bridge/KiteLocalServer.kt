@@ -4,16 +4,18 @@ import android.content.Context
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kftest.app.foundation.toolchain.ToolchainPackInstaller
 import org.json.JSONObject
+import java.net.BindException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URLDecoder
 import java.util.Locale
 import kotlin.concurrent.thread
 
 class KiteLocalServer(
     context: Context,
     private val diagnostics: KiteDiagnostics,
-    private val openWeb: (String) -> Unit
+    private val openWeb: (KiteBrowserOpenRequest) -> Unit
 ) {
     private val appContext = context.applicationContext
 
@@ -38,7 +40,13 @@ class KiteLocalServer(
                     }
                 }
             }.onFailure {
-                diagnostics.logExternalUrl("local_server_error:${it.message}")
+                running = false
+                val message = if (it is BindException) {
+                    "local_server_port_in_use:$port"
+                } else {
+                    "local_server_error:${it.message}"
+                }
+                diagnostics.logExternalUrl(message)
             }
         }
     }
@@ -64,7 +72,9 @@ class KiteLocalServer(
             }
 
             val method = parts[0].uppercase(Locale.US)
-            val path = parts[1].substringBefore("?")
+            val target = parts[1]
+            val path = target.substringBefore("?")
+            val query = parseQuery(target.substringAfter("?", ""))
             diagnostics.logLocalServer("$method $path")
 
             when {
@@ -105,19 +115,21 @@ class KiteLocalServer(
                     writeJson(client, 202, JSONObject().put("ok", true).put("accepted", true).put("action", "toolchain_doctor"))
                 }
 
-                method == "POST" && path == "/open-web" -> {
-                    val url = runCatching { JSONObject(request.body).getString("url") }.getOrNull()
-                    if (url.isNullOrBlank()) {
+                method in setOf("GET", "POST") && path == "/open-web" -> {
+                    val openRequest = parseOpenWebRequest(query, request.body)
+                    if (openRequest == null) {
                         writeJson(client, 400, JSONObject().put("ok", false).put("error", "missing_url"))
                     } else {
-                        openWeb(url)
+                        openWeb(openRequest)
                         writeJson(
                             client,
                             200,
                             JSONObject()
                                 .put("ok", true)
                                 .put("accepted", true)
-                                .put("url", url)
+                                .put("url", openRequest.url)
+                                .put("recipeId", openRequest.recipeId ?: "")
+                                .put("instanceId", openRequest.instanceId ?: "")
                         )
                     }
                 }
@@ -126,6 +138,39 @@ class KiteLocalServer(
             }
         }
     }
+
+    private fun parseOpenWebRequest(query: Map<String, String>, body: String): KiteBrowserOpenRequest? {
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        val rawBody = body.trim().takeIf { it.startsWith("http://") || it.startsWith("https://") }
+        val url = json?.optString("url")?.takeIf { it.isNotBlank() }
+            ?: query["url"]?.takeIf { it.isNotBlank() }
+            ?: rawBody
+            ?: return null
+        return KiteBrowserOpenRequest(
+            url = url,
+            recipeId = json?.optString("recipeId")?.takeIf { it.isNotBlank() }
+                ?: query["recipeId"]?.takeIf { it.isNotBlank() },
+            instanceId = json?.optString("instanceId")?.takeIf { it.isNotBlank() }
+                ?: query["instanceId"]?.takeIf { it.isNotBlank() },
+            source = json?.optString("source")?.takeIf { it.isNotBlank() }
+                ?: query["source"]?.takeIf { it.isNotBlank() }
+                ?: KiteBrowserOpenRequest.SOURCE_UBUNTU_BROWSER
+        )
+    }
+
+    private fun parseQuery(query: String): Map<String, String> {
+        if (query.isBlank()) return emptyMap()
+        return query.split("&")
+            .mapNotNull { part ->
+                val key = part.substringBefore("=").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val value = part.substringAfter("=", "")
+                decodeQueryPart(key) to decodeQueryPart(value)
+            }
+            .toMap()
+    }
+
+    private fun decodeQueryPart(value: String): String =
+        runCatching { URLDecoder.decode(value, Charsets.UTF_8.name()) }.getOrDefault(value)
 
     private fun readHttpRequest(socket: Socket): HttpRequest? {
         val input = socket.getInputStream()
@@ -200,7 +245,7 @@ class KiteLocalServer(
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>KF AI Toolchain</title>
+          <title>KF Tool Environment</title>
           <style>
             :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
             body { margin: 0; padding: 18px; background: #f6f7f9; color: #172033; }
@@ -222,8 +267,8 @@ class KiteLocalServer(
         </head>
         <body>
           <main>
-            <h1>AI/Dev environment completion</h1>
-            <p>Installs or repairs Node 24 LTS, uv, pnpm, Python venv/pip support, adb/fastboot, and common CLI tools inside the KF Ubuntu workspace.</p>
+            <h1>KF tool environment</h1>
+            <p>Checks and repairs Node 24 LTS, uv, pnpm, Python venv/pip support, adb/fastboot, and common CLI tools inside the KF Ubuntu workspace.</p>
             <div class="panel">
               <div>Phase: <span id="phase" class="status">loading</span></div>
               <div>Action: <span id="action">--</span></div>
@@ -231,8 +276,8 @@ class KiteLocalServer(
               <div>Exit: <span id="exit">--</span></div>
               <div>Log: <span id="log">--</span></div>
               <div class="row">
-                <button onclick="postAction('/toolchain/prepare')">Start one-click completion</button>
-                <button class="secondary" onclick="postAction('/toolchain/doctor')">Run doctor</button>
+                <button onclick="postAction('/toolchain/prepare')">Check and repair</button>
+                <button class="secondary" onclick="postAction('/toolchain/doctor')">Run diagnostics</button>
               </div>
             </div>
             <div class="panel">

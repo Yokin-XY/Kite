@@ -758,7 +758,7 @@ object WorkspaceBuildSupport {
             |echo "KFSHELL_ADB_CHECK_BEGIN"
             |if ! command -v adb >/dev/null 2>&1; then
             |  echo "FAIL adb.client missing"
-            |  echo "hint: run KFShell one-click AI/developer environment preparation to install the managed adb client."
+            |  echo "hint: run KFShell tool environment repair to install the managed adb client."
             |  echo "KFSHELL_ADB_CHECK_END"
             |  exit 2
             |fi
@@ -909,7 +909,7 @@ object WorkspaceBuildSupport {
             |fi
             |
             |echo "adb: real adb binary not found at ${'$'}REAL_ADB" >&2
-            |echo "hint: run KFShell one-click AI/developer environment preparation to install adb." >&2
+            |echo "hint: run KFShell tool environment repair to install adb." >&2
             |exit 127
         """.trimMargin() + "\n"
     }

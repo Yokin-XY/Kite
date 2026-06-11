@@ -41,7 +41,7 @@ class KiteWebShell(
                 request: WebResourceRequest
             ): Boolean {
                 val url = request.url.toString()
-                return if (isLocalUrl(url)) {
+                return if (shouldStayInWebView(url)) {
                     false
                 } else {
                     openExternal(url)
@@ -87,11 +87,23 @@ class KiteWebShell(
         currentRecipeId = recipeId
         currentRecipeName = recipeName
         currentOpenSource = openSource
-        if (isLocalUrl(url)) {
+        if (shouldStayInWebView(url)) {
             webView.loadUrl(url)
         } else {
             openExternal(url)
         }
+    }
+
+    fun loadInWebView(
+        url: String,
+        recipeId: String? = null,
+        recipeName: String? = null,
+        openSource: String? = null
+    ) {
+        currentRecipeId = recipeId
+        currentRecipeName = recipeName
+        currentOpenSource = openSource
+        webView.loadUrl(url)
     }
 
     private fun openExternal(url: String) {
@@ -106,6 +118,22 @@ class KiteWebShell(
         val scheme = uri.scheme ?: return false
         val host = uri.host ?: return false
         return scheme == "http" && (host == "127.0.0.1" || host == "localhost")
+    }
+
+    private fun shouldStayInWebView(url: String): Boolean {
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        val scheme = uri.scheme ?: return false
+        if (scheme !in setOf("http", "https")) return false
+        if (isLocalUrl(url)) return true
+        val source = currentOpenSource.orEmpty()
+        return source in setOf(
+            "card_run_surface",
+            "browser_proxy",
+            "ubuntu_browser",
+            "terminal_page",
+            "terminal_step",
+            "shell_step"
+        )
     }
 
     fun capabilitySummary(): Map<String, Any> = mapOf(

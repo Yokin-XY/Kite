@@ -525,6 +525,21 @@ doctor() {
   echo "KFSHELL_AI_DEV_PACK_DOCTOR_END"
 }
 
+doctor_node() {
+  export PATH="$BIN_DIR:/root/.local/bin:$PATH"
+  echo "KFSHELL_NODE_RESOURCE_DOCTOR_BEGIN"
+  echo "mode=$MODE"
+  echo "pack_dir=$PACK_DIR"
+  echo "toolchain_dir=$TOOLCHAIN_DIR"
+  echo "bin_dir=$BIN_DIR"
+  echo "PATH=$PATH"
+  version_line node node "ai-dev-pack node resource"
+  version_line npm npm "ai-dev-pack node resource"
+  version_line npx npx "ai-dev-pack node resource"
+  echo "SUMMARY PASS=$PASS WARN=$WARN FAIL=$FAIL"
+  echo "KFSHELL_NODE_RESOURCE_DOCTOR_END"
+}
+
 main() {
   echo "KFSHELL_AI_DEV_PACK_BEGIN"
   echo "timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
@@ -536,6 +551,10 @@ main() {
   case "$MODE" in
     --doctor|doctor)
       doctor
+      ;;
+    --install-node|install-node|node)
+      install_node
+      doctor_node
       ;;
     *)
       install_apt_baseline

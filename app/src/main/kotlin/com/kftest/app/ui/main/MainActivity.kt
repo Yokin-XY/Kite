@@ -715,13 +715,13 @@ class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (prefs.getBoolean(PREF_AI_ENV_PROMPT_SHOWN, false)) return
         prefs.edit().putBoolean(PREF_AI_ENV_PROMPT_SHOWN, true).apply()
         MaterialAlertDialogBuilder(this)
-            .setTitle("推荐补全 AI/开发环境")
+            .setTitle("推荐检查 KF 工具环境")
             .setMessage(
-                "补全后可更顺畅运行 Hermes、Claude Code、Codex、OpenCode、OpenClaw 等 AI 工具。\n\n" +
-                    "不补全也可以正常使用终端，稍后可在“环境”页面再次执行。"
+                "检查并修复后，Node、npm、pnpm、uv、Python venv/pip 和常用命令会更稳定。\n\n" +
+                    "不处理也可以正常使用终端，稍后可在“环境”页面再次执行。"
             )
             .setNegativeButton("稍后再说", null)
-            .setPositiveButton("一键补全") { _, _ ->
+            .setPositiveButton("检查并修复") { _, _ ->
                 ToolchainPackInstaller.prepareAiEnv(applicationContext)
                 renderTab(MainTab.BRIDGE)
             }

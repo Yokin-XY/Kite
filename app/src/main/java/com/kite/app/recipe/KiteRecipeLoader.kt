@@ -342,11 +342,12 @@ class KiteRecipeLoader(
         return when (input.type) {
             KiteRecipe.STEP_TERMINAL -> {
                 val text = input.command.trim()
-                if (text.isBlank()) return null
                 KiteRecipeStep(
                     id = input.id.ifBlank { "step_terminal_${index + 1}_$recipeId" },
                     type = KiteRecipe.STEP_TERMINAL,
-                    text = if (text.endsWith("\n")) text else "$text\n"
+                    text = text.takeIf { it.isNotBlank() }?.let {
+                        if (it.endsWith("\n")) it else "$it\n"
+                    }
                 )
             }
 
@@ -404,7 +405,7 @@ class KiteRecipeLoader(
 
     private fun inferType(requestedType: String, steps: List<KiteRecipeStep>, defaultUrl: String): String {
         if (requestedType == KiteRecipe.TYPE_TEMPLATE) return KiteRecipe.TYPE_TEMPLATE
-        val hasShell = steps.any { it.type == KiteRecipe.STEP_SHELL }
+        val hasShell = steps.any { it.type == KiteRecipe.STEP_SHELL || it.type == KiteRecipe.STEP_TERMINAL }
         val hasOpenWeb = steps.any { it.type == KiteRecipe.STEP_OPEN_WEB } || defaultUrl.isNotBlank()
         return when {
             hasShell && hasOpenWeb -> KiteRecipe.TYPE_COMMAND_WEB

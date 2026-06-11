@@ -12,7 +12,7 @@ data class ToolchainPackManifest(
         fun fromJson(json: JSONObject): ToolchainPackManifest {
             return ToolchainPackManifest(
                 packId = json.optString("packId", "ai-dev-pack"),
-                displayName = json.optString("displayName", "AI development environment"),
+                displayName = json.optString("displayName", "KF tool environment"),
                 version = json.optInt("version", 1),
                 description = json.optString("description", "")
             )

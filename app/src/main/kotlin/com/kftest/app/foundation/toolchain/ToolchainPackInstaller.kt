@@ -42,8 +42,41 @@ object ToolchainPackInstaller {
         runPack(context, ToolchainAction.PREPARE)
     }
 
+    fun prepareNode(context: Context) {
+        runPack(context, ToolchainAction.NODE)
+    }
+
     fun doctor(context: Context) {
         runPack(context, ToolchainAction.DOCTOR)
+    }
+
+    fun stageLocalResourcePack(context: Context, resourceId: String): ToolchainPackManifest {
+        val appContext = context.applicationContext
+        val manifest = extractRuntimePack(appContext)
+        mirrorPackIntoResource(appContext, resourceId)
+        return manifest
+    }
+
+    fun resourcePackWorkspacePath(resourceId: String): String {
+        return "/workspace/.kf/cache/resources/${safeResourceId(resourceId)}/$PACK_ID"
+    }
+
+    fun isNodeRuntimeInstalled(context: Context): Boolean {
+        val workspaceDir = workspaceDirOrNull(context.applicationContext) ?: return false
+        val newNode = File(workspaceDir, ".kf/software/kite.nodejs/node-v24.15.0/bin/node")
+        val componentNode = File(workspaceDir, ".kf/components/kite.nodejs/node-v24.15.0/bin/node")
+        val legacyNode = File(workspaceDir, ".kf/toolchains/node-v24.15.0/bin/node")
+        return (newNode.exists() || componentNode.exists() || legacyNode.exists()) &&
+            File(workspaceDir, ".kf/bin/node").exists() &&
+            File(workspaceDir, ".kf/bin/npm").exists() &&
+            File(workspaceDir, ".kf/bin/npx").exists()
+    }
+
+    fun isToolchainPackInstalled(context: Context): Boolean {
+        val workspaceDir = workspaceDirOrNull(context.applicationContext) ?: return false
+        return isNodeRuntimeInstalled(context) &&
+            File(workspaceDir, ".kf/bin/pnpm").exists() &&
+            File(workspaceDir, ".kf/bin/uv").exists()
     }
 
     fun refreshState(context: Context) {
@@ -147,6 +180,7 @@ object ToolchainPackInstaller {
     private fun extractRuntimePack(context: Context): ToolchainPackManifest {
         val runtimePackDir = runtimePackDir(context).also { it.mkdirs() }
         copyAssetTree(context, ASSET_ROOT, runtimePackDir)
+        normalizeShellScripts(runtimePackDir)
         val manifestFile = File(runtimePackDir, "manifest.json")
         val manifest = ToolchainPackManifest.fromJson(JSONObject(manifestFile.readText()))
         appendLog(context, "Extracted ${manifest.packId} v${manifest.version} to ${runtimePackDir.absolutePath}")
@@ -162,7 +196,22 @@ object ToolchainPackInstaller {
             workspacePackDir.deleteRecursively()
         }
         runtimePackDir(context).copyRecursively(workspacePackDir, overwrite = true)
+        normalizeShellScripts(workspacePackDir)
         appendLog(context, "Mirrored $PACK_ID to ${workspacePackDir.absolutePath}")
+        return workspacePackDir
+    }
+
+    private fun mirrorPackIntoResource(context: Context, resourceId: String): File {
+        val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(context)
+        val workspaceDir = File(container.workspacePath).also { it.mkdirs() }
+        WorkspaceBuildSupport.ensure(workspaceDir)
+        val workspacePackDir = File(workspaceDir, ".kf/cache/resources/${safeResourceId(resourceId)}/$PACK_ID")
+        if (workspacePackDir.exists()) {
+            workspacePackDir.deleteRecursively()
+        }
+        runtimePackDir(context).copyRecursively(workspacePackDir, overwrite = true)
+        normalizeShellScripts(workspacePackDir)
+        appendLog(context, "Staged $PACK_ID resource ${safeResourceId(resourceId)} to ${workspacePackDir.absolutePath}")
         return workspacePackDir
     }
 
@@ -174,6 +223,7 @@ object ToolchainPackInstaller {
         val scriptPath = "/workspace/.kf/toolchains/$PACK_ID/install.sh"
         val mode = when (action) {
             ToolchainAction.PREPARE -> "--install"
+            ToolchainAction.NODE -> "--install-node"
             ToolchainAction.DOCTOR -> "--doctor"
         }
         val payload = """
@@ -243,8 +293,39 @@ object ToolchainPackInstaller {
         }
     }
 
+    private fun normalizeShellScripts(root: File) {
+        root.walkTopDown()
+            .filter { it.isFile && it.extension.equals("sh", ignoreCase = true) }
+            .forEach { script ->
+                runCatching {
+                    val original = script.readText(Charsets.UTF_8)
+                    val normalized = original.replace("\r\n", "\n").replace("\r", "\n")
+                    if (normalized != original) {
+                        script.writeText(normalized, Charsets.UTF_8)
+                    }
+                }.onFailure { error ->
+                    Logger.e(LOG_TAG, "Failed to normalize shell script ${script.absolutePath}: ${error.message}")
+                }
+            }
+    }
+
     private fun runtimePackDir(context: Context): File {
         return File(WorkSurfaceRuntimeBridge.getRuntimeRoot(context), "toolchain-packs/$PACK_ID")
+    }
+
+    private fun workspaceDirOrNull(context: Context): File? {
+        return runCatching {
+            val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(context.applicationContext)
+            File(container.workspacePath)
+        }.getOrNull()
+    }
+
+    private fun safeResourceId(resourceId: String): String {
+        return resourceId.trim()
+            .lowercase()
+            .replace(Regex("[^a-z0-9._-]+"), "-")
+            .trim('-')
+            .ifBlank { "resource" }
     }
 
     private fun statusFile(context: Context): File {
@@ -301,6 +382,7 @@ object ToolchainPackInstaller {
 
     private enum class ToolchainAction {
         PREPARE,
+        NODE,
         DOCTOR
     }
 

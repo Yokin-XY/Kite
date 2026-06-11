@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.hermes.webui",
+  "base": {
+    "name": "Hermes WebUI",
+    "description": "Hermes 的网页工作台",
+    "version": "npm",
+    "icon": {
+      "type": "text",
+      "value": "H"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "tags": [
+      "hermes",
+      "webui",
+      "ai"
+    ]
+  },
+  "source": {
+    "type": "command",
+    "command": "npm install -g hermes-web-ui"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.hermes.webui",
+    "installRoot": "/workspace/.kf/software/kite.hermes.webui",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "npm install -g hermes-web-ui"
+      }
+    ],
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "npm uninstall -g hermes-web-ui"
+      }
+    ]
+  }
+}

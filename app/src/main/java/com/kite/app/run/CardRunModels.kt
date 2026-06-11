@@ -5,7 +5,7 @@ enum class CardRunStatus(
     val lifecycleEvent: String
 ) {
     Unknown("未启动", "unknown"),
-    Stopped("未启动", "stopped"),
+    Stopped("已停止", "stopped"),
     Starting("启动中", "starting"),
     Running("运行中", "running"),
     WaitingTerminal("等待终端", "waiting_terminal"),

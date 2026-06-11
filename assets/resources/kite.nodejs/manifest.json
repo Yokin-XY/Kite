@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.nodejs",
+  "base": {
+    "name": "Node.js",
+    "description": "现代 JavaScript 运行环境",
+    "version": "24.15.0",
+    "icon": {
+      "type": "text",
+      "value": "JS"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "tags": [
+      "node",
+      "npm",
+      "npx",
+      "javascript"
+    ]
+  },
+  "source": {
+    "type": "bundled",
+    "asset": "toolchain/ai-dev-pack"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.nodejs",
+    "installRoot": "/workspace/.kf/software/kite.nodejs",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "install.sh --install-node"
+      }
+    ],
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "remove software root and node/npm/npx wrappers"
+      }
+    ],
+    "reinstall": [
+      {
+        "type": "action",
+        "name": "uninstall"
+      },
+      {
+        "type": "action",
+        "name": "install"
+      }
+    ]
+  }
+}

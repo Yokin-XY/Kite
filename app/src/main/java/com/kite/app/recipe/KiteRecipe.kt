@@ -23,7 +23,7 @@ data class KiteRecipe(
     val runtimeSource: String = SOURCE_ASSETS
 ) {
     val steps: List<KiteRecipeStep>
-        get() = execution.steps.ifEmpty { actions[ACTION_START]?.steps.orEmpty() }
+        get() = actions[ACTION_START]?.steps?.takeIf { it.isNotEmpty() } ?: execution.steps
 
     val status: String
         get() = "unknown"

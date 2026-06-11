@@ -1,8 +1,8 @@
 {
   "packId": "ai-dev-pack",
-  "displayName": "AI development environment",
+  "displayName": "KF tool environment",
   "version": 14,
-  "description": "Official KFShell toolchain pack for AI and developer workflows.",
+  "description": "Official KFShell toolchain pack for runtime repair, command-line tools, and developer workflows.",
   "installScript": "install.sh",
   "installTarget": "/workspace/.kf/toolchains",
   "binTarget": "/workspace/.kf/bin",

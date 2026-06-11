@@ -8,6 +8,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -987,7 +988,11 @@ public final class TerminalView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         if (mEmulator == null) {
-            canvas.drawColor(0XFF000000);
+            if (getBackground() instanceof ColorDrawable) {
+                canvas.drawColor(((ColorDrawable) getBackground()).getColor());
+            } else {
+                canvas.drawColor(0XFFFFFFFF);
+            }
         } else {
             // render the terminal view and highlight any selected text
             int[] sel = mDefaultSelectors;

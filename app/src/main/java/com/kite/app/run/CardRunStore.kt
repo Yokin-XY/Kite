@@ -7,10 +7,21 @@ import java.util.UUID
 
 object CardRunStore {
     private val _runs = MutableStateFlow<List<CardRunState>>(emptyList())
+    private val registeredRecipes = linkedMapOf<String, KiteRecipe>()
     val runs: StateFlow<List<CardRunState>> = _runs
 
     @Synchronized
+    fun registerRecipe(recipe: KiteRecipe) {
+        registeredRecipes[recipe.id] = recipe
+    }
+
+    @Synchronized
+    fun registeredRecipe(recipeId: String): KiteRecipe? =
+        registeredRecipes[recipeId]
+
+    @Synchronized
     fun start(recipe: KiteRecipe, instanceId: String = newInstanceId(recipe.id)): CardRunState {
+        registerRecipe(recipe)
         val now = System.currentTimeMillis()
         val run = CardRunState(
             instanceId = instanceId,

@@ -54,7 +54,7 @@ class BridgeFragment : Fragment() {
         tvBridgeStatus.text = "环境工具"
         view.findViewById<Button>(R.id.btnPrepareAiEnv).setOnClickListener {
             ToolchainPackInstaller.prepareAiEnv(requireContext())
-            Toast.makeText(requireContext(), "已开始一键补全 AI/开发环境", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "已开始检查并修复 KF 工具环境", Toast.LENGTH_SHORT).show()
         }
         view.findViewById<Button>(R.id.btnToolchainDoctor).setOnClickListener {
             ToolchainPackInstaller.doctor(requireContext())
@@ -89,14 +89,14 @@ class BridgeFragment : Fragment() {
             ToolchainInstallPhase.FAILED -> "失败"
         }
         tvToolchainStatus.text = buildString {
-            appendLine("AI/开发环境补全：$phaseLabel")
+            appendLine("KF 工具环境：$phaseLabel")
             appendLine("动作：${state.action.ifBlank { "--" }}")
             appendLine("摘要：${state.summary}")
             appendLine("退出码：${state.exitCode?.toString() ?: "--"} timeout=${state.timedOut}")
             appendLine("日志：${state.logPath.ifBlank { ToolchainPackInstaller.logFile(requireContext()).absolutePath }}")
         }
         tvToolchainInventory.text = state.outputPreview.ifBlank {
-            "点击“一键补全 AI/开发环境”会安装/修复 Node 24 LTS、uv、pnpm、Python venv/pip 兼容包和常用 CLI；点击“环境诊断”只读取当前状态。"
+            "点击“检查并修复”会补齐或修复 Node 24 LTS、uv、pnpm、Python venv/pip 兼容包和常用 CLI；点击“环境诊断”只读取当前状态。"
         }
     }
 
