@@ -4,7 +4,6 @@ import android.content.Context
 import com.kftest.app.foundation.service.WorkstationActionGateway
 import com.kftest.app.foundation.terminal.TerminalRuntimeEntry
 import com.kftest.app.foundation.terminal.TerminalRuntimeHost
-import com.kftest.app.foundation.workspace.KFWorkspaceManager
 import com.kftest.app.foundation.workspace.ManagedTerminalStatus
 import com.kftest.app.foundation.logging.Logger
 import com.kftest.app.foundation.workspace.isArchivedStatus
@@ -82,7 +81,6 @@ data class TerminalSessionItem(
 data class TerminalSessionsSnapshot(
     val spaceId: String? = null,
     val currentViewedSessionId: String? = null,
-    val primaryEntry: TerminalSessionItem? = null,
     val liveSessions: List<TerminalSessionItem> = emptyList(),
     val sessions: List<TerminalSessionItem> = emptyList(),
     val refreshedAt: Long = 0L
@@ -97,6 +95,7 @@ object TerminalSessionStore {
 
     private const val TERMINAL_SNAPSHOT_LOG_MIN_INTERVAL_MS = 15_000L
     private const val UI_REFRESH_MIN_INTERVAL_MS = 5_000L
+    private const val LEGACY_KF_SHELL_TITLE = "\u4e3b\u7ec8\u7aef"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _snapshot = MutableStateFlow(TerminalSessionsSnapshot())
@@ -121,7 +120,6 @@ object TerminalSessionStore {
                 RuntimeOverviewStore.snapshot,
                 RuntimeHealthStore.snapshot
             ) { overview, health ->
-                val primarySessionId = overview.spaceId?.let { KFWorkspaceManager.primaryShellSessionId(it) }
                 val allSessions = overview.terminalSessions
                     .sortedWith(
                         compareByDescending<TerminalRuntimeEntry> { it.isActive }
@@ -133,15 +131,13 @@ object TerminalSessionStore {
                             root = health.terminalRoot(it.sessionId)
                         )
                     }
-                    .withStableDisplayTitles(primarySessionId)
-                val primaryEntry = allSessions.firstOrNull { it.id == primarySessionId }
+                    .withStableDisplayTitles()
                 val liveSessions = allSessions.filter { item ->
-                    item.id != primarySessionId && item.isVisibleInMainList
+                    item.isVisibleInMainList
                 }
                 TerminalSessionsSnapshot(
                     spaceId = overview.spaceId,
                     currentViewedSessionId = overview.currentViewedSessionId,
-                    primaryEntry = primaryEntry,
                     liveSessions = liveSessions,
                     sessions = allSessions,
                     refreshedAt = maxOf(overview.refreshedAt, health.reconciledAt)
@@ -242,7 +238,7 @@ object TerminalSessionStore {
         }
         Logger.i(
             "TerminalSessionStore",
-            "终端快照刷新: primary=${latest.primaryEntry?.id ?: "none"}, live=${latest.liveSessions.joinToString { "${it.title}:${it.status.name}" }}, all=${latest.sessions.joinToString { "${it.title}:${it.status.name}/${it.runtimeRealityLabel ?: "record"}" }}"
+            "终端快照刷新: live=${latest.liveSessions.joinToString { "${it.title}:${it.status.name}" }}, all=${latest.sessions.joinToString { "${it.title}:${it.status.name}/${it.runtimeRealityLabel ?: "record"}" }}"
         )
         lastSnapshotLogSignature = signature
         lastSnapshotLogAtMs = now
@@ -253,8 +249,6 @@ object TerminalSessionStore {
             append(latest.spaceId ?: "none")
             append('|')
             append(latest.currentViewedSessionId ?: "none")
-            append('|')
-            append(latest.primaryEntry?.id ?: "none")
             append('|')
             latest.sessions.forEach { session ->
                 appendSessionSignature(session)
@@ -469,11 +463,9 @@ object TerminalSessionStore {
         }
     }
 
-    private fun List<TerminalSessionItem>.withStableDisplayTitles(
-        primarySessionId: String?
-    ): List<TerminalSessionItem> {
+    private fun List<TerminalSessionItem>.withStableDisplayTitles(): List<TerminalSessionItem> {
         val normalized = map { item ->
-            item.copy(title = item.resolveDisplayTitle(primarySessionId))
+            item.copy(title = item.resolveDisplayTitle())
         }
         val titleCounts = normalized.groupingBy { it.title }.eachCount()
         return normalized.map { item ->
@@ -485,14 +477,11 @@ object TerminalSessionStore {
         }
     }
 
-    private fun TerminalSessionItem.resolveDisplayTitle(primarySessionId: String?): String {
+    private fun TerminalSessionItem.resolveDisplayTitle(): String {
         val cleaned = title.trim()
-        if (id == primarySessionId) {
-            return cleaned.ifBlank { "主终端" }
-        }
         if (
             cleaned.isBlank() ||
-            cleaned == "主终端" ||
+            cleaned == LEGACY_KF_SHELL_TITLE ||
             Regex("^终端\\s+\\d+$").matches(cleaned)
         ) {
             return "Shell ${shortSessionTag()}"

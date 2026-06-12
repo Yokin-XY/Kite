@@ -31,18 +31,11 @@
     <string name="terminal_new_session">新建终端</string>
     <string name="terminal_open_current">继续当前</string>
     <string name="terminal_back_to_list">返回列表</string>
-    <string name="terminal_more_actions">更多操作</string>
-    <string name="terminal_more_short">更多</string>
-    <string name="terminal_empty_sessions">还没有终端会话。点右上角加号后，可以新建普通终端，或者打开独立的智能体会话。</string>
-    <string name="terminal_entry_title">新建入口</string>
-    <string name="terminal_entry_note">先按参考 UI 收结构。这里放“新建终端”和几个常用智能体入口，不在列表页直接摊开。</string>
-    <string name="terminal_entry_claude">打开 Claude 会话</string>
-    <string name="terminal_entry_codex">打开 Codex 会话</string>
-    <string name="terminal_entry_openclaw">打开 OpenClaw 会话</string>
+    <string name="terminal_empty_sessions">还没有终端会话。点右上角 + 新建终端。</string>
     <string name="terminal_session_active">当前使用</string>
     <string name="terminal_session_shell">Shell 终端</string>
     <string name="terminal_session_agent">智能体终端</string>
-    <string name="terminal_status_running">后台运行中</string>
+    <string name="terminal_status_running">运行中</string>
     <string name="terminal_status_connected">已连接</string>
     <string name="terminal_status_disconnected">已断开</string>
     <string name="terminal_status_exited">已退出</string>
@@ -69,15 +62,6 @@
     <string name="terminal_copy_transcript">复制当前输出</string>
     <string name="terminal_copy_success">已复制当前输出</string>
     <string name="terminal_copy_empty">当前还没有可复制的输出</string>
-    <string name="terminal_actions_title">更多操作</string>
-    <string name="terminal_actions_note">这里保留当前会话动作和构建常用入口。构建按钮会自动切回主 Shell，再注入命令，避免把内容误打进 Claude/Codex 会话。</string>
-    <string name="terminal_actions_build">构建与环境</string>
-    <string name="terminal_actions_container">容器与环境</string>
-    <string name="terminal_actions_shell">Shell 快捷动作</string>
-    <string name="terminal_actions_shell_note">这些命令会直接写进当前前台会话。如果当前前台是 Claude Code、Codex 这类交互工具，它们会把这些内容当成输入，而不是当成系统按钮。</string>
-    <string name="terminal_build_doctor">构建医生</string>
-    <string name="terminal_build_compile">热身编译</string>
-    <string name="terminal_build_assemble">构建调试包</string>
 
     <string name="files_workspace">工作区</string>
     <string name="files_rootfs">容器 rootfs</string>
@@ -127,9 +111,6 @@
     <string name="log_share">分享</string>
     <string name="log_empty">还没有日志输出</string>
     <string name="log_share_chooser">分享日志</string>
-    <string name="terminal_delete_session">删除当前会话</string>
-    <string name="terminal_kill_session">结束当前会话</string>
-    <string name="terminal_actions_session">当前会话</string>
     <string name="task_action_end_process">结束进程</string>
     <string name="task_action_open_terminal">进入终端</string>
     <string name="task_detail_source">来源：%1$s</string>
@@ -140,7 +121,6 @@
     <string name="task_detail_runtime">关联后台项：%1$s</string>
     <string name="task_detail_terminal">关联终端：%1$s</string>
     <string name="task_log_unavailable">这个进程没有接入 KF 的日志托管，当前只能查看进程信息。</string>
-    <string name="terminal_primary_title">主终端</string>
     <string name="terminal_bootstrap_progress_title">正在准备终端环境</string>
     <string name="terminal_bootstrap_progress_detail">请稍候，首次初始化需要解压镜像、初始化基础环境并准备工作区。</string>
     <string name="terminal_font_smaller">A-</string>

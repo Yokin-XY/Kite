@@ -293,21 +293,6 @@ class TerminalSessionController(
         }
     }
 
-    fun openPrimaryShellEntry() {
-        controllerScope.launch {
-            try {
-                val space = ensureSpaceRecord()
-                val record = withContext(Dispatchers.IO) {
-                    KFWorkspaceManager.ensurePrimaryShellSession(appContext, space.id)
-                }
-                switchToRecord(record, "已进入 ${record.title}。")
-            } catch (error: Exception) {
-                Logger.e(LOG_TAG, "打开主终端入口失败: ${error.message}")
-                uiCallbacks.showSessionNote("打开主终端失败：${error.message ?: "未知错误"}")
-            }
-        }
-    }
-
     fun createAndLaunchAgentSession(agentRuntime: AgentRuntimeRecord) {
         controllerScope.launch {
             launchAgentRuntime(agentRuntime)
@@ -461,26 +446,6 @@ class TerminalSessionController(
 
     fun sendCommand(command: String) {
         sendCommandToSession(null, command)
-    }
-
-    fun runCommandInPrimaryShell(command: String, note: String? = null) {
-        if (command.isBlank()) {
-            return
-        }
-
-        controllerScope.launch {
-            try {
-                val space = ensureSpaceRecord()
-                val record = withContext(Dispatchers.IO) {
-                    KFWorkspaceManager.ensurePrimaryShellSession(appContext, space.id)
-                }
-                switchToRecord(record, note ?: "已进入 ${record.title}。")
-                sendCommandToSession(record.id, command)
-            } catch (error: Exception) {
-                Logger.e(LOG_TAG, "主终端快捷命令执行失败: ${error.message}")
-                uiCallbacks.showSessionNote("主终端快捷命令执行失败：${error.message ?: "未知错误"}")
-            }
-        }
     }
 
     fun sendCommandToSession(sessionId: String?, command: String) {
@@ -659,7 +624,7 @@ class TerminalSessionController(
                 lastError = "${agentRuntime.displayName} 未安装到当前空间"
             )
         }
-        uiCallbacks.showSessionNote("${agentRuntime.displayName} 还没有安装到当前空间，先在主终端里按正常 Linux 方式安装。")
+        uiCallbacks.showSessionNote("${agentRuntime.displayName} 还没有安装到当前空间，先在终端里按正常 Linux 方式安装。")
         return false
     }
 

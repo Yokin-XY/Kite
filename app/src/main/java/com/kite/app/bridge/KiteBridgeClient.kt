@@ -27,6 +27,7 @@ class KiteBridgeClient(
     private val baseUrl: String = DEFAULT_BASE_URL
 ) {
     private val directRuns = ConcurrentHashMap<String, DirectRunBinding>()
+    private val directProcesses = ConcurrentHashMap<String, DirectProcessBinding>()
 
     fun runRecipe(
         recipe: KiteRecipe,
@@ -94,6 +95,11 @@ class KiteBridgeClient(
             stopDirectRuns(context, recipe, listOf(direct), callback)
             return
         }
+        val directProcess = directProcesses[runId]
+        if (context != null && directProcess != null) {
+            stopDirectProcesses(recipe, listOf(directProcess), callback)
+            return
+        }
         if (context != null) {
             callback(stoppedWithoutActiveDirectBinding(recipe, runId))
             return
@@ -118,6 +124,11 @@ class KiteBridgeClient(
         val direct = directRuns.values.filter { it.recipeId == recipe.id }
         if (context != null && direct.isNotEmpty()) {
             stopDirectRuns(context, recipe, direct, callback)
+            return
+        }
+        val directProcess = directProcesses.values.filter { it.recipeId == recipe.id }
+        if (context != null && directProcess.isNotEmpty()) {
+            stopDirectProcesses(recipe, directProcess, callback)
             return
         }
         if (context != null) {
@@ -309,7 +320,7 @@ class KiteBridgeClient(
                 var pid: String? = null
 
                 for (step in shellSteps) {
-                    val execution = executeDirectShellStep(context, recipe, requestId, step, extraEnv, onProgress)
+                    val execution = executeDirectShellStep(context, recipe, runId, requestId, step, extraEnv, onProgress)
                     stepReports.add(execution.report)
                     if (!execution.pid.isNullOrBlank()) pid = execution.pid
                     if (execution.detached) {
@@ -382,6 +393,7 @@ class KiteBridgeClient(
     private fun executeDirectShellStep(
         context: Context,
         recipe: KiteRecipe,
+        runId: String,
         requestId: String,
         step: KiteRecipeStep,
         extraEnv: Map<String, String> = emptyMap(),
@@ -391,13 +403,14 @@ class KiteBridgeClient(
         return if (runMode == KiteRecipe.RUN_MODE_DETACHED) {
             executeDetachedShellStep(context, recipe, requestId, step, extraEnv, onProgress)
         } else {
-            executeAttachedShellStep(context, recipe, requestId, step, extraEnv, onProgress)
+            executeAttachedShellStep(context, recipe, runId, requestId, step, extraEnv, onProgress)
         }
     }
 
     private fun executeAttachedShellStep(
         context: Context,
         recipe: KiteRecipe,
+        runId: String,
         requestId: String,
         step: KiteRecipeStep,
         extraEnv: Map<String, String> = emptyMap(),
@@ -410,7 +423,13 @@ class KiteBridgeClient(
             loginShell = true
         )
         val timeoutMs = step.timeoutMs?.takeIf { it > 0L } ?: DEFAULT_ATTACHED_TIMEOUT_MS
-        val process = executeProcess(config.command, config.env + extraEnv, timeoutMs) { output, chunk ->
+        val process = executeProcess(
+            command = config.command,
+            env = config.env + extraEnv,
+            timeoutMs = timeoutMs,
+            activeRecipeId = recipe.id,
+            activeRunId = runId
+        ) { output, chunk ->
             onProgress?.invoke(
                 BridgeProgress(
                     requestId = requestId,
@@ -549,6 +568,53 @@ class KiteBridgeClient(
         }
     }
 
+    private fun stopDirectProcesses(
+        recipe: KiteRecipe,
+        bindings: List<DirectProcessBinding>,
+        callback: (BridgeResult) -> Unit
+    ) {
+        val requestId = newRequestId()
+        thread(name = "KiteDirectProcessStop", isDaemon = true) {
+            val runId = bindings.firstOrNull()?.runId ?: requestId
+            bindings.forEach { binding ->
+                runCatching {
+                    binding.process.destroy()
+                    if (!binding.process.waitFor(1200L, TimeUnit.MILLISECONDS)) {
+                        binding.process.destroyForcibly()
+                    }
+                }
+                directProcesses.remove(binding.runId)
+            }
+            val report = KiteRunReport(
+                protocolVersion = KiteRecipe.PROTOCOL_VERSION,
+                requestId = requestId,
+                runId = runId,
+                recipeId = recipe.id,
+                status = KiteRunReport.STATUS_STOPPED,
+                ok = true,
+                steps = listOf(
+                    KiteStepReport(
+                        stepId = "direct_process_stop",
+                        type = KiteRecipe.STEP_SHELL,
+                        status = KiteRunReport.STATUS_STOPPED,
+                        exitCode = 0,
+                        lastMeaningfulOutput = "已中断正在执行的 SH 命令。"
+                    )
+                )
+            )
+            callback(
+                BridgeResult(
+                    ok = true,
+                    accepted = true,
+                    status = KiteRunReport.STATUS_STOPPED,
+                    message = report.toJson().toString(),
+                    requestId = requestId,
+                    runReport = report
+                )
+            )
+        }
+    }
+
     private fun stoppedWithoutActiveDirectBinding(recipe: KiteRecipe, runId: String): BridgeResult {
         val requestId = newRequestId()
         val resolvedRunId = runId.ifBlank { requestId }
@@ -584,6 +650,8 @@ class KiteBridgeClient(
         command: List<String>,
         env: Map<String, String>,
         timeoutMs: Long,
+        activeRecipeId: String? = null,
+        activeRunId: String? = null,
         onOutput: ((output: String, chunk: String) -> Unit)? = null
     ): DirectProcessResult {
         val output = StringBuilder()
@@ -592,6 +660,9 @@ class KiteBridgeClient(
             .redirectErrorStream(true)
             .apply { environment().putAll(env) }
             .start()
+        if (!activeRecipeId.isNullOrBlank() && !activeRunId.isNullOrBlank()) {
+            directProcesses[activeRunId] = DirectProcessBinding(activeRecipeId, activeRunId, process)
+        }
         val reader = thread(start = true, isDaemon = true, name = "KiteDirectReader") {
             runCatching {
                 val buffer = ByteArray(1024)
@@ -613,6 +684,9 @@ class KiteBridgeClient(
         val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
         if (!finished) process.destroyForcibly()
         reader.join(1500L)
+        if (!activeRunId.isNullOrBlank()) {
+            directProcesses.remove(activeRunId)
+        }
         val finalOutput = synchronized(outputLock) { output.toString() }
         return DirectProcessResult(
             exitCode = if (finished) process.exitValue() else -1,
@@ -674,6 +748,12 @@ private data class DirectRunBinding(
     val recipeId: String,
     val runId: String,
     val pid: String?
+)
+
+private data class DirectProcessBinding(
+    val recipeId: String,
+    val runId: String,
+    val process: Process
 )
 
 private data class DirectProcessResult(

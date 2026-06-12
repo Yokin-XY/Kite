@@ -18,6 +18,7 @@ enum class CardRunStatus(
 
     companion object {
         val activeStatuses = setOf(Running, AlreadyRunning)
+        val interruptibleStatuses = setOf(Running, WaitingTerminal, AlreadyRunning, Opened)
 
         fun fromRecipeStatus(status: String): CardRunStatus = when (status) {
             "opened" -> Opened
@@ -62,6 +63,8 @@ data class CardRunState(
         status == CardRunStatus.WaitingTerminal
 
     fun isActive(): Boolean = status in CardRunStatus.activeStatuses
+
+    fun isInterruptible(): Boolean = status in CardRunStatus.interruptibleStatuses
 
     fun hasRunBinding(): Boolean =
         !runId.isNullOrBlank() || !pid.isNullOrBlank() || !terminalSessionId.isNullOrBlank()

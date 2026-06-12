@@ -22,11 +22,15 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.text.Editable
 import android.text.InputType
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.TextWatcher
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -182,6 +186,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var resourceSectionsRenderKey: String = ""
     private var resourceSectionsDirty = true
     private var cachedResourceCatalog: List<ResourceItem>? = null
+    private var lastConsoleRuntimeRefreshAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -240,6 +245,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         super.onResume()
         applyRecentTaskVisibilitySetting()
         refreshResourceScreenIfVisible()
+        if (currentScreen == Screen.Console) {
+            showConsole()
+        }
     }
 
     override fun onPause() {
@@ -446,7 +454,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         recipe = recipe,
                         stepIndex = pending.nextStepIndex,
                         runId = pending.sessionId,
-                        pid = terminal.lastPid?.toString(),
+                        pid = null,
                         lastOutput = "终端已结束：${terminal.status.label}"
                     )
                 }
@@ -612,14 +620,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             BootstrapStage.SERVICE_REQUESTED,
             BootstrapStage.ROOTFS_EXTRACTING,
             BootstrapStage.BASE_BOOTSTRAP,
-            BootstrapStage.SPACE_READY,
-            BootstrapStage.TERMINAL_WARMING -> UbuntuRuntimeUiState(
+            BootstrapStage.SPACE_READY -> UbuntuRuntimeUiState(
                 title = when (stage) {
                     BootstrapStage.SERVICE_REQUESTED -> "\u6b63\u5728\u5524\u8d77 Ubuntu \u8fd0\u884c\u73af\u5883"
                     BootstrapStage.ROOTFS_EXTRACTING -> "\u6b63\u5728\u89e3\u538b\u7cfb\u7edf\u955c\u50cf"
                     BootstrapStage.BASE_BOOTSTRAP -> "\u6b63\u5728\u521d\u59cb\u5316\u57fa\u7840\u73af\u5883"
                     BootstrapStage.SPACE_READY -> "\u6b63\u5728\u51c6\u5907\u5de5\u4f5c\u533a"
-                    BootstrapStage.TERMINAL_WARMING -> "\u6b63\u5728\u9884\u70ed\u7ec8\u7aef"
                     else -> "\u6b63\u5728\u90e8\u7f72 Ubuntu"
                 },
                 detail = "\u90e8\u7f72\u671f\u95f4 Ubuntu \u5361\u7247\u6682\u65f6\u9501\u5b9a\uff0c\u5b8c\u6210\u540e\u4f1a\u81ea\u52a8\u6062\u590d\u3002",
@@ -2629,7 +2635,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun showCardRunSurface(recipe: KiteRecipe) {
         currentScreen = Screen.CardRun
-        root.setBackgroundColor(tokens.pageBackground)
+        root.setBackgroundColor(Color.rgb(246, 247, 249))
         clearRootForScreen()
         val state = focusedRunInstanceId
             ?.let { CardRunStore.get(it) }
@@ -2648,7 +2654,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             showCardRunWebView(recipe, webUrl)
         } else {
             root.addView(ScrollView(this).apply {
-                addView(cardRunContent(state))
+                addView(cardRunContent(recipe, state))
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
     }
@@ -2667,28 +2673,52 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun cardRunTopBar(recipe: KiteRecipe, state: RecipeRuntimeState): View = FrameLayout(this).apply {
-        setPadding(dp(18), dp(12), dp(18), dp(5))
-        if (state.status == RecipeRunStatus.WaitingTerminal && !state.terminalSessionId.isNullOrBlank()) {
+        val waitingForTerminal = state.status == RecipeRunStatus.WaitingTerminal && !state.terminalSessionId.isNullOrBlank()
+        val sideControlSize = dp(44)
+        setPadding(dp(16), dp(12), dp(16), dp(8))
+        val leftControl = if (waitingForTerminal) {
+            cardRunDoneButton { completeTerminalStepFromCard(recipe, state) }
+        } else {
+            iconButton("‹", sideControlSize, Color.TRANSPARENT, tokens.textPrimary, dp(18)) { closeCardRunTask() }
+        }
+        addView(leftControl, FrameLayout.LayoutParams(sideControlSize, sideControlSize, Gravity.LEFT or Gravity.CENTER_VERTICAL))
+        addView(TextView(context).apply {
+            text = cardRunSurfaceTitle(state)
+            textSize = 20f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(tokens.textPrimary)
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, sideControlSize, Gravity.CENTER))
+        if (waitingForTerminal) {
             val authUrl = terminalAuthorizationUrl(state.terminalSessionId)
-            addView(row {
-                addView(cardRunDoneButton { completeTerminalStepFromCard(recipe, state) })
-                if (!authUrl.isNullOrBlank()) {
+            if (!authUrl.isNullOrBlank()) {
+                addView(row {
                     addView(cardRunAuthButton {
                         openExternalAuthorizationUrl(recipe, authUrl)
                     })
-                }
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(29), Gravity.LEFT or Gravity.CENTER_VERTICAL))
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(29), Gravity.LEFT or Gravity.CENTER_VERTICAL).apply {
+                    setMargins(sideControlSize + dp(4), 0, 0, 0)
+                })
+            }
         }
-        val rightChrome = cardRunResultIsland(recipe, state) ?: cardRunControlPill(recipe, state)
+        val rightChrome = cardRunControlPill(recipe, state)
         addView(
             rightChrome,
             FrameLayout.LayoutParams(
-                if (recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE) ViewGroup.LayoutParams.WRAP_CONTENT else dp(92),
-                dp(34),
+                sideControlSize,
+                sideControlSize,
                 Gravity.RIGHT or Gravity.CENTER_VERTICAL
             )
         )
     }
+
+    private fun cardRunSurfaceTitle(state: RecipeRuntimeState): String =
+        when (state.surface) {
+            CardRunSurface.Report, CardRunSurface.Summary -> "SH 报告"
+            CardRunSurface.Terminal -> "终端"
+            CardRunSurface.Web -> "网页"
+        }
 
     private fun cardRunResultIsland(recipe: KiteRecipe, state: RecipeRuntimeState): View? {
         if (recipe.runtimeSource != KiteResourceInstallRecipes.RUNTIME_SOURCE) return null
@@ -2750,13 +2780,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun cardRunDoneButton(onClick: () -> Unit): TextView =
         TextView(this).apply {
             text = "完成"
-            textSize = 12.5f
+            textSize = 15.5f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(tokens.buttonText)
-            background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(15).toFloat())
-            elevation = dp(2).toFloat()
+            setTextColor(tokens.textPrimary)
+            background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(12).toFloat(), 0)
             setOnClickListener { onClick() }
         }
 
@@ -2823,44 +2852,44 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun cardRunControlPill(recipe: KiteRecipe, state: RecipeRuntimeState): View = row {
         gravity = Gravity.CENTER
-        setPadding(dp(3), dp(3), dp(3), dp(3))
-        background = roundedBox(Color.argb(232, 255, 255, 255), tokens.border, dp(17).toFloat())
-        elevation = dp(4).toFloat()
-        if (recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE) {
-            addView(
-                cardRunPillButton("•••") { showCardRunMenu(recipe, state) },
-                LinearLayout.LayoutParams(dp(54), ViewGroup.LayoutParams.MATCH_PARENT)
-            )
-        } else {
-            addView(cardRunPillButton("•••") { showCardRunMenu(recipe, state) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-            addView(View(context).apply {
-                setBackgroundColor(tokens.border)
-                layoutParams = LinearLayout.LayoutParams(dp(1), dp(19))
-            })
-            addView(cardRunPillButton("◎") { closeCardRunTask() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        }
+        addView(
+            cardRunMoreButton { showCardRunMenu(recipe, state) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
     }
 
-    private fun cardRunPillButton(textValue: String, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = textValue
-            textSize = if (textValue == "◎") 16f else 14f
-            typeface = Typeface.DEFAULT_BOLD
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            setTextColor(tokens.textPrimary)
+    private fun cardRunMoreButton(onClick: () -> Unit): View =
+        object : View(this) {
+            private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tokens.textPrimary
+                style = Paint.Style.FILL
+            }
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val density = resources.displayMetrics.density
+                val radius = 1.85f * density
+                val spacing = 6.2f * density
+                val centerX = width / 2f
+                val centerY = height / 2f
+                canvas.drawCircle(centerX - spacing, centerY, radius, dotPaint)
+                canvas.drawCircle(centerX, centerY, radius, dotPaint)
+                canvas.drawCircle(centerX + spacing, centerY, radius, dotPaint)
+            }
+        }.apply {
             background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(12).toFloat(), 0)
+            isClickable = true
             setOnClickListener { onClick() }
         }
 
-    private fun cardRunContent(state: RecipeRuntimeState): View =
+    private fun cardRunContent(recipe: KiteRecipe, state: RecipeRuntimeState): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(12), dp(18), dp(28))
+            setPadding(dp(16), dp(12), dp(16), dp(28))
             when (state.surface) {
                 CardRunSurface.Terminal -> addView(cardRunPlaceholderPanel("终端", state.terminalSessionId ?: "还没有终端会话。"))
                 CardRunSurface.Web -> addView(cardRunPlaceholderPanel("网页", state.nextActionUrl ?: "还没有网页地址。"))
-                else -> addView(cardRunReportPanel(state))
+                else -> addView(cardRunReportPanel(recipe, state))
             }
         }
 
@@ -2914,27 +2943,307 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         return listOf(stepText, state.surface.label, binding.takeIf { it.isNotBlank() }).filterNotNull().joinToString(" · ")
     }
 
-    private fun cardRunReportPanel(state: RecipeRuntimeState): View =
+    private fun cardRunReportPanel(recipe: KiteRecipe, state: RecipeRuntimeState): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(8), 0, 0)
+            setPadding(0, 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(0, 0, 0, 0)
             }
-            addView(TextView(context).apply {
-                text = "SH 报告"
-                textSize = 15f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
+            addView(cardRunReportSummaryCard(recipe, state))
+            addView(cardRunOutputCard(recipe, state))
+        }
+
+    private fun cardRunReportSummaryCard(recipe: KiteRecipe, state: RecipeRuntimeState): View =
+        LinearLayout(this).apply {
+            val reportBorder = Color.rgb(232, 235, 240)
+            val reportText = Color.rgb(17, 24, 39)
+            orientation = LinearLayout.VERTICAL
+            minimumHeight = dp(142)
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            background = roundedBox(Color.WHITE, reportBorder, dp(20).toFloat())
+            elevation = dp(1).toFloat()
+            addView(row {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(context).apply {
+                    text = ">_"
+                    textSize = 18f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(Color.rgb(22, 163, 107))
+                    background = roundedBox(Color.rgb(234, 248, 240), Color.TRANSPARENT, dp(12).toFloat(), 0)
+                    layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                        setMargins(0, 0, dp(14), 0)
+                    }
+                })
+                addView(TextView(context).apply {
+                    text = "执行摘要"
+                    textSize = 17f
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    setTextColor(reportText)
+                    includeFontPadding = false
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                addView(cardRunStatusBadge(state), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22)).apply {
+                    setMargins(dp(12), 0, 0, 0)
+                })
             })
-            addView(TextView(context).apply {
-                text = cardRunReportText(state)
-                textSize = 12.5f
-                setTextColor(if (state.failureSummary() != null) tokens.danger else tokens.textSecondary)
-                setLineSpacing(dp(3).toFloat(), 1f)
-                setPadding(0, dp(10), 0, 0)
+            addView(row {
+                gravity = Gravity.BOTTOM
+                setPadding(0, dp(14), 0, 0)
+                val items = listOf(
+                    "步骤" to cardRunStepCounter(state),
+                    "已运行" to formatRunDuration(state),
+                    "当前命令" to currentShellCommand(recipe, state).ifBlank { "--" }
+                )
+                items.forEachIndexed { index, item ->
+                    addView(cardRunSummaryMetric(item.first, item.second), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    if (index != items.lastIndex) {
+                        addView(View(context).apply {
+                            setBackgroundColor(Color.argb(115, Color.red(reportBorder), Color.green(reportBorder), Color.blue(reportBorder)))
+                        }, LinearLayout.LayoutParams(dp(1), dp(32)).apply {
+                            setMargins(dp(8), dp(3), dp(8), 0)
+                        })
+                    }
+                }
             })
         }
+
+    private fun cardRunStatusBadge(state: RecipeRuntimeState): TextView {
+        val isFailure = state.failureSummary() != null
+        val isDone = state.status == RecipeRunStatus.Completed || state.status == RecipeRunStatus.Stopped
+        val color = when {
+            isFailure -> tokens.danger
+            state.isBusy() || state.isActive() -> tokens.primaryStrong
+            isDone -> Color.rgb(22, 163, 107)
+            else -> Color.rgb(124, 133, 149)
+        }
+        val backgroundColor = when {
+            isDone -> Color.rgb(234, 248, 240)
+            else -> tintBackground(color)
+        }
+        val label = when {
+            isFailure -> "失败"
+            state.isBusy() || state.isActive() -> "运行中"
+            isDone -> "已完成"
+            else -> state.status.label
+        }
+        return TextView(this).apply {
+            text = label
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setPadding(dp(8), 0, dp(8), 0)
+            setTextColor(color)
+            background = roundedBox(backgroundColor, Color.TRANSPARENT, dp(11).toFloat(), 0)
+        }
+    }
+
+    private fun cardRunSummaryMetric(label: String, value: String): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(context).apply {
+                text = label
+                textSize = 11f
+                setTextColor(Color.rgb(152, 162, 179))
+                includeFontPadding = false
+            })
+            addView(TextView(context).apply {
+                text = value
+                textSize = 15f
+                setTextColor(Color.rgb(17, 24, 39))
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+                includeFontPadding = false
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(7), 0, 0)
+            })
+        }
+
+    private fun cardRunOutputCard(recipe: KiteRecipe, state: RecipeRuntimeState): View {
+        val outputText = cardRunOutputText(recipe, state)
+        val isRunning = state.isBusy() || state.isActive()
+        val reportBorder = Color.rgb(232, 235, 240)
+        val reportText = Color.rgb(17, 24, 39)
+        val reportSecondary = Color.rgb(124, 133, 149)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(15), dp(16), dp(16))
+            background = roundedBox(Color.WHITE, reportBorder, dp(20).toFloat())
+            elevation = dp(1).toFloat()
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, dp(18), 0, 0)
+            }
+            addView(row {
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
+                addView(TextView(context).apply {
+                    text = "实时输出"
+                    textSize = 18f
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    includeFontPadding = false
+                    setTextColor(reportText)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                addView(reportToolButton("⧉", "复制") {
+                    copyTextToClipboard("Kite SH 输出", outputText, "已复制 SH 输出")
+                })
+            })
+            addView(TextView(context).apply {
+                text = lineNumberedOutput(outputText)
+                minimumHeight = dp(260)
+                textSize = 13f
+                typeface = Typeface.MONOSPACE
+                setTextColor(if (state.failureSummary() != null) tokens.danger else reportText)
+                setLineSpacing(dp(3).toFloat(), 1.0f)
+                includeFontPadding = true
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                background = roundedBox(Color.rgb(248, 250, 252), Color.TRANSPARENT, dp(16).toFloat(), 0)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(0, dp(12), 0, 0)
+                }
+            })
+            if (isRunning) {
+                addView(row {
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(14), dp(12), dp(14), 0)
+                    addView(TextView(context).apply {
+                        text = "●"
+                        textSize = 10f
+                        includeFontPadding = false
+                        setTextColor(tokens.success)
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                            setMargins(0, 0, dp(8), 0)
+                        }
+                    })
+                    addView(TextView(context).apply {
+                        text = reportFooterLabel(state)
+                        textSize = 13f
+                        setTextColor(reportSecondary)
+                    })
+                })
+            }
+        }
+    }
+
+    private fun reportToolButton(icon: String, label: String, onClick: () -> Unit): View =
+        row {
+            gravity = Gravity.CENTER
+            setPadding(dp(7), 0, dp(7), 0)
+            addView(TextView(context).apply {
+                text = icon
+                textSize = 16f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(Color.rgb(124, 133, 149))
+            })
+            addView(TextView(context).apply {
+                text = label
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(Color.rgb(124, 133, 149))
+                setPadding(dp(5), 0, 0, 0)
+            })
+            setOnClickListener { onClick() }
+        }
+
+    private fun copyTextToClipboard(label: String, text: String, toast: String) {
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
+        Toast.makeText(this, toast, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun reportFooterLabel(state: RecipeRuntimeState): String =
+        when {
+            state.failureSummary() != null -> "执行失败 · ${formatRunDuration(state)}"
+            state.isBusy() || state.isActive() -> "正在执行 · ${formatRunDuration(state)}"
+            state.status == RecipeRunStatus.Completed -> "已完成 · ${formatRunDuration(state)}"
+            state.status == RecipeRunStatus.Stopped -> "已停止 · ${formatRunDuration(state)}"
+            else -> state.status.label
+        }
+
+    private fun cardRunStepCounter(state: RecipeRuntimeState): String =
+        if (state.stepCount > 0) "${(state.currentStepIndex + 1).coerceIn(1, state.stepCount)}/${state.stepCount}" else "--"
+
+    private fun formatRunDuration(state: RecipeRuntimeState): String {
+        val endAt = if (state.isBusy() || state.isActive()) System.currentTimeMillis() else state.updatedAt
+        val seconds = ((endAt - state.createdAt).coerceAtLeast(0L) / 1000L).coerceAtMost(99L * 60L + 59L)
+        return String.format("%02d:%02d", seconds / 60L, seconds % 60L)
+    }
+
+    private fun currentShellCommand(recipe: KiteRecipe, state: RecipeRuntimeState): String {
+        val stepCommand = recipe.steps.getOrNull(state.currentStepIndex)?.cmd.orEmpty().trim()
+        if (stepCommand.isNotBlank()) return stepCommand.lineSequence().firstOrNull().orEmpty().ifBlank { stepCommand }
+        return state.shellReportText.orEmpty()
+            .lineSequence()
+            .firstOrNull { it.startsWith("命令：") }
+            ?.removePrefix("命令：")
+            ?.trim()
+            .orEmpty()
+    }
+
+    private fun fullShellCommand(recipe: KiteRecipe, state: RecipeRuntimeState): String {
+        val stepCommand = recipe.steps.getOrNull(state.currentStepIndex)?.cmd.orEmpty().trim()
+        if (stepCommand.isNotBlank()) return stepCommand
+        return currentShellCommand(recipe, state)
+    }
+
+    private fun cardRunOutputText(recipe: KiteRecipe, state: RecipeRuntimeState): String {
+        val command = fullShellCommand(recipe, state)
+        val report = state.shellReportText.orEmpty().trim()
+        val output = extractShellOutput(report)
+        val fallback = when {
+            output.isNotBlank() -> output
+            state.lastError.orEmpty().isNotBlank() -> state.lastError.orEmpty()
+            state.lastMeaningfulOutput.orEmpty().isNotBlank() -> state.lastMeaningfulOutput.orEmpty()
+            else -> "暂无输出。一次性命令请使用“等待结束”，例如 python3 -V。"
+        }.normalizeShellStreamForDisplay()
+        return buildString {
+            if (command.isNotBlank()) append(command).append("\n\n")
+            append(fallback)
+            commandHintFor(state)?.let { append("\n\n提示：").append(it) }
+        }.trim()
+    }
+
+    private fun extractShellOutput(report: String): String {
+        val markers = listOf("原始输出：", "有效输出：", "错误输出：", "输出：")
+        markers.forEach { marker ->
+            val index = report.indexOf(marker)
+            if (index >= 0) {
+                return report.substring(index + marker.length).trim()
+            }
+        }
+        return report.lineSequence()
+            .filterNot { line ->
+                line.startsWith("命令：") ||
+                    line.startsWith("结果：") ||
+                    line.startsWith("退出码：") ||
+                    line.startsWith("匹配：")
+            }
+            .joinToString("\n")
+            .trim()
+    }
+
+    private fun lineNumberedOutput(text: String): CharSequence {
+        val lines = text.ifBlank { "暂无输出。" }.lineSequence().toList().ifEmpty { listOf("暂无输出。") }
+        val width = lines.size.toString().length.coerceAtLeast(2)
+        return SpannableStringBuilder().apply {
+            lines.forEachIndexed { index, line ->
+                val numberStart = length
+                append((index + 1).toString().padStart(width, ' '))
+                val numberEnd = length
+                setSpan(ForegroundColorSpan(Color.rgb(152, 162, 179)), numberStart, numberEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                setSpan(RelativeSizeSpan(0.92f), numberStart, numberEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                append("  ")
+                append(line)
+                if (index != lines.lastIndex) append('\n')
+            }
+        }
+    }
 
     private fun cardRunReportText(state: RecipeRuntimeState): String {
         val lines = mutableListOf<String>()
@@ -3666,13 +3975,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun recipePowerButton(recipe: KiteRecipe, state: RecipeRuntimeState, ubuntuBlocked: Boolean): TextView =
         TextView(this).apply {
-            val disabled = state.isBusy() || ubuntuBlocked
-            val active = state.isActive()
+            val disabled = state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping || ubuntuBlocked
+            val interruptible = state.isInterruptible()
             text = when {
                 ubuntuBlocked -> "…"
                 state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable -> "↻"
-                active -> "■"
-                state.isBusy() -> "…"
+                interruptible -> "■"
+                state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping -> "…"
                 else -> "▶"
             }
             textSize = if (text == "▶") 17f else 18f
@@ -3683,7 +3992,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             alpha = if (disabled) 0.62f else 1f
             val fill = when {
                 state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable -> tokens.danger
-                active -> tokens.warning
+                interruptible -> tokens.warning
                 else -> tokens.primaryStrong
             }
             background = roundedBox(fill, fill, dp(24).toFloat())
@@ -3766,13 +4075,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun handleRecipeActionWithRouter(recipe: KiteRecipe) {
         val state = runtimeStateFor(recipe)
         diagnostics.logRecipeAction(recipe, "card_click", mapOf("type" to recipe.type, "status" to state.status.name))
-        if (state.isBusy()) return
+        if (state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping) return
         if (isUbuntuActionBlocked(recipe)) {
             Toast.makeText(this, ubuntuRuntimeState.title, Toast.LENGTH_SHORT).show()
             return
         }
 
-        val actionName = if (state.isActive()) KiteRecipe.ACTION_STOP else KiteRecipe.ACTION_START
+        if (state.isInterruptible()) {
+            stopRecipe(recipe, state)
+            return
+        }
+
+        val actionName = KiteRecipe.ACTION_START
         if (actionName == KiteRecipe.ACTION_START && shouldOpenCardRunTaskFromHome(recipe)) {
             diagnostics.logRecipeAction(recipe, "card_run_task_requested", mapOf("source" to CardRunIntents.SOURCE_CARD))
             startActivity(
@@ -4251,6 +4565,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         stepIndex: Int,
         result: BridgeResult
     ) {
+        val currentState = runtimeStates[recipe.id] ?: CardRunStore.currentForRecipe(recipe.id)
+        if (currentState?.currentStepIndex == stepIndex &&
+            (currentState.status == RecipeRunStatus.Stopping || currentState.status == RecipeRunStatus.Stopped)
+        ) {
+            diagnostics.logRecipeAction(
+                recipe,
+                "sequence_shell_result_ignored_after_stop",
+                mapOf("stepIndex" to stepIndex.toString(), "status" to currentState.status.name)
+            )
+            return
+        }
         val report = result.runReport
         if (report != null) diagnostics.writeRunReport(report)
         val requestId = (report?.requestId ?: result.requestId).orEmpty()
@@ -4463,6 +4788,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun stopRecipe(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
         val terminalSessionId = previousState.terminalSessionId?.takeIf { it.isNotBlank() }
+        if (terminalSessionId == null &&
+            previousState.runId.isNullOrBlank() &&
+            previousState.pid.isNullOrBlank() &&
+            previousState.status == RecipeRunStatus.Opened
+        ) {
+            diagnostics.logBridgeEvent(
+                "stop_opened_web_local",
+                recipe,
+                mapOf("url" to previousState.nextActionUrl.orEmpty())
+            )
+            webView.stopLoading()
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Stopped,
+                surface = CardRunSurface.Summary,
+                currentStepIndex = previousState.currentStepIndex,
+                lastMeaningfulOutput = "网页实例已关闭",
+                clearRunBinding = true,
+                clearNextActionUrl = true
+            )
+            showConsole()
+            return
+        }
         if (terminalSessionId != null) {
             pendingTerminalFlow = pendingTerminalFlow?.takeUnless {
                 it.recipeId == recipe.id && (it.sessionId == terminalSessionId || it.instanceId == previousState.instanceId)
@@ -4480,12 +4828,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setRuntimeState(
                 recipe,
                 RecipeRunStatus.Stopped,
+                surface = CardRunSurface.Summary,
                 currentStepIndex = previousState.currentStepIndex,
-                runId = previousState.runId,
-                terminalSessionId = terminalSessionId,
-                pid = previousState.pid,
                 lastMeaningfulOutput = "终端已发送中断并关闭",
-                nextActionUrl = previousState.nextActionUrl
+                clearRunBinding = true,
+                clearTerminalSession = true
             )
             showConsole()
             return
@@ -4555,7 +4902,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
         )
         if ((result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
-            setRuntimeState(recipe, RecipeRunStatus.Stopped)
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Stopped,
+                surface = CardRunSurface.Summary,
+                lastMeaningfulOutput = result.runReport?.lastMeaningfulOutput() ?: "已停止",
+                clearRunBinding = true,
+                clearTerminalSession = true,
+                clearNextActionUrl = true
+            )
             diagnostics.logBridgeEvent("stop_success", recipe, mapOf("runId" to previousState.runId.orEmpty()))
             showConsole()
             return
@@ -4627,7 +4982,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val report = result.runReport
         if (report != null) diagnostics.writeRunReport(report)
         if ((result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
-            setRuntimeState(recipe, RecipeRunStatus.Stopped)
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Stopped,
+                surface = CardRunSurface.Summary,
+                lastMeaningfulOutput = result.runReport?.lastMeaningfulOutput() ?: "已停止",
+                clearRunBinding = true,
+                clearTerminalSession = true,
+                clearNextActionUrl = true
+            )
             showConsole()
             return
         }
@@ -4866,7 +5229,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         lastMeaningfulOutput: String? = null,
         lastError: String? = null,
         shellReportText: String? = null,
-        nextActionUrl: String? = null
+        nextActionUrl: String? = null,
+        clearRunBinding: Boolean = false,
+        clearTerminalSession: Boolean = false,
+        clearNextActionUrl: Boolean = false
     ) {
         val state = CardRunStore.update(
             recipe = recipe,
@@ -4880,7 +5246,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             lastMeaningfulOutput = lastMeaningfulOutput,
             lastError = lastError,
             shellReportText = shellReportText,
-            nextActionUrl = nextActionUrl
+            nextActionUrl = nextActionUrl,
+            clearRunBinding = clearRunBinding,
+            clearTerminalSession = clearTerminalSession,
+            clearNextActionUrl = clearNextActionUrl
         )
         runtimeStates[recipe.id] = state
         diagnostics.logLifecycleEvent(
@@ -4892,6 +5261,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             state.lastMeaningfulOutput,
             state.lastError
         )
+        maybeRefreshConsoleAfterRuntimeState(status)
+    }
+
+    private fun maybeRefreshConsoleAfterRuntimeState(status: RecipeRunStatus) {
+        if (this is CardRunActivity || currentScreen != Screen.Console) return
+        val important = status == RecipeRunStatus.Completed ||
+            status == RecipeRunStatus.Failed ||
+            status == RecipeRunStatus.BridgeUnavailable ||
+            status == RecipeRunStatus.Stopped ||
+            status == RecipeRunStatus.Opened ||
+            status == RecipeRunStatus.WaitingTerminal
+        val now = System.currentTimeMillis()
+        if (!important && now - lastConsoleRuntimeRefreshAt < 600L) return
+        lastConsoleRuntimeRefreshAt = now
+        root.post {
+            if (currentScreen == Screen.Console) showConsole()
+        }
     }
 
     private fun showCreateConfig() = showRecipeForm(null)
@@ -5457,7 +5843,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         urlInput.setText(draft?.url ?: openUrl)
         val recipeId = recipe?.id.orEmpty()
         shortcutSwitch.isChecked = draft?.shortcutRequested ?: (recipeId.isNotBlank() && cardLocalSettings.shortcutRequested(recipeId))
-        launchInstanceSwitch.isChecked = draft?.launchOpenInstance ?: (recipe?.launch?.openInstance == true)
+        launchInstanceSwitch.isChecked = draft?.launchOpenInstance ?: (recipe?.launch?.openInstance ?: true)
     }
 
     private fun updateDynamicFieldVisibility() {
@@ -5863,7 +6249,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         setPadding(0, 0, 0, dp(8))
         addView(localSwitchRow(
             title = "启动时打开独立实例页",
-            detail = "从首页启动这张卡片时进入独立最近任务；关闭后就在首页内执行。"
+            detail = "默认从首页启动时进入独立最近任务；关闭后就在首页内静默执行。"
         ) {
             launchInstanceSwitch = it
         })
@@ -6206,10 +6592,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val feedback = state.feedbackSummary()
         if (isProblem && !feedback.isNullOrBlank()) return feedback
         if (state.status == RecipeRunStatus.Starting ||
-            state.status == RecipeRunStatus.Running ||
-            state.status == RecipeRunStatus.WaitingTerminal ||
             state.status == RecipeRunStatus.Stopping ||
-            state.status == RecipeRunStatus.AlreadyRunning
+            state.isInterruptible()
         ) {
             val progress = if (state.stepCount > 0 && state.currentStepIndex >= 0) {
                 "步骤 ${state.currentStepIndex + 1}/${state.stepCount}"
@@ -6645,7 +7029,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         command = json.optString("command"),
                         workdir = json.optString("workdir"),
                         shortcutRequested = json.optBoolean("shortcutRequested", false),
-                        launchOpenInstance = json.optBoolean("launchOpenInstance", false),
+                        launchOpenInstance = json.optBoolean("launchOpenInstance", true),
                         steps = steps
                     )
                 }.getOrNull()
@@ -6691,6 +7075,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val value: String,
         val note: String,
         val monospace: Boolean
+    )
+
+    private data class SummaryMetric(
+        val label: String,
+        val value: String,
+        val weight: Float
     )
 
     private data class SemanticColors(

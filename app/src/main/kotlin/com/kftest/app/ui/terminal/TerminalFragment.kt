@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Bundle
 import android.os.Looper
@@ -53,7 +54,6 @@ import com.kftest.app.foundation.bootstrap.BootstrapStage
 import com.kftest.app.foundation.bootstrap.KFApplication
 import com.kftest.app.foundation.logging.Logger
 import com.kftest.app.foundation.runtime.ContainerRecord
-import com.kftest.app.foundation.runtime.RuntimeActionKind
 import com.kftest.app.foundation.runtime.TerminalSessionItem
 import com.kftest.app.foundation.runtime.TerminalSessionStore
 import com.kftest.app.foundation.runtime.TerminalSessionsSnapshot
@@ -61,8 +61,6 @@ import com.kftest.app.foundation.service.WorkstationActionGateway
 import com.kftest.app.foundation.terminal.TerminalSessionController
 import com.kftest.app.foundation.terminal.TerminalRuntimeHost
 import com.kftest.app.foundation.terminal.TerminalSessionUiCallbacks
-import com.kftest.app.foundation.workspace.AgentKind
-import com.kftest.app.foundation.workspace.AgentRuntimeRecord
 import com.kftest.app.foundation.workspace.KFWorkspaceManager
 import com.kftest.app.foundation.workspace.ManagedTerminalStatus
 import com.kftest.app.foundation.workspace.SpaceRecord
@@ -80,8 +78,7 @@ import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.concurrent.atomic.AtomicLong
 
-class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallbacks,
-    TerminalActionSheet.Listener, TerminalEntrySheet.Listener {
+class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallbacks {
 
     companion object {
         private const val ARG_DETAIL_ONLY = "detail_only"
@@ -108,6 +105,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private lateinit var tvEmptySessions: TextView
     private lateinit var terminalListContainer: LinearLayout
     private lateinit var tvDetailTitle: TextView
+    private lateinit var tvDetailSubtitle: TextView
     private lateinit var tvSessionNote: TextView
     private lateinit var cardBootstrapStatus: View
     private lateinit var progressBootstrap: ProgressBar
@@ -124,7 +122,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private var isAltPressed = false
     private var currentFontSizeDp = 35
     private var currentSpace: SpaceRecord? = null
-    private var currentAgents: List<AgentRuntimeRecord> = emptyList()
     private var currentTerminalSnapshot = TerminalSessionsSnapshot()
     private var lastManagedSessionsRenderSignature: String = ""
     private var isDetailMode = false
@@ -256,6 +253,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         tvEmptySessions = view.findViewById(R.id.tvEmptySessions)
         terminalListContainer = view.findViewById(R.id.terminalListContainer)
         tvDetailTitle = view.findViewById(R.id.tvDetailTitle)
+        tvDetailSubtitle = view.findViewById(R.id.tvDetailSubtitle)
         tvSessionNote = view.findViewById(R.id.tvSessionNote)
         cardBootstrapStatus = view.findViewById(R.id.cardBootstrapStatus)
         progressBootstrap = view.findViewById(R.id.progressBootstrap)
@@ -317,7 +315,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         }
 
         view.findViewById<AppCompatImageButton>(R.id.btnListAdd).setOnClickListener {
-            showEntrySheet()
+            createNewTerminalSession()
         }
         view.findViewById<AppCompatImageButton>(R.id.btnBackToSessions).apply {
             if (isDetailOnlyMode()) {
@@ -327,13 +325,10 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 setOnClickListener { showListPage() }
             }
         }
-        view.findViewById<AppCompatImageButton>(R.id.btnDetailMoreActions).setOnClickListener {
-            showActionSheet()
-        }
         setupTerminalComposer()
         setupWindowInsets(view)
 
-        tvDetailTitle.text = getString(R.string.terminal_title_short)
+        renderDetailHeader(null)
         showSessionNote("")
         showInitialPage()
     }
@@ -452,11 +447,13 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private fun setupTerminalComposer() {
         terminalInputBar.removeAllViews()
-        terminalInputBar.setPadding(dp(10), dp(8), dp(10), dp(10))
+        terminalInputBar.setPadding(dp(12), dp(10), dp(12), dp(10))
+        applyComposerBackground()
 
         terminalControlPanel = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
+            gravity = Gravity.CENTER_HORIZONTAL
             setPadding(0, 0, 0, dp(8))
         }
         terminalControlPage = LinearLayout(requireContext()).apply {
@@ -476,18 +473,18 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         composerRow.addView(panelToggle, LinearLayout.LayoutParams(dp(44), dp(44)))
 
         val inputCard = MaterialCardView(requireContext()).apply {
-            radius = dp(18).toFloat()
+            radius = dp(16).toFloat()
             cardElevation = 0f
-            setCardBackgroundColor(color(R.color.terminal_page_input_bg))
+            setCardBackgroundColor(color(R.color.terminal_page_surface))
             strokeColor = color(R.color.terminal_page_line)
             strokeWidth = dp(1)
-            minimumHeight = dp(44)
+            minimumHeight = dp(48)
             minimumWidth = 0
             setContentPadding(dp(12), dp(8), dp(10), dp(8))
         }
         terminalComposerInput = EditText(requireContext()).apply {
             background = null
-            hint = "输入命令或和 Agent 对话..."
+            hint = "输入命令或与 Agent 对话"
             setHintTextColor(color(R.color.terminal_page_subtext))
             setTextColor(color(R.color.terminal_page_text))
             textSize = 14f
@@ -613,41 +610,36 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun buildTerminalControlPage(): View {
-        val root = LinearLayout(requireContext()).apply {
+        return LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2), 0, dp(2), 0)
+            addView(
+                buildPanelGrid(
+                    listOf(
+                        PanelButton("Ctrl+C", "中断", R.drawable.ic_terminal_interrupt) {
+                            sendTerminalInput("\u0003")
+                        },
+                        PanelButton("Ctrl+L", "清屏", R.drawable.ic_terminal_clear_line) {
+                            sendTerminalInput("\u000c")
+                        },
+                        PanelButton("A-", "缩小字体") {
+                            applyFontSize(TerminalUiPreferences.stepFontSize(currentFontSizeDp, -1), true)
+                        },
+                        PanelButton("A+", "放大字体") {
+                            applyFontSize(TerminalUiPreferences.stepFontSize(currentFontSizeDp, 1), true)
+                        }
+                    )
+                ),
+                LinearLayout.LayoutParams(dp(166), ViewGroup.LayoutParams.WRAP_CONTENT)
+            )
+            addView(
+                buildDpadCluster(),
+                LinearLayout.LayoutParams(dp(132), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginStart = dp(12)
+                }
+            )
         }
-
-        root.addView(
-            buildPanelGrid(
-                listOf(
-                    PanelButton("Ctrl+C", "") { sendTerminalInput("\u0003") },
-                    PanelButton("Ctrl+L", "") { sendTerminalInput("\u000c") },
-                    PanelButton("A-", "") {
-                        applyFontSize(TerminalUiPreferences.stepFontSize(currentFontSizeDp, -1), true)
-                    },
-                    PanelButton("A+", "") {
-                        applyFontSize(TerminalUiPreferences.stepFontSize(currentFontSizeDp, 1), true)
-                    },
-                    PanelButton("主题", "") { showThemeMenu(it) }
-                )
-            ),
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
-
-        val divider = View(requireContext()).apply {
-            setBackgroundColor(color(R.color.terminal_page_line))
-        }
-        root.addView(
-            divider,
-            LinearLayout.LayoutParams(dp(1), dp(132)).apply {
-                marginStart = dp(8)
-                marginEnd = dp(8)
-            }
-        )
-
-        root.addView(buildDpadCluster())
-        return root
     }
 
     private fun buildDpadCluster(): View {
@@ -663,27 +655,27 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             ).apply {
                 width = dp(42)
                 height = dp(42)
-                setMargins(dp(2), dp(2), dp(2), dp(2))
+                setMargins(dp(1), dp(1), dp(1), dp(1))
             }
             grid.addView(view ?: SpaceView(requireContext()), params)
         }
 
         addCell(null, 0, 0)
-        addCell(controlTile("▲", "").also {
+        addCell(controlTile("↑", "").also {
             bindRepeatingKey(it, KeyEvent.KEYCODE_DPAD_UP, "\u001b[A")
         }, 0, 1)
         addCell(null, 0, 2)
-        addCell(controlTile("◀", "").also {
+        addCell(controlTile("←", "").also {
             bindRepeatingKey(it, KeyEvent.KEYCODE_DPAD_LEFT, "\u001b[D")
         }, 1, 0)
-        addCell(controlTile("OK", "").also {
+        addCell(controlTile("Enter", "回车").also {
             it.setOnClickListener { sendTerminalInput("\r") }
         }, 1, 1)
-        addCell(controlTile("▶", "").also {
+        addCell(controlTile("→", "").also {
             bindRepeatingKey(it, KeyEvent.KEYCODE_DPAD_RIGHT, "\u001b[C")
         }, 1, 2)
         addCell(null, 2, 0)
-        addCell(controlTile("▼", "").also {
+        addCell(controlTile("↓", "").also {
             bindRepeatingKey(it, KeyEvent.KEYCODE_DPAD_DOWN, "\u001b[B")
         }, 2, 1)
         addCell(null, 2, 2)
@@ -691,26 +683,21 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun buildPanelGrid(buttons: List<PanelButton>): View {
-        val columns = if (buttons.size <= 4) {
-            buttons.size.coerceAtLeast(1)
-        } else {
-            3
-        }
+        val columns = 2
         val grid = GridLayout(requireContext()).apply {
             columnCount = columns
             rowCount = ((buttons.size + columns - 1) / columns).coerceAtLeast(1)
         }
         buttons.forEachIndexed { index, button ->
-            val tile = controlTile(button.title, button.subtitle).apply {
+            val tile = controlTile(button.title, button.subtitle, button.iconRes).apply {
                 setOnClickListener { button.action(this) }
             }
             val params = GridLayout.LayoutParams(
                 GridLayout.spec(index / columns),
                 GridLayout.spec(index % columns)
             ).apply {
-                width = 0
-                height = dp(42)
-                columnSpec = GridLayout.spec(index % columns, 1f)
+                width = dp(76)
+                height = dp(44)
                 setMargins(dp(3), dp(3), dp(3), dp(3))
             }
             grid.addView(tile, params)
@@ -718,29 +705,112 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         return grid
     }
 
-    private fun controlTile(title: String, subtitle: String): MaterialCardView {
+    private fun controlTile(
+        title: String,
+        subtitle: String,
+        iconRes: Int? = null,
+        compact: Boolean = false
+    ): MaterialCardView {
         return MaterialCardView(requireContext()).apply {
-            radius = dp(12).toFloat()
-            cardElevation = dp(1).toFloat()
-            setCardBackgroundColor(color(R.color.terminal_page_input_bg))
-            strokeColor = color(R.color.terminal_page_line)
+            radius = dp(13).toFloat()
+            cardElevation = 0f
+            setCardBackgroundColor(android.graphics.Color.rgb(249, 250, 251))
+            strokeColor = android.graphics.Color.rgb(229, 231, 235)
             strokeWidth = dp(1)
+            minimumWidth = dp(44)
+            setMinimumWidth(dp(44))
             isClickable = true
             isFocusable = true
-            val label = TextView(requireContext()).apply {
+            addView(buildControlTileContent(title, subtitle, iconRes, compact))
+        }
+    }
+
+    private fun buildControlTileContent(
+        title: String,
+        subtitle: String,
+        iconRes: Int?,
+        compact: Boolean
+    ): View {
+        if (subtitle.isBlank()) {
+            return TextView(requireContext()).apply {
                 gravity = Gravity.CENTER
-                text = if (subtitle.isBlank()) title else "$title\n$subtitle"
-                setTextColor(color(R.color.terminal_page_text))
-                textSize = if (subtitle.isBlank()) 17f else 12f
-                typeface = Typeface.DEFAULT_BOLD
+                text = title
+                setTextColor(android.graphics.Color.rgb(17, 24, 39))
+                textSize = if (compact) 13f else 20f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
                 includeFontPadding = false
-            }
-            addView(
-                label,
-                ViewGroup.LayoutParams(
+                minWidth = dp(44)
+                layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
+            }
+        }
+
+        val titleView = TextView(requireContext()).apply {
+            text = title
+            setTextColor(android.graphics.Color.rgb(17, 24, 39))
+            textSize = 11.2f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            includeFontPadding = false
+            maxLines = 1
+            gravity = Gravity.CENTER
+        }
+        val subtitleView = TextView(requireContext()).apply {
+            text = subtitle
+            setTextColor(android.graphics.Color.rgb(111, 119, 131))
+            textSize = 10.2f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+            includeFontPadding = false
+            maxLines = 1
+            gravity = Gravity.CENTER
+        }
+        val textColumn = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            addView(
+                titleView,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            addView(
+                subtitleView,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(2)
+                }
+            )
+        }
+
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), 0, dp(8), 0)
+            iconRes?.let { resId ->
+                addView(
+                    ImageView(requireContext()).apply {
+                        setImageResource(resId)
+                        setColorFilter(android.graphics.Color.rgb(17, 24, 39))
+                    },
+                    LinearLayout.LayoutParams(dp(16), dp(16)).apply {
+                        marginEnd = dp(6)
+                    }
+                )
+            }
+            addView(
+                textColumn,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            )
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
     }
@@ -801,6 +871,25 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private class SpaceView(context: Context) : View(context)
 
+    private fun buildTerminalHandle(): View {
+        return LinearLayout(requireContext()).apply {
+            gravity = Gravity.CENTER
+            addView(View(requireContext()).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    cornerRadius = dp(2).toFloat()
+                    setColor(color(R.color.terminal_page_gray_chip))
+                }
+            }, LinearLayout.LayoutParams(dp(64), dp(4)))
+        }
+    }
+
+    private fun buildVerticalDivider(): View {
+        return View(requireContext()).apply {
+            setBackgroundColor(android.graphics.Color.rgb(232, 235, 240))
+        }
+    }
+
     private fun composerRoundButton(label: String): MaterialButton {
         return MaterialButton(requireContext()).apply {
             text = label
@@ -815,6 +904,19 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             backgroundTintList = android.content.res.ColorStateList.valueOf(
                 color(R.color.terminal_page_input_bg)
             )
+        }
+    }
+
+    private fun applyComposerBackground() {
+        terminalInputBar.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadii = floatArrayOf(
+                dp(22).toFloat(), dp(22).toFloat(),
+                dp(22).toFloat(), dp(22).toFloat(),
+                0f, 0f,
+                0f, 0f
+            )
+            setColor(color(R.color.terminal_page_header))
         }
     }
 
@@ -930,6 +1032,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private data class PanelButton(
         val title: String,
         val subtitle: String,
+        val iconRes: Int? = null,
         val action: (View) -> Unit
     )
 
@@ -962,9 +1065,10 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         root.findViewById<View>(R.id.terminalOutputContainer)
             ?.setBackgroundColor(color(R.color.terminal_page_surface))
         terminalView.setBackgroundColor(color(R.color.terminal_page_surface))
-        terminalInputBar.setBackgroundColor(color(R.color.terminal_page_header))
+        applyComposerBackground()
         tvEmptySessions.setTextColor(color(R.color.terminal_page_subtext))
         tvDetailTitle.setTextColor(color(R.color.terminal_page_text))
+        tvDetailSubtitle.setTextColor(color(R.color.terminal_page_subtext))
         tvSessionNote.setTextColor(color(R.color.terminal_page_subtext))
         tvBootstrapTitle.setTextColor(color(R.color.terminal_page_text))
         tvBootstrapDetail.setTextColor(color(R.color.terminal_page_subtext))
@@ -1097,12 +1201,26 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private fun handleThemeMenuItem(item: MenuItem): Boolean {
         val mode = TerminalThemeMode.entries.firstOrNull { it.ordinal == item.itemId } ?: return false
+        applyTerminalThemeMode(mode)
+        return true
+    }
+
+    private fun showThemeDialog() {
+        val modes = arrayOf(TerminalThemeMode.SYSTEM, TerminalThemeMode.DARK, TerminalThemeMode.LIGHT)
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(getString(R.string.terminal_theme_button))
+            .setItems(modes.map { it.label }.toTypedArray()) { _, which ->
+                applyTerminalThemeMode(modes[which])
+            }
+            .show()
+    }
+
+    private fun applyTerminalThemeMode(mode: TerminalThemeMode) {
         TerminalUiPreferences.saveThemeMode(requireContext().applicationContext, mode)
         applyTerminalColorScheme()
         terminalView.mTermSession?.emulator?.mColors?.reset()
         refreshTerminalColors()
         keepLatestTerminalOutputVisible()
-        return true
     }
 
     private fun sendTerminalInput(rawInput: String) {
@@ -1191,51 +1309,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             "lastUiRefreshAtMs=$lastUiRefreshAtMs"
     }
 
-    private fun showActionSheet() {
-        if (childFragmentManager.findFragmentByTag("terminal-actions") != null) {
-            return
-        }
-        TerminalActionSheet().show(childFragmentManager, "terminal-actions")
-    }
-
-    private fun showEntrySheet() {
-        if (childFragmentManager.findFragmentByTag("terminal-entries") != null) {
-            return
-        }
-        TerminalEntrySheet().show(childFragmentManager, "terminal-entries")
-    }
-
-    private fun runQuickCommand(command: String) {
-        Logger.i("Terminal", "触发更多操作里的 Shell 动作: $command")
-        terminalController.sendCommand(command)
-        showDetailPage()
-    }
-
-    private fun runBuildAction(label: String, command: String) {
-        Logger.i("Terminal", "触发构建快捷动作: $label, command=$command")
-        val routeLabel = WorkSurfaceRuntimeBridge.actionRouteLabel(RuntimeActionKind.MOBILE_BUILD)
-        // 任务入口层只表达“用户想触发哪个工作面动作”，具体会话与命令路由继续交给 TerminalSessionController。
-        terminalController.runCommandInPrimaryShell(
-            command = command,
-            note = "${routeLabel}：已切回主终端，开始执行${label}。"
-        )
-        showDetailPage()
-    }
-
-    private fun runSmokeScript() {
-        Logger.i("Terminal", "触发终端基础验收脚本")
-        terminalController.sendCommand(
-            """
-            printf '\n[SMOKE] 容器基础验收开始\n'
-            whoami
-            uname -a
-            pwd
-            ls /workspace
-            node --version
-            claude auth status
-            printf '[SMOKE] 容器基础验收结束\n'
-            """.trimIndent()
-        )
+    private fun createNewTerminalSession() {
+        WorkstationActionGateway.createShellSession(requireContext().applicationContext)
         showDetailPage()
     }
 
@@ -1254,14 +1329,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             viewLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 KFWorkspaceManager.currentSpaceState.collect { space ->
                     currentSpace = space
-                    currentAgents = if (space == null) {
-                        emptyList()
-                    } else {
-                        KFWorkspaceManager.listAgentRuntimes(
-                            requireContext().applicationContext,
-                            space.id
-                        )
-                    }
                     renderManagedSessions()
                 }
             }
@@ -1317,7 +1384,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                     BootstrapStage.ROOTFS_EXTRACTING -> "正在解压系统镜像"
                     BootstrapStage.BASE_BOOTSTRAP -> "正在初始化基础环境"
                     BootstrapStage.SPACE_READY -> "正在准备工作区"
-                    BootstrapStage.TERMINAL_WARMING -> "正在预热主终端"
                     else -> getString(R.string.terminal_bootstrap_progress_title)
                 }
                 tvBootstrapDetail.text = when (snapshot.stage) {
@@ -1327,8 +1393,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                         "正在初始化基础环境和工具链，完成后会自动继续。"
                     BootstrapStage.SPACE_READY ->
                         "正在准备标准工作区和构建辅助目录。"
-                    BootstrapStage.TERMINAL_WARMING ->
-                        "正在恢复主终端状态，请稍候。"
                     BootstrapStage.SERVICE_REQUESTED ->
                         "后台服务正在接管终端环境。"
                     else -> getString(R.string.terminal_bootstrap_progress_detail)
@@ -1350,7 +1414,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             lastManagedSessionsRenderSignature = "space:none"
             terminalListContainer.removeAllViews()
             tvEmptySessions.visibility = View.VISIBLE
-            tvDetailTitle.text = getString(R.string.terminal_title_short)
+            renderDetailHeader(null)
             return
         }
 
@@ -1358,9 +1422,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         val activeSessionId = terminalController.getActiveSessionId()
             ?: snapshot.currentViewedSessionId
             ?: space.currentTerminalSessionId
-        val activeSession = sequenceOf(snapshot.primaryEntry)
-            .filterNotNull()
-            .plus(snapshot.sessions.asSequence())
+        val activeSession = snapshot.sessions.asSequence()
             .firstOrNull { it.id == activeSessionId }
 
         val renderSignature = buildManagedSessionsRenderSignature(space, snapshot, activeSessionId)
@@ -1374,54 +1436,24 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private fun renderTerminalSessions(snapshot: TerminalSessionsSnapshot) {
         terminalListContainer.removeAllViews()
 
-        val additionalSessions = snapshot.liveSessions
+        val visibleSessions = snapshot.liveSessions
             .sortedWith(
                 compareByDescending<TerminalSessionItem> { it.isInputReady || it.allowsQueuedInput }
                     .thenByDescending { it.lastAttachedAt ?: it.lastStartedAt ?: it.createdAt }
             )
         Logger.i(
             "TerminalFragment",
-            "渲染终端列表: primary=${snapshot.primaryEntry?.status?.name ?: "none"}, liveCount=${additionalSessions.size}, allCount=${snapshot.sessions.size}"
+            "渲染终端列表: visibleCount=${visibleSessions.size}, allCount=${snapshot.sessions.size}"
         )
+        if (visibleSessions.isEmpty()) {
+            tvEmptySessions.visibility = View.VISIBLE
+            return
+        }
+
         tvEmptySessions.visibility = View.GONE
-
-        if (additionalSessions.isEmpty()) {
-            terminalListContainer.addView(createPrimarySessionEntry(snapshot.primaryEntry))
-        } else {
-            additionalSessions.forEach { session ->
-                terminalListContainer.addView(createSessionListItem(session))
-            }
+        visibleSessions.forEach { session ->
+            terminalListContainer.addView(createSessionListItem(session))
         }
-    }
-
-    private fun createPrimarySessionEntry(primaryEntry: TerminalSessionItem?): View {
-        val listPrimaryEntry = primaryEntry?.takeUnless { it.isTerminalListArchived() }
-        val effectiveStatus = when (listPrimaryEntry?.status) {
-            ManagedTerminalStatus.RUNNING,
-            ManagedTerminalStatus.ATTACHED,
-            ManagedTerminalStatus.REGISTERED,
-            ManagedTerminalStatus.FROZEN,
-            ManagedTerminalStatus.STOPPED,
-            ManagedTerminalStatus.EXITED,
-            ManagedTerminalStatus.FAILED -> ManagedTerminalStatus.REGISTERED
-            null -> ManagedTerminalStatus.REGISTERED
-        }
-        val badge = resolveSessionBadge(
-            status = effectiveStatus,
-            isActive = listPrimaryEntry?.isCurrentViewed == true
-        )
-        val timestamp = resolveSessionTimestamp(listPrimaryEntry)
-
-        return buildSessionListItem(
-            title = listPrimaryEntry?.title ?: getString(R.string.terminal_primary_title),
-            timeText = timestamp?.let(::formatSessionTime),
-            badge = badge,
-            statusLabelOverride = listPrimaryEntry?.statusLabel,
-            onClick = {
-                terminalController.openPrimaryShellEntry()
-                showDetailPage()
-            }
-        )
     }
 
     private fun createSessionListItem(session: TerminalSessionItem): View {
@@ -1431,7 +1463,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             title = session.title,
             timeText = timestamp?.let(::formatSessionTime),
             badge = badge,
-            statusLabelOverride = session.statusLabel,
             onClick = {
                 terminalController.switchToSession(session.id)
                 showDetailPage()
@@ -1443,7 +1474,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         title: String,
         timeText: String?,
         badge: Triple<Int, Int, String>,
-        statusLabelOverride: String? = null,
         onClick: () -> Unit
     ): View {
         val itemView = layoutInflater.inflate(
@@ -1472,7 +1502,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         titleView.setTextColor(color(R.color.terminal_page_text))
         timeView.setTextColor(color(R.color.terminal_page_subtext))
 
-        titleView.text = title
+        val titleParts = splitTerminalTitle(title)
+        titleView.text = titleParts.main
         if (timeText.isNullOrBlank()) {
             timeView.visibility = View.INVISIBLE
             timeView.text = ""
@@ -1480,7 +1511,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             timeView.visibility = View.VISIBLE
             timeView.text = timeText
         }
-        statusView.text = statusLabelOverride?.takeIf { it.isNotBlank() } ?: labelText
+        statusView.text = labelText
 
         root.setOnClickListener { onClick() }
         return itemView
@@ -1514,7 +1545,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                     Triple(
                         R.color.terminal_page_blue,
                         R.color.terminal_page_surface,
-                        getString(R.string.terminal_status_connected)
+                        getString(R.string.terminal_status_running)
                     )
                 }
 
@@ -1566,14 +1597,45 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         return DateFormat.format("MM-dd", timestamp).toString()
     }
 
-    private fun renderDetailHeader(activeSessionTitle: String?) {
-        tvDetailTitle.text = activeSessionTitle ?: getString(R.string.terminal_title_short)
+    private data class TerminalTitleParts(
+        val main: String,
+        val subtitle: String
+    )
+
+    private fun splitTerminalTitle(title: String?): TerminalTitleParts {
+        val raw = title?.trim().orEmpty()
+        if (raw.isBlank()) {
+            return TerminalTitleParts(getString(R.string.terminal_title_short), "")
+        }
+        val sessionNumber = Regex("""#\d+""").find(raw)?.value
+        val withoutNumber = sessionNumber?.let { raw.replace(it, "").trim() } ?: raw
+        val colonIndex = withoutNumber.indexOf(':')
+        val main = if (colonIndex > 0) {
+            withoutNumber.substring(0, colonIndex).trim()
+        } else {
+            withoutNumber.trim()
+        }
+        val path = if (colonIndex > 0) {
+            withoutNumber.substring(colonIndex + 1).trim()
+        } else {
+            ""
+        }
+        val subtitle = listOf(path.takeIf { it.isNotBlank() }, sessionNumber)
+            .filterNotNull()
+            .joinToString(" · ")
+        return TerminalTitleParts(main.ifBlank { raw }, subtitle)
     }
 
-    private fun launchAgentInDedicatedSession(agent: AgentRuntimeRecord) {
-        Logger.i("Terminal", "从参考入口打开独立智能体会话: ${agent.displayName}")
-        WorkstationActionGateway.launchAgentSession(requireContext().applicationContext, agent.id)
-        showDetailPage()
+    private fun renderDetailHeader(activeSessionTitle: String?) {
+        val parts = splitTerminalTitle(activeSessionTitle)
+        tvDetailTitle.text = parts.main
+        if (parts.subtitle.isBlank()) {
+            tvDetailSubtitle.visibility = View.GONE
+            tvDetailSubtitle.text = ""
+        } else {
+            tvDetailSubtitle.visibility = View.VISIBLE
+            tvDetailSubtitle.text = parts.subtitle
+        }
     }
 
     fun openSessionFromExternal(sessionId: String) {
@@ -1622,8 +1684,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             append(space.id)
             append('|')
             append(activeSessionId ?: "none")
-            append('|')
-            snapshot.primaryEntry?.let { appendSessionRenderSignature(it) }
             append('|')
             snapshot.liveSessions.forEach { appendSessionRenderSignature(it) }
             append('|')
@@ -1974,64 +2034,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     override fun updateCursorState(state: Boolean) {
         terminalView.setTerminalCursorBlinkerState(state, true)
-    }
-
-    override fun onTerminalActionSelected(action: TerminalActionSheet.Action) {
-        when (action) {
-            TerminalActionSheet.Action.BUILD_DOCTOR ->
-                runBuildAction("构建医生", "kf-gradle doctor")
-
-            TerminalActionSheet.Action.BUILD_FAST_COMPILE ->
-                runBuildAction("热身编译", "kf-gradle compile")
-
-            TerminalActionSheet.Action.BUILD_DEBUG_APK ->
-                runBuildAction("调试包构建", "kf-gradle assemble")
-
-            TerminalActionSheet.Action.CLEAR_SCREEN ->
-                sendTerminalInput("\u000c")
-
-            TerminalActionSheet.Action.KILL_CURRENT_SESSION ->
-                terminalController.getActiveSessionId()?.let { id ->
-                    terminalController.endSession(id)
-                }
-
-            TerminalActionSheet.Action.SEND_CTRL_C ->
-                sendTerminalInput("\u0003")
-
-            TerminalActionSheet.Action.COPY_TRANSCRIPT -> copyCurrentScreenText()
-            TerminalActionSheet.Action.DELETE_CURRENT_SESSION -> {
-                terminalController.removeActiveSession()
-                showListPage()
-            }
-        }
-    }
-
-    override fun onTerminalEntrySelected(action: TerminalEntrySheet.Action) {
-        when (action) {
-            TerminalEntrySheet.Action.NEW_SESSION -> {
-                // 这里仍是入口层，只把"新建会话"转发给宿主服务，不在 Fragment 里拼终端运行逻辑。
-                WorkstationActionGateway.createShellSession(requireContext().applicationContext)
-                showDetailPage()
-            }
-
-            TerminalEntrySheet.Action.OPEN_CLAUDE -> openAgentEntry(AgentKind.CLAUDE_CODE)
-            TerminalEntrySheet.Action.OPEN_CODEX -> openAgentEntry(AgentKind.CODEX)
-            TerminalEntrySheet.Action.OPEN_OPENCLAW -> openAgentEntry(AgentKind.OPENCLAW)
-            TerminalEntrySheet.Action.SEND_ENTER -> sendTerminalInput("\r")
-        }
-    }
-
-    private fun openAgentEntry(agentKind: AgentKind) {
-        val agent = currentAgents.firstOrNull { it.agentKind == agentKind }
-        if (agent == null) {
-            showSessionNote("当前空间里还没有这个智能体入口。")
-            return
-        }
-        if (!WorkSurfaceRuntimeBridge.isCommandAvailable(requireContext().applicationContext, agent.launchCommand)) {
-            showSessionNote("${agent.displayName} 还没有安装到当前空间，先在主终端里按正常 Linux 方式安装。")
-            return
-        }
-        launchAgentInDedicatedSession(agent)
     }
 
     override fun logError(tag: String, message: String) {

@@ -13,14 +13,13 @@ import java.io.File
 /**
  * 工作面层对象，主责是维护“空间 / 终端会话 / 智能体运行时”的元数据。
  *
- * 它可以决定谁属于哪个空间、哪个会话是当前主终端；
+ * 它可以决定谁属于哪个空间、哪个会话是当前查看的终端；
  * 但不应该回到建房层去决定 rootfs、bind 或 PRoot 参数。
  */
 object KFWorkspaceManager {
 
     private const val DEFAULT_SPACE_ID = "space-main"
     private const val DEFAULT_SPACE_NAME = "默认空间"
-    private const val DEFAULT_SHELL_TITLE = "主终端"
     private const val SPACES_FILE = "spaces.json"
     private const val TERMINALS_FILE = "terminal-sessions.json"
     private const val AGENTS_FILE = "agent-runtimes.json"
@@ -40,7 +39,6 @@ object KFWorkspaceManager {
         val spaces = loadSpaces(runtimeRoot).toMutableList()
         val existing = spaces.firstOrNull { it.id == DEFAULT_SPACE_ID }
         val currentTerminalSessionId = existing?.currentTerminalSessionId
-            ?: defaultShellSessionId(DEFAULT_SPACE_ID)
 
         val space = (existing ?: SpaceRecord(
             id = DEFAULT_SPACE_ID,
@@ -63,7 +61,6 @@ object KFWorkspaceManager {
             .apply { add(space) }
 
         saveSpaces(runtimeRoot, updatedSpaces)
-        ensurePrimaryTerminalSession(runtimeRoot, space)
         ensureBuiltinAgents(runtimeRoot, space)
         val (normalizedSpaces, _) = normalizeWorkspaceState(runtimeRoot)
         syncCurrentSpaceState(normalizedSpaces)
@@ -120,51 +117,6 @@ object KFWorkspaceManager {
         return normalizeWorkspaceState(runtimeRoot(context)).second
             .filter { it.spaceId == spaceId }
             .sortedWith(compareBy<ManagedTerminalRecord> { it.createdAt }.thenBy { it.title })
-    }
-
-    fun primaryShellSessionId(spaceId: String): String {
-        return defaultShellSessionId(spaceId)
-    }
-
-    @Synchronized
-    fun ensurePrimaryShellSession(context: Context, spaceId: String): ManagedTerminalRecord {
-        val runtimeRoot = runtimeRoot(context)
-        val spaces = loadSpaces(runtimeRoot)
-        val space = spaces.firstOrNull { it.id == spaceId }
-        val sessions = loadTerminalSessions(runtimeRoot)
-        val primarySessionId = defaultShellSessionId(spaceId)
-        val existing = sessions.firstOrNull { it.id == primarySessionId }
-            ?: sessions.firstOrNull {
-                it.spaceId == spaceId &&
-                    it.kind == ManagedTerminalKind.SHELL &&
-                    it.title == DEFAULT_SHELL_TITLE
-            }
-
-        if (existing != null && !existing.isArchivedRecord()) {
-            return existing
-        }
-
-        val refreshed = ManagedTerminalRecord(
-            id = primarySessionId,
-            spaceId = spaceId,
-            title = DEFAULT_SHELL_TITLE,
-            kind = ManagedTerminalKind.SHELL,
-            createdAt = existing?.createdAt ?: space?.createdAt ?: System.currentTimeMillis(),
-            status = ManagedTerminalStatus.REGISTERED
-        )
-
-        val updatedSessions = sessions
-            .filterNot { it.id == primarySessionId }
-            .filterNot {
-                it.spaceId == spaceId &&
-                    it.kind == ManagedTerminalKind.SHELL &&
-                    it.title == DEFAULT_SHELL_TITLE
-            }
-            .toMutableList()
-            .apply { add(refreshed) }
-
-        saveTerminalSessions(runtimeRoot, updatedSessions)
-        return refreshed
     }
 
     fun listAllTerminalSessions(context: Context): List<ManagedTerminalRecord> {
@@ -318,9 +270,6 @@ object KFWorkspaceManager {
 
     fun suggestNextShellTitle(context: Context, spaceId: String): String {
         val existingTitles = listTerminalSessions(context, spaceId).map { it.title }.toSet()
-        if (existingTitles.isEmpty()) {
-            return DEFAULT_SHELL_TITLE
-        }
         var suffix = System.currentTimeMillis().toString(36).takeLast(4).uppercase()
         var candidate = "Shell $suffix"
         var attempts = 0
@@ -419,23 +368,6 @@ object KFWorkspaceManager {
         return updated.firstOrNull { it.id == runtimeId }
     }
 
-    private fun ensurePrimaryTerminalSession(runtimeRoot: File, space: SpaceRecord) {
-        val sessions = loadTerminalSessions(runtimeRoot)
-        if (sessions.any { it.spaceId == space.id }) {
-            return
-        }
-
-        val mainSession = ManagedTerminalRecord(
-            id = defaultShellSessionId(space.id),
-            spaceId = space.id,
-            title = DEFAULT_SHELL_TITLE,
-            kind = ManagedTerminalKind.SHELL,
-            createdAt = space.createdAt,
-            status = ManagedTerminalStatus.REGISTERED
-        )
-        saveTerminalSessions(runtimeRoot, sessions + mainSession)
-    }
-
     private fun normalizeWorkspaceState(
         runtimeRoot: File
     ): Pair<List<SpaceRecord>, List<ManagedTerminalRecord>> {
@@ -449,7 +381,6 @@ object KFWorkspaceManager {
         val normalizedSpaces = spaces.map { space ->
             val spaceSessions = normalizedSessions.filter { it.spaceId == space.id }
             val normalizedCurrentSessionId = resolvePreferredCurrentSessionId(
-                spaceId = space.id,
                 currentSessionId = space.currentTerminalSessionId,
                 sessions = spaceSessions
             )
@@ -564,7 +495,6 @@ object KFWorkspaceManager {
     }
 
     private fun resolvePreferredCurrentSessionId(
-        spaceId: String,
         currentSessionId: String?,
         sessions: List<ManagedTerminalRecord>
     ): String? {
@@ -578,7 +508,7 @@ object KFWorkspaceManager {
         return sessions
             .filterNot { it.isArchivedRecord() }
             .sortedWith(
-                compareBy<ManagedTerminalRecord> { currentSessionPriority(spaceId, it) }
+                compareBy<ManagedTerminalRecord> { currentSessionPriority(it) }
                     .thenByDescending { it.lastAttachedAt ?: it.lastStartedAt ?: it.createdAt }
                     .thenBy { it.title }
             )
@@ -586,17 +516,12 @@ object KFWorkspaceManager {
             ?.id
     }
 
-    private fun currentSessionPriority(spaceId: String, session: ManagedTerminalRecord): Int {
+    private fun currentSessionPriority(session: ManagedTerminalRecord): Int {
         return when {
             session.status.isLiveProcessStatus() -> 0
-
-            session.id == defaultShellSessionId(spaceId) &&
-                (session.status == ManagedTerminalStatus.FROZEN ||
-                    session.status == ManagedTerminalStatus.REGISTERED) -> 1
-
-            session.status == ManagedTerminalStatus.FROZEN -> 2
-            session.status == ManagedTerminalStatus.REGISTERED -> 3
-            else -> 4
+            session.status == ManagedTerminalStatus.FROZEN -> 1
+            session.status == ManagedTerminalStatus.REGISTERED -> 2
+            else -> 3
         }
     }
 
@@ -754,9 +679,5 @@ object KFWorkspaceManager {
         }.onFailure { error ->
             Logger.e("KFWorkspaceManager", "保存工作面状态失败: ${file.name}, ${error.message}")
         }
-    }
-
-    private fun defaultShellSessionId(spaceId: String): String {
-        return "shell-$spaceId-main"
     }
 }

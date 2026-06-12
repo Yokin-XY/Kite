@@ -427,16 +427,16 @@ data class KiteRecipeCard(
 }
 
 data class KiteLaunchConfig(
-    val openInstance: Boolean = false
+    val openInstance: Boolean = true
 ) {
-    fun isDefault(): Boolean = !openInstance
+    fun isDefault(): Boolean = openInstance
 
     fun toJson(): JSONObject = JSONObject()
         .put("openInstance", openInstance)
 
     companion object {
         fun fromJson(json: JSONObject?): KiteLaunchConfig =
-            KiteLaunchConfig(openInstance = json?.optBoolean("openInstance", false) ?: false)
+            KiteLaunchConfig(openInstance = json?.optBoolean("openInstance", true) ?: true)
     }
 }
 

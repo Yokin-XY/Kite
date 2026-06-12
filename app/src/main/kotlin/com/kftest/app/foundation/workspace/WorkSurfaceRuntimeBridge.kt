@@ -120,7 +120,7 @@ object WorkSurfaceRuntimeBridge {
                 提示：
                 1. 这里是工作区的构建辅助区，用来放 `kf-gradle`、Gradle 缓存和 Android 用户目录。
                 2. 它属于高频构建热路径的一部分，不建议在文件页里大范围手工清空。
-                3. 如果需要跑手机端构建，优先去主终端执行 `kf-gradle doctor|compile|assemble`。
+                3. 如果需要跑手机端构建，优先去终端页执行 `kf-gradle doctor|compile|assemble`。
                 """.trimIndent()
             }
 

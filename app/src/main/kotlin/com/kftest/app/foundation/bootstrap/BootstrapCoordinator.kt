@@ -22,7 +22,6 @@ enum class BootstrapStage {
     ROOTFS_EXTRACTING,
     BASE_BOOTSTRAP,
     SPACE_READY,
-    TERMINAL_WARMING,
     READY,
     FAILED
 }
@@ -80,14 +79,9 @@ object BootstrapCoordinator {
                 BackgroundRuntimeHost.ensureResidentRuntimes(appContext, reason = "service-start:app-bootstrap")
                 KFApplication.markLaunchStage(LOG_TAG, "后台守护运行项已请求")
 
-                // 冷启动时先把旧宿主残留的终端快照归一化，再决定当前会话和预热入口，
-                // 避免短时间内把已经死掉的 RUNNING/ATTACHED 记录误当成当前会话。
+                // 冷启动时只归一化旧宿主残留的终端快照，不主动创建终端入口。
                 TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
                 KFApplication.markLaunchStage(LOG_TAG, "持久终端快照已归一化")
-
-                _snapshot.value = _snapshot.value.copy(stage = BootstrapStage.TERMINAL_WARMING)
-                TerminalRuntimeHost.prewarmPrimarySession(appContext)
-                KFApplication.markLaunchStage(LOG_TAG, "主终端预热已请求")
 
                 _snapshot.value = _snapshot.value.copy(
                     stage = BootstrapStage.READY,

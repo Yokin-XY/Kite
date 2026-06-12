@@ -55,14 +55,6 @@ object TerminalRuntimeHost {
         ensureController(appContext).createAndSwitchShellSession()
     }
 
-    fun prewarmPrimarySession(appContext: Context) {
-        Logger.i("TerminalRuntimeHost", "请求预热主终端")
-        ensureController(appContext).prepareAndStartContainer(
-            resetContainer = false,
-            forceRestart = false
-        )
-    }
-
     fun launchAgentSession(appContext: Context, runtimeId: String) {
         ensureController(appContext).launchAgentSession(runtimeId)
     }

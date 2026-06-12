@@ -49,7 +49,10 @@ object CardRunStore {
         lastMeaningfulOutput: String? = null,
         lastError: String? = null,
         shellReportText: String? = null,
-        nextActionUrl: String? = null
+        nextActionUrl: String? = null,
+        clearRunBinding: Boolean = false,
+        clearTerminalSession: Boolean = false,
+        clearNextActionUrl: Boolean = false
     ): CardRunState {
         val existing = instanceId
             ?.takeIf { it.isNotBlank() }
@@ -68,13 +71,13 @@ object CardRunStore {
             surface = resolvedSurface,
             currentStepIndex = currentStepIndex ?: existing.currentStepIndex,
             stepCount = recipe.steps.size,
-            runId = runId ?: existing.runId,
-            terminalSessionId = terminalSessionId ?: existing.terminalSessionId,
-            pid = pid ?: existing.pid,
+            runId = if (clearRunBinding) null else runId ?: existing.runId,
+            terminalSessionId = if (clearRunBinding || clearTerminalSession) null else terminalSessionId ?: existing.terminalSessionId,
+            pid = if (clearRunBinding) null else pid ?: existing.pid,
             lastMeaningfulOutput = lastMeaningfulOutput ?: existing.lastMeaningfulOutput,
             lastError = lastError,
             shellReportText = shellReportText ?: existing.shellReportText,
-            nextActionUrl = nextActionUrl ?: existing.nextActionUrl,
+            nextActionUrl = if (clearRunBinding || clearNextActionUrl) null else nextActionUrl ?: existing.nextActionUrl,
             updatedAt = System.currentTimeMillis()
         )
         upsert(next)

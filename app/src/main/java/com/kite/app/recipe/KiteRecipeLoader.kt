@@ -532,7 +532,7 @@ data class NewRecipeInput(
     val url: String,
     val command: String,
     val shortcut: Boolean,
-    val openInstanceOnStart: Boolean = false,
+    val openInstanceOnStart: Boolean = true,
     val iconName: String = "",
     val description: String = "",
     val workdir: String = "",
