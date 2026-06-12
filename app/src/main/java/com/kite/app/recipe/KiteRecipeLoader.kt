@@ -305,9 +305,20 @@ class KiteRecipeLoader(
             explicitSteps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB && !it.url.isNullOrBlank() }?.url.orEmpty()
         }
         val inferredType = inferType(input.type, explicitSteps, defaultUrl)
-        val iconName = input.iconName.ifBlank { KiteRecipeIcon.defaultNameForType(inferredType) }
-        val normalizedIcon = KiteRecipeIcon.normalizeName(iconName, inferredType)
-        val steps = explicitSteps.ifEmpty { legacySteps(id, input, defaultUrl) }
+        val iconType = input.iconType.trim().lowercase()
+        val icon = if (iconType == KiteRecipeIcon.TYPE_IMAGE && input.iconSource.isNotBlank()) {
+            KiteRecipeIcon(
+                type = KiteRecipeIcon.TYPE_IMAGE,
+                name = input.iconName.ifBlank { "custom" },
+                source = input.iconSource
+            )
+        } else {
+            val iconName = input.iconName.ifBlank { KiteRecipeIcon.defaultNameForType(inferredType) }
+            KiteRecipeIcon(
+                type = KiteRecipeIcon.TYPE_BUILTIN,
+                name = KiteRecipeIcon.normalizeName(iconName, inferredType)
+            )
+        }
         return KiteRecipe(
             schemaVersion = KiteRecipe.PROTOCOL_VERSION,
             id = id,
@@ -317,10 +328,10 @@ class KiteRecipeLoader(
             category = KiteRecipe.CATEGORY_UNCATEGORIZED,
             defaultUrl = defaultUrl,
             shortcut = input.shortcut,
-            icon = KiteRecipeIcon(type = "builtin", name = normalizedIcon),
+            icon = icon,
             launch = KiteLaunchConfig(openInstance = input.openInstanceOnStart),
-            execution = KiteExecution.steps(steps),
-            actions = KiteRecipe.defaultActionsFor(steps, defaultUrl),
+            execution = KiteExecution.steps(explicitSteps),
+            actions = KiteRecipe.defaultActionsFor(explicitSteps, defaultUrl),
             taskLabel = input.name.trim(),
             taskMode = "separate",
             runtimeSource = KiteRecipe.SOURCE_SHARED
@@ -374,32 +385,6 @@ class KiteRecipeLoader(
             }
 
             else -> null
-        }
-    }
-
-    private fun legacySteps(recipeId: String, input: NewRecipeInput, defaultUrl: String): List<KiteRecipeStep> {
-        val expected = input.expectedText.trim().takeIf { it.isNotBlank() }?.let {
-            KiteExpectedResult(mode = "contains", text = it, source = KiteRecipe.OUTPUT_LAST_MEANINGFUL)
-        }
-        val shellStep = input.command.trim().takeIf { it.isNotBlank() }?.let {
-            KiteRecipeStep(
-                id = "step_start_$recipeId",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = it,
-                runMode = KiteRecipe.normalizeRunMode(input.runMode) ?: KiteRecipe.RUN_MODE_DETACHED,
-                workdir = input.workdir.trim().ifBlank { null },
-                expected = expected,
-                outputPolicy = KiteOutputPolicy()
-            )
-        }
-        val openWebStep = defaultUrl.takeIf { it.isNotBlank() }?.let {
-            KiteRecipeStep(id = "step_open_$recipeId", type = KiteRecipe.STEP_OPEN_WEB, url = it)
-        }
-        return when (input.type) {
-            KiteRecipe.TYPE_COMMAND_WEB, KiteRecipe.TYPE_SCRIPT_WEB -> listOfNotNull(shellStep, openWebStep)
-            KiteRecipe.TYPE_START_SERVICE -> listOfNotNull(shellStep, openWebStep)
-            KiteRecipe.TYPE_TEMPLATE -> emptyList()
-            else -> listOfNotNull(openWebStep)
         }
     }
 
@@ -534,6 +519,8 @@ data class NewRecipeInput(
     val shortcut: Boolean,
     val openInstanceOnStart: Boolean = true,
     val iconName: String = "",
+    val iconType: String = KiteRecipeIcon.TYPE_BUILTIN,
+    val iconSource: String = "",
     val description: String = "",
     val workdir: String = "",
     val runMode: String = KiteRecipe.RUN_MODE_DETACHED,

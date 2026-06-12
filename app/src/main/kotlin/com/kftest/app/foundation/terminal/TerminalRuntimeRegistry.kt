@@ -29,6 +29,7 @@ data class TerminalRuntimeEntry(
     val lastExitCode: Int? = null,
     val sourceAgentRuntimeId: String? = null,
     val startupCommand: String? = null,
+    val sourceLabel: String? = null,
     val transcriptPath: String,
     val isActive: Boolean = false,
     val hasAttachedSession: Boolean = false,
@@ -61,6 +62,7 @@ object TerminalRuntimeRegistry {
                 lastExitCode = record.lastExitCode,
                 sourceAgentRuntimeId = record.sourceAgentRuntimeId,
                 startupCommand = record.startupCommand,
+                sourceLabel = record.sourceLabel,
                 transcriptPath = File(transcriptDir, "${record.id}.txt").absolutePath,
                 isActive = currentViewedSessionId != null && record.id == currentViewedSessionId
             )
@@ -92,6 +94,7 @@ object TerminalRuntimeRegistry {
             lastExitCode = record.lastExitCode,
             sourceAgentRuntimeId = record.sourceAgentRuntimeId,
             startupCommand = record.startupCommand,
+            sourceLabel = record.sourceLabel,
             transcriptPath = transcriptFile.absolutePath,
             isActive = isActive,
             hasAttachedSession = hasAttachedSession,

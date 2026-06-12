@@ -71,7 +71,7 @@
             android:alwaysRetainTaskState="true"
             android:clearTaskOnLaunch="false"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:documentLaunchMode="always"
+            android:documentLaunchMode="intoExisting"
             android:excludeFromRecents="false"
             android:exported="true"
             android:finishOnTaskLaunch="false"

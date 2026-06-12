@@ -75,6 +75,7 @@ data class TerminalSessionItem(
     val isCurrentViewed: Boolean,
     val startupCommand: String? = null,
     val sourceAgentRuntimeId: String? = null,
+    val sourceLabel: String? = null,
     val availableActions: List<TerminalSessionAction> = emptyList()
 )
 
@@ -265,6 +266,8 @@ object TerminalSessionStore {
         append(':')
         append(session.statusLabel)
         append(':')
+        append(session.sourceLabel ?: "")
+        append(':')
         append(session.runtimeRealityLabel ?: "record")
         append(':')
         append(session.rootPid ?: 0)
@@ -323,6 +326,7 @@ object TerminalSessionStore {
             isCurrentViewed = currentViewedSessionId == sessionId,
             startupCommand = startupCommand,
             sourceAgentRuntimeId = sourceAgentRuntimeId,
+            sourceLabel = sourceLabel,
             availableActions = buildAvailableActions(status, root)
         )
     }

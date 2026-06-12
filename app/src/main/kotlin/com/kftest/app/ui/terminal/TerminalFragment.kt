@@ -98,15 +98,16 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             }
     }
 
-    private lateinit var listPage: View
+    private var listPage: View? = null
     private lateinit var detailPage: View
     private lateinit var terminalDetailHeader: View
-    private lateinit var terminalListRefresh: SwipeRefreshLayout
-    private lateinit var tvEmptySessions: TextView
-    private lateinit var terminalListContainer: LinearLayout
+    private var terminalListRefresh: SwipeRefreshLayout? = null
+    private var tvEmptySessions: TextView? = null
+    private var terminalListContainer: LinearLayout? = null
     private lateinit var tvDetailTitle: TextView
     private lateinit var tvDetailSubtitle: TextView
     private lateinit var tvSessionNote: TextView
+    private lateinit var terminalOutputContainer: View
     private lateinit var cardBootstrapStatus: View
     private lateinit var progressBootstrap: ProgressBar
     private lateinit var tvBootstrapTitle: TextView
@@ -195,7 +196,12 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         savedInstanceState: Bundle?
     ): View {
         Logger.i("Terminal", "创建终端页面")
-        return inflater.inflate(R.layout.fragment_terminal, container, false)
+        val layout = if (isDetailOnlyMode()) {
+            R.layout.fragment_terminal_detail
+        } else {
+            R.layout.fragment_terminal
+        }
+        return inflater.inflate(layout, container, false)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -255,6 +261,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         tvDetailTitle = view.findViewById(R.id.tvDetailTitle)
         tvDetailSubtitle = view.findViewById(R.id.tvDetailSubtitle)
         tvSessionNote = view.findViewById(R.id.tvSessionNote)
+        terminalOutputContainer = view.findViewById(R.id.terminalOutputContainer)
         cardBootstrapStatus = view.findViewById(R.id.cardBootstrapStatus)
         progressBootstrap = view.findViewById(R.id.progressBootstrap)
         tvBootstrapTitle = view.findViewById(R.id.tvBootstrapTitle)
@@ -264,7 +271,12 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         terminalView.setBackgroundColor(color(R.color.terminal_page_surface))
         applyShellThemeToStaticViews(view)
         val appContext = requireContext().applicationContext
-        terminalController = TerminalRuntimeHost.attachUi(appContext, this)
+        terminalController = TerminalRuntimeHost.attachUi(
+            appContext,
+            this,
+            preferredSessionId = initialSessionId().takeIf { isDetailOnlyMode() && it.isNotBlank() },
+            notifyManagedSessionsChanged = !isDetailOnlyMode()
+        )
         currentFontSizeDp = TerminalUiPreferences.loadFontSizeDp(appContext)
 
         applyTerminalColorScheme()
@@ -307,17 +319,17 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             false
         }
 
-        terminalListRefresh.setColorSchemeColors(
+        terminalListRefresh?.setColorSchemeColors(
             color(R.color.terminal_page_blue)
         )
-        terminalListRefresh.setOnRefreshListener {
+        terminalListRefresh?.setOnRefreshListener {
             requestTerminalRefresh("pull-to-refresh", force = true, userVisible = true)
         }
 
-        view.findViewById<AppCompatImageButton>(R.id.btnListAdd).setOnClickListener {
+        view.findViewById<AppCompatImageButton>(R.id.btnListAdd)?.setOnClickListener {
             createNewTerminalSession()
         }
-        view.findViewById<AppCompatImageButton>(R.id.btnBackToSessions).apply {
+        view.findViewById<AppCompatImageButton>(R.id.btnBackToSessions)?.apply {
             if (isDetailOnlyMode()) {
                 visibility = View.INVISIBLE
                 setOnClickListener(null)
@@ -1058,7 +1070,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         }
 
         root.setBackgroundColor(color(R.color.terminal_page_bg))
-        listPage.setBackgroundColor(color(R.color.terminal_page_surface))
+        listPage?.setBackgroundColor(color(R.color.terminal_page_surface))
         detailPage.setBackgroundColor(color(R.color.terminal_page_bg))
         tintHeader((listPage as? ViewGroup)?.getChildAt(0))
         tintHeader((detailPage as? ViewGroup)?.getChildAt(0))
@@ -1066,7 +1078,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             ?.setBackgroundColor(color(R.color.terminal_page_surface))
         terminalView.setBackgroundColor(color(R.color.terminal_page_surface))
         applyComposerBackground()
-        tvEmptySessions.setTextColor(color(R.color.terminal_page_subtext))
+        tvEmptySessions?.setTextColor(color(R.color.terminal_page_subtext))
         tvDetailTitle.setTextColor(color(R.color.terminal_page_text))
         tvDetailSubtitle.setTextColor(color(R.color.terminal_page_subtext))
         tvSessionNote.setTextColor(color(R.color.terminal_page_subtext))
@@ -1079,15 +1091,16 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun setupWindowInsets(root: View) {
-        val listInitialBottomPadding = listPage.paddingBottom
+        val list = listPage
+        val listInitialBottomPadding = list?.paddingBottom ?: 0
         val detailInitialBottomPadding = detailPage.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val systemInsets = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
-            listPage.setPadding(
-                listPage.paddingLeft,
-                listPage.paddingTop,
-                listPage.paddingRight,
+            list?.setPadding(
+                list.paddingLeft,
+                list.paddingTop,
+                list.paddingRight,
                 listInitialBottomPadding + systemInsets.bottom
             )
             detailPage.setPadding(
@@ -1113,8 +1126,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             pendingTerminalRefresh = true
             pendingTerminalRefreshForce = pendingTerminalRefreshForce || force
             pendingTerminalRefreshUserVisible = pendingTerminalRefreshUserVisible || userVisible
-            if (userVisible && ::terminalListRefresh.isInitialized) {
-                terminalListRefresh.isRefreshing = true
+            if (userVisible) {
+                terminalListRefresh?.isRefreshing = true
             }
             Logger.i("TerminalFragment", "终端刷新已排队: reason=$reason")
             return
@@ -1124,8 +1137,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             Logger.i("TerminalFragment", "跳过终端刷新: reason=$reason, recent=true")
             return
         }
-        if (userVisible && ::terminalListRefresh.isInitialized) {
-            terminalListRefresh.isRefreshing = true
+        if (userVisible) {
+            terminalListRefresh?.isRefreshing = true
         }
         terminalRefreshJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -1166,9 +1179,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 } while (pendingTerminalRefresh)
             } finally {
                 withContext(Dispatchers.Main) {
-                    if (::terminalListRefresh.isInitialized) {
-                        terminalListRefresh.isRefreshing = false
-                    }
+                    terminalListRefresh?.isRefreshing = false
                 }
                 terminalRefreshJob = null
             }
@@ -1179,7 +1190,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         currentFontSizeDp = newSizeDp
         terminalView.setTextSize(currentFontSizeDp)
         TerminalUiPreferences.saveFontSizeDp(requireContext().applicationContext, currentFontSizeDp)
-        keepLatestTerminalOutputVisible(forceImmediate = true)
+        relayoutTerminalAfterFontSizeChange()
         if (announce) {
             Toast.makeText(
                 requireContext(),
@@ -1187,6 +1198,24 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 Toast.LENGTH_SHORT
             ).show()
         }
+    }
+
+    private fun relayoutTerminalAfterFontSizeChange() {
+        terminalView.scaleX = 1f
+        terminalView.scaleY = 1f
+        terminalOutputContainer.requestLayout()
+        terminalView.requestLayout()
+        forceTerminalViewResize()
+        terminalView.post { forceTerminalViewResize() }
+        terminalView.postDelayed({ forceTerminalViewResize() }, 80L)
+    }
+
+    private fun forceTerminalViewResize() {
+        if (view == null) {
+            return
+        }
+        terminalView.updateSize()
+        keepLatestTerminalOutputVisible(forceImmediate = true)
     }
 
     private fun showThemeMenu(anchor: View) {
@@ -1340,7 +1369,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             viewLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 TerminalSessionStore.snapshot.collect { snapshot ->
                     currentTerminalSnapshot = snapshot
-                    terminalListRefresh.isRefreshing = false
+                    terminalListRefresh?.isRefreshing = false
                     renderManagedSessions()
                 }
             }
@@ -1412,8 +1441,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 return
             }
             lastManagedSessionsRenderSignature = "space:none"
-            terminalListContainer.removeAllViews()
-            tvEmptySessions.visibility = View.VISIBLE
+            terminalListContainer?.removeAllViews()
+            tvEmptySessions?.visibility = View.VISIBLE
             renderDetailHeader(null)
             return
         }
@@ -1425,6 +1454,11 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         val activeSession = snapshot.sessions.asSequence()
             .firstOrNull { it.id == activeSessionId }
 
+        if (isDetailOnlyMode()) {
+            renderDetailHeader(activeSession?.title)
+            return
+        }
+
         val renderSignature = buildManagedSessionsRenderSignature(space, snapshot, activeSessionId)
         if (!isDetailMode && renderSignature != lastManagedSessionsRenderSignature) {
             renderTerminalSessions(snapshot)
@@ -1434,7 +1468,9 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun renderTerminalSessions(snapshot: TerminalSessionsSnapshot) {
-        terminalListContainer.removeAllViews()
+        val container = terminalListContainer ?: return
+        val emptyView = tvEmptySessions ?: return
+        container.removeAllViews()
 
         val visibleSessions = snapshot.liveSessions
             .sortedWith(
@@ -1446,13 +1482,13 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             "渲染终端列表: visibleCount=${visibleSessions.size}, allCount=${snapshot.sessions.size}"
         )
         if (visibleSessions.isEmpty()) {
-            tvEmptySessions.visibility = View.VISIBLE
+            emptyView.visibility = View.VISIBLE
             return
         }
 
-        tvEmptySessions.visibility = View.GONE
+        emptyView.visibility = View.GONE
         visibleSessions.forEach { session ->
-            terminalListContainer.addView(createSessionListItem(session))
+            container.addView(createSessionListItem(session))
         }
     }
 
@@ -1461,6 +1497,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         val timestamp = resolveSessionTimestamp(session)
         return buildSessionListItem(
             title = session.title,
+            sourceText = session.sourceLabel.orEmpty(),
             timeText = timestamp?.let(::formatSessionTime),
             badge = badge,
             onClick = {
@@ -1472,6 +1509,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private fun buildSessionListItem(
         title: String,
+        sourceText: String,
         timeText: String?,
         badge: Triple<Int, Int, String>,
         onClick: () -> Unit
@@ -1488,6 +1526,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         val divider = itemView.findViewById<View>(R.id.sessionItemDivider)
         val statusCard = itemView.findViewById<MaterialCardView>(R.id.cardSessionItemStatus)
         val titleView = itemView.findViewById<TextView>(R.id.tvSessionItemTitle)
+        val sourceView = itemView.findViewById<TextView>(R.id.tvSessionItemSource)
         val timeView = itemView.findViewById<TextView>(R.id.tvSessionItemTime)
         val statusView = itemView.findViewById<TextView>(R.id.tvSessionItemStatus)
 
@@ -1500,10 +1539,19 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         statusCard.setCardBackgroundColor(color(bgColorRes))
         statusView.setTextColor(color(textColorRes))
         titleView.setTextColor(color(R.color.terminal_page_text))
+        sourceView.setTextColor(color(R.color.terminal_page_subtext))
         timeView.setTextColor(color(R.color.terminal_page_subtext))
 
         val titleParts = splitTerminalTitle(title)
         titleView.text = titleParts.main
+        val cleanedSource = sourceText.trim()
+        if (cleanedSource.isBlank()) {
+            sourceView.visibility = View.INVISIBLE
+            sourceView.text = ""
+        } else {
+            sourceView.visibility = View.VISIBLE
+            sourceView.text = cleanedSource
+        }
         if (timeText.isNullOrBlank()) {
             timeView.visibility = View.INVISIBLE
             timeView.text = ""
@@ -1653,7 +1701,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         detailBackCallback.isEnabled = false
         hideSoftKeyboard(terminalComposerInput)
         hideSoftKeyboard(terminalView)
-        listPage.visibility = View.VISIBLE
+        listPage?.visibility = View.VISIBLE
         detailPage.visibility = View.GONE
         (activity as? TerminalChromeHost)?.setTerminalDetailMode(false)
         stopRepeatingKey()
@@ -1665,7 +1713,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private fun showDetailPage() {
         isDetailMode = true
         detailBackCallback.isEnabled = !isDetailOnlyMode()
-        listPage.visibility = View.GONE
+        listPage?.visibility = View.GONE
         detailPage.visibility = View.VISIBLE
         terminalDetailHeader.visibility = if (isDetailOnlyMode()) View.GONE else View.VISIBLE
         (activity as? TerminalChromeHost)?.setTerminalDetailMode(true)

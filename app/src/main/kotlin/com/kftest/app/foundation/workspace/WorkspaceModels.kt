@@ -106,6 +106,7 @@ data class ManagedTerminalRecord(
     val lastExitCode: Int? = null,
     val sourceAgentRuntimeId: String? = null,
     val startupCommand: String? = null,
+    val sourceLabel: String? = null,
     val status: ManagedTerminalStatus = ManagedTerminalStatus.REGISTERED
 ) {
     fun toJson(): JSONObject {
@@ -122,6 +123,7 @@ data class ManagedTerminalRecord(
             .put("lastExitCode", lastExitCode)
             .put("sourceAgentRuntimeId", sourceAgentRuntimeId)
             .put("startupCommand", startupCommand)
+            .put("sourceLabel", sourceLabel)
             .put("status", status.name)
     }
 
@@ -155,6 +157,9 @@ data class ManagedTerminalRecord(
                 },
                 startupCommand = json.optString("startupCommand").takeIf {
                     !json.isNull("startupCommand")
+                },
+                sourceLabel = json.optString("sourceLabel").takeIf {
+                    !json.isNull("sourceLabel")
                 },
                 status = ManagedTerminalStatus.valueOf(
                     json.optString("status", ManagedTerminalStatus.REGISTERED.name)

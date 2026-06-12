@@ -10,14 +10,19 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import android.os.Build
 import com.kite.app.recipe.KiteRecipe
+import com.kite.app.recipe.KiteRecipeIcon
+import java.io.File
+import android.graphics.BitmapFactory
 
 object CardShortcutManager {
     fun iconBitmap(recipe: KiteRecipe): Bitmap = shortcutBitmap(recipe)
+    fun iconBitmap(context: Context, recipe: KiteRecipe): Bitmap = shortcutBitmap(context, recipe)
 
     fun hasPinnedShortcut(context: Context, recipeId: String): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
@@ -40,7 +45,7 @@ object CardShortcutManager {
         val shortcut = ShortcutInfo.Builder(context, shortcutId)
             .setShortLabel(recipe.name.take(10).ifBlank { "Kite" })
             .setLongLabel(recipe.name.ifBlank { "Kite 卡片" })
-            .setIcon(Icon.createWithBitmap(shortcutBitmap(recipe)))
+            .setIcon(Icon.createWithBitmap(shortcutBitmap(context, recipe)))
             .setActivity(ComponentName(context, CardRunActivity::class.java))
             .setIntent(
                 CardRunIntents.launchIntent(
@@ -91,7 +96,7 @@ object CardShortcutManager {
         }
         val shortcutIntent = Intent("com.android.launcher.action.INSTALL_SHORTCUT")
             .putExtra(Intent.EXTRA_SHORTCUT_NAME, recipe.name.ifBlank { "Kite 卡片" })
-            .putExtra(Intent.EXTRA_SHORTCUT_ICON, shortcutBitmap(recipe))
+            .putExtra(Intent.EXTRA_SHORTCUT_ICON, shortcutBitmap(context, recipe))
             .putExtra(Intent.EXTRA_SHORTCUT_INTENT, launchIntent)
             .putExtra("duplicate", false)
         return runCatching {
@@ -102,6 +107,36 @@ object CardShortcutManager {
 
     private fun shortcutId(recipeId: String): String =
         "kite_card_$recipeId".replace(Regex("[^a-zA-Z0-9_.-]"), "_")
+
+    private fun shortcutBitmap(context: Context, recipe: KiteRecipe): Bitmap =
+        customShortcutBitmap(context, recipe) ?: shortcutBitmap(recipe)
+
+    private fun customShortcutBitmap(context: Context, recipe: KiteRecipe): Bitmap? {
+        if (recipe.icon.type != KiteRecipeIcon.TYPE_IMAGE || recipe.icon.source.isBlank()) return null
+        val file = if (recipe.icon.source.startsWith("/") || recipe.icon.source.contains(":")) {
+            File(recipe.icon.source)
+        } else {
+            File(context.filesDir, recipe.icon.source)
+        }
+        val source = if (file.exists()) BitmapFactory.decodeFile(file.absolutePath) else null
+        source ?: return null
+        val size = 144
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val bounds = RectF(0f, 0f, size.toFloat(), size.toFloat())
+        val clipPath = Path().apply { addRoundRect(bounds, 34f, 34f, Path.Direction.CW) }
+        canvas.save()
+        canvas.clipPath(clipPath)
+        val scale = maxOf(size / source.width.toFloat(), size / source.height.toFloat())
+        val width = source.width * scale
+        val height = source.height * scale
+        val left = (size - width) / 2f
+        val top = (size - height) / 2f
+        canvas.drawBitmap(source, null, RectF(left, top, left + width, top + height), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        canvas.restore()
+        source.recycle()
+        return bitmap
+    }
 
     private fun shortcutBitmap(recipe: KiteRecipe): Bitmap {
         val size = 144

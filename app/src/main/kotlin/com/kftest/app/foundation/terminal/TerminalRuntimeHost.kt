@@ -2,6 +2,7 @@ package com.kftest.app.foundation.terminal
 
 import android.content.Context
 import com.kftest.app.foundation.logging.Logger
+import com.kftest.app.foundation.workspace.ManagedTerminalRecord
 import com.kftest.app.foundation.workspace.KFWorkspaceManager
 import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.termux.terminal.TerminalSession
@@ -45,10 +46,17 @@ object TerminalRuntimeHost {
     @Synchronized
     fun attachUi(
         appContext: Context,
-        uiCallbacks: TerminalSessionUiCallbacks
+        uiCallbacks: TerminalSessionUiCallbacks,
+        preferredSessionId: String? = null,
+        notifyManagedSessionsChanged: Boolean = true
     ): TerminalSessionController {
         callbackProxy.attach(uiCallbacks)
-        return ensureController(appContext).also { it.reattachActiveSession() }
+        return ensureController(appContext).also {
+            it.reattachActiveSession(
+                preferredSessionId = preferredSessionId,
+                notifyManagedSessionsChanged = notifyManagedSessionsChanged
+            )
+        }
     }
 
     fun createShellSession(appContext: Context) {
@@ -61,6 +69,18 @@ object TerminalRuntimeHost {
 
     fun switchToSession(appContext: Context, sessionId: String) {
         ensureController(appContext).switchToSession(sessionId)
+    }
+
+    fun openEmbeddedSession(appContext: Context, sessionId: String) {
+        ensureController(appContext).openEmbeddedSession(sessionId)
+    }
+
+    fun stageEmbeddedSession(appContext: Context, record: ManagedTerminalRecord) {
+        ensureController(appContext).stageEmbeddedSession(record)
+    }
+
+    fun openEmbeddedSession(appContext: Context, record: ManagedTerminalRecord) {
+        ensureController(appContext).openEmbeddedSession(record)
     }
 
     fun setLaunchEnvironmentOverrides(

@@ -3,6 +3,7 @@ package com.kite.app
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import java.util.UUID
 
 object CardRunIntents {
@@ -22,24 +23,29 @@ object CardRunIntents {
     fun newInstanceId(recipeId: String): String =
         "run_${recipeId}_${UUID.randomUUID().toString().replace("-", "")}"
 
+    fun instanceDataUri(instanceId: String): Uri =
+        Uri.parse("kite://card-run/${Uri.encode(instanceId)}")
+
     fun launchIntent(
         context: Context,
         recipeId: String,
         instanceId: String? = null,
         launchSource: String = SOURCE_CARD,
         autoStart: Boolean = true
-    ): Intent =
-        Intent(context, CardRunActivity::class.java)
+    ): Intent {
+        val resolvedInstanceId = instanceId?.takeIf { it.isNotBlank() } ?: recipeId
+        return Intent(context, CardRunActivity::class.java)
             .setAction(ACTION_OPEN)
+            .setData(instanceDataUri(resolvedInstanceId))
             .putExtra(EXTRA_RECIPE_ID, recipeId)
+            .putExtra(EXTRA_INSTANCE_ID, resolvedInstanceId)
             .putExtra(EXTRA_LAUNCH_SOURCE, launchSource)
             .putExtra(EXTRA_AUTO_START, autoStart)
             .apply {
-                if (!instanceId.isNullOrBlank()) putExtra(EXTRA_INSTANCE_ID, instanceId)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
-                addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_RETAIN_IN_RECENTS)
             }
+    }
 
     fun temporaryWebIntent(
         context: Context,

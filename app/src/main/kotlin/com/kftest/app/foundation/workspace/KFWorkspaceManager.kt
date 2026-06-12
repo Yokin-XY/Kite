@@ -150,13 +150,32 @@ object KFWorkspaceManager {
     fun createShellSession(
         context: Context,
         spaceId: String,
-        title: String = suggestNextShellTitle(context, spaceId)
+        title: String = suggestNextShellTitle(context, spaceId),
+        sourceLabel: String? = null
     ): ManagedTerminalRecord {
         return createManagedTerminalSession(
             context = context,
             spaceId = spaceId,
             title = title,
-            kind = ManagedTerminalKind.SHELL
+            kind = ManagedTerminalKind.SHELL,
+            sourceLabel = sourceLabel
+        )
+    }
+
+    fun createEmbeddedShellSession(
+        context: Context,
+        spaceId: String,
+        title: String
+    ): ManagedTerminalRecord {
+        val now = System.currentTimeMillis()
+        val safeTitle = title.trim().ifBlank { "终端" }
+        return ManagedTerminalRecord(
+            id = "embedded-$spaceId-$now",
+            spaceId = spaceId,
+            title = safeTitle,
+            kind = ManagedTerminalKind.SHELL,
+            createdAt = now,
+            status = ManagedTerminalStatus.REGISTERED
         )
     }
 
@@ -539,7 +558,8 @@ object KFWorkspaceManager {
         title: String,
         kind: ManagedTerminalKind,
         sourceAgentRuntimeId: String? = null,
-        startupCommand: String? = null
+        startupCommand: String? = null,
+        sourceLabel: String? = null
     ): ManagedTerminalRecord {
         val runtimeRoot = runtimeRoot(context)
         val now = System.currentTimeMillis()
@@ -548,6 +568,10 @@ object KFWorkspaceManager {
             ManagedTerminalKind.AGENT_CONSOLE -> suggestUniqueTerminalTitle(context, spaceId, "智能体会话")
         }
         val safeTitle = title.trim().ifBlank { fallbackTitle }
+        val safeSourceLabel = sourceLabel
+            ?.trim()
+            ?.take(80)
+            ?.takeIf { it.isNotBlank() }
         val prefix = when (kind) {
             ManagedTerminalKind.SHELL -> "shell"
             ManagedTerminalKind.AGENT_CONSOLE -> "agent-console"
@@ -561,6 +585,7 @@ object KFWorkspaceManager {
             createdAt = now,
             sourceAgentRuntimeId = sourceAgentRuntimeId,
             startupCommand = startupCommand,
+            sourceLabel = safeSourceLabel,
             status = ManagedTerminalStatus.REGISTERED
         )
 

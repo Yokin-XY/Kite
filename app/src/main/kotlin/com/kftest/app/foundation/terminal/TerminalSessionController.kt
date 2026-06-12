@@ -57,6 +57,7 @@ class TerminalSessionController(
         var record: ManagedTerminalRecord,
         val session: TerminalSession,
         val transcriptMirrorFile: File,
+        val managed: Boolean = true,
         var lastTranscriptSnapshot: String = "",
         var lastTerminalOutputAuditAt: Long = 0L,
         var lastTranscriptMirrorAuditAt: Long = 0L,
@@ -91,6 +92,7 @@ class TerminalSessionController(
         parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job])
     )
     private val sessionHolders = LinkedHashMap<String, SessionHolder>()
+    private val embeddedSessionRecords = LinkedHashMap<String, ManagedTerminalRecord>()
     private val launchEnvOverrides = LinkedHashMap<String, Map<String, String>>()
     private val transcriptMirrorRequested = AtomicLong(0L)
     private val transcriptMirrorFlushed = AtomicLong(0L)
@@ -160,16 +162,26 @@ class TerminalSessionController(
         }
     }
 
-    fun reattachActiveSession() {
-        val holder = sessionHolders[activeSessionId] ?: return
+    fun reattachActiveSession(
+        preferredSessionId: String? = null,
+        notifyManagedSessionsChanged: Boolean = true
+    ) {
+        val holder = if (preferredSessionId.isNullOrBlank()) {
+            sessionHolders[activeSessionId]
+        } else {
+            sessionHolders[preferredSessionId]
+        } ?: return
         controllerScope.launch {
             flushTranscriptMirror(holder, force = true)
         }
         holder.session.updateTerminalSessionClient(this)
+        activeSessionId = holder.record.id
         uiCallbacks.attachSession(holder.session)
         TerminalRuntimeRegistry.markActive(holder.record.id)
         syncRuntimeEntry(holder)
-        uiCallbacks.onManagedSessionsChanged()
+        if (notifyManagedSessionsChanged) {
+            uiCallbacks.onManagedSessionsChanged()
+        }
         uiCallbacks.refreshTerminalView()
         if (holder.hasEndedRecord()) {
             uiCallbacks.updateCursorState(false)
@@ -339,6 +351,64 @@ class TerminalSessionController(
             } catch (error: Exception) {
                 Logger.e(LOG_TAG, "切换终端会话失败: ${error.message}")
                 uiCallbacks.showSessionNote("切换终端失败：${error.message ?: "未知错误"}")
+            }
+        }
+    }
+
+    fun openEmbeddedSession(sessionId: String) {
+        controllerScope.launch {
+            try {
+                val embeddedRecord = embeddedSessionRecords[sessionId]
+                val record = embeddedRecord ?: withContext(Dispatchers.IO) {
+                    KFWorkspaceManager.getTerminalSession(appContext, sessionId)
+                }
+
+                if (record == null) {
+                    uiCallbacks.showSessionNote("未找到要打开的终端会话。")
+                    return@launch
+                }
+
+                if (!canOpenSessionDetail(record)) {
+                    uiCallbacks.showSessionNote("${record.title} 已结束，当前版本先保留状态记录，稍后再补历史 transcript 回放。")
+                    return@launch
+                }
+
+                switchToRecord(
+                    record = record,
+                    note = "",
+                    notifyManagedSessionsChanged = false,
+                    showNote = false,
+                    updateWorkspaceCurrentSession = false,
+                    managed = embeddedRecord == null
+                )
+            } catch (error: Exception) {
+                Logger.e(LOG_TAG, "打开实例终端失败: ${error.message}")
+                uiCallbacks.showSessionNote("打开终端失败：${error.message ?: "未知错误"}")
+            }
+        }
+    }
+
+    fun stageEmbeddedSession(record: ManagedTerminalRecord) {
+        if (record.id.isNotBlank()) {
+            embeddedSessionRecords[record.id] = record
+        }
+    }
+
+    fun openEmbeddedSession(record: ManagedTerminalRecord) {
+        controllerScope.launch {
+            try {
+                embeddedSessionRecords[record.id] = record
+                switchToRecord(
+                    record = record,
+                    note = "",
+                    notifyManagedSessionsChanged = false,
+                    showNote = false,
+                    updateWorkspaceCurrentSession = false,
+                    managed = false
+                )
+            } catch (error: Exception) {
+                Logger.e(LOG_TAG, "打开临时实例终端失败: ${error.message}")
+                uiCallbacks.showSessionNote("打开终端失败：${error.message ?: "未知错误"}")
             }
         }
     }
@@ -740,35 +810,50 @@ class TerminalSessionController(
         return sessionHolders[record.id]
     }
 
-    private suspend fun switchToRecord(record: ManagedTerminalRecord, note: String) {
+    private suspend fun switchToRecord(
+        record: ManagedTerminalRecord,
+        note: String,
+        notifyManagedSessionsChanged: Boolean = true,
+        showNote: Boolean = true,
+        updateWorkspaceCurrentSession: Boolean = true,
+        managed: Boolean = true
+    ) {
         val previousActiveHolder = sessionHolders[activeSessionId]
             ?.takeIf { it.record.id != record.id }
         previousActiveHolder?.let { holder ->
             flushTranscriptMirror(holder, force = true)
         }
         activeSessionId = record.id
-        withContext(Dispatchers.IO) {
-            KFWorkspaceManager.setCurrentTerminalSession(appContext, record.spaceId, record.id)
+        if (updateWorkspaceCurrentSession) {
+            withContext(Dispatchers.IO) {
+                KFWorkspaceManager.setCurrentTerminalSession(appContext, record.spaceId, record.id)
+            }
         }
         TerminalRuntimeRegistry.markActive(record.id)
-        uiCallbacks.onManagedSessionsChanged()
+        if (notifyManagedSessionsChanged) {
+            uiCallbacks.onManagedSessionsChanged()
+        }
 
         val existingHolder = sessionHolders[record.id]
         if (existingHolder != null) {
-            attachExistingHolder(existingHolder, note)
+            attachExistingHolder(existingHolder, note, showNote)
         } else {
-            attachNewSession(record, note)
+            attachNewSession(record, note, showNote, managed)
         }
     }
 
-    private suspend fun attachExistingHolder(holder: SessionHolder, note: String) {
+    private suspend fun attachExistingHolder(
+        holder: SessionHolder,
+        note: String,
+        showNote: Boolean = true
+    ) {
         if (!holder.isSessionRunning() &&
             !holder.hasEndedRecord() &&
             holder.record.lastStartedAt != null
         ) {
             Logger.i(LOG_TAG, "会话 ${holder.record.id} 已结束，重新创建真实终端。")
             sessionHolders.remove(holder.record.id)
-            attachNewSession(holder.record, note)
+            attachNewSession(holder.record, note, showNote)
             return
         }
 
@@ -780,7 +865,9 @@ class TerminalSessionController(
         if (holder.hasEndedRecord()) {
             syncRuntimeEntry(holder)
             uiCallbacks.updateCursorState(false)
-            uiCallbacks.showSessionNote("${holder.record.title} 已结束，输出记录已保留。")
+            if (showNote) {
+                uiCallbacks.showSessionNote("${holder.record.title} 已结束，输出记录已保留。")
+            }
             return
         }
         if (holder.isSessionRunning()) {
@@ -791,22 +878,35 @@ class TerminalSessionController(
             syncRuntimeEntry(holder)
             uiCallbacks.updateCursorState(false)
             if (holder.record.isArchivedRecord()) {
-                uiCallbacks.showSessionNote("${holder.record.title} 已结束，输出记录已保留。")
+                if (showNote) {
+                    uiCallbacks.showSessionNote("${holder.record.title} 已结束，输出记录已保留。")
+                }
                 return
             }
             ensureSessionInitialized(holder)
             launchActivationProbe(holder.record.id)
         }
 
-        uiCallbacks.showSessionNote(note)
+        if (showNote && note.isNotBlank()) {
+            uiCallbacks.showSessionNote(note)
+        }
     }
 
-    private suspend fun attachNewSession(record: ManagedTerminalRecord, note: String) {
+    private suspend fun attachNewSession(
+        record: ManagedTerminalRecord,
+        note: String,
+        showNote: Boolean = true,
+        managed: Boolean = true
+    ) {
         val storage = RuntimeStorageGuard.canStartNewRuntime(appContext, "terminal_attach:${record.id}")
         if (storage.isCritical) {
-            updateDetachedSessionStatus(record, ManagedTerminalStatus.FAILED, lastExitCode = null)
+            if (managed) {
+                updateDetachedSessionStatus(record, ManagedTerminalStatus.FAILED, lastExitCode = null)
+            }
             TerminalRuntimeRegistry.remove(record.id)
-            uiCallbacks.onManagedSessionsChanged()
+            if (managed) {
+                uiCallbacks.onManagedSessionsChanged()
+            }
             uiCallbacks.updateCursorState(false)
             uiCallbacks.showSessionNote(storage.userMessage())
             Logger.e(LOG_TAG, "Terminal start blocked by storage pressure: session=${record.id} usable=${storage.usableBytes}")
@@ -849,7 +949,8 @@ class TerminalSessionController(
         val holder = SessionHolder(
             record = record,
             session = session,
-            transcriptMirrorFile = buildTranscriptMirrorFile(record.id)
+            transcriptMirrorFile = buildTranscriptMirrorFile(record.id),
+            managed = managed
         )
         sessionHolders[record.id] = holder
         activeSessionId = record.id
@@ -866,7 +967,9 @@ class TerminalSessionController(
             launchActivationProbe(record.id)
         }
 
-        uiCallbacks.showSessionNote(note)
+        if (showNote && note.isNotBlank()) {
+            uiCallbacks.showSessionNote(note)
+        }
         Logger.i(LOG_TAG, "已创建并挂接终端会话: ${record.id}, pid=${session.pid}")
     }
 
@@ -1096,20 +1199,24 @@ class TerminalSessionController(
         )
         sessionHolders[holder.record.id] = holder
 
-        controllerScope.launch(Dispatchers.IO) {
-            KFWorkspaceManager.updateTerminalSessionStatus(
-                context = appContext,
-                sessionId = holder.record.id,
-                status = status,
-                lastAttachedAt = attachedAt,
-                lastStartedAt = holder.record.lastStartedAt,
-                lastExitedAt = holder.record.lastExitedAt,
-                lastPid = holder.record.lastPid,
-                lastExitCode = holder.record.lastExitCode
-            )
+        if (holder.managed) {
+            controllerScope.launch(Dispatchers.IO) {
+                KFWorkspaceManager.updateTerminalSessionStatus(
+                    context = appContext,
+                    sessionId = holder.record.id,
+                    status = status,
+                    lastAttachedAt = attachedAt,
+                    lastStartedAt = holder.record.lastStartedAt,
+                    lastExitedAt = holder.record.lastExitedAt,
+                    lastPid = holder.record.lastPid,
+                    lastExitCode = holder.record.lastExitCode
+                )
+            }
         }
         syncRuntimeEntry(holder)
-        uiCallbacks.onManagedSessionsChanged()
+        if (holder.managed) {
+            uiCallbacks.onManagedSessionsChanged()
+        }
     }
 
     private fun syncRuntimeEntry(holder: SessionHolder) {

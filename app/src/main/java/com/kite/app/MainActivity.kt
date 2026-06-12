@@ -9,10 +9,14 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
@@ -32,6 +36,7 @@ import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.PathInterpolator
@@ -42,6 +47,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -89,6 +95,7 @@ import com.kftest.app.foundation.bootstrap.BootstrapStage
 import com.kftest.app.foundation.runtime.AssetExtractor
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
+import com.kftest.app.foundation.runtime.TerminalSessionStore
 import com.kftest.app.foundation.terminal.TerminalRuntimeHost
 import com.kftest.app.foundation.terminal.TerminalRuntimeRegistry
 import com.kftest.app.foundation.workspace.ManagedTerminalStatus
@@ -105,9 +112,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 import kotlin.concurrent.thread
+import kotlin.math.max
+import kotlin.math.min
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -147,6 +158,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var selectedType = KiteRecipe.TYPE_OPEN_URL
     private var selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_OPEN_URL)
+    private var selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
+    private var selectedIconSource = ""
+    private var avatarTileRefresh: (() -> Unit)? = null
+    private var recipeIconMenuDialog: Dialog? = null
+    private var applyPickedIconAfterCrop = false
+    private var reopenIconMenuAfterCrop = false
     private var editingRecipe: KiteRecipe? = null
     private var dropZoneStatus: DropZoneStatus = DropZoneStatus(available = false, message = "投放区尚未检查")
     private var isDropZoneRefreshing = false
@@ -165,6 +182,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var focusedRunRecipeId: String? = null
     private var focusedRunInstanceId: String? = null
     private var registeredBrowserInstanceId: String? = null
+    private var registeredCardRunCloserInstanceId: String? = null
     private var currentResourceDetailId: String? = null
     private var latestBootstrapSnapshot = BootstrapCoordinator.snapshot.value
     private var latestRootfsProgress = AssetExtractor.rootfsProgress.value
@@ -267,6 +285,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     override fun onDestroy() {
         CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
+        CardRunTaskCloser.unregister(registeredCardRunCloserInstanceId)
         if (localServerStarted) {
             localServer.stop()
         }
@@ -300,7 +319,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
         val instanceId = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID)
             ?.takeIf { it.isNotBlank() }
-            ?: CardRunIntents.newInstanceId(recipeId)
+            ?: recipeId
         val autoStart = sourceIntent?.getBooleanExtra(CardRunIntents.EXTRA_AUTO_START, true) ?: true
         val launchSource = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_LAUNCH_SOURCE).orEmpty()
         val launchKey = "$recipeId:$instanceId:$autoStart:$launchSource"
@@ -326,6 +345,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         activeRunInstanceIds[recipe.id] = state.instanceId
         runtimeStates[recipe.id] = state
         registerCardRunBrowserHandler(recipe, instanceId)
+        registerCardRunTaskCloser(instanceId)
         diagnostics.logRecipeAction(
             recipe,
             "card_run_task_launch",
@@ -382,7 +402,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         setTaskDescription(
             ActivityManager.TaskDescription(
                 recipe.name.ifBlank { "Kite 卡片" },
-                CardShortcutManager.iconBitmap(recipe),
+                CardShortcutManager.iconBitmap(this, recipe),
                 opaqueColor(tokens.primaryStrong)
             )
         )
@@ -450,11 +470,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                             "exitCode" to (terminal.lastExitCode?.toString() ?: "")
                         )
                     )
-                    executeRecipeStep(
+                    advanceAfterUserCompletedStep(
                         recipe = recipe,
-                        stepIndex = pending.nextStepIndex,
-                        runId = pending.sessionId,
-                        pid = null,
+                        state = activeRun,
+                        nextStepIndex = pending.nextStepIndex,
                         lastOutput = "终端已结束：${terminal.status.label}"
                     )
                 }
@@ -765,6 +784,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             editingRecipeId = editingRecipe?.id.orEmpty(),
             selectedType = selectedType,
             selectedIconName = selectedIconName,
+            selectedIconType = selectedIconType,
+            selectedIconSource = selectedIconSource,
             name = nameInput.text?.toString().orEmpty(),
             description = if (::descriptionInput.isInitialized) descriptionInput.text?.toString().orEmpty() else "",
             url = if (::urlInput.isInitialized) urlInput.text?.toString().orEmpty() else "",
@@ -801,6 +822,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             dropZoneStatus = dropZoneManager.prepareDropZone()
             Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_SHORT).show()
             if (currentScreen == Screen.Console) showConsole()
+        }
+    }
+
+    @Deprecated("Use Activity Result APIs after the UI shell is migrated.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_PICK_RECIPE_ICON && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            showRecipeIconCropDialog(uri)
+        } else if (requestCode == REQUEST_PICK_RECIPE_ICON) {
+            applyPickedIconAfterCrop = false
+            reopenIconMenuAfterCrop = false
         }
     }
 
@@ -915,7 +948,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         var changed = false
 
         fun detachFragment(tag: String) {
-            (supportFragmentManager.findFragmentByTag(tag) as? TerminalFragment)?.let { fragment ->
+            supportFragmentManager.findFragmentByTag(tag)?.let { fragment ->
                 if (fragment.isAdded && !fragment.isDetached) {
                     transaction.detach(fragment)
                     changed = true
@@ -2149,7 +2182,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun startResourceRun(item: ResourceItem, recipe: KiteRecipe, stageBundledResource: Boolean) {
-        val instanceId = CardRunIntents.newInstanceId(recipe.id)
+        val instanceId = recipe.id
         CardRunStore.registerRecipe(recipe)
         focusedRunRecipeId = recipe.id
         focusedRunInstanceId = instanceId
@@ -2650,6 +2683,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setBackgroundColor(tokens.pageBackground)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             showCardRunTerminalFragment(terminalSessionId)
+        } else if (state.surface == CardRunSurface.Terminal) {
+            root.addView(FrameLayout(this).apply {
+                setBackgroundColor(tokens.pageBackground)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         } else if (state.surface == CardRunSurface.Web && webUrl != null) {
             showCardRunWebView(recipe, webUrl)
         } else {
@@ -2660,24 +2697,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun showCardRunTerminalFragment(sessionId: String) {
-        val existing = supportFragmentManager.findFragmentByTag(CARD_RUN_TERMINAL_FRAGMENT_TAG) as? TerminalFragment
-        val fragment = existing ?: TerminalFragment.detailOnly(sessionId)
-        supportFragmentManager.beginTransaction().apply {
-            when {
-                fragment.isDetached -> attach(fragment)
-                fragment.isAdded -> show(fragment)
-                else -> add(cardRunTerminalContainerId, fragment, CARD_RUN_TERMINAL_FRAGMENT_TAG)
-            }
-        }.commitNowAllowingStateLoss()
-        fragment.openSessionFromExternal(sessionId)
+        val fragment = TerminalFragment.detailOnly(sessionId)
+        supportFragmentManager.beginTransaction()
+            .replace(cardRunTerminalContainerId, fragment, CARD_RUN_TERMINAL_FRAGMENT_TAG)
+            .commitNowAllowingStateLoss()
     }
 
     private fun cardRunTopBar(recipe: KiteRecipe, state: RecipeRuntimeState): View = FrameLayout(this).apply {
         val waitingForTerminal = state.status == RecipeRunStatus.WaitingTerminal && !state.terminalSessionId.isNullOrBlank()
+        val canCompleteCurrentStep = canCompleteCurrentCardStep(recipe, state)
         val sideControlSize = dp(44)
         setPadding(dp(16), dp(12), dp(16), dp(8))
-        val leftControl = if (waitingForTerminal) {
-            cardRunDoneButton { completeTerminalStepFromCard(recipe, state) }
+        val leftControl = if (canCompleteCurrentStep) {
+            cardRunDoneButton { completeCurrentCardStep(recipe, state) }
         } else {
             iconButton("‹", sideControlSize, Color.TRANSPARENT, tokens.textPrimary, dp(18)) { closeCardRunTask() }
         }
@@ -2825,28 +2857,85 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         showCardRunSurface(recipe)
     }
 
-    private fun completeTerminalStepFromCard(recipe: KiteRecipe, state: RecipeRuntimeState) {
-        val pending = pendingTerminalFlow?.takeIf {
-            it.recipeId == recipe.id &&
-                (it.instanceId == state.instanceId || it.sessionId == state.terminalSessionId)
+    private fun canCompleteCurrentCardStep(recipe: KiteRecipe, state: RecipeRuntimeState): Boolean {
+        val step = recipe.steps.getOrNull(state.currentStepIndex) ?: return false
+        return when (step.type) {
+            KiteRecipe.STEP_TERMINAL -> state.status == RecipeRunStatus.WaitingTerminal && !state.terminalSessionId.isNullOrBlank()
+            KiteRecipe.STEP_OPEN_WEB -> state.surface == CardRunSurface.Web && !state.nextActionUrl.isNullOrBlank()
+            else -> false
+        }
+    }
+
+    private fun completeCurrentCardStep(recipe: KiteRecipe, state: RecipeRuntimeState) {
+        val step = recipe.steps.getOrNull(state.currentStepIndex)
+        val pending = if (step?.type == KiteRecipe.STEP_TERMINAL) {
+            pendingTerminalFlow?.takeIf {
+                it.recipeId == recipe.id &&
+                    (it.instanceId == state.instanceId || it.sessionId == state.terminalSessionId)
+            }
+        } else {
+            null
         }
         val nextStepIndex = pending?.nextStepIndex ?: (state.currentStepIndex + 1).coerceAtLeast(0)
-        pendingTerminalFlow = null
+        if (step?.type == KiteRecipe.STEP_TERMINAL) {
+            pendingTerminalFlow = pendingTerminalFlow?.takeUnless {
+                it.recipeId == recipe.id &&
+                    (it.instanceId == state.instanceId || it.sessionId == state.terminalSessionId)
+            }
+            state.terminalSessionId?.takeIf { it.isNotBlank() }?.let {
+                TerminalRuntimeHost.endSession(applicationContext, it)
+            }
+        }
         diagnostics.logRecipeAction(
             recipe,
-            "terminal_step_completed_by_user",
+            "card_step_completed_by_user",
             mapOf(
+                "type" to step?.type.orEmpty(),
                 "sessionId" to state.terminalSessionId.orEmpty(),
                 "stepIndex" to state.currentStepIndex.toString(),
                 "nextStepIndex" to nextStepIndex.toString()
             )
         )
+        advanceAfterUserCompletedStep(
+            recipe = recipe,
+            state = state,
+            nextStepIndex = nextStepIndex,
+            lastOutput = when (step?.type) {
+                KiteRecipe.STEP_TERMINAL -> "终端已由用户标记完成"
+                KiteRecipe.STEP_OPEN_WEB -> "网页已由用户标记完成"
+                else -> "步骤已由用户标记完成"
+            }
+        )
+    }
+
+    private fun advanceAfterUserCompletedStep(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        nextStepIndex: Int,
+        lastOutput: String
+    ) {
+        if (nextStepIndex >= recipe.steps.size) {
+            val runId = state.runId ?: state.terminalSessionId
+            markResourceRunSuccess(recipe, runId, lastOutput)
+            setRuntimeState(
+                recipe,
+                if (!state.pid.isNullOrBlank()) RecipeRunStatus.Running else RecipeRunStatus.Completed,
+                currentStepIndex = nextStepIndex,
+                runId = runId,
+                pid = state.pid,
+                lastMeaningfulOutput = lastOutput,
+                clearTerminalSession = true,
+                clearNextActionUrl = true
+            )
+            closeCardRunTask()
+            return
+        }
         executeRecipeStep(
             recipe = recipe,
             stepIndex = nextStepIndex,
-            runId = state.terminalSessionId ?: state.runId,
+            runId = state.runId ?: state.terminalSessionId,
             pid = state.pid,
-            lastOutput = "终端已由用户标记完成"
+            lastOutput = lastOutput
         )
     }
 
@@ -2887,7 +2976,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(28))
             when (state.surface) {
-                CardRunSurface.Terminal -> addView(cardRunPlaceholderPanel("终端", state.terminalSessionId ?: "还没有终端会话。"))
+                CardRunSurface.Terminal -> Unit
                 CardRunSurface.Web -> addView(cardRunPlaceholderPanel("网页", state.nextActionUrl ?: "还没有网页地址。"))
                 else -> addView(cardRunReportPanel(recipe, state))
             }
@@ -3589,6 +3678,64 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
+    private fun registerCardRunTaskCloser(instanceId: String) {
+        if (this !is CardRunActivity || instanceId.isBlank()) return
+        if (registeredCardRunCloserInstanceId == instanceId) return
+        CardRunTaskCloser.unregister(registeredCardRunCloserInstanceId)
+        registeredCardRunCloserInstanceId = instanceId
+        CardRunTaskCloser.register(instanceId) {
+            runOnUiThread { closeCardRunTask() }
+        }
+    }
+
+    private fun closeCardRunInstanceForStop(recipe: KiteRecipe, previousState: RecipeRuntimeState, reason: String) {
+        val instanceId = listOf(
+            previousState.instanceId,
+            activeRunInstanceIds[recipe.id],
+            focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id },
+            CardRunStore.currentForRecipe(recipe.id)?.instanceId,
+            recipe.id
+        ).firstOrNull { !it.isNullOrBlank() } ?: return
+
+        val closedLiveInstance = if (this is CardRunActivity && focusedRunInstanceId == instanceId) {
+            closeCardRunTask()
+            true
+        } else {
+            CardRunTaskCloser.close(instanceId)
+        }
+        val closedTask = finishCardRunTaskByInstanceId(instanceId)
+        diagnostics.logRecipeAction(
+            recipe,
+            "card_run_task_close_requested",
+            mapOf(
+                "instanceId" to instanceId,
+                "reason" to reason,
+                "closedLiveInstance" to closedLiveInstance.toString(),
+                "closedTask" to closedTask.toString()
+            )
+        )
+    }
+
+    private fun finishCardRunTaskByInstanceId(instanceId: String): Boolean {
+        if (instanceId.isBlank() || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return false
+        val targetUri = CardRunIntents.instanceDataUri(instanceId).toString()
+        return runCatching {
+            val manager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return@runCatching false
+            var closed = false
+            manager.appTasks.forEach { task ->
+                val baseIntent = task.taskInfo.baseIntent
+                val matchesData = baseIntent?.data?.toString() == targetUri
+                val matchesExtra = baseIntent?.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID) == instanceId
+                val isCardRun = baseIntent?.component?.className == CardRunActivity::class.java.name
+                if (isCardRun && (matchesData || matchesExtra)) {
+                    task.finishAndRemoveTask()
+                    closed = true
+                }
+            }
+            closed
+        }.getOrDefault(false)
+    }
+
     private fun runtimeProgressView(state: UbuntuRuntimeUiState, compact: Boolean): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -3954,8 +4101,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         isClickable = true
         setOnClickListener { showRecipeEditor(recipe) }
 
-        addView(iconTile(recipe.icon.name, accentFor(recipe), tintBackground(accentFor(recipe))).apply {
-            textSize = 18f
+        addView(recipeIconTile(recipe, dp(38), 18f).apply {
             layoutParams = FrameLayout.LayoutParams(dp(38), dp(38), Gravity.START or Gravity.TOP).apply {
                 setMargins(dp(13), dp(13), 0, 0)
             }
@@ -4162,23 +4308,43 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         CardRunStore.start(
             recipe,
-            preferredInstanceId ?: activeRunInstanceIds[recipe.id] ?: CardRunIntents.newInstanceId(recipe.id)
+            preferredInstanceId ?: activeRunInstanceIds[recipe.id] ?: recipe.id
         ).also {
             activeRunInstanceIds[recipe.id] = it.instanceId
             runtimeStates[recipe.id] = it
         }
+        val firstStep = recipe.steps.firstOrNull()
+        val initialSurface = firstStep?.let { surfaceForStep(it) } ?: CardRunSurface.Summary
+        val deferInitialSurfaceUntilTerminalReady =
+            firstStep?.type == KiteRecipe.STEP_TERMINAL && (this is CardRunActivity || !openConsoleOnStart)
+        diagnostics.logRecipeAction(
+            recipe,
+            "recipe_sequence_start",
+            mapOf(
+                "steps" to recipe.steps.joinToString(" -> ") { it.type },
+                "initialSurface" to initialSurface.name,
+                "deferInitialSurface" to deferInitialSurfaceUntilTerminalReady.toString()
+            )
+        )
         setRuntimeState(
             recipe,
             RecipeRunStatus.Starting,
-            surface = if (openConsoleOnStart) null else CardRunSurface.Report,
+            surface = initialSurface,
+            currentStepIndex = 0,
             lastMeaningfulOutput = "正在启动流程"
         )
-        if (openConsoleOnStart) {
+        if (openConsoleOnStart && this !is CardRunActivity) {
             showConsole()
         } else {
             focusedRunRecipeId = recipe.id
             focusedRunInstanceId = activeRunInstanceIds[recipe.id]
-            showCardRunSurface(recipe)
+            if (!deferInitialSurfaceUntilTerminalReady) {
+                showCardRunSurface(recipe)
+            } else {
+                currentScreen = Screen.CardRun
+                root.setBackgroundColor(tokens.pageBackground)
+                clearRootForScreen()
+            }
         }
         executeRecipeStep(recipe, stepIndex = 0)
     }
@@ -4198,7 +4364,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             currentStepIndex = stepIndex,
             runId = runId,
             pid = pid,
-            lastMeaningfulOutput = "正在准备 Ubuntu"
+            lastMeaningfulOutput = "正在准备 Ubuntu",
+            clearNextActionUrl = true
         )
         setUbuntuRuntimeState(
             UbuntuRuntimeUiState(
@@ -4315,6 +4482,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     showRunSurfaceOrConsole(recipe)
                     return
                 }
+                val openSurface = shouldOpenStepSurface(recipe, step)
+                val waitForUserSignal = openSurface && shouldRenderInCardRun(recipe)
                 setRuntimeState(
                     recipe,
                     if (!pid.isNullOrBlank()) RecipeRunStatus.Running else RecipeRunStatus.Opened,
@@ -4325,7 +4494,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     lastMeaningfulOutput = lastOutput,
                     nextActionUrl = url
                 )
-                if (shouldOpenStepSurface(recipe, step)) {
+                if (openSurface) {
                     if (shouldRenderInCardRun(recipe)) {
                         focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
                         showCardRunSurface(recipe)
@@ -4340,8 +4509,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     )
                 }
                 if (stepIndex < steps.lastIndex) {
-                    executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput)
-                } else if (!shouldOpenStepSurface(recipe, step)) {
+                    if (waitForUserSignal) {
+                        diagnostics.logRecipeAction(
+                            recipe,
+                            "open_web_waiting_for_user_completion",
+                            mapOf("stepIndex" to stepIndex.toString(), "nextStepIndex" to (stepIndex + 1).toString())
+                        )
+                    } else {
+                        executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput)
+                    }
+                } else if (!openSurface) {
                     showRunSurfaceOrConsole(recipe)
                 }
             }
@@ -4446,7 +4623,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             runId = previousRunId,
             pid = previousPid,
             lastMeaningfulOutput = "正在执行 sh：${step.cmd.take(80)}",
-            shellReportText = "命令：${step.cmd}\n结果：执行中"
+            shellReportText = "命令：${step.cmd}\n结果：执行中",
+            clearNextActionUrl = true
         )
         if (shouldOpenStepSurface(recipe, step)) {
             focusedRunRecipeId = recipe.id
@@ -4532,7 +4710,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             currentStepIndex = stepIndex,
             runId = runId,
             pid = pid,
-            lastMeaningfulOutput = "正在执行安卓动作：${step.action.orEmpty()}"
+            lastMeaningfulOutput = "正在执行安卓动作：${step.action.orEmpty()}",
+            clearNextActionUrl = true
         )
         when (step.action) {
             KiteRecipe.ANDROID_ACTION_PREPARE_AI_ENV -> {
@@ -4654,7 +4833,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             KFWorkspaceManager.createShellSession(
                 context = appContext,
                 spaceId = space.id,
-                title = "${recipe.name} 配置"
+                title = cardTerminalTitle(recipe, stepIndex),
+                sourceLabel = recipe.name
             )
         }.getOrElse { error ->
             val message = "创建终端失败：${error.message ?: error.javaClass.simpleName}"
@@ -4670,8 +4850,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             showRunSurfaceOrConsole(recipe)
             return
         }
+        TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
+        TerminalSessionStore.refresh(appContext, force = true)
 
         val instanceId = ensureRunInstanceId(recipe)
+        focusedRunInstanceId = instanceId
         pendingTerminalFlow = PendingTerminalFlow(
             recipeId = recipe.id,
             instanceId = instanceId,
@@ -4681,11 +4864,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         setRuntimeState(
             recipe,
             RecipeRunStatus.WaitingTerminal,
+            instanceId = instanceId,
             surface = CardRunSurface.Terminal,
             currentStepIndex = stepIndex,
             runId = record.id,
             terminalSessionId = record.id,
-            lastMeaningfulOutput = "等待终端完成：${record.title}"
+            lastMeaningfulOutput = "等待终端完成：${record.title}",
+            clearNextActionUrl = true
         )
         diagnostics.logRecipeAction(
             recipe,
@@ -4704,7 +4889,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         )
         val openSurface = shouldOpenStepSurface(recipe, step)
         if (openSurface) {
-            focusedRunInstanceId = instanceId
             showCardRunSurface(recipe)
         } else {
             diagnostics.logRecipeAction(
@@ -4713,8 +4897,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
             )
             showConsole()
+            TerminalRuntimeHost.switchToSession(appContext, record.id)
         }
-        TerminalRuntimeHost.switchToSession(appContext, record.id)
         if (text.isNotBlank()) {
             root.postDelayed(
                 {
@@ -4728,6 +4912,20 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
         }
         startTerminalAuthorizationLinkWatcher(recipe, record.id, instanceId)
+    }
+
+    private fun cardTerminalTitle(recipe: KiteRecipe, stepIndex: Int): String {
+        val recipeName = recipe.name.trim().ifBlank { "Kite 卡片" }
+        val terminalOrder = recipe.steps
+            .take(stepIndex + 1)
+            .count { it.type == KiteRecipe.STEP_TERMINAL }
+            .coerceAtLeast(1)
+        val suffix = if (recipe.steps.count { it.type == KiteRecipe.STEP_TERMINAL } > 1) {
+            "终端 $terminalOrder"
+        } else {
+            "终端"
+        }
+        return "$recipeName · $suffix"
     }
 
     private fun startTerminalAuthorizationLinkWatcher(recipe: KiteRecipe, sessionId: String, instanceId: String) {
@@ -4808,6 +5006,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 clearRunBinding = true,
                 clearNextActionUrl = true
             )
+            closeCardRunInstanceForStop(recipe, previousState, "stop_opened_web")
             showConsole()
             return
         }
@@ -4834,6 +5033,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 clearRunBinding = true,
                 clearTerminalSession = true
             )
+            closeCardRunInstanceForStop(recipe, previousState, "stop_terminal_session")
             showConsole()
             return
         }
@@ -4867,6 +5067,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
             bridgeClient.stopRecipe(recipe, callback)
         }
+        closeCardRunInstanceForStop(recipe, previousState, "stop_request_sent")
     }
 
     private fun retryStopRequestAfterStableBridge(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
@@ -4912,6 +5113,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 clearNextActionUrl = true
             )
             diagnostics.logBridgeEvent("stop_success", recipe, mapOf("runId" to previousState.runId.orEmpty()))
+            closeCardRunInstanceForStop(recipe, previousState, "stop_success")
             showConsole()
             return
         }
@@ -4991,6 +5193,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 clearTerminalSession = true,
                 clearNextActionUrl = true
             )
+            closeCardRunInstanceForStop(recipe, previousState, "stop_success")
             showConsole()
             return
         }
@@ -5221,6 +5424,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun setRuntimeState(
         recipe: KiteRecipe,
         status: RecipeRunStatus,
+        instanceId: String? = null,
         surface: CardRunSurface? = null,
         currentStepIndex: Int? = null,
         runId: String? = null,
@@ -5237,7 +5441,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val state = CardRunStore.update(
             recipe = recipe,
             status = status,
-            instanceId = activeRunInstanceIds[recipe.id],
+            instanceId = instanceId ?: activeRunInstanceIds[recipe.id],
             surface = surface,
             currentStepIndex = currentStepIndex,
             runId = runId,
@@ -5293,6 +5497,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         selectedIconName = draft?.selectedIconName?.takeIf { it.isNotBlank() }
             ?: recipe?.icon?.name?.ifBlank { null }
             ?: KiteRecipeIcon.defaultNameForType(selectedType)
+        selectedIconType = draft?.selectedIconType?.takeIf { it.isNotBlank() }
+            ?: recipe?.icon?.type?.ifBlank { null }
+            ?: KiteRecipeIcon.TYPE_BUILTIN
+        selectedIconSource = draft?.selectedIconSource
+            ?: recipe?.icon?.source
+            ?: ""
+        if (selectedIconType != KiteRecipeIcon.TYPE_IMAGE || selectedIconSource.isBlank()) {
+            selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
+            selectedIconSource = ""
+            selectedIconName = KiteRecipeIcon.normalizeName(selectedIconName, selectedType)
+        }
         clearRootForScreen()
         root.addView(createTopBar(if (recipe == null) "新建配置" else "编辑配置"))
         root.addView(ScrollView(this).apply {
@@ -5363,7 +5578,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
             })
             addView(TextView(context).apply {
-                text = "点击图标可更换 ›"
+                text = "点击头像选择图片 ›"
                 textSize = 8.8f
                 setTextColor(tokens.textSecondary)
                 setPadding(0, dp(5), 0, 0)
@@ -5424,8 +5639,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun largeRecipeIconTile(): View = FrameLayout(this).apply {
         background = roundedBox(tokens.primarySubtle, Color.TRANSPARENT, dp(18).toFloat(), 0)
+        clipToOutline = true
         layoutParams = LinearLayout.LayoutParams(dp(58), dp(58))
 
+        val image = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = View.GONE
+        }
         val glyph = TextView(context).apply {
             text = displayIconGlyph(selectedIconName)
             textSize = 19.5f
@@ -5433,7 +5653,24 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             gravity = Gravity.CENTER
             setTextColor(tokens.primaryStrong)
         }
+        addView(image, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         addView(glyph, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        fun renderIcon() {
+            val bitmap = selectedIconBitmap()
+            if (bitmap != null) {
+                image.setImageBitmap(bitmap)
+                image.visibility = View.VISIBLE
+                glyph.visibility = View.GONE
+            } else {
+                image.setImageDrawable(null)
+                image.visibility = View.GONE
+                glyph.visibility = View.VISIBLE
+                glyph.text = displayIconGlyph(selectedIconName)
+            }
+        }
+        avatarTileRefresh = { renderIcon() }
+        renderIcon()
 
         addView(TextView(context).apply {
             text = "✎"
@@ -5449,10 +5686,544 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         })
 
         setOnClickListener {
-            val names = listOf("terminal", "web", "bot", "file", "tools", "server", "code", "default")
-            val nextIndex = (names.indexOf(selectedIconName).takeIf { it >= 0 } ?: 0) + 1
-            selectedIconName = names[nextIndex % names.size]
-            glyph.text = displayIconGlyph(selectedIconName)
+            showRecipeIconMenu()
+        }
+    }
+
+    private fun selectedIconBitmap(): Bitmap? =
+        if (selectedIconType == KiteRecipeIcon.TYPE_IMAGE && selectedIconSource.isNotBlank()) {
+            decodeRecipeIconSource(selectedIconSource)
+        } else {
+            null
+        }
+
+    private fun showRecipeIconMenu() {
+        recipeIconMenuDialog?.dismiss()
+        val dialog = Dialog(this)
+        recipeIconMenuDialog = dialog
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = roundedBox(tokens.surfaceElevated, Color.TRANSPARENT, dp(24).toFloat(), 0)
+            addView(TextView(context).apply {
+                text = "选择头像"
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = "从头像集选择，或添加一张新图片"
+                textSize = 12f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(4), 0, dp(12))
+            })
+
+            addView(recipeIconMenuSectionTitle("头像集"))
+            addView(recipeIconGrid().apply {
+                customRecipeIconSources().forEach { source ->
+                    addView(imageIconChoiceTile(source) {
+                        applyImageRecipeIcon(source)
+                        dialog.dismiss()
+                    })
+                }
+                addView(addIconChoiceTile {
+                    dialog.dismiss()
+                    openRecipeIconPicker(applyAfterSave = false, reopenMenuAfterSave = true)
+                })
+            })
+
+            addView(recipeIconMenuSectionTitle("预置图标").apply {
+                setPadding(0, dp(14), 0, dp(8))
+            })
+            addView(recipeIconGrid().apply {
+                presetRecipeIcons().forEach { iconName ->
+                    addView(builtinIconChoiceTile(iconName) {
+                        applyBuiltinRecipeIcon(iconName)
+                        dialog.dismiss()
+                    })
+                }
+            })
+        }
+        dialog.setContentView(ScrollView(this).apply { addView(content) })
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        dialog.setOnDismissListener {
+            if (recipeIconMenuDialog == dialog) recipeIconMenuDialog = null
+        }
+        dialog.show()
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.92f).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private fun recipeIconMenuSectionTitle(label: String): TextView = TextView(this).apply {
+        text = label
+        textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(tokens.textPrimary)
+        setPadding(0, 0, 0, dp(8))
+    }
+
+    private fun recipeIconGrid(): GridLayout = GridLayout(this).apply {
+        columnCount = 4
+        setPadding(0, 0, 0, dp(2))
+    }
+
+    private fun builtinIconChoiceTile(iconName: String, onClick: () -> Unit): View =
+        recipeIconChoiceFrame(
+            selected = selectedIconType == KiteRecipeIcon.TYPE_BUILTIN && selectedIconName == iconName,
+            onClick = onClick
+        ).apply {
+            addView(TextView(context).apply {
+                text = iconGlyph(iconName)
+                textSize = 18f
+                includeFontPadding = false
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.primaryStrong)
+                background = roundedBox(tokens.primarySubtle, Color.TRANSPARENT, dp(16).toFloat(), 0)
+            }, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                topMargin = dp(4)
+            })
+            addView(TextView(context).apply {
+                text = builtinIconLabel(iconName)
+                textSize = 10.5f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textSecondary)
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(20), Gravity.BOTTOM))
+        }
+
+    private fun imageIconChoiceTile(source: String, onClick: () -> Unit): View =
+        recipeIconChoiceFrame(
+            selected = selectedIconType == KiteRecipeIcon.TYPE_IMAGE && selectedIconSource == source,
+            onClick = onClick
+        ).apply {
+            addView(FrameLayout(context).apply {
+                background = roundedBox(tokens.surface, tokens.border, dp(16).toFloat())
+                clipToOutline = true
+                val bitmap = decodeRecipeIconSource(source)
+                if (bitmap != null) {
+                    addView(ImageView(context).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        setImageBitmap(bitmap)
+                    }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                } else {
+                    addView(TextView(context).apply {
+                        text = "?"
+                        textSize = 18f
+                        typeface = Typeface.DEFAULT_BOLD
+                        gravity = Gravity.CENTER
+                        setTextColor(tokens.textTertiary)
+                    }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                }
+            }, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                topMargin = dp(4)
+            })
+            addView(TextView(context).apply {
+                text = "自定义"
+                textSize = 10.5f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textSecondary)
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(20), Gravity.BOTTOM))
+        }
+
+    private fun addIconChoiceTile(onClick: () -> Unit): View =
+        recipeIconChoiceFrame(selected = false, onClick = onClick).apply {
+            addView(TextView(context).apply {
+                text = "+"
+                textSize = 24f
+                includeFontPadding = false
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.primaryStrong)
+                background = roundedBox(tokens.surface, tokens.border, dp(16).toFloat())
+            }, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                topMargin = dp(4)
+            })
+            addView(TextView(context).apply {
+                text = "添加"
+                textSize = 10.5f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textSecondary)
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(20), Gravity.BOTTOM))
+        }
+
+    private fun recipeIconChoiceFrame(selected: Boolean, onClick: () -> Unit): FrameLayout =
+        FrameLayout(this).apply {
+            val width = ((resources.displayMetrics.widthPixels * 0.92f).toInt() - dp(36)) / 4
+            background = roundedBox(
+                if (selected) tokens.primarySubtle else Color.TRANSPARENT,
+                if (selected) tokens.primarySoft else Color.TRANSPARENT,
+                dp(18).toFloat()
+            )
+            layoutParams = ViewGroup.MarginLayoutParams(width, dp(76)).apply {
+                setMargins(0, 0, 0, dp(8))
+            }
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun applyBuiltinRecipeIcon(iconName: String) {
+        selectedIconName = iconName
+        selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
+        selectedIconSource = ""
+        renderIconOptions()
+        avatarTileRefresh?.invoke()
+    }
+
+    private fun applyImageRecipeIcon(source: String) {
+        selectedIconType = KiteRecipeIcon.TYPE_IMAGE
+        selectedIconName = "custom"
+        selectedIconSource = source
+        renderIconOptions()
+        avatarTileRefresh?.invoke()
+    }
+
+    private fun presetRecipeIcons(): List<String> = listOf(
+        "terminal",
+        "web",
+        "bot",
+        "file",
+        "tools",
+        "server",
+        "code",
+        "logs"
+    )
+
+    private fun builtinIconLabel(iconName: String): String = when (iconName) {
+        "terminal" -> "终端"
+        "web" -> "网页"
+        "bot" -> "AI"
+        "file" -> "文件"
+        "tools" -> "工具"
+        "server" -> "服务"
+        "code" -> "代码"
+        "logs" -> "日志"
+        else -> "图标"
+    }
+
+    private fun customRecipeIconSources(): List<String> {
+        val raw = appSettings.getString(KEY_RECIPE_ICON_COLLECTION, "[]").orEmpty()
+        return runCatching {
+            val json = JSONArray(raw)
+            buildList {
+                for (index in 0 until json.length()) {
+                    val source = json.optString(index).takeIf { it.isNotBlank() } ?: continue
+                    if (recipeIconSourceExists(source)) add(source)
+                }
+            }.distinct()
+        }.getOrDefault(emptyList())
+    }
+
+    private fun addRecipeIconToCollection(source: String) {
+        if (source.isBlank()) return
+        val merged = (listOf(source) + customRecipeIconSources()).distinct().take(48)
+        appSettings.edit()
+            .putString(KEY_RECIPE_ICON_COLLECTION, JSONArray().apply { merged.forEach { put(it) } }.toString())
+            .apply()
+    }
+
+    private fun openRecipeIconPicker(applyAfterSave: Boolean = false, reopenMenuAfterSave: Boolean = false) {
+        applyPickedIconAfterCrop = applyAfterSave
+        reopenIconMenuAfterCrop = reopenMenuAfterSave
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        runCatching {
+            startActivityForResult(
+                Intent.createChooser(intent, "选择卡片头像"),
+                REQUEST_PICK_RECIPE_ICON
+            )
+        }.onFailure { error ->
+            applyPickedIconAfterCrop = false
+            reopenIconMenuAfterCrop = false
+            if (error is ActivityNotFoundException) {
+                Toast.makeText(this, "没有可用的图片选择器", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "打开相册失败：${error.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun showRecipeIconCropDialog(uri: Uri) {
+        val sourceBitmap = decodeBitmapFromUri(uri, 2048) ?: run {
+            Toast.makeText(this, "无法读取这张图片", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val dialog = Dialog(this)
+        val cropView = AvatarCropView(this, sourceBitmap).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320)).apply {
+                setMargins(0, dp(14), 0, dp(18))
+            }
+        }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(14))
+            background = roundedBox(tokens.surfaceElevated, Color.TRANSPARENT, dp(24).toFloat(), 0)
+            addView(TextView(context).apply {
+                text = "裁剪头像"
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = "拖动图片调整位置，双指缩放"
+                textSize = 12f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(4), 0, 0)
+            })
+            addView(cropView)
+            addView(row {
+                gravity = Gravity.RIGHT
+                addView(TextView(context).apply {
+                    text = "取消"
+                    textSize = 14f
+                    gravity = Gravity.CENTER
+                    setTextColor(tokens.textSecondary)
+                    background = roundedBox(tokens.surface, tokens.border, dp(16).toFloat())
+                    layoutParams = LinearLayout.LayoutParams(dp(86), dp(38)).apply {
+                        setMargins(0, 0, dp(10), 0)
+                    }
+                    setOnClickListener { dialog.dismiss() }
+                })
+                addView(TextView(context).apply {
+                    text = "保存"
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.WHITE)
+                    background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(16).toFloat())
+                    layoutParams = LinearLayout.LayoutParams(dp(96), dp(38))
+                    setOnClickListener {
+                        val cropped = cropView.cropBitmap(512)
+                        val source = saveRecipeIconBitmap(cropped)
+                        cropped.recycle()
+                        if (source.isBlank()) {
+                            Toast.makeText(context, "保存头像失败", Toast.LENGTH_SHORT).show()
+                            return@setOnClickListener
+                        }
+                        addRecipeIconToCollection(source)
+                        if (applyPickedIconAfterCrop) {
+                            applyImageRecipeIcon(source)
+                        } else {
+                            Toast.makeText(context, "已加入头像集", Toast.LENGTH_SHORT).show()
+                        }
+                        val shouldReopenMenu = reopenIconMenuAfterCrop
+                        applyPickedIconAfterCrop = false
+                        reopenIconMenuAfterCrop = false
+                        dialog.dismiss()
+                        if (shouldReopenMenu) {
+                            root.post { showRecipeIconMenu() }
+                        }
+                    }
+                })
+            })
+        }
+        dialog.setContentView(panel)
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        dialog.setOnDismissListener {
+            if (!sourceBitmap.isRecycled) sourceBitmap.recycle()
+        }
+        dialog.show()
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.92f).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private fun decodeBitmapFromUri(uri: Uri, maxSize: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / sample > maxSize || bounds.outHeight / sample > maxSize) {
+            sample *= 2
+        }
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        return contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+    }
+
+    private fun saveRecipeIconBitmap(bitmap: Bitmap): String {
+        val directory = File(filesDir, "card-icons").apply { mkdirs() }
+        val owner = editingRecipe?.id
+            ?.takeIf { it.isNotBlank() }
+            ?.replace(Regex("[^a-zA-Z0-9_.-]"), "_")
+            ?: "draft_${UUID.randomUUID().toString().replace("-", "")}"
+        val file = File(directory, "${owner}_${System.currentTimeMillis()}.png")
+        return runCatching {
+            FileOutputStream(file).use { output ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            }
+            "card-icons/${file.name}"
+        }.getOrDefault("")
+    }
+
+    private fun decodeRecipeIconSource(source: String): Bitmap? {
+        val file = recipeIconFile(source)
+        return if (file.exists()) {
+            BitmapFactory.decodeFile(file.absolutePath)
+        } else {
+            null
+        }
+    }
+
+    private fun recipeIconSourceExists(source: String): Boolean = recipeIconFile(source).exists()
+
+    private fun recipeIconFile(source: String): File =
+        if (source.startsWith("/") || source.contains(":")) {
+            File(source)
+        } else {
+            File(filesDir, source)
+        }
+
+    private inner class AvatarCropView(context: Context, private val sourceBitmap: Bitmap) : View(context) {
+        private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        private val overlayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x77000000 }
+        private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = dp(2).toFloat()
+        }
+        private val matrix = Matrix()
+        private val inverse = Matrix()
+        private val cropRect = RectF()
+        private var scale = 1f
+        private var minScale = 1f
+        private var offsetX = 0f
+        private var offsetY = 0f
+        private var lastX = 0f
+        private var lastY = 0f
+        private var lastDistance = 0f
+        private var lastScale = 1f
+        private var gestureMode = 0
+
+        init {
+            setBackgroundColor(Color.rgb(18, 24, 38))
+        }
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            val cropSize = min(w, h) * 0.82f
+            cropRect.set(
+                (w - cropSize) / 2f,
+                (h - cropSize) / 2f,
+                (w + cropSize) / 2f,
+                (h + cropSize) / 2f
+            )
+            resetToCoverCrop()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            updateMatrix()
+            canvas.drawBitmap(sourceBitmap, matrix, imagePaint)
+            canvas.drawRect(0f, 0f, width.toFloat(), cropRect.top, overlayPaint)
+            canvas.drawRect(0f, cropRect.bottom, width.toFloat(), height.toFloat(), overlayPaint)
+            canvas.drawRect(0f, cropRect.top, cropRect.left, cropRect.bottom, overlayPaint)
+            canvas.drawRect(cropRect.right, cropRect.top, width.toFloat(), cropRect.bottom, overlayPaint)
+            canvas.drawRoundRect(cropRect, dp(18).toFloat(), dp(18).toFloat(), borderPaint)
+        }
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    gestureMode = 1
+                    lastX = event.x
+                    lastY = event.y
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    if (event.pointerCount >= 2) {
+                        gestureMode = 2
+                        lastDistance = pointerDistance(event)
+                        lastScale = scale
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (gestureMode == 2 && event.pointerCount >= 2) {
+                        val distance = pointerDistance(event)
+                        if (lastDistance > 0f) {
+                            scale = (lastScale * distance / lastDistance).coerceIn(minScale, minScale * 5f)
+                            clampOffset()
+                            invalidate()
+                        }
+                    } else if (gestureMode == 1) {
+                        offsetX += event.x - lastX
+                        offsetY += event.y - lastY
+                        lastX = event.x
+                        lastY = event.y
+                        clampOffset()
+                        invalidate()
+                    }
+                }
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL -> gestureMode = 0
+                MotionEvent.ACTION_POINTER_UP -> {
+                    gestureMode = 1
+                    lastX = event.getX(0)
+                    lastY = event.getY(0)
+                }
+            }
+            return true
+        }
+
+        fun cropBitmap(size: Int): Bitmap {
+            updateMatrix()
+            matrix.invert(inverse)
+            val points = floatArrayOf(cropRect.left, cropRect.top, cropRect.right, cropRect.bottom)
+            inverse.mapPoints(points)
+            val left = points[0].toInt().coerceIn(0, sourceBitmap.width - 1)
+            val top = points[1].toInt().coerceIn(0, sourceBitmap.height - 1)
+            val right = points[2].toInt().coerceIn(left + 1, sourceBitmap.width)
+            val bottom = points[3].toInt().coerceIn(top + 1, sourceBitmap.height)
+            val cropped = Bitmap.createBitmap(sourceBitmap, left, top, right - left, bottom - top)
+            return Bitmap.createScaledBitmap(cropped, size, size, true).also {
+                if (cropped !== it) cropped.recycle()
+            }
+        }
+
+        private fun resetToCoverCrop() {
+            if (cropRect.isEmpty) return
+            minScale = max(cropRect.width() / sourceBitmap.width, cropRect.height() / sourceBitmap.height)
+            scale = minScale
+            offsetX = cropRect.centerX() - sourceBitmap.width * scale / 2f
+            offsetY = cropRect.centerY() - sourceBitmap.height * scale / 2f
+            clampOffset()
+        }
+
+        private fun updateMatrix() {
+            matrix.reset()
+            matrix.postScale(scale, scale)
+            matrix.postTranslate(offsetX, offsetY)
+        }
+
+        private fun clampOffset() {
+            val scaledWidth = sourceBitmap.width * scale
+            val scaledHeight = sourceBitmap.height * scale
+            offsetX = when {
+                scaledWidth <= cropRect.width() -> cropRect.centerX() - scaledWidth / 2f
+                offsetX > cropRect.left -> cropRect.left
+                offsetX + scaledWidth < cropRect.right -> cropRect.right - scaledWidth
+                else -> offsetX
+            }
+            offsetY = when {
+                scaledHeight <= cropRect.height() -> cropRect.centerY() - scaledHeight / 2f
+                offsetY > cropRect.top -> cropRect.top
+                offsetY + scaledHeight < cropRect.bottom -> cropRect.bottom - scaledHeight
+                else -> offsetY
+            }
+        }
+
+        private fun pointerDistance(event: MotionEvent): Float {
+            val dx = event.getX(0) - event.getX(1)
+            val dy = event.getY(0) - event.getY(1)
+            return kotlin.math.sqrt(dx * dx + dy * dy)
         }
     }
 
@@ -5521,6 +6292,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         selectedType = type
         selectedIconName = KiteRecipeIcon.defaultNameForType(type)
+        selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
+        selectedIconSource = ""
+        avatarTileRefresh?.invoke()
         renderIconOptions()
         renderStepOptions()
     }
@@ -5908,6 +6682,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     shortcut = false,
                     openInstanceOnStart = openInstanceOnStart,
                     iconName = selectedIconName,
+                    iconType = selectedIconType,
+                    iconSource = selectedIconSource,
                     description = description,
                     steps = normalizedSteps.map { it.toInput() }
                 )
@@ -5937,18 +6713,33 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun showRecipeRawJson(recipe: KiteRecipe) {
+        val latestRecipe = latestRecipeForRawJson(recipe)
         currentScreen = Screen.RecipeDetail
         clearRootForScreen()
-        root.addView(topBar("原始 JSON") { showRecipeEditor(recipe) })
+        root.addView(topBar("原始 JSON") { showRecipeEditor(latestRecipe) })
         root.addView(ScrollView(this).apply {
             addView(TextView(context).apply {
-                text = recipe.toJson().toString(2)
+                text = latestRecipe.toJson(includeLocalIdentity = true).toString(2)
                 textSize = 14f
                 setTextColor(tokens.textPrimary)
                 setPadding(dp(24), dp(20), dp(24), dp(28))
                 typeface = Typeface.MONOSPACE
             })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    private fun latestRecipeForRawJson(recipe: KiteRecipe): KiteRecipe {
+        val recipes = runCatching { recipeLoader.loadAllRecipes() }.getOrNull().orEmpty()
+        if (recipes.isNotEmpty()) currentRecipes = recipes
+        return recipes.firstOrNull { recipe.id.isNotBlank() && it.id == recipe.id }
+            ?: recipes.firstOrNull {
+                recipe.id.isBlank() &&
+                    it.name == recipe.name &&
+                    it.description == recipe.description &&
+                    it.steps.map { step -> step.type to (step.cmd ?: step.text ?: step.url).orEmpty() } ==
+                    recipe.steps.map { step -> step.type to (step.cmd ?: step.text ?: step.url).orEmpty() }
+            }
+            ?: recipe
     }
 
     private fun registerCardRunBrowserHandler(recipe: KiteRecipe, instanceId: String) {
@@ -6176,8 +6967,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setOnClickListener {
                 selectedType = option.type
                 selectedIconName = KiteRecipeIcon.defaultNameForType(selectedType)
+                selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
+                selectedIconSource = ""
                 renderTypeOptions()
                 renderIconOptions()
+                avatarTileRefresh?.invoke()
                 updateDynamicFieldVisibility()
             }
         }
@@ -6191,11 +6985,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         layoutParams = LinearLayout.LayoutParams(dp(44), dp(38)).apply { setMargins(0, 0, dp(8), 0) }
         setOnClickListener {
             if (iconName == "more") {
-                Toast.makeText(context, "自定义图标后续开放", Toast.LENGTH_SHORT).show()
+                showRecipeIconMenu()
                 return@setOnClickListener
             }
             selectedIconName = iconName
+            selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
+            selectedIconSource = ""
             renderIconOptions()
+            avatarTileRefresh?.invoke()
         }
     }
 
@@ -6497,6 +7294,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         setTextColor(tint)
         background = roundedBox(fill, tintBackgroundBorder(tint), dp(14).toFloat())
         layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+    }
+
+    private fun recipeIconTile(recipe: KiteRecipe, size: Int, fallbackTextSize: Float): View {
+        val bitmap = if (recipe.icon.type == KiteRecipeIcon.TYPE_IMAGE && recipe.icon.source.isNotBlank()) {
+            decodeRecipeIconSource(recipe.icon.source)
+        } else {
+            null
+        }
+        if (bitmap == null) {
+            return iconTile(recipe.icon.name, accentFor(recipe), tintBackground(accentFor(recipe))).apply {
+                textSize = fallbackTextSize
+                layoutParams = LinearLayout.LayoutParams(size, size)
+            }
+        }
+        return FrameLayout(this).apply {
+            background = roundedBox(tokens.surface, tintBackgroundBorder(accentFor(recipe)), dp(14).toFloat())
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(size, size)
+            addView(ImageView(context).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setImageBitmap(bitmap)
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
     }
 
     private fun iconGlyph(iconName: String): String = when (iconName) {
@@ -6967,6 +7787,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val editingRecipeId: String,
         val selectedType: String,
         val selectedIconName: String,
+        val selectedIconType: String,
+        val selectedIconSource: String,
         val name: String,
         val description: String,
         val url: String,
@@ -6981,6 +7803,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 .put("editingRecipeId", editingRecipeId)
                 .put("selectedType", selectedType)
                 .put("selectedIconName", selectedIconName)
+                .put("selectedIconType", selectedIconType)
+                .put("selectedIconSource", selectedIconSource)
                 .put("name", name)
                 .put("description", description)
                 .put("url", url)
@@ -7023,6 +7847,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         editingRecipeId = json.optString("editingRecipeId"),
                         selectedType = json.optString("selectedType").ifBlank { KiteRecipe.TYPE_COMMAND_WEB },
                         selectedIconName = json.optString("selectedIconName").ifBlank { KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_COMMAND_WEB) },
+                        selectedIconType = json.optString("selectedIconType").ifBlank { KiteRecipeIcon.TYPE_BUILTIN },
+                        selectedIconSource = json.optString("selectedIconSource"),
                         name = json.optString("name"),
                         description = json.optString("description"),
                         url = json.optString("url"),
@@ -7157,10 +7983,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val TERMINAL_AUTH_LINK_POLL_MS = 1200L
         private const val TERMINAL_AUTH_LINK_WATCH_MS = 10L * 60L * 1000L
         private const val REQUEST_DROPZONE_STORAGE = 801
+        private const val REQUEST_PICK_RECIPE_ICON = 802
         private const val KEY_HIDE_MAIN_TASK_FROM_RECENTS = "hide_main_task_from_recents"
         private const val KEY_RESTORE_LAST_SCREEN = "restore_last_screen"
         private const val KEY_RECIPE_DRAFT = "recipe_draft"
         private const val KEY_RECIPE_DRAFT_SAVED_AT = "recipe_draft_saved_at"
+        private const val KEY_RECIPE_ICON_COLLECTION = "recipe_icon_collection"
         private const val STATE_CURRENT_SCREEN = "kite_current_screen"
         private const val STATE_WORKBENCH_URL = "kite_workbench_url"
         private const val STATE_RECIPE_DRAFT = "kite_recipe_draft"

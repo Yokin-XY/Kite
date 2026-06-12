@@ -3,7 +3,6 @@ package com.kite.app.run
 import com.kite.app.recipe.KiteRecipe
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import java.util.UUID
 
 object CardRunStore {
     private val _runs = MutableStateFlow<List<CardRunState>>(emptyList())
@@ -20,7 +19,7 @@ object CardRunStore {
         registeredRecipes[recipeId]
 
     @Synchronized
-    fun start(recipe: KiteRecipe, instanceId: String = newInstanceId(recipe.id)): CardRunState {
+    fun start(recipe: KiteRecipe, instanceId: String = recipe.id): CardRunState {
         registerRecipe(recipe)
         val now = System.currentTimeMillis()
         val run = CardRunState(
@@ -112,6 +111,4 @@ object CardRunStore {
         _runs.value = current.values.sortedByDescending { it.updatedAt }
     }
 
-    private fun newInstanceId(recipeId: String): String =
-        "run_${recipeId}_${UUID.randomUUID().toString().replace("-", "")}"
 }

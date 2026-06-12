@@ -313,13 +313,20 @@ data class KiteRecipe(
 
 data class KiteRecipeIcon(
     val type: String = "builtin",
-    val name: String = ICON_DEFAULT
+    val name: String = ICON_DEFAULT,
+    val source: String = ""
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("type", type)
         .put("name", name)
+        .apply {
+            if (source.isNotBlank()) put("source", source)
+        }
 
     companion object {
+        const val TYPE_BUILTIN = "builtin"
+        const val TYPE_IMAGE = "image"
+
         const val ICON_TERMINAL = "terminal"
         const val ICON_WEB = "web"
         const val ICON_BOT = "bot"
@@ -348,13 +355,23 @@ data class KiteRecipeIcon(
             ICON_DEFAULT
         )
 
-        fun fromJson(json: JSONObject, recipeType: String): KiteRecipeIcon = KiteRecipeIcon(
-            type = json.optString("type", "builtin"),
-            name = normalizeName(json.optString("name"), recipeType)
-        )
+        fun fromJson(json: JSONObject, recipeType: String): KiteRecipeIcon {
+            val iconType = json.optString("type", TYPE_BUILTIN).trim().lowercase()
+            if (iconType == TYPE_IMAGE || iconType == "local") {
+                return KiteRecipeIcon(
+                    type = TYPE_IMAGE,
+                    name = json.optString("name").ifBlank { "custom" },
+                    source = json.optString("source").ifBlank { json.optString("path") }
+                )
+            }
+            return KiteRecipeIcon(
+                type = TYPE_BUILTIN,
+                name = normalizeName(json.optString("name"), recipeType)
+            )
+        }
 
         fun defaultForType(recipeType: String): KiteRecipeIcon = KiteRecipeIcon(
-            type = "builtin",
+            type = TYPE_BUILTIN,
             name = defaultNameForType(recipeType)
         )
 
