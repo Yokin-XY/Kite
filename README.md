@@ -1,29 +1,74 @@
 # Kite
 
-Kite 是一个面向 Android 的 KF/RKF 操作层。它把 KF/KFShell 这类移动 Linux 与 AI 运行底座包装成卡片、终端、浏览器工作台和可分享工作流，让手机上的 Ubuntu/proot 服务不再只是一堆命令和端口。
+<div align="center">
 
-一句话说，Kite 拿 KF 作为内核，把“启动工具、等待服务、打开页面、看日志、做账号验证、回到工作台”这些动作卡片化。
+**Android card workbench for KF/KFShell: cards, resources, local Web Shell, and shareable AI workflows on a phone.**
 
-![Kite home preview](docs/screenshots/kite-v0.2-home-preview.svg)
+Kite 拿 KF/KFShell 作为移动 Linux 与 AI 运行底座，把“启动工具、等待服务、打开页面、看日志、做账号验证、回到工作台”这些动作卡片化。
 
-## 它解决什么
+![Platform](https://img.shields.io/badge/platform-Android-34A853?style=flat-square)
+![Runtime](https://img.shields.io/badge/runtime-KF%20%2F%20KFShell-0F172A?style=flat-square)
+![Workbench](https://img.shields.io/badge/workbench-cards%20%2B%20Web%20Shell-0EA5E9?style=flat-square)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-F59E0B?style=flat-square)
 
-KF/KFShell 负责真正的执行环境：Ubuntu rootfs、PRoot、进程管理、工具链、服务端口、终端、日志和运行时生命周期。Kite 负责把这些能力变成用户和 AI 都容易操作的入口：
+</div>
 
-- 把一个服务或脚本做成 Kite Card。
-- 点击卡片后在 KF runtime 中执行命令、安装依赖或启动服务。
-- 等待服务端口就绪后打开对应的本地 Web 工作台。
-- 用内置 Web Shell 承接 `127.0.0.1` / `localhost` 页面，减少 Ubuntu 内部没有浏览器带来的麻烦。
-- 把外部登录、OAuth、账号验证、浏览器回跳这类事情交给 Android 系统浏览器或 Kite Web Shell 协作处理。
-- 让卡片可以本地导入、导出、分享，后续也可以从网络加载。
+<p align="center">
+  <img src="docs/screenshots/kite-resources.png" width="23%" alt="Kite resource catalog" />
+  <img src="docs/screenshots/kite-resource-detail.png" width="23%" alt="Kite resource detail and execution preview" />
+  <img src="docs/screenshots/kite-create-card.png" width="23%" alt="Kite recipe editor" />
+  <img src="docs/screenshots/kite-home.png" width="23%" alt="Kite card console" />
+</p>
 
-Kite 的目标不是做另一个完整浏览器，也不是把 KF 重新写一遍。它更像 KF 的手机工作台外壳：KF 管执行，Kite 管入口、呈现、诊断和工作流身份。
+<p align="center"><sub>Current Android debug build captured on OnePlus 8T: resource catalog, execution preview, recipe editor, and card console.</sub></p>
 
-## 核心概念
+## What Kite Is
+
+Kite 是一个面向 Android 的 KF/RKF 操作层。它不是另一个完整浏览器，也不是把 KF 重新写一遍；它更像 KF 的手机工作台外壳：
+
+- **KF/KFShell 管执行**：Ubuntu rootfs、PRoot、进程管理、工具链、服务端口、终端、日志和运行时生命周期。
+- **Kite 管入口**：卡片、Recipe、资源页、Web Shell、运行报告、导入分享、桌面快捷方式和登录/回调承接。
+- **AI 和人都能用**：一个服务或脚本可以变成卡片，点击后启动、等待、打开、诊断，而不是让用户记一串命令和端口。
+
+## Product Surfaces
+
+| Surface | What it does |
+| --- | --- |
+| **Card Console** | 把服务、命令、网页工作台变成可启动的 Kite Card，并保留运行状态。 |
+| **Resource Catalog** | 管 Node.js、Hermes、uv、curl、Git、Python 等本地资源和依赖关系。 |
+| **Resource Detail** | 显示安装来源、执行命令、安装位置、访问入口和依赖说明。 |
+| **Recipe Editor** | 用 `shell` / `service` / `open_web` 等动作组合一个可分享工作流。 |
+| **Kite Web Shell** | 承接 `127.0.0.1` / `localhost` 页面、WebView console、加载错误和本地 AI Web 应用。 |
+| **Desktop Shortcuts** | 保留 shortcut/card identity 语义，目标是从 Android 桌面直达对应工作台。 |
+
+## Run Logic
+
+Kite Card 不是静态 UI 数据。它同时是快捷入口、任务身份、运行报告绑定对象、默认工作台地址和分享单元。
+
+```mermaid
+flowchart LR
+    A["Kite Card or desktop shortcut target"] --> B["Kite Recipe"]
+    B --> C["shell / service / open_web steps"]
+    C --> D["Android/KF runtime control plane"]
+    D --> E["Ubuntu + PRoot + toolchain"]
+    E --> F["Run report and port readiness"]
+    F --> G["Kite Web Shell or system browser"]
+```
+
+典型流程：
+
+1. 用户点击 Kite Card；桌面快捷方式会进入同一条 card identity 路径。
+2. Kite 读取 Recipe，建立这次运行的 card identity 和 run report。
+3. Android/KF runtime 执行 shell、安装依赖或启动服务。
+4. Kite 等待端口、解析输出、记录最后有效状态。
+5. 本地页面交给 Kite Web Shell，公网登录或 OAuth 回调交给系统浏览器协作处理。
+6. 卡片状态回写到工作台，后续可以继续打开、停止、诊断或分享。
+
+## Core Concepts
 
 ### Kite Card
 
-Kite Card 是一个可执行的工作流入口。它可以只是打开一个网址，也可以先执行脚本，再等待结果，再打开 Web 页面。
+Kite Card 是一个可执行的工作流入口。它可以只是打开一个网址，也可以先执行脚本，再等待服务就绪，最后打开 Web 页面。
 
 常见卡片类型：
 
@@ -32,25 +77,21 @@ Kite Card 是一个可执行的工作流入口。它可以只是打开一个网�
 - 命令卡片：执行一个 KF/Ubuntu 命令，读取结构化运行报告。
 - Web 卡片：直接打开本地或外部工作台。
 
-卡片不只是 UI 数据。它同时是快捷入口、任务身份、运行报告绑定对象、默认工作台地址和分享单元。
-
 ### Kite Recipe
 
 Kite Recipe 是卡片背后的 JSON 工作流协议。一个 Recipe 可以描述：
 
 - 卡片名称、图标、分类和说明。
 - 默认打开地址，例如 `http://127.0.0.1:8648`。
-- shell / service / open_web 等步骤。
+- `shell` / `service` / `open_web` 等步骤。
 - 成功判断、最后有效输出、运行报告摘要。
 - 是否允许作为桌面快捷入口。
 
-Recipe 的执行边界很重要：Recipe 可以描述要做什么，但传输方式、token、KF 启动方式和最终执行权不交给 Recipe 决定。Android/KF runtime 才是执行所有 shell、PRoot、进程、服务和资源管理动作的控制面。
+Recipe 的执行边界很重要：Recipe 可以描述要做什么，但传输方式、token、KF 启动方式和最终执行权不交给 Recipe 决定。Android/KF runtime 才是执行 shell、PRoot、进程、服务和资源管理动作的控制面。
 
 ### Kite Web Shell
 
-Kite Web Shell 是一个偏“无头”的内置浏览器壳。它不是给普通网页浏览设计的，所以不会追求完整地址栏、书签、历史、复杂标签页和下载器体验。
-
-它更关注这些事：
+Kite Web Shell 是一个偏“无头”的内置浏览器壳。它不追求普通浏览器的完整地址栏、书签、历史、复杂标签页和下载器体验，而是服务本地工作台：
 
 - 打开本地服务页面，例如 `http://127.0.0.1:*` 和 `http://localhost:*`。
 - 捕获 WebView console、页面错误、加载状态和能力报告。
@@ -60,23 +101,9 @@ Kite Web Shell 是一个偏“无头”的内置浏览器壳。它不是给普�
 
 长期方向上，Kite Web Shell 会尽量让网页元素、错误、状态和上下文对 AI 更友好，也就是一种更适合 AI 使用和诊断的浏览器工作面。
 
-### 桌面快捷方式
+## Repository Map
 
-Kite Card 的目标形态是可以变成 Android 桌面快捷方式。用户点桌面图标时，不必先进入 Kite 本体再找功能，而是直接进入这个卡片对应的工作台：
-
-```text
-桌面快捷方式
--> Kite Card / Recipe
--> KF runtime 执行脚本或启动服务
--> 等待端口 / 读取 Run Report
--> 打开 Kite Web Shell 或系统浏览器
-```
-
-当前代码已经保留了 `shortcut` 语义和卡片身份，桌面快捷入口仍在持续完善中。
-
-## 当前仓库包含什么
-
-这个仓库不是一个纯 UI demo。当前主线已经包含：
+这个仓库不是一个纯 UI demo。当前主线包含：
 
 - Android app 工程。
 - Kite Console / Recipe 卡片界面。
@@ -88,31 +115,43 @@ Kite Card 的目标形态是可以变成 Android 桌面快捷方式。用户点�
 - Termux terminal view 本地集成。
 - Shizuku、ADB、PRoot、runtime lifecycle、task/status/logs 等运行时模块。
 
-其中大体分工是：
+主要目录：
 
-```text
-Kite
-  卡片、Recipe、Web Shell、诊断、导入/分享、工作台入口。
+| Path | Purpose |
+| --- | --- |
+| `app/` | Android app, card UI, Web Shell, bridge and KF runtime integration. |
+| `app/src/main/assets/recipes/` | Built-in Kite Recipe examples. |
+| `assets/` | PRoot, Ubuntu rootfs, resources and toolchain packs. |
+| `docs/protocol/` | Kite bridge and Recipe protocol drafts. |
+| `docs/architecture/` | Architecture notes for the current v0.x line. |
+| `references/` | Local build/deploy toolchain references for this workspace. |
 
-Android/KF runtime
-  PRoot、Ubuntu、终端、进程、工具链、服务、日志、资源与生命周期管理。
-
-Recipe / Card
-  描述工作流和默认工作台，但不拥有平台传输层和敏感执行权限。
-```
-
-## 卡片分享和导入
+## Sharing And Imports
 
 Kite 预期支持多种卡片来源：
 
-- 内置卡片：随 APK 打包，适合官方维护的常用工作流。
-- 本地卡片：用户自己创建和编辑。
-- 导入卡片：从共享目录导入。
-- 网络卡片：未来从远端加载。
+- **Built-in cards**：随 APK 打包，适合官方维护的常用工作流。
+- **Local cards**：用户自己创建和编辑。
+- **Imported cards**：从共享目录导入。
+- **Network-loaded cards**：未来从远端加载。
 
 当前代码中，drop zone 会准备共享目录并扫描 JSON Recipe。复杂卡片可以把脚本逻辑放进包内，Kite 读取 `recipe.json` 后生成卡片，再由 KF runtime 负责执行。
 
-## 安全边界
+## Build
+
+Windows / PowerShell:
+
+```powershell
+.\gradlew.bat assembleDebug
+```
+
+Debug APK output:
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+## Security Boundary
 
 Kite 面向个人设备和本地运行环境，不应该把控制接口暴露给不可信网络。
 
@@ -124,23 +163,7 @@ Kite 面向个人设备和本地运行环境，不应该把控制接口暴露给
 - 第三方卡片和脚本包需要来源可信，后续应加入更明确的风险提示和签名/权限模型。
 - Kite Web Shell 主要承接本地工作台；外部登录和公网链接优先交给系统浏览器。
 
-## 构建
-
-Windows / PowerShell：
-
-```powershell
-.\gradlew.bat assembleDebug
-```
-
-主要工程入口：
-
-- Android app: `app/`
-- 内置 Recipe: `app/src/main/assets/recipes/`
-- 外部运行资产: `assets/`
-- 协议文档: `docs/protocol/`
-- 架构文档: `docs/architecture/`
-
-## 许可证
+## License
 
 Kite 原创代码、文档、Recipe 和集成工作默认使用 PolyForm Noncommercial License 1.0.0，个人、研究、教育、非营利等非商业用途可以使用，商业用途需要单独授权。
 
