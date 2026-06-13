@@ -1,6 +1,7 @@
 package com.kite.app
 
 import android.animation.ValueAnimator
+import android.animation.LayoutTransition
 import android.app.ActivityManager
 import android.app.Dialog
 import android.Manifest
@@ -79,6 +80,8 @@ import com.kite.app.recipe.NewRecipeStepInput
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallSpec
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceManifest
+import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunBrowserRouter
 import com.kite.app.run.CardRunSurface
@@ -115,6 +118,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Calendar
 import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.max
@@ -132,6 +136,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private lateinit var localServer: KiteLocalServer
     private lateinit var cardLocalSettings: CardLocalSettingsStore
     private lateinit var resourceInstallStore: KiteResourceInstallStore
+    private lateinit var resourceManifestLoader: KiteResourceManifestLoader
     private lateinit var themeStore: SharedPreferences
     private lateinit var appSettings: SharedPreferences
     private lateinit var root: LinearLayout
@@ -160,6 +165,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_OPEN_URL)
     private var selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
     private var selectedIconSource = ""
+    private var formShortcutRequested = false
+    private var formLaunchOpenInstance = true
+    private var recipeMoreDraft: RecipeFormDraft? = null
     private var avatarTileRefresh: (() -> Unit)? = null
     private var recipeIconMenuDialog: Dialog? = null
     private var applyPickedIconAfterCrop = false
@@ -212,6 +220,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         diagnostics.writeCapabilityReport()
         themeStore = getSharedPreferences("kite_theme", MODE_PRIVATE)
         appSettings = getSharedPreferences("kite_app_settings", MODE_PRIVATE)
+        CardRunStore.initialize(applicationContext)
         themeConfig = loadThemeConfig()
         tokens = KiteTheme.resolve(themeConfig)
         applyKiteTerminalTheme()
@@ -223,6 +232,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         webShell = KiteWebShell(this, webView, diagnostics) { }
         cardLocalSettings = CardLocalSettingsStore(this)
         resourceInstallStore = KiteResourceInstallStore(this)
+        resourceManifestLoader = KiteResourceManifestLoader(this)
         localServer = KiteLocalServer(applicationContext, diagnostics) { request ->
             runOnUiThread { handleBrowserOpenRequest(request) }
         }
@@ -299,8 +309,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             return
         }
         when (currentScreen) {
-            Screen.CreateConfig -> discardRecipeDraftAndShowConsole()
+            Screen.CreateConfig -> handleRecipeFormBack()
+            Screen.RecipeMore -> returnToRecipeFormFromMore()
             Screen.ThemeSettings -> showSettings()
+            Screen.ResourceMore -> currentResourceDetailId?.let { showResourceDetail(it) } ?: showResources()
             Screen.ResourceDetail -> showResources()
             Screen.Resources -> showConsole()
             Screen.Settings -> showConsole()
@@ -738,6 +750,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 showResources()
                 true
             }
+            Screen.ResourceMore -> {
+                showResources()
+                true
+            }
             Screen.Workbench -> {
                 val url = savedInstanceState.getString(STATE_WORKBENCH_URL).orEmpty()
                 if (url.isBlank()) {
@@ -779,6 +795,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun snapshotRecipeFormDraft(): RecipeFormDraft? {
+        if (currentScreen == Screen.RecipeMore) {
+            return recipeMoreDraft?.withLaunchState()
+        }
         if (currentScreen != Screen.CreateConfig || !::nameInput.isInitialized) return null
         return RecipeFormDraft(
             editingRecipeId = editingRecipe?.id.orEmpty(),
@@ -791,11 +810,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             url = if (::urlInput.isInitialized) urlInput.text?.toString().orEmpty() else "",
             command = if (::commandInput.isInitialized) commandInput.text?.toString().orEmpty() else "",
             workdir = if (::workdirInput.isInitialized) workdirInput.text?.toString().orEmpty() else "",
-            shortcutRequested = ::shortcutSwitch.isInitialized && shortcutSwitch.isChecked,
-            launchOpenInstance = ::launchInstanceSwitch.isInitialized && launchInstanceSwitch.isChecked,
+            shortcutRequested = formShortcutRequested,
+            launchOpenInstance = formLaunchOpenInstance,
             steps = formSteps.map { it.copy() }
         )
     }
+
+    private fun RecipeFormDraft.withLaunchState(): RecipeFormDraft =
+        copy(
+            shortcutRequested = formShortcutRequested,
+            launchOpenInstance = formLaunchOpenInstance
+        )
 
     private fun clearRecipeDraftState() {
         appSettings.edit()
@@ -853,6 +878,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             val result = dropZoneManager.scanAndImport()
             runOnUiThread {
                 isDropZoneRefreshing = false
+                refreshRecipeRuntimeStates(currentRecipes)
                 Toast.makeText(this, result.message, Toast.LENGTH_SHORT).show()
                 showConsole()
             }
@@ -878,11 +904,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         currentScreen = Screen.Console
         dropZoneStatus = dropZoneManager.prepareDropZone()
         currentRecipes = recipeLoader.loadAllRecipes()
-        currentRecipes.forEach { recipe ->
-            runtimeStates[recipe.id] = CardRunStore.currentForRecipe(recipe.id)
-                ?: runtimeStates[recipe.id]
-                    ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown")
-        }
+        refreshRecipeRuntimeStates(currentRecipes)
         val focusedRecipe = focusedRunRecipe()
         if (this is CardRunActivity && focusedRecipe != null) {
             showCardRunSurface(focusedRecipe)
@@ -894,6 +916,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         ubuntuRuntimeBanner()?.let { root.addView(it) }
         root.addView(recipeGrid(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomNavigation())
+    }
+
+    private fun refreshRecipeRuntimeStates(recipes: List<KiteRecipe> = currentRecipes) {
+        recipes.forEach { recipe ->
+            runtimeStates[recipe.id] = CardRunStore.currentForRecipe(recipe.id)
+                ?: runtimeStates[recipe.id]
+                    ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown")
+        }
     }
 
     private fun focusedRunRecipe(): KiteRecipe? {
@@ -1654,6 +1684,46 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (item.actionEnabled) setOnClickListener { handleResourceAction(item) }
         }
 
+    private fun resourceDetailActionArea(item: ResourceItem): View =
+        if (resourceHasSplitActions(item)) {
+            row {
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                    setMargins(0, dp(24), 0, 0)
+                }
+                addView(resourceActionButton(item, compact = false).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, dp(46), 0.7f)
+                })
+                addView(resourceUninstallButton(item).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, dp(46), 0.3f).apply {
+                        setMargins(dp(10), 0, 0, 0)
+                    }
+                })
+            }
+        } else {
+            resourceActionButton(item, compact = false).apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                    setMargins(0, dp(24), 0, 0)
+                }
+            }
+        }
+
+    private fun resourceHasSplitActions(item: ResourceItem): Boolean =
+        resourceIsInstalled(item) && item.actionLabel == "打开"
+
+    private fun resourceUninstallButton(item: ResourceItem): TextView =
+        TextView(this).apply {
+            text = "卸载"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(tokens.danger)
+            alpha = if (item.actionEnabled) 1f else 0.58f
+            background = roundedBox(tintBackground(tokens.danger), tintBackgroundBorder(tokens.danger), dp(15).toFloat(), 0)
+            if (item.actionEnabled) setOnClickListener { handleResourceUninstallAction(item) }
+        }
+
     private fun showResourceDetail(resourceId: String) {
         val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId } ?: return
         currentResourceDetailId = resourceId
@@ -1665,13 +1735,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(22), dp(8), dp(22), dp(34))
-                addView(resourceDetailChrome())
+                addView(resourceDetailChrome(item))
                 addView(resourceDetailHeader(item))
-                addView(resourceActionButton(item, compact = false).apply {
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
-                        setMargins(0, dp(24), 0, 0)
-                    }
-                })
+                addView(resourceDetailActionArea(item))
                 addView(resourcePreviewStrip(item))
                 addView(resourceInfoBlock("简介", item.longDescription))
                 addView(resourceExecutionPreviewBlock(item))
@@ -1680,14 +1746,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
-    private fun resourceDetailChrome(): View =
+    private fun resourceDetailChrome(item: ResourceItem): View =
         row {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, dp(8))
             addView(iconButton("‹", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { showResources() })
             addView(View(context), LinearLayout.LayoutParams(0, dp(32), 1f))
             addView(iconButton("•••", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) {
-                Toast.makeText(this@MainActivity, "更多操作稍后接入", Toast.LENGTH_SHORT).show()
+                showResourceMoreActions(item)
             })
         }
 
@@ -1886,6 +1952,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 ResourceExecutionRow("位", "安装地点", "npm 全局目录", "一般不需要用户手动选择路径", monospace = false),
                 ResourceExecutionRow("访", "访问入口", "127.0.0.1:8648", "启动后在 Kite 网页里打开", monospace = true)
             )
+            RESOURCE_GIT -> listOf(
+                ResourceExecutionRow("源", "来源", "apt", "从 Ubuntu 软件源安装 git", monospace = false),
+                ResourceExecutionRow("命", "执行命令", "apt-get install -y git ca-certificates", "安装前会先检查当前环境是否已有 git", monospace = true),
+                ResourceExecutionRow("能", "提供能力", "tool.git", "供 Hermes 本体、源码下载和后续资源依赖引用", monospace = true),
+                ResourceExecutionRow("记", "登记位置", KiteResourceInstallRecipes.softwarePath(RESOURCE_GIT), "记录 preexisting 或 installed_by_kite", monospace = true),
+                ResourceExecutionRow("验", "验证命令", "git --version", "用于确认当前 Git 可用", monospace = true)
+            )
+            RESOURCE_PYTHON -> listOf(
+                ResourceExecutionRow("源", "来源", "apt", "补齐 Ubuntu Python 运行时", monospace = false),
+                ResourceExecutionRow("命", "执行命令", "apt-get install -y python3 python3-venv python3-pip", "安装前会校验 Hermes 的 Python 版本范围", monospace = true),
+                ResourceExecutionRow("能", "提供能力", "runtime.python>=3.11<3.14", "Hermes pyproject 当前要求这个范围", monospace = true),
+                ResourceExecutionRow("位", "登记位置", KiteResourceInstallRecipes.softwarePath(RESOURCE_PYTHON), "Python 是系统底座，只记录 Kite 可用状态", monospace = true),
+                ResourceExecutionRow("验", "验证命令", "python3 -m venv --help", "确认 venv/pip 路径可用于 Hermes", monospace = true)
+            )
+            RESOURCE_UV -> listOf(
+                ResourceExecutionRow("源", "来源", "本地", "从内置 ai-dev-pack 解出 uv", monospace = false),
+                ResourceExecutionRow("包", "资源位置", KiteResourceInstallRecipes.localPackPath(RESOURCE_UV), "先作为资源包放入工作区", monospace = true),
+                ResourceExecutionRow("命", "执行命令", "install.sh --install-uv", "只安装 uv/uvx，不顺带安装整个工具合集", monospace = true),
+                ResourceExecutionRow("入", "命令入口", "/workspace/.kf/bin/uv", "Hermes 安装 Python 依赖时使用", monospace = true),
+                ResourceExecutionRow("验", "验证命令", "uv --version && uvx --version", "用于确认当前 uv 可用", monospace = true)
+            )
+            RESOURCE_HERMES_CORE -> listOf(
+                ResourceExecutionRow("源", "来源", "官方", "下载 Hermes 官方 install.sh 并按 Kite 注册目录执行", monospace = false),
+                ResourceExecutionRow("命", "执行命令", "install.sh --dir ... --hermes-home ...", "本体安装跳过交互 setup 和浏览器下载", monospace = true),
+                ResourceExecutionRow("位", "安装地点", KiteResourceInstallRecipes.softwarePath(RESOURCE_HERMES_CORE), "官方安装产物放进这张资源自己的软件区", monospace = true),
+                ResourceExecutionRow("入", "命令入口", "/workspace/.kf/bin/hermes", "包装命令会自动带上 Kite 管理的 HERMES_HOME", monospace = true),
+                ResourceExecutionRow("卸", "卸载范围", "Hermes Core", "只清本体目录和入口，不处理配置配套卡和 WebUI", monospace = false)
+            )
             "python-314" -> listOf(
                 ResourceExecutionRow("源", "来源", "下载", "下载独立 Python 工具链", monospace = false),
                 ResourceExecutionRow("命", "执行命令", "download/extract python toolchain", "先下载，再解包到独立目录", monospace = true),
@@ -2063,20 +2157,197 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     startResourceInstall(item, recipe)
                 }
             }
-            "卸载", "继续清理" -> {
-                val recipe = resourceUninstallRecipe(item)
+            "打开" -> {
+                val recipe = resourceOpenRecipe(item)
                 if (recipe == null) {
-                    resourceInstallStore.clear(item.id)
-                    invalidateResourceCatalogCache()
-                    Toast.makeText(this, "已移除 ${item.name} 的安装记录", Toast.LENGTH_SHORT).show()
-                    showResources()
+                    Toast.makeText(this, "${item.name} 的打开动作稍后接入", Toast.LENGTH_SHORT).show()
                 } else {
-                    startResourceUninstall(item, recipe)
+                    startResourceOpen(item, recipe)
                 }
+            }
+            "卸载", "继续清理" -> {
+                handleResourceUninstallAction(item)
             }
             else -> Toast.makeText(this, "正在处理 ${item.name}", Toast.LENGTH_SHORT).show()
         }
     }
+
+    private fun handleResourceUninstallAction(item: ResourceItem) {
+        val recipe = resourceUninstallRecipe(item)
+        if (recipe == null) {
+            resourceInstallStore.clear(item.id)
+            invalidateResourceCatalogCache()
+            Toast.makeText(this, "已移除 ${item.name} 的安装记录", Toast.LENGTH_SHORT).show()
+            showResources()
+        } else {
+            startResourceUninstall(item, recipe)
+        }
+    }
+
+    private fun showResourceMoreActions(item: ResourceItem) {
+        currentResourceDetailId = item.id
+        currentScreen = Screen.ResourceMore
+        root.setBackgroundColor(tokens.pageBackground)
+        clearRootForScreen()
+        root.addView(topBar("资源管理") { showResourceDetail(item.id) })
+        root.addView(ScrollView(this).apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(22), dp(18), dp(22), dp(34))
+                addView(resourceMoreHeader(item))
+                addView(resourceCreateHomeCardRow(item))
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    private fun resourceMoreHeader(item: ResourceItem): View =
+        row {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(resourceIcon(item.iconText, item.accent).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+                    setMargins(0, 0, dp(12), 0)
+                }
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(context).apply {
+                    text = item.name
+                    textSize = 18f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                })
+                addView(TextView(context).apply {
+                    text = item.description
+                    textSize = 12.5f
+                    setTextColor(tokens.textSecondary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(4), 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+
+    private fun resourceCreateHomeCardRow(item: ResourceItem): View {
+        val canCreate = resourceHomeCardTemplate(item) != null
+        return row {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), 0, dp(16), 0)
+            alpha = if (canCreate) 1f else 0.56f
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(68)).apply {
+                setMargins(0, dp(22), 0, 0)
+            }
+            addView(TextView(context).apply {
+                text = "+"
+                textSize = 21f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(tokens.primaryStrong)
+                background = roundedBox(tokens.primarySubtle, tokens.primarySoft, dp(14).toFloat())
+                layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+                    setMargins(0, 0, dp(14), 0)
+                }
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(context).apply {
+                    text = "创建首页卡片"
+                    textSize = 15f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                })
+                addView(TextView(context).apply {
+                    text = if (canCreate) "把这个资源的打开卡片固定到首页" else "这个资源还没有可创建的首页模板"
+                    textSize = 12f
+                    setTextColor(tokens.textSecondary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(4), 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(context).apply {
+                text = "›"
+                textSize = 24f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(tokens.textTertiary)
+                layoutParams = LinearLayout.LayoutParams(dp(24), dp(42))
+            })
+            if (canCreate) setOnClickListener { addResourceHomeCard(item) }
+        }
+    }
+
+    private fun resourceIsInstalled(item: ResourceItem): Boolean =
+        item.stateLabel == "已安装"
+
+    private fun resourceOpenRecipe(item: ResourceItem): KiteRecipe? =
+        resourceOpenRecipeJson(item)?.let { temporaryResourceRecipe(item, "open", it) }
+
+    private fun temporaryResourceRecipe(item: ResourceItem, action: String, template: JSONObject): KiteRecipe {
+        val json = JSONObject(template.toString())
+        val base = json.optJSONObject("base") ?: JSONObject().also { json.put("base", it) }
+        val runtimeId = "tmp-${KiteResourceInstallRecipes.safeId(item.id)}-$action-${UUID.randomUUID()}"
+        base.put("id", runtimeId)
+        if (base.optString("name").isBlank()) base.put("name", item.name)
+        if (base.optString("description").isBlank()) base.put("description", item.description)
+        return KiteRecipe.fromJson(json, runtimeSource = KiteRecipe.SOURCE_USER)
+            .copy(id = runtimeId, runtimeSource = RESOURCE_OPEN_RUNTIME_SOURCE)
+    }
+
+    private fun startResourceOpen(item: ResourceItem, recipe: KiteRecipe) {
+        CardRunStore.registerRecipe(recipe)
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = recipe.id
+        activeRunInstanceIds[recipe.id] = recipe.id
+        if (shouldOpenCardRunTaskFromHome(recipe)) {
+            startActivity(
+                CardRunIntents.launchIntent(
+                    context = this,
+                    recipeId = recipe.id,
+                    instanceId = recipe.id,
+                    launchSource = CardRunIntents.SOURCE_CARD,
+                    autoStart = true
+                )
+            )
+        } else {
+            startRecipe(
+                recipe,
+                runtimeStateFor(recipe),
+                preferredInstanceId = recipe.id,
+                openConsoleOnStart = recipe.launch.openInstance,
+                renderOnStart = recipe.launch.openInstance
+            )
+        }
+        Toast.makeText(this, "正在打开 ${item.name}", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun addResourceHomeCard(item: ResourceItem) {
+        val template = resourceHomeCardTemplate(item)
+        if (template == null) {
+            Toast.makeText(this, "${item.name} 暂无首页卡片模板", Toast.LENGTH_SHORT).show()
+            return
+        }
+        runCatching {
+            recipeLoader.addSharedRecipeTemplate(template, "${KiteResourceInstallRecipes.safeId(item.id)}-home")
+            currentRecipes = recipeLoader.loadAllRecipes()
+            refreshRecipeRuntimeStates(currentRecipes)
+            resourceSectionsDirty = true
+        }.onSuccess {
+            Toast.makeText(this, "已添加 ${item.name} 到首页", Toast.LENGTH_SHORT).show()
+        }.onFailure {
+            Toast.makeText(this, "添加失败：${it.message ?: it.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun resourceOpenRecipeJson(item: ResourceItem): JSONObject? =
+        resourceManifestLoader.openRecipeTemplate(item.id)
+
+    private fun resourceHomeCardTemplate(item: ResourceItem): JSONObject? =
+        resourceManifestLoader.firstHomeCardRecipeTemplate(item.id)
+            ?: resourceManifestLoader.openRecipeTemplate(item.id)
 
     private fun resourceInstallRecipe(item: ResourceItem): KiteRecipe? {
         val step = when (item.id) {
@@ -2103,6 +2374,38 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
                 workdir = "/workspace",
                 timeoutMs = 900_000L
+            )
+            RESOURCE_GIT -> KiteRecipeStep(
+                id = "install_git",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.gitInstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 300_000L
+            )
+            RESOURCE_PYTHON -> KiteRecipeStep(
+                id = "install_python",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.pythonInstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 600_000L
+            )
+            RESOURCE_UV -> KiteRecipeStep(
+                id = "install_uv",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.localToolchainCommand(item.id, "--install-uv"),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 300_000L
+            )
+            RESOURCE_HERMES_CORE -> KiteRecipeStep(
+                id = "install_hermes_core",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.hermesCoreInstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 1_800_000L
             )
             else -> null
         } ?: return null
@@ -2144,6 +2447,38 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 workdir = "/workspace",
                 timeoutMs = 300_000L
             )
+            RESOURCE_GIT -> KiteRecipeStep(
+                id = "uninstall_git",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.gitUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 300_000L
+            )
+            RESOURCE_PYTHON -> KiteRecipeStep(
+                id = "uninstall_python",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.pythonUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 120_000L
+            )
+            RESOURCE_UV -> KiteRecipeStep(
+                id = "uninstall_uv",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.uvUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 120_000L
+            )
+            RESOURCE_HERMES_CORE -> KiteRecipeStep(
+                id = "uninstall_hermes_core",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.hermesCoreUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 180_000L
+            )
             else -> null
         } ?: return null
         return KiteResourceInstallRecipes.toRecipe(
@@ -2161,9 +2496,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun resourceRecipeIcon(item: ResourceItem): String =
-        when (item.category) {
-            "AI" -> KiteRecipeIcon.ICON_BOT
-            "Node", "Python" -> KiteRecipeIcon.ICON_CODE
+        when {
+            item.id == RESOURCE_GIT || item.id == RESOURCE_UV -> KiteRecipeIcon.ICON_CODE
+            item.category == "AI" -> KiteRecipeIcon.ICON_BOT
+            item.category == "Node" || item.category == "Python" -> KiteRecipeIcon.ICON_CODE
             else -> KiteRecipeIcon.ICON_TOOLS
         }
 
@@ -2253,12 +2589,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 }
             }
             Screen.ResourceDetail -> currentResourceDetailId?.let { showResourceDetail(it) }
+            Screen.ResourceMore -> currentResourceDetailId?.let { resourceId ->
+                resourceCatalog(forceRefresh = true)
+                    .firstOrNull { it.id == resourceId }
+                    ?.let { showResourceMoreActions(it) }
+            }
             else -> Unit
         }
     }
 
     private fun ResourceItem.isBundledResource(): Boolean =
-        id == RESOURCE_NODE_RUNTIME || id == RESOURCE_KF_TOOL_ENV
+        id == RESOURCE_NODE_RUNTIME || id == RESOURCE_KF_TOOL_ENV || id == RESOURCE_UV
 
     private fun resourceIdForRecipe(recipe: KiteRecipe): String? {
         if (recipe.runtimeSource != KiteResourceInstallRecipes.RUNTIME_SOURCE) return null
@@ -2326,7 +2667,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (!forceRefresh) return cached
         }
         ToolchainPackInstaller.refreshState(applicationContext)
-        listOf(RESOURCE_NODE_RUNTIME, RESOURCE_KF_TOOL_ENV, RESOURCE_HERMES_WEBUI)
+        listOf(RESOURCE_NODE_RUNTIME, RESOURCE_KF_TOOL_ENV, RESOURCE_HERMES_CORE, RESOURCE_HERMES_WEBUI, RESOURCE_GIT, RESOURCE_PYTHON, RESOURCE_UV)
             .forEach { normalizeStaleResourceState(it) }
         val toolchain = ToolchainPackInstaller.state.value
         val nodeWorkspaceInstalled = ToolchainPackInstaller.isNodeRuntimeInstalled(applicationContext)
@@ -2346,6 +2687,26 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val hermesBusy = resourceInstallStore.isBusy(RESOURCE_HERMES_WEBUI)
         val hermesInstalling = resourceInstallStore.isInstalling(RESOURCE_HERMES_WEBUI)
         val hermesFailedOperation = resourceInstallStore.failedOperation(RESOURCE_HERMES_WEBUI)
+        val hermesCoreRecordedInstalled = resourceInstallStore.isInstalled(RESOURCE_HERMES_CORE)
+        val hermesCoreInstallFailed = resourceInstallStore.isFailed(RESOURCE_HERMES_CORE)
+        val hermesCoreBusy = resourceInstallStore.isBusy(RESOURCE_HERMES_CORE)
+        val hermesCoreInstalling = resourceInstallStore.isInstalling(RESOURCE_HERMES_CORE)
+        val hermesCoreFailedOperation = resourceInstallStore.failedOperation(RESOURCE_HERMES_CORE)
+        val gitRecordedInstalled = resourceInstallStore.isInstalled(RESOURCE_GIT)
+        val gitInstallFailed = resourceInstallStore.isFailed(RESOURCE_GIT)
+        val gitBusy = resourceInstallStore.isBusy(RESOURCE_GIT)
+        val gitInstalling = resourceInstallStore.isInstalling(RESOURCE_GIT)
+        val gitFailedOperation = resourceInstallStore.failedOperation(RESOURCE_GIT)
+        val pythonRecordedInstalled = resourceInstallStore.isInstalled(RESOURCE_PYTHON)
+        val pythonInstallFailed = resourceInstallStore.isFailed(RESOURCE_PYTHON)
+        val pythonBusy = resourceInstallStore.isBusy(RESOURCE_PYTHON)
+        val pythonInstalling = resourceInstallStore.isInstalling(RESOURCE_PYTHON)
+        val pythonFailedOperation = resourceInstallStore.failedOperation(RESOURCE_PYTHON)
+        val uvRecordedInstalled = resourceInstallStore.isInstalled(RESOURCE_UV)
+        val uvInstallFailed = resourceInstallStore.isFailed(RESOURCE_UV)
+        val uvBusy = resourceInstallStore.isBusy(RESOURCE_UV)
+        val uvInstalling = resourceInstallStore.isInstalling(RESOURCE_UV)
+        val uvFailedOperation = resourceInstallStore.failedOperation(RESOURCE_UV)
         val nodeInstalled = toolchain.phase == ToolchainInstallPhase.SUCCEEDED &&
             (toolchain.action == "node" || toolchain.action == "prepare") || nodeWorkspaceInstalled || nodeRecordedInstalled
         val toolchainInstalled = toolchain.phase == ToolchainInstallPhase.SUCCEEDED &&
@@ -2353,7 +2714,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val toolchainRunning = toolchain.phase == ToolchainInstallPhase.RUNNING
         val nodeAction = when {
             toolchainRunning || nodeBusy -> "处理中"
-            nodeInstalled -> "卸载"
+            nodeInstalled -> "打开"
             nodeInstallFailed && nodeFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
             nodeInstallFailed -> "重新安装"
             else -> "安装"
@@ -2368,7 +2729,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         val toolchainAction = when {
             toolchainRunning || toolchainBusy -> "处理中"
-            toolchainInstalled -> "卸载"
+            toolchainInstalled -> "打开"
             toolchainInstallFailed && toolchainFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
             toolchainInstallFailed -> "重新安装"
             else -> "安装"
@@ -2383,7 +2744,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         val hermesAction = when {
             hermesBusy -> "处理中"
-            hermesRecordedInstalled -> "卸载"
+            hermesRecordedInstalled -> "打开"
             hermesInstallFailed && hermesFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
             hermesInstallFailed -> "重新安装"
             else -> "获取"
@@ -2395,6 +2756,66 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             hermesInstallFailed && hermesFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
             hermesInstallFailed -> "安装失败"
             else -> "未下载"
+        }
+        val hermesCoreAction = when {
+            hermesCoreBusy -> "处理中"
+            hermesCoreRecordedInstalled -> "打开"
+            hermesCoreInstallFailed && hermesCoreFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
+            hermesCoreInstallFailed -> "重新安装"
+            else -> "获取"
+        }
+        val hermesCoreState = when {
+            hermesCoreInstalling -> "安装中"
+            hermesCoreBusy -> "清理中"
+            hermesCoreRecordedInstalled -> "已安装"
+            hermesCoreInstallFailed && hermesCoreFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
+            hermesCoreInstallFailed -> "安装失败"
+            else -> "未下载"
+        }
+        val gitAction = when {
+            gitBusy -> "处理中"
+            gitRecordedInstalled -> "打开"
+            gitInstallFailed && gitFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
+            gitInstallFailed -> "重新安装"
+            else -> "安装"
+        }
+        val gitState = when {
+            gitInstalling -> "安装中"
+            gitBusy -> "清理中"
+            gitRecordedInstalled -> "已安装"
+            gitInstallFailed && gitFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
+            gitInstallFailed -> "安装失败"
+            else -> "未安装"
+        }
+        val pythonAction = when {
+            pythonBusy -> "处理中"
+            pythonRecordedInstalled -> "打开"
+            pythonInstallFailed && pythonFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
+            pythonInstallFailed -> "重新安装"
+            else -> "安装"
+        }
+        val pythonState = when {
+            pythonInstalling -> "安装中"
+            pythonBusy -> "清理中"
+            pythonRecordedInstalled -> "已安装"
+            pythonInstallFailed && pythonFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
+            pythonInstallFailed -> "安装失败"
+            else -> "未安装"
+        }
+        val uvAction = when {
+            uvBusy -> "处理中"
+            uvRecordedInstalled -> "打开"
+            uvInstallFailed && uvFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
+            uvInstallFailed -> "重新安装"
+            else -> "安装"
+        }
+        val uvState = when {
+            uvInstalling -> "安装中"
+            uvBusy -> "清理中"
+            uvRecordedInstalled -> "已安装"
+            uvInstallFailed && uvFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
+            uvInstallFailed -> "安装失败"
+            else -> "本地包"
         }
         val catalog = listOf(
             ResourceItem(
@@ -2444,10 +2865,102 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 )
             ),
             ResourceItem(
+                id = RESOURCE_GIT,
+                name = "Git",
+                description = "源码下载与版本管理工具",
+                longDescription = "Git 是 Hermes 本体和后续源码型资源的底层工具卡。安装时先检查当前 Ubuntu 环境是否已有 git；已有则只登记为可用，没有则通过 apt 安装 git 与 ca-certificates，并记录这次安装的 ownership。",
+                section = "更多资源",
+                category = "系统工具",
+                iconText = "Git",
+                accent = "orange",
+                version = "apt",
+                sizeLabel = "网络包",
+                sourceLabel = "apt",
+                stateLabel = gitState,
+                actionLabel = gitAction,
+                actionEnabled = !gitBusy,
+                includes = listOf("git CLI", "ca-certificates", "tool.git 能力", "安装 ownership 标记"),
+                notes = listOf("基础层能力：tool.git", "如果 Git 原本已存在，卸载只清 Kite 登记", "Hermes Core 后续会引用这张卡"),
+                steps = listOf(
+                    ResourceStep("shell", "检查 Git", "command -v git && git --version"),
+                    ResourceStep("shell", "安装 Git", "apt-get install -y git ca-certificates"),
+                    ResourceStep("shell", "登记能力", "provides tool.git")
+                )
+            ),
+            ResourceItem(
+                id = RESOURCE_PYTHON,
+                name = "Python",
+                description = "Hermes 本体需要的 Python 运行时",
+                longDescription = "Python 是 Hermes Core 的基础层资源。Hermes 当前声明 Python >=3.11,<3.14；这张卡负责补齐 python3、venv、pip 和证书能力，并把可用状态登记到 Kite。卸载时不移除系统 Python，只清除 Kite 的资源登记。",
+                section = "更多资源",
+                category = "Python",
+                iconText = "Py",
+                accent = "blue",
+                version = ">=3.11,<3.14",
+                sizeLabel = "网络包",
+                sourceLabel = "apt",
+                stateLabel = pythonState,
+                actionLabel = pythonAction,
+                actionEnabled = !pythonBusy,
+                includes = listOf("python3", "venv", "pip", "runtime.python>=3.11<3.14"),
+                notes = listOf("基础层能力：runtime.python>=3.11<3.14", "卸载只清 Kite 登记，不删除系统 Python", "Hermes Core 后续会引用这张卡"),
+                steps = listOf(
+                    ResourceStep("shell", "校验版本", "python3 >=3.11 and <3.14"),
+                    ResourceStep("shell", "补齐 Python", "apt-get install -y python3 python3-venv python3-pip"),
+                    ResourceStep("shell", "验证 venv", "python3 -m venv --help")
+                )
+            ),
+            ResourceItem(
+                id = RESOURCE_UV,
+                name = "uv",
+                description = "高速 Python 包管理器",
+                longDescription = "uv 是 Hermes 安装 Python 依赖和管理虚拟环境的基础工具卡。Kite 使用内置 ai-dev-pack 中的 uv 0.11.1，只安装 uv/uvx 到 /workspace/.kf/bin，不顺带安装完整工具合集。",
+                section = "更多资源",
+                category = "Python",
+                iconText = "uv",
+                accent = "green",
+                version = "0.11.1",
+                sizeLabel = "内置包",
+                sourceLabel = "内置",
+                stateLabel = uvState,
+                actionLabel = uvAction,
+                actionEnabled = !uvBusy,
+                includes = listOf("uv 0.11.1", "uvx", "tool.uv", "tool.uvx"),
+                notes = listOf("基础层能力：tool.uv", "从内置包安装，不需要先联网下载 uv", "Hermes Core 后续会引用这张卡"),
+                steps = listOf(
+                    ResourceStep("shell", "复制内置资源包", "mirror assets/toolchain/ai-dev-pack -> ${KiteResourceInstallRecipes.localPackPath(RESOURCE_UV)}"),
+                    ResourceStep("shell", "安装 uv", "bash ${KiteResourceInstallRecipes.localPackPath(RESOURCE_UV)}/install.sh --install-uv"),
+                    ResourceStep("shell", "验证版本", "uv --version && uvx --version")
+                )
+            ),
+            ResourceItem(
+                id = RESOURCE_HERMES_CORE,
+                name = "Hermes Core",
+                description = "Hermes Agent 本体与 CLI",
+                longDescription = "Hermes Core 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。它只负责本体安装和卸载；面向普通人的配置网页、WebUI 和首页启动卡会作为上层方案或配套卡组织。",
+                section = "精选推荐",
+                category = "AI",
+                iconText = "H",
+                accent = "teal",
+                version = "main",
+                sizeLabel = "网络包",
+                sourceLabel = "官方脚本",
+                stateLabel = hermesCoreState,
+                actionLabel = hermesCoreAction,
+                actionEnabled = !hermesCoreBusy,
+                includes = listOf("官方 install.sh", "hermes CLI", "独立 venv", "Kite 管理的 HERMES_HOME", "service.hermes 能力"),
+                notes = listOf("基础层：Git", "本体卡不直接写首页启动卡片", "配置网页和 WebUI 应由上层方案卡或配套卡关联"),
+                steps = listOf(
+                    ResourceStep("shell", "下载官方安装器", "curl -fsSL https://hermes-agent.nousresearch.com/install.sh"),
+                    ResourceStep("shell", "执行官方安装", "bash install.sh --dir ... --hermes-home ... --skip-setup"),
+                    ResourceStep("shell", "暴露命令", "link hermes -> /workspace/.kf/bin")
+                )
+            ),
+            ResourceItem(
                 id = RESOURCE_HERMES_WEBUI,
                 name = "Hermes WebUI",
                 description = "Hermes 的网页工作台",
-                longDescription = "用于在浏览器界面里使用 Hermes 的轻量 Web UI。安装动作后续会复用资源步骤，先安装 npm 包，再生成首页启动卡片。",
+                longDescription = "用于在浏览器界面里使用 Hermes 的轻量 Web UI。它是 Hermes Core 的上层界面资源，安装时先检查 hermes 与 npm 是否存在；后续配置完成后再写回首页启动卡片。",
                 section = "精选推荐",
                 category = "AI",
                 iconText = "H",
@@ -2459,7 +2972,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 actionLabel = hermesAction,
                 actionEnabled = !hermesBusy,
                 includes = listOf("hermes-web-ui npm 包", "启动端口 8648", "首页启动卡片"),
-                notes = listOf("需要先安装 Node.js 资源", "首次启动可能需要 Hermes 配置"),
+                notes = listOf("基础层：Hermes Core、Node.js", "首次启动需要 Hermes 已完成模型配置"),
                 steps = listOf(
                     ResourceStep("shell", "安装 npm 包", "npm install -g hermes-web-ui"),
                     ResourceStep("shell", "启动服务", "hermes-web-ui start --port 8648"),
@@ -2520,10 +3033,51 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 notes = listOf("第一版先展示入口，后续对接日志页"),
                 steps = listOf(ResourceStep("android", "打开日志页", "open resource logs"))
             )
-        )
+        ).map { applyResourceManifest(it) }
         cachedResourceCatalog = catalog
         return catalog
     }
+
+    private fun applyResourceManifest(item: ResourceItem): ResourceItem {
+        val manifest = resourceManifestLoader.manifest(item.id) ?: return item
+        return item.copy(
+            name = manifest.name.ifBlank { item.name },
+            description = manifest.description.ifBlank { item.description },
+            section = resourceSectionLabel(manifest.sections.firstOrNull()).ifBlank { item.section },
+            iconText = manifest.iconText.ifBlank { item.iconText },
+            version = manifest.version.ifBlank { item.version },
+            sourceLabel = resourceSourceLabel(manifest.sourceType).ifBlank { item.sourceLabel },
+            includes = mergeResourceStrings(item.includes, manifest.provides),
+            notes = mergeResourceStrings(item.notes, resourceRelationNotes(manifest))
+        )
+    }
+
+    private fun resourceSectionLabel(section: String?): String =
+        when (section) {
+            "featured" -> "精选推荐"
+            "quick" -> "快速开始"
+            "more" -> "更多资源"
+            else -> ""
+        }
+
+    private fun resourceSourceLabel(type: String): String =
+        when (type) {
+            "bundled" -> "内置"
+            "apt" -> "apt"
+            "official_script" -> "官方脚本"
+            "command" -> "网络"
+            else -> ""
+        }
+
+    private fun resourceRelationNotes(manifest: KiteResourceManifest): List<String> =
+        buildList {
+            if (manifest.baseRequirements.isNotEmpty()) add("基础层：${manifest.baseRequirements.joinToString("、")}")
+            if (manifest.defaultRequirements.isNotEmpty()) add("默认层：${manifest.defaultRequirements.joinToString("、")}")
+            if (manifest.extensions.isNotEmpty()) add("扩展层：${manifest.extensions.joinToString("、")}")
+        }
+
+    private fun mergeResourceStrings(primary: List<String>, extra: List<String>): List<String> =
+        (primary + extra).map { it.trim() }.filter { it.isNotBlank() }.distinct()
 
     private fun consoleHeader(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -2684,9 +3238,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             showCardRunTerminalFragment(terminalSessionId)
         } else if (state.surface == CardRunSurface.Terminal) {
-            root.addView(FrameLayout(this).apply {
-                setBackgroundColor(tokens.pageBackground)
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            root.addView(cardRunLoadingBody("正在准备终端"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         } else if (state.surface == CardRunSurface.Web && webUrl != null) {
             showCardRunWebView(recipe, webUrl)
         } else {
@@ -2695,6 +3247,45 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
     }
+
+    private fun showCardRunLoadingSurface(recipe: KiteRecipe, message: String) {
+        currentScreen = Screen.CardRun
+        root.setBackgroundColor(Color.rgb(246, 247, 249))
+        clearRootForScreen()
+        root.addView(cardRunTopBar(recipe, runtimeStateFor(recipe)))
+        root.addView(cardRunLoadingBody(message), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    private fun cardRunLoadingBody(message: String): View =
+        FrameLayout(this).apply {
+            setBackgroundColor(tokens.pageBackground)
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(24), dp(28), dp(24), dp(28))
+                addView(ProgressBar(context).apply {
+                    isIndeterminate = true
+                    layoutParams = LinearLayout.LayoutParams(dp(42), dp(42))
+                })
+                addView(TextView(context).apply {
+                    text = message
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setPadding(0, dp(18), 0, 0)
+                })
+                addView(TextView(context).apply {
+                    text = "正在连接运行环境，请稍候"
+                    textSize = 12f
+                    setTextColor(tokens.textSecondary)
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setPadding(0, dp(8), 0, 0)
+                })
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        }
 
     private fun showCardRunTerminalFragment(sessionId: String) {
         val fragment = TerminalFragment.detailOnly(sessionId)
@@ -3259,9 +3850,55 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (state.stepCount > 0) "${(state.currentStepIndex + 1).coerceIn(1, state.stepCount)}/${state.stepCount}" else "--"
 
     private fun formatRunDuration(state: RecipeRuntimeState): String {
-        val endAt = if (state.isBusy() || state.isActive()) System.currentTimeMillis() else state.updatedAt
+        val endAt = if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
+            System.currentTimeMillis()
+        } else {
+            state.updatedAt
+        }
         val seconds = ((endAt - state.createdAt).coerceAtLeast(0L) / 1000L).coerceAtMost(99L * 60L + 59L)
         return String.format("%02d:%02d", seconds / 60L, seconds % 60L)
+    }
+
+    private fun formatCardRunElapsed(state: RecipeRuntimeState): String {
+        val endAt = if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
+            System.currentTimeMillis()
+        } else {
+            state.updatedAt
+        }
+        val seconds = ((endAt - state.createdAt).coerceAtLeast(0L) / 1000L).coerceAtLeast(0L)
+        return when {
+            seconds < 60L * 60L -> String.format("%02d:%02d", seconds / 60L, seconds % 60L)
+            seconds < 24L * 60L * 60L -> "${seconds / (60L * 60L)}小时"
+            else -> "${seconds / (24L * 60L * 60L)}天"
+        }
+    }
+
+    private fun formatLastRunTime(timestamp: Long): String {
+        val now = System.currentTimeMillis()
+        val ageMs = (now - timestamp).coerceAtLeast(0L)
+        val minuteMs = 60_000L
+        val relativeCutoffMs = 30L * minuteMs
+        if (ageMs < minuteMs) return "刚刚"
+        if (ageMs < relativeCutoffMs) return "${ageMs / minuteMs}分钟前"
+
+        val nowCalendar = Calendar.getInstance()
+        val thenCalendar = Calendar.getInstance().apply { timeInMillis = timestamp }
+        val sameDay = nowCalendar.get(Calendar.YEAR) == thenCalendar.get(Calendar.YEAR) &&
+            nowCalendar.get(Calendar.DAY_OF_YEAR) == thenCalendar.get(Calendar.DAY_OF_YEAR)
+        if (sameDay) {
+            return String.format(
+                "%02d:%02d",
+                thenCalendar.get(Calendar.HOUR_OF_DAY),
+                thenCalendar.get(Calendar.MINUTE)
+            )
+        }
+
+        val yesterdayCalendar = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+        val isYesterday = yesterdayCalendar.get(Calendar.YEAR) == thenCalendar.get(Calendar.YEAR) &&
+            yesterdayCalendar.get(Calendar.DAY_OF_YEAR) == thenCalendar.get(Calendar.DAY_OF_YEAR)
+        if (isYesterday) return "昨天"
+
+        return "${thenCalendar.get(Calendar.MONTH) + 1}月${thenCalendar.get(Calendar.DAY_OF_MONTH)}日"
     }
 
     private fun currentShellCommand(recipe: KiteRecipe, state: RecipeRuntimeState): String {
@@ -4068,7 +4705,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setColorSchemeColors(tokens.primaryStrong)
             setProgressBackgroundColorSchemeColor(tokens.surfaceElevated)
             isRefreshing = isDropZoneRefreshing
-            setOnRefreshListener { refreshDropZoneRecipes(showToast = false) }
+            setOnRefreshListener {
+                refreshRecipeRuntimeStates(currentRecipes)
+                refreshDropZoneRecipes(showToast = false)
+            }
         }
         val scroll = ScrollView(this).apply {
             isFillViewport = true
@@ -4095,7 +4735,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun recipeCard(recipe: KiteRecipe): View = FrameLayout(this).apply {
         val runtimeState = runtimeStateFor(recipe)
         val ubuntuBlocked = isUbuntuActionBlocked(recipe)
-        val statusText = recipeCardStatusText(recipe, runtimeState, ubuntuBlocked)
         background = roundedBox(tokens.cardBackground, tokens.border, dp(24).toFloat())
         elevation = dp(1).toFloat()
         isClickable = true
@@ -4106,31 +4745,45 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setMargins(dp(13), dp(13), 0, 0)
             }
         })
-        addView(recipePowerButton(recipe, runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(dp(38), dp(38), Gravity.END or Gravity.TOP).apply {
-            setMargins(0, dp(13), dp(13), 0)
+        addView(recipeStatusBadge(runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26), Gravity.END or Gravity.TOP).apply {
+            setMargins(0, dp(14), dp(13), 0)
         })
-        addView(recipeCardName(recipe.name), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.BOTTOM).apply {
-            setMargins(dp(15), 0, dp(15), if (statusText.isBlank()) dp(18) else dp(34))
+        addView(recipeCardName(recipe.name), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
+            setMargins(dp(15), dp(58), dp(15), 0)
         })
-        if (statusText.isNotBlank()) {
-            addView(recipeCardStatus(statusText, runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.BOTTOM).apply {
-                setMargins(dp(15), 0, dp(15), dp(15))
-            })
-        }
+        addView(recipeCardCategory(recipe), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
+            setMargins(dp(15), dp(78), dp(15), 0)
+        })
+        addView(recipeStepCue(recipe, runtimeState), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.BOTTOM).apply {
+            setMargins(dp(15), 0, dp(96), dp(20))
+        })
+        addView(recipeActionArea(recipe, runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(dp(82), dp(50), Gravity.END or Gravity.BOTTOM).apply {
+            setMargins(0, 0, dp(11), dp(8))
+        })
     }
+
+    private fun recipeActionArea(recipe: KiteRecipe, state: RecipeRuntimeState, ubuntuBlocked: Boolean): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(recipePowerButton(recipe, state, ubuntuBlocked), LinearLayout.LayoutParams(dp(66), dp(31)).apply {
+                setMargins(0, 0, 0, dp(4))
+            })
+            addView(recipeActionSubline(state), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(13)))
+        }
 
     private fun recipePowerButton(recipe: KiteRecipe, state: RecipeRuntimeState, ubuntuBlocked: Boolean): TextView =
         TextView(this).apply {
             val disabled = state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping || ubuntuBlocked
             val interruptible = state.isInterruptible()
             text = when {
-                ubuntuBlocked -> "…"
-                state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable -> "↻"
-                interruptible -> "■"
-                state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping -> "…"
-                else -> "▶"
+                ubuntuBlocked -> "等待"
+                state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable -> "重试"
+                interruptible -> "停止"
+                state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping -> "处理中"
+                else -> "启动"
             }
-            textSize = if (text == "▶") 17f else 18f
+            textSize = 12.5f
             includeFontPadding = false
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -4141,16 +4794,52 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 interruptible -> tokens.warning
                 else -> tokens.primaryStrong
             }
-            background = roundedBox(fill, fill, dp(24).toFloat())
+            background = roundedBox(fill, fill, dp(16).toFloat())
             isEnabled = !disabled
             if (!disabled) setOnClickListener {
                 handleRecipeActionWithRouter(recipe)
             }
         }
 
+    private fun recipeActionSubline(state: RecipeRuntimeState): TextView =
+        TextView(this).apply {
+            textSize = 9.5f
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setTextColor(recipeActionSublineColor(state))
+            fun refresh() {
+                text = recipeActionSublineText(state)
+                if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
+                    postDelayed({
+                        if (isAttachedToWindow) refresh()
+                    }, 1000L)
+                }
+            }
+            refresh()
+        }
+
+    private fun recipeActionSublineColor(state: RecipeRuntimeState): Int =
+        when (state.status) {
+            RecipeRunStatus.Failed,
+            RecipeRunStatus.BridgeUnavailable -> tokens.danger
+            else -> tokens.textSecondary
+        }
+
+    private fun recipeActionSublineText(state: RecipeRuntimeState): String =
+        when {
+            state.status == RecipeRunStatus.Unknown -> ""
+            state.status == RecipeRunStatus.Failed ||
+                state.status == RecipeRunStatus.BridgeUnavailable ||
+                state.status == RecipeRunStatus.Stopped -> "中止 · ${formatCardRunElapsed(state)}"
+            state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened -> "运行 · ${formatCardRunElapsed(state)}"
+            else -> "上次 · ${formatLastRunTime(state.updatedAt)}"
+        }
+
     private fun recipeCardName(text: String): TextView = TextView(this).apply {
         this.text = text.ifBlank { "未命名卡片" }
-        textSize = 14.2f
+        textSize = 13.2f
         includeFontPadding = false
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(tokens.textPrimary)
@@ -4158,48 +4847,108 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         ellipsize = TextUtils.TruncateAt.END
     }
 
-    private fun recipeCardStatus(textValue: String, state: RecipeRuntimeState, ubuntuBlocked: Boolean): TextView =
-        TextView(this).apply {
-            text = textValue
-            textSize = 10.5f
-            includeFontPadding = false
-            setTextColor(recipeCardStatusColor(state, ubuntuBlocked))
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        }
-
-    private fun recipeCardStatusText(recipe: KiteRecipe, state: RecipeRuntimeState, ubuntuBlocked: Boolean): String = when {
-        ubuntuBlocked -> "部署中"
-        state.status == RecipeRunStatus.Failed -> "启动失败"
-        state.status == RecipeRunStatus.BridgeUnavailable -> "桥接不可用"
-        state.status == RecipeRunStatus.WaitingTerminal -> "等待终端"
-        state.status == RecipeRunStatus.Starting -> "启动中"
-        state.status == RecipeRunStatus.Stopping -> "停止中"
-        state.status == RecipeRunStatus.Running || state.status == RecipeRunStatus.AlreadyRunning -> "运行中"
-        state.status == RecipeRunStatus.Opened -> "已打开"
-        state.status == RecipeRunStatus.Completed -> "上次完成"
-        else -> recipePassiveLabel(recipe)
+    private fun recipeCardCategory(recipe: KiteRecipe): TextView = TextView(this).apply {
+        text = recipeCategoryLabel(recipe)
+        textSize = 9.8f
+        includeFontPadding = false
+        setTextColor(tokens.textTertiary)
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
     }
 
-    private fun recipeCardStatusColor(state: RecipeRuntimeState, ubuntuBlocked: Boolean): Int = when {
-        ubuntuBlocked -> tokens.warning
-        state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable -> tokens.danger
-        state.status == RecipeRunStatus.WaitingTerminal ||
+    private fun recipeStepCue(recipe: KiteRecipe, state: RecipeRuntimeState): TextView = TextView(this).apply {
+        text = recipeStepCueText(recipe, state)
+        textSize = 10.4f
+        includeFontPadding = false
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(recipeStepCueColor(state))
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+    }
+
+    private fun recipeStatusBadge(state: RecipeRuntimeState, ubuntuBlocked: Boolean): View =
+        LinearLayout(this).apply {
+            val badge = recipeStatusPresentation(state, ubuntuBlocked)
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), 0, dp(9), 0)
+            background = roundedBox(badge.background, Color.TRANSPARENT, dp(13).toFloat(), 0)
+            addView(View(context).apply {
+                background = roundedBox(badge.color, Color.TRANSPARENT, dp(4).toFloat(), 0)
+                layoutParams = LinearLayout.LayoutParams(dp(6), dp(6)).apply {
+                    setMargins(0, 0, dp(5), 0)
+                }
+            })
+            addView(TextView(context).apply {
+                text = badge.label
+                textSize = 10.5f
+                includeFontPadding = false
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(badge.color)
+                maxLines = 1
+            })
+        }
+
+    private fun recipeStatusPresentation(state: RecipeRuntimeState, ubuntuBlocked: Boolean): RecipeStatusBadge {
+        if (state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable) {
+            return RecipeStatusBadge("失败", tokens.danger, tokens.dangerSoft)
+        }
+        if (ubuntuBlocked ||
+            state.status == RecipeRunStatus.WaitingTerminal ||
             state.status == RecipeRunStatus.Starting ||
             state.status == RecipeRunStatus.Stopping ||
             state.status == RecipeRunStatus.Running ||
             state.status == RecipeRunStatus.AlreadyRunning ||
-            state.status == RecipeRunStatus.Opened -> tokens.primaryStrong
-        else -> tokens.textSecondary
+            state.status == RecipeRunStatus.Opened
+        ) {
+            return RecipeStatusBadge("执行中", tokens.success, tokens.successSoft)
+        }
+        return RecipeStatusBadge("未启动", tokens.textSecondary, tokens.surface)
     }
 
-    private fun recipePassiveLabel(recipe: KiteRecipe): String {
+    private fun recipeCategoryLabel(recipe: KiteRecipe): String =
+        KiteRecipe.normalizeCategory(recipe.category)
+
+    private fun recipeStepCueText(recipe: KiteRecipe, state: RecipeRuntimeState): String {
         val steps = recipe.steps
-        return when {
-            steps.size > 1 -> "组合"
-            recipe.category.isNotBlank() && recipe.category != KiteRecipe.CATEGORY_UNCATEGORIZED -> recipe.category.take(8)
-            else -> ""
+        if (steps.isEmpty()) return "无步骤"
+        val isLive = state.status == RecipeRunStatus.Starting ||
+            state.status == RecipeRunStatus.Stopping ||
+            state.status == RecipeRunStatus.Running ||
+            state.status == RecipeRunStatus.WaitingTerminal ||
+            state.status == RecipeRunStatus.AlreadyRunning ||
+            state.status == RecipeRunStatus.Opened
+        val isProblem = state.status == RecipeRunStatus.Failed ||
+            state.status == RecipeRunStatus.BridgeUnavailable
+        val total = (state.stepCount.takeIf { it > 0 } ?: steps.size).coerceAtLeast(1)
+        return if (isLive || isProblem) {
+            val index = state.currentStepIndex.coerceIn(0, total - 1)
+            "${recipeStepKind(steps.getOrNull(index) ?: steps.firstOrNull())} · ${index + 1}/$total"
+        } else {
+            val firstKind = recipeStepKind(steps.firstOrNull())
+            if (total == 1) firstKind else "$firstKind · ${total}项"
         }
+    }
+
+    private fun recipeStepCueColor(state: RecipeRuntimeState): Int =
+        when {
+            state.status == RecipeRunStatus.Failed ||
+                state.status == RecipeRunStatus.BridgeUnavailable -> tokens.danger
+            state.status == RecipeRunStatus.Starting ||
+                state.status == RecipeRunStatus.Stopping ||
+                state.status == RecipeRunStatus.Running ||
+                state.status == RecipeRunStatus.WaitingTerminal ||
+                state.status == RecipeRunStatus.AlreadyRunning ||
+                state.status == RecipeRunStatus.Opened -> tokens.success
+            else -> tokens.textSecondary
+        }
+
+    private fun recipeStepKind(step: KiteRecipeStep?): String = when (step?.type) {
+        KiteRecipe.STEP_SHELL -> "命令"
+        KiteRecipe.STEP_TERMINAL -> "终端"
+        KiteRecipe.STEP_OPEN_WEB -> "网页"
+        KiteRecipe.STEP_ANDROID_ACTION -> "本机"
+        else -> "卡片"
     }
 
     private fun isUbuntuActionBlocked(recipe: KiteRecipe): Boolean =
@@ -4247,7 +4996,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         when (val route = actionRouter.route(recipe, actionName)) {
             is KiteActionRoute.StopRecipe -> stopRecipe(recipe, state)
-            is KiteActionRoute.RunRecipe -> startRecipe(route.recipe, state)
+            is KiteActionRoute.RunRecipe -> startRecipe(
+                route.recipe,
+                state,
+                openConsoleOnStart = route.recipe.launch.openInstance,
+                renderOnStart = route.recipe.launch.openInstance
+            )
             is KiteActionRoute.OpenWeb -> {
                 setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = route.url)
                 openWeb(route.url, "recipe_card", recipe)
@@ -4290,7 +5044,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         recipe: KiteRecipe,
         previousState: RecipeRuntimeState,
         preferredInstanceId: String? = null,
-        openConsoleOnStart: Boolean = true
+        openConsoleOnStart: Boolean = true,
+        renderOnStart: Boolean = true
     ) {
         if (previousState.status == RecipeRunStatus.Failed || previousState.status == RecipeRunStatus.BridgeUnavailable) {
             diagnostics.logLifecycleEvent(recipe, "retry", previousState.runId, previousState.pid, previousState.status.name)
@@ -4333,7 +5088,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             currentStepIndex = 0,
             lastMeaningfulOutput = "正在启动流程"
         )
-        if (openConsoleOnStart && this !is CardRunActivity) {
+        if (!renderOnStart) {
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = activeRunInstanceIds[recipe.id]
+        } else if (openConsoleOnStart && this !is CardRunActivity) {
             showConsole()
         } else {
             focusedRunRecipeId = recipe.id
@@ -4341,9 +5099,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (!deferInitialSurfaceUntilTerminalReady) {
                 showCardRunSurface(recipe)
             } else {
-                currentScreen = Screen.CardRun
-                root.setBackgroundColor(tokens.pageBackground)
-                clearRootForScreen()
+                showCardRunLoadingSurface(recipe, "正在准备终端")
             }
         }
         executeRecipeStep(recipe, stepIndex = 0)
@@ -4561,6 +5317,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             focusedRunRecipeId = recipe.id
             focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
             showCardRunSurface(recipe)
+        } else if (currentScreen == Screen.CreateConfig || currentScreen == Screen.RecipeMore) {
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
+        } else {
+            showConsole()
+        }
+    }
+
+    private fun showConsoleUnlessEditingRecipe(recipe: KiteRecipe) {
+        if (currentScreen == Screen.CreateConfig || currentScreen == Screen.RecipeMore) {
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
         } else {
             showConsole()
         }
@@ -4576,9 +5344,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         when (KiteRecipe.normalizeSurfaceMode(step.surfaceMode)) {
             KiteRecipe.SURFACE_MODE_PANEL -> true
             KiteRecipe.SURFACE_MODE_SILENT -> false
-            else -> step.type == KiteRecipe.STEP_OPEN_WEB ||
-                step.type == KiteRecipe.STEP_TERMINAL ||
-                (step.type == KiteRecipe.STEP_SHELL && recipe.launch.openInstance)
+            else -> {
+                val mayAutoOpenSurface = this is CardRunActivity ||
+                    currentScreen == Screen.CardRun ||
+                    recipe.launch.openInstance
+                mayAutoOpenSurface && (
+                    step.type == KiteRecipe.STEP_OPEN_WEB ||
+                        step.type == KiteRecipe.STEP_TERMINAL ||
+                        step.type == KiteRecipe.STEP_SHELL
+                    )
+            }
         }
 
     private fun executeShellRecipeStep(
@@ -4631,7 +5406,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             focusedRunInstanceId = instanceId
             showCardRunSurface(recipe)
         } else {
-            showConsole()
+            showConsoleUnlessEditingRecipe(recipe)
         }
         bridgeClient.runRecipe(
             stepRecipe,
@@ -4896,7 +5671,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 "terminal_surface_suppressed",
                 mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
             )
-            showConsole()
+            showConsoleUnlessEditingRecipe(recipe)
             TerminalRuntimeHost.switchToSession(appContext, record.id)
         }
         if (text.isNotBlank()) {
@@ -5508,28 +6283,52 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             selectedIconSource = ""
             selectedIconName = KiteRecipeIcon.normalizeName(selectedIconName, selectedType)
         }
+        val recipeId = recipe?.id.orEmpty()
+        formShortcutRequested = draft?.shortcutRequested ?: (recipeId.isNotBlank() && cardLocalSettings.shortcutRequested(recipeId))
+        formLaunchOpenInstance = draft?.launchOpenInstance ?: (recipe?.launch?.openInstance ?: true)
         clearRootForScreen()
         root.addView(createTopBar(if (recipe == null) "新建配置" else "编辑配置"))
-        root.addView(ScrollView(this).apply {
+        val bodyFrame = FrameLayout(this)
+        val actionBar = recipe?.let { recipeEditorRunActions(it) }
+        val scrollView = ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(24), dp(30), dp(24), dp(92))
+                setPadding(dp(24), dp(30), dp(24), if (actionBar == null) dp(92) else dp(158))
                 addView(formPanel())
                 addView(formDivider())
                 addView(sectionTitle("动作流程"))
                 addView(stepsPanel())
-                addView(formDivider())
-                addView(sectionTitle("启动配置"))
-                addView(launchOptionsPanel())
                 if (recipe != null) {
                     addView(formDivider())
                     addView(navigationRow("查看原始 JSON") { showRecipeRawJson(recipe) }.apply {
                         setPadding(0, dp(16), 0, dp(8))
                     })
-                    addView(deleteRow(recipe))
                 }
             })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
+        bodyFrame.addView(scrollView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        actionBar?.let { bar ->
+            bodyFrame.addView(
+                bar,
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46), Gravity.BOTTOM).apply {
+                    setMargins(dp(24), 0, dp(24), dp(24))
+                }
+            )
+            scrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                val threshold = maxOf(dp(180), scrollView.height / 3)
+                val hide = scrollY > threshold
+                val targetTranslation = if (hide) dp(82).toFloat() else 0f
+                val targetAlpha = if (hide) 0f else 1f
+                if (bar.translationY != targetTranslation || bar.alpha != targetAlpha) {
+                    bar.animate()
+                        .translationY(targetTranslation)
+                        .alpha(targetAlpha)
+                        .setDuration(180L)
+                        .start()
+                }
+            }
+        }
+        root.addView(bodyFrame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         prefillRecipeForm(recipe, draft)
     }
 
@@ -5584,6 +6383,166 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setPadding(0, dp(5), 0, 0)
             })
         })
+    }
+
+    private fun recipeEditorRunActions(recipe: KiteRecipe): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, 0)
+            layoutTransition = LayoutTransition().apply {
+                enableTransitionType(LayoutTransition.CHANGING)
+                setDuration(220L)
+            }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                setMargins(0, dp(22), 0, dp(24))
+            }
+            renderRecipeEditorActionRow(this, recipe)
+        }
+
+    private fun renderRecipeEditorActionRow(actionRow: LinearLayout, recipe: KiteRecipe) {
+        val state = runtimeStateFor(recipe)
+        val live = state.status == RecipeRunStatus.Starting ||
+            state.status == RecipeRunStatus.Stopping ||
+            state.isInterruptible()
+        actionRow.removeAllViews()
+        actionRow.gravity = Gravity.CENTER_VERTICAL
+        if (live) {
+            actionRow.background = roundedBox(tokens.primarySubtle, tokens.border, dp(16).toFloat())
+            actionRow.addView(recipeEditorActionSegment(
+                label = "打开",
+                textColor = tokens.primaryStrong,
+                enabled = state.status != RecipeRunStatus.Stopping
+            ) {
+                openRecipeRunInstance(recipe)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 7f))
+            actionRow.addView(View(this).apply {
+                setBackgroundColor(tokens.border)
+            }, LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                setMargins(0, dp(10), 0, dp(10))
+            })
+            actionRow.addView(recipeEditorActionSegment(
+                label = "停止",
+                textColor = tokens.danger,
+                enabled = state.status != RecipeRunStatus.Stopping
+            ) {
+                stopRecipe(recipe, state)
+                actionRow.postDelayed({ renderRecipeEditorActionRow(actionRow, recipe) }, 180L)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 3f))
+        } else {
+            val blocked = isUbuntuActionBlocked(recipe)
+            actionRow.background = roundedBox(
+                if (blocked) tokens.surface else tokens.primaryStrong,
+                if (blocked) tokens.border else tokens.primaryStrong,
+                dp(16).toFloat()
+            )
+            actionRow.addView(recipeEditorActionSegment(
+                label = if (state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable) "重新启动" else "启动",
+                textColor = if (blocked) tokens.textSecondary else Color.WHITE,
+                enabled = !blocked
+            ) {
+                startRecipeFromEditor(recipe, actionRow)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        }
+    }
+
+    private fun startRecipeFromEditor(recipe: KiteRecipe, actionRow: LinearLayout) {
+        val state = runtimeStateFor(recipe)
+        if (state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping) return
+        if (isUbuntuActionBlocked(recipe)) {
+            Toast.makeText(this, ubuntuRuntimeState.title, Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (state.isInterruptible()) {
+            renderRecipeEditorActionRow(actionRow, recipe)
+            return
+        }
+
+        when (val route = actionRouter.route(recipe, KiteRecipe.ACTION_START)) {
+            is KiteActionRoute.RunRecipe -> {
+                startRecipe(route.recipe, state, openConsoleOnStart = false, renderOnStart = true)
+                renderRecipeEditorActionRow(actionRow, recipe)
+            }
+            is KiteActionRoute.OpenWeb -> {
+                val instanceId = ensureRunInstanceId(recipe)
+                setRuntimeState(
+                    recipe,
+                    RecipeRunStatus.Opened,
+                    instanceId = instanceId,
+                    surface = CardRunSurface.Web,
+                    nextActionUrl = route.url
+                )
+                renderRecipeEditorActionRow(actionRow, recipe)
+            }
+            is KiteActionRoute.NativeAction -> {
+                runNativeAction(recipe, route)
+                renderRecipeEditorActionRow(actionRow, recipe)
+            }
+            is KiteActionRoute.StopRecipe -> {
+                stopRecipe(recipe, state)
+                actionRow.postDelayed({ renderRecipeEditorActionRow(actionRow, recipe) }, 180L)
+            }
+            is KiteActionRoute.Unsupported -> {
+                setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = route.reason)
+                Toast.makeText(this, route.reason, Toast.LENGTH_SHORT).show()
+                renderRecipeEditorActionRow(actionRow, recipe)
+            }
+        }
+    }
+
+    private fun recipeEditorActionButton(
+        label: String,
+        fill: Int,
+        textColor: Int,
+        enabled: Boolean = true,
+        onClick: () -> Unit
+    ): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(textColor)
+            alpha = if (enabled) 1f else 0.56f
+            background = roundedBox(fill, Color.TRANSPARENT, dp(15).toFloat(), 0)
+            isEnabled = enabled
+            if (enabled) setOnClickListener { onClick() }
+        }
+
+    private fun recipeEditorActionSegment(
+        label: String,
+        textColor: Int,
+        enabled: Boolean = true,
+        onClick: () -> Unit
+    ): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(textColor)
+            alpha = if (enabled) 1f else 0.52f
+            background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(16).toFloat(), 0)
+            isEnabled = enabled
+            if (enabled) setOnClickListener { onClick() }
+        }
+
+    private fun openRecipeRunInstance(recipe: KiteRecipe) {
+        val instanceId = activeRunInstanceIds[recipe.id]
+            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
+            ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
+            ?: recipe.id
+        activeRunInstanceIds[recipe.id] = instanceId
+        startActivity(
+            CardRunIntents.launchIntent(
+                context = this,
+                recipeId = recipe.id,
+                instanceId = instanceId,
+                launchSource = CardRunIntents.SOURCE_CARD,
+                autoStart = false
+            )
+        )
     }
 
     private fun appearancePanel(recipe: KiteRecipe?): View = LinearLayout(this).apply {
@@ -6615,9 +7574,142 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         commandInput.setText(draft?.command ?: shellStep?.cmd.orEmpty())
         workdirInput.setText(draft?.workdir ?: shellStep?.workdir ?: recipe?.execution?.workdir.orEmpty())
         urlInput.setText(draft?.url ?: openUrl)
-        val recipeId = recipe?.id.orEmpty()
-        shortcutSwitch.isChecked = draft?.shortcutRequested ?: (recipeId.isNotBlank() && cardLocalSettings.shortcutRequested(recipeId))
-        launchInstanceSwitch.isChecked = draft?.launchOpenInstance ?: (recipe?.launch?.openInstance ?: true)
+        if (::shortcutSwitch.isInitialized) shortcutSwitch.isChecked = formShortcutRequested
+        if (::launchInstanceSwitch.isInitialized) launchInstanceSwitch.isChecked = formLaunchOpenInstance
+    }
+
+    private fun handleRecipeFormBack() {
+        if (recipeFormHasChanges()) {
+            showRecipeUnsavedChangesDialog()
+        } else {
+            discardRecipeDraftAndShowConsole()
+        }
+    }
+
+    private fun recipeFormHasChanges(): Boolean =
+        currentRecipeFormSnapshot() != baselineRecipeFormSnapshot(editingRecipe)
+
+    private fun recipeFormChangeLabels(): List<String> {
+        val current = currentRecipeFormSnapshot()
+        val baseline = baselineRecipeFormSnapshot(editingRecipe)
+        return buildList {
+            if (current.name != baseline.name || current.description != baseline.description) add("基础信息")
+            if (
+                current.selectedIconName != baseline.selectedIconName ||
+                current.selectedIconType != baseline.selectedIconType ||
+                current.selectedIconSource != baseline.selectedIconSource
+            ) {
+                add("头像")
+            }
+            if (current.steps != baseline.steps) add("动作流程")
+            if (
+                current.shortcutRequested != baseline.shortcutRequested ||
+                current.launchOpenInstance != baseline.launchOpenInstance
+            ) {
+                add("启动配置")
+            }
+        }
+    }
+
+    private fun showRecipeUnsavedChangesDialog() {
+        val dialog = Dialog(this)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(20), dp(20), dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(20).toFloat())
+            addView(TextView(context).apply {
+                text = "保存这次修改？"
+                textSize = 17f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textPrimary)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
+            addView(row {
+                setPadding(0, dp(20), 0, 0)
+                addView(TextView(context).apply {
+                    text = "取消"
+                    textSize = 14f
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(tokens.textPrimary)
+                    background = roundedBox(tokens.surface, tokens.border, dp(13).toFloat())
+                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                        setMargins(0, 0, dp(8), 0)
+                    }
+                    setOnClickListener { dialog.dismiss() }
+                })
+                addView(TextView(context).apply {
+                    text = "保存"
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(Color.WHITE)
+                    background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(13).toFloat())
+                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                        setMargins(dp(8), 0, 0, 0)
+                    }
+                    setOnClickListener {
+                        dialog.dismiss()
+                        saveRecipeForm()
+                    }
+                })
+            })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setGravity(Gravity.CENTER)
+        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.78f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun currentRecipeFormSnapshot(): RecipeFormSnapshot =
+        RecipeFormSnapshot(
+            name = if (::nameInput.isInitialized) nameInput.text?.toString().orEmpty().trim() else "",
+            description = if (::descriptionInput.isInitialized) descriptionInput.text?.toString().orEmpty().trim() else "",
+            selectedIconName = selectedIconName,
+            selectedIconType = selectedIconType,
+            selectedIconSource = selectedIconSource,
+            shortcutRequested = formShortcutRequested,
+            launchOpenInstance = formLaunchOpenInstance,
+            steps = formSteps.map { it.normalizedCopy() }
+        )
+
+    private fun baselineRecipeFormSnapshot(recipe: KiteRecipe?): RecipeFormSnapshot {
+        if (recipe == null) {
+            return RecipeFormSnapshot(
+                name = "",
+                description = "",
+                selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_COMMAND_WEB),
+                selectedIconType = KiteRecipeIcon.TYPE_BUILTIN,
+                selectedIconSource = "",
+                shortcutRequested = false,
+                launchOpenInstance = true,
+                steps = emptyList()
+            )
+        }
+        val iconType = recipe.icon.type.ifBlank { KiteRecipeIcon.TYPE_BUILTIN }
+        val iconSource = recipe.icon.source.takeIf { iconType == KiteRecipeIcon.TYPE_IMAGE }.orEmpty()
+        val iconName = if (iconType == KiteRecipeIcon.TYPE_IMAGE) {
+            recipe.icon.name.ifBlank { "custom" }
+        } else {
+            KiteRecipeIcon.normalizeName(recipe.icon.name, recipe.type)
+        }
+        return RecipeFormSnapshot(
+            name = recipe.name.trim(),
+            description = recipe.description.trim(),
+            selectedIconName = iconName,
+            selectedIconType = if (iconType == KiteRecipeIcon.TYPE_IMAGE && iconSource.isNotBlank()) {
+                KiteRecipeIcon.TYPE_IMAGE
+            } else {
+                KiteRecipeIcon.TYPE_BUILTIN
+            },
+            selectedIconSource = iconSource,
+            shortcutRequested = recipe.id.isNotBlank() && cardLocalSettings.shortcutRequested(recipe.id),
+            launchOpenInstance = recipe.launch.openInstance,
+            steps = recipe.steps.map { RecipeStepDraft.fromStep(it).normalizedCopy() }
+        )
     }
 
     private fun updateDynamicFieldVisibility() {
@@ -6639,17 +7731,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun saveRecipeForm() {
-        val name = nameInput.text?.toString().orEmpty().trim()
-        val description = descriptionInput.text?.toString().orEmpty().trim()
+        val draft = snapshotRecipeFormDraft()
+        val name = draft?.name?.trim()
+            ?: nameInput.text?.toString().orEmpty().trim()
+        val description = draft?.description?.trim()
+            ?: descriptionInput.text?.toString().orEmpty().trim()
         if (name.isBlank()) {
             Toast.makeText(this, "请输入名称", Toast.LENGTH_SHORT).show()
             return
         }
-        if (formSteps.isEmpty()) {
+        val normalizedSteps = draft?.steps?.map { it.normalizedCopy() } ?: formSteps.map { it.normalizedCopy() }
+        if (normalizedSteps.isEmpty()) {
             Toast.makeText(this, "请至少添加一个命令或打开网页步骤", Toast.LENGTH_SHORT).show()
             return
         }
-        formSteps.forEachIndexed { index, step ->
+        normalizedSteps.forEachIndexed { index, step ->
             if (step.type == KiteRecipe.STEP_OPEN_WEB && step.url.isBlank()) {
                 Toast.makeText(this, "第 ${index + 1} 个打开网页步骤缺少地址", Toast.LENGTH_SHORT).show()
                 return
@@ -6659,11 +7755,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 return
             }
         }
-        val normalizedSteps = formSteps.toList()
         val inferredType = inferTypeFromDrafts(normalizedSteps)
         val defaultUrl = normalizedSteps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB }?.url.orEmpty()
-        val requestShortcut = shortcutSwitch.isChecked
-        val openInstanceOnStart = launchInstanceSwitch.isChecked
+        val requestShortcut = draft?.shortcutRequested ?: formShortcutRequested
+        val openInstanceOnStart = draft?.launchOpenInstance ?: formLaunchOpenInstance
         val previousShortcutRequested = editingRecipe?.id
             ?.takeIf { it.isNotBlank() }
             ?.let { recipeId ->
@@ -6677,13 +7772,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     id = editingRecipe?.id,
                     type = inferredType,
                     name = name,
+                    category = editingRecipe?.category.orEmpty(),
                     url = defaultUrl,
                     command = "",
                     shortcut = false,
                     openInstanceOnStart = openInstanceOnStart,
-                    iconName = selectedIconName,
-                    iconType = selectedIconType,
-                    iconSource = selectedIconSource,
+                    iconName = draft?.selectedIconName ?: selectedIconName,
+                    iconType = draft?.selectedIconType ?: selectedIconType,
+                    iconSource = draft?.selectedIconSource ?: selectedIconSource,
                     description = description,
                     steps = normalizedSteps.map { it.toInput() }
                 )
@@ -6899,7 +7995,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun createTopBar(title: String): View = row {
         setPadding(0, dp(18), dp(22), dp(10))
         gravity = Gravity.CENTER_VERTICAL
-        addView(iconButton("‹", dp(40), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { discardRecipeDraftAndShowConsole() })
+        addView(iconButton("‹", dp(40), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { handleRecipeFormBack() })
         addView(TextView(context).apply {
             text = title
             textSize = 15f
@@ -6909,14 +8005,86 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         addView(TextView(context).apply {
-            text = "保存"
-            textSize = 17f
+            text = "..."
+            textSize = 21f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
+            includeFontPadding = false
+            setTextColor(tokens.textPrimary)
             layoutParams = LinearLayout.LayoutParams(dp(54), dp(42))
-            setOnClickListener { saveRecipeForm() }
+            setOnClickListener { showRecipeFormMoreMenu() }
         })
+    }
+
+    private fun showRecipeFormMoreMenu() {
+        val draft = snapshotRecipeFormDraft() ?: recipeMoreDraft ?: return
+        recipeMoreDraft = draft.withLaunchState()
+        val activeRecipe = editingRecipe
+        currentScreen = Screen.RecipeMore
+        clearRootForScreen()
+        root.setBackgroundColor(tokens.pageBackground)
+        root.addView(topBar("更多配置") { returnToRecipeFormFromMore() })
+        root.addView(ScrollView(this).apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(24), dp(18), dp(24), dp(92))
+                addView(TextView(context).apply {
+                    text = "启动配置"
+                    textSize = 13.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                    setPadding(0, 0, 0, dp(12))
+                })
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(16), dp(12), dp(16), dp(10))
+                    background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+                    addView(launchOptionsPanel())
+                })
+                if (activeRecipe != null) {
+                    addView(formDivider())
+                    addView(TextView(context).apply {
+                        text = "危险操作"
+                        textSize = 13.5f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(tokens.textPrimary)
+                        setPadding(0, 0, 0, dp(12))
+                    })
+                    addView(recipeMoreDeleteRow(activeRecipe))
+                }
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    private fun returnToRecipeFormFromMore() {
+        val draft = recipeMoreDraft?.withLaunchState()
+        recipeMoreDraft = null
+        showRecipeForm(editingRecipe, draft)
+    }
+
+    private fun recipeMoreDeleteRow(recipe: KiteRecipe): View = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(16), 0, dp(16), 0)
+        background = roundedBox(Color.WHITE, Color.rgb(229, 231, 235), dp(16).toFloat())
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply {
+            setMargins(0, dp(8), 0, 0)
+        }
+        addView(TextView(context).apply {
+            text = "删除配置"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(tokens.danger)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        addView(TextView(context).apply {
+            text = "›"
+            textSize = 22f
+            setTextColor(tokens.danger)
+        })
+        setOnClickListener {
+            showDeleteRecipeConfirmSheet(recipe)
+        }
     }
 
     private fun topBar(title: String, onBack: () -> Unit): View = row {
@@ -7046,20 +8214,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         setPadding(0, 0, 0, dp(8))
         addView(localSwitchRow(
             title = "启动时打开独立实例页",
-            detail = "默认从首页启动时进入独立最近任务；关闭后就在首页内静默执行。"
+            detail = "默认从首页启动时进入独立最近任务；关闭后就在首页内静默执行。",
+            checked = formLaunchOpenInstance
         ) {
             launchInstanceSwitch = it
+            it.setOnCheckedChangeListener { _, isChecked ->
+                formLaunchOpenInstance = isChecked
+            }
         })
         addView(divider())
         addView(localSwitchRow(
             title = "申请桌面图标",
-            detail = "保存后向桌面发起创建申请，删除快捷方式后不做回收。"
+            detail = "保存后向桌面发起创建申请，删除快捷方式后不做回收。",
+            checked = formShortcutRequested
         ) {
             shortcutSwitch = it
+            it.setOnCheckedChangeListener { _, isChecked ->
+                formShortcutRequested = isChecked
+            }
         })
     }
 
-    private fun localSwitchRow(title: String, detail: String, bind: (Switch) -> Unit): View = row {
+    private fun localSwitchRow(title: String, detail: String, checked: Boolean, bind: (Switch) -> Unit): View = row {
         setPadding(0, dp(4), 0, dp(4))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -7077,7 +8253,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setPadding(0, dp(2), dp(8), 0)
             })
         })
-        val switch = Switch(context).apply { isChecked = false }
+        val switch = Switch(context).apply { isChecked = checked }
         bind(switch)
         addView(switch)
     }
@@ -7225,7 +8401,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         elevation = dp(6).toFloat()
         addView(navItem("▦", "配置", currentScreen == Screen.Console) { showConsole() })
         addView(navItem(">_", "终端", currentScreen == Screen.Terminal) { showTerminal() })
-        addView(navItem("≡", "资源", currentScreen == Screen.Resources || currentScreen == Screen.ResourceDetail) { showResources() })
+        addView(navItem("≡", "资源", currentScreen == Screen.Resources || currentScreen == Screen.ResourceDetail || currentScreen == Screen.ResourceMore) { showResources() })
         addView(navItem("⚙", "设置", currentScreen == Screen.Settings || currentScreen == Screen.ThemeSettings) { showSettings() })
     }
 
@@ -7759,6 +8935,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         var url: String = "",
         var workdir: String = ""
     ) {
+        fun normalizedCopy(): RecipeStepDraft = copy(
+            command = command.trim(),
+            url = url.trim(),
+            workdir = workdir.trim()
+        )
+
         fun toInput(): NewRecipeStepInput = NewRecipeStepInput(
             type = type,
             command = command,
@@ -7862,6 +9044,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
+    private data class RecipeFormSnapshot(
+        val name: String,
+        val description: String,
+        val selectedIconName: String,
+        val selectedIconType: String,
+        val selectedIconSource: String,
+        val shortcutRequested: Boolean,
+        val launchOpenInstance: Boolean,
+        val steps: List<RecipeStepDraft>
+    )
+
     private data class ResourceItem(
         val id: String,
         val name: String,
@@ -7915,6 +9108,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val border: Int
     )
 
+    private data class RecipeStatusBadge(
+        val label: String,
+        val color: Int,
+        val background: Int
+    )
+
     private data class UbuntuRuntimeUiState(
         val title: String,
         val detail: String,
@@ -7946,8 +9145,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         CardRun,
         RecipeDetail,
         CreateConfig,
+        RecipeMore,
         Resources,
         ResourceDetail,
+        ResourceMore,
         Settings,
         ThemeSettings
     }
@@ -7971,7 +9172,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val CARD_RUN_TERMINAL_FRAGMENT_TAG = "kite-card-run-terminal"
         private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
+        private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
         private const val RESOURCE_HERMES_WEBUI = "kite.hermes.webui"
+        private const val RESOURCE_GIT = "kite.git"
+        private const val RESOURCE_PYTHON = "kite.python"
+        private const val RESOURCE_UV = "kite.uv"
+        private const val RESOURCE_OPEN_RUNTIME_SOURCE = "resource_open"
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
         private const val WEB_READY_TIMEOUT_MS = 8000L
         private const val WEB_READY_INTERVAL_MS = 700L

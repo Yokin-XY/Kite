@@ -9,7 +9,7 @@ data class KiteRecipe(
     val name: String,
     val description: String,
     val type: String,
-    val category: String = CATEGORY_UNCATEGORIZED,
+    val category: String = "",
     val defaultUrl: String,
     val shortcut: Boolean,
     val icon: KiteRecipeIcon = KiteRecipeIcon.defaultForType(type),
@@ -62,12 +62,12 @@ data class KiteRecipe(
                 .put("id", if (includeLocalIdentity) id else "")
                 .put("name", name)
                 .put("description", description)
-                .put("category", normalizeCategory(category))
+                .apply {
+                    if (includeLocalIdentity) put("category", normalizeCategory(category))
+                }
                 .put("icon", icon.toJson())
         )
-        .apply {
-            if (!launch.isDefault()) put("launch", launch.toJson())
-        }
+        .put("launch", launch.toJson())
         .put("recipe", JSONArray().apply {
             mainRecipeSteps().forEach { put(it.toJson()) }
         })
@@ -173,11 +173,7 @@ data class KiteRecipe(
                     ?: json.optString("name").ifBlank { json.getString("id") },
                 description = header?.optString("description") ?: json.optString("description"),
                 type = type,
-                category = normalizeCategory(
-                    header?.optString("category")
-                        ?: json.optString("category")
-                        ?: legacyType
-                ),
+                category = normalizeCategory(header?.optString("category") ?: json.optString("category")),
                 defaultUrl = defaultUrl,
                 shortcut = header?.optBoolean("shortcut") ?: json.optBoolean("shortcut", false),
                 icon = icon,
@@ -305,8 +301,8 @@ data class KiteRecipe(
         }
 
         fun normalizeCategory(category: String?): String {
-            val normalized = category?.trim()?.lowercase().orEmpty()
-            return normalized.ifBlank { CATEGORY_UNCATEGORIZED }
+            val normalized = category?.trim().orEmpty()
+            return if (normalized.equals(CATEGORY_UNCATEGORIZED, ignoreCase = true)) "" else normalized
         }
     }
 }

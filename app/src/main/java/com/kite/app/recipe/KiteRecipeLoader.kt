@@ -45,6 +45,32 @@ class KiteRecipeLoader(
         return recipe
     }
 
+    fun addSharedRecipeTemplate(template: JSONObject, fileStem: String): File {
+        val json = JSONObject(template.toString())
+        val base = json.optJSONObject("base") ?: JSONObject().also { json.put("base", it) }
+        if (!base.has("id")) {
+            base.put("id", "")
+        }
+        val target = uniqueTargetFile(sharedCardsDir(), "${safeFileName(fileStem)}.json")
+        runCatching {
+            target.writeText(json.toString(2))
+        }.onSuccess {
+            diagnostics.logRecipeEvent(
+                "recipe_template_added_to_home",
+                null,
+                mapOf("file" to target.name, "stem" to fileStem)
+            )
+        }.onFailure {
+            diagnostics.logRecipeEvent(
+                "recipe_template_add_failed",
+                null,
+                mapOf("file" to target.name, "stem" to fileStem, "error" to it.message.orEmpty())
+            )
+            throw it
+        }
+        return target
+    }
+
     fun deleteRecipe(recipe: KiteRecipe): Boolean {
         val deleted = deleteRecipeFiles(recipe.id)
         diagnostics.logRecipeEvent(
@@ -325,7 +351,7 @@ class KiteRecipeLoader(
             name = input.name.trim(),
             description = input.description.ifBlank { defaultDescription(inferredType) },
             type = inferredType,
-            category = KiteRecipe.CATEGORY_UNCATEGORIZED,
+            category = KiteRecipe.normalizeCategory(input.category),
             defaultUrl = defaultUrl,
             shortcut = input.shortcut,
             icon = icon,
@@ -514,6 +540,7 @@ data class NewRecipeInput(
     val id: String? = null,
     val type: String,
     val name: String,
+    val category: String = "",
     val url: String,
     val command: String,
     val shortcut: Boolean,

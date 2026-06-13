@@ -3,7 +3,7 @@
     "id": "",
     "name": "Hermes WebUI",
     "description": "\u542f\u52a8 Hermes \u56fe\u5f62\u5316\u5de5\u4f5c\u53f0",
-    "category": "uncategorized",
+    "category": "",
     "icon": {
       "type": "builtin",
       "name": "terminal"
