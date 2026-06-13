@@ -540,6 +540,20 @@ doctor_node() {
   echo "KFSHELL_NODE_RESOURCE_DOCTOR_END"
 }
 
+doctor_uv() {
+  export PATH="$BIN_DIR:/root/.local/bin:$PATH"
+  echo "KFSHELL_UV_RESOURCE_DOCTOR_BEGIN"
+  echo "mode=$MODE"
+  echo "pack_dir=$PACK_DIR"
+  echo "toolchain_dir=$TOOLCHAIN_DIR"
+  echo "bin_dir=$BIN_DIR"
+  echo "PATH=$PATH"
+  version_line uv uv "ai-dev-pack uv resource"
+  version_line uvx uvx "ai-dev-pack uv resource"
+  echo "SUMMARY PASS=$PASS WARN=$WARN FAIL=$FAIL"
+  echo "KFSHELL_UV_RESOURCE_DOCTOR_END"
+}
+
 main() {
   echo "KFSHELL_AI_DEV_PACK_BEGIN"
   echo "timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
@@ -555,6 +569,10 @@ main() {
     --install-node|install-node|node)
       install_node
       doctor_node
+      ;;
+    --install-uv|install-uv|uv)
+      install_uv
+      doctor_uv
       ;;
     *)
       install_apt_baseline
