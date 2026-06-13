@@ -1,36 +1,36 @@
 {
   "schemaVersion": 1,
-  "id": "kite.nodejs",
+  "id": "kite.uv",
   "base": {
-    "name": "Node.js",
-    "description": "现代 JavaScript 运行环境",
-    "version": "24.15.0",
+    "name": "uv",
+    "description": "Hermes 本体安装 Python 依赖的高速包管理器",
+    "version": "0.11.1",
     "icon": {
       "type": "text",
-      "value": "JS"
+      "value": "uv"
     }
   },
   "display": {
     "sections": [
-      "featured"
+      "more"
     ],
     "tags": [
-      "node",
-      "npm",
-      "npx",
-      "javascript"
+      "uv",
+      "python",
+      "package-manager",
+      "dependency",
+      "hermes"
     ]
   },
   "relations": {
     "provides": [
-      "runtime.node>=24",
-      "tool.npm",
-      "tool.npx"
+      "tool.uv",
+      "tool.uvx"
     ],
     "base": [],
     "defaults": [],
     "extensions": [
-      "kite.hermes.webui"
+      "kite.hermes.core"
     ]
   },
   "source": {
@@ -38,15 +38,15 @@
     "asset": "toolchain/ai-dev-pack"
   },
   "paths": {
-    "cacheRoot": "/workspace/.kf/cache/resources/kite.nodejs",
-    "installRoot": "/workspace/.kf/software/kite.nodejs",
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.uv",
+    "installRoot": "/workspace/.kf/software/kite.uv",
     "binRoot": "/workspace/.kf/bin"
   },
   "actions": {
     "install": [
       {
         "type": "shell",
-        "cmd": "install.sh --install-node"
+        "cmd": "install.sh --install-uv"
       }
     ],
     "open": {
@@ -54,8 +54,8 @@
       "recipe": {
         "base": {
           "id": "",
-          "name": "Node.js",
-          "description": "检查 Node.js、npm 与 npx 版本",
+          "name": "uv",
+          "description": "检查 uv 与 uvx 命令",
           "icon": {
             "type": "builtin",
             "name": "code"
@@ -67,7 +67,7 @@
         "recipe": [
           {
             "type": "shell",
-            "cmd": "node --version && npm --version && npx --version",
+            "cmd": "uv --version && uvx --version",
             "surfaceMode": "panel"
           }
         ]
@@ -76,17 +76,7 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove software root and node/npm/npx wrappers"
-      }
-    ],
-    "reinstall": [
-      {
-        "type": "action",
-        "name": "uninstall"
-      },
-      {
-        "type": "action",
-        "name": "install"
+        "cmd": "remove software root and uv/uvx wrappers"
       }
     ]
   },

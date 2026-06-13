@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.hermes.core",
+  "base": {
+    "name": "Hermes Core",
+    "description": "Hermes Agent 本体与 CLI",
+    "version": "main",
+    "icon": {
+      "type": "text",
+      "value": "H"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "tags": [
+      "hermes",
+      "agent",
+      "ai",
+      "core"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.hermes",
+      "service.hermes",
+      "config.hermes"
+    ],
+    "base": [
+      "tool.git"
+    ],
+    "defaults": [],
+    "extensions": [
+      "kite.hermes.webui"
+    ]
+  },
+  "source": {
+    "type": "official_script",
+    "url": "https://hermes-agent.nousresearch.com/install.sh",
+    "upstream": "https://github.com/NousResearch/hermes-agent",
+    "args": [
+      "--skip-setup",
+      "--skip-browser",
+      "--non-interactive"
+    ]
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.hermes.core",
+    "installRoot": "/workspace/.kf/software/kite.hermes.core",
+    "binRoot": "/workspace/.kf/bin",
+    "configRoot": "/workspace/.kf/software/kite.hermes.core/home"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o install.sh && bash install.sh --dir /workspace/.kf/software/kite.hermes.core/hermes-agent --hermes-home /workspace/.kf/software/kite.hermes.core/home --skip-setup --skip-browser --non-interactive"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Hermes Core",
+          "description": "在终端启动 Hermes",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "cmd": "hermes"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "remove /workspace/.kf/software/kite.hermes.core and /workspace/.kf/bin/hermes"
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Hermes CLI",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Hermes",
+          "description": "在终端启动 Hermes",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "cmd": "hermes"
+          }
+        ]
+      }
+    }
+  ]
+}

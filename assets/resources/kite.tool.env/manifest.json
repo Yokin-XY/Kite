@@ -22,6 +22,23 @@
       "adb"
     ]
   },
+  "relations": {
+    "provides": [
+      "runtime.node>=24",
+      "tool.npm",
+      "tool.npx",
+      "tool.pnpm",
+      "tool.uv",
+      "tool.uvx",
+      "tool.adb",
+      "tool.fastboot",
+      "tool.ripgrep",
+      "tool.jq"
+    ],
+    "base": [],
+    "defaults": [],
+    "extensions": []
+  },
   "source": {
     "type": "bundled",
     "asset": "toolchain/ai-dev-pack"
@@ -38,11 +55,36 @@
         "cmd": "install.sh --install"
       }
     ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "工具环境合集",
+          "description": "检查常用开发工具命令",
+          "icon": {
+            "type": "builtin",
+            "name": "tools"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "shell",
+            "cmd": "node --version && npm --version && uv --version && rg --version | head -1 || true",
+            "surfaceMode": "panel"
+          }
+        ]
+      }
+    },
     "uninstall": [
       {
         "type": "shell",
         "cmd": "remove software root and tool wrappers"
       }
     ]
-  }
+  },
+  "homeCards": []
 }

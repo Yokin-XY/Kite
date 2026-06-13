@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.git",
+  "base": {
+    "name": "Git",
+    "description": "源码下载与版本管理工具",
+    "version": "apt",
+    "icon": {
+      "type": "text",
+      "value": "Git"
+    }
+  },
+  "display": {
+    "sections": [
+      "more"
+    ],
+    "tags": [
+      "git",
+      "source",
+      "dependency",
+      "hermes"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "tool.git"
+    ],
+    "base": [],
+    "defaults": [],
+    "extensions": [
+      "kite.hermes.core"
+    ]
+  },
+  "source": {
+    "type": "apt",
+    "packages": [
+      "git",
+      "ca-certificates"
+    ]
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.git",
+    "installRoot": "/workspace/.kf/software/kite.git",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "apt-get install -y git ca-certificates"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Git",
+          "description": "查看 Git 版本与常用命令帮助",
+          "icon": {
+            "type": "builtin",
+            "name": "code"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "shell",
+            "cmd": "git --version && git --help | head -40",
+            "surfaceMode": "panel"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "remove git when installed_by_kite; otherwise clear Kite resource record only"
+      }
+    ]
+  },
+  "homeCards": []
+}

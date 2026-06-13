@@ -20,6 +20,20 @@
       "ai"
     ]
   },
+  "relations": {
+    "provides": [
+      "surface.hermes.webui"
+    ],
+    "base": [
+      "cli.hermes",
+      "service.hermes",
+      "runtime.node>=23"
+    ],
+    "defaults": [],
+    "extensions": [
+      "storage.hermes.sql"
+    ]
+  },
   "source": {
     "type": "command",
     "command": "npm install -g hermes-web-ui"
@@ -36,11 +50,70 @@
         "cmd": "npm install -g hermes-web-ui"
       }
     ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Hermes WebUI",
+          "description": "启动 Hermes 图形化工作台",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "shell",
+            "cmd": "hermes-web-ui start --port 8648",
+            "surfaceMode": "panel"
+          },
+          {
+            "type": "open_web",
+            "url": "http://127.0.0.1:8648"
+          }
+        ]
+      }
+    },
     "uninstall": [
       {
         "type": "shell",
         "cmd": "npm uninstall -g hermes-web-ui"
       }
     ]
-  }
+  },
+  "homeCards": [
+    {
+      "label": "Hermes WebUI",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Hermes WebUI",
+          "description": "启动 Hermes 图形化工作台",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "shell",
+            "cmd": "hermes-web-ui start --port 8648",
+            "surfaceMode": "panel"
+          },
+          {
+            "type": "open_web",
+            "url": "http://127.0.0.1:8648"
+          }
+        ]
+      }
+    }
+  ]
 }

@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.python",
+  "base": {
+    "name": "Python",
+    "description": "Hermes 本体需要的 Python 运行时",
+    "version": ">=3.11,<3.14",
+    "icon": {
+      "type": "text",
+      "value": "Py"
+    }
+  },
+  "display": {
+    "sections": [
+      "more"
+    ],
+    "tags": [
+      "python",
+      "venv",
+      "pip",
+      "dependency",
+      "hermes"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "runtime.python>=3.11<3.14",
+      "tool.pip",
+      "tool.venv"
+    ],
+    "base": [],
+    "defaults": [],
+    "extensions": [
+      "kite.hermes.core"
+    ]
+  },
+  "source": {
+    "type": "apt",
+    "packages": [
+      "python3",
+      "python3-venv",
+      "python3-pip",
+      "ca-certificates"
+    ]
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.python",
+    "installRoot": "/workspace/.kf/software/kite.python",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "apt-get install -y python3 python3-venv python3-pip ca-certificates"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Python",
+          "description": "检查 Python 与 pip 运行环境",
+          "icon": {
+            "type": "builtin",
+            "name": "code"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "shell",
+            "cmd": "python3 --version && python3 -m pip --version || true",
+            "surfaceMode": "panel"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "clear Kite resource record only; do not remove system Python"
+      }
+    ]
+  },
+  "homeCards": []
+}
