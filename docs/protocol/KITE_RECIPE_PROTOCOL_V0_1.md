@@ -2,6 +2,8 @@
 
 本文定义 Kite Recipe 的工作流语义。V0.1 的重点不是把所有能力写进 Recipe，而是把边界分清楚：平台传输层固定，Recipe 工作流开放加载，KF 执行层返回结构化 Run Report。
 
+实际给 Hermes、人类或其他 AI 写首页卡片时，先看 `docs/HOME_CARD_SCHEMA.md`。那里记录当前真实加载目录、`base.id` 留空规则、共享目录 `/exchange/cards`、以及进程容器测试卡片模板。
+
 ## 1. 三层模型
 
 ```text
