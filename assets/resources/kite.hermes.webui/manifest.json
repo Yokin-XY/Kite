@@ -25,9 +25,9 @@
       "surface.hermes.webui"
     ],
     "base": [
+      "runtime.node>=23",
       "cli.hermes",
-      "service.hermes",
-      "runtime.node>=23"
+      "service.hermes"
     ],
     "defaults": [],
     "extensions": [

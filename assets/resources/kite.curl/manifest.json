@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.curl",
+  "base": {
+    "name": "curl",
+    "description": "网络下载命令",
+    "version": "apt",
+    "icon": {
+      "type": "text",
+      "value": "curl"
+    }
+  },
+  "display": {
+    "sections": [
+      "more"
+    ],
+    "tags": [
+      "curl",
+      "download",
+      "dependency",
+      "hermes"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "tool.curl"
+    ],
+    "base": [],
+    "defaults": [],
+    "extensions": [
+      "kite.hermes.core"
+    ]
+  },
+  "source": {
+    "type": "apt",
+    "packages": [
+      "curl",
+      "ca-certificates"
+    ]
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.curl",
+    "installRoot": "/workspace/.kf/software/kite.curl",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "apt-get install -y curl ca-certificates"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "curl",
+          "description": "检查 curl 版本",
+          "icon": {
+            "type": "builtin",
+            "name": "code"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "shell",
+            "cmd": "curl --version | head -1",
+            "surfaceMode": "panel"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "remove curl when installed_by_kite; otherwise clear Kite resource record only"
+      }
+    ]
+  },
+  "homeCards": []
+}
