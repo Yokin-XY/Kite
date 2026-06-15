@@ -176,6 +176,47 @@ object KiteResourceInstallRecipes {
             exit 0
         """.trimIndent()
 
+    fun curlInstallCommand(): String =
+        """
+            set -e
+            install_root="${softwarePath("kite.curl")}"
+            mkdir -p "${'$'}install_root"
+            if command -v curl >/dev/null 2>&1; then
+              echo "KITE_RESOURCE_STEP curl-present ${'$'}(command -v curl)"
+              echo "preexisting" > "${'$'}install_root/ownership"
+            else
+              if ! command -v apt-get >/dev/null 2>&1; then
+                echo "缺少 apt-get：当前 Ubuntu 环境无法安装 curl。"
+                exit 127
+              fi
+              echo "KITE_RESOURCE_STEP apt-update"
+              apt-get update
+              echo "KITE_RESOURCE_STEP apt-install curl ca-certificates"
+              DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates
+              echo "installed_by_kite" > "${'$'}install_root/ownership"
+            fi
+            curl --version | head -1
+        """.trimIndent()
+
+    fun curlUninstallCommand(): String =
+        """
+            set +e
+            install_root="${softwarePath("kite.curl")}"
+            ownership="${'$'}install_root/ownership"
+            if [ -f "${'$'}ownership" ] && grep -q '^installed_by_kite${'$'}' "${'$'}ownership"; then
+              if command -v apt-get >/dev/null 2>&1; then
+                echo "KITE_RESOURCE_STEP apt-remove curl"
+                DEBIAN_FRONTEND=noninteractive apt-get remove -y curl
+              else
+                echo "apt-get missing; cannot remove curl package"
+              fi
+            else
+              echo "curl was preexisting or ownership is unknown; clearing Kite resource record only"
+            fi
+            rm -rf "${'$'}install_root"
+            exit 0
+        """.trimIndent()
+
     fun pythonInstallCommand(): String =
         """
             set -e
@@ -290,6 +331,58 @@ PY
             rm -rf ${softwarePath("kite.hermes.webui")}
             exit 0
         """.trimIndent()
+
+    fun cancelCleanupCommand(resourceIds: List<String>): String {
+        val ids = resourceIds.map(::safeId).filter { it.isNotBlank() }.distinct()
+        val quotedIds = ids.joinToString(" ") { "'$it'" }
+        return """
+            set +e
+            export PATH="$WORKSPACE_BIN_ROOT:/root/.local/bin:${'$'}PATH"
+            for resource_id in $quotedIds; do
+              [ -n "${'$'}resource_id" ] || continue
+              software="$WORKSPACE_SOFTWARE_ROOT/${'$'}resource_id"
+              cache="$WORKSPACE_RESOURCE_ROOT/${'$'}resource_id"
+              echo "KITE_RESOURCE_STEP cancel-clean ${'$'}resource_id"
+              case "${'$'}resource_id" in
+                kite.nodejs)
+                  rm -f "$WORKSPACE_BIN_ROOT/node" "$WORKSPACE_BIN_ROOT/npm" "$WORKSPACE_BIN_ROOT/npx"
+                  rm -rf /workspace/.kf/components/kite.nodejs /workspace/.kf/toolchains/node-v24.15.0
+                  ;;
+                kite.uv)
+                  rm -f "$WORKSPACE_BIN_ROOT/uv" "$WORKSPACE_BIN_ROOT/uvx"
+                  rm -rf /workspace/.kf/toolchains/uv-0.11.1
+                  ;;
+                kite.tool.env)
+                  rm -f "$WORKSPACE_BIN_ROOT/node" "$WORKSPACE_BIN_ROOT/npm" "$WORKSPACE_BIN_ROOT/npx"
+                  rm -f "$WORKSPACE_BIN_ROOT/pnpm" "$WORKSPACE_BIN_ROOT/uv" "$WORKSPACE_BIN_ROOT/uvx"
+                  rm -f "$WORKSPACE_BIN_ROOT/adb" "$WORKSPACE_BIN_ROOT/fastboot"
+                  rm -f "$WORKSPACE_BIN_ROOT/fd" "$WORKSPACE_BIN_ROOT/systemctl" "$WORKSPACE_BIN_ROOT/service"
+                  rm -rf /workspace/.kf/components/kite.tool.env
+                  rm -rf /workspace/.kf/toolchains/node-v24.15.0 /workspace/.kf/toolchains/uv-0.11.1 /workspace/.kf/toolchains/pnpm-10.33.2
+                  ;;
+                kite.hermes.core)
+                  rm -f "$WORKSPACE_BIN_ROOT/hermes"
+                  for user_launcher in "${'$'}software/user-home/.local/bin/hermes" "/root/.local/bin/hermes"; do
+                    if [ -f "${'$'}user_launcher" ] && grep -q "${'$'}software" "${'$'}user_launcher"; then
+                      rm -f "${'$'}user_launcher"
+                    fi
+                  done
+                  ;;
+                kite.hermes.webui)
+                  if command -v npm >/dev/null 2>&1; then
+                    npm uninstall -g hermes-web-ui >/dev/null 2>&1 || true
+                  fi
+                  ;;
+              esac
+              rm -rf "${'$'}software" "${'$'}cache"
+            done
+            if command -v apt-get >/dev/null 2>&1; then
+              apt-get clean >/dev/null 2>&1 || true
+            fi
+            echo "资源取消清理完成"
+            exit 0
+        """.trimIndent()
+    }
 
     fun toRecipe(spec: KiteResourceInstallSpec): KiteRecipe =
         KiteRecipe(

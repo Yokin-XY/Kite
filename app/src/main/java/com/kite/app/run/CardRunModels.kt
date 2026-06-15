@@ -37,13 +37,17 @@ enum class CardRunSurface(val label: String) {
     Summary("概览"),
     Report("报告"),
     Terminal("终端"),
-    Web("网页")
+    Web("网页"),
+    InstallWizard("安装向导")
 }
 
 data class CardRunState(
     val instanceId: String,
     val recipeId: String,
     val recipeName: String = "",
+    val parentInstanceId: String? = null,
+    val ownerKind: String = OWNER_KIND_CARD,
+    val stepId: String? = null,
     val status: CardRunStatus,
     val surface: CardRunSurface = CardRunSurface.Summary,
     val currentStepIndex: Int = -1,
@@ -51,6 +55,9 @@ data class CardRunState(
     val runId: String? = null,
     val terminalSessionId: String? = null,
     val pid: String? = null,
+    val rootPid: String? = null,
+    val processGroupId: String? = null,
+    val systemSessionId: String? = null,
     val lastMeaningfulOutput: String? = null,
     val lastError: String? = null,
     val shellReportText: String? = null,
@@ -67,7 +74,11 @@ data class CardRunState(
     fun isInterruptible(): Boolean = status in CardRunStatus.interruptibleStatuses
 
     fun hasRunBinding(): Boolean =
-        !runId.isNullOrBlank() || !pid.isNullOrBlank() || !terminalSessionId.isNullOrBlank()
+        !runId.isNullOrBlank() ||
+            !pid.isNullOrBlank() ||
+            !rootPid.isNullOrBlank() ||
+            !processGroupId.isNullOrBlank() ||
+            !terminalSessionId.isNullOrBlank()
 
     fun recommendedSurface(): CardRunSurface = when {
         !nextActionUrl.isNullOrBlank() -> CardRunSurface.Web
@@ -90,6 +101,12 @@ data class CardRunState(
     }?.take(80)
 
     companion object {
+        const val OWNER_KIND_CARD = "card"
+        const val OWNER_KIND_RESOURCE = "resource"
+        const val OWNER_KIND_INSTALL_WIZARD = "install_wizard"
+        const val OWNER_KIND_TERMINAL = "terminal"
+        const val OWNER_KIND_WEB = "web"
+
         fun fromRecipeStatus(recipeId: String, status: String): CardRunState =
             CardRunState(
                 instanceId = "idle_$recipeId",

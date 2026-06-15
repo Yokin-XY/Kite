@@ -621,6 +621,9 @@ data class KiteRunReport(
     val status: String,
     val ok: Boolean,
     val pid: String? = null,
+    val rootPid: String? = null,
+    val processGroupId: String? = null,
+    val systemSessionId: String? = null,
     val steps: List<KiteStepReport> = emptyList(),
     val nextAction: KiteNextAction? = null
 ) {
@@ -634,6 +637,9 @@ data class KiteRunReport(
         .put("steps", JSONArray().apply { steps.forEach { put(it.toJson()) } })
         .apply {
             if (!pid.isNullOrBlank()) put("pid", pid)
+            if (!rootPid.isNullOrBlank()) put("rootPid", rootPid)
+            if (!processGroupId.isNullOrBlank()) put("processGroupId", processGroupId)
+            if (!systemSessionId.isNullOrBlank()) put("systemSessionId", systemSessionId)
             if (nextAction != null) put("nextAction", nextAction.toJson())
         }
 
@@ -680,6 +686,9 @@ data class KiteRunReport(
                 status = json.optString("status", STATUS_FAILED),
                 ok = json.optBoolean("ok", false),
                 pid = json.optString("pid").ifBlank { null },
+                rootPid = json.optString("rootPid").ifBlank { null },
+                processGroupId = json.optString("processGroupId").ifBlank { null },
+                systemSessionId = json.optString("systemSessionId").ifBlank { null },
                 steps = steps,
                 nextAction = json.optJSONObject("nextAction")?.let { KiteNextAction.fromJson(it) }
             )

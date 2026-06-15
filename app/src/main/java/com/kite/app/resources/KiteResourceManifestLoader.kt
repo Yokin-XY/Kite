@@ -1,6 +1,7 @@
 package com.kite.app.resources
 
 import android.content.Context
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -18,7 +19,8 @@ data class KiteResourceManifest(
     val extensions: List<String>,
     val sourceType: String,
     val openRecipe: JSONObject?,
-    val homeCards: List<KiteResourceHomeCard>
+    val homeCards: List<KiteResourceHomeCard>,
+    val rawJson: JSONObject
 )
 
 data class KiteResourceHomeCard(
@@ -27,37 +29,294 @@ data class KiteResourceHomeCard(
     val recipe: JSONObject
 )
 
+data class KiteResourceRelationTargets(
+    val base: List<KiteResourceRequirementTarget>,
+    val defaults: List<KiteResourceRequirementTarget>,
+    val extensions: List<KiteResourceRequirementTarget>
+)
+
+data class KiteResourceRequirementTarget(
+    val requirement: String,
+    val providerIds: List<String>
+)
+
+data class KiteResourceManifestRequest(
+    val resourceId: String
+)
+
+data class KiteResourceProviderRequest(
+    val requirement: String
+)
+
+data class KiteResourceInstallPlanRequest(
+    val resourceId: String,
+    val registeredResourceIds: Set<String> = emptySet(),
+    val registeredCapabilities: Set<String> = emptySet()
+)
+
+data class KiteResourceInstallPlanPayload(
+    val targetResourceId: String,
+    val revision: String,
+    val resourceIds: List<String>,
+    val missing: List<KiteResourcePlanMissingRequirement>,
+    val rawJson: JSONObject
+)
+
+data class KiteResourcePlanMissingRequirement(
+    val requirement: String,
+    val requestedByResourceId: String
+)
+
 class KiteResourceManifestLoader(private val context: Context) {
-    private var cachedManifests: Map<String, KiteResourceManifest>? = null
+    private val supply: KiteResourceManifestSupply = AssetResourceManifestSupply(context)
 
-    fun manifest(resourceId: String): KiteResourceManifest? =
-        manifests()[resourceId]
+    fun requestManifest(resourceId: String): KiteResourceManifest? =
+        supply.requestManifest(KiteResourceManifestRequest(resourceId))
 
-    fun openRecipeTemplate(resourceId: String): JSONObject? =
-        manifest(resourceId)?.openRecipe?.deepCopy()
+    fun requestOpenRecipeTemplate(resourceId: String): JSONObject? =
+        requestManifest(resourceId)?.openRecipe?.deepCopy()
 
-    fun firstHomeCardRecipeTemplate(resourceId: String): JSONObject? =
-        manifest(resourceId)?.homeCards?.firstOrNull()?.recipe?.deepCopy()
+    fun requestFirstHomeCardRecipeTemplate(resourceId: String): JSONObject? =
+        requestManifest(resourceId)?.homeCards?.firstOrNull()?.recipe?.deepCopy()
 
-    fun hasHomeCardTemplate(resourceId: String): Boolean =
-        manifest(resourceId)?.homeCards?.isNotEmpty() == true
+    fun requestHasHomeCardTemplate(resourceId: String): Boolean =
+        requestManifest(resourceId)?.homeCards?.isNotEmpty() == true
 
-    fun manifests(): Map<String, KiteResourceManifest> {
-        cachedManifests?.let { return it }
-        val loaded = linkedMapOf<String, KiteResourceManifest>()
-        context.assets.list(ASSET_ROOT).orEmpty()
-            .sorted()
-            .forEach { entry ->
-                readManifest("$ASSET_ROOT/$entry/manifest.json")?.let { manifest ->
-                    if (manifest.id.isNotBlank()) loaded[manifest.id] = manifest
-                }
+    fun requestExecutionManifestJson(resourceId: String): JSONObject? =
+        requestManifest(resourceId)?.rawJson?.deepCopy()
+
+    fun requestRelationTargets(resourceId: String): KiteResourceRelationTargets {
+        val manifest = requestManifest(resourceId)
+            ?: return KiteResourceRelationTargets(base = emptyList(), defaults = emptyList(), extensions = emptyList())
+        return KiteResourceRelationTargets(
+            base = manifest.baseRequirements.resolveRequirements(),
+            defaults = manifest.defaultRequirements.resolveRequirements(),
+            extensions = manifest.extensions.map { extension ->
+                KiteResourceRequirementTarget(
+                    requirement = extension,
+                    providerIds = listOf(extension).filter { requestManifest(it) != null }
+                )
             }
-        cachedManifests = loaded
-        return loaded
+        )
     }
 
+    fun requestProviderIdsFor(requirement: String): List<String> =
+        supply.requestProviderIds(KiteResourceProviderRequest(requirement))
+
+    fun requestInstallPlan(
+        resourceId: String,
+        registeredResourceIds: Set<String> = emptySet(),
+        registeredCapabilities: Set<String> = emptySet()
+    ): KiteResourceInstallPlanPayload? =
+        supply.requestInstallPlan(
+            KiteResourceInstallPlanRequest(
+                resourceId = resourceId,
+                registeredResourceIds = registeredResourceIds,
+                registeredCapabilities = registeredCapabilities
+            )
+        )
+
+    fun manifest(resourceId: String): KiteResourceManifest? =
+        requestManifest(resourceId)
+
+    fun openRecipeTemplate(resourceId: String): JSONObject? =
+        requestOpenRecipeTemplate(resourceId)
+
+    fun firstHomeCardRecipeTemplate(resourceId: String): JSONObject? =
+        requestFirstHomeCardRecipeTemplate(resourceId)
+
+    fun hasHomeCardTemplate(resourceId: String): Boolean =
+        requestHasHomeCardTemplate(resourceId)
+
+    fun relationTargets(resourceId: String): KiteResourceRelationTargets =
+        requestRelationTargets(resourceId)
+
+    fun providerIdsFor(requirement: String): List<String> =
+        requestProviderIdsFor(requirement)
+
+    fun installPlan(
+        resourceId: String,
+        registeredResourceIds: Set<String> = emptySet(),
+        registeredCapabilities: Set<String> = emptySet()
+    ): KiteResourceInstallPlanPayload? =
+        requestInstallPlan(resourceId, registeredResourceIds, registeredCapabilities)
+
+    fun manifests(): Map<String, KiteResourceManifest> =
+        supply.requestAllManifests()
+
     fun invalidate() {
-        cachedManifests = null
+        supply.invalidate()
+    }
+
+    private interface KiteResourceManifestSupply {
+        fun requestManifest(request: KiteResourceManifestRequest): KiteResourceManifest?
+        fun requestProviderIds(request: KiteResourceProviderRequest): List<String>
+        fun requestInstallPlan(request: KiteResourceInstallPlanRequest): KiteResourceInstallPlanPayload?
+        fun requestAllManifests(): Map<String, KiteResourceManifest>
+        fun invalidate()
+    }
+
+    private inner class AssetResourceManifestSupply(private val context: Context) : KiteResourceManifestSupply {
+        private val lock = Any()
+        private val requestedManifests = linkedMapOf<String, KiteResourceManifest?>()
+        private val requestedProviders = linkedMapOf<String, List<String>>()
+        private val requestedPlans = linkedMapOf<String, KiteResourceInstallPlanPayload?>()
+        private var knownAssetEntries: List<String>? = null
+        private var allManifestCache: Map<String, KiteResourceManifest>? = null
+
+        override fun requestManifest(request: KiteResourceManifestRequest): KiteResourceManifest? {
+            val resourceId = request.resourceId.trim()
+            if (resourceId.isBlank()) return null
+            return synchronized(lock) {
+                if (requestedManifests.containsKey(resourceId)) return@synchronized requestedManifests[resourceId]
+                val direct = readManifest("$ASSET_ROOT/$resourceId/manifest.json")
+                    ?.takeIf { it.id == resourceId }
+                val manifest = direct ?: requestAllManifests()[resourceId]
+                requestedManifests[resourceId] = manifest
+                manifest
+            }
+        }
+
+        override fun requestProviderIds(request: KiteResourceProviderRequest): List<String> {
+            val requirement = request.requirement.trim()
+            if (requirement.isBlank()) return emptyList()
+            val requestKey = KiteResourceRequestPolicy.providerLookupKey(requirement)
+            return synchronized(lock) {
+                requestedProviders[requestKey]?.let { return@synchronized it }
+                val direct = requestManifest(KiteResourceManifestRequest(requirement))?.let { listOf(it.id) }.orEmpty()
+                val capable = requestAllManifests().values
+                    .filter { manifest ->
+                        manifest.provides.any { provided -> capabilitySatisfies(requirement, provided) }
+                    }
+                    .map { it.id }
+                (direct + capable).distinct().also { requestedProviders[requestKey] = it }
+            }
+        }
+
+        override fun requestInstallPlan(request: KiteResourceInstallPlanRequest): KiteResourceInstallPlanPayload? {
+            val resourceId = request.resourceId.trim()
+            if (resourceId.isBlank()) return null
+            val requestKey = buildString {
+                append(KiteResourceRequestPolicy.installPlanKey(resourceId))
+                append(":r=")
+                append(request.registeredResourceIds.sorted().joinToString(","))
+                append(":c=")
+                append(request.registeredCapabilities.sorted().joinToString(","))
+            }
+            return synchronized(lock) {
+                requestedPlans[requestKey]?.let { return@synchronized it }
+                val root = requestManifest(KiteResourceManifestRequest(resourceId))
+                    ?: return@synchronized null.also { requestedPlans[requestKey] = null }
+                val ordered = linkedSetOf<String>()
+                val missing = mutableListOf<KiteResourcePlanMissingRequirement>()
+                val visiting = mutableSetOf<String>()
+                val visited = mutableSetOf<String>()
+
+                fun isSatisfied(requirement: String, providerIds: List<String>): Boolean {
+                    if (providerIds.any { it in request.registeredResourceIds }) return true
+                    return request.registeredCapabilities.any { capability ->
+                        capabilitySatisfies(requirement, capability)
+                    }
+                }
+
+                fun visit(manifest: KiteResourceManifest) {
+                    if (manifest.id in visited) return
+                    if (!visiting.add(manifest.id)) return
+                    val dependencies = (manifest.baseRequirements + manifest.defaultRequirements).distinct()
+                    dependencies.forEach { requirement ->
+                        val providerIds = requestProviderIds(KiteResourceProviderRequest(requirement))
+                        if (isSatisfied(requirement, providerIds)) return@forEach
+                        val provider = providerIds
+                            .asSequence()
+                            .mapNotNull { providerId -> requestManifest(KiteResourceManifestRequest(providerId)) }
+                            .firstOrNull()
+                        if (provider == null) {
+                            missing.add(
+                                KiteResourcePlanMissingRequirement(
+                                    requirement = requirement,
+                                    requestedByResourceId = manifest.id
+                                )
+                            )
+                        } else {
+                            visit(provider)
+                        }
+                    }
+                    visiting.remove(manifest.id)
+                    visited.add(manifest.id)
+                    if (manifest.id !in request.registeredResourceIds) {
+                        ordered.add(manifest.id)
+                    }
+                }
+
+                visit(root)
+                val revisionSource = buildString {
+                    append(resourceId)
+                    append('|')
+                    append(ordered.joinToString(","))
+                    append('|')
+                    append(missing.joinToString(",") { "${it.requestedByResourceId}:${it.requirement}" })
+                }
+                val revision = "plan-${revisionSource.hashCode().toUInt().toString(16)}"
+                val rawJson = JSONObject()
+                    .put("surface", KiteResourceRequestPolicy.SURFACE_INSTALL_PLAN)
+                    .put("targetResourceId", resourceId)
+                    .put("revision", revision)
+                    .put("resources", JSONArray().apply { ordered.forEach { put(it) } })
+                    .put(
+                        "missing",
+                        JSONArray().apply {
+                            missing.forEach { item ->
+                                put(
+                                    JSONObject()
+                                        .put("requirement", item.requirement)
+                                        .put("requestedByResourceId", item.requestedByResourceId)
+                                )
+                            }
+                        }
+                    )
+                KiteResourceInstallPlanPayload(
+                    targetResourceId = resourceId,
+                    revision = revision,
+                    resourceIds = ordered.toList(),
+                    missing = missing.distinct(),
+                    rawJson = rawJson
+                ).also { requestedPlans[requestKey] = it }
+            }
+        }
+
+        override fun requestAllManifests(): Map<String, KiteResourceManifest> {
+            return synchronized(lock) {
+                allManifestCache?.let { return@synchronized it }
+                val loaded = linkedMapOf<String, KiteResourceManifest>()
+                assetEntries().forEach { entry ->
+                    readManifest("$ASSET_ROOT/$entry/manifest.json")?.let { manifest ->
+                        if (manifest.id.isNotBlank()) {
+                            loaded[manifest.id] = manifest
+                            requestedManifests[manifest.id] = manifest
+                        }
+                    }
+                }
+                allManifestCache = loaded
+                loaded
+            }
+        }
+
+        override fun invalidate() {
+            synchronized(lock) {
+                requestedManifests.clear()
+                requestedProviders.clear()
+                requestedPlans.clear()
+                knownAssetEntries = null
+                allManifestCache = null
+            }
+        }
+
+        private fun assetEntries(): List<String> {
+            knownAssetEntries?.let { return it }
+            val entries = context.assets.list(ASSET_ROOT).orEmpty().sorted()
+            knownAssetEntries = entries
+            return entries
+        }
     }
 
     private fun readManifest(path: String): KiteResourceManifest? =
@@ -65,6 +324,8 @@ class KiteResourceManifestLoader(private val context: Context) {
             context.assets.open(path).bufferedReader().use { reader ->
                 parseManifest(JSONObject(reader.readText()))
             }
+        }.onFailure { error ->
+            Log.w(TAG, "Failed to read resource manifest: $path", error)
         }.getOrNull()
 
     private fun parseManifest(json: JSONObject): KiteResourceManifest {
@@ -97,7 +358,8 @@ class KiteResourceManifestLoader(private val context: Context) {
             extensions = relations.optJSONArray("extensions").toStringList(),
             sourceType = source.optString("type"),
             openRecipe = openRecipe,
-            homeCards = parseHomeCards(json.optJSONArray("homeCards"))
+            homeCards = parseHomeCards(json.optJSONArray("homeCards")),
+            rawJson = json.deepCopy()
         )
     }
 
@@ -131,7 +393,48 @@ class KiteResourceManifestLoader(private val context: Context) {
         }
     }
 
+    private fun List<String>.resolveRequirements(): List<KiteResourceRequirementTarget> =
+        map { requirement ->
+            KiteResourceRequirementTarget(
+                requirement = requirement,
+                providerIds = requestProviderIdsFor(requirement)
+            )
+        }
+
+    private fun capabilitySatisfies(requirement: String, provided: String): Boolean {
+        val need = requirement.trim()
+        val have = provided.trim()
+        if (need.equals(have, ignoreCase = true)) return true
+        val needVersion = capabilityMinVersion(need) ?: return false
+        val haveVersion = capabilityMinVersion(have) ?: return false
+        return needVersion.first.equals(haveVersion.first, ignoreCase = true) &&
+            compareCapabilityVersions(haveVersion.second, needVersion.second) >= 0
+    }
+
+    private fun capabilityMinVersion(value: String): Pair<String, List<Int>>? {
+        val match = Regex("^([A-Za-z0-9_.-]+)>=(\\d+(?:\\.\\d+)*)(?:<\\d+(?:\\.\\d+)*)?$")
+            .matchEntire(value.trim())
+            ?: return null
+        val name = match.groupValues[1]
+        val version = match.groupValues[2]
+            .split('.')
+            .mapNotNull { it.toIntOrNull() }
+        if (version.isEmpty()) return null
+        return name to version
+    }
+
+    private fun compareCapabilityVersions(left: List<Int>, right: List<Int>): Int {
+        val size = maxOf(left.size, right.size)
+        for (index in 0 until size) {
+            val a = left.getOrElse(index) { 0 }
+            val b = right.getOrElse(index) { 0 }
+            if (a != b) return a.compareTo(b)
+        }
+        return 0
+    }
+
     companion object {
         private const val ASSET_ROOT = "resources"
+        private const val TAG = "KiteResourceManifest"
     }
 }

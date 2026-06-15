@@ -39,6 +39,8 @@ object WorkspaceBuildSupport {
     private const val TOP_APPLET_NAME = "top"
     private const val RESOURCE_SAMPLER_APPLET_NAME = "kf-resource-sampler"
     private const val SYSTEM_PROCESS_APPLET_ASSET_PATH = "system/kf-procps-arm64"
+    private const val KITE_RUNNER_ASSET_PATH = "system/kf-runner-arm64"
+    private const val KITE_RUNNER_APPLET_NAME = "kf-runner"
     private const val PROOT_SHIM_NAME = "proot"
     private const val SYSTEMCTL_SHIM_NAME = "systemctl"
     private const val SERVICE_SHIM_NAME = "service"
@@ -77,6 +79,7 @@ object WorkspaceBuildSupport {
     const val ANDROID_DATA_DIR_NAME = ".android-data"
     const val CONTAINER_HELPER_BIN_PATH = "/workspace/.kf/bin"
     const val CONTAINER_HELPER_SYSTEM_BIN_PATH = "/workspace/.kf/system/bin"
+    const val CONTAINER_KITE_RUNNER_PATH = "/workspace/.kf/system/bin/kf-runner"
     const val CONTAINER_HELPER_SYSTEM_PROC_PATH = "/workspace/.kf/system/state/proc"
     const val CONTAINER_HELPER_SYSTEM_STATE_PATH = "/workspace/.kf/system/state"
     const val CONTAINER_HELPER_TOOLCHAIN_PATH = "/workspace/.kf/toolchains"
@@ -277,6 +280,8 @@ object WorkspaceBuildSupport {
         val runtimeWorkloadPolicyFile = runtimeWorkloadPolicyFile(workspaceDir)
         if (!runtimeWorkloadPolicyFile.exists()) {
             writeTextIfChanged(runtimeWorkloadPolicyFile, buildRuntimeWorkloadPolicyTemplate())
+        } else {
+            migrateLegacyRuntimeWorkloadPolicy(runtimeWorkloadPolicyFile)
         }
         val runtimeWorkloadIntentFile = runtimeWorkloadIntentFile(workspaceDir)
         if (!runtimeWorkloadIntentFile.exists()) {
@@ -329,7 +334,8 @@ object WorkspaceBuildSupport {
             if (
                 installMarker.exists() &&
                 runCatching { installMarker.readText() }.getOrNull() == installVersion &&
-                processAppletCommandNames().all { commandName -> File(systemBinDir, commandName).canExecute() }
+                processAppletCommandNames().all { commandName -> File(systemBinDir, commandName).canExecute() } &&
+                optionalRunnerReady(context, systemBinDir)
             ) {
                 installedSystemComponentKeys.add(installKey)
                 return
@@ -357,6 +363,16 @@ object WorkspaceBuildSupport {
                 destination.setWritable(false, false)
                 chmodIfPossible(destination, 0b101101101)
             }
+            val runnerDestination = File(systemBinDir, KITE_RUNNER_APPLET_NAME)
+            val runnerInstalled = copyAssetExecutableIfAvailable(
+                context = context,
+                assetPath = KITE_RUNNER_ASSET_PATH,
+                destination = runnerDestination
+            )
+            if (!runnerInstalled && runnerDestination.exists()) {
+                runnerDestination.setWritable(true, false)
+                runnerDestination.delete()
+            }
             writeTextIfChanged(installMarker, installVersion)
             chmodIfPossible(systemDir, 0b101101101)
             chmodIfPossible(systemBinDir, 0b101101101)
@@ -370,7 +386,8 @@ object WorkspaceBuildSupport {
         val versionCode = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
         }.getOrDefault(-1L)
-        return "versionCode=$versionCode\nasset=$SYSTEM_PROCESS_APPLET_ASSET_PATH\nlayout=v9_native_systemctl_service\n"
+        val runnerState = if (assetExists(context, KITE_RUNNER_ASSET_PATH)) "present" else "absent"
+        return "versionCode=$versionCode\nasset=$SYSTEM_PROCESS_APPLET_ASSET_PATH\nrunner=$KITE_RUNNER_ASSET_PATH:$runnerState\nlayout=v10_optional_kf_runner\n"
     }
 
     private fun processAppletCommandNames(): List<String> {
@@ -393,6 +410,34 @@ object WorkspaceBuildSupport {
         runCatching {
             Os.chmod(file.absolutePath, mode)
         }
+    }
+
+    private fun optionalRunnerReady(context: Context, systemBinDir: File): Boolean {
+        return !assetExists(context, KITE_RUNNER_ASSET_PATH) ||
+            File(systemBinDir, KITE_RUNNER_APPLET_NAME).canExecute()
+    }
+
+    private fun assetExists(context: Context, assetPath: String): Boolean {
+        return runCatching {
+            context.assets.open(assetPath).use { }
+        }.isSuccess
+    }
+
+    private fun copyAssetExecutableIfAvailable(context: Context, assetPath: String, destination: File): Boolean {
+        val bytes = runCatching {
+            context.assets.open(assetPath).use { input -> input.readBytes() }
+        }.getOrNull() ?: return false
+        val shouldWrite = !destination.exists() ||
+            runCatching { !destination.readBytes().contentEquals(bytes) }.getOrDefault(true)
+        if (shouldWrite) {
+            destination.setWritable(true, false)
+            destination.writeBytes(bytes)
+        }
+        destination.setExecutable(true, false)
+        destination.setReadable(true, false)
+        destination.setWritable(false, false)
+        chmodIfPossible(destination, 0b101101101)
+        return true
     }
 
     private fun removeLegacyProcessShimScripts(helperBinDir: File) {
@@ -1705,6 +1750,13 @@ object WorkspaceBuildSupport {
         }
     }
 
+    private fun migrateLegacyRuntimeWorkloadPolicy(file: File) {
+        val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return
+        if (json.has("lifecycleManagementEnabled")) return
+        json.put("lifecycleManagementEnabled", false)
+        writeTextIfChanged(file, json.toString(2) + "\n")
+    }
+
     private fun buildRuntimeReclaimerPolicyTemplate(): String {
         return """
             |{
@@ -1827,6 +1879,7 @@ object WorkspaceBuildSupport {
         return """
             |{
             |  "version": 1,
+            |  "lifecycleManagementEnabled": false,
             |  "authority": "android_control_plane",
             |  "telemetrySource": "proot_lifecycle_telemetry_v0+android_proc_snapshot_current",
             |  "lanes": [
@@ -2887,7 +2940,7 @@ object WorkspaceBuildSupport {
             |    policy["lifecycleManagementEnabled"] = enabled
             |    write_policy(policy)
             |
-            |current = bool(policy.get("lifecycleManagementEnabled", True))
+            |current = bool(policy.get("lifecycleManagementEnabled", False))
             |print("kf_runtime_lifecycle_status=" + ("enabled" if current else "disabled"))
             |print("kf_runtime_lifecycle_management_enabled=" + ("true" if current else "false"))
             |print("kf_runtime_lifecycle_action=" + (action or "status"))

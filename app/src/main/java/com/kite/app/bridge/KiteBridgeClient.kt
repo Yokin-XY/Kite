@@ -11,6 +11,7 @@ import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.recipe.KiteRunReport
 import com.kite.app.recipe.KiteStepReport
 import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kftest.app.foundation.workspace.WorkspaceBuildSupport
 import org.json.JSONObject
 import java.net.ConnectException
 import java.net.HttpURLConnection
@@ -89,6 +90,26 @@ class KiteBridgeClient(
     }
 
     fun stopRun(recipe: KiteRecipe, runId: String, callback: (BridgeResult) -> Unit) {
+        stopRun(
+            recipe = recipe,
+            runId = runId,
+            pid = null,
+            rootPid = null,
+            processGroupId = null,
+            systemSessionId = null,
+            callback = callback
+        )
+    }
+
+    fun stopRun(
+        recipe: KiteRecipe,
+        runId: String,
+        pid: String? = null,
+        rootPid: String? = null,
+        processGroupId: String? = null,
+        systemSessionId: String? = null,
+        callback: (BridgeResult) -> Unit
+    ) {
         val context = appContext
         val direct = directRuns[runId]
         if (context != null && direct != null) {
@@ -97,10 +118,22 @@ class KiteBridgeClient(
         }
         val directProcess = directProcesses[runId]
         if (context != null && directProcess != null) {
-            stopDirectProcesses(recipe, listOf(directProcess), callback)
+            stopDirectProcesses(context, recipe, listOf(directProcess), callback)
             return
         }
         if (context != null) {
+            val persisted = DirectRunBinding(
+                recipeId = recipe.id,
+                runId = runId,
+                pid = pid,
+                rootPid = rootPid,
+                processGroupId = processGroupId,
+                systemSessionId = systemSessionId
+            ).takeIf { it.hasProcessBinding() }
+            if (persisted != null) {
+                stopDirectRuns(context, recipe, listOf(persisted), callback)
+                return
+            }
             callback(stoppedWithoutActiveDirectBinding(recipe, runId))
             return
         }
@@ -128,7 +161,7 @@ class KiteBridgeClient(
         }
         val directProcess = directProcesses.values.filter { it.recipeId == recipe.id }
         if (context != null && directProcess.isNotEmpty()) {
-            stopDirectProcesses(recipe, directProcess, callback)
+            stopDirectProcesses(context, recipe, directProcess, callback)
             return
         }
         if (context != null) {
@@ -318,14 +351,27 @@ class KiteBridgeClient(
                 var ok = true
                 var detached = false
                 var pid: String? = null
+                var rootPid: String? = null
+                var processGroupId: String? = null
+                var systemSessionId: String? = null
 
                 for (step in shellSteps) {
                     val execution = executeDirectShellStep(context, recipe, runId, requestId, step, extraEnv, onProgress)
                     stepReports.add(execution.report)
                     if (!execution.pid.isNullOrBlank()) pid = execution.pid
+                    if (!execution.rootPid.isNullOrBlank()) rootPid = execution.rootPid
+                    if (!execution.processGroupId.isNullOrBlank()) processGroupId = execution.processGroupId
+                    if (!execution.systemSessionId.isNullOrBlank()) systemSessionId = execution.systemSessionId
                     if (execution.detached) {
                         detached = true
-                        directRuns[runId] = DirectRunBinding(recipe.id, runId, execution.pid)
+                        directRuns[runId] = DirectRunBinding(
+                            recipeId = recipe.id,
+                            runId = runId,
+                            pid = execution.pid,
+                            rootPid = execution.rootPid,
+                            processGroupId = execution.processGroupId,
+                            systemSessionId = execution.systemSessionId
+                        )
                         break
                     }
                     if (!execution.ok) {
@@ -353,6 +399,9 @@ class KiteBridgeClient(
                     status = status,
                     ok = ok,
                     pid = pid,
+                    rootPid = rootPid,
+                    processGroupId = processGroupId,
+                    systemSessionId = systemSessionId,
                     steps = stepReports,
                     nextAction = nextUrl?.let { KiteNextAction(KiteRecipe.STEP_OPEN_WEB, it) }
                 )
@@ -401,10 +450,30 @@ class KiteBridgeClient(
     ): DirectStepExecution {
         val runMode = KiteRecipe.normalizeRunMode(step.runMode) ?: KiteRecipe.RUN_MODE_ATTACHED
         return if (runMode == KiteRecipe.RUN_MODE_DETACHED) {
-            executeDetachedShellStep(context, recipe, requestId, step, extraEnv, onProgress)
+            executeDetachedShellStep(context, recipe, runId, requestId, step, extraEnv, onProgress)
         } else {
             executeAttachedShellStep(context, recipe, runId, requestId, step, extraEnv, onProgress)
         }
+    }
+
+    fun stopProcessBinding(
+        recipe: KiteRecipe,
+        runId: String,
+        pid: String?,
+        rootPid: String?,
+        processGroupId: String?,
+        systemSessionId: String?,
+        callback: (BridgeResult) -> Unit
+    ) {
+        stopRun(
+            recipe = recipe,
+            runId = runId.ifBlank { newRequestId() },
+            pid = pid,
+            rootPid = rootPid,
+            processGroupId = processGroupId,
+            systemSessionId = systemSessionId,
+            callback = callback
+        )
     }
 
     private fun executeAttachedShellStep(
@@ -419,7 +488,7 @@ class KiteBridgeClient(
         val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
             context = context,
             workingDirectory = step.workdir?.trim().orEmpty().ifBlank { DEFAULT_WORKDIR },
-            payload = step.cmd.orEmpty(),
+            payload = groupedAttachedPayload(step.cmd.orEmpty()),
             loginShell = true
         )
         val timeoutMs = step.timeoutMs?.takeIf { it > 0L } ?: DEFAULT_ATTACHED_TIMEOUT_MS
@@ -430,28 +499,40 @@ class KiteBridgeClient(
             activeRecipeId = recipe.id,
             activeRunId = runId
         ) { output, chunk ->
+            updateDirectProcessBinding(runId, output)
+            val meta = extractRunBindingMeta(output)
             onProgress?.invoke(
                 BridgeProgress(
                     requestId = requestId,
+                    runId = runId,
                     recipeId = recipe.id,
                     stepId = step.id,
                     command = step.cmd.orEmpty(),
                     outputTail = output.takeLast(OUTPUT_TAIL_CHARS),
                     lastChunk = chunk,
-                    lastMeaningfulOutput = lastMeaningfulLine(output)
+                    lastMeaningfulOutput = lastMeaningfulLine(output),
+                    pid = meta.rootPid,
+                    rootPid = meta.rootPid,
+                    processGroupId = meta.processGroupId,
+                    systemSessionId = meta.systemSessionId
                 )
             )
         }
         val output = process.output
+        updateDirectProcessBinding(runId, output)
         val meaningful = lastMeaningfulLine(output)
         val expected = step.expected ?: recipe.expected
         val match = matchExpected(expected, output, meaningful)
         val success = !process.timedOut && process.exitCode == 0 && (match?.matched != false)
         val status = if (success) KiteRunReport.STATUS_FINISHED else KiteRunReport.STATUS_FAILED
+        val runMeta = extractRunBindingMeta(output)
         return DirectStepExecution(
             ok = success,
             detached = false,
             pid = null,
+            rootPid = runMeta.rootPid,
+            processGroupId = runMeta.processGroupId,
+            systemSessionId = runMeta.systemSessionId,
             report = KiteStepReport(
                 stepId = step.id,
                 type = step.type,
@@ -468,13 +549,15 @@ class KiteBridgeClient(
     private fun executeDetachedShellStep(
         context: Context,
         recipe: KiteRecipe,
+        runId: String,
         requestId: String,
         step: KiteRecipeStep,
         extraEnv: Map<String, String> = emptyMap(),
         onProgress: ((BridgeProgress) -> Unit)? = null
     ): DirectStepExecution {
         val logPath = "/tmp/kite-${safeId(recipe.id)}-${safeId(step.id)}.log"
-        val payload = "mkdir -p /tmp && nohup bash -lc ${shellQuote(step.cmd.orEmpty())} > ${shellQuote(logPath)} 2>&1 < /dev/null & echo pid:$!"
+        val launchPayload = runnerAwareLaunchPayload(step.cmd.orEmpty())
+        val payload = "mkdir -p /tmp && { $launchPayload; } > ${shellQuote(logPath)} 2>&1 < /dev/null & echo pid:$!; echo rootPid:$!; echo processGroupId:$!; echo systemSessionId:$!"
         val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
             context = context,
             workingDirectory = step.workdir?.trim().orEmpty().ifBlank { DEFAULT_WORKDIR },
@@ -482,25 +565,35 @@ class KiteBridgeClient(
             loginShell = true
         )
         val process = executeProcess(config.command, config.env + extraEnv, DETACHED_START_TIMEOUT_MS) { output, chunk ->
+            val meta = extractRunBindingMeta(output)
             onProgress?.invoke(
                 BridgeProgress(
                     requestId = requestId,
+                    runId = runId,
                     recipeId = recipe.id,
                     stepId = step.id,
                     command = step.cmd.orEmpty(),
                     outputTail = output.takeLast(OUTPUT_TAIL_CHARS),
                     lastChunk = chunk,
-                    lastMeaningfulOutput = lastMeaningfulLine(output)
+                    lastMeaningfulOutput = lastMeaningfulLine(output),
+                    pid = meta.rootPid ?: extractPid(output),
+                    rootPid = meta.rootPid ?: extractPid(output),
+                    processGroupId = meta.processGroupId ?: extractPid(output),
+                    systemSessionId = meta.systemSessionId ?: extractPid(output)
                 )
             )
         }
         val output = process.output
-        val pid = extractPid(output)
+        val runMeta = extractRunBindingMeta(output)
+        val pid = runMeta.rootPid ?: extractPid(output)
         val success = !process.timedOut && process.exitCode == 0 && !pid.isNullOrBlank()
         return DirectStepExecution(
             ok = success,
             detached = success,
             pid = pid,
+            rootPid = runMeta.rootPid ?: pid,
+            processGroupId = runMeta.processGroupId ?: pid,
+            systemSessionId = runMeta.systemSessionId ?: pid,
             report = KiteStepReport(
                 stepId = step.id,
                 type = step.type,
@@ -526,8 +619,9 @@ class KiteBridgeClient(
             val output = StringBuilder()
             bindings.forEach { binding ->
                 val pid = binding.pid
-                if (!pid.isNullOrBlank()) {
-                    val payload = "kill -TERM $pid >/dev/null 2>&1 || true; sleep 1; kill -0 $pid >/dev/null 2>&1 && kill -KILL $pid >/dev/null 2>&1 || true"
+                val processGroupId = binding.processGroupId
+                if (!pid.isNullOrBlank() || !processGroupId.isNullOrBlank()) {
+                    val payload = buildStopProcessGroupPayload(pid = pid, processGroupId = processGroupId)
                     val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
                         context = context,
                         workingDirectory = DEFAULT_WORKDIR,
@@ -538,37 +632,41 @@ class KiteBridgeClient(
                 }
                 directRuns.remove(binding.runId)
             }
+            val stoppedOk = !stopPayloadHasRemaining(output.toString())
+            val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
             val report = KiteRunReport(
                 protocolVersion = KiteRecipe.PROTOCOL_VERSION,
                 requestId = requestId,
                 runId = runId,
                 recipeId = recipe.id,
-                status = KiteRunReport.STATUS_STOPPED,
-                ok = true,
+                status = status,
+                ok = stoppedOk,
                 steps = listOf(
                     KiteStepReport(
                         stepId = "direct_stop",
                         type = KiteRecipe.STEP_SHELL,
-                        status = KiteRunReport.STATUS_STOPPED,
-                        exitCode = 0,
+                        status = status,
+                        exitCode = if (stoppedOk) 0 else 1,
                         lastMeaningfulOutput = output.toString().trim().takeLast(OUTPUT_TAIL_CHARS)
                     )
                 )
             )
             callback(
                 BridgeResult(
-                    ok = true,
-                    accepted = true,
-                    status = KiteRunReport.STATUS_STOPPED,
+                    ok = stoppedOk,
+                    accepted = stoppedOk,
+                    status = status,
                     message = report.toJson().toString(),
                     requestId = requestId,
-                    runReport = report
+                    runReport = report,
+                    errorType = if (stoppedOk) BridgeErrorType.None else BridgeErrorType.BridgeFailed
                 )
             )
         }
     }
 
     private fun stopDirectProcesses(
+        context: Context,
         recipe: KiteRecipe,
         bindings: List<DirectProcessBinding>,
         callback: (BridgeResult) -> Unit
@@ -576,8 +674,22 @@ class KiteBridgeClient(
         val requestId = newRequestId()
         thread(name = "KiteDirectProcessStop", isDaemon = true) {
             val runId = bindings.firstOrNull()?.runId ?: requestId
+            val output = StringBuilder()
             bindings.forEach { binding ->
                 runCatching {
+                    if (!binding.pid.isNullOrBlank() || !binding.processGroupId.isNullOrBlank()) {
+                        val payload = buildStopProcessGroupPayload(
+                            pid = binding.pid,
+                            processGroupId = binding.processGroupId
+                        )
+                        val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+                            context = context,
+                            workingDirectory = DEFAULT_WORKDIR,
+                            payload = payload,
+                            loginShell = true
+                        )
+                        output.append(executeProcess(config.command, config.env, DIRECT_STOP_TIMEOUT_MS).output)
+                    }
                     binding.process.destroy()
                     if (!binding.process.waitFor(1200L, TimeUnit.MILLISECONDS)) {
                         binding.process.destroyForcibly()
@@ -585,31 +697,34 @@ class KiteBridgeClient(
                 }
                 directProcesses.remove(binding.runId)
             }
+            val stoppedOk = !stopPayloadHasRemaining(output.toString())
+            val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
             val report = KiteRunReport(
                 protocolVersion = KiteRecipe.PROTOCOL_VERSION,
                 requestId = requestId,
                 runId = runId,
                 recipeId = recipe.id,
-                status = KiteRunReport.STATUS_STOPPED,
-                ok = true,
+                status = status,
+                ok = stoppedOk,
                 steps = listOf(
                     KiteStepReport(
                         stepId = "direct_process_stop",
                         type = KiteRecipe.STEP_SHELL,
-                        status = KiteRunReport.STATUS_STOPPED,
-                        exitCode = 0,
-                        lastMeaningfulOutput = "已中断正在执行的 SH 命令。"
+                        status = status,
+                        exitCode = if (stoppedOk) 0 else 1,
+                        lastMeaningfulOutput = output.toString().trim().ifBlank { "已中断正在执行的 SH 命令。" }.takeLast(OUTPUT_TAIL_CHARS)
                     )
                 )
             )
             callback(
                 BridgeResult(
-                    ok = true,
-                    accepted = true,
-                    status = KiteRunReport.STATUS_STOPPED,
+                    ok = stoppedOk,
+                    accepted = stoppedOk,
+                    status = status,
                     message = report.toJson().toString(),
                     requestId = requestId,
-                    runReport = report
+                    runReport = report,
+                    errorType = if (stoppedOk) BridgeErrorType.None else BridgeErrorType.BridgeFailed
                 )
             )
         }
@@ -719,6 +834,157 @@ class KiteBridgeClient(
     private fun lastMeaningfulLine(output: String): String =
         output.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.lastOrNull().orEmpty()
 
+    private fun updateDirectProcessBinding(runId: String, output: String) {
+        val meta = extractRunBindingMeta(output)
+        if (meta.isEmpty()) return
+        directProcesses.computeIfPresent(runId) { _, existing ->
+            existing.copy(
+                pid = meta.rootPid ?: existing.pid,
+                processGroupId = meta.processGroupId ?: existing.processGroupId,
+                systemSessionId = meta.systemSessionId ?: existing.systemSessionId
+            )
+        }
+    }
+
+    private fun groupedAttachedPayload(command: String): String =
+        runnerAwareLaunchPayload(command)
+
+    private fun runnerAwareLaunchPayload(command: String): String {
+        val safeCommand = command.ifBlank { ":" }
+        val runnerPath = WorkspaceBuildSupport.CONTAINER_KITE_RUNNER_PATH
+        val runnerCommand = "${shellQuote(runnerPath)} --shell ${shellQuote(safeCommand)}"
+        val fallbackCommand = "setsid bash -lc ${shellQuote(groupedShellBody(safeCommand))}"
+        return "if [ -x ${shellQuote(runnerPath)} ]; then $runnerCommand; else $fallbackCommand; fi"
+    }
+
+    private fun groupedShellBody(command: String): String {
+        val safeCommand = command.ifBlank { ":" }
+        return listOf(
+            "kite_root_pid=\"\$\$\"",
+            "kite_pgid=\"\$kite_root_pid\"",
+            "kite_sid=\"\$kite_root_pid\"",
+            "printf '__kite_root_pid:%s\\n' \"\$kite_root_pid\"",
+            "printf '__kite_process_group_id:%s\\n' \"\$kite_pgid\"",
+            "printf '__kite_system_session_id:%s\\n' \"\$kite_sid\"",
+            "exec bash -lc ${shellQuote(safeCommand)}"
+        ).joinToString("; ")
+    }
+
+    private fun buildStopProcessGroupPayload(pid: String?, processGroupId: String?): String {
+        val safePid = numericProcessId(pid)
+        val safeGroup = numericProcessId(processGroupId)
+        if (safePid == null && safeGroup == null) {
+            return "printf '__kite_stop:no-target\\n'"
+        }
+        return """
+            kf_stop_pid=${shellQuote(safePid.orEmpty())}
+            kf_stop_pgid=${shellQuote(safeGroup.orEmpty())}
+            printf '__kite_stop_mode:force-kill\n'
+            printf '__kite_stop_target_pid:%s\n' "${'$'}kf_stop_pid"
+            printf '__kite_stop_target_pgid:%s\n' "${'$'}kf_stop_pgid"
+            kf_children_of() {
+              ps -eo pid=,ppid= 2>/dev/null | awk -v p="${'$'}1" '${'$'}2 == p { print ${'$'}1 }'
+            }
+            kf_collect_tree() {
+              kf_todo="${'$'}1"
+              kf_seen=""
+              while [ -n "${'$'}kf_todo" ]; do
+                kf_next=""
+                for kf_parent in ${'$'}kf_todo; do
+                  for kf_child in ${'$'}(kf_children_of "${'$'}kf_parent"); do
+                    case " ${'$'}kf_seen " in
+                      *" ${'$'}kf_child "*) ;;
+                      *) printf '%s\n' "${'$'}kf_child"; kf_seen="${'$'}kf_seen ${'$'}kf_child"; kf_next="${'$'}kf_next ${'$'}kf_child" ;;
+                    esac
+                  done
+                done
+                kf_todo="${'$'}kf_next"
+              done
+            }
+            kf_collect_group() {
+              [ -n "${'$'}kf_stop_pgid" ] || return 0
+              ps -eo pid=,pgid= 2>/dev/null | awk -v pg="${'$'}kf_stop_pgid" '${'$'}2 == pg { print ${'$'}1 }'
+            }
+            kf_targets=${'$'}(
+              {
+                [ -n "${'$'}kf_stop_pid" ] && printf '%s\n' "${'$'}kf_stop_pid"
+                [ -n "${'$'}kf_stop_pid" ] && kf_collect_tree "${'$'}kf_stop_pid"
+                kf_collect_group
+              } | awk 'NF && ${'$'}1 ~ /^[0-9]+${'$'}/ && ${'$'}1 > 1 && !seen[${'$'}1]++ { print ${'$'}1 }'
+            )
+            kf_targets_line=${'$'}(printf '%s\n' "${'$'}kf_targets" | tr '\n' ',')
+            printf '__kite_stop_targets:%s\n' "${'$'}kf_targets_line"
+            kf_kill_group() {
+              [ -n "${'$'}kf_stop_pgid" ] || return 0
+              kill "${'$'}1" -- "-${'$'}kf_stop_pgid" >/dev/null 2>&1 && return 0
+              kill "${'$'}1" "-${'$'}kf_stop_pgid" >/dev/null 2>&1 || true
+            }
+            kf_kill_targets() {
+              for kf_target in ${'$'}kf_targets; do
+                [ "${'$'}kf_target" = "${'$'}${'$'}" ] && continue
+                [ -n "${'$'}PPID" ] && [ "${'$'}kf_target" = "${'$'}PPID" ] && continue
+                kill "${'$'}1" "${'$'}kf_target" >/dev/null 2>&1 || true
+              done
+            }
+            kf_kill_group -KILL
+            kf_kill_targets -KILL
+            sleep 0.06
+            kf_kill_group -KILL
+            kf_kill_targets -KILL
+            kf_is_live_process() {
+              [ -n "${'$'}1" ] || return 1
+              [ -d "/proc/${'$'}1" ] || return 1
+              kf_state=${'$'}(sed 's/^.*) //' "/proc/${'$'}1/stat" 2>/dev/null | awk '{ print ${'$'}1 }')
+              [ "${'$'}kf_state" = "Z" ] && return 1
+              kill -0 "${'$'}1" >/dev/null 2>&1
+            }
+            kf_remaining=${'$'}(
+              for kf_target in ${'$'}kf_targets; do
+                kf_is_live_process "${'$'}kf_target" && printf '%s\n' "${'$'}kf_target"
+              done
+            )
+            kf_remaining_line=${'$'}(printf '%s\n' "${'$'}kf_remaining" | tr '\n' ',')
+            printf '__kite_stop_remaining:%s\n' "${'$'}kf_remaining_line"
+        """.trimIndent()
+    }
+
+    private fun stopPayloadHasRemaining(output: String): Boolean =
+        output.lineSequence()
+            .filter { it.startsWith("__kite_stop_remaining:") }
+            .map { it.substringAfter(':') }
+            .any { remaining ->
+                remaining.split(',').any { value ->
+                    value.trim().matches(Regex("\\d+"))
+                }
+            }
+
+    private fun numericProcessId(value: String?): String? =
+        value?.trim()
+            ?.takeIf { it.matches(Regex("\\d+")) }
+            ?.takeIf { it.toLongOrNull()?.let { number -> number > 1L } == true }
+
+    private fun extractRunBindingMeta(text: String): RunBindingMeta {
+        val rootPid = extractTaggedNumber(text, "__kite_root_pid")
+            ?: extractTaggedNumber(text, "rootPid")
+            ?: extractTaggedNumber(text, "pid")
+        return RunBindingMeta(
+            rootPid = rootPid,
+            processGroupId = extractTaggedNumber(text, "__kite_process_group_id")
+                ?: extractTaggedNumber(text, "processGroupId")
+                ?: extractTaggedNumber(text, "pgid")
+                ?: rootPid,
+            systemSessionId = extractTaggedNumber(text, "__kite_system_session_id")
+                ?: extractTaggedNumber(text, "systemSessionId")
+                ?: extractTaggedNumber(text, "sid")
+                ?: rootPid
+        )
+    }
+
+    private fun extractTaggedNumber(text: String, label: String): String? {
+        val pattern = Regex("""(?im)^\s*${Regex.escape(label)}\s*[:=]\s*(\d+)\s*$""")
+        return pattern.find(text)?.groupValues?.getOrNull(1)
+    }
+
     private fun extractPid(text: String): String? {
         val match = Regex("""pid\s*[:=]\s*(\d+)|pid\s+(\d+)""", RegexOption.IGNORE_CASE).find(text) ?: return null
         return match.groupValues.drop(1).firstOrNull { it.isNotBlank() }
@@ -747,13 +1013,25 @@ class KiteBridgeClient(
 private data class DirectRunBinding(
     val recipeId: String,
     val runId: String,
-    val pid: String?
-)
+    val pid: String?,
+    val rootPid: String? = null,
+    val processGroupId: String? = null,
+    val systemSessionId: String? = null
+) {
+    fun hasProcessBinding(): Boolean =
+        !pid.isNullOrBlank() ||
+            !rootPid.isNullOrBlank() ||
+            !processGroupId.isNullOrBlank() ||
+            !systemSessionId.isNullOrBlank()
+}
 
 private data class DirectProcessBinding(
     val recipeId: String,
     val runId: String,
-    val process: Process
+    val process: Process,
+    val pid: String? = null,
+    val processGroupId: String? = null,
+    val systemSessionId: String? = null
 )
 
 private data class DirectProcessResult(
@@ -766,8 +1044,20 @@ private data class DirectStepExecution(
     val ok: Boolean,
     val detached: Boolean,
     val pid: String?,
+    val rootPid: String? = null,
+    val processGroupId: String? = null,
+    val systemSessionId: String? = null,
     val report: KiteStepReport
 )
+
+private data class RunBindingMeta(
+    val rootPid: String? = null,
+    val processGroupId: String? = null,
+    val systemSessionId: String? = null
+) {
+    fun isEmpty(): Boolean =
+        rootPid.isNullOrBlank() && processGroupId.isNullOrBlank() && systemSessionId.isNullOrBlank()
+}
 
 enum class BridgeErrorType {
     None,
@@ -792,10 +1082,15 @@ data class BridgeResult(
 
 data class BridgeProgress(
     val requestId: String,
+    val runId: String? = null,
     val recipeId: String,
     val stepId: String,
     val command: String,
     val outputTail: String,
     val lastChunk: String,
-    val lastMeaningfulOutput: String
+    val lastMeaningfulOutput: String,
+    val pid: String? = null,
+    val rootPid: String? = null,
+    val processGroupId: String? = null,
+    val systemSessionId: String? = null
 )

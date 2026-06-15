@@ -584,7 +584,7 @@ data class RuntimeLifecycleLeasePolicy(
 
 data class RuntimeWorkloadPolicy(
     val version: Int = 1,
-    val lifecycleManagementEnabled: Boolean = true,
+    val lifecycleManagementEnabled: Boolean = false,
     val lifecycleStrategyGroup: String = "balanced_default",
     val authority: String = "android_control_plane",
     val telemetrySource: String = "proot_lifecycle_telemetry_v0+android_proc_snapshot_current",
@@ -662,7 +662,7 @@ data class RuntimeWorkloadPolicy(
                 budgetStateMerge.addedDefaults.size
             return RuntimeWorkloadPolicy(
                 version = json.optInt("version", 1).coerceAtLeast(1),
-                lifecycleManagementEnabled = json.optBoolean("lifecycleManagementEnabled", true),
+                lifecycleManagementEnabled = json.optBoolean("lifecycleManagementEnabled", false),
                 lifecycleStrategyGroup = json.optString("lifecycleStrategyGroup", "balanced_default")
                     .trim()
                     .takeIf { it.isNotBlank() }

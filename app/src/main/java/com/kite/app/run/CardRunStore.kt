@@ -7,19 +7,30 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 object CardRunStore {
     private val _runs = MutableStateFlow<List<CardRunState>>(emptyList())
     private val registeredRecipes = linkedMapOf<String, KiteRecipe>()
+    private val runsByInstance = linkedMapOf<String, CardRunState>()
+    private val persistExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "KiteCardRunStorePersist").apply { isDaemon = true }
+    }
+    private val persistScheduleLock = Any()
     private var prefs: SharedPreferences? = null
     private var initialized = false
+    private var persistScheduled = false
     val runs: StateFlow<List<CardRunState>> = _runs
 
     @Synchronized
     fun initialize(context: Context) {
         if (initialized) return
         prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        _runs.value = loadPersistedRuns()
+        val loaded = loadPersistedRuns()
+        runsByInstance.clear()
+        loaded.forEach { runsByInstance[it.instanceId] = it }
+        _runs.value = sortedRuns()
         initialized = true
     }
 
@@ -33,13 +44,22 @@ object CardRunStore {
         registeredRecipes[recipeId]
 
     @Synchronized
-    fun start(recipe: KiteRecipe, instanceId: String = recipe.id): CardRunState {
+    fun start(
+        recipe: KiteRecipe,
+        instanceId: String = recipe.id,
+        parentInstanceId: String? = null,
+        ownerKind: String = CardRunState.OWNER_KIND_CARD,
+        stepId: String? = null
+    ): CardRunState {
         registerRecipe(recipe)
         val now = System.currentTimeMillis()
         val run = CardRunState(
             instanceId = instanceId,
             recipeId = recipe.id,
             recipeName = recipe.name,
+            parentInstanceId = parentInstanceId,
+            ownerKind = ownerKind,
+            stepId = stepId,
             status = CardRunStatus.Starting,
             stepCount = recipe.steps.size,
             createdAt = now,
@@ -54,11 +74,17 @@ object CardRunStore {
         recipe: KiteRecipe,
         status: CardRunStatus,
         instanceId: String? = null,
+        parentInstanceId: String? = null,
+        ownerKind: String? = null,
+        stepId: String? = null,
         surface: CardRunSurface? = null,
         currentStepIndex: Int? = null,
         runId: String? = null,
         terminalSessionId: String? = null,
         pid: String? = null,
+        rootPid: String? = null,
+        processGroupId: String? = null,
+        systemSessionId: String? = null,
         lastMeaningfulOutput: String? = null,
         lastError: String? = null,
         shellReportText: String? = null,
@@ -80,6 +106,9 @@ object CardRunStore {
         }
         val next = existing.copy(
             recipeName = recipe.name,
+            parentInstanceId = parentInstanceId ?: existing.parentInstanceId,
+            ownerKind = ownerKind ?: existing.ownerKind,
+            stepId = stepId ?: existing.stepId,
             status = status,
             surface = resolvedSurface,
             currentStepIndex = currentStepIndex ?: existing.currentStepIndex,
@@ -87,6 +116,9 @@ object CardRunStore {
             runId = if (clearRunBinding) null else runId ?: existing.runId,
             terminalSessionId = if (clearRunBinding || clearTerminalSession) null else terminalSessionId ?: existing.terminalSessionId,
             pid = if (clearRunBinding) null else pid ?: existing.pid,
+            rootPid = if (clearRunBinding) null else rootPid ?: existing.rootPid,
+            processGroupId = if (clearRunBinding) null else processGroupId ?: existing.processGroupId,
+            systemSessionId = if (clearRunBinding) null else systemSessionId ?: existing.systemSessionId,
             lastMeaningfulOutput = lastMeaningfulOutput ?: existing.lastMeaningfulOutput,
             lastError = lastError,
             shellReportText = shellReportText ?: existing.shellReportText,
@@ -113,17 +145,57 @@ object CardRunStore {
 
     @Synchronized
     fun get(instanceId: String): CardRunState? =
-        _runs.value.firstOrNull { it.instanceId == instanceId }
+        runsByInstance[instanceId]
 
     @Synchronized
     fun snapshot(): List<CardRunState> = _runs.value
 
     @Synchronized
+    fun childrenOf(parentInstanceId: String): List<CardRunState> =
+        _runs.value
+            .filter { it.parentInstanceId == parentInstanceId }
+            .sortedByDescending { it.updatedAt }
+
+    @Synchronized
+    fun removeRecipes(recipeIds: Collection<String>) {
+        val ids = recipeIds
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toSet()
+        if (ids.isEmpty()) return
+        val beforeSize = runsByInstance.size
+        runsByInstance.entries.removeAll { (_, run) -> run.recipeId in ids || run.instanceId in ids }
+        if (runsByInstance.size == beforeSize) return
+        _runs.value = sortedRuns()
+        schedulePersistRuns()
+    }
+
+    @Synchronized
     private fun upsert(run: CardRunState) {
-        val current = _runs.value.associateBy { it.instanceId }.toMutableMap()
-        current[run.instanceId] = run
-        _runs.value = current.values.sortedByDescending { it.updatedAt }
-        persistRuns()
+        runsByInstance[run.instanceId] = run
+        _runs.value = sortedRuns()
+        schedulePersistRuns()
+    }
+
+    private fun sortedRuns(): List<CardRunState> =
+        runsByInstance.values.sortedByDescending { it.updatedAt }
+
+    private fun schedulePersistRuns() {
+        if (prefs == null) return
+        synchronized(persistScheduleLock) {
+            if (persistScheduled) return
+            persistScheduled = true
+        }
+        persistExecutor.schedule(
+            {
+                synchronized(persistScheduleLock) {
+                    persistScheduled = false
+                }
+                persistRuns()
+            },
+            PERSIST_DEBOUNCE_MS,
+            TimeUnit.MILLISECONDS
+        )
     }
 
     private fun persistRuns() {
@@ -131,6 +203,7 @@ object CardRunStore {
         val payload = JSONArray()
         _runs.value
             .sortedByDescending { it.updatedAt }
+            .filterNot { it.isTemporaryResourceRun() }
             .take(MAX_STORED_RUNS)
             .forEach { payload.put(it.toJson()) }
         store.edit().putString(KEY_RUNS, payload.toString()).apply()
@@ -146,14 +219,22 @@ object CardRunStore {
                     array.optJSONObject(index)?.toCardRunStateOrNull()?.let { add(it) }
                 }
             }.sortedByDescending { it.updatedAt }
+                .filterNot { it.isTemporaryResourceRun() }
         }.getOrDefault(emptyList())
     }
+
+    private fun CardRunState.isTemporaryResourceRun(): Boolean =
+        recipeId.startsWith("resource-install-wizard-") ||
+            (recipeId.startsWith("resource-") && (recipeId.endsWith("-install") || recipeId.endsWith("-uninstall")))
 
     private fun CardRunState.toJson(): JSONObject =
         JSONObject()
             .put("instanceId", instanceId)
             .put("recipeId", recipeId)
             .put("recipeName", recipeName)
+            .put("parentInstanceId", parentInstanceId.orEmpty())
+            .put("ownerKind", ownerKind)
+            .put("stepId", stepId.orEmpty())
             .put("status", status.name)
             .put("surface", surface.name)
             .put("currentStepIndex", currentStepIndex)
@@ -161,6 +242,9 @@ object CardRunStore {
             .put("runId", runId.orEmpty())
             .put("terminalSessionId", terminalSessionId.orEmpty())
             .put("pid", pid.orEmpty())
+            .put("rootPid", rootPid.orEmpty())
+            .put("processGroupId", processGroupId.orEmpty())
+            .put("systemSessionId", systemSessionId.orEmpty())
             .put("lastMeaningfulOutput", lastMeaningfulOutput.orEmpty().take(MAX_STORED_TEXT_CHARS))
             .put("lastError", lastError.orEmpty().take(MAX_STORED_TEXT_CHARS))
             .put("shellReportText", shellReportText.orEmpty().takeLast(MAX_STORED_TEXT_CHARS))
@@ -179,6 +263,9 @@ object CardRunStore {
             instanceId = instanceId,
             recipeId = recipeId,
             recipeName = optString("recipeName"),
+            parentInstanceId = optString("parentInstanceId").takeIf { it.isNotBlank() },
+            ownerKind = optString("ownerKind").ifBlank { CardRunState.OWNER_KIND_CARD },
+            stepId = optString("stepId").takeIf { it.isNotBlank() },
             status = status,
             surface = surface,
             currentStepIndex = optInt("currentStepIndex", -1),
@@ -186,6 +273,9 @@ object CardRunStore {
             runId = optString("runId").takeIf { it.isNotBlank() },
             terminalSessionId = optString("terminalSessionId").takeIf { it.isNotBlank() },
             pid = optString("pid").takeIf { it.isNotBlank() },
+            rootPid = optString("rootPid").takeIf { it.isNotBlank() },
+            processGroupId = optString("processGroupId").takeIf { it.isNotBlank() },
+            systemSessionId = optString("systemSessionId").takeIf { it.isNotBlank() },
             lastMeaningfulOutput = optString("lastMeaningfulOutput").takeIf { it.isNotBlank() },
             lastError = optString("lastError").takeIf { it.isNotBlank() },
             shellReportText = optString("shellReportText").takeIf { it.isNotBlank() },
@@ -202,5 +292,6 @@ object CardRunStore {
     private const val KEY_RUNS = "runs_v1"
     private const val MAX_STORED_RUNS = 80
     private const val MAX_STORED_TEXT_CHARS = 4000
+    private const val PERSIST_DEBOUNCE_MS = 300L
 
 }

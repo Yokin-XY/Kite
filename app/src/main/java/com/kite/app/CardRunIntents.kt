@@ -14,11 +14,14 @@ object CardRunIntents {
     const val EXTRA_AUTO_START = "com.kite.app.extra.AUTO_START"
     const val EXTRA_TEMP_URL = "com.kite.app.extra.TEMP_URL"
     const val EXTRA_TEMP_TITLE = "com.kite.app.extra.TEMP_TITLE"
+    const val EXTRA_RESOURCE_INSTALL_TARGET_ID = "com.kite.app.extra.RESOURCE_INSTALL_TARGET_ID"
+    const val EXTRA_RESOURCE_INSTALL_PLAN_IDS = "com.kite.app.extra.RESOURCE_INSTALL_PLAN_IDS"
 
     const val SOURCE_CARD = "card"
     const val SOURCE_SHORTCUT = "shortcut"
     const val SOURCE_NOTIFICATION = "notification"
     const val SOURCE_BROWSER_PROXY = "browser_proxy"
+    const val SOURCE_RESOURCE_INSTALL = "resource_install"
 
     fun newInstanceId(recipeId: String): String =
         "run_${recipeId}_${UUID.randomUUID().toString().replace("-", "")}"
@@ -62,6 +65,26 @@ object CardRunIntents {
         ).putExtra(EXTRA_TEMP_URL, url)
             .putExtra(EXTRA_TEMP_TITLE, "临时网页")
     }
+
+    fun resourceInstallWizardIntent(
+        context: Context,
+        recipeId: String,
+        instanceId: String,
+        targetResourceId: String,
+        planResourceIds: List<String>
+    ): Intent =
+        launchIntent(
+            context = context,
+            recipeId = recipeId,
+            instanceId = instanceId,
+            launchSource = SOURCE_RESOURCE_INSTALL,
+            autoStart = false
+        )
+            .putExtra(EXTRA_RESOURCE_INSTALL_TARGET_ID, targetResourceId)
+            .putStringArrayListExtra(
+                EXTRA_RESOURCE_INSTALL_PLAN_IDS,
+                java.util.ArrayList(planResourceIds)
+            )
 
     fun pendingIntent(
         context: Context,
