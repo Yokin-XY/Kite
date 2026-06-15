@@ -379,6 +379,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             applyLightTerminalPalette(colors)
         }
         TerminalColors.COLOR_SCHEME.setCursorColorForBackground()
+        applyTerminalCanvasBackground()
     }
 
     private fun applyDarkTerminalPalette(colors: IntArray) {
@@ -1027,7 +1028,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun shouldUseRealtimeComposerSync(text: String): Boolean {
-        return text.startsWith("/") && !text.contains('\n') && !text.contains('\r')
+        return !text.contains('\n') && !text.contains('\r')
     }
 
     private fun clearComposerLiveEchoIfNeeded() {
@@ -1056,6 +1057,18 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         return KiteTerminalShellTheme.resolve(requireContext(), resId)
     }
 
+    private fun applyTerminalCanvasBackground() {
+        if (!::terminalView.isInitialized) return
+        val colors = TerminalColors.COLOR_SCHEME.mDefaultColors
+        val background = colors.getOrElse(TextStyle.COLOR_INDEX_BACKGROUND) {
+            color(R.color.terminal_page_surface)
+        }
+        terminalView.setBackgroundColor(background)
+        if (::terminalOutputContainer.isInitialized) {
+            terminalOutputContainer.setBackgroundColor(background)
+        }
+    }
+
     private fun applyShellThemeToStaticViews(root: View) {
         fun tintHeader(header: View?) {
             header?.setBackgroundColor(color(R.color.terminal_page_header))
@@ -1074,9 +1087,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         detailPage.setBackgroundColor(color(R.color.terminal_page_bg))
         tintHeader((listPage as? ViewGroup)?.getChildAt(0))
         tintHeader((detailPage as? ViewGroup)?.getChildAt(0))
-        root.findViewById<View>(R.id.terminalOutputContainer)
-            ?.setBackgroundColor(color(R.color.terminal_page_surface))
-        terminalView.setBackgroundColor(color(R.color.terminal_page_surface))
+        applyTerminalCanvasBackground()
         applyComposerBackground()
         tvEmptySessions?.setTextColor(color(R.color.terminal_page_subtext))
         tvDetailTitle.setTextColor(color(R.color.terminal_page_text))
@@ -2051,6 +2062,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         applyTerminalColorScheme()
         terminalView.attachSession(session)
         session.emulator?.mColors?.reset()
+        applyTerminalCanvasBackground()
         followTerminalOutput = true
         keepLatestTerminalOutputVisible()
     }

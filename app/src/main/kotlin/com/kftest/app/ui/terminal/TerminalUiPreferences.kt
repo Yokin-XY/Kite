@@ -1,7 +1,6 @@
 package com.kftest.app.ui.terminal
 
 import android.content.Context
-import android.content.res.Configuration
 
 enum class TerminalThemeMode(
     val storageValue: String,
@@ -53,7 +52,7 @@ object TerminalUiPreferences {
 
     fun loadThemeMode(context: Context): TerminalThemeMode {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return TerminalThemeMode.fromStorage(prefs.getString(KEY_THEME_MODE, TerminalThemeMode.SYSTEM.storageValue))
+        return TerminalThemeMode.fromStorage(prefs.getString(KEY_THEME_MODE, TerminalThemeMode.LIGHT.storageValue))
     }
 
     fun saveThemeMode(context: Context, mode: TerminalThemeMode) {
@@ -68,16 +67,8 @@ object TerminalUiPreferences {
         loadThemeMode(context.applicationContext)
     }
 
-    fun resolveTerminalDarkMode(context: Context): Boolean {
-        return when (loadThemeMode(context.applicationContext)) {
-            TerminalThemeMode.DARK -> true
-            TerminalThemeMode.LIGHT -> false
-            TerminalThemeMode.SYSTEM -> {
-                val uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-                uiMode == Configuration.UI_MODE_NIGHT_YES
-            }
-        }
-    }
+    @Suppress("UNUSED_PARAMETER")
+    fun resolveTerminalDarkMode(context: Context): Boolean = false
 
     private fun closestFontSize(value: Int): Int {
         return FONT_PRESETS.minByOrNull { kotlin.math.abs(it - value) } ?: DEFAULT_FONT_SIZE_DP
