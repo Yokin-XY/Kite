@@ -80,10 +80,12 @@ import com.kite.app.recipe.KiteStepReport
 import com.kite.app.recipe.NewRecipeInput
 import com.kite.app.recipe.NewRecipeStepInput
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.resources.KiteResourceInstallSignal
 import com.kite.app.resources.KiteResourceInstallSpec
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
+import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRequestPolicy
 import com.kite.app.resources.KiteResourceRegistryEntry
 import com.kite.app.run.CardRunState as RecipeRuntimeState
@@ -208,7 +210,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var runtimePanelActionButton: TextView? = null
     private var autoOpenedRootfsRunAt = 0L
     private var lastWorkbenchUrl: String? = null
-    private var lastShellProgressRenderAt = 0L
     private var resourcePageView: View? = null
     private var resourcePageNavView: View? = null
     private var resourceSectionHost: LinearLayout? = null
@@ -227,8 +228,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var cachedResourceCatalog: List<ResourceItem>? = null
     private var cachedResourceCatalogUpdatedAt = 0L
     private var resourceCatalogDirty = true
+    private var resourceCatalogBackgroundRefreshInFlight = false
     private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     private var lastConsoleRuntimeRefreshAt = 0L
+    private var cardRunReportBinding: CardRunReportBinding? = null
+    private var cardRunTopBarBinding: CardRunTopBarBinding? = null
+    private var resourceInstallWizardBinding: ResourceInstallWizardBinding? = null
+    private var resourceInstallWizardRefreshSerial = 0L
+    private var foregroundLiveTickScheduled = false
+    private val terminalAuthorizationUrlCache = mutableMapOf<String, String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -267,6 +275,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         observeRootfsExtractionProgress()
         observeRuntimeBootstrapProgress()
         observeTerminalFlowSignals()
+        observeCardRunStoreSignals()
+        observeResourceInstallSignals()
         applyRecentTaskVisibilitySetting()
         val handledLaunchIntent = handleCardRunLaunchIntent(intent)
         if (!handledLaunchIntent && !restoreScreenFromBundle(savedInstanceState) && !restoreRecipeDraftFromSettings()) {
@@ -550,6 +560,49 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
         }
     }
+
+    private fun observeCardRunStoreSignals() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                CardRunStore.runs.collect { runs ->
+                    val reportBinding = cardRunReportBinding
+                    if (reportBinding != null && currentScreen == Screen.CardRun) {
+                        val state = runs.firstOrNull { it.instanceId == reportBinding.instanceId }
+                        val recipe = state?.let { recipeForRunState(it) }
+                        if (state != null && recipe != null) {
+                            runtimeStates[state.recipeId] = state
+                            updateVisibleCardRunReport(recipe, state)
+                        }
+                    }
+                    updateVisibleResourceInstallWizardElapsed()
+                }
+            }
+        }
+    }
+
+    private fun observeResourceInstallSignals() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                resourceInstallStore.signals.collect { signal ->
+                    if (signal.revision <= 0L) return@collect
+                    consumeResourceInstallSignal(signal)
+                }
+            }
+        }
+    }
+
+    private fun consumeResourceInstallSignal(signal: KiteResourceInstallSignal) {
+        invalidateResourceCatalogCache()
+        when (currentScreen) {
+            Screen.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
+            Screen.CardRun -> requestVisibleResourceInstallWizardRefresh(signal.reason)
+            else -> Unit
+        }
+    }
+
+    private fun recipeForRunState(state: RecipeRuntimeState): KiteRecipe? =
+        CardRunStore.registeredRecipe(state.recipeId)
+            ?: currentRecipes.firstOrNull { it.id == state.recipeId }
 
     private fun refreshUbuntuRuntimeState() {
         thread(name = "KiteUbuntuRuntimeCheck", isDaemon = true) {
@@ -1036,6 +1089,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun clearRootForScreen(detachTerminal: Boolean = true) {
         terminalBottomNavigation = null
+        cardRunReportBinding = null
+        cardRunTopBarBinding = null
+        resourceInstallWizardBinding = null
         val transaction = supportFragmentManager.beginTransaction()
         var changed = false
 
@@ -1404,6 +1460,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun invalidateResourceUiCache() {
         clearResourcePageCache()
         invalidateResourceCatalogCache()
+    }
+
+    private fun resourceCatalogForUiRender(reason: String): List<ResourceItem> {
+        cachedResourceCatalog?.let { return it }
+        requestResourceCatalogBackgroundRefresh(reason)
+        return emptyList()
+    }
+
+    private fun requestResourceCatalogBackgroundRefresh(reason: String) {
+        if (resourceCatalogBackgroundRefreshInFlight) return
+        resourceCatalogBackgroundRefreshInFlight = true
+        thread(name = "KiteResourceCatalogUiRefresh", isDaemon = true) {
+            runCatching { resourceCatalog(forceRefresh = false) }
+            runOnUiThread {
+                resourceCatalogBackgroundRefreshInFlight = false
+                when (currentScreen) {
+                    Screen.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
+                    Screen.CardRun -> requestVisibleResourceInstallWizardRefresh("catalog:$reason")
+                    else -> Unit
+                }
+            }
+        }
     }
 
     private fun prewarmResourceCatalog() {
@@ -3239,7 +3317,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setPadding(dp(22), dp(16), dp(22), dp(34))
             val context = activeResourceInstallWizard
             val targetId = context?.targetResourceId ?: currentResourceInstallTargetId.orEmpty()
-            val catalog = resourceCatalog(forceRefresh = false).associateBy { it.id }
+            val catalog = resourceCatalogForUiRender("install_wizard_content").associateBy { it.id }
             val planSnapshot = resourceInstallStore.planSnapshot()
             val pendingIds = planSnapshot.pendingResourceIds
             val planIds = context?.planResourceIds.orEmpty()
@@ -3267,6 +3345,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
             val hasRunningStep = planIds.any { isRunningStep(it) }
             val hasPending = pendingIds.isNotEmpty() && !hasFailure
+            val rowHosts = linkedMapOf<String, LinearLayout>()
+            val rowBindings = linkedMapOf<String, ResourceInstallWizardRowBinding>()
+            var headerDetailTextView: TextView? = null
+            var headerProgressTextView: TextView? = null
 
             addView(resourceInstallWizardHeader(
                 title = target?.name ?: targetId,
@@ -3277,29 +3359,58 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     else -> "安装队列已完成"
                 },
                 completedCount = completedCount.coerceIn(0, planIds.size.coerceAtLeast(1)),
-                totalCount = planIds.size
+                totalCount = planIds.size,
+                onBind = { _, detailView, progressView ->
+                    headerDetailTextView = detailView
+                    headerProgressTextView = progressView
+                }
             ))
-            addView(resourceInstallWizardPrimaryAction(
-                target = target,
-                targetId = targetId,
-                planIds = planIds,
-                hasRunningStep = hasRunningStep,
-                hasPending = hasPending,
-                hasFailure = hasFailure
-            ))
-            addView(sectionTitle("安装队列").apply { setPadding(0, dp(24), 0, dp(12)) })
-            planIds.forEachIndexed { index, resourceId ->
-                val item = catalog[resourceId]
-                addView(resourceInstallWizardStepRow(
-                    index = index,
-                    total = planIds.size,
-                    item = item,
-                    resourceId = resourceId,
-                    isActive = resourceId == activeId,
-                    planSnapshot = planSnapshot,
-                    registryEntry = registrySnapshot[resourceId]
+            val primaryActionHost = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(resourceInstallWizardPrimaryAction(
+                    target = target,
+                    targetId = targetId,
+                    planIds = planIds,
+                    hasRunningStep = hasRunningStep,
+                    hasPending = hasPending,
+                    hasFailure = hasFailure
                 ))
             }
+            addView(primaryActionHost)
+            addView(sectionTitle("安装队列").apply { setPadding(0, dp(24), 0, dp(12)) })
+            val rowsHost = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+            }
+            planIds.forEachIndexed { index, resourceId ->
+                val item = catalog[resourceId]
+                val rowHost = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(resourceInstallWizardStepRow(
+                        index = index,
+                        total = planIds.size,
+                        item = item,
+                        resourceId = resourceId,
+                        isActive = resourceId == activeId,
+                        planSnapshot = planSnapshot,
+                        registryEntry = registrySnapshot[resourceId],
+                        onBind = { rowBinding -> rowBindings[resourceId] = rowBinding }
+                    ))
+                }
+                rowHosts[resourceId] = rowHost
+                rowsHost.addView(rowHost)
+            }
+            addView(rowsHost)
+            resourceInstallWizardBinding = ResourceInstallWizardBinding(
+                targetResourceId = targetId,
+                planResourceIds = planIds,
+                headerDetailTextView = headerDetailTextView,
+                headerProgressTextView = headerProgressTextView,
+                primaryActionHost = primaryActionHost,
+                rowsHost = rowsHost,
+                rowHosts = rowHosts,
+                rowBindings = rowBindings
+            )
+            scheduleForegroundLiveTickIfNeeded()
         }
 
     private fun resourceInstallWizardRecipe(targetResourceId: String, targetName: String): KiteRecipe =
@@ -3328,11 +3439,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         title: String,
         detail: String,
         completedCount: Int,
-        totalCount: Int
+        totalCount: Int,
+        onBind: ((TextView, TextView, TextView) -> Unit)? = null
     ): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(18), dp(18), dp(18), dp(18))
         background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+        var titleTextView: TextView? = null
+        var detailTextView: TextView? = null
         addView(row {
             gravity = Gravity.CENTER_VERTICAL
             addView(resourceIcon("↓", "teal").apply {
@@ -3342,31 +3456,41 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(TextView(context).apply {
+                val titleView = TextView(context).apply {
                     text = title
                     textSize = 20f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(tokens.textPrimary)
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(TextView(context).apply {
+                }
+                titleTextView = titleView
+                addView(titleView)
+                val detailView = TextView(context).apply {
                     text = detail
                     textSize = 12.5f
                     setTextColor(tokens.textSecondary)
                     setPadding(0, dp(6), 0, 0)
                     maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
-                })
+                }
+                detailTextView = detailView
+                addView(detailView)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         })
-        addView(TextView(context).apply {
+        val progressView = TextView(context).apply {
             text = if (totalCount > 0) "$completedCount/$totalCount" else "--"
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(tokens.primaryStrong)
             setPadding(0, dp(14), 0, 0)
-        })
+        }
+        addView(progressView)
+        val titleView = titleTextView
+        val detailView = detailTextView
+        if (titleView != null && detailView != null) {
+            onBind?.invoke(titleView, detailView, progressView)
+        }
     }
 
     private fun resourceInstallWizardPrimaryAction(
@@ -3476,7 +3600,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceId: String,
         isActive: Boolean,
         planSnapshot: com.kite.app.resources.KiteResourcePlanSnapshot? = null,
-        registryEntry: KiteResourceRegistryEntry? = null
+        registryEntry: KiteResourceRegistryEntry? = null,
+        onBind: ((ResourceInstallWizardRowBinding) -> Unit)? = null
     ): View {
         val recipeState = resourceInstallRecipeState(resourceId)
         val planStepStatus = planSnapshot?.stepStatus(resourceId) ?: resourceInstallStore.planStepStatus(resourceId)
@@ -3522,6 +3647,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         setMargins(0, 0, dp(12), 0)
                     }
                 })
+                var subtitleTextView: TextView? = null
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(TextView(context).apply {
@@ -3532,14 +3658,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
                     })
-                    addView(TextView(context).apply {
+                    val subtitleView = TextView(context).apply {
                         text = "${item?.sourceLabel ?: "资源"} · ${index + 1}/$total"
                         textSize = 11.5f
                         setTextColor(tokens.textSecondary)
                         setPadding(0, dp(4), 0, 0)
-                    })
+                    }
+                    subtitleView.text = resourceInstallWizardStepSubtitle(item, index, total, recipeState)
+                    subtitleTextView = subtitleView
+                    addView(subtitleView)
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(TextView(context).apply {
+                val statusView = TextView(context).apply {
                     text = statusLabel
                     textSize = 11.5f
                     typeface = Typeface.DEFAULT_BOLD
@@ -3549,7 +3678,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     background = roundedBox(tintBackground(tone), Color.TRANSPARENT, dp(11).toFloat(), 0)
                     setPadding(dp(9), 0, dp(9), 0)
                     layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22))
-                })
+                }
+                addView(statusView)
+                subtitleTextView?.let { subtitleView ->
+                    onBind?.invoke(
+                        ResourceInstallWizardRowBinding(
+                            resourceId = resourceId,
+                            subtitleTextView = subtitleView,
+                            statusTextView = statusView
+                        )
+                    )
+                }
             })
             val canOpenRunSurface = item != null &&
                 recipeState != null &&
@@ -3599,6 +3738,184 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setOnClickListener { onClick() }
         }
 
+    private fun resourceInstallWizardStepSubtitle(
+        item: ResourceItem?,
+        index: Int,
+        total: Int,
+        state: RecipeRuntimeState?
+    ): String {
+        val base = "${item?.sourceLabel ?: "资源"} · ${index + 1}/$total"
+        val elapsed = state?.let { formatCardRunElapsed(it) } ?: return base
+        return when {
+            state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened -> "$base · 运行 $elapsed"
+            state.status == RecipeRunStatus.Completed -> "$base · 用时 $elapsed"
+            state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable -> "$base · 失败 $elapsed"
+            state.status == RecipeRunStatus.Stopped -> "$base · 中止 $elapsed"
+            else -> base
+        }
+    }
+
+    private fun requestVisibleResourceInstallWizardRefresh(reason: String) {
+        val binding = resourceInstallWizardBinding ?: return
+        if (!resourceInstallWizardSurfaceActive() || currentScreen != Screen.CardRun) return
+        val requestId = ++resourceInstallWizardRefreshSerial
+        val targetId = binding.targetResourceId
+        val planIds = binding.planResourceIds
+        thread(name = "KiteInstallWizardRefresh", isDaemon = true) {
+            val uiState = runCatching {
+                buildResourceInstallWizardUiState(targetId, planIds)
+            }.getOrNull() ?: return@thread
+            runOnUiThread {
+                if (requestId != resourceInstallWizardRefreshSerial) return@runOnUiThread
+                if (resourceInstallWizardBinding !== binding || currentScreen != Screen.CardRun) return@runOnUiThread
+                applyResourceInstallWizardUiState(binding, uiState)
+                diagnostics.logRecipeEvent(
+                    "install_wizard_local_refresh",
+                    null,
+                    mapOf(
+                        "reason" to reason,
+                        "target" to targetId,
+                        "rows" to uiState.planIds.size.toString()
+                    )
+                )
+            }
+        }
+    }
+
+    private fun buildResourceInstallWizardUiState(
+        targetId: String,
+        seedPlanIds: List<String>
+    ): ResourceInstallWizardUiState {
+        val catalog = (cachedResourceCatalog ?: resourceCatalog(forceRefresh = false)).associateBy { it.id }
+        val planSnapshot = resourceInstallStore.planSnapshot()
+        val pendingIds = planSnapshot.pendingResourceIds
+        val planIds = seedPlanIds
+            .ifEmpty { resourceInstallWizardPlanIds }
+            .ifEmpty { planSnapshot.resourceIds }
+            .ifEmpty { pendingIds }
+        val registrySnapshot = resourceInstallStore.registrySnapshot(planIds)
+        fun entry(resourceId: String) = registrySnapshot[resourceId]
+        fun stepStatus(resourceId: String): String = planSnapshot.stepStatus(resourceId)
+        fun isRunningStep(resourceId: String): Boolean =
+            stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_RUNNING
+        fun isFailed(resourceId: String): Boolean =
+            entry(resourceId)?.failed == true ||
+                stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_FAILED
+        val failedIds = planIds.filter { id -> isFailed(id) }
+        val hasFailure = failedIds.isNotEmpty()
+        val activeId = planIds.firstOrNull { isRunningStep(it) }
+            ?: failedIds.firstOrNull()
+            ?: pendingIds.firstOrNull()
+        val completedCount = planIds.count { id ->
+            stepStatus(id) == KiteResourceInstallStore.PLAN_STEP_DONE ||
+                (resourceItemIsInstalled(catalog[id]) && entry(id)?.failed != true)
+        }
+        val hasRunningStep = planIds.any { isRunningStep(it) }
+        val hasPending = pendingIds.isNotEmpty() && !hasFailure
+        val detail = when {
+            hasRunningStep -> "正在安装：${catalog[activeId]?.name ?: activeId.orEmpty()}"
+            hasFailure -> "安装已停止，请查看失败步骤报告"
+            hasPending -> "将按顺序安装 ${planIds.size} 个资源"
+            else -> "安装队列已完成"
+        }
+        return ResourceInstallWizardUiState(
+            targetId = targetId,
+            target = catalog[targetId],
+            planIds = planIds,
+            catalog = catalog,
+            planSnapshot = planSnapshot,
+            registrySnapshot = registrySnapshot,
+            activeId = activeId,
+            detail = detail,
+            completedCount = completedCount.coerceIn(0, planIds.size.coerceAtLeast(1)),
+            hasRunningStep = hasRunningStep,
+            hasPending = hasPending,
+            hasFailure = hasFailure
+        )
+    }
+
+    private fun applyResourceInstallWizardUiState(
+        binding: ResourceInstallWizardBinding,
+        uiState: ResourceInstallWizardUiState
+    ) {
+        binding.headerDetailTextView?.text = uiState.detail
+        binding.headerProgressTextView?.text = if (uiState.planIds.isNotEmpty()) {
+            "${uiState.completedCount}/${uiState.planIds.size}"
+        } else {
+            "--"
+        }
+        binding.primaryActionHost.removeAllViews()
+        binding.primaryActionHost.addView(resourceInstallWizardPrimaryAction(
+            target = uiState.target,
+            targetId = uiState.targetId,
+            planIds = uiState.planIds,
+            hasRunningStep = uiState.hasRunningStep,
+            hasPending = uiState.hasPending,
+            hasFailure = uiState.hasFailure
+        ))
+        if (binding.planResourceIds != uiState.planIds) {
+            binding.planResourceIds = uiState.planIds
+            binding.rowHosts.clear()
+            binding.rowBindings.clear()
+            binding.rowsHost.removeAllViews()
+            uiState.planIds.forEachIndexed { index, resourceId ->
+                val rowHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                binding.rowHosts[resourceId] = rowHost
+                binding.rowsHost.addView(rowHost)
+                renderResourceInstallWizardRowInto(binding, uiState, index, resourceId)
+            }
+        } else {
+            uiState.planIds.forEachIndexed { index, resourceId ->
+                renderResourceInstallWizardRowInto(binding, uiState, index, resourceId)
+            }
+        }
+        updateVisibleResourceInstallWizardElapsed()
+    }
+
+    private fun renderResourceInstallWizardRowInto(
+        binding: ResourceInstallWizardBinding,
+        uiState: ResourceInstallWizardUiState,
+        index: Int,
+        resourceId: String
+    ) {
+        val host = binding.rowHosts[resourceId] ?: return
+        binding.rowBindings.remove(resourceId)
+        host.removeAllViews()
+        host.addView(resourceInstallWizardStepRow(
+            index = index,
+            total = uiState.planIds.size,
+            item = uiState.catalog[resourceId],
+            resourceId = resourceId,
+            isActive = resourceId == uiState.activeId,
+            planSnapshot = uiState.planSnapshot,
+            registryEntry = uiState.registrySnapshot[resourceId],
+            onBind = { rowBinding -> binding.rowBindings[resourceId] = rowBinding }
+        ))
+    }
+
+    private fun updateVisibleResourceInstallWizardElapsed(): Boolean {
+        val binding = resourceInstallWizardBinding ?: return false
+        if (currentScreen != Screen.CardRun || !resourceInstallWizardSurfaceActive()) return false
+        var keepTicking = false
+        binding.planResourceIds.forEachIndexed { index, resourceId ->
+            val state = resourceInstallRecipeState(resourceId)
+            val rowBinding = binding.rowBindings[resourceId]
+            val item = cachedResourceCatalog?.firstOrNull { it.id == resourceId }
+            if (state != null && rowBinding != null) {
+                rowBinding.subtitleTextView.text = resourceInstallWizardStepSubtitle(
+                    item = item,
+                    index = index,
+                    total = binding.planResourceIds.size,
+                    state = state
+                )
+                if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
+                    keepTicking = true
+                }
+            }
+        }
+        return keepTicking
+    }
+
     private fun resourceInstallRecipeState(resourceId: String): RecipeRuntimeState? =
         CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL))
 
@@ -3609,11 +3926,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun resourceInstallWizardSurfaceActive(): Boolean =
         currentScreen == Screen.CardRun &&
-            focusedRunRecipe()?.runtimeSource == RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE
+            activeResourceInstallWizard?.let { context ->
+                focusedRunRecipeId == context.wizardRecipeId ||
+                    focusedRunInstanceId == context.wizardInstanceId
+            } == true
 
     private fun resourceInstallWizardRecipeFor(context: ResourceInstallWizardContext): KiteRecipe {
         CardRunStore.registeredRecipe(context.wizardRecipeId)?.let { return it }
-        val targetName = resourceCatalog(forceRefresh = false)
+        val targetName = resourceCatalogForUiRender("install_wizard_recipe")
             .firstOrNull { it.id == context.targetResourceId }
             ?.name
             ?: context.targetResourceId
@@ -3638,7 +3958,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun renderResourceInstallWizardFor(recipe: KiteRecipe): Boolean {
         if (!resourceInstallWizardShouldHost(recipe)) return false
         val context = activeResourceInstallWizard ?: return false
-        showCardRunSurface(resourceInstallWizardRecipeFor(context))
+        if (resourceInstallWizardBinding != null && currentScreen == Screen.CardRun) {
+            requestVisibleResourceInstallWizardRefresh("hosted:${recipe.id}")
+        } else {
+            showCardRunSurface(resourceInstallWizardRecipeFor(context))
+        }
         return true
     }
 
@@ -3650,7 +3974,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (surface == CardRunSurface.InstallWizard) return null
         val context = activeResourceInstallWizard ?: return null
         val resourceId = context.selectedResourceId ?: return null
-        val item = resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId } ?: return null
+        val item = resourceCatalogForUiRender("install_wizard_selected_run").firstOrNull { it.id == resourceId } ?: return null
         val childRecipe = resourceInstallRecipe(item) ?: return null
         CardRunStore.registerRecipe(childRecipe)
         val childState = CardRunStore.currentForRecipe(childRecipe.id)
@@ -5216,16 +5540,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setTextColor(tokens.textPrimary)
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, sideControlSize, Gravity.CENTER))
         if (waitingForTerminal) {
-            val authUrl = terminalAuthorizationUrl(actionState.terminalSessionId)
-            if (!authUrl.isNullOrBlank()) {
-                addView(row {
-                    addView(cardRunAuthButton {
-                        openExternalAuthorizationUrl(actionRecipe, authUrl)
-                    })
-                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(29), Gravity.LEFT or Gravity.CENTER_VERTICAL).apply {
-                    setMargins(sideControlSize + dp(4), 0, 0, 0)
-                })
-            }
+            val authSlot = FrameLayout(context)
+            val terminalSessionId = actionState.terminalSessionId.orEmpty()
+            cardRunTopBarBinding = CardRunTopBarBinding(
+                displayRecipe = recipe,
+                actionRecipe = actionRecipe,
+                actionInstanceId = actionState.instanceId,
+                terminalSessionId = terminalSessionId,
+                authSlot = authSlot
+            )
+            renderTerminalAuthorizationButton(authSlot, actionRecipe, actionState)
+            addView(authSlot, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(29), Gravity.LEFT or Gravity.CENTER_VERTICAL).apply {
+                setMargins(sideControlSize + dp(4), 0, 0, 0)
+            })
         }
         val rightChrome = cardRunControlPill(recipe, state)
         addView(
@@ -5324,6 +5651,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
             setOnClickListener { onClick() }
         }
+
+    private fun renderTerminalAuthorizationButton(
+        slot: FrameLayout,
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState
+    ) {
+        slot.removeAllViews()
+        val authUrl = terminalAuthorizationUrl(state.terminalSessionId)
+        if (authUrl.isNullOrBlank()) return
+        slot.addView(row {
+            addView(cardRunAuthButton {
+                openExternalAuthorizationUrl(recipe, authUrl)
+            })
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun updateVisibleTerminalAuthorizationButton(sessionId: String) {
+        val binding = cardRunTopBarBinding ?: return
+        if (binding.terminalSessionId != sessionId || currentScreen != Screen.CardRun) return
+        val state = CardRunStore.get(binding.actionInstanceId) ?: return
+        renderTerminalAuthorizationButton(binding.authSlot, binding.actionRecipe, state)
+    }
 
     private fun openExternalAuthorizationUrl(recipe: KiteRecipe, url: String) {
         diagnostics.logRecipeAction(recipe, "terminal_authorization_url_open", mapOf("url" to url.take(500)))
@@ -5578,7 +5927,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     "当前命令" to currentShellCommand(recipe, state).ifBlank { "--" }
                 )
                 items.forEachIndexed { index, item ->
-                    addView(cardRunSummaryMetric(item.first, item.second), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(
+                        cardRunSummaryMetric(item.first, item.second) { valueView ->
+                            if (item.first == "已运行") {
+                                registerCardRunReportBinding(
+                                    recipeId = recipe.id,
+                                    state = state,
+                                    elapsedTextView = valueView
+                                )
+                            }
+                        },
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    )
                     if (index != items.lastIndex) {
                         addView(View(context).apply {
                             setBackgroundColor(Color.argb(115, Color.red(reportBorder), Color.green(reportBorder), Color.blue(reportBorder)))
@@ -5735,7 +6095,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val color: Int
     )
 
-    private fun cardRunSummaryMetric(label: String, value: String): View =
+    private fun cardRunSummaryMetric(
+        label: String,
+        value: String,
+        onValueView: ((TextView) -> Unit)? = null
+    ): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(TextView(context).apply {
@@ -5744,7 +6108,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setTextColor(Color.rgb(152, 162, 179))
                 includeFontPadding = false
             })
-            addView(TextView(context).apply {
+            val valueText = TextView(context).apply {
                 text = value
                 textSize = 15f
                 setTextColor(Color.rgb(17, 24, 39))
@@ -5753,7 +6117,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setPadding(0, dp(7), 0, 0)
-            })
+            }
+            addView(valueText)
+            onValueView?.invoke(valueText)
         }
 
     private fun cardRunOutputCard(recipe: KiteRecipe, state: RecipeRuntimeState): View {
@@ -5782,10 +6148,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 })
                 addView(reportToolButton("⧉", "复制") {
-                    copyTextToClipboard("Kite SH 输出", outputText, "已复制 SH 输出")
+                    val latest = CardRunStore.get(state.instanceId) ?: state
+                    copyTextToClipboard("Kite SH 输出", cardRunOutputText(recipe, latest), "已复制 SH 输出")
                 })
             })
-            addView(TextView(context).apply {
+            val outputTextView = TextView(context).apply {
                 text = lineNumberedOutput(outputText)
                 minimumHeight = dp(260)
                 textSize = 13f
@@ -5798,7 +6165,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     setMargins(0, dp(12), 0, 0)
                 }
-            })
+            }
+            addView(outputTextView)
             if (isRunning) {
                 addView(row {
                     gravity = Gravity.CENTER_VERTICAL
@@ -5812,12 +6180,25 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                             setMargins(0, 0, dp(8), 0)
                         }
                     })
-                    addView(TextView(context).apply {
+                    val footerTextView = TextView(context).apply {
                         text = reportFooterLabel(state)
                         textSize = 13f
                         setTextColor(reportSecondary)
-                    })
+                    }
+                    addView(footerTextView)
+                    registerCardRunReportBinding(
+                        recipeId = recipe.id,
+                        state = state,
+                        outputTextView = outputTextView,
+                        footerTextView = footerTextView
+                    )
                 })
+            } else {
+                registerCardRunReportBinding(
+                    recipeId = recipe.id,
+                    state = state,
+                    outputTextView = outputTextView
+                )
             }
         }
     }
@@ -5857,6 +6238,57 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             state.status == RecipeRunStatus.Stopped -> "已停止 · ${formatRunDuration(state)}"
             else -> state.status.label
         }
+
+    private fun registerCardRunReportBinding(
+        recipeId: String,
+        state: RecipeRuntimeState,
+        outputTextView: TextView? = null,
+        footerTextView: TextView? = null,
+        elapsedTextView: TextView? = null
+    ) {
+        val current = cardRunReportBinding?.takeIf { it.instanceId == state.instanceId }
+        cardRunReportBinding = CardRunReportBinding(
+            recipeId = recipeId,
+            instanceId = state.instanceId,
+            outputTextView = outputTextView ?: current?.outputTextView,
+            footerTextView = footerTextView ?: current?.footerTextView,
+            elapsedTextView = elapsedTextView ?: current?.elapsedTextView
+        )
+        scheduleForegroundLiveTickIfNeeded()
+    }
+
+    private fun updateVisibleCardRunReport(recipe: KiteRecipe, state: RecipeRuntimeState) {
+        val binding = cardRunReportBinding ?: return
+        if (binding.instanceId != state.instanceId || currentScreen != Screen.CardRun) return
+        binding.outputTextView?.text = lineNumberedOutput(cardRunOutputText(recipe, state))
+        binding.footerTextView?.text = reportFooterLabel(state)
+        binding.elapsedTextView?.text = formatRunDuration(state)
+        if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
+            scheduleForegroundLiveTickIfNeeded()
+        }
+    }
+
+    private fun updateVisibleCardRunReportElapsed(): Boolean {
+        val binding = cardRunReportBinding ?: return false
+        if (currentScreen != Screen.CardRun) return false
+        val state = CardRunStore.get(binding.instanceId) ?: return false
+        binding.elapsedTextView?.text = formatRunDuration(state)
+        binding.footerTextView?.text = reportFooterLabel(state)
+        return state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened
+    }
+
+    private fun scheduleForegroundLiveTickIfNeeded() {
+        if (!::root.isInitialized || foregroundLiveTickScheduled) return
+        foregroundLiveTickScheduled = true
+        root.postDelayed({
+            foregroundLiveTickScheduled = false
+            val keepReportTick = updateVisibleCardRunReportElapsed()
+            val keepWizardTick = updateVisibleResourceInstallWizardElapsed()
+            if (keepReportTick || keepWizardTick) {
+                scheduleForegroundLiveTickIfNeeded()
+            }
+        }, 1000L)
+    }
 
     private fun cardRunStepCounter(state: RecipeRuntimeState): String =
         if (state.stepCount > 0) "${(state.currentStepIndex + 1).coerceIn(1, state.stepCount)}/${state.stepCount}" else "--"
@@ -7542,7 +7974,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             shellReportText = reportText
         )
         runtimeStates[recipe.id] = updated
-        maybeRenderShellProgress(recipe)
+        updateVisibleCardRunReport(recipe, updated)
+        updateVisibleResourceInstallWizardElapsed()
     }
 
     private fun buildStreamingShellReport(step: KiteRecipeStep, output: String): String =
@@ -7553,19 +7986,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 append("\n原始输出：\n").append(output)
             }
         }
-
-    private fun maybeRenderShellProgress(recipe: KiteRecipe) {
-        val now = System.currentTimeMillis()
-        if (now - lastShellProgressRenderAt < SHELL_PROGRESS_RENDER_INTERVAL_MS) return
-        lastShellProgressRenderAt = now
-        when {
-            resourceInstallWizardShouldHost(recipe) -> renderResourceInstallWizardFor(recipe)
-            resourceRunSurfaceSuppressed(recipe) -> Unit
-            this is CardRunActivity && focusedRunRecipeId == recipe.id -> showCardRunSurface(recipe)
-            currentScreen == Screen.Console -> showConsole()
-            currentScreen == Screen.CardRun -> showCardRunSurface(recipe)
-        }
-    }
 
     private fun executeAndroidRecipeStep(
         recipe: KiteRecipe,
@@ -7817,43 +8237,62 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun startTerminalAuthorizationLinkWatcher(recipe: KiteRecipe, sessionId: String, instanceId: String) {
-        fun tick(startedAt: Long) {
-            val active = pendingTerminalFlow?.let {
+        fun active(): Boolean =
+            pendingTerminalFlow?.let {
                 it.recipeId == recipe.id && it.sessionId == sessionId && it.instanceId == instanceId
             } == true
-            if (!active || System.currentTimeMillis() - startedAt > TERMINAL_AUTH_LINK_WATCH_MS) return
 
-            val authUrl = terminalAuthorizationUrl(sessionId)
-            if (!authUrl.isNullOrBlank()) {
-                val state = CardRunStore.get(instanceId)
-                if (state != null && state.status == RecipeRunStatus.WaitingTerminal) {
-                    val updated = CardRunStore.update(
-                        recipe = recipe,
-                        status = RecipeRunStatus.WaitingTerminal,
-                        instanceId = instanceId,
-                        surface = CardRunSurface.Terminal,
-                        currentStepIndex = state.currentStepIndex,
-                        runId = state.runId,
-                        terminalSessionId = state.terminalSessionId,
-                        pid = state.pid,
-                        lastMeaningfulOutput = "检测到授权链接，点击顶部“授权”打开。"
-                    )
-                    runtimeStates[recipe.id] = updated
-                    if (this is CardRunActivity && focusedRunRecipeId == recipe.id && currentScreen == Screen.CardRun) {
-                        showCardRunSurface(recipe)
+        fun tick(startedAt: Long) {
+            if (!active() || System.currentTimeMillis() - startedAt > TERMINAL_AUTH_LINK_WATCH_MS) return
+
+            thread(name = "KiteTerminalAuthWatcher", isDaemon = true) {
+                val authUrl = readTerminalAuthorizationUrlFromTranscript(sessionId)
+                runOnUiThread {
+                    if (!active() || System.currentTimeMillis() - startedAt > TERMINAL_AUTH_LINK_WATCH_MS) return@runOnUiThread
+                    if (!authUrl.isNullOrBlank()) {
+                        terminalAuthorizationUrlCache[sessionId] = authUrl
+                        val state = CardRunStore.get(instanceId)
+                        if (state != null && state.status == RecipeRunStatus.WaitingTerminal) {
+                            val updated = CardRunStore.update(
+                                recipe = recipe,
+                                status = RecipeRunStatus.WaitingTerminal,
+                                instanceId = instanceId,
+                                surface = CardRunSurface.Terminal,
+                                currentStepIndex = state.currentStepIndex,
+                                runId = state.runId,
+                                terminalSessionId = state.terminalSessionId,
+                                pid = state.pid,
+                                lastMeaningfulOutput = "检测到授权链接，点击顶部“授权”打开。"
+                            )
+                            runtimeStates[recipe.id] = updated
+                            updateVisibleTerminalAuthorizationButton(sessionId)
+                        }
+                        return@runOnUiThread
                     }
+                    root.postDelayed({ tick(startedAt) }, TERMINAL_AUTH_LINK_POLL_MS)
                 }
-                return
             }
-            root.postDelayed({ tick(startedAt) }, TERMINAL_AUTH_LINK_POLL_MS)
         }
         root.postDelayed({ tick(System.currentTimeMillis()) }, TERMINAL_AUTH_LINK_POLL_MS)
     }
 
     private fun terminalAuthorizationUrl(sessionId: String?): String? {
         if (sessionId.isNullOrBlank()) return null
+        return terminalAuthorizationUrlCache[sessionId]
+    }
+
+    private fun readTerminalAuthorizationUrlFromTranscript(sessionId: String): String? {
         val entry = TerminalRuntimeRegistry.snapshot().firstOrNull { it.sessionId == sessionId } ?: return null
-        val transcript = runCatching { File(entry.transcriptPath).readText() }.getOrNull().orEmpty()
+        val transcript = runCatching {
+            val file = File(entry.transcriptPath)
+            if (!file.isFile) return@runCatching ""
+            val length = file.length()
+            file.inputStream().use { input ->
+                val skipBytes = length - TERMINAL_AUTH_LINK_TAIL_BYTES
+                if (skipBytes > 0L) input.skip(skipBytes)
+                input.bufferedReader().readText()
+            }
+        }.getOrNull().orEmpty()
         if (transcript.isBlank()) return null
         return extractTerminalAuthorizationUrl(transcript)
     }
@@ -8454,6 +8893,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             clearNextActionUrl = clearNextActionUrl
         )
         runtimeStates[recipe.id] = state
+        updateVisibleCardRunReport(recipe, state)
+        updateVisibleResourceInstallWizardElapsed()
         diagnostics.logLifecycleEvent(
             recipe,
             status.lifecycleEvent,
@@ -11329,6 +11770,54 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val selectedSurface: CardRunSurface = CardRunSurface.InstallWizard
     )
 
+    private data class CardRunReportBinding(
+        val recipeId: String,
+        val instanceId: String,
+        val outputTextView: TextView?,
+        val footerTextView: TextView?,
+        val elapsedTextView: TextView?
+    )
+
+    private data class CardRunTopBarBinding(
+        val displayRecipe: KiteRecipe,
+        val actionRecipe: KiteRecipe,
+        val actionInstanceId: String,
+        val terminalSessionId: String,
+        val authSlot: FrameLayout
+    )
+
+    private data class ResourceInstallWizardBinding(
+        val targetResourceId: String,
+        var planResourceIds: List<String>,
+        val headerDetailTextView: TextView?,
+        val headerProgressTextView: TextView?,
+        val primaryActionHost: LinearLayout,
+        val rowsHost: LinearLayout,
+        val rowHosts: MutableMap<String, LinearLayout>,
+        val rowBindings: MutableMap<String, ResourceInstallWizardRowBinding>
+    )
+
+    private data class ResourceInstallWizardRowBinding(
+        val resourceId: String,
+        val subtitleTextView: TextView,
+        val statusTextView: TextView
+    )
+
+    private data class ResourceInstallWizardUiState(
+        val targetId: String,
+        val target: ResourceItem?,
+        val planIds: List<String>,
+        val catalog: Map<String, ResourceItem>,
+        val planSnapshot: KiteResourcePlanSnapshot,
+        val registrySnapshot: Map<String, KiteResourceRegistryEntry>,
+        val activeId: String?,
+        val detail: String,
+        val completedCount: Int,
+        val hasRunningStep: Boolean,
+        val hasPending: Boolean,
+        val hasFailure: Boolean
+    )
+
     private data class ResourceSectionsPayload(
         val query: String,
         val resources: List<ResourceItem>,
@@ -11442,11 +11931,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val WEB_READY_READ_TIMEOUT_MS = 700
         private const val TERMINAL_STEP_COMMAND_DELAY_MS = 650L
         private const val TERMINAL_STOP_GRACE_MS = 350L
-        private const val SHELL_PROGRESS_RENDER_INTERVAL_MS = 350L
         private const val RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS = 1_200L
         private const val TOOLCHAIN_WORKSPACE_PROBE_TTL_MS = 5_000L
         private const val TERMINAL_AUTH_LINK_POLL_MS = 1200L
         private const val TERMINAL_AUTH_LINK_WATCH_MS = 10L * 60L * 1000L
+        private const val TERMINAL_AUTH_LINK_TAIL_BYTES = 64L * 1024L
         private const val REQUEST_DROPZONE_STORAGE = 801
         private const val REQUEST_PICK_RECIPE_ICON = 802
         private const val KEY_HIDE_MAIN_TASK_FROM_RECENTS = "hide_main_task_from_recents"

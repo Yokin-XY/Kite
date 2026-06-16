@@ -1,11 +1,24 @@
 package com.kite.app.resources
 
 import android.content.Context
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+
+data class KiteResourceInstallSignal(
+    val revision: Long = 0L,
+    val reason: String = "initial",
+    val resourceId: String? = null,
+    val targetResourceId: String? = null
+)
 
 class KiteResourceInstallStore(context: Context) {
     private val registry = KiteResourceRegistry(context)
     private val installedSnapshots = KiteInstalledResourceSnapshotStore(context)
     private val pageCache = KiteResourcePageCacheStore(context)
+    private val _signals = MutableStateFlow(KiteResourceInstallSignal())
+    private var revision = 0L
+
+    val signals: StateFlow<KiteResourceInstallSignal> = _signals
 
     fun status(resourceId: String): String? =
         registry.status(resourceId)
@@ -39,27 +52,33 @@ class KiteResourceInstallStore(context: Context) {
 
     fun markInstalling(resourceId: String, runId: String? = null) {
         registry.markInstalling(resourceId, runId)
+        emitSignal("markInstalling", resourceId = resourceId)
     }
 
     fun markUninstalling(resourceId: String, runId: String? = null) {
         registry.markUninstalling(resourceId, runId)
+        emitSignal("markUninstalling", resourceId = resourceId)
     }
 
     fun markInstalled(resourceId: String, version: String, runId: String?, summary: String?) {
         registry.markInstalled(resourceId, version, runId, summary)
+        emitSignal("markInstalled", resourceId = resourceId)
     }
 
     fun markFailed(resourceId: String, operation: String, runId: String?, reason: String?) {
         registry.markFailed(resourceId, operation, runId, reason)
+        emitSignal("markFailed", resourceId = resourceId)
     }
 
     fun clear(resourceId: String) {
         registry.clear(resourceId)
         installedSnapshots.clear(resourceId)
+        emitSignal("clear", resourceId = resourceId)
     }
 
     fun beginPlan(targetResourceId: String, resourceIds: List<String>) {
         registry.beginPlan(targetResourceId, resourceIds)
+        emitSignal("beginPlan", targetResourceId = targetResourceId)
     }
 
     fun pendingPlanResourceIds(): List<String> =
@@ -74,18 +93,26 @@ class KiteResourceInstallStore(context: Context) {
     fun planStepStatus(resourceId: String): String =
         registry.planStepStatus(resourceId)
 
-    fun markPlanStepRunning(resourceId: String): Boolean =
-        registry.markPlanStepRunning(resourceId)
+    fun markPlanStepRunning(resourceId: String): Boolean {
+        val changed = registry.markPlanStepRunning(resourceId)
+        if (changed) emitSignal("markPlanStepRunning", resourceId = resourceId)
+        return changed
+    }
 
-    fun advancePlanAfter(resourceId: String): List<String> =
-        registry.advancePlanAfter(resourceId)
+    fun advancePlanAfter(resourceId: String): List<String> {
+        val next = registry.advancePlanAfter(resourceId)
+        emitSignal("advancePlanAfter", resourceId = resourceId)
+        return next
+    }
 
     fun failPlanAt(resourceId: String) {
         registry.failPlanAt(resourceId)
+        emitSignal("failPlanAt", resourceId = resourceId)
     }
 
     fun clearPlan() {
         registry.clearPlan()
+        emitSignal("clearPlan")
     }
 
     fun saveInstalledSnapshot(
@@ -110,6 +137,16 @@ class KiteResourceInstallStore(context: Context) {
 
     fun clearExpiredPageCache() {
         pageCache.clearExpired()
+    }
+
+    private fun emitSignal(reason: String, resourceId: String? = null, targetResourceId: String? = null) {
+        revision += 1
+        _signals.value = KiteResourceInstallSignal(
+            revision = revision,
+            reason = reason,
+            resourceId = resourceId,
+            targetResourceId = targetResourceId
+        )
     }
 
     companion object {
