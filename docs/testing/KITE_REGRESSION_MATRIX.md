@@ -159,7 +159,23 @@ main-thread stack -> owning lane -> heavy work source -> minimal lane fix
 - 删除 terminal 预输入，或让它依赖页面 render timing。
 - 隐藏异常或压掉 ANR 提示。
 
-## 九、验收模板
+## 九、静态守门
+
+运行设备验收前，先跑一次静态守门：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1
+```
+
+这个脚本只做代码结构检查，用来防止以下回归：
+
+- shell progress 又接回整页 redraw。
+- terminal auth transcript 又回到 UI 路径全量 `readText()`。
+- install store signal 丢失。
+- report / install wizard / console card 局部 binding 被删。
+- 资源管理页重新在 render 中同步构建 catalog / DB snapshot。
+
+## 十、验收模板
 
 每个 runtime 修复最后按这个输出：
 
@@ -174,4 +190,3 @@ Regression checks:
 ANR checks:
 Known residual risk:
 ```
-

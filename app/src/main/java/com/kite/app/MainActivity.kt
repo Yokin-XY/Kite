@@ -221,6 +221,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var resourceSectionsInFlightKey: String? = null
     private var resourceSectionsDirty = true
     private var resourceDetailInFlightKey: String? = null
+    private var resourceManageContentHost: LinearLayout? = null
+    private var resourceManageRequestSerial = 0L
     private var currentResourceInstallTargetId: String? = null
     private var resourceInstallWizardPlanIds: List<String> = emptyList()
     private var resourceInstallPlanRequestSerial = 0L
@@ -237,6 +239,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var resourceInstallWizardRefreshSerial = 0L
     private var foregroundLiveTickScheduled = false
     private val terminalAuthorizationUrlCache = mutableMapOf<String, String>()
+    private val consoleCardBindings = mutableMapOf<String, RecipeCardBinding>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -574,6 +577,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                             updateVisibleCardRunReport(recipe, state)
                         }
                     }
+                    if (currentScreen == Screen.Console && consoleCardBindings.isNotEmpty()) {
+                        currentRecipes.forEach { recipe ->
+                            val state = CardRunStore.currentForRecipe(recipe.id)
+                                ?: runtimeStates[recipe.id]
+                                ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown")
+                            runtimeStates[recipe.id] = state
+                            updateVisibleConsoleCard(recipe, state)
+                        }
+                    }
                     updateVisibleResourceInstallWizardElapsed()
                 }
             }
@@ -596,6 +608,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         when (currentScreen) {
             Screen.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
             Screen.CardRun -> requestVisibleResourceInstallWizardRefresh(signal.reason)
+            Screen.ResourceManage -> requestResourceManageRefresh(forceCatalogRefresh = false, reason = signal.reason)
             else -> Unit
         }
     }
@@ -1092,6 +1105,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         cardRunReportBinding = null
         cardRunTopBarBinding = null
         resourceInstallWizardBinding = null
+        consoleCardBindings.clear()
         val transaction = supportFragmentManager.beginTransaction()
         var changed = false
 
@@ -1450,6 +1464,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceSectionsRenderKey = ""
         resourceSectionsRenderedRequestKey = ""
         resourceSectionsDirty = true
+        resourceManageContentHost = null
     }
 
     private fun invalidateResourceCatalogCache() {
@@ -1478,10 +1493,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 when (currentScreen) {
                     Screen.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
                     Screen.CardRun -> requestVisibleResourceInstallWizardRefresh("catalog:$reason")
+                    Screen.ResourceMore -> refreshResourceMoreActionsFromCache()
+                    Screen.ResourceManage -> requestResourceManageRefresh(forceCatalogRefresh = false, reason = "catalog:$reason")
                     else -> Unit
                 }
             }
         }
+    }
+
+    private fun refreshResourceMoreActionsFromCache() {
+        val resourceId = currentResourceDetailId ?: return
+        cachedResourceCatalog
+            ?.firstOrNull { it.id == resourceId }
+            ?.let { showResourceMoreActions(it) }
     }
 
     private fun prewarmResourceCatalog() {
@@ -1511,60 +1535,108 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         clearRootForScreen()
         root.addView(topBar("资源管理") { showResources() })
         root.addView(ScrollView(this).apply {
-            addView(LinearLayout(context).apply {
+            val host = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(22), dp(18), dp(22), dp(34))
-                val catalog = resourceCatalog(forceRefresh = true)
-                val catalogById = catalog.associateBy { it.id }
+                addView(resourceManageEmptyBlock("正在读取资源管理信息", "安装队列和已安装资源会在后台加载，避免阻塞当前页面。"))
+            }
+            resourceManageContentHost = host
+            addView(host)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(bottomNavigation())
+        requestResourceManageRefresh(forceCatalogRefresh = true, reason = "open")
+    }
+
+    private fun requestResourceManageRefresh(forceCatalogRefresh: Boolean, reason: String) {
+        val requestId = ++resourceManageRequestSerial
+        thread(name = "KiteResourceManageRefresh", isDaemon = true) {
+            val payload = runCatching {
+                val catalog = resourceCatalog(forceRefresh = forceCatalogRefresh)
                 val planSnapshot = resourceInstallStore.planSnapshot()
                 val planIds = planSnapshot.resourceIds
                 val registrySnapshot = resourceInstallStore.registrySnapshot(planIds)
-                addView(sectionTitle("安装列表"))
-                if (planIds.isEmpty()) {
-                    addView(resourceManageEmptyBlock("暂无安装任务", "从资源商店点击安装后，这里会显示当前队列。"))
-                } else {
-                    addView(resourceManageInstallTaskCard(planIds, catalogById, planSnapshot, registrySnapshot))
-                    val activeInstallId = resourceManageActiveInstallId(planIds, planSnapshot, registrySnapshot)
-                    addView(LinearLayout(context).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setPadding(0, dp(12), 0, 0)
-                        planIds.forEachIndexed { index, resourceId ->
-                            addView(resourceInstallWizardStepRow(
-                                index = index,
-                                total = planIds.size,
-                                item = catalogById[resourceId],
-                                resourceId = resourceId,
-                                isActive = activeInstallId == resourceId,
-                                planSnapshot = planSnapshot,
-                                registryEntry = registrySnapshot[resourceId]
-                            ))
-                        }
-                    })
+                ResourceManagePayload(
+                    catalog = catalog,
+                    planSnapshot = planSnapshot,
+                    planIds = planIds,
+                    registrySnapshot = registrySnapshot
+                )
+            }.getOrNull()
+            runOnUiThread {
+                if (requestId != resourceManageRequestSerial || currentScreen != Screen.ResourceManage) return@runOnUiThread
+                if (payload == null) {
+                    resourceManageContentHost?.let { host ->
+                        host.removeAllViews()
+                        host.addView(resourceManageEmptyBlock("资源管理读取失败", "稍后返回资源页后可重新进入。"))
+                    }
+                    return@runOnUiThread
                 }
-                addView(sectionTitle("已安装资源").apply {
-                    setPadding(0, dp(24), 0, dp(12))
-                })
-                val installed = catalog.filter { resourceItemIsInstalled(it) }
-                if (installed.isEmpty()) {
-                    addView(resourceManageEmptyBlock("暂无已安装资源", "安装成功并完成注册后，会出现在这里。"))
-                } else {
-                    addView(LinearLayout(context).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setPadding(dp(14), dp(10), dp(14), dp(10))
-                        background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
-                        installed.forEachIndexed { index, item ->
-                            addView(resourceListRow(item))
-                            if (index != installed.lastIndex) addView(divider().apply {
-                                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                                    setMargins(dp(64), dp(8), dp(12), dp(8))
-                                }
-                            })
+                applyResourceManagePayload(payload, reason)
+            }
+        }
+    }
+
+    private fun applyResourceManagePayload(payload: ResourceManagePayload, reason: String) {
+        val host = resourceManageContentHost ?: return
+        host.removeAllViews()
+        val catalogById = payload.catalog.associateBy { it.id }
+        host.addView(sectionTitle("安装列表"))
+        if (payload.planIds.isEmpty()) {
+            host.addView(resourceManageEmptyBlock("暂无安装任务", "从资源商店点击安装后，这里会显示当前队列。"))
+        } else {
+            host.addView(resourceManageInstallTaskCard(
+                payload.planIds,
+                catalogById,
+                payload.planSnapshot,
+                payload.registrySnapshot
+            ))
+            val activeInstallId = resourceManageActiveInstallId(payload.planIds, payload.planSnapshot, payload.registrySnapshot)
+            host.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(12), 0, 0)
+                payload.planIds.forEachIndexed { index, resourceId ->
+                    addView(resourceInstallWizardStepRow(
+                        index = index,
+                        total = payload.planIds.size,
+                        item = catalogById[resourceId],
+                        resourceId = resourceId,
+                        isActive = activeInstallId == resourceId,
+                        planSnapshot = payload.planSnapshot,
+                        registryEntry = payload.registrySnapshot[resourceId]
+                    ))
+                }
+            })
+        }
+        host.addView(sectionTitle("已安装资源").apply {
+            setPadding(0, dp(24), 0, dp(12))
+        })
+        val installed = payload.catalog.filter { resourceItemIsInstalled(it) }
+        if (installed.isEmpty()) {
+            host.addView(resourceManageEmptyBlock("暂无已安装资源", "安装成功并完成注册后，会出现在这里。"))
+        } else {
+            host.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+                installed.forEachIndexed { index, item ->
+                    addView(resourceListRow(item))
+                    if (index != installed.lastIndex) addView(divider().apply {
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                            setMargins(dp(64), dp(8), dp(12), dp(8))
                         }
                     })
                 }
             })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(bottomNavigation())
+        }
+        diagnostics.logRecipeEvent(
+            "resource_manage_payload_applied",
+            null,
+            mapOf(
+                "reason" to reason,
+                "catalog" to payload.catalog.size.toString(),
+                "plan" to payload.planIds.size.toString()
+            )
+        )
     }
 
     private fun resourceManageActiveInstallId(
@@ -4644,11 +4716,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
             Screen.ResourceDetail -> currentResourceDetailId?.let { showResourceDetail(it) }
             Screen.ResourceMore -> currentResourceDetailId?.let { resourceId ->
-                resourceCatalog(forceRefresh = true)
+                resourceCatalogForUiRender("resource_more_refresh")
                     .firstOrNull { it.id == resourceId }
                     ?.let { showResourceMoreActions(it) }
             }
-            Screen.ResourceManage -> showResourceManage()
+            Screen.ResourceManage -> {
+                if (resourceManageContentHost != null) {
+                    requestResourceManageRefresh(forceCatalogRefresh = true, reason = "visible_refresh")
+                } else {
+                    showResourceManage()
+                }
+            }
             else -> Unit
         }
     }
@@ -7255,7 +7333,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setMargins(dp(13), dp(13), 0, 0)
             }
         })
-        addView(recipeStatusBadge(runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26), Gravity.END or Gravity.TOP).apply {
+        val statusHost = FrameLayout(context)
+        statusHost.addView(recipeStatusBadge(runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
+        addView(statusHost, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26), Gravity.END or Gravity.TOP).apply {
             setMargins(0, dp(14), dp(13), 0)
         })
         addView(recipeCardName(recipe.name), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
@@ -7264,12 +7344,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         addView(recipeCardCategory(recipe), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
             setMargins(dp(15), dp(78), dp(15), 0)
         })
-        addView(recipeStepCue(recipe, runtimeState), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.BOTTOM).apply {
+        val cueHost = FrameLayout(context)
+        cueHost.addView(recipeStepCue(recipe, runtimeState), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(cueHost, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.BOTTOM).apply {
             setMargins(dp(15), 0, dp(96), dp(20))
         })
-        addView(recipeActionArea(recipe, runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(dp(82), dp(50), Gravity.END or Gravity.BOTTOM).apply {
+        val actionHost = FrameLayout(context)
+        actionHost.addView(recipeActionArea(recipe, runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        addView(actionHost, FrameLayout.LayoutParams(dp(82), dp(50), Gravity.END or Gravity.BOTTOM).apply {
             setMargins(0, 0, dp(11), dp(8))
         })
+        consoleCardBindings[recipe.id] = RecipeCardBinding(
+            recipeId = recipe.id,
+            statusHost = statusHost,
+            cueHost = cueHost,
+            actionHost = actionHost
+        )
+    }
+
+    private fun updateVisibleConsoleCard(recipe: KiteRecipe, state: RecipeRuntimeState) {
+        val binding = consoleCardBindings[recipe.id] ?: return
+        if (currentScreen != Screen.Console) return
+        val ubuntuBlocked = isUbuntuActionBlocked(recipe)
+        binding.statusHost.removeAllViews()
+        binding.statusHost.addView(recipeStatusBadge(state, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
+        binding.cueHost.removeAllViews()
+        binding.cueHost.addView(recipeStepCue(recipe, state), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        binding.actionHost.removeAllViews()
+        binding.actionHost.addView(recipeActionArea(recipe, state, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
     private fun recipeActionArea(recipe: KiteRecipe, state: RecipeRuntimeState, ubuntuBlocked: Boolean): View =
@@ -8904,19 +9006,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             state.lastMeaningfulOutput,
             state.lastError
         )
-        maybeRefreshConsoleAfterRuntimeState(status)
+        maybeRefreshConsoleAfterRuntimeState(recipe, state, status)
     }
 
-    private fun maybeRefreshConsoleAfterRuntimeState(status: RecipeRunStatus) {
+    private fun maybeRefreshConsoleAfterRuntimeState(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        status: RecipeRunStatus
+    ) {
         if (this is CardRunActivity || currentScreen != Screen.Console) return
+        if (consoleCardBindings.containsKey(recipe.id)) {
+            updateVisibleConsoleCard(recipe, state)
+            return
+        }
         val important = status == RecipeRunStatus.Completed ||
             status == RecipeRunStatus.Failed ||
             status == RecipeRunStatus.BridgeUnavailable ||
             status == RecipeRunStatus.Stopped ||
             status == RecipeRunStatus.Opened ||
             status == RecipeRunStatus.WaitingTerminal
+        if (!important) return
         val now = System.currentTimeMillis()
-        if (!important && now - lastConsoleRuntimeRefreshAt < 600L) return
+        if (now - lastConsoleRuntimeRefreshAt < 600L) return
         lastConsoleRuntimeRefreshAt = now
         root.post {
             if (currentScreen == Screen.Console) showConsole()
@@ -11816,6 +11927,20 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val hasRunningStep: Boolean,
         val hasPending: Boolean,
         val hasFailure: Boolean
+    )
+
+    private data class ResourceManagePayload(
+        val catalog: List<ResourceItem>,
+        val planSnapshot: KiteResourcePlanSnapshot,
+        val planIds: List<String>,
+        val registrySnapshot: Map<String, KiteResourceRegistryEntry>
+    )
+
+    private data class RecipeCardBinding(
+        val recipeId: String,
+        val statusHost: FrameLayout,
+        val cueHost: FrameLayout,
+        val actionHost: FrameLayout
     )
 
     private data class ResourceSectionsPayload(
