@@ -7446,8 +7446,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         when {
             state.status == RecipeRunStatus.Unknown -> ""
             state.status == RecipeRunStatus.Failed ||
-                state.status == RecipeRunStatus.BridgeUnavailable -> "失败 · ${formatCardRunElapsed(state)}"
-            state.status == RecipeRunStatus.Stopped -> "已停止 · ${formatCardRunElapsed(state)}"
+                state.status == RecipeRunStatus.BridgeUnavailable -> "已停止 · ${formatCardRunElapsed(state)}"
             state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened -> "运行 · ${formatCardRunElapsed(state)}"
             else -> "上次 · ${formatLastRunTime(state.updatedAt)}"
         }
