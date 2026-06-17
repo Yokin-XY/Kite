@@ -77,6 +77,40 @@ object KiteResourceInstallRecipes {
             fi
         """.trimIndent()
 
+    fun reasonixInstallCommand(): String =
+        """
+            set -e
+            export PATH="$WORKSPACE_BIN_ROOT:/root/.local/bin:${'$'}PATH"
+            install_root="${softwarePath("kite.reasonix")}"
+            if ! command -v npm >/dev/null 2>&1; then
+              echo "缺少 npm：请先安装 Node.js 资源。"
+              exit 127
+            fi
+            echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}install_root"
+            mkdir -p "${'$'}install_root" "$WORKSPACE_BIN_ROOT"
+            echo "KITE_RESOURCE_STEP npm-install reasonix"
+            npm install -g reasonix
+            npm_prefix="${'$'}(npm prefix -g 2>/dev/null || true)"
+            for bin_name in reasonix dsnix; do
+              rm -f "$WORKSPACE_BIN_ROOT/${'$'}bin_name"
+              for candidate in "${'$'}npm_prefix/bin/${'$'}bin_name" "/root/.local/bin/${'$'}bin_name"; do
+                if [ -x "${'$'}candidate" ]; then
+                  echo "KITE_RESOURCE_STEP link-command ${'$'}bin_name"
+                  ln -sfn "${'$'}candidate" "$WORKSPACE_BIN_ROOT/${'$'}bin_name"
+                  break
+                fi
+              done
+            done
+            hash -r 2>/dev/null || true
+            if ! command -v reasonix >/dev/null 2>&1; then
+              echo "Reasonix npm package installed, but the reasonix command was not found."
+              exit 127
+            fi
+            reasonix --version || reasonix --help | head -40 || true
+            printf '%s\n' 'installed_by_kite' > "${'$'}install_root/ownership"
+            echo "Reasonix installed at ${'$'}(command -v reasonix)"
+        """.trimIndent()
+
     fun hermesCoreInstallCommand(): String =
         """
             set -e
@@ -332,6 +366,21 @@ PY
             exit 0
         """.trimIndent()
 
+    fun reasonixUninstallCommand(): String =
+        """
+            set +e
+            export PATH="$WORKSPACE_BIN_ROOT:/root/.local/bin:${'$'}PATH"
+            if command -v npm >/dev/null 2>&1; then
+              echo "KITE_RESOURCE_STEP npm-uninstall reasonix"
+              npm uninstall -g reasonix
+            else
+              echo "npm missing; clearing Kite install record only"
+            fi
+            rm -f "$WORKSPACE_BIN_ROOT/reasonix" "$WORKSPACE_BIN_ROOT/dsnix"
+            rm -rf ${softwarePath("kite.reasonix")}
+            exit 0
+        """.trimIndent()
+
     fun cancelCleanupCommand(resourceIds: List<String>): String {
         val ids = resourceIds.map(::safeId).filter { it.isNotBlank() }.distinct()
         val quotedIds = ids.joinToString(" ") { "'$it'" }
@@ -371,6 +420,12 @@ PY
                 kite.hermes.webui)
                   if command -v npm >/dev/null 2>&1; then
                     npm uninstall -g hermes-web-ui >/dev/null 2>&1 || true
+                  fi
+                  ;;
+                kite.reasonix)
+                  rm -f "$WORKSPACE_BIN_ROOT/reasonix" "$WORKSPACE_BIN_ROOT/dsnix"
+                  if command -v npm >/dev/null 2>&1; then
+                    npm uninstall -g reasonix >/dev/null 2>&1 || true
                   fi
                   ;;
               esac

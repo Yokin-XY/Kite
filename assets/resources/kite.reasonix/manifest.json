@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.reasonix",
+  "base": {
+    "name": "Reasonix",
+    "description": "DeepSeek 原生终端编码助手",
+    "version": "npm",
+    "icon": {
+      "type": "text",
+      "value": "Rx"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "tags": [
+      "reasonix",
+      "deepseek",
+      "coding-agent",
+      "terminal",
+      "ai"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.reasonix",
+      "agent.deepseek.reasonix"
+    ],
+    "base": [
+      "runtime.node>=24",
+      "tool.npm"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "reasonix",
+    "repository": "https://github.com/esengine/deepseek-reasonix",
+    "command": "npm install -g reasonix"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.reasonix",
+    "installRoot": "/workspace/.kf/software/kite.reasonix",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "npm install -g reasonix"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Reasonix",
+          "description": "在终端里启动 DeepSeek 编码 Agent",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\nif [ -z \"$DEEPSEEK_API_KEY\" ]; then\n  echo \"请先设置 DEEPSEEK_API_KEY，例如：export DEEPSEEK_API_KEY=sk-...\"\nfi\nreasonix\n"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "npm uninstall -g reasonix"
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Reasonix",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Reasonix",
+          "description": "在终端里启动 DeepSeek 编码 Agent",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\nif [ -z \"$DEEPSEEK_API_KEY\" ]; then\n  echo \"请先设置 DEEPSEEK_API_KEY，例如：export DEEPSEEK_API_KEY=sk-...\"\nfi\nreasonix\n"
+          }
+        ]
+      }
+    }
+  ]
+}

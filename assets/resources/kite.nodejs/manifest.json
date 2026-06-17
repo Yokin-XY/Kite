@@ -30,7 +30,8 @@
     "base": [],
     "defaults": [],
     "extensions": [
-      "kite.hermes.webui"
+      "kite.hermes.webui",
+      "kite.reasonix"
     ]
   },
   "source": {
