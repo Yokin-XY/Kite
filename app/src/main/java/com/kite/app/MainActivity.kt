@@ -346,6 +346,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             Screen.ThemeSettings -> showSettings()
             Screen.ResourceManage -> showResources()
             Screen.ResourceMore -> currentResourceDetailId?.let { showResourceDetail(it) } ?: showResources()
+            Screen.ResourceRawJson -> currentResourceDetailId?.let { showResourceDetail(it) } ?: showResources()
             Screen.ResourceDetail -> showResources()
             Screen.Resources -> showConsole()
             Screen.Settings -> showConsole()
@@ -2719,7 +2720,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(24), 0, 0)
             addView(TextView(context).apply {
-                text = "执行预览"
+                text = "来源"
                 textSize = 20f
                 typeface = Typeface.DEFAULT_BOLD
                 includeFontPadding = false
@@ -2727,30 +2728,46 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(8), dp(14), dp(8))
+                setPadding(dp(14), dp(12), dp(14), dp(14))
                 background = roundedBox(tokens.cardBackground, tokens.border, dp(17).toFloat())
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     .apply { setMargins(0, dp(14), 0, 0) }
-                val rows = resourceExecutionRows(item)
-                rows.forEachIndexed { index, row ->
-                    addView(resourceExecutionRow(row, item.accent))
-                    if (index != rows.lastIndex) addView(divider().apply {
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                            setMargins(dp(48), dp(2), 0, dp(2))
-                        }
-                    })
-                }
+                addView(resourceSourceSummaryRow(item))
+                addView(divider().apply {
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                        setMargins(0, dp(12), 0, dp(12))
+                    }
+                })
+                addView(navigationRow("查看原始 JSON") { showResourceRawJson(item) }.apply {
+                    setPadding(0, 0, 0, 0)
+                })
             })
         }
 
-    private fun resourceExecutionRow(row: ResourceExecutionRow, accent: String): View =
+    private fun showResourceRawJson(item: ResourceItem) {
+        val latestItem = cachedResourceCatalog?.firstOrNull { it.id == item.id } ?: item
+        currentResourceDetailId = latestItem.id
+        currentScreen = Screen.ResourceRawJson
+        clearRootForScreen()
+        root.addView(topBar("原始 JSON") { showResourceDetail(latestItem.id, latestItem) })
+        root.addView(ScrollView(this).apply {
+            addView(TextView(context).apply {
+                text = resourceRawJsonForUi(latestItem)
+                textSize = 14f
+                setTextColor(tokens.textPrimary)
+                setPadding(dp(24), dp(20), dp(24), dp(28))
+                typeface = Typeface.MONOSPACE
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    private fun resourceSourceSummaryRow(item: ResourceItem): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, dp(8))
-            val tone = KiteTheme.accent(accent, tokens)
+            val tone = KiteTheme.accent(item.accent, tokens)
             addView(TextView(context).apply {
-                text = row.marker
+                text = "源"
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 includeFontPadding = false
@@ -2762,140 +2779,60 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    setMargins(dp(12), 0, dp(8), 0)
+                    setMargins(dp(12), 0, 0, 0)
                 }
-                addView(row {
-                    gravity = Gravity.CENTER_VERTICAL
-                    addView(TextView(context).apply {
-                        text = row.label
-                        textSize = 13.5f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(tokens.textPrimary)
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    })
-                    addView(TextView(context).apply {
-                        text = row.value
-                        textSize = 12.5f
-                        typeface = if (row.monospace) Typeface.MONOSPACE else Typeface.DEFAULT
-                        setTextColor(tokens.textSecondary)
-                        maxLines = 1
-                        ellipsize = TextUtils.TruncateAt.END
-                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                            setMargins(dp(14), 0, 0, 0)
-                        }
-                    })
+                addView(TextView(context).apply {
+                    text = resourceSourceTitle(item)
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
                 })
-                if (row.note.isNotBlank()) {
-                    addView(TextView(context).apply {
-                        text = row.note
-                        textSize = 11.5f
-                        setTextColor(tokens.textTertiary)
-                        maxLines = 1
-                        ellipsize = TextUtils.TruncateAt.END
-                        setPadding(0, dp(3), 0, 0)
-                    })
-                }
-            })
-            addView(TextView(context).apply {
-                text = "›"
-                textSize = 22f
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(tokens.textTertiary)
-                layoutParams = LinearLayout.LayoutParams(dp(22), dp(34))
+                addView(TextView(context).apply {
+                    text = resourceSourceSubtitle(item)
+                    textSize = 11.5f
+                    setTextColor(tokens.textTertiary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(4), 0, 0)
+                })
             })
         }
 
-    private fun resourceExecutionRows(item: ResourceItem): List<ResourceExecutionRow> =
-        when (item.id) {
-            RESOURCE_KF_TOOL_ENV -> listOf(
-                ResourceExecutionRow("源", "来源", "本地", "内置资源包，不需要先联网下载", monospace = false),
-                ResourceExecutionRow("包", "资源位置", KiteResourceInstallRecipes.localPackPath(RESOURCE_KF_TOOL_ENV), "先作为资源包放入工作区", monospace = true),
-                ResourceExecutionRow("命", "执行命令", "install.sh --install", "安装脚本负责展开和链接命令", monospace = true),
-                ResourceExecutionRow("位", "安装地点", KiteResourceInstallRecipes.softwarePath(RESOURCE_KF_TOOL_ENV), "按注册名放入软件区", monospace = true),
-                ResourceExecutionRow("入", "命令入口", "/workspace/.kf/bin", "node、npm、pnpm、uv、adb 从这里暴露", monospace = true),
-                ResourceExecutionRow("环", "包含环境", "Node / Python / adb", "用于后续网络包和卡片脚本", monospace = false)
-            )
-            RESOURCE_HERMES_WEBUI -> listOf(
-                ResourceExecutionRow("源", "来源", "下载", "从 npm 获取 hermes-web-ui", monospace = false),
-                ResourceExecutionRow("命", "执行命令", "npm install -g hermes-web-ui", "npm 会处理下载和安装细节", monospace = true),
-                ResourceExecutionRow("环", "运行环境", "Node.js / npm", "需要先安装 Node.js 资源", monospace = false),
-                ResourceExecutionRow("位", "安装地点", "npm 全局目录", "一般不需要用户手动选择路径", monospace = false),
-                ResourceExecutionRow("访", "访问入口", "127.0.0.1:8648", "启动后在 Kite 网页里打开", monospace = true)
-            )
-            RESOURCE_GIT -> listOf(
-                ResourceExecutionRow("源", "来源", "apt", "从 Ubuntu 软件源安装 git", monospace = false),
-                ResourceExecutionRow("命", "执行命令", "apt-get install -y git ca-certificates", "安装前会先检查当前环境是否已有 git", monospace = true),
-                ResourceExecutionRow("能", "提供能力", "tool.git", "供 Hermes 本体、源码下载和后续资源依赖引用", monospace = true),
-                ResourceExecutionRow("记", "登记位置", KiteResourceInstallRecipes.softwarePath(RESOURCE_GIT), "记录 preexisting 或 installed_by_kite", monospace = true),
-                ResourceExecutionRow("验", "验证命令", "git --version", "用于确认当前 Git 可用", monospace = true)
-            )
-            RESOURCE_PYTHON -> listOf(
-                ResourceExecutionRow("源", "来源", "apt", "补齐 Ubuntu Python 运行时", monospace = false),
-                ResourceExecutionRow("命", "执行命令", "apt-get install -y python3 python3-venv python3-pip", "安装前会校验 Hermes 的 Python 版本范围", monospace = true),
-                ResourceExecutionRow("能", "提供能力", "runtime.python>=3.11<3.14", "Hermes pyproject 当前要求这个范围", monospace = true),
-                ResourceExecutionRow("位", "登记位置", KiteResourceInstallRecipes.softwarePath(RESOURCE_PYTHON), "Python 是系统底座，只记录 Kite 可用状态", monospace = true),
-                ResourceExecutionRow("验", "验证命令", "python3 -m venv --help", "确认 venv/pip 路径可用于 Hermes", monospace = true)
-            )
-            RESOURCE_UV -> listOf(
-                ResourceExecutionRow("源", "来源", "本地", "从内置 ai-dev-pack 解出 uv", monospace = false),
-                ResourceExecutionRow("包", "资源位置", KiteResourceInstallRecipes.localPackPath(RESOURCE_UV), "先作为资源包放入工作区", monospace = true),
-                ResourceExecutionRow("命", "执行命令", "install.sh --install-uv", "只安装 uv/uvx，不顺带安装整个工具合集", monospace = true),
-                ResourceExecutionRow("入", "命令入口", "/workspace/.kf/bin/uv", "Hermes 安装 Python 依赖时使用", monospace = true),
-                ResourceExecutionRow("验", "验证命令", "uv --version && uvx --version", "用于确认当前 uv 可用", monospace = true)
-            )
-            RESOURCE_HERMES_CORE -> listOf(
-                ResourceExecutionRow("源", "来源", "官方", "下载 Hermes 官方 install.sh 并按 Kite 注册目录执行", monospace = false),
-                ResourceExecutionRow("命", "执行命令", "install.sh --dir ... --hermes-home ...", "本体安装跳过交互 setup 和浏览器下载", monospace = true),
-                ResourceExecutionRow("位", "安装地点", KiteResourceInstallRecipes.softwarePath(RESOURCE_HERMES_CORE), "官方安装产物放进这张资源自己的软件区", monospace = true),
-                ResourceExecutionRow("入", "命令入口", "/workspace/.kf/bin/hermes", "包装命令会自动带上 Kite 管理的 HERMES_HOME", monospace = true),
-                ResourceExecutionRow("卸", "卸载范围", "Hermes Core", "只清本体目录和入口，不处理配置配套卡和 WebUI", monospace = false)
-            )
-            "python-314" -> listOf(
-                ResourceExecutionRow("源", "来源", "下载", "下载独立 Python 工具链", monospace = false),
-                ResourceExecutionRow("命", "执行命令", "download/extract python toolchain", "先下载，再解包到独立目录", monospace = true),
-                ResourceExecutionRow("位", "安装地点", "/workspace/.kf/software/kite.python.314", "按注册名放入软件区", monospace = true),
-                ResourceExecutionRow("环", "包含环境", "python / pip / venv", "面向插件和项目运行", monospace = false)
-            )
-            RESOURCE_NODE_RUNTIME -> listOf(
-                ResourceExecutionRow("源", "来源", "本地", "内置 Node.js 压缩包，不需要先联网下载", monospace = false),
-                ResourceExecutionRow("包", "资源位置", KiteResourceInstallRecipes.localPackPath(RESOURCE_NODE_RUNTIME), "先作为资源包放入工作区", monospace = true),
-                ResourceExecutionRow("命", "执行命令", "install.sh --install-node", "只安装 node、npm、npx 三个入口", monospace = true),
-                ResourceExecutionRow("位", "安装地点", "${KiteResourceInstallRecipes.softwarePath(RESOURCE_NODE_RUNTIME)}/node-v24.15.0", "按注册名放入软件区", monospace = true),
-                ResourceExecutionRow("入", "命令入口", "/workspace/.kf/bin", "node、npm、npx 从这里暴露", monospace = true),
-                ResourceExecutionRow("验", "验证命令", "node --version && npm --version", "用于确认当前环境可用", monospace = true)
-            )
-            "logs-viewer" -> listOf(
-                ResourceExecutionRow("源", "来源", "本地", "Kite 内置功能入口", monospace = false),
-                ResourceExecutionRow("命", "打开方式", "open resource logs", "后续接入安装日志和 SH 报告", monospace = true),
-                ResourceExecutionRow("位", "显示位置", "Kite 日志页", "不写入 Ubuntu 环境", monospace = false)
-            )
-            else -> {
-                val source = if (item.sourceLabel.contains("网络") || item.sizeLabel.contains("网络")) "下载" else "本地"
-                val firstStep = item.steps.firstOrNull()
-                listOf(
-                    ResourceExecutionRow("源", "来源", source, item.sourceLabel, monospace = false),
-                    ResourceExecutionRow("命", "执行命令", firstStep?.preview ?: item.actionLabel, firstStep?.title.orEmpty(), monospace = true),
-                    ResourceExecutionRow("环", "运行环境", resourceRuntimeLabel(item), "按资源类型准备环境", monospace = false),
-                    ResourceExecutionRow("位", "安装地点", resourceInstallLocation(item), "具体路径由安装脚本决定", monospace = true)
-                )
-            }
-        }
-
-    private fun resourceRuntimeLabel(item: ResourceItem): String =
-        when (item.category) {
-            "AI" -> "Node.js / npm"
-            "Python" -> "Python"
-            "Node" -> "Node.js / npm"
-            else -> "Kite / Ubuntu"
-        }
-
-    private fun resourceInstallLocation(item: ResourceItem): String =
+    private fun resourceSourceTitle(item: ResourceItem): String =
         when {
-            item.sourceLabel.contains("内置") || item.sizeLabel.contains("内置") -> "/workspace/.kf/cache/resources"
-            item.category == "AI" -> "npm 全局目录"
-            item.category == "Python" -> "/workspace/.kf/software/kite.python.314"
-            else -> "/workspace"
+            item.sourceLabel.contains("内置") || item.sizeLabel.contains("内置") -> "内置资源包"
+            item.sourceLabel.equals("apt", ignoreCase = true) -> "Ubuntu apt"
+            item.sourceLabel.contains("官方") -> "官方来源"
+            item.sourceLabel.contains("网络") || item.sizeLabel.contains("网络") -> "网络下载"
+            else -> item.sourceLabel.ifBlank { "本地定义" }
+        }
+
+    private fun resourceSourceSubtitle(item: ResourceItem): String =
+        listOf(item.sourceLabel, item.version, item.sizeLabel)
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" · ")
+
+    private fun resourceRawJsonForUi(item: ResourceItem): String =
+        item.rawJson.ifBlank {
+            JSONObject()
+                .put("id", item.id)
+                .put("name", item.name)
+                .put("version", item.version)
+                .put("source", item.sourceLabel)
+                .put("category", item.category)
+                .put("steps", JSONArray().apply {
+                    item.steps.forEach { step ->
+                        put(JSONObject()
+                            .put("type", step.type)
+                            .put("title", step.title)
+                            .put("preview", step.preview)
+                        )
+                    }
+                })
+                .toString(2)
         }
 
     private fun resourcePreviewStrip(item: ResourceItem): View =
@@ -5442,7 +5379,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             version = manifest.version.ifBlank { item.version },
             sourceLabel = resourceSourceLabel(manifest.sourceType).ifBlank { item.sourceLabel },
             includes = mergeResourceStrings(item.includes, manifest.provides),
-            notes = mergeResourceStrings(item.notes, resourceRelationNotes(manifest))
+            notes = mergeResourceStrings(item.notes, resourceRelationNotes(manifest)),
+            rawJson = runCatching { manifest.rawJson.toString(2) }.getOrElse { manifest.rawJson.toString() }
         )
     }
 
@@ -11927,7 +11865,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         elevation = dp(6).toFloat()
         addView(navItem("▦", "配置", currentScreen == Screen.Console) { showConsole() })
         addView(navItem(">_", "终端", currentScreen == Screen.Terminal) { showTerminal() })
-        addView(navItem("≡", "资源", currentScreen == Screen.Resources || currentScreen == Screen.ResourceManage || currentScreen == Screen.ResourceDetail || currentScreen == Screen.ResourceMore) { showResources() })
+        addView(navItem("≡", "资源", currentScreen == Screen.Resources || currentScreen == Screen.ResourceManage || currentScreen == Screen.ResourceDetail || currentScreen == Screen.ResourceMore || currentScreen == Screen.ResourceRawJson) { showResources() })
         addView(navItem("⚙", "设置", currentScreen == Screen.Settings || currentScreen == Screen.ThemeSettings) { showSettings() })
     }
 
@@ -12599,7 +12537,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val actionEnabled: Boolean = true,
         val includes: List<String>,
         val notes: List<String>,
-        val steps: List<ResourceStep>
+        val steps: List<ResourceStep>,
+        val rawJson: String = ""
     )
 
     private data class ResourceStep(
@@ -12714,14 +12653,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val accent: String
     )
 
-    private data class ResourceExecutionRow(
-        val marker: String,
-        val label: String,
-        val value: String,
-        val note: String,
-        val monospace: Boolean
-    )
-
     private data class SummaryMetric(
         val label: String,
         val value: String,
@@ -12781,6 +12712,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         ResourceManage,
         ResourceDetail,
         ResourceMore,
+        ResourceRawJson,
         Settings,
         ThemeSettings
     }
