@@ -3072,7 +3072,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             activeRunInstanceIds.remove(recipeId)
             suppressedResourceRunSurfaceRecipeIds.remove(recipeId)
         }
-        if (recipeIds.isNotEmpty()) CardRunStore.removeRecipes(recipeIds)
+        if (recipeIds.isNotEmpty()) {
+            CardRunStore.removeRunStatesForRecipes(recipeIds, removeOpenHistory = true)
+        }
     }
 
     private fun handleResourceUninstallAction(item: ResourceItem) {
@@ -3161,7 +3163,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             activeRunInstanceIds.remove(recipeId)
             suppressedResourceRunSurfaceRecipeIds.remove(recipeId)
         }
-        CardRunStore.removeRecipes(recipeIds)
+        CardRunStore.removeRunStatesForRecipes(recipeIds, removeOpenHistory = true)
         invalidateResourceCatalogCache()
         if (closeWizard) {
             currentResourceInstallTargetId = null
@@ -3700,6 +3702,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             statusLabel == "已完成" -> tokens.success
             else -> tokens.textSecondary
         }
+        val canOpenRunSurface = item != null && recipeState != null
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(13), dp(14), dp(13))
@@ -3722,6 +3725,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     }
                 })
                 var subtitleTextView: TextView? = null
+                var openButtonTextView: TextView? = null
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(TextView(context).apply {
@@ -3754,38 +3758,42 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22))
                 }
                 addView(statusView)
+                item?.let { resourceItem ->
+                    val openButton = resourceWizardOpenButton(enabled = canOpenRunSurface) {
+                        if (resourceInstallRecipeState(resourceId) == null) {
+                            Toast.makeText(this@MainActivity, "报告正在准备", Toast.LENGTH_SHORT).show()
+                        } else {
+                            openResourceInstallRunSurface(resourceItem, CardRunSurface.Report)
+                        }
+                    }
+                    openButtonTextView = openButton
+                    addView(openButton)
+                }
                 subtitleTextView?.let { subtitleView ->
                     onBind?.invoke(
                         ResourceInstallWizardRowBinding(
                             resourceId = resourceId,
                             subtitleTextView = subtitleView,
-                            statusTextView = statusView
+                            statusTextView = statusView,
+                            openButtonTextView = openButtonTextView
                         )
                     )
                 }
             })
-            val canOpenRunSurface = item != null &&
-                recipeState != null &&
-                (
-                    planStepStatus == KiteResourceInstallStore.PLAN_STEP_DONE ||
-                        planStepStatus == KiteResourceInstallStore.PLAN_STEP_FAILED ||
-                        running ||
-                        recipeState.isBusy() ||
-                        recipeState.isActive()
-                    )
-            if (canOpenRunSurface) {
+            val secondarySurface = recipeState?.surface
+            if (
+                canOpenRunSurface &&
+                (secondarySurface == CardRunSurface.Terminal || secondarySurface == CardRunSurface.Web)
+            ) {
                 addView(row {
                     setPadding(dp(46), dp(10), 0, 0)
                     item?.let { resourceItem ->
-                        addView(resourceWizardInlineButton("查看报告") {
-                            openResourceInstallRunSurface(resourceItem, CardRunSurface.Report)
-                        })
-                        if (recipeState?.surface == CardRunSurface.Terminal) {
+                        if (secondarySurface == CardRunSurface.Terminal) {
                             addView(resourceWizardInlineButton("打开终端") {
                                 openResourceInstallRunSurface(resourceItem, CardRunSurface.Terminal)
                             })
                         }
-                        if (recipeState?.surface == CardRunSurface.Web) {
+                        if (secondarySurface == CardRunSurface.Web) {
                             addView(resourceWizardInlineButton("打开网页") {
                                 openResourceInstallRunSurface(resourceItem, CardRunSurface.Web)
                             })
@@ -3794,6 +3802,33 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 })
             }
         }
+    }
+
+    private fun resourceWizardOpenButton(enabled: Boolean, onClick: () -> Unit): TextView =
+        TextView(this).apply {
+            text = "打开"
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setPadding(dp(10), 0, dp(10), 0)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply {
+                setMargins(dp(8), 0, 0, 0)
+            }
+            setOnClickListener { if (isEnabled) onClick() }
+            applyResourceWizardOpenButtonState(this, enabled)
+        }
+
+    private fun applyResourceWizardOpenButtonState(button: TextView, enabled: Boolean) {
+        button.isEnabled = enabled
+        button.alpha = if (enabled) 1f else 0.52f
+        button.setTextColor(if (enabled) tokens.buttonText else tokens.textTertiary)
+        button.background = roundedBox(
+            if (enabled) tokens.primaryStrong else tokens.surface,
+            if (enabled) Color.TRANSPARENT else tokens.border,
+            dp(12).toFloat(),
+            0
+        )
     }
 
     private fun resourceWizardInlineButton(label: String, onClick: () -> Unit): View =
@@ -3975,6 +4010,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             val state = resourceInstallRecipeState(resourceId)
             val rowBinding = binding.rowBindings[resourceId]
             val item = cachedResourceCatalog?.firstOrNull { it.id == resourceId }
+            rowBinding?.openButtonTextView?.let { button ->
+                applyResourceWizardOpenButtonState(button, state != null)
+            }
             if (state != null && rowBinding != null) {
                 rowBinding.subtitleTextView.text = resourceInstallWizardStepSubtitle(
                     item = item,
@@ -4102,6 +4140,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setPadding(dp(22), dp(18), dp(22), dp(34))
                 addView(resourceMoreHeader(item))
                 addView(resourceCreateHomeCardRow(item))
+                addView(resourceInstallHistoryPanel(item))
             })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
@@ -4185,6 +4224,49 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (canCreate) setOnClickListener { addResourceHomeCard(item) }
         }
     }
+
+    private fun resourceInstallHistoryPanel(item: ResourceItem): View =
+        LinearLayout(this).apply {
+            val recipe = resourceInstallRecipe(item)
+            val history = recipe?.let { CardRunStore.historyForRecipe(it.id) }.orEmpty()
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(18), 0, dp(4))
+            addView(TextView(context).apply {
+                text = "最近安装日志"
+                textSize = 13.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+                setPadding(0, 0, 0, dp(10))
+            })
+            if (recipe == null || history.isEmpty()) {
+                addView(resourceRunHistoryEmptyBlock())
+            } else {
+                history.forEachIndexed { index, entry ->
+                    addView(runHistoryPreviewRow(recipe, entry, index + 1) {
+                        showResourceRunHistoryDetail(item, recipe, entry)
+                    })
+                }
+            }
+        }
+
+    private fun resourceRunHistoryEmptyBlock(): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+            addView(TextView(context).apply {
+                text = "还没有安装日志"
+                textSize = 14.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = "资源安装或失败后，这里会保留对应资源自己的步骤和 SH 报告。"
+                textSize = 12f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(8), 0, 0)
+            })
+        }
 
     private fun resourceIsInstalled(item: ResourceItem): Boolean =
         item.stateLabel == "已安装"
@@ -5836,7 +5918,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             markResourceRunSuccess(recipe, runId, lastOutput)
             setRuntimeState(
                 recipe,
-                if (!state.pid.isNullOrBlank()) RecipeRunStatus.Running else RecipeRunStatus.Completed,
+                finishedRecipeStatus(recipe, state.pid),
                 currentStepIndex = nextStepIndex,
                 runId = runId,
                 pid = state.pid,
@@ -7909,7 +7991,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             markResourceRunSuccess(recipe, runId, lastOutput)
             setRuntimeState(
                 recipe,
-                if (!pid.isNullOrBlank()) RecipeRunStatus.Running else RecipeRunStatus.Completed,
+                finishedRecipeStatus(recipe, pid),
                 surface = CardRunSurface.Report,
                 currentStepIndex = stepIndex,
                 runId = runId,
@@ -8903,7 +8985,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             markResourceRunSuccess(recipe, runId, lastOutput)
             setRuntimeState(
                 recipe,
-                successfulStatus(report, lastOutput),
+                successfulBridgeStatus(recipe, report, lastOutput),
                 runId = runId,
                 pid = pid,
                 rootPid = rootPid,
@@ -9011,6 +9093,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             RecipeRunStatus.Running
         } else {
             RecipeRunStatus.Opened
+        }
+
+    private fun isFiniteResourceOperation(recipe: KiteRecipe): Boolean =
+        recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE &&
+            resourceOperationForRecipe(recipe) != null
+
+    private fun finishedRecipeStatus(recipe: KiteRecipe, pid: String?): RecipeRunStatus =
+        if (isFiniteResourceOperation(recipe) || pid.isNullOrBlank()) {
+            RecipeRunStatus.Completed
+        } else {
+            RecipeRunStatus.Running
+        }
+
+    private fun successfulBridgeStatus(
+        recipe: KiteRecipe,
+        report: KiteRunReport?,
+        output: String?
+    ): RecipeRunStatus =
+        if (isFiniteResourceOperation(recipe)) {
+            RecipeRunStatus.Completed
+        } else {
+            successfulStatus(report, output)
         }
 
     private fun extractPid(text: String?): String? {
@@ -10787,7 +10891,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
         }
 
-    private fun runHistoryPreviewRow(recipe: KiteRecipe, entry: CardRunHistoryEntry, ordinal: Int): View =
+    private fun runHistoryPreviewRow(
+        recipe: KiteRecipe,
+        entry: CardRunHistoryEntry,
+        ordinal: Int,
+        onClick: () -> Unit = { showRecipeRunHistoryDetail(recipe, entry) }
+    ): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -10796,7 +10905,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(0, 0, 0, dp(8))
             }
-            setOnClickListener { showRecipeRunHistoryDetail(recipe, entry) }
+            setOnClickListener { onClick() }
             addView(TextView(context).apply {
                 text = ordinal.toString()
                 textSize = 10.5f
@@ -10840,9 +10949,38 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun showRecipeRunHistoryDetail(recipe: KiteRecipe, entry: CardRunHistoryEntry) {
         val latestRecipe = latestRecipeForRawJson(recipe)
-        currentScreen = Screen.RecipeDetail
+        showRunHistoryDetail(
+            screen = Screen.RecipeDetail,
+            title = "运行详情",
+            backAction = { showRecipeEditor(latestRecipe) },
+            recipe = latestRecipe,
+            entry = entry,
+            onStepReport = { step -> showRecipeRunHistoryStepReport(recipe, entry, step) }
+        )
+    }
+
+    private fun showResourceRunHistoryDetail(item: ResourceItem, recipe: KiteRecipe, entry: CardRunHistoryEntry) {
+        showRunHistoryDetail(
+            screen = Screen.ResourceMore,
+            title = "安装日志",
+            backAction = { showResourceMoreActions(item) },
+            recipe = recipe,
+            entry = entry,
+            onStepReport = { step -> showResourceRunHistoryStepReport(item, recipe, entry, step) }
+        )
+    }
+
+    private fun showRunHistoryDetail(
+        screen: Screen,
+        title: String,
+        backAction: () -> Unit,
+        recipe: KiteRecipe,
+        entry: CardRunHistoryEntry,
+        onStepReport: (CardRunHistoryStep) -> Unit
+    ) {
+        currentScreen = screen
         clearRootForScreen()
-        root.addView(topBar("运行详情") { showRecipeEditor(latestRecipe) })
+        root.addView(topBar(title, backAction))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -10859,7 +10997,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     addView(runHistoryEmptyBlock(compact = true))
                 } else {
                     entry.steps.forEach { step ->
-                        addView(runHistoryStepRow(latestRecipe, entry, step))
+                        addView(runHistoryStepRow(recipe, entry, step) { onStepReport(step) })
                     }
                 }
             })
@@ -10923,9 +11061,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun showRecipeRunHistoryStepReport(recipe: KiteRecipe, entry: CardRunHistoryEntry, step: CardRunHistoryStep) {
-        currentScreen = Screen.RecipeDetail
+        showRunHistoryStepReport(
+            screen = Screen.RecipeDetail,
+            backAction = { showRecipeRunHistoryDetail(recipe, entry) },
+            step = step
+        )
+    }
+
+    private fun showResourceRunHistoryStepReport(
+        item: ResourceItem,
+        recipe: KiteRecipe,
+        entry: CardRunHistoryEntry,
+        step: CardRunHistoryStep
+    ) {
+        showRunHistoryStepReport(
+            screen = Screen.ResourceMore,
+            backAction = { showResourceRunHistoryDetail(item, recipe, entry) },
+            step = step
+        )
+    }
+
+    private fun showRunHistoryStepReport(
+        screen: Screen,
+        backAction: () -> Unit,
+        step: CardRunHistoryStep
+    ) {
+        currentScreen = screen
         clearRootForScreen()
-        root.addView(topBar("历史 SH 报告") { showRecipeRunHistoryDetail(recipe, entry) })
+        root.addView(topBar("历史 SH 报告", backAction))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -11006,7 +11169,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }.trim()
     }
 
-    private fun runHistoryStepRow(recipe: KiteRecipe, entry: CardRunHistoryEntry, step: CardRunHistoryStep): View =
+    private fun runHistoryStepRow(
+        recipe: KiteRecipe,
+        entry: CardRunHistoryEntry,
+        step: CardRunHistoryStep,
+        onReportClick: () -> Unit = { showRecipeRunHistoryStepReport(recipe, entry, step) }
+    ): View =
         LinearLayout(this).apply {
             val canOpenReport = step.type == KiteRecipe.STEP_SHELL && step.reportText.isNotBlank()
             orientation = LinearLayout.HORIZONTAL
@@ -11014,7 +11182,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setPadding(dp(14), dp(10), dp(14), dp(10))
             background = roundedBox(tokens.cardBackground, tokens.border, dp(16).toFloat())
             isClickable = canOpenReport
-            if (canOpenReport) setOnClickListener { showRecipeRunHistoryStepReport(recipe, entry, step) }
+            if (canOpenReport) setOnClickListener { onReportClick() }
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(0, 0, 0, dp(8))
             }
@@ -12450,7 +12618,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private data class ResourceInstallWizardRowBinding(
         val resourceId: String,
         val subtitleTextView: TextView,
-        val statusTextView: TextView
+        val statusTextView: TextView,
+        val openButtonTextView: TextView?
     )
 
     private data class ResourceInstallWizardUiState(
