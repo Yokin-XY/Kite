@@ -42,6 +42,17 @@ data class KiteResourceHomeCard(
     val recipe: JSONObject
 )
 
+data class KiteResourceHomeLayout(
+    val sections: List<KiteResourceHomeSection>,
+    val rawJson: JSONObject
+)
+
+data class KiteResourceHomeSection(
+    val id: String,
+    val title: String,
+    val items: List<String>
+)
+
 data class KiteResourceRelationTargets(
     val base: List<KiteResourceRequirementTarget>,
     val defaults: List<KiteResourceRequirementTarget>,
@@ -94,6 +105,9 @@ class KiteResourceManifestLoader(private val context: Context) {
 
     fun requestUninstallActions(resourceId: String): List<KiteResourceShellAction> =
         requestManifest(resourceId)?.uninstallActions.orEmpty()
+
+    fun requestHomeLayout(): KiteResourceHomeLayout? =
+        supply.requestHomeLayout()
 
     fun requestFirstHomeCardRecipeTemplate(resourceId: String): JSONObject? =
         requestManifest(resourceId)?.homeCards?.firstOrNull()?.recipe?.deepCopy()
@@ -172,6 +186,7 @@ class KiteResourceManifestLoader(private val context: Context) {
         fun requestProviderIds(request: KiteResourceProviderRequest): List<String>
         fun requestInstallPlan(request: KiteResourceInstallPlanRequest): KiteResourceInstallPlanPayload?
         fun requestAllManifests(): Map<String, KiteResourceManifest>
+        fun requestHomeLayout(): KiteResourceHomeLayout?
         fun invalidate()
     }
 
@@ -182,6 +197,8 @@ class KiteResourceManifestLoader(private val context: Context) {
         private val requestedPlans = linkedMapOf<String, KiteResourceInstallPlanPayload?>()
         private var knownAssetEntries: List<String>? = null
         private var allManifestCache: Map<String, KiteResourceManifest>? = null
+        private var homeLayoutCache: KiteResourceHomeLayout? = null
+        private var homeLayoutLoaded = false
 
         override fun requestManifest(request: KiteResourceManifestRequest): KiteResourceManifest? {
             val resourceId = request.resourceId.trim()
@@ -324,6 +341,15 @@ class KiteResourceManifestLoader(private val context: Context) {
             }
         }
 
+        override fun requestHomeLayout(): KiteResourceHomeLayout? {
+            return synchronized(lock) {
+                if (homeLayoutLoaded) return@synchronized homeLayoutCache
+                homeLayoutCache = readHomeLayout("$ASSET_ROOT/home.json")
+                homeLayoutLoaded = true
+                homeLayoutCache
+            }
+        }
+
         override fun invalidate() {
             synchronized(lock) {
                 requestedManifests.clear()
@@ -331,12 +357,16 @@ class KiteResourceManifestLoader(private val context: Context) {
                 requestedPlans.clear()
                 knownAssetEntries = null
                 allManifestCache = null
+                homeLayoutCache = null
+                homeLayoutLoaded = false
             }
         }
 
         private fun assetEntries(): List<String> {
             knownAssetEntries?.let { return it }
-            val entries = context.assets.list(ASSET_ROOT).orEmpty().sorted()
+            val entries = context.assets.list(ASSET_ROOT).orEmpty()
+                .filterNot { it.endsWith(".json", ignoreCase = true) }
+                .sorted()
             knownAssetEntries = entries
             return entries
         }
@@ -350,6 +380,31 @@ class KiteResourceManifestLoader(private val context: Context) {
         }.onFailure { error ->
             Log.w(TAG, "Failed to read resource manifest: $path", error)
         }.getOrNull()
+
+    private fun readHomeLayout(path: String): KiteResourceHomeLayout? =
+        runCatching {
+            context.assets.open(path).bufferedReader().use { reader ->
+                parseHomeLayout(JSONObject(reader.readText()))
+            }
+        }.onFailure { error ->
+            Log.w(TAG, "Failed to read resource home layout: $path", error)
+        }.getOrNull()
+
+    private fun parseHomeLayout(json: JSONObject): KiteResourceHomeLayout {
+        val sectionsJson = json.optJSONArray("sections") ?: JSONArray()
+        val sections = buildList {
+            for (index in 0 until sectionsJson.length()) {
+                val section = sectionsJson.optJSONObject(index) ?: continue
+                val id = section.optString("id").trim()
+                val title = section.optString("title").trim()
+                val items = section.optJSONArray("items").toStringList()
+                if (id.isNotBlank() && title.isNotBlank()) {
+                    add(KiteResourceHomeSection(id = id, title = title, items = items))
+                }
+            }
+        }
+        return KiteResourceHomeLayout(sections = sections, rawJson = json.deepCopy())
+    }
 
     private fun parseManifest(json: JSONObject): KiteResourceManifest {
         val base = json.optJSONObject("base") ?: JSONObject()

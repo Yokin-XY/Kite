@@ -85,6 +85,7 @@ import com.kite.app.resources.KiteResourceInstallSpec
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
+import com.kite.app.resources.KiteResourceHomeLayout
 import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRequestPolicy
 import com.kite.app.resources.KiteResourceRegistryEntry
@@ -1349,11 +1350,43 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val resources = resourceCatalog(forceRefresh = forceCatalogRefresh)
         val cleanQuery = query.trim()
         val visibleResources = if (cleanQuery.isBlank()) resources else resources.filter { it.matchesResourceQuery(cleanQuery) }
+        val sections = buildResourceHomeSections(visibleResources, resourceManifestLoader.requestHomeLayout())
         return ResourceSectionsPayload(
             query = cleanQuery,
             resources = visibleResources,
-            renderKey = buildResourceSectionsRenderKey(cleanQuery, visibleResources)
+            sections = sections,
+            renderKey = buildResourceSectionsRenderKey(cleanQuery, visibleResources, sections)
         )
+    }
+
+    private fun buildResourceHomeSections(
+        resources: List<ResourceItem>,
+        layout: KiteResourceHomeLayout?
+    ): List<ResourceHomeSectionUi> {
+        val resourcesById = resources.associateBy { it.id }
+        val usedIds = linkedSetOf<String>()
+        val layoutSections = layout?.sections.orEmpty().mapNotNull { section ->
+            val sectionItems = section.items.mapNotNull { resourceId ->
+                resourcesById[resourceId]?.also { usedIds.add(it.id) }
+            }
+            if (sectionItems.isEmpty()) {
+                null
+            } else {
+                ResourceHomeSectionUi(id = section.id, title = section.title, items = sectionItems)
+            }
+        }
+        val fallbackSections = resources
+            .filterNot { it.id in usedIds }
+            .groupBy { it.section }
+            .mapNotNull { (title, items) ->
+                val cleanTitle = title.ifBlank { "更多资源" }
+                if (items.isEmpty()) null else ResourceHomeSectionUi(
+                    id = KiteResourceInstallRecipes.safeId(cleanTitle),
+                    title = cleanTitle,
+                    items = items
+                )
+            }
+        return layoutSections + fallbackSections
     }
 
     private fun cacheResourceSectionsPayload(requestKey: String, payload: ResourceSectionsPayload) {
@@ -1379,19 +1412,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             return true
         }
         sectionHost.removeAllViews()
-        val resourcesBySection = visibleResources.groupBy { it.section }
-        sectionHost.addView(resourceSection(
-            title = "精选推荐",
-            items = resourcesBySection["精选推荐"].orEmpty()
-        ))
-        sectionHost.addView(resourceSection(
-            title = "快速开始",
-            items = resourcesBySection["快速开始"].orEmpty()
-        ))
-        sectionHost.addView(resourceSection(
-            title = "更多资源",
-            items = resourcesBySection["更多资源"].orEmpty()
-        ))
+        payload.sections.forEach { section ->
+            sectionHost.addView(resourceSection(title = section.title, items = section.items))
+        }
         if (visibleResources.isEmpty()) {
             sectionHost.addView(resourceSearchEmptyState(payload.query))
         }
@@ -1441,9 +1464,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
         }
 
-    private fun buildResourceSectionsRenderKey(query: String, resources: List<ResourceItem>): String =
+    private fun buildResourceSectionsRenderKey(
+        query: String,
+        resources: List<ResourceItem>,
+        sections: List<ResourceHomeSectionUi>
+    ): String =
         buildString {
             append(query)
+            sections.forEach { section ->
+                append("|section:")
+                append(section.id)
+                append(':')
+                append(section.title)
+                append(':')
+                append(section.items.joinToString(",") { it.id })
+            }
             resources.forEach { item ->
                 append('|')
                 append(item.id)
@@ -13132,7 +13167,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private data class ResourceSectionsPayload(
         val query: String,
         val resources: List<ResourceItem>,
+        val sections: List<ResourceHomeSectionUi>,
         val renderKey: String
+    )
+
+    private data class ResourceHomeSectionUi(
+        val id: String,
+        val title: String,
+        val items: List<ResourceItem>
     )
 
     private data class ResourcePreviewCard(

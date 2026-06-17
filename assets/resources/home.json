@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "sections": [
+    {
+      "id": "featured",
+      "title": "精选推荐",
+      "items": [
+        "kite.nodejs",
+        "kite.hermes.core",
+        "kite.hermes.webui",
+        "kite.reasonix",
+        "kite.mimo.code",
+        "kite.codex.cli",
+        "kite.claude.code",
+        "kite.opencode",
+        "kite.openclaw"
+      ]
+    },
+    {
+      "id": "more",
+      "title": "更多资源",
+      "items": [
+        "kite.git",
+        "kite.curl",
+        "kite.python",
+        "kite.uv"
+      ]
+    }
+  ]
+}
