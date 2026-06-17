@@ -7343,7 +7343,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setMargins(0, dp(14), dp(13), 0)
         })
         addView(recipeCardName(recipe.name), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
-            setMargins(dp(15), dp(58), dp(15), 0)
+            setMargins(dp(15), dp(58), dp(92), 0)
         })
         addView(recipeCardCategory(recipe), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
             setMargins(dp(15), dp(78), dp(15), 0)
@@ -7452,14 +7452,93 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun recipeCardName(text: String): TextView = TextView(this).apply {
-        this.text = text.ifBlank { "未命名卡片" }
-        textSize = 13.2f
+        val title = compactRecipeCardTitle(text)
+        this.text = title.text
+        textSize = title.textSizeSp
         includeFontPadding = false
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(tokens.textPrimary)
         maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
+        ellipsize = TextUtils.TruncateAt.MIDDLE
     }
+
+    private fun compactRecipeCardTitle(raw: String): RecipeCardTitleText {
+        val title = raw.trim().ifBlank { "未命名卡片" }
+        val bytes = utf8ByteCount(title)
+        val overflow = (bytes - RECIPE_CARD_TITLE_SHRINK_AFTER_BYTES).coerceAtLeast(0)
+        val range = (RECIPE_CARD_TITLE_MAX_BYTES - RECIPE_CARD_TITLE_SHRINK_AFTER_BYTES).coerceAtLeast(1)
+        val progress = (overflow.toFloat() / range.toFloat()).coerceIn(0f, 1f)
+        val textSize = RECIPE_CARD_TITLE_MAX_TEXT_SP -
+            ((RECIPE_CARD_TITLE_MAX_TEXT_SP - RECIPE_CARD_TITLE_MIN_TEXT_SP) * progress)
+        return RecipeCardTitleText(
+            text = middleEllipsizeByUtf8Bytes(title, RECIPE_CARD_TITLE_MAX_BYTES),
+            textSizeSp = textSize
+        )
+    }
+
+    private fun middleEllipsizeByUtf8Bytes(text: String, maxBytes: Int): String {
+        if (utf8ByteCount(text) <= maxBytes) return text
+        val budget = (maxBytes - utf8ByteCount(RECIPE_CARD_TITLE_ELLIPSIS)).coerceAtLeast(0)
+        if (budget <= 0) return RECIPE_CARD_TITLE_ELLIPSIS
+        val prefixBudget = (budget * 3) / 5
+        val suffixBudget = budget - prefixBudget
+        return takeUtf8Prefix(text, prefixBudget) +
+            RECIPE_CARD_TITLE_ELLIPSIS +
+            takeUtf8Suffix(text, suffixBudget)
+    }
+
+    private fun takeUtf8Prefix(text: String, maxBytes: Int): String {
+        val builder = StringBuilder()
+        var index = 0
+        var bytes = 0
+        while (index < text.length) {
+            val codePoint = text.codePointAt(index)
+            val nextBytes = utf8ByteCount(codePoint)
+            if (bytes + nextBytes > maxBytes) break
+            builder.appendCodePoint(codePoint)
+            bytes += nextBytes
+            index += Character.charCount(codePoint)
+        }
+        return builder.toString()
+    }
+
+    private fun takeUtf8Suffix(text: String, maxBytes: Int): String {
+        val codePoints = mutableListOf<Int>()
+        var index = text.length
+        var bytes = 0
+        while (index > 0) {
+            val codePoint = text.codePointBefore(index)
+            val nextBytes = utf8ByteCount(codePoint)
+            if (bytes + nextBytes > maxBytes) break
+            codePoints.add(codePoint)
+            bytes += nextBytes
+            index -= Character.charCount(codePoint)
+        }
+        val builder = StringBuilder()
+        for (position in codePoints.indices.reversed()) {
+            builder.appendCodePoint(codePoints[position])
+        }
+        return builder.toString()
+    }
+
+    private fun utf8ByteCount(text: String): Int {
+        var index = 0
+        var bytes = 0
+        while (index < text.length) {
+            val codePoint = text.codePointAt(index)
+            bytes += utf8ByteCount(codePoint)
+            index += Character.charCount(codePoint)
+        }
+        return bytes
+    }
+
+    private fun utf8ByteCount(codePoint: Int): Int =
+        when {
+            codePoint <= 0x7F -> 1
+            codePoint <= 0x7FF -> 2
+            codePoint <= 0xFFFF -> 3
+            else -> 4
+        }
 
     private fun recipeCardCategory(recipe: KiteRecipe): TextView = TextView(this).apply {
         text = recipeCategoryLabel(recipe)
@@ -11992,6 +12071,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val background: Int
     )
 
+    private data class RecipeCardTitleText(
+        val text: String,
+        val textSizeSp: Float
+    )
+
     private data class UbuntuRuntimeUiState(
         val title: String,
         val detail: String,
@@ -12082,6 +12166,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val STATE_WORKBENCH_URL = "kite_workbench_url"
         private const val STATE_RECIPE_DRAFT = "kite_recipe_draft"
         private const val RECIPE_DRAFT_RESTORE_WINDOW_MS = 6L * 60L * 60L * 1000L
+        private const val RECIPE_CARD_TITLE_MAX_TEXT_SP = 13.2f
+        private const val RECIPE_CARD_TITLE_MIN_TEXT_SP = 10.0f
+        private const val RECIPE_CARD_TITLE_SHRINK_AFTER_BYTES = 12
+        private const val RECIPE_CARD_TITLE_MAX_BYTES = 20
+        private const val RECIPE_CARD_TITLE_ELLIPSIS = "…"
         private val terminalFlowFinishedStatuses = setOf(
             ManagedTerminalStatus.EXITED,
             ManagedTerminalStatus.FAILED,
