@@ -170,7 +170,7 @@ class KiteResourceRegistry(context: Context) {
             status = STATUS_INSTALLING,
             operation = OP_INSTALL,
             runId = runId.orEmpty(),
-            summary = "安装中"
+            summary = "获取中"
         )
     }
 
@@ -180,7 +180,7 @@ class KiteResourceRegistry(context: Context) {
             status = STATUS_UNINSTALLING,
             operation = OP_UNINSTALL,
             runId = runId.orEmpty(),
-            summary = "清理中"
+            summary = "卸载中"
         )
     }
 

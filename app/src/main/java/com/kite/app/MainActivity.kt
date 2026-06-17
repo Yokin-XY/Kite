@@ -229,6 +229,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var resourceInstallWizardPlanIds: List<String> = emptyList()
     private var resourceInstallPlanRequestSerial = 0L
     private val suppressedResourceRunSurfaceRecipeIds = mutableSetOf<String>()
+    private val pendingResourceUninstallContinuations = mutableMapOf<String, ResourceUninstallContinuation>()
     private var cachedResourceCatalog: List<ResourceItem>? = null
     private var cachedResourceCatalogUpdatedAt = 0L
     private var resourceCatalogDirty = true
@@ -378,7 +379,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (showResourceInstallWizardFromIntent(sourceIntent, recipeId, instanceId)) {
                 return true
             }
-            Toast.makeText(this, "安装向导缺少队列信息", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "获取向导缺少队列信息", Toast.LENGTH_SHORT).show()
             if (this is CardRunActivity) finish()
             return true
         }
@@ -611,6 +612,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         when (currentScreen) {
             Screen.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
             Screen.CardRun -> requestVisibleResourceInstallWizardRefresh(signal.reason)
+            Screen.ResourceDetail -> currentResourceDetailId?.let { showResourceDetail(it) }
+            Screen.ResourceMore -> currentResourceDetailId?.let { resourceId ->
+                resourceCatalogForUiRender("resource_more_signal")
+                    .firstOrNull { item -> item.id == resourceId }
+                    ?.let { item -> showResourceMoreActions(item) }
+            }
             Screen.ResourceManage -> requestResourceManageRefresh(forceCatalogRefresh = false, reason = signal.reason)
             else -> Unit
         }
@@ -1473,6 +1480,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun invalidateResourceCatalogCache() {
         resourceCatalogDirty = true
         resourceSectionsDirty = true
+        cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     }
 
     private fun invalidateResourceUiCache() {
@@ -1541,7 +1549,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             val host = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(22), dp(18), dp(22), dp(34))
-                addView(resourceManageEmptyBlock("正在读取资源管理信息", "安装队列和已安装资源会在后台加载，避免阻塞当前页面。"))
+                addView(resourceManageEmptyBlock("正在读取资源管理信息", "获取队列和已获取资源会在后台加载，避免阻塞当前页面。"))
             }
             resourceManageContentHost = host
             addView(host)
@@ -1583,9 +1591,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val host = resourceManageContentHost ?: return
         host.removeAllViews()
         val catalogById = payload.catalog.associateBy { it.id }
-        host.addView(sectionTitle("安装列表"))
+        host.addView(sectionTitle("获取列表"))
         if (payload.planIds.isEmpty()) {
-            host.addView(resourceManageEmptyBlock("暂无安装任务", "从资源商店点击安装后，这里会显示当前队列。"))
+            host.addView(resourceManageEmptyBlock("暂无获取任务", "从资源商店点击获取后，这里会显示当前队列。"))
         } else {
             host.addView(resourceManageInstallTaskCard(
                 payload.planIds,
@@ -1610,12 +1618,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 }
             })
         }
-        host.addView(sectionTitle("已安装资源").apply {
+        host.addView(sectionTitle("已获取资源").apply {
             setPadding(0, dp(24), 0, dp(12))
         })
         val installed = payload.catalog.filter { resourceItemIsInstalled(it) }
         if (installed.isEmpty()) {
-            host.addView(resourceManageEmptyBlock("暂无已安装资源", "安装成功并完成注册后，会出现在这里。"))
+            host.addView(resourceManageEmptyBlock("暂无已获取资源", "获取成功并完成注册后，会出现在这里。"))
         } else {
             host.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -1663,27 +1671,35 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val targetId = currentResourceInstallTargetId
             ?: activeResourceInstallWizard?.targetResourceId
             ?: planIds.lastOrNull().orEmpty()
-        val targetName = catalogById[targetId]?.name ?: targetId.ifBlank { "安装任务" }
+        val targetName = catalogById[targetId]?.name ?: targetId.ifBlank { "获取任务" }
         val completedCount = planIds.count { id ->
             planSnapshot.stepStatus(id) == KiteResourceInstallStore.PLAN_STEP_DONE ||
                 (resourceItemIsInstalled(catalogById[id]) && registrySnapshot[id]?.failed != true)
         }
+        val hasUninstalling = planIds.any { id -> registrySnapshot[id]?.uninstalling == true }
+        val hasUninstallFailure = planIds.any { id ->
+            registrySnapshot[id]?.failed == true &&
+                registrySnapshot[id]?.operation == KiteResourceInstallStore.OP_UNINSTALL
+        }
         val hasFailure = planIds.any { id ->
-            registrySnapshot[id]?.failed == true ||
-                planSnapshot.stepStatus(id) == KiteResourceInstallStore.PLAN_STEP_FAILED
+            registrySnapshot[id]?.uninstalling != true &&
+                (registrySnapshot[id]?.failed == true ||
+                    planSnapshot.stepStatus(id) == KiteResourceInstallStore.PLAN_STEP_FAILED)
         }
         val hasRunningStep = planIds.any { id ->
             planSnapshot.stepStatus(id) == KiteResourceInstallStore.PLAN_STEP_RUNNING
         }
         val statusText = when {
-            hasRunningStep -> "安装中"
+            hasRunningStep -> "获取中"
+            hasUninstalling -> "卸载中"
+            hasUninstallFailure -> "卸载失败"
             hasFailure -> "已停止"
             completedCount >= planIds.size -> "已完成"
             else -> "等待中"
         }
         val tone = when {
-            hasFailure -> tokens.danger
-            hasRunningStep -> tokens.primaryStrong
+            hasFailure || hasUninstallFailure -> tokens.danger
+            hasRunningStep || hasUninstalling -> tokens.primaryStrong
             completedCount >= planIds.size -> tokens.success
             else -> tokens.textSecondary
         }
@@ -2112,7 +2128,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             addView(row {
-                listOf("全部", "已安装", "本地", "Python", "Node", "AI", "系统工具").forEachIndexed { index, label ->
+                listOf("全部", "已获取", "本地", "Python", "Node", "AI", "系统工具").forEachIndexed { index, label ->
                     addView(TextView(context).apply {
                         text = label
                         textSize = 12.5f
@@ -2237,7 +2253,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun resourceActionEnabled(actionLabel: String, busy: Boolean): Boolean =
-        actionLabel == "处理中" || !busy
+        when (actionLabel) {
+            "获取中", "卸载中", "处理中" -> false
+            else -> !busy
+        }
 
     private fun resourceDetailActionArea(item: ResourceItem): View =
         if (resourceHasSplitActions(item)) {
@@ -2267,7 +2286,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         (resourceIsInstalled(item) && item.actionLabel == "打开") || resourceHasFailedInstallActions(item)
 
     private fun resourceHasFailedInstallActions(item: ResourceItem): Boolean =
-        item.actionLabel == "重新安装" &&
+        item.actionLabel == "重新获取" &&
             resourceInstallStore.isFailed(item.id) &&
             resourceInstallStore.failedOperation(item.id) != KiteResourceInstallStore.OP_UNINSTALL
 
@@ -2285,7 +2304,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (item.actionEnabled) {
                 setOnClickListener {
                     if (isCancel) {
-                        handleResourceCancelInstallTask(item)
+                        handleResourceFailedInstallCancel(item)
                     } else {
                         handleResourceUninstallAction(item)
                     }
@@ -2655,7 +2674,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             RESOURCE_HERMES_WEBUI -> listOf(
                 ResourceRecommendation(RESOURCE_HERMES_CORE, "基础依赖"),
                 ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
-                ResourceRecommendation("open-webui", "同类界面")
+                ResourceRecommendation(RESOURCE_REASONIX, "同类 Agent")
+            )
+            RESOURCE_REASONIX -> listOf(
+                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
+                ResourceRecommendation(RESOURCE_GIT, "源码工具"),
+                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "同类 Agent")
             )
             RESOURCE_HERMES_CORE -> listOf(
                 ResourceRecommendation(RESOURCE_PYTHON, "运行时"),
@@ -2665,53 +2689,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
             RESOURCE_PYTHON -> listOf(
                 ResourceRecommendation(RESOURCE_UV, "包管理"),
-                ResourceRecommendation("python-314", "同类工具链"),
                 ResourceRecommendation(RESOURCE_HERMES_CORE, "上层应用")
-            )
-            "python-314" -> listOf(
-                ResourceRecommendation(RESOURCE_PYTHON, "系统 Python"),
-                ResourceRecommendation(RESOURCE_UV, "包管理"),
-                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集")
             )
             RESOURCE_NODE_RUNTIME -> listOf(
                 ResourceRecommendation(RESOURCE_HERMES_WEBUI, "上层应用"),
-                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集"),
-                ResourceRecommendation("open-webui", "网页工具")
+                ResourceRecommendation(RESOURCE_REASONIX, "编码 Agent")
             )
             RESOURCE_UV -> listOf(
                 ResourceRecommendation(RESOURCE_PYTHON, "运行时"),
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "上层应用"),
-                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集")
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "上层应用")
             )
             RESOURCE_GIT -> listOf(
                 ResourceRecommendation(RESOURCE_CURL, "同级工具"),
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "被依赖"),
-                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集")
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "被依赖")
             )
             RESOURCE_CURL -> listOf(
                 ResourceRecommendation(RESOURCE_GIT, "同级工具"),
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "被依赖"),
-                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集")
-            )
-            RESOURCE_KF_TOOL_ENV -> listOf(
-                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "包含能力"),
-                ResourceRecommendation(RESOURCE_UV, "包含能力"),
-                ResourceRecommendation("logs-viewer", "配套入口")
-            )
-            "open-webui" -> listOf(
-                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "同类界面"),
-                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "网页运行时"),
-                ResourceRecommendation(RESOURCE_PYTHON, "后端运行时")
-            )
-            "logs-viewer" -> listOf(
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "运行日志"),
-                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "网页日志"),
-                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "系统工具")
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "被依赖")
             )
             else -> listOf(
-                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集"),
                 ResourceRecommendation(RESOURCE_HERMES_CORE, "AI 基础"),
-                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "Web 运行")
+                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "Web 运行"),
+                ResourceRecommendation(RESOURCE_PYTHON, "运行时")
             )
         }
 
@@ -2919,7 +2918,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         "Python" -> "Python"
                         else -> "Kite / Ubuntu"
                     },
-                    "安装来源" to item.sourceLabel,
+                    "获取来源" to item.sourceLabel,
                     "占用空间" to item.sizeLabel,
                     "状态" to item.stateLabel,
                     "资源类型" to item.category
@@ -2957,8 +2956,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun handleResourceAction(item: ResourceItem) {
         when (item.actionLabel) {
-            "安装", "重新安装", "获取" -> handleResourceInstallAction(item)
-            "处理中" -> reopenResourceInstallWizard(item)
+            "获取", "重新获取", "安装", "重新安装" -> handleResourceInstallAction(item)
+            "处理中", "获取中" -> reopenResourceInstallWizard(item)
+            "卸载中" -> Toast.makeText(this, "${item.name} 正在卸载", Toast.LENGTH_SHORT).show()
             "打开" -> {
                 val recipe = resourceOpenRecipe(item)
                 if (recipe == null) {
@@ -2967,7 +2967,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     startResourceOpen(item, recipe)
                 }
             }
-            "卸载", "继续清理" -> {
+            "卸载", "继续卸载" -> {
                 handleResourceUninstallAction(item)
             }
             else -> Toast.makeText(this, "正在处理 ${item.name}", Toast.LENGTH_SHORT).show()
@@ -2988,7 +2988,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         val planIds = planSnapshot.resourceIds.ifEmpty { resourceInstallWizardPlanIds }
         if (targetId.isBlank() || planIds.isEmpty()) {
-            Toast.makeText(this, "${item.name} 正在处理，安装向导暂不可恢复", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "${item.name} 正在处理，获取向导暂不可恢复", Toast.LENGTH_SHORT).show()
             return
         }
         currentResourceInstallTargetId = targetId
@@ -2997,8 +2997,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun handleResourceInstallAction(item: ResourceItem) {
+        if (
+            resourceInstallStore.isFailed(item.id) &&
+            resourceInstallStore.failedOperation(item.id) != KiteResourceInstallStore.OP_UNINSTALL
+        ) {
+            handleResourceReinstallAction(item)
+            return
+        }
         val requestId = ++resourceInstallPlanRequestSerial
-        Toast.makeText(this, "正在准备 ${item.name} 的安装队列", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "正在准备 ${item.name} 的获取队列", Toast.LENGTH_SHORT).show()
         thread(name = "KiteResourceInstallPlan-$requestId-${item.id}", isDaemon = true) {
             val result = runCatching { buildResourceInstallPlan(item) }
             runOnUiThread {
@@ -3008,12 +3015,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 }.onFailure { error ->
                     Toast.makeText(
                         this,
-                        "安装队列准备失败：${error.message ?: error.javaClass.simpleName}",
+                        "获取队列准备失败：${error.message ?: error.javaClass.simpleName}",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
             }
         }
+    }
+
+    private fun handleResourceReinstallAction(item: ResourceItem) {
+        Toast.makeText(this, "正在先卸载 ${item.name} 的残留", Toast.LENGTH_SHORT).show()
+        handleResourceUninstallAction(item, ResourceUninstallContinuation.Reinstall)
     }
 
     private fun handleResourceInstallPlanReady(item: ResourceItem, plan: ResourceInstallPlan) {
@@ -3022,7 +3034,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 .map { it.resource?.name ?: it.requirement }
                 .distinct()
                 .joinToString("、")
-            Toast.makeText(this, "缺少可安装的基础层：$missingNames", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "缺少可获取的基础层：$missingNames", Toast.LENGTH_SHORT).show()
             return
         }
         if (plan.steps.isEmpty()) {
@@ -3047,6 +3059,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 ) {
                     resourceInstallStore.clear(resourceId)
                 }
+                pendingResourceUninstallContinuations.remove(resourceId)
                 KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
             }
         recipeIds.forEach { recipeId ->
@@ -3059,16 +3072,40 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
-    private fun handleResourceUninstallAction(item: ResourceItem) {
+    private fun handleResourceUninstallAction(
+        item: ResourceItem,
+        continuation: ResourceUninstallContinuation = pendingResourceUninstallContinuations[item.id]
+            ?: ResourceUninstallContinuation.None
+    ) {
         val recipe = resourceUninstallRecipe(item)
         if (recipe == null) {
+            pendingResourceUninstallContinuations.remove(item.id)
             resourceInstallStore.clear(item.id)
             invalidateResourceCatalogCache()
-            Toast.makeText(this, "已移除 ${item.name} 的安装记录", Toast.LENGTH_SHORT).show()
-            showResources()
+            Toast.makeText(this, "已移除 ${item.name} 的获取记录", Toast.LENGTH_SHORT).show()
+            if (continuation == ResourceUninstallContinuation.Reinstall) {
+                handleResourceInstallAction(item)
+            } else if (continuation == ResourceUninstallContinuation.CancelFailedInstall) {
+                resourceInstallStore.clearPlan()
+                currentResourceInstallTargetId = null
+                resourceInstallWizardPlanIds = emptyList()
+                activeResourceInstallWizard = null
+                if (this is CardRunActivity && currentScreen == Screen.CardRun) {
+                    closeCardRunTask()
+                } else {
+                    showResources()
+                }
+            } else {
+                showResources()
+            }
         } else {
-            startResourceUninstall(item, recipe)
+            startResourceUninstall(item, recipe, continuation)
         }
+    }
+
+    private fun handleResourceFailedInstallCancel(item: ResourceItem) {
+        Toast.makeText(this, "正在卸载 ${item.name} 的残留", Toast.LENGTH_SHORT).show()
+        handleResourceUninstallAction(item, ResourceUninstallContinuation.CancelFailedInstall)
     }
 
     private fun handleResourceCancelInstallTask(item: ResourceItem) {
@@ -3095,14 +3132,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .filterNot { resourceInstallStore.isInstalled(it) }
             .distinct()
         stopResourceInstallRunsForCancel(unfinishedIds, catalogById)
-        Toast.makeText(this, "正在取消安装任务", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "正在取消获取任务", Toast.LENGTH_SHORT).show()
         if (unfinishedIds.isEmpty()) {
             clearResourceInstallTask(
                 targetResourceId = targetId,
                 planResourceIds = resourceIds,
                 closeWizard = closeWizard
             )
-            Toast.makeText(this, "安装任务已取消", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "获取任务已取消", Toast.LENGTH_SHORT).show()
             return
         }
         root.postDelayed({
@@ -3123,6 +3160,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val targetId = targetResourceId.orEmpty()
         val resourceIds = resolveResourceInstallTaskIds(targetId, planResourceIds)
         resourceIds.forEach { resourceId ->
+            pendingResourceUninstallContinuations.remove(resourceId)
             if (
                 resourceInstallStore.status(resourceId) != null &&
                 !resourceInstallStore.isInstalled(resourceId) &&
@@ -3195,7 +3233,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             runId = state.runId,
             terminalSessionId = state.terminalSessionId,
             pid = state.pid,
-            lastMeaningfulOutput = "正在取消安装任务"
+            lastMeaningfulOutput = "正在取消获取任务"
         )
         state.terminalSessionId?.takeIf { it.isNotBlank() }?.let { sessionId ->
             TerminalRuntimeHost.sendCommand(applicationContext, "\u0003", sessionId)
@@ -3248,9 +3286,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     closeWizard = closeWizard
                 )
                 val message = if (result.ok || result.accepted) {
-                    "安装任务已取消，临时内容已清理"
+                    "获取任务已取消，临时内容已清理"
                 } else {
-                    "安装任务已取消，部分残留稍后再清理"
+                    "获取任务已取消，部分残留稍后再清理"
                 }
                 Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
             }
@@ -3359,7 +3397,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             stepId = targetId,
             surface = CardRunSurface.InstallWizard,
             currentStepIndex = 0,
-            lastMeaningfulOutput = "等待安装确认"
+            lastMeaningfulOutput = "等待获取确认"
         )
         title = wizardRecipe.name
         if (this is CardRunActivity) {
@@ -3388,13 +3426,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             fun stepStatus(resourceId: String): String = planSnapshot.stepStatus(resourceId)
             fun isRunningStep(resourceId: String): Boolean =
                 stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_RUNNING
+            fun isUninstallingStep(resourceId: String): Boolean =
+                entry(resourceId)?.uninstalling == true
             fun isFailed(resourceId: String): Boolean =
-                entry(resourceId)?.failed == true ||
-                    stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_FAILED
+                !isUninstallingStep(resourceId) &&
+                    (entry(resourceId)?.failed == true ||
+                        stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_FAILED)
             val target = catalog[targetId]
             val failedIds = planIds.filter { id -> isFailed(id) }
+            val uninstallingIds = planIds.filter { id -> isUninstallingStep(id) }
             val hasFailure = failedIds.isNotEmpty()
             val activeId = planIds.firstOrNull { isRunningStep(it) }
+                ?: uninstallingIds.firstOrNull()
                 ?: failedIds.firstOrNull()
                 ?: pendingIds.firstOrNull()
             val completedCount = planIds.count { id ->
@@ -3402,6 +3445,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     (resourceItemIsInstalled(catalog[id]) && entry(id)?.failed != true)
             }
             val hasRunningStep = planIds.any { isRunningStep(it) }
+            val hasUninstallingStep = uninstallingIds.isNotEmpty()
             val hasPending = pendingIds.isNotEmpty() && !hasFailure
             val rowHosts = linkedMapOf<String, LinearLayout>()
             val rowBindings = linkedMapOf<String, ResourceInstallWizardRowBinding>()
@@ -3411,10 +3455,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             addView(resourceInstallWizardHeader(
                 title = target?.name ?: targetId,
                 detail = when {
-                    hasRunningStep -> "正在安装：${catalog[activeId]?.name ?: activeId.orEmpty()}"
-                    hasFailure -> "安装已停止，请查看失败步骤报告"
-                    hasPending -> "将按顺序安装 ${planIds.size} 个资源"
-                    else -> "安装队列已完成"
+                    hasRunningStep -> "正在获取：${catalog[activeId]?.name ?: activeId.orEmpty()}"
+                    hasUninstallingStep -> "正在卸载：${catalog[activeId]?.name ?: activeId.orEmpty()}"
+                    hasFailure -> "发现异常请手动处理"
+                    hasPending -> "将按顺序获取 ${planIds.size} 个资源"
+                    else -> "获取队列已完成"
                 },
                 completedCount = completedCount.coerceIn(0, planIds.size.coerceAtLeast(1)),
                 totalCount = planIds.size,
@@ -3426,16 +3471,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             val primaryActionHost = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(resourceInstallWizardPrimaryAction(
-                    target = target,
-                    targetId = targetId,
-                    planIds = planIds,
                     hasRunningStep = hasRunningStep,
+                    hasUninstallingStep = hasUninstallingStep,
                     hasPending = hasPending,
                     hasFailure = hasFailure
                 ))
             }
             addView(primaryActionHost)
-            addView(sectionTitle("安装队列").apply { setPadding(0, dp(24), 0, dp(12)) })
+            addView(sectionTitle("获取队列").apply { setPadding(0, dp(24), 0, dp(12)) })
             val rowsHost = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
             }
@@ -3474,8 +3517,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun resourceInstallWizardRecipe(targetResourceId: String, targetName: String): KiteRecipe =
         KiteRecipe(
             id = "resource-install-wizard-${KiteResourceInstallRecipes.safeId(targetResourceId)}",
-            name = "$targetName 安装向导",
-            description = "管理资源安装队列",
+            name = "$targetName 获取向导",
+            description = "管理资源获取队列",
             type = KiteRecipe.TYPE_TEMPLATE,
             category = "resource",
             defaultUrl = "",
@@ -3552,51 +3595,35 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun resourceInstallWizardPrimaryAction(
-        target: ResourceItem?,
-        targetId: String,
-        planIds: List<String>,
         hasRunningStep: Boolean,
+        hasUninstallingStep: Boolean,
         hasPending: Boolean,
         hasFailure: Boolean
     ): View {
-        if (hasFailure) {
-            return row {
-                gravity = Gravity.CENTER_VERTICAL
+        if (hasUninstallingStep) {
+            return resourceInstallWizardActionButton(
+                label = "卸载中",
+                enabled = false
+            ) {}.apply {
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply {
                     setMargins(0, dp(16), 0, 0)
                 }
-                addView(resourceInstallWizardActionButton("重新安装") {
-                    clearResourceInstallTask(
-                        targetResourceId = targetId,
-                        planResourceIds = planIds,
-                        closeWizard = false
-                    )
-                    val targetItem = target ?: resourceCatalog(forceRefresh = true).firstOrNull { it.id == targetId }
-                    if (targetItem == null) {
-                        Toast.makeText(this@MainActivity, "安装目标缺少资源定义", Toast.LENGTH_SHORT).show()
-                    } else {
-                        handleResourceInstallAction(targetItem)
-                    }
-                }.apply {
-                    layoutParams = LinearLayout.LayoutParams(0, dp(52), 0.7f)
-                })
-                addView(resourceInstallWizardActionButton("取消", danger = true) {
-                    clearResourceInstallTask(
-                        targetResourceId = targetId,
-                        planResourceIds = planIds,
-                        closeWizard = true
-                    )
-                }.apply {
-                    layoutParams = LinearLayout.LayoutParams(0, dp(52), 0.3f).apply {
-                        setMargins(dp(10), 0, 0, 0)
-                    }
-                })
+            }
+        }
+        if (hasFailure) {
+            return resourceInstallWizardActionButton(
+                label = "发现异常请手动处理",
+                enabled = false
+            ) {}.apply {
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply {
+                    setMargins(0, dp(16), 0, 0)
+                }
             }
         }
         return resourceInstallWizardActionButton(
             label = when {
-                hasRunningStep -> "安装中"
-                hasPending -> "开始安装"
+                hasRunningStep -> "获取中"
+                hasPending -> "开始获取"
                 else -> "完成"
             },
             enabled = !hasRunningStep
@@ -3661,8 +3688,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         registryEntry: KiteResourceRegistryEntry? = null,
         onBind: ((ResourceInstallWizardRowBinding) -> Unit)? = null
     ): View {
-        val recipeState = resourceInstallRecipeState(resourceId)
+        val runOperation = resourceVisibleRunOperation(resourceId, registryEntry)
+        val recipeState = resourceRunStateForOperation(resourceId, runOperation)
         val planStepStatus = planSnapshot?.stepStatus(resourceId) ?: resourceInstallStore.planStepStatus(resourceId)
+        val uninstalling = registryEntry?.uninstalling == true
+        val uninstallFailed = registryEntry?.failed == true &&
+            registryEntry.operation == KiteResourceInstallStore.OP_UNINSTALL
         val failed = registryEntry?.failed == true ||
             planStepStatus == KiteResourceInstallStore.PLAN_STEP_FAILED ||
             recipeState?.failureSummary() != null
@@ -3671,16 +3702,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val running = planStepStatus == KiteResourceInstallStore.PLAN_STEP_RUNNING
         val installed = resourceItemIsInstalled(item)
         val statusLabel = when {
+            uninstalling -> "卸载中"
+            uninstallFailed -> "卸载失败"
             failed -> "失败"
-            running -> "安装中"
+            running -> "获取中"
             installed || done -> "已完成"
             blocked -> "已暂停"
-            isActive -> "等待安装"
+            isActive -> "等待获取"
             else -> "排队"
         }
         val tone = when {
-            failed -> tokens.danger
-            statusLabel == "安装中" -> tokens.primaryStrong
+            uninstallFailed || failed -> tokens.danger
+            statusLabel == "获取中" -> tokens.primaryStrong
+            statusLabel == "卸载中" -> tokens.primaryStrong
             statusLabel == "已完成" -> tokens.success
             else -> tokens.textSecondary
         }
@@ -3742,10 +3776,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 addView(statusView)
                 item?.let { resourceItem ->
                     val openButton = resourceWizardOpenButton(enabled = canOpenRunSurface) {
-                        if (resourceInstallRecipeState(resourceId) == null) {
+                        if (resourceVisibleRunState(resourceId, registryEntry) == null) {
                             Toast.makeText(this@MainActivity, "报告正在准备", Toast.LENGTH_SHORT).show()
                         } else {
-                            openResourceInstallRunSurface(resourceItem, CardRunSurface.Report)
+                            openResourceInstallRunSurface(resourceItem, CardRunSurface.Report, runOperation)
                         }
                     }
                     openButtonTextView = openButton
@@ -3755,6 +3789,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     onBind?.invoke(
                         ResourceInstallWizardRowBinding(
                             resourceId = resourceId,
+                            runOperation = runOperation,
                             subtitleTextView = subtitleView,
                             statusTextView = statusView,
                             openButtonTextView = openButtonTextView
@@ -3772,12 +3807,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     item?.let { resourceItem ->
                         if (secondarySurface == CardRunSurface.Terminal) {
                             addView(resourceWizardInlineButton("打开终端") {
-                                openResourceInstallRunSurface(resourceItem, CardRunSurface.Terminal)
+                                openResourceInstallRunSurface(resourceItem, CardRunSurface.Terminal, runOperation)
                             })
                         }
                         if (secondarySurface == CardRunSurface.Web) {
                             addView(resourceWizardInlineButton("打开网页") {
-                                openResourceInstallRunSurface(resourceItem, CardRunSurface.Web)
+                                openResourceInstallRunSurface(resourceItem, CardRunSurface.Web, runOperation)
                             })
                         }
                     }
@@ -3887,31 +3922,37 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val registrySnapshot = resourceInstallStore.registrySnapshot(planIds)
         fun entry(resourceId: String) = registrySnapshot[resourceId]
         fun stepStatus(resourceId: String): String = planSnapshot.stepStatus(resourceId)
-        fun isRunningStep(resourceId: String): Boolean =
-            stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_RUNNING
-        fun isFailed(resourceId: String): Boolean =
-            entry(resourceId)?.failed == true ||
-                stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_FAILED
-        val failedIds = planIds.filter { id -> isFailed(id) }
-        val hasFailure = failedIds.isNotEmpty()
-        val activeId = planIds.firstOrNull { isRunningStep(it) }
-            ?: failedIds.firstOrNull()
-            ?: pendingIds.firstOrNull()
+            fun isRunningStep(resourceId: String): Boolean =
+                stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_RUNNING
+            fun isUninstallingStep(resourceId: String): Boolean =
+                entry(resourceId)?.uninstalling == true
+            fun isFailed(resourceId: String): Boolean =
+                !isUninstallingStep(resourceId) &&
+                    (entry(resourceId)?.failed == true ||
+                        stepStatus(resourceId) == KiteResourceInstallStore.PLAN_STEP_FAILED)
+            val failedIds = planIds.filter { id -> isFailed(id) }
+            val uninstallingIds = planIds.filter { id -> isUninstallingStep(id) }
+            val hasFailure = failedIds.isNotEmpty()
+            val activeId = planIds.firstOrNull { isRunningStep(it) }
+                ?: uninstallingIds.firstOrNull()
+                ?: failedIds.firstOrNull()
+                ?: pendingIds.firstOrNull()
         val completedCount = planIds.count { id ->
             stepStatus(id) == KiteResourceInstallStore.PLAN_STEP_DONE ||
                 (resourceItemIsInstalled(catalog[id]) && entry(id)?.failed != true)
         }
         val hasRunningStep = planIds.any { isRunningStep(it) }
+        val hasUninstallingStep = uninstallingIds.isNotEmpty()
         val hasPending = pendingIds.isNotEmpty() && !hasFailure
         val detail = when {
-            hasRunningStep -> "正在安装：${catalog[activeId]?.name ?: activeId.orEmpty()}"
-            hasFailure -> "安装已停止，请查看失败步骤报告"
-            hasPending -> "将按顺序安装 ${planIds.size} 个资源"
-            else -> "安装队列已完成"
+            hasRunningStep -> "正在获取：${catalog[activeId]?.name ?: activeId.orEmpty()}"
+            hasUninstallingStep -> "正在卸载：${catalog[activeId]?.name ?: activeId.orEmpty()}"
+            hasFailure -> "发现异常请手动处理"
+            hasPending -> "将按顺序获取 ${planIds.size} 个资源"
+            else -> "获取队列已完成"
         }
         return ResourceInstallWizardUiState(
             targetId = targetId,
-            target = catalog[targetId],
             planIds = planIds,
             catalog = catalog,
             planSnapshot = planSnapshot,
@@ -3920,6 +3961,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             detail = detail,
             completedCount = completedCount.coerceIn(0, planIds.size.coerceAtLeast(1)),
             hasRunningStep = hasRunningStep,
+            hasUninstallingStep = hasUninstallingStep,
             hasPending = hasPending,
             hasFailure = hasFailure
         )
@@ -3937,10 +3979,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         binding.primaryActionHost.removeAllViews()
         binding.primaryActionHost.addView(resourceInstallWizardPrimaryAction(
-            target = uiState.target,
-            targetId = uiState.targetId,
-            planIds = uiState.planIds,
             hasRunningStep = uiState.hasRunningStep,
+            hasUninstallingStep = uiState.hasUninstallingStep,
             hasPending = uiState.hasPending,
             hasFailure = uiState.hasFailure
         ))
@@ -3989,8 +4029,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (currentScreen != Screen.CardRun || !resourceInstallWizardSurfaceActive()) return false
         var keepTicking = false
         binding.planResourceIds.forEachIndexed { index, resourceId ->
-            val state = resourceInstallRecipeState(resourceId)
             val rowBinding = binding.rowBindings[resourceId]
+            val state = rowBinding?.let {
+                resourceRunStateForOperation(resourceId, it.runOperation)
+            } ?: resourceInstallRecipeState(resourceId)
             val item = cachedResourceCatalog?.firstOrNull { it.id == resourceId }
             rowBinding?.openButtonTextView?.let { button ->
                 applyResourceWizardOpenButtonState(button, state != null)
@@ -4010,8 +4052,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         return keepTicking
     }
 
+    private fun resourceVisibleRunOperation(
+        resourceId: String,
+        registryEntry: KiteResourceRegistryEntry? = resourceInstallStore.registryEntry(resourceId)
+    ): String = when {
+        registryEntry?.uninstalling == true -> KiteResourceInstallRecipes.OP_UNINSTALL
+        registryEntry?.failed == true && registryEntry.operation == KiteResourceInstallStore.OP_UNINSTALL ->
+            KiteResourceInstallRecipes.OP_UNINSTALL
+        else -> KiteResourceInstallRecipes.OP_INSTALL
+    }
+
+    private fun resourceRunStateForOperation(resourceId: String, operation: String): RecipeRuntimeState? =
+        CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, operation))
+
+    private fun resourceRunRecipeForOperation(item: ResourceItem, operation: String): KiteRecipe? =
+        if (operation == KiteResourceInstallRecipes.OP_UNINSTALL) {
+            resourceUninstallRecipe(item)
+        } else {
+            resourceInstallRecipe(item)
+        }
+
+    private fun resourceVisibleRunState(
+        resourceId: String,
+        registryEntry: KiteResourceRegistryEntry? = resourceInstallStore.registryEntry(resourceId)
+    ): RecipeRuntimeState? =
+        resourceRunStateForOperation(resourceId, resourceVisibleRunOperation(resourceId, registryEntry))
+
     private fun resourceInstallRecipeState(resourceId: String): RecipeRuntimeState? =
-        CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL))
+        resourceRunStateForOperation(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
 
     private fun resourceRunIsActive(resourceId: String): Boolean {
         val state = resourceInstallRecipeState(resourceId) ?: return false
@@ -4069,7 +4137,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val context = activeResourceInstallWizard ?: return null
         val resourceId = context.selectedResourceId ?: return null
         val item = resourceCatalogForUiRender("install_wizard_selected_run").firstOrNull { it.id == resourceId } ?: return null
-        val childRecipe = resourceInstallRecipe(item) ?: return null
+        val childRecipe = resourceRunRecipeForOperation(item, context.selectedOperation) ?: return null
         CardRunStore.registerRecipe(childRecipe)
         val childState = CardRunStore.currentForRecipe(childRecipe.id)
             ?: runtimeStates[childRecipe.id]
@@ -4077,8 +4145,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         return childRecipe to childState
     }
 
-    private fun openResourceInstallRunSurface(item: ResourceItem, surface: CardRunSurface) {
-        val recipe = resourceInstallRecipe(item) ?: return
+    private fun openResourceInstallRunSurface(
+        item: ResourceItem,
+        surface: CardRunSurface,
+        operation: String = resourceVisibleRunOperation(item.id)
+    ) {
+        val recipe = resourceRunRecipeForOperation(item, operation) ?: return
         CardRunStore.registerRecipe(recipe)
         val instanceId = CardRunStore.currentForRecipe(recipe.id)?.instanceId ?: recipe.id
         if (CardRunStore.get(instanceId) != null) {
@@ -4095,6 +4167,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val wizardRecipe = resourceInstallWizardRecipeFor(context)
         activeResourceInstallWizard = context.copy(
             selectedResourceId = item.id,
+            selectedOperation = operation,
             selectedSurface = surface
         )
         focusedRunRecipeId = wizardRecipe.id
@@ -4214,7 +4287,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(18), 0, dp(4))
             addView(TextView(context).apply {
-                text = "最近安装日志"
+                text = "最近获取日志"
                 textSize = 13.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(tokens.textPrimary)
@@ -4237,13 +4310,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setPadding(dp(16), dp(12), dp(16), dp(12))
             background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
             addView(TextView(context).apply {
-                text = "还没有安装日志"
+                text = "还没有获取日志"
                 textSize = 14.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(tokens.textPrimary)
             })
             addView(TextView(context).apply {
-                text = "资源安装或失败后，这里会保留对应资源自己的步骤和 SH 报告。"
+                text = "资源获取或失败后，这里会保留对应资源自己的步骤和 SH 报告。"
                 textSize = 12f
                 setTextColor(tokens.textSecondary)
                 setPadding(0, dp(8), 0, 0)
@@ -4251,10 +4324,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun resourceIsInstalled(item: ResourceItem): Boolean =
-        item.stateLabel == "已安装"
+        item.stateLabel == "已安装" || item.stateLabel == "已获取"
 
     private fun resourceItemIsInstalled(item: ResourceItem?): Boolean =
-        item?.stateLabel == "已安装"
+        item?.stateLabel == "已安装" || item?.stateLabel == "已获取"
 
     private fun resourceOpenRecipe(item: ResourceItem): KiteRecipe? =
         resourceOpenRecipeJson(item)?.let { temporaryResourceRecipe(item, "open", it) }
@@ -4348,6 +4421,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 workdir = "/workspace",
                 timeoutMs = 900_000L
             )
+            RESOURCE_REASONIX -> KiteRecipeStep(
+                id = "install_reasonix",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.reasonixInstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 600_000L
+            )
             RESOURCE_GIT -> KiteRecipeStep(
                 id = "install_git",
                 type = KiteRecipe.STEP_SHELL,
@@ -4393,7 +4474,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         return KiteResourceInstallRecipes.toRecipe(
             KiteResourceInstallSpec(
                 id = item.id,
-                name = "${item.name} 安装",
+                name = "${item.name} 获取",
                 description = item.description,
                 category = "resource",
                 iconName = resourceRecipeIcon(item),
@@ -4427,6 +4508,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
                 workdir = "/workspace",
                 timeoutMs = 300_000L
+            )
+            RESOURCE_REASONIX -> KiteRecipeStep(
+                id = "uninstall_reasonix",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.reasonixUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 180_000L
             )
             RESOURCE_GIT -> KiteRecipeStep(
                 id = "uninstall_git",
@@ -4569,13 +4658,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 .firstOrNull { it.id == runningId }
                 ?.let { resourceInstallRecipe(it) }
             if (recipe != null) {
-                markResourceInstallFailed(recipe, null, "安装流程异常中断")
+                markResourceInstallFailed(recipe, null, "获取流程异常中断")
             } else {
                 resourceInstallStore.markFailed(
                     runningId,
                     KiteResourceInstallStore.OP_INSTALL,
                     null,
-                    "安装流程异常中断"
+                    "获取流程异常中断"
                 )
                 resourceInstallStore.failPlanAt(runningId)
                 invalidateResourceCatalogCache()
@@ -4591,7 +4680,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .firstOrNull()
         if (next == null) {
             resourceInstallStore.clearPlan()
-            Toast.makeText(this, "安装队列缺少资源定义", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "获取队列缺少资源定义", Toast.LENGTH_SHORT).show()
             showResourceInstallWizard()
             return
         }
@@ -4605,7 +4694,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val recipe = resourceInstallRecipe(next)
         if (recipe == null) {
             resourceInstallStore.clearPlan()
-            Toast.makeText(this, "${next.name} 的安装脚本尚未接入", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "${next.name} 的获取脚本尚未接入", Toast.LENGTH_SHORT).show()
             showResourceInstallWizard()
             return
         }
@@ -4614,7 +4703,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             return
         }
         if (!resourceInstallWizardSurfaceActive()) {
-            Toast.makeText(this, "正在安装：${next.name}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "正在获取：${next.name}", Toast.LENGTH_SHORT).show()
         }
         startResourceInstall(next, recipe)
     }
@@ -4631,7 +4720,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun continueResourceInstallPlanAfter(resourceId: String) {
         val remaining = resourceInstallStore.advancePlanAfter(resourceId)
         if (remaining.isEmpty()) {
-            Toast.makeText(this, "资源安装队列完成", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "资源获取队列完成", Toast.LENGTH_SHORT).show()
             if (currentResourceInstallTargetId != null) showResourceInstallWizard()
             return
         }
@@ -4652,7 +4741,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         refreshResourceScreenIfVisible()
     }
 
-    private fun startResourceUninstall(item: ResourceItem, recipe: KiteRecipe) {
+    private fun startResourceUninstall(
+        item: ResourceItem,
+        recipe: KiteRecipe,
+        continuation: ResourceUninstallContinuation = ResourceUninstallContinuation.None
+    ) {
+        if (continuation != ResourceUninstallContinuation.None) {
+            pendingResourceUninstallContinuations[item.id] = continuation
+        } else {
+            pendingResourceUninstallContinuations.remove(item.id)
+        }
         resourceInstallStore.markUninstalling(item.id)
         invalidateResourceCatalogCache()
         startResourceRun(item, recipe, stageBundledResource = false, openRunTask = false)
@@ -4821,9 +4919,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun markResourceRunSuccess(recipe: KiteRecipe, runId: String?, summary: String?) {
         when (resourceOperationForRecipe(recipe)) {
             KiteResourceInstallRecipes.OP_INSTALL -> markResourceInstallSuccess(recipe, runId, summary)
-            KiteResourceInstallRecipes.OP_UNINSTALL -> resourceIdForRecipe(recipe)?.let {
-                resourceInstallStore.clear(it)
+            KiteResourceInstallRecipes.OP_UNINSTALL -> resourceIdForRecipe(recipe)?.let { resourceId ->
+                val continuation = pendingResourceUninstallContinuations.remove(resourceId)
+                    ?: ResourceUninstallContinuation.None
+                resourceInstallStore.clear(resourceId)
                 invalidateResourceCatalogCache()
+                if (continuation == ResourceUninstallContinuation.Reinstall) {
+                    val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }
+                    if (item == null) {
+                        Toast.makeText(this, "卸载完成，但获取目标缺少资源定义", Toast.LENGTH_SHORT).show()
+                        refreshResourceScreenIfVisible()
+                    } else {
+                        Toast.makeText(this, "${item.name} 残留已卸载，继续获取", Toast.LENGTH_SHORT).show()
+                        handleResourceInstallAction(item)
+                    }
+                } else if (continuation == ResourceUninstallContinuation.CancelFailedInstall) {
+                    resourceInstallStore.clearPlan()
+                    currentResourceInstallTargetId = null
+                    resourceInstallWizardPlanIds = emptyList()
+                    activeResourceInstallWizard = null
+                    Toast.makeText(this, "残留已卸载，获取任务已取消", Toast.LENGTH_SHORT).show()
+                    if (this is CardRunActivity && currentScreen == Screen.CardRun) {
+                        closeCardRunTask()
+                    } else {
+                        refreshResourceScreenIfVisible()
+                    }
+                } else {
+                    refreshResourceScreenIfVisible()
+                }
             }
         }
     }
@@ -4887,9 +5010,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val stillRunning = run?.isBusy() == true || run?.isActive() == true
         if (!stillRunning) {
             val reason = if (operation == KiteResourceInstallStore.OP_UNINSTALL) {
-                "清理流程异常中断"
+                "卸载流程异常中断"
             } else {
-                "安装流程异常中断"
+                "获取流程异常中断"
             }
             resourceInstallStore.markFailed(resourceId, operation, run?.runId, reason)
             if (
@@ -4905,20 +5028,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun resourceCatalog(forceRefresh: Boolean = false): List<ResourceItem> {
         val now = System.currentTimeMillis()
+        val onMainThread = Looper.myLooper() == Looper.getMainLooper()
         cachedResourceCatalog?.let { cached ->
             val canReuseCleanCatalog = !resourceCatalogDirty &&
-                (!forceRefresh || now - cachedResourceCatalogUpdatedAt < RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS)
+                (!forceRefresh || (onMainThread && now - cachedResourceCatalogUpdatedAt < RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS))
             if (canReuseCleanCatalog) return cached
         }
-        val allowWorkspaceProbe = Looper.myLooper() != Looper.getMainLooper()
+        val allowWorkspaceProbe = !onMainThread
         if (allowWorkspaceProbe) {
             ToolchainPackInstaller.refreshState(applicationContext)
         }
         val managedResourceIds = listOf(
             RESOURCE_NODE_RUNTIME,
-            RESOURCE_KF_TOOL_ENV,
             RESOURCE_HERMES_CORE,
             RESOURCE_HERMES_WEBUI,
+            RESOURCE_REASONIX,
             RESOURCE_GIT,
             RESOURCE_CURL,
             RESOURCE_PYTHON,
@@ -4937,177 +5061,227 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             registrySnapshot[resourceId]?.busy == true
         fun installing(resourceId: String): Boolean =
             registrySnapshot[resourceId]?.installing == true
+        fun uninstalling(resourceId: String): Boolean =
+            registrySnapshot[resourceId]?.uninstalling == true
         fun failedOperation(resourceId: String): String =
             registrySnapshot[resourceId]?.operation.orEmpty()
+        fun actionLabelForResource(
+            installed: Boolean,
+            installing: Boolean,
+            uninstalling: Boolean,
+            failed: Boolean,
+            failedOperation: String
+        ): String = when {
+            installing -> "获取中"
+            uninstalling -> "卸载中"
+            installed -> "打开"
+            failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续卸载"
+            failed -> "重新获取"
+            else -> "获取"
+        }
+        fun stateLabelForResource(
+            installed: Boolean,
+            installing: Boolean,
+            uninstalling: Boolean,
+            failed: Boolean,
+            failedOperation: String,
+            idleLabel: String
+        ): String = when {
+            installing -> "获取中"
+            uninstalling -> "卸载中"
+            installed -> "已获取"
+            failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败"
+            failed -> "获取失败"
+            else -> idleLabel
+        }
         val toolchain = ToolchainPackInstaller.state.value
         val workspaceSnapshot = toolchainWorkspaceSnapshot(allowProbe = allowWorkspaceProbe)
         val nodeWorkspaceInstalled = workspaceSnapshot.nodeInstalled
-        val toolchainWorkspaceInstalled = workspaceSnapshot.toolchainInstalled
+        fun clearInstalledIfWorkspaceMissing(resourceId: String, workspaceInstalled: Boolean): Boolean {
+            if (!allowWorkspaceProbe || !recordedInstalled(resourceId) || workspaceInstalled) return false
+            resourceInstallStore.clear(resourceId)
+            return true
+        }
+        val clearedNodeWorkspaceState =
+            clearInstalledIfWorkspaceMissing(RESOURCE_NODE_RUNTIME, nodeWorkspaceInstalled)
+        val workspaceStateNormalized = clearedNodeWorkspaceState
+        if (workspaceStateNormalized) {
+            registrySnapshot = resourceInstallStore.registrySnapshot(managedResourceIds)
+        }
         val nodeRecordedInstalled = recordedInstalled(RESOURCE_NODE_RUNTIME)
         val nodeInstallFailed = installFailed(RESOURCE_NODE_RUNTIME)
         val nodeBusy = busy(RESOURCE_NODE_RUNTIME)
         val nodeInstalling = installing(RESOURCE_NODE_RUNTIME)
+        val nodeUninstalling = uninstalling(RESOURCE_NODE_RUNTIME)
         val nodeFailedOperation = failedOperation(RESOURCE_NODE_RUNTIME)
-        val toolchainRecordedInstalled = recordedInstalled(RESOURCE_KF_TOOL_ENV)
-        val toolchainInstallFailed = installFailed(RESOURCE_KF_TOOL_ENV)
-        val toolchainBusy = busy(RESOURCE_KF_TOOL_ENV)
-        val toolchainInstalling = installing(RESOURCE_KF_TOOL_ENV)
-        val toolchainFailedOperation = failedOperation(RESOURCE_KF_TOOL_ENV)
         val hermesRecordedInstalled = recordedInstalled(RESOURCE_HERMES_WEBUI)
         val hermesInstallFailed = installFailed(RESOURCE_HERMES_WEBUI)
         val hermesBusy = busy(RESOURCE_HERMES_WEBUI)
         val hermesInstalling = installing(RESOURCE_HERMES_WEBUI)
+        val hermesUninstalling = uninstalling(RESOURCE_HERMES_WEBUI)
         val hermesFailedOperation = failedOperation(RESOURCE_HERMES_WEBUI)
         val hermesCoreRecordedInstalled = recordedInstalled(RESOURCE_HERMES_CORE)
         val hermesCoreInstallFailed = installFailed(RESOURCE_HERMES_CORE)
         val hermesCoreBusy = busy(RESOURCE_HERMES_CORE)
         val hermesCoreInstalling = installing(RESOURCE_HERMES_CORE)
+        val hermesCoreUninstalling = uninstalling(RESOURCE_HERMES_CORE)
         val hermesCoreFailedOperation = failedOperation(RESOURCE_HERMES_CORE)
+        val reasonixRecordedInstalled = recordedInstalled(RESOURCE_REASONIX)
+        val reasonixInstallFailed = installFailed(RESOURCE_REASONIX)
+        val reasonixBusy = busy(RESOURCE_REASONIX)
+        val reasonixInstalling = installing(RESOURCE_REASONIX)
+        val reasonixUninstalling = uninstalling(RESOURCE_REASONIX)
+        val reasonixFailedOperation = failedOperation(RESOURCE_REASONIX)
         val gitRecordedInstalled = recordedInstalled(RESOURCE_GIT)
         val gitInstallFailed = installFailed(RESOURCE_GIT)
         val gitBusy = busy(RESOURCE_GIT)
         val gitInstalling = installing(RESOURCE_GIT)
+        val gitUninstalling = uninstalling(RESOURCE_GIT)
         val gitFailedOperation = failedOperation(RESOURCE_GIT)
         val curlRecordedInstalled = recordedInstalled(RESOURCE_CURL)
         val curlInstallFailed = installFailed(RESOURCE_CURL)
         val curlBusy = busy(RESOURCE_CURL)
         val curlInstalling = installing(RESOURCE_CURL)
+        val curlUninstalling = uninstalling(RESOURCE_CURL)
         val curlFailedOperation = failedOperation(RESOURCE_CURL)
         val pythonRecordedInstalled = recordedInstalled(RESOURCE_PYTHON)
         val pythonInstallFailed = installFailed(RESOURCE_PYTHON)
         val pythonBusy = busy(RESOURCE_PYTHON)
         val pythonInstalling = installing(RESOURCE_PYTHON)
+        val pythonUninstalling = uninstalling(RESOURCE_PYTHON)
         val pythonFailedOperation = failedOperation(RESOURCE_PYTHON)
         val uvRecordedInstalled = recordedInstalled(RESOURCE_UV)
         val uvInstallFailed = installFailed(RESOURCE_UV)
         val uvBusy = busy(RESOURCE_UV)
         val uvInstalling = installing(RESOURCE_UV)
+        val uvUninstalling = uninstalling(RESOURCE_UV)
         val uvFailedOperation = failedOperation(RESOURCE_UV)
-        val nodeInstalled = toolchain.phase == ToolchainInstallPhase.SUCCEEDED &&
-            (toolchain.action == "node" || toolchain.action == "prepare") || nodeWorkspaceInstalled || nodeRecordedInstalled
-        val toolchainInstalled = toolchain.phase == ToolchainInstallPhase.SUCCEEDED &&
-            toolchain.action == "prepare" || toolchainWorkspaceInstalled || toolchainRecordedInstalled
+        val nodeInstalled = if (allowWorkspaceProbe) {
+            nodeWorkspaceInstalled
+        } else {
+            nodeWorkspaceInstalled || nodeRecordedInstalled
+        }
         val toolchainRunning = toolchain.phase == ToolchainInstallPhase.RUNNING
-        val nodeAction = when {
-            toolchainRunning || nodeBusy -> "处理中"
-            nodeInstalled -> "打开"
-            nodeInstallFailed && nodeFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
-            nodeInstallFailed -> "重新安装"
-            else -> "安装"
-        }
-        val nodeState = when {
-            toolchainRunning || nodeInstalling -> "安装中"
-            nodeBusy -> "清理中"
-            nodeInstalled -> "已安装"
-            nodeInstallFailed && nodeFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
-            nodeInstallFailed -> "安装失败"
-            else -> "本地包"
-        }
-        val toolchainAction = when {
-            toolchainRunning || toolchainBusy -> "处理中"
-            toolchainInstalled -> "打开"
-            toolchainInstallFailed && toolchainFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
-            toolchainInstallFailed -> "重新安装"
-            else -> "安装"
-        }
-        val toolchainState = when {
-            toolchainRunning || toolchainInstalling -> "安装中"
-            toolchainBusy -> "清理中"
-            toolchainInstalled -> "已安装"
-            toolchainInstallFailed && toolchainFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
-            toolchainInstallFailed -> "安装失败"
-            else -> "本地包"
-        }
-        val hermesAction = when {
-            hermesBusy -> "处理中"
-            hermesRecordedInstalled -> "打开"
-            hermesInstallFailed && hermesFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
-            hermesInstallFailed -> "重新安装"
-            else -> "获取"
-        }
-        val hermesState = when {
-            hermesInstalling -> "安装中"
-            hermesBusy -> "清理中"
-            hermesRecordedInstalled -> "已安装"
-            hermesInstallFailed && hermesFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
-            hermesInstallFailed -> "安装失败"
-            else -> "未下载"
-        }
-        val hermesCoreAction = when {
-            hermesCoreBusy -> "处理中"
-            hermesCoreRecordedInstalled -> "打开"
-            hermesCoreInstallFailed && hermesCoreFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
-            hermesCoreInstallFailed -> "重新安装"
-            else -> "获取"
-        }
-        val hermesCoreState = when {
-            hermesCoreInstalling -> "安装中"
-            hermesCoreBusy -> "清理中"
-            hermesCoreRecordedInstalled -> "已安装"
-            hermesCoreInstallFailed && hermesCoreFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
-            hermesCoreInstallFailed -> "安装失败"
-            else -> "未下载"
-        }
-        val gitAction = when {
-            gitBusy -> "处理中"
-            gitRecordedInstalled -> "打开"
-            gitInstallFailed && gitFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
-            gitInstallFailed -> "重新安装"
-            else -> "安装"
-        }
-        val gitState = when {
-            gitInstalling -> "安装中"
-            gitBusy -> "清理中"
-            gitRecordedInstalled -> "已安装"
-            gitInstallFailed && gitFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
-            gitInstallFailed -> "安装失败"
-            else -> "未安装"
-        }
-        val curlAction = when {
-            curlBusy -> "处理中"
-            curlRecordedInstalled -> "打开"
-            curlInstallFailed && curlFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
-            curlInstallFailed -> "重新安装"
-            else -> "安装"
-        }
-        val curlState = when {
-            curlInstalling -> "安装中"
-            curlBusy -> "清理中"
-            curlRecordedInstalled -> "已安装"
-            curlInstallFailed && curlFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
-            curlInstallFailed -> "安装失败"
-            else -> "未安装"
-        }
-        val pythonAction = when {
-            pythonBusy -> "处理中"
-            pythonRecordedInstalled -> "打开"
-            pythonInstallFailed && pythonFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
-            pythonInstallFailed -> "重新安装"
-            else -> "安装"
-        }
-        val pythonState = when {
-            pythonInstalling -> "安装中"
-            pythonBusy -> "清理中"
-            pythonRecordedInstalled -> "已安装"
-            pythonInstallFailed && pythonFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
-            pythonInstallFailed -> "安装失败"
-            else -> "未安装"
-        }
-        val uvAction = when {
-            uvBusy -> "处理中"
-            uvRecordedInstalled -> "打开"
-            uvInstallFailed && uvFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续清理"
-            uvInstallFailed -> "重新安装"
-            else -> "安装"
-        }
-        val uvState = when {
-            uvInstalling -> "安装中"
-            uvBusy -> "清理中"
-            uvRecordedInstalled -> "已安装"
-            uvInstallFailed && uvFailedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "清理异常"
-            uvInstallFailed -> "安装失败"
-            else -> "本地包"
-        }
+        val nodeAction = actionLabelForResource(
+            nodeInstalled,
+            toolchainRunning || nodeInstalling,
+            nodeUninstalling,
+            nodeInstallFailed,
+            nodeFailedOperation
+        )
+        val nodeState = stateLabelForResource(
+            nodeInstalled,
+            toolchainRunning || nodeInstalling,
+            nodeUninstalling,
+            nodeInstallFailed,
+            nodeFailedOperation,
+            "本地包"
+        )
+        val hermesAction = actionLabelForResource(
+            hermesRecordedInstalled,
+            hermesInstalling,
+            hermesUninstalling,
+            hermesInstallFailed,
+            hermesFailedOperation
+        )
+        val hermesState = stateLabelForResource(
+            hermesRecordedInstalled,
+            hermesInstalling,
+            hermesUninstalling,
+            hermesInstallFailed,
+            hermesFailedOperation,
+            "未获取"
+        )
+        val hermesCoreAction = actionLabelForResource(
+            hermesCoreRecordedInstalled,
+            hermesCoreInstalling,
+            hermesCoreUninstalling,
+            hermesCoreInstallFailed,
+            hermesCoreFailedOperation
+        )
+        val hermesCoreState = stateLabelForResource(
+            hermesCoreRecordedInstalled,
+            hermesCoreInstalling,
+            hermesCoreUninstalling,
+            hermesCoreInstallFailed,
+            hermesCoreFailedOperation,
+            "未获取"
+        )
+        val reasonixAction = actionLabelForResource(
+            reasonixRecordedInstalled,
+            reasonixInstalling,
+            reasonixUninstalling,
+            reasonixInstallFailed,
+            reasonixFailedOperation
+        )
+        val reasonixState = stateLabelForResource(
+            reasonixRecordedInstalled,
+            reasonixInstalling,
+            reasonixUninstalling,
+            reasonixInstallFailed,
+            reasonixFailedOperation,
+            "未获取"
+        )
+        val gitAction = actionLabelForResource(
+            gitRecordedInstalled,
+            gitInstalling,
+            gitUninstalling,
+            gitInstallFailed,
+            gitFailedOperation
+        )
+        val gitState = stateLabelForResource(
+            gitRecordedInstalled,
+            gitInstalling,
+            gitUninstalling,
+            gitInstallFailed,
+            gitFailedOperation,
+            "未获取"
+        )
+        val curlAction = actionLabelForResource(
+            curlRecordedInstalled,
+            curlInstalling,
+            curlUninstalling,
+            curlInstallFailed,
+            curlFailedOperation
+        )
+        val curlState = stateLabelForResource(
+            curlRecordedInstalled,
+            curlInstalling,
+            curlUninstalling,
+            curlInstallFailed,
+            curlFailedOperation,
+            "未获取"
+        )
+        val pythonAction = actionLabelForResource(
+            pythonRecordedInstalled,
+            pythonInstalling,
+            pythonUninstalling,
+            pythonInstallFailed,
+            pythonFailedOperation
+        )
+        val pythonState = stateLabelForResource(
+            pythonRecordedInstalled,
+            pythonInstalling,
+            pythonUninstalling,
+            pythonInstallFailed,
+            pythonFailedOperation,
+            "未获取"
+        )
+        val uvAction = actionLabelForResource(
+            uvRecordedInstalled,
+            uvInstalling,
+            uvUninstalling,
+            uvInstallFailed,
+            uvFailedOperation
+        )
+        val uvState = stateLabelForResource(
+            uvRecordedInstalled,
+            uvInstalling,
+            uvUninstalling,
+            uvInstallFailed,
+            uvFailedOperation,
+            "本地包"
+        )
         val catalog = listOf(
             ResourceItem(
                 id = RESOURCE_NODE_RUNTIME,
@@ -5130,29 +5304,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     ResourceStep("shell", "解压 Node.js", "extract node-v24.15.0-linux-arm64.tar.xz"),
                     ResourceStep("shell", "暴露命令", "link node/npm/npx -> /workspace/.kf/bin"),
                     ResourceStep("shell", "验证版本", "node --version && npm --version")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_KF_TOOL_ENV,
-                name = "工具环境合集",
-                description = "pnpm、uv、adb 与常用命令合集",
-                longDescription = "工具环境合集是后续可能保留的一键补全包，用来一次性安装 pnpm、uv、adb、jq、rg 等常用命令。当前第一阶段先把 Node.js 拆成独立样本，这个合集降为备用入口。",
-                section = "更多资源",
-                category = "系统工具",
-                iconText = ">_",
-                accent = "teal",
-                version = "v14",
-                sizeLabel = "内置包",
-                sourceLabel = "内置",
-                stateLabel = toolchainState,
-                actionLabel = toolchainAction,
-                actionEnabled = resourceActionEnabled(toolchainAction, toolchainRunning || toolchainBusy),
-                includes = listOf("Node 24.15.0 / npm / npx", "pnpm 10.33.2", "uv / uvx", "Python venv/pip 支持", "adb / fastboot", "jq / rg / fd / zip / zstd"),
-                notes = listOf("首次安装会写入 ${KiteResourceInstallRecipes.softwarePath(RESOURCE_KF_TOOL_ENV)} 与 /workspace/.kf/bin", "部分 Ubuntu apt 依赖仍可能需要网络", "重新安装会先清理自己的注册名目录"),
-                steps = listOf(
-                    ResourceStep("shell", "复制内置资源包", "mirror assets/toolchain/ai-dev-pack -> ${KiteResourceInstallRecipes.localPackPath(RESOURCE_KF_TOOL_ENV)}"),
-                    ResourceStep("shell", "安装工具链", "bash ${KiteResourceInstallRecipes.localPackPath(RESOURCE_KF_TOOL_ENV)}/install.sh --install"),
-                    ResourceStep("shell", "暴露命令", "ln -sf node npm pnpm uv adb -> /workspace/.kf/bin")
                 )
             ),
             ResourceItem(
@@ -5294,58 +5445,27 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 )
             ),
             ResourceItem(
-                id = "python-314",
-                name = "Python 3.14",
-                description = "独立 Python 工具链",
-                longDescription = "计划中的独立 Python 工具链资源，不替换系统 /usr/bin/python3，用于需要新版本 Python 的插件和项目。",
-                section = "快速开始",
-                category = "Python",
-                iconText = "Py",
-                accent = "blue",
-                version = "规划",
-                sizeLabel = "网络包",
-                sourceLabel = "网络",
-                stateLabel = "未下载",
-                actionLabel = "获取",
-                includes = listOf("Python 3.14", "pip", "venv", "独立 PATH wrapper"),
-                notes = listOf("不会覆盖 Ubuntu 系统 Python", "部分 AI 包可能仍需 Python 3.12/3.13"),
-                steps = listOf(ResourceStep("shell", "安装独立 Python", "download/extract python toolchain"))
-            ),
-            ResourceItem(
-                id = "open-webui",
-                name = "Open WebUI",
-                description = "本地模型网页界面",
-                longDescription = "面向本地模型服务的 Web UI 候选资源，第一版只作为人工维护清单占位。",
-                section = "更多资源",
+                id = RESOURCE_REASONIX,
+                name = "Reasonix",
+                description = "DeepSeek 原生终端编码助手",
+                longDescription = "Reasonix 是围绕 DeepSeek prefix-cache 稳定性设计的终端编码 Agent。Kite 把它作为 Node.js 上层资源：安装阶段只通过 npm 装 CLI 并暴露 reasonix/dsnix 命令；创建首页卡片后，用户从终端表面启动交互式 Reasonix，不把 API Key 或运行输出写回资源卡。",
+                section = "精选推荐",
                 category = "AI",
-                iconText = "OW",
-                accent = "purple",
-                version = "规划",
+                iconText = "Rx",
+                accent = "teal",
+                version = "npm",
                 sizeLabel = "网络包",
-                sourceLabel = "网络",
-                stateLabel = "未下载",
-                actionLabel = "获取",
-                includes = listOf("Web UI 服务", "本地端口入口", "首页启动卡片"),
-                notes = listOf("需要确认最终安装方式后接入"),
-                steps = listOf(ResourceStep("shell", "预留安装步骤", "install open-webui"))
-            ),
-            ResourceItem(
-                id = "logs-viewer",
-                name = "日志查看器",
-                description = "查看安装与运行日志",
-                longDescription = "用于后续统一打开资源安装日志、SH 报告和运行日志的工具入口。",
-                section = "更多资源",
-                category = "系统工具",
-                iconText = "LOG",
-                accent = "slate",
-                version = "规划",
-                sizeLabel = "本地功能",
-                sourceLabel = "内置",
-                stateLabel = "规划",
-                actionLabel = "打开",
-                includes = listOf("安装日志", "运行报告", "错误输出"),
-                notes = listOf("第一版先展示入口，后续对接日志页"),
-                steps = listOf(ResourceStep("android", "打开日志页", "open resource logs"))
+                sourceLabel = "npm",
+                stateLabel = reasonixState,
+                actionLabel = reasonixAction,
+                actionEnabled = resourceActionEnabled(reasonixAction, reasonixBusy),
+                includes = listOf("reasonix CLI", "dsnix alias", "DeepSeek API", "终端首页卡片"),
+                notes = listOf("基础层：Node.js", "需要用户自行配置 DEEPSEEK_API_KEY", "运行态输出仍归首页卡/终端/SH 报告车道"),
+                steps = listOf(
+                    ResourceStep("shell", "安装 npm 包", "npm install -g reasonix"),
+                    ResourceStep("shell", "暴露命令", "link reasonix/dsnix -> /workspace/.kf/bin"),
+                    ResourceStep("terminal", "打开终端", "reasonix")
+                )
             )
         ).map { applyResourceManifest(it) }
         cachedResourceCatalog = catalog
@@ -5397,6 +5517,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             "bundled" -> "内置"
             "apt" -> "apt"
             "official_script" -> "官方脚本"
+            "npm" -> "npm"
             "command" -> "网络"
             else -> ""
         }
@@ -5715,7 +5836,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             CardRunSurface.Report, CardRunSurface.Summary -> "SH 报告"
             CardRunSurface.Terminal -> "终端"
             CardRunSurface.Web -> "网页"
-            CardRunSurface.InstallWizard -> "安装向导"
+            CardRunSurface.InstallWizard -> "获取向导"
         }
 
     private fun cardRunResultIsland(recipe: KiteRecipe, state: RecipeRuntimeState): View? {
@@ -5728,9 +5849,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
         val label = when {
             isSuccess && isUninstall -> "清理完成"
-            isSuccess -> "安装完成"
+            isSuccess -> "获取完成"
             isUninstall -> "清理失败"
-            else -> "安装失败"
+            else -> "获取失败"
         }
         val toneColor = if (isFailure) tokens.danger else tokens.primaryStrong
         return TextView(this).apply {
@@ -6937,7 +7058,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     status = RecipeRunStatus.Opened,
                     instanceId = focusedState?.instanceId ?: focusedRunInstanceId,
                     surface = CardRunSurface.InstallWizard,
-                    lastMeaningfulOutput = "返回安装向导"
+                    lastMeaningfulOutput = "返回获取向导"
                 )
                 showResourceInstallWizard(activeResourceInstallWizard?.targetResourceId)
                 return
@@ -10945,7 +11066,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun showResourceRunHistoryDetail(item: ResourceItem, recipe: KiteRecipe, entry: CardRunHistoryEntry) {
         showRunHistoryDetail(
             screen = Screen.ResourceMore,
-            title = "安装日志",
+            title = "获取日志",
             backAction = { showResourceMoreActions(item) },
             recipe = recipe,
             entry = entry,
@@ -12562,6 +12683,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val missing: List<ResourceRequirementResolution>
     )
 
+    private enum class ResourceUninstallContinuation {
+        None,
+        Reinstall,
+        CancelFailedInstall
+    }
+
     private data class ToolchainWorkspaceSnapshot(
         val nodeInstalled: Boolean = false,
         val toolchainInstalled: Boolean = false,
@@ -12574,6 +12701,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val wizardRecipeId: String,
         val wizardInstanceId: String,
         val selectedResourceId: String? = null,
+        val selectedOperation: String = KiteResourceInstallRecipes.OP_INSTALL,
         val selectedSurface: CardRunSurface = CardRunSurface.InstallWizard
     )
 
@@ -12606,6 +12734,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private data class ResourceInstallWizardRowBinding(
         val resourceId: String,
+        val runOperation: String,
         val subtitleTextView: TextView,
         val statusTextView: TextView,
         val openButtonTextView: TextView?
@@ -12613,7 +12742,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private data class ResourceInstallWizardUiState(
         val targetId: String,
-        val target: ResourceItem?,
         val planIds: List<String>,
         val catalog: Map<String, ResourceItem>,
         val planSnapshot: KiteResourcePlanSnapshot,
@@ -12622,6 +12750,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val detail: String,
         val completedCount: Int,
         val hasRunningStep: Boolean,
+        val hasUninstallingStep: Boolean,
         val hasPending: Boolean,
         val hasFailure: Boolean
     )
@@ -12738,6 +12867,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
         private const val RESOURCE_HERMES_WEBUI = "kite.hermes.webui"
+        private const val RESOURCE_REASONIX = "kite.reasonix"
         private const val RESOURCE_GIT = "kite.git"
         private const val RESOURCE_CURL = "kite.curl"
         private const val RESOURCE_PYTHON = "kite.python"
