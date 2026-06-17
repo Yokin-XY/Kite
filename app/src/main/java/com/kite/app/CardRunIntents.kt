@@ -46,7 +46,6 @@ object CardRunIntents {
             .putExtra(EXTRA_AUTO_START, autoStart)
             .apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
-                addFlags(Intent.FLAG_ACTIVITY_RETAIN_IN_RECENTS)
             }
     }
 

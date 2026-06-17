@@ -70,6 +70,7 @@
             android:name="com.kite.app.CardRunActivity"
             android:alwaysRetainTaskState="true"
             android:clearTaskOnLaunch="false"
+            android:autoRemoveFromRecents="true"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:documentLaunchMode="intoExisting"
             android:excludeFromRecents="false"
@@ -77,6 +78,7 @@
             android:finishOnTaskLaunch="false"
             android:label="Kite 卡片"
             android:launchMode="standard"
+            android:maxRecents="8"
             android:windowSoftInputMode="adjustResize" />
 
         <activity

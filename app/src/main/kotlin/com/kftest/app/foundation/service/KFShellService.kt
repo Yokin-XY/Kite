@@ -1,10 +1,12 @@
 package com.kftest.app.foundation.service
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
@@ -15,6 +17,7 @@ import com.kftest.app.foundation.logging.Logger
 import com.kftest.app.foundation.runtime.HostSelfAdbBridgeWorker
 import com.kftest.app.foundation.runtime.RuntimeOverviewStore
 import com.kftest.app.foundation.runtime.RuntimeFrameCoordinator
+import com.kite.app.CardRunActivity
 import com.kite.app.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -186,8 +189,33 @@ class KFShellService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        closeCardRunTasksIfMainTaskRemoved(rootIntent)
         Logger.i("KFShellService", "recent task removed; requesting foreground runtime recovery")
         start(applicationContext)
+    }
+
+    private fun closeCardRunTasksIfMainTaskRemoved(rootIntent: Intent?) {
+        val removedComponent = rootIntent?.component?.className.orEmpty()
+        if (removedComponent != MainActivity::class.java.name) {
+            return
+        }
+        val closedCount = finishCardRunDocumentTasks()
+        Logger.i("KFShellService", "main task removed; closed card run document tasks=$closedCount")
+    }
+
+    private fun finishCardRunDocumentTasks(): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return 0
+        val manager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return 0
+        var closedCount = 0
+        manager.appTasks.forEach { task ->
+            val baseIntent = task.taskInfo.baseIntent
+            val isCardRunTask = baseIntent.component?.className == CardRunActivity::class.java.name
+            if (isCardRunTask) {
+                task.finishAndRemoveTask()
+                closedCount += 1
+            }
+        }
+        return closedCount
     }
 
     private fun createNotification(): Notification {
