@@ -62,19 +62,95 @@ object KiteResourceInstallRecipes {
         """
             set -e
             export PATH="$WORKSPACE_BIN_ROOT:/root/.local/bin:${'$'}PATH"
+            resource_root="${softwarePath("kite.hermes.webui")}"
+            repo_dir="${'$'}resource_root/hermes-webui"
+            state_dir="${'$'}resource_root/state"
+            bin_dir="$WORKSPACE_BIN_ROOT"
+            hermes_core_root="${softwarePath("kite.hermes.core")}"
+            hermes_agent_dir="${'$'}hermes_core_root/hermes-agent"
+            hermes_home="${'$'}hermes_core_root/home"
+            agent_python="${'$'}hermes_agent_dir/venv/bin/python"
             if ! command -v hermes >/dev/null 2>&1; then
               echo "缺少 hermes：请先安装 Hermes Core 资源。"
               exit 127
             fi
-            if ! command -v npm >/dev/null 2>&1; then
-              echo "缺少 npm：请先安装 Node.js 资源。"
+            if ! command -v git >/dev/null 2>&1; then
+              echo "缺少 git：请先安装 Git 资源。"
               exit 127
             fi
-            echo "KITE_RESOURCE_STEP npm-install hermes-web-ui"
-            npm install -g hermes-web-ui
-            if command -v hermes-web-ui >/dev/null 2>&1; then
-              hermes-web-ui -v || true
+            if ! command -v python3 >/dev/null 2>&1; then
+              echo "缺少 python3：请先安装 Python 资源。"
+              exit 127
             fi
+            if [ ! -f "${'$'}hermes_agent_dir/run_agent.py" ]; then
+              echo "Hermes Agent 目录不存在：${'$'}hermes_agent_dir"
+              exit 127
+            fi
+            if [ ! -x "${'$'}agent_python" ]; then
+              echo "Hermes Agent Python 不存在：${'$'}agent_python"
+              exit 127
+            fi
+            ensure_agent_pip() {
+              if "${'$'}agent_python" -m pip --version >/dev/null 2>&1; then
+                return 0
+              fi
+              echo "KITE_RESOURCE_STEP repair-hermes-core-pip"
+              if ! python3 -m venv --help >/dev/null 2>&1 || ! python3 -m pip --version >/dev/null 2>&1; then
+                if ! command -v apt-get >/dev/null 2>&1; then
+                  echo "缺少 pip/venv，且当前 Ubuntu 环境无法通过 apt-get 补齐。"
+                  exit 127
+                fi
+                echo "KITE_RESOURCE_STEP apt-install python-pip-venv"
+                apt-get update
+                DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip ca-certificates
+              fi
+              if ! "${'$'}agent_python" -m ensurepip --upgrade; then
+                python3 -m pip --python "${'$'}agent_python" install --upgrade pip
+              fi
+              "${'$'}agent_python" -m pip --version
+            }
+            echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}resource_root"
+            mkdir -p "${'$'}resource_root" "${'$'}state_dir" "${'$'}bin_dir"
+            if [ -d "${'$'}repo_dir/.git" ]; then
+              echo "KITE_RESOURCE_STEP update-repo nesquena/hermes-webui"
+              git -C "${'$'}repo_dir" fetch --depth=1 origin master
+              git -C "${'$'}repo_dir" reset --hard FETCH_HEAD
+            else
+              echo "KITE_RESOURCE_STEP clone-repo nesquena/hermes-webui"
+              rm -rf "${'$'}repo_dir"
+              git clone --depth=1 https://github.com/nesquena/hermes-webui.git "${'$'}repo_dir"
+            fi
+            chmod +x "${'$'}repo_dir/start.sh" "${'$'}repo_dir/ctl.sh" 2>/dev/null || true
+            ensure_agent_pip
+            echo "KITE_RESOURCE_STEP install-python-deps"
+            "${'$'}agent_python" -m pip install --quiet -r "${'$'}repo_dir/requirements.txt"
+            echo "KITE_RESOURCE_STEP validate-webui-runtime"
+            HERMES_HOME="${'$'}hermes_home" \
+            HERMES_WEBUI_AGENT_DIR="${'$'}hermes_agent_dir" \
+            PYTHONPATH="${'$'}hermes_agent_dir${'$'}{PYTHONPATH:+:${'$'}PYTHONPATH}" \
+            "${'$'}agent_python" - <<'PY'
+import yaml
+import cryptography
+from run_agent import AIAgent
+print("Hermes WebUI runtime import check OK")
+PY
+            echo "KITE_RESOURCE_STEP write-launcher ${'$'}bin_dir/hermes-webui-kite"
+            cat > "${'$'}bin_dir/hermes-webui-kite" <<SH
+#!/usr/bin/env bash
+set -e
+export PATH="${'$'}bin_dir:/root/.local/bin:\${'$'}PATH"
+export HERMES_HOME="${'$'}hermes_home"
+export HERMES_WEBUI_AGENT_DIR="${'$'}hermes_agent_dir"
+export HERMES_WEBUI_PYTHON="${'$'}agent_python"
+export HERMES_WEBUI_STATE_DIR="${'$'}state_dir"
+export HERMES_WEBUI_HOST="\${'$'}HERMES_WEBUI_HOST:-127.0.0.1"
+export HERMES_WEBUI_PORT="\${'$'}HERMES_WEBUI_PORT:-8787"
+cd "${'$'}repo_dir"
+exec ./ctl.sh "\${'$'}@"
+SH
+            chmod +x "${'$'}bin_dir/hermes-webui-kite"
+            printf '%s\n' 'installed_by_kite' > "${'$'}resource_root/ownership"
+            echo "Hermes WebUI installed from https://github.com/nesquena/hermes-webui"
         """.trimIndent()
 
     fun reasonixInstallCommand(): String =
@@ -151,6 +227,23 @@ object KiteResourceInstallRecipes {
               --skip-setup \
               --skip-browser \
               --non-interactive
+            agent_python="${'$'}repo_dir/venv/bin/python"
+            if ! "${'$'}agent_python" -m pip --version >/dev/null 2>&1; then
+              echo "KITE_RESOURCE_STEP bootstrap-hermes-core-pip"
+              if ! python3 -m venv --help >/dev/null 2>&1 || ! python3 -m pip --version >/dev/null 2>&1; then
+                if ! command -v apt-get >/dev/null 2>&1; then
+                  echo "缺少 pip/venv，且当前 Ubuntu 环境无法通过 apt-get 补齐。"
+                  exit 127
+                fi
+                echo "KITE_RESOURCE_STEP apt-install python-pip-venv"
+                apt-get update
+                DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip ca-certificates
+              fi
+              if ! "${'$'}agent_python" -m ensurepip --upgrade; then
+                python3 -m pip --python "${'$'}agent_python" install --upgrade pip
+              fi
+            fi
+            "${'$'}agent_python" -m pip --version
             echo "KITE_RESOURCE_STEP link-command ${'$'}bin_dir/hermes"
             rm -f "${'$'}bin_dir/hermes"
             {
@@ -256,13 +349,20 @@ object KiteResourceInstallRecipes {
             set -e
             install_root="${softwarePath("kite.python")}"
             mkdir -p "${'$'}install_root"
+            python_ready=0
             if command -v python3 >/dev/null 2>&1 && python3 - <<'PY'
 import sys
 raise SystemExit(0 if (3, 11) <= sys.version_info < (3, 14) else 1)
 PY
             then
               echo "KITE_RESOURCE_STEP python-present ${'$'}(python3 --version 2>&1)"
-            else
+              if python3 -m venv --help >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then
+                python_ready=1
+              else
+                echo "KITE_RESOURCE_STEP python-substrate-missing pip-or-venv"
+              fi
+            fi
+            if [ "${'$'}python_ready" -ne 1 ]; then
               if ! command -v apt-get >/dev/null 2>&1; then
                 echo "缺少 apt-get：当前 Ubuntu 环境无法安装 Python。"
                 exit 127
@@ -279,7 +379,7 @@ if not ((3, 11) <= sys.version_info < (3, 14)):
 print("python_version=" + sys.version.split()[0])
 PY
             python3 -m venv --help >/dev/null
-            python3 -m pip --version || true
+            python3 -m pip --version
             echo "system_python" > "${'$'}install_root/ownership"
         """.trimIndent()
 
@@ -356,13 +456,23 @@ PY
         """
             set +e
             export PATH="$WORKSPACE_BIN_ROOT:/root/.local/bin:${'$'}PATH"
-            if command -v npm >/dev/null 2>&1; then
-              echo "KITE_RESOURCE_STEP npm-uninstall hermes-web-ui"
-              npm uninstall -g hermes-web-ui
-            else
-              echo "npm missing; clearing Kite install record only"
+            resource_root="${softwarePath("kite.hermes.webui")}"
+            repo_dir="${'$'}resource_root/hermes-webui"
+            hermes_core_root="${softwarePath("kite.hermes.core")}"
+            if [ -x "${'$'}repo_dir/ctl.sh" ]; then
+              echo "KITE_RESOURCE_STEP stop-webui"
+              HERMES_HOME="${'$'}hermes_core_root/home" \
+              HERMES_WEBUI_AGENT_DIR="${'$'}hermes_core_root/hermes-agent" \
+              HERMES_WEBUI_PYTHON="${'$'}hermes_core_root/hermes-agent/venv/bin/python" \
+              HERMES_WEBUI_STATE_DIR="${'$'}resource_root/state" \
+              HERMES_WEBUI_HOST="127.0.0.1" \
+              HERMES_WEBUI_PORT="8787" \
+              "${'$'}repo_dir/ctl.sh" stop || true
             fi
-            rm -rf ${softwarePath("kite.hermes.webui")}
+            echo "KITE_RESOURCE_STEP remove-command $WORKSPACE_BIN_ROOT/hermes-webui-kite"
+            rm -f "$WORKSPACE_BIN_ROOT/hermes-webui-kite"
+            echo "KITE_RESOURCE_STEP remove-software ${'$'}resource_root"
+            rm -rf "${'$'}resource_root"
             exit 0
         """.trimIndent()
 
@@ -418,6 +528,16 @@ PY
                   done
                   ;;
                 kite.hermes.webui)
+                  if [ -x "${'$'}software/hermes-webui/ctl.sh" ]; then
+                    HERMES_HOME="${softwarePath("kite.hermes.core")}/home" \
+                    HERMES_WEBUI_AGENT_DIR="${softwarePath("kite.hermes.core")}/hermes-agent" \
+                    HERMES_WEBUI_PYTHON="${softwarePath("kite.hermes.core")}/hermes-agent/venv/bin/python" \
+                    HERMES_WEBUI_STATE_DIR="${'$'}software/state" \
+                    HERMES_WEBUI_HOST="127.0.0.1" \
+                    HERMES_WEBUI_PORT="8787" \
+                    "${'$'}software/hermes-webui/ctl.sh" stop >/dev/null 2>&1 || true
+                  fi
+                  rm -f "$WORKSPACE_BIN_ROOT/hermes-webui-kite"
                   if command -v npm >/dev/null 2>&1; then
                     npm uninstall -g hermes-web-ui >/dev/null 2>&1 || true
                   fi

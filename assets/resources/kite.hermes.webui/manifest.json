@@ -4,7 +4,7 @@
   "base": {
     "name": "Hermes WebUI",
     "description": "Hermes 的网页工作台",
-    "version": "npm",
+    "version": "github",
     "icon": {
       "type": "text",
       "value": "H"
@@ -25,7 +25,9 @@
       "surface.hermes.webui"
     ],
     "base": [
-      "runtime.node>=23",
+      "tool.git",
+      "runtime.python>=3.11<3.14",
+      "tool.pip",
       "cli.hermes",
       "service.hermes"
     ],
@@ -35,8 +37,8 @@
     ]
   },
   "source": {
-    "type": "command",
-    "command": "npm install -g hermes-web-ui"
+    "type": "git",
+    "url": "https://github.com/nesquena/hermes-webui"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.hermes.webui",
@@ -47,7 +49,7 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "npm install -g hermes-web-ui"
+        "cmd": "git clone --depth=1 https://github.com/nesquena/hermes-webui.git /workspace/.kf/software/kite.hermes.webui/hermes-webui && (/workspace/.kf/software/kite.hermes.core/hermes-agent/venv/bin/python -m ensurepip --upgrade || python3 -m pip --python /workspace/.kf/software/kite.hermes.core/hermes-agent/venv/bin/python install --upgrade pip) && /workspace/.kf/software/kite.hermes.core/hermes-agent/venv/bin/python -m pip install -r /workspace/.kf/software/kite.hermes.webui/hermes-webui/requirements.txt"
       }
     ],
     "open": {
@@ -68,12 +70,12 @@
         "recipe": [
           {
             "type": "shell",
-            "cmd": "hermes-web-ui start --port 8648",
+            "cmd": "hermes-webui-kite start 8787 && for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:8787/health >/dev/null 2>&1 && break; sleep 1; done",
             "surfaceMode": "panel"
           },
           {
             "type": "open_web",
-            "url": "http://127.0.0.1:8648"
+            "url": "http://127.0.0.1:8787"
           }
         ]
       }
@@ -81,7 +83,7 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "npm uninstall -g hermes-web-ui"
+        "cmd": "hermes-webui-kite stop || true; rm -rf /workspace/.kf/software/kite.hermes.webui /workspace/.kf/bin/hermes-webui-kite"
       }
     ]
   },
@@ -105,12 +107,12 @@
         "recipe": [
           {
             "type": "shell",
-            "cmd": "hermes-web-ui start --port 8648",
+            "cmd": "hermes-webui-kite start 8787 && for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:8787/health >/dev/null 2>&1 && break; sleep 1; done",
             "surfaceMode": "panel"
           },
           {
             "type": "open_web",
-            "url": "http://127.0.0.1:8648"
+            "url": "http://127.0.0.1:8787"
           }
         ]
       }

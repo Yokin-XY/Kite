@@ -1,6 +1,7 @@
 package com.kftest.app.foundation.toolchain
 
 import android.content.Context
+import android.system.Os
 import com.kftest.app.foundation.capability.CapabilityCallerType
 import com.kftest.app.foundation.capability.CapabilityDomain
 import com.kftest.app.foundation.capability.CapabilityGate
@@ -66,17 +67,19 @@ object ToolchainPackInstaller {
         val newNode = File(workspaceDir, ".kf/software/kite.nodejs/node-v24.15.0/bin/node")
         val componentNode = File(workspaceDir, ".kf/components/kite.nodejs/node-v24.15.0/bin/node")
         val legacyNode = File(workspaceDir, ".kf/toolchains/node-v24.15.0/bin/node")
-        return (newNode.exists() || componentNode.exists() || legacyNode.exists()) &&
-            File(workspaceDir, ".kf/bin/node").exists() &&
-            File(workspaceDir, ".kf/bin/npm").exists() &&
-            File(workspaceDir, ".kf/bin/npx").exists()
+        return (workspacePathExists(newNode, workspaceDir) ||
+            workspacePathExists(componentNode, workspaceDir) ||
+            workspacePathExists(legacyNode, workspaceDir)) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/node"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/npm"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/npx"), workspaceDir)
     }
 
     fun isToolchainPackInstalled(context: Context): Boolean {
         val workspaceDir = workspaceDirOrNull(context.applicationContext) ?: return false
         return isNodeRuntimeInstalled(context) &&
-            File(workspaceDir, ".kf/bin/pnpm").exists() &&
-            File(workspaceDir, ".kf/bin/uv").exists()
+            workspacePathExists(File(workspaceDir, ".kf/bin/pnpm"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/uv"), workspaceDir)
     }
 
     fun refreshState(context: Context) {
@@ -318,6 +321,16 @@ object ToolchainPackInstaller {
             val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(context.applicationContext)
             File(container.workspacePath)
         }.getOrNull()
+    }
+
+    private fun workspacePathExists(file: File, workspaceDir: File): Boolean {
+        if (file.exists()) return true
+        val target = runCatching { Os.readlink(file.absolutePath) }.getOrNull()
+            ?: return false
+        if (!target.startsWith("/workspace/")) return true
+        val projectedTarget = File(workspaceDir, target.removePrefix("/workspace/"))
+        return projectedTarget.exists() ||
+            runCatching { Os.readlink(projectedTarget.absolutePath) }.isSuccess
     }
 
     private fun safeResourceId(resourceId: String): String {

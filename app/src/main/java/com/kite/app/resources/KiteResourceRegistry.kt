@@ -144,13 +144,15 @@ class KiteResourceRegistry(context: Context) {
             while (cursor.moveToNext()) {
                 val resourceId = cursor.getString(0).orEmpty()
                 val status = cursor.getString(1).orEmpty()
-                resourceIds.add(resourceId)
-                statuses[resourceId] = status
-                if (status == PLAN_STEP_RUNNING && plan.second == PLAN_STATUS_ACTIVE) {
-                    running.add(resourceId)
-                }
-                if (status == PLAN_STEP_PENDING && plan.second == PLAN_STATUS_ACTIVE) {
-                    pending.add(resourceId)
+                if (resourceId.isNotBlank() && !statuses.containsKey(resourceId)) {
+                    resourceIds.add(resourceId)
+                    statuses[resourceId] = status
+                    if (status == PLAN_STEP_RUNNING && plan.second == PLAN_STATUS_ACTIVE) {
+                        running.add(resourceId)
+                    }
+                    if (status == PLAN_STEP_PENDING && plan.second == PLAN_STATUS_ACTIVE) {
+                        pending.add(resourceId)
+                    }
                 }
             }
         }
@@ -232,6 +234,7 @@ class KiteResourceRegistry(context: Context) {
             )
             resourceIds.map { normalizeResourceId(it) }
                 .filter { it.isNotBlank() }
+                .distinct()
                 .forEachIndexed { index, resourceId ->
                     insertWithOnConflict(
                         TABLE_PLAN_STEP,
@@ -491,7 +494,7 @@ class KiteResourceRegistry(context: Context) {
         ).use { cursor ->
             buildList {
                 while (cursor.moveToNext()) add(cursor.getString(0))
-            }
+            }.distinct()
         }
     }
 
@@ -520,7 +523,7 @@ class KiteResourceRegistry(context: Context) {
         ).use { cursor ->
             buildList {
                 while (cursor.moveToNext()) add(cursor.getString(0))
-            }
+            }.distinct()
         }
     }
 
@@ -547,7 +550,7 @@ class KiteResourceRegistry(context: Context) {
         ).use { cursor ->
             buildList {
                 while (cursor.moveToNext()) add(cursor.getString(0))
-            }
+            }.distinct()
         }
     }
 

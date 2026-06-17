@@ -31,6 +31,7 @@
       "tool.git",
       "tool.curl",
       "runtime.python>=3.11<3.14",
+      "tool.pip",
       "kite.uv"
     ],
     "defaults": [],
