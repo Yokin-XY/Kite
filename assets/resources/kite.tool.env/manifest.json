@@ -11,9 +11,7 @@
     }
   },
   "display": {
-    "sections": [
-      "more"
-    ],
+    "sections": [],
     "tags": [
       "tool",
       "node",

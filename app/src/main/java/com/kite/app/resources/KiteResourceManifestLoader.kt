@@ -183,10 +183,14 @@ class KiteResourceManifestLoader(private val context: Context) {
             val requestKey = KiteResourceRequestPolicy.providerLookupKey(requirement)
             return synchronized(lock) {
                 requestedProviders[requestKey]?.let { return@synchronized it }
-                val direct = requestManifest(KiteResourceManifestRequest(requirement))?.let { listOf(it.id) }.orEmpty()
+                val direct = requestManifest(KiteResourceManifestRequest(requirement))
+                    ?.takeIf { it.isVisibleResourceCard() }
+                    ?.let { listOf(it.id) }
+                    .orEmpty()
                 val capable = requestAllManifests().values
                     .filter { manifest ->
-                        manifest.provides.any { provided -> capabilitySatisfies(requirement, provided) }
+                        manifest.isVisibleResourceCard() &&
+                            manifest.provides.any { provided -> capabilitySatisfies(requirement, provided) }
                     }
                     .map { it.id }
                 (direct + capable).distinct().also { requestedProviders[requestKey] = it }
@@ -379,6 +383,9 @@ class KiteResourceManifestLoader(private val context: Context) {
             }
         }
     }
+
+    private fun KiteResourceManifest.isVisibleResourceCard(): Boolean =
+        sections.isNotEmpty()
 
     private fun JSONObject.deepCopy(): JSONObject =
         JSONObject(toString())
