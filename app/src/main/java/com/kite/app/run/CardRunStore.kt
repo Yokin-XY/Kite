@@ -64,6 +64,25 @@ object CardRunStore {
     ): CardRunState {
         registerRecipe(recipe)
         val now = System.currentTimeMillis()
+        val existing = runsByInstance[instanceId]
+        if (
+            existing != null &&
+            existing.recipeId == recipe.id &&
+            existing.status == CardRunStatus.Starting &&
+            !existing.hasRunBinding()
+        ) {
+            // Resource preparation and recipe start can touch the same instance; keep that as one lifecycle.
+            val run = existing.copy(
+                recipeName = recipe.name,
+                parentInstanceId = parentInstanceId ?: existing.parentInstanceId,
+                ownerKind = ownerKind,
+                stepId = stepId ?: existing.stepId,
+                stepCount = recipe.steps.size,
+                updatedAt = now
+            )
+            upsert(run)
+            return run
+        }
         val run = CardRunState(
             instanceId = instanceId,
             recipeId = recipe.id,
@@ -180,6 +199,7 @@ object CardRunStore {
     @Synchronized
     fun historyForRecipe(recipeId: String, limit: Int = MAX_HISTORY_PER_RECIPE): List<CardRunHistoryEntry> =
         historiesByRecipe[recipeId]
+            ?.withoutStaleOpenEntries()
             ?.sortedByDescending { it.startedAt }
             ?.take(limit.coerceAtLeast(0))
             .orEmpty()
@@ -195,6 +215,35 @@ object CardRunStore {
         runsByInstance.entries.removeAll { (_, run) -> run.recipeId in ids || run.instanceId in ids }
         val historyChanged = ids.any { historiesByRecipe.remove(it) != null }
         if (runsByInstance.size == beforeSize && !historyChanged) return
+        _runs.value = sortedRuns()
+        schedulePersistRuns()
+        if (historyChanged) schedulePersistHistory()
+    }
+
+    @Synchronized
+    fun removeRunStatesForRecipes(recipeIds: Collection<String>, removeOpenHistory: Boolean = false) {
+        val ids = recipeIds
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toSet()
+        if (ids.isEmpty()) return
+        val removedInstanceIds = runsByInstance.values
+            .filter { it.recipeId in ids || it.instanceId in ids }
+            .mapTo(mutableSetOf()) { it.instanceId }
+        if (removedInstanceIds.isEmpty()) return
+        runsByInstance.entries.removeAll { (_, run) -> run.instanceId in removedInstanceIds }
+        var historyChanged = false
+        if (removeOpenHistory) {
+            ids.forEach { recipeId ->
+                val entries = historiesByRecipe[recipeId] ?: return@forEach
+                val before = entries.size
+                entries.removeAll { it.instanceId in removedInstanceIds && !it.isClosed() }
+                if (entries.size != before) {
+                    historyChanged = true
+                    if (entries.isEmpty()) historiesByRecipe.remove(recipeId)
+                }
+            }
+        }
         _runs.value = sortedRuns()
         schedulePersistRuns()
         if (historyChanged) schedulePersistHistory()
@@ -233,7 +282,7 @@ object CardRunStore {
         val payload = JSONArray()
         _runs.value
             .sortedByDescending { it.updatedAt }
-            .filterNot { it.isTemporaryResourceRun() }
+            .filterNot { it.isTransientResourceRunState() }
             .take(MAX_STORED_RUNS)
             .forEach { payload.put(it.toJson()) }
         store.edit().putString(KEY_RUNS, payload.toString()).apply()
@@ -280,7 +329,7 @@ object CardRunStore {
                     array.optJSONObject(index)?.toCardRunStateOrNull()?.let { add(it) }
                 }
             }.sortedByDescending { it.updatedAt }
-                .filterNot { it.isTemporaryResourceRun() }
+                .filterNot { it.isTransientResourceRunState() }
         }.getOrDefault(emptyList())
     }
 
@@ -325,12 +374,21 @@ object CardRunStore {
             this == CardRunStatus.Opened ||
             this == CardRunStatus.Stopping
 
-    private fun CardRunState.isTemporaryResourceRun(): Boolean =
+    private fun CardRunState.isResourceOperationRun(): Boolean =
+        recipeId.startsWith("resource-") && (recipeId.endsWith("-install") || recipeId.endsWith("-uninstall"))
+
+    private fun CardRunState.isInstallWizardRun(): Boolean =
+        recipeId.startsWith("resource-install-wizard-")
+
+    private fun CardRunState.isTransientResourceRunState(): Boolean =
+        isInstallWizardRun() || isResourceOperationRun()
+
+    private fun CardRunState.skipsHistory(): Boolean =
         recipeId.startsWith("resource-install-wizard-") ||
-            (recipeId.startsWith("resource-") && (recipeId.endsWith("-install") || recipeId.endsWith("-uninstall")))
+            recipeId.startsWith("tmp-")
 
     private fun recordHistoryStart(recipe: KiteRecipe, state: CardRunState, now: Long = state.createdAt) {
-        if (state.isTemporaryResourceRun()) return
+        if (state.skipsHistory()) return
         val entry = CardRunHistoryEntry(
             historyId = "${state.instanceId}@$now",
             recipeId = recipe.id,
@@ -349,6 +407,7 @@ object CardRunStore {
             steps = recipe.toHistorySteps(state)
         )
         val entries = historiesByRecipe.getOrPut(recipe.id) { mutableListOf() }
+        entries.removeAll { it.instanceId == state.instanceId && !it.isClosed() }
         entries.removeAll { it.historyId == entry.historyId }
         entries.add(0, entry)
         trimHistory(recipe.id)
@@ -356,7 +415,7 @@ object CardRunStore {
     }
 
     private fun recordHistoryUpdate(recipe: KiteRecipe, state: CardRunState, now: Long = state.updatedAt) {
-        if (state.isTemporaryResourceRun()) return
+        if (state.skipsHistory()) return
         val entries = historiesByRecipe.getOrPut(recipe.id) { mutableListOf() }
         val current = entries.firstOrNull { it.instanceId == state.instanceId && !it.isClosed() }
             ?: entries.firstOrNull()
@@ -528,10 +587,22 @@ object CardRunStore {
 
     private fun trimHistory(recipeId: String) {
         val entries = historiesByRecipe[recipeId] ?: return
-        val trimmed = entries.sortedByDescending { it.startedAt }.take(MAX_HISTORY_PER_RECIPE)
+        val trimmed = entries
+            .withoutStaleOpenEntries()
+            .sortedByDescending { it.startedAt }
+            .take(MAX_HISTORY_PER_RECIPE)
         entries.clear()
         entries.addAll(trimmed)
     }
+
+    private fun List<CardRunHistoryEntry>.withoutStaleOpenEntries(): List<CardRunHistoryEntry> =
+        filterNot { candidate ->
+            // Older open entries are stale once any newer lifecycle exists for the same recipe.
+            !candidate.isClosed() && any { other ->
+                other.updatedAt > candidate.updatedAt ||
+                    other.startedAt > candidate.startedAt
+            }
+        }
 
     private fun CardRunStatus.startsHistoryEntry(): Boolean =
         this == CardRunStatus.Starting ||
