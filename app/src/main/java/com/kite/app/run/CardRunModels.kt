@@ -116,6 +116,39 @@ data class CardRunState(
     }
 }
 
+data class CardRunHistoryEntry(
+    val historyId: String,
+    val recipeId: String,
+    val recipeName: String,
+    val instanceId: String,
+    val ownerKind: String = CardRunState.OWNER_KIND_CARD,
+    val status: CardRunStatus,
+    val currentStepIndex: Int = -1,
+    val stepCount: Int = 0,
+    val startedAt: Long,
+    val endedAt: Long? = null,
+    val updatedAt: Long = startedAt,
+    val summary: String = "",
+    val error: String = "",
+    val shellReportText: String = "",
+    val steps: List<CardRunHistoryStep> = emptyList()
+) {
+    fun isClosed(): Boolean =
+        endedAt != null ||
+            status == CardRunStatus.Completed ||
+            status == CardRunStatus.Failed ||
+            status == CardRunStatus.Stopped ||
+            status == CardRunStatus.BridgeUnavailable
+}
+
+data class CardRunHistoryStep(
+    val index: Int,
+    val type: String,
+    val label: String,
+    val detail: String,
+    val reportText: String = ""
+)
+
 data class PendingTerminalFlow(
     val recipeId: String,
     val instanceId: String,

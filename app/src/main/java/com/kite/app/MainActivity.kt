@@ -90,6 +90,8 @@ import com.kite.app.resources.KiteResourceRequestPolicy
 import com.kite.app.resources.KiteResourceRegistryEntry
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunBrowserRouter
+import com.kite.app.run.CardRunHistoryEntry
+import com.kite.app.run.CardRunHistoryStep
 import com.kite.app.run.CardRunSurface
 import com.kite.app.run.CardRunStatus as RecipeRunStatus
 import com.kite.app.run.CardRunStore
@@ -9167,6 +9169,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     addView(navigationRow("查看原始 JSON") { showRecipeRawJson(recipe) }.apply {
                         setPadding(0, dp(16), 0, dp(8))
                     })
+                    addView(recentRunHistoryPanel(recipe))
                 }
             })
         }
@@ -9419,6 +9422,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         addView(divider())
         if (recipe != null) {
             addView(navigationRow("查看原始 JSON") { showRecipeRawJson(recipe) })
+            addView(recentRunHistoryPanel(recipe))
             addView(deleteRow(recipe))
         } else {
             addView(navigationRow("高级设置（可选）") {
@@ -10701,6 +10705,415 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
             ?: recipe
     }
+
+    private fun recentRunHistoryPanel(recipe: KiteRecipe): View =
+        LinearLayout(this).apply {
+            val history = CardRunStore.historyForRecipe(recipe.id)
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(18), 0, dp(4))
+            addView(TextView(context).apply {
+                text = "最近运行"
+                textSize = 13.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+                setPadding(0, 0, 0, dp(10))
+            })
+            if (history.isEmpty()) {
+                addView(runHistoryEmptyBlock(compact = true))
+            } else {
+                history.forEachIndexed { index, entry ->
+                    addView(runHistoryPreviewRow(recipe, entry, index + 1))
+                }
+            }
+        }
+
+    private fun runHistoryEmptyBlock(compact: Boolean = false): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), if (compact) dp(12) else dp(16), dp(16), if (compact) dp(12) else dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+            addView(TextView(context).apply {
+                text = "还没有运行记录"
+                textSize = 14.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = "启动一次卡片后，这里会出现本次流程的时间、步骤和自动执行内容。"
+                textSize = 12f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(8), 0, 0)
+            })
+        }
+
+    private fun runHistoryPreviewRow(recipe: KiteRecipe, entry: CardRunHistoryEntry, ordinal: Int): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(11), dp(12), dp(11))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(16).toFloat())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, 0, 0, dp(8))
+            }
+            setOnClickListener { showRecipeRunHistoryDetail(recipe, entry) }
+            addView(TextView(context).apply {
+                text = ordinal.toString()
+                textSize = 10.5f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(Color.WHITE)
+                background = roundedBox(runHistoryStatusColor(entry), Color.TRANSPARENT, dp(11).toFloat())
+                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                    setMargins(0, 0, dp(11), 0)
+                }
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply {
+                    text = "${entry.status.label} · ${runHistoryDuration(entry)} · ${runHistoryProgress(entry)}"
+                    textSize = 12.2f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                })
+                addView(TextView(context).apply {
+                    text = runHistoryTimeline(entry)
+                    textSize = 10.5f
+                    setTextColor(tokens.textSecondary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(3), 0, 0)
+                })
+            })
+            addView(TextView(context).apply {
+                text = "›"
+                textSize = 24f
+                setTextColor(tokens.textTertiary)
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(22), ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
+        }
+
+    private fun showRecipeRunHistoryDetail(recipe: KiteRecipe, entry: CardRunHistoryEntry) {
+        val latestRecipe = latestRecipeForRawJson(recipe)
+        currentScreen = Screen.RecipeDetail
+        clearRootForScreen()
+        root.addView(topBar("运行详情") { showRecipeEditor(latestRecipe) })
+        root.addView(ScrollView(this).apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(24), dp(18), dp(24), dp(28))
+                addView(runHistoryDetailHeader(entry))
+                addView(TextView(context).apply {
+                    text = "流程快照"
+                    textSize = 13.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                    setPadding(0, dp(20), 0, dp(10))
+                })
+                if (entry.steps.isEmpty()) {
+                    addView(runHistoryEmptyBlock(compact = true))
+                } else {
+                    entry.steps.forEach { step ->
+                        addView(runHistoryStepRow(latestRecipe, entry, step))
+                    }
+                }
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    private fun runHistoryDetailHeader(entry: CardRunHistoryEntry): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, 0, 0, dp(12))
+            }
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(TextView(context).apply {
+                    text = "本次运行"
+                    textSize = 14.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                addView(TextView(context).apply {
+                    text = entry.status.label
+                    textSize = 10.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    includeFontPadding = false
+                    gravity = Gravity.CENTER
+                    setTextColor(runHistoryStatusColor(entry))
+                    background = roundedBox(tintBackground(runHistoryStatusColor(entry)), Color.TRANSPARENT, dp(10).toFloat())
+                    setPadding(dp(9), dp(5), dp(9), dp(5))
+                })
+            })
+            addView(TextView(context).apply {
+                text = "${runHistoryTimeline(entry)} · ${runHistoryDuration(entry)} · ${runHistoryProgress(entry)}"
+                textSize = 11.5f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(7), 0, 0)
+            })
+            val message = entry.error.ifBlank { entry.summary }
+            if (message.isNotBlank()) {
+                addView(TextView(context).apply {
+                    text = message.take(160)
+                    textSize = 11.2f
+                    setTextColor(if (entry.error.isNotBlank()) tokens.danger else tokens.textSecondary)
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(8), 0, 0)
+                })
+            }
+            if (entry.steps.isNotEmpty()) {
+                addView(TextView(context).apply {
+                    text = "步骤快照来自本次运行，不会随当前卡片编排修改而改变。"
+                    textSize = 10.5f
+                    setTextColor(tokens.textTertiary)
+                    setPadding(0, dp(9), 0, 0)
+                })
+            }
+        }
+
+    private fun showRecipeRunHistoryStepReport(recipe: KiteRecipe, entry: CardRunHistoryEntry, step: CardRunHistoryStep) {
+        currentScreen = Screen.RecipeDetail
+        clearRootForScreen()
+        root.addView(topBar("历史 SH 报告") { showRecipeRunHistoryDetail(recipe, entry) })
+        root.addView(ScrollView(this).apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(24), dp(18), dp(24), dp(28))
+                addView(TextView(context).apply {
+                    text = "步骤 ${step.index + 1} · ${step.label}"
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                })
+                addView(TextView(context).apply {
+                    text = runHistoryStepDetail(step)
+                    textSize = 11.2f
+                    setTextColor(tokens.textSecondary)
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(5), 0, dp(12))
+                })
+                addView(readonlyShellReportCard(step))
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    private fun readonlyShellReportCard(step: CardRunHistoryStep): View {
+        val outputText = historicalShellOutputText(step)
+        val reportBorder = Color.rgb(232, 235, 240)
+        val reportText = Color.rgb(17, 24, 39)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(15), dp(16), dp(16))
+            background = roundedBox(Color.WHITE, reportBorder, dp(20).toFloat())
+            elevation = dp(1).toFloat()
+            addView(row {
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
+                addView(TextView(context).apply {
+                    text = "只读 SH 报告"
+                    textSize = 18f
+                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                    includeFontPadding = false
+                    setTextColor(reportText)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                addView(reportToolButton("⧉", "复制") {
+                    copyTextToClipboard("Kite 历史 SH 报告", outputText, "已复制 SH 报告")
+                })
+            })
+            addView(TextView(context).apply {
+                text = lineNumberedOutput(outputText)
+                minimumHeight = dp(220)
+                textSize = 13f
+                typeface = Typeface.MONOSPACE
+                setTextColor(reportText)
+                setLineSpacing(dp(3).toFloat(), 1.0f)
+                includeFontPadding = true
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                background = roundedBox(Color.rgb(248, 250, 252), Color.TRANSPARENT, dp(16).toFloat(), 0)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(0, dp(12), 0, 0)
+                }
+            })
+        }
+    }
+
+    private fun historicalShellOutputText(step: CardRunHistoryStep): String {
+        val report = step.reportText.trim()
+        val output = extractShellOutput(report).ifBlank { report }
+        val command = step.detail.ifBlank {
+            report.lineSequence()
+                .firstOrNull { it.startsWith("命令：") }
+                ?.removePrefix("命令：")
+                ?.trim()
+                .orEmpty()
+        }
+        return buildString {
+            if (command.isNotBlank()) append(command).append("\n\n")
+            append(output.ifBlank { "没有可用的 SH 报告快照。" }.normalizeShellStreamForDisplay())
+        }.trim()
+    }
+
+    private fun runHistoryStepRow(recipe: KiteRecipe, entry: CardRunHistoryEntry, step: CardRunHistoryStep): View =
+        LinearLayout(this).apply {
+            val canOpenReport = step.type == KiteRecipe.STEP_SHELL && step.reportText.isNotBlank()
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(16).toFloat())
+            isClickable = canOpenReport
+            if (canOpenReport) setOnClickListener { showRecipeRunHistoryStepReport(recipe, entry, step) }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, 0, 0, dp(8))
+            }
+            addView(TextView(context).apply {
+                text = "${step.index + 1}"
+                textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(Color.WHITE)
+                background = roundedBox(runHistoryStepColor(entry, step.index), Color.TRANSPARENT, dp(9).toFloat())
+                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply {
+                    setMargins(0, dp(1), dp(9), 0)
+                }
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply {
+                    text = "${step.label} · ${runHistoryStepState(entry, step.index)}"
+                    textSize = 11.8f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                })
+                addView(TextView(context).apply {
+                    text = runHistoryStepDetail(step)
+                    textSize = 10.8f
+                    setTextColor(tokens.textSecondary)
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(3), 0, 0)
+                })
+            })
+            if (canOpenReport) {
+                addView(TextView(context).apply {
+                    text = "报告 ›"
+                    textSize = 11.2f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.primaryStrong)
+                    includeFontPadding = false
+                    setPadding(dp(10), dp(3), 0, 0)
+                })
+            }
+        }
+
+    private fun runHistoryProgress(entry: CardRunHistoryEntry): String {
+        val total = entry.stepCount.takeIf { it > 0 } ?: entry.steps.size
+        if (total <= 0) return "无步骤"
+        val done = when {
+            entry.status == RecipeRunStatus.Completed -> total
+            entry.currentStepIndex < 0 -> 0
+            entry.isClosed() -> (entry.currentStepIndex + 1).coerceIn(0, total)
+            else -> entry.currentStepIndex.coerceIn(0, total - 1) + 1
+        }
+        return "步骤 $done/$total"
+    }
+
+    private fun runHistoryDuration(entry: CardRunHistoryEntry): String {
+        val endAt = entry.endedAt ?: if (entry.isClosed()) entry.updatedAt else System.currentTimeMillis()
+        val seconds = ((endAt - entry.startedAt).coerceAtLeast(0L) / 1000L).coerceAtLeast(0L)
+        return when {
+            seconds < 60L * 60L -> String.format("%02d:%02d", seconds / 60L, seconds % 60L)
+            seconds < 24L * 60L * 60L -> "${seconds / (60L * 60L)}小时"
+            else -> "${seconds / (24L * 60L * 60L)}天"
+        }
+    }
+
+    private fun runHistoryTimeline(entry: CardRunHistoryEntry): String {
+        val start = formatRunHistoryClock(entry.startedAt)
+        val endAt = entry.endedAt ?: entry.updatedAt.takeIf { entry.isClosed() }
+        val end = endAt?.let { "结束 ${formatRunHistoryClock(it)}" } ?: "进行中"
+        return "开始 $start · $end"
+    }
+
+    private fun formatRunHistoryClock(timestamp: Long): String {
+        val nowCalendar = Calendar.getInstance()
+        val thenCalendar = Calendar.getInstance().apply { timeInMillis = timestamp }
+        val sameDay = nowCalendar.get(Calendar.YEAR) == thenCalendar.get(Calendar.YEAR) &&
+            nowCalendar.get(Calendar.DAY_OF_YEAR) == thenCalendar.get(Calendar.DAY_OF_YEAR)
+        val time = String.format(
+            "%02d:%02d",
+            thenCalendar.get(Calendar.HOUR_OF_DAY),
+            thenCalendar.get(Calendar.MINUTE)
+        )
+        return if (sameDay) {
+            time
+        } else {
+            "${thenCalendar.get(Calendar.MONTH) + 1}月${thenCalendar.get(Calendar.DAY_OF_MONTH)}日 $time"
+        }
+    }
+
+    private fun runHistoryStatusColor(entry: CardRunHistoryEntry): Int =
+        when (entry.status) {
+            RecipeRunStatus.Failed,
+            RecipeRunStatus.BridgeUnavailable -> tokens.danger
+            RecipeRunStatus.Completed -> tokens.success
+            RecipeRunStatus.Stopped -> tokens.info
+            RecipeRunStatus.Starting,
+            RecipeRunStatus.Running,
+            RecipeRunStatus.WaitingTerminal,
+            RecipeRunStatus.AlreadyRunning,
+            RecipeRunStatus.Opened -> tokens.primaryStrong
+            else -> tokens.textSecondary
+        }
+
+    private fun runHistoryStepColor(entry: CardRunHistoryEntry, index: Int): Int =
+        when (runHistoryStepState(entry, index)) {
+            "失败" -> tokens.danger
+            "已完成" -> tokens.success
+            "已停止" -> tokens.info
+            "未执行" -> tokens.textTertiary
+            else -> tokens.primaryStrong
+        }
+
+    private fun runHistoryStepState(entry: CardRunHistoryEntry, index: Int): String =
+        when {
+            entry.status == RecipeRunStatus.Completed && index < entry.stepCount -> "已完成"
+            index < entry.currentStepIndex -> "已完成"
+            index > entry.currentStepIndex && entry.currentStepIndex >= 0 -> "未执行"
+            entry.currentStepIndex < 0 -> if (entry.isClosed()) "未执行" else entry.status.label
+            entry.status == RecipeRunStatus.Failed ||
+                entry.status == RecipeRunStatus.BridgeUnavailable -> "失败"
+            entry.status == RecipeRunStatus.Stopped -> "已停止"
+            entry.status == RecipeRunStatus.WaitingTerminal -> "等待终端"
+            entry.status == RecipeRunStatus.Opened -> "已打开"
+            entry.status == RecipeRunStatus.Running ||
+                entry.status == RecipeRunStatus.AlreadyRunning ||
+                entry.status == RecipeRunStatus.Starting -> entry.status.label
+            else -> entry.status.label
+        }
+
+    private fun runHistoryStepDetail(step: CardRunHistoryStep): String =
+        step.detail.ifBlank {
+            when (step.type) {
+                KiteRecipe.STEP_TERMINAL -> "打开交互终端"
+                KiteRecipe.STEP_OPEN_WEB -> "未记录网址"
+                KiteRecipe.STEP_SHELL -> "未记录命令"
+                else -> "无自动内容"
+            }
+        }
 
     private fun registerCardRunBrowserHandler(recipe: KiteRecipe, instanceId: String) {
         if (this !is CardRunActivity || instanceId.isBlank()) return
