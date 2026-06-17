@@ -373,6 +373,36 @@ class KiteResourceRegistry(context: Context) {
         }
     }
 
+    fun resumePlanFrom(resourceId: String): Boolean {
+        val normalized = normalizeResourceId(resourceId)
+        if (normalized.isBlank()) return false
+        val now = System.currentTimeMillis()
+        var changed = false
+        database.writableDatabase.runInTransaction {
+            val stepIndex = planStepIndex(this, normalized) ?: return@runInTransaction
+            val rows = update(
+                TABLE_PLAN_STEP,
+                ContentValues().apply {
+                    put(COL_STATUS, PLAN_STEP_PENDING)
+                    put(COL_UPDATED_AT, now)
+                },
+                "$COL_PLAN_ID = ? AND $COL_STEP_INDEX >= ? AND $COL_STATUS IN (?, ?)",
+                arrayOf(ACTIVE_PLAN_ID, stepIndex.toString(), PLAN_STEP_FAILED, PLAN_STEP_BLOCKED)
+            )
+            update(
+                TABLE_PLAN,
+                ContentValues().apply {
+                    put(COL_STATUS, PLAN_STATUS_ACTIVE)
+                    put(COL_UPDATED_AT, now)
+                },
+                "$COL_PLAN_ID = ?",
+                arrayOf(ACTIVE_PLAN_ID)
+            )
+            changed = rows > 0
+        }
+        return changed
+    }
+
     fun clearPlan() {
         database.writableDatabase.runInTransaction {
             clearPlanLocked(this)

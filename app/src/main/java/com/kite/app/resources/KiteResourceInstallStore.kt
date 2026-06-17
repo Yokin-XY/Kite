@@ -110,6 +110,12 @@ class KiteResourceInstallStore(context: Context) {
         emitSignal("failPlanAt", resourceId = resourceId)
     }
 
+    fun resumePlanFrom(resourceId: String): Boolean {
+        val changed = registry.resumePlanFrom(resourceId)
+        if (changed) emitSignal("resumePlanFrom", resourceId = resourceId)
+        return changed
+    }
+
     fun clearPlan() {
         registry.clearPlan()
         emitSignal("clearPlan")

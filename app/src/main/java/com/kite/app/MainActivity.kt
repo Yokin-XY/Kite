@@ -3695,8 +3695,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val uninstallFailed = registryEntry?.failed == true &&
             registryEntry.operation == KiteResourceInstallStore.OP_UNINSTALL
         val failed = registryEntry?.failed == true ||
-            planStepStatus == KiteResourceInstallStore.PLAN_STEP_FAILED ||
-            recipeState?.failureSummary() != null
+            planStepStatus == KiteResourceInstallStore.PLAN_STEP_FAILED
         val blocked = planStepStatus == KiteResourceInstallStore.PLAN_STEP_BLOCKED
         val done = planStepStatus == KiteResourceInstallStore.PLAN_STEP_DONE
         val running = planStepStatus == KiteResourceInstallStore.PLAN_STEP_RUNNING
@@ -3784,6 +3783,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     }
                     openButtonTextView = openButton
                     addView(openButton)
+                    if (failed && !uninstalling) {
+                        addView(resourceWizardInlineButton("卸载", danger = true) {
+                            showResourceWizardUninstallConfirm(resourceItem)
+                        })
+                    }
                 }
                 subtitleTextView?.let { subtitleView ->
                     onBind?.invoke(
@@ -3821,6 +3825,81 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
+    private fun showResourceWizardUninstallConfirm(item: ResourceItem) {
+        val dialog = Dialog(this)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(20), dp(20), dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(20).toFloat())
+            addView(TextView(context).apply {
+                text = "卸载异常资源？"
+                textSize = 17f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textPrimary)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
+            addView(TextView(context).apply {
+                text = "将只执行 ${item.name} 的卸载动作，把它恢复为未获取状态。完成后仍留在当前获取向导里，不会自动重新获取。"
+                textSize = 13f
+                setTextColor(tokens.textSecondary)
+                gravity = Gravity.CENTER
+                setPadding(0, dp(12), 0, 0)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
+            addView(row {
+                setPadding(0, dp(20), 0, 0)
+                addView(TextView(context).apply {
+                    text = "取消"
+                    textSize = 14f
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(tokens.textPrimary)
+                    background = roundedBox(tokens.surface, tokens.border, dp(13).toFloat())
+                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                        setMargins(0, 0, dp(8), 0)
+                    }
+                    setOnClickListener { dialog.dismiss() }
+                })
+                addView(TextView(context).apply {
+                    text = "卸载"
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(tokens.danger)
+                    background = roundedBox(tintBackground(tokens.danger), tintBackgroundBorder(tokens.danger), dp(13).toFloat())
+                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                        setMargins(dp(8), 0, 0, 0)
+                    }
+                    setOnClickListener {
+                        dialog.dismiss()
+                        runResourceWizardUninstall(item)
+                    }
+                })
+            })
+        }
+        dialog.setContentView(content)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.show()
+    }
+
+    private fun runResourceWizardUninstall(item: ResourceItem) {
+        val recipe = resourceUninstallRecipe(item)
+        if (recipe == null) {
+            pendingResourceUninstallContinuations.remove(item.id)
+            resourceInstallStore.clear(item.id)
+            resourceInstallStore.resumePlanFrom(item.id)
+            invalidateResourceCatalogCache()
+            Toast.makeText(this, "${item.name} 已恢复为未获取", Toast.LENGTH_SHORT).show()
+            requestVisibleResourceInstallWizardRefresh("wizard_uninstall_no_recipe:${item.id}")
+            refreshResourceScreenIfVisible()
+            return
+        }
+        Toast.makeText(this, "正在卸载 ${item.name}", Toast.LENGTH_SHORT).show()
+        startResourceUninstall(item, recipe, ResourceUninstallContinuation.ResumeInstallWizard)
+    }
+
     private fun resourceWizardOpenButton(enabled: Boolean, onClick: () -> Unit): TextView =
         TextView(this).apply {
             text = "打开"
@@ -3848,15 +3927,24 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         )
     }
 
-    private fun resourceWizardInlineButton(label: String, onClick: () -> Unit): View =
+    private fun resourceWizardInlineButton(
+        label: String,
+        danger: Boolean = false,
+        onClick: () -> Unit
+    ): View =
         TextView(this).apply {
             text = label
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(tokens.primaryStrong)
-            background = roundedBox(tokens.primarySubtle, tokens.primarySoft, dp(13).toFloat())
+            val tone = if (danger) tokens.danger else tokens.primaryStrong
+            setTextColor(tone)
+            background = roundedBox(
+                if (danger) tintBackground(tokens.danger) else tokens.primarySubtle,
+                if (danger) tintBackgroundBorder(tokens.danger) else tokens.primarySoft,
+                dp(13).toFloat()
+            )
             setPadding(dp(10), 0, dp(10), 0)
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
                 setMargins(0, 0, dp(8), 0)
@@ -4924,28 +5012,37 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     ?: ResourceUninstallContinuation.None
                 resourceInstallStore.clear(resourceId)
                 invalidateResourceCatalogCache()
-                if (continuation == ResourceUninstallContinuation.Reinstall) {
-                    val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }
-                    if (item == null) {
-                        Toast.makeText(this, "卸载完成，但获取目标缺少资源定义", Toast.LENGTH_SHORT).show()
-                        refreshResourceScreenIfVisible()
-                    } else {
-                        Toast.makeText(this, "${item.name} 残留已卸载，继续获取", Toast.LENGTH_SHORT).show()
-                        handleResourceInstallAction(item)
+                when (continuation) {
+                    ResourceUninstallContinuation.Reinstall -> {
+                        val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }
+                        if (item == null) {
+                            Toast.makeText(this, "卸载完成，但获取目标缺少资源定义", Toast.LENGTH_SHORT).show()
+                            refreshResourceScreenIfVisible()
+                        } else {
+                            Toast.makeText(this, "${item.name} 残留已卸载，继续获取", Toast.LENGTH_SHORT).show()
+                            handleResourceInstallAction(item)
+                        }
                     }
-                } else if (continuation == ResourceUninstallContinuation.CancelFailedInstall) {
-                    resourceInstallStore.clearPlan()
-                    currentResourceInstallTargetId = null
-                    resourceInstallWizardPlanIds = emptyList()
-                    activeResourceInstallWizard = null
-                    Toast.makeText(this, "残留已卸载，获取任务已取消", Toast.LENGTH_SHORT).show()
-                    if (this is CardRunActivity && currentScreen == Screen.CardRun) {
-                        closeCardRunTask()
-                    } else {
+                    ResourceUninstallContinuation.CancelFailedInstall -> {
+                        resourceInstallStore.clearPlan()
+                        currentResourceInstallTargetId = null
+                        resourceInstallWizardPlanIds = emptyList()
+                        activeResourceInstallWizard = null
+                        Toast.makeText(this, "残留已卸载，获取任务已取消", Toast.LENGTH_SHORT).show()
+                        if (this is CardRunActivity && currentScreen == Screen.CardRun) {
+                            closeCardRunTask()
+                        } else {
+                            refreshResourceScreenIfVisible()
+                        }
+                    }
+                    ResourceUninstallContinuation.ResumeInstallWizard -> {
+                        resourceInstallStore.resumePlanFrom(resourceId)
+                        Toast.makeText(this, "已卸载异常资源，可继续当前获取队列", Toast.LENGTH_SHORT).show()
                         refreshResourceScreenIfVisible()
                     }
-                } else {
-                    refreshResourceScreenIfVisible()
+                    ResourceUninstallContinuation.None -> {
+                        refreshResourceScreenIfVisible()
+                    }
                 }
             }
         }
@@ -12686,7 +12783,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private enum class ResourceUninstallContinuation {
         None,
         Reinstall,
-        CancelFailedInstall
+        CancelFailedInstall,
+        ResumeInstallWizard
     }
 
     private data class ToolchainWorkspaceSnapshot(
