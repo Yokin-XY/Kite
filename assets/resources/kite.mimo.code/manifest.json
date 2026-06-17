@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.mimo.code",
+  "base": {
+    "name": "MiMo Code",
+    "description": "小米 MiMo 终端 AI 编码助手",
+    "version": "npm",
+    "icon": {
+      "type": "text",
+      "value": "Mi"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "tags": [
+      "mimo",
+      "mimocode",
+      "coding-agent",
+      "terminal",
+      "ai",
+      "mcp",
+      "memory"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.mimo",
+      "agent.mimo.code"
+    ],
+    "base": [
+      "runtime.node>=24",
+      "tool.npm"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "@mimo-ai/cli",
+    "repository": "https://github.com/XiaomiMiMo/MiMo-Code",
+    "command": "npm install -g @mimo-ai/cli"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.mimo.code",
+    "installRoot": "/workspace/.kf/software/kite.mimo.code",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "npm install -g @mimo-ai/cli"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "MiMo Code",
+          "description": "在终端里启动 MiMo Code 编码助手",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"MiMo Code 首次启动会引导配置：MiMo Auto、小米平台 OAuth、Claude Code 导入或自定义 OpenAI-compatible Provider。\"\nmimo\n"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "npm uninstall -g @mimo-ai/cli"
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "MiMo Code",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "MiMo Code",
+          "description": "在终端里启动 MiMo Code 编码助手",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"MiMo Code 首次启动会引导配置：MiMo Auto、小米平台 OAuth、Claude Code 导入或自定义 OpenAI-compatible Provider。\"\nmimo\n"
+          }
+        ]
+      }
+    }
+  ]
+}

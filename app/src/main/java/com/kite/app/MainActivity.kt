@@ -100,6 +100,7 @@ import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.web.KiteWebShell
+import com.kftest.app.R
 import com.kftest.app.foundation.bootstrap.BootstrapCoordinator
 import com.kftest.app.foundation.bootstrap.BootstrapSnapshot
 import com.kftest.app.foundation.bootstrap.BootstrapStage
@@ -2031,69 +2032,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun resourceHero(): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(18), dp(18), dp(18))
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                intArrayOf(Color.rgb(224, 251, 249), Color.rgb(248, 253, 255))
-            ).apply {
-                cornerRadius = dp(24).toFloat()
-                setStroke(dp(1), Color.rgb(215, 238, 240))
-            }
-            elevation = dp(1).toFloat()
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(214)
-            ).apply { setMargins(0, dp(22), 0, dp(18)) }
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.25f)
-                addView(TextView(context).apply {
-                    text = "精选推荐"
-                    textSize = 12f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.primaryStrong)
-                    setPadding(dp(10), dp(5), dp(10), dp(5))
-                    background = roundedBox(Color.argb(160, 255, 255, 255), Color.rgb(166, 223, 221), dp(14).toFloat())
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    )
-                })
-                addView(TextView(context).apply {
-                    text = "本地 AI 工作台"
-                    textSize = 22f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    includeFontPadding = false
-                    maxLines = 2
-                    setLineSpacing(dp(1).toFloat(), 1.0f)
-                    setPadding(0, dp(16), 0, 0)
-                })
-                addView(TextView(context).apply {
-                    text = "Hermes、Node 与开发环境"
-                    textSize = 12.5f
-                    setTextColor(tokens.textSecondary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setLineSpacing(dp(2).toFloat(), 1.0f)
-                    setPadding(0, dp(7), 0, 0)
-                })
-                addView(row {
-                    setPadding(0, dp(15), 0, 0)
-                    listOf("H" to "Hermes", "JS" to "Node", ">_" to "Dev").forEach { item ->
-                        addView(heroMiniIcon(item.first, item.second))
-                    }
-                })
-            })
-            addView(ResourceHeroArtView(context).apply {
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.78f).apply {
-                    setMargins(dp(4), 0, 0, 0)
-                }
+        HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            clipToPadding = false
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { setMargins(0, dp(22), 0, dp(18)) }
+            addView(row {
+                addView(resourceHeroPoster())
             })
         }
+
+    private fun resourceHeroPoster(): View {
+        val posterWidth = (resources.displayMetrics.widthPixels - dp(44)).coerceAtLeast(dp(280))
+        val posterHeight = (posterWidth * 780f / 1200f).toInt().coerceIn(dp(180), dp(240))
+        return FrameLayout(this).apply {
+            contentDescription = "MiMo Code 海报，点击查看资源详情"
+            isClickable = true
+            isFocusable = true
+            background = roundedBox(tokens.surface, Color.rgb(225, 226, 229), dp(24).toFloat())
+            clipToOutline = true
+            elevation = dp(1).toFloat()
+            setOnClickListener { showResourceDetail(RESOURCE_MIMO_CODE) }
+            layoutParams = LinearLayout.LayoutParams(posterWidth, posterHeight)
+            addView(ImageView(context).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setImageResource(R.drawable.kite_mimo_code_banner)
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+    }
 
     private fun heroMiniIcon(label: String, caption: String): View =
         LinearLayout(this).apply {
@@ -2420,7 +2386,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 addView(resourceDetailChrome(item))
                 addView(resourceDetailHeader(item))
                 addView(resourceDetailActionArea(item))
-                addView(resourcePreviewStrip(item))
+                addView(resourceDetailVisualBlock(item))
                 addView(resourceInfoBlock("简介", item.longDescription))
                 resourceRecommendationBlock(item)?.let { addView(it) }
                 addView(resourceExecutionPreviewBlock(item))
@@ -2673,11 +2639,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             RESOURCE_HERMES_WEBUI -> listOf(
                 ResourceRecommendation(RESOURCE_HERMES_CORE, "基础依赖"),
                 ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
-                ResourceRecommendation(RESOURCE_REASONIX, "同类 Agent")
+                ResourceRecommendation(RESOURCE_REASONIX, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_MIMO_CODE, "编码 Agent")
             )
             RESOURCE_REASONIX -> listOf(
                 ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
                 ResourceRecommendation(RESOURCE_GIT, "源码工具"),
+                ResourceRecommendation(RESOURCE_MIMO_CODE, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "同类 Agent")
+            )
+            RESOURCE_MIMO_CODE -> listOf(
+                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
+                ResourceRecommendation(RESOURCE_GIT, "源码工具"),
+                ResourceRecommendation(RESOURCE_REASONIX, "同类 Agent"),
                 ResourceRecommendation(RESOURCE_HERMES_WEBUI, "同类 Agent")
             )
             RESOURCE_HERMES_CORE -> listOf(
@@ -2692,7 +2666,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
             RESOURCE_NODE_RUNTIME -> listOf(
                 ResourceRecommendation(RESOURCE_HERMES_WEBUI, "上层应用"),
-                ResourceRecommendation(RESOURCE_REASONIX, "编码 Agent")
+                ResourceRecommendation(RESOURCE_REASONIX, "编码 Agent"),
+                ResourceRecommendation(RESOURCE_MIMO_CODE, "编码 Agent")
             )
             RESOURCE_UV -> listOf(
                 ResourceRecommendation(RESOURCE_PYTHON, "运行时"),
@@ -2831,6 +2806,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     }
                 })
                 .toString(2)
+        }
+
+    private fun resourceDetailVisualBlock(item: ResourceItem): View =
+        if (item.id == RESOURCE_MIMO_CODE) {
+            resourceImageBanner(item)
+        } else {
+            resourcePreviewStrip(item)
+        }
+
+    private fun resourceImageBanner(item: ResourceItem): View =
+        FrameLayout(this).apply {
+            val tone = KiteTheme.accent(item.accent, tokens)
+            background = roundedBox(tokens.surface, tone.border, dp(22).toFloat())
+            clipToOutline = true
+            elevation = dp(2).toFloat()
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(228)).apply {
+                setMargins(0, dp(20), 0, 0)
+            }
+            addView(ImageView(context).apply {
+                contentDescription = "${item.name} 视觉预览"
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setImageResource(R.drawable.kite_mimo_code_banner)
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
 
     private fun resourcePreviewStrip(item: ResourceItem): View =
@@ -4534,6 +4532,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 workdir = "/workspace",
                 timeoutMs = 600_000L
             )
+            RESOURCE_MIMO_CODE -> KiteRecipeStep(
+                id = "install_mimo_code",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.mimoCodeInstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 600_000L
+            )
             RESOURCE_GIT -> KiteRecipeStep(
                 id = "install_git",
                 type = KiteRecipe.STEP_SHELL,
@@ -4618,6 +4624,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 id = "uninstall_reasonix",
                 type = KiteRecipe.STEP_SHELL,
                 cmd = KiteResourceInstallRecipes.reasonixUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 180_000L
+            )
+            RESOURCE_MIMO_CODE -> KiteRecipeStep(
+                id = "uninstall_mimo_code",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.mimoCodeUninstallCommand(),
                 surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
                 workdir = "/workspace",
                 timeoutMs = 180_000L
@@ -5157,6 +5171,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             RESOURCE_HERMES_CORE,
             RESOURCE_HERMES_WEBUI,
             RESOURCE_REASONIX,
+            RESOURCE_MIMO_CODE,
             RESOURCE_GIT,
             RESOURCE_CURL,
             RESOURCE_PYTHON,
@@ -5271,6 +5286,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val reasonixInstalling = installing(RESOURCE_REASONIX)
         val reasonixUninstalling = uninstalling(RESOURCE_REASONIX)
         val reasonixFailedOperation = failedOperation(RESOURCE_REASONIX)
+        val mimoCodeRecordedInstalled = recordedInstalled(RESOURCE_MIMO_CODE)
+        val mimoCodeInstallFailed = installFailed(RESOURCE_MIMO_CODE)
+        val mimoCodeBusy = busy(RESOURCE_MIMO_CODE)
+        val mimoCodeInstalling = installing(RESOURCE_MIMO_CODE)
+        val mimoCodeUninstalling = uninstalling(RESOURCE_MIMO_CODE)
+        val mimoCodeFailedOperation = failedOperation(RESOURCE_MIMO_CODE)
         val gitRecordedInstalled = recordedInstalled(RESOURCE_GIT)
         val gitInstallFailed = installFailed(RESOURCE_GIT)
         val gitBusy = busy(RESOURCE_GIT)
@@ -5359,6 +5380,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             reasonixUninstalling,
             reasonixInstallFailed,
             reasonixFailedOperation,
+            "未获取"
+        )
+        val mimoCodeAction = actionLabelForResource(
+            mimoCodeRecordedInstalled,
+            mimoCodeInstalling,
+            mimoCodeUninstalling,
+            mimoCodeInstallFailed,
+            mimoCodeFailedOperation
+        )
+        val mimoCodeState = stateLabelForResource(
+            mimoCodeRecordedInstalled,
+            mimoCodeInstalling,
+            mimoCodeUninstalling,
+            mimoCodeInstallFailed,
+            mimoCodeFailedOperation,
             "未获取"
         )
         val gitAction = actionLabelForResource(
@@ -5605,6 +5641,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     ResourceStep("shell", "安装 npm 包", "npm install -g reasonix"),
                     ResourceStep("shell", "暴露命令", "link reasonix/dsnix -> /workspace/.kf/bin"),
                     ResourceStep("terminal", "打开终端", "reasonix")
+                )
+            ),
+            ResourceItem(
+                id = RESOURCE_MIMO_CODE,
+                name = "MiMo Code",
+                description = "小米 MiMo 终端 AI 编码助手",
+                longDescription = "MiMo Code 是小米 MiMo 团队的终端原生 AI 编码助手，可以读写代码、运行命令、管理 Git，并通过持久记忆理解项目。Kite 把它作为 Node.js 上层资源：获取阶段只安装 @mimo-ai/cli 并暴露 mimo 命令；打开后在终端表面完成首次配置或登录，不把 Provider、OAuth 或运行输出写进资源卡。",
+                section = "精选推荐",
+                category = "AI",
+                iconText = "Mi",
+                accent = "orange",
+                version = "npm",
+                sizeLabel = "网络包",
+                sourceLabel = "npm",
+                stateLabel = mimoCodeState,
+                actionLabel = mimoCodeAction,
+                actionEnabled = resourceActionEnabled(mimoCodeAction, mimoCodeBusy),
+                includes = listOf("@mimo-ai/cli", "mimo CLI", "MiMo Auto / OAuth / Provider 配置", "终端首页卡片"),
+                notes = listOf("基础层：Node.js", "首次启动由 MiMo Code TUI 引导配置", "运行态输出仍归首页卡/终端/SH 报告车道"),
+                steps = listOf(
+                    ResourceStep("shell", "安装 npm 包", "npm install -g @mimo-ai/cli"),
+                    ResourceStep("shell", "暴露命令", "link mimo -> /workspace/.kf/bin"),
+                    ResourceStep("terminal", "打开终端", "mimo")
                 )
             )
         ).map { applyResourceManifest(it) }
@@ -13009,6 +13068,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
         private const val RESOURCE_HERMES_WEBUI = "kite.hermes.webui"
         private const val RESOURCE_REASONIX = "kite.reasonix"
+        private const val RESOURCE_MIMO_CODE = "kite.mimo.code"
         private const val RESOURCE_GIT = "kite.git"
         private const val RESOURCE_CURL = "kite.curl"
         private const val RESOURCE_PYTHON = "kite.python"

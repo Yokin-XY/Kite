@@ -363,7 +363,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         val sessionId = initialSessionId()
         if (sessionId.isNotBlank() && !detailOnlyInitialSessionOpened) {
             detailOnlyInitialSessionOpened = true
-            terminalController.switchToSession(sessionId)
+            terminalController.openEmbeddedSession(sessionId)
         }
         showDetailPage()
     }
@@ -1699,7 +1699,11 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     fun openSessionFromExternal(sessionId: String) {
         detailOnlyInitialSessionOpened = true
-        terminalController.switchToSession(sessionId)
+        if (isDetailOnlyMode()) {
+            terminalController.openEmbeddedSession(sessionId)
+        } else {
+            terminalController.switchToSession(sessionId)
+        }
         showDetailPage()
     }
 

@@ -187,6 +187,38 @@ SH
             echo "Reasonix installed at ${'$'}(command -v reasonix)"
         """.trimIndent()
 
+    fun mimoCodeInstallCommand(): String =
+        """
+            set -e
+            export PATH="$WORKSPACE_BIN_ROOT:/root/.local/bin:${'$'}PATH"
+            install_root="${softwarePath("kite.mimo.code")}"
+            if ! command -v npm >/dev/null 2>&1; then
+              echo "缺少 npm：请先安装 Node.js 资源。"
+              exit 127
+            fi
+            echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}install_root"
+            mkdir -p "${'$'}install_root" "$WORKSPACE_BIN_ROOT"
+            echo "KITE_RESOURCE_STEP npm-install @mimo-ai/cli"
+            npm install -g @mimo-ai/cli
+            npm_prefix="${'$'}(npm prefix -g 2>/dev/null || true)"
+            rm -f "$WORKSPACE_BIN_ROOT/mimo"
+            for candidate in "${'$'}npm_prefix/bin/mimo" "/root/.local/bin/mimo"; do
+              if [ -x "${'$'}candidate" ]; then
+                echo "KITE_RESOURCE_STEP link-command mimo"
+                ln -sfn "${'$'}candidate" "$WORKSPACE_BIN_ROOT/mimo"
+                break
+              fi
+            done
+            hash -r 2>/dev/null || true
+            if ! command -v mimo >/dev/null 2>&1; then
+              echo "MiMo Code npm package installed, but the mimo command was not found."
+              exit 127
+            fi
+            mimo --version || mimo --help | head -40 || true
+            printf '%s\n' 'installed_by_kite' > "${'$'}install_root/ownership"
+            echo "MiMo Code installed at ${'$'}(command -v mimo)"
+        """.trimIndent()
+
     fun hermesCoreInstallCommand(): String =
         """
             set -e
@@ -491,6 +523,21 @@ PY
             exit 0
         """.trimIndent()
 
+    fun mimoCodeUninstallCommand(): String =
+        """
+            set +e
+            export PATH="$WORKSPACE_BIN_ROOT:/root/.local/bin:${'$'}PATH"
+            if command -v npm >/dev/null 2>&1; then
+              echo "KITE_RESOURCE_STEP npm-uninstall @mimo-ai/cli"
+              npm uninstall -g @mimo-ai/cli
+            else
+              echo "npm missing; clearing Kite install record only"
+            fi
+            rm -f "$WORKSPACE_BIN_ROOT/mimo"
+            rm -rf ${softwarePath("kite.mimo.code")}
+            exit 0
+        """.trimIndent()
+
     fun cancelCleanupCommand(resourceIds: List<String>): String {
         val ids = resourceIds.map(::safeId).filter { it.isNotBlank() }.distinct()
         val quotedIds = ids.joinToString(" ") { "'$it'" }
@@ -546,6 +593,12 @@ PY
                   rm -f "$WORKSPACE_BIN_ROOT/reasonix" "$WORKSPACE_BIN_ROOT/dsnix"
                   if command -v npm >/dev/null 2>&1; then
                     npm uninstall -g reasonix >/dev/null 2>&1 || true
+                  fi
+                  ;;
+                kite.mimo.code)
+                  rm -f "$WORKSPACE_BIN_ROOT/mimo"
+                  if command -v npm >/dev/null 2>&1; then
+                    npm uninstall -g @mimo-ai/cli >/dev/null 2>&1 || true
                   fi
                   ;;
               esac

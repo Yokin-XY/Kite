@@ -31,7 +31,8 @@
     "defaults": [],
     "extensions": [
       "kite.hermes.webui",
-      "kite.reasonix"
+      "kite.reasonix",
+      "kite.mimo.code"
     ]
   },
   "source": {
