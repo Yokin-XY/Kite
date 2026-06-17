@@ -49,7 +49,13 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "npm install -g reasonix"
+        "cmd": "npm install -g reasonix",
+        "managedCommands": [
+          "reasonix",
+          "dsnix"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 600000
       }
     ],
     "open": {
@@ -78,7 +84,13 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "npm uninstall -g reasonix"
+        "cmd": ":",
+        "managedCommands": [
+          "reasonix",
+          "dsnix"
+        ],
+        "npmUninstallPackage": "reasonix",
+        "timeoutMs": 180000
       }
     ]
   },

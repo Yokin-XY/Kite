@@ -47,7 +47,12 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "curl -fsSL https://claude.ai/install.sh | bash"
+        "cmd": "curl -fsSL https://claude.ai/install.sh | bash",
+        "managedCommands": [
+          "claude"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 600000
       }
     ],
     "open": {
@@ -76,7 +81,11 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove Kite claude wrapper and managed install root"
+        "cmd": ":",
+        "managedCommands": [
+          "claude"
+        ],
+        "timeoutMs": 180000
       }
     ]
   },

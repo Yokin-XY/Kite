@@ -48,7 +48,12 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"
+        "cmd": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+        "managedCommands": [
+          "codex"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 600000
       }
     ],
     "open": {
@@ -77,7 +82,11 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove Kite codex wrapper and managed install root"
+        "cmd": ":",
+        "managedCommands": [
+          "codex"
+        ],
+        "timeoutMs": 180000
       }
     ]
   },

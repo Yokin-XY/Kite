@@ -49,7 +49,12 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "npm install -g openclaw@latest"
+        "cmd": "npm install -g openclaw@latest",
+        "managedCommands": [
+          "openclaw"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 600000
       }
     ],
     "open": {
@@ -78,7 +83,12 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "npm uninstall -g openclaw"
+        "cmd": ":",
+        "managedCommands": [
+          "openclaw"
+        ],
+        "npmUninstallPackage": "openclaw",
+        "timeoutMs": 180000
       }
     ]
   },

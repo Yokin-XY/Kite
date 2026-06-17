@@ -18,9 +18,22 @@ data class KiteResourceManifest(
     val defaultRequirements: List<String>,
     val extensions: List<String>,
     val sourceType: String,
+    val installActions: List<KiteResourceShellAction>,
+    val uninstallActions: List<KiteResourceShellAction>,
     val openRecipe: JSONObject?,
     val homeCards: List<KiteResourceHomeCard>,
     val rawJson: JSONObject
+)
+
+data class KiteResourceShellAction(
+    val type: String,
+    val cmd: String,
+    val surfaceMode: String,
+    val workdir: String,
+    val timeoutMs: Long,
+    val managedCommands: List<String>,
+    val cleanInstallRoot: Boolean,
+    val npmUninstallPackages: List<String>
 )
 
 data class KiteResourceHomeCard(
@@ -75,6 +88,12 @@ class KiteResourceManifestLoader(private val context: Context) {
 
     fun requestOpenRecipeTemplate(resourceId: String): JSONObject? =
         requestManifest(resourceId)?.openRecipe?.deepCopy()
+
+    fun requestInstallActions(resourceId: String): List<KiteResourceShellAction> =
+        requestManifest(resourceId)?.installActions.orEmpty()
+
+    fun requestUninstallActions(resourceId: String): List<KiteResourceShellAction> =
+        requestManifest(resourceId)?.uninstallActions.orEmpty()
 
     fun requestFirstHomeCardRecipeTemplate(resourceId: String): JSONObject? =
         requestManifest(resourceId)?.homeCards?.firstOrNull()?.recipe?.deepCopy()
@@ -361,10 +380,44 @@ class KiteResourceManifestLoader(private val context: Context) {
             defaultRequirements = relations.optJSONArray("defaults").toStringList(),
             extensions = relations.optJSONArray("extensions").toStringList(),
             sourceType = source.optString("type"),
+            installActions = parseShellActions(actions.optJSONArray("install")),
+            uninstallActions = parseShellActions(actions.optJSONArray("uninstall")),
             openRecipe = openRecipe,
             homeCards = parseHomeCards(json.optJSONArray("homeCards")),
             rawJson = json.deepCopy()
         )
+    }
+
+    private fun parseShellActions(actionsJson: JSONArray?): List<KiteResourceShellAction> {
+        if (actionsJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until actionsJson.length()) {
+                val action = actionsJson.optJSONObject(index) ?: continue
+                val type = action.optString("type")
+                val cmd = action.optString("cmd")
+                if (type != "shell" || cmd.isBlank()) continue
+                val managedCommands = (
+                    action.optJSONArray("managedCommands").toStringList() +
+                        listOf(action.optString("managedCommand")).filter { it.isNotBlank() }
+                    ).distinct()
+                val npmUninstallPackages = (
+                    action.optJSONArray("npmUninstallPackages").toStringList() +
+                        listOf(action.optString("npmUninstallPackage")).filter { it.isNotBlank() }
+                    ).distinct()
+                add(
+                    KiteResourceShellAction(
+                        type = type,
+                        cmd = cmd,
+                        surfaceMode = action.optString("surfaceMode", "panel"),
+                        workdir = action.optString("workdir", "/workspace"),
+                        timeoutMs = action.optLong("timeoutMs", 600_000L),
+                        managedCommands = managedCommands,
+                        cleanInstallRoot = action.optBoolean("cleanInstallRoot", false),
+                        npmUninstallPackages = npmUninstallPackages
+                    )
+                )
+            }
+        }
     }
 
     private fun parseHomeCards(cardsJson: JSONArray?): List<KiteResourceHomeCard> {

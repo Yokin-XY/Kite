@@ -51,7 +51,12 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "npm install -g @mimo-ai/cli"
+        "cmd": "npm install -g @mimo-ai/cli",
+        "managedCommands": [
+          "mimo"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 600000
       }
     ],
     "open": {
@@ -80,7 +85,12 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "npm uninstall -g @mimo-ai/cli"
+        "cmd": ":",
+        "managedCommands": [
+          "mimo"
+        ],
+        "npmUninstallPackage": "@mimo-ai/cli",
+        "timeoutMs": 180000
       }
     ]
   },

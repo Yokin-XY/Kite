@@ -48,7 +48,12 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "curl -fsSL https://opencode.ai/install | bash"
+        "cmd": "export OPENCODE_INSTALL_DIR=\"$install_root/bin\"\ncurl -fsSL https://opencode.ai/install | bash",
+        "managedCommands": [
+          "opencode"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 600000
       }
     ],
     "open": {
@@ -77,7 +82,11 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove Kite opencode wrapper and managed install root"
+        "cmd": ":",
+        "managedCommands": [
+          "opencode"
+        ],
+        "timeoutMs": 180000
       }
     ]
   },

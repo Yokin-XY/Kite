@@ -88,6 +88,7 @@ import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRequestPolicy
 import com.kite.app.resources.KiteResourceRegistryEntry
+import com.kite.app.resources.KiteResourceShellAction
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunBrowserRouter
 import com.kite.app.run.CardRunHistoryEntry
@@ -4525,6 +4526,46 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceManifestLoader.requestFirstHomeCardRecipeTemplate(item.id)
             ?: resourceManifestLoader.requestOpenRecipeTemplate(item.id)
 
+    private fun resourceManifestRecipeSteps(item: ResourceItem, operation: String): List<KiteRecipeStep> {
+        val actions = when (operation) {
+            KiteResourceInstallRecipes.OP_INSTALL -> resourceManifestLoader.requestInstallActions(item.id)
+            KiteResourceInstallRecipes.OP_UNINSTALL -> resourceManifestLoader.requestUninstallActions(item.id)
+            else -> emptyList()
+        }
+        return actions.mapIndexed { index, action ->
+            KiteRecipeStep(
+                id = "${operation}_${KiteResourceInstallRecipes.safeId(item.id)}_${index + 1}",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = resourceManifestActionCommand(item, operation, action),
+                surfaceMode = action.surfaceMode.ifBlank { KiteRecipe.SURFACE_MODE_PANEL },
+                workdir = action.workdir.ifBlank { "/workspace" },
+                timeoutMs = action.timeoutMs.takeIf { it > 0L } ?: 600_000L
+            )
+        }
+    }
+
+    private fun resourceManifestActionCommand(
+        item: ResourceItem,
+        operation: String,
+        action: KiteResourceShellAction
+    ): String =
+        when (operation) {
+            KiteResourceInstallRecipes.OP_INSTALL -> KiteResourceInstallRecipes.manifestInstallCommand(
+                resourceId = item.id,
+                displayName = item.name,
+                rawCommand = action.cmd,
+                managedCommands = action.managedCommands,
+                cleanInstallRoot = action.cleanInstallRoot
+            )
+            KiteResourceInstallRecipes.OP_UNINSTALL -> KiteResourceInstallRecipes.manifestUninstallCommand(
+                resourceId = item.id,
+                rawCommand = action.cmd,
+                managedCommands = action.managedCommands,
+                npmUninstallPackages = action.npmUninstallPackages
+            )
+            else -> action.cmd
+        }
+
     private fun resourceInstallRecipe(item: ResourceItem): KiteRecipe? {
         val step = when (item.id) {
             RESOURCE_NODE_RUNTIME -> KiteRecipeStep(
@@ -4550,54 +4591,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
                 workdir = "/workspace",
                 timeoutMs = 900_000L
-            )
-            RESOURCE_REASONIX -> KiteRecipeStep(
-                id = "install_reasonix",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.reasonixInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 600_000L
-            )
-            RESOURCE_MIMO_CODE -> KiteRecipeStep(
-                id = "install_mimo_code",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.mimoCodeInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 600_000L
-            )
-            RESOURCE_CODEX_CLI -> KiteRecipeStep(
-                id = "install_codex_cli",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.codexCliInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 600_000L
-            )
-            RESOURCE_CLAUDE_CODE -> KiteRecipeStep(
-                id = "install_claude_code",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.claudeCodeInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 600_000L
-            )
-            RESOURCE_OPENCODE -> KiteRecipeStep(
-                id = "install_opencode",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.openCodeInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 600_000L
-            )
-            RESOURCE_OPENCLAW -> KiteRecipeStep(
-                id = "install_openclaw",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.openClawInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 600_000L
             )
             RESOURCE_GIT -> KiteRecipeStep(
                 id = "install_git",
@@ -4640,7 +4633,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 timeoutMs = 1_800_000L
             )
             else -> null
-        } ?: return null
+        }
+        val steps = step?.let { listOf(it) }
+            ?: resourceManifestRecipeSteps(item, KiteResourceInstallRecipes.OP_INSTALL)
+        if (steps.isEmpty()) return null
         return KiteResourceInstallRecipes.toRecipe(
             KiteResourceInstallSpec(
                 id = item.id,
@@ -4648,7 +4644,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 description = item.description,
                 category = "resource",
                 iconName = resourceRecipeIcon(item),
-                steps = listOf(step)
+                steps = steps
             )
         )
     }
@@ -4678,54 +4674,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
                 workdir = "/workspace",
                 timeoutMs = 300_000L
-            )
-            RESOURCE_REASONIX -> KiteRecipeStep(
-                id = "uninstall_reasonix",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.reasonixUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 180_000L
-            )
-            RESOURCE_MIMO_CODE -> KiteRecipeStep(
-                id = "uninstall_mimo_code",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.mimoCodeUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 180_000L
-            )
-            RESOURCE_CODEX_CLI -> KiteRecipeStep(
-                id = "uninstall_codex_cli",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.codexCliUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 180_000L
-            )
-            RESOURCE_CLAUDE_CODE -> KiteRecipeStep(
-                id = "uninstall_claude_code",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.claudeCodeUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 180_000L
-            )
-            RESOURCE_OPENCODE -> KiteRecipeStep(
-                id = "uninstall_opencode",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.openCodeUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 180_000L
-            )
-            RESOURCE_OPENCLAW -> KiteRecipeStep(
-                id = "uninstall_openclaw",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.openClawUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 180_000L
             )
             RESOURCE_GIT -> KiteRecipeStep(
                 id = "uninstall_git",
@@ -4768,7 +4716,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 timeoutMs = 180_000L
             )
             else -> null
-        } ?: return null
+        }
+        val steps = step?.let { listOf(it) }
+            ?: resourceManifestRecipeSteps(item, KiteResourceInstallRecipes.OP_UNINSTALL)
+        if (steps.isEmpty()) return null
         return KiteResourceInstallRecipes.toRecipe(
             KiteResourceInstallSpec(
                 id = item.id,
@@ -4778,7 +4729,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 iconName = resourceRecipeIcon(item),
                 operation = KiteResourceInstallRecipes.OP_UNINSTALL,
                 actionLabel = "卸载",
-                steps = listOf(step)
+                steps = steps
             )
         )
     }
