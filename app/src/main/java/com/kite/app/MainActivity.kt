@@ -236,6 +236,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var cachedResourceCatalog: List<ResourceItem>? = null
     private var cachedResourceCatalogUpdatedAt = 0L
     private var resourceCatalogDirty = true
+    private val resourceIconBitmapCache = mutableMapOf<String, Bitmap>()
     private var resourceCatalogBackgroundRefreshInFlight = false
     private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     private var lastConsoleRuntimeRefreshAt = 0L
@@ -2032,6 +2033,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             section,
             actionLabel,
             iconText,
+            iconAsset,
             accent
         ).any { it.lowercase().contains(needle) } ||
             steps.any { step ->
@@ -2195,7 +2197,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(7), 0, dp(7))
             setOnClickListener { showResourceDetail(item.id, item) }
-            addView(resourceIcon(item.iconText, item.accent))
+            addView(resourceIcon(item))
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -2227,7 +2229,26 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             addView(resourceActionButton(item, compact = true))
         }
 
-    private fun resourceIcon(textValue: String, accent: String): View =
+    private fun resourceIcon(item: ResourceItem): View =
+        resourceIcon(item.iconText, item.accent, item.iconAsset)
+
+    private fun resourceIcon(textValue: String, accent: String, assetPath: String = ""): View {
+        val bitmap = resourceIconBitmap(assetPath)
+        if (bitmap == null) return resourceTextIcon(textValue, accent)
+        val tone = KiteTheme.accent(accent, tokens)
+        return FrameLayout(this).apply {
+            background = roundedBox(tokens.surface, tone.border, dp(14).toFloat())
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+            addView(ImageView(context).apply {
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dp(7), dp(7), dp(7), dp(7))
+                setImageBitmap(bitmap)
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+    }
+
+    private fun resourceTextIcon(textValue: String, accent: String): View =
         TextView(this).apply {
             text = textValue
             textSize = 15f
@@ -2238,6 +2259,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             background = roundedBox(tokens.surface, tone.border, dp(14).toFloat())
             layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
         }
+
+    private fun resourceIconBitmap(assetPath: String): Bitmap? {
+        val normalized = assetPath.trim().trimStart('/')
+        if (normalized.isBlank() || normalized.contains("..")) return null
+        resourceIconBitmapCache[normalized]?.let { return it }
+        return runCatching {
+            assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream) }
+        }.getOrNull()?.also { bitmap ->
+            resourceIconBitmapCache[normalized] = bitmap
+        }
+    }
 
     private fun resourceActionButton(item: ResourceItem, compact: Boolean): TextView =
         TextView(this).apply {
@@ -2532,7 +2564,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         row {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(4), 0, 0)
-            addView(resourceIcon(item.iconText, item.accent).apply {
+            addView(resourceIcon(item).apply {
                 elevation = dp(3).toFloat()
                 layoutParams = LinearLayout.LayoutParams(dp(78), dp(78))
             })
@@ -2656,7 +2688,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             gravity = Gravity.CENTER
             contentDescription = "${item.name}，${recommendation.label}"
             setOnClickListener { showResourceDetail(item.id, item) }
-            addView(resourceIcon(item.iconText, item.accent))
+            addView(resourceIcon(item))
             addView(TextView(context).apply {
                 text = item.name
                 textSize = 10.5f
@@ -4361,7 +4393,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun resourceMoreHeader(item: ResourceItem): View =
         row {
             gravity = Gravity.CENTER_VERTICAL
-            addView(resourceIcon(item.iconText, item.accent).apply {
+            addView(resourceIcon(item).apply {
                 layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
                     setMargins(0, 0, dp(12), 0)
                 }
@@ -5168,9 +5200,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun saveInstalledResourceSnapshot(resourceId: String, item: ResourceItem?, version: String) {
         val manifest = resourceManifestLoader.requestManifest(resourceId)
+        val snapshotIconAsset = manifest?.iconAsset?.ifBlank { item?.iconAsset.orEmpty() } ?: item?.iconAsset.orEmpty()
+        val snapshotIconText = manifest?.iconText?.ifBlank { item?.iconText.orEmpty() } ?: item?.iconText.orEmpty()
         val iconJson = JSONObject().apply {
-            put("type", "text")
-            put("value", manifest?.iconText?.ifBlank { item?.iconText.orEmpty() } ?: item?.iconText.orEmpty())
+            if (snapshotIconAsset.isNotBlank()) {
+                put("type", "asset")
+                put("value", snapshotIconAsset)
+                put("fallbackText", snapshotIconText)
+            } else {
+                put("type", "text")
+                put("value", snapshotIconText)
+            }
         }.toString()
         val manifestJson = resourceManifestLoader.requestExecutionManifestJson(resourceId)?.toString().orEmpty()
         resourceInstallStore.saveInstalledSnapshot(
@@ -5884,6 +5924,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             description = manifest.description.ifBlank { item.description },
             section = resourceSectionLabel(manifest.sections.firstOrNull()).ifBlank { item.section },
             iconText = manifest.iconText.ifBlank { item.iconText },
+            iconAsset = manifest.iconAsset.ifBlank { item.iconAsset },
             version = manifest.version.ifBlank { item.version },
             sourceLabel = resourceSourceLabel(manifest.sourceType).ifBlank { item.sourceLabel },
             includes = mergeResourceStrings(item.includes, manifest.provides),
@@ -13037,6 +13078,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val section: String,
         val category: String,
         val iconText: String,
+        val iconAsset: String = "",
         val accent: String,
         val version: String,
         val sizeLabel: String,

@@ -6,8 +6,9 @@
     "description": "开源终端 AI 编码 Agent",
     "version": "official",
     "icon": {
-      "type": "text",
-      "value": "OC"
+      "type": "asset",
+      "value": "resources/kite.opencode/icon.png",
+      "fallbackText": "OC"
     }
   },
   "display": {

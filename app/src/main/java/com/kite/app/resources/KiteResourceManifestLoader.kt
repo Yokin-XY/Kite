@@ -11,6 +11,7 @@ data class KiteResourceManifest(
     val description: String,
     val version: String,
     val iconText: String,
+    val iconAsset: String,
     val sections: List<String>,
     val tags: List<String>,
     val provides: List<String>,
@@ -426,6 +427,13 @@ class KiteResourceManifestLoader(private val context: Context) {
             version = base.optString("version"),
             iconText = when (icon?.optString("type")) {
                 "text" -> icon.optString("value")
+                "asset" -> icon.optString("fallbackText")
+                else -> ""
+            },
+            iconAsset = when (icon?.optString("type")) {
+                "asset" -> icon.optString("value")
+                    .ifBlank { icon.optString("asset") }
+                    .trim()
                 else -> ""
             },
             sections = display.optJSONArray("sections").toStringList(),

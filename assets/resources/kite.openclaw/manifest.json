@@ -6,8 +6,9 @@
     "description": "多通道 AI Agent 网关",
     "version": "npm",
     "icon": {
-      "type": "text",
-      "value": "Cl"
+      "type": "asset",
+      "value": "resources/kite.openclaw/icon.png",
+      "fallbackText": "Cl"
     }
   },
   "display": {

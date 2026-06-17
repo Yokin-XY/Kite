@@ -6,8 +6,9 @@
     "description": "Anthropic 的终端编码助手",
     "version": "official",
     "icon": {
-      "type": "text",
-      "value": "CC"
+      "type": "asset",
+      "value": "resources/kite.claude.code/icon.png",
+      "fallbackText": "CC"
     }
   },
   "display": {
