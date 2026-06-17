@@ -9153,7 +9153,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         formShortcutRequested = draft?.shortcutRequested ?: (recipeId.isNotBlank() && cardLocalSettings.shortcutRequested(recipeId))
         formLaunchOpenInstance = draft?.launchOpenInstance ?: (recipe?.launch?.openInstance ?: true)
         clearRootForScreen()
-        root.addView(createTopBar(if (recipe == null) "新建配置" else "编辑配置"))
+        root.addView(createTopBar(if (recipe == null) "新建配置" else "编辑配置", saveAction = recipe == null))
         val bodyFrame = FrameLayout(this)
         val actionBar = recipe?.let { recipeEditorRunActions(it) }
         val scrollView = ScrollView(this).apply {
@@ -9170,6 +9170,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         setPadding(0, dp(16), 0, dp(8))
                     })
                     addView(recentRunHistoryPanel(recipe))
+                } else {
+                    addView(formDivider())
+                    addView(navigationRow("启动配置") { showRecipeFormMoreMenu() }.apply {
+                        setPadding(0, dp(16), 0, dp(8))
+                    })
                 }
             })
         }
@@ -10481,12 +10486,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun showRecipeUnsavedChangesDialog() {
         val dialog = Dialog(this)
+        val creatingNewRecipe = editingRecipe == null
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(20), dp(20), dp(16))
             background = roundedBox(tokens.cardBackground, tokens.border, dp(20).toFloat())
             addView(TextView(context).apply {
-                text = "保存这次修改？"
+                text = if (creatingNewRecipe) "取消新建配置？" else "保存这次修改？"
                 textSize = 17f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
@@ -10495,34 +10501,69 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
             addView(row {
                 setPadding(0, dp(20), 0, 0)
-                addView(TextView(context).apply {
-                    text = "取消"
-                    textSize = 14f
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setTextColor(tokens.textPrimary)
-                    background = roundedBox(tokens.surface, tokens.border, dp(13).toFloat())
-                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                        setMargins(0, 0, dp(8), 0)
-                    }
-                    setOnClickListener { dialog.dismiss() }
-                })
-                addView(TextView(context).apply {
-                    text = "保存"
-                    textSize = 14f
-                    typeface = Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setTextColor(Color.WHITE)
-                    background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(13).toFloat())
-                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                        setMargins(dp(8), 0, 0, 0)
-                    }
-                    setOnClickListener {
-                        dialog.dismiss()
-                        saveRecipeForm()
-                    }
-                })
+                if (creatingNewRecipe) {
+                    addView(TextView(context).apply {
+                        text = "取消"
+                        textSize = 14f
+                        typeface = Typeface.DEFAULT_BOLD
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        setTextColor(tokens.danger)
+                        background = roundedBox(tintBackground(tokens.danger), tintBackgroundBorder(tokens.danger), dp(13).toFloat())
+                        layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                            setMargins(0, 0, dp(8), 0)
+                        }
+                        setOnClickListener {
+                            dialog.dismiss()
+                            discardRecipeDraftAndShowConsole()
+                        }
+                    })
+                    addView(TextView(context).apply {
+                        text = "继续编辑"
+                        textSize = 14f
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        setTextColor(tokens.textPrimary)
+                        background = roundedBox(tokens.surface, tokens.border, dp(13).toFloat())
+                        layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                            setMargins(dp(8), 0, 0, 0)
+                        }
+                        setOnClickListener { dialog.dismiss() }
+                    })
+                } else {
+                    addView(TextView(context).apply {
+                        text = "不保存"
+                        textSize = 14f
+                        typeface = Typeface.DEFAULT_BOLD
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        setTextColor(tokens.danger)
+                        background = roundedBox(tintBackground(tokens.danger), tintBackgroundBorder(tokens.danger), dp(13).toFloat())
+                        layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                            setMargins(0, 0, dp(8), 0)
+                        }
+                        setOnClickListener {
+                            dialog.dismiss()
+                            discardRecipeDraftAndShowConsole()
+                        }
+                    })
+                    addView(TextView(context).apply {
+                        text = "保存"
+                        textSize = 14f
+                        typeface = Typeface.DEFAULT_BOLD
+                        gravity = Gravity.CENTER
+                        includeFontPadding = false
+                        setTextColor(Color.WHITE)
+                        background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(13).toFloat())
+                        layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                            setMargins(dp(8), 0, 0, 0)
+                        }
+                        setOnClickListener {
+                            dialog.dismiss()
+                            saveRecipeForm()
+                        }
+                    })
+                }
             })
         }
         dialog.setContentView(content)
@@ -11269,10 +11310,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         webShell.open(url, recipeId = recipe?.id, recipeName = recipe?.name, openSource = source)
     }
 
-    private fun createTopBar(title: String): View = row {
-        setPadding(0, dp(18), dp(22), dp(10))
+    private fun createTopBar(title: String, saveAction: Boolean = false): View = row {
+        setPadding(dp(18), dp(14), dp(18), dp(10))
         gravity = Gravity.CENTER_VERTICAL
-        addView(iconButton("‹", dp(40), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { handleRecipeFormBack() })
+        addView(iconButton("‹", dp(44), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { handleRecipeFormBack() })
         addView(TextView(context).apply {
             text = title
             textSize = 15f
@@ -11281,15 +11322,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setTextColor(tokens.textPrimary)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
-        addView(TextView(context).apply {
-            text = "..."
-            textSize = 21f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(tokens.textPrimary)
-            layoutParams = LinearLayout.LayoutParams(dp(54), dp(42))
-            setOnClickListener { showRecipeFormMoreMenu() }
+        val rightText = if (saveAction) "保存" else "..."
+        val rightColor = if (saveAction) tokens.primaryStrong else tokens.textPrimary
+        addView(iconButton(rightText, dp(44), Color.TRANSPARENT, rightColor, dp(16)) {
+            if (saveAction) saveRecipeForm() else showRecipeFormMoreMenu()
         })
     }
 
@@ -11726,6 +11762,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             textSize = when (text) {
                 "+" -> 38f
                 "⌕" -> 37f
+                "保存" -> 13f
                 else -> 24f
             }
             gravity = Gravity.CENTER
