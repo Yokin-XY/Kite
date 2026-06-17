@@ -28,10 +28,14 @@ object CardRunStore {
         if (initialized) return
         prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val loaded = loadPersistedRuns()
+        val normalized = loaded.map { it.normalizedAfterProcessRestore() }
         runsByInstance.clear()
-        loaded.forEach { runsByInstance[it.instanceId] = it }
+        normalized.forEach { runsByInstance[it.instanceId] = it }
         _runs.value = sortedRuns()
         initialized = true
+        if (normalized != loaded) {
+            persistRuns()
+        }
     }
 
     @Synchronized
@@ -222,6 +226,34 @@ object CardRunStore {
                 .filterNot { it.isTemporaryResourceRun() }
         }.getOrDefault(emptyList())
     }
+
+    private fun CardRunState.normalizedAfterProcessRestore(): CardRunState {
+        if (!status.shouldResetAfterProcessRestore()) return this
+        return copy(
+            status = CardRunStatus.Stopped,
+            surface = when {
+                !shellReportText.isNullOrBlank() || !lastMeaningfulOutput.isNullOrBlank() -> CardRunSurface.Report
+                else -> CardRunSurface.Summary
+            },
+            runId = null,
+            terminalSessionId = null,
+            pid = null,
+            rootPid = null,
+            processGroupId = null,
+            systemSessionId = null,
+            lastMeaningfulOutput = lastMeaningfulOutput ?: "Kite 重新启动，已重置上次未完成状态",
+            lastError = null,
+            nextActionUrl = null
+        )
+    }
+
+    private fun CardRunStatus.shouldResetAfterProcessRestore(): Boolean =
+        this == CardRunStatus.Starting ||
+            this == CardRunStatus.Running ||
+            this == CardRunStatus.WaitingTerminal ||
+            this == CardRunStatus.AlreadyRunning ||
+            this == CardRunStatus.Opened ||
+            this == CardRunStatus.Stopping
 
     private fun CardRunState.isTemporaryResourceRun(): Boolean =
         recipeId.startsWith("resource-install-wizard-") ||

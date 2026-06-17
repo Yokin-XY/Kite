@@ -3822,7 +3822,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened -> "$base · 运行 $elapsed"
             state.status == RecipeRunStatus.Completed -> "$base · 用时 $elapsed"
             state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable -> "$base · 失败 $elapsed"
-            state.status == RecipeRunStatus.Stopped -> "$base · 中止 $elapsed"
+            state.status == RecipeRunStatus.Stopped -> "$base · 已停止 $elapsed"
             else -> base
         }
     }
@@ -6030,21 +6030,25 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun cardRunStatusBadge(state: RecipeRuntimeState): TextView {
         val isFailure = state.failureSummary() != null
-        val isDone = state.status == RecipeRunStatus.Completed || state.status == RecipeRunStatus.Stopped
+        val isDone = state.status == RecipeRunStatus.Completed
+        val isStopped = state.status == RecipeRunStatus.Stopped
         val color = when {
             isFailure -> tokens.danger
             state.isBusy() || state.isActive() -> tokens.primaryStrong
             isDone -> Color.rgb(22, 163, 107)
+            isStopped -> tokens.textSecondary
             else -> Color.rgb(124, 133, 149)
         }
         val backgroundColor = when {
             isDone -> Color.rgb(234, 248, 240)
+            isStopped -> tokens.surface
             else -> tintBackground(color)
         }
         val label = when {
             isFailure -> "失败"
             state.isBusy() || state.isActive() -> "运行中"
             isDone -> "已完成"
+            isStopped -> "已停止"
             else -> state.status.label
         }
         return TextView(this).apply {
@@ -7334,7 +7338,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
         })
         val statusHost = FrameLayout(context)
-        statusHost.addView(recipeStatusBadge(runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
+        applyRecipeStatusBadge(statusHost, runtimeState)
         addView(statusHost, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26), Gravity.END or Gravity.TOP).apply {
             setMargins(0, dp(14), dp(13), 0)
         })
@@ -7366,8 +7370,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val binding = consoleCardBindings[recipe.id] ?: return
         if (currentScreen != Screen.Console) return
         val ubuntuBlocked = isUbuntuActionBlocked(recipe)
-        binding.statusHost.removeAllViews()
-        binding.statusHost.addView(recipeStatusBadge(state, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
+        applyRecipeStatusBadge(binding.statusHost, state)
         binding.cueHost.removeAllViews()
         binding.cueHost.addView(recipeStepCue(recipe, state), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         binding.actionHost.removeAllViews()
@@ -7443,8 +7446,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         when {
             state.status == RecipeRunStatus.Unknown -> ""
             state.status == RecipeRunStatus.Failed ||
-                state.status == RecipeRunStatus.BridgeUnavailable ||
-                state.status == RecipeRunStatus.Stopped -> "中止 · ${formatCardRunElapsed(state)}"
+                state.status == RecipeRunStatus.BridgeUnavailable -> "失败 · ${formatCardRunElapsed(state)}"
+            state.status == RecipeRunStatus.Stopped -> "已停止 · ${formatCardRunElapsed(state)}"
             state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened -> "运行 · ${formatCardRunElapsed(state)}"
             else -> "上次 · ${formatLastRunTime(state.updatedAt)}"
         }
@@ -7478,9 +7481,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         ellipsize = TextUtils.TruncateAt.END
     }
 
-    private fun recipeStatusBadge(state: RecipeRuntimeState, ubuntuBlocked: Boolean): View =
-        LinearLayout(this).apply {
-            val badge = recipeStatusPresentation(state, ubuntuBlocked)
+    private fun applyRecipeStatusBadge(host: FrameLayout, state: RecipeRuntimeState) {
+        host.removeAllViews()
+        recipeStatusBadge(state)?.let { badge ->
+            host.addView(badge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
+        }
+    }
+
+    private fun recipeStatusBadge(state: RecipeRuntimeState): View? {
+        val badge = recipeStatusPresentation(state) ?: return null
+        return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(dp(8), 0, dp(9), 0)
@@ -7500,22 +7510,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 maxLines = 1
             })
         }
+    }
 
-    private fun recipeStatusPresentation(state: RecipeRuntimeState, ubuntuBlocked: Boolean): RecipeStatusBadge {
+    private fun recipeStatusPresentation(state: RecipeRuntimeState): RecipeStatusBadge? {
         if (state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable) {
             return RecipeStatusBadge("失败", tokens.danger, tokens.dangerSoft)
         }
-        if (ubuntuBlocked ||
-            state.status == RecipeRunStatus.WaitingTerminal ||
-            state.status == RecipeRunStatus.Starting ||
+        if (state.status == RecipeRunStatus.WaitingTerminal || state.status == RecipeRunStatus.Opened) {
+            return RecipeStatusBadge("手动操作", tokens.info, tokens.infoSoft)
+        }
+        if (state.status == RecipeRunStatus.Starting ||
             state.status == RecipeRunStatus.Stopping ||
             state.status == RecipeRunStatus.Running ||
-            state.status == RecipeRunStatus.AlreadyRunning ||
-            state.status == RecipeRunStatus.Opened
+            state.status == RecipeRunStatus.AlreadyRunning
         ) {
-            return RecipeStatusBadge("执行中", tokens.success, tokens.successSoft)
+            return RecipeStatusBadge("运行中", tokens.success, tokens.successSoft)
         }
-        return RecipeStatusBadge("未启动", tokens.textSecondary, tokens.surface)
+        return null
     }
 
     private fun recipeCategoryLabel(recipe: KiteRecipe): String =
