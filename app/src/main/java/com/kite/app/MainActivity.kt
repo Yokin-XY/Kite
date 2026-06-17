@@ -2403,7 +2403,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 addView(resourceDetailActionArea(item))
                 addView(resourcePreviewStrip(item))
                 addView(resourceInfoBlock("简介", item.longDescription))
-                resourceNetworkRequirementBlock(item)?.let { addView(it) }
+                resourceRecommendationBlock(item)?.let { addView(it) }
                 addView(resourceExecutionPreviewBlock(item))
                 addView(resourceRequirementsBlock(item))
             })
@@ -2593,81 +2593,126 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun resourceBulletBlock(title: String, items: List<String>): View =
         resourceInfoBlock(title, items.joinToString("\n") { "· $it" })
 
-    private fun resourceNetworkRequirementBlock(item: ResourceItem): View? {
-        val lines = resourceNetworkRequirementLines(item)
-        if (lines.isEmpty()) return null
+    private fun resourceRecommendationBlock(item: ResourceItem): View? {
+        val catalogById = cachedResourceCatalog.orEmpty().associateBy { it.id }
+        val recommendations = resourceRecommendationsFor(item.id)
+            .mapNotNull { recommendation ->
+                val target = catalogById[recommendation.resourceId]
+                if (target == null || target.id == item.id) null else recommendation to target
+            }
+        if (recommendations.isEmpty()) return null
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(24), 0, 0)
+            setPadding(0, dp(20), 0, 0)
             addView(TextView(context).apply {
-                text = "网络要求"
-                textSize = 20f
+                text = "推荐"
+                textSize = 18f
                 typeface = Typeface.DEFAULT_BOLD
                 includeFontPadding = false
                 setTextColor(tokens.textPrimary)
             })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(12), dp(14), dp(12))
-                background = roundedBox(tokens.cardBackground, tokens.border, dp(17).toFloat())
+            addView(HorizontalScrollView(context).apply {
+                isHorizontalScrollBarEnabled = false
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    .apply { setMargins(0, dp(14), 0, 0) }
-                lines.forEachIndexed { index, line ->
-                    addView(resourceRequirementRow(line.first, line.second))
-                    if (index != lines.lastIndex) addView(divider().apply {
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                            setMargins(0, dp(1), 0, dp(1))
-                        }
-                    })
-                }
+                    .apply { setMargins(0, dp(10), 0, 0) }
+                addView(row {
+                    recommendations.forEachIndexed { index, pair ->
+                        val (recommendation, target) = pair
+                        addView(resourceRecommendationCard(target, recommendation).apply {
+                            layoutParams = LinearLayout.LayoutParams(dp(72), dp(82)).apply {
+                                setMargins(0, 0, if (index == recommendations.lastIndex) 0 else dp(12), 0)
+                            }
+                        })
+                    }
+                })
             })
         }
     }
 
-    private fun resourceNetworkRequirementLines(item: ResourceItem): List<Pair<String, String>> {
-        val manifestSource = resourceManifestLoader.requestManifest(item.id)
-            ?.rawJson
-            ?.optJSONObject("source")
-        val sourceType = manifestSource?.optString("type").orEmpty()
-        val sourceUrl = manifestSource?.optString("url").orEmpty()
-        val sourceCommand = manifestSource?.optString("command").orEmpty()
-        return when {
-            item.id == RESOURCE_HERMES_CORE -> listOf(
-                "来源" to "官方脚本",
-                "需要访问" to listOf("hermes-agent.nousresearch.com", "github.com", "pypi.org", "files.pythonhosted.org").joinToString(" / "),
-                "网络建议" to "需要稳定外网；Python 依赖下载慢时建议代理或镜像",
-                "失败判断" to "timeout/403/ENOTFOUND 多半是网络；signal 9 更像进程被系统杀掉"
-            )
-            item.id == RESOURCE_HERMES_WEBUI || sourceCommand.contains("npm", ignoreCase = true) -> listOf(
-                "来源" to "npm",
-                "需要访问" to "registry.npmjs.org",
-                "网络建议" to "需要稳定外网；如依赖下载浏览器工具，可能还会访问 GitHub/CDN",
-                "失败判断" to "npm ERR、ECONNRESET、ETIMEDOUT 才优先按网络处理"
-            )
-            item.sourceLabel == "apt" || sourceType == "apt" -> listOf(
-                "来源" to "Ubuntu apt",
-                "需要访问" to "当前 Ubuntu 软件源",
-                "网络建议" to "需要容器能访问 apt 源；源慢时可切换镜像",
-                "失败判断" to "Temporary failure、Connection timed out、Hash Sum mismatch 多半是网络或源问题"
-            )
-            sourceUrl.isNotBlank() -> listOf(
-                "来源" to resourceSourceLabel(sourceType).ifBlank { item.sourceLabel },
-                "需要访问" to sourceUrl,
-                "网络建议" to "需要能访问官方地址；失败时优先检查代理、DNS 和证书"
-            )
-            item.sourceLabel.contains("网络") || item.sizeLabel.contains("网络") -> listOf(
-                "来源" to item.sourceLabel,
-                "需要访问" to "资源声明的上游下载地址",
-                "网络建议" to "需要稳定外网；后续会把具体域名写进资源元数据"
-            )
-            item.sourceLabel.contains("内置") || item.sizeLabel.contains("内置") -> listOf(
-                "来源" to "内置资源包",
-                "需要访问" to "首次安装不需要外网",
-                "网络建议" to "只有后续扩展或 apt/npm/pip 步骤才需要联网"
-            )
-            else -> emptyList()
+    private fun resourceRecommendationCard(item: ResourceItem, recommendation: ResourceRecommendation): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            contentDescription = "${item.name}，${recommendation.label}"
+            setOnClickListener { showResourceDetail(item.id, item) }
+            addView(resourceIcon(item.iconText, item.accent))
+            addView(TextView(context).apply {
+                text = item.name
+                textSize = 10.5f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textSecondary)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(5), 0, 0)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
         }
-    }
+
+    private fun resourceRecommendationsFor(resourceId: String): List<ResourceRecommendation> =
+        when (resourceId) {
+            RESOURCE_HERMES_WEBUI -> listOf(
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "基础依赖"),
+                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
+                ResourceRecommendation("open-webui", "同类界面")
+            )
+            RESOURCE_HERMES_CORE -> listOf(
+                ResourceRecommendation(RESOURCE_PYTHON, "运行时"),
+                ResourceRecommendation(RESOURCE_UV, "依赖管理"),
+                ResourceRecommendation(RESOURCE_GIT, "源码工具"),
+                ResourceRecommendation(RESOURCE_CURL, "下载工具")
+            )
+            RESOURCE_PYTHON -> listOf(
+                ResourceRecommendation(RESOURCE_UV, "包管理"),
+                ResourceRecommendation("python-314", "同类工具链"),
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "上层应用")
+            )
+            "python-314" -> listOf(
+                ResourceRecommendation(RESOURCE_PYTHON, "系统 Python"),
+                ResourceRecommendation(RESOURCE_UV, "包管理"),
+                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集")
+            )
+            RESOURCE_NODE_RUNTIME -> listOf(
+                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "上层应用"),
+                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集"),
+                ResourceRecommendation("open-webui", "网页工具")
+            )
+            RESOURCE_UV -> listOf(
+                ResourceRecommendation(RESOURCE_PYTHON, "运行时"),
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "上层应用"),
+                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集")
+            )
+            RESOURCE_GIT -> listOf(
+                ResourceRecommendation(RESOURCE_CURL, "同级工具"),
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "被依赖"),
+                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集")
+            )
+            RESOURCE_CURL -> listOf(
+                ResourceRecommendation(RESOURCE_GIT, "同级工具"),
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "被依赖"),
+                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集")
+            )
+            RESOURCE_KF_TOOL_ENV -> listOf(
+                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "包含能力"),
+                ResourceRecommendation(RESOURCE_UV, "包含能力"),
+                ResourceRecommendation("logs-viewer", "配套入口")
+            )
+            "open-webui" -> listOf(
+                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "同类界面"),
+                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "网页运行时"),
+                ResourceRecommendation(RESOURCE_PYTHON, "后端运行时")
+            )
+            "logs-viewer" -> listOf(
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "运行日志"),
+                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "网页日志"),
+                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "系统工具")
+            )
+            else -> listOf(
+                ResourceRecommendation(RESOURCE_KF_TOOL_ENV, "工具合集"),
+                ResourceRecommendation(RESOURCE_HERMES_CORE, "AI 基础"),
+                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "Web 运行")
+            )
+        }
 
     private fun resourceExecutionPreviewBlock(item: ResourceItem): View =
         LinearLayout(this).apply {
@@ -12561,6 +12606,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val type: String,
         val title: String,
         val preview: String
+    )
+
+    private data class ResourceRecommendation(
+        val resourceId: String,
+        val label: String
     )
 
     private data class ResourceRequirementResolution(
