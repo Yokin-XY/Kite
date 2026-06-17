@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.openclaw",
+  "base": {
+    "name": "OpenClaw",
+    "description": "多通道 AI Agent 网关",
+    "version": "npm",
+    "icon": {
+      "type": "text",
+      "value": "Cl"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "tags": [
+      "openclaw",
+      "agent",
+      "gateway",
+      "terminal",
+      "ai"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.openclaw",
+      "agent.openclaw"
+    ],
+    "base": [
+      "runtime.node>=24",
+      "tool.npm"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "openclaw",
+    "repository": "https://github.com/openclaw/openclaw",
+    "command": "npm install -g openclaw@latest"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.openclaw",
+    "installRoot": "/workspace/.kf/software/kite.openclaw",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "npm install -g openclaw@latest"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "OpenClaw",
+          "description": "在终端里启动 OpenClaw onboard",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"OpenClaw 首次启动建议完成 onboard。\"\nopenclaw onboard --install-daemon\n"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "npm uninstall -g openclaw"
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "OpenClaw",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "OpenClaw",
+          "description": "在终端里启动 OpenClaw onboard",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"OpenClaw 首次启动建议完成 onboard。\"\nopenclaw onboard --install-daemon\n"
+          }
+        ]
+      }
+    }
+  ]
+}

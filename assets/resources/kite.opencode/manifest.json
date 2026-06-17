@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.opencode",
+  "base": {
+    "name": "OpenCode",
+    "description": "开源终端 AI 编码 Agent",
+    "version": "official",
+    "icon": {
+      "type": "text",
+      "value": "OC"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "tags": [
+      "opencode",
+      "coding-agent",
+      "terminal",
+      "ai",
+      "open-source"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.opencode",
+      "agent.opencode"
+    ],
+    "base": [
+      "tool.curl"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "official_script",
+    "url": "https://opencode.ai/install",
+    "repository": "https://github.com/anomalyco/opencode",
+    "command": "curl -fsSL https://opencode.ai/install | bash"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.opencode",
+    "installRoot": "/workspace/.kf/software/kite.opencode",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "curl -fsSL https://opencode.ai/install | bash"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "OpenCode",
+          "description": "在终端里启动 OpenCode",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"OpenCode 首次启动会引导选择或配置 Provider。\"\nopencode\n"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "remove Kite opencode wrapper and managed install root"
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "OpenCode",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "OpenCode",
+          "description": "在终端里启动 OpenCode",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"OpenCode 首次启动会引导选择或配置 Provider。\"\nopencode\n"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.codex.cli",
+  "base": {
+    "name": "Codex CLI",
+    "description": "OpenAI 的终端编码助手",
+    "version": "official",
+    "icon": {
+      "type": "text",
+      "value": "Cx"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "tags": [
+      "codex",
+      "openai",
+      "coding-agent",
+      "terminal",
+      "ai"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.codex",
+      "agent.openai.codex"
+    ],
+    "base": [
+      "tool.curl"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "official_script",
+    "url": "https://chatgpt.com/codex/install.sh",
+    "repository": "https://github.com/openai/codex",
+    "command": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.codex.cli",
+    "installRoot": "/workspace/.kf/software/kite.codex.cli",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Codex CLI",
+          "description": "在终端里启动 OpenAI Codex",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Codex CLI 首次启动会要求登录 ChatGPT 或配置 API Key。\"\ncodex\n"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "remove Kite codex wrapper and managed install root"
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Codex CLI",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Codex CLI",
+          "description": "在终端里启动 OpenAI Codex",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Codex CLI 首次启动会要求登录 ChatGPT 或配置 API Key。\"\ncodex\n"
+          }
+        ]
+      }
+    }
+  ]
+}

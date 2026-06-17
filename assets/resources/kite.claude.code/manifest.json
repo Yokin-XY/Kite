@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.claude.code",
+  "base": {
+    "name": "Claude Code",
+    "description": "Anthropic 的终端编码助手",
+    "version": "official",
+    "icon": {
+      "type": "text",
+      "value": "CC"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "tags": [
+      "claude",
+      "anthropic",
+      "coding-agent",
+      "terminal",
+      "ai"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.claude",
+      "agent.anthropic.claude-code"
+    ],
+    "base": [
+      "tool.curl"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "official_script",
+    "url": "https://claude.ai/install.sh",
+    "command": "curl -fsSL https://claude.ai/install.sh | bash"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.claude.code",
+    "installRoot": "/workspace/.kf/software/kite.claude.code",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "curl -fsSL https://claude.ai/install.sh | bash"
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Claude Code",
+          "description": "在终端里启动 Claude Code",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Claude Code 首次启动会要求登录 Claude / Anthropic。\"\nclaude\n"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "remove Kite claude wrapper and managed install root"
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Claude Code",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Claude Code",
+          "description": "在终端里启动 Claude Code",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Claude Code 首次启动会要求登录 Claude / Anthropic。\"\nclaude\n"
+          }
+        ]
+      }
+    }
+  ]
+}

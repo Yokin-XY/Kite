@@ -219,6 +219,161 @@ SH
             echo "MiMo Code installed at ${'$'}(command -v mimo)"
         """.trimIndent()
 
+    fun codexCliInstallCommand(): String =
+        linkedCliInstallCommand(
+            resourceId = "kite.codex.cli",
+            displayName = "Codex CLI",
+            commandName = "codex",
+            installStep = "install-official-codex-cli",
+            installCommands = """
+                if ! command -v curl >/dev/null 2>&1; then
+                  echo "缺少 curl：请先安装 curl 资源。"
+                  exit 127
+                fi
+                curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh
+            """.trimIndent(),
+            extraCandidatePaths = listOf(
+                "/root/.codex/bin/codex",
+                "${'$'}HOME/.codex/bin/codex"
+            )
+        )
+
+    fun claudeCodeInstallCommand(): String =
+        linkedCliInstallCommand(
+            resourceId = "kite.claude.code",
+            displayName = "Claude Code",
+            commandName = "claude",
+            installStep = "install-official-claude-code",
+            installCommands = """
+                if ! command -v curl >/dev/null 2>&1; then
+                  echo "缺少 curl：请先安装 curl 资源。"
+                  exit 127
+                fi
+                curl -fsSL https://claude.ai/install.sh | bash
+            """.trimIndent(),
+            extraCandidatePaths = listOf(
+                "/root/.claude/local/claude",
+                "${'$'}HOME/.claude/local/claude"
+            )
+        )
+
+    fun openCodeInstallCommand(): String =
+        linkedCliInstallCommand(
+            resourceId = "kite.opencode",
+            displayName = "OpenCode",
+            commandName = "opencode",
+            installStep = "install-official-opencode",
+            installCommands = """
+                if ! command -v curl >/dev/null 2>&1; then
+                  echo "缺少 curl：请先安装 curl 资源。"
+                  exit 127
+                fi
+                export OPENCODE_INSTALL_DIR="${'$'}install_root/bin"
+                curl -fsSL https://opencode.ai/install | bash
+            """.trimIndent(),
+            extraCandidatePaths = listOf(
+                "/root/.opencode/bin/opencode",
+                "${'$'}HOME/.opencode/bin/opencode"
+            )
+        )
+
+    fun openClawInstallCommand(): String =
+        linkedCliInstallCommand(
+            resourceId = "kite.openclaw",
+            displayName = "OpenClaw",
+            commandName = "openclaw",
+            installStep = "npm-install openclaw",
+            installCommands = """
+                if ! command -v npm >/dev/null 2>&1; then
+                  echo "缺少 npm：请先安装 Node.js 资源。"
+                  exit 127
+                fi
+                npm install -g openclaw@latest
+            """.trimIndent()
+        )
+
+    fun codexCliUninstallCommand(): String =
+        linkedCliUninstallCommand("kite.codex.cli", "codex")
+
+    fun claudeCodeUninstallCommand(): String =
+        linkedCliUninstallCommand("kite.claude.code", "claude")
+
+    fun openCodeUninstallCommand(): String =
+        linkedCliUninstallCommand("kite.opencode", "opencode")
+
+    fun openClawUninstallCommand(): String =
+        linkedCliUninstallCommand("kite.openclaw", "openclaw", npmPackage = "openclaw")
+
+    private fun linkedCliInstallCommand(
+        resourceId: String,
+        displayName: String,
+        commandName: String,
+        installStep: String,
+        installCommands: String,
+        extraCandidatePaths: List<String> = emptyList()
+    ): String {
+        val candidates = (listOf(
+            "$WORKSPACE_BIN_ROOT/$commandName",
+            "${'$'}install_root/bin/$commandName",
+            "${'$'}npm_prefix/bin/$commandName",
+            "/root/.local/bin/$commandName",
+            "${'$'}HOME/.local/bin/$commandName",
+            "/usr/local/bin/$commandName"
+        ) + extraCandidatePaths).joinToString(" ")
+        return """
+            set -e
+            install_root="${softwarePath(resourceId)}"
+            user_home="${'$'}install_root/user-home"
+            export HOME="${'$'}user_home"
+            export PATH="$WORKSPACE_BIN_ROOT:${'$'}install_root/bin:${'$'}HOME/.local/bin:${'$'}HOME/.codex/bin:${'$'}HOME/.claude/local:${'$'}HOME/.opencode/bin:/root/.local/bin:/root/.codex/bin:/root/.claude/local:/root/.opencode/bin:${'$'}PATH"
+            echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}install_root"
+            rm -rf "${'$'}install_root"
+            mkdir -p "${'$'}install_root" "${'$'}install_root/bin" "${'$'}user_home" "$WORKSPACE_BIN_ROOT"
+            echo "KITE_RESOURCE_STEP $installStep"
+            $installCommands
+            npm_prefix="${'$'}(npm prefix -g 2>/dev/null || true)"
+            rm -f "$WORKSPACE_BIN_ROOT/$commandName"
+            for candidate in $candidates; do
+              if [ -x "${'$'}candidate" ]; then
+                echo "KITE_RESOURCE_STEP link-command $commandName"
+                ln -sfn "${'$'}candidate" "$WORKSPACE_BIN_ROOT/$commandName"
+                break
+              fi
+            done
+            hash -r 2>/dev/null || true
+            if ! command -v $commandName >/dev/null 2>&1; then
+              echo "$displayName installed, but the $commandName command was not found."
+              exit 127
+            fi
+            $commandName --version || $commandName --help | head -40 || true
+            printf '%s\n' 'installed_by_kite' > "${'$'}install_root/ownership"
+            echo "$displayName installed at ${'$'}(command -v $commandName)"
+        """.trimIndent()
+    }
+
+    private fun linkedCliUninstallCommand(
+        resourceId: String,
+        commandName: String,
+        npmPackage: String? = null
+    ): String {
+        val npmUninstall = npmPackage?.let { pkg ->
+            """
+                if command -v npm >/dev/null 2>&1; then
+                  echo "KITE_RESOURCE_STEP npm-uninstall $pkg"
+                  npm uninstall -g $pkg
+                fi
+            """.trimIndent()
+        }.orEmpty()
+        return """
+            set +e
+            export PATH="$WORKSPACE_BIN_ROOT:/root/.local/bin:${'$'}PATH"
+            $npmUninstall
+            rm -f "$WORKSPACE_BIN_ROOT/$commandName"
+            rm -rf ${softwarePath(resourceId)}
+            exit 0
+        """.trimIndent()
+    }
+
     fun hermesCoreInstallCommand(): String =
         """
             set -e
@@ -599,6 +754,21 @@ PY
                   rm -f "$WORKSPACE_BIN_ROOT/mimo"
                   if command -v npm >/dev/null 2>&1; then
                     npm uninstall -g @mimo-ai/cli >/dev/null 2>&1 || true
+                  fi
+                  ;;
+                kite.codex.cli)
+                  rm -f "$WORKSPACE_BIN_ROOT/codex"
+                  ;;
+                kite.claude.code)
+                  rm -f "$WORKSPACE_BIN_ROOT/claude"
+                  ;;
+                kite.opencode)
+                  rm -f "$WORKSPACE_BIN_ROOT/opencode"
+                  ;;
+                kite.openclaw)
+                  rm -f "$WORKSPACE_BIN_ROOT/openclaw"
+                  if command -v npm >/dev/null 2>&1; then
+                    npm uninstall -g openclaw >/dev/null 2>&1 || true
                   fi
                   ;;
               esac

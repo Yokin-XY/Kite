@@ -2640,18 +2640,44 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 ResourceRecommendation(RESOURCE_HERMES_CORE, "基础依赖"),
                 ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
                 ResourceRecommendation(RESOURCE_REASONIX, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_MIMO_CODE, "编码 Agent")
+                ResourceRecommendation(RESOURCE_MIMO_CODE, "编码 Agent"),
+                ResourceRecommendation(RESOURCE_OPENCODE, "编码 Agent")
             )
             RESOURCE_REASONIX -> listOf(
                 ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
                 ResourceRecommendation(RESOURCE_GIT, "源码工具"),
                 ResourceRecommendation(RESOURCE_MIMO_CODE, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_CLAUDE_CODE, "同类 Agent"),
                 ResourceRecommendation(RESOURCE_HERMES_WEBUI, "同类 Agent")
             )
             RESOURCE_MIMO_CODE -> listOf(
                 ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
                 ResourceRecommendation(RESOURCE_GIT, "源码工具"),
                 ResourceRecommendation(RESOURCE_REASONIX, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_CODEX_CLI, "同类 Agent")
+            )
+            RESOURCE_CODEX_CLI -> listOf(
+                ResourceRecommendation(RESOURCE_CURL, "下载工具"),
+                ResourceRecommendation(RESOURCE_CLAUDE_CODE, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_OPENCODE, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_MIMO_CODE, "终端 Agent")
+            )
+            RESOURCE_CLAUDE_CODE -> listOf(
+                ResourceRecommendation(RESOURCE_CURL, "下载工具"),
+                ResourceRecommendation(RESOURCE_CODEX_CLI, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_OPENCODE, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_REASONIX, "终端 Agent")
+            )
+            RESOURCE_OPENCODE -> listOf(
+                ResourceRecommendation(RESOURCE_CURL, "下载工具"),
+                ResourceRecommendation(RESOURCE_CODEX_CLI, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_CLAUDE_CODE, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_OPENCLAW, "同类 Agent")
+            )
+            RESOURCE_OPENCLAW -> listOf(
+                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
+                ResourceRecommendation(RESOURCE_OPENCODE, "同类 Agent"),
+                ResourceRecommendation(RESOURCE_CODEX_CLI, "终端 Agent"),
                 ResourceRecommendation(RESOURCE_HERMES_WEBUI, "同类 Agent")
             )
             RESOURCE_HERMES_CORE -> listOf(
@@ -2667,7 +2693,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             RESOURCE_NODE_RUNTIME -> listOf(
                 ResourceRecommendation(RESOURCE_HERMES_WEBUI, "上层应用"),
                 ResourceRecommendation(RESOURCE_REASONIX, "编码 Agent"),
-                ResourceRecommendation(RESOURCE_MIMO_CODE, "编码 Agent")
+                ResourceRecommendation(RESOURCE_MIMO_CODE, "编码 Agent"),
+                ResourceRecommendation(RESOURCE_OPENCLAW, "编码 Agent")
             )
             RESOURCE_UV -> listOf(
                 ResourceRecommendation(RESOURCE_PYTHON, "运行时"),
@@ -4540,6 +4567,38 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 workdir = "/workspace",
                 timeoutMs = 600_000L
             )
+            RESOURCE_CODEX_CLI -> KiteRecipeStep(
+                id = "install_codex_cli",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.codexCliInstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 600_000L
+            )
+            RESOURCE_CLAUDE_CODE -> KiteRecipeStep(
+                id = "install_claude_code",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.claudeCodeInstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 600_000L
+            )
+            RESOURCE_OPENCODE -> KiteRecipeStep(
+                id = "install_opencode",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.openCodeInstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 600_000L
+            )
+            RESOURCE_OPENCLAW -> KiteRecipeStep(
+                id = "install_openclaw",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.openClawInstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 600_000L
+            )
             RESOURCE_GIT -> KiteRecipeStep(
                 id = "install_git",
                 type = KiteRecipe.STEP_SHELL,
@@ -4632,6 +4691,38 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 id = "uninstall_mimo_code",
                 type = KiteRecipe.STEP_SHELL,
                 cmd = KiteResourceInstallRecipes.mimoCodeUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 180_000L
+            )
+            RESOURCE_CODEX_CLI -> KiteRecipeStep(
+                id = "uninstall_codex_cli",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.codexCliUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 180_000L
+            )
+            RESOURCE_CLAUDE_CODE -> KiteRecipeStep(
+                id = "uninstall_claude_code",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.claudeCodeUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 180_000L
+            )
+            RESOURCE_OPENCODE -> KiteRecipeStep(
+                id = "uninstall_opencode",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.openCodeUninstallCommand(),
+                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
+                workdir = "/workspace",
+                timeoutMs = 180_000L
+            )
+            RESOURCE_OPENCLAW -> KiteRecipeStep(
+                id = "uninstall_openclaw",
+                type = KiteRecipe.STEP_SHELL,
+                cmd = KiteResourceInstallRecipes.openClawUninstallCommand(),
                 surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
                 workdir = "/workspace",
                 timeoutMs = 180_000L
@@ -5172,6 +5263,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             RESOURCE_HERMES_WEBUI,
             RESOURCE_REASONIX,
             RESOURCE_MIMO_CODE,
+            RESOURCE_CODEX_CLI,
+            RESOURCE_CLAUDE_CODE,
+            RESOURCE_OPENCODE,
+            RESOURCE_OPENCLAW,
             RESOURCE_GIT,
             RESOURCE_CURL,
             RESOURCE_PYTHON,
@@ -5222,6 +5317,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败"
             failed -> "获取失败"
             else -> idleLabel
+        }
+        fun labelsForResource(resourceId: String, idleLabel: String = "未获取"): ResourceRuntimeLabels {
+            val recordedInstalled = recordedInstalled(resourceId)
+            val installing = installing(resourceId)
+            val uninstalling = uninstalling(resourceId)
+            val failed = installFailed(resourceId)
+            val failedOperation = failedOperation(resourceId)
+            return ResourceRuntimeLabels(
+                state = stateLabelForResource(recordedInstalled, installing, uninstalling, failed, failedOperation, idleLabel),
+                action = actionLabelForResource(recordedInstalled, installing, uninstalling, failed, failedOperation),
+                busy = busy(resourceId)
+            )
         }
         val toolchain = ToolchainPackInstaller.state.value
         val workspaceSnapshot = toolchainWorkspaceSnapshot(allowProbe = allowWorkspaceProbe)
@@ -5292,6 +5399,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val mimoCodeInstalling = installing(RESOURCE_MIMO_CODE)
         val mimoCodeUninstalling = uninstalling(RESOURCE_MIMO_CODE)
         val mimoCodeFailedOperation = failedOperation(RESOURCE_MIMO_CODE)
+        val codexLabels = labelsForResource(RESOURCE_CODEX_CLI)
+        val claudeCodeLabels = labelsForResource(RESOURCE_CLAUDE_CODE)
+        val openCodeLabels = labelsForResource(RESOURCE_OPENCODE)
+        val openClawLabels = labelsForResource(RESOURCE_OPENCLAW)
         val gitRecordedInstalled = recordedInstalled(RESOURCE_GIT)
         val gitInstallFailed = installFailed(RESOURCE_GIT)
         val gitBusy = busy(RESOURCE_GIT)
@@ -5664,6 +5775,98 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     ResourceStep("shell", "安装 npm 包", "npm install -g @mimo-ai/cli"),
                     ResourceStep("shell", "暴露命令", "link mimo -> /workspace/.kf/bin"),
                     ResourceStep("terminal", "打开终端", "mimo")
+                )
+            ),
+            ResourceItem(
+                id = RESOURCE_CODEX_CLI,
+                name = "Codex CLI",
+                description = "OpenAI 的终端编码助手",
+                longDescription = "Codex CLI 是 OpenAI 面向终端的编码助手。Kite 使用官方 standalone installer 获取命令入口，并把 codex 暴露到 /workspace/.kf/bin；登录、模型和项目权限仍由 Codex 自己在终端里引导，不写入资源卡 JSON。",
+                section = "精选推荐",
+                category = "AI",
+                iconText = "Cx",
+                accent = "teal",
+                version = "official",
+                sizeLabel = "网络包",
+                sourceLabel = "官方脚本",
+                stateLabel = codexLabels.state,
+                actionLabel = codexLabels.action,
+                actionEnabled = resourceActionEnabled(codexLabels.action, codexLabels.busy),
+                includes = listOf("Codex CLI", "official installer", "codex command", "终端首页卡片"),
+                notes = listOf("基础层：curl", "首次启动需要登录 ChatGPT 或配置 API Key", "运行态输出仍归首页卡/终端/SH 报告车道"),
+                steps = listOf(
+                    ResourceStep("shell", "运行官方安装器", "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"),
+                    ResourceStep("shell", "暴露命令", "link codex -> /workspace/.kf/bin"),
+                    ResourceStep("terminal", "打开终端", "codex")
+                )
+            ),
+            ResourceItem(
+                id = RESOURCE_CLAUDE_CODE,
+                name = "Claude Code",
+                description = "Anthropic 的终端编码助手",
+                longDescription = "Claude Code 是 Anthropic 面向终端的编码助手。Kite 使用官方 native installer 获取 claude 命令，并只负责资源获取、wrapper 暴露和首页卡模板；登录和项目授权在终端表面完成。",
+                section = "精选推荐",
+                category = "AI",
+                iconText = "CC",
+                accent = "orange",
+                version = "official",
+                sizeLabel = "网络包",
+                sourceLabel = "官方脚本",
+                stateLabel = claudeCodeLabels.state,
+                actionLabel = claudeCodeLabels.action,
+                actionEnabled = resourceActionEnabled(claudeCodeLabels.action, claudeCodeLabels.busy),
+                includes = listOf("Claude Code CLI", "official native installer", "claude command", "终端首页卡片"),
+                notes = listOf("基础层：curl", "首次启动需要登录 Claude / Anthropic", "运行态输出仍归首页卡/终端/SH 报告车道"),
+                steps = listOf(
+                    ResourceStep("shell", "运行官方安装器", "curl -fsSL https://claude.ai/install.sh | bash"),
+                    ResourceStep("shell", "暴露命令", "link claude -> /workspace/.kf/bin"),
+                    ResourceStep("terminal", "打开终端", "claude")
+                )
+            ),
+            ResourceItem(
+                id = RESOURCE_OPENCODE,
+                name = "OpenCode",
+                description = "开源终端 AI 编码 Agent",
+                longDescription = "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方 install script 安装 opencode 命令，并提供首页卡入口；Provider 配置和会话内容仍由终端运行态承接。",
+                section = "精选推荐",
+                category = "AI",
+                iconText = "OC",
+                accent = "blue",
+                version = "official",
+                sizeLabel = "网络包",
+                sourceLabel = "官方脚本",
+                stateLabel = openCodeLabels.state,
+                actionLabel = openCodeLabels.action,
+                actionEnabled = resourceActionEnabled(openCodeLabels.action, openCodeLabels.busy),
+                includes = listOf("OpenCode CLI", "official install script", "opencode command", "终端首页卡片"),
+                notes = listOf("基础层：curl", "首次启动会引导选择 Provider", "运行态输出仍归首页卡/终端/SH 报告车道"),
+                steps = listOf(
+                    ResourceStep("shell", "运行官方安装器", "curl -fsSL https://opencode.ai/install | bash"),
+                    ResourceStep("shell", "暴露命令", "link opencode -> /workspace/.kf/bin"),
+                    ResourceStep("terminal", "打开终端", "opencode")
+                )
+            ),
+            ResourceItem(
+                id = RESOURCE_OPENCLAW,
+                name = "OpenClaw",
+                description = "多通道 AI Agent 网关",
+                longDescription = "OpenClaw 是偏网关和多通道协作的 AI Agent 工具。Kite 把它先作为 Node.js 上层资源接入：获取阶段安装 openclaw npm 包并暴露 openclaw 命令，首次配置由终端里的 onboard 流程完成。",
+                section = "精选推荐",
+                category = "AI",
+                iconText = "Cl",
+                accent = "mint",
+                version = "npm",
+                sizeLabel = "网络包",
+                sourceLabel = "npm",
+                stateLabel = openClawLabels.state,
+                actionLabel = openClawLabels.action,
+                actionEnabled = resourceActionEnabled(openClawLabels.action, openClawLabels.busy),
+                includes = listOf("openclaw npm package", "openclaw command", "onboard flow", "终端首页卡片"),
+                notes = listOf("基础层：Node.js", "首次启动建议运行 onboard", "运行态输出仍归首页卡/终端/SH 报告车道"),
+                steps = listOf(
+                    ResourceStep("shell", "安装 npm 包", "npm install -g openclaw@latest"),
+                    ResourceStep("shell", "暴露命令", "link openclaw -> /workspace/.kf/bin"),
+                    ResourceStep("terminal", "打开终端", "openclaw onboard --install-daemon")
                 )
             )
         ).map { applyResourceManifest(it) }
@@ -12872,6 +13075,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val label: String
     )
 
+    private data class ResourceRuntimeLabels(
+        val state: String,
+        val action: String,
+        val busy: Boolean
+    )
+
     private data class ResourceRequirementResolution(
         val requirement: String,
         val resource: ResourceItem?
@@ -13069,6 +13278,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_HERMES_WEBUI = "kite.hermes.webui"
         private const val RESOURCE_REASONIX = "kite.reasonix"
         private const val RESOURCE_MIMO_CODE = "kite.mimo.code"
+        private const val RESOURCE_CODEX_CLI = "kite.codex.cli"
+        private const val RESOURCE_CLAUDE_CODE = "kite.claude.code"
+        private const val RESOURCE_OPENCODE = "kite.opencode"
+        private const val RESOURCE_OPENCLAW = "kite.openclaw"
         private const val RESOURCE_GIT = "kite.git"
         private const val RESOURCE_CURL = "kite.curl"
         private const val RESOURCE_PYTHON = "kite.python"

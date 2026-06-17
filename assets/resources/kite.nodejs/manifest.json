@@ -32,7 +32,8 @@
     "extensions": [
       "kite.hermes.webui",
       "kite.reasonix",
-      "kite.mimo.code"
+      "kite.mimo.code",
+      "kite.openclaw"
     ]
   },
   "source": {
