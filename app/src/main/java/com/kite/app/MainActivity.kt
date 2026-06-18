@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.animation.LayoutTransition
 import android.app.ActivityManager
 import android.app.Dialog
+import android.app.NotificationManager
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -32,6 +33,7 @@ import android.text.Spanned
 import android.text.TextWatcher
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Looper
 import android.provider.Settings
 import android.text.TextUtils
@@ -177,6 +179,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
     private var selectedIconSource = ""
     private var formShortcutRequested = false
+    private var shortcutSwitchInternalChange = false
     private var formLaunchOpenInstance = true
     private var recipeMoreDraft: RecipeFormDraft? = null
     private var avatarTileRefresh: (() -> Unit)? = null
@@ -193,7 +196,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var terminalBottomNavigation: View? = null
     private var isTerminalDetailMode = false
     private var kfRuntimeBootstrapRequested = false
-    private var ubuntuRuntimeState = UbuntuRuntimeUiState.hidden()
+    private var pendingRuntimePermissionBootstrap = false
+    private var runtimePermissionRequestInFlight = false
+    private var firstRunRuntimeGateShown = false
+    private var firstRunPermissionOnboardingInFlight = false
+    private var firstRunPermissionRequestInFlight = false
+    private var firstRunRuntimePermissionsRequested = false
+    private var firstRunAllFilesSettingsOpened = false
+    private var ubuntuRuntimeState = UbuntuRuntimeUiState.checking()
     private val formSteps = mutableListOf<RecipeStepDraft>()
     private var pendingTerminalFlow: PendingTerminalFlow? = null
     private var localServerStarted = false
@@ -293,6 +303,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             showConsole()
         }
         refreshUbuntuRuntimeState()
+        if (!maybeStartFirstRunPermissionOnboarding()) {
+            maybeStartFirstRunRuntimeGate()
+        }
         if (!dropZoneStatus.available) {
             Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_LONG).show()
         }
@@ -309,9 +322,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     override fun onResume() {
         super.onResume()
         applyRecentTaskVisibilitySetting()
+        resumePendingFirstRunPermissionOnboarding()
+        resumePendingRuntimePermissionBootstrap()
         refreshResourceScreenIfVisible()
-        if (currentScreen == Screen.Console) {
-            showConsole()
+        when (currentScreen) {
+            Screen.Console -> showConsole()
+            Screen.Settings -> showSettings()
+            else -> Unit
         }
     }
 
@@ -631,10 +648,312 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         CardRunStore.registeredRecipe(state.recipeId)
             ?: currentRecipes.firstOrNull { it.id == state.recipeId }
 
+    private fun maybeStartFirstRunPermissionOnboarding(): Boolean {
+        if (this is CardRunActivity) return false
+        if (appSettings.getBoolean(KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE, false)) return false
+        appSettings.edit().putBoolean(KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE, true).apply()
+        firstRunPermissionOnboardingInFlight = true
+        firstRunRuntimePermissionsRequested = false
+        firstRunAllFilesSettingsOpened = false
+        setUbuntuRuntimeState(buildFirstRunPermissionOnboardingUiState())
+        showUbuntuRuntimePanel(auto = true)
+        continueFirstRunPermissionOnboarding()
+        return true
+    }
+
+    private fun continueFirstRunPermissionOnboarding() {
+        if (!firstRunPermissionOnboardingInFlight || firstRunPermissionRequestInFlight) return
+        val state = currentFirstRunPermissionState()
+        setUbuntuRuntimeState(buildFirstRunPermissionOnboardingUiState(state))
+        when {
+            state.runtimePermissionsToRequest.isNotEmpty() && !firstRunRuntimePermissionsRequested -> {
+                firstRunRuntimePermissionsRequested = true
+                firstRunPermissionRequestInFlight = true
+                requestPermissions(
+                    state.runtimePermissionsToRequest.toTypedArray(),
+                    REQUEST_FIRST_RUN_PERMISSION_ONBOARDING
+                )
+            }
+            state.needsAllFilesAccess && !firstRunAllFilesSettingsOpened -> {
+                firstRunAllFilesSettingsOpened = true
+                openAllFilesAccessSettings()
+            }
+            else -> completeFirstRunPermissionOnboarding()
+        }
+    }
+
+    private fun resumePendingFirstRunPermissionOnboarding() {
+        if (!firstRunPermissionOnboardingInFlight || firstRunPermissionRequestInFlight) return
+        continueFirstRunPermissionOnboarding()
+    }
+
+    private fun completeFirstRunPermissionOnboarding() {
+        if (!firstRunPermissionOnboardingInFlight) return
+        firstRunPermissionOnboardingInFlight = false
+        firstRunPermissionRequestInFlight = false
+        firstRunRuntimePermissionsRequested = false
+        firstRunAllFilesSettingsOpened = false
+        dropZoneStatus = dropZoneManager.prepareDropZone()
+        maybeStartFirstRunRuntimeGate()
+        if (currentScreen == Screen.Console) showConsole()
+    }
+
+    private fun currentFirstRunPermissionState(): FirstRunPermissionState {
+        val runtimePermissions = mutableListOf<String>()
+        runtimePermissions += currentRuntimePermissionState().missingPermissions
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            runtimePermissions += Manifest.permission.POST_NOTIFICATIONS
+        }
+        return FirstRunPermissionState(
+            runtimePermissionsToRequest = runtimePermissions.distinct(),
+            needsAllFilesAccess = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                !Environment.isExternalStorageManager()
+        )
+    }
+
+    private fun buildFirstRunPermissionOnboardingUiState(
+        state: FirstRunPermissionState = currentFirstRunPermissionState()
+    ): UbuntuRuntimeUiState {
+        val labels = state.labels()
+        return UbuntuRuntimeUiState(
+            title = "首次授权",
+            detail = listOf(
+                "Kite 会先集中申请一次系统能力：${labels.joinToString("、")}。",
+                "如果你暂时拒绝，Kite 不会反复打扰；之后 Ubuntu 解压、通知、桌面图标会在各自入口继续提示。",
+                "完成授权后会继续检查 Ubuntu 基础环境。"
+            ).joinToString("\n"),
+            blocksUbuntuActions = true,
+            isProblem = false,
+            canRetry = true,
+            firstRunPermissionOnboarding = true,
+            permissionActionLabel = "开始授权"
+        )
+    }
+
+    private fun FirstRunPermissionState.labels(): List<String> =
+        buildList {
+            if (needsAllFilesAccess) add("全部文件访问")
+            runtimePermissionsToRequest
+                .map(::runtimePermissionLabel)
+                .filter { it.isNotBlank() }
+                .forEach { add(it) }
+        }.distinct().ifEmpty { listOf("当前所需权限") }
+
+    private fun maybeStartFirstRunRuntimeGate() {
+        if (this is CardRunActivity || firstRunRuntimeGateShown) return
+        firstRunRuntimeGateShown = true
+        thread(name = "KiteFirstRunRuntimeGate", isDaemon = true) {
+            val baseReady = runCatching { WorkSurfaceRuntimeBridge.isBaseImageReady(applicationContext) }
+                .getOrDefault(false)
+            if (baseReady) return@thread
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val permissionState = currentRuntimePermissionState()
+                if (!permissionState.ready) {
+                    setUbuntuRuntimeState(buildRuntimePermissionUiState(baseImageReady = false) ?: return@runOnUiThread)
+                    showUbuntuRuntimePanel(auto = true)
+                } else {
+                    setUbuntuRuntimeState(runtimeDeployPendingState())
+                    showUbuntuRuntimePanel(auto = true)
+                    ensureKfRuntimeBootstrap()
+                }
+            }
+        }
+    }
+
+    private fun currentRuntimePermissionState(): RuntimePermissionState {
+        val missing = mutableListOf<String>()
+        fun addIfMissing(permission: String) {
+            if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+                missing += permission
+            }
+        }
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            addIfMissing(Manifest.permission.READ_EXTERNAL_STORAGE)
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+                addIfMissing(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }
+
+        val needsAllFilesAccess = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            !Environment.isExternalStorageManager()
+        return RuntimePermissionState(
+            missingPermissions = missing.distinct(),
+            needsAllFilesAccess = needsAllFilesAccess
+        )
+    }
+
+    private fun buildRuntimePermissionUiState(baseImageReady: Boolean): UbuntuRuntimeUiState? {
+        if (baseImageReady) return null
+        val permissionState = currentRuntimePermissionState()
+        if (permissionState.ready) return null
+        val labels = permissionState.missingLabels()
+        val actionLabel = when {
+            permissionState.missingPermissions.isNotEmpty() -> "弹出权限请求"
+            permissionState.needsAllFilesAccess -> "打开文件访问设置"
+            else -> "继续部署"
+        }
+        return UbuntuRuntimeUiState(
+            title = "需要完成首次授权",
+            detail = listOf(
+                "首次部署 Ubuntu 前需要先完成文件访问授权，否则共享投放区、导入目录和部分系统准备步骤可能被系统拦截。",
+                "未完成：${labels.joinToString("、")}",
+                "点击下方按钮后，请按系统提示完成授权；返回 Kite 后会自动继续解压 Ubuntu。"
+            ).joinToString("\n"),
+            blocksUbuntuActions = true,
+            isProblem = false,
+            canRetry = true,
+            requiresPermission = true,
+            permissionActionLabel = actionLabel
+        )
+    }
+
+    private fun RuntimePermissionState.missingLabels(): List<String> =
+        buildList {
+            if (needsAllFilesAccess) add("全部文件访问")
+            missingPermissions
+                .map(::runtimePermissionLabel)
+                .filter { it.isNotBlank() }
+                .forEach { add(it) }
+        }.distinct().ifEmpty { listOf("文件访问") }
+
+    private fun runtimePermissionLabel(permission: String): String =
+        when (permission) {
+            Manifest.permission.READ_EXTERNAL_STORAGE -> "文件读取"
+            Manifest.permission.WRITE_EXTERNAL_STORAGE -> "文件写入"
+            Manifest.permission.POST_NOTIFICATIONS -> "系统通知"
+            else -> permission.substringAfterLast('.')
+        }
+
+    private fun requestFirstRunRuntimePermissions(startBootstrapAfterGrant: Boolean) {
+        if (startBootstrapAfterGrant) {
+            pendingRuntimePermissionBootstrap = true
+        }
+        val uiState = buildRuntimePermissionUiState(baseImageReady = false)
+        if (uiState != null) {
+            setUbuntuRuntimeState(uiState)
+        }
+        val permissionState = currentRuntimePermissionState()
+        when {
+            permissionState.missingPermissions.isNotEmpty() -> {
+                if (!runtimePermissionRequestInFlight) {
+                    runtimePermissionRequestInFlight = true
+                    requestPermissions(
+                        permissionState.missingPermissions.toTypedArray(),
+                        REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS
+                    )
+                }
+            }
+            permissionState.needsAllFilesAccess -> openAllFilesAccessSettings()
+            startBootstrapAfterGrant -> resumePendingRuntimePermissionBootstrap()
+        }
+    }
+
+    private fun notificationsEnabled(): Boolean {
+        val manager = getSystemService(NotificationManager::class.java) ?: return true
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            manager.areNotificationsEnabled()
+        } else {
+            true
+        }
+    }
+
+    private fun notificationSettingsSubtitle(): String =
+        if (notificationsEnabled()) {
+            "已开启，后台运行和容器服务会显示系统通知。"
+        } else {
+            "未开启，点击后进入系统通知授权。"
+        }
+
+    private fun requestNotificationAccess() {
+        if (notificationsEnabled()) {
+            openAppNotificationSettings()
+            return
+        }
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                REQUEST_NOTIFICATION_PERMISSION
+            )
+            return
+        }
+        openAppNotificationSettings()
+    }
+
+    private fun handleNotificationSettingToggle(wantsEnabled: Boolean) {
+        if (wantsEnabled) {
+            requestNotificationAccess()
+        } else {
+            openAppNotificationSettings()
+        }
+    }
+
+    private fun openAppNotificationSettings() {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            }
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        }
+        runCatching { startActivity(intent) }
+            .onFailure {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+    }
+
+    private fun openAllFilesAccessSettings() {
+        val appSettingsIntent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+            data = Uri.parse("package:$packageName")
+        }
+        runCatching { startActivity(appSettingsIntent) }
+            .onFailure {
+                runCatching { startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
+                    .onFailure { error ->
+                        Toast.makeText(
+                            this,
+                            "无法打开文件访问授权：${error.message ?: error.javaClass.simpleName}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+            }
+    }
+
+    private fun resumePendingRuntimePermissionBootstrap() {
+        if (!pendingRuntimePermissionBootstrap || runtimePermissionRequestInFlight) return
+        val uiState = buildRuntimePermissionUiState(baseImageReady = false)
+        if (uiState != null) {
+            setUbuntuRuntimeState(uiState)
+            return
+        }
+        pendingRuntimePermissionBootstrap = false
+        kfRuntimeBootstrapRequested = false
+        setUbuntuRuntimeState(runtimeDeployPendingState())
+        ensureKfRuntimeBootstrap()
+    }
+
+    private fun runtimeDeployPendingState(): UbuntuRuntimeUiState =
+        UbuntuRuntimeUiState(
+            title = "正在准备 Ubuntu 部署",
+            detail = "权限已经就绪，正在启动系统镜像解压和基础环境初始化。",
+            blocksUbuntuActions = true,
+            isProblem = false,
+            showProgress = true,
+            progressText = "等待解压进度"
+        )
+
     private fun refreshUbuntuRuntimeState() {
         thread(name = "KiteUbuntuRuntimeCheck", isDaemon = true) {
             val state = runCatching {
-                if (WorkSurfaceRuntimeBridge.isBaseImageReady(applicationContext)) {
+                val baseReady = WorkSurfaceRuntimeBridge.isBaseImageReady(applicationContext)
+                buildRuntimePermissionUiState(baseImageReady = baseReady) ?: if (baseReady) {
                     UbuntuRuntimeUiState.hidden()
                 } else {
                     UbuntuRuntimeUiState(
@@ -672,6 +991,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (previous.title != next.title) return true
         if (previous.isProblem != next.isProblem) return true
         if (previous.blocksUbuntuActions != next.blocksUbuntuActions) return true
+        if (previous.requiresPermission != next.requiresPermission) return true
+        if (previous.canRetry != next.canRetry) return true
         if (previous.showProgress != next.showProgress) return true
         val previousPercent = previous.progressPercent
         val nextPercent = next.progressPercent
@@ -682,6 +1003,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun buildUbuntuRuntimeUiState(): UbuntuRuntimeUiState? {
+        if (ubuntuRuntimeState.requiresPermission && !currentRuntimePermissionState().ready) {
+            buildRuntimePermissionUiState(baseImageReady = false)?.let { return it }
+        }
         latestRootfsProgress.toUbuntuRuntimeUiState()?.let { return it }
         latestRuntimeBootstrapProgress.toUbuntuRuntimeUiState()?.let { return it }
         return latestBootstrapSnapshot.toUbuntuRuntimeUiState()
@@ -989,6 +1313,37 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             dropZoneStatus = dropZoneManager.prepareDropZone()
             Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_SHORT).show()
             if (currentScreen == Screen.Console) showConsole()
+        } else if (requestCode == REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS) {
+            runtimePermissionRequestInFlight = false
+            dropZoneStatus = dropZoneManager.prepareDropZone()
+            val permissionState = currentRuntimePermissionState()
+            val permissionUiState = buildRuntimePermissionUiState(baseImageReady = false)
+            if (permissionUiState != null) {
+                setUbuntuRuntimeState(permissionUiState)
+                if (permissionState.missingPermissions.isEmpty() && permissionState.needsAllFilesAccess) {
+                    openAllFilesAccessSettings()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "仍缺少：${permissionState.missingLabels().joinToString("、")}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } else {
+                resumePendingRuntimePermissionBootstrap()
+            }
+            if (currentScreen == Screen.Console) showConsole()
+        } else if (requestCode == REQUEST_FIRST_RUN_PERMISSION_ONBOARDING) {
+            firstRunPermissionRequestInFlight = false
+            dropZoneStatus = dropZoneManager.prepareDropZone()
+            continueFirstRunPermissionOnboarding()
+        } else if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
+            if (notificationsEnabled()) {
+                Toast.makeText(this, "通知已开启", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "通知未开启，可在设置中再次授权", Toast.LENGTH_SHORT).show()
+            }
+            if (currentScreen == Screen.Settings) showSettings()
         }
     }
 
@@ -1028,6 +1383,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun requestDropZoneAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            openAllFilesAccessSettings()
+            return
+        }
         if (Build.VERSION.SDK_INT <= 32 &&
             checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -1110,6 +1469,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (kfRuntimeBootstrapRequested) {
             return
         }
+        val baseReady = runCatching { WorkSurfaceRuntimeBridge.isBaseImageReady(applicationContext) }
+            .getOrDefault(false)
+        if (!baseReady) {
+            val permissionUiState = buildRuntimePermissionUiState(baseImageReady = false)
+            if (permissionUiState != null) {
+                setUbuntuRuntimeState(permissionUiState)
+                showUbuntuRuntimePanel(auto = true)
+                requestFirstRunRuntimePermissions(startBootstrapAfterGrant = true)
+                return
+            }
+        }
         kfRuntimeBootstrapRequested = true
         BootstrapCoordinator.ensureStarted(applicationContext)
     }
@@ -1184,6 +1554,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 ) { checked ->
                     appSettings.edit().putBoolean(KEY_HIDE_MAIN_TASK_FROM_RECENTS, checked).apply()
                     applyRecentTaskVisibilitySetting()
+                })
+                addView(settingsSwitchRow(
+                    title = "系统通知",
+                    subtitle = notificationSettingsSubtitle(),
+                    checked = notificationsEnabled()
+                ) { checked ->
+                    handleNotificationSettingToggle(checked)
                 })
                 addView(settingsRow("投放区", dropZoneStatus.message) {
                     if (dropZoneStatus.available) refreshDropZoneRecipes() else requestDropZoneAccess()
@@ -6049,6 +6426,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         includeFontPadding = false
         val color = when {
             state.isProblem -> tokens.danger
+            state.requiresPermission -> tokens.primaryStrong
             state.blocksUbuntuActions -> tokens.primaryStrong
             state.visible -> tokens.textSecondary
             else -> tokens.success
@@ -6060,6 +6438,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun systemStatusLabel(state: UbuntuRuntimeUiState): String = when {
         state.isProblem -> "异常"
+        state.requiresPermission -> "待授权"
         state.showProgress && state.progressPercent != null -> "解压 ${state.progressPercent}%"
         state.blocksUbuntuActions -> "部署中"
         state.visible -> "未部署"
@@ -7735,19 +8114,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         runtimePanelActionButton?.apply {
             val shouldRetry = state.canRetry || (state.visible && !state.blocksUbuntuActions)
-            text = if (shouldRetry) "重新检查 / 继续部署" else "关闭"
+            text = when {
+                state.firstRunPermissionOnboarding -> state.permissionActionLabel.ifBlank { "开始授权" }
+                state.requiresPermission -> state.permissionActionLabel.ifBlank { "打开授权 / 继续" }
+                shouldRetry -> "重新检查 / 继续部署"
+                else -> "关闭"
+            }
+            val primaryAction = state.firstRunPermissionOnboarding || state.requiresPermission || shouldRetry
             background = roundedBox(
-                if (shouldRetry) tokens.primaryStrong else tokens.surface,
-                if (shouldRetry) tokens.primaryStrong else tokens.border,
+                if (primaryAction) tokens.primaryStrong else tokens.surface,
+                if (primaryAction) tokens.primaryStrong else tokens.border,
                 dp(14).toFloat()
             )
-            setTextColor(if (shouldRetry) tokens.buttonText else tokens.textPrimary)
+            setTextColor(if (primaryAction) tokens.buttonText else tokens.textPrimary)
         }
     }
 
     private fun handleRuntimePanelAction() {
         val state = ubuntuRuntimeState
-        if (state.canRetry || (state.visible && !state.blocksUbuntuActions)) {
+        if (state.firstRunPermissionOnboarding) {
+            continueFirstRunPermissionOnboarding()
+        } else if (state.requiresPermission) {
+            requestFirstRunRuntimePermissions(startBootstrapAfterGrant = true)
+        } else if (state.canRetry || (state.visible && !state.blocksUbuntuActions)) {
             ubuntuRuntimeDialog?.dismiss()
             kfRuntimeBootstrapRequested = false
             ensureKfRuntimeBootstrap()
@@ -11084,7 +11473,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         commandInput.setText(draft?.command ?: shellStep?.cmd.orEmpty())
         workdirInput.setText(draft?.workdir ?: shellStep?.workdir ?: recipe?.execution?.workdir.orEmpty())
         urlInput.setText(draft?.url ?: openUrl)
-        if (::shortcutSwitch.isInitialized) shortcutSwitch.isChecked = formShortcutRequested
+        setShortcutSwitchChecked(formShortcutRequested)
         if (::launchInstanceSwitch.isInitialized) launchInstanceSwitch.isChecked = formLaunchOpenInstance
     }
 
@@ -11273,6 +11662,95 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             hasShell -> KiteRecipe.TYPE_START_SERVICE
             hasOpenWeb -> KiteRecipe.TYPE_OPEN_URL
             else -> KiteRecipe.TYPE_TEMPLATE
+        }
+    }
+
+    private fun handleShortcutSwitchChanged(isChecked: Boolean) {
+        if (shortcutSwitchInternalChange) return
+        if (!isChecked) {
+            formShortcutRequested = false
+            return
+        }
+
+        val existingRecipe = editingRecipe
+        if (existingRecipe == null || existingRecipe.id.isBlank()) {
+            formShortcutRequested = true
+            Toast.makeText(this, "保存后会向桌面发起创建申请", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (CardShortcutManager.hasPinnedShortcut(this, existingRecipe.id)) {
+            formShortcutRequested = true
+            cardLocalSettings.setShortcutRequested(existingRecipe.id, true)
+            Toast.makeText(this, "桌面图标已存在", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val requested = CardShortcutManager.requestPinnedShortcut(
+            this,
+            shortcutRecipeForCurrentForm(existingRecipe)
+        )
+        if (requested) {
+            formShortcutRequested = true
+            cardLocalSettings.setShortcutRequested(existingRecipe.id, true)
+            Toast.makeText(this, "已提交桌面快捷方式申请", Toast.LENGTH_SHORT).show()
+        } else {
+            formShortcutRequested = false
+            setShortcutSwitchChecked(false)
+            Toast.makeText(this, "当前桌面不支持自动创建快捷方式", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun shortcutRecipeForCurrentForm(existingRecipe: KiteRecipe): KiteRecipe {
+        val draft = snapshotRecipeFormDraft()
+        val normalizedSteps = draft?.steps?.map { it.normalizedCopy() }.orEmpty()
+        val inferredType = normalizedSteps
+            .takeIf { it.isNotEmpty() }
+            ?.let { inferTypeFromDrafts(it) }
+            ?: existingRecipe.type
+        val iconType = draft?.selectedIconType?.takeIf { it.isNotBlank() }
+            ?: selectedIconType.takeIf { it.isNotBlank() }
+            ?: existingRecipe.icon.type
+        val iconSource = draft?.selectedIconSource?.takeIf { it.isNotBlank() }
+            ?: selectedIconSource.takeIf { it.isNotBlank() }
+            ?: existingRecipe.icon.source
+        val iconName = draft?.selectedIconName?.takeIf { it.isNotBlank() }
+            ?: selectedIconName.takeIf { it.isNotBlank() }
+            ?: existingRecipe.icon.name
+        val icon = if (iconType == KiteRecipeIcon.TYPE_IMAGE && iconSource.isNotBlank()) {
+            KiteRecipeIcon(
+                type = KiteRecipeIcon.TYPE_IMAGE,
+                name = iconName.ifBlank { "custom" },
+                source = iconSource
+            )
+        } else {
+            KiteRecipeIcon(
+                type = KiteRecipeIcon.TYPE_BUILTIN,
+                name = KiteRecipeIcon.normalizeName(iconName, inferredType)
+            )
+        }
+
+        return existingRecipe.copy(
+            name = draft?.name?.trim()?.ifBlank { existingRecipe.name } ?: existingRecipe.name,
+            description = draft?.description?.trim()?.ifBlank { existingRecipe.description }
+                ?: existingRecipe.description,
+            type = inferredType,
+            defaultUrl = normalizedSteps
+                .firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB && it.url.isNotBlank() }
+                ?.url
+                ?: existingRecipe.defaultUrl,
+            icon = icon,
+            launch = KiteLaunchConfig(openInstance = draft?.launchOpenInstance ?: formLaunchOpenInstance)
+        )
+    }
+
+    private fun setShortcutSwitchChecked(checked: Boolean) {
+        if (!::shortcutSwitch.isInitialized || shortcutSwitch.isChecked == checked) return
+        shortcutSwitchInternalChange = true
+        try {
+            shortcutSwitch.isChecked = checked
+        } finally {
+            shortcutSwitchInternalChange = false
         }
     }
 
@@ -12219,7 +12697,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setTextColor(tokens.textPrimary)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
-        shortcutSwitch = Switch(context).apply { isChecked = false }
+        shortcutSwitch = Switch(context).apply {
+            isChecked = formShortcutRequested
+            setOnCheckedChangeListener { _, isChecked -> handleShortcutSwitchChanged(isChecked) }
+        }
         addView(shortcutSwitch)
     }
 
@@ -12239,13 +12720,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         addView(divider())
         addView(localSwitchRow(
             title = "申请桌面图标",
-            detail = "保存后向桌面发起创建申请，删除快捷方式后不做回收。",
+            detail = "已有卡片会立即弹出桌面确认；新建卡片会在保存后继续申请。",
             checked = formShortcutRequested
         ) {
             shortcutSwitch = it
-            it.setOnCheckedChangeListener { _, isChecked ->
-                formShortcutRequested = isChecked
-            }
+            it.setOnCheckedChangeListener { _, isChecked -> handleShortcutSwitchChanged(isChecked) }
         })
     }
 
@@ -13249,6 +13728,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val textSizeSp: Float
     )
 
+    private data class RuntimePermissionState(
+        val missingPermissions: List<String>,
+        val needsAllFilesAccess: Boolean
+    ) {
+        val ready: Boolean = missingPermissions.isEmpty() && !needsAllFilesAccess
+    }
+
+    private data class FirstRunPermissionState(
+        val runtimePermissionsToRequest: List<String>,
+        val needsAllFilesAccess: Boolean
+    )
+
     private data class UbuntuRuntimeUiState(
         val title: String,
         val detail: String,
@@ -13259,9 +13750,20 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val progressText: String = "",
         val showProgress: Boolean = false,
         val canRetry: Boolean = false,
-        val autoOpenPanel: Boolean = false
+        val autoOpenPanel: Boolean = false,
+        val requiresPermission: Boolean = false,
+        val firstRunPermissionOnboarding: Boolean = false,
+        val permissionActionLabel: String = ""
     ) {
         companion object {
+            fun checking(): UbuntuRuntimeUiState =
+                UbuntuRuntimeUiState(
+                    title = "正在检查 Ubuntu",
+                    detail = "正在确认系统镜像、权限和基础运行环境。",
+                    blocksUbuntuActions = true,
+                    isProblem = false
+                )
+
             fun hidden(): UbuntuRuntimeUiState =
                 UbuntuRuntimeUiState(
                     title = "",
@@ -13337,8 +13839,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val TERMINAL_AUTH_LINK_TAIL_BYTES = 64L * 1024L
         private const val REQUEST_DROPZONE_STORAGE = 801
         private const val REQUEST_PICK_RECIPE_ICON = 802
+        private const val REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS = 803
+        private const val REQUEST_NOTIFICATION_PERMISSION = 804
+        private const val REQUEST_FIRST_RUN_PERMISSION_ONBOARDING = 805
         private const val KEY_HIDE_MAIN_TASK_FROM_RECENTS = "hide_main_task_from_recents"
         private const val KEY_RESTORE_LAST_SCREEN = "restore_last_screen"
+        private const val KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE = "first_run_permission_onboarding_done"
         private const val KEY_RECIPE_DRAFT = "recipe_draft"
         private const val KEY_RECIPE_DRAFT_SAVED_AT = "recipe_draft_saved_at"
         private const val KEY_RECIPE_ICON_COLLECTION = "recipe_icon_collection"
