@@ -12,6 +12,7 @@ data class KiteResourceManifest(
     val version: String,
     val iconText: String,
     val iconAsset: String,
+    val iconFit: String = "",
     val sections: List<String>,
     val tags: List<String>,
     val provides: List<String>,
@@ -436,6 +437,7 @@ class KiteResourceManifestLoader(private val context: Context) {
                     .trim()
                 else -> ""
             },
+            iconFit = icon?.optString("fit").orEmpty().trim(),
             sections = display.optJSONArray("sections").toStringList(),
             tags = display.optJSONArray("tags").toStringList(),
             provides = relations.optJSONArray("provides").toStringList(),

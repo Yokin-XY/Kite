@@ -6,8 +6,9 @@
     "description": "Hermes Agent 本体与 CLI",
     "version": "main",
     "icon": {
-      "type": "text",
-      "value": "H"
+      "type": "asset",
+      "value": "resources/kite.hermes.core/icon.png",
+      "fallbackText": "H"
     }
   },
   "display": {

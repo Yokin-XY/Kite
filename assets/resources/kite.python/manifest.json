@@ -6,8 +6,9 @@
     "description": "Hermes 本体需要的 Python 运行时",
     "version": ">=3.11,<3.14",
     "icon": {
-      "type": "text",
-      "value": "Py"
+      "type": "asset",
+      "value": "resources/kite.python/icon.png",
+      "fallbackText": "Py"
     }
   },
   "display": {

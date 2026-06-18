@@ -6,8 +6,9 @@
     "description": "源码下载与版本管理工具",
     "version": "apt",
     "icon": {
-      "type": "text",
-      "value": "Git"
+      "type": "asset",
+      "value": "resources/kite.git/icon.png",
+      "fallbackText": "Git"
     }
   },
   "display": {

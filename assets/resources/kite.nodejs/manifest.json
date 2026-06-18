@@ -6,8 +6,9 @@
     "description": "现代 JavaScript 运行环境",
     "version": "24.15.0",
     "icon": {
-      "type": "text",
-      "value": "JS"
+      "type": "asset",
+      "value": "resources/kite.nodejs/icon.png",
+      "fallbackText": "JS"
     }
   },
   "display": {

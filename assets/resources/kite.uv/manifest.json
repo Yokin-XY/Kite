@@ -6,8 +6,10 @@
     "description": "Hermes 本体安装 Python 依赖的高速包管理器",
     "version": "0.11.1",
     "icon": {
-      "type": "text",
-      "value": "uv"
+      "type": "asset",
+      "value": "resources/kite.uv/icon.png",
+      "fallbackText": "uv",
+      "fit": "fullBleed"
     }
   },
   "display": {

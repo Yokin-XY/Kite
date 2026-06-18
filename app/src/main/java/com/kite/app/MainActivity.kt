@@ -2675,10 +2675,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun resourceIcon(item: ResourceItem): View =
-        resourceIcon(item.iconText, item.accent, item.iconAsset)
+        resourceIcon(item.iconText, item.accent, item.iconAsset, item.iconFit)
 
-    private fun resourceIcon(textValue: String, accent: String, assetPath: String = ""): View {
-        return resourceIcon(textValue, accent, assetPath, size = dp(56), padding = dp(7), radius = dp(14).toFloat(), textSize = 15f)
+    private fun resourceIcon(textValue: String, accent: String, assetPath: String = "", iconFit: String = ""): View {
+        return resourceIcon(textValue, accent, assetPath, iconFit, size = dp(56), padding = dp(7), radius = dp(14).toFloat(), textSize = 15f)
     }
 
     private fun resourceShelfIcon(item: ResourceItem): View =
@@ -2686,6 +2686,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             item.iconText,
             item.accent,
             item.iconAsset,
+            item.iconFit,
             size = dp(RESOURCE_TOOL_SHELF_ICON_SIZE_DP),
             padding = dp(RESOURCE_TOOL_SHELF_ICON_PADDING_DP),
             radius = dp(RESOURCE_TOOL_SHELF_ICON_RADIUS_DP).toFloat(),
@@ -2696,6 +2697,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         textValue: String,
         accent: String,
         assetPath: String,
+        iconFit: String,
         size: Int,
         padding: Int,
         radius: Float,
@@ -2703,14 +2705,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     ): View {
         val bitmap = resourceIconBitmap(assetPath)
         if (bitmap == null) return resourceTextIcon(textValue, accent, size, radius, textSize)
+        val isFullBleed = iconFit.equals(RESOURCE_ICON_FIT_FULL_BLEED, ignoreCase = true)
         val tone = KiteTheme.accent(accent, tokens)
         return FrameLayout(this).apply {
-            background = roundedBox(tokens.surface, tone.border, radius)
+            background = if (isFullBleed) {
+                roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, radius)
+            } else {
+                roundedBox(tokens.surface, tone.border, radius)
+            }
             clipToOutline = true
             layoutParams = LinearLayout.LayoutParams(size, size)
             addView(ImageView(context).apply {
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                setPadding(padding, padding, padding, padding)
+                scaleType = if (isFullBleed) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_INSIDE
+                if (!isFullBleed) setPadding(padding, padding, padding, padding)
                 setImageBitmap(bitmap)
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
@@ -5678,11 +5685,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val manifest = resourceManifestLoader.requestManifest(resourceId)
         val snapshotIconAsset = manifest?.iconAsset?.ifBlank { item?.iconAsset.orEmpty() } ?: item?.iconAsset.orEmpty()
         val snapshotIconText = manifest?.iconText?.ifBlank { item?.iconText.orEmpty() } ?: item?.iconText.orEmpty()
+        val snapshotIconFit = manifest?.iconFit?.ifBlank { item?.iconFit.orEmpty() } ?: item?.iconFit.orEmpty()
         val iconJson = JSONObject().apply {
             if (snapshotIconAsset.isNotBlank()) {
                 put("type", "asset")
                 put("value", snapshotIconAsset)
                 put("fallbackText", snapshotIconText)
+                if (snapshotIconFit.isNotBlank()) put("fit", snapshotIconFit)
             } else {
                 put("type", "text")
                 put("value", snapshotIconText)
@@ -6401,6 +6410,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             section = resourceSectionLabel(manifest.sections.firstOrNull()).ifBlank { item.section },
             iconText = manifest.iconText.ifBlank { item.iconText },
             iconAsset = manifest.iconAsset.ifBlank { item.iconAsset },
+            iconFit = manifest.iconFit.ifBlank { item.iconFit },
             version = manifest.version.ifBlank { item.version },
             sourceLabel = resourceSourceLabel(manifest.sourceType).ifBlank { item.sourceLabel },
             includes = mergeResourceStrings(item.includes, manifest.provides),
@@ -13657,6 +13667,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val category: String,
         val iconText: String,
         val iconAsset: String = "",
+        val iconFit: String = "",
         val accent: String,
         val version: String,
         val sizeLabel: String,
@@ -13931,6 +13942,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_TOOL_SHELF_ICON_RADIUS_DP = 16
         private const val RESOURCE_TOOL_SHELF_ICON_TEXT_SP = 14f
         private const val RESOURCE_TOOL_SHELF_TITLE_TEXT_SP = 11.5f
+        private const val RESOURCE_ICON_FIT_FULL_BLEED = "fullBleed"
         private const val RESOURCE_ACTION_BUTTON_COMPACT_WIDTH_DP = 60
         private const val RESOURCE_ACTION_BUTTON_COMPACT_HEIGHT_DP = 32
         private const val RESOURCE_ACTION_BUTTON_COMPACT_RADIUS_DP = 16

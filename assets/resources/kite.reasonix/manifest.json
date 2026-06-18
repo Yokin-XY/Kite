@@ -6,8 +6,10 @@
     "description": "DeepSeek 原生终端编码助手",
     "version": "npm",
     "icon": {
-      "type": "text",
-      "value": "Rx"
+      "type": "asset",
+      "value": "resources/kite.reasonix/icon.png",
+      "fallbackText": "Rx",
+      "fit": "fullBleed"
     }
   },
   "display": {

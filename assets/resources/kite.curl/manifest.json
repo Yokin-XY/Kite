@@ -6,8 +6,10 @@
     "description": "网络下载命令",
     "version": "apt",
     "icon": {
-      "type": "text",
-      "value": "curl"
+      "type": "asset",
+      "value": "resources/kite.curl/icon.png",
+      "fallbackText": "curl",
+      "fit": "fullBleed"
     }
   },
   "display": {

@@ -24,17 +24,17 @@
       "id": "foundation",
       "title": "基础环境",
       "items": [
-        "kite.nodejs"
+        "kite.nodejs",
+        "kite.python",
+        "kite.git",
+        "kite.uv",
+        "kite.curl"
       ]
     },
     {
       "id": "more",
       "title": "更多资源",
       "items": [
-        "kite.git",
-        "kite.curl",
-        "kite.python",
-        "kite.uv",
         "kite.hermes.webui"
       ]
     }

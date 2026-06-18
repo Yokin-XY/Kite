@@ -8,7 +8,8 @@
     "icon": {
       "type": "asset",
       "value": "resources/kite.claude.code/icon.png",
-      "fallbackText": "CC"
+      "fallbackText": "CC",
+      "fit": "fullBleed"
     }
   },
   "display": {
