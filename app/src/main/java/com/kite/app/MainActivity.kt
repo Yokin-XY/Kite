@@ -348,6 +348,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     override fun onDestroy() {
+        closeResourceInstallTaskIfActivityDestroyed()
         CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
         CardRunTaskCloser.unregister(registeredCardRunCloserInstanceId)
         if (localServerStarted) {
@@ -2016,22 +2017,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 payload.planSnapshot,
                 payload.registrySnapshot
             ))
-            val activeInstallId = resourceManageActiveInstallId(payload.planIds, payload.planSnapshot, payload.registrySnapshot)
-            host.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, dp(12), 0, 0)
-                payload.planIds.forEachIndexed { index, resourceId ->
-                    addView(resourceInstallWizardStepRow(
-                        index = index,
-                        total = payload.planIds.size,
-                        item = catalogById[resourceId],
-                        resourceId = resourceId,
-                        isActive = activeInstallId == resourceId,
-                        planSnapshot = payload.planSnapshot,
-                        registryEntry = payload.registrySnapshot[resourceId]
-                    ))
-                }
-            })
         }
         host.addView(sectionTitle("已获取资源").apply {
             setPadding(0, dp(24), 0, dp(12))
@@ -2064,18 +2049,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
         )
     }
-
-    private fun resourceManageActiveInstallId(
-        planIds: List<String>,
-        planSnapshot: com.kite.app.resources.KiteResourcePlanSnapshot,
-        registrySnapshot: Map<String, KiteResourceRegistryEntry>
-    ): String? =
-        planIds.firstOrNull { planSnapshot.stepStatus(it) == KiteResourceInstallStore.PLAN_STEP_RUNNING }
-            ?: planIds.firstOrNull {
-                registrySnapshot[it]?.failed == true ||
-                    planSnapshot.stepStatus(it) == KiteResourceInstallStore.PLAN_STEP_FAILED
-            }
-            ?: planSnapshot.pendingResourceIds.firstOrNull()
 
     private fun resourceManageInstallTaskCard(
         planIds: List<String>,
@@ -2122,6 +2095,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setPadding(dp(16), dp(15), dp(16), dp(15))
             background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            if (targetId.isNotBlank()) {
+                bindResourceManageInstallTaskCardGesture(
+                    view = this,
+                    targetResourceId = targetId,
+                    planResourceIds = planIds
+                )
+            }
             addView(row {
                 gravity = Gravity.CENTER_VERTICAL
                 addView(resourceIcon("↓", "teal").apply {
@@ -2140,7 +2120,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         ellipsize = TextUtils.TruncateAt.END
                     })
                     addView(TextView(context).apply {
-                        text = "$completedCount/${planIds.size} · $statusText"
+                        text = "$completedCount/${planIds.size} · $statusText · 点击打开，上滑关闭"
                         textSize = 12f
                         setTextColor(tokens.textSecondary)
                         setPadding(0, dp(4), 0, 0)
@@ -2158,25 +2138,60 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22))
                 })
             })
-            addView(row {
-                setPadding(0, dp(14), 0, 0)
-                addView(resourceManageActionButton("打开向导") {
-                    if (targetId.isNotBlank()) showResourceInstallWizard(targetId)
-                }.apply {
-                    layoutParams = LinearLayout.LayoutParams(0, dp(38), 0.7f)
-                })
-                addView(resourceManageActionButton("取消", danger = true) {
-                    cancelResourceInstallTask(
-                        targetResourceId = targetId,
-                        planResourceIds = planIds,
-                        closeWizard = false
-                    )
-                }.apply {
-                    layoutParams = LinearLayout.LayoutParams(0, dp(38), 0.3f).apply {
-                        setMargins(dp(10), 0, 0, 0)
+        }
+    }
+
+    private fun bindResourceManageInstallTaskCardGesture(
+        view: View,
+        targetResourceId: String,
+        planResourceIds: List<String>
+    ) {
+        var downX = 0f
+        var downY = 0f
+        view.isClickable = true
+        view.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.x - downX
+                    val dy = event.y - downY
+                    if (dy < -dp(16) && kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
+                        view.translationY = dy.coerceAtLeast(-dp(56).toFloat())
+                        view.alpha = (1f + dy / dp(160).toFloat()).coerceIn(0.62f, 1f)
                     }
-                })
-            })
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val dx = event.x - downX
+                    val dy = event.y - downY
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+                    view.translationY = 0f
+                    view.alpha = 1f
+                    if (dy < -dp(48) && kotlin.math.abs(dy) > kotlin.math.abs(dx) * 1.2f) {
+                        cancelResourceInstallTask(
+                            targetResourceId = targetResourceId,
+                            planResourceIds = planResourceIds,
+                            closeWizard = false
+                        )
+                    } else {
+                        view.performClick()
+                        showResourceInstallWizard(targetResourceId)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    view.parent?.requestDisallowInterceptTouchEvent(false)
+                    view.translationY = 0f
+                    view.alpha = 1f
+                    true
+                }
+                else -> true
+            }
         }
     }
 
@@ -3782,10 +3797,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         CardRunStore.removeRunStatesForRecipes(recipeIds, removeOpenHistory = true)
         invalidateResourceCatalogCache()
+        closeResourceInstallWizardInstance(targetId, removeRunState = true)
         if (closeWizard) {
-            currentResourceInstallTargetId = null
-            resourceInstallWizardPlanIds = emptyList()
-            activeResourceInstallWizard = null
             if (this is CardRunActivity) {
                 closeCardRunTask()
             } else {
@@ -3794,6 +3807,55 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         } else {
             refreshResourceScreenIfVisible()
         }
+    }
+
+    private fun closeResourceInstallWizardInstance(
+        targetResourceId: String? = null,
+        removeRunState: Boolean = false
+    ) {
+        val targetId = targetResourceId.orEmpty()
+        val context = activeResourceInstallWizard
+        val matchesCurrent = targetId.isBlank() ||
+            currentResourceInstallTargetId == targetId ||
+            context?.targetResourceId == targetId
+        if (!matchesCurrent) return
+        val wizardRecipeIds = listOfNotNull(
+            context?.wizardRecipeId,
+            targetId.takeIf { it.isNotBlank() }?.let { resourceInstallWizardRecipe(it, it).id }
+        ).distinct()
+        currentResourceInstallTargetId = null
+        resourceInstallWizardPlanIds = emptyList()
+        activeResourceInstallWizard = null
+        resourceInstallWizardBinding = null
+        if (removeRunState && wizardRecipeIds.isNotEmpty()) {
+            wizardRecipeIds.forEach { recipeId ->
+                runtimeStates.remove(recipeId)
+                activeRunInstanceIds.remove(recipeId)
+                suppressedResourceRunSurfaceRecipeIds.remove(recipeId)
+            }
+            CardRunStore.removeRunStatesForRecipes(wizardRecipeIds, removeOpenHistory = true)
+        }
+    }
+
+    private fun closeResourceInstallTaskIfActivityDestroyed() {
+        if (this !is CardRunActivity || isChangingConfigurations) return
+        if (!::resourceInstallStore.isInitialized) return
+        val context = activeResourceInstallWizard ?: return
+        if (focusedRunInstanceId != context.wizardInstanceId && focusedRunRecipeId != context.wizardRecipeId) return
+        val targetId = context.targetResourceId
+        val planIds = context.planResourceIds.ifEmpty { resourceInstallStore.planResourceIds() }
+        val resourceIds = resolveResourceInstallTaskIds(targetId, planIds)
+        if (resourceIds.isEmpty()) {
+            closeResourceInstallWizardInstance(targetId, removeRunState = true)
+            return
+        }
+        val catalogById = cachedResourceCatalog.orEmpty().associateBy { it.id }
+        stopResourceInstallRunsForCancel(resourceIds, catalogById)
+        clearResourceInstallTask(
+            targetResourceId = targetId,
+            planResourceIds = resourceIds,
+            closeWizard = false
+        )
     }
 
     private fun resolveResourceInstallTaskIds(targetId: String, planResourceIds: List<String>): List<String> =
@@ -5626,9 +5688,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     }
                     ResourceUninstallContinuation.CancelFailedInstall -> {
                         resourceInstallStore.clearPlan()
-                        currentResourceInstallTargetId = null
-                        resourceInstallWizardPlanIds = emptyList()
-                        activeResourceInstallWizard = null
+                        closeResourceInstallWizardInstance(resourceId, removeRunState = true)
                         Toast.makeText(this, "残留已卸载，获取任务已取消", Toast.LENGTH_SHORT).show()
                         if (this is CardRunActivity && currentScreen == Screen.CardRun) {
                             closeCardRunTask()
@@ -8055,6 +8115,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 showResourceInstallWizard(activeResourceInstallWizard?.targetResourceId)
                 return
             }
+            val context = activeResourceInstallWizard
+            cancelResourceInstallTask(
+                targetResourceId = context?.targetResourceId,
+                planResourceIds = context?.planResourceIds.orEmpty(),
+                closeWizard = true
+            )
+            return
         }
         if (
             activeResourceInstallWizard != null &&
