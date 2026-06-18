@@ -1,8 +1,5 @@
 package com.termux.view.textselection;
 
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
 import android.graphics.Rect;
 import android.text.TextUtils;
 import android.view.ActionMode;
@@ -23,7 +20,6 @@ public class TextSelectionCursorController implements CursorController {
 
     private final TerminalView terminalView;
     private final TextSelectionHandleView mStartHandle, mEndHandle;
-    private String mStoredSelectedText;
     private boolean mIsSelectingText = false;
     private long mShowStartTime = System.currentTimeMillis();
 
@@ -32,8 +28,7 @@ public class TextSelectionCursorController implements CursorController {
 
     private ActionMode mActionMode;
     public final int ACTION_COPY = 1;
-    public final int ACTION_PASTE = 2;
-    public final int ACTION_MORE = 3;
+    public final int ACTION_SELECT_ALL = 2;
 
     public TextSelectionCursorController(TerminalView terminalView) {
         this.terminalView = terminalView;
@@ -114,10 +109,8 @@ public class TextSelectionCursorController implements CursorController {
             public boolean onCreateActionMode(ActionMode mode, Menu menu) {
                 int show = MenuItem.SHOW_AS_ACTION_IF_ROOM | MenuItem.SHOW_AS_ACTION_WITH_TEXT;
 
-                ClipboardManager clipboard = (ClipboardManager) terminalView.getContext().getSystemService(Context.CLIPBOARD_SERVICE);
                 menu.add(Menu.NONE, ACTION_COPY, Menu.NONE, R.string.copy_text).setShowAsAction(show);
-                menu.add(Menu.NONE, ACTION_PASTE, Menu.NONE, R.string.paste_text).setEnabled(clipboard != null && clipboard.hasPrimaryClip()).setShowAsAction(show);
-                menu.add(Menu.NONE, ACTION_MORE, Menu.NONE, R.string.text_selection_more);
+                menu.add(Menu.NONE, ACTION_SELECT_ALL, Menu.NONE, R.string.paste_text).setShowAsAction(show);
                 return true;
             }
 
@@ -139,19 +132,8 @@ public class TextSelectionCursorController implements CursorController {
                         terminalView.mTermSession.onCopyTextToClipboard(selectedText);
                         terminalView.stopTextSelectionMode();
                         break;
-                    case ACTION_PASTE:
-                        terminalView.stopTextSelectionMode();
-                        terminalView.mTermSession.onPasteTextFromClipboard();
-                        break;
-                    case ACTION_MORE:
-                        // We first store the selected text in case TerminalViewClient needs the
-                        // selected text before MORE button was pressed since we are going to
-                        // stop selection mode
-                        mStoredSelectedText = getSelectedText();
-                        // The text selection needs to be stopped before showing context menu,
-                        // otherwise handles will show above popup
-                        terminalView.stopTextSelectionMode();
-                        terminalView.showContextMenu();
+                    case ACTION_SELECT_ALL:
+                        selectAllTranscript();
                         break;
                 }
 
@@ -370,15 +352,26 @@ public class TextSelectionCursorController implements CursorController {
         return terminalView.mEmulator.getSelectedText(mSelX1, mSelY1, mSelX2, mSelY2);
     }
 
+    private void selectAllTranscript() {
+        if (terminalView.mEmulator == null) {
+            return;
+        }
+        mSelX1 = 0;
+        mSelY1 = -terminalView.mEmulator.getScreen().getActiveTranscriptRows();
+        mSelX2 = terminalView.mEmulator.mColumns - 1;
+        mSelY2 = terminalView.mEmulator.mRows - 1;
+        terminalView.invalidate();
+        render();
+    }
+
     /** Get the selected text stored before "MORE" button was pressed on the context menu. */
     @Nullable
     public String getStoredSelectedText() {
-        return mStoredSelectedText;
+        return null;
     }
 
     /** Unset the selected text stored before "MORE" button was pressed on the context menu. */
     public void unsetStoredSelectedText() {
-        mStoredSelectedText = null;
     }
 
     public ActionMode getActionMode() {

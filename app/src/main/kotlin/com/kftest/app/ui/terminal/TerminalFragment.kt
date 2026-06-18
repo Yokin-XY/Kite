@@ -3,6 +3,7 @@ package com.kftest.app.ui.terminal
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
@@ -26,7 +27,9 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.GridLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -115,6 +118,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private lateinit var terminalInputBar: LinearLayout
     private lateinit var terminalComposerInput: EditText
     private lateinit var terminalControlPanel: LinearLayout
+    private lateinit var terminalControlPager: HorizontalScrollView
     private lateinit var terminalControlPage: LinearLayout
     private lateinit var terminalView: TerminalView
     private lateinit var terminalController: TerminalSessionController
@@ -127,6 +131,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private var lastManagedSessionsRenderSignature: String = ""
     private var isDetailMode = false
     private var isTerminalPanelExpanded = false
+    private var terminalPanelPageIndex = 0
     private var sessionNoteJob: Job? = null
     private var terminalRefreshJob: Job? = null
     @Volatile
@@ -307,13 +312,15 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
                 MotionEvent.ACTION_MOVE -> {
                     terminalTouchScrolling = true
-                    followTerminalOutput = false
+                    setTerminalOutputFollow(false)
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (terminalTouchScrolling || terminalView.topRow != terminalTouchStartTopRow) {
-                        followTerminalOutput = terminalView.topRow == 0
-                    }
+                    terminalView.postDelayed({
+                        if (terminalTouchScrolling || terminalView.topRow != terminalTouchStartTopRow) {
+                            setTerminalOutputFollow(terminalView.topRow == 0)
+                        }
+                    }, 80L)
                 }
             }
             false
@@ -461,7 +468,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private fun setupTerminalComposer() {
         terminalInputBar.removeAllViews()
         terminalInputBar.setPadding(dp(12), dp(10), dp(12), dp(10))
-        applyComposerBackground()
+        applyTerminalComposerBackground()
 
         terminalControlPanel = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
@@ -469,11 +476,43 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(0, 0, 0, dp(8))
         }
-        terminalControlPage = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
+        terminalControlPager = object : HorizontalScrollView(requireContext()) {
+            override fun onTouchEvent(event: MotionEvent): Boolean {
+                val handled = super.onTouchEvent(event)
+                if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+                    snapTerminalPanelPage()
+                }
+                return handled
+            }
+        }.apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isFillViewport = true
         }
-        terminalControlPanel.addView(terminalControlPage)
-        terminalInputBar.addView(terminalControlPanel)
+        terminalControlPage = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        terminalControlPager.addView(
+            terminalControlPage,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        terminalControlPanel.addView(
+            terminalControlPager,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        terminalInputBar.addView(
+            terminalControlPanel,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
 
         val composerRow = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -488,8 +527,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         val inputCard = MaterialCardView(requireContext()).apply {
             radius = dp(16).toFloat()
             cardElevation = 0f
-            setCardBackgroundColor(color(R.color.terminal_page_surface))
-            strokeColor = color(R.color.terminal_page_line)
+            setCardBackgroundColor(terminalColor(R.color.terminal_page_surface))
+            strokeColor = terminalColor(R.color.terminal_page_line)
             strokeWidth = dp(1)
             minimumHeight = dp(48)
             minimumWidth = 0
@@ -498,8 +537,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         terminalComposerInput = EditText(requireContext()).apply {
             background = null
             hint = "输入命令或与 Agent 对话"
-            setHintTextColor(color(R.color.terminal_page_subtext))
-            setTextColor(color(R.color.terminal_page_text))
+            setHintTextColor(terminalColor(R.color.terminal_page_subtext))
+            setTextColor(terminalColor(R.color.terminal_page_text))
             textSize = 14f
             minLines = 1
             maxLines = TERMINAL_COMPOSER_MAX_LINES
@@ -572,7 +611,59 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private fun renderTerminalPanelPage() {
         terminalControlPage.removeAllViews()
-        terminalControlPage.addView(buildTerminalControlPage())
+        terminalControlPage.addView(buildTerminalPanelPageContainer(buildTerminalControlPage()))
+        terminalControlPage.addView(buildTerminalPanelPageContainer(buildTerminalUtilityPage()))
+        terminalControlPager.post {
+            updateTerminalPanelPageWidths()
+            terminalControlPager.scrollTo(terminalPanelPageIndex * terminalControlPager.width, 0)
+        }
+    }
+
+    private fun setTerminalPanelPage(pageIndex: Int) {
+        val nextPage = pageIndex.coerceIn(0, 1)
+        if (terminalPanelPageIndex == nextPage) {
+            return
+        }
+        terminalPanelPageIndex = nextPage
+        terminalControlPager.post {
+            terminalControlPager.smoothScrollTo(terminalPanelPageIndex * terminalControlPager.width, 0)
+        }
+    }
+
+    private fun buildTerminalPanelPageContainer(content: View): View {
+        return FrameLayout(requireContext()).apply {
+            addView(
+                content,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER
+                )
+            )
+        }
+    }
+
+    private fun updateTerminalPanelPageWidths() {
+        val pageWidth = terminalControlPager.width
+        if (pageWidth <= 0) {
+            return
+        }
+        for (index in 0 until terminalControlPage.childCount) {
+            val child = terminalControlPage.getChildAt(index)
+            val params = child.layoutParams
+            if (params.width != pageWidth) {
+                params.width = pageWidth
+                child.layoutParams = params
+            }
+        }
+    }
+
+    private fun snapTerminalPanelPage() {
+        if (!::terminalControlPager.isInitialized || terminalControlPager.width <= 0) {
+            return
+        }
+        terminalPanelPageIndex = if (terminalControlPager.scrollX >= terminalControlPager.width / 2) 1 else 0
+        terminalControlPager.smoothScrollTo(terminalPanelPageIndex * terminalControlPager.width, 0)
     }
 
     private fun updateComposerScrollState() {
@@ -630,12 +721,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             addView(
                 buildPanelGrid(
                     listOf(
-                        PanelButton("Ctrl+C", "中断", R.drawable.ic_terminal_interrupt) {
-                            sendTerminalInput("\u0003")
-                        },
-                        PanelButton("Ctrl+L", "清屏", R.drawable.ic_terminal_clear_line) {
-                            sendTerminalInput("\u000c")
-                        },
+                        PanelButton("Ctrl+C", "中断", R.drawable.ic_terminal_interrupt) { sendTerminalInput("\u0003") },
+                        PanelButton("Ctrl+L", "清屏", R.drawable.ic_terminal_clear_line) { sendTerminalInput("\u000c") },
                         PanelButton("A-", "缩小字体") {
                             applyFontSize(TerminalUiPreferences.stepFontSize(currentFontSizeDp, -1), true)
                         },
@@ -651,6 +738,27 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 LinearLayout.LayoutParams(dp(132), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     marginStart = dp(12)
                 }
+            )
+        }
+    }
+
+    private fun buildTerminalUtilityPage(): View {
+        return LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(2), 0, dp(2), 0)
+            addView(
+                buildPanelGrid(
+                    listOf(
+                        PanelButton("Esc", "取消") { sendTerminalInput("\u001b") },
+                        PanelButton("Tab", "补全") { sendTerminalInput("\t") },
+                        PanelButton("粘贴", "剪贴板") { pasteFromClipboard() },
+                        PanelButton("主题", TerminalUiPreferences.loadThemeMode(requireContext()).label) {
+                            showThemeMenu(it)
+                        }
+                    )
+                ),
+                LinearLayout.LayoutParams(dp(166), ViewGroup.LayoutParams.WRAP_CONTENT)
             )
         }
     }
@@ -727,8 +835,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         return MaterialCardView(requireContext()).apply {
             radius = dp(13).toFloat()
             cardElevation = 0f
-            setCardBackgroundColor(android.graphics.Color.rgb(249, 250, 251))
-            strokeColor = android.graphics.Color.rgb(229, 231, 235)
+            setCardBackgroundColor(terminalColor(R.color.terminal_page_surface))
+            strokeColor = terminalColor(R.color.terminal_page_line)
             strokeWidth = dp(1)
             minimumWidth = dp(44)
             setMinimumWidth(dp(44))
@@ -748,7 +856,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             return TextView(requireContext()).apply {
                 gravity = Gravity.CENTER
                 text = title
-                setTextColor(android.graphics.Color.rgb(17, 24, 39))
+                setTextColor(terminalColor(R.color.terminal_page_text))
                 textSize = if (compact) 13f else 20f
                 typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
                 includeFontPadding = false
@@ -762,7 +870,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
         val titleView = TextView(requireContext()).apply {
             text = title
-            setTextColor(android.graphics.Color.rgb(17, 24, 39))
+            setTextColor(terminalColor(R.color.terminal_page_text))
             textSize = 11.2f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             includeFontPadding = false
@@ -771,7 +879,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         }
         val subtitleView = TextView(requireContext()).apply {
             text = subtitle
-            setTextColor(android.graphics.Color.rgb(111, 119, 131))
+            setTextColor(terminalColor(R.color.terminal_page_subtext))
             textSize = 10.2f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
             includeFontPadding = false
@@ -807,7 +915,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 addView(
                     ImageView(requireContext()).apply {
                         setImageResource(resId)
-                        setColorFilter(android.graphics.Color.rgb(17, 24, 39))
+                        setColorFilter(terminalColor(R.color.terminal_page_text))
                     },
                     LinearLayout.LayoutParams(dp(16), dp(16)).apply {
                         marginEnd = dp(6)
@@ -891,15 +999,9 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 background = android.graphics.drawable.GradientDrawable().apply {
                     shape = android.graphics.drawable.GradientDrawable.RECTANGLE
                     cornerRadius = dp(2).toFloat()
-                    setColor(color(R.color.terminal_page_gray_chip))
+                    setColor(terminalColor(R.color.terminal_page_gray_chip))
                 }
             }, LinearLayout.LayoutParams(dp(64), dp(4)))
-        }
-    }
-
-    private fun buildVerticalDivider(): View {
-        return View(requireContext()).apply {
-            setBackgroundColor(android.graphics.Color.rgb(232, 235, 240))
         }
     }
 
@@ -907,7 +1009,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         return MaterialButton(requireContext()).apply {
             text = label
             textSize = 22f
-            setTextColor(color(R.color.terminal_page_text))
+            setTextColor(terminalColor(R.color.terminal_page_text))
             cornerRadius = dp(22)
             insetTop = 0
             insetBottom = 0
@@ -915,12 +1017,12 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             minimumWidth = 0
             setPadding(0, 0, 0, 0)
             backgroundTintList = android.content.res.ColorStateList.valueOf(
-                color(R.color.terminal_page_input_bg)
+                terminalColor(R.color.terminal_page_input_bg)
             )
         }
     }
 
-    private fun applyComposerBackground() {
+    private fun applyTerminalComposerBackground() {
         terminalInputBar.background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadii = floatArrayOf(
@@ -929,7 +1031,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 0f, 0f,
                 0f, 0f
             )
-            setColor(color(R.color.terminal_page_header))
+            setColor(terminalColor(R.color.terminal_page_header))
         }
     }
 
@@ -1021,7 +1123,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         }
         if (delta.isNotEmpty()) {
             terminalController.writeRawInput(delta)
-            followTerminalOutput = true
+            setTerminalOutputFollow(true)
             keepLatestTerminalOutputVisible(forceImmediate = true)
         }
         composerLiveSyncBuffer = text
@@ -1038,7 +1140,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         }
         terminalController.writeRawInput("\u007f".repeat(composerLiveSyncBuffer.length))
         composerLiveSyncBuffer = ""
-        followTerminalOutput = true
+        setTerminalOutputFollow(true)
         keepLatestTerminalOutputVisible(forceImmediate = true)
     }
 
@@ -1057,11 +1159,42 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         return KiteTerminalShellTheme.resolve(requireContext(), resId)
     }
 
+    private fun terminalColor(resId: Int): Int {
+        val isDark = TerminalUiPreferences.resolveTerminalDarkMode(requireContext())
+        return if (isDark) {
+            when (resId) {
+                R.color.terminal_page_bg -> Color.rgb(5, 8, 13)
+                R.color.terminal_page_header -> Color.rgb(14, 20, 29)
+                R.color.terminal_page_surface -> Color.rgb(11, 17, 24)
+                R.color.terminal_page_text -> Color.rgb(242, 246, 251)
+                R.color.terminal_page_subtext -> Color.rgb(148, 163, 184)
+                R.color.terminal_page_line -> Color.rgb(36, 49, 64)
+                R.color.terminal_page_green -> Color.rgb(71, 209, 140)
+                R.color.terminal_page_blue -> Color.rgb(87, 166, 255)
+                R.color.terminal_page_gray_chip -> Color.rgb(51, 65, 85)
+                R.color.terminal_page_input_bg -> Color.rgb(17, 24, 39)
+                else -> color(resId)
+            }
+        } else {
+            when (resId) {
+                R.color.terminal_page_bg -> Color.rgb(242, 243, 245)
+                R.color.terminal_page_header -> Color.rgb(232, 235, 238)
+                R.color.terminal_page_surface -> Color.rgb(255, 255, 255)
+                R.color.terminal_page_text -> Color.rgb(31, 35, 41)
+                R.color.terminal_page_subtext -> Color.rgb(111, 119, 131)
+                R.color.terminal_page_line -> Color.rgb(225, 229, 234)
+                R.color.terminal_page_gray_chip -> Color.rgb(201, 206, 214)
+                R.color.terminal_page_input_bg -> Color.rgb(244, 246, 248)
+                else -> color(resId)
+            }
+        }
+    }
+
     private fun applyTerminalCanvasBackground() {
         if (!::terminalView.isInitialized) return
         val colors = TerminalColors.COLOR_SCHEME.mDefaultColors
         val background = colors.getOrElse(TextStyle.COLOR_INDEX_BACKGROUND) {
-            color(R.color.terminal_page_surface)
+            terminalColor(R.color.terminal_page_surface)
         }
         terminalView.setBackgroundColor(background)
         if (::terminalOutputContainer.isInitialized) {
@@ -1087,8 +1220,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         detailPage.setBackgroundColor(color(R.color.terminal_page_bg))
         tintHeader((listPage as? ViewGroup)?.getChildAt(0))
         tintHeader((detailPage as? ViewGroup)?.getChildAt(0))
-        applyTerminalCanvasBackground()
-        applyComposerBackground()
         tvEmptySessions?.setTextColor(color(R.color.terminal_page_subtext))
         tvDetailTitle.setTextColor(color(R.color.terminal_page_text))
         tvDetailSubtitle.setTextColor(color(R.color.terminal_page_subtext))
@@ -1098,6 +1229,73 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         (cardBootstrapStatus as? MaterialCardView)?.apply {
             setCardBackgroundColor(color(R.color.terminal_page_surface))
             strokeColor = color(R.color.terminal_page_line)
+        }
+        applyTerminalDetailTheme()
+    }
+
+    private fun applyTerminalDetailTheme() {
+        if (!::detailPage.isInitialized) {
+            return
+        }
+        fun tintTerminalHeader(header: View?) {
+            header?.setBackgroundColor(terminalColor(R.color.terminal_page_header))
+            if (header is ViewGroup) {
+                for (index in 0 until header.childCount) {
+                    when (val child = header.getChildAt(index)) {
+                        is TextView -> child.setTextColor(terminalColor(R.color.terminal_page_text))
+                        is AppCompatImageButton -> child.setColorFilter(terminalColor(R.color.terminal_page_text))
+                    }
+                }
+            }
+        }
+
+        detailPage.setBackgroundColor(terminalColor(R.color.terminal_page_bg))
+        tintTerminalHeader(terminalDetailHeader)
+        tvDetailTitle.setTextColor(terminalColor(R.color.terminal_page_text))
+        tvDetailSubtitle.setTextColor(terminalColor(R.color.terminal_page_subtext))
+        tvSessionNote.setTextColor(terminalColor(R.color.terminal_page_subtext))
+        applyTerminalCanvasBackground()
+        refreshTerminalComposerTheme()
+    }
+
+    private fun refreshTerminalComposerTheme() {
+        if (!::terminalInputBar.isInitialized) {
+            return
+        }
+        applyTerminalComposerBackground()
+        if (::terminalComposerInput.isInitialized) {
+            terminalComposerInput.setTextColor(terminalColor(R.color.terminal_page_text))
+            terminalComposerInput.setHintTextColor(terminalColor(R.color.terminal_page_subtext))
+        }
+        applyThemeToTerminalControlTree(terminalInputBar)
+    }
+
+    private fun applyThemeToTerminalControlTree(view: View) {
+        when (view) {
+            is MaterialButton -> {
+                view.setTextColor(terminalColor(R.color.terminal_page_text))
+                view.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                    terminalColor(R.color.terminal_page_input_bg)
+                )
+            }
+
+            is MaterialCardView -> {
+                view.setCardBackgroundColor(terminalColor(R.color.terminal_page_surface))
+                view.strokeColor = terminalColor(R.color.terminal_page_line)
+            }
+
+            is TextView -> {
+                view.setTextColor(terminalColor(R.color.terminal_page_text))
+            }
+
+            is ImageView -> {
+                view.setColorFilter(terminalColor(R.color.terminal_page_text))
+            }
+        }
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                applyThemeToTerminalControlTree(view.getChildAt(index))
+            }
         }
     }
 
@@ -1258,6 +1456,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private fun applyTerminalThemeMode(mode: TerminalThemeMode) {
         TerminalUiPreferences.saveThemeMode(requireContext().applicationContext, mode)
         applyTerminalColorScheme()
+        applyTerminalDetailTheme()
         terminalView.mTermSession?.emulator?.mColors?.reset()
         refreshTerminalColors()
         keepLatestTerminalOutputVisible()
@@ -1268,7 +1467,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         if (composerLiveSyncEnabled && shouldResetComposerAfterControlInput(rawInput)) {
             resetComposerAfterRealtimeControl()
         }
-        followTerminalOutput = true
+        setTerminalOutputFollow(true)
         keepLatestTerminalOutputVisible()
     }
 
@@ -1282,8 +1481,15 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private fun sendTerminalPaste(rawInput: String) {
         terminalController.writePastedInput(rawInput)
-        followTerminalOutput = true
+        setTerminalOutputFollow(true)
         keepLatestTerminalOutputVisible(forceImmediate = true)
+    }
+
+    private fun setTerminalOutputFollow(enabled: Boolean) {
+        followTerminalOutput = enabled
+        if (::terminalView.isInitialized) {
+            terminalView.setScrollToBottomOnScreenUpdate(enabled)
+        }
     }
 
     private fun keepLatestTerminalOutputVisible(forceImmediate: Boolean = false) {
@@ -1332,6 +1538,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun performTerminalViewRefresh() {
+        terminalView.setScrollToBottomOnScreenUpdate(followTerminalOutput && !terminalView.isSelectingText())
         if (isDetailMode && followTerminalOutput && !terminalView.isSelectingText() && terminalView.topRow != 0) {
             terminalView.topRow = 0
         }
@@ -1796,36 +2003,14 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         clipboard?.setPrimaryClip(ClipData.newPlainText("terminal", text))
     }
 
-    private fun showFullTranscriptSelectionDialog() {
-        val transcript = terminalView.mEmulator?.screen?.transcriptText?.trim()
-        if (transcript.isNullOrBlank()) {
-            Toast.makeText(requireContext(), getString(R.string.terminal_copy_empty), Toast.LENGTH_SHORT).show()
-            return
-        }
-        val preview = EditText(requireContext()).apply {
-            setText(transcript)
-            setTextColor(color(R.color.terminal_page_text))
-            setHintTextColor(color(R.color.terminal_page_subtext))
-            setTextIsSelectable(true)
-            setSingleLine(false)
-            minLines = 8
-            maxLines = 18
-            typeface = Typeface.MONOSPACE
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            gravity = Gravity.START or Gravity.TOP
-            setHorizontallyScrolling(false)
-            setShowSoftInputOnFocus(false)
-            background = null
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-        }
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(getString(R.string.terminal_select_all_title))
-            .setView(preview)
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
-        preview.post {
-            preview.requestFocus()
-            preview.selectAll()
+    private fun pasteFromClipboard() {
+        val clipboard = context?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        val text = clipboard?.primaryClip?.getItemAt(0)?.coerceToText(requireContext())?.toString()
+        if (!text.isNullOrEmpty()) {
+            val editable = terminalComposerInput.text
+            val insertAt = terminalComposerInput.selectionStart.coerceIn(0, editable?.length ?: 0)
+            editable?.insert(insertAt, text)
+            focusComposerInput(showKeyboard = true)
         }
     }
 
@@ -1958,7 +2143,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     override fun onLongPress(event: MotionEvent): Boolean {
-        followTerminalOutput = false
+        setTerminalOutputFollow(false)
         hideSoftKeyboard(terminalComposerInput)
         terminalSelectionFocusAllowed = true
         terminalView.requestFocus()
@@ -2067,7 +2252,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         terminalView.attachSession(session)
         session.emulator?.mColors?.reset()
         applyTerminalCanvasBackground()
-        followTerminalOutput = true
+        setTerminalOutputFollow(true)
         keepLatestTerminalOutputVisible()
     }
 
@@ -2084,7 +2269,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     override fun pasteTextFromClipboard() {
-        showFullTranscriptSelectionDialog()
+        pasteFromClipboard()
     }
 
     override fun performBellFeedback() {

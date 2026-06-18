@@ -2,7 +2,6 @@ package com.termux.view;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
-import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -69,6 +68,7 @@ public final class TerminalView extends View {
 
     /** The top row of text to display. Ranges from -activeTranscriptRows to 0. */
     int mTopRow;
+    private boolean mScrollToBottomOnScreenUpdate = true;
     int[] mDefaultSelectors = new int[]{-1,-1,-1,-1};
 
     float mScaleFactor = 1.f;
@@ -464,6 +464,12 @@ public final class TerminalView extends View {
                 mTopRow -= rowShift;
                 decrementYTextSelectionCursors(rowShift);
             }
+        } else if (!mScrollToBottomOnScreenUpdate && mTopRow != 0) {
+            int rowShift = mEmulator.getScrollCounter();
+            if (rowShift != 0) {
+                mTopRow = Math.max(-rowsInHistory, mTopRow - rowShift);
+            }
+            skipScrolling = true;
         }
 
         if (!skipScrolling && mTopRow != 0) {
@@ -483,9 +489,7 @@ public final class TerminalView extends View {
         if (mAccessibilityEnabled) setContentDescription(getText());
     }
 
-    /** This must be called by the hosting activity in {@link Activity#onContextMenuClosed(Menu)}
-     * when context menu for the {@link TerminalView} is started by
-     * {@link TextSelectionCursorController#ACTION_MORE} is closed. */
+    /** This must be called by the hosting activity when a terminal context menu is closed. */
     public void onContextMenuClosed(Menu menu) {
         // Unset the stored text since it shouldn't be used anymore and should be cleared from memory
         unsetStoredSelectedText();
@@ -1040,6 +1044,10 @@ public final class TerminalView extends View {
 
     public void setTopRow(int mTopRow) {
         this.mTopRow = mTopRow;
+    }
+
+    public void setScrollToBottomOnScreenUpdate(boolean scrollToBottomOnScreenUpdate) {
+        mScrollToBottomOnScreenUpdate = scrollToBottomOnScreenUpdate;
     }
 
 
