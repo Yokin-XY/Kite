@@ -23,12 +23,11 @@ class KiteRecipeLoader(
         val cardsDir = sharedCardsDir()
         seedAssetRecipesIfNeeded(cardsDir)
         migrateLegacyPrivateRecipes(cardsDir)
+        removeDeprecatedAssetRecipesIfNeeded(cardsDir)
         val usedIds = linkedSetOf<String>()
         return sharedRecipeFiles(cardsDir)
             .mapNotNull { file -> loadRecipeFile(file, KiteRecipe.SOURCE_SHARED, canonicalize = true, usedIds = usedIds) }
     }
-
-    fun loadSampleRecipeJson(): String = readAsset("recipes/hermes-webui.json")
 
     fun saveUserRecipe(input: NewRecipeInput): KiteRecipe {
         val recipe = buildRecipe(input)
@@ -152,6 +151,70 @@ class KiteRecipeLoader(
                 }
         }
         if (!hasFailure) marker.writeText(Instant.now().toString())
+    }
+
+    private fun removeDeprecatedAssetRecipesIfNeeded(cardsDir: File) {
+        val marker = File(cardsDir, DEPRECATED_ASSET_CLEANUP_MARKER)
+        if (marker.exists()) return
+        var hasFailure = false
+        sharedRecipeFiles(cardsDir).forEach { file ->
+            if (!file.nameWithoutExtension.startsWith(DEPRECATED_HERMES_WEBUI_FILE_STEM)) return@forEach
+            val shouldRemove = runCatching {
+                isDeprecatedHermesWebUiPreset(JSONObject(file.readText()))
+            }.getOrDefault(false)
+            if (!shouldRemove) return@forEach
+            val deleted = runCatching { file.delete() }
+                .onFailure {
+                    diagnostics.logRecipeEvent(
+                        "recipe_deprecated_asset_cleanup_failed",
+                        null,
+                        mapOf("file" to file.name, "error" to it.message.orEmpty())
+                    )
+                }
+                .getOrDefault(false)
+            if (deleted) {
+                diagnostics.logRecipeEvent(
+                    "recipe_deprecated_asset_removed",
+                    null,
+                    mapOf("file" to file.name, "preset" to DEPRECATED_HERMES_WEBUI_FILE_STEM)
+                )
+            } else {
+                hasFailure = true
+                diagnostics.logRecipeEvent(
+                    "recipe_deprecated_asset_cleanup_failed",
+                    null,
+                    mapOf("file" to file.name, "error" to "delete returned false")
+                )
+            }
+        }
+        if (!hasFailure) marker.writeText(Instant.now().toString())
+    }
+
+    private fun isDeprecatedHermesWebUiPreset(json: JSONObject): Boolean {
+        val base = json.optJSONObject("base") ?: return false
+        if (base.optString("name") != DEPRECATED_HERMES_WEBUI_NAME) return false
+        val icon = base.optJSONObject("icon") ?: return false
+        if (icon.optString("type") != KiteRecipeIcon.TYPE_BUILTIN || icon.optString("name") != "terminal") {
+            return false
+        }
+        val steps = json.optJSONArray("recipe") ?: return false
+        var hasOldStartCommand = false
+        var hasOldOpenUrl = false
+        for (index in 0 until steps.length()) {
+            val step = steps.optJSONObject(index) ?: continue
+            when (step.optString("type")) {
+                KiteRecipe.STEP_SHELL -> {
+                    hasOldStartCommand = hasOldStartCommand ||
+                        step.optString("cmd").trim() == DEPRECATED_HERMES_WEBUI_START_COMMAND
+                }
+
+                KiteRecipe.STEP_OPEN_WEB -> {
+                    hasOldOpenUrl = hasOldOpenUrl ||
+                        step.optString("url").trim() == DEPRECATED_HERMES_WEBUI_OPEN_URL
+                }
+            }
+        }
+        return hasOldStartCommand && hasOldOpenUrl
     }
 
     private fun sharedRecipeFiles(cardsDir: File): List<File> {
@@ -533,6 +596,11 @@ class KiteRecipeLoader(
     companion object {
         private const val ASSET_SEED_MARKER = ".asset-presets-seeded-v1"
         private const val LEGACY_MIGRATION_MARKER = ".legacy-private-migrated-v1"
+        private const val DEPRECATED_ASSET_CLEANUP_MARKER = ".deprecated-asset-presets-cleaned-v1"
+        private const val DEPRECATED_HERMES_WEBUI_FILE_STEM = "hermes-webui"
+        private const val DEPRECATED_HERMES_WEBUI_NAME = "Hermes WebUI"
+        private const val DEPRECATED_HERMES_WEBUI_START_COMMAND = "hermes-web-ui start --port 8648"
+        private const val DEPRECATED_HERMES_WEBUI_OPEN_URL = "http://127.0.0.1:8648"
     }
 }
 

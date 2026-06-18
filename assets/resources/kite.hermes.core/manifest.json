@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "kite.hermes.core",
   "base": {
-    "name": "Hermes Core",
+    "name": "Hermes",
     "description": "Hermes Agent 本体与 CLI",
     "version": "main",
     "icon": {
@@ -67,7 +67,7 @@
       "recipe": {
         "base": {
           "id": "",
-          "name": "Hermes Core",
+          "name": "Hermes",
           "description": "在终端启动 Hermes",
           "icon": {
             "type": "builtin",
@@ -94,7 +94,7 @@
   },
   "homeCards": [
     {
-      "label": "Hermes CLI",
+      "label": "Hermes",
       "policy": "manual",
       "recipe": {
         "base": {

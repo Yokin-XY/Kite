@@ -1791,7 +1791,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         sectionHost.removeAllViews()
         payload.sections.forEach { section ->
-            sectionHost.addView(resourceSection(title = section.title, items = section.items))
+            sectionHost.addView(resourceSection(section))
         }
         if (visibleResources.isEmpty()) {
             sectionHost.addView(resourceSearchEmptyState(payload.query))
@@ -2527,7 +2527,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
         }
 
-    private fun resourceSection(title: String, items: List<ResourceItem>): View =
+    private fun resourceSection(section: ResourceHomeSectionUi): View =
+        if (section.id in RESOURCE_HOME_TOOL_SHELF_SECTIONS) {
+            resourceToolShelfSection(section)
+        } else {
+            resourceListSection(title = section.title, items = section.items)
+        }
+
+    private fun resourceListSection(title: String, items: List<ResourceItem>): View =
         LinearLayout(this).apply {
             if (items.isEmpty()) return@apply
             orientation = LinearLayout.VERTICAL
@@ -2565,6 +2572,67 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                             setMargins(dp(64), dp(8), dp(12), dp(8))
                         }
                     })
+                }
+            })
+        }
+
+    private fun resourceToolShelfSection(section: ResourceHomeSectionUi): View =
+        LinearLayout(this).apply {
+            val items = section.items
+            if (items.isEmpty()) return@apply
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(18), 0, 0)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            addView(HorizontalScrollView(context).apply {
+                isHorizontalScrollBarEnabled = false
+                clipToPadding = false
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                addView(row {
+                    gravity = Gravity.TOP
+                    items.forEachIndexed { index, item ->
+                        addView(resourceToolShelfItem(item).apply {
+                            layoutParams = LinearLayout.LayoutParams(dp(RESOURCE_TOOL_SHELF_ITEM_WIDTH_DP), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                                if (index != items.lastIndex) setMargins(0, 0, dp(RESOURCE_TOOL_SHELF_ITEM_GAP_DP), 0)
+                            }
+                        })
+                    }
+                })
+            })
+        }
+
+    private fun resourceToolShelfItem(item: ResourceItem): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            isClickable = true
+            isFocusable = true
+            setPadding(0, 0, 0, dp(1))
+            setOnClickListener { showResourceDetail(item.id, item) }
+            addView(resourceShelfIcon(item))
+            addView(TextView(context).apply {
+                text = item.name
+                textSize = RESOURCE_TOOL_SHELF_TITLE_TEXT_SP
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textPrimary)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                includeFontPadding = false
+                setPadding(0, dp(7), 0, 0)
+                layoutParams = LinearLayout.LayoutParams(dp(RESOURCE_TOOL_SHELF_TEXT_WIDTH_DP), ViewGroup.LayoutParams.WRAP_CONTENT)
+            })
+            addView(resourceActionButton(item, compact = true).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    dp(RESOURCE_ACTION_BUTTON_COMPACT_WIDTH_DP),
+                    dp(RESOURCE_ACTION_BUTTON_COMPACT_HEIGHT_DP)
+                ).apply {
+                    setMargins(0, dp(7), 0, 0)
                 }
             })
         }
@@ -2610,31 +2678,54 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceIcon(item.iconText, item.accent, item.iconAsset)
 
     private fun resourceIcon(textValue: String, accent: String, assetPath: String = ""): View {
+        return resourceIcon(textValue, accent, assetPath, size = dp(56), padding = dp(7), radius = dp(14).toFloat(), textSize = 15f)
+    }
+
+    private fun resourceShelfIcon(item: ResourceItem): View =
+        resourceIcon(
+            item.iconText,
+            item.accent,
+            item.iconAsset,
+            size = dp(RESOURCE_TOOL_SHELF_ICON_SIZE_DP),
+            padding = dp(RESOURCE_TOOL_SHELF_ICON_PADDING_DP),
+            radius = dp(RESOURCE_TOOL_SHELF_ICON_RADIUS_DP).toFloat(),
+            textSize = RESOURCE_TOOL_SHELF_ICON_TEXT_SP
+        )
+
+    private fun resourceIcon(
+        textValue: String,
+        accent: String,
+        assetPath: String,
+        size: Int,
+        padding: Int,
+        radius: Float,
+        textSize: Float
+    ): View {
         val bitmap = resourceIconBitmap(assetPath)
-        if (bitmap == null) return resourceTextIcon(textValue, accent)
+        if (bitmap == null) return resourceTextIcon(textValue, accent, size, radius, textSize)
         val tone = KiteTheme.accent(accent, tokens)
         return FrameLayout(this).apply {
-            background = roundedBox(tokens.surface, tone.border, dp(14).toFloat())
+            background = roundedBox(tokens.surface, tone.border, radius)
             clipToOutline = true
-            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+            layoutParams = LinearLayout.LayoutParams(size, size)
             addView(ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
-                setPadding(dp(7), dp(7), dp(7), dp(7))
+                setPadding(padding, padding, padding, padding)
                 setImageBitmap(bitmap)
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
     }
 
-    private fun resourceTextIcon(textValue: String, accent: String): View =
+    private fun resourceTextIcon(textValue: String, accent: String, size: Int, radius: Float, textSizeValue: Float): View =
         TextView(this).apply {
             text = textValue
-            textSize = 15f
+            textSize = textSizeValue
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             val tone = KiteTheme.accent(accent, tokens)
             setTextColor(tone.strong)
-            background = roundedBox(tokens.surface, tone.border, dp(14).toFloat())
-            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+            background = roundedBox(tokens.surface, tone.border, radius)
+            layoutParams = LinearLayout.LayoutParams(size, size)
         }
 
     private fun resourceIconBitmap(assetPath: String): Bitmap? {
@@ -2651,14 +2742,22 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun resourceActionButton(item: ResourceItem, compact: Boolean): TextView =
         TextView(this).apply {
             text = item.actionLabel
-            textSize = if (compact) 12f else 13f
+            textSize = if (compact) RESOURCE_ACTION_BUTTON_COMPACT_TEXT_SP else 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
             setTextColor(tokens.primaryStrong)
             alpha = if (item.actionEnabled) 1f else 0.58f
-            background = roundedBox(tokens.primarySubtle, Color.TRANSPARENT, dp(15).toFloat(), 0)
-            layoutParams = LinearLayout.LayoutParams(if (compact) dp(76) else ViewGroup.LayoutParams.MATCH_PARENT, dp(36))
+            background = roundedBox(
+                tokens.primarySubtle,
+                Color.TRANSPARENT,
+                dp(if (compact) RESOURCE_ACTION_BUTTON_COMPACT_RADIUS_DP else 15).toFloat(),
+                0
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                if (compact) dp(RESOURCE_ACTION_BUTTON_COMPACT_WIDTH_DP) else ViewGroup.LayoutParams.MATCH_PARENT,
+                if (compact) dp(RESOURCE_ACTION_BUTTON_COMPACT_HEIGHT_DP) else dp(36)
+            )
             if (item.actionEnabled) setOnClickListener { handleResourceAction(item) }
         }
 
@@ -6011,7 +6110,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 actionLabel = gitAction,
                 actionEnabled = resourceActionEnabled(gitAction, gitBusy),
                 includes = listOf("git CLI", "ca-certificates", "tool.git 能力", "安装 ownership 标记"),
-                notes = listOf("基础层能力：tool.git", "如果 Git 原本已存在，卸载只清 Kite 登记", "Hermes Core 后续会引用这张卡"),
+                notes = listOf("基础层能力：tool.git", "如果 Git 原本已存在，卸载只清 Kite 登记", "Hermes 后续会引用这张卡"),
                 steps = listOf(
                     ResourceStep("shell", "检查 Git", "command -v git && git --version"),
                     ResourceStep("shell", "安装 Git", "apt-get install -y git ca-certificates"),
@@ -6022,7 +6121,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 id = RESOURCE_PYTHON,
                 name = "Python",
                 description = "Hermes 本体需要的 Python 运行时",
-                longDescription = "Python 是 Hermes Core 的基础层资源。Hermes 当前声明 Python >=3.11,<3.14；这张卡负责补齐 python3、venv、pip 和证书能力，并把可用状态登记到 Kite。卸载时不移除系统 Python，只清除 Kite 的资源登记。",
+                longDescription = "Python 是 Hermes 的基础层资源。Hermes 当前声明 Python >=3.11,<3.14；这张卡负责补齐 python3、venv、pip 和证书能力，并把可用状态登记到 Kite。卸载时不移除系统 Python，只清除 Kite 的资源登记。",
                 section = "更多资源",
                 category = "Python",
                 iconText = "Py",
@@ -6034,7 +6133,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 actionLabel = pythonAction,
                 actionEnabled = resourceActionEnabled(pythonAction, pythonBusy),
                 includes = listOf("python3", "venv", "pip", "runtime.python>=3.11<3.14"),
-                notes = listOf("基础层能力：runtime.python>=3.11<3.14", "卸载只清 Kite 登记，不删除系统 Python", "Hermes Core 后续会引用这张卡"),
+                notes = listOf("基础层能力：runtime.python>=3.11<3.14", "卸载只清 Kite 登记，不删除系统 Python", "Hermes 后续会引用这张卡"),
                 steps = listOf(
                     ResourceStep("shell", "校验版本", "python3 >=3.11 and <3.14"),
                     ResourceStep("shell", "补齐 Python", "apt-get install -y python3 python3-venv python3-pip"),
@@ -6045,7 +6144,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 id = RESOURCE_CURL,
                 name = "curl",
                 description = "网络下载命令",
-                longDescription = "curl 是网络型资源下载安装脚本的基础层工具。Hermes Core 需要用它下载官方 install.sh；安装时先检查当前 Ubuntu 环境是否已有 curl，已有则只登记为可用，没有则通过 apt 安装 curl 与 ca-certificates。",
+                longDescription = "curl 是网络型资源下载安装脚本的基础层工具。Hermes 需要用它下载官方 install.sh；安装时先检查当前 Ubuntu 环境是否已有 curl，已有则只登记为可用，没有则通过 apt 安装 curl 与 ca-certificates。",
                 section = "更多资源",
                 category = "系统工具",
                 iconText = "curl",
@@ -6057,7 +6156,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 actionLabel = curlAction,
                 actionEnabled = resourceActionEnabled(curlAction, curlBusy),
                 includes = listOf("curl CLI", "ca-certificates", "tool.curl 能力", "安装 ownership 标记"),
-                notes = listOf("基础层能力：tool.curl", "如果 curl 原本已存在，卸载只清 Kite 登记", "Hermes Core 后续会引用这张卡"),
+                notes = listOf("基础层能力：tool.curl", "如果 curl 原本已存在，卸载只清 Kite 登记", "Hermes 后续会引用这张卡"),
                 steps = listOf(
                     ResourceStep("shell", "检查 curl", "command -v curl && curl --version"),
                     ResourceStep("shell", "安装 curl", "apt-get install -y curl ca-certificates"),
@@ -6080,7 +6179,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 actionLabel = uvAction,
                 actionEnabled = resourceActionEnabled(uvAction, uvBusy),
                 includes = listOf("uv 0.11.1", "uvx", "tool.uv", "tool.uvx"),
-                notes = listOf("基础层能力：tool.uv", "从内置包安装，不需要先联网下载 uv", "Hermes Core 后续会引用这张卡"),
+                notes = listOf("基础层能力：tool.uv", "从内置包安装，不需要先联网下载 uv", "Hermes 后续会引用这张卡"),
                 steps = listOf(
                     ResourceStep("shell", "复制内置资源包", "mirror assets/toolchain/ai-dev-pack -> ${KiteResourceInstallRecipes.localPackPath(RESOURCE_UV)}"),
                     ResourceStep("shell", "安装 uv", "bash ${KiteResourceInstallRecipes.localPackPath(RESOURCE_UV)}/install.sh --install-uv"),
@@ -6089,9 +6188,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             ),
             ResourceItem(
                 id = RESOURCE_HERMES_CORE,
-                name = "Hermes Core",
+                name = "Hermes",
                 description = "Hermes Agent 本体与 CLI",
-                longDescription = "Hermes Core 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。它只负责本体安装和卸载；面向普通人的配置网页、WebUI 和首页启动卡会作为上层方案或配套卡组织。",
+                longDescription = "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。它只负责本体安装和卸载；面向普通人的配置网页、WebUI 和首页启动卡会作为上层方案或配套卡组织。",
                 section = "精选推荐",
                 category = "AI",
                 iconText = "H",
@@ -6114,7 +6213,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 id = RESOURCE_HERMES_WEBUI,
                 name = "Hermes WebUI",
                 description = "Hermes 的网页工作台",
-                longDescription = "用于在浏览器界面里使用 Hermes 的轻量 Web UI。它是 Hermes Core 的上层界面资源，安装时从 nesquena/hermes-webui 克隆源码，并复用 Hermes Core 的 Python venv 准备运行环境。",
+                longDescription = "用于在浏览器界面里使用 Hermes 的轻量 Web UI。它是 Hermes 的上层界面资源，安装时从 nesquena/hermes-webui 克隆源码，并复用 Hermes 的 Python venv 准备运行环境。",
                 section = "精选推荐",
                 category = "AI",
                 iconText = "H",
@@ -6126,7 +6225,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 actionLabel = hermesAction,
                 actionEnabled = resourceActionEnabled(hermesAction, hermesBusy),
                 includes = listOf("nesquena/hermes-webui 源码", "Python WebUI 依赖", "启动端口 8787", "首页启动卡片"),
-                notes = listOf("基础层：Hermes Core、Python、Git", "首次启动需要 Hermes 已完成模型配置"),
+                notes = listOf("基础层：Hermes、Python、Git", "首次启动需要 Hermes 已完成模型配置"),
                 steps = listOf(
                     ResourceStep("shell", "克隆源码", "git clone https://github.com/nesquena/hermes-webui"),
                     ResourceStep("shell", "安装 Python 依赖", "pip install -r requirements.txt"),
@@ -7157,7 +7256,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun networkFailureDetailFor(recipe: KiteRecipe): String =
         when {
             recipe.id.contains(RESOURCE_HERMES_CORE) ->
-                "Hermes Core 需要访问官方安装脚本、GitHub、PyPI 和 files.pythonhosted.org。请确认当前网络或代理能访问这些域名。"
+                "Hermes 需要访问官方安装脚本、GitHub、PyPI 和 files.pythonhosted.org。请确认当前网络或代理能访问这些域名。"
             recipe.id.contains(RESOURCE_HERMES_WEBUI) ->
                 "Hermes WebUI 主要需要访问 registry.npmjs.org；如果安装浏览器工具，还可能访问 GitHub 或 CDN。"
             recipe.id.contains(RESOURCE_GIT) || recipe.id.contains(RESOURCE_CURL) || recipe.id.contains(RESOURCE_PYTHON) ->
@@ -13823,6 +13922,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_CURL = "kite.curl"
         private const val RESOURCE_PYTHON = "kite.python"
         private const val RESOURCE_UV = "kite.uv"
+        private val RESOURCE_HOME_TOOL_SHELF_SECTIONS = setOf("ai-vendor", "ai-community")
+        private const val RESOURCE_TOOL_SHELF_ITEM_WIDTH_DP = 68
+        private const val RESOURCE_TOOL_SHELF_ITEM_GAP_DP = 7
+        private const val RESOURCE_TOOL_SHELF_ICON_SIZE_DP = 58
+        private const val RESOURCE_TOOL_SHELF_TEXT_WIDTH_DP = 52
+        private const val RESOURCE_TOOL_SHELF_ICON_PADDING_DP = 7
+        private const val RESOURCE_TOOL_SHELF_ICON_RADIUS_DP = 16
+        private const val RESOURCE_TOOL_SHELF_ICON_TEXT_SP = 14f
+        private const val RESOURCE_TOOL_SHELF_TITLE_TEXT_SP = 11.5f
+        private const val RESOURCE_ACTION_BUTTON_COMPACT_WIDTH_DP = 60
+        private const val RESOURCE_ACTION_BUTTON_COMPACT_HEIGHT_DP = 32
+        private const val RESOURCE_ACTION_BUTTON_COMPACT_RADIUS_DP = 16
+        private const val RESOURCE_ACTION_BUTTON_COMPACT_TEXT_SP = 12.2f
         private const val RESOURCE_OPEN_RUNTIME_SOURCE = "resource_open"
         private const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE = "resource_install_wizard"
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"

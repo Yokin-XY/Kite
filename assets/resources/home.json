@@ -2,18 +2,29 @@
   "schemaVersion": 1,
   "sections": [
     {
-      "id": "featured",
-      "title": "精选推荐",
+      "id": "ai-community",
+      "title": "独立工具",
       "items": [
-        "kite.nodejs",
-        "kite.hermes.core",
-        "kite.hermes.webui",
+        "kite.opencode",
+        "kite.openclaw",
         "kite.reasonix",
-        "kite.mimo.code",
+        "kite.hermes.core"
+      ]
+    },
+    {
+      "id": "ai-vendor",
+      "title": "厂商工具",
+      "items": [
         "kite.codex.cli",
         "kite.claude.code",
-        "kite.opencode",
-        "kite.openclaw"
+        "kite.mimo.code"
+      ]
+    },
+    {
+      "id": "foundation",
+      "title": "基础环境",
+      "items": [
+        "kite.nodejs"
       ]
     },
     {
@@ -23,7 +34,8 @@
         "kite.git",
         "kite.curl",
         "kite.python",
-        "kite.uv"
+        "kite.uv",
+        "kite.hermes.webui"
       ]
     }
   ]
