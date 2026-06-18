@@ -8,3 +8,7 @@ local.properties
 /kite-*.png
 /card-run-*.png
 /terminal-*-check.png
+
+# Local planning and workspace notes.
+/docs/
+/references/
