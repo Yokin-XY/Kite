@@ -30,7 +30,8 @@
       "agent.anthropic.claude-code"
     ],
     "base": [
-      "tool.curl"
+      "kite.git",
+      "kite.curl"
     ],
     "defaults": [],
     "extensions": []

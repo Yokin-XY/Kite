@@ -30,8 +30,8 @@
       "agent.deepseek.reasonix"
     ],
     "base": [
-      "runtime.node>=24",
-      "tool.npm"
+      "kite.nodejs",
+      "kite.git"
     ],
     "defaults": [],
     "extensions": []

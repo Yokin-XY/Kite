@@ -25,11 +25,10 @@
       "surface.hermes.webui"
     ],
     "base": [
-      "tool.git",
-      "runtime.python>=3.11<3.14",
-      "tool.pip",
-      "cli.hermes",
-      "service.hermes"
+      "kite.git",
+      "kite.curl",
+      "kite.python",
+      "kite.hermes.core"
     ],
     "defaults": [],
     "extensions": [

@@ -31,7 +31,7 @@
     "base": [],
     "defaults": [],
     "extensions": [
-      "kite.hermes.webui",
+      "kite.hermes.core",
       "kite.reasonix",
       "kite.mimo.code",
       "kite.openclaw"

@@ -29,7 +29,8 @@
       "agent.openai.codex"
     ],
     "base": [
-      "tool.curl"
+      "kite.git",
+      "kite.curl"
     ],
     "defaults": [],
     "extensions": []

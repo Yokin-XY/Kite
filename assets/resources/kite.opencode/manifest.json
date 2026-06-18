@@ -30,7 +30,8 @@
       "agent.opencode"
     ],
     "base": [
-      "tool.curl"
+      "kite.git",
+      "kite.curl"
     ],
     "defaults": [],
     "extensions": []
