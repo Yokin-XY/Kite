@@ -316,8 +316,8 @@ SH
               echo "exec \"${'$'}repo_dir/venv/bin/hermes\" \"\${'$'}@\""
             } > "${'$'}bin_dir/hermes"
             chmod +x "${'$'}bin_dir/hermes"
+            echo "KITE_RESOURCE_STEP validate-hermes-command"
             "${'$'}bin_dir/hermes" --help >/dev/null
-            "${'$'}bin_dir/hermes" doctor || true
             printf '%s\n' 'installed_by_kite' > "${'$'}resource_root/ownership"
             echo "Hermes Core installed at ${'$'}repo_dir"
         """.trimIndent()

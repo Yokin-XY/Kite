@@ -599,7 +599,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         val recipe = state?.let { recipeForRunState(it) }
                         if (state != null && recipe != null) {
                             runtimeStates[state.recipeId] = state
-                            updateVisibleCardRunReport(recipe, state)
+                            updateVisibleCardRunReport(state)
                         }
                     }
                     if (currentScreen == Screen.Console && consoleCardBindings.isNotEmpty()) {
@@ -7113,6 +7113,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             addView(row {
                 gravity = Gravity.BOTTOM
                 setPadding(0, dp(14), 0, 0)
+                val rawCommand = fullShellCommand(recipe, state)
                 val items = listOf(
                     "步骤" to cardRunStepCounter(state),
                     "已运行" to formatRunDuration(state),
@@ -7120,7 +7121,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 )
                 items.forEachIndexed { index, item ->
                     addView(
-                        cardRunSummaryMetric(item.first, item.second) { valueView ->
+                        cardRunSummaryMetric(
+                            item.first,
+                            item.second,
+                            onClick = if (item.first == "当前命令" && rawCommand.isNotBlank()) {
+                                { showShellCommandDialog(rawCommand) }
+                            } else {
+                                null
+                            }
+                        ) { valueView ->
                             if (item.first == "已运行") {
                                 registerCardRunReportBinding(
                                     recipeId = recipe.id,
@@ -7294,10 +7303,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun cardRunSummaryMetric(
         label: String,
         value: String,
+        onClick: (() -> Unit)? = null,
         onValueView: ((TextView) -> Unit)? = null
     ): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            if (onClick != null) {
+                isClickable = true
+                setOnClickListener { onClick() }
+            }
             addView(TextView(context).apply {
                 text = label
                 textSize = 11f
@@ -7319,7 +7333,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun cardRunOutputCard(recipe: KiteRecipe, state: RecipeRuntimeState): View {
-        val outputText = cardRunOutputText(recipe, state)
+        val outputText = cardRunOutputText(state)
         val isRunning = state.isBusy() || state.isActive()
         val reportBorder = Color.rgb(232, 235, 240)
         val reportText = Color.rgb(17, 24, 39)
@@ -7345,7 +7359,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 })
                 addView(reportToolButton("⧉", "复制") {
                     val latest = CardRunStore.get(state.instanceId) ?: state
-                    copyTextToClipboard("Kite SH 输出", cardRunOutputText(recipe, latest), "已复制 SH 输出")
+                    copyTextToClipboard("Kite SH 输出", cardRunOutputText(latest), "已复制 SH 输出")
                 })
             })
             val outputTextView = TextView(context).apply {
@@ -7357,12 +7371,25 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setLineSpacing(dp(3).toFloat(), 1.0f)
                 includeFontPadding = true
                 setPadding(dp(14), dp(14), dp(14), dp(14))
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+            val outputScrollView = ScrollView(context).apply {
+                isFillViewport = true
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
                 background = roundedBox(Color.rgb(248, 250, 252), Color.TRANSPARENT, dp(16).toFloat(), 0)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    reportOutputViewportHeight()
+                ).apply {
                     setMargins(0, dp(12), 0, 0)
                 }
+                addView(outputTextView)
             }
-            addView(outputTextView)
+            addView(outputScrollView)
+            if (isRunning) outputScrollView.post { outputScrollView.fullScroll(View.FOCUS_DOWN) }
             if (isRunning) {
                 addView(row {
                     gravity = Gravity.CENTER_VERTICAL
@@ -7386,6 +7413,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         recipeId = recipe.id,
                         state = state,
                         outputTextView = outputTextView,
+                        outputScrollView = outputScrollView,
                         footerTextView = footerTextView
                     )
                 })
@@ -7393,7 +7421,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 registerCardRunReportBinding(
                     recipeId = recipe.id,
                     state = state,
-                    outputTextView = outputTextView
+                    outputTextView = outputTextView,
+                    outputScrollView = outputScrollView
                 )
             }
         }
@@ -7420,6 +7449,53 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setOnClickListener { onClick() }
         }
 
+    private fun showShellCommandDialog(command: String) {
+        val dialog = Dialog(this)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+            addView(TextView(context).apply {
+                text = "原始命令"
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(ScrollView(context).apply {
+                background = roundedBox(Color.rgb(248, 250, 252), Color.TRANSPARENT, dp(14).toFloat(), 0)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(260)).apply {
+                    setMargins(0, dp(12), 0, 0)
+                }
+                addView(TextView(context).apply {
+                    text = command
+                    textSize = 12.5f
+                    typeface = Typeface.MONOSPACE
+                    setTextColor(tokens.textPrimary)
+                    setLineSpacing(dp(3).toFloat(), 1.0f)
+                    setPadding(dp(12), dp(12), dp(12), dp(12))
+                })
+            })
+            addView(row {
+                gravity = Gravity.CENTER_VERTICAL or Gravity.END
+                setPadding(0, dp(14), 0, 0)
+                addView(resourceManageActionButton("复制命令") {
+                    copyTextToClipboard("Kite 原始命令", command, "已复制原始命令")
+                }.apply {
+                    layoutParams = LinearLayout.LayoutParams(0, dp(40), 0.62f)
+                })
+                addView(resourceManageActionButton("关闭") { dialog.dismiss() }.apply {
+                    layoutParams = LinearLayout.LayoutParams(0, dp(40), 0.38f).apply {
+                        setMargins(dp(10), 0, 0, 0)
+                    }
+                })
+            })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
     private fun copyTextToClipboard(label: String, text: String, toast: String) {
         val clipboard = getSystemService(ClipboardManager::class.java)
         clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
@@ -7439,6 +7515,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         recipeId: String,
         state: RecipeRuntimeState,
         outputTextView: TextView? = null,
+        outputScrollView: ScrollView? = null,
         footerTextView: TextView? = null,
         elapsedTextView: TextView? = null
     ) {
@@ -7447,16 +7524,22 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             recipeId = recipeId,
             instanceId = state.instanceId,
             outputTextView = outputTextView ?: current?.outputTextView,
+            outputScrollView = outputScrollView ?: current?.outputScrollView,
             footerTextView = footerTextView ?: current?.footerTextView,
             elapsedTextView = elapsedTextView ?: current?.elapsedTextView
         )
         scheduleForegroundLiveTickIfNeeded()
     }
 
-    private fun updateVisibleCardRunReport(recipe: KiteRecipe, state: RecipeRuntimeState) {
+    private fun updateVisibleCardRunReport(state: RecipeRuntimeState) {
         val binding = cardRunReportBinding ?: return
         if (binding.instanceId != state.instanceId || currentScreen != Screen.CardRun) return
-        binding.outputTextView?.text = lineNumberedOutput(cardRunOutputText(recipe, state))
+        binding.outputTextView?.text = lineNumberedOutput(cardRunOutputText(state))
+        if (state.isBusy() || state.isActive()) {
+            binding.outputScrollView?.let { scrollView ->
+                scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
+            }
+        }
         binding.footerTextView?.text = reportFooterLabel(state)
         binding.elapsedTextView?.text = formatRunDuration(state)
         if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
@@ -7558,8 +7641,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         return currentShellCommand(recipe, state)
     }
 
-    private fun cardRunOutputText(recipe: KiteRecipe, state: RecipeRuntimeState): String {
-        val command = fullShellCommand(recipe, state)
+    private fun cardRunOutputText(state: RecipeRuntimeState): String {
         val report = state.shellReportText.orEmpty().trim()
         val output = extractShellOutput(report)
         val fallback = when {
@@ -7569,10 +7651,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             else -> "暂无输出。一次性命令请使用“等待结束”，例如 python3 -V。"
         }.normalizeShellStreamForDisplay()
         return buildString {
-            if (command.isNotBlank()) append(command).append("\n\n")
-            append(fallback)
+            append(fallback.withoutKiteProcessMarkers())
             commandHintFor(state)?.let { append("\n\n提示：").append(it) }
         }.trim()
+    }
+
+    private fun reportOutputViewportHeight(): Int {
+        val screenBoundedHeight = (resources.displayMetrics.heightPixels * 0.42f).toInt()
+        return screenBoundedHeight.coerceIn(dp(260), dp(420))
     }
 
     private fun extractShellOutput(report: String): String {
@@ -7710,6 +7796,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .lineSequence()
             .joinToString("\n") { it.trimEnd() }
             .trimEnd()
+
+    private fun String.withoutKiteProcessMarkers(): String =
+        lineSequence()
+            .filterNot { line ->
+                val trimmed = line.trim()
+                trimmed.startsWith("__kite_root_pid:") ||
+                    trimmed.startsWith("__kite_process_group_id:") ||
+                    trimmed.startsWith("__kite_system_session_id:")
+            }
+            .joinToString("\n")
+            .trim()
 
     private fun showCardRunMenu(recipe: KiteRecipe, state: RecipeRuntimeState) {
         val dialog = Dialog(this)
@@ -9289,7 +9386,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             shellReportText = reportText
         )
         runtimeStates[recipe.id] = updated
-        updateVisibleCardRunReport(recipe, updated)
+        updateVisibleCardRunReport(updated)
         updateVisibleResourceInstallWizardElapsed()
     }
 
@@ -10230,7 +10327,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             clearNextActionUrl = clearNextActionUrl
         )
         runtimeStates[recipe.id] = state
-        updateVisibleCardRunReport(recipe, state)
+        updateVisibleCardRunReport(state)
         updateVisibleResourceInstallWizardElapsed()
         diagnostics.logLifecycleEvent(
             recipe,
@@ -13744,6 +13841,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val recipeId: String,
         val instanceId: String,
         val outputTextView: TextView?,
+        val outputScrollView: ScrollView?,
         val footerTextView: TextView?,
         val elapsedTextView: TextView?
     )
