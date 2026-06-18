@@ -2770,7 +2770,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun resourceActionEnabled(actionLabel: String, busy: Boolean): Boolean =
         when (actionLabel) {
-            "获取中", "卸载中", "处理中" -> false
+            "获取中" -> true
+            "卸载中", "处理中" -> false
             else -> !busy
         }
 
@@ -2799,7 +2800,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun resourceHasSplitActions(item: ResourceItem): Boolean =
-        (resourceIsInstalled(item) && item.actionLabel == "打开") || resourceHasFailedInstallActions(item)
+        item.actionLabel == "获取中" ||
+            (resourceIsInstalled(item) && item.actionLabel == "打开") ||
+            resourceHasFailedInstallActions(item)
 
     private fun resourceHasFailedInstallActions(item: ResourceItem): Boolean =
         item.actionLabel == "重新获取" &&
@@ -2808,7 +2811,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun resourceSecondaryActionButton(item: ResourceItem): TextView =
         TextView(this).apply {
-            val isCancel = resourceHasFailedInstallActions(item)
+            val isCancel = item.actionLabel == "获取中" || resourceHasFailedInstallActions(item)
             text = if (isCancel) "取消" else "卸载"
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
@@ -2819,7 +2822,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             background = roundedBox(tintBackground(tokens.danger), tintBackgroundBorder(tokens.danger), dp(15).toFloat(), 0)
             if (item.actionEnabled) {
                 setOnClickListener {
-                    if (isCancel) {
+                    if (item.actionLabel == "获取中") {
+                        handleResourceCancelInstallTask(item)
+                    } else if (isCancel) {
                         handleResourceFailedInstallCancel(item)
                     } else {
                         handleResourceUninstallAction(item)
@@ -3559,9 +3564,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 activeResourceInstallWizard!!.targetResourceId
             currentResourceInstallTargetId?.isNotBlank() == true ->
                 currentResourceInstallTargetId.orEmpty()
+            item.actionLabel == "获取中" -> item.id
             else -> ""
         }
-        val planIds = planSnapshot.resourceIds.ifEmpty { resourceInstallWizardPlanIds }
+        val planIds = planSnapshot.resourceIds
+            .ifEmpty { resourceInstallWizardPlanIds }
+            .ifEmpty { resourceInstallStore.planResourceIds() }
+            .ifEmpty { if (item.actionLabel == "获取中") listOf(item.id) else emptyList() }
         if (targetId.isBlank() || planIds.isEmpty()) {
             Toast.makeText(this, "${item.name} 正在处理，获取向导暂不可恢复", Toast.LENGTH_SHORT).show()
             return
