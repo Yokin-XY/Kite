@@ -3776,7 +3776,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (
                 resourceInstallStore.status(resourceId) != null &&
                 !resourceInstallStore.isInstalled(resourceId) &&
-                resourceInstallStore.failedOperation(resourceId) != KiteResourceInstallStore.OP_UNINSTALL
+                !resourceInstallStore.isFailed(resourceId)
             ) {
                 resourceInstallStore.clear(resourceId)
             }
@@ -3849,13 +3849,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             closeResourceInstallWizardInstance(targetId, removeRunState = true)
             return
         }
-        val catalogById = cachedResourceCatalog.orEmpty().associateBy { it.id }
-        stopResourceInstallRunsForCancel(resourceIds, catalogById)
-        clearResourceInstallTask(
-            targetResourceId = targetId,
-            planResourceIds = resourceIds,
-            closeWizard = false
-        )
+        closeResourceInstallWizardInstance(targetId, removeRunState = true)
     }
 
     private fun resolveResourceInstallTaskIds(targetId: String, planResourceIds: List<String>): List<String> =
@@ -8115,12 +8109,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 showResourceInstallWizard(activeResourceInstallWizard?.targetResourceId)
                 return
             }
-            val context = activeResourceInstallWizard
-            cancelResourceInstallTask(
-                targetResourceId = context?.targetResourceId,
-                planResourceIds = context?.planResourceIds.orEmpty(),
-                closeWizard = true
+            closeResourceInstallWizardInstance(
+                targetResourceId = activeResourceInstallWizard?.targetResourceId,
+                removeRunState = true
             )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                finishAndRemoveTask()
+            } else {
+                finish()
+            }
             return
         }
         if (
