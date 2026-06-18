@@ -4297,13 +4297,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val installed = resourceItemIsInstalled(item) || registryEntry?.installed == true
         val statusLabel = when {
             uninstalling -> "卸载中"
-            uninstallFailed -> "卸载失败"
-            failed -> "失败"
+            uninstallFailed || failed -> "需卸载"
             running -> "获取中"
             installed -> "已完成"
             blocked -> "已暂停"
-            isActive -> "等待获取"
-            else -> "排队"
+            isActive -> "待获取"
+            else -> "待获取"
         }
         val tone = when {
             uninstallFailed || failed -> tokens.danger
@@ -4320,6 +4319,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 setMargins(0, 0, 0, dp(10))
             }
+            item?.let { resourceItem ->
+                isClickable = true
+                setOnClickListener {
+                    if (resourceVisibleRunState(resourceId, registryEntry) == null) {
+                        Toast.makeText(this@MainActivity, "报告正在准备", Toast.LENGTH_SHORT).show()
+                    } else {
+                        openResourceInstallRunSurface(resourceItem, CardRunSurface.Report, runOperation)
+                    }
+                }
+            }
             addView(row {
                 gravity = Gravity.CENTER_VERTICAL
                 addView(TextView(context).apply {
@@ -4334,8 +4343,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         setMargins(0, 0, dp(12), 0)
                     }
                 })
-                var subtitleTextView: TextView? = null
-                var openButtonTextView: TextView? = null
+                lateinit var subtitleTextView: TextView
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     addView(TextView(context).apply {
@@ -4358,43 +4366,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 val statusView = TextView(context).apply {
                     text = statusLabel
-                    textSize = 11.5f
+                    textSize = 12.5f
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
                     includeFontPadding = false
                     setTextColor(tone)
                     background = roundedBox(tintBackground(tone), Color.TRANSPARENT, dp(11).toFloat(), 0)
-                    setPadding(dp(9), 0, dp(9), 0)
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22))
+                    setPadding(dp(12), 0, dp(12), 0)
+                    minWidth = dp(58)
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
+                        setMargins(dp(12), 0, 0, 0)
+                    }
                 }
                 addView(statusView)
                 item?.let { resourceItem ->
-                    val openButton = resourceWizardOpenButton(enabled = canOpenRunSurface) {
-                        if (resourceVisibleRunState(resourceId, registryEntry) == null) {
-                            Toast.makeText(this@MainActivity, "报告正在准备", Toast.LENGTH_SHORT).show()
-                        } else {
-                            openResourceInstallRunSurface(resourceItem, CardRunSurface.Report, runOperation)
+                    if (failed && !uninstalling) {
+                        statusView.isClickable = true
+                        statusView.setOnClickListener {
+                            showResourceWizardUninstallConfirm(resourceItem)
                         }
                     }
-                    openButtonTextView = openButton
-                    addView(openButton)
-                    if (failed && !uninstalling) {
-                        addView(resourceWizardInlineButton("卸载", danger = true) {
-                            showResourceWizardUninstallConfirm(resourceItem)
-                        })
-                    }
                 }
-                subtitleTextView?.let { subtitleView ->
-                    onBind?.invoke(
-                        ResourceInstallWizardRowBinding(
-                            resourceId = resourceId,
-                            runOperation = runOperation,
-                            subtitleTextView = subtitleView,
-                            statusTextView = statusView,
-                            openButtonTextView = openButtonTextView
-                        )
+                onBind?.invoke(
+                    ResourceInstallWizardRowBinding(
+                        resourceId = resourceId,
+                        runOperation = runOperation,
+                        subtitleTextView = subtitleTextView
                     )
-                }
+                )
             })
             val secondarySurface = recipeState?.surface
             if (
@@ -4493,33 +4492,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         Toast.makeText(this, "正在卸载 ${item.name}", Toast.LENGTH_SHORT).show()
         startResourceUninstall(item, recipe, ResourceUninstallContinuation.ResumeInstallWizard)
-    }
-
-    private fun resourceWizardOpenButton(enabled: Boolean, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = "打开"
-            textSize = 11.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setPadding(dp(10), 0, dp(10), 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply {
-                setMargins(dp(8), 0, 0, 0)
-            }
-            setOnClickListener { if (isEnabled) onClick() }
-            applyResourceWizardOpenButtonState(this, enabled)
-        }
-
-    private fun applyResourceWizardOpenButtonState(button: TextView, enabled: Boolean) {
-        button.isEnabled = enabled
-        button.alpha = if (enabled) 1f else 0.52f
-        button.setTextColor(if (enabled) tokens.buttonText else tokens.textTertiary)
-        button.background = roundedBox(
-            if (enabled) tokens.primaryStrong else tokens.surface,
-            if (enabled) Color.TRANSPARENT else tokens.border,
-            dp(12).toFloat(),
-            0
-        )
     }
 
     private fun resourceWizardInlineButton(
@@ -4716,9 +4688,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 resourceRunStateForOperation(resourceId, it.runOperation)
             } ?: resourceInstallRecipeState(resourceId)
             val item = cachedResourceCatalog?.firstOrNull { it.id == resourceId }
-            rowBinding?.openButtonTextView?.let { button ->
-                applyResourceWizardOpenButtonState(button, state != null)
-            }
             if (state != null && rowBinding != null) {
                 rowBinding.subtitleTextView.text = resourceInstallWizardStepSubtitle(
                     item = item,
@@ -13868,9 +13837,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private data class ResourceInstallWizardRowBinding(
         val resourceId: String,
         val runOperation: String,
-        val subtitleTextView: TextView,
-        val statusTextView: TextView,
-        val openButtonTextView: TextView?
+        val subtitleTextView: TextView
     )
 
     private data class ResourceInstallWizardUiState(
