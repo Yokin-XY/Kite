@@ -10,5 +10,8 @@ local.properties
 /terminal-*-check.png
 
 # Local planning and workspace notes.
-/docs/
+/docs/*
+!/docs/screenshots/
+/docs/screenshots/*
+!/docs/screenshots/kite-*.png
 /references/
