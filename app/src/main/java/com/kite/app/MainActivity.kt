@@ -3806,11 +3806,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     ) {
         val targetId = targetResourceId.orEmpty()
         val resourceIds = resolveResourceInstallTaskIds(targetId, planResourceIds)
-        val catalogById = resourceCatalog(forceRefresh = true).associateBy { it.id }
         val unfinishedIds = resourceIds
             .filterNot { resourceInstallStore.isInstalled(it) }
             .distinct()
-        stopResourceInstallRunsForCancel(unfinishedIds, catalogById)
+        stopResourceInstallRunsForCancel(unfinishedIds)
         Toast.makeText(this, "正在取消获取任务", Toast.LENGTH_SHORT).show()
         if (unfinishedIds.isEmpty()) {
             clearResourceInstallTask(
@@ -3927,8 +3926,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .distinct()
 
     private fun stopResourceInstallRunsForCancel(
-        resourceIds: List<String>,
-        catalogById: Map<String, ResourceItem>
+        resourceIds: List<String>
     ) {
         val childRunsByRecipeId = activeResourceInstallWizard
             ?.wizardInstanceId
@@ -3936,8 +3934,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .orEmpty()
             .associateBy { it.recipeId }
         resourceIds.forEach { resourceId ->
-            val item = catalogById[resourceId] ?: return@forEach
-            val recipe = resourceInstallRecipe(item) ?: return@forEach
+            val recipeId = KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
+            val recipe = CardRunStore.registeredRecipe(recipeId) ?: return@forEach
             val state = childRunsByRecipeId[recipe.id] ?: resourceInstallRecipeState(resourceId) ?: return@forEach
             if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
                 stopResourceRecipeForCancel(recipe, state)
@@ -5494,7 +5492,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 showResourceInstallWizard()
                 return
             }
-            val recipe = resourceCatalog(forceRefresh = true)
+            val recipe = resourceCatalog(forceRefresh = false)
                 .firstOrNull { it.id == runningId }
                 ?.let { resourceInstallRecipe(it) }
             if (recipe != null) {
@@ -5514,7 +5512,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         val pendingIds = planSnapshot.pendingResourceIds
         if (pendingIds.isEmpty()) return
-        val catalog = resourceCatalog(forceRefresh = true)
+        val catalog = resourceCatalog(forceRefresh = false)
         val next = pendingIds
             .mapNotNull { id -> catalog.firstOrNull { it.id == id } }
             .firstOrNull()
@@ -5766,7 +5764,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 invalidateResourceCatalogCache()
                 when (continuation) {
                     ResourceUninstallContinuation.Reinstall -> {
-                        val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }
+                        val item = resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId }
                         if (item == null) {
                             Toast.makeText(this, "卸载完成，但获取目标缺少资源定义", Toast.LENGTH_SHORT).show()
                             refreshResourceScreenIfVisible()
@@ -5800,7 +5798,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun markResourceInstallSuccess(recipe: KiteRecipe, runId: String?, summary: String?) {
         val resourceId = resourceIdForRecipe(recipe) ?: return
-        val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }
+        val item = resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId }
         val version = item?.version.orEmpty()
         resourceInstallStore.markInstalled(resourceId, version, runId, summary)
         saveInstalledResourceSnapshot(resourceId, item, version)
@@ -6524,10 +6522,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun showCardRunTerminalFragment(sessionId: String) {
+        val currentFragment = supportFragmentManager
+            .findFragmentByTag(CARD_RUN_TERMINAL_FRAGMENT_TAG) as? TerminalFragment
+        val currentSessionId = currentFragment
+            ?.arguments
+            ?.getString(TERMINAL_FRAGMENT_INITIAL_SESSION_ARG)
+        if (currentFragment?.isAdded == true && !currentFragment.isDetached && currentSessionId == sessionId) {
+            return
+        }
         val fragment = TerminalFragment.detailOnly(sessionId)
         supportFragmentManager.beginTransaction()
             .replace(cardRunTerminalContainerId, fragment, CARD_RUN_TERMINAL_FRAGMENT_TAG)
-            .commitNowAllowingStateLoss()
+            .commitAllowingStateLoss()
     }
 
     private fun cardRunTopBar(
@@ -9377,94 +9383,138 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     ) {
         val text = step.text.orEmpty().ifBlank { step.cmd.orEmpty() }
         val appContext = applicationContext
-        val record = runCatching {
-            val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
-            KFWorkspaceManager.createShellSession(
-                context = appContext,
-                spaceId = space.id,
-                title = cardTerminalTitle(recipe, stepIndex),
-                sourceLabel = recipe.name
-            )
-        }.getOrElse { error ->
-            val message = "创建终端失败：${error.message ?: error.javaClass.simpleName}"
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Failed,
-                surface = CardRunSurface.Report,
-                currentStepIndex = stepIndex,
-                lastError = message
-            )
-            markResourceInstallFailed(recipe, null, message)
-            toastIfNotResourceRecipe(recipe, message.take(120))
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
-        TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
-        TerminalSessionStore.refresh(appContext, force = true)
-
         val instanceId = ensureRunInstanceId(recipe)
         if (!resourceRunSurfaceSuppressed(recipe)) {
             focusedRunInstanceId = instanceId
         }
-        pendingTerminalFlow = PendingTerminalFlow(
-            recipeId = recipe.id,
-            instanceId = instanceId,
-            sessionId = record.id,
-            nextStepIndex = stepIndex + 1
-        )
         setRuntimeState(
             recipe,
-            RecipeRunStatus.WaitingTerminal,
+            RecipeRunStatus.Running,
             instanceId = instanceId,
             surface = CardRunSurface.Terminal,
             currentStepIndex = stepIndex,
-            runId = record.id,
-            terminalSessionId = record.id,
-            lastMeaningfulOutput = "等待终端完成：${record.title}",
+            lastMeaningfulOutput = "正在创建终端",
             clearNextActionUrl = true
-        )
-        diagnostics.logRecipeAction(
-            recipe,
-            "terminal_step_started",
-            mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
-        )
-        TerminalRuntimeHost.setLaunchEnvironmentOverrides(
-            appContext = appContext,
-            sessionId = record.id,
-            overrides = KiteBrowserProxyInstaller.environment(
-                context = appContext,
-                recipeId = recipe.id,
-                instanceId = instanceId,
-                source = "terminal_step"
-            )
         )
         val openSurface = shouldOpenStepSurface(recipe, step)
         if (openSurface) {
             showCardRunSurface(recipe)
-        } else {
-            diagnostics.logRecipeAction(
-                recipe,
-                "terminal_surface_suppressed",
-                mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
-            )
-            if (!renderResourceInstallWizardFor(recipe) && !resourceRunSurfaceSuppressed(recipe)) {
-                showConsoleUnlessEditingRecipe(recipe)
+        }
+        diagnostics.logRecipeAction(
+            recipe,
+            "terminal_step_session_prepare",
+            mapOf("instanceId" to instanceId, "stepIndex" to stepIndex.toString())
+        )
+
+        thread(name = "KiteTerminalStep-${recipe.id.take(32)}", isDaemon = true) {
+            val recordResult = runCatching {
+                val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
+                val record = KFWorkspaceManager.createShellSession(
+                    context = appContext,
+                    spaceId = space.id,
+                    title = cardTerminalTitle(recipe, stepIndex),
+                    sourceLabel = recipe.name
+                )
+                TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
+                record
             }
-            TerminalRuntimeHost.switchToSession(appContext, record.id)
-        }
-        if (text.isNotBlank()) {
-            root.postDelayed(
-                {
-                    TerminalRuntimeHost.sendCommand(
-                        appContext = appContext,
-                        command = if (text.endsWith("\n")) text else "$text\n",
-                        sessionId = record.id
+            runOnUiThread {
+                val stillPreparing = CardRunStore.get(instanceId)?.let { current ->
+                    current.status == RecipeRunStatus.Running &&
+                        current.surface == CardRunSurface.Terminal &&
+                        current.currentStepIndex == stepIndex &&
+                        current.terminalSessionId.isNullOrBlank()
+                } == true
+                if (!stillPreparing) {
+                    diagnostics.logRecipeAction(
+                        recipe,
+                        "terminal_step_session_discarded",
+                        mapOf("instanceId" to instanceId, "stepIndex" to stepIndex.toString())
                     )
-                },
-                TERMINAL_STEP_COMMAND_DELAY_MS
-            )
+                    return@runOnUiThread
+                }
+
+                val record = recordResult.getOrElse { error ->
+                    val message = "创建终端失败：${error.message ?: error.javaClass.simpleName}"
+                    setRuntimeState(
+                        recipe,
+                        RecipeRunStatus.Failed,
+                        instanceId = instanceId,
+                        surface = CardRunSurface.Report,
+                        currentStepIndex = stepIndex,
+                        lastError = message
+                    )
+                    markResourceInstallFailed(recipe, null, message)
+                    toastIfNotResourceRecipe(recipe, message.take(120))
+                    if (!openSurface || (currentScreen == Screen.CardRun && focusedRunInstanceId == instanceId)) {
+                        showRunSurfaceOrConsole(recipe)
+                    }
+                    return@runOnUiThread
+                }
+
+                TerminalSessionStore.refresh(appContext, force = true)
+                pendingTerminalFlow = PendingTerminalFlow(
+                    recipeId = recipe.id,
+                    instanceId = instanceId,
+                    sessionId = record.id,
+                    nextStepIndex = stepIndex + 1
+                )
+                setRuntimeState(
+                    recipe,
+                    RecipeRunStatus.WaitingTerminal,
+                    instanceId = instanceId,
+                    surface = CardRunSurface.Terminal,
+                    currentStepIndex = stepIndex,
+                    runId = record.id,
+                    terminalSessionId = record.id,
+                    lastMeaningfulOutput = "等待终端完成：${record.title}",
+                    clearNextActionUrl = true
+                )
+                diagnostics.logRecipeAction(
+                    recipe,
+                    "terminal_step_started",
+                    mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
+                )
+                TerminalRuntimeHost.setLaunchEnvironmentOverrides(
+                    appContext = appContext,
+                    sessionId = record.id,
+                    overrides = KiteBrowserProxyInstaller.environment(
+                        context = appContext,
+                        recipeId = recipe.id,
+                        instanceId = instanceId,
+                        source = "terminal_step"
+                    )
+                )
+                if (openSurface) {
+                    if (currentScreen == Screen.CardRun && focusedRunInstanceId == instanceId) {
+                        showCardRunSurface(recipe)
+                    }
+                } else {
+                    diagnostics.logRecipeAction(
+                        recipe,
+                        "terminal_surface_suppressed",
+                        mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
+                    )
+                    if (!renderResourceInstallWizardFor(recipe) && !resourceRunSurfaceSuppressed(recipe)) {
+                        showConsoleUnlessEditingRecipe(recipe)
+                    }
+                    TerminalRuntimeHost.switchToSession(appContext, record.id)
+                }
+                if (text.isNotBlank()) {
+                    root.postDelayed(
+                        {
+                            TerminalRuntimeHost.sendCommand(
+                                appContext = appContext,
+                                command = if (text.endsWith("\n")) text else "$text\n",
+                                sessionId = record.id
+                            )
+                        },
+                        TERMINAL_STEP_COMMAND_DELAY_MS
+                    )
+                }
+                startTerminalAuthorizationLinkWatcher(recipe, record.id, instanceId)
+            }
         }
-        startTerminalAuthorizationLinkWatcher(recipe, record.id, instanceId)
     }
 
     private fun cardTerminalTitle(recipe: KiteRecipe, stepIndex: Int): String {
@@ -13896,6 +13946,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     companion object {
         private const val TERMINAL_FRAGMENT_TAG = "kite-terminal"
         private const val CARD_RUN_TERMINAL_FRAGMENT_TAG = "kite-card-run-terminal"
+        private const val TERMINAL_FRAGMENT_INITIAL_SESSION_ARG = "initial_session_id"
         private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
