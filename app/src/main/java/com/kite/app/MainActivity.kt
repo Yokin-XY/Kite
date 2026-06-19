@@ -2493,7 +2493,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             layoutParams = LinearLayout.LayoutParams(posterWidth, posterHeight)
             addView(ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                resourceIconBitmap(imageAsset)?.let { setImageBitmap(it) }
+                resourceIconBitmap(imageAsset, maxOf(posterWidth, posterHeight))?.let { setImageBitmap(it) }
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
     }
@@ -2699,7 +2699,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         radius: Float,
         textSize: Float
     ): View {
-        val bitmap = resourceIconBitmap(assetPath)
+        val bitmap = resourceIconBitmap(assetPath, size)
         if (bitmap == null) return resourceTextIcon(textValue, accent, size, radius, textSize)
         val isFullBleed = iconFit.equals(RESOURCE_ICON_FIT_FULL_BLEED, ignoreCase = true)
         val tone = KiteTheme.accent(accent, tokens)
@@ -2731,15 +2731,39 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             layoutParams = LinearLayout.LayoutParams(size, size)
         }
 
-    private fun resourceIconBitmap(assetPath: String): Bitmap? {
+    private fun resourceIconBitmap(assetPath: String, maxDimensionPx: Int = 0): Bitmap? {
         val normalized = assetPath.trim().trimStart('/')
         if (normalized.isBlank() || normalized.contains("..")) return null
-        resourceIconBitmapCache[normalized]?.let { return it }
+        val boundedMaxDimension = maxDimensionPx.coerceAtLeast(0)
+        val cacheKey = if (boundedMaxDimension > 0) "$normalized@$boundedMaxDimension" else normalized
+        resourceIconBitmapCache[cacheKey]?.let { return it }
         return runCatching {
-            assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream) }
+            if (boundedMaxDimension <= 0) {
+                assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream) }
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream, null, bounds) }
+                val options = BitmapFactory.Options().apply {
+                    inSampleSize = bitmapSampleSize(bounds.outWidth, bounds.outHeight, boundedMaxDimension)
+                }
+                assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream, null, options) }
+            }
         }.getOrNull()?.also { bitmap ->
-            resourceIconBitmapCache[normalized] = bitmap
+            resourceIconBitmapCache[cacheKey] = bitmap
         }
+    }
+
+    private fun bitmapSampleSize(width: Int, height: Int, maxDimensionPx: Int): Int {
+        if (width <= 0 || height <= 0 || maxDimensionPx <= 0) return 1
+        var sampleSize = 1
+        var sampledWidth = width
+        var sampledHeight = height
+        while (sampledWidth / 2 >= maxDimensionPx && sampledHeight / 2 >= maxDimensionPx) {
+            sampleSize *= 2
+            sampledWidth /= 2
+            sampledHeight /= 2
+        }
+        return sampleSize.coerceAtLeast(1)
     }
 
     private fun resourceActionButton(item: ResourceItem, compact: Boolean): TextView =
@@ -3337,7 +3361,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             addView(ImageView(context).apply {
                 contentDescription = item.media?.contentDescription ?: "${item.name} 视觉预览"
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                item.media?.asset?.let { asset -> resourceIconBitmap(asset)?.let { setImageBitmap(it) } }
+                item.media?.asset?.let { asset ->
+                    resourceIconBitmap(asset, maxOf(resources.displayMetrics.widthPixels, dp(228)))?.let { setImageBitmap(it) }
+                }
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
 
