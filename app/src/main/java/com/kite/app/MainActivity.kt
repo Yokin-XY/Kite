@@ -43,6 +43,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -174,6 +175,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private val runtimeStates = mutableMapOf<String, RecipeRuntimeState>()
     private val activeRunInstanceIds = mutableMapOf<String, String>()
+    private val cardRunWindowHiddenSurfaces = mutableMapOf<String, MutableSet<CardRunSurface>>()
     private val actionRouter = KiteActionRouter()
     private var currentScreen: Screen = Screen.Console
     private var currentRecipes: List<KiteRecipe> = emptyList()
@@ -7610,7 +7612,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         content.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         content.addView(
-            cardRunWindowOverviewDock(dialog),
+            cardRunWindowOverviewDock(recipe, state, dialog),
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(92), Gravity.BOTTOM)
         )
         dialog.setContentView(content)
@@ -7639,6 +7641,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val cardHeight = cardRunWindowCardHeightPx()
+            if (items.isEmpty()) {
+                addView(cardRunWindowEmptyState(), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(180)
+                ))
+                return@apply
+            }
             items.chunked(2).forEachIndexed { rowIndex, rowItems ->
                 addView(row {
                     gravity = Gravity.TOP
@@ -7713,7 +7722,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     setTextColor(Color.rgb(108, 118, 134))
                     setOnClickListener { clicked ->
                         cardRunWindowPress(clicked) {
-                            Toast.makeText(context, "窗口关闭动作稍后接入", Toast.LENGTH_SHORT).show()
+                            hideCardRunWindowSurface(recipe, state, item.surface, dialog)
                         }
                     }
                 }, LinearLayout.LayoutParams(dp(28), dp(28)))
@@ -7748,17 +7757,46 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }, item.staggerMs)
         }
 
-    private fun cardRunWindowOverviewDock(dialog: Dialog): View =
+    private fun cardRunWindowEmptyState(): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            background = roundedBox(Color.WHITE, Color.rgb(224, 229, 237), dp(22).toFloat(), dp(1))
+            addView(TextView(context).apply {
+                text = "暂无打开窗口"
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                includeFontPadding = false
+                setTextColor(Color.rgb(42, 49, 64))
+                gravity = Gravity.CENTER
+            })
+            addView(TextView(context).apply {
+                text = "点底部 + 新建或恢复窗口"
+                textSize = 12f
+                includeFontPadding = false
+                setTextColor(Color.rgb(128, 139, 157))
+                gravity = Gravity.CENTER
+                setPadding(0, dp(9), 0, 0)
+            })
+        }
+
+    private fun cardRunWindowOverviewDock(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        dialog: Dialog
+    ): View =
         LinearLayout(this).apply {
             gravity = Gravity.CENTER
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(22), dp(10), dp(22), dp(12))
             background = roundedTopBox(Color.argb(238, 255, 255, 255), Color.rgb(229, 234, 242), dp(1).toFloat())
-            addView(cardRunWindowDockButton("trash", "清理") {
-                Toast.makeText(context, "清理动作稍后接入", Toast.LENGTH_SHORT).show()
+            addView(cardRunWindowDockButton("trash", "关闭") {
+                dialog.dismiss()
+                closeCardRunTask()
             }, LinearLayout.LayoutParams(0, dp(76), 1f))
-            addView(cardRunWindowDockButton("plus", "新增") {
-                Toast.makeText(context, "新增窗口动作稍后接入", Toast.LENGTH_SHORT).show()
+            addView(cardRunWindowDockButton("plus", "新建") {
+                showCardRunWindowCreateBubble(recipe, state, dialog)
             }, LinearLayout.LayoutParams(0, dp(76), 1f))
             addView(cardRunWindowDockButton("back", "返回") {
                 dialog.dismiss()
@@ -7789,7 +7827,140 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
         }
 
+    private fun showCardRunWindowCreateBubble(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        overviewDialog: Dialog
+    ) {
+        val bubble = Dialog(this)
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            isClickable = true
+            setOnClickListener { bubble.dismiss() }
+            addView(row {
+                gravity = Gravity.CENTER
+                addView(cardRunWindowCreateBubbleButton("terminal") {
+                    handleCardRunWindowCreateChoice(recipe, state, CardRunSurface.Terminal, overviewDialog, bubble)
+                }, LinearLayout.LayoutParams(dp(62), dp(62)).apply {
+                    setMargins(0, 0, dp(16), 0)
+                })
+                addView(cardRunWindowCreateBubbleButton("web") {
+                    handleCardRunWindowCreateChoice(recipe, state, CardRunSurface.Web, overviewDialog, bubble)
+                }, LinearLayout.LayoutParams(dp(62), dp(62)))
+            }.apply {
+                isClickable = true
+                setOnClickListener { }
+                alpha = 0f
+                scaleX = 0.72f
+                scaleY = 0.72f
+                translationY = dp(22).toFloat()
+                post {
+                    animate()
+                        .alpha(1f)
+                        .scaleX(1f)
+                        .scaleY(1f)
+                        .translationY(0f)
+                        .setDuration(180L)
+                        .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
+                        .start()
+                }
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                setMargins(0, 0, 0, dp(112))
+            })
+        }
+        bubble.setContentView(overlay)
+        bubble.show()
+        bubble.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        bubble.window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        bubble.window?.setDimAmount(0f)
+        bubble.window?.decorView?.setPadding(0, 0, 0, 0)
+        bubble.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    }
+
+    private fun cardRunWindowCreateBubbleButton(kind: String, action: () -> Unit): View =
+        FrameLayout(this).apply {
+            val isTerminal = kind == "terminal"
+            contentDescription = if (isTerminal) "新建终端" else "新建网页"
+            background = roundedBox(
+                if (isTerminal) Color.rgb(34, 184, 98) else Color.rgb(59, 130, 246),
+                Color.TRANSPARENT,
+                dp(31).toFloat(),
+                0
+            )
+            elevation = dp(6).toFloat()
+            addView(cardRunWindowCreateBubbleGlyph(kind), FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER))
+            setOnClickListener { clicked ->
+                cardRunWindowPress(clicked, action)
+            }
+        }
+
+    private fun cardRunWindowCreateBubbleGlyph(kind: String): View =
+        object : View(this) {
+            private val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val w = width.toFloat()
+                val h = height.toFloat()
+                glyphPaint.style = Paint.Style.STROKE
+                glyphPaint.strokeWidth = 2.5f * resources.displayMetrics.density
+                if (kind == "terminal") {
+                    canvas.drawLine(w * 0.24f, h * 0.34f, w * 0.43f, h * 0.50f, glyphPaint)
+                    canvas.drawLine(w * 0.24f, h * 0.66f, w * 0.43f, h * 0.50f, glyphPaint)
+                    canvas.drawLine(w * 0.56f, h * 0.68f, w * 0.78f, h * 0.68f, glyphPaint)
+                } else {
+                    canvas.drawRoundRect(
+                        RectF(w * 0.18f, h * 0.24f, w * 0.82f, h * 0.64f),
+                        dp(3).toFloat(),
+                        dp(3).toFloat(),
+                        glyphPaint
+                    )
+                    canvas.drawLine(w * 0.50f, h * 0.64f, w * 0.50f, h * 0.78f, glyphPaint)
+                    canvas.drawLine(w * 0.34f, h * 0.80f, w * 0.66f, h * 0.80f, glyphPaint)
+                }
+            }
+        }
+
+    private fun handleCardRunWindowCreateChoice(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        surface: CardRunSurface,
+        overviewDialog: Dialog,
+        bubble: Dialog
+    ) {
+        val latest = CardRunStore.get(state.instanceId) ?: state
+        val hidden = cardRunWindowHiddenSurfaces[latest.instanceId].orEmpty()
+        val canRestore = cardRunWindowAllItems(recipe, latest).any { it.surface == surface && surface in hidden }
+        bubble.dismiss()
+        if (canRestore) {
+            restoreCardRunWindowSurface(recipe, latest, surface, overviewDialog)
+            return
+        }
+        val message = when (surface) {
+            CardRunSurface.Terminal -> "空白终端新建入口下一步接入"
+            CardRunSurface.Web -> "空白网页入口下一步接入"
+            else -> "暂不支持新建这个窗口"
+        }
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
     private fun cardRunWindowOverviewItems(recipe: KiteRecipe, state: RecipeRuntimeState): List<CardRunWindowItem> {
+        val allItems = cardRunWindowAllItems(recipe, state)
+        val hidden = cardRunWindowHiddenSurfaces[state.instanceId] ?: return allItems
+        val availableSurfaces = allItems.map { it.surface }.toSet()
+        hidden.retainAll(availableSurfaces)
+        if (hidden.isEmpty()) {
+            cardRunWindowHiddenSurfaces.remove(state.instanceId)
+            return allItems
+        }
+        return allItems.filterNot { it.surface in hidden }
+    }
+
+    private fun cardRunWindowAllItems(recipe: KiteRecipe, state: RecipeRuntimeState): List<CardRunWindowItem> {
         val items = mutableListOf<CardRunWindowItem>()
         if (cardRunReportSurfaceAvailable(recipe, state)) {
             items += CardRunWindowItem(
@@ -7824,6 +7995,61 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
         }
         return items
+    }
+
+    private fun cardRunWindowSelectedItem(
+        state: RecipeRuntimeState,
+        items: List<CardRunWindowItem>
+    ): CardRunWindowItem? =
+        items.firstOrNull { cardRunWindowSurfaceSelected(state.surface, it.surface) }
+            ?: items.firstOrNull()
+
+    private fun hideCardRunWindowSurface(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        surface: CardRunSurface,
+        dialog: Dialog
+    ) {
+        val latest = CardRunStore.get(state.instanceId) ?: state
+        val allItems = cardRunWindowAllItems(recipe, latest)
+        if (allItems.none { it.surface == surface }) {
+            Toast.makeText(this, "窗口已不存在", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val hidden = cardRunWindowHiddenSurfaces.getOrPut(latest.instanceId) { mutableSetOf() }
+        hidden += surface
+        val nextSurface = allItems
+            .firstOrNull { it.surface != surface && it.surface !in hidden }
+            ?.surface
+            ?: CardRunSurface.Summary
+        val shouldSwitchSurface = latest.surface == surface ||
+            (latest.surface == CardRunSurface.Summary && surface == CardRunSurface.Report)
+        if (shouldSwitchSurface) {
+            CardRunStore.selectSurface(latest.instanceId, nextSurface)?.let { updated ->
+                runtimeStates[recipe.id] = updated
+            }
+        }
+        dialog.dismiss()
+        showCardRunSurface(recipe)
+        showCardRunWindowOverview(recipe, CardRunStore.get(latest.instanceId) ?: latest)
+    }
+
+    private fun restoreCardRunWindowSurface(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        surface: CardRunSurface,
+        dialog: Dialog
+    ) {
+        cardRunWindowHiddenSurfaces[state.instanceId]?.let { hidden ->
+            hidden -= surface
+            if (hidden.isEmpty()) cardRunWindowHiddenSurfaces.remove(state.instanceId)
+        }
+        CardRunStore.selectSurface(state.instanceId, surface)?.let { updated ->
+            runtimeStates[recipe.id] = updated
+        }
+        dialog.dismiss()
+        showCardRunSurface(recipe)
+        showCardRunWindowOverview(recipe, CardRunStore.get(state.instanceId) ?: state)
     }
 
     private fun cardRunWindowSurfaceSelected(current: CardRunSurface, candidate: CardRunSurface): Boolean =
