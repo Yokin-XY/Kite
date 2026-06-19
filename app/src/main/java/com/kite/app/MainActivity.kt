@@ -6468,6 +6468,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             root.addView(cardRunLoadingBody("正在准备终端"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         } else if (state.surface == CardRunSurface.Web && webUrl != null) {
             showCardRunWebView(wizardChildRun?.first ?: recipe, webUrl)
+        } else if (state.surface == CardRunSurface.Web) {
+            root.addView(
+                cardRunWebAddressInputBody(wizardChildRun?.first ?: recipe, surfaceState),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            )
         } else if (state.surface == CardRunSurface.InstallWizard) {
             root.addView(ScrollView(this).apply {
                 addView(resourceInstallWizardContent())
@@ -6628,6 +6633,127 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (parent is ViewGroup) parent.removeView(webView)
         root.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         webShell.loadInWebView(target, recipeId = recipe.id, recipeName = recipe.name, openSource = "card_run_surface")
+    }
+
+    private fun cardRunWebAddressInputBody(recipe: KiteRecipe, state: RecipeRuntimeState): View =
+        FrameLayout(this).apply {
+            setBackgroundColor(Color.WHITE)
+            val input = EditText(context).apply {
+                hint = "输入网址或本地端口"
+                textSize = 15f
+                setSingleLine(true)
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+                imeOptions = EditorInfo.IME_ACTION_GO
+                setTextColor(tokens.textPrimary)
+                setHintTextColor(Color.rgb(150, 160, 176))
+                background = ColorDrawable(Color.TRANSPARENT)
+                setPadding(dp(18), 0, dp(8), 0)
+            }
+            val submit = {
+                openCardRunManualWebUrl(recipe, state, input.text?.toString().orEmpty())
+            }
+            input.setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_SEARCH) {
+                    submit()
+                    true
+                } else {
+                    false
+                }
+            }
+            addView(TextView(context).apply {
+                text = "Kite"
+                textSize = 33f
+                typeface = Typeface.DEFAULT_BOLD
+                includeFontPadding = false
+                setTextColor(Color.rgb(20, 28, 42))
+                gravity = Gravity.CENTER
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
+                setMargins(dp(24), 0, dp(24), dp(108))
+            })
+            addView(FrameLayout(context).apply {
+                background = roundedBox(Color.WHITE, Color.rgb(198, 205, 216), dp(26).toFloat(), dp(1))
+                elevation = dp(1).toFloat()
+                addView(input, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                    setMargins(0, 0, dp(54), 0)
+                })
+                addView(cardRunWebSearchButton { submit() }, FrameLayout.LayoutParams(dp(52), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.RIGHT))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54), Gravity.CENTER).apply {
+                setMargins(dp(24), 0, dp(24), 0)
+            })
+            input.post {
+                input.requestFocus()
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+
+    private fun cardRunWebSearchButton(onClick: () -> Unit): View =
+        object : View(this) {
+            private val searchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(20, 24, 33)
+                style = Paint.Style.STROKE
+                strokeWidth = 2.7f * resources.displayMetrics.density
+                strokeCap = Paint.Cap.ROUND
+            }
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val size = width.coerceAtMost(height).toFloat()
+                val radius = size * 0.16f
+                val cx = width * 0.45f
+                val cy = height * 0.45f
+                canvas.drawCircle(cx, cy, radius, searchPaint)
+                canvas.drawLine(
+                    cx + radius * 0.72f,
+                    cy + radius * 0.72f,
+                    cx + radius * 1.65f,
+                    cy + radius * 1.65f,
+                    searchPaint
+                )
+            }
+        }.apply {
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun openCardRunManualWebUrl(recipe: KiteRecipe, state: RecipeRuntimeState, rawUrl: String) {
+        val url = normalizeManualCardRunUrl(rawUrl)
+        if (url.isBlank()) {
+            Toast.makeText(this, "请输入网页地址", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val instanceId = ensureCardRunWindowInstance(recipe, state)
+        val status = cardRunManualSurfaceStatus(CardRunStore.get(instanceId) ?: state)
+        activeRunInstanceIds[recipe.id] = instanceId
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = instanceId
+        cardRunWindowHiddenSurfaces[instanceId]?.remove(CardRunSurface.Web)
+        val updated = CardRunStore.update(
+            recipe = recipe,
+            status = status,
+            instanceId = instanceId,
+            surface = CardRunSurface.Web,
+            lastMeaningfulOutput = "手动打开网页",
+            nextActionUrl = url
+        )
+        runtimeStates[recipe.id] = updated
+        diagnostics.logRecipeAction(
+            recipe,
+            "card_run_manual_web_open",
+            mapOf("instanceId" to instanceId, "url" to url.take(500))
+        )
+        showCardRunSurface(recipe)
+    }
+
+    private fun normalizeManualCardRunUrl(rawUrl: String): String {
+        val value = rawUrl.trim()
+        if (value.isBlank()) return ""
+        val lower = value.lowercase()
+        if (lower.startsWith("http://") || lower.startsWith("https://")) return value
+        if (value.all { it.isDigit() }) return "http://127.0.0.1:$value"
+        if (lower.startsWith("localhost") || lower.startsWith("127.0.0.1")) return "http://$value"
+        if ("://" in value) return value
+        return "https://$value"
     }
 
     private fun cardRunDoneButton(onClick: () -> Unit): TextView =
@@ -7940,12 +8066,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             restoreCardRunWindowSurface(recipe, latest, surface, overviewDialog)
             return
         }
-        val message = when (surface) {
-            CardRunSurface.Terminal -> "空白终端新建入口下一步接入"
-            CardRunSurface.Web -> "空白网页入口下一步接入"
-            else -> "暂不支持新建这个窗口"
+        when (surface) {
+            CardRunSurface.Terminal -> openCardRunBlankTerminal(recipe, latest, overviewDialog)
+            CardRunSurface.Web -> openCardRunBlankWebSurface(recipe, latest, overviewDialog)
+            else -> Toast.makeText(this, "暂不支持新建这个窗口", Toast.LENGTH_SHORT).show()
         }
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     private fun cardRunWindowOverviewItems(recipe: KiteRecipe, state: RecipeRuntimeState): List<CardRunWindowItem> {
@@ -7978,7 +8103,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 staggerMs = 80L
             )
         }
-        state.nextActionUrl?.takeIf { it.isNotBlank() }?.let {
+        if (!state.nextActionUrl.isNullOrBlank() || state.surface == CardRunSurface.Web) {
             items += CardRunWindowItem(
                 surface = CardRunSurface.Web,
                 kind = "web",
@@ -8051,6 +8176,134 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         showCardRunSurface(recipe)
         showCardRunWindowOverview(recipe, CardRunStore.get(state.instanceId) ?: state)
     }
+
+    private fun openCardRunBlankWebSurface(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        overviewDialog: Dialog
+    ) {
+        val instanceId = ensureCardRunWindowInstance(recipe, state)
+        val updated = CardRunStore.update(
+            recipe = recipe,
+            status = cardRunManualSurfaceStatus(CardRunStore.get(instanceId) ?: state),
+            instanceId = instanceId,
+            surface = CardRunSurface.Web,
+            lastMeaningfulOutput = "等待输入网页地址",
+            clearNextActionUrl = true
+        )
+        activeRunInstanceIds[recipe.id] = instanceId
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = instanceId
+        runtimeStates[recipe.id] = updated
+        cardRunWindowHiddenSurfaces[instanceId]?.remove(CardRunSurface.Web)
+        overviewDialog.dismiss()
+        showCardRunSurface(recipe)
+    }
+
+    private fun openCardRunBlankTerminal(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        overviewDialog: Dialog
+    ) {
+        val instanceId = ensureCardRunWindowInstance(recipe, state)
+        val latest = CardRunStore.get(instanceId) ?: state
+        val preparing = CardRunStore.update(
+            recipe = recipe,
+            status = cardRunManualSurfaceStatus(latest),
+            instanceId = instanceId,
+            surface = CardRunSurface.Terminal,
+            lastMeaningfulOutput = "正在创建空白终端",
+            clearTerminalSession = true
+        )
+        activeRunInstanceIds[recipe.id] = instanceId
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = instanceId
+        runtimeStates[recipe.id] = preparing
+        cardRunWindowHiddenSurfaces[instanceId]?.remove(CardRunSurface.Terminal)
+        overviewDialog.dismiss()
+        showCardRunSurface(recipe)
+
+        val appContext = applicationContext
+        thread(name = "KiteCardRunBlankTerminal-${recipe.id.take(28)}", isDaemon = true) {
+            val recordResult = runCatching {
+                val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
+                val record = KFWorkspaceManager.createShellSession(
+                    context = appContext,
+                    spaceId = space.id,
+                    title = "${recipe.name.trim().ifBlank { "Kite" }} · 终端",
+                    sourceLabel = recipe.name
+                )
+                TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
+                val environment = runCatching {
+                    KiteBrowserProxyInstaller.environment(
+                        context = appContext,
+                        recipeId = recipe.id,
+                        instanceId = instanceId,
+                        source = "card_run_blank_terminal"
+                    )
+                }.getOrDefault(emptyMap())
+                record to environment
+            }
+            runOnUiThread {
+                val current = CardRunStore.get(instanceId)
+                if (current == null || current.terminalSessionId?.isNotBlank() == true) return@runOnUiThread
+                val (record, environment) = recordResult.getOrElse { error ->
+                    val message = "创建终端失败：${error.message ?: error.javaClass.simpleName}"
+                    val failed = CardRunStore.update(
+                        recipe = recipe,
+                        status = RecipeRunStatus.Failed,
+                        instanceId = instanceId,
+                        surface = CardRunSurface.Report,
+                        lastError = message
+                    )
+                    runtimeStates[recipe.id] = failed
+                    Toast.makeText(this, message.take(120), Toast.LENGTH_SHORT).show()
+                    showCardRunSurface(recipe)
+                    return@runOnUiThread
+                }
+                TerminalSessionStore.refresh(appContext, force = true)
+                if (environment.isNotEmpty()) {
+                    TerminalRuntimeHost.setLaunchEnvironmentOverrides(appContext, record.id, environment)
+                }
+                val updated = CardRunStore.update(
+                    recipe = recipe,
+                    status = cardRunManualSurfaceStatus(current),
+                    instanceId = instanceId,
+                    surface = CardRunSurface.Terminal,
+                    runId = record.id,
+                    terminalSessionId = record.id,
+                    lastMeaningfulOutput = "已打开空白终端：${record.title}"
+                )
+                runtimeStates[recipe.id] = updated
+                diagnostics.logRecipeAction(
+                    recipe,
+                    "card_run_blank_terminal_opened",
+                    mapOf("instanceId" to instanceId, "sessionId" to record.id)
+                )
+                if (currentScreen == Screen.CardRun && focusedRunInstanceId == instanceId) {
+                    showCardRunSurface(recipe)
+                }
+            }
+        }
+    }
+
+    private fun ensureCardRunWindowInstance(recipe: KiteRecipe, state: RecipeRuntimeState): String {
+        val stateId = state.instanceId.takeIf { it.isNotBlank() && !it.startsWith("idle_") }
+        val instanceId = stateId
+            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
+            ?: ensureRunInstanceId(recipe)
+        activeRunInstanceIds[recipe.id] = instanceId
+        return instanceId
+    }
+
+    private fun cardRunManualSurfaceStatus(state: RecipeRuntimeState): RecipeRunStatus =
+        when (state.status) {
+            RecipeRunStatus.Starting,
+            RecipeRunStatus.Running,
+            RecipeRunStatus.WaitingTerminal,
+            RecipeRunStatus.AlreadyRunning -> state.status
+            else -> RecipeRunStatus.Opened
+        }
 
     private fun cardRunWindowSurfaceSelected(current: CardRunSurface, candidate: CardRunSurface): Boolean =
         current == candidate || (current == CardRunSurface.Summary && candidate == CardRunSurface.Report)
