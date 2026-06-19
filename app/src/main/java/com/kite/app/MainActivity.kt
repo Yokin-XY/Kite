@@ -7594,26 +7594,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 primaryText,
                 secondaryText
             ))
-            addView(cardRunMenuDivider(dividerColor))
-            addView(cardRunMenuActionRow(
-                listOf(
-                    CardRunMenuAction("SH", "SH 报告") {
-                        dialog.dismiss()
-                        selectCardRunSurface(recipe, CardRunSurface.Report)
-                    },
-                    CardRunMenuAction(">_", "终端") {
-                        dialog.dismiss()
-                        selectCardRunSurface(recipe, CardRunSurface.Terminal)
-                    },
-                    CardRunMenuAction("◎", "网页") {
-                        dialog.dismiss()
-                        selectCardRunSurface(recipe, CardRunSurface.Web)
-                    }
-                ),
-                tileFill,
-                primaryText,
-                secondaryText
-            ))
+            val surfaceActions = cardRunSurfaceMenuActions(recipe, state, dialog)
+            if (surfaceActions.isNotEmpty()) {
+                addView(cardRunMenuDivider(dividerColor))
+                addView(cardRunMenuActionRow(
+                    surfaceActions,
+                    tileFill,
+                    primaryText,
+                    secondaryText
+                ))
+            }
             addView(cardRunMenuDivider(dividerColor))
             addView(cardRunMenuCancel(dialog, secondaryText))
         }
@@ -7624,6 +7614,52 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         dialog.window?.setGravity(Gravity.BOTTOM)
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
+
+    private fun cardRunSurfaceMenuActions(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        dialog: Dialog
+    ): List<CardRunMenuAction> = buildList {
+        if (cardRunReportSurfaceAvailable(recipe, state)) {
+            add(CardRunMenuAction("SH", "SH 报告") {
+                dialog.dismiss()
+                selectCardRunSurface(recipe, CardRunSurface.Report)
+            })
+        }
+        if (!state.terminalSessionId.isNullOrBlank()) {
+            add(CardRunMenuAction(">_", "终端") {
+                dialog.dismiss()
+                selectCardRunSurface(recipe, CardRunSurface.Terminal)
+            })
+        }
+        state.nextActionUrl?.takeIf { it.isNotBlank() }?.let { url ->
+            add(CardRunMenuAction("◎", cardRunWebSurfaceLabel(url)) {
+                dialog.dismiss()
+                selectCardRunSurface(recipe, CardRunSurface.Web)
+            })
+        }
+    }
+
+    private fun cardRunReportSurfaceAvailable(recipe: KiteRecipe, state: RecipeRuntimeState): Boolean {
+        val hasShellStep = recipe.steps.any { step ->
+            step.type == KiteRecipe.STEP_SHELL || step.type == KiteRecipe.STEP_ANDROID_ACTION
+        }
+        return !state.shellReportText.isNullOrBlank() ||
+            (hasShellStep && (state.hasRunBinding() || state.isBusy() || !state.lastMeaningfulOutput.isNullOrBlank() || !state.lastError.isNullOrBlank())) ||
+            (state.surface == CardRunSurface.Report && (!state.lastMeaningfulOutput.isNullOrBlank() || !state.lastError.isNullOrBlank()))
+    }
+
+    private fun cardRunWebSurfaceLabel(url: String): String =
+        runCatching {
+            val parsed = Uri.parse(url)
+            val host = parsed.host.orEmpty()
+            val port = parsed.port.takeIf { it > 0 }?.let { " $it" }.orEmpty()
+            when {
+                host.equals("127.0.0.1", ignoreCase = true) || host.equals("localhost", ignoreCase = true) -> "本地$port"
+                host.isNotBlank() -> host.removePrefix("www.").take(14)
+                else -> "网页"
+            }
+        }.getOrDefault("网页")
 
     private data class CardRunMenuAction(
         val icon: String,
