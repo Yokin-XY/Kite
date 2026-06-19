@@ -34,7 +34,7 @@ Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must no
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
 Assert-True ($main -notmatch 'lastShellProgressRenderAt') 'shell progress render timestamp should stay removed.'
 Assert-True ($main -notmatch 'File\(entry\.transcriptPath\)\.readText\(\)') 'terminal auth transcript must not be fully read on UI path.'
-Assert-True ($main -match 'readTerminalAuthorizationUrlFromTranscript') 'terminal auth transcript reader should stay isolated.'
+Assert-True ($main -notmatch 'startTerminalAuthorizationLinkWatcher|readTerminalAuthorizationUrlFromTranscript|extractTerminalAuthorizationUrl|TERMINAL_AUTH_LINK') 'terminal web open must use browser proxy events, not transcript URL parsing.'
 Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'
 Assert-True ($main -match 'updateVisibleResourceInstallWizardElapsed') 'install wizard must have local elapsed binding.'
 Assert-True ($main -match 'updateVisibleConsoleCard') 'console card runtime changes should have local binding.'

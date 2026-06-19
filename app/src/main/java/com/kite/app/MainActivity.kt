@@ -257,11 +257,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     private var lastConsoleRuntimeRefreshAt = 0L
     private var cardRunReportBinding: CardRunReportBinding? = null
-    private var cardRunTopBarBinding: CardRunTopBarBinding? = null
     private var resourceInstallWizardBinding: ResourceInstallWizardBinding? = null
     private var resourceInstallWizardRefreshSerial = 0L
     private var foregroundLiveTickScheduled = false
-    private val terminalAuthorizationUrlCache = mutableMapOf<String, String>()
     private val consoleCardBindings = mutableMapOf<String, RecipeCardBinding>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -1494,7 +1492,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun clearRootForScreen(detachTerminal: Boolean = true) {
         terminalBottomNavigation = null
         cardRunReportBinding = null
-        cardRunTopBarBinding = null
         resourceInstallWizardBinding = null
         consoleCardBindings.clear()
         val transaction = supportFragmentManager.beginTransaction()
@@ -6542,7 +6539,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         actionRecipe: KiteRecipe = recipe,
         actionState: RecipeRuntimeState = state
     ): View = FrameLayout(this).apply {
-        val waitingForTerminal = actionState.status == RecipeRunStatus.WaitingTerminal && !actionState.terminalSessionId.isNullOrBlank()
         val canCompleteCurrentStep = canCompleteCurrentCardStep(actionRecipe, actionState)
         val sideControlSize = dp(44)
         setPadding(dp(16), dp(12), dp(16), dp(8))
@@ -6560,21 +6556,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             includeFontPadding = false
             setTextColor(tokens.textPrimary)
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, sideControlSize, Gravity.CENTER))
-        if (waitingForTerminal) {
-            val authSlot = FrameLayout(context)
-            val terminalSessionId = actionState.terminalSessionId.orEmpty()
-            cardRunTopBarBinding = CardRunTopBarBinding(
-                displayRecipe = recipe,
-                actionRecipe = actionRecipe,
-                actionInstanceId = actionState.instanceId,
-                terminalSessionId = terminalSessionId,
-                authSlot = authSlot
-            )
-            renderTerminalAuthorizationButton(authSlot, actionRecipe, actionState)
-            addView(authSlot, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(29), Gravity.LEFT or Gravity.CENTER_VERTICAL).apply {
-                setMargins(sideControlSize + dp(4), 0, 0, 0)
-            })
-        }
         val rightChrome = cardRunControlPill(recipe, state)
         addView(
             rightChrome,
@@ -6656,64 +6637,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(12).toFloat(), 0)
             setOnClickListener { onClick() }
         }
-
-    private fun cardRunAuthButton(onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = "授权"
-            textSize = 12.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(tokens.primaryStrong)
-            background = roundedBox(tokens.surfaceElevated, tokens.primarySoft, dp(15).toFloat())
-            elevation = dp(2).toFloat()
-            layoutParams = LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                setMargins(dp(8), 0, 0, 0)
-            }
-            setOnClickListener { onClick() }
-        }
-
-    private fun renderTerminalAuthorizationButton(
-        slot: FrameLayout,
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState
-    ) {
-        slot.removeAllViews()
-        val authUrl = terminalAuthorizationUrl(state.terminalSessionId)
-        if (authUrl.isNullOrBlank()) return
-        slot.addView(row {
-            addView(cardRunAuthButton {
-                openExternalAuthorizationUrl(recipe, authUrl)
-            })
-        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    }
-
-    private fun updateVisibleTerminalAuthorizationButton(sessionId: String) {
-        val binding = cardRunTopBarBinding ?: return
-        if (binding.terminalSessionId != sessionId || currentScreen != Screen.CardRun) return
-        val state = CardRunStore.get(binding.actionInstanceId) ?: return
-        renderTerminalAuthorizationButton(binding.authSlot, binding.actionRecipe, state)
-    }
-
-    private fun openExternalAuthorizationUrl(recipe: KiteRecipe, url: String) {
-        diagnostics.logRecipeAction(recipe, "terminal_authorization_url_open", mapOf("url" to url.take(500)))
-        val instanceId = focusedRunInstanceId
-            ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
-            ?: ensureRunInstanceId(recipe)
-        updateBrowserRequestState(
-            recipe = recipe,
-            instanceId = instanceId,
-            request = KiteBrowserOpenRequest(
-                url = url,
-                recipeId = recipe.id,
-                instanceId = instanceId,
-                source = "terminal_step"
-            )
-        )
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = instanceId
-        showCardRunSurface(recipe)
-    }
 
     private fun canCompleteCurrentCardStep(recipe: KiteRecipe, state: RecipeRuntimeState): Boolean {
         val step = recipe.steps.getOrNull(state.currentStepIndex) ?: return false
@@ -9512,7 +9435,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         TERMINAL_STEP_COMMAND_DELAY_MS
                     )
                 }
-                startTerminalAuthorizationLinkWatcher(recipe, record.id, instanceId)
             }
         }
     }
@@ -9529,81 +9451,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             "终端"
         }
         return "$recipeName · $suffix"
-    }
-
-    private fun startTerminalAuthorizationLinkWatcher(recipe: KiteRecipe, sessionId: String, instanceId: String) {
-        fun active(): Boolean =
-            pendingTerminalFlow?.let {
-                it.recipeId == recipe.id && it.sessionId == sessionId && it.instanceId == instanceId
-            } == true
-
-        fun tick(startedAt: Long) {
-            if (!active() || System.currentTimeMillis() - startedAt > TERMINAL_AUTH_LINK_WATCH_MS) return
-
-            thread(name = "KiteTerminalAuthWatcher", isDaemon = true) {
-                val authUrl = readTerminalAuthorizationUrlFromTranscript(sessionId)
-                runOnUiThread {
-                    if (!active() || System.currentTimeMillis() - startedAt > TERMINAL_AUTH_LINK_WATCH_MS) return@runOnUiThread
-                    if (!authUrl.isNullOrBlank()) {
-                        terminalAuthorizationUrlCache[sessionId] = authUrl
-                        val state = CardRunStore.get(instanceId)
-                        if (state != null && state.status == RecipeRunStatus.WaitingTerminal) {
-                            val updated = CardRunStore.update(
-                                recipe = recipe,
-                                status = RecipeRunStatus.WaitingTerminal,
-                                instanceId = instanceId,
-                                surface = CardRunSurface.Terminal,
-                                currentStepIndex = state.currentStepIndex,
-                                runId = state.runId,
-                                terminalSessionId = state.terminalSessionId,
-                                pid = state.pid,
-                                lastMeaningfulOutput = "检测到授权链接，点击顶部“授权”打开。"
-                            )
-                            runtimeStates[recipe.id] = updated
-                            updateVisibleTerminalAuthorizationButton(sessionId)
-                        }
-                        return@runOnUiThread
-                    }
-                    root.postDelayed({ tick(startedAt) }, TERMINAL_AUTH_LINK_POLL_MS)
-                }
-            }
-        }
-        root.postDelayed({ tick(System.currentTimeMillis()) }, TERMINAL_AUTH_LINK_POLL_MS)
-    }
-
-    private fun terminalAuthorizationUrl(sessionId: String?): String? {
-        if (sessionId.isNullOrBlank()) return null
-        return terminalAuthorizationUrlCache[sessionId]
-    }
-
-    private fun readTerminalAuthorizationUrlFromTranscript(sessionId: String): String? {
-        val entry = TerminalRuntimeRegistry.snapshot().firstOrNull { it.sessionId == sessionId } ?: return null
-        val transcript = runCatching {
-            val file = File(entry.transcriptPath)
-            if (!file.isFile) return@runCatching ""
-            val length = file.length()
-            file.inputStream().use { input ->
-                val skipBytes = length - TERMINAL_AUTH_LINK_TAIL_BYTES
-                if (skipBytes > 0L) input.skip(skipBytes)
-                input.bufferedReader().readText()
-            }
-        }.getOrNull().orEmpty()
-        if (transcript.isBlank()) return null
-        return extractTerminalAuthorizationUrl(transcript)
-    }
-
-    private fun extractTerminalAuthorizationUrl(text: String): String? {
-        val urls = Regex("""https?://[^\s<>"']+""")
-            .findAll(text)
-            .map { it.value.trimEnd('.', ',', ';', ')', ']', '}') }
-            .toList()
-        return urls.firstOrNull { url ->
-            url.contains("user_code=", ignoreCase = true) ||
-                url.contains("portal.nousresearch.com", ignoreCase = true) ||
-                url.contains("login", ignoreCase = true) ||
-                url.contains("oauth", ignoreCase = true) ||
-                url.contains("authorize", ignoreCase = true)
-        } ?: urls.firstOrNull()
     }
 
     private fun stopRecipe(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
@@ -13765,14 +13612,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val elapsedTextView: TextView?
     )
 
-    private data class CardRunTopBarBinding(
-        val displayRecipe: KiteRecipe,
-        val actionRecipe: KiteRecipe,
-        val actionInstanceId: String,
-        val terminalSessionId: String,
-        val authSlot: FrameLayout
-    )
-
     private data class ResourceInstallWizardBinding(
         val targetResourceId: String,
         var planResourceIds: List<String>,
@@ -13985,9 +13824,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val TERMINAL_STOP_GRACE_MS = 350L
         private const val RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS = 1_200L
         private const val TOOLCHAIN_WORKSPACE_PROBE_TTL_MS = 5_000L
-        private const val TERMINAL_AUTH_LINK_POLL_MS = 1200L
-        private const val TERMINAL_AUTH_LINK_WATCH_MS = 10L * 60L * 1000L
-        private const val TERMINAL_AUTH_LINK_TAIL_BYTES = 64L * 1024L
         private const val REQUEST_DROPZONE_STORAGE = 801
         private const val REQUEST_PICK_RECIPE_ICON = 802
         private const val REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS = 803
