@@ -106,6 +106,7 @@ import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.web.KiteWebShell
+import com.kftest.app.R
 import com.kftest.app.foundation.bootstrap.BootstrapCoordinator
 import com.kftest.app.foundation.bootstrap.BootstrapSnapshot
 import com.kftest.app.foundation.bootstrap.BootstrapStage
@@ -137,6 +138,7 @@ import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -7561,59 +7563,324 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .trim()
 
     private fun showCardRunMenu(recipe: KiteRecipe, state: RecipeRuntimeState) {
+        showCardRunWindowOverview(recipe, state)
+    }
+
+    private fun showCardRunWindowOverview(recipe: KiteRecipe, state: RecipeRuntimeState) {
         val dialog = Dialog(this)
-        val sheetFill = Color.WHITE
-        val tileFill = Color.rgb(244, 244, 246)
-        val primaryText = Color.rgb(20, 20, 24)
-        val secondaryText = Color.rgb(105, 105, 112)
-        val dividerColor = Color.rgb(232, 232, 236)
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, 0, 0, 0)
-            background = roundedTopBox(sheetFill, sheetFill, dp(18).toFloat())
-            addView(cardRunMenuHeader(recipe, primaryText, secondaryText))
-            addView(cardRunMenuDivider(dividerColor))
-            addView(cardRunMenuActionRow(
-                buildList {
-                    add(CardRunMenuAction("↻", "刷新") {
-                        dialog.dismiss()
-                        showCardRunSurface(recipe)
-                    })
-                    if (!state.isInterruptible() && !state.hasRunBinding()) {
-                        add(CardRunMenuAction("↺", "重新执行") {
-                            dialog.dismiss()
-                            startRecipe(recipe, state, focusedRunInstanceId)
-                        })
-                    }
-                    add(CardRunMenuAction("⊙", "关闭实例") {
-                        dialog.dismiss()
-                        closeCardRunTask()
-                    })
-                },
-                tileFill,
-                primaryText,
-                secondaryText
-            ))
-            val surfaceActions = cardRunSurfaceMenuActions(recipe, state, dialog)
-            if (surfaceActions.isNotEmpty()) {
-                addView(cardRunMenuDivider(dividerColor))
-                addView(cardRunMenuActionRow(
-                    surfaceActions,
-                    tileFill,
-                    primaryText,
-                    secondaryText
-                ))
-            }
-            addView(cardRunMenuDivider(dividerColor))
-            addView(cardRunMenuCancel(dialog, secondaryText))
+        val windowItems = cardRunWindowOverviewItems(recipe, state)
+        val pageFill = Color.rgb(246, 248, 252)
+        val content = FrameLayout(this).apply {
+            setBackgroundColor(pageFill)
+            alpha = 0f
+            scaleX = 0.96f
+            scaleY = 0.96f
         }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(28), dp(44), dp(28), dp(112))
+                addView(row {
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(TextView(context).apply {
+                        text = "实例窗口"
+                        textSize = 21f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(Color.rgb(20, 24, 33))
+                        includeFontPadding = false
+                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                })
+                addView(TextView(context).apply {
+                    text = "管理当前实例中的前端窗口"
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    includeFontPadding = false
+                    setTextColor(Color.rgb(128, 139, 157))
+                    setPadding(0, dp(8), 0, 0)
+                })
+                addView(cardRunWindowGrid(recipe, state, windowItems, dialog), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    setMargins(0, dp(24), 0, 0)
+                })
+            }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        content.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        content.addView(
+            cardRunWindowOverviewDock(dialog),
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(92), Gravity.BOTTOM)
+        )
         dialog.setContentView(content)
+        dialog.setOnShowListener {
+            content.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(190L)
+                .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
+                .start()
+        }
         dialog.show()
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         dialog.window?.decorView?.setPadding(0, 0, 0, 0)
-        dialog.window?.setGravity(Gravity.BOTTOM)
-        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        dialog.window?.setGravity(Gravity.CENTER)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     }
+
+    private fun cardRunWindowGrid(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        items: List<CardRunWindowItem>,
+        dialog: Dialog
+    ): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val cardHeight = cardRunWindowCardHeightPx()
+            items.chunked(2).forEachIndexed { rowIndex, rowItems ->
+                addView(row {
+                    gravity = Gravity.TOP
+                    rowItems.forEachIndexed { index, item ->
+                        val card = cardRunWindowCard(recipe, state, item, dialog)
+                        addView(card, LinearLayout.LayoutParams(0, cardHeight, 1f).apply {
+                            setMargins(
+                                if (index == 0) 0 else dp(7),
+                                0,
+                                if (index == 0) dp(7) else 0,
+                                0
+                            )
+                        })
+                    }
+                    if (rowItems.size == 1) {
+                        addView(View(context), LinearLayout.LayoutParams(0, cardHeight, 1f).apply {
+                            setMargins(dp(7), 0, 0, 0)
+                        })
+                    }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(0, if (rowIndex == 0) 0 else dp(16), 0, 0)
+                })
+            }
+        }
+
+    private fun cardRunWindowCardHeightPx(): Int {
+        val availableWidth = resources.displayMetrics.widthPixels - dp(56) - dp(14)
+        val cardWidth = (availableWidth / 2f).coerceAtLeast(dp(132).toFloat())
+        return (cardWidth * 1.34f).roundToInt().coerceIn(dp(210), dp(242))
+    }
+
+    private fun cardRunWindowCard(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        item: CardRunWindowItem,
+        dialog: Dialog
+    ): View =
+        LinearLayout(this).apply {
+            val selected = cardRunWindowSurfaceSelected(state.surface, item.surface)
+            orientation = LinearLayout.VERTICAL
+            background = roundedBox(
+                Color.WHITE,
+                if (selected) Color.rgb(51, 127, 245) else Color.rgb(224, 229, 237),
+                dp(22).toFloat(),
+                if (selected) dp(3) else dp(1)
+            )
+            elevation = dp(if (selected) 7 else 3).toFloat()
+            addView(row {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(12), dp(9), dp(12), dp(7))
+                addView(ImageView(context).apply {
+                    setImageResource(cardRunWindowTypeIconRes(item.kind))
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    adjustViewBounds = false
+                }, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                    setMargins(0, 0, dp(7), 0)
+                })
+                addView(TextView(context).apply {
+                    text = item.title
+                    textSize = 13.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    includeFontPadding = false
+                    setTextColor(Color.rgb(27, 31, 42))
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(context).apply {
+                    text = "×"
+                    textSize = 21f
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(Color.rgb(108, 118, 134))
+                    setOnClickListener { clicked ->
+                        cardRunWindowPress(clicked) {
+                            Toast.makeText(context, "窗口关闭动作稍后接入", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }, LinearLayout.LayoutParams(dp(28), dp(28)))
+            })
+            addView(FrameLayout(context).apply {
+                addView(ImageView(context).apply {
+                    setImageResource(cardRunWindowPreviewRes(item.kind))
+                    scaleType = ImageView.ScaleType.FIT_XY
+                    adjustViewBounds = false
+                }, FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                ))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+                setMargins(dp(10), 0, dp(10), dp(10))
+            })
+            setOnClickListener { clicked ->
+                cardRunWindowPress(clicked) {
+                    dialog.dismiss()
+                    selectCardRunSurface(recipe, item.surface)
+                }
+            }
+            translationY = dp(12).toFloat()
+            alpha = 0f
+            postDelayed({
+                animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(180L)
+                    .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
+                    .start()
+            }, item.staggerMs)
+        }
+
+    private fun cardRunWindowOverviewDock(dialog: Dialog): View =
+        LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(22), dp(10), dp(22), dp(12))
+            background = roundedTopBox(Color.argb(238, 255, 255, 255), Color.rgb(229, 234, 242), dp(1).toFloat())
+            addView(cardRunWindowDockButton("trash", "清理") {
+                Toast.makeText(context, "清理动作稍后接入", Toast.LENGTH_SHORT).show()
+            }, LinearLayout.LayoutParams(0, dp(76), 1f))
+            addView(cardRunWindowDockButton("plus", "新增") {
+                Toast.makeText(context, "新增窗口动作稍后接入", Toast.LENGTH_SHORT).show()
+            }, LinearLayout.LayoutParams(0, dp(76), 1f))
+            addView(cardRunWindowDockButton("back", "返回") {
+                dialog.dismiss()
+            }, LinearLayout.LayoutParams(0, dp(76), 1f))
+        }
+
+    private fun cardRunWindowDockButton(kind: String, label: String, action: () -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            contentDescription = label
+            addView(ImageView(context).apply {
+                setImageResource(cardRunWindowDockIconRes(kind))
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                adjustViewBounds = false
+            }, LinearLayout.LayoutParams(if (kind == "plus") dp(54) else dp(50), if (kind == "plus") dp(54) else dp(50)))
+            addView(TextView(context).apply {
+                text = label
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(Color.rgb(126, 136, 153))
+                setPadding(0, dp(7), 0, 0)
+            })
+            setOnClickListener { clicked ->
+                cardRunWindowPress(clicked, action)
+            }
+        }
+
+    private fun cardRunWindowOverviewItems(recipe: KiteRecipe, state: RecipeRuntimeState): List<CardRunWindowItem> {
+        val items = mutableListOf<CardRunWindowItem>()
+        if (cardRunReportSurfaceAvailable(recipe, state)) {
+            items += CardRunWindowItem(
+                surface = CardRunSurface.Report,
+                kind = "report",
+                title = "SH 报告",
+                staggerMs = 40L
+            )
+        }
+        if (!state.terminalSessionId.isNullOrBlank()) {
+            items += CardRunWindowItem(
+                surface = CardRunSurface.Terminal,
+                kind = "terminal",
+                title = "终端",
+                staggerMs = 80L
+            )
+        }
+        state.nextActionUrl?.takeIf { it.isNotBlank() }?.let {
+            items += CardRunWindowItem(
+                surface = CardRunSurface.Web,
+                kind = "web",
+                title = "Web",
+                staggerMs = 120L
+            )
+        }
+        if (items.isEmpty()) {
+            items += CardRunWindowItem(
+                surface = state.surface,
+                kind = cardRunWindowKindForSurface(state.surface),
+                title = cardRunSurfaceTitle(state),
+                staggerMs = 40L
+            )
+        }
+        return items
+    }
+
+    private fun cardRunWindowSurfaceSelected(current: CardRunSurface, candidate: CardRunSurface): Boolean =
+        current == candidate || (current == CardRunSurface.Summary && candidate == CardRunSurface.Report)
+
+    private fun cardRunWindowKindForSurface(surface: CardRunSurface): String =
+        when (surface) {
+            CardRunSurface.Web -> "web"
+            CardRunSurface.Terminal -> "terminal"
+            else -> "report"
+        }
+
+    private fun cardRunWindowTypeIconRes(kind: String): Int =
+        when (kind) {
+            "web" -> R.drawable.card_run_window_icon_web
+            "terminal" -> R.drawable.card_run_window_icon_terminal
+            "report" -> R.drawable.card_run_window_icon_shell
+            else -> R.drawable.card_run_window_icon_shell
+        }
+
+    private fun cardRunWindowPreviewRes(kind: String): Int =
+        when (kind) {
+            "web" -> R.drawable.card_run_window_preview_web
+            "terminal" -> R.drawable.card_run_window_preview_terminal
+            "report" -> R.drawable.card_run_window_preview_shell
+            else -> R.drawable.card_run_window_preview_shell
+        }
+
+    private fun cardRunWindowDockIconRes(kind: String): Int =
+        when (kind) {
+            "trash" -> R.drawable.card_run_window_dock_trash
+            "plus" -> R.drawable.card_run_window_dock_add
+            else -> R.drawable.card_run_window_dock_back
+        }
+
+    private fun cardRunWindowPress(view: View, action: () -> Unit) {
+        view.animate()
+            .scaleX(0.95f)
+            .scaleY(0.95f)
+            .setDuration(70L)
+            .withEndAction {
+                view.animate()
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(110L)
+                    .withEndAction(action)
+                    .start()
+            }
+            .start()
+    }
+
+    private data class CardRunWindowItem(
+        val surface: CardRunSurface,
+        val kind: String,
+        val title: String,
+        val staggerMs: Long
+    )
 
     private fun cardRunSurfaceMenuActions(
         recipe: KiteRecipe,
