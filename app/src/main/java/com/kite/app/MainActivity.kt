@@ -234,6 +234,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var resourceSectionsRenderKey: String = ""
     private var resourceSectionsRenderedRequestKey: String = ""
     private var resourceSectionsRequestSerial = 0L
+    private var resourceSectionsRenderSerial = 0L
     private var resourceSectionsInFlightKey: String? = null
     private var resourceSectionsDirty = true
     private var resourceDetailInFlightKey: String? = null
@@ -1796,19 +1797,43 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (!resourceSectionsDirty && resourceSectionsRenderKey == renderKey && sectionHost.childCount > 0) {
             return true
         }
+        val renderSerial = ++resourceSectionsRenderSerial
         sectionHost.removeAllViews()
-        payload.sections.forEach { section ->
-            sectionHost.addView(resourceSection(section))
-        }
-        if (visibleResources.isEmpty()) {
+        if (payload.sections.isEmpty() && visibleResources.isEmpty()) {
             sectionHost.addView(resourceSearchEmptyState(payload.query))
+        } else {
+            renderResourceSectionsBatch(sectionHost, payload.sections, renderSerial)
         }
         resourceSectionsRenderKey = renderKey
         resourceSectionsDirty = false
         return true
     }
 
+    private fun renderResourceSectionsBatch(
+        sectionHost: LinearLayout,
+        sections: List<ResourceHomeSectionUi>,
+        renderSerial: Long,
+        startIndex: Int = 0
+    ) {
+        if (renderSerial != resourceSectionsRenderSerial) return
+        if (currentScreen != Screen.Resources) {
+            resourceSectionsDirty = true
+            return
+        }
+        val endIndex = (startIndex + RESOURCE_SECTION_RENDER_BATCH_SIZE).coerceAtMost(sections.size)
+        for (index in startIndex until endIndex) {
+            sectionHost.addView(resourceSection(sections[index]))
+        }
+        if (endIndex < sections.size) {
+            sectionHost.postDelayed(
+                { renderResourceSectionsBatch(sectionHost, sections, renderSerial, endIndex) },
+                RESOURCE_SECTION_RENDER_BATCH_DELAY_MS
+            )
+        }
+    }
+
     private fun renderResourceSectionsError(sectionHost: LinearLayout, error: Throwable) {
+        resourceSectionsRenderSerial++
         sectionHost.removeAllViews()
         sectionHost.addView(resourceRequestStateBlock(
             title = "资源请求失败",
@@ -1897,6 +1922,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceSearchQuery = ""
         resourceSectionsRenderKey = ""
         resourceSectionsRenderedRequestKey = ""
+        resourceSectionsRenderSerial++
         resourceSectionsDirty = true
         resourceManageContentHost = null
     }
@@ -2535,9 +2561,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             resourceListSection(title = section.title, items = section.items)
         }
 
-    private fun resourceListSection(title: String, items: List<ResourceItem>): View =
-        LinearLayout(this).apply {
-            if (items.isEmpty()) return@apply
+    private fun resourceListSection(title: String, items: List<ResourceItem>): View {
+        if (items.isEmpty()) return LinearLayout(this)
+        val sectionView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(24), 0, 0)
             layoutParams = LinearLayout.LayoutParams(
@@ -2559,53 +2585,107 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     setTextColor(tokens.primaryStrong)
                 })
             })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(10), dp(14), dp(10))
-                background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
-                elevation = dp(1).toFloat()
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    .apply { setMargins(0, dp(12), 0, 0) }
-                items.forEachIndexed { index, item ->
-                    addView(resourceListRow(item))
-                    if (index != items.lastIndex) addView(divider().apply {
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                            setMargins(dp(64), dp(8), dp(12), dp(8))
-                        }
-                    })
-                }
-            })
         }
+        val rowsHost = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+            elevation = dp(1).toFloat()
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { setMargins(0, dp(12), 0, 0) }
+        }
+        sectionView.addView(rowsHost)
+        rowsHost.post { renderResourceListRowsBatch(sectionView, rowsHost, items) }
+        return sectionView
+    }
 
-    private fun resourceToolShelfSection(section: ResourceHomeSectionUi): View =
-        LinearLayout(this).apply {
-            val items = section.items
-            if (items.isEmpty()) return@apply
+    private fun renderResourceListRowsBatch(
+        sectionView: View,
+        rowsHost: LinearLayout,
+        items: List<ResourceItem>,
+        startIndex: Int = 0
+    ) {
+        if (currentScreen != Screen.Resources) {
+            resourceSectionsDirty = true
+            return
+        }
+        if (sectionView.parent == null) return
+        val endIndex = (startIndex + RESOURCE_LIST_ROW_RENDER_BATCH_SIZE).coerceAtMost(items.size)
+        for (index in startIndex until endIndex) {
+            rowsHost.addView(resourceListRow(items[index]))
+            if (index != items.lastIndex) {
+                rowsHost.addView(divider().apply {
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                        setMargins(dp(64), dp(8), dp(12), dp(8))
+                    }
+                })
+            }
+        }
+        if (endIndex < items.size) {
+            rowsHost.postDelayed(
+                { renderResourceListRowsBatch(sectionView, rowsHost, items, endIndex) },
+                RESOURCE_LIST_ROW_RENDER_BATCH_DELAY_MS
+            )
+        }
+    }
+
+    private fun resourceToolShelfSection(section: ResourceHomeSectionUi): View {
+        val items = section.items
+        if (items.isEmpty()) return LinearLayout(this)
+        val sectionView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, dp(18), 0, 0)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            addView(HorizontalScrollView(context).apply {
-                isHorizontalScrollBarEnabled = false
-                clipToPadding = false
+        }
+        val itemsHost = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+        }
+        sectionView.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            clipToPadding = false
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            addView(itemsHost)
+        })
+        itemsHost.post { renderResourceShelfItemsBatch(sectionView, itemsHost, items) }
+        return sectionView
+    }
+
+    private fun renderResourceShelfItemsBatch(
+        sectionView: View,
+        itemsHost: LinearLayout,
+        items: List<ResourceItem>,
+        startIndex: Int = 0
+    ) {
+        if (currentScreen != Screen.Resources) {
+            resourceSectionsDirty = true
+            return
+        }
+        if (sectionView.parent == null) return
+        val endIndex = (startIndex + RESOURCE_TOOL_SHELF_RENDER_BATCH_SIZE).coerceAtMost(items.size)
+        for (index in startIndex until endIndex) {
+            itemsHost.addView(resourceToolShelfItem(items[index]).apply {
                 layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(RESOURCE_TOOL_SHELF_ITEM_WIDTH_DP),
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-                addView(row {
-                    gravity = Gravity.TOP
-                    items.forEachIndexed { index, item ->
-                        addView(resourceToolShelfItem(item).apply {
-                            layoutParams = LinearLayout.LayoutParams(dp(RESOURCE_TOOL_SHELF_ITEM_WIDTH_DP), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                                if (index != items.lastIndex) setMargins(0, 0, dp(RESOURCE_TOOL_SHELF_ITEM_GAP_DP), 0)
-                            }
-                        })
-                    }
-                })
+                ).apply {
+                    if (index != items.lastIndex) setMargins(0, 0, dp(RESOURCE_TOOL_SHELF_ITEM_GAP_DP), 0)
+                }
             })
         }
+        if (endIndex < items.size) {
+            itemsHost.postDelayed(
+                { renderResourceShelfItemsBatch(sectionView, itemsHost, items, endIndex) },
+                RESOURCE_TOOL_SHELF_RENDER_BATCH_DELAY_MS
+            )
+        }
+    }
 
     private fun resourceToolShelfItem(item: ResourceItem): View =
         LinearLayout(this).apply {
@@ -13837,6 +13917,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_ACTION_BUTTON_COMPACT_HEIGHT_DP = 32
         private const val RESOURCE_ACTION_BUTTON_COMPACT_RADIUS_DP = 16
         private const val RESOURCE_ACTION_BUTTON_COMPACT_TEXT_SP = 12.2f
+        private const val RESOURCE_SECTION_RENDER_BATCH_SIZE = 1
+        private const val RESOURCE_SECTION_RENDER_BATCH_DELAY_MS = 16L
+        private const val RESOURCE_TOOL_SHELF_RENDER_BATCH_SIZE = 5
+        private const val RESOURCE_TOOL_SHELF_RENDER_BATCH_DELAY_MS = 16L
+        private const val RESOURCE_LIST_ROW_RENDER_BATCH_SIZE = 4
+        private const val RESOURCE_LIST_ROW_RENDER_BATCH_DELAY_MS = 16L
         private const val RESOURCE_OPEN_RUNTIME_SOURCE = "resource_open"
         private const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE = "resource_install_wizard"
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
