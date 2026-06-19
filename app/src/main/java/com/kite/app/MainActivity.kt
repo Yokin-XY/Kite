@@ -7579,21 +7579,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         dialog.dismiss()
                         showCardRunSurface(recipe)
                     })
-                    if (state.isInterruptible() || state.hasRunBinding()) {
-                        add(CardRunMenuAction("■", "终止") {
-                            dialog.dismiss()
-                            stopRecipe(recipe, state)
-                        })
-                    } else {
+                    if (!state.isInterruptible() && !state.hasRunBinding()) {
                         add(CardRunMenuAction("↺", "重新执行") {
                             dialog.dismiss()
                             startRecipe(recipe, state, focusedRunInstanceId)
                         })
                     }
-                    add(CardRunMenuAction("⧉", "复制报告") {
-                        copyCardRunReport(state)
-                        dialog.dismiss()
-                    })
                     add(CardRunMenuAction("⊙", "关闭实例") {
                         dialog.dismiss()
                         closeCardRunTask()
@@ -7796,12 +7787,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
             setOnClickListener { onClick() }
         }
-
-    private fun copyCardRunReport(state: RecipeRuntimeState) {
-        val clipboard = getSystemService(ClipboardManager::class.java)
-        clipboard?.setPrimaryClip(ClipData.newPlainText("Kite 执行报告", cardRunReportText(state)))
-        Toast.makeText(this, "已复制执行报告", Toast.LENGTH_SHORT).show()
-    }
 
     private fun closeCardRunTask() {
         if (this !is CardRunActivity) {
