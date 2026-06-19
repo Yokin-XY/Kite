@@ -181,7 +181,11 @@ object CardRunStore {
     fun currentForRecipe(recipeId: String): CardRunState? =
         _runs.value
             .filter { it.recipeId == recipeId }
+            .filter { it.parentInstanceId.isNullOrBlank() }
             .maxByOrNull { it.updatedAt }
+            ?: _runs.value
+                .filter { it.recipeId == recipeId }
+                .maxByOrNull { it.updatedAt }
 
     @Synchronized
     fun get(instanceId: String): CardRunState? =

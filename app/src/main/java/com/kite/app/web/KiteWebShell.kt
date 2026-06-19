@@ -109,8 +109,18 @@ class KiteWebShell(
     private fun openExternal(url: String) {
         diagnostics.logExternalUrl(url)
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        activity.startActivity(intent)
-        onStatus("Opened in system browser: $url")
+        runCatching {
+            activity.startActivity(intent)
+        }.onSuccess {
+            onStatus("Opened in system browser: $url")
+        }.onFailure { error ->
+            diagnostics.logWebError(
+                url = url,
+                code = -1,
+                description = "external_open_failed:${error.javaClass.simpleName}:${error.message.orEmpty()}"
+            )
+            onStatus("External URL ignored: $url")
+        }
     }
 
     private fun isLocalUrl(url: String): Boolean {
