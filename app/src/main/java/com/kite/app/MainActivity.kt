@@ -247,7 +247,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var cachedResourceCatalog: List<ResourceItem>? = null
     private var cachedResourceCatalogUpdatedAt = 0L
     private var resourceCatalogDirty = true
+    private val resourceIconBitmapLock = Any()
     private val resourceIconBitmapCache = mutableMapOf<String, Bitmap>()
+    private val resourceIconBitmapInFlight = mutableSetOf<String>()
+    private val resourceIconBitmapWaiters = mutableMapOf<String, MutableList<(Bitmap) -> Unit>>()
     private val recipeIconBitmapCache = mutableMapOf<String, Bitmap>()
     private var resourceCatalogBackgroundRefreshInFlight = false
     private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
@@ -2493,7 +2496,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             layoutParams = LinearLayout.LayoutParams(posterWidth, posterHeight)
             addView(ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                resourceIconBitmap(imageAsset, maxOf(posterWidth, posterHeight))?.let { setImageBitmap(it) }
+                requestResourceIconBitmap(imageAsset, maxOf(posterWidth, posterHeight)) { bitmap ->
+                    if (parent != null) setImageBitmap(bitmap)
+                }?.let { setImageBitmap(it) }
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
     }
@@ -2699,23 +2704,43 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         radius: Float,
         textSize: Float
     ): View {
-        val bitmap = resourceIconBitmap(assetPath, size)
-        if (bitmap == null) return resourceTextIcon(textValue, accent, size, radius, textSize)
+        if (assetPath.isBlank()) return resourceTextIcon(textValue, accent, size, radius, textSize)
         val isFullBleed = iconFit.equals(RESOURCE_ICON_FIT_FULL_BLEED, ignoreCase = true)
         val tone = KiteTheme.accent(accent, tokens)
         return FrameLayout(this).apply {
-            background = if (isFullBleed) {
-                roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, radius)
-            } else {
-                roundedBox(tokens.surface, tone.border, radius)
+            fun applyIconBackground(hasBitmap: Boolean) {
+                background = if (isFullBleed && hasBitmap) {
+                    roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, radius)
+                } else {
+                    roundedBox(tokens.surface, tone.border, radius)
+                }
             }
+            fun showBitmap(bitmap: Bitmap) {
+                applyIconBackground(hasBitmap = true)
+                removeAllViews()
+                addView(ImageView(context).apply {
+                    scaleType = if (isFullBleed) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_INSIDE
+                    if (!isFullBleed) setPadding(padding, padding, padding, padding)
+                    setImageBitmap(bitmap)
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+            applyIconBackground(hasBitmap = false)
             clipToOutline = true
             layoutParams = LinearLayout.LayoutParams(size, size)
-            addView(ImageView(context).apply {
-                scaleType = if (isFullBleed) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_INSIDE
-                if (!isFullBleed) setPadding(padding, padding, padding, padding)
-                setImageBitmap(bitmap)
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            val cachedBitmap = requestResourceIconBitmap(assetPath, size) { bitmap ->
+                if (parent != null) showBitmap(bitmap)
+            }
+            if (cachedBitmap != null) {
+                showBitmap(cachedBitmap)
+            } else {
+                addView(TextView(context).apply {
+                    text = textValue
+                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, textSize)
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    setTextColor(tone.strong)
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }
         }
     }
 
@@ -2731,27 +2756,55 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             layoutParams = LinearLayout.LayoutParams(size, size)
         }
 
-    private fun resourceIconBitmap(assetPath: String, maxDimensionPx: Int = 0): Bitmap? {
+    private fun requestResourceIconBitmap(
+        assetPath: String,
+        maxDimensionPx: Int = 0,
+        onLoaded: (Bitmap) -> Unit
+    ): Bitmap? {
+        val normalized = normalizedResourceAssetPath(assetPath) ?: return null
+        val boundedMaxDimension = maxDimensionPx.coerceAtLeast(0)
+        val cacheKey = resourceIconBitmapCacheKey(normalized, boundedMaxDimension)
+        synchronized(resourceIconBitmapLock) {
+            resourceIconBitmapCache[cacheKey]?.let { return it }
+            resourceIconBitmapWaiters.getOrPut(cacheKey) { mutableListOf() }.add(onLoaded)
+            if (!resourceIconBitmapInFlight.add(cacheKey)) return null
+        }
+        thread(name = "KiteResourceImage-${cacheKey.hashCode()}", isDaemon = true) {
+            val bitmap = decodeResourceIconBitmap(normalized, boundedMaxDimension)
+            val waiters = synchronized(resourceIconBitmapLock) {
+                if (bitmap != null) resourceIconBitmapCache[cacheKey] = bitmap
+                resourceIconBitmapInFlight.remove(cacheKey)
+                resourceIconBitmapWaiters.remove(cacheKey).orEmpty()
+            }
+            if (bitmap != null && waiters.isNotEmpty()) {
+                root.post { waiters.forEach { waiter -> waiter(bitmap) } }
+            }
+        }
+        return null
+    }
+
+    private fun normalizedResourceAssetPath(assetPath: String): String? {
         val normalized = assetPath.trim().trimStart('/')
         if (normalized.isBlank() || normalized.contains("..")) return null
-        val boundedMaxDimension = maxDimensionPx.coerceAtLeast(0)
-        val cacheKey = if (boundedMaxDimension > 0) "$normalized@$boundedMaxDimension" else normalized
-        resourceIconBitmapCache[cacheKey]?.let { return it }
-        return runCatching {
-            if (boundedMaxDimension <= 0) {
-                assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream) }
+        return normalized
+    }
+
+    private fun resourceIconBitmapCacheKey(normalizedAssetPath: String, maxDimensionPx: Int): String =
+        if (maxDimensionPx > 0) "$normalizedAssetPath@$maxDimensionPx" else normalizedAssetPath
+
+    private fun decodeResourceIconBitmap(normalizedAssetPath: String, maxDimensionPx: Int): Bitmap? =
+        runCatching {
+            if (maxDimensionPx <= 0) {
+                assets.open(normalizedAssetPath).use { stream -> BitmapFactory.decodeStream(stream) }
             } else {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream, null, bounds) }
+                assets.open(normalizedAssetPath).use { stream -> BitmapFactory.decodeStream(stream, null, bounds) }
                 val options = BitmapFactory.Options().apply {
-                    inSampleSize = bitmapSampleSize(bounds.outWidth, bounds.outHeight, boundedMaxDimension)
+                    inSampleSize = bitmapSampleSize(bounds.outWidth, bounds.outHeight, maxDimensionPx)
                 }
-                assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream, null, options) }
+                assets.open(normalizedAssetPath).use { stream -> BitmapFactory.decodeStream(stream, null, options) }
             }
-        }.getOrNull()?.also { bitmap ->
-            resourceIconBitmapCache[cacheKey] = bitmap
-        }
-    }
+        }.getOrNull()
 
     private fun bitmapSampleSize(width: Int, height: Int, maxDimensionPx: Int): Int {
         if (width <= 0 || height <= 0 || maxDimensionPx <= 0) return 1
@@ -3362,7 +3415,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 contentDescription = item.media?.contentDescription ?: "${item.name} 视觉预览"
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 item.media?.asset?.let { asset ->
-                    resourceIconBitmap(asset, maxOf(resources.displayMetrics.widthPixels, dp(228)))?.let { setImageBitmap(it) }
+                    requestResourceIconBitmap(asset, maxOf(resources.displayMetrics.widthPixels, dp(228))) { bitmap ->
+                        if (parent != null) setImageBitmap(bitmap)
+                    }?.let { setImageBitmap(it) }
                 }
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
