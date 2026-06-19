@@ -147,6 +147,8 @@ object KiteTheme {
             "purple" -> KiteTone(tokens.primaryStrong, tokens.primarySoft, tokens.primarySubtle, tokens.primarySoft)
             "orange" -> KiteTone(tokens.warning, tokens.warningSoft, tokens.warningSoft, tokens.warningBorder)
             "blue" -> KiteTone(tokens.info, tokens.infoSoft, tokens.infoSoft, tokens.infoBorder)
+            "teal", "cyan" -> KiteTone(tokens.primaryStrong, tokens.primarySoft, tokens.primarySubtle, tokens.primarySoft)
+            "mint" -> KiteTone(tokens.success, tokens.successSoft, tokens.successSoft, tokens.successBorder)
             else -> KiteTone(tokens.primaryStrong, tokens.primarySoft, tokens.primarySubtle, tokens.primarySoft)
         }
 

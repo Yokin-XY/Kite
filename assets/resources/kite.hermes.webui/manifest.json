@@ -14,6 +14,32 @@
     "sections": [
       "featured"
     ],
+    "category": "AI",
+    "accent": "mint",
+    "sizeLabel": "网络包",
+    "longDescription": "用于在浏览器界面里使用 Hermes 的轻量 Web UI。它是 Hermes 的上层界面资源，安装时从 nesquena/hermes-webui 克隆源码，并复用 Hermes 的 Python venv 准备运行环境。",
+    "recommendations": [
+      {
+        "resourceId": "kite.hermes.core",
+        "label": "基础依赖"
+      },
+      {
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.reasonix",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.mimo.code",
+        "label": "编码 Agent"
+      },
+      {
+        "resourceId": "kite.opencode",
+        "label": "编码 Agent"
+      }
+    ],
     "tags": [
       "hermes",
       "webui",

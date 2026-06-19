@@ -16,6 +16,20 @@
     "sections": [
       "more"
     ],
+    "category": "系统工具",
+    "accent": "orange",
+    "sizeLabel": "网络包",
+    "longDescription": "curl 是网络型资源下载安装脚本的基础层工具。Hermes 需要用它下载官方 install.sh；安装时先检查当前 Ubuntu 环境是否已有 curl，已有则只登记为可用，没有则通过 apt 安装 curl 与 ca-certificates。",
+    "recommendations": [
+      {
+        "resourceId": "kite.git",
+        "label": "同级工具"
+      },
+      {
+        "resourceId": "kite.hermes.core",
+        "label": "被依赖"
+      }
+    ],
     "tags": [
       "curl",
       "download",

@@ -85,9 +85,11 @@ import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallSignal
 import com.kite.app.resources.KiteResourceInstallSpec
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceDisplayRowSpec
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.resources.KiteResourceHomeLayout
+import com.kite.app.resources.KiteResourcePreviewSpec
 import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRequestPolicy
 import com.kite.app.resources.KiteResourceRegistryEntry
@@ -104,7 +106,6 @@ import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.web.KiteWebShell
-import com.kftest.app.R
 import com.kftest.app.foundation.bootstrap.BootstrapCoordinator
 import com.kftest.app.foundation.bootstrap.BootstrapSnapshot
 import com.kftest.app.foundation.bootstrap.BootstrapStage
@@ -247,6 +248,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var cachedResourceCatalogUpdatedAt = 0L
     private var resourceCatalogDirty = true
     private val resourceIconBitmapCache = mutableMapOf<String, Bitmap>()
+    private val recipeIconBitmapCache = mutableMapOf<String, Bitmap>()
     private var resourceCatalogBackgroundRefreshInFlight = false
     private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     private var lastConsoleRuntimeRefreshAt = 0L
@@ -1751,7 +1753,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (sectionItems.isEmpty()) {
                 null
             } else {
-                ResourceHomeSectionUi(id = section.id, title = section.title, items = sectionItems)
+                ResourceHomeSectionUi(id = section.id, title = section.title, style = section.style, items = sectionItems)
             }
         }
         val fallbackSections = resources
@@ -1762,6 +1764,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 if (items.isEmpty()) null else ResourceHomeSectionUi(
                     id = KiteResourceInstallRecipes.safeId(cleanTitle),
                     title = cleanTitle,
+                    style = "list",
                     items = items
                 )
             }
@@ -1855,6 +1858,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 append(section.id)
                 append(':')
                 append(section.title)
+                append(':')
+                append(section.style)
                 append(':')
                 append(section.items.joinToString(",") { it.id })
             }
@@ -2461,69 +2466,45 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
         }
 
-    private fun resourceHero(): View =
-        HorizontalScrollView(this).apply {
+    private fun resourceHero(): View {
+        val hero = resourceManifestLoader.requestHomeLayout()?.hero
+        return HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             clipToPadding = false
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 .apply { setMargins(0, dp(22), 0, dp(18)) }
             addView(row {
-                addView(resourceHeroPoster())
+                hero?.let { addView(resourceHeroPoster(it.resourceId, it.imageAsset, it.contentDescription)) }
             })
         }
+    }
 
-    private fun resourceHeroPoster(): View {
+    private fun resourceHeroPoster(resourceId: String, imageAsset: String, contentDescriptionText: String): View {
         val posterWidth = (resources.displayMetrics.widthPixels - dp(44)).coerceAtLeast(dp(280))
         val posterHeight = (posterWidth * 780f / 1200f).toInt().coerceIn(dp(180), dp(240))
         return FrameLayout(this).apply {
-            contentDescription = "MiMo Code 海报，点击查看资源详情"
+            contentDescription = contentDescriptionText.ifBlank { "资源海报，点击查看资源详情" }
             isClickable = true
             isFocusable = true
             background = roundedBox(tokens.surface, Color.rgb(225, 226, 229), dp(24).toFloat())
             clipToOutline = true
             elevation = dp(1).toFloat()
-            setOnClickListener { showResourceDetail(RESOURCE_MIMO_CODE) }
+            setOnClickListener { showResourceDetail(resourceId) }
             layoutParams = LinearLayout.LayoutParams(posterWidth, posterHeight)
             addView(ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                setImageResource(R.drawable.kite_mimo_code_banner)
+                resourceIconBitmap(imageAsset)?.let { setImageBitmap(it) }
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
     }
-
-    private fun heroMiniIcon(label: String, caption: String): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(dp(50), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(0, 0, dp(7), 0)
-            }
-            addView(TextView(context).apply {
-                text = label
-                textSize = 14f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(tokens.primaryStrong)
-                background = roundedBox(Color.argb(180, 255, 255, 255), Color.rgb(220, 235, 238), dp(13).toFloat())
-                elevation = dp(1).toFloat()
-                layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
-            })
-            addView(TextView(context).apply {
-                text = caption
-                textSize = 10f
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                gravity = Gravity.CENTER
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(5), 0, 0)
-            })
-        }
 
     private fun resourceCategoryChips(): View =
         HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             addView(row {
-                listOf("全部", "已获取", "本地", "Python", "Node", "AI", "系统工具").forEachIndexed { index, label ->
+                val labels = resourceManifestLoader.requestHomeLayout()?.chips.orEmpty()
+                    .ifEmpty { listOf("全部", "已获取", "本地", "Python", "Node", "AI", "系统工具") }
+                labels.forEachIndexed { index, label ->
                     addView(TextView(context).apply {
                         text = label
                         textSize = 12.5f
@@ -2543,7 +2524,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun resourceSection(section: ResourceHomeSectionUi): View =
-        if (section.id in RESOURCE_HOME_TOOL_SHELF_SECTIONS) {
+        if (section.style.equals("shelf", ignoreCase = true)) {
             resourceToolShelfSection(section)
         } else {
             resourceListSection(title = section.title, items = section.items)
@@ -2928,6 +2909,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             append(item.actionEnabled)
             append(':')
             append(item.version)
+            append(':')
+            append(item.badge)
+            append(':')
+            append(item.media)
+            append(':')
+            append(item.previewCards)
+            append(':')
+            append(item.requirementRows)
         }
 
     private fun requestResourceDetailMedia(item: ResourceItem) {
@@ -3096,9 +3085,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 addView(row {
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(0, dp(7), 0, 0)
-                    val tone = KiteTheme.accent(item.accent, tokens)
+                    val tone = KiteTheme.accent(item.badge.accent, tokens)
                     addView(TextView(context).apply {
-                        text = "✓"
+                        text = item.badge.iconText
                         textSize = 11f
                         gravity = Gravity.CENTER
                         includeFontPadding = false
@@ -3108,7 +3097,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
                     })
                     addView(TextView(context).apply {
-                        text = "Kite 官方资源"
+                        text = item.badge.label
                         textSize = 12.5f
                         typeface = Typeface.DEFAULT_BOLD
                         setTextColor(tone.strong)
@@ -3151,7 +3140,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun resourceRecommendationBlock(item: ResourceItem): View? {
         val catalogById = cachedResourceCatalog.orEmpty().associateBy { it.id }
-        val recommendations = resourceRecommendationsFor(item.id)
+        val recommendations = resourceRecommendationsFor(item)
             .mapNotNull { recommendation ->
                 val target = catalogById[recommendation.resourceId]
                 if (target == null || target.id == item.id) null else recommendation to target
@@ -3205,86 +3194,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
         }
 
-    private fun resourceRecommendationsFor(resourceId: String): List<ResourceRecommendation> =
-        when (resourceId) {
-            RESOURCE_HERMES_WEBUI -> listOf(
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "基础依赖"),
-                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
-                ResourceRecommendation(RESOURCE_REASONIX, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_MIMO_CODE, "编码 Agent"),
-                ResourceRecommendation(RESOURCE_OPENCODE, "编码 Agent")
-            )
-            RESOURCE_REASONIX -> listOf(
-                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
-                ResourceRecommendation(RESOURCE_GIT, "源码工具"),
-                ResourceRecommendation(RESOURCE_MIMO_CODE, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_CLAUDE_CODE, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "同类 Agent")
-            )
-            RESOURCE_MIMO_CODE -> listOf(
-                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
-                ResourceRecommendation(RESOURCE_GIT, "源码工具"),
-                ResourceRecommendation(RESOURCE_REASONIX, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_CODEX_CLI, "同类 Agent")
-            )
-            RESOURCE_CODEX_CLI -> listOf(
-                ResourceRecommendation(RESOURCE_CURL, "下载工具"),
-                ResourceRecommendation(RESOURCE_CLAUDE_CODE, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_OPENCODE, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_MIMO_CODE, "终端 Agent")
-            )
-            RESOURCE_CLAUDE_CODE -> listOf(
-                ResourceRecommendation(RESOURCE_CURL, "下载工具"),
-                ResourceRecommendation(RESOURCE_CODEX_CLI, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_OPENCODE, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_REASONIX, "终端 Agent")
-            )
-            RESOURCE_OPENCODE -> listOf(
-                ResourceRecommendation(RESOURCE_CURL, "下载工具"),
-                ResourceRecommendation(RESOURCE_CODEX_CLI, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_CLAUDE_CODE, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_OPENCLAW, "同类 Agent")
-            )
-            RESOURCE_OPENCLAW -> listOf(
-                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "运行时"),
-                ResourceRecommendation(RESOURCE_OPENCODE, "同类 Agent"),
-                ResourceRecommendation(RESOURCE_CODEX_CLI, "终端 Agent"),
-                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "同类 Agent")
-            )
-            RESOURCE_HERMES_CORE -> listOf(
-                ResourceRecommendation(RESOURCE_PYTHON, "运行时"),
-                ResourceRecommendation(RESOURCE_UV, "依赖管理"),
-                ResourceRecommendation(RESOURCE_GIT, "源码工具"),
-                ResourceRecommendation(RESOURCE_CURL, "下载工具")
-            )
-            RESOURCE_PYTHON -> listOf(
-                ResourceRecommendation(RESOURCE_UV, "包管理"),
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "上层应用")
-            )
-            RESOURCE_NODE_RUNTIME -> listOf(
-                ResourceRecommendation(RESOURCE_HERMES_WEBUI, "上层应用"),
-                ResourceRecommendation(RESOURCE_REASONIX, "编码 Agent"),
-                ResourceRecommendation(RESOURCE_MIMO_CODE, "编码 Agent"),
-                ResourceRecommendation(RESOURCE_OPENCLAW, "编码 Agent")
-            )
-            RESOURCE_UV -> listOf(
-                ResourceRecommendation(RESOURCE_PYTHON, "运行时"),
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "上层应用")
-            )
-            RESOURCE_GIT -> listOf(
-                ResourceRecommendation(RESOURCE_CURL, "同级工具"),
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "被依赖")
-            )
-            RESOURCE_CURL -> listOf(
-                ResourceRecommendation(RESOURCE_GIT, "同级工具"),
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "被依赖")
-            )
-            else -> listOf(
-                ResourceRecommendation(RESOURCE_HERMES_CORE, "AI 基础"),
-                ResourceRecommendation(RESOURCE_NODE_RUNTIME, "Web 运行"),
-                ResourceRecommendation(RESOURCE_PYTHON, "运行时")
-            )
-        }
+    private fun resourceRecommendationsFor(item: ResourceItem): List<ResourceRecommendation> {
+        return item.recommendations
+    }
 
     private fun resourceExecutionPreviewBlock(item: ResourceItem): View =
         LinearLayout(this).apply {
@@ -3407,7 +3319,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun resourceDetailVisualBlock(item: ResourceItem): View =
-        if (item.id == RESOURCE_MIMO_CODE) {
+        if (item.media != null) {
             resourceImageBanner(item)
         } else {
             resourcePreviewStrip(item)
@@ -3423,9 +3335,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setMargins(0, dp(20), 0, 0)
             }
             addView(ImageView(context).apply {
-                contentDescription = "${item.name} 视觉预览"
+                contentDescription = item.media?.contentDescription ?: "${item.name} 视觉预览"
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                setImageResource(R.drawable.kite_mimo_code_banner)
+                item.media?.asset?.let { asset -> resourceIconBitmap(asset)?.let { setImageBitmap(it) } }
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
 
@@ -3435,14 +3347,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 .apply { setMargins(0, dp(20), 0, 0) }
             addView(row {
-                listOf(
-                    ResourcePreviewCard("工作台", "管理模型、对话和提示词", item.iconText, item.accent),
-                    ResourcePreviewCard("资源卡片", "一键部署，快速启动", item.iconText, item.accent),
-                    ResourcePreviewCard("启动访问", "配置完成后直接打开", "✓", item.accent)
-                ).forEachIndexed { index, preview ->
+                item.previewCards.forEachIndexed { index, preview ->
                     addView(resourcePreviewCard(preview).apply {
                         layoutParams = LinearLayout.LayoutParams(dp(176), dp(136)).apply {
-                            setMargins(0, 0, if (index == 2) 0 else dp(12), 0)
+                            setMargins(0, 0, if (index == item.previewCards.lastIndex) 0 else dp(12), 0)
                         }
                     })
                 }
@@ -3453,8 +3361,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(13), dp(12), dp(13), dp(10))
-            background = roundedBox(Color.rgb(244, 253, 252), Color.rgb(214, 237, 240), dp(16).toFloat())
             val tone = KiteTheme.accent(preview.accent, tokens)
+            background = roundedBox(tokens.cardBackground, tone.border, dp(16).toFloat())
             addView(TextView(context).apply {
                 text = preview.title
                 textSize = 13.5f
@@ -3473,20 +3381,20 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 setPadding(dp(9), dp(9), dp(9), dp(9))
-                background = roundedBox(Color.argb(225, 255, 255, 255), Color.rgb(223, 235, 238), dp(13).toFloat())
+                background = roundedBox(tokens.surface, tokens.border, dp(13).toFloat())
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
                     setMargins(0, dp(10), 0, 0)
                 }
-                addView(TextView(context).apply {
-                    text = preview.symbol
-                    textSize = 22f
-                    typeface = Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setTextColor(tone.strong)
-                    background = roundedBox(tone.soft, tone.border, dp(11).toFloat())
-                    layoutParams = LinearLayout.LayoutParams(dp(38), dp(38))
-                })
+                addView(resourceIcon(
+                    preview.symbol,
+                    preview.accent,
+                    preview.iconAsset,
+                    preview.iconFit,
+                    size = dp(42),
+                    padding = dp(6),
+                    radius = dp(12).toFloat(),
+                    textSize = 15f
+                ))
             })
         }
 
@@ -3507,19 +3415,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 background = roundedBox(tokens.cardBackground, tokens.border, dp(17).toFloat())
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     .apply { setMargins(0, dp(14), 0, 0) }
-                val rows = listOf(
-                    "运行环境" to when (item.category) {
-                        "AI" -> "Node.js / npm"
-                        "Python" -> "Python"
-                        else -> "Kite / Ubuntu"
-                    },
-                    "获取来源" to item.sourceLabel,
-                    "占用空间" to item.sizeLabel,
-                    "状态" to item.stateLabel,
-                    "资源类型" to item.category
-                )
+                val rows = (item.requirementRows.ifEmpty { resourceDefaultRequirementRows(item) } +
+                    ResourceRequirementRow("状态", item.stateLabel))
                 rows.forEachIndexed { index, row ->
-                    addView(resourceRequirementRow(row.first, row.second))
+                    addView(resourceRequirementRow(row.label, row.value))
                     if (index != rows.lastIndex) addView(divider().apply {
                         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
                             setMargins(0, dp(1), 0, dp(1))
@@ -3528,6 +3427,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 }
             })
         }
+
+    private fun resourceDefaultRequirementRows(item: ResourceItem): List<ResourceRequirementRow> =
+        listOf(
+            ResourceRequirementRow("获取来源", item.sourceLabel),
+            ResourceRequirementRow("占用空间", item.sizeLabel),
+            ResourceRequirementRow("资源类型", item.category)
+        ).filter { it.value.isNotBlank() }
 
     private fun resourceRequirementRow(label: String, value: String): View =
         row {
@@ -5105,10 +5011,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun resourceOpenRecipeJson(item: ResourceItem): JSONObject? =
         resourceManifestLoader.requestOpenRecipeTemplate(item.id)
+            ?.let { hydrateResourceRecipeTemplate(item, it) }
 
     private fun resourceHomeCardTemplate(item: ResourceItem): JSONObject? =
-        resourceManifestLoader.requestFirstHomeCardRecipeTemplate(item.id)
-            ?: resourceManifestLoader.requestOpenRecipeTemplate(item.id)
+        (
+            resourceManifestLoader.requestFirstHomeCardRecipeTemplate(item.id)
+                ?: resourceManifestLoader.requestOpenRecipeTemplate(item.id)
+            )?.let { hydrateResourceRecipeTemplate(item, it) }
+
+    private fun hydrateResourceRecipeTemplate(item: ResourceItem, template: JSONObject): JSONObject {
+        val json = JSONObject(template.toString())
+        val base = json.optJSONObject("base") ?: JSONObject().also { json.put("base", it) }
+        if (base.optString("name").isBlank()) base.put("name", item.name)
+        if (base.optString("description").isBlank()) base.put("description", item.description)
+        if (item.iconAsset.isNotBlank()) {
+            base.put(
+                "icon",
+                JSONObject()
+                    .put("type", KiteRecipeIcon.TYPE_IMAGE)
+                    .put("name", item.iconText.ifBlank { "resource" })
+                    .put("source", item.iconAsset)
+            )
+        }
+        val card = json.optJSONObject("card") ?: JSONObject().also { json.put("card", it) }
+        if (card.optString("accent").isBlank() || card.optString("accent").equals("primary", ignoreCase = true)) {
+            card.put("accent", item.accent.ifBlank { "primary" })
+        }
+        return json
+    }
 
     private fun resourceManifestRecipeSteps(item: ResourceItem, operation: String): List<KiteRecipeStep> {
         val actions = when (operation) {
@@ -5151,7 +5081,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun resourceInstallRecipe(item: ResourceItem): KiteRecipe? {
-        val step = when (item.id) {
+        val steps = resourceManifestRecipeSteps(item, KiteResourceInstallRecipes.OP_INSTALL)
+            .ifEmpty { legacyResourceInstallStep(item)?.let { listOf(it) }.orEmpty() }
+        if (steps.isEmpty()) return null
+        return KiteResourceInstallRecipes.toRecipe(
+            KiteResourceInstallSpec(
+                id = item.id,
+                name = "${item.name} 获取",
+                description = item.description,
+                category = "resource",
+                iconName = resourceRecipeIcon(item),
+                steps = steps
+            )
+        )
+    }
+
+    private fun legacyResourceInstallStep(item: ResourceItem): KiteRecipeStep? =
+        when (item.id) {
             RESOURCE_NODE_RUNTIME -> KiteRecipeStep(
                 id = "install_node",
                 type = KiteRecipe.STEP_SHELL,
@@ -5218,23 +5164,27 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
             else -> null
         }
-        val steps = step?.let { listOf(it) }
-            ?: resourceManifestRecipeSteps(item, KiteResourceInstallRecipes.OP_INSTALL)
+
+    private fun resourceUninstallRecipe(item: ResourceItem): KiteRecipe? {
+        val steps = resourceManifestRecipeSteps(item, KiteResourceInstallRecipes.OP_UNINSTALL)
+            .ifEmpty { legacyResourceUninstallStep(item)?.let { listOf(it) }.orEmpty() }
         if (steps.isEmpty()) return null
         return KiteResourceInstallRecipes.toRecipe(
             KiteResourceInstallSpec(
                 id = item.id,
-                name = "${item.name} 获取",
+                name = "${item.name} 卸载",
                 description = item.description,
                 category = "resource",
                 iconName = resourceRecipeIcon(item),
+                operation = KiteResourceInstallRecipes.OP_UNINSTALL,
+                actionLabel = "卸载",
                 steps = steps
             )
         )
     }
 
-    private fun resourceUninstallRecipe(item: ResourceItem): KiteRecipe? {
-        val step = when (item.id) {
+    private fun legacyResourceUninstallStep(item: ResourceItem): KiteRecipeStep? =
+        when (item.id) {
             RESOURCE_NODE_RUNTIME -> KiteRecipeStep(
                 id = "uninstall_node",
                 type = KiteRecipe.STEP_SHELL,
@@ -5301,28 +5251,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
             else -> null
         }
-        val steps = step?.let { listOf(it) }
-            ?: resourceManifestRecipeSteps(item, KiteResourceInstallRecipes.OP_UNINSTALL)
-        if (steps.isEmpty()) return null
-        return KiteResourceInstallRecipes.toRecipe(
-            KiteResourceInstallSpec(
-                id = item.id,
-                name = "${item.name} 卸载",
-                description = item.description,
-                category = "resource",
-                iconName = resourceRecipeIcon(item),
-                operation = KiteResourceInstallRecipes.OP_UNINSTALL,
-                actionLabel = "卸载",
-                steps = steps
-            )
-        )
-    }
 
     private fun resourceRecipeIcon(item: ResourceItem): String =
         when {
             item.id == RESOURCE_GIT || item.id == RESOURCE_CURL || item.id == RESOURCE_UV -> KiteRecipeIcon.ICON_CODE
             item.category == "AI" -> KiteRecipeIcon.ICON_BOT
-            item.category == "Node" || item.category == "Python" -> KiteRecipeIcon.ICON_CODE
+            item.category == "Node" || item.category == "JavaScript" || item.category == "Python" -> KiteRecipeIcon.ICON_CODE
             else -> KiteRecipeIcon.ICON_TOOLS
         }
 
@@ -5796,25 +5730,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 (!forceRefresh || (onMainThread && now - cachedResourceCatalogUpdatedAt < RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS))
             if (canReuseCleanCatalog) return cached
         }
+        val visibleManifests = resourceCatalogManifestsForUi()
+        val managedResourceIds = visibleManifests.map { it.id }
+        if (managedResourceIds.isEmpty()) {
+            cachedResourceCatalog = emptyList()
+            cachedResourceCatalogUpdatedAt = now
+            resourceCatalogDirty = false
+            return emptyList()
+        }
         val allowWorkspaceProbe = !onMainThread
         if (allowWorkspaceProbe) {
             ToolchainPackInstaller.refreshState(applicationContext)
         }
-        val managedResourceIds = listOf(
-            RESOURCE_NODE_RUNTIME,
-            RESOURCE_HERMES_CORE,
-            RESOURCE_HERMES_WEBUI,
-            RESOURCE_REASONIX,
-            RESOURCE_MIMO_CODE,
-            RESOURCE_CODEX_CLI,
-            RESOURCE_CLAUDE_CODE,
-            RESOURCE_OPENCODE,
-            RESOURCE_OPENCLAW,
-            RESOURCE_GIT,
-            RESOURCE_CURL,
-            RESOURCE_PYTHON,
-            RESOURCE_UV
-        )
         var registrySnapshot = resourceInstallStore.registrySnapshot(managedResourceIds)
         val normalizedAny = managedResourceIds.any { normalizeStaleResourceState(it, registrySnapshot[it]) }
         if (normalizedAny) {
@@ -5877,7 +5804,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val workspaceSnapshot = toolchainWorkspaceSnapshot(allowProbe = allowWorkspaceProbe)
         val nodeWorkspaceInstalled = workspaceSnapshot.nodeInstalled
         fun clearInstalledIfWorkspaceMissing(resourceId: String, workspaceInstalled: Boolean): Boolean {
-            if (!allowWorkspaceProbe || !recordedInstalled(resourceId) || workspaceInstalled) return false
+            if (!allowWorkspaceProbe || resourceId !in managedResourceIds || !recordedInstalled(resourceId) || workspaceInstalled) return false
             resourceInstallStore.clear(resourceId)
             return true
         }
@@ -5889,6 +5816,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         ): Boolean {
             if (
                 !allowWorkspaceProbe ||
+                resourceId !in managedResourceIds ||
                 !workspaceInstalled ||
                 recordedInstalled(resourceId) ||
                 busy(resourceId) ||
@@ -5899,526 +5827,51 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             resourceInstallStore.markInstalled(resourceId, version, null, summary)
             return true
         }
-        val clearedNodeWorkspaceState =
-            clearInstalledIfWorkspaceMissing(RESOURCE_NODE_RUNTIME, nodeWorkspaceInstalled)
-        val restoredNodeWorkspaceState =
+        val nodeManifest = visibleManifests.firstOrNull { it.id == RESOURCE_NODE_RUNTIME }
+        val workspaceStateNormalized = clearInstalledIfWorkspaceMissing(RESOURCE_NODE_RUNTIME, nodeWorkspaceInstalled) ||
             restoreInstalledIfWorkspacePresent(
                 resourceId = RESOURCE_NODE_RUNTIME,
                 workspaceInstalled = nodeWorkspaceInstalled,
-                version = "24.15.0",
+                version = nodeManifest?.version?.ifBlank { "24.15.0" } ?: "24.15.0",
                 summary = "Node.js workspace files verified"
             )
-        val workspaceStateNormalized = clearedNodeWorkspaceState || restoredNodeWorkspaceState
         if (workspaceStateNormalized) {
             registrySnapshot = resourceInstallStore.registrySnapshot(managedResourceIds)
         }
-        val nodeRecordedInstalled = recordedInstalled(RESOURCE_NODE_RUNTIME)
-        val nodeInstallFailed = installFailed(RESOURCE_NODE_RUNTIME)
-        val nodeBusy = busy(RESOURCE_NODE_RUNTIME)
-        val nodeInstalling = installing(RESOURCE_NODE_RUNTIME)
-        val nodeUninstalling = uninstalling(RESOURCE_NODE_RUNTIME)
-        val nodeFailedOperation = failedOperation(RESOURCE_NODE_RUNTIME)
-        val hermesRecordedInstalled = recordedInstalled(RESOURCE_HERMES_WEBUI)
-        val hermesInstallFailed = installFailed(RESOURCE_HERMES_WEBUI)
-        val hermesBusy = busy(RESOURCE_HERMES_WEBUI)
-        val hermesInstalling = installing(RESOURCE_HERMES_WEBUI)
-        val hermesUninstalling = uninstalling(RESOURCE_HERMES_WEBUI)
-        val hermesFailedOperation = failedOperation(RESOURCE_HERMES_WEBUI)
-        val hermesCoreRecordedInstalled = recordedInstalled(RESOURCE_HERMES_CORE)
-        val hermesCoreInstallFailed = installFailed(RESOURCE_HERMES_CORE)
-        val hermesCoreBusy = busy(RESOURCE_HERMES_CORE)
-        val hermesCoreInstalling = installing(RESOURCE_HERMES_CORE)
-        val hermesCoreUninstalling = uninstalling(RESOURCE_HERMES_CORE)
-        val hermesCoreFailedOperation = failedOperation(RESOURCE_HERMES_CORE)
-        val reasonixRecordedInstalled = recordedInstalled(RESOURCE_REASONIX)
-        val reasonixInstallFailed = installFailed(RESOURCE_REASONIX)
-        val reasonixBusy = busy(RESOURCE_REASONIX)
-        val reasonixInstalling = installing(RESOURCE_REASONIX)
-        val reasonixUninstalling = uninstalling(RESOURCE_REASONIX)
-        val reasonixFailedOperation = failedOperation(RESOURCE_REASONIX)
-        val mimoCodeRecordedInstalled = recordedInstalled(RESOURCE_MIMO_CODE)
-        val mimoCodeInstallFailed = installFailed(RESOURCE_MIMO_CODE)
-        val mimoCodeBusy = busy(RESOURCE_MIMO_CODE)
-        val mimoCodeInstalling = installing(RESOURCE_MIMO_CODE)
-        val mimoCodeUninstalling = uninstalling(RESOURCE_MIMO_CODE)
-        val mimoCodeFailedOperation = failedOperation(RESOURCE_MIMO_CODE)
-        val codexLabels = labelsForResource(RESOURCE_CODEX_CLI)
-        val claudeCodeLabels = labelsForResource(RESOURCE_CLAUDE_CODE)
-        val openCodeLabels = labelsForResource(RESOURCE_OPENCODE)
-        val openClawLabels = labelsForResource(RESOURCE_OPENCLAW)
-        val gitRecordedInstalled = recordedInstalled(RESOURCE_GIT)
-        val gitInstallFailed = installFailed(RESOURCE_GIT)
-        val gitBusy = busy(RESOURCE_GIT)
-        val gitInstalling = installing(RESOURCE_GIT)
-        val gitUninstalling = uninstalling(RESOURCE_GIT)
-        val gitFailedOperation = failedOperation(RESOURCE_GIT)
-        val curlRecordedInstalled = recordedInstalled(RESOURCE_CURL)
-        val curlInstallFailed = installFailed(RESOURCE_CURL)
-        val curlBusy = busy(RESOURCE_CURL)
-        val curlInstalling = installing(RESOURCE_CURL)
-        val curlUninstalling = uninstalling(RESOURCE_CURL)
-        val curlFailedOperation = failedOperation(RESOURCE_CURL)
-        val pythonRecordedInstalled = recordedInstalled(RESOURCE_PYTHON)
-        val pythonInstallFailed = installFailed(RESOURCE_PYTHON)
-        val pythonBusy = busy(RESOURCE_PYTHON)
-        val pythonInstalling = installing(RESOURCE_PYTHON)
-        val pythonUninstalling = uninstalling(RESOURCE_PYTHON)
-        val pythonFailedOperation = failedOperation(RESOURCE_PYTHON)
-        val uvRecordedInstalled = recordedInstalled(RESOURCE_UV)
-        val uvInstallFailed = installFailed(RESOURCE_UV)
-        val uvBusy = busy(RESOURCE_UV)
-        val uvInstalling = installing(RESOURCE_UV)
-        val uvUninstalling = uninstalling(RESOURCE_UV)
-        val uvFailedOperation = failedOperation(RESOURCE_UV)
-        val nodeInstalled = if (allowWorkspaceProbe) {
-            nodeWorkspaceInstalled
-        } else {
-            nodeWorkspaceInstalled || nodeRecordedInstalled
-        }
         val toolchainRunning = toolchain.phase == ToolchainInstallPhase.RUNNING
-        val nodeAction = actionLabelForResource(
-            nodeInstalled,
-            toolchainRunning || nodeInstalling,
-            nodeUninstalling,
-            nodeInstallFailed,
-            nodeFailedOperation
-        )
-        val nodeState = stateLabelForResource(
-            nodeInstalled,
-            toolchainRunning || nodeInstalling,
-            nodeUninstalling,
-            nodeInstallFailed,
-            nodeFailedOperation,
-            "本地包"
-        )
-        val hermesAction = actionLabelForResource(
-            hermesRecordedInstalled,
-            hermesInstalling,
-            hermesUninstalling,
-            hermesInstallFailed,
-            hermesFailedOperation
-        )
-        val hermesState = stateLabelForResource(
-            hermesRecordedInstalled,
-            hermesInstalling,
-            hermesUninstalling,
-            hermesInstallFailed,
-            hermesFailedOperation,
-            "未获取"
-        )
-        val hermesCoreAction = actionLabelForResource(
-            hermesCoreRecordedInstalled,
-            hermesCoreInstalling,
-            hermesCoreUninstalling,
-            hermesCoreInstallFailed,
-            hermesCoreFailedOperation
-        )
-        val hermesCoreState = stateLabelForResource(
-            hermesCoreRecordedInstalled,
-            hermesCoreInstalling,
-            hermesCoreUninstalling,
-            hermesCoreInstallFailed,
-            hermesCoreFailedOperation,
-            "未获取"
-        )
-        val reasonixAction = actionLabelForResource(
-            reasonixRecordedInstalled,
-            reasonixInstalling,
-            reasonixUninstalling,
-            reasonixInstallFailed,
-            reasonixFailedOperation
-        )
-        val reasonixState = stateLabelForResource(
-            reasonixRecordedInstalled,
-            reasonixInstalling,
-            reasonixUninstalling,
-            reasonixInstallFailed,
-            reasonixFailedOperation,
-            "未获取"
-        )
-        val mimoCodeAction = actionLabelForResource(
-            mimoCodeRecordedInstalled,
-            mimoCodeInstalling,
-            mimoCodeUninstalling,
-            mimoCodeInstallFailed,
-            mimoCodeFailedOperation
-        )
-        val mimoCodeState = stateLabelForResource(
-            mimoCodeRecordedInstalled,
-            mimoCodeInstalling,
-            mimoCodeUninstalling,
-            mimoCodeInstallFailed,
-            mimoCodeFailedOperation,
-            "未获取"
-        )
-        val gitAction = actionLabelForResource(
-            gitRecordedInstalled,
-            gitInstalling,
-            gitUninstalling,
-            gitInstallFailed,
-            gitFailedOperation
-        )
-        val gitState = stateLabelForResource(
-            gitRecordedInstalled,
-            gitInstalling,
-            gitUninstalling,
-            gitInstallFailed,
-            gitFailedOperation,
-            "未获取"
-        )
-        val curlAction = actionLabelForResource(
-            curlRecordedInstalled,
-            curlInstalling,
-            curlUninstalling,
-            curlInstallFailed,
-            curlFailedOperation
-        )
-        val curlState = stateLabelForResource(
-            curlRecordedInstalled,
-            curlInstalling,
-            curlUninstalling,
-            curlInstallFailed,
-            curlFailedOperation,
-            "未获取"
-        )
-        val pythonAction = actionLabelForResource(
-            pythonRecordedInstalled,
-            pythonInstalling,
-            pythonUninstalling,
-            pythonInstallFailed,
-            pythonFailedOperation
-        )
-        val pythonState = stateLabelForResource(
-            pythonRecordedInstalled,
-            pythonInstalling,
-            pythonUninstalling,
-            pythonInstallFailed,
-            pythonFailedOperation,
-            "未获取"
-        )
-        val uvAction = actionLabelForResource(
-            uvRecordedInstalled,
-            uvInstalling,
-            uvUninstalling,
-            uvInstallFailed,
-            uvFailedOperation
-        )
-        val uvState = stateLabelForResource(
-            uvRecordedInstalled,
-            uvInstalling,
-            uvUninstalling,
-            uvInstallFailed,
-            uvFailedOperation,
-            "本地包"
-        )
-        val catalog = listOf(
-            ResourceItem(
-                id = RESOURCE_NODE_RUNTIME,
-                name = "Node.js",
-                description = "现代 JavaScript 运行环境",
-                longDescription = "Node.js 是资源页第一条真实样本。它从 Kite 内置资源缓存解压，按注册名安装到软件区，并把 node、npm、npx 暴露到 /workspace/.kf/bin，供后续 Hermes WebUI、网页工具和卡片脚本使用。",
-                section = "精选推荐",
-                category = "Node",
-                iconText = "JS",
-                accent = "green",
-                version = "24.15.0",
-                sizeLabel = "30.1 MB",
-                sourceLabel = "内置",
-                stateLabel = nodeState,
-                actionLabel = nodeAction,
-                actionEnabled = resourceActionEnabled(nodeAction, toolchainRunning || nodeBusy),
-                includes = listOf("node 24.15.0", "npm", "npx", "PATH wrapper"),
-                notes = listOf("安装位置是 ${KiteResourceInstallRecipes.softwarePath(RESOURCE_NODE_RUNTIME)}/node-v24.15.0", "命令入口是 /workspace/.kf/bin", "重新安装会先清理自己的注册名目录"),
-                steps = listOf(
-                    ResourceStep("shell", "解压 Node.js", "extract node-v24.15.0-linux-arm64.tar.xz"),
-                    ResourceStep("shell", "暴露命令", "link node/npm/npx -> /workspace/.kf/bin"),
-                    ResourceStep("shell", "验证版本", "node --version && npm --version")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_GIT,
-                name = "Git",
-                description = "源码下载与版本管理工具",
-                longDescription = "Git 是 Hermes 本体和后续源码型资源的底层工具卡。安装时先检查当前 Ubuntu 环境是否已有 git；已有则只登记为可用，没有则通过 apt 安装 git 与 ca-certificates，并记录这次安装的 ownership。",
-                section = "更多资源",
-                category = "系统工具",
-                iconText = "Git",
-                accent = "orange",
-                version = "apt",
-                sizeLabel = "网络包",
-                sourceLabel = "apt",
-                stateLabel = gitState,
-                actionLabel = gitAction,
-                actionEnabled = resourceActionEnabled(gitAction, gitBusy),
-                includes = listOf("git CLI", "ca-certificates", "tool.git 能力", "安装 ownership 标记"),
-                notes = listOf("基础层能力：tool.git", "如果 Git 原本已存在，卸载只清 Kite 登记", "Hermes 后续会引用这张卡"),
-                steps = listOf(
-                    ResourceStep("shell", "检查 Git", "command -v git && git --version"),
-                    ResourceStep("shell", "安装 Git", "apt-get install -y git ca-certificates"),
-                    ResourceStep("shell", "登记能力", "provides tool.git")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_PYTHON,
-                name = "Python",
-                description = "Hermes 本体需要的 Python 运行时",
-                longDescription = "Python 是 Hermes 的基础层资源。Hermes 当前声明 Python >=3.11,<3.14；这张卡负责补齐 python3、venv、pip 和证书能力，并把可用状态登记到 Kite。卸载时不移除系统 Python，只清除 Kite 的资源登记。",
-                section = "更多资源",
-                category = "Python",
-                iconText = "Py",
-                accent = "blue",
-                version = ">=3.11,<3.14",
-                sizeLabel = "网络包",
-                sourceLabel = "apt",
-                stateLabel = pythonState,
-                actionLabel = pythonAction,
-                actionEnabled = resourceActionEnabled(pythonAction, pythonBusy),
-                includes = listOf("python3", "venv", "pip", "runtime.python>=3.11<3.14"),
-                notes = listOf("基础层能力：runtime.python>=3.11<3.14", "卸载只清 Kite 登记，不删除系统 Python", "Hermes 后续会引用这张卡"),
-                steps = listOf(
-                    ResourceStep("shell", "校验版本", "python3 >=3.11 and <3.14"),
-                    ResourceStep("shell", "补齐 Python", "apt-get install -y python3 python3-venv python3-pip"),
-                    ResourceStep("shell", "验证 venv", "python3 -m venv --help")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_CURL,
-                name = "curl",
-                description = "网络下载命令",
-                longDescription = "curl 是网络型资源下载安装脚本的基础层工具。Hermes 需要用它下载官方 install.sh；安装时先检查当前 Ubuntu 环境是否已有 curl，已有则只登记为可用，没有则通过 apt 安装 curl 与 ca-certificates。",
-                section = "更多资源",
-                category = "系统工具",
-                iconText = "curl",
-                accent = "orange",
-                version = "apt",
-                sizeLabel = "网络包",
-                sourceLabel = "apt",
-                stateLabel = curlState,
-                actionLabel = curlAction,
-                actionEnabled = resourceActionEnabled(curlAction, curlBusy),
-                includes = listOf("curl CLI", "ca-certificates", "tool.curl 能力", "安装 ownership 标记"),
-                notes = listOf("基础层能力：tool.curl", "如果 curl 原本已存在，卸载只清 Kite 登记", "Hermes 后续会引用这张卡"),
-                steps = listOf(
-                    ResourceStep("shell", "检查 curl", "command -v curl && curl --version"),
-                    ResourceStep("shell", "安装 curl", "apt-get install -y curl ca-certificates"),
-                    ResourceStep("shell", "登记能力", "provides tool.curl")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_UV,
-                name = "uv",
-                description = "高速 Python 包管理器",
-                longDescription = "uv 是 Hermes 安装 Python 依赖和管理虚拟环境的基础工具卡。Kite 使用内置 ai-dev-pack 中的 uv 0.11.1，只安装 uv/uvx 到 /workspace/.kf/bin，不顺带安装完整工具合集。",
-                section = "更多资源",
-                category = "Python",
-                iconText = "uv",
-                accent = "green",
-                version = "0.11.1",
-                sizeLabel = "内置包",
-                sourceLabel = "内置",
-                stateLabel = uvState,
-                actionLabel = uvAction,
-                actionEnabled = resourceActionEnabled(uvAction, uvBusy),
-                includes = listOf("uv 0.11.1", "uvx", "tool.uv", "tool.uvx"),
-                notes = listOf("基础层能力：tool.uv", "从内置包安装，不需要先联网下载 uv", "Hermes 后续会引用这张卡"),
-                steps = listOf(
-                    ResourceStep("shell", "复制内置资源包", "mirror assets/toolchain/ai-dev-pack -> ${KiteResourceInstallRecipes.localPackPath(RESOURCE_UV)}"),
-                    ResourceStep("shell", "安装 uv", "bash ${KiteResourceInstallRecipes.localPackPath(RESOURCE_UV)}/install.sh --install-uv"),
-                    ResourceStep("shell", "验证版本", "uv --version && uvx --version")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_HERMES_CORE,
-                name = "Hermes",
-                description = "Hermes Agent 本体与 CLI",
-                longDescription = "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。它只负责本体安装和卸载；面向普通人的配置网页、WebUI 和首页启动卡会作为上层方案或配套卡组织。",
-                section = "精选推荐",
-                category = "AI",
-                iconText = "H",
-                accent = "teal",
-                version = "main",
-                sizeLabel = "网络包",
-                sourceLabel = "官方脚本",
-                stateLabel = hermesCoreState,
-                actionLabel = hermesCoreAction,
-                actionEnabled = resourceActionEnabled(hermesCoreAction, hermesCoreBusy),
-                includes = listOf("官方 install.sh", "hermes CLI", "独立 venv", "Kite 管理的 HERMES_HOME", "service.hermes 能力"),
-                notes = listOf("基础层：Git", "本体卡不直接写首页启动卡片", "配置网页和 WebUI 应由上层方案卡或配套卡关联"),
-                steps = listOf(
-                    ResourceStep("shell", "下载官方安装器", "curl -fsSL https://hermes-agent.nousresearch.com/install.sh"),
-                    ResourceStep("shell", "执行官方安装", "bash install.sh --dir ... --hermes-home ... --skip-setup"),
-                    ResourceStep("shell", "暴露命令", "link hermes -> /workspace/.kf/bin")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_HERMES_WEBUI,
-                name = "Hermes WebUI",
-                description = "Hermes 的网页工作台",
-                longDescription = "用于在浏览器界面里使用 Hermes 的轻量 Web UI。它是 Hermes 的上层界面资源，安装时从 nesquena/hermes-webui 克隆源码，并复用 Hermes 的 Python venv 准备运行环境。",
-                section = "精选推荐",
-                category = "AI",
-                iconText = "H",
-                accent = "mint",
-                version = "github",
-                sizeLabel = "网络包",
-                sourceLabel = "GitHub",
-                stateLabel = hermesState,
-                actionLabel = hermesAction,
-                actionEnabled = resourceActionEnabled(hermesAction, hermesBusy),
-                includes = listOf("nesquena/hermes-webui 源码", "Python WebUI 依赖", "启动端口 8787", "首页启动卡片"),
-                notes = listOf("基础层：Hermes、Python、Git", "首次启动需要 Hermes 已完成模型配置"),
-                steps = listOf(
-                    ResourceStep("shell", "克隆源码", "git clone https://github.com/nesquena/hermes-webui"),
-                    ResourceStep("shell", "安装 Python 依赖", "pip install -r requirements.txt"),
-                    ResourceStep("shell", "启动服务", "hermes-webui-kite start 8787"),
-                    ResourceStep("open_web", "打开网页", "http://127.0.0.1:8787")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_REASONIX,
-                name = "Reasonix",
-                description = "DeepSeek 原生终端编码助手",
-                longDescription = "Reasonix 是围绕 DeepSeek prefix-cache 稳定性设计的终端编码 Agent。Kite 把它作为 Node.js 上层资源：安装阶段只通过 npm 装 CLI 并暴露 reasonix/dsnix 命令；创建首页卡片后，用户从终端表面启动交互式 Reasonix，不把 API Key 或运行输出写回资源卡。",
-                section = "精选推荐",
-                category = "AI",
-                iconText = "Rx",
-                accent = "teal",
-                version = "npm",
-                sizeLabel = "网络包",
-                sourceLabel = "npm",
-                stateLabel = reasonixState,
-                actionLabel = reasonixAction,
-                actionEnabled = resourceActionEnabled(reasonixAction, reasonixBusy),
-                includes = listOf("reasonix CLI", "dsnix alias", "DeepSeek API", "终端首页卡片"),
-                notes = listOf("基础层：Node.js", "需要用户自行配置 DEEPSEEK_API_KEY", "运行态输出仍归首页卡/终端/SH 报告车道"),
-                steps = listOf(
-                    ResourceStep("shell", "安装 npm 包", "npm install -g reasonix"),
-                    ResourceStep("shell", "暴露命令", "link reasonix/dsnix -> /workspace/.kf/bin"),
-                    ResourceStep("terminal", "打开终端", "reasonix")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_MIMO_CODE,
-                name = "MiMo Code",
-                description = "小米 MiMo 终端 AI 编码助手",
-                longDescription = "MiMo Code 是小米 MiMo 团队的终端原生 AI 编码助手，可以读写代码、运行命令、管理 Git，并通过持久记忆理解项目。Kite 把它作为 Node.js 上层资源：获取阶段只安装 @mimo-ai/cli 并暴露 mimo 命令；打开后在终端表面完成首次配置或登录，不把 Provider、OAuth 或运行输出写进资源卡。",
-                section = "精选推荐",
-                category = "AI",
-                iconText = "Mi",
-                accent = "orange",
-                version = "npm",
-                sizeLabel = "网络包",
-                sourceLabel = "npm",
-                stateLabel = mimoCodeState,
-                actionLabel = mimoCodeAction,
-                actionEnabled = resourceActionEnabled(mimoCodeAction, mimoCodeBusy),
-                includes = listOf("@mimo-ai/cli", "mimo CLI", "MiMo Auto / OAuth / Provider 配置", "终端首页卡片"),
-                notes = listOf("基础层：Node.js", "首次启动由 MiMo Code TUI 引导配置", "运行态输出仍归首页卡/终端/SH 报告车道"),
-                steps = listOf(
-                    ResourceStep("shell", "安装 npm 包", "npm install -g @mimo-ai/cli"),
-                    ResourceStep("shell", "暴露命令", "link mimo -> /workspace/.kf/bin"),
-                    ResourceStep("terminal", "打开终端", "mimo")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_CODEX_CLI,
-                name = "Codex CLI",
-                description = "OpenAI 的终端编码助手",
-                longDescription = "Codex CLI 是 OpenAI 面向终端的编码助手。Kite 使用官方 standalone installer 获取命令入口，并把 codex 暴露到 /workspace/.kf/bin；登录、模型和项目权限仍由 Codex 自己在终端里引导，不写入资源卡 JSON。",
-                section = "精选推荐",
-                category = "AI",
-                iconText = "Cx",
-                accent = "teal",
-                version = "official",
-                sizeLabel = "网络包",
-                sourceLabel = "官方脚本",
-                stateLabel = codexLabels.state,
-                actionLabel = codexLabels.action,
-                actionEnabled = resourceActionEnabled(codexLabels.action, codexLabels.busy),
-                includes = listOf("Codex CLI", "official installer", "codex command", "终端首页卡片"),
-                notes = listOf("基础层：curl", "首次启动需要登录 ChatGPT 或配置 API Key", "运行态输出仍归首页卡/终端/SH 报告车道"),
-                steps = listOf(
-                    ResourceStep("shell", "运行官方安装器", "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"),
-                    ResourceStep("shell", "暴露命令", "link codex -> /workspace/.kf/bin"),
-                    ResourceStep("terminal", "打开终端", "codex")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_CLAUDE_CODE,
-                name = "Claude Code",
-                description = "Anthropic 的终端编码助手",
-                longDescription = "Claude Code 是 Anthropic 面向终端的编码助手。Kite 使用官方 native installer 获取 claude 命令，并只负责资源获取、wrapper 暴露和首页卡模板；登录和项目授权在终端表面完成。",
-                section = "精选推荐",
-                category = "AI",
-                iconText = "CC",
-                accent = "orange",
-                version = "official",
-                sizeLabel = "网络包",
-                sourceLabel = "官方脚本",
-                stateLabel = claudeCodeLabels.state,
-                actionLabel = claudeCodeLabels.action,
-                actionEnabled = resourceActionEnabled(claudeCodeLabels.action, claudeCodeLabels.busy),
-                includes = listOf("Claude Code CLI", "official native installer", "claude command", "终端首页卡片"),
-                notes = listOf("基础层：curl", "首次启动需要登录 Claude / Anthropic", "运行态输出仍归首页卡/终端/SH 报告车道"),
-                steps = listOf(
-                    ResourceStep("shell", "运行官方安装器", "curl -fsSL https://claude.ai/install.sh | bash"),
-                    ResourceStep("shell", "暴露命令", "link claude -> /workspace/.kf/bin"),
-                    ResourceStep("terminal", "打开终端", "claude")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_OPENCODE,
-                name = "OpenCode",
-                description = "开源终端 AI 编码 Agent",
-                longDescription = "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方 install script 安装 opencode 命令，并提供首页卡入口；Provider 配置和会话内容仍由终端运行态承接。",
-                section = "精选推荐",
-                category = "AI",
-                iconText = "OC",
-                accent = "blue",
-                version = "official",
-                sizeLabel = "网络包",
-                sourceLabel = "官方脚本",
-                stateLabel = openCodeLabels.state,
-                actionLabel = openCodeLabels.action,
-                actionEnabled = resourceActionEnabled(openCodeLabels.action, openCodeLabels.busy),
-                includes = listOf("OpenCode CLI", "official install script", "opencode command", "终端首页卡片"),
-                notes = listOf("基础层：curl", "首次启动会引导选择 Provider", "运行态输出仍归首页卡/终端/SH 报告车道"),
-                steps = listOf(
-                    ResourceStep("shell", "运行官方安装器", "curl -fsSL https://opencode.ai/install | bash"),
-                    ResourceStep("shell", "暴露命令", "link opencode -> /workspace/.kf/bin"),
-                    ResourceStep("terminal", "打开终端", "opencode")
-                )
-            ),
-            ResourceItem(
-                id = RESOURCE_OPENCLAW,
-                name = "OpenClaw",
-                description = "多通道 AI Agent 网关",
-                longDescription = "OpenClaw 是偏网关和多通道协作的 AI Agent 工具。Kite 把它先作为 Node.js 上层资源接入：获取阶段安装 openclaw npm 包并暴露 openclaw 命令，首次配置由终端里的 onboard 流程完成。",
-                section = "精选推荐",
-                category = "AI",
-                iconText = "Cl",
-                accent = "mint",
-                version = "npm",
-                sizeLabel = "网络包",
-                sourceLabel = "npm",
-                stateLabel = openClawLabels.state,
-                actionLabel = openClawLabels.action,
-                actionEnabled = resourceActionEnabled(openClawLabels.action, openClawLabels.busy),
-                includes = listOf("openclaw npm package", "openclaw command", "onboard flow", "终端首页卡片"),
-                notes = listOf("基础层：Node.js", "首次启动建议运行 onboard", "运行态输出仍归首页卡/终端/SH 报告车道"),
-                steps = listOf(
-                    ResourceStep("shell", "安装 npm 包", "npm install -g openclaw@latest"),
-                    ResourceStep("shell", "暴露命令", "link openclaw -> /workspace/.kf/bin"),
-                    ResourceStep("terminal", "打开终端", "openclaw onboard --install-daemon")
-                )
+        fun labelsForManifest(manifest: KiteResourceManifest): ResourceRuntimeLabels {
+            if (manifest.id != RESOURCE_NODE_RUNTIME) {
+                return labelsForResource(manifest.id, resourceIdleLabelForManifest(manifest))
+            }
+            val recordedInstalled = recordedInstalled(RESOURCE_NODE_RUNTIME)
+            val nodeInstalled = if (allowWorkspaceProbe) {
+                nodeWorkspaceInstalled
+            } else {
+                nodeWorkspaceInstalled || recordedInstalled
+            }
+            val installing = toolchainRunning || installing(RESOURCE_NODE_RUNTIME)
+            val uninstalling = uninstalling(RESOURCE_NODE_RUNTIME)
+            val failed = installFailed(RESOURCE_NODE_RUNTIME)
+            val failedOperation = failedOperation(RESOURCE_NODE_RUNTIME)
+            return ResourceRuntimeLabels(
+                state = stateLabelForResource(nodeInstalled, installing, uninstalling, failed, failedOperation, "本地包"),
+                action = actionLabelForResource(nodeInstalled, installing, uninstalling, failed, failedOperation),
+                busy = busy(RESOURCE_NODE_RUNTIME) || toolchainRunning
             )
-        ).map { applyResourceManifest(it) }
+        }
+        val catalog = visibleManifests.map { manifest ->
+            val labels = labelsForManifest(manifest)
+            resourceItemFromManifest(
+                manifest = manifest,
+                labels = labels,
+                actionEnabled = resourceActionEnabled(labels.action, labels.busy)
+            )
+        }
         cachedResourceCatalog = catalog
         cachedResourceCatalogUpdatedAt = now
         resourceCatalogDirty = false
         return catalog
     }
-
     private fun toolchainWorkspaceSnapshot(allowProbe: Boolean): ToolchainWorkspaceSnapshot {
         val now = System.currentTimeMillis()
         val cached = cachedToolchainWorkspaceSnapshot
@@ -6434,25 +5887,210 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
-    private fun applyResourceManifest(item: ResourceItem): ResourceItem {
-        val manifest = resourceManifestLoader.requestManifest(item.id) ?: return item
-        return item.copy(
-            name = manifest.name.ifBlank { item.name },
-            description = manifest.description.ifBlank { item.description },
-            section = resourceSectionLabel(manifest.sections.firstOrNull()).ifBlank { item.section },
-            iconText = manifest.iconText.ifBlank { item.iconText },
-            iconAsset = manifest.iconAsset.ifBlank { item.iconAsset },
-            iconFit = manifest.iconFit.ifBlank { item.iconFit },
-            version = manifest.version.ifBlank { item.version },
-            sourceLabel = resourceSourceLabel(manifest.sourceType).ifBlank { item.sourceLabel },
-            includes = mergeResourceStrings(item.includes, manifest.provides),
-            notes = mergeResourceStrings(item.notes, resourceRelationNotes(manifest)),
+    private fun resourceCatalogManifestsForUi(): List<KiteResourceManifest> {
+        val manifests = resourceManifestLoader.manifests().values
+            .filter { it.sections.isNotEmpty() }
+        if (manifests.isEmpty()) return emptyList()
+        val byId = manifests.associateBy { it.id }
+        val homeOrder = resourceManifestLoader.requestHomeLayout()
+            ?.sections
+            .orEmpty()
+            .flatMap { it.items }
+        return (homeOrder + manifests.map { it.id })
+            .distinct()
+            .mapNotNull { byId[it] }
+    }
+
+    // One manifest record plus live registry labels becomes the shared UI projection for every resource template.
+    private fun resourceItemFromManifest(
+        manifest: KiteResourceManifest,
+        labels: ResourceRuntimeLabels,
+        actionEnabled: Boolean
+    ): ResourceItem {
+        val sourceLabel = resourceSourceLabel(manifest.sourceType)
+            .ifBlank { manifest.sourceType.ifBlank { "本地定义" } }
+        return ResourceItem(
+            id = manifest.id,
+            name = manifest.name.ifBlank { manifest.id },
+            description = manifest.description.ifBlank { sourceLabel },
+            longDescription = manifest.displayLongDescription.ifBlank {
+                manifest.description.ifBlank { manifest.id }
+            },
+            section = resourceSectionLabel(manifest.sections.firstOrNull()).ifBlank { "更多资源" },
+            category = manifest.displayCategory.ifBlank { resourceCategoryForManifest(manifest) },
+            iconText = manifest.iconText.ifBlank { resourceFallbackIconText(manifest) },
+            iconAsset = manifest.iconAsset,
+            iconFit = manifest.iconFit,
+            accent = manifest.displayAccent.ifBlank { resourceAccentForManifest(manifest) },
+            version = manifest.version.ifBlank { "latest" },
+            sizeLabel = manifest.displaySizeLabel.ifBlank { resourceSizeLabelForManifest(manifest) },
+            sourceLabel = sourceLabel,
+            stateLabel = labels.state,
+            actionLabel = labels.action,
+            actionEnabled = actionEnabled,
+            includes = resourceIncludesForManifest(manifest),
+            notes = resourceNotesForManifest(manifest),
+            steps = resourceStepsForManifest(manifest),
+            badge = resourceBadgeForManifest(manifest),
+            media = resourceMediaForManifest(manifest),
+            previewCards = resourcePreviewCardsForManifest(manifest),
+            requirementRows = resourceRequirementRowsForManifest(manifest),
+            recommendations = manifest.displayRecommendations.map { ResourceRecommendation(it.resourceId, it.label) },
             rawJson = runCatching { manifest.rawJson.toString(2) }.getOrElse { manifest.rawJson.toString() }
         )
     }
 
+    private fun resourceBadgeForManifest(manifest: KiteResourceManifest): ResourceBadge {
+        val badge = manifest.displayBadge
+        val accent = badge?.accent?.ifBlank { manifest.displayAccent } ?: manifest.displayAccent
+        return ResourceBadge(
+            label = badge?.label?.ifBlank { "Kite 官方资源" } ?: "Kite 官方资源",
+            iconText = badge?.iconText?.ifBlank { "✓" } ?: "✓",
+            accent = accent.ifBlank { resourceAccentForManifest(manifest) }
+        )
+    }
+
+    private fun resourceMediaForManifest(manifest: KiteResourceManifest): ResourceMedia? =
+        manifest.displayMedia?.let { media ->
+            ResourceMedia(
+                type = media.type,
+                asset = media.asset,
+                contentDescription = media.contentDescription.ifBlank { "${manifest.name} 视觉预览" }
+            )
+        }
+
+    private fun resourcePreviewCardsForManifest(manifest: KiteResourceManifest): List<ResourcePreviewCard> {
+        val previews = manifest.displayPreviewCards.map { it.toResourcePreviewCard(manifest) }
+        if (previews.isNotEmpty()) return previews
+        val accent = manifest.displayAccent.ifBlank { resourceAccentForManifest(manifest) }
+        val iconText = manifest.iconText.ifBlank { resourceFallbackIconText(manifest) }
+        return listOf(
+            ResourcePreviewCard("工作台", "管理模型、对话和提示词", iconText, accent, manifest.iconAsset, manifest.iconFit),
+            ResourcePreviewCard("资源卡片", "一键部署，快速启动", iconText, accent, manifest.iconAsset, manifest.iconFit),
+            ResourcePreviewCard("启动访问", "配置完成后直接打开", "✓", accent)
+        )
+    }
+
+    private fun KiteResourcePreviewSpec.toResourcePreviewCard(manifest: KiteResourceManifest): ResourcePreviewCard {
+        val accent = this.accent.ifBlank { manifest.displayAccent.ifBlank { resourceAccentForManifest(manifest) } }
+        return ResourcePreviewCard(
+            title = title,
+            subtitle = subtitle,
+            symbol = symbol.ifBlank { manifest.iconText.ifBlank { resourceFallbackIconText(manifest) } },
+            accent = accent,
+            iconAsset = iconAsset.ifBlank { manifest.iconAsset },
+            iconFit = iconFit.ifBlank { manifest.iconFit }
+        )
+    }
+
+    private fun resourceRequirementRowsForManifest(manifest: KiteResourceManifest): List<ResourceRequirementRow> =
+        manifest.displayRequirementRows.map { it.toResourceRequirementRow() }
+
+    private fun KiteResourceDisplayRowSpec.toResourceRequirementRow(): ResourceRequirementRow =
+        ResourceRequirementRow(label = label, value = value)
+
+    private fun resourceIdleLabelForManifest(manifest: KiteResourceManifest): String =
+        if (manifest.sourceType == "bundled") "本地包" else "未获取"
+
+    private fun resourceCategoryForManifest(manifest: KiteResourceManifest): String {
+        val tags = manifest.tags.map { it.lowercase() }.toSet()
+        val provides = manifest.provides.map { it.lowercase() }
+        return when {
+            "ai" in tags || "agent" in tags || "coding-agent" in tags ||
+                provides.any { it.startsWith("agent.") } -> "AI"
+            provides.any { it.startsWith("runtime.node") || it == "tool.npm" || it == "tool.npx" } -> "JavaScript"
+            provides.any {
+                it.startsWith("runtime.python") ||
+                    it == "tool.pip" ||
+                    it == "tool.venv" ||
+                    it == "tool.uv" ||
+                    it == "tool.uvx"
+            } -> "Python"
+            else -> "系统工具"
+        }
+    }
+
+    private fun resourceAccentForManifest(manifest: KiteResourceManifest): String =
+        when (resourceCategoryForManifest(manifest)) {
+            "AI" -> "teal"
+            "JavaScript" -> "green"
+            "Python" -> "blue"
+            else -> "orange"
+        }
+
+    private fun resourceSizeLabelForManifest(manifest: KiteResourceManifest): String =
+        when (manifest.sourceType) {
+            "bundled" -> "内置包"
+            "apt", "npm", "official_script", "git", "command" -> "网络包"
+            else -> ""
+        }
+
+    private fun resourceFallbackIconText(manifest: KiteResourceManifest): String {
+        val name = manifest.name.ifBlank { manifest.id.substringAfterLast('.') }.trim()
+        return name.take(2).ifBlank { "R" }
+    }
+
+    private fun resourceIncludesForManifest(manifest: KiteResourceManifest): List<String> =
+        mergeResourceStrings(
+            manifest.provides,
+            manifest.installActions.flatMap { it.managedCommands } + manifest.homeCards.map { it.label }
+        )
+
+    private fun resourceNotesForManifest(manifest: KiteResourceManifest): List<String> =
+        mergeResourceStrings(
+            resourceRelationNotes(manifest),
+            when (manifest.sourceType) {
+                "bundled" -> listOf("来源：内置资源包")
+                "apt" -> listOf("来源：Ubuntu apt")
+                "npm" -> listOf("来源：npm")
+                "official_script" -> listOf("来源：官方安装脚本")
+                "git" -> listOf("来源：Git 仓库")
+                else -> emptyList()
+            }
+        )
+
+    private fun resourceStepsForManifest(manifest: KiteResourceManifest): List<ResourceStep> {
+        val installSteps = manifest.installActions.mapIndexed { index, action ->
+            ResourceStep(
+                type = action.type,
+                title = resourceInstallActionTitle(manifest, index),
+                preview = resourceActionPreview(action)
+            )
+        }
+        if (installSteps.isNotEmpty()) return installSteps
+        return listOf(
+            ResourceStep(
+                type = "open",
+                title = "打开资源",
+                preview = manifest.openRecipe?.optJSONObject("base")?.optString("name").orEmpty()
+                    .ifBlank { manifest.name }
+            )
+        )
+    }
+
+    private fun resourceInstallActionTitle(manifest: KiteResourceManifest, index: Int): String {
+        if (index > 0) return "执行获取步骤 ${index + 1}"
+        return when (manifest.sourceType) {
+            "bundled" -> "安装内置资源"
+            "apt" -> "安装 apt 包"
+            "npm" -> "安装 npm 包"
+            "official_script" -> "执行官方安装器"
+            "git" -> "获取源码"
+            else -> "执行获取步骤"
+        }
+    }
+
+    private fun resourceActionPreview(action: KiteResourceShellAction): String =
+        action.cmd.lineSequence()
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+            .take(160)
+
     private fun resourceSectionLabel(section: String?): String =
         when (section) {
+            "foundation" -> "基础环境"
+            "ai-vendor" -> "厂商工具"
+            "ai-community" -> "独立工具"
             "featured" -> "精选推荐"
             "quick" -> "快速开始"
             "more" -> "更多资源"
@@ -6465,6 +6103,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             "apt" -> "apt"
             "official_script" -> "官方脚本"
             "npm" -> "npm"
+            "git" -> "GitHub"
             "command" -> "网络"
             else -> ""
         }
@@ -11172,15 +10811,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun decodeRecipeIconSource(source: String): Bitmap? {
+        val normalized = source.trim().trimStart('/')
+        if (normalized.isBlank() || normalized.contains("..")) return null
+        recipeIconBitmapCache[normalized]?.let { return it }
         val file = recipeIconFile(source)
-        return if (file.exists()) {
+        val bitmap = if (file.exists()) {
             BitmapFactory.decodeFile(file.absolutePath)
         } else {
-            null
+            runCatching {
+                assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream) }
+            }.getOrNull()
         }
+        if (bitmap != null) recipeIconBitmapCache[normalized] = bitmap
+        return bitmap
     }
 
-    private fun recipeIconSourceExists(source: String): Boolean = recipeIconFile(source).exists()
+    private fun recipeIconSourceExists(source: String): Boolean {
+        val normalized = source.trim().trimStart('/')
+        if (normalized.isBlank() || normalized.contains("..")) return false
+        return recipeIconFile(source).exists() ||
+            runCatching {
+                assets.open(normalized).use { true }
+            }.getOrDefault(false)
+    }
 
     private fun recipeIconFile(source: String): File =
         if (source.startsWith("/") || source.contains(":")) {
@@ -13524,7 +13177,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun tintBackgroundBorder(color: Int): Int = KiteTheme.tint(color, 0.72f)
 
     private fun displayAccentName(recipe: KiteRecipe): String =
-        "primary"
+        recipe.card.accent.ifBlank { "primary" }
 
     private fun accentFor(recipe: KiteRecipe): Int = KiteTheme.accent(displayAccentName(recipe), tokens).strong
 
@@ -13817,6 +13470,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val includes: List<String>,
         val notes: List<String>,
         val steps: List<ResourceStep>,
+        val badge: ResourceBadge,
+        val media: ResourceMedia?,
+        val previewCards: List<ResourcePreviewCard>,
+        val requirementRows: List<ResourceRequirementRow>,
+        val recommendations: List<ResourceRecommendation> = emptyList(),
         val rawJson: String = ""
     )
 
@@ -13829,6 +13487,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private data class ResourceRecommendation(
         val resourceId: String,
         val label: String
+    )
+
+    private data class ResourceBadge(
+        val label: String,
+        val iconText: String,
+        val accent: String
+    )
+
+    private data class ResourceMedia(
+        val type: String,
+        val asset: String,
+        val contentDescription: String
+    )
+
+    private data class ResourceRequirementRow(
+        val label: String,
+        val value: String
     )
 
     private data class ResourceRuntimeLabels(
@@ -13943,6 +13618,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private data class ResourceHomeSectionUi(
         val id: String,
         val title: String,
+        val style: String,
         val items: List<ResourceItem>
     )
 
@@ -13950,7 +13626,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val title: String,
         val subtitle: String,
         val symbol: String,
-        val accent: String
+        val accent: String,
+        val iconAsset: String = "",
+        val iconFit: String = ""
     )
 
     private data class SummaryMetric(
@@ -14061,17 +13739,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
         private const val RESOURCE_HERMES_WEBUI = "kite.hermes.webui"
-        private const val RESOURCE_REASONIX = "kite.reasonix"
-        private const val RESOURCE_MIMO_CODE = "kite.mimo.code"
-        private const val RESOURCE_CODEX_CLI = "kite.codex.cli"
-        private const val RESOURCE_CLAUDE_CODE = "kite.claude.code"
-        private const val RESOURCE_OPENCODE = "kite.opencode"
-        private const val RESOURCE_OPENCLAW = "kite.openclaw"
         private const val RESOURCE_GIT = "kite.git"
         private const val RESOURCE_CURL = "kite.curl"
         private const val RESOURCE_PYTHON = "kite.python"
         private const val RESOURCE_UV = "kite.uv"
-        private val RESOURCE_HOME_TOOL_SHELF_SECTIONS = setOf("ai-vendor", "ai-community")
         private const val RESOURCE_TOOL_SHELF_ITEM_WIDTH_DP = 68
         private const val RESOURCE_TOOL_SHELF_ITEM_GAP_DP = 7
         private const val RESOURCE_TOOL_SHELF_ICON_SIZE_DP = 58

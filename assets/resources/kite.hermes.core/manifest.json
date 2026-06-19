@@ -15,6 +15,28 @@
     "sections": [
       "featured"
     ],
+    "category": "AI",
+    "accent": "teal",
+    "sizeLabel": "网络包",
+    "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。它只负责本体安装和卸载；面向普通人的配置网页、WebUI 和首页启动卡会作为上层方案或配套卡组织。",
+    "recommendations": [
+      {
+        "resourceId": "kite.python",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.uv",
+        "label": "依赖管理"
+      },
+      {
+        "resourceId": "kite.git",
+        "label": "源码工具"
+      },
+      {
+        "resourceId": "kite.curl",
+        "label": "下载工具"
+      }
+    ],
     "tags": [
       "hermes",
       "agent",

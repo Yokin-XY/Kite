@@ -15,6 +15,28 @@
     "sections": [
       "featured"
     ],
+    "category": "JavaScript",
+    "accent": "green",
+    "sizeLabel": "30.1 MB",
+    "longDescription": "Node.js 是资源页第一条真实样本。它从 Kite 内置资源缓存解压，按注册名安装到软件区，并把 node、npm、npx 暴露到 /workspace/.kf/bin，供后续 Hermes WebUI、网页工具和卡片脚本使用。",
+    "recommendations": [
+      {
+        "resourceId": "kite.hermes.webui",
+        "label": "上层应用"
+      },
+      {
+        "resourceId": "kite.reasonix",
+        "label": "编码 Agent"
+      },
+      {
+        "resourceId": "kite.mimo.code",
+        "label": "编码 Agent"
+      },
+      {
+        "resourceId": "kite.openclaw",
+        "label": "编码 Agent"
+      }
+    ],
     "tags": [
       "node",
       "npm",

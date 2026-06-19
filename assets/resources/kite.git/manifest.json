@@ -15,6 +15,20 @@
     "sections": [
       "more"
     ],
+    "category": "系统工具",
+    "accent": "orange",
+    "sizeLabel": "网络包",
+    "longDescription": "Git 是 Hermes 本体和后续源码型资源的底层工具卡。安装时先检查当前 Ubuntu 环境是否已有 git；已有则只登记为可用，没有则通过 apt 安装 git 与 ca-certificates，并记录这次安装的 ownership。",
+    "recommendations": [
+      {
+        "resourceId": "kite.curl",
+        "label": "同级工具"
+      },
+      {
+        "resourceId": "kite.hermes.core",
+        "label": "被依赖"
+      }
+    ],
     "tags": [
       "git",
       "source",

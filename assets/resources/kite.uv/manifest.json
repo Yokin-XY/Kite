@@ -16,6 +16,20 @@
     "sections": [
       "more"
     ],
+    "category": "Python",
+    "accent": "green",
+    "sizeLabel": "内置包",
+    "longDescription": "uv 是 Hermes 安装 Python 依赖和管理虚拟环境的基础工具卡。Kite 使用内置 ai-dev-pack 中的 uv 0.11.1，只安装 uv/uvx 到 /workspace/.kf/bin，不顺带安装完整工具合集。",
+    "recommendations": [
+      {
+        "resourceId": "kite.python",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.hermes.core",
+        "label": "上层应用"
+      }
+    ],
     "tags": [
       "uv",
       "python",

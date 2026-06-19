@@ -13,6 +13,15 @@ data class KiteResourceManifest(
     val iconText: String,
     val iconAsset: String,
     val iconFit: String = "",
+    val displayCategory: String,
+    val displayAccent: String,
+    val displaySizeLabel: String,
+    val displayLongDescription: String,
+    val displayBadge: KiteResourceBadgeSpec?,
+    val displayMedia: KiteResourceMediaSpec?,
+    val displayPreviewCards: List<KiteResourcePreviewSpec>,
+    val displayRequirementRows: List<KiteResourceDisplayRowSpec>,
+    val displayRecommendations: List<KiteResourceRecommendationSpec>,
     val sections: List<String>,
     val tags: List<String>,
     val provides: List<String>,
@@ -44,15 +53,55 @@ data class KiteResourceHomeCard(
     val recipe: JSONObject
 )
 
+data class KiteResourceRecommendationSpec(
+    val resourceId: String,
+    val label: String
+)
+
+data class KiteResourceBadgeSpec(
+    val label: String,
+    val iconText: String,
+    val accent: String
+)
+
+data class KiteResourceMediaSpec(
+    val type: String,
+    val asset: String,
+    val contentDescription: String
+)
+
+data class KiteResourcePreviewSpec(
+    val title: String,
+    val subtitle: String,
+    val symbol: String,
+    val accent: String,
+    val iconAsset: String,
+    val iconFit: String
+)
+
+data class KiteResourceDisplayRowSpec(
+    val label: String,
+    val value: String
+)
+
 data class KiteResourceHomeLayout(
     val sections: List<KiteResourceHomeSection>,
+    val hero: KiteResourceHomeHero?,
+    val chips: List<String>,
     val rawJson: JSONObject
 )
 
 data class KiteResourceHomeSection(
     val id: String,
     val title: String,
+    val style: String,
     val items: List<String>
+)
+
+data class KiteResourceHomeHero(
+    val resourceId: String,
+    val imageAsset: String,
+    val contentDescription: String
 )
 
 data class KiteResourceRelationTargets(
@@ -399,13 +448,35 @@ class KiteResourceManifestLoader(private val context: Context) {
                 val section = sectionsJson.optJSONObject(index) ?: continue
                 val id = section.optString("id").trim()
                 val title = section.optString("title").trim()
+                val style = section.optString("style").trim()
                 val items = section.optJSONArray("items").toStringList()
                 if (id.isNotBlank() && title.isNotBlank()) {
-                    add(KiteResourceHomeSection(id = id, title = title, items = items))
+                    add(KiteResourceHomeSection(id = id, title = title, style = style, items = items))
                 }
             }
         }
-        return KiteResourceHomeLayout(sections = sections, rawJson = json.deepCopy())
+        val heroJson = json.optJSONObject("hero")
+        val hero = heroJson?.let {
+            val resourceId = it.optString("resourceId").trim()
+                .ifBlank { it.optString("id").trim() }
+            val imageAsset = it.optString("imageAsset").trim()
+                .ifBlank { it.optString("asset").trim() }
+            if (resourceId.isBlank() || imageAsset.isBlank()) {
+                null
+            } else {
+                KiteResourceHomeHero(
+                    resourceId = resourceId,
+                    imageAsset = imageAsset,
+                    contentDescription = it.optString("contentDescription").trim()
+                )
+            }
+        }
+        return KiteResourceHomeLayout(
+            sections = sections,
+            hero = hero,
+            chips = json.optJSONArray("chips").toStringList(),
+            rawJson = json.deepCopy()
+        )
     }
 
     private fun parseManifest(json: JSONObject): KiteResourceManifest {
@@ -438,6 +509,15 @@ class KiteResourceManifestLoader(private val context: Context) {
                 else -> ""
             },
             iconFit = icon?.optString("fit").orEmpty().trim(),
+            displayCategory = display.optString("category").trim(),
+            displayAccent = display.optString("accent").trim(),
+            displaySizeLabel = display.optString("sizeLabel").trim(),
+            displayLongDescription = display.optString("longDescription").trim(),
+            displayBadge = parseBadge(display.optJSONObject("badge")),
+            displayMedia = parseMedia(display.optJSONObject("media")),
+            displayPreviewCards = parsePreviewCards(display.optJSONArray("previewCards")),
+            displayRequirementRows = parseDisplayRows(display.optJSONArray("requirementRows")),
+            displayRecommendations = parseRecommendations(display.optJSONArray("recommendations")),
             sections = display.optJSONArray("sections").toStringList(),
             tags = display.optJSONArray("tags").toStringList(),
             provides = relations.optJSONArray("provides").toStringList(),
@@ -451,6 +531,91 @@ class KiteResourceManifestLoader(private val context: Context) {
             homeCards = parseHomeCards(json.optJSONArray("homeCards")),
             rawJson = json.deepCopy()
         )
+    }
+
+    private fun parseBadge(badgeJson: JSONObject?): KiteResourceBadgeSpec? {
+        if (badgeJson == null) return null
+        val label = badgeJson.optString("label").trim()
+        if (label.isBlank()) return null
+        return KiteResourceBadgeSpec(
+            label = label,
+            iconText = badgeJson.optString("iconText").trim()
+                .ifBlank { badgeJson.optString("icon").trim() },
+            accent = badgeJson.optString("accent").trim()
+        )
+    }
+
+    private fun parseMedia(mediaJson: JSONObject?): KiteResourceMediaSpec? {
+        if (mediaJson == null) return null
+        val type = mediaJson.optString("type").trim()
+        val asset = mediaJson.optString("asset").trim()
+        if (type.isBlank() || asset.isBlank()) return null
+        return KiteResourceMediaSpec(
+            type = type,
+            asset = asset,
+            contentDescription = mediaJson.optString("contentDescription").trim()
+        )
+    }
+
+    private fun parsePreviewCards(previewJson: JSONArray?): List<KiteResourcePreviewSpec> {
+        if (previewJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until previewJson.length()) {
+                val preview = previewJson.optJSONObject(index) ?: continue
+                val title = preview.optString("title").trim()
+                if (title.isBlank()) continue
+                val icon = preview.optJSONObject("icon")
+                add(
+                    KiteResourcePreviewSpec(
+                        title = title,
+                        subtitle = preview.optString("subtitle").trim(),
+                        symbol = when (icon?.optString("type")) {
+                            "text" -> icon.optString("value")
+                            "asset" -> icon.optString("fallbackText")
+                            else -> preview.optString("symbol")
+                        }.trim(),
+                        accent = preview.optString("accent").trim(),
+                        iconAsset = when (icon?.optString("type")) {
+                            "asset" -> icon.optString("value").ifBlank { icon.optString("asset") }
+                            else -> preview.optString("iconAsset")
+                        }.trim(),
+                        iconFit = icon?.optString("fit").orEmpty().trim()
+                    )
+                )
+            }
+        }
+    }
+
+    private fun parseDisplayRows(rowsJson: JSONArray?): List<KiteResourceDisplayRowSpec> {
+        if (rowsJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until rowsJson.length()) {
+                val row = rowsJson.optJSONObject(index) ?: continue
+                val label = row.optString("label").trim()
+                val value = row.optString("value").trim()
+                if (label.isNotBlank() && value.isNotBlank()) {
+                    add(KiteResourceDisplayRowSpec(label = label, value = value))
+                }
+            }
+        }
+    }
+
+    private fun parseRecommendations(recommendationsJson: JSONArray?): List<KiteResourceRecommendationSpec> {
+        if (recommendationsJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until recommendationsJson.length()) {
+                val recommendation = recommendationsJson.optJSONObject(index) ?: continue
+                val resourceId = recommendation.optString("resourceId").trim()
+                    .ifBlank { recommendation.optString("id").trim() }
+                if (resourceId.isBlank()) continue
+                add(
+                    KiteResourceRecommendationSpec(
+                        resourceId = resourceId,
+                        label = recommendation.optString("label").trim()
+                    )
+                )
+            }
+        }
     }
 
     private fun parseShellActions(actionsJson: JSONArray?): List<KiteResourceShellAction> {

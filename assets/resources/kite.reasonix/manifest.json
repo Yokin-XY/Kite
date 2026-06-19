@@ -16,6 +16,32 @@
     "sections": [
       "featured"
     ],
+    "category": "AI",
+    "accent": "teal",
+    "sizeLabel": "网络包",
+    "longDescription": "Reasonix 是围绕 DeepSeek prefix-cache 稳定性设计的终端编码 Agent。Kite 把它作为 Node.js 上层资源：安装阶段只通过 npm 装 CLI 并暴露 reasonix/dsnix 命令；创建首页卡片后，用户从终端表面启动交互式 Reasonix，不把 API Key 或运行输出写回资源卡。",
+    "recommendations": [
+      {
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.git",
+        "label": "源码工具"
+      },
+      {
+        "resourceId": "kite.mimo.code",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.claude.code",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.hermes.webui",
+        "label": "同类 Agent"
+      }
+    ],
     "tags": [
       "reasonix",
       "deepseek",

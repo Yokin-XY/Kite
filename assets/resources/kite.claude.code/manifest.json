@@ -16,6 +16,28 @@
     "sections": [
       "featured"
     ],
+    "category": "AI",
+    "accent": "orange",
+    "sizeLabel": "网络包",
+    "longDescription": "Claude Code 是 Anthropic 面向终端的编码助手。Kite 使用官方 native installer 获取 claude 命令，并只负责资源获取、wrapper 暴露和首页卡模板；登录和项目授权在终端表面完成。",
+    "recommendations": [
+      {
+        "resourceId": "kite.curl",
+        "label": "下载工具"
+      },
+      {
+        "resourceId": "kite.codex.cli",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.opencode",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.reasonix",
+        "label": "终端 Agent"
+      }
+    ],
     "tags": [
       "claude",
       "anthropic",

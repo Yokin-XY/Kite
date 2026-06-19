@@ -9,7 +9,8 @@
         "kite.openclaw",
         "kite.reasonix",
         "kite.hermes.core"
-      ]
+      ],
+      "style": "shelf"
     },
     {
       "id": "ai-vendor",
@@ -18,7 +19,8 @@
         "kite.codex.cli",
         "kite.claude.code",
         "kite.mimo.code"
-      ]
+      ],
+      "style": "shelf"
     },
     {
       "id": "foundation",
@@ -29,14 +31,30 @@
         "kite.git",
         "kite.uv",
         "kite.curl"
-      ]
+      ],
+      "style": "list"
     },
     {
       "id": "more",
       "title": "更多资源",
       "items": [
         "kite.hermes.webui"
-      ]
+      ],
+      "style": "list"
     }
+  ],
+  "hero": {
+    "resourceId": "kite.mimo.code",
+    "imageAsset": "resources/kite.mimo.code/banner.png",
+    "contentDescription": "MiMo Code 海报，点击查看资源详情"
+  },
+  "chips": [
+    "全部",
+    "已获取",
+    "本地",
+    "Python",
+    "Node",
+    "AI",
+    "系统工具"
   ]
 }

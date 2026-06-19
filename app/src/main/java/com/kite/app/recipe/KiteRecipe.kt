@@ -67,6 +67,7 @@ data class KiteRecipe(
                 }
                 .put("icon", icon.toJson())
         )
+        .put("card", card.toJson())
         .put("launch", launch.toJson())
         .put("recipe", JSONArray().apply {
             mainRecipeSteps().forEach { put(it.toJson()) }
@@ -158,6 +159,7 @@ data class KiteRecipe(
             val type = legacyType.ifBlank { inferTypeFromSteps(parsedActions[ACTION_START]?.steps ?: execution.steps) }
             val expected = json.optJSONObject("expected")?.let { KiteExpectedResult.fromJson(it) }
             val icon = parseIcon(json, header, type)
+            val card = parseCard(json, icon, type)
             val actions = parsedActions.ifEmpty { defaultActionsFor(execution.steps, json.optString("defaultUrl")) }
             val defaultUrl = json.optString("defaultUrl").ifBlank {
                 openWebUrlFromActions(actions).ifBlank { firstOpenWebUrl(execution.steps) }
@@ -177,7 +179,7 @@ data class KiteRecipe(
                 defaultUrl = defaultUrl,
                 shortcut = header?.optBoolean("shortcut") ?: json.optBoolean("shortcut", false),
                 icon = icon,
-                card = KiteRecipeCard.defaultForType(type),
+                card = card,
                 launch = KiteLaunchConfig.fromJson(json.optJSONObject("launch")),
                 execution = execution,
                 actions = actions,
@@ -219,6 +221,20 @@ data class KiteRecipe(
                 KiteRecipeIcon(type = "builtin", name = KiteRecipeIcon.normalizeName(legacyIcon, type))
             } else {
                 KiteRecipeIcon.defaultForType(type)
+            }
+        }
+
+        private fun parseCard(json: JSONObject, icon: KiteRecipeIcon, type: String): KiteRecipeCard {
+            val cardJson = json.optJSONObject("card")
+            if (cardJson != null) return KiteRecipeCard.fromJson(cardJson, type, icon.name)
+            val legacyCardJson = JSONObject().apply {
+                if (json.has("accent")) put("accent", json.optString("accent"))
+                if (json.has("status")) put("status", json.optString("status"))
+            }
+            return if (legacyCardJson.length() > 0) {
+                KiteRecipeCard.fromJson(legacyCardJson, type, icon.name)
+            } else {
+                KiteRecipeCard.defaultForType(type)
             }
         }
 
@@ -425,13 +441,22 @@ data class KiteRecipeCard(
             val recommended = defaultAccentForIcon(iconName, recipeType)
             val normalized = normalizeAccent(storedAccent)
             if (normalized.isBlank()) return recommended
-            if (normalized in LEGACY_GENERATED_ACCENTS) return recommended
             return if (normalized in SUPPORTED_ACCENTS) normalized else recommended
         }
 
         private const val ACCENT_PRIMARY = "primary"
-        private val SUPPORTED_ACCENTS = setOf(ACCENT_PRIMARY, "theme", "workflow", "green", "blue", "purple", "orange")
-        private val LEGACY_GENERATED_ACCENTS = setOf("green", "blue", "purple", "orange", "teal", "cyan")
+        private val SUPPORTED_ACCENTS = setOf(
+            ACCENT_PRIMARY,
+            "theme",
+            "workflow",
+            "green",
+            "blue",
+            "purple",
+            "orange",
+            "teal",
+            "cyan",
+            "mint"
+        )
 
         private fun normalizeAccent(accent: String?): String =
             accent?.trim()?.lowercase().orEmpty()

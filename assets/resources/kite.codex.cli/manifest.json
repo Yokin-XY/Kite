@@ -15,6 +15,28 @@
     "sections": [
       "featured"
     ],
+    "category": "AI",
+    "accent": "teal",
+    "sizeLabel": "网络包",
+    "longDescription": "Codex CLI 是 OpenAI 面向终端的编码助手。Kite 使用官方 standalone installer 获取命令入口，并把 codex 暴露到 /workspace/.kf/bin；登录、模型和项目权限仍由 Codex 自己在终端里引导，不写入资源卡 JSON。",
+    "recommendations": [
+      {
+        "resourceId": "kite.curl",
+        "label": "下载工具"
+      },
+      {
+        "resourceId": "kite.claude.code",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.opencode",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.mimo.code",
+        "label": "终端 Agent"
+      }
+    ],
     "tags": [
       "codex",
       "openai",

@@ -16,6 +16,28 @@
     "sections": [
       "featured"
     ],
+    "category": "AI",
+    "accent": "blue",
+    "sizeLabel": "网络包",
+    "longDescription": "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方 install script 安装 opencode 命令，并提供首页卡入口；Provider 配置和会话内容仍由终端运行态承接。",
+    "recommendations": [
+      {
+        "resourceId": "kite.curl",
+        "label": "下载工具"
+      },
+      {
+        "resourceId": "kite.codex.cli",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.claude.code",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.openclaw",
+        "label": "同类 Agent"
+      }
+    ],
     "tags": [
       "opencode",
       "coding-agent",

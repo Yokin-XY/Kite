@@ -16,6 +16,28 @@
     "sections": [
       "featured"
     ],
+    "category": "AI",
+    "accent": "orange",
+    "sizeLabel": "网络包",
+    "longDescription": "MiMo Code 是小米 MiMo 团队的终端原生 AI 编码助手，可以读写代码、运行命令、管理 Git，并通过持久记忆理解项目。Kite 把它作为 Node.js 上层资源：获取阶段只安装 @mimo-ai/cli 并暴露 mimo 命令；打开后在终端表面完成首次配置或登录，不把 Provider、OAuth 或运行输出写进资源卡。",
+    "recommendations": [
+      {
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.git",
+        "label": "源码工具"
+      },
+      {
+        "resourceId": "kite.reasonix",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.codex.cli",
+        "label": "同类 Agent"
+      }
+    ],
     "tags": [
       "mimo",
       "mimocode",
@@ -24,7 +46,12 @@
       "ai",
       "mcp",
       "memory"
-    ]
+    ],
+    "media": {
+      "type": "image",
+      "asset": "resources/kite.mimo.code/banner.png",
+      "contentDescription": "MiMo Code 海报，点击查看资源详情"
+    }
   },
   "relations": {
     "provides": [

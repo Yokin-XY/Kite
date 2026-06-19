@@ -15,6 +15,20 @@
     "sections": [
       "more"
     ],
+    "category": "Python",
+    "accent": "blue",
+    "sizeLabel": "网络包",
+    "longDescription": "Python 是 Hermes 的基础层资源。Hermes 当前声明 Python >=3.11,<3.14；这张卡负责补齐 python3、venv、pip 和证书能力，并把可用状态登记到 Kite。卸载时不移除系统 Python，只清除 Kite 的资源登记。",
+    "recommendations": [
+      {
+        "resourceId": "kite.uv",
+        "label": "包管理"
+      },
+      {
+        "resourceId": "kite.hermes.core",
+        "label": "上层应用"
+      }
+    ],
     "tags": [
       "python",
       "venv",

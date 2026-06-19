@@ -12,6 +12,11 @@
   },
   "display": {
     "sections": [],
+    "category": "系统工具",
+    "accent": "teal",
+    "sizeLabel": "内置包",
+    "longDescription": "工具环境合集是隐藏的底层资源包，提供 pnpm、uv、adb 与常用命令合集。它不直接进入资源首页，只作为能力提供者被上层资源复用。",
+    "recommendations": [],
     "tags": [
       "tool",
       "node",
