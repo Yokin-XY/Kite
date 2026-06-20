@@ -6448,52 +6448,57 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             ?.let { CardRunStore.get(it) }
             ?: runtimeStateFor(recipe)
         val wizardChildRun = resourceInstallWizardSelectedRun(recipe, state.surface)
+        val actionRecipe = wizardChildRun?.first ?: recipe
         val surfaceState = wizardChildRun?.second ?: state
-        root.addView(cardRunTopBar(
-            recipe = recipe,
-            state = state,
-            actionRecipe = wizardChildRun?.first ?: recipe,
-            actionState = surfaceState
-        ))
+        val surfaceHost = FrameLayout(this).apply {
+            setBackgroundColor(tokens.pageBackground)
+        }
+        root.addView(surfaceHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         val terminalSessionId = surfaceState.terminalSessionId?.takeIf { it.isNotBlank() }
         val webUrl = surfaceState.nextActionUrl?.takeIf { it.isNotBlank() }
         if (state.surface == CardRunSurface.Terminal && terminalSessionId != null) {
             applyKiteTerminalTheme()
-            root.addView(FrameLayout(this).apply {
+            surfaceHost.addView(FrameLayout(this).apply {
                 id = cardRunTerminalContainerId
                 setBackgroundColor(tokens.pageBackground)
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             showCardRunTerminalFragment(terminalSessionId)
         } else if (state.surface == CardRunSurface.Terminal) {
-            root.addView(cardRunLoadingBody("正在准备终端"), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            surfaceHost.addView(cardRunLoadingBody("正在准备终端"), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         } else if (state.surface == CardRunSurface.Web && webUrl != null) {
-            showCardRunWebView(wizardChildRun?.first ?: recipe, webUrl)
+            showCardRunWebView(surfaceHost, actionRecipe, webUrl)
         } else if (state.surface == CardRunSurface.Web) {
-            root.addView(
-                cardRunWebAddressInputBody(wizardChildRun?.first ?: recipe, surfaceState),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            surfaceHost.addView(
+                cardRunWebAddressInputBody(actionRecipe, surfaceState),
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             )
         } else if (state.surface == CardRunSurface.InstallWizard) {
-            root.addView(ScrollView(this).apply {
+            surfaceHost.addView(ScrollView(this).apply {
                 addView(resourceInstallWizardContent())
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         } else if (wizardChildRun != null) {
-            root.addView(ScrollView(this).apply {
+            surfaceHost.addView(ScrollView(this).apply {
                 addView(cardRunContent(wizardChildRun.first, wizardChildRun.second))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         } else {
-            root.addView(ScrollView(this).apply {
+            surfaceHost.addView(ScrollView(this).apply {
                 addView(cardRunContent(recipe, state))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
+        addCardRunFloatingCapsule(surfaceHost, recipe, state, actionRecipe, surfaceState)
     }
 
     private fun showCardRunLoadingSurface(recipe: KiteRecipe, message: String) {
         currentScreen = Screen.CardRun
         root.setBackgroundColor(Color.rgb(246, 247, 249))
         clearRootForScreen()
-        root.addView(cardRunTopBar(recipe, runtimeStateFor(recipe)))
-        root.addView(cardRunLoadingBody(message), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val state = runtimeStateFor(recipe)
+        val surfaceHost = FrameLayout(this).apply {
+            setBackgroundColor(tokens.pageBackground)
+        }
+        root.addView(surfaceHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        surfaceHost.addView(cardRunLoadingBody(message), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        addCardRunFloatingCapsule(surfaceHost, recipe, state, recipe, state)
     }
 
     private fun cardRunLoadingBody(message: String): View =
@@ -6576,6 +6581,167 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         )
     }
 
+    private fun addCardRunFloatingCapsule(
+        host: FrameLayout,
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        actionRecipe: KiteRecipe,
+        actionState: RecipeRuntimeState
+    ) {
+        val capsule = cardRunFloatingCapsule(recipe, state, actionRecipe, actionState)
+        host.addView(
+            capsule,
+            FrameLayout.LayoutParams(dp(76), dp(36), Gravity.TOP or Gravity.RIGHT).apply {
+                setMargins(0, dp(12), dp(12), 0)
+            }
+        )
+        capsule.bringToFront()
+    }
+
+    private fun cardRunFloatingCapsule(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        actionRecipe: KiteRecipe,
+        actionState: RecipeRuntimeState
+    ): View {
+        val collapsedWidth = dp(76)
+        val collapsedHeight = dp(36)
+        val collapsedTopMargin = dp(12)
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
+        if (canCompleteCurrentCardStep(actionRecipe, actionState)) {
+            actions += "完成" to { completeCurrentCardStep(actionRecipe, actionState) }
+        }
+        if (actionState.surface == CardRunSurface.Web && !actionState.nextActionUrl.isNullOrBlank()) {
+            actions += "刷新" to { webView.reload() }
+        }
+
+        val expandedWidth = (collapsedWidth + actions.size * dp(58)).coerceAtMost(dp(248))
+        val expandedHeight = dp(42)
+        val shell = FrameLayout(this).apply {
+            background = roundedBox(
+                Color.argb(188, 255, 255, 255),
+                Color.argb(46, 123, 137, 156),
+                dp(21).toFloat(),
+                dp(1)
+            )
+            elevation = dp(7).toFloat()
+            clipChildren = true
+            clipToPadding = true
+        }
+
+        val actionsRow = row {
+            gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL
+        }.apply {
+            alpha = 0f
+            translationX = dp(14).toFloat()
+        }
+
+        var expanded = false
+        fun setExpanded(open: Boolean) {
+            if (actions.isEmpty()) return
+            if (expanded == open) return
+            expanded = open
+            val startWidth = shell.layoutParams?.width?.takeIf { it > 0 } ?: collapsedWidth
+            val startHeight = shell.layoutParams?.height?.takeIf { it > 0 } ?: collapsedHeight
+            val targetWidth = if (open) expandedWidth else collapsedWidth
+            val targetHeight = if (open) expandedHeight else collapsedHeight
+            ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 220L
+                interpolator = PathInterpolator(0.22f, 1f, 0.36f, 1f)
+                addUpdateListener { animator ->
+                    val progress = animator.animatedValue as Float
+                    val easedAlpha = if (open) progress else 1f - progress
+                    val currentWidth = (startWidth + (targetWidth - startWidth) * progress).roundToInt()
+                    val currentHeight = (startHeight + (targetHeight - startHeight) * progress).roundToInt()
+                    shell.layoutParams = shell.layoutParams.apply {
+                        width = currentWidth
+                        height = currentHeight
+                        if (this is FrameLayout.LayoutParams) {
+                            topMargin = collapsedTopMargin - ((currentHeight - collapsedHeight) / 2)
+                        }
+                    }
+                    actionsRow.alpha = easedAlpha
+                    actionsRow.translationX = (if (open) 1f - progress else progress) * dp(14)
+                }
+            }.start()
+        }
+
+        val content = row {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(5), 0, dp(5), 0)
+            addView(actionsRow, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                setMargins(0, 0, dp(2), 0)
+            })
+            addView(
+                cardRunMoreButton { setExpanded(!expanded) },
+                LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
+            )
+            addView(View(context).apply {
+                setBackgroundColor(Color.argb(34, 112, 122, 138))
+            }, LinearLayout.LayoutParams(dp(1), dp(21)).apply {
+                setMargins(dp(1), 0, dp(1), 0)
+            })
+            addView(
+                cardRunCapsuleMark { showCardRunMenu(recipe, state) },
+                LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
+            )
+        }
+        actions.forEach { (label, handler) ->
+            actionsRow.addView(cardRunCapsuleAction(label) {
+                handler()
+                setExpanded(false)
+            }, LinearLayout.LayoutParams(dp(54), dp(31)).apply {
+                setMargins(dp(2), 0, dp(1), 0)
+            })
+        }
+        shell.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        return shell
+    }
+
+    private fun cardRunCapsuleAction(label: String, onClick: () -> Unit): View =
+        TextView(this).apply {
+            text = label
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(if (label == "完成") tokens.primaryStrong else tokens.textPrimary)
+            background = roundedBox(
+                if (label == "完成") tokens.primarySubtle else Color.argb(0, 255, 255, 255),
+                Color.TRANSPARENT,
+                dp(17).toFloat(),
+                0
+            )
+            setOnClickListener { onClick() }
+        }
+
+    private fun cardRunCapsuleMark(onClick: () -> Unit): View =
+        object : View(this) {
+            private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(24, 29, 38)
+                style = Paint.Style.STROKE
+                strokeWidth = 1.9f * resources.displayMetrics.density
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+            private val rect = RectF()
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val size = width.coerceAtMost(height).toFloat()
+                val cx = width / 2f
+                val cy = height / 2f
+                val r = size * 0.22f
+                rect.set(cx - r, cy - r, cx + r, cy + r)
+                canvas.drawRoundRect(rect, r * 0.55f, r * 0.55f, strokePaint)
+                canvas.drawLine(cx - r * 0.55f, cy, cx + r * 0.55f, cy, strokePaint)
+            }
+        }.apply {
+            alpha = 0.86f
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
     private fun cardRunSurfaceTitle(state: RecipeRuntimeState): String =
         when (state.surface) {
             CardRunSurface.Report, CardRunSurface.Summary -> "SH 报告"
@@ -6618,7 +6784,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
-    private fun showCardRunWebView(recipe: KiteRecipe, url: String) {
+    private fun showCardRunWebView(parentHost: FrameLayout, recipe: KiteRecipe, url: String) {
         val target = url.trim().ifBlank { DEFAULT_LOCAL_URL }
         diagnostics.logOpenWebAttempt(recipe, target, "card_run_surface")
         diagnostics.writeWebAppStatus(
@@ -6631,7 +6797,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         )
         val parent = webView.parent
         if (parent is ViewGroup) parent.removeView(webView)
-        root.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        parentHost.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         webShell.loadInWebView(target, recipeId = recipe.id, recipeName = recipe.name, openSource = "card_run_surface")
     }
 
@@ -13282,14 +13448,22 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         currentScreen = Screen.Workbench
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
-        if (this is CardRunActivity && recipe != null) {
-            root.addView(cardRunTopBar(recipe, runtimeStateFor(recipe)))
-        } else {
-            root.addView(topBar("Kite 工作台") { showConsole() })
-        }
         val parent = webView.parent
         if (parent is ViewGroup) parent.removeView(webView)
-        root.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        if (this is CardRunActivity && recipe != null) {
+            val state = focusedRunInstanceId
+                ?.let { CardRunStore.get(it) }
+                ?: runtimeStateFor(recipe)
+            val surfaceHost = FrameLayout(this).apply {
+                setBackgroundColor(tokens.pageBackground)
+            }
+            root.addView(surfaceHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            surfaceHost.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addCardRunFloatingCapsule(surfaceHost, recipe, state, recipe, state)
+        } else {
+            root.addView(topBar("Kite 工作台") { showConsole() })
+            root.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
         webShell.open(url, recipeId = recipe?.id, recipeName = recipe?.name, openSource = source)
     }
 
