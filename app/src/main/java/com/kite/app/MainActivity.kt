@@ -6601,26 +6601,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val capsule = cardRunFloatingCapsule(recipe, state, actionRecipe, actionState) { toggle ->
             toggleFloatingCapsule = toggle
         }
-        val isWebChrome = actionState.surface == CardRunSurface.Web
         host.addView(
             capsule,
-            FrameLayout.LayoutParams(if (isWebChrome) 0 else dp(84), if (isWebChrome) dp(40) else dp(36), Gravity.TOP or Gravity.RIGHT).apply {
+            FrameLayout.LayoutParams(0, dp(40), Gravity.TOP or Gravity.RIGHT).apply {
                 setMargins(0, dp(12), dp(12), 0)
             }
         )
         capsule.bringToFront()
-        if (isWebChrome) {
-            val handle = cardRunSideFloatingHandle {
-                toggleFloatingCapsule?.invoke()
-            }
-            host.addView(
-                handle,
-                FrameLayout.LayoutParams(dp(20), dp(64), Gravity.RIGHT or Gravity.CENTER_VERTICAL).apply {
-                    setMargins(0, 0, dp(4), 0)
-                }
-            )
-            handle.bringToFront()
+        val handle = cardRunSideFloatingHandle {
+            toggleFloatingCapsule?.invoke()
         }
+        host.addView(
+            handle,
+            FrameLayout.LayoutParams(dp(20), dp(64), Gravity.RIGHT or Gravity.CENTER_VERTICAL).apply {
+                setMargins(0, 0, dp(4), 0)
+            }
+        )
+        handle.bringToFront()
     }
 
     private fun cardRunFloatingCapsule(
@@ -6631,9 +6628,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         onToggleReady: ((() -> Unit) -> Unit)? = null
     ): View {
         val isWebChrome = actionState.surface == CardRunSurface.Web
-        val collapsedWidth = if (isWebChrome) 0 else dp(84)
+        val collapsedWidth = 0
         val collapsedHeight = dp(36)
-        val expandedHeight = if (actionState.surface == CardRunSurface.Web) dp(40) else collapsedHeight
+        val expandedHeight = dp(40)
         val collapsedTopMargin = dp(12)
         val canComplete = canCompleteCurrentCardStep(actionRecipe, actionState)
         val currentWebUrl = (actionState.nextActionUrl
@@ -6641,7 +6638,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             ?: lastWorkbenchUrl?.takeIf { it.isNotBlank() }).orEmpty()
         val actions = mutableListOf<Pair<String, () -> Unit>>()
         if (!isWebChrome && canComplete) {
-            actions += "完成" to { completeCurrentCardStep(actionRecipe, actionState) }
+            actions += "继续" to { completeCurrentCardStep(actionRecipe, actionState) }
         }
 
         val maxAvailableWidth = (resources.displayMetrics.widthPixels - dp(24)).coerceAtLeast(collapsedWidth)
@@ -6650,31 +6647,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val webWindowCapsuleWidth = dp(36)
         val expandedWidth = if (isWebChrome) {
             webExpandedWidth
+        } else if (actions.isNotEmpty()) {
+            webFlowCapsuleWidth + webWindowCapsuleWidth + dp(10)
         } else {
-            (collapsedWidth + actions.size * dp(58)).coerceAtMost(dp(248))
+            webWindowCapsuleWidth
         }
         val shell = FrameLayout(this).apply {
-            if (isWebChrome) {
-                setBackgroundColor(Color.TRANSPARENT)
-                elevation = 0f
-                alpha = 0f
-                clipChildren = false
-                clipToPadding = false
-            } else {
-                background = roundedBox(
-                    Color.argb(188, 255, 255, 255),
-                    Color.argb(46, 123, 137, 156),
-                    dp(22).toFloat(),
-                    dp(1)
-                )
-                elevation = dp(7).toFloat()
-                clipChildren = true
-                clipToPadding = true
-            }
+            setBackgroundColor(Color.TRANSPARENT)
+            elevation = 0f
+            alpha = 0f
+            clipChildren = false
+            clipToPadding = false
         }
 
         val actionsRow = row {
-            gravity = if (isWebChrome) Gravity.CENTER_VERTICAL else Gravity.RIGHT or Gravity.CENTER_VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
         }.apply {
             alpha = 0f
             translationX = dp(14).toFloat()
@@ -6683,7 +6670,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         var expanded = false
         var touchedByUser = false
         fun setExpanded(open: Boolean) {
-            if (!isWebChrome && actions.isEmpty()) return
             if (expanded == open) return
             expanded = open
             val startWidth = shell.layoutParams?.width?.takeIf { it > 0 } ?: collapsedWidth
@@ -6707,7 +6693,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     }
                     actionsRow.alpha = easedAlpha
                     actionsRow.translationX = (if (open) 1f - progress else progress) * dp(14)
-                    if (isWebChrome) shell.alpha = easedAlpha
+                    shell.alpha = easedAlpha
                 }
             }.start()
         }
@@ -6718,22 +6704,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
         val rightControls = row {
             gravity = Gravity.CENTER
-            if (isWebChrome) {
-                background = roundedBox(Color.argb(142, 255, 255, 255), Color.argb(44, 123, 137, 156), dp(18).toFloat(), dp(1))
-                elevation = dp(5).toFloat()
-                setPadding(dp(3), 0, dp(3), 0)
-            }
-            if (!isWebChrome) {
-                addView(
-                    cardRunMoreButton { setExpanded(!expanded) },
-                    LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
-                )
-                addView(View(context).apply {
-                    setBackgroundColor(Color.argb(34, 112, 122, 138))
-                }, LinearLayout.LayoutParams(dp(1), dp(21)).apply {
-                    setMargins(dp(1), 0, dp(1), 0)
-                })
-            }
+            background = roundedBox(Color.argb(142, 255, 255, 255), Color.argb(44, 123, 137, 156), dp(18).toFloat(), dp(1))
+            elevation = dp(5).toFloat()
+            setPadding(dp(3), 0, dp(3), 0)
             addView(
                 cardRunCapsuleMark { showCardRunMenu(recipe, state) },
                 LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
@@ -6741,13 +6714,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         val content = row {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(if (isWebChrome) 0 else dp(5), 0, if (isWebChrome) 0 else dp(5), 0)
-            addView(actionsRow, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                setMargins(0, 0, if (isWebChrome) dp(6) else dp(2), 0)
-            })
+            setPadding(0, 0, 0, 0)
+            if (isWebChrome || actions.isNotEmpty()) {
+                addView(actionsRow, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                    setMargins(0, 0, dp(6), 0)
+                })
+            }
             addView(
                 rightControls,
-                LinearLayout.LayoutParams(if (isWebChrome) webWindowCapsuleWidth else ViewGroup.LayoutParams.WRAP_CONTENT, if (isWebChrome) dp(36) else ViewGroup.LayoutParams.MATCH_PARENT)
+                LinearLayout.LayoutParams(webWindowCapsuleWidth, dp(36))
             )
         }
         if (isWebChrome) {
@@ -6784,13 +6759,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 actionsRow.addView(cardRunCapsuleAction(label) {
                     handler()
                     setExpanded(false)
-                }, LinearLayout.LayoutParams(dp(54), dp(30)).apply {
-                    setMargins(dp(2), 0, dp(1), 0)
+                }, LinearLayout.LayoutParams(webFlowCapsuleWidth, dp(32)).apply {
+                    setMargins(0, 0, dp(4), 0)
                 })
             }
         }
         shell.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        if (isWebChrome && canComplete) {
+        if (canComplete) {
             shell.postDelayed({
                 if (shell.isAttachedToWindow && !touchedByUser) setExpanded(true)
             }, 500L)
