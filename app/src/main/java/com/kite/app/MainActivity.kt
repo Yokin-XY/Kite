@@ -367,6 +367,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     @Deprecated("Use OnBackPressedDispatcher in a future AndroidX Activity migration.")
     override fun onBackPressed() {
+        if (handleWebViewBackSignal()) return
         if (this is CardRunActivity) {
             handleCardRunBackSignal()
             return
@@ -384,6 +385,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             Screen.Terminal -> if (isTerminalDetailMode) super.onBackPressed() else showConsole()
             else -> if (currentScreen != Screen.Console) showConsole() else super.onBackPressed()
         }
+    }
+
+    private fun handleWebViewBackSignal(): Boolean {
+        if (!::webView.isInitialized) return false
+        if (currentScreen != Screen.Workbench && currentScreen != Screen.CardRun) return false
+        if (webView.parent == null || !webView.canGoBack()) return false
+        webView.goBack()
+        return true
     }
 
     override fun onPostResume() {
