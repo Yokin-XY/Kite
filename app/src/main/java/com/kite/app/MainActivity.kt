@@ -43,6 +43,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
@@ -6630,7 +6631,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val isWebChrome = actionState.surface == CardRunSurface.Web
         val collapsedWidth = 0
         val collapsedHeight = dp(36)
-        val expandedHeight = dp(40)
+        val actionCapsuleLength = dp(60)
+        val windowCapsuleLength = dp(40)
+        val capsuleControlHeight = dp(36)
+        val webSearchCapsuleHeight = dp(42)
+        val expandedHeight = if (isWebChrome) webSearchCapsuleHeight else dp(40)
         val collapsedTopMargin = dp(12)
         val canComplete = canCompleteCurrentCardStep(actionRecipe, actionState)
         val currentWebUrl = (actionState.nextActionUrl
@@ -6643,15 +6648,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
         val maxAvailableWidth = (resources.displayMetrics.widthPixels - dp(24)).coerceAtLeast(collapsedWidth)
         val webExpandedWidth = maxAvailableWidth.coerceAtLeast(minOf(dp(260), maxAvailableWidth))
-        val webFlowCapsuleWidth = dp(78)
-        val webWindowCapsuleWidth = dp(41)
         val capsuleGapWidth = dp(12)
         val expandedWidth = if (isWebChrome) {
             webExpandedWidth
         } else if (actions.isNotEmpty()) {
-            webFlowCapsuleWidth + webWindowCapsuleWidth + capsuleGapWidth
+            (actionCapsuleLength * actions.size) + windowCapsuleLength + (capsuleGapWidth * actions.size)
         } else {
-            webWindowCapsuleWidth
+            windowCapsuleLength
         }
         val shell = FrameLayout(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
@@ -6718,20 +6721,20 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setPadding(0, 0, 0, 0)
             if (isWebChrome || actions.isNotEmpty()) {
                 addView(actionsRow, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                    setMargins(0, 0, dp(6), 0)
+                    setMargins(0, 0, capsuleGapWidth, 0)
                 })
             }
             addView(
                 rightControls,
-                LinearLayout.LayoutParams(webWindowCapsuleWidth, dp(36))
+                LinearLayout.LayoutParams(windowCapsuleLength, capsuleControlHeight)
             )
         }
         if (isWebChrome) {
             if (canComplete) {
                 actionsRow.addView(cardRunCapsuleAction("继续") {
                     completeCurrentCardStep(actionRecipe, actionState)
-                }, LinearLayout.LayoutParams(webFlowCapsuleWidth, dp(32)).apply {
-                    setMargins(0, 0, dp(4), 0)
+                }, LinearLayout.LayoutParams(actionCapsuleLength, capsuleControlHeight).apply {
+                    setMargins(0, 0, capsuleGapWidth, 0)
                 })
             }
             val addressChrome = cardRunWebAddressCapsule(currentWebUrl) { input ->
@@ -6752,17 +6755,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 })
                 addView(addressChrome.first, addressLayoutParams)
             }
-            actionsRow.addView(searchGroup, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
-                setMargins(0, 0, dp(1), 0)
-            })
+            actionsRow.addView(searchGroup, LinearLayout.LayoutParams(0, webSearchCapsuleHeight, 1f))
         } else {
             actions.forEach { (label, handler) ->
                 actionsRow.addView(cardRunCapsuleAction(label) {
                     handler()
                     setExpanded(false)
-                }, LinearLayout.LayoutParams(webFlowCapsuleWidth, dp(32)).apply {
-                    setMargins(0, 0, dp(4), 0)
-                })
+                }, LinearLayout.LayoutParams(actionCapsuleLength, capsuleControlHeight))
             }
         }
         shell.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -6792,6 +6791,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             fun animateDragVisual(active: Boolean) {
                 val start = dragVisualProgress
                 val end = if (active) 1f else 0f
+                animate()
+                    .scaleX(if (active) 1.22f else 1f)
+                    .scaleY(if (active) 1.08f else 1f)
+                    .setDuration(130L)
+                    .setInterpolator(PathInterpolator(0.22f, 1f, 0.36f, 1f))
+                    .start()
                 dragVisualAnimator?.cancel()
                 if (start == end) {
                     postInvalidateOnAnimation()
@@ -6834,6 +6839,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             var downRawY = 0f
             var downTop = 0
             var dragStarter: Runnable? = null
+            val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
             fun enterDragMode(view: View) {
                 if (dragging || !pressed || !view.isAttachedToWindow) return
                 dragging = true
@@ -6851,12 +6857,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         downTop = view.top
                         val starter = Runnable { enterDragMode(view) }
                         dragStarter = starter
-                        view.postOnAnimationDelayed(starter, 280L)
+                        view.postDelayed(starter, longPressTimeout)
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dy = event.rawY - downRawY
                         if (kotlin.math.abs(dy) > dp(4)) moved = true
+                        if (!dragging && event.eventTime - event.downTime >= longPressTimeout) {
+                            enterDragMode(view)
+                        }
                         if (dragging) {
                             val parent = view.parent as? ViewGroup
                             val params = view.layoutParams as? FrameLayout.LayoutParams
