@@ -8354,8 +8354,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setPadding(dp(22), dp(10), dp(22), dp(12))
             background = roundedTopBox(Color.argb(238, 255, 255, 255), Color.rgb(229, 234, 242), dp(1).toFloat())
             addView(cardRunWindowDockButton("trash", "关闭") {
-                dialog.dismiss()
-                closeCardRunTask()
+                closeCardRunWindowInstance(recipe, state, dialog)
             }, LinearLayout.LayoutParams(0, dp(76), 1f))
             addView(cardRunWindowDockButton("plus", "新建") {
                 showCardRunWindowCreateBubble(recipe, state, dialog)
@@ -8375,19 +8374,33 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 adjustViewBounds = false
             }, LinearLayout.LayoutParams(if (kind == "plus") dp(54) else dp(50), if (kind == "plus") dp(54) else dp(50)))
-            addView(TextView(context).apply {
-                text = label
-                textSize = 11f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(Color.rgb(126, 136, 153))
-                setPadding(0, dp(7), 0, 0)
-            })
             setOnClickListener { clicked ->
                 cardRunWindowPress(clicked, action)
             }
         }
+
+    private fun closeCardRunWindowInstance(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        dialog: Dialog
+    ) {
+        val rootState = cardRunWindowRootState(CardRunStore.get(state.instanceId) ?: state)
+        val latestRootState = CardRunStore.get(rootState.instanceId) ?: rootState
+        dialog.dismiss()
+        activeRunInstanceIds[recipe.id] = latestRootState.instanceId
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = latestRootState.instanceId
+        if (
+            latestRootState.status == RecipeRunStatus.Stopped ||
+            latestRootState.status == RecipeRunStatus.Completed ||
+            latestRootState.status == RecipeRunStatus.Failed ||
+            latestRootState.status == RecipeRunStatus.BridgeUnavailable
+        ) {
+            closeCardRunTask()
+            return
+        }
+        stopRecipe(recipe, latestRootState)
+    }
 
     private fun showCardRunWindowCreateBubble(
         recipe: KiteRecipe,
