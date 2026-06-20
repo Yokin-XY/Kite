@@ -6613,7 +6613,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         host.addView(
             handle,
-            FrameLayout.LayoutParams(dp(22), dp(72), Gravity.RIGHT or Gravity.CENTER_VERTICAL).apply {
+            FrameLayout.LayoutParams(dp(20), dp(64), Gravity.RIGHT or Gravity.CENTER_VERTICAL).apply {
                 setMargins(0, 0, dp(4), 0)
             }
         )
@@ -6643,12 +6643,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
         val maxAvailableWidth = (resources.displayMetrics.widthPixels - dp(24)).coerceAtLeast(collapsedWidth)
         val webExpandedWidth = maxAvailableWidth.coerceAtLeast(minOf(dp(260), maxAvailableWidth))
-        val webFlowCapsuleWidth = dp(68)
-        val webWindowCapsuleWidth = dp(36)
+        val webFlowCapsuleWidth = dp(78)
+        val webWindowCapsuleWidth = dp(41)
+        val capsuleGapWidth = dp(12)
         val expandedWidth = if (isWebChrome) {
             webExpandedWidth
         } else if (actions.isNotEmpty()) {
-            webFlowCapsuleWidth + webWindowCapsuleWidth + dp(10)
+            webFlowCapsuleWidth + webWindowCapsuleWidth + capsuleGapWidth
         } else {
             webWindowCapsuleWidth
         }
@@ -6786,26 +6787,33 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
             private val rect = RectF()
             private var dragVisualProgress = 0f
+            private var dragVisualAnimator: ValueAnimator? = null
 
             fun animateDragVisual(active: Boolean) {
                 val start = dragVisualProgress
                 val end = if (active) 1f else 0f
-                ValueAnimator.ofFloat(start, end).apply {
+                dragVisualAnimator?.cancel()
+                if (start == end) {
+                    postInvalidateOnAnimation()
+                    return
+                }
+                dragVisualAnimator = ValueAnimator.ofFloat(start, end).apply {
                     duration = 130L
                     interpolator = PathInterpolator(0.22f, 1f, 0.36f, 1f)
                     addUpdateListener { animator ->
                         dragVisualProgress = animator.animatedValue as Float
-                        invalidate()
+                        postInvalidateOnAnimation()
                     }
-                }.start()
+                    start()
+                }
             }
 
             override fun onDraw(canvas: Canvas) {
                 super.onDraw(canvas)
                 val cx = width / 2f
                 val cy = height / 2f
-                val visualWidth = dp(5) + ((dp(16) - dp(5)) * dragVisualProgress)
-                val visualHeight = dp(60) + ((dp(6)) * dragVisualProgress)
+                val visualWidth = dp(4) + ((dp(14) - dp(4)) * dragVisualProgress)
+                val visualHeight = dp(54) + ((dp(4)) * dragVisualProgress)
                 val radius = visualWidth / 2f
                 rect.set(
                     cx - visualWidth / 2f,
@@ -6826,6 +6834,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             var downRawY = 0f
             var downTop = 0
             var dragStarter: Runnable? = null
+            fun enterDragMode(view: View) {
+                if (dragging || !pressed || !view.isAttachedToWindow) return
+                dragging = true
+                (view.parent as? ViewGroup)?.requestDisallowInterceptTouchEvent(true)
+                view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                this@handle.animateDragVisual(true)
+            }
             setOnTouchListener { view, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
@@ -6834,16 +6849,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         moved = false
                         downRawY = event.rawY
                         downTop = view.top
-                        val starter = Runnable {
-                            if (pressed && view.isAttachedToWindow) {
-                                dragging = true
-                                (view.parent as? ViewGroup)?.requestDisallowInterceptTouchEvent(true)
-                                view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                                this@handle.animateDragVisual(true)
-                            }
-                        }
+                        val starter = Runnable { enterDragMode(view) }
                         dragStarter = starter
-                        view.postDelayed(starter, 280L)
+                        view.postOnAnimationDelayed(starter, 280L)
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
