@@ -6588,27 +6588,44 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         actionRecipe: KiteRecipe,
         actionState: RecipeRuntimeState
     ) {
-        val capsule = cardRunFloatingCapsule(recipe, state, actionRecipe, actionState)
+        var toggleFloatingCapsule: (() -> Unit)? = null
+        val capsule = cardRunFloatingCapsule(recipe, state, actionRecipe, actionState) { toggle ->
+            toggleFloatingCapsule = toggle
+        }
+        val isWebChrome = actionState.surface == CardRunSurface.Web
         host.addView(
             capsule,
-            FrameLayout.LayoutParams(dp(84), dp(36), Gravity.TOP or Gravity.RIGHT).apply {
+            FrameLayout.LayoutParams(if (isWebChrome) 0 else dp(84), if (isWebChrome) dp(40) else dp(36), Gravity.TOP or Gravity.RIGHT).apply {
                 setMargins(0, dp(12), dp(12), 0)
             }
         )
         capsule.bringToFront()
+        if (isWebChrome) {
+            val handle = cardRunSideFloatingHandle {
+                toggleFloatingCapsule?.invoke()
+            }
+            host.addView(
+                handle,
+                FrameLayout.LayoutParams(dp(20), dp(64), Gravity.RIGHT or Gravity.CENTER_VERTICAL).apply {
+                    setMargins(0, 0, dp(4), 0)
+                }
+            )
+            handle.bringToFront()
+        }
     }
 
     private fun cardRunFloatingCapsule(
         recipe: KiteRecipe,
         state: RecipeRuntimeState,
         actionRecipe: KiteRecipe,
-        actionState: RecipeRuntimeState
+        actionState: RecipeRuntimeState,
+        onToggleReady: ((() -> Unit) -> Unit)? = null
     ): View {
-        val collapsedWidth = dp(84)
+        val isWebChrome = actionState.surface == CardRunSurface.Web
+        val collapsedWidth = if (isWebChrome) 0 else dp(84)
         val collapsedHeight = dp(36)
         val expandedHeight = if (actionState.surface == CardRunSurface.Web) dp(40) else collapsedHeight
         val collapsedTopMargin = dp(12)
-        val isWebChrome = actionState.surface == CardRunSurface.Web
         val canComplete = canCompleteCurrentCardStep(actionRecipe, actionState)
         val currentWebUrl = (actionState.nextActionUrl
             ?.takeIf { it.isNotBlank() }
@@ -6620,7 +6637,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
         val maxAvailableWidth = (resources.displayMetrics.widthPixels - dp(24)).coerceAtLeast(collapsedWidth)
         val webExpandedWidth = maxAvailableWidth.coerceAtLeast(minOf(dp(260), maxAvailableWidth))
-        val webSideCapsuleWidth = dp(68)
+        val webFlowCapsuleWidth = dp(68)
+        val webWindowCapsuleWidth = dp(36)
         val expandedWidth = if (isWebChrome) {
             webExpandedWidth
         } else {
@@ -6630,6 +6648,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (isWebChrome) {
                 setBackgroundColor(Color.TRANSPARENT)
                 elevation = 0f
+                alpha = 0f
                 clipChildren = false
                 clipToPadding = false
             } else {
@@ -6653,6 +6672,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         var expanded = false
+        var touchedByUser = false
         fun setExpanded(open: Boolean) {
             if (!isWebChrome && actions.isEmpty()) return
             if (expanded == open) return
@@ -6678,8 +6698,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     }
                     actionsRow.alpha = easedAlpha
                     actionsRow.translationX = (if (open) 1f - progress else progress) * dp(14)
+                    if (isWebChrome) shell.alpha = easedAlpha
                 }
             }.start()
+        }
+        onToggleReady?.invoke {
+            touchedByUser = true
+            setExpanded(!expanded)
         }
 
         val rightControls = row {
@@ -6689,15 +6714,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 elevation = dp(5).toFloat()
                 setPadding(dp(3), 0, dp(3), 0)
             }
-            addView(
-                cardRunMoreButton { setExpanded(!expanded) },
-                LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
-            )
-            addView(View(context).apply {
-                setBackgroundColor(Color.argb(34, 112, 122, 138))
-            }, LinearLayout.LayoutParams(dp(1), dp(21)).apply {
-                setMargins(dp(1), 0, dp(1), 0)
-            })
+            if (!isWebChrome) {
+                addView(
+                    cardRunMoreButton { setExpanded(!expanded) },
+                    LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
+                )
+                addView(View(context).apply {
+                    setBackgroundColor(Color.argb(34, 112, 122, 138))
+                }, LinearLayout.LayoutParams(dp(1), dp(21)).apply {
+                    setMargins(dp(1), 0, dp(1), 0)
+                })
+            }
             addView(
                 cardRunCapsuleMark { showCardRunMenu(recipe, state) },
                 LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
@@ -6711,14 +6738,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
             addView(
                 rightControls,
-                LinearLayout.LayoutParams(if (isWebChrome) webSideCapsuleWidth else ViewGroup.LayoutParams.WRAP_CONTENT, if (isWebChrome) dp(36) else ViewGroup.LayoutParams.MATCH_PARENT)
+                LinearLayout.LayoutParams(if (isWebChrome) webWindowCapsuleWidth else ViewGroup.LayoutParams.WRAP_CONTENT, if (isWebChrome) dp(36) else ViewGroup.LayoutParams.MATCH_PARENT)
             )
         }
         if (isWebChrome) {
             if (canComplete) {
                 actionsRow.addView(cardRunCapsuleAction("继续") {
                     completeCurrentCardStep(actionRecipe, actionState)
-                }, LinearLayout.LayoutParams(webSideCapsuleWidth, dp(32)).apply {
+                }, LinearLayout.LayoutParams(webFlowCapsuleWidth, dp(32)).apply {
                     setMargins(0, 0, dp(4), 0)
                 })
             }
@@ -6756,11 +6783,125 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         shell.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         if (isWebChrome && canComplete) {
             shell.postDelayed({
-                if (shell.isAttachedToWindow) setExpanded(true)
+                if (shell.isAttachedToWindow && !touchedByUser) setExpanded(true)
             }, 500L)
         }
         return shell
     }
+
+    private fun cardRunSideFloatingHandle(onClick: () -> Unit): View =
+        object : View(this) {
+            private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(164, 255, 255, 255)
+                style = Paint.Style.FILL
+            }
+            private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(56, 123, 137, 156)
+                style = Paint.Style.STROKE
+                strokeWidth = 1f * resources.displayMetrics.density
+            }
+            private val rect = RectF()
+            private var dragVisualProgress = 0f
+
+            fun animateDragVisual(active: Boolean) {
+                val start = dragVisualProgress
+                val end = if (active) 1f else 0f
+                ValueAnimator.ofFloat(start, end).apply {
+                    duration = 130L
+                    interpolator = PathInterpolator(0.22f, 1f, 0.36f, 1f)
+                    addUpdateListener { animator ->
+                        dragVisualProgress = animator.animatedValue as Float
+                        invalidate()
+                    }
+                }.start()
+            }
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val cx = width / 2f
+                val cy = height / 2f
+                val visualWidth = dp(4) + ((dp(14) - dp(4)) * dragVisualProgress)
+                val visualHeight = dp(54) + ((dp(4)) * dragVisualProgress)
+                val radius = visualWidth / 2f
+                rect.set(
+                    cx - visualWidth / 2f,
+                    cy - visualHeight / 2f,
+                    cx + visualWidth / 2f,
+                    cy + visualHeight / 2f
+                )
+                canvas.drawRoundRect(rect, radius, radius, fillPaint)
+                canvas.drawRoundRect(rect, radius, radius, strokePaint)
+            }
+        }.apply handle@{
+            setBackgroundColor(Color.TRANSPARENT)
+            elevation = dp(7).toFloat()
+            isClickable = true
+            var pressed = false
+            var dragging = false
+            var moved = false
+            var downRawY = 0f
+            var downTop = 0
+            var dragStarter: Runnable? = null
+            setOnTouchListener { view, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        pressed = true
+                        dragging = false
+                        moved = false
+                        downRawY = event.rawY
+                        downTop = view.top
+                        val starter = Runnable {
+                            if (pressed && view.isAttachedToWindow) {
+                                dragging = true
+                                (view.parent as? ViewGroup)?.requestDisallowInterceptTouchEvent(true)
+                                view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                this@handle.animateDragVisual(true)
+                            }
+                        }
+                        dragStarter = starter
+                        view.postDelayed(starter, 280L)
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dy = event.rawY - downRawY
+                        if (kotlin.math.abs(dy) > dp(4)) moved = true
+                        if (dragging) {
+                            val parent = view.parent as? ViewGroup
+                            val params = view.layoutParams as? FrameLayout.LayoutParams
+                            if (parent != null && params != null && parent.height > view.height) {
+                                val minTop = dp(12)
+                                val maxTop = parent.height - view.height - dp(12)
+                                params.gravity = Gravity.RIGHT or Gravity.TOP
+                                params.topMargin = (downTop + dy.roundToInt()).coerceIn(minTop, maxTop)
+                                params.rightMargin = dp(4)
+                                view.layoutParams = params
+                            }
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        pressed = false
+                        dragStarter?.let { view.removeCallbacks(it) }
+                        val wasDragging = dragging
+                        dragging = false
+                        this@handle.animateDragVisual(false)
+                        if (!wasDragging && !moved) {
+                            view.performClick()
+                            onClick()
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        pressed = false
+                        dragging = false
+                        dragStarter?.let { view.removeCallbacks(it) }
+                        this@handle.animateDragVisual(false)
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
 
     private fun cardRunCapsuleAction(label: String, onClick: () -> Unit): TextView =
         TextView(this).apply {
