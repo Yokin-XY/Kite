@@ -6606,7 +6606,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     ): View {
         val collapsedWidth = dp(84)
         val collapsedHeight = dp(36)
-        val expandedHeight = if (actionState.surface == CardRunSurface.Web) dp(44) else collapsedHeight
+        val expandedHeight = if (actionState.surface == CardRunSurface.Web) dp(40) else collapsedHeight
         val collapsedTopMargin = dp(12)
         val isWebChrome = actionState.surface == CardRunSurface.Web
         val canComplete = canCompleteCurrentCardStep(actionRecipe, actionState)
@@ -6619,26 +6619,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         val maxAvailableWidth = (resources.displayMetrics.widthPixels - dp(24)).coerceAtLeast(collapsedWidth)
-        val webExpandedWidth = minOf(maxAvailableWidth, dp(330)).coerceAtLeast(minOf(dp(276), maxAvailableWidth))
+        val webExpandedWidth = maxAvailableWidth.coerceAtLeast(minOf(dp(260), maxAvailableWidth))
+        val webSideCapsuleWidth = dp(68)
         val expandedWidth = if (isWebChrome) {
             webExpandedWidth
         } else {
             (collapsedWidth + actions.size * dp(58)).coerceAtMost(dp(248))
         }
         val shell = FrameLayout(this).apply {
-            background = roundedBox(
-                Color.argb(188, 255, 255, 255),
-                Color.argb(46, 123, 137, 156),
-                dp(22).toFloat(),
-                dp(1)
-            )
-            elevation = dp(7).toFloat()
-            clipChildren = true
-            clipToPadding = true
+            if (isWebChrome) {
+                setBackgroundColor(Color.TRANSPARENT)
+                elevation = 0f
+                clipChildren = false
+                clipToPadding = false
+            } else {
+                background = roundedBox(
+                    Color.argb(188, 255, 255, 255),
+                    Color.argb(46, 123, 137, 156),
+                    dp(22).toFloat(),
+                    dp(1)
+                )
+                elevation = dp(7).toFloat()
+                clipChildren = true
+                clipToPadding = true
+            }
         }
 
         val actionsRow = row {
-            gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL
+            gravity = if (isWebChrome) Gravity.CENTER_VERTICAL else Gravity.RIGHT or Gravity.CENTER_VERTICAL
         }.apply {
             alpha = 0f
             translationX = dp(14).toFloat()
@@ -6674,12 +6682,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }.start()
         }
 
-        val content = row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(5), 0, dp(5), 0)
-            addView(actionsRow, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                setMargins(0, 0, dp(2), 0)
-            })
+        val rightControls = row {
+            gravity = Gravity.CENTER
+            if (isWebChrome) {
+                background = roundedBox(Color.argb(142, 255, 255, 255), Color.argb(44, 123, 137, 156), dp(18).toFloat(), dp(1))
+                elevation = dp(5).toFloat()
+                setPadding(dp(3), 0, dp(3), 0)
+            }
             addView(
                 cardRunMoreButton { setExpanded(!expanded) },
                 LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
@@ -6694,26 +6703,46 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
             )
         }
+        val content = row {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(if (isWebChrome) 0 else dp(5), 0, if (isWebChrome) 0 else dp(5), 0)
+            addView(actionsRow, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                setMargins(0, 0, if (isWebChrome) dp(6) else dp(2), 0)
+            })
+            addView(
+                rightControls,
+                LinearLayout.LayoutParams(if (isWebChrome) webSideCapsuleWidth else ViewGroup.LayoutParams.WRAP_CONTENT, if (isWebChrome) dp(36) else ViewGroup.LayoutParams.MATCH_PARENT)
+            )
+        }
         if (isWebChrome) {
             if (canComplete) {
-                actionsRow.addView(cardRunCapsuleAction("完成") {
+                actionsRow.addView(cardRunCapsuleAction("继续") {
                     completeCurrentCardStep(actionRecipe, actionState)
-                    setExpanded(false)
-                }, LinearLayout.LayoutParams(dp(48), dp(36)).apply {
+                }, LinearLayout.LayoutParams(webSideCapsuleWidth, dp(32)).apply {
                     setMargins(0, 0, dp(4), 0)
                 })
             }
-            actionsRow.addView(cardRunCapsuleIconAction("↻") {
-                webView.reload()
-            }, LinearLayout.LayoutParams(dp(36), dp(36)).apply {
-                setMargins(0, 0, dp(7), 0)
+            val addressChrome = cardRunWebAddressCapsule(currentWebUrl) { input ->
+                openCardRunManualWebUrl(actionRecipe, actionState, input.text?.toString().orEmpty())
+            }
+            val addressLayoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply {
+                setMargins(0, 0, dp(2), 0)
+            }
+            val searchGroup = row {
+                gravity = Gravity.CENTER_VERTICAL
+                background = roundedBox(Color.argb(142, 255, 255, 255), Color.argb(44, 123, 137, 156), dp(18).toFloat(), dp(1))
+                elevation = dp(5).toFloat()
+                setPadding(dp(2), 0, dp(2), 0)
+                addView(cardRunCapsuleIconAction("↻") {
+                    webView.reload()
+                }, LinearLayout.LayoutParams(dp(30), dp(30)).apply {
+                    setMargins(0, 0, dp(5), 0)
+                })
+                addView(addressChrome.first, addressLayoutParams)
+            }
+            actionsRow.addView(searchGroup, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+                setMargins(0, 0, dp(1), 0)
             })
-            actionsRow.addView(
-                cardRunWebAddressCapsule(actionRecipe, actionState, currentWebUrl),
-                LinearLayout.LayoutParams(0, dp(36), 1f).apply {
-                    setMargins(0, 0, dp(2), 0)
-                }
-            )
         } else {
             actions.forEach { (label, handler) ->
                 actionsRow.addView(cardRunCapsuleAction(label) {
@@ -6725,23 +6754,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
         }
         shell.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        if (isWebChrome && canComplete) {
+            shell.postDelayed({
+                if (shell.isAttachedToWindow) setExpanded(true)
+            }, 500L)
+        }
         return shell
     }
 
-    private fun cardRunCapsuleAction(label: String, onClick: () -> Unit): View =
+    private fun cardRunCapsuleAction(label: String, onClick: () -> Unit): TextView =
         TextView(this).apply {
             text = label
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             includeFontPadding = false
-            setTextColor(if (label == "完成") tokens.primaryStrong else tokens.textPrimary)
+            setTextColor(tokens.textPrimary)
             background = roundedBox(
-                if (label == "完成") tokens.primarySubtle else Color.argb(0, 255, 255, 255),
-                Color.TRANSPARENT,
-                dp(17).toFloat(),
-                0
+                Color.argb(132, 255, 255, 255),
+                Color.argb(36, 123, 137, 156),
+                dp(16).toFloat(),
+                dp(1)
             )
+            elevation = dp(5).toFloat()
             setOnClickListener { onClick() }
         }
 
@@ -6757,10 +6792,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setOnClickListener { onClick() }
         }
 
-    private fun cardRunWebAddressCapsule(recipe: KiteRecipe, state: RecipeRuntimeState, currentUrl: String): View =
-        FrameLayout(this).apply {
+    private fun cardRunWebAddressCapsule(currentUrl: String, onSubmit: (EditText) -> Unit): Pair<FrameLayout, EditText> {
+        lateinit var input: EditText
+        val root = FrameLayout(this).apply {
             background = roundedBox(Color.argb(178, 255, 255, 255), Color.argb(44, 123, 137, 156), dp(18).toFloat())
-            val input = EditText(context).apply {
+            input = EditText(context).apply {
                 hint = "输入网址"
                 textSize = 13f
                 setSingleLine(true)
@@ -6775,7 +6811,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setSelectAllOnFocus(true)
             }
             val submit = {
-                openCardRunManualWebUrl(recipe, state, input.text?.toString().orEmpty())
+                onSubmit(input)
             }
             input.setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_SEARCH) {
@@ -6790,6 +6826,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
             addView(cardRunWebSearchButton { submit() }, FrameLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.RIGHT))
         }
+        return root to input
+    }
 
     private fun cardRunCapsuleMark(onClick: () -> Unit): View =
         object : View(this) {
