@@ -6613,7 +6613,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         host.addView(
             handle,
-            FrameLayout.LayoutParams(dp(20), dp(64), Gravity.RIGHT or Gravity.CENTER_VERTICAL).apply {
+            FrameLayout.LayoutParams(dp(22), dp(72), Gravity.RIGHT or Gravity.CENTER_VERTICAL).apply {
                 setMargins(0, 0, dp(4), 0)
             }
         )
@@ -6804,8 +6804,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 super.onDraw(canvas)
                 val cx = width / 2f
                 val cy = height / 2f
-                val visualWidth = dp(4) + ((dp(14) - dp(4)) * dragVisualProgress)
-                val visualHeight = dp(54) + ((dp(4)) * dragVisualProgress)
+                val visualWidth = dp(5) + ((dp(16) - dp(5)) * dragVisualProgress)
+                val visualHeight = dp(60) + ((dp(6)) * dragVisualProgress)
                 val radius = visualWidth / 2f
                 rect.set(
                     cx - visualWidth / 2f,
