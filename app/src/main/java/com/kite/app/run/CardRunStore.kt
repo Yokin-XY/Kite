@@ -30,7 +30,9 @@ object CardRunStore {
         if (initialized) return
         prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val loaded = loadPersistedRuns()
-        val normalized = loaded.map { it.normalizedAfterProcessRestore() }
+        val normalized = loaded
+            .map { it.normalizedAfterProcessRestore() }
+            .filterNot { it.shouldDropCurrentAfterProcessRestore() }
         runsByInstance.clear()
         normalized.forEach { runsByInstance[it.instanceId] = it }
         historiesByRecipe.clear()
@@ -369,6 +371,13 @@ object CardRunStore {
             nextActionUrl = null
         )
     }
+
+    private fun CardRunState.shouldDropCurrentAfterProcessRestore(): Boolean =
+        status.endsHistoryEntry() ||
+            status.shouldResetAfterProcessRestore() ||
+            hasRunBinding() ||
+            !parentInstanceId.isNullOrBlank() ||
+            !nextActionUrl.isNullOrBlank()
 
     private fun CardRunStatus.shouldResetAfterProcessRestore(): Boolean =
         this == CardRunStatus.Starting ||

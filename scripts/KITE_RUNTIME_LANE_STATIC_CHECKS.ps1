@@ -6,9 +6,11 @@ $ErrorActionPreference = 'Stop'
 
 $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
 $storePath = Join-Path $Root 'app/src/main/java/com/kite/app/resources/KiteResourceInstallStore.kt'
+$cardRunStorePath = Join-Path $Root 'app/src/main/java/com/kite/app/run/CardRunStore.kt'
 
 $main = Get-Content -LiteralPath $mainPath -Raw
 $store = Get-Content -LiteralPath $storePath -Raw
+$cardRunStore = Get-Content -LiteralPath $cardRunStorePath -Raw
 $failures = New-Object System.Collections.Generic.List[string]
 
 function Assert-True {
@@ -70,6 +72,12 @@ $runManagementGroups = Function-Body $main 'buildRunManagementGroups'
 Assert-True ($runManagementGroups -match 'CardRunStore\.runs\.value') 'run management groups must reuse CardRunStore.'
 Assert-True ($runManagementGroups -match 'TerminalSessionStore\.snapshot\.value\.sessions') 'run management groups must reuse TerminalSessionStore.'
 Assert-True ($runManagementGroups -match 'TaskManagerStore\.snapshot\.value\.processes') 'run management groups must reuse TaskManagerStore.'
+
+Assert-True ($cardRunStore -match '(?s)fun initialize\b.*?shouldDropCurrentAfterProcessRestore') 'CardRunStore must not restore stale current runs after process restart.'
+
+$cardRunRestoreDrop = Function-Body $cardRunStore 'CardRunState.shouldDropCurrentAfterProcessRestore'
+Assert-True ($cardRunRestoreDrop -match 'status\.endsHistoryEntry') 'restored ended card-run states should stay out of the current run list.'
+Assert-True ($cardRunRestoreDrop -match 'hasRunBinding') 'restored run bindings should stay out of the current run list.'
 
 $runManagementCard = Function-Body $main 'runManagementCard'
 Assert-True ($runManagementCard -match 'setOnClickListener \{ toggleRunManagementCard') 'run management row card should expand from the whole card click.'
