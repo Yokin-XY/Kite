@@ -61,6 +61,27 @@ Assert-True ($runtimePanelCounts -notmatch 'showCardRunSurface|showConsole|showK
 $showRuntimePanel = Function-Body $main 'showUbuntuRuntimePanel'
 Assert-True ($showRuntimePanel -match 'requestRuntimePanelSummaryRefresh') 'opening runtime panel should request throttled summary refresh.'
 
+$showRunManagement = Function-Body $main 'showKiteProcessOverview'
+Assert-True ($showRunManagement -match 'runManagementHeader') 'run management page should use the run-management header.'
+Assert-True ($showRunManagement -notmatch 'kiteProcessSummaryBlock') 'run management page must not render the old three-count summary card.'
+Assert-True ($showRunManagement -match 'buildRunManagementGroups') 'run management page should render grouped card runtime rows.'
+
+$runManagementGroups = Function-Body $main 'buildRunManagementGroups'
+Assert-True ($runManagementGroups -match 'CardRunStore\.runs\.value') 'run management groups must reuse CardRunStore.'
+Assert-True ($runManagementGroups -match 'TerminalSessionStore\.snapshot\.value\.sessions') 'run management groups must reuse TerminalSessionStore.'
+Assert-True ($runManagementGroups -match 'TaskManagerStore\.snapshot\.value\.processes') 'run management groups must reuse TaskManagerStore.'
+
+$runManagementCard = Function-Body $main 'runManagementCard'
+Assert-True ($runManagementCard -match 'setOnClickListener \{ toggleRunManagementCard') 'run management row card should expand from the whole card click.'
+Assert-True ($runManagementCard -match 'LinearLayout\.LayoutParams\(dp\(34\), dp\(34\)\)') 'run management card icon should stay compact like install wizard rows.'
+Assert-True ($runManagementCard -notmatch '停止卡片|runManagementActionButton|runManagementSummary|processCount') 'run management card should not expose heavy counts or action buttons in the collapsed row.'
+
+$runManagementDetails = Function-Body $main 'runManagementDetails'
+Assert-True ($runManagementDetails -match 'runManagementSurfaceItems') 'expanded run management card should derive SH/terminal/web rows from existing card-run surfaces.'
+Assert-True ($runManagementDetails -match 'CardRunSurface\.Report') 'expanded run management card should surface SH report when available.'
+Assert-True ($runManagementDetails -match 'CardRunSurface\.Terminal') 'expanded run management card should surface terminal rows when available.'
+Assert-True ($runManagementDetails -match 'CardRunSurface\.Web') 'expanded run management card should surface web rows when available.'
+
 $showManage = Function-Body $main 'showResourceManage'
 Assert-True ($showManage -notmatch 'resourceCatalog\(forceRefresh = true\)|planSnapshot\(\)|registrySnapshot\(') 'showResourceManage must not synchronously build catalog or DB snapshots.'
 Assert-True ($showManage -match 'requestResourceManageRefresh') 'showResourceManage should request a background payload.'
