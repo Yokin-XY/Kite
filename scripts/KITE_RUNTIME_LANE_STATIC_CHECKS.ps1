@@ -39,9 +39,27 @@ Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have l
 Assert-True ($main -match 'updateVisibleResourceInstallWizardElapsed') 'install wizard must have local elapsed binding.'
 Assert-True ($main -match 'updateVisibleConsoleCard') 'console card runtime changes should have local binding.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'
+Assert-True ($main -match 'observeRuntimePanelSummarySignals') 'runtime panel summary counts must observe existing store snapshots.'
 
 $handleProgress = Function-Body $main 'handleShellProgress'
 Assert-True ($handleProgress -notmatch 'showCardRunSurface|showConsole|renderResourceInstallWizardFor') 'handleShellProgress must not redraw whole surfaces.'
+
+$runtimePanelObserver = Function-Body $main 'observeRuntimePanelSummarySignals'
+Assert-True ($runtimePanelObserver -match 'TerminalSessionStore\.snapshot\.collect') 'runtime panel terminal count must reuse TerminalSessionStore snapshot.'
+Assert-True ($runtimePanelObserver -match 'TaskManagerStore\.snapshot\.collect') 'runtime panel process count must reuse TaskManagerStore snapshot.'
+Assert-True ($runtimePanelObserver -notmatch 'showCardRunSurface|showConsole|showKiteProcessOverview|refreshResourceScreenIfVisible') 'runtime panel count observer must not trigger whole-surface refreshes.'
+
+$runtimePanelSummary = Function-Body $main 'runtimePanelSummary'
+Assert-True ($runtimePanelSummary -match 'CardRunStore\.runs\.value') 'runtime panel card count must reuse CardRunStore.'
+Assert-True ($runtimePanelSummary -match 'TerminalSessionStore\.snapshot\.value\.liveSessions\.size') 'runtime panel terminal count must reuse live terminal snapshot.'
+Assert-True ($runtimePanelSummary -match 'TaskManagerStore\.snapshot\.value\.processes\.size') 'runtime panel process count must reuse task-manager snapshot.'
+
+$runtimePanelCounts = Function-Body $main 'renderRuntimePanelCounts'
+Assert-True ($runtimePanelCounts -match 'runtimePanelCardCountView\?\.text') 'runtime panel counts should update existing value views.'
+Assert-True ($runtimePanelCounts -notmatch 'showCardRunSurface|showConsole|showKiteProcessOverview|RuntimeHealthStore\.refresh|TaskManagerStore\.refresh|TerminalSessionStore\.refresh') 'runtime panel count rendering must stay a cheap text bind.'
+
+$showRuntimePanel = Function-Body $main 'showUbuntuRuntimePanel'
+Assert-True ($showRuntimePanel -match 'requestRuntimePanelSummaryRefresh') 'opening runtime panel should request throttled summary refresh.'
 
 $showManage = Function-Body $main 'showResourceManage'
 Assert-True ($showManage -notmatch 'resourceCatalog\(forceRefresh = true\)|planSnapshot\(\)|registrySnapshot\(') 'showResourceManage must not synchronously build catalog or DB snapshots.'

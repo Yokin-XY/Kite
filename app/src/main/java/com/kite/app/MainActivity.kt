@@ -116,6 +116,7 @@ import com.kftest.app.foundation.runtime.AssetExtractor
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
 import com.kftest.app.foundation.runtime.RuntimeHealthStore
+import com.kftest.app.foundation.runtime.TaskManagerStore
 import com.kftest.app.foundation.runtime.TerminalSessionStore
 import com.kftest.app.foundation.terminal.TerminalRuntimeHost
 import com.kftest.app.foundation.terminal.TerminalRuntimeRegistry
@@ -235,6 +236,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var runtimePanelCardCountView: TextView? = null
     private var runtimePanelTerminalCountView: TextView? = null
     private var runtimePanelProcessCountView: TextView? = null
+    private var processOverviewCardCountView: TextView? = null
+    private var processOverviewTerminalCountView: TextView? = null
+    private var processOverviewProcessCountView: TextView? = null
     private var autoOpenedRootfsRunAt = 0L
     private var lastWorkbenchUrl: String? = null
     private var resourcePageView: View? = null
@@ -311,6 +315,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         observeRuntimeBootstrapProgress()
         observeTerminalFlowSignals()
         observeCardRunStoreSignals()
+        observeRuntimePanelSummarySignals()
         observeResourceInstallSignals()
         applyRecentTaskVisibilitySetting()
         val handledLaunchIntent = handleCardRunLaunchIntent(intent)
@@ -578,6 +583,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
+    private fun observeRuntimePanelSummarySignals() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                TerminalSessionStore.snapshot.collect {
+                    renderRuntimePanelCounts()
+                }
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                TaskManagerStore.snapshot.collect {
+                    renderRuntimePanelCounts()
+                }
+            }
+        }
+    }
+
     private fun observeTerminalFlowSignals() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -637,6 +659,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                             updateVisibleConsoleCard(recipe, state)
                         }
                     }
+                    renderRuntimePanelCounts()
                     updateVisibleResourceInstallWizardElapsed()
                 }
             }
@@ -1461,6 +1484,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun showKiteProcessOverview() {
+        requestRuntimePanelSummaryRefresh(force = true)
         currentScreen = Screen.Processes
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
@@ -1482,7 +1506,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(18), dp(10), dp(18), dp(28))
-                addView(kiteProcessSummaryBlock(runtimePanelSummary()))
+                addView(kiteProcessSummaryBlock(runtimePanelSummary(), bindProcessOverview = true))
                 val activeRuns = CardRunStore.runs.value
                     .filter { it.countsAsRuntimePanelCard() }
                     .sortedByDescending { it.updatedAt }
@@ -1558,6 +1582,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         terminalBottomNavigation = null
         cardRunReportBinding = null
         resourceInstallWizardBinding = null
+        processOverviewCardCountView = null
+        processOverviewTerminalCountView = null
+        processOverviewProcessCountView = null
         consoleCardBindings.clear()
         val transaction = supportFragmentManager.beginTransaction()
         var changed = false
@@ -9337,6 +9364,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun runtimePanelSummary(): RuntimePanelSummary {
         val health = RuntimeHealthStore.snapshot.value
         val processCount = listOf(
+            TaskManagerStore.snapshot.value.processes.size,
             health.prootTelemetry.processLiveTable.liveTraceeCount,
             health.processResourceSnapshot.processCount,
             health.processSnapshotMergedProcessCount,
@@ -9347,6 +9375,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             runningTerminals = TerminalSessionStore.snapshot.value.liveSessions.size,
             runningProcesses = processCount.coerceAtLeast(0)
         )
+    }
+
+    private fun requestRuntimePanelSummaryRefresh(force: Boolean = false) {
+        val appContext = applicationContext
+        TerminalSessionStore.refresh(appContext, force = force)
+        TaskManagerStore.refresh(appContext, force = force)
+    }
+
+    private fun renderRuntimePanelCounts(summary: RuntimePanelSummary = runtimePanelSummary()) {
+        runtimePanelCardCountView?.text = summary.runningCards.toString()
+        runtimePanelTerminalCountView?.text = summary.runningTerminals.toString()
+        runtimePanelProcessCountView?.text = summary.runningProcesses.toString()
+        processOverviewCardCountView?.text = summary.runningCards.toString()
+        processOverviewTerminalCountView?.text = summary.runningTerminals.toString()
+        processOverviewProcessCountView?.text = summary.runningProcesses.toString()
     }
 
     private fun runtimePanelUsesPrimaryAction(state: UbuntuRuntimeUiState): Boolean =
@@ -9366,24 +9409,31 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             else -> false
         }
 
-    private fun kiteProcessSummaryBlock(summary: RuntimePanelSummary): View =
+    private fun kiteProcessSummaryBlock(summary: RuntimePanelSummary, bindProcessOverview: Boolean = false): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(14), dp(16), dp(14))
             background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
             addView(row {
-                addView(kiteProcessSummaryCell("卡片", summary.runningCards.toString()))
-                addView(kiteProcessSummaryCell("终端", summary.runningTerminals.toString()))
-                addView(kiteProcessSummaryCell("进程", summary.runningProcesses.toString()))
+                addView(kiteProcessSummaryCell("卡片", summary.runningCards.toString()) {
+                    if (bindProcessOverview) processOverviewCardCountView = it
+                })
+                addView(kiteProcessSummaryCell("终端", summary.runningTerminals.toString()) {
+                    if (bindProcessOverview) processOverviewTerminalCountView = it
+                })
+                addView(kiteProcessSummaryCell("进程", summary.runningProcesses.toString()) {
+                    if (bindProcessOverview) processOverviewProcessCountView = it
+                })
             })
         }
 
-    private fun kiteProcessSummaryCell(label: String, value: String): View =
+    private fun kiteProcessSummaryCell(label: String, value: String, bindValue: (TextView) -> Unit = {}): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             addView(TextView(context).apply {
+                bindValue(this)
                 text = value
                 textSize = 22f
                 typeface = Typeface.DEFAULT_BOLD
@@ -9490,9 +9540,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun showUbuntuRuntimePanel(auto: Boolean, anchor: View? = null) {
         val existing = ubuntuRuntimeDialog
         if (existing?.isShowing == true) {
+            requestRuntimePanelSummaryRefresh(force = !auto)
             renderUbuntuRuntimePanelState()
             return
         }
+        requestRuntimePanelSummaryRefresh(force = !auto)
 
         val screenWidth = resources.displayMetrics.widthPixels
         val panelWidth = (screenWidth - dp(36)).coerceAtMost(dp(560))
@@ -9681,9 +9733,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             text = detailText
             visibility = if (detailText.isBlank()) View.GONE else View.VISIBLE
         }
-        runtimePanelCardCountView?.text = summary.runningCards.toString()
-        runtimePanelTerminalCountView?.text = summary.runningTerminals.toString()
-        runtimePanelProcessCountView?.text = summary.runningProcesses.toString()
+        renderRuntimePanelCounts(summary)
         runtimePanelProgressBar?.apply {
             visibility = if (state.showProgress) View.VISIBLE else View.GONE
             isIndeterminate = state.progressPercent == null
