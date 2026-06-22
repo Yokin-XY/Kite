@@ -115,6 +115,7 @@ import com.kftest.app.foundation.bootstrap.BootstrapStage
 import com.kftest.app.foundation.runtime.AssetExtractor
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
+import com.kftest.app.foundation.runtime.RuntimeHealthStore
 import com.kftest.app.foundation.runtime.TerminalSessionStore
 import com.kftest.app.foundation.terminal.TerminalRuntimeHost
 import com.kftest.app.foundation.terminal.TerminalRuntimeRegistry
@@ -229,6 +230,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var runtimePanelProgressBar: ProgressBar? = null
     private var runtimePanelProgressTextView: TextView? = null
     private var runtimePanelActionButton: TextView? = null
+    private var runtimePanelActionRow: LinearLayout? = null
+    private var runtimePanelActionChevronView: TextView? = null
+    private var runtimePanelCardCountView: TextView? = null
+    private var runtimePanelTerminalCountView: TextView? = null
+    private var runtimePanelProcessCountView: TextView? = null
     private var autoOpenedRootfsRunAt = 0L
     private var lastWorkbenchUrl: String? = null
     private var resourcePageView: View? = null
@@ -383,6 +389,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             Screen.ResourceDetail -> showResources()
             Screen.Resources -> showConsole()
             Screen.Settings -> showConsole()
+            Screen.Processes -> showConsole()
             Screen.Terminal -> if (isTerminalDetailMode) super.onBackPressed() else showConsole()
             else -> if (currentScreen != Screen.Console) showConsole() else super.onBackPressed()
         }
@@ -1451,6 +1458,50 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         return currentRecipes.firstOrNull { it.id == recipeId }
             ?: CardRunStore.registeredRecipe(recipeId)
             ?: recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
+    }
+
+    private fun showKiteProcessOverview() {
+        currentScreen = Screen.Processes
+        root.setBackgroundColor(tokens.pageBackground)
+        clearRootForScreen()
+        root.addView(row {
+            setPadding(dp(16), dp(12), dp(16), dp(8))
+            addView(iconButton("‹", dp(42), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { showConsole() })
+            addView(TextView(context).apply {
+                text = "进程"
+                textSize = 20f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textPrimary)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(View(context), LinearLayout.LayoutParams(dp(42), dp(42)))
+        })
+        root.addView(ScrollView(this).apply {
+            isFillViewport = true
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(18), dp(10), dp(18), dp(28))
+                addView(kiteProcessSummaryBlock(runtimePanelSummary()))
+                val activeRuns = CardRunStore.runs.value
+                    .filter { it.countsAsRuntimePanelCard() }
+                    .sortedByDescending { it.updatedAt }
+                if (activeRuns.isEmpty()) {
+                    addView(TextView(context).apply {
+                        text = "当前没有运行中的卡片"
+                        textSize = 13.5f
+                        gravity = Gravity.CENTER
+                        setTextColor(tokens.textSecondary)
+                        setPadding(0, dp(46), 0, dp(20))
+                    })
+                } else {
+                    activeRuns.forEach { run ->
+                        addView(kiteProcessCard(run))
+                    }
+                }
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(bottomNavigation())
     }
 
     private fun showTerminal() {
@@ -6361,10 +6412,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             includeFontPadding = false
             setTextColor(tokens.textPrimary)
         })
-        addView(systemStatusPill(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
+        val statusPill = systemStatusPill()
+        addView(statusPill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
             setMargins(dp(10), dp(2), 0, 0)
         })
-        setOnClickListener { showUbuntuRuntimePanel(auto = false) }
+        val openPanel = { showUbuntuRuntimePanel(auto = false, anchor = statusPill) }
+        setOnClickListener { openPanel() }
+        statusPill.setOnClickListener { openPanel() }
     }
 
     private fun systemStatusPill(): TextView = TextView(this).apply {
@@ -9241,6 +9295,172 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
         }
 
+    private fun runtimePanelMetric(
+        iconText: String,
+        label: String,
+        accent: Int,
+        bindValue: (TextView) -> Unit
+    ): View =
+        row {
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(context).apply {
+                text = iconText
+                textSize = 18f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(accent)
+                background = roundedBox(tintBackground(accent), Color.TRANSPARENT, dp(13).toFloat(), 0)
+                layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+                    setMargins(0, 0, dp(12), 0)
+                }
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(context).apply {
+                    text = label
+                    textSize = 12f
+                    setTextColor(tokens.textSecondary)
+                })
+                addView(TextView(context).apply {
+                    bindValue(this)
+                    textSize = 22f
+                    typeface = Typeface.DEFAULT_BOLD
+                    includeFontPadding = false
+                    setTextColor(tokens.textPrimary)
+                    setPadding(0, dp(2), 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+
+    private fun runtimePanelSummary(): RuntimePanelSummary {
+        val health = RuntimeHealthStore.snapshot.value
+        val processCount = listOf(
+            health.prootTelemetry.processLiveTable.liveTraceeCount,
+            health.processResourceSnapshot.processCount,
+            health.processSnapshotMergedProcessCount,
+            health.roots.sumOf { it.processCount }
+        ).maxOrNull() ?: 0
+        return RuntimePanelSummary(
+            runningCards = CardRunStore.runs.value.count { it.countsAsRuntimePanelCard() },
+            runningTerminals = TerminalSessionStore.snapshot.value.liveSessions.size,
+            runningProcesses = processCount.coerceAtLeast(0)
+        )
+    }
+
+    private fun runtimePanelUsesPrimaryAction(state: UbuntuRuntimeUiState): Boolean =
+        state.firstRunPermissionOnboarding ||
+            state.requiresPermission ||
+            state.canRetry ||
+            (state.visible && !state.blocksUbuntuActions)
+
+    private fun RecipeRuntimeState.countsAsRuntimePanelCard(): Boolean =
+        parentInstanceId.isNullOrBlank() && when (status) {
+            RecipeRunStatus.Starting,
+            RecipeRunStatus.Running,
+            RecipeRunStatus.WaitingTerminal,
+            RecipeRunStatus.AlreadyRunning,
+            RecipeRunStatus.Opened,
+            RecipeRunStatus.Stopping -> true
+            else -> false
+        }
+
+    private fun kiteProcessSummaryBlock(summary: RuntimePanelSummary): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+            addView(row {
+                addView(kiteProcessSummaryCell("卡片", summary.runningCards.toString()))
+                addView(kiteProcessSummaryCell("终端", summary.runningTerminals.toString()))
+                addView(kiteProcessSummaryCell("进程", summary.runningProcesses.toString()))
+            })
+        }
+
+    private fun kiteProcessSummaryCell(label: String, value: String): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(context).apply {
+                text = value
+                textSize = 22f
+                typeface = Typeface.DEFAULT_BOLD
+                includeFontPadding = false
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = label
+                textSize = 12f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(3), 0, 0)
+            })
+        }
+
+    private fun kiteProcessCard(run: RecipeRuntimeState): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(15), dp(13), dp(15), dp(13))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(16).toFloat())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, dp(12), 0, 0)
+            }
+            addView(row {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    addView(TextView(context).apply {
+                        text = run.recipeName.ifBlank { run.recipeId.ifBlank { "Kite 卡片" } }
+                        textSize = 15f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(tokens.textPrimary)
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                    })
+                    addView(TextView(context).apply {
+                        text = buildProcessOverviewSubtitle(run)
+                        textSize = 12f
+                        setTextColor(tokens.textSecondary)
+                        setPadding(0, dp(5), 0, 0)
+                        maxLines = 2
+                        ellipsize = TextUtils.TruncateAt.END
+                    })
+                })
+                addView(TextView(context).apply {
+                    text = run.ownerKind.processOverviewOwnerLabel()
+                    textSize = 11.5f
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(tokens.textSecondary)
+                    background = roundedBox(tokens.surface, tokens.border, dp(11).toFloat(), 0)
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)).apply {
+                        setMargins(dp(10), 0, 0, 0)
+                    }
+                    setPadding(dp(9), 0, dp(9), 0)
+                })
+            })
+        }
+
+    private fun buildProcessOverviewSubtitle(run: RecipeRuntimeState): String {
+        val parts = mutableListOf(run.status.label)
+        if (!run.terminalSessionId.isNullOrBlank()) parts += "终端 1"
+        if (!run.nextActionUrl.isNullOrBlank()) parts += "网页 1"
+        if (!run.pid.isNullOrBlank() || !run.rootPid.isNullOrBlank() || !run.processGroupId.isNullOrBlank()) {
+            parts += "进程已绑定"
+        }
+        return parts.joinToString(" · ")
+    }
+
+    private fun String.processOverviewOwnerLabel(): String = when (this) {
+        RecipeRuntimeState.OWNER_KIND_RESOURCE -> "资源"
+        RecipeRuntimeState.OWNER_KIND_INSTALL_WIZARD -> "安装"
+        RecipeRuntimeState.OWNER_KIND_TERMINAL -> "终端"
+        RecipeRuntimeState.OWNER_KIND_WEB -> "网页"
+        else -> "卡片"
+    }
+
     private fun maybeAutoShowUbuntuRuntimePanel(state: UbuntuRuntimeUiState) {
         val startedAt = latestRootfsProgress.startedAt
         if (!state.autoOpenPanel || startedAt <= 0L || autoOpenedRootfsRunAt == startedAt) return
@@ -9248,62 +9468,101 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         showUbuntuRuntimePanel(auto = true)
     }
 
-    private fun showUbuntuRuntimePanel(auto: Boolean) {
+    private fun runtimePanelAnchorPoint(
+        anchor: View?,
+        panelLeft: Int,
+        panelWidth: Int,
+        fallbackBottomY: Int
+    ): Pair<Int, Int> {
+        val fallback = (panelLeft + panelWidth / 2) to fallbackBottomY
+        if (anchor == null || anchor.width <= 0 || !anchor.isAttachedToWindow) {
+            return fallback
+        }
+        val location = IntArray(2)
+        return runCatching {
+            anchor.getLocationOnScreen(location)
+            val visibleFrame = android.graphics.Rect()
+            window.decorView.getWindowVisibleDisplayFrame(visibleFrame)
+            (location[0] + anchor.width / 2) to (location[1] + anchor.height - visibleFrame.top)
+        }.getOrDefault(fallback)
+    }
+
+    private fun showUbuntuRuntimePanel(auto: Boolean, anchor: View? = null) {
         val existing = ubuntuRuntimeDialog
         if (existing?.isShowing == true) {
             renderUbuntuRuntimePanelState()
             return
         }
 
+        val screenWidth = resources.displayMetrics.widthPixels
+        val panelWidth = (screenWidth - dp(36)).coerceAtMost(dp(560))
+        val panelLeft = ((screenWidth - panelWidth) / 2).coerceAtLeast(dp(8))
+        val pointerSize = dp(22)
+        val pointerMinLeft = dp(24)
+        val pointerMaxLeft = (panelWidth - dp(24) - pointerSize).coerceAtLeast(pointerMinLeft)
+        val (anchorCenterX, anchorBottomY) = runtimePanelAnchorPoint(
+            anchor,
+            panelLeft,
+            panelWidth,
+            fallbackBottomY = if (auto) dp(56) else dp(58)
+        )
+        val pointerLeft = (anchorCenterX - panelLeft - pointerSize / 2).coerceIn(pointerMinLeft, pointerMaxLeft)
+        val panelTop = (anchorBottomY + dp(3)).coerceAtLeast(dp(6))
+
         val dialog = Dialog(this)
         ubuntuRuntimeDialog = dialog
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(18), dp(20), dp(18))
-            background = roundedBox(tokens.pageBackground, tokens.border, dp(24).toFloat())
+            setPadding(dp(18), dp(18), dp(18), 0)
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
+            elevation = dp(8).toFloat()
         }
 
         content.addView(row {
             gravity = Gravity.CENTER_VERTICAL
+            addView(View(context).apply {
+                background = roundedBox(tokens.success, Color.TRANSPARENT, dp(5).toFloat(), 0)
+                layoutParams = LinearLayout.LayoutParams(dp(10), dp(10)).apply {
+                    setMargins(0, 0, dp(10), 0)
+                }
+            })
             addView(TextView(context).apply {
-                text = "系统状态"
-                textSize = 18f
+                text = "运行状态"
+                textSize = 15.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(tokens.textPrimary)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(TextView(context).apply {
-                text = "×"
-                textSize = 24f
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(tokens.textSecondary)
-                background = roundedBox(tokens.surface, tokens.border, dp(18).toFloat())
-                layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
-                setOnClickListener { dialog.dismiss() }
             })
         })
 
         content.addView(TextView(this).apply {
             runtimePanelTitleView = this
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
+            textSize = 13.5f
+            typeface = Typeface.DEFAULT
             setTextColor(tokens.textPrimary)
-            setPadding(0, dp(22), 0, 0)
+            setPadding(0, dp(14), 0, 0)
         })
         content.addView(TextView(this).apply {
             runtimePanelDetailView = this
-            textSize = 12.5f
+            textSize = 12f
             setTextColor(tokens.textSecondary)
             setLineSpacing(dp(2).toFloat(), 1f)
-            setPadding(0, dp(8), 0, 0)
+            setPadding(0, dp(5), 0, 0)
+        })
+        content.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(18), 0, dp(16))
+            addView(runtimePanelMetric("▣", "卡片", tokens.primaryStrong) { runtimePanelCardCountView = it })
+            addView(runtimePanelMetric(">_", "终端", Color.rgb(0, 150, 136)) { runtimePanelTerminalCountView = it })
+            addView(runtimePanelMetric("⌁", "进程", tokens.warning) { runtimePanelProcessCountView = it })
         })
         content.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             runtimePanelProgressBar = this
             max = 100
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(7)).apply {
-                setMargins(0, dp(18), 0, 0)
+                setMargins(0, 0, 0, 0)
             }
         })
         content.addView(TextView(this).apply {
@@ -9312,19 +9571,64 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setTextColor(tokens.textSecondary)
             setPadding(0, dp(7), 0, 0)
         })
-        content.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        content.addView(TextView(this).apply {
-            runtimePanelActionButton = this
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(tokens.buttonText)
-            background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(14).toFloat())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
-            setOnClickListener { handleRuntimePanelAction() }
-        })
 
-        dialog.setContentView(content)
+        content.addView(divider().apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                setMargins(-dp(18), dp(18), -dp(18), 0)
+            }
+        })
+        val actionRow = row {
+            runtimePanelActionRow = this
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), 0, dp(8), 0)
+            setOnClickListener { handleRuntimePanelAction() }
+            addView(TextView(context).apply {
+                runtimePanelActionButton = this
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER_VERTICAL
+                setTextColor(tokens.textPrimary)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+            })
+            addView(TextView(context).apply {
+                runtimePanelActionChevronView = this
+                text = "›"
+                textSize = 30f
+                includeFontPadding = false
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textSecondary)
+                layoutParams = LinearLayout.LayoutParams(dp(28), ViewGroup.LayoutParams.MATCH_PARENT)
+            })
+        }
+        content.addView(actionRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)))
+
+        val popover = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            alpha = 0f
+            scaleX = 0.92f
+            scaleY = 0.92f
+            pivotX = pointerLeft + pointerSize / 2f
+            pivotY = dp(13).toFloat()
+            val pointer = View(context).apply {
+                rotation = 45f
+                background = roundedBox(tokens.cardBackground, Color.TRANSPARENT, dp(2).toFloat(), 0)
+            }
+            val pointerParams = FrameLayout.LayoutParams(pointerSize, pointerSize, Gravity.TOP or Gravity.START).apply {
+                leftMargin = pointerLeft
+                topMargin = dp(2)
+            }
+            addView(pointer, pointerParams)
+            val contentParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(11)
+            }
+            addView(content, contentParams)
+        }
+
+        dialog.setContentView(popover)
         dialog.setOnDismissListener {
             if (ubuntuRuntimeDialog == dialog) {
                 ubuntuRuntimeDialog = null
@@ -9333,15 +9637,33 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 runtimePanelProgressBar = null
                 runtimePanelProgressTextView = null
                 runtimePanelActionButton = null
+                runtimePanelActionRow = null
+                runtimePanelActionChevronView = null
+                runtimePanelCardCountView = null
+                runtimePanelTerminalCountView = null
+                runtimePanelProcessCountView = null
             }
         }
         dialog.show()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setGravity(Gravity.TOP)
-        dialog.window?.setLayout(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            (resources.displayMetrics.heightPixels * 0.61f).toInt()
-        )
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0f)
+            setGravity(Gravity.TOP or Gravity.START)
+            attributes = attributes.apply {
+                x = panelLeft
+                y = panelTop
+                dimAmount = 0f
+            }
+            setLayout(panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        popover.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(180L)
+            .setInterpolator(PathInterpolator(0.16f, 1f, 0.3f, 1f))
+            .start()
         renderUbuntuRuntimePanelState()
     }
 
@@ -9349,15 +9671,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val dialog = ubuntuRuntimeDialog
         if (dialog?.isShowing != true) return
         val state = ubuntuRuntimeState
+        val summary = runtimePanelSummary()
         runtimePanelTitleView?.apply {
-            text = if (state.visible) state.title else "Kite 系统就绪"
+            text = if (state.visible) state.title else "Ubuntu 环境可用"
             setTextColor(if (state.isProblem) tokens.danger else tokens.textPrimary)
         }
-        runtimePanelDetailView?.text = if (state.visible) {
-            state.detail
-        } else {
-            "Ubuntu 系统镜像已经准备好，可以启动卡片、终端或网页流程。"
+        runtimePanelDetailView?.apply {
+            val detailText = if (state.visible) state.detail else ""
+            text = detailText
+            visibility = if (detailText.isBlank()) View.GONE else View.VISIBLE
         }
+        runtimePanelCardCountView?.text = summary.runningCards.toString()
+        runtimePanelTerminalCountView?.text = summary.runningTerminals.toString()
+        runtimePanelProcessCountView?.text = summary.runningProcesses.toString()
         runtimePanelProgressBar?.apply {
             visibility = if (state.showProgress) View.VISIBLE else View.GONE
             isIndeterminate = state.progressPercent == null
@@ -9369,21 +9695,26 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             text = state.progressText
             visibility = if (state.showProgress && state.progressText.isNotBlank()) View.VISIBLE else View.GONE
         }
+        val primaryAction = runtimePanelUsesPrimaryAction(state)
+        runtimePanelActionRow?.apply {
+            background = if (primaryAction) {
+                roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(14).toFloat())
+            } else {
+                null
+            }
+        }
         runtimePanelActionButton?.apply {
-            val shouldRetry = state.canRetry || (state.visible && !state.blocksUbuntuActions)
             text = when {
                 state.firstRunPermissionOnboarding -> state.permissionActionLabel.ifBlank { "开始授权" }
                 state.requiresPermission -> state.permissionActionLabel.ifBlank { "打开授权 / 继续" }
-                shouldRetry -> "重新检查 / 继续部署"
-                else -> "关闭"
+                state.canRetry || (state.visible && !state.blocksUbuntuActions) -> "重新检查 / 继续部署"
+                else -> "查看进程"
             }
-            val primaryAction = state.firstRunPermissionOnboarding || state.requiresPermission || shouldRetry
-            background = roundedBox(
-                if (primaryAction) tokens.primaryStrong else tokens.surface,
-                if (primaryAction) tokens.primaryStrong else tokens.border,
-                dp(14).toFloat()
-            )
             setTextColor(if (primaryAction) tokens.buttonText else tokens.textPrimary)
+        }
+        runtimePanelActionChevronView?.apply {
+            visibility = if (primaryAction) View.GONE else View.VISIBLE
+            setTextColor(tokens.textSecondary)
         }
     }
 
@@ -9399,6 +9730,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             ensureKfRuntimeBootstrap()
         } else {
             ubuntuRuntimeDialog?.dismiss()
+            showKiteProcessOverview()
         }
     }
 
@@ -14975,6 +15307,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val weight: Float
     )
 
+    private data class RuntimePanelSummary(
+        val runningCards: Int,
+        val runningTerminals: Int,
+        val runningProcesses: Int
+    )
+
     private data class SemanticColors(
         val text: Int,
         val background: Int,
@@ -15052,6 +15390,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         ResourceDetail,
         ResourceMore,
         ResourceRawJson,
+        Processes,
         Settings,
         ThemeSettings
     }
