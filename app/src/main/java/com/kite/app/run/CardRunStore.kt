@@ -256,6 +256,47 @@ object CardRunStore {
     }
 
     @Synchronized
+    fun removeClosedRunStatesForRecipes(recipeIds: Collection<String>): Set<String> {
+        val ids = recipeIds
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toSet()
+        if (ids.isEmpty()) return emptySet()
+        val activeInstanceIds = runsByInstance.values
+            .filter { (it.recipeId in ids || it.instanceId in ids) && !it.status.endsHistoryEntry() }
+            .mapTo(mutableSetOf()) { it.instanceId }
+        val closedRunInstanceIds = runsByInstance.values
+            .filter { (it.recipeId in ids || it.instanceId in ids) && it.status.endsHistoryEntry() }
+            .mapTo(linkedSetOf()) { it.instanceId }
+        val closedHistoryInstanceIds = linkedSetOf<String>()
+        var historyChanged = false
+        ids.forEach { recipeId ->
+            val entries = historiesByRecipe[recipeId] ?: return@forEach
+            val before = entries.size
+            entries.removeAll { entry ->
+                if (entry.isClosed()) {
+                    closedHistoryInstanceIds.add(entry.instanceId)
+                    true
+                } else {
+                    false
+                }
+            }
+            if (entries.size != before) {
+                historyChanged = true
+                if (entries.isEmpty()) historiesByRecipe.remove(recipeId)
+            }
+        }
+        if (closedRunInstanceIds.isNotEmpty()) {
+            runsByInstance.entries.removeAll { (_, run) -> run.instanceId in closedRunInstanceIds }
+            _runs.value = sortedRuns()
+            schedulePersistRuns()
+        }
+        if (historyChanged) schedulePersistHistory()
+        return (closedRunInstanceIds + closedHistoryInstanceIds)
+            .filterTo(linkedSetOf()) { it !in activeInstanceIds }
+    }
+
+    @Synchronized
     private fun upsert(run: CardRunState) {
         runsByInstance[run.instanceId] = run
         _runs.value = sortedRuns()
@@ -355,7 +396,7 @@ object CardRunStore {
     private fun CardRunState.normalizedAfterProcessRestore(): CardRunState {
         if (!status.shouldResetAfterProcessRestore()) return this
         return copy(
-            status = CardRunStatus.Stopped,
+            status = CardRunStatus.Failed,
             surface = when {
                 !shellReportText.isNullOrBlank() || !lastMeaningfulOutput.isNullOrBlank() -> CardRunSurface.Report
                 else -> CardRunSurface.Summary
@@ -366,8 +407,8 @@ object CardRunStore {
             rootPid = null,
             processGroupId = null,
             systemSessionId = null,
-            lastMeaningfulOutput = lastMeaningfulOutput ?: "Kite 重新启动，已重置上次未完成状态",
-            lastError = null,
+            lastMeaningfulOutput = lastMeaningfulOutput ?: PROCESS_RESTORE_ABORTED_MESSAGE,
+            lastError = lastError ?: PROCESS_RESTORE_ABORTED_MESSAGE,
             nextActionUrl = null
         )
     }
@@ -641,15 +682,17 @@ object CardRunStore {
             this
         } else {
             copy(
-                status = CardRunStatus.Stopped,
+                status = CardRunStatus.Failed,
                 endedAt = updatedAt,
-                summary = summary.ifBlank { "Kite 重新启动，已重置上次未完成状态" }
+                summary = summary.ifBlank { PROCESS_RESTORE_ABORTED_MESSAGE },
+                error = error.ifBlank { PROCESS_RESTORE_ABORTED_MESSAGE }
             )
         }
 
     private fun CardRunState.toJson(): JSONObject =
         JSONObject()
             .put("instanceId", instanceId)
+            .put("cardInstanceId", cardInstanceId)
             .put("recipeId", recipeId)
             .put("recipeName", recipeName)
             .put("parentInstanceId", parentInstanceId.orEmpty())
@@ -699,7 +742,9 @@ object CardRunStore {
             .put("reportText", reportText.takeLast(MAX_HISTORY_REPORT_CHARS))
 
     private fun JSONObject.toCardRunStateOrNull(): CardRunState? {
-        val instanceId = optString("instanceId").takeIf { it.isNotBlank() } ?: return null
+        val instanceId = optString("instanceId").takeIf { it.isNotBlank() }
+            ?: optString("cardInstanceId").takeIf { it.isNotBlank() }
+            ?: return null
         val recipeId = optString("recipeId").takeIf { it.isNotBlank() } ?: return null
         val status = enumValueOrDefault(optString("status"), CardRunStatus.Unknown)
         val surface = enumValueOrDefault(optString("surface"), CardRunSurface.Summary)
@@ -785,6 +830,7 @@ object CardRunStore {
     private const val MAX_HISTORY_DETAIL_CHARS = 260
     private const val MAX_HISTORY_SUMMARY_CHARS = 500
     private const val MAX_HISTORY_REPORT_CHARS = 4000
+    private const val PROCESS_RESTORE_ABORTED_MESSAGE = "Kite 重新启动，上次运行未确认正常结束"
     private const val PERSIST_DEBOUNCE_MS = 300L
 
 }

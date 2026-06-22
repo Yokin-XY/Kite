@@ -65,6 +65,8 @@ data class CardRunState(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {
+    val cardInstanceId: String get() = instanceId
+
     fun isBusy(): Boolean = status == CardRunStatus.Starting ||
         status == CardRunStatus.Stopping ||
         status == CardRunStatus.WaitingTerminal

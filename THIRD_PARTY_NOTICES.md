@@ -29,6 +29,9 @@ terms:
   `terminal-view-local/build.gradle.kts`, including AndroidX, Material,
   Shizuku, Kotlin/coroutines, and Apache Commons Compress, retain their
   own upstream license terms.
+- `AGENTS.md`: project coding-agent guidance adapted from Ponytail
+  (https://github.com/DietrichGebert/ponytail), MIT License, copyright
+  (c) 2026 DietrichGebert.
 
 The repository also contains local runtime control code for ADB,
 Shizuku, PRoot, process lifecycle management, and Android/KF execution

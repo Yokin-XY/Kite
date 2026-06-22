@@ -30,6 +30,28 @@ class KiteBridgeClient(
     private val directRuns = ConcurrentHashMap<String, DirectRunBinding>()
     private val directProcesses = ConcurrentHashMap<String, DirectProcessBinding>()
 
+    fun cleanCardRunPidDirs(cardInstanceIds: Collection<String>) {
+        val context = appContext ?: return
+        val ids = cardInstanceIds
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (ids.isEmpty()) return
+        thread(name = "KiteCardRunPidDirCleanup", isDaemon = true) {
+            ids.forEach { cardInstanceId ->
+                runCatching {
+                    val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+                        context = context,
+                        workingDirectory = DEFAULT_WORKDIR,
+                        payload = cleanCardRunPidDirPayload(cardInstanceId),
+                        loginShell = true
+                    )
+                    executeProcess(config.command, config.env, DIRECT_STOP_TIMEOUT_MS)
+                }
+            }
+        }
+    }
+
     fun runRecipe(
         recipe: KiteRecipe,
         extraEnv: Map<String, String> = emptyMap(),
@@ -97,6 +119,7 @@ class KiteBridgeClient(
             rootPid = null,
             processGroupId = null,
             systemSessionId = null,
+            cardInstanceId = null,
             callback = callback
         )
     }
@@ -108,6 +131,7 @@ class KiteBridgeClient(
         rootPid: String? = null,
         processGroupId: String? = null,
         systemSessionId: String? = null,
+        cardInstanceId: String? = null,
         callback: (BridgeResult) -> Unit
     ) {
         val context = appContext
@@ -128,7 +152,11 @@ class KiteBridgeClient(
                 pid = pid,
                 rootPid = rootPid,
                 processGroupId = processGroupId,
-                systemSessionId = systemSessionId
+                systemSessionId = systemSessionId,
+                cardInstanceId = cardInstanceId,
+                pidFilePath = cardInstanceId
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { cardRunPidFilePath(it, runId) }
             ).takeIf { it.hasProcessBinding() }
             if (persisted != null) {
                 stopDirectRuns(context, recipe, listOf(persisted), callback)
@@ -370,7 +398,9 @@ class KiteBridgeClient(
                             pid = execution.pid,
                             rootPid = execution.rootPid,
                             processGroupId = execution.processGroupId,
-                            systemSessionId = execution.systemSessionId
+                            systemSessionId = execution.systemSessionId,
+                            cardInstanceId = execution.cardInstanceId,
+                            pidFilePath = execution.pidFilePath
                         )
                         break
                     }
@@ -463,6 +493,7 @@ class KiteBridgeClient(
         rootPid: String?,
         processGroupId: String?,
         systemSessionId: String?,
+        cardInstanceId: String? = null,
         callback: (BridgeResult) -> Unit
     ) {
         stopRun(
@@ -472,6 +503,7 @@ class KiteBridgeClient(
             rootPid = rootPid,
             processGroupId = processGroupId,
             systemSessionId = systemSessionId,
+            cardInstanceId = cardInstanceId,
             callback = callback
         )
     }
@@ -556,8 +588,16 @@ class KiteBridgeClient(
         onProgress: ((BridgeProgress) -> Unit)? = null
     ): DirectStepExecution {
         val logPath = "/tmp/kite-${safeId(recipe.id)}-${safeId(step.id)}.log"
+        val cardInstanceId = cardInstanceIdFrom(extraEnv, recipe)
+        val pidFilePath = cardRunPidFilePath(cardInstanceId, runId)
         val launchPayload = runnerAwareLaunchPayload(step.cmd.orEmpty())
-        val payload = "mkdir -p /tmp && { $launchPayload; } > ${shellQuote(logPath)} 2>&1 < /dev/null & echo pid:$!; echo rootPid:$!; echo processGroupId:$!; echo systemSessionId:$!"
+        val payload = detachedLaunchPayload(
+            launchPayload = launchPayload,
+            logPath = logPath,
+            pidFilePath = pidFilePath,
+            cardInstanceId = cardInstanceId,
+            runId = runId
+        )
         val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
             context = context,
             workingDirectory = step.workdir?.trim().orEmpty().ifBlank { DEFAULT_WORKDIR },
@@ -594,6 +634,8 @@ class KiteBridgeClient(
             rootPid = runMeta.rootPid ?: pid,
             processGroupId = runMeta.processGroupId ?: pid,
             systemSessionId = runMeta.systemSessionId ?: pid,
+            cardInstanceId = cardInstanceId,
+            pidFilePath = pidFilePath,
             report = KiteStepReport(
                 stepId = step.id,
                 type = step.type,
@@ -633,6 +675,11 @@ class KiteBridgeClient(
                 directRuns.remove(binding.runId)
             }
             val stoppedOk = !stopPayloadHasRemaining(output.toString())
+            if (stoppedOk) {
+                bindings.forEach { binding ->
+                    output.append(cleanCardRunPidFile(context, binding.pidFilePath))
+                }
+            }
             val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
             val report = KiteRunReport(
                 protocolVersion = KiteRecipe.PROTOCOL_VERSION,
@@ -849,6 +896,62 @@ class KiteBridgeClient(
     private fun groupedAttachedPayload(command: String): String =
         runnerAwareLaunchPayload(command)
 
+    private fun cardInstanceIdFrom(extraEnv: Map<String, String>, recipe: KiteRecipe): String =
+        extraEnv["KITE_CARD_INSTANCE_ID"]
+            ?: extraEnv["KITE_INSTANCE_ID"]
+            ?: recipe.id
+
+    private fun cardRunPidDir(cardInstanceId: String): String =
+        "${WorkspaceBuildSupport.CONTAINER_HELPER_SYSTEM_STATE_PATH}/card-runs/${safeId(cardInstanceId)}"
+
+    private fun cardRunPidFilePath(cardInstanceId: String, runId: String): String =
+        "${cardRunPidDir(cardInstanceId)}/${safeId(runId)}.pid"
+
+    private fun cleanCardRunPidFile(context: Context, pidFilePath: String?): String {
+        val path = pidFilePath?.takeIf { it.isNotBlank() } ?: return ""
+        val payload = "rm -f -- ${shellQuote(path)} && printf '__kite_pid_file_cleaned:%s\\n' ${shellQuote(path)}"
+        val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+            context = context,
+            workingDirectory = DEFAULT_WORKDIR,
+            payload = payload,
+            loginShell = true
+        )
+        return executeProcess(config.command, config.env, DIRECT_STOP_TIMEOUT_MS).output
+    }
+
+    private fun cleanCardRunPidDirPayload(cardInstanceId: String): String {
+        val dir = cardRunPidDir(cardInstanceId)
+        return "rm -rf -- ${shellQuote(dir)} && printf '__kite_pid_dir_cleaned:%s\\n' ${shellQuote(dir)}"
+    }
+
+    private fun detachedLaunchPayload(
+        launchPayload: String,
+        logPath: String,
+        pidFilePath: String,
+        cardInstanceId: String,
+        runId: String
+    ): String = """
+        mkdir -p /tmp ${shellQuote(cardRunPidDir(cardInstanceId))}
+        { $launchPayload; } > ${shellQuote(logPath)} 2>&1 < /dev/null &
+        kite_root_pid=${'$'}!
+        kite_pgid="${'$'}kite_root_pid"
+        kite_sid="${'$'}kite_root_pid"
+        kite_pid_file=${shellQuote(pidFilePath)}
+        {
+          printf 'cardInstanceId=%s\n' ${shellQuote(cardInstanceId)}
+          printf 'runId=%s\n' ${shellQuote(runId)}
+          printf 'rootPid=%s\n' "${'$'}kite_root_pid"
+          printf 'processGroupId=%s\n' "${'$'}kite_pgid"
+          printf 'systemSessionId=%s\n' "${'$'}kite_sid"
+          printf 'logPath=%s\n' ${shellQuote(logPath)}
+        } > "${'$'}kite_pid_file"
+        printf '__kite_pid_file:%s\n' "${'$'}kite_pid_file"
+        printf 'pid:%s\n' "${'$'}kite_root_pid"
+        printf 'rootPid:%s\n' "${'$'}kite_root_pid"
+        printf 'processGroupId:%s\n' "${'$'}kite_pgid"
+        printf 'systemSessionId:%s\n' "${'$'}kite_sid"
+    """.trimIndent()
+
     private fun runnerAwareLaunchPayload(command: String): String {
         val safeCommand = command.ifBlank { ":" }
         val runnerPath = WorkspaceBuildSupport.CONTAINER_KITE_RUNNER_PATH
@@ -1016,7 +1119,9 @@ private data class DirectRunBinding(
     val pid: String?,
     val rootPid: String? = null,
     val processGroupId: String? = null,
-    val systemSessionId: String? = null
+    val systemSessionId: String? = null,
+    val cardInstanceId: String? = null,
+    val pidFilePath: String? = null
 ) {
     fun hasProcessBinding(): Boolean =
         !pid.isNullOrBlank() ||
@@ -1047,6 +1152,8 @@ private data class DirectStepExecution(
     val rootPid: String? = null,
     val processGroupId: String? = null,
     val systemSessionId: String? = null,
+    val cardInstanceId: String? = null,
+    val pidFilePath: String? = null,
     val report: KiteStepReport
 )
 

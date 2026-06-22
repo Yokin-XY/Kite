@@ -31,6 +31,7 @@ object KiteBrowserProxyInstaller {
         return linkedMapOf(
             "KITE_OPEN_URL_ENDPOINT" to ENDPOINT,
             "KITE_RECIPE_ID" to recipeId,
+            "KITE_CARD_INSTANCE_ID" to instanceId,
             "KITE_INSTANCE_ID" to instanceId,
             "KITE_BROWSER_SOURCE" to source,
             "KITE_BROWSER_PROXY" to CONTAINER_COMMAND,
@@ -153,9 +154,9 @@ object KiteBrowserProxyInstaller {
         |
         |endpoint="${'$'}{KITE_OPEN_URL_ENDPOINT:-$ENDPOINT}"
         |recipe="${'$'}{KITE_RECIPE_ID:-}"
-        |instance="${'$'}{KITE_INSTANCE_ID:-}"
+        |instance="${'$'}{KITE_CARD_INSTANCE_ID:-${'$'}{KITE_INSTANCE_ID:-}}"
         |source="${'$'}{KITE_BROWSER_SOURCE:-${KiteBrowserOpenRequest.SOURCE_UBUNTU_BROWSER}}"
-        |query="recipeId=${'$'}recipe&instanceId=${'$'}instance&source=${'$'}source"
+        |query="recipeId=${'$'}recipe&instanceId=${'$'}instance&cardInstanceId=${'$'}instance&source=${'$'}source"
         |
         |if command -v curl >/dev/null 2>&1; then
         |  printf '%s' "${'$'}url" | curl -fsS -X POST \

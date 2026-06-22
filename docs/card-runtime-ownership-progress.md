@@ -1,0 +1,163 @@
+# Kite 卡片运行容器化进度
+
+## 当前阶段
+一期：建立卡片运行所有权。
+
+## 当前原则
+所有启动、停止、查询、清理都围绕 cardInstanceId。
+当前不替换 Ubuntu，不重写 PRoot，不引入新容器方案。
+
+## 已完成
+- 2026-06-22：补齐 CardRun 最小运行单元的 cardInstanceId 语义；CardRunStore 仍复用现有 instanceId 主键，并对外持久化/恢复 cardInstanceId；shell、terminal、Web browser proxy 运行环境都能拿到同一个 card 实例标识。
+- 2026-06-22：补齐 detached shell 的最小启动 pidfile；KiteBridgeClient 在启动时把 cardInstanceId/runId/rootPid/processGroupId/systemSessionId/logPath 写入 `/workspace/.kf/system/state/card-runs/<cardInstanceId>/<runId>.pid`，并继续通过现有 progress/report 路径回写 CardRunStore。
+- 2026-06-22：收敛统一停止入口的最小实现；MainActivity.stopRecipe 先按 cardInstanceId 查询 CardRunStore 最新状态，再停止 terminal / bridge process binding，并把 stop callback 回写固定到同一个 cardInstanceId。
+- 2026-06-22：补齐停止后的最小运行复核；MainActivity.handleStopResultV2 会解析 bridge stop 输出里的 `__kite_stop_remaining`，只有 stop 成功且 remaining 为空才清 binding 并写 Stopped，有残留则保留原状态并把残留 PID 写回 CardRunStore 错误。
+- 2026-06-22：补齐 stop 成功后的最小 pidfile 清理；KiteBridgeClient 在 detached run binding 中保留 pidfile path，并在 stopDirectRuns 复核成功后删除对应 `<cardInstanceId>/<runId>.pid`。
+- 2026-06-22：补齐 cardInstanceId 查询入口的最小展示；运行管理展开详情会显示 CardRun 标识、runId/rootPid/pgid/sid 执行绑定、terminal/web 表面绑定。
+- 2026-06-22：补齐删除卡片后的最小清理；删除配置成功后只移除该卡片已关闭的 CardRun 状态/历史，并按返回的 cardInstanceId 清理残留 pidfile 目录。
+- 2026-06-22：补齐异常退出的最小识别；运行管理展开详情会显示正常停止、正常完成、崩溃/异常、残留、未结束，CardRunStore 不再把进程恢复时未完成运行归成正常停止。
+- 2026-06-22：完成 OnePlus 8T 真实设备启停闭环验收；通过首页真实启动/停止按钮启动临时 shell 卡片，CardRunStore 登记 `cardInstanceId/runId/rootPid/processGroupId/systemSessionId`，停止后回写 Stopped 并清空 run binding，Android 进程表确认 `rootPid/pgid` 无残留。
+- 2026-06-22：修复提交前阻塞；静态验收脚本可通过 `powershell -File` 直接运行，删除活动卡片配置前会先按 cardInstanceId 请求 stop，并中止本次删除。
+
+## 正在进行
+- 暂无
+
+## 阻塞项
+- 暂无
+
+## 下次推荐领取
+1. 一期收口复核：按最终验收逐项确认启动、查看、关闭、删除、异常退出的剩余缺口。
+2. detached pidfile 专项实机复核：如果需要补齐实物证据，构造一张确实走 detached launch 的卡片，确认 `<cardInstanceId>/<runId>.pid` 创建和停止后清理。
+3. RuntimeHealthStore 级运行态复核方案：如果要从一期最小方案升级到完整统一管理，再把 stop 后复核从 bridge 脚本即时检查提升到运行态健康源。
+
+## 会话记录
+
+### 2026-06-22 14:29
+- 领取任务：一期任务 1，定义/补齐最小 CardRun 运行单元字段里的 cardInstanceId 语义。
+- 领取原因：真实代码已经以 CardRunStore.instanceId 承担卡片实例所有权，但总纲和运行环境需要明确的 cardInstanceId 名称，先补兼容面比新建状态模型更小。
+- 涉及入口或状态源：CardRunStore；MainActivity 的 startRecipe / executeShellRecipeStep / executeTerminalRecipeStep / openBrowserRequestInCardRun；KiteBridgeClient 的 extraEnv handoff；KiteBrowserProxyInstaller / KiteLocalServer 的 Web surface 绑定。
+- 验收标准：CardRunStore 可查询同一实例的 runId、rootPid、processGroupId、terminalSessionId、status、createdAt、updatedAt，并持久化 cardInstanceId；shell/terminal/Web 启动环境可通过 KITE_CARD_INSTANCE_ID 找回同一实例。
+- 明确不做：不重写 stop(cardInstanceId)，不改 Ubuntu/PRoot，不引入新容器方案，不做二期运行目录制度，不改 terminal/runtime surface 内部行为。
+- 修改范围：app/src/main/java/com/kite/app/run/CardRunModels.kt；app/src/main/java/com/kite/app/run/CardRunStore.kt；app/src/main/java/com/kite/app/bridge/KiteBrowserProxy.kt；app/src/main/java/com/kite/app/bridge/KiteLocalServer.kt；scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1；docs/card-runtime-ownership-progress.md。
+- 验证方式：`& D:\xm\Kite\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat :app:assembleDebug --console=plain`。
+- 验证结果：静态检查通过；debug APK 编译通过。
+- 完成状态：已完成。
+- 剩余问题：stop(cardInstanceId)、pidfile 创建、停止复核仍未统一。
+- 下次建议：领取“统一启动入口”的最小 pidfile 创建和 CardRunStore 回写。
+
+### 2026-06-22 14:36
+- 领取任务：一期任务 2，统一启动入口里的 detached shell 最小 pidfile 创建和 CardRunStore 回写。
+- 领取原因：CardRunStore 已有 cardInstanceId/runId/rootPid/processGroupId 字段和回写路径，下一步最小缺口是 launcher 启动时落一个可查询 pidfile。
+- 涉及入口或状态源：MainActivity.executeShellRecipeStep；KiteBridgeClient.runRecipe / executeDetachedShellStep；CardRunStore.update；KiteBrowserProxyInstaller.environment。
+- 验收标准：detached shell 启动经 KiteBridgeClient launcher 写入 KITE_CARD_INSTANCE_ID、生成 runId、创建 pidfile、记录 rootPid/processGroupId，并继续回写 CardRunStore。
+- 明确不做：不重写 stop(cardInstanceId)，不做停止复核，不引入 `/run/kite/cards/<cardInstanceId>/` 二期目录制度，不改 PRoot 或 kf-runner 二进制。
+- 修改范围：app/src/main/java/com/kite/app/bridge/KiteBridgeClient.kt；scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1；docs/card-runtime-ownership-progress.md。
+- 验证方式：`& D:\xm\Kite\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat :app:assembleDebug --console=plain`；`jar tf D:\xm\Kite\app\build\outputs\apk\debug\app-debug.apk | Select-String -Pattern 'assets/system/kf-runner-arm64|assets/system/kf-procps-arm64'`；`git diff --check -- ...`。
+- 验证结果：静态检查通过；debug APK 编译通过；APK 包含 kf-runner/kf-procps 资产；diff whitespace 检查通过。
+- 完成状态：已完成。
+- 剩余问题：stop(cardInstanceId)、停止后残留复核、pidfile 清理仍未统一。
+- 下次建议：领取“统一停止入口”，用 cardInstanceId 查询 CardRunStore 后停止 terminal / bridge run / process group。
+
+### 2026-06-22 14:44
+- 领取任务：一期任务 3，统一停止入口的最小 stop(cardInstanceId) 收口。
+- 领取原因：启动侧已经能登记 cardInstanceId/runId/rootPid/processGroupId，下一步必须让 UI 停止动作不再依赖页面局部 previousState 猜测，而是回到 CardRunStore 的实例事实。
+- 涉及入口或状态源：MainActivity.stopRecipe / handleStopResultV2；CardRunStore.get(cardInstanceId)；KiteBridgeClient.stopProcessBinding；TerminalRuntimeHost.endSession。
+- 验收标准：stopRecipe 先按 cardInstanceId 查询 CardRunStore；停止结果回写同一个 cardInstanceId；terminal 场景如果保留 pid/rootPid/processGroupId/systemSessionId，必须同时请求 bridge 停止对应 process binding。
+- 明确不做：不做二期 `/run/kite/cards/<cardInstanceId>/` 目录；不改 Ubuntu/PRoot；不新增容器方案；不做 pidfile 清理；不把完整残留复核制度并入本次。
+- 修改范围：app/src/main/java/com/kite/app/MainActivity.kt；scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1；docs/card-runtime-ownership-progress.md。
+- 验证方式：`& D:\xm\Kite\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat :app:assembleDebug --console=plain`；`git diff --check -- ...`；代码审核确认 stopProcessBinding 会走已有 process group kill 和 remaining 检查。
+- 验证结果：静态检查通过；debug APK 编译通过；diff whitespace 检查通过（仅 Git CRLF 提示）；bridge direct stop 路径包含 kill process group/targets 和 `__kite_stop_remaining` 检查。
+- 完成状态：已完成本次最小统一停止入口。
+- 剩余问题：停止后复核结果还没有作为 CardRunStore 的明确四条件门槛；pidfile 停止/删除清理仍未做；还缺围绕 cardInstanceId 的查询验收入口。
+- 下次建议：领取“运行复核”，把 stop 请求成功、进程组不存在、CardRunStore 清 binding、UI 状态 Stopped 四个条件收成同一个复核流程。
+
+### 2026-06-22 14:49
+- 领取任务：一期任务 4，运行复核的最小 remaining 门槛。
+- 领取原因：统一停止入口已经把 stop 交给 CardRunStore 实例和 bridge process binding，下一步需要避免只凭 stop 返回就把 UI/CardRunStore 标成 Stopped。
+- 涉及入口或状态源：MainActivity.handleStopResultV2；KiteBridgeClient.stopDirectRuns / stopDirectProcesses 已有 `__kite_stop_remaining` 输出；CardRunStore.update。
+- 验收标准：stop 请求成功且 `__kite_stop_remaining` 为空时才清 run binding 并写 Stopped；如果 remaining 有 PID，CardRunStore 保留原 run binding 并写入“停止后仍有进程残留”错误；UI 不显示 Stopped。
+- 明确不做：不新增 CardRunStore 字段；不做 pidfile 删除；不做卡片删除清理；不引入新的 runtime 探针；不改 Ubuntu/PRoot。
+- 修改范围：app/src/main/java/com/kite/app/MainActivity.kt；scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1；docs/card-runtime-ownership-progress.md。
+- 验证方式：`& D:\xm\Kite\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat :app:assembleDebug --console=plain`；`git diff --check -- ...`；代码审核确认 bridge stop 已输出并判断 `__kite_stop_remaining`。
+- 验证结果：静态检查通过；debug APK 编译通过；diff whitespace 检查通过（仅 Git CRLF 提示）；复核逻辑复用现有 bridge remaining marker。
+- 完成状态：已完成本次最小运行复核。
+- 剩余问题：pidfile 停止/删除清理仍未做；还缺围绕 cardInstanceId 的查询验收入口；异常退出和残留状态还没有独立展示。
+- 下次建议：领取“删除/清理”，停止成功或删除卡片时清理 `/workspace/.kf/system/state/card-runs/<cardInstanceId>/<runId>.pid`。
+
+### 2026-06-22 14:56
+- 领取任务：一期删除/清理里的 stop 成功后 pidfile 最小清理。
+- 领取原因：detached shell 启动已经写入 pidfile，停止和复核也已经围绕 cardInstanceId；如果 stop 成功后 pidfile 还留着，运行所有权的“可清理”验收仍不完整。
+- 涉及入口或状态源：KiteBridgeClient.executeDetachedShellStep / stopDirectRuns；DirectRunBinding；MainActivity.stopRecipeByCardInstanceId / retryStopRequestAfterStableBridge。
+- 验收标准：detached run binding 保留 pidfile path；stopDirectRuns 在 `__kite_stop_remaining` 为空后删除该 pidfile；MainActivity 停止调用把 cardInstanceId 传给 bridge，便于进程重启后的派生清理路径。
+- 明确不做：不做查询入口；不做删除卡片时清整个目录；不新增 CardRunStore 字段；不引入 `/run/kite/cards/<cardInstanceId>/` 二期目录；不改 Ubuntu/PRoot。
+- 修改范围：app/src/main/java/com/kite/app/bridge/KiteBridgeClient.kt；app/src/main/java/com/kite/app/MainActivity.kt；scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1；docs/card-runtime-ownership-progress.md。
+- 验证方式：`& D:\xm\Kite\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat :app:assembleDebug --console=plain`；`git diff --check -- ...`。
+- 验证结果：静态检查通过；debug APK 编译通过；diff whitespace 检查通过（仅 Git CRLF 提示）。
+- 完成状态：已完成 stop 成功后的最小 pidfile 清理。
+- 剩余问题：删除卡片时清已关闭运行状态/残留 pidfile 目录仍未做；还缺围绕 cardInstanceId 的查询验收入口；异常退出和残留状态还没有独立展示。
+- 下次建议：领取“查询入口”，补一个围绕 cardInstanceId 的运行资源查看/调试入口，先让 rootPid/pgid/terminal/Web 归属可验收。
+
+### 2026-06-22 14:59
+- 领取任务：一期查询入口，补围绕 cardInstanceId 的运行资源查看入口。
+- 领取原因：登记、停止、复核、pidfile 清理都已有最小路径，但用户侧还缺一个能看到 cardInstanceId 名下 rootPid/pgid/terminal/Web 归属的验收入口。
+- 涉及入口或状态源：MainActivity.showKiteProcessOverview；runManagementDetails；CardRunStore.runs；TerminalSessionStore；TaskManagerStore。
+- 验收标准：运行管理展开卡片后能看到 cardInstanceId、runId、rootPid、pgid、sid、terminalSessionId、web URL 这些归属信息。
+- 明确不做：不新建页面；不新增 runtime 查询服务；不新增 CardRunStore 字段；不做删除卡片清理；不做异常退出识别；不改 Ubuntu/PRoot。
+- 修改范围：app/src/main/java/com/kite/app/MainActivity.kt；scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1；docs/card-runtime-ownership-progress.md。
+- 验证方式：`& D:\xm\Kite\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat :app:assembleDebug --console=plain`；`git diff --check -- ...`。
+- 验证结果：静态检查通过；debug APK 编译通过；diff whitespace 检查通过（仅 Git CRLF 提示）。
+- 完成状态：已完成最小查询入口。
+- 剩余问题：删除卡片时清已关闭运行状态/残留 pidfile 目录仍未做；异常退出和残留状态还没有独立展示；还未做真实设备验收。
+- 下次建议：领取“删除卡片清理”，删除卡片时清理已关闭运行状态和残留 pidfile 目录。
+
+### 2026-06-22 15:07
+- 领取任务：一期删除卡片清理，删除卡片时清理已关闭运行状态和残留 pidfile 目录。
+- 领取原因：查询入口已能看到 cardInstanceId 归属，下一块一期验收是删除卡片后状态和 pidfile 残留可清理。
+- 涉及入口或状态源：MainActivity.showDeleteRecipeConfirmSheet；CardRunStore.removeClosedRunStatesForRecipes；KiteBridgeClient.cleanCardRunPidDirs；`/workspace/.kf/system/state/card-runs/<cardInstanceId>/`。
+- 验收标准：删除配置成功后只清理该 recipe 下已关闭的 CardRun 当前状态/历史；不删除仍处于运行/停止中等未结束状态；按被移除的 cardInstanceId 派生并清理 pidfile 目录。
+- 明确不做：不停止仍在运行的进程；不做异常退出识别；不新建查询服务；不引入 `/run/kite/cards/<cardInstanceId>/` 二期目录；不改 Ubuntu/PRoot。
+- 修改范围：app/src/main/java/com/kite/app/MainActivity.kt；app/src/main/java/com/kite/app/run/CardRunStore.kt；app/src/main/java/com/kite/app/bridge/KiteBridgeClient.kt；scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1；docs/card-runtime-ownership-progress.md。
+- 验证方式：`& D:\xm\Kite\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat :app:assembleDebug --console=plain`；`git diff --check -- ...`；代码审核确认删除入口不会调用 stop，也不会用宽删除清 active run。
+- 验证结果：静态检查通过；debug APK 编译通过；diff whitespace 检查通过（仅 Git CRLF 提示）。
+- 完成状态：已完成删除卡片后的最小已关闭状态和 pidfile 目录清理。
+- 剩余问题：异常退出识别还没有独立区分正常停止、崩溃、残留；还未做真实设备验收。
+- 下次建议：领取“异常退出识别”，先复用 CardRunStore/history 和 stop remaining 文案，把正常停止、崩溃、残留的状态边界补清楚。
+
+### 2026-06-22 15:12
+- 领取任务：一期异常退出识别，区分正常停止、崩溃/异常、残留。
+- 领取原因：启动、停止、查询、删除清理都已有最小链路，剩余一期验收缺口是异常退出不能被看成正常停止。
+- 涉及入口或状态源：CardRunStore.normalizedAfterProcessRestore / normalizedHistoryAfterProcessRestore；MainActivity.runManagementOwnershipRows / runManagementExitSummary；handleStopResultV2 已有 `__kite_stop_remaining` 文案。
+- 验收标准：运行管理展开详情能看到退出判断；Stopped 显示正常停止，Completed 显示正常完成，Failed/BridgeUnavailable 显示崩溃/异常，`停止后仍有进程残留` 显示残留；进程恢复时未完成运行写入历史为 Failed 并保留异常文案。
+- 明确不做：不新增 exitReason 字段；不新增后台扫描/监控服务；不扫全系统残留；不做二期 `/run/kite/cards/<cardInstanceId>/`；不改 Ubuntu/PRoot。
+- 修改范围：app/src/main/java/com/kite/app/MainActivity.kt；app/src/main/java/com/kite/app/run/CardRunStore.kt；scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1；docs/card-runtime-ownership-progress.md。
+- 验证方式：`& D:\xm\Kite\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat :app:assembleDebug --console=plain`；`git diff --check -- ...`。
+- 验证结果：静态检查通过；debug APK 编译通过；最终 diff whitespace 检查通过（仅 Git CRLF 提示）。
+- 完成状态：已完成异常退出的最小识别。
+- 剩余问题：还未做真实设备验收；异常退出目前是现有状态/文案派生，不支持结构化筛选统计。
+- 下次建议：领取“真实设备验收”，启动一张 detached 卡片，运行管理查看 cardInstanceId/runId/rootPid/pgid/退出判断，停止后确认无残留并清 pidfile。
+
+### 2026-06-22 15:24
+- 领取任务：真实设备验收，确认卡片启动、登记、停止、残留复核、CardRunStore 回写闭环。
+- 领取原因：一期制度能力已经完成静态检查和构建，下一步必须在默认真实设备 OnePlus 8T 上验证真实 UI 路径，不继续凭代码推断。
+- 涉及入口或状态源：`/storage/emulated/0/Download/KF/cards` 外部卡片入口；首页卡片启动/停止按钮；MainActivity.stopRecipeByCardInstanceId；KiteBridgeClient/kf-runner shell 执行路径；CardRunStore 的 `kite_card_run_store.xml`；Android 进程表。
+- 验收标准：能安装并启动 APK；能通过真实卡片按钮启动 shell 运行；CardRunStore 能看到 `cardInstanceId/runId/rootPid/processGroupId/systemSessionId`；停止后 CardRunStore 写 Stopped 并清 run binding；`ps` 查不到原 `rootPid/pgid` 相关进程；`/workspace/.kf/system/state/card-runs` 无残留 pidfile。
+- 明确不做：不修改 Ubuntu/PRoot；不引入新容器方案；不启动二期 `/run/kite/cards/<cardInstanceId>/`；不把资源页/任务页 UI 做新改造；不保留临时测试卡。
+- 修改范围：docs/card-runtime-ownership-progress.md；设备侧临时创建并删除 `/storage/emulated/0/Download/KF/cards/kite-process-container-test.json`。
+- 验证方式：`adb -s 3f8bbaad install -r app/build/outputs/apk/debug/app-debug.apk`；`adb -s 3f8bbaad shell am start -n com.kite.app/.MainActivity`；真实 UI 点击测试卡 `启动`/`停止`；`adb -s 3f8bbaad shell run-as com.kite.app cat shared_prefs/kite_card_run_store.xml`；`adb -s 3f8bbaad shell ps -A -o USER,PID,PPID,PGID,NAME,ARGS`；`adb -s 3f8bbaad shell run-as com.kite.app find files/runtime/shared/ubuntu-main/.kf -maxdepth 5 -name '*run_db04e6a4fc0e4d88b188283ff1f6cf98*' -o -name '*.pid'`。
+- 验证结果：APK 安装成功并启动；首页显示测试卡运行中和停止按钮；启动时 CardRunStore 写入 `cardInstanceId=kite-process-container-test`、`runId=run_db04e6a4fc0e4d88b188283ff1f6cf98`、`rootPid=10815`、`processGroupId=10815`、`systemSessionId=10815`、`lastMeaningfulOutput=KITE_PROCESS_TEST_START`；停止后首页变为 `已停止 1`，CardRunStore 当前运行写 `status=Stopped/surface=Summary` 且 `runId/pid/rootPid/processGroupId/systemSessionId` 清空，`lastMeaningfulOutput=已停止，未发现进程残留`；`ps` 对 `10815/10812/10809/sleep 300/KITE_PROCESS_TEST_START` 无命中；`.kf/system/state` 下未发现该 runId 的 pidfile 或 `card-runs` 残留；临时测试卡 JSON 已删除。
+- 完成状态：已完成真实设备启停闭环验收。
+- 剩余问题：本次临时 shell 卡实测走 kf-runner shell 绑定路径，未产生 detached pidfile；detached pidfile 的创建/清理仍以代码审核和静态检查覆盖，如需实物证据，下次单独构造 detached launch 卡片复核。底部“资源”tab 在当前实际 app 中是资源页，不是任务管理器入口，本次不继续扩展 UI 查询路径。
+- 下次建议：领取“一期收口复核”，按最终验收逐项整理仍缺的真实设备证据；如优先补证据，则领取“detached pidfile 专项实机复核”。
+
+### 2026-06-22 15:38
+- 领取任务：提交前阻塞修复：静态验收脚本编码和删除活动卡片的 stop 边界。
+- 领取原因：静态验收门必须能用 `powershell -File` 直接运行；删除配置不能绕过仍在运行的 cardInstanceId 运行单元。
+- 涉及入口或状态源：`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`MainActivity.showDeleteRecipeConfirmSheet`；`CardRunStore.currentForRecipe`；`stopRecipeByCardInstanceId`；`CardRunStore.removeClosedRunStatesForRecipes`；`KiteBridgeClient.cleanCardRunPidDirs`。
+- 验收标准：静态脚本在 Windows PowerShell 下不因中文断言字符串解析失败；删除活动卡片时先按 cardInstanceId 调用 stop，并不在同一次点击继续删除 recipe；已关闭卡片删除仍只清 closed run state 和 pidfile 目录。
+- 明确不做：不做 RuntimeHealthStore 级完整运行态复核；不做一键异步 stop 后自动删除队列；不改 Ubuntu/PRoot；不引入 `/run/kite/cards/<cardInstanceId>/`。
+- 修改范围：`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`app/src/main/java/com/kite/app/MainActivity.kt`；`docs/card-runtime-ownership-progress.md`。
+- 验证方式：`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat :app:assembleDebug --console=plain`；`git diff --check -- app/src/main/java/com/kite/app/MainActivity.kt scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`。
+- 验证结果：静态验收脚本通过；debug APK 编译通过；diff whitespace 检查通过，仅有 Git CRLF 提示。
+- 完成状态：已完成提交前两个硬阻塞修复。
+- 剩余问题：停止复核仍是 bridge stop 脚本里的 `/proc`/`kill -0` 即时检查，不是 RuntimeHealthStore 级运行态复核；删除活动卡片采用“先停并中止本次删除”，停止完成后需要再次删除。
+- 下次建议：领取“一期收口复核”；如果要补强完整统一管理，再领取 RuntimeHealthStore 级运行态复核方案。

@@ -130,6 +130,7 @@ class KiteLocalServer(
                                 .put("url", openRequest.url)
                                 .put("recipeId", openRequest.recipeId ?: "")
                                 .put("instanceId", openRequest.instanceId ?: "")
+                                .put("cardInstanceId", openRequest.instanceId ?: "")
                         )
                     }
                 }
@@ -150,7 +151,9 @@ class KiteLocalServer(
             url = url,
             recipeId = json?.optString("recipeId")?.takeIf { it.isNotBlank() }
                 ?: query["recipeId"]?.takeIf { it.isNotBlank() },
-            instanceId = json?.optString("instanceId")?.takeIf { it.isNotBlank() }
+            instanceId = json?.optString("cardInstanceId")?.takeIf { it.isNotBlank() }
+                ?: json?.optString("instanceId")?.takeIf { it.isNotBlank() }
+                ?: query["cardInstanceId"]?.takeIf { it.isNotBlank() }
                 ?: query["instanceId"]?.takeIf { it.isNotBlank() },
             source = json?.optString("source")?.takeIf { it.isNotBlank() }
                 ?: query["source"]?.takeIf { it.isNotBlank() }

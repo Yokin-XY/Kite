@@ -6,11 +6,12 @@ $ErrorActionPreference = 'Stop'
 
 $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
 $storePath = Join-Path $Root 'app/src/main/java/com/kite/app/resources/KiteResourceInstallStore.kt'
+$bridgeClientPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteBridgeClient.kt'
+$browserProxyPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteBrowserProxy.kt'
+$localServerPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteLocalServer.kt'
+$cardRunModelsPath = Join-Path $Root 'app/src/main/java/com/kite/app/run/CardRunModels.kt'
 $cardRunStorePath = Join-Path $Root 'app/src/main/java/com/kite/app/run/CardRunStore.kt'
 
-$main = Get-Content -LiteralPath $mainPath -Raw
-$store = Get-Content -LiteralPath $storePath -Raw
-$cardRunStore = Get-Content -LiteralPath $cardRunStorePath -Raw
 $failures = New-Object System.Collections.Generic.List[string]
 
 function Assert-True {
@@ -23,6 +24,11 @@ function Assert-True {
     }
 }
 
+function Read-Utf8 {
+    param([string]$Path)
+    return [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+}
+
 function Function-Body {
     param(
         [string]$Source,
@@ -31,6 +37,14 @@ function Function-Body {
     $pattern = "(?s)private fun $([regex]::Escape($Name))\b.*?(?=\n    private fun |\n    private data class |\n    private enum class |\n    companion object|\n    override fun |\z)"
     return [regex]::Match($Source, $pattern).Value
 }
+
+$main = Read-Utf8 $mainPath
+$store = Read-Utf8 $storePath
+$bridgeClient = Read-Utf8 $bridgeClientPath
+$browserProxy = Read-Utf8 $browserProxyPath
+$localServer = Read-Utf8 $localServerPath
+$cardRunModels = Read-Utf8 $cardRunModelsPath
+$cardRunStore = Read-Utf8 $cardRunStorePath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -74,6 +88,56 @@ Assert-True ($runManagementGroups -match 'TerminalSessionStore\.snapshot\.value\
 Assert-True ($runManagementGroups -match 'TaskManagerStore\.snapshot\.value\.processes') 'run management groups must reuse TaskManagerStore.'
 
 Assert-True ($cardRunStore -match '(?s)fun initialize\b.*?shouldDropCurrentAfterProcessRestore') 'CardRunStore must not restore stale current runs after process restart.'
+Assert-True ($cardRunModels -match 'val cardInstanceId: String get\(\) = instanceId') 'CardRunState must expose cardInstanceId as the card ownership alias.'
+Assert-True ($cardRunStore -match '\.put\("cardInstanceId", cardInstanceId\)') 'CardRunStore must persist cardInstanceId beside instanceId.'
+Assert-True ($cardRunStore -match 'optString\("cardInstanceId"\)') 'CardRunStore must restore cardInstanceId for ownership-compatible snapshots.'
+Assert-True ($browserProxy -match 'KITE_CARD_INSTANCE_ID') 'Browser proxy environment must export KITE_CARD_INSTANCE_ID.'
+Assert-True ($browserProxy -match 'cardInstanceId=') 'Browser proxy requests must carry cardInstanceId.'
+Assert-True ($localServer -match 'cardInstanceId') 'Local server must accept cardInstanceId on open-web requests.'
+Assert-True ($bridgeClient -match 'KITE_CARD_INSTANCE_ID') 'direct shell launch must resolve the cardInstanceId from the run environment.'
+Assert-True ($bridgeClient -match 'cardRunPidFilePath') 'detached shell launch must create a pidfile through the pidfile helper.'
+Assert-True ($bridgeClient.Contains('card-runs/${safeId(cardInstanceId)}')) 'detached shell pidfiles must be grouped by cardInstanceId.'
+Assert-True ($bridgeClient.Contains('${safeId(runId)}.pid')) 'detached shell pidfiles must be keyed by runId.'
+Assert-True ($bridgeClient -match '__kite_pid_file') 'detached shell launch must report the pidfile path in launch output.'
+Assert-True ($bridgeClient -notmatch '/run/kite/cards') 'phase one must not introduce the phase two /run/kite/cards directory scheme.'
+Assert-True ($bridgeClient -match 'private fun cleanCardRunPidFile') 'stop success must have a minimal pidfile cleanup helper.'
+Assert-True ($bridgeClient -match '__kite_pid_file_cleaned') 'pidfile cleanup must report the cleaned pidfile path.'
+Assert-True ($bridgeClient -match 'rm -f --') 'pidfile cleanup must delete only the resolved pidfile path.'
+Assert-True ($bridgeClient -match 'pidFilePath = execution\.pidFilePath') 'direct run bindings must retain the launch pidfile path.'
+Assert-True ($bridgeClient.Contains('if (stoppedOk)') -and $bridgeClient.Contains('cleanCardRunPidFile(context, binding.pidFilePath)')) 'pidfile cleanup must run only after process stop succeeds.'
+Assert-True ($main -match 'private fun shouldStopRunBeforeDelete') 'delete recipe flow must have an active-run stop guard.'
+$deleteConfirm = Function-Body $main 'showDeleteRecipeConfirmSheet'
+Assert-True ($deleteConfirm -match 'shouldStopRunBeforeDelete' -and $deleteConfirm -match 'stopRecipeByCardInstanceId\(recipe, activeDeleteState\.cardInstanceId, activeDeleteState\)') 'delete recipe flow must stop an active card run before deleting the recipe.'
+Assert-True ($deleteConfirm -match 'return@setOnClickListener') 'delete recipe flow must not delete active recipes in the same click after requesting stop.'
+Assert-True ($cardRunStore -match 'fun removeClosedRunStatesForRecipes') 'card deletion cleanup must use a closed-run-only CardRunStore entry.'
+Assert-True ($cardRunStore -match 'activeInstanceIds' -and $cardRunStore -match 'status\.endsHistoryEntry\(\)' -and $cardRunStore -match 'entry\.isClosed\(\)') 'closed-run cleanup must preserve active instances while removing ended run state/history.'
+Assert-True ($main -match 'removeClosedRunStatesForRecipes\(listOf\(recipe\.id\)\)') 'delete recipe flow must clean only closed CardRun state for the deleted card.'
+Assert-True ($main -match 'cleanCardRunPidDirs\(removedCardInstanceIds\)') 'delete recipe flow must request pid directory cleanup for removed cardInstanceIds.'
+Assert-True ($bridgeClient -match 'fun cleanCardRunPidDirs') 'bridge client must expose card pid directory cleanup.'
+Assert-True ($bridgeClient -match 'private fun cleanCardRunPidDirPayload') 'pid directory cleanup must derive its payload from a cardInstanceId.'
+Assert-True ($bridgeClient.Contains('rm -rf -- ${shellQuote(dir)}')) 'pid directory cleanup must delete only the derived card-run pid directory.'
+Assert-True ($bridgeClient -match '__kite_pid_dir_cleaned') 'pid directory cleanup must report the cleaned directory path.'
+Assert-True ($cardRunStore -match 'PROCESS_RESTORE_ABORTED_MESSAGE') 'process-restore abnormal exits must use one explicit CardRunStore message.'
+Assert-True ($cardRunStore -match 'status = CardRunStatus\.Failed' -and $cardRunStore -match 'lastError = lastError \?: PROCESS_RESTORE_ABORTED_MESSAGE') 'process-restore unfinished runs must be classified as abnormal, not normal stopped.'
+Assert-True ($cardRunStore -match 'normalizedHistoryAfterProcessRestore' -and $cardRunStore -match 'error = error\.ifBlank \{ PROCESS_RESTORE_ABORTED_MESSAGE \}') 'process-restore history must preserve an abnormal-exit error.'
+
+$stopRecipe = Function-Body $main 'stopRecipe'
+$stopRecipeByCardInstanceId = Function-Body $main 'stopRecipeByCardInstanceId'
+$handleStopResultV2 = Function-Body $main 'handleStopResultV2'
+Assert-True ($stopRecipe -match 'stopRecipeByCardInstanceId\(recipe, previousState\.cardInstanceId, previousState\)') 'stopRecipe must delegate to the cardInstanceId stop entry.'
+Assert-True ($stopRecipeByCardInstanceId -match 'CardRunStore\.get\(cardInstanceId\)') 'stop(cardInstanceId) must resolve the latest CardRunStore state.'
+Assert-True ($stopRecipeByCardInstanceId -match 'activeRunInstanceIds\[recipe\.id\] = previousState\.instanceId') 'stop(cardInstanceId) must bind runtime writes to the resolved card instance.'
+Assert-True ($main -match 'private fun RecipeRuntimeState\.hasProcessBindingForStop\(\)') 'stop flow must distinguish terminal-only state from process bindings.'
+Assert-True ($stopRecipeByCardInstanceId -match 'hasProcessBindingForStop\(\)') 'terminal stop must check for retained process bindings.'
+Assert-True ($stopRecipeByCardInstanceId -match 'stop_terminal_and_process_request_sent') 'terminal plus process stop must record the combined stop request.'
+Assert-True ($stopRecipeByCardInstanceId -match 'bridgeClient\.stopProcessBinding') 'terminal plus process stop must ask the bridge to stop the retained process binding.'
+Assert-True ($handleStopResultV2 -match 'instanceId = previousState\.instanceId') 'stop result handling must write back to the stopped card instance.'
+Assert-True ($handleStopResultV2 -match 'stopRemaining\.isEmpty\(\).*KiteRunReport\.STATUS_STOPPED') 'stop success must require an empty process-residue check before Stopped.'
+Assert-True ($handleStopResultV2 -match '\u5df2\u505c\u6b62\uff0c\u672a\u53d1\u73b0\u8fdb\u7a0b\u6b8b\u7559') 'stop success must write an explicit no-residue result.'
+Assert-True ($handleStopResultV2 -match '\u505c\u6b62\u540e\u4ecd\u6709\u8fdb\u7a0b\u6b8b\u7559') 'stop failure must keep residue visible in CardRunStore.'
+Assert-True ($main -match 'private fun stopRemainingProcesses\(result: BridgeResult\)') 'stop result handling must parse remaining process observations.'
+Assert-True ($main -match '__kite_stop_remaining:') 'stop residue parsing must use the bridge remaining marker.'
+Assert-True ($main -match 'cardInstanceId = previousState\.cardInstanceId') 'card stop calls must pass cardInstanceId to the bridge for pidfile cleanup.'
 
 $cardRunRestoreDrop = Function-Body $cardRunStore 'CardRunState.shouldDropCurrentAfterProcessRestore'
 Assert-True ($cardRunRestoreDrop -match 'status\.endsHistoryEntry') 'restored ended card-run states should stay out of the current run list.'
@@ -82,13 +146,26 @@ Assert-True ($cardRunRestoreDrop -match 'hasRunBinding') 'restored run bindings 
 $runManagementCard = Function-Body $main 'runManagementCard'
 Assert-True ($runManagementCard -match 'setOnClickListener \{ toggleRunManagementCard') 'run management row card should expand from the whole card click.'
 Assert-True ($runManagementCard -match 'LinearLayout\.LayoutParams\(dp\(34\), dp\(34\)\)') 'run management card icon should stay compact like install wizard rows.'
-Assert-True ($runManagementCard -notmatch '停止卡片|runManagementActionButton|runManagementSummary|processCount') 'run management card should not expose heavy counts or action buttons in the collapsed row.'
+Assert-True ($runManagementCard -notmatch '\u505c\u6b62\u5361\u7247|runManagementActionButton|runManagementSummary|processCount') 'run management card should not expose heavy counts or action buttons in the collapsed row.'
 
 $runManagementDetails = Function-Body $main 'runManagementDetails'
+Assert-True ($runManagementDetails -match 'runManagementOwnershipRows') 'expanded run management card must show CardRun ownership rows.'
 Assert-True ($runManagementDetails -match 'runManagementSurfaceItems') 'expanded run management card should derive SH/terminal/web rows from existing card-run surfaces.'
 Assert-True ($runManagementDetails -match 'CardRunSurface\.Report') 'expanded run management card should surface SH report when available.'
 Assert-True ($runManagementDetails -match 'CardRunSurface\.Terminal') 'expanded run management card should surface terminal rows when available.'
 Assert-True ($runManagementDetails -match 'CardRunSurface\.Web') 'expanded run management card should surface web rows when available.'
+
+$runManagementOwnershipRows = Function-Body $main 'runManagementOwnershipRows'
+Assert-True ($runManagementOwnershipRows -match 'cardInstanceId') 'run management ownership rows must expose cardInstanceId.'
+Assert-True ($runManagementOwnershipRows -match 'runId' -and $runManagementOwnershipRows -match 'rootPid' -and $runManagementOwnershipRows -match 'pgid') 'run management ownership rows must expose runId/rootPid/pgid.'
+Assert-True ($runManagementOwnershipRows -match 'terminal' -and $runManagementOwnershipRows -match 'web') 'run management ownership rows must expose terminal/web bindings.'
+Assert-True ($runManagementOwnershipRows -match '\u9000\u51fa\u5224\u65ad' -and $runManagementOwnershipRows -match 'runManagementExitSummary\(run\)') 'run management ownership rows must expose the exit classification.'
+
+$runManagementExitSummary = Function-Body $main 'runManagementExitSummary'
+Assert-True ($runManagementExitSummary -match '\u505c\u6b62\u540e\u4ecd\u6709\u8fdb\u7a0b\u6b8b\u7559' -and $runManagementExitSummary -match '\u6b8b\u7559') 'run management exit summary must identify stop residue.'
+Assert-True ($runManagementExitSummary -match 'RecipeRunStatus\.Stopped' -and $runManagementExitSummary -match '\u6b63\u5e38\u505c\u6b62') 'run management exit summary must identify normal stopped runs.'
+Assert-True ($runManagementExitSummary -match 'RecipeRunStatus\.Failed' -and $runManagementExitSummary -match '\u5d29\u6e83/\u5f02\u5e38') 'run management exit summary must identify failed runs as abnormal exits.'
+Assert-True ($runManagementExitSummary -match '\u672a\u7ed3\u675f') 'run management exit summary must identify still-open runs.'
 
 $showManage = Function-Body $main 'showResourceManage'
 Assert-True ($showManage -notmatch 'resourceCatalog\(forceRefresh = true\)|planSnapshot\(\)|registrySnapshot\(') 'showResourceManage must not synchronously build catalog or DB snapshots.'

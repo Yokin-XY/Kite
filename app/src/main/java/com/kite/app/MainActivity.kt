@@ -4059,6 +4059,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 rootPid = state.rootPid,
                 processGroupId = state.processGroupId,
                 systemSessionId = state.systemSessionId,
+                cardInstanceId = state.cardInstanceId,
                 callback = callback
             )
         } else {
@@ -9229,6 +9230,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             state.status != RecipeRunStatus.Failed &&
             state.status != RecipeRunStatus.BridgeUnavailable
 
+    private fun shouldStopRunBeforeDelete(state: RecipeRuntimeState): Boolean =
+        state.status == RecipeRunStatus.Opened ||
+            state.isBusy() ||
+            state.isActive() ||
+            shouldStopRunWhenClosingInstance(state)
+
     private fun registerCardRunTaskCloser(instanceId: String) {
         if (this !is CardRunActivity || instanceId.isBlank()) return
         if (registeredCardRunCloserInstanceId == instanceId) return
@@ -9612,6 +9619,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(46), dp(10), 0, 0)
+            runManagementOwnershipRows(group).forEach { row ->
+                addView(runManagementDetailRow(
+                    title = row.first,
+                    subtitle = row.second,
+                    actions = emptyList()
+                ))
+            }
             val surfaceItems = runManagementSurfaceItems(group)
             surfaceItems
                 .filter { it.surface == CardRunSurface.Report }
@@ -9670,6 +9684,40 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 }
             }
         }
+
+    private fun runManagementOwnershipRows(group: RunManagementGroup): List<Pair<String, String>> {
+        val run = group.run
+        val runBinding = listOfNotNull(
+            run.runId?.takeIf { it.isNotBlank() }?.let { "runId $it" },
+            run.rootPid?.takeIf { it.isNotBlank() }?.let { "rootPid $it" },
+            run.processGroupId?.takeIf { it.isNotBlank() }?.let { "pgid $it" },
+            run.systemSessionId?.takeIf { it.isNotBlank() }?.let { "sid $it" }
+        ).joinToString(" · ").ifBlank { "未绑定执行进程" }
+        val surfaceBinding = listOfNotNull(
+            run.terminalSessionId?.takeIf { it.isNotBlank() }?.let { "terminal $it" },
+            run.nextActionUrl?.takeIf { it.isNotBlank() }?.let { "web ${it.trimForRunManagement(46)}" }
+        ).joinToString(" · ").ifBlank { "暂无 terminal/web" }
+        return listOf(
+            "CardRun" to "cardInstanceId ${run.cardInstanceId}",
+            "执行绑定" to runBinding,
+            "表面绑定" to surfaceBinding,
+            "退出判断" to runManagementExitSummary(run)
+        )
+    }
+
+    private fun runManagementExitSummary(run: RecipeRuntimeState): String {
+        // ponytail: text-derived exit class; add a stored exitReason only when filtering/reporting needs it.
+        val observation = listOfNotNull(run.lastError, run.lastMeaningfulOutput, run.shellReportText)
+            .joinToString("\n")
+        val detail = run.feedbackSummary()?.let { " · $it" }.orEmpty()
+        return when {
+            observation.contains("停止后仍有进程残留") -> "残留$detail"
+            run.status == RecipeRunStatus.Stopped -> "正常停止$detail"
+            run.status == RecipeRunStatus.Completed -> "正常完成$detail"
+            run.status == RecipeRunStatus.Failed || run.status == RecipeRunStatus.BridgeUnavailable -> "崩溃/异常$detail"
+            else -> "未结束 · ${run.status.label}"
+        }
+    }
 
     private fun runManagementSurfaceItems(group: RunManagementGroup): List<CardRunWindowItem> =
         group.recipe
@@ -11588,6 +11636,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun stopRecipe(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
+        stopRecipeByCardInstanceId(recipe, previousState.cardInstanceId, previousState)
+    }
+
+    private fun stopRecipeByCardInstanceId(
+        recipe: KiteRecipe,
+        cardInstanceId: String,
+        fallbackState: RecipeRuntimeState? = null
+    ) {
+        val previousState = CardRunStore.get(cardInstanceId)
+            ?: fallbackState?.takeIf { it.recipeId == recipe.id }
+            ?: CardRunStore.currentForRecipe(recipe.id)
+            ?: return
+        activeRunInstanceIds[recipe.id] = previousState.instanceId
+        runtimeStates[recipe.id] = previousState
+        diagnostics.logBridgeEvent(
+            "stop_card_instance_resolved",
+            recipe,
+            mapOf(
+                "cardInstanceId" to previousState.cardInstanceId,
+                "runId" to previousState.runId.orEmpty(),
+                "terminalSessionId" to previousState.terminalSessionId.orEmpty()
+            )
+        )
         val terminalSessionId = previousState.terminalSessionId?.takeIf { it.isNotBlank() }
         if (terminalSessionId == null &&
             previousState.runId.isNullOrBlank() &&
@@ -11603,6 +11674,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setRuntimeState(
                 recipe,
                 RecipeRunStatus.Stopped,
+                instanceId = previousState.instanceId,
                 surface = CardRunSurface.Summary,
                 currentStepIndex = previousState.currentStepIndex,
                 lastMeaningfulOutput = "网页实例已关闭",
@@ -11627,9 +11699,50 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 { TerminalRuntimeHost.endSession(applicationContext, terminalSessionId) },
                 TERMINAL_STOP_GRACE_MS
             )
+            if (previousState.hasProcessBindingForStop()) {
+                setRuntimeState(
+                    recipe,
+                    RecipeRunStatus.Stopping,
+                    instanceId = previousState.instanceId,
+                    runId = previousState.runId,
+                    terminalSessionId = terminalSessionId,
+                    pid = previousState.pid,
+                    rootPid = previousState.rootPid,
+                    processGroupId = previousState.processGroupId,
+                    systemSessionId = previousState.systemSessionId,
+                    lastMeaningfulOutput = previousState.lastMeaningfulOutput,
+                    nextActionUrl = previousState.nextActionUrl
+                )
+                showConsole()
+                val callback: (BridgeResult) -> Unit = { result -> runOnUiThread { handleStopResultV2(recipe, previousState, result) } }
+                diagnostics.logBridgeEvent(
+                    "stop_terminal_process_request_sent",
+                    recipe,
+                    mapOf(
+                        "sessionId" to terminalSessionId,
+                        "runId" to previousState.runId.orEmpty(),
+                        "pid" to previousState.pid.orEmpty(),
+                        "rootPid" to previousState.rootPid.orEmpty(),
+                        "processGroupId" to previousState.processGroupId.orEmpty()
+                    )
+                )
+                bridgeClient.stopProcessBinding(
+                    recipe = recipe,
+                    runId = previousState.runId.orEmpty().ifBlank { previousState.instanceId },
+                    pid = previousState.pid,
+                    rootPid = previousState.rootPid,
+                    processGroupId = previousState.processGroupId,
+                    systemSessionId = previousState.systemSessionId,
+                    cardInstanceId = previousState.cardInstanceId,
+                    callback = callback
+                )
+                closeCardRunInstanceForStop(recipe, previousState, "stop_terminal_and_process_request_sent")
+                return
+            }
             setRuntimeState(
                 recipe,
                 RecipeRunStatus.Stopped,
+                instanceId = previousState.instanceId,
                 surface = CardRunSurface.Summary,
                 currentStepIndex = previousState.currentStepIndex,
                 lastMeaningfulOutput = "终端已发送中断并关闭",
@@ -11644,6 +11757,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         setRuntimeState(
             recipe,
             RecipeRunStatus.Stopping,
+            instanceId = previousState.instanceId,
             runId = previousState.runId,
             pid = previousState.pid,
             rootPid = previousState.rootPid,
@@ -11671,6 +11785,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 rootPid = previousState.rootPid,
                 processGroupId = previousState.processGroupId,
                 systemSessionId = previousState.systemSessionId,
+                cardInstanceId = previousState.cardInstanceId,
                 callback = callback
             )
         } else {
@@ -11686,11 +11801,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 rootPid = previousState.rootPid,
                 processGroupId = previousState.processGroupId,
                 systemSessionId = previousState.systemSessionId,
+                cardInstanceId = previousState.cardInstanceId,
                 callback = callback
             )
         }
         closeCardRunInstanceForStop(recipe, previousState, "stop_request_sent")
     }
+
+    private fun RecipeRuntimeState.hasProcessBindingForStop(): Boolean =
+        !pid.isNullOrBlank() ||
+            !rootPid.isNullOrBlank() ||
+            !processGroupId.isNullOrBlank() ||
+            !systemSessionId.isNullOrBlank()
 
     private fun retryStopRequestAfterStableBridge(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
         diagnostics.logBridgeEvent("stop_timeout_bridge_stable_retry", recipe, mapOf("runId" to previousState.runId.orEmpty()))
@@ -11705,6 +11827,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 rootPid = previousState.rootPid,
                 processGroupId = previousState.processGroupId,
                 systemSessionId = previousState.systemSessionId,
+                cardInstanceId = previousState.cardInstanceId,
                 callback = callback
             )
         } else {
@@ -11715,6 +11838,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 rootPid = previousState.rootPid,
                 processGroupId = previousState.processGroupId,
                 systemSessionId = previousState.systemSessionId,
+                cardInstanceId = previousState.cardInstanceId,
                 callback = callback
             )
         }
@@ -11726,6 +11850,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         result: BridgeResult,
         retriedAfterStableBridge: Boolean = false
     ) {
+        activeRunInstanceIds[recipe.id] = previousState.instanceId
         val report = result.runReport
         if (report != null) diagnostics.writeRunReport(report)
         diagnostics.logBridgeEvent(
@@ -11740,12 +11865,25 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 "message" to result.message.take(500)
             )
         )
-        if ((result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
+        val stopRemaining = stopRemainingProcesses(result)
+        if (stopRemaining.isNotEmpty()) {
+            diagnostics.logBridgeEvent(
+                "stop_residue_detected",
+                recipe,
+                mapOf("remaining" to stopRemaining.joinToString(","))
+            )
+        }
+        if (stopRemaining.isEmpty() && (result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
             setRuntimeState(
                 recipe,
                 RecipeRunStatus.Stopped,
+                instanceId = previousState.instanceId,
                 surface = CardRunSurface.Summary,
-                lastMeaningfulOutput = result.runReport?.lastMeaningfulOutput() ?: "已停止",
+                lastMeaningfulOutput = if (stopResidueMarkerSeen(result)) {
+                    "已停止，未发现进程残留"
+                } else {
+                    result.runReport?.lastMeaningfulOutput() ?: "已停止"
+                },
                 clearRunBinding = true,
                 clearTerminalSession = true,
                 clearNextActionUrl = true
@@ -11767,6 +11905,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         setRuntimeState(
                             recipe,
                             RecipeRunStatus.BridgeUnavailable,
+                            instanceId = previousState.instanceId,
                             runId = previousState.runId,
                             pid = previousState.pid,
                             rootPid = previousState.rootPid,
@@ -11800,7 +11939,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
             BridgeErrorType.BridgeFailed, BridgeErrorType.None -> {
                 diagnostics.logBridgeEvent("stop_bridge_failed", recipe, mapOf("message" to result.message.take(500)))
-                result.runReport?.lastMeaningfulOutput() ?: result.message.ifBlank { "Bridge 返回停止失败" }
+                if (stopRemaining.isNotEmpty()) {
+                    "停止后仍有进程残留：${stopRemaining.joinToString(",")}"
+                } else {
+                    result.runReport?.lastMeaningfulOutput() ?: result.message.ifBlank { "Bridge 返回停止失败" }
+                }
             }
         }
         diagnostics.logLifecycleEvent(
@@ -11815,6 +11958,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         runtimeStates[recipe.id] = CardRunStore.update(
             recipe = recipe,
             status = previousState.status,
+            instanceId = previousState.instanceId,
             currentStepIndex = previousState.currentStepIndex,
             runId = previousState.runId,
             terminalSessionId = previousState.terminalSessionId,
@@ -11828,6 +11972,32 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         )
         Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show()
         showConsole()
+    }
+
+    private fun stopRemainingProcesses(result: BridgeResult): List<String> =
+        stopObservationText(result)
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.startsWith("__kite_stop_remaining:") }
+            .flatMap { it.substringAfter(':').split(',').asSequence() }
+            .map { it.trim() }
+            .filter { it.matches(Regex("\\d+")) }
+            .distinct()
+            .toList()
+
+    private fun stopResidueMarkerSeen(result: BridgeResult): Boolean =
+        stopObservationText(result)
+            .lineSequence()
+            .map { it.trim() }
+            .any { it.startsWith("__kite_stop_remaining:") }
+
+    private fun stopObservationText(result: BridgeResult): String = buildString {
+        result.runReport?.steps.orEmpty().forEach { step ->
+            appendLine(step.lastMeaningfulOutput)
+            appendLine(step.stdoutTail)
+            appendLine(step.stderrTail)
+        }
+        appendLine(result.rawBody)
     }
 
     private fun handleStopResult(recipe: KiteRecipe, previousState: RecipeRuntimeState, result: BridgeResult) {
@@ -14940,9 +15110,22 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 background = roundedBox(tokens.danger, tokens.danger, dp(12).toFloat())
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
                 setOnClickListener {
+                    val activeDeleteState = (CardRunStore.currentForRecipe(recipe.id) ?: runtimeStates[recipe.id])
+                        ?.takeIf { shouldStopRunBeforeDelete(it) }
+                    if (activeDeleteState != null) {
+                        stopRecipeByCardInstanceId(recipe, activeDeleteState.cardInstanceId, activeDeleteState)
+                        dialog.dismiss()
+                        Toast.makeText(this@MainActivity, "已先停止运行，请停止后再删除配置", Toast.LENGTH_SHORT).show()
+                        showConsole()
+                        return@setOnClickListener
+                    }
                     val deleted = recipeLoader.deleteRecipe(recipe)
                     dialog.dismiss()
                     if (deleted) {
+                        val removedCardInstanceIds = CardRunStore.removeClosedRunStatesForRecipes(listOf(recipe.id))
+                        if (removedCardInstanceIds.isNotEmpty()) {
+                            bridgeClient.cleanCardRunPidDirs(removedCardInstanceIds)
+                        }
                         runtimeStates.remove(recipe.id)
                         Toast.makeText(this@MainActivity, "已删除配置", Toast.LENGTH_SHORT).show()
                         showConsole()
