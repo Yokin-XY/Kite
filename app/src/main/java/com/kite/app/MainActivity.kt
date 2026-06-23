@@ -113,6 +113,7 @@ import com.kftest.app.foundation.bootstrap.BootstrapCoordinator
 import com.kftest.app.foundation.bootstrap.BootstrapSnapshot
 import com.kftest.app.foundation.bootstrap.BootstrapStage
 import com.kftest.app.foundation.runtime.AssetExtractor
+import com.kftest.app.foundation.runtime.RuntimeAutomationActions
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
 import com.kftest.app.foundation.runtime.RuntimeHealthStore
@@ -321,7 +322,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         observeRuntimePanelSummarySignals()
         observeResourceInstallSignals()
         applyRecentTaskVisibilitySetting()
-        val handledLaunchIntent = handleCardRunLaunchIntent(intent)
+        val handledAutomationIntent = handleRuntimeAutomationIntent(intent)
+        val handledLaunchIntent = !handledAutomationIntent && handleCardRunLaunchIntent(intent)
         if (!handledLaunchIntent && !restoreScreenFromBundle(savedInstanceState) && !restoreRecipeDraftFromSettings()) {
             showConsole()
         }
@@ -339,7 +341,72 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (handleRuntimeAutomationIntent(intent)) return
         handleCardRunLaunchIntent(intent)
+    }
+
+    private fun handleRuntimeAutomationIntent(sourceIntent: Intent?): Boolean {
+        val intent = sourceIntent ?: return false
+        val runtimeAction = intent
+            .getStringExtra(EXTRA_AUTOMATION_RUNTIME_ACTION)
+            ?.trim()
+            .orEmpty()
+        if (runtimeAction.isBlank()) return false
+
+        if (!RuntimeAutomationActions.isEnabled(applicationContext, runtimeAction)) {
+            return true
+        }
+        when (runtimeAction.lowercase()) {
+            ACTION_DUMP_DIAGNOSTICS -> RuntimeAutomationActions.dumpDiagnostics(applicationContext)
+            ACTION_REFRESH_PROOT_TELEMETRY_HEARTBEAT -> {
+                RuntimeAutomationActions.refreshProotTelemetryHeartbeat(applicationContext)
+            }
+            ACTION_STOP_CARD_RUN -> stopCardRunFromAutomation(intent)
+            else -> diagnostics.logRecipeEvent(
+                "kite_runtime_automation_ignored",
+                null,
+                mapOf("runtimeAction" to runtimeAction)
+            )
+        }
+        intent.removeExtra(EXTRA_AUTOMATION_RUNTIME_ACTION)
+        return true
+    }
+
+    private fun stopCardRunFromAutomation(sourceIntent: Intent?) {
+        val recipeId = sourceIntent
+            ?.getStringExtra(CardRunIntents.EXTRA_RECIPE_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_stop_missing_recipe",
+                null,
+                emptyMap()
+            )
+        val instanceId = sourceIntent
+            .getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: recipeId
+        val recipes = recipeLoader.loadAllRecipes()
+        currentRecipes = recipes
+        val recipe = recipes.firstOrNull { it.id == recipeId }
+            ?: CardRunStore.registeredRecipe(recipeId)
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_stop_missing_recipe",
+                null,
+                mapOf("recipeId" to recipeId, "instanceId" to instanceId)
+            )
+        val state = CardRunStore.get(instanceId)
+            ?: runtimeStates[recipe.id]?.takeIf { it.instanceId == instanceId || it.cardInstanceId == instanceId }
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_stop_missing_state",
+                recipe,
+                mapOf("recipeId" to recipeId, "instanceId" to instanceId)
+            )
+        diagnostics.logRecipeEvent(
+            "kite_runtime_automation_stop_card_run",
+            recipe,
+            mapOf("recipeId" to recipeId, "instanceId" to instanceId, "status" to state.status.name)
+        )
+        stopRecipeByCardInstanceId(recipe, state.cardInstanceId, state)
     }
 
     override fun onResume() {
@@ -16203,6 +16270,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_LIST_ROW_RENDER_BATCH_DELAY_MS = 16L
         private const val RESOURCE_OPEN_RUNTIME_SOURCE = "resource_open"
         private const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE = "resource_install_wizard"
+        private const val EXTRA_AUTOMATION_RUNTIME_ACTION = "runtime_action"
+        private const val ACTION_DUMP_DIAGNOSTICS = "dump_diagnostics"
+        private const val ACTION_REFRESH_PROOT_TELEMETRY_HEARTBEAT = "refresh_proot_telemetry_heartbeat"
+        private const val ACTION_STOP_CARD_RUN = "stop_card_run"
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
         private const val WEB_READY_TIMEOUT_MS = 8000L
         private const val WEB_READY_INTERVAL_MS = 700L

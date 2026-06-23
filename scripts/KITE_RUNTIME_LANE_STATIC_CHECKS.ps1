@@ -15,6 +15,7 @@ $prootTelemetryStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/f
 $prootOwnerTerminatorPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotOwnerProcessTerminator.kt'
 $runtimeHealthStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeHealthStore.kt'
 $runtimeWorkloadRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeWorkloadRegistry.kt'
+$runtimeAutomationActionsPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeAutomationActions.kt'
 $taskManagerStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/TaskManagerStore.kt'
 $taskManagerFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/ui/tasks/TaskManagerFragment.kt'
 $prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeProotPoolPlanDryRun.kt'
@@ -57,6 +58,7 @@ $prootTelemetryStore = Read-Utf8 $prootTelemetryStorePath
 $prootOwnerTerminator = Read-Utf8 $prootOwnerTerminatorPath
 $runtimeHealthStore = Read-Utf8 $runtimeHealthStorePath
 $runtimeWorkloadRegistry = Read-Utf8 $runtimeWorkloadRegistryPath
+$runtimeAutomationActions = Read-Utf8 $runtimeAutomationActionsPath
 $taskManagerStore = Read-Utf8 $taskManagerStorePath
 $taskManagerFragment = Read-Utf8 $taskManagerFragmentPath
 $prootPoolPlan = Read-Utf8 $prootPoolPlanPath
@@ -72,6 +74,11 @@ Assert-True ($main -match 'updateVisibleResourceInstallWizardElapsed') 'install 
 Assert-True ($main -match 'updateVisibleConsoleCard') 'console card runtime changes should have local binding.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'
 Assert-True ($main -match 'observeRuntimePanelSummarySignals') 'runtime panel summary counts must observe existing store snapshots.'
+Assert-True ($main -match 'handleRuntimeAutomationIntent') 'Kite MainActivity must expose the runtime automation diagnostic entry on the real launcher path.'
+Assert-True ($main -match 'RuntimeAutomationActions\.dumpDiagnostics\(applicationContext\)') 'Kite runtime diagnostics must reuse the shared RuntimeAutomationActions dump path.'
+Assert-True ($runtimeAutomationActions -match '(?s)fun dumpDiagnostics\b.*RuntimeHealthStore\.refresh\(\s*context = appContext,\s*reason = "adb-dump-diagnostics"') 'ADB dump diagnostics must refresh RuntimeHealth before exporting owner/process facts.'
+Assert-True ($main -match 'ACTION_STOP_CARD_RUN = "stop_card_run"') 'Kite runtime automation must expose a gated card stop action for real-path owner stop validation.'
+Assert-True ($main -match '(?s)private fun stopCardRunFromAutomation\b.*stopRecipeByCardInstanceId\(recipe, state\.cardInstanceId, state\)') 'Kite card stop automation must reuse the product card-instance stop path.'
 
 $handleProgress = Function-Body $main 'handleShellProgress'
 Assert-True ($handleProgress -notmatch 'showCardRunSurface|showConsole|renderResourceInstallWizardFor') 'handleShellProgress must not redraw whole surfaces.'

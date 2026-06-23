@@ -32,6 +32,7 @@
 - 2026-06-23：补齐 PRoot owner 容器化主链路；KiteBridgeClient 在 direct shell 启动时注入 `KF_RUNTIME_ID/KF_UNIT_ID`，ProotTelemetryStore 从 live tracee 表生成 owner process index，RuntimeHealthStore 把 `card:` / `resource:` owner 变成卡片/资源运行根，TaskManagerStore 和 RuntimeWorkloadRegistry 消费同一事实源，KiteBridgeClient 停止路径追加 ProotOwnerProcessTerminator，按 owner 的 pgid/tracee 发信号并用最终 `__kite_stop_remaining` 复核残留，PRoot pool plan 输出 owner 容器数和 owner tracee 数。
 - 2026-06-23：补齐终端 owner 边界；CardRun 空白终端和 terminal step 启动环境注入 `terminal:<sessionId>` owner，终端停止入口会后台调用 ProotOwnerProcessTerminator 收束 owner tracee，RuntimeHealthStore 跳过已有 terminal session root 对应的 terminal owner root，避免重复展示。
 - 2026-06-23：补齐 CardRun 对 owner 事实源的消费；TaskManagerProcessItem 暴露 RuntimeHealth owner id，运行管理页按 `card:<cardInstanceId>` / `resource:<resourceId>` / `terminal:<sessionId>` 合并 owner root，不再只靠旧 pid binding 猜卡片进程归属。
+- 2026-06-23：完成 Card owner 真机闭环复核；新增 debug-gated `runtime_action` 诊断/停止入口，OnePlus 8T 上启动 `kite-owner-telemetry-live` 卡片后，dump diagnostics 可看到 `card:kite-owner-telemetry-live` owner live group、workload root、pool owner 容器计数；通过同一 stop path 停止后 owner 容器数和 tracee 数归零，bridge stop 输出包含 `__kite_owner_stop_owner` 与空 `__kite_stop_remaining`。
 
 ## 正在进行
 - 暂无
@@ -40,9 +41,9 @@
 - 暂无
 
 ## 下次推荐领取
-1. PRoot owner 实机复核：在 OnePlus 8T 上启动会 fork 子进程的卡片，确认 telemetry owner index 出现 `card:<cardInstanceId>`，停止后 owner group 清空。
-2. 资源 owner 实机复核：执行资源 install/uninstall，确认 owner id 为 `resource:<resourceId>`，TaskManager/RuntimeHealth/pool plan 均能看到资源容器。
-3. 终端 owner 实机复核：从卡片打开空白终端或 terminal step，确认 telemetry owner index 出现 `terminal:<sessionId>`，结束终端后 owner group 清空。
+1. 资源 owner 实机复核：执行资源 install/uninstall，确认 owner id 为 `resource:<resourceId>`，TaskManager/RuntimeHealth/pool plan 均能看到资源容器。
+2. 终端 owner 实机复核：从卡片打开空白终端或 terminal step，确认 telemetry owner index 出现 `terminal:<sessionId>`，结束终端后 owner group 清空。
+3. PRoot telemetry 基线清理：处理旧 jsonl skipped-bytes/history 污染，让后续验收可以区分历史脏数据和当前 live owner。
 4. 多 PRoot 容量执行复核：在 capacity executor policy 打开后，确认 owner 容器计数进入 pool plan，再决定是否启动绑定的第二 PRoot runtime。
 
 ## 会话记录
@@ -196,3 +197,13 @@
 - 修改范围：`app/src/main/java/com/kite/app/MainActivity.kt`；`TaskManagerStore.kt`；`TaskManagerFragment.kt`；`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；本文件。
 - 验收标准：TaskManagerProcessItem 携带 raw `runtimeOwnerId`；运行管理页按 owner id 把卡片/资源/终端 owner root 合并进对应 CardRun；静态脚本阻止回退到只按 pid 匹配。
 - 明确不做：不新增 CardRunStore 字段；不复制 RuntimeHealth 快照进 CardRunStore；不新增扫描。
+
+### 2026-06-23 Card owner 真机复核与自动化入口
+- 领取任务：把 PRoot owner 容器方案整理成可执行目标，并完成 Card owner 实机闭环验证。
+- 领取原因：最高效完整路线不是继续补 UI pid 绑定，而是让 Kite 通过 PRoot telemetry owner index 管理 Ubuntu 内部 tracee；这条路线必须用真实卡片启动、dump、stop、再 dump 证明。
+- 修改范围：`app/src/main/java/com/kite/app/MainActivity.kt`；`RuntimeAutomationActions.kt`；`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；本文件。
+- 验收标准：`runtime_action=dump_diagnostics` 必须走真实 MainActivity launcher path，并在导出前刷新 RuntimeHealth；`runtime_action=stop_card_run` 必须复用 `stopRecipeByCardInstanceId` 产品停止路径；实机启动卡片后能看到 `card:<cardInstanceId>` owner group，停止后 owner container/tracee 计数归零。
+- 验证方式：`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`git diff --check`；`.\gradlew.bat assembleDebug --console=plain`；`adb -s 3f8bbaad install -r .\app\build\outputs\apk\debug\app-debug.apk`；OnePlus 8T 上通过 CardRunActivity 启动临时 shell 卡片，再用 MainActivity `runtime_action` dump/stop/dump。
+- 验证结果：静态检查通过；diff whitespace 检查通过，仅有 Git CRLF 提示；debug APK 编译通过并安装成功；启动 `kite-owner-telemetry-live` 后，`runtime-pressure.env` 出现 `proot_pool_plan_owner_container_count=1`、`proot_pool_plan_owner_container_tracee_count=2`、`workload_2_id=CARD:card:kite-owner-telemetry-live`；停止后 owner container/tracee 均为 `0`，bridge 输出 `__kite_owner_stop_owner:card:kite-owner-telemetry-live` 且 `__kite_stop_remaining:,`。
+- 完成状态：Card owner 真机闭环已完成；资源 owner、终端 owner 和多 PRoot capacity executor 仍需分别实机复核。
+- 剩余问题：设备侧 telemetry 仍存在旧 jsonl skipped-bytes/history 污染，需要单独清理基线；这不影响本次 live owner group 启停归零证据。

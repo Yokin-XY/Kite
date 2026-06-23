@@ -184,6 +184,10 @@ object RuntimeAutomationActions {
                     context = appContext,
                     reason = "adb-dump-diagnostics"
                 )
+                RuntimeHealthStore.refresh(
+                    context = appContext,
+                    reason = "adb-dump-diagnostics"
+                )
                 SupervisordServiceHealthStore.refresh(
                     context = appContext,
                     reason = "adb-dump-diagnostics"
