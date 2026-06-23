@@ -14,9 +14,11 @@ data class RuntimeReclaimerExecutionSnapshot(
     val lastReason: String = "none",
     val runtimeStopRequestCount: Int = 0,
     val unattributedTerminateRequestCount: Int = 0,
+    val ownerProcessTerminateRequestCount: Int = 0,
     val skippedInFlightCount: Int = 0,
     val inFlightRuntimeCount: Int = 0,
-    val inFlightPidCount: Int = 0
+    val inFlightPidCount: Int = 0,
+    val inFlightOwnerCount: Int = 0
 )
 
 data class RuntimeReclaimerRuntimeReclaimResult(
@@ -40,6 +42,7 @@ object RuntimeReclaimer {
 
     private val inFlightRuntimeIds = LinkedHashMap<String, Long>()
     private val inFlightPids = LinkedHashMap<Int, Long>()
+    private val inFlightOwnerIds = LinkedHashMap<String, Long>()
 
     @Volatile
     private var lastReclaimAtMs: Long = 0L
@@ -49,6 +52,7 @@ object RuntimeReclaimer {
     private var lastReason: String = "none"
     private var runtimeStopRequestCount: Int = 0
     private var unattributedTerminateRequestCount: Int = 0
+    private var ownerProcessTerminateRequestCount: Int = 0
     private var skippedInFlightCount: Int = 0
 
     @Synchronized
@@ -63,9 +67,11 @@ object RuntimeReclaimer {
             lastReason = lastReason,
             runtimeStopRequestCount = runtimeStopRequestCount,
             unattributedTerminateRequestCount = unattributedTerminateRequestCount,
+            ownerProcessTerminateRequestCount = ownerProcessTerminateRequestCount,
             skippedInFlightCount = skippedInFlightCount,
             inFlightRuntimeCount = inFlightRuntimeIds.size,
-            inFlightPidCount = inFlightPids.size
+            inFlightPidCount = inFlightPids.size,
+            inFlightOwnerCount = inFlightOwnerIds.size
         )
     }
 
@@ -281,6 +287,85 @@ object RuntimeReclaimer {
         }
     }
 
+    fun reclaimOwnerRuntime(
+        context: Context,
+        ownerId: String,
+        title: String,
+        reason: String,
+        now: Long = System.currentTimeMillis()
+    ): RuntimeReclaimerRuntimeReclaimResult {
+        val cleanOwnerId = ownerId.trim()
+        if (cleanOwnerId.isBlank()) {
+            return RuntimeReclaimerRuntimeReclaimResult(
+                executed = false,
+                reason = "owner_id_missing"
+            )
+        }
+        if (!cleanOwnerId.isExplicitOwnerReclaimId()) {
+            return RuntimeReclaimerRuntimeReclaimResult(
+                executed = false,
+                reason = "owner_id_not_reclaimable"
+            )
+        }
+        synchronized(this) {
+            pruneInFlight(now)
+            if (inFlightOwnerIds.containsKey(cleanOwnerId)) {
+                skippedInFlightCount += 1
+                return RuntimeReclaimerRuntimeReclaimResult(
+                    executed = false,
+                    skippedInFlight = true,
+                    reason = "owner_reclaim_already_in_flight"
+                )
+            }
+            inFlightOwnerIds[cleanOwnerId] = now
+            lastReclaimAtMs = now
+        }
+        Logger.i(LOG_TAG, "explicit owner reclaim owner=$cleanOwnerId title=$title reason=$reason")
+        return runCatching {
+            val termination = ProotOwnerProcessTerminator.terminate(
+                context = context.applicationContext,
+                ownerId = cleanOwnerId
+            )
+            val signal = when {
+                termination.sentKill -> "SIGKILL"
+                termination.sentTerminate -> "SIGTERM"
+                else -> "none"
+            }
+            val hadTarget = termination.targetTraceePids.isNotEmpty() ||
+                termination.targetProcessGroupIds.isNotEmpty()
+            if (!hadTarget || !termination.ok) {
+                synchronized(this) {
+                    inFlightOwnerIds.remove(cleanOwnerId)
+                }
+                return RuntimeReclaimerRuntimeReclaimResult(
+                    executed = false,
+                    reason = "owner_process_terminate_failed:${termination.reason}",
+                    signal = signal,
+                    targetMode = "proot_owner_process_group_and_tracee"
+                )
+            }
+            recordOwnerExecutionRequest(
+                ownerId = cleanOwnerId,
+                title = title,
+                reason = reason
+            )
+            RuntimeReclaimerRuntimeReclaimResult(
+                executed = true,
+                reason = "runtime_reclaimer_terminated_owner_processes:${termination.reason}",
+                signal = signal,
+                targetMode = "proot_owner_process_group_and_tracee"
+            )
+        }.getOrElse { error ->
+            synchronized(this) {
+                inFlightOwnerIds.remove(cleanOwnerId)
+            }
+            RuntimeReclaimerRuntimeReclaimResult(
+                executed = false,
+                reason = error.message ?: "owner_reclaim_failed"
+            )
+        }
+    }
+
     @Synchronized
     private fun recordExecutionRequest(decision: RuntimeReclaimDecision, reason: String) {
         lastExecutionKind = when (decision) {
@@ -298,6 +383,15 @@ object RuntimeReclaimer {
             is UnattributedTerminateDecision -> decision.pid.toString()
         }
         lastTargetTitle = decision.title
+        lastReason = reason
+    }
+
+    @Synchronized
+    private fun recordOwnerExecutionRequest(ownerId: String, title: String, reason: String) {
+        ownerProcessTerminateRequestCount += 1
+        lastExecutionKind = "explicit_owner_process_terminate"
+        lastTargetId = ownerId
+        lastTargetTitle = title
         lastReason = reason
     }
 
@@ -441,6 +535,13 @@ object RuntimeReclaimer {
                 pidIterator.remove()
             }
         }
+        val ownerIterator = inFlightOwnerIds.entries.iterator()
+        while (ownerIterator.hasNext()) {
+            val entry = ownerIterator.next()
+            if (now - entry.value >= IN_FLIGHT_TTL_MS) {
+                ownerIterator.remove()
+            }
+        }
     }
 
     private fun buildReason(
@@ -492,6 +593,12 @@ object RuntimeReclaimer {
     private fun RuntimeRootSnapshot.isProotCapacityRuntime(): Boolean {
         return runtimeKind == BackgroundRuntimeKind.CONTAINER_SUPERVISOR ||
             runtimeKind == BackgroundRuntimeKind.PROOT_CAPACITY_WORKER
+    }
+
+    private fun String.isExplicitOwnerReclaimId(): Boolean {
+        return startsWith("card:") ||
+            startsWith("resource:") ||
+            startsWith("terminal:")
     }
 
     private sealed interface RuntimeReclaimDecision {

@@ -117,6 +117,7 @@ import com.kftest.app.foundation.runtime.RuntimeAutomationActions
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
 import com.kftest.app.foundation.runtime.RuntimeHealthStore
+import com.kftest.app.foundation.runtime.RuntimeReclaimer
 import com.kftest.app.foundation.runtime.TaskManagerProcessItem
 import com.kftest.app.foundation.runtime.TaskManagerStore
 import com.kftest.app.foundation.runtime.TerminalSessionItem
@@ -371,6 +372,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 targetLiveTracees = readProbeTargetLiveTracees(intent)
             )
             ACTION_STOP_BACKGROUND_RUNTIME -> stopBackgroundRuntimeFromAutomation(intent)
+            ACTION_RECLAIM_OWNER_RUNTIME -> reclaimOwnerRuntimeFromAutomation(intent)
             ACTION_START_RESOURCE_OWNER_PROBE -> startResourceOwnerProbeFromAutomation(intent)
             ACTION_STOP_CARD_RUN -> stopCardRunFromAutomation(intent)
             else -> diagnostics.logRecipeEvent(
@@ -381,6 +383,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         intent.removeExtra(EXTRA_AUTOMATION_RUNTIME_ACTION)
         intent.removeExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES)
+        intent.removeExtra(EXTRA_AUTOMATION_OWNER_ID)
         return true
     }
 
@@ -401,6 +404,45 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         )
     }
 
+    private fun reclaimOwnerRuntimeFromAutomation(sourceIntent: Intent?) {
+        val ownerId = sourceIntent
+            ?.getStringExtra(EXTRA_AUTOMATION_OWNER_ID)
+            ?.trim()
+            .orEmpty()
+        if (ownerId.isBlank()) {
+            return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_reclaim_missing_owner",
+                null,
+                emptyMap()
+            )
+        }
+        if (!ownerId.isAutomationRuntimeOwnerId()) {
+            return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_reclaim_invalid_owner",
+                null,
+                mapOf("ownerId" to ownerId)
+            )
+        }
+        val result = RuntimeReclaimer.reclaimOwnerRuntime(
+            context = applicationContext,
+            ownerId = ownerId,
+            title = ownerId,
+            reason = "adb-owner-reclaim"
+        )
+        RuntimeHealthStore.refresh(applicationContext, reason = "adb-owner-reclaim")
+        diagnostics.logRecipeEvent(
+            "kite_runtime_automation_reclaim_owner_runtime",
+            null,
+            mapOf(
+                "ownerId" to ownerId,
+                "executed" to result.executed.toString(),
+                "reason" to result.reason,
+                "signal" to result.signal,
+                "targetMode" to result.targetMode
+            )
+        )
+    }
+
     private fun readProbeTargetLiveTracees(intent: Intent?): Int {
         if (intent == null || !intent.hasExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES)) return 4
         val rawInt = intent.getIntExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES, Int.MIN_VALUE)
@@ -410,6 +452,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             ?.toIntOrNull()
             ?.coerceAtLeast(0)
             ?: 4
+    }
+
+    private fun String.isAutomationRuntimeOwnerId(): Boolean {
+        return startsWith("card:") ||
+            startsWith("resource:") ||
+            startsWith("terminal:")
     }
 
     private fun stopCardRunFromAutomation(sourceIntent: Intent?) {
@@ -16373,12 +16421,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val EXTRA_AUTOMATION_RUNTIME_ACTION = "runtime_action"
         private const val EXTRA_AUTOMATION_RUNTIME_ID = "runtime_id"
         private const val EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES = "probe_target_live_tracees"
+        private const val EXTRA_AUTOMATION_OWNER_ID = "owner_id"
         private const val ACTION_DUMP_DIAGNOSTICS = "dump_diagnostics"
         private const val ACTION_ROTATE_PROOT_TELEMETRY = "rotate_proot_telemetry"
         private const val ACTION_REFRESH_PROOT_TELEMETRY_HEARTBEAT = "refresh_proot_telemetry_heartbeat"
         private const val ACTION_PREPARE_PROOT_LIVE_TRACEE_PROBE = "prepare_proot_live_tracee_probe"
         private const val ACTION_INJECT_PROOT_LIVE_TRACEE_PROBE = "inject_proot_live_tracee_probe"
         private const val ACTION_STOP_BACKGROUND_RUNTIME = "stop_background_runtime"
+        private const val ACTION_RECLAIM_OWNER_RUNTIME = "reclaim_owner_runtime"
         private const val ACTION_START_RESOURCE_OWNER_PROBE = "start_resource_owner_probe"
         private const val ACTION_STOP_CARD_RUN = "stop_card_run"
         private const val RESOURCE_OWNER_PROBE_ID = "kite.owner.telemetry.probe"

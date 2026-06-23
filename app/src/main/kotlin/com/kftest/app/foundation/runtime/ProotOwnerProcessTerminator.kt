@@ -1,8 +1,8 @@
 package com.kftest.app.foundation.runtime
 
 import android.content.Context
+import android.system.Os
 import android.system.OsConstants
-import com.kftest.app.foundation.jni.KFJni
 import com.kftest.app.foundation.logging.Logger
 
 data class ProotOwnerTerminationResult(
@@ -72,6 +72,14 @@ object ProotOwnerProcessTerminator {
         Thread.sleep(TERM_GRACE_MS)
         var remaining = remainingTracees(context, cleanOwnerId)
         if (remaining.isNotEmpty()) {
+            remaining = retireIfOsTargetsGone(
+                context = context,
+                ownerId = cleanOwnerId,
+                remainingTraceePids = remaining,
+                reason = "owner_processes_missing_after_term"
+            )
+        }
+        if (remaining.isNotEmpty()) {
             val killTargets = ownerTargets(context, cleanOwnerId)
             val sentKill = signalTargets(
                 processGroupIds = killTargets.processGroupIds,
@@ -80,6 +88,14 @@ object ProotOwnerProcessTerminator {
             )
             Thread.sleep(KILL_GRACE_MS)
             remaining = remainingTracees(context, cleanOwnerId)
+            if (remaining.isNotEmpty()) {
+                remaining = retireIfOsTargetsGone(
+                    context = context,
+                    ownerId = cleanOwnerId,
+                    remainingTraceePids = remaining,
+                    reason = "owner_processes_missing_after_kill"
+                )
+            }
             return ProotOwnerTerminationResult(
                 ownerId = cleanOwnerId,
                 targetTraceePids = targetTracees,
@@ -127,6 +143,25 @@ object ProotOwnerProcessTerminator {
         )
     }
 
+    private fun retireIfOsTargetsGone(
+        context: Context,
+        ownerId: String,
+        remainingTraceePids: List<Int>,
+        reason: String
+    ): List<Int> {
+        val liveOsPids = remainingTraceePids.filter { pid -> isProcessStillPresent(pid) }
+        if (liveOsPids.isNotEmpty()) {
+            return remainingTraceePids
+        }
+        val result = ProotTelemetryStore.retireOwnerTracees(
+            context = context,
+            ownerId = ownerId,
+            reason = reason
+        )
+        Logger.i(LOG_TAG, "retire stale owner tracees after signal check: ${result.summary()}")
+        return remainingTracees(context, ownerId)
+    }
+
     private fun signalTargets(
         processGroupIds: List<Int>,
         traceePids: List<Int>,
@@ -147,10 +182,23 @@ object ProotOwnerProcessTerminator {
     private fun sendSignal(target: Int, signal: Int, label: String): Boolean {
         if (target == 0 || target == -1 || target == 1) return false
         return runCatching {
-            KFJni.sendSignal(target, signal)
+            Os.kill(target, signal)
+            true
         }.getOrElse { error ->
             Logger.i(LOG_TAG, "send owner stop signal failed: $label signal=$signal error=${error.message}")
             false
+        }
+    }
+
+    private fun isProcessStillPresent(pid: Int): Boolean {
+        if (pid <= 1) return false
+        return runCatching {
+            Os.kill(pid, 0)
+            true
+        }.getOrElse { error ->
+            val message = error.message.orEmpty()
+            !message.contains("ESRCH") &&
+                !message.contains("No such process", ignoreCase = true)
         }
     }
 }

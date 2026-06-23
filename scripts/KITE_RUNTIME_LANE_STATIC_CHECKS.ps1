@@ -14,6 +14,7 @@ $cardRunStorePath = Join-Path $Root 'app/src/main/java/com/kite/app/run/CardRunS
 $prootTelemetryStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotTelemetryStore.kt'
 $prootOwnerTerminatorPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotOwnerProcessTerminator.kt'
 $runtimeHealthStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeHealthStore.kt'
+$runtimeReclaimerPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeReclaimer.kt'
 $runtimeWorkloadRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeWorkloadRegistry.kt'
 $runtimeAutomationActionsPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeAutomationActions.kt'
 $runtimeMemoryLifecycleRuleTriggerPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeMemoryLifecycleRuleTrigger.kt'
@@ -59,6 +60,7 @@ $cardRunStore = Read-Utf8 $cardRunStorePath
 $prootTelemetryStore = Read-Utf8 $prootTelemetryStorePath
 $prootOwnerTerminator = Read-Utf8 $prootOwnerTerminatorPath
 $runtimeHealthStore = Read-Utf8 $runtimeHealthStorePath
+$runtimeReclaimer = Read-Utf8 $runtimeReclaimerPath
 $runtimeWorkloadRegistry = Read-Utf8 $runtimeWorkloadRegistryPath
 $runtimeAutomationActions = Read-Utf8 $runtimeAutomationActionsPath
 $runtimeMemoryLifecycleRuleTrigger = Read-Utf8 $runtimeMemoryLifecycleRuleTriggerPath
@@ -84,6 +86,9 @@ Assert-True ($main -match 'RuntimeAutomationActions\.rotateProotTelemetry\(appli
 Assert-True ($main -match 'RuntimeAutomationActions\.prepareProotLiveTraceeProbe' -and $main -match 'RuntimeAutomationActions\.injectProotLiveTraceeProbe') 'Kite runtime automation must expose live-tracee probe actions on the real launcher path.'
 Assert-True ($main -match 'private fun readProbeTargetLiveTracees' -and $main -match 'EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES = "probe_target_live_tracees"') 'Kite live-tracee probe automation must accept an explicit target tracee count.'
 Assert-True ($main -match 'ACTION_STOP_BACKGROUND_RUNTIME = "stop_background_runtime"' -and $main -match '(?s)private fun stopBackgroundRuntimeFromAutomation\b.*TaskManagerStore\.stopRuntime\(applicationContext, runtimeId\)') 'Kite runtime automation must stop background runtimes through the existing TaskManagerStore path.'
+Assert-True ($main -match 'ACTION_RECLAIM_OWNER_RUNTIME = "reclaim_owner_runtime"' -and $main -match 'EXTRA_AUTOMATION_OWNER_ID = "owner_id"') 'Kite runtime automation must expose an explicit owner reclaim action and owner_id extra.'
+Assert-True ($main -match '(?s)private fun reclaimOwnerRuntimeFromAutomation\b.*ownerId\.isAutomationRuntimeOwnerId\(\).*RuntimeReclaimer\.reclaimOwnerRuntime') 'Kite owner reclaim automation must validate card/resource/terminal owner ids before dispatching RuntimeReclaimer.'
+Assert-True ($main -match '(?s)private fun String\.isAutomationRuntimeOwnerId\(\).*startsWith\("card:"\).*startsWith\("resource:"\).*startsWith\("terminal:"\)') 'Kite owner reclaim automation must stay bounded to card/resource/terminal owner ids.'
 Assert-True ($runtimeAutomationActions -match '(?s)fun dumpDiagnostics\b.*RuntimeHealthStore\.refresh\(\s*context = appContext,\s*reason = "adb-dump-diagnostics"') 'ADB dump diagnostics must refresh RuntimeHealth before exporting owner/process facts.'
 Assert-True ($main -match 'ACTION_STOP_CARD_RUN = "stop_card_run"') 'Kite runtime automation must expose a gated card stop action for real-path owner stop validation.'
 Assert-True ($main -match '(?s)private fun stopCardRunFromAutomation\b.*stopRecipeByCardInstanceId\(recipe, state\.cardInstanceId, state\)') 'Kite card stop automation must reuse the product card-instance stop path.'
@@ -166,6 +171,7 @@ Assert-True ($runtimeHealthStore -match 'private fun buildProotOwnerRoots') 'Run
 Assert-True ($runtimeHealthStore -match 'prootTelemetry\.ownerProcessIndex\.groups') 'RuntimeHealth owner roots must consume the owner process index.'
 Assert-True ($runtimeHealthStore -match 'existingTerminalOwnerIds' -and $runtimeHealthStore -match 'excludedOwnerIds: Set<String> = emptySet\(\)') 'RuntimeHealth must skip PRoot terminal owner roots already represented by terminal sessions.'
 Assert-True ($runtimeHealthStore -match 'attributedRootPids = attributedPids \+ ownerTraceePids') 'owner tracees must be excluded from unattributed root generation.'
+Assert-True ($runtimeHealthStore -match 'runtime_reclaimer_owner_reclaim_mode=explicit_owner_id_only' -and $runtimeHealthStore -match 'runtime_reclaimer_owner_process_terminate_request_count') 'RuntimeHealth env output must declare explicit-only owner reclaim and expose owner terminate count.'
 Assert-True ($runtimeWorkloadRegistry -match 'proot_owner_index:\$\{ownerKind\.name\.lowercase\(\)\}') 'workload registry must classify card/resource owner roots from the PRoot owner index.'
 Assert-True ($taskManagerStore -match '\u5361\u7247\u5bb9\u5668' -and $taskManagerStore -match '\u8d44\u6e90\u5bb9\u5668') 'task manager must surface card/resource roots as owner containers.'
 Assert-True ($taskManagerStore -match 'val runtimeOwnerId: String\? = null') 'task manager process items must carry the raw runtime owner id.'
@@ -184,9 +190,14 @@ Assert-True ($runtimeMemoryLifecycleRuleTrigger -match 'prootRule\(snapshot, now
 Assert-True ($backgroundRuntimeRegistry -match 'PROOT_CAPACITY_WORKER_INITIAL_COUNT = 2') 'PRoot capacity registry must pre-register an inactive second worker for auto-bound scale-out.'
 Assert-True ($prootOwnerTerminator -match 'object ProotOwnerProcessTerminator') 'owner stop must have a dedicated PRoot owner terminator.'
 Assert-True ($prootOwnerTerminator -match 'ProotTelemetryStore\.refreshBlocking') 'owner stop must use blocking telemetry refresh for residue checks.'
-Assert-True ($prootOwnerTerminator -match 'KFJni\.sendSignal\(target, signal\)') 'owner stop must signal PRoot tracee process groups/pids directly.'
+Assert-True ($prootOwnerTerminator -match 'Os\.kill\(target, signal\)') 'owner stop must signal PRoot tracee process groups/pids through Android platform signals.'
+Assert-True ($prootOwnerTerminator -match 'ProotTelemetryStore\.retireOwnerTracees' -and $prootOwnerTerminator -match 'isProcessStillPresent') 'owner stop must tombstone stale telemetry only after Android signal-0 shows tracee pids are gone.'
 Assert-True (($prootOwnerTerminator -match '(?s)processGroupIds\.forEach.*traceePids\.forEach') -and ($prootOwnerTerminator -notmatch 'if \(processGroupIds\.isEmpty\(\)')) 'owner stop must signal bounded tracee pids even when PRoot process-group signals are available.'
 Assert-True ($prootOwnerTerminator -match '__kite_owner_stop_owner' -and $prootOwnerTerminator -match '__kite_stop_remaining') 'owner stop must report owner and final remaining tracees.'
+Assert-True ($runtimeReclaimer -match 'fun reclaimOwnerRuntime' -and $runtimeReclaimer -match 'ProotOwnerProcessTerminator\.terminate') 'RuntimeReclaimer explicit owner reclaim must terminate through the PRoot owner terminator.'
+Assert-True ($runtimeReclaimer -match 'ownerProcessTerminateRequestCount' -and $runtimeReclaimer -match 'explicit_owner_process_terminate') 'RuntimeReclaimer must record explicit owner process terminate requests.'
+Assert-True ($runtimeReclaimer -match '(?s)private fun String\.isExplicitOwnerReclaimId\(\).*startsWith\("card:"\).*startsWith\("resource:"\).*startsWith\("terminal:"\)') 'RuntimeReclaimer owner reclaim must reject non card/resource/terminal owner ids.'
+Assert-True ($runtimeReclaimer -match 'RuntimeRootOwnerKind\.CARD,\s*\r?\n\s*RuntimeRootOwnerKind\.RESOURCE,\s*\r?\n\s*RuntimeRootOwnerKind\.TERMINAL -> false') 'RuntimeReclaimer automatic candidate selection must not auto-reclaim interactive owner roots.'
 Assert-True ($bridgeClient -match 'ProotOwnerProcessTerminator\.terminate') 'bridge stop must invoke the PRoot owner terminator.'
 Assert-True ($bridgeClient -match 'private fun stopOwnerProcesses') 'bridge stop must collect owner stop output centrally.'
 Assert-True ($terminalSessionController -match 'private fun stopTerminalOwnerProcesses') 'terminal stop must have a dedicated owner stop hook.'
