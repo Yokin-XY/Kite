@@ -361,6 +361,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             ACTION_REFRESH_PROOT_TELEMETRY_HEARTBEAT -> {
                 RuntimeAutomationActions.refreshProotTelemetryHeartbeat(applicationContext)
             }
+            ACTION_START_RESOURCE_OWNER_PROBE -> startResourceOwnerProbeFromAutomation(intent)
             ACTION_STOP_CARD_RUN -> stopCardRunFromAutomation(intent)
             else -> diagnostics.logRecipeEvent(
                 "kite_runtime_automation_ignored",
@@ -407,6 +408,63 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             mapOf("recipeId" to recipeId, "instanceId" to instanceId, "status" to state.status.name)
         )
         stopRecipeByCardInstanceId(recipe, state.cardInstanceId, state)
+    }
+
+    private fun startResourceOwnerProbeFromAutomation(sourceIntent: Intent?) {
+        val resourceId = sourceIntent
+            ?.getStringExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_TARGET_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { KiteResourceInstallRecipes.safeId(it) }
+            ?: RESOURCE_OWNER_PROBE_ID
+        val recipe = resourceOwnerProbeRecipe(resourceId)
+        val instanceId = sourceIntent
+            ?.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: "resource-owner-probe-$resourceId"
+        CardRunStore.registerRecipe(recipe)
+        activeRunInstanceIds[recipe.id] = instanceId
+        val state = CardRunStore.start(
+            recipe = recipe,
+            instanceId = instanceId,
+            ownerKind = RecipeRuntimeState.OWNER_KIND_RESOURCE,
+            stepId = resourceId
+        )
+        runtimeStates[recipe.id] = state
+        diagnostics.logRecipeEvent(
+            "kite_runtime_automation_start_resource_owner_probe",
+            recipe,
+            mapOf("resourceId" to resourceId, "instanceId" to instanceId)
+        )
+        startRecipe(
+            recipe = recipe,
+            previousState = state,
+            preferredInstanceId = instanceId,
+            openConsoleOnStart = false,
+            renderOnStart = false,
+            keepCurrentFocus = true
+        )
+    }
+
+    private fun resourceOwnerProbeRecipe(resourceId: String): KiteRecipe {
+        val step = KiteRecipeStep(
+            id = "resource_owner_probe_$resourceId",
+            type = KiteRecipe.STEP_SHELL,
+            cmd = "bash -lc 'echo KITE_RESOURCE_OWNER_PROBE_START; sleep 600'",
+            surfaceMode = KiteRecipe.SURFACE_MODE_SILENT,
+            workdir = "/workspace",
+            timeoutMs = 900_000L
+        )
+        return KiteResourceInstallRecipes.toRecipe(
+            KiteResourceInstallSpec(
+                id = resourceId,
+                name = "Resource owner probe",
+                description = "Debug resource owner telemetry probe",
+                category = "resource",
+                operation = KiteResourceInstallRecipes.OP_INSTALL,
+                actionLabel = "Probe",
+                steps = listOf(step)
+            )
+        )
     }
 
     override fun onResume() {
@@ -11023,8 +11081,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
         }
         CardRunStore.start(
-            recipe,
-            preferredInstanceId ?: activeRunInstanceIds[recipe.id] ?: recipe.id
+            recipe = recipe,
+            instanceId = preferredInstanceId ?: activeRunInstanceIds[recipe.id] ?: recipe.id,
+            parentInstanceId = previousState.parentInstanceId,
+            ownerKind = previousState.ownerKind,
+            stepId = previousState.stepId
         ).also {
             activeRunInstanceIds[recipe.id] = it.instanceId
             runtimeStates[recipe.id] = it
@@ -16273,7 +16334,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val EXTRA_AUTOMATION_RUNTIME_ACTION = "runtime_action"
         private const val ACTION_DUMP_DIAGNOSTICS = "dump_diagnostics"
         private const val ACTION_REFRESH_PROOT_TELEMETRY_HEARTBEAT = "refresh_proot_telemetry_heartbeat"
+        private const val ACTION_START_RESOURCE_OWNER_PROBE = "start_resource_owner_probe"
         private const val ACTION_STOP_CARD_RUN = "stop_card_run"
+        private const val RESOURCE_OWNER_PROBE_ID = "kite.owner.telemetry.probe"
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
         private const val WEB_READY_TIMEOUT_MS = 8000L
         private const val WEB_READY_INTERVAL_MS = 700L

@@ -33,6 +33,8 @@
 - 2026-06-23：补齐终端 owner 边界；CardRun 空白终端和 terminal step 启动环境注入 `terminal:<sessionId>` owner，终端停止入口会后台调用 ProotOwnerProcessTerminator 收束 owner tracee，RuntimeHealthStore 跳过已有 terminal session root 对应的 terminal owner root，避免重复展示。
 - 2026-06-23：补齐 CardRun 对 owner 事实源的消费；TaskManagerProcessItem 暴露 RuntimeHealth owner id，运行管理页按 `card:<cardInstanceId>` / `resource:<resourceId>` / `terminal:<sessionId>` 合并 owner root，不再只靠旧 pid binding 猜卡片进程归属。
 - 2026-06-23：完成 Card owner 真机闭环复核；新增 debug-gated `runtime_action` 诊断/停止入口，OnePlus 8T 上启动 `kite-owner-telemetry-live` 卡片后，dump diagnostics 可看到 `card:kite-owner-telemetry-live` owner live group、workload root、pool owner 容器计数；通过同一 stop path 停止后 owner 容器数和 tracee 数归零，bridge stop 输出包含 `__kite_owner_stop_owner` 与空 `__kite_stop_remaining`。
+- 2026-06-23：完成 Resource owner 真机闭环复核；新增 debug-gated `runtime_action=start_resource_owner_probe`，通过资源安装 recipe 路径启动 `resource:kite.owner.telemetry.probe`，RuntimeHealth/Workload/Authority/Pool 均能看到资源 owner 容器，停止后 owner container/tracee 归零。
+- 2026-06-23：完成 Terminal owner 真机闭环复核；修复冷启动读取不到 rotated telemetry 的 owner baseline、同一 terminal step 重复 attach 导致 owner split、以及 host 终端已退出但 PRoot 未落根 tracee exit 的 tombstone 缺口；v5 实测停止后 `terminal:shell-space-main-1782193330714` 只保留历史 ledger，不再留 live owner。
 
 ## 正在进行
 - 暂无
@@ -41,10 +43,9 @@
 - 暂无
 
 ## 下次推荐领取
-1. 资源 owner 实机复核：执行资源 install/uninstall，确认 owner id 为 `resource:<resourceId>`，TaskManager/RuntimeHealth/pool plan 均能看到资源容器。
-2. 终端 owner 实机复核：从卡片打开空白终端或 terminal step，确认 telemetry owner index 出现 `terminal:<sessionId>`，结束终端后 owner group 清空。
-3. PRoot telemetry 基线清理：处理旧 jsonl skipped-bytes/history 污染，让后续验收可以区分历史脏数据和当前 live owner。
-4. 多 PRoot 容量执行复核：在 capacity executor policy 打开后，确认 owner 容器计数进入 pool plan，再决定是否启动绑定的第二 PRoot runtime。
+1. 多 PRoot 容量执行复核：在 capacity executor policy 打开后，确认 owner 容器计数进入 pool plan，再决定是否启动绑定的第二 PRoot runtime。
+2. PRoot telemetry 基线清理：处理旧 jsonl skipped-bytes/history 污染和历史 stale owner，让后续验收可以区分历史账本与当前 live owner。
+3. Owner stop 审计泛化：把 terminal tombstone 的“host 已确认退出后写回同源 telemetry”策略，评估是否需要扩展到更多非终端 owner stop 场景。
 
 ## 会话记录
 
@@ -205,5 +206,25 @@
 - 验收标准：`runtime_action=dump_diagnostics` 必须走真实 MainActivity launcher path，并在导出前刷新 RuntimeHealth；`runtime_action=stop_card_run` 必须复用 `stopRecipeByCardInstanceId` 产品停止路径；实机启动卡片后能看到 `card:<cardInstanceId>` owner group，停止后 owner container/tracee 计数归零。
 - 验证方式：`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`git diff --check`；`.\gradlew.bat assembleDebug --console=plain`；`adb -s 3f8bbaad install -r .\app\build\outputs\apk\debug\app-debug.apk`；OnePlus 8T 上通过 CardRunActivity 启动临时 shell 卡片，再用 MainActivity `runtime_action` dump/stop/dump。
 - 验证结果：静态检查通过；diff whitespace 检查通过，仅有 Git CRLF 提示；debug APK 编译通过并安装成功；启动 `kite-owner-telemetry-live` 后，`runtime-pressure.env` 出现 `proot_pool_plan_owner_container_count=1`、`proot_pool_plan_owner_container_tracee_count=2`、`workload_2_id=CARD:card:kite-owner-telemetry-live`；停止后 owner container/tracee 均为 `0`，bridge 输出 `__kite_owner_stop_owner:card:kite-owner-telemetry-live` 且 `__kite_stop_remaining:,`。
-- 完成状态：Card owner 真机闭环已完成；资源 owner、终端 owner 和多 PRoot capacity executor 仍需分别实机复核。
+- 完成状态：Card owner 真机闭环已完成；后续已继续补资源 owner 和终端 owner 真机复核，多 PRoot capacity executor 仍需单独验证。
 - 剩余问题：设备侧 telemetry 仍存在旧 jsonl skipped-bytes/history 污染，需要单独清理基线；这不影响本次 live owner group 启停归零证据。
+
+### 2026-06-23 Resource owner 真机复核
+- 领取任务：验证资源卡片是否能作为独立 PRoot owner 容器进入 RuntimeHealth/Workload/Pool 事实链。
+- 领取原因：Card owner 已证明卡片实例路径可行，但资源安装 recipe 必须保留 `ownerKind=resource`，否则 startRecipe 会把资源 probe 覆盖回 card owner。
+- 修改范围：`app/src/main/java/com/kite/app/MainActivity.kt`；`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；本文件。
+- 验收标准：`runtime_action=start_resource_owner_probe` 能启动 `resource:<resourceId>` owner；PRoot telemetry owner index、RuntimeHealth、workload、authority matrix、pool plan 均能看到资源容器；停止后 owner container/tracee 清空。
+- 验证方式：`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat assembleDebug --console=plain`；`adb -s 3f8bbaad install -r .\app\build\outputs\apk\debug\app-debug.apk`；OnePlus 8T 上用 `runtime_action=start_resource_owner_probe` 启动 `kite.owner.telemetry.probe`，dump/stop/dump。
+- 验证结果：启动后 `runtime-pressure.env` 出现 `proot_live_table_entry_*_kf_runtime_id=resource:kite.owner.telemetry.probe`、`workload_2_id=RESOURCE:resource:kite.owner.telemetry.probe`、`lifecycle_authority_matrix_entry_1_root_key=RESOURCE:resource:kite.owner.telemetry.probe`、`proot_pool_plan_owner_container_count=1`、`proot_pool_plan_owner_container_tracee_count=2`；停止后 owner container/tracee 均为 `0`，日志输出 `已停止，未发现进程残留`。
+- 完成状态：Resource owner 真机闭环已完成。
+- 剩余问题：资源 probe 是 debug-gated 自动化入口，不代表完整 install/uninstall 产品交互已覆盖；多 PRoot capacity executor 仍未打开。
+
+### 2026-06-23 Terminal owner 真机复核与 stop 缺口修复
+- 领取任务：验证 terminal step 下 Ubuntu bash/sleep 是否全归属同一 terminal owner，并在结束终端后从 live owner index 清空。
+- 领取原因：终端不是 direct shell 卡片路径，真实执行要经过 terminal session attach；这里最容易出现 owner split、rotated telemetry 读不到、host 关闭但 PRoot 根 tracee 无 exit 事件三个缺口。
+- 修改范围：`app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotTelemetryStore.kt`；`app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotOwnerProcessTerminator.kt`；`app/src/main/kotlin/com/kftest/app/foundation/terminal/TerminalSessionController.kt`；`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；本文件。
+- 验收标准：terminal step 只 attach 一个 PRoot session；`sleep 600` 继承 `terminal:<sessionId>` 和 `card:<cardInstanceId>`；停止后 `__kite_stop_remaining` 最终为空；若 host 已确认退出但 native PRoot 没写根 tracee exit，必须向同一 telemetry JSONL 写入 owner tombstone，而不是靠扫描或 UI 状态遮盖。
+- 验证方式：安装 debug APK 后在 OnePlus 8T 通过 CardRunActivity 启动临时 terminal 卡 `kite-terminal-owner-telemetry-live-v5`，等待 `sleep 600`，dump/stop/dump，并检查 `terminal-actions.log`、`kf-proot-telemetry.jsonl`、`runtime-pressure.env`。
+- 验证结果：v5 session 为 `shell-space-main-1782193330714`；启动后 raw telemetry 中 `/usr/bin/bash` 与 `sleep 600` 均带 `kfRuntimeId=terminal:shell-space-main-1782193330714`、`kfUnitId=card:kite-terminal-owner-telemetry-live-v5`；停止后 terminal log 出现 `retire-proot-owner-tracees`，`retiredTraceePids=29389`，`previousLiveTracees=2`、`observedLiveTracees=1`，随后 owner stop 输出 `__kite_stop_remaining:` 为空；raw telemetry 写入 `sourceHook=kite_owner_retire...` 的 `TraceeExited` tombstone；runtime-pressure 对 v5 只剩历史 `runtime_resource_event_ledger`，不再有 `proot_live_table_entry`。
+- 完成状态：Terminal owner 真机闭环已完成。
+- 剩余问题：设备上仍有旧 v4 验证留下的 stale 历史 owner，需要单独 telemetry 基线清理；owner tombstone 当前只在 terminal host 已确认退出后启用，是否扩展到其他 owner stop 场景待下一阶段审计。

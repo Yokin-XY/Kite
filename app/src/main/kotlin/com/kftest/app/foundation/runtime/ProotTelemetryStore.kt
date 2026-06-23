@@ -408,20 +408,63 @@ data class ProotTelemetryHeartbeatExecutionResult(
     }
 }
 
+data class ProotTelemetryOwnerRetireResult(
+    val status: String,
+    val action: String,
+    val ownerId: String,
+    val reason: String,
+    val sourcePath: String,
+    val retiredTraceePids: List<Int> = emptyList(),
+    val previousLiveTracees: Int = 0,
+    val observedLiveTracees: Int = 0,
+    val generatedAtMs: Long = System.currentTimeMillis()
+) {
+    val retired: Boolean
+        get() = retiredTraceePids.isNotEmpty()
+
+    fun summary(): String {
+        return "status=$status action=$action owner=$ownerId retired=$retired " +
+            "pids=${retiredTraceePids.joinToString(",")} beforeLive=$previousLiveTracees " +
+            "observedLive=$observedLiveTracees reason=$reason"
+    }
+
+    fun toLogBlock(): String {
+        return buildString {
+            appendLine("== retire-proot-owner-tracees ==")
+            appendLine("generatedAtMs=$generatedAtMs")
+            appendLine("status=$status")
+            appendLine("action=$action")
+            appendLine("ownerId=$ownerId")
+            appendLine("retired=$retired")
+            appendLine("retiredTraceePids=${retiredTraceePids.joinToString(",")}")
+            appendLine("sourcePath=$sourcePath")
+            appendLine("previousLiveTracees=$previousLiveTracees")
+            appendLine("observedLiveTracees=$observedLiveTracees")
+            appendLine("boundary=android_control_plane_owner_tombstone_same_telemetry_source_no_proc_scan")
+            appendLine("reason=$reason")
+        }
+    }
+}
+
 /**
  * Read-side bridge for PRoot lifecycle telemetry.
  *
- * This is intentionally observational: it tails the JSONL file emitted by the
- * native PRoot fork and maintains a small live table. It does not reclaim,
- * throttle, block, or make lifecycle policy decisions.
+ * Normal refresh is observational: it tails the JSONL file emitted by the
+ * native PRoot fork and maintains a small live table. Control-plane owner
+ * retire events are appended to the same JSONL source only after Kite has
+ * already stopped an owner and needs to tombstone tracees whose native PRoot
+ * exit event was not emitted.
  */
 object ProotTelemetryStore {
     private const val LOG_TAG = "ProotTelemetryStore"
     private const val TELEMETRY_FILE_NAME = "kf-proot-telemetry.jsonl"
     private const val MAX_INCREMENTAL_READ_BYTES = 256 * 1024
+    private const val TERMINAL_TRACEE_TTL_MS = 7L * 24L * 60L * 60L * 1000L
+    private const val ROTATED_TELEMETRY_SEGMENTS = 3
+    private const val ROTATED_BASELINE_READ_BYTES = MAX_INCREMENTAL_READ_BYTES
+    private const val ROTATED_BASELINE_EVENT_TTL_MS = TERMINAL_TRACEE_TTL_MS
     private const val MAX_RECENT_EVENTS = 128
     private const val MAX_TERMINAL_TRACEE_RECORDS = 5_000
-    private const val TERMINAL_TRACEE_TTL_MS = 7L * 24L * 60L * 60L * 1000L
     private const val PRESSURE_WINDOW_MS = 60_000L
     private const val SYNTHETIC_PROBE_EVENT_AGE_MS = PRESSURE_WINDOW_MS + 5_000L
     private const val AUTO_REFRESH_INTERVAL_MS = 2_000L
@@ -442,6 +485,7 @@ object ProotTelemetryStore {
     private val lock = Any()
     private var lastPath: String = ""
     private var lastOffsetBytes: Long = 0L
+    private var rotationBaselineLoadedForPath: String = ""
     private var readerEpochMs: Long = System.currentTimeMillis()
     private var pendingPartialLine: String = ""
     private var probeDeclaredTargetLiveTracees: Int = 0
@@ -848,6 +892,126 @@ object ProotTelemetryStore {
         )
     }
 
+    fun retireOwnerTracees(
+        context: Context,
+        ownerId: String,
+        reason: String = "owner-stop-confirmed"
+    ): ProotTelemetryOwnerRetireResult {
+        val cleanOwnerId = ownerId.trim()
+        val appContext = context.applicationContext
+        val file = telemetryFile(appContext)
+        if (cleanOwnerId.isBlank()) {
+            return ProotTelemetryOwnerRetireResult(
+                status = "SKIPPED",
+                action = "RETIRE_PROOT_OWNER_TRACEES",
+                ownerId = "",
+                reason = "owner_id_missing:$reason",
+                sourcePath = file.absolutePath
+            )
+        }
+
+        runCatching { readTelemetry(appContext) }
+            .onFailure { error ->
+                Logger.e(LOG_TAG, "owner retire preflight refresh failed: ${error.message}")
+            }
+
+        val before = snapshot.value
+        val targets = before.tracees
+            .filter { it.running && it.kfRuntimeId == cleanOwnerId }
+            .sortedBy { it.traceePid }
+        if (targets.isEmpty()) {
+            return ProotTelemetryOwnerRetireResult(
+                status = "NOOP",
+                action = "RETIRE_PROOT_OWNER_TRACEES",
+                ownerId = cleanOwnerId,
+                reason = "owner_has_no_running_tracees:$reason",
+                sourcePath = file.absolutePath,
+                previousLiveTracees = before.liveTraceeCount,
+                observedLiveTracees = before.liveTraceeCount
+            )
+        }
+
+        val safeReason = telemetryLabel(reason, "owner_stop_confirmed")
+        val now = System.currentTimeMillis()
+        val appended = synchronized(lock) {
+            runCatching {
+                file.parentFile?.let { parent ->
+                    if (!parent.exists()) parent.mkdirs()
+                }
+                if (!file.exists()) {
+                    file.createNewFile()
+                }
+                RandomAccessFile(file, "rw").use { raf ->
+                    raf.seek(file.length())
+                    targets.forEachIndexed { index, record ->
+                        val line = JSONObject()
+                            .put("schema", "kf_proot_lifecycle_event_v1")
+                            .put("eventType", ProotTelemetryEventType.TraceeExited.name)
+                            .put("timestampMs", now + index)
+                            .put("telemetrySessionId", record.telemetrySessionId)
+                            .put("prootStartMs", record.prootStartMs)
+                            .put("prootPid", record.prootPid)
+                            .put("traceePid", record.traceePid)
+                            .put("traceeVpid", record.traceeVpid)
+                            .put("processGroupId", record.processGroupId ?: 0)
+                            .put("sessionId", record.sessionId ?: 0)
+                            .put("parentTraceePid", record.parentTraceePid ?: 0)
+                            .put("parentTraceeVpid", record.parentTraceeVpid ?: 0L)
+                            .put("state", "EXITED")
+                            .put("flags", 0L)
+                            .put("sourceHook", "kite_owner_retire_$safeReason")
+                            .put("costLevel", "control_plane_owner_retire")
+                            .put("executable", record.executable)
+                            .put("argvHash", record.argvHash)
+                            .put("argvPreview", record.argvPreview)
+                            .put("cwd", record.cwd)
+                            .put("kfRuntimeId", record.kfRuntimeId)
+                            .put("kfUnitId", record.kfUnitId)
+                            .put("exitCode", -1)
+                            .toString()
+                        raf.write(line.toByteArray(Charsets.UTF_8))
+                        raf.write('\n'.code)
+                    }
+                }
+                true
+            }.getOrElse { error ->
+                Logger.e(LOG_TAG, "owner retire append failed: ${error.message}")
+                false
+            }
+        }
+
+        if (!appended) {
+            return ProotTelemetryOwnerRetireResult(
+                status = "FAILED",
+                action = "RETIRE_PROOT_OWNER_TRACEES",
+                ownerId = cleanOwnerId,
+                reason = "owner_retire_append_failed:$reason",
+                sourcePath = file.absolutePath,
+                retiredTraceePids = targets.map { it.traceePid },
+                previousLiveTracees = before.liveTraceeCount,
+                observedLiveTracees = before.liveTraceeCount
+            )
+        }
+
+        readTelemetry(appContext)
+        val after = snapshot.value
+        Logger.i(
+            LOG_TAG,
+            "owner tracees retired: owner=$cleanOwnerId pids=${targets.joinToString(",") { it.traceePid.toString() }} " +
+                "live=${before.liveTraceeCount}->${after.liveTraceeCount}"
+        )
+        return ProotTelemetryOwnerRetireResult(
+            status = "RETIRED",
+            action = "RETIRE_PROOT_OWNER_TRACEES",
+            ownerId = cleanOwnerId,
+            reason = "android_control_plane_owner_tombstone_same_telemetry_source:$reason",
+            sourcePath = file.absolutePath,
+            retiredTraceePids = targets.map { it.traceePid },
+            previousLiveTracees = before.liveTraceeCount,
+            observedLiveTracees = after.liveTraceeCount
+        )
+    }
+
     private fun readTelemetry(context: Context) {
         val file = telemetryFile(context)
         if (!file.exists()) {
@@ -863,6 +1027,11 @@ object ProotTelemetryStore {
             return
         }
 
+        val baselineResult = runCatching { readRotationBaselineIfNeeded(file) }
+            .getOrElse { error ->
+                Logger.e(LOG_TAG, "failed to read rotated PRoot telemetry baseline: ${error.message}")
+                null
+            }
         val readResult = runCatching { readNewLines(file) }
             .getOrElse { error ->
                 Logger.e(LOG_TAG, "failed to read PRoot telemetry: ${error.message}")
@@ -880,6 +1049,7 @@ object ProotTelemetryStore {
         var parsedEvents = 0
         var forkExecEvents = 0
         var parseErrors = 0
+        val baselineNow = System.currentTimeMillis()
 
         synchronized(lock) {
             resetIfPathChanged(file.absolutePath)
@@ -887,6 +1057,28 @@ object ProotTelemetryStore {
             // without replaying stale history. Dropping old backlog is not corruption; parse errors
             // remain the health blocker for genuinely malformed telemetry.
             counters = counters
+
+            baselineResult?.let { baseline ->
+                if (baseline.skippedBytes > 0L) {
+                    counters = counters.copy(skippedBytes = counters.skippedBytes + baseline.skippedBytes)
+                }
+                for (line in baseline.lines) {
+                    if (line.isBlank()) continue
+                    val event = parseEvent(line)
+                    if (event == null) {
+                        parseErrors += 1
+                        continue
+                    }
+                    if (!event.belongsToRotationBaseline(baselineNow)) {
+                        continue
+                    }
+                    parsedEvents += 1
+                    if (event.eventType in FORK_EXEC_EVENT_TYPES) {
+                        forkExecEvents += 1
+                    }
+                    applyEvent(event)
+                }
+            }
 
             if (readResult.skippedBytes > 0L) {
                 counters = counters.copy(skippedBytes = counters.skippedBytes + readResult.skippedBytes)
@@ -923,6 +1115,89 @@ object ProotTelemetryStore {
 
     private fun telemetryFile(context: Context): File {
         return File(AssetExtractor.getRuntimeLayout(context).tmpDir, TELEMETRY_FILE_NAME)
+    }
+
+    private fun telemetryLabel(value: String, fallback: String): String {
+        return value
+            .trim()
+            .take(80)
+            .replace(Regex("[^A-Za-z0-9_.:-]+"), "_")
+            .ifBlank { fallback }
+    }
+
+    private fun readRotationBaselineIfNeeded(file: File): ReadLinesResult? {
+        val path = file.absolutePath
+        val shouldLoad = synchronized(lock) {
+            resetIfPathChanged(path)
+            rotationBaselineLoadedForPath != path &&
+                counters.totalEvents == 0L &&
+                recentEvents.isEmpty() &&
+                tracees.isEmpty()
+        }
+        if (!shouldLoad) return null
+
+        var skippedBytes = 0L
+        val lines = mutableListOf<String>()
+        for (segment in telemetryBaselineFiles(file)) {
+            val result = readCompleteTailLines(segment, ROTATED_BASELINE_READ_BYTES)
+            skippedBytes += result.skippedBytes
+            lines += result.lines
+        }
+        val currentLength = file.length()
+
+        val loaded = synchronized(lock) {
+            resetIfPathChanged(path)
+            if (
+                rotationBaselineLoadedForPath == path ||
+                counters.totalEvents != 0L ||
+                recentEvents.isNotEmpty() ||
+                tracees.isNotEmpty()
+            ) {
+                false
+            } else {
+                rotationBaselineLoadedForPath = path
+                lastOffsetBytes = currentLength
+                pendingPartialLine = ""
+                true
+            }
+        }
+        return if (loaded) ReadLinesResult(lines, skippedBytes) else null
+    }
+
+    private fun telemetryBaselineFiles(file: File): List<File> {
+        val parent = file.parentFile ?: return listOf(file)
+        val rotated = (ROTATED_TELEMETRY_SEGMENTS downTo 1)
+            .map { index -> File(parent, "${file.name}.$index") }
+            .filter { it.exists() && it.isFile }
+        return rotated + file
+    }
+
+    private fun readCompleteTailLines(file: File, maxBytes: Int): ReadLinesResult {
+        if (!file.exists() || !file.isFile) return ReadLinesResult(emptyList(), 0L)
+        val length = file.length()
+        if (length <= 0L) return ReadLinesResult(emptyList(), 0L)
+
+        val startOffset = (length - maxBytes).coerceAtLeast(0L)
+        val bytes = ByteArray((length - startOffset).coerceAtMost(maxBytes.toLong()).toInt())
+        RandomAccessFile(file, "r").use { raf ->
+            raf.seek(startOffset)
+            raf.readFully(bytes)
+        }
+
+        val rawText = bytes.toString(Charsets.UTF_8)
+        val preparedText = if (startOffset > 0L) {
+            rawText.substringAfter('\n', "")
+        } else {
+            rawText
+        }
+        if (preparedText.isEmpty()) return ReadLinesResult(emptyList(), startOffset)
+        val parts = preparedText.split('\n')
+        val completeLines = if (preparedText.endsWith('\n')) {
+            parts.dropLast(1)
+        } else {
+            parts.dropLast(1)
+        }
+        return ReadLinesResult(completeLines, startOffset)
     }
 
     private fun readNewLines(file: File): ReadLinesResult {
@@ -1398,6 +1673,7 @@ object ProotTelemetryStore {
     private fun resetReaderState(path: String) {
         lastPath = path
         lastOffsetBytes = 0L
+        rotationBaselineLoadedForPath = ""
         readerEpochMs = System.currentTimeMillis()
         pendingPartialLine = ""
         counters = ProotTelemetryCounters()
@@ -1409,13 +1685,30 @@ object ProotTelemetryStore {
         return timestampMs >= readerEpochMs
     }
 
+    private fun ProotTelemetryEvent.belongsToRotationBaseline(now: Long): Boolean {
+        return timestampMs in (now - ROTATED_BASELINE_EVENT_TTL_MS)..now
+    }
+
     internal fun readTelemetryFileForTests(file: File, readerEpochMs: Long = 0L): ProotTelemetrySnapshot {
         synchronized(lock) {
             resetReaderState(file.absolutePath)
             this.readerEpochMs = readerEpochMs
         }
+        val baselineResult = readRotationBaselineIfNeeded(file)
         val readResult = readNewLines(file)
         synchronized(lock) {
+            baselineResult?.let { baseline ->
+                if (baseline.skippedBytes > 0L) {
+                    counters = counters.copy(skippedBytes = counters.skippedBytes + baseline.skippedBytes)
+                }
+                baseline.lines.forEach { line ->
+                    if (line.isBlank()) return@forEach
+                    val event = parseEvent(line) ?: return@forEach
+                    if (event.belongsToRotationBaseline(System.currentTimeMillis())) {
+                        applyEvent(event)
+                    }
+                }
+            }
             if (readResult.skippedBytes > 0L) {
                 counters = counters.copy(skippedBytes = counters.skippedBytes + readResult.skippedBytes)
             }

@@ -136,10 +136,10 @@ object ProotOwnerProcessTerminator {
         processGroupIds.forEach { pgid ->
             sent = sendSignal(-pgid, signal, "pgid=$pgid") || sent
         }
-        if (processGroupIds.isEmpty()) {
-            traceePids.forEach { pid ->
-                sent = sendSignal(pid, signal, "pid=$pid") || sent
-            }
+        // PRoot tracee process groups are not always signalable on Android. The
+        // owner index already gives a bounded direct tracee set, so use both.
+        traceePids.forEach { pid ->
+            sent = sendSignal(pid, signal, "pid=$pid") || sent
         }
         return sent
     }

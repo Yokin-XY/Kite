@@ -14,6 +14,7 @@ import com.kftest.app.foundation.runtime.HostStopAuditor
 import com.kftest.app.foundation.runtime.HostProcessTerminator
 import com.kftest.app.foundation.runtime.ProcessExitSemantics
 import com.kftest.app.foundation.runtime.ProotOwnerProcessTerminator
+import com.kftest.app.foundation.runtime.ProotTelemetryStore
 import com.kftest.app.foundation.runtime.RuntimeFrameCoordinator
 import com.kftest.app.foundation.runtime.RuntimeStorageGuard
 import com.kftest.app.foundation.workspace.AgentLaunchMode
@@ -95,6 +96,7 @@ class TerminalSessionController(
     private val sessionHolders = LinkedHashMap<String, SessionHolder>()
     private val embeddedSessionRecords = LinkedHashMap<String, ManagedTerminalRecord>()
     private val launchEnvOverrides = LinkedHashMap<String, Map<String, String>>()
+    private val attachingSessionIds = LinkedHashSet<String>()
     private val transcriptMirrorRequested = AtomicLong(0L)
     private val transcriptMirrorFlushed = AtomicLong(0L)
     private val transcriptMirrorCoalesced = AtomicLong(0L)
@@ -838,9 +840,42 @@ class TerminalSessionController(
         val existingHolder = sessionHolders[record.id]
         if (existingHolder != null) {
             attachExistingHolder(existingHolder, note, showNote)
+        } else if (beginSessionAttach(record.id)) {
+            try {
+                attachNewSession(record, note, showNote, managed)
+            } finally {
+                endSessionAttach(record.id)
+            }
         } else {
-            attachNewSession(record, note, showNote, managed)
+            val attached = waitForSessionAttach(record.id)
+            if (attached != null) {
+                attachExistingHolder(attached, note, showNote)
+            } else if (beginSessionAttach(record.id)) {
+                try {
+                    attachNewSession(record, note, showNote, managed)
+                } finally {
+                    endSessionAttach(record.id)
+                }
+            }
         }
+    }
+
+    private fun beginSessionAttach(sessionId: String): Boolean {
+        if (attachingSessionIds.contains(sessionId)) return false
+        attachingSessionIds.add(sessionId)
+        return true
+    }
+
+    private fun endSessionAttach(sessionId: String) {
+        attachingSessionIds.remove(sessionId)
+    }
+
+    private suspend fun waitForSessionAttach(sessionId: String): SessionHolder? {
+        repeat(STARTUP_PROBE_ATTEMPTS) {
+            sessionHolders[sessionId]?.let { holder -> return holder }
+            delay(STARTUP_PROBE_DELAY_MS)
+        }
+        return sessionHolders[sessionId]
     }
 
     private suspend fun attachExistingHolder(
@@ -1485,7 +1520,7 @@ class TerminalSessionController(
                 Logger.e(LOG_TAG, "停止终端会话失败: ${error.message}")
             }
             if (pid > 0) {
-                controllerScope.launch {
+                controllerScope.launch(Dispatchers.IO) {
                     val outcome = HostProcessTerminator.terminateTerminalProcessGroup(pid) { message ->
                         Logger.i(LOG_TAG, "终端停止补偿: session=$sessionId pid=$pid $message")
                     }
@@ -1502,6 +1537,12 @@ class TerminalSessionController(
                             "终端停止诊断: session=$sessionId ${report.toCompactSummary()}"
                         )
                         writeTerminalActionLog(report.toLogBlock("终端停止诊断 $sessionId"))
+                    }
+                    if (outcome.exited) {
+                        retireStoppedTerminalOwnerTracees(
+                            sessionId = sessionId,
+                            reason = "terminal-host-process-exited:$reason"
+                        )
                     }
                     RuntimeFrameCoordinator.refreshProcessSnapshot(
                         context = appContext,
@@ -1556,11 +1597,13 @@ class TerminalSessionController(
         )
         stopTerminalOwnerProcesses(record.id, reason)
 
+        var hostExited = false
         val report = if (resolvedPid != null && resolvedPid > 0) {
             val stopAuditSeed = HostStopAuditor.capture(resolvedPid, LOG_TAG)
             val outcome = HostProcessTerminator.terminateTerminalProcessGroup(resolvedPid) { message ->
                 Logger.i(LOG_TAG, "终端停止补偿(脱离态): session=${record.id} pid=$resolvedPid $message")
             }
+            hostExited = outcome.exited
             Logger.i(
                 LOG_TAG,
                 "终端停止补偿完成(脱离态): session=${record.id} pid=$resolvedPid exited=${outcome.exited} term=${outcome.sentTerminate} kill=${outcome.sentKill}"
@@ -1580,6 +1623,14 @@ class TerminalSessionController(
         report?.let { auditReport ->
             Logger.i(LOG_TAG, "终端停止诊断(脱离态): session=${record.id} ${auditReport.toCompactSummary()}")
             writeTerminalActionLog(auditReport.toLogBlock("终端停止诊断 ${record.id}"))
+        }
+        if (hostExited) {
+            withContext(Dispatchers.IO) {
+                retireStoppedTerminalOwnerTracees(
+                    sessionId = record.id,
+                    reason = "terminal-detached-host-process-exited:$reason"
+                )
+            }
         }
 
         withContext(Dispatchers.IO) {
@@ -1623,6 +1674,13 @@ class TerminalSessionController(
                 reason = "terminal-owner-stop:$sessionId"
             )
         }
+    }
+
+    private fun retireStoppedTerminalOwnerTracees(sessionId: String, reason: String) {
+        val ownerId = sessionId.trim().takeIf { it.isNotBlank() }?.let { "terminal:$it" } ?: return
+        val result = ProotTelemetryStore.retireOwnerTracees(appContext, ownerId, reason)
+        Logger.i(LOG_TAG, "终端 PRoot owner tracee 退役: ${result.summary()}")
+        writeTerminalActionLog(result.toLogBlock())
     }
 
     private fun resolveTerminalStopPid(record: ManagedTerminalRecord): Int? {
