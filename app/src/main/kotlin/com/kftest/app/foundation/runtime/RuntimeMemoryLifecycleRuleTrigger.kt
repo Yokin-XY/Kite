@@ -111,8 +111,9 @@ object RuntimeMemoryLifecycleRuleTrigger {
         resourceSampler: RuntimeProcessResourceSampler = RuntimeProcessTableResourceSampler,
         now: Long = System.currentTimeMillis()
     ): RuntimeMemoryLifecycleRuleSnapshot {
+        val appContext = context.applicationContext
         if (!config.enabled) {
-            val records = listOf(
+            val records = mutableListOf(
                 RuntimeMemoryLifecycleRuleRecord(
                     action = RuntimeMemoryLifecycleRuleAction.WAIT,
                     result = RuntimeMemoryLifecycleRuleResult.WAITING,
@@ -120,11 +121,15 @@ object RuntimeMemoryLifecycleRuleTrigger {
                     timestampMs = now
                 )
             )
+            prootRule(snapshot, now)?.let(records::add)
+            if (records.hasProotCapacityActuatorRequest()) {
+                RuntimeProotCapacityActuator.onSnapshot(appContext, snapshot)
+            }
             return snapshotFor(records, snapshot.lifecycleReclaimPlan, enabled = false)
                 .also { lastSnapshot = it }
         }
         resourceSampler.requestIfNeeded(
-            context = context.applicationContext,
+            context = appContext,
             snapshot = snapshot,
             policy = snapshot.lifecycleReclaimPlan.toLeasePolicyForSampler(),
             now = now
@@ -140,12 +145,7 @@ object RuntimeMemoryLifecycleRuleTrigger {
         if (records.any { it.result != RuntimeMemoryLifecycleRuleResult.WAITING }) {
             lastLeaseSettlementAtMs = now
         }
-        val appContext = context.applicationContext
-        if (records.any { it.action == RuntimeMemoryLifecycleRuleAction.REQUEST_PROOT_SCALE_OUT ||
-                it.action == RuntimeMemoryLifecycleRuleAction.REQUEST_PROOT_DOWNSCALE ||
-                it.reason == "proot_capacity_queue_requested"
-            }
-        ) {
+        if (records.hasProotCapacityActuatorRequest()) {
             RuntimeProotCapacityActuator.onSnapshot(appContext, snapshot)
         }
         if (records.any { it.action == RuntimeMemoryLifecycleRuleAction.RECLAIM_LEASE }) {
@@ -208,6 +208,14 @@ object RuntimeMemoryLifecycleRuleTrigger {
         lastSnapshot = RuntimeMemoryLifecycleRuleSnapshot()
         lastLeaseSettlementAtMs = 0L
         RuntimeProcessTableResourceSampler.resetForTests()
+    }
+
+    private fun List<RuntimeMemoryLifecycleRuleRecord>.hasProotCapacityActuatorRequest(): Boolean {
+        return any {
+            it.action == RuntimeMemoryLifecycleRuleAction.REQUEST_PROOT_SCALE_OUT ||
+                it.action == RuntimeMemoryLifecycleRuleAction.REQUEST_PROOT_DOWNSCALE ||
+                it.reason == "proot_capacity_queue_requested"
+        }
     }
 
     private fun leaseRule(

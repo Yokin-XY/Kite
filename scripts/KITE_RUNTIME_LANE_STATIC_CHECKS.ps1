@@ -16,6 +16,8 @@ $prootOwnerTerminatorPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/
 $runtimeHealthStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeHealthStore.kt'
 $runtimeWorkloadRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeWorkloadRegistry.kt'
 $runtimeAutomationActionsPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeAutomationActions.kt'
+$runtimeMemoryLifecycleRuleTriggerPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeMemoryLifecycleRuleTrigger.kt'
+$backgroundRuntimeRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/service/BackgroundRuntimeRegistry.kt'
 $taskManagerStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/TaskManagerStore.kt'
 $taskManagerFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/ui/tasks/TaskManagerFragment.kt'
 $prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeProotPoolPlanDryRun.kt'
@@ -59,6 +61,8 @@ $prootOwnerTerminator = Read-Utf8 $prootOwnerTerminatorPath
 $runtimeHealthStore = Read-Utf8 $runtimeHealthStorePath
 $runtimeWorkloadRegistry = Read-Utf8 $runtimeWorkloadRegistryPath
 $runtimeAutomationActions = Read-Utf8 $runtimeAutomationActionsPath
+$runtimeMemoryLifecycleRuleTrigger = Read-Utf8 $runtimeMemoryLifecycleRuleTriggerPath
+$backgroundRuntimeRegistry = Read-Utf8 $backgroundRuntimeRegistryPath
 $taskManagerStore = Read-Utf8 $taskManagerStorePath
 $taskManagerFragment = Read-Utf8 $taskManagerFragmentPath
 $prootPoolPlan = Read-Utf8 $prootPoolPlanPath
@@ -172,6 +176,8 @@ Assert-True ($prootPoolPlan -match 'val ownerContainerCount: Int') 'PRoot pool p
 Assert-True ($prootPoolPlan -match 'val ownerContainerTraceeCount: Int') 'PRoot pool plan must expose owner tracee count.'
 Assert-True ($prootPoolPlan -match 'entry\.ownerKind == RuntimeRootOwnerKind\.CARD' -and $prootPoolPlan -match 'entry\.ownerKind == RuntimeRootOwnerKind\.RESOURCE') 'PRoot pool plan must derive owner container pressure from card/resource owner roots.'
 Assert-True ($prootPoolPlan -match 'proot_pool_plan_owner_container_count' -and $prootPoolPlan -match 'proot_pool_plan_owner_container_tracee_count') 'PRoot pool env output must include owner container pressure.'
+Assert-True ($runtimeMemoryLifecycleRuleTrigger -match 'prootRule\(snapshot, now\)\?\.let\(records::add\)' -and $runtimeMemoryLifecycleRuleTrigger -match 'records\.hasProotCapacityActuatorRequest\(\)') 'PRoot capacity actuator must still receive approved PRoot pool actions when generic lifecycle reclaim is disabled.'
+Assert-True ($backgroundRuntimeRegistry -match 'PROOT_CAPACITY_WORKER_INITIAL_COUNT = 2') 'PRoot capacity registry must pre-register an inactive second worker for auto-bound scale-out.'
 Assert-True ($prootOwnerTerminator -match 'object ProotOwnerProcessTerminator') 'owner stop must have a dedicated PRoot owner terminator.'
 Assert-True ($prootOwnerTerminator -match 'ProotTelemetryStore\.refreshBlocking') 'owner stop must use blocking telemetry refresh for residue checks.'
 Assert-True ($prootOwnerTerminator -match 'KFJni\.sendSignal\(target, signal\)') 'owner stop must signal PRoot tracee process groups/pids directly.'

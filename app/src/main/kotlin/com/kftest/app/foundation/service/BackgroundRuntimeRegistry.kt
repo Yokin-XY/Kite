@@ -17,7 +17,7 @@ object BackgroundRuntimeRegistry {
     private const val LOG_DIR = "background-runtimes"
     private const val LEGACY_PROBE_SUFFIX = "-kf-probe-loop"
     private const val LEGACY_SERVICE_PROBE_SUFFIX = "-kf-service-probe"
-    private const val PROOT_CAPACITY_WORKER_INITIAL_COUNT = 1
+    private const val PROOT_CAPACITY_WORKER_INITIAL_COUNT = 2
     private const val PROOT_CAPACITY_WORKER_SPARE_COUNT = 1
     private const val PROOT_CAPACITY_WORKER_REGISTRATION_MAX = 3
 

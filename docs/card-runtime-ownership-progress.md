@@ -228,3 +228,13 @@
 - 验证结果：v5 session 为 `shell-space-main-1782193330714`；启动后 raw telemetry 中 `/usr/bin/bash` 与 `sleep 600` 均带 `kfRuntimeId=terminal:shell-space-main-1782193330714`、`kfUnitId=card:kite-terminal-owner-telemetry-live-v5`；停止后 terminal log 出现 `retire-proot-owner-tracees`，`retiredTraceePids=29389`，`previousLiveTracees=2`、`observedLiveTracees=1`，随后 owner stop 输出 `__kite_stop_remaining:` 为空；raw telemetry 写入 `sourceHook=kite_owner_retire...` 的 `TraceeExited` tombstone；runtime-pressure 对 v5 只剩历史 `runtime_resource_event_ledger`，不再有 `proot_live_table_entry`。
 - 完成状态：Terminal owner 真机闭环已完成。
 - 剩余问题：设备上仍有旧 v4 验证留下的 stale 历史 owner，需要单独 telemetry 基线清理；owner tombstone 当前只在 terminal host 已确认退出后启用，是否扩展到其他 owner stop 场景待下一阶段审计。
+
+### 2026-06-23 PRoot pool capacity 执行链补强
+- 领取任务：把 owner 容器压力到多 PRoot capacity executor 的计划/执行缺口补齐。
+- 领取原因：Card/Resource/Terminal owner 已进入 PRoot telemetry、RuntimeHealth、WorkloadRegistry 和 pool plan；剩余风险是 capacity plan 需要扩容时，如果 2 号 worker 还未登记，auto binding 会停在等待 launcher binding，而不是交给 Android control plane 启动。
+- 修改范围：`BackgroundRuntimeRegistry.kt`；`RuntimeMemoryLifecycleRuleTrigger.kt`；`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；本文件。
+- 验收标准：registry 默认预登记 1 号 resident worker 与 2 号 inactive worker；owner 压力触发 pool/budget/executor 后，即使通用 lifecycle reclaim 开关关闭，PRoot capacity actuator 仍能接收已批准的 PRoot scale-out/downline/queue 动作；真正启动仍受 `proot-capacity-executor-policy.json`、MemoryAdmission、`maxProots`、cooldown 和专用 `PROOT_CAPACITY_WORKER` 边界保护。
+- 明确不做：不默认常驻第二个 PRoot 进程；不让 Ubuntu 直接 start/stop PRoot；不新增扫描或 UI 轮询；不打开泛化 lease reclaim 自动杀。
+- 验证方式：`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`git diff --check`；`.\gradlew.bat assembleDebug --console=plain`；`adb -s 3f8bbaad install -r .\app\build\outputs\apk\debug\app-debug.apk`；OnePlus 8T 上 `runtime_action=dump_diagnostics` 后读取 `background-runtimes.json` 与 `runtime-pressure.env`。
+- 验证结果：静态检查通过；debug APK 编译通过并安装成功；设备侧 `background-space-main-proot-capacity-worker-2` 已登记为 `REGISTERED/INACTIVE`、`retentionClass=EPHEMERAL`；`runtime-pressure.env` 显示 `proot_capacity_executor_registered_capacity_worker_count=2`、`proot_capacity_executor_registered_runtime_target_id=background-space-main-proot-capacity-worker-2`、当前无容量请求时 `proot_capacity_executor_state=IDLE` 且 `proot_capacity_actuator_last_skip_reason=none`。
+- 完成状态：PRoot pool capacity 执行链补强完成，已验证 2 号 worker 可被 Android control plane 自动绑定但不会默认常驻启动。
