@@ -94,6 +94,7 @@ class TaskManagerFragment : Fragment() {
                 item.commandLine,
                 item.linkedRuntimeId.orEmpty(),
                 item.linkedTerminalSessionId.orEmpty(),
+                item.runtimeOwnerId.orEmpty(),
                 item.runtimeOwnerKindLabel.orEmpty(),
                 item.runtimeRealityLabel.orEmpty()
             ).joinToString(separator = "\u001e")

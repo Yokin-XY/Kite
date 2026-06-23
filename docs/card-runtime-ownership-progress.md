@@ -31,6 +31,7 @@
 - 2026-06-22：修复提交前阻塞；静态验收脚本可通过 `powershell -File` 直接运行，删除活动卡片配置前会先按 cardInstanceId 请求 stop，并中止本次删除。
 - 2026-06-23：补齐 PRoot owner 容器化主链路；KiteBridgeClient 在 direct shell 启动时注入 `KF_RUNTIME_ID/KF_UNIT_ID`，ProotTelemetryStore 从 live tracee 表生成 owner process index，RuntimeHealthStore 把 `card:` / `resource:` owner 变成卡片/资源运行根，TaskManagerStore 和 RuntimeWorkloadRegistry 消费同一事实源，KiteBridgeClient 停止路径追加 ProotOwnerProcessTerminator，按 owner 的 pgid/tracee 发信号并用最终 `__kite_stop_remaining` 复核残留，PRoot pool plan 输出 owner 容器数和 owner tracee 数。
 - 2026-06-23：补齐终端 owner 边界；CardRun 空白终端和 terminal step 启动环境注入 `terminal:<sessionId>` owner，终端停止入口会后台调用 ProotOwnerProcessTerminator 收束 owner tracee，RuntimeHealthStore 跳过已有 terminal session root 对应的 terminal owner root，避免重复展示。
+- 2026-06-23：补齐 CardRun 对 owner 事实源的消费；TaskManagerProcessItem 暴露 RuntimeHealth owner id，运行管理页按 `card:<cardInstanceId>` / `resource:<resourceId>` / `terminal:<sessionId>` 合并 owner root，不再只靠旧 pid binding 猜卡片进程归属。
 
 ## 正在进行
 - 暂无
@@ -188,3 +189,10 @@
 - 完成状态：已完成代码主链路，未做真实设备 owner telemetry 验收。
 - 剩余问题：Web 表面本身不是独立 Ubuntu 长驻进程，当前 owner 只覆盖 Ubuntu 侧命令/终端/open-url helper；多 PRoot capacity executor 是否实际启动仍受现有 policy/binding gate 控制。
 - 下次建议：先做卡片/资源/终端 owner 实机复核，再决定是否打开 capacity executor policy 做第二 PRoot runtime 实验。
+
+### 2026-06-23 CardRun owner 消费补强
+- 领取任务：让 CardRun 运行管理页消费 TaskManager/RuntimeHealth 的 owner 事实源。
+- 领取原因：上一轮 RuntimeHealth/TaskManager 已能看到 PRoot owner root，但运行管理分组仍主要按旧 pid/rootPid binding 匹配，CardRun 层没有直接吃同一事实源。
+- 修改范围：`app/src/main/java/com/kite/app/MainActivity.kt`；`TaskManagerStore.kt`；`TaskManagerFragment.kt`；`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；本文件。
+- 验收标准：TaskManagerProcessItem 携带 raw `runtimeOwnerId`；运行管理页按 owner id 把卡片/资源/终端 owner root 合并进对应 CardRun；静态脚本阻止回退到只按 pid 匹配。
+- 明确不做：不新增 CardRunStore 字段；不复制 RuntimeHealth 快照进 CardRunStore；不新增扫描。

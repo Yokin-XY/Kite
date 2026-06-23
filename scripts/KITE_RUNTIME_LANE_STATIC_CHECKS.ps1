@@ -16,6 +16,7 @@ $prootOwnerTerminatorPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/
 $runtimeHealthStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeHealthStore.kt'
 $runtimeWorkloadRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeWorkloadRegistry.kt'
 $taskManagerStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/TaskManagerStore.kt'
+$taskManagerFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/ui/tasks/TaskManagerFragment.kt'
 $prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeProotPoolPlanDryRun.kt'
 $terminalSessionControllerPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/terminal/TerminalSessionController.kt'
 
@@ -57,6 +58,7 @@ $prootOwnerTerminator = Read-Utf8 $prootOwnerTerminatorPath
 $runtimeHealthStore = Read-Utf8 $runtimeHealthStorePath
 $runtimeWorkloadRegistry = Read-Utf8 $runtimeWorkloadRegistryPath
 $taskManagerStore = Read-Utf8 $taskManagerStorePath
+$taskManagerFragment = Read-Utf8 $taskManagerFragmentPath
 $prootPoolPlan = Read-Utf8 $prootPoolPlanPath
 $terminalSessionController = Read-Utf8 $terminalSessionControllerPath
 
@@ -138,6 +140,14 @@ Assert-True ($runtimeHealthStore -match 'existingTerminalOwnerIds' -and $runtime
 Assert-True ($runtimeHealthStore -match 'attributedRootPids = attributedPids \+ ownerTraceePids') 'owner tracees must be excluded from unattributed root generation.'
 Assert-True ($runtimeWorkloadRegistry -match 'proot_owner_index:\$\{ownerKind\.name\.lowercase\(\)\}') 'workload registry must classify card/resource owner roots from the PRoot owner index.'
 Assert-True ($taskManagerStore -match '\u5361\u7247\u5bb9\u5668' -and $taskManagerStore -match '\u8d44\u6e90\u5bb9\u5668') 'task manager must surface card/resource roots as owner containers.'
+Assert-True ($taskManagerStore -match 'val runtimeOwnerId: String\? = null') 'task manager process items must carry the raw runtime owner id.'
+Assert-True ($taskManagerStore -match 'runtimeOwnerId = ownerId') 'task manager root items must expose the RuntimeHealth owner id.'
+Assert-True ($taskManagerFragment -match 'item\.runtimeOwnerId\.orEmpty\(\)') 'task manager render signatures must include runtime owner id.'
+$runManagementGroups = Function-Body $main 'buildRunManagementGroups'
+Assert-True ($runManagementGroups -match 'runtimeOwnerIdForRunManagement\(\)' -and $runManagementGroups -match 'belongsToRun\(run, boundPids, ownerId\)') 'run management groups must match CardRun rows by owner id, not only pid bindings.'
+$belongsToRun = Function-Body $main 'TaskManagerProcessItem.belongsToRun'
+Assert-True ($belongsToRun -match 'runtimeOwnerId == ownerId') 'CardRun process grouping must consume the TaskManager owner fact source.'
+Assert-True ($main -match 'private fun RecipeRuntimeState\.runtimeOwnerIdForRunManagement') 'CardRun run management must derive the expected PRoot owner id.'
 Assert-True ($prootPoolPlan -match 'val ownerContainerCount: Int') 'PRoot pool plan must expose owner container count.'
 Assert-True ($prootPoolPlan -match 'val ownerContainerTraceeCount: Int') 'PRoot pool plan must expose owner tracee count.'
 Assert-True ($prootPoolPlan -match 'entry\.ownerKind == RuntimeRootOwnerKind\.CARD' -and $prootPoolPlan -match 'entry\.ownerKind == RuntimeRootOwnerKind\.RESOURCE') 'PRoot pool plan must derive owner container pressure from card/resource owner roots.'

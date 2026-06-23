@@ -9448,8 +9448,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     ?.takeIf { it.isNotBlank() }
                     ?.let { sessionId -> terminalItems.firstOrNull { it.id == sessionId } }
                 val boundPids = run.boundProcessIds()
+                val ownerId = run.runtimeOwnerIdForRunManagement()
                 val runProcesses = processItems
-                    .filter { item -> item.belongsToRun(run, boundPids) }
+                    .filter { item -> item.belongsToRun(run, boundPids, ownerId) }
                     .sortedWith(compareBy<TaskManagerProcessItem> { it.parentPid }.thenBy { it.pid })
                 val mainProcess = runProcesses.firstOrNull { it.isMainProcessForRun(boundPids) }
                     ?: runProcesses.firstOrNull()
@@ -9478,7 +9479,33 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .mapNotNull { it?.trim()?.toIntOrNull()?.takeIf { value -> value > 0 } }
             .toSet()
 
-    private fun TaskManagerProcessItem.belongsToRun(run: RecipeRuntimeState, boundPids: Set<Int>): Boolean {
+    private fun RecipeRuntimeState.runtimeOwnerIdForRunManagement(): String =
+        when (ownerKind) {
+            RecipeRuntimeState.OWNER_KIND_RESOURCE -> "resource:${runManagementSafeOwnerId(resourceIdForRunManagement() ?: cardInstanceId)}"
+            RecipeRuntimeState.OWNER_KIND_TERMINAL -> "terminal:${terminalSessionId ?: runId ?: cardInstanceId}"
+            else -> "card:${runManagementSafeOwnerId(cardInstanceId)}"
+        }
+
+    private fun RecipeRuntimeState.resourceIdForRunManagement(): String? {
+        if (recipeId.startsWith("resource-")) {
+            return recipeId
+                .removePrefix("resource-")
+                .removeSuffix("-${KiteResourceInstallRecipes.OP_INSTALL}")
+                .removeSuffix("-${KiteResourceInstallRecipes.OP_UNINSTALL}")
+                .takeIf { it.isNotBlank() }
+        }
+        return stepId?.takeIf { it.isNotBlank() }
+    }
+
+    private fun runManagementSafeOwnerId(value: String): String =
+        value.replace(Regex("[^a-zA-Z0-9_.-]"), "_").ifBlank { "recipe" }
+
+    private fun TaskManagerProcessItem.belongsToRun(
+        run: RecipeRuntimeState,
+        boundPids: Set<Int>,
+        ownerId: String
+    ): Boolean {
+        if (runtimeOwnerId == ownerId) return true
         val terminalId = run.terminalSessionId?.takeIf { it.isNotBlank() }
         if (terminalId != null && linkedTerminalSessionId == terminalId) return true
         if (boundPids.isEmpty()) return false
