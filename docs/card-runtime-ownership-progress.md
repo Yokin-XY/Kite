@@ -35,6 +35,7 @@
 - 2026-06-23：完成 Card owner 真机闭环复核；新增 debug-gated `runtime_action` 诊断/停止入口，OnePlus 8T 上启动 `kite-owner-telemetry-live` 卡片后，dump diagnostics 可看到 `card:kite-owner-telemetry-live` owner live group、workload root、pool owner 容器计数；通过同一 stop path 停止后 owner 容器数和 tracee 数归零，bridge stop 输出包含 `__kite_owner_stop_owner` 与空 `__kite_stop_remaining`。
 - 2026-06-23：完成 Resource owner 真机闭环复核；新增 debug-gated `runtime_action=start_resource_owner_probe`，通过资源安装 recipe 路径启动 `resource:kite.owner.telemetry.probe`，RuntimeHealth/Workload/Authority/Pool 均能看到资源 owner 容器，停止后 owner container/tracee 归零。
 - 2026-06-23：完成 Terminal owner 真机闭环复核；修复冷启动读取不到 rotated telemetry 的 owner baseline、同一 terminal step 重复 attach 导致 owner split、以及 host 终端已退出但 PRoot 未落根 tracee exit 的 tombstone 缺口；v5 实测停止后 `terminal:shell-space-main-1782193330714` 只保留历史 ledger，不再留 live owner。
+- 2026-06-23：完成本地代码复核边界修正；RuntimeHealth 现在只把已渲染成 owner root 的 tracee 从 unattributed roots 排除，未知 `KF_RUNTIME_ID` 前缀不会被 owner index 静默隐藏。
 
 ## 正在进行
 - 暂无

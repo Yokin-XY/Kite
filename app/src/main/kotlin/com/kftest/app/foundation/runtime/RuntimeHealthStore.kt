@@ -1532,7 +1532,11 @@ object RuntimeHealthStore {
             excludedOwnerIds = existingTerminalOwnerIds,
             processRefreshedAt = processRefreshedAt
         )
+        val attributedOwnerIds = ownerRoots
+            .mapNotNull { it.ownerId }
+            .toSet()
         val ownerTraceePids = prootTelemetry.ownerProcessIndex.groups
+            .filter { group -> group.ownerId in attributedOwnerIds }
             .flatMapTo(mutableSetOf()) { it.traceePids }
         val attributedPids = (terminalRoots + runtimeRoots)
             .mapNotNull { it.observedPid }
