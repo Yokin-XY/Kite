@@ -358,9 +358,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         when (runtimeAction.lowercase()) {
             ACTION_DUMP_DIAGNOSTICS -> RuntimeAutomationActions.dumpDiagnostics(applicationContext)
+            ACTION_ROTATE_PROOT_TELEMETRY -> RuntimeAutomationActions.rotateProotTelemetry(applicationContext)
             ACTION_REFRESH_PROOT_TELEMETRY_HEARTBEAT -> {
                 RuntimeAutomationActions.refreshProotTelemetryHeartbeat(applicationContext)
             }
+            ACTION_PREPARE_PROOT_LIVE_TRACEE_PROBE -> RuntimeAutomationActions.prepareProotLiveTraceeProbe(
+                context = applicationContext,
+                targetLiveTracees = readProbeTargetLiveTracees(intent)
+            )
+            ACTION_INJECT_PROOT_LIVE_TRACEE_PROBE -> RuntimeAutomationActions.injectProotLiveTraceeProbe(
+                context = applicationContext,
+                targetLiveTracees = readProbeTargetLiveTracees(intent)
+            )
+            ACTION_STOP_BACKGROUND_RUNTIME -> stopBackgroundRuntimeFromAutomation(intent)
             ACTION_START_RESOURCE_OWNER_PROBE -> startResourceOwnerProbeFromAutomation(intent)
             ACTION_STOP_CARD_RUN -> stopCardRunFromAutomation(intent)
             else -> diagnostics.logRecipeEvent(
@@ -370,7 +380,36 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
         }
         intent.removeExtra(EXTRA_AUTOMATION_RUNTIME_ACTION)
+        intent.removeExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES)
         return true
+    }
+
+    private fun stopBackgroundRuntimeFromAutomation(sourceIntent: Intent?) {
+        val runtimeId = sourceIntent
+            ?.getStringExtra(EXTRA_AUTOMATION_RUNTIME_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_stop_missing_runtime",
+                null,
+                emptyMap()
+            )
+        TaskManagerStore.stopRuntime(applicationContext, runtimeId)
+        diagnostics.logRecipeEvent(
+            "kite_runtime_automation_stop_background_runtime",
+            null,
+            mapOf("runtimeId" to runtimeId)
+        )
+    }
+
+    private fun readProbeTargetLiveTracees(intent: Intent?): Int {
+        if (intent == null || !intent.hasExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES)) return 4
+        val rawInt = intent.getIntExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES, Int.MIN_VALUE)
+        if (rawInt != Int.MIN_VALUE) return rawInt.coerceAtLeast(0)
+        return intent.getStringExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES)
+            ?.trim()
+            ?.toIntOrNull()
+            ?.coerceAtLeast(0)
+            ?: 4
     }
 
     private fun stopCardRunFromAutomation(sourceIntent: Intent?) {
@@ -16332,8 +16371,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_OPEN_RUNTIME_SOURCE = "resource_open"
         private const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE = "resource_install_wizard"
         private const val EXTRA_AUTOMATION_RUNTIME_ACTION = "runtime_action"
+        private const val EXTRA_AUTOMATION_RUNTIME_ID = "runtime_id"
+        private const val EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES = "probe_target_live_tracees"
         private const val ACTION_DUMP_DIAGNOSTICS = "dump_diagnostics"
+        private const val ACTION_ROTATE_PROOT_TELEMETRY = "rotate_proot_telemetry"
         private const val ACTION_REFRESH_PROOT_TELEMETRY_HEARTBEAT = "refresh_proot_telemetry_heartbeat"
+        private const val ACTION_PREPARE_PROOT_LIVE_TRACEE_PROBE = "prepare_proot_live_tracee_probe"
+        private const val ACTION_INJECT_PROOT_LIVE_TRACEE_PROBE = "inject_proot_live_tracee_probe"
+        private const val ACTION_STOP_BACKGROUND_RUNTIME = "stop_background_runtime"
         private const val ACTION_START_RESOURCE_OWNER_PROBE = "start_resource_owner_probe"
         private const val ACTION_STOP_CARD_RUN = "stop_card_run"
         private const val RESOURCE_OWNER_PROBE_ID = "kite.owner.telemetry.probe"
