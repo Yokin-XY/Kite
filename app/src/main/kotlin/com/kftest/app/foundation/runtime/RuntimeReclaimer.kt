@@ -336,6 +336,8 @@ object RuntimeReclaimer {
                         rssKb = root.rssKb,
                         classificationSource = root.classificationSource
                     )
+                    RuntimeRootOwnerKind.CARD,
+                    RuntimeRootOwnerKind.RESOURCE,
                     RuntimeRootOwnerKind.TERMINAL -> null
                 }
             }
@@ -387,6 +389,8 @@ object RuntimeReclaimer {
             }
             RuntimeRootOwnerKind.UNATTRIBUTED ->
                 observedPid != null && profile.allowsUnknown(level)
+            RuntimeRootOwnerKind.CARD,
+            RuntimeRootOwnerKind.RESOURCE,
             RuntimeRootOwnerKind.TERMINAL -> false
         }
     }
@@ -411,6 +415,8 @@ object RuntimeReclaimer {
                 observedPid != null &&
                     item.reclaimRank > 0 &&
                     profile != RuntimeReclaimerProfile.CONSERVATIVE
+            RuntimeRootOwnerKind.CARD,
+            RuntimeRootOwnerKind.RESOURCE,
             RuntimeRootOwnerKind.TERMINAL -> false
         }
     }
@@ -471,6 +477,8 @@ object RuntimeReclaimer {
                 rssKb = rssKb,
                 classificationSource = policyHint
             )
+            RuntimeRootOwnerKind.CARD,
+            RuntimeRootOwnerKind.RESOURCE,
             RuntimeRootOwnerKind.TERMINAL -> null
         }
     }

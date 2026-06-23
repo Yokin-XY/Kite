@@ -11,6 +11,13 @@ $browserProxyPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteB
 $localServerPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteLocalServer.kt'
 $cardRunModelsPath = Join-Path $Root 'app/src/main/java/com/kite/app/run/CardRunModels.kt'
 $cardRunStorePath = Join-Path $Root 'app/src/main/java/com/kite/app/run/CardRunStore.kt'
+$prootTelemetryStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotTelemetryStore.kt'
+$prootOwnerTerminatorPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotOwnerProcessTerminator.kt'
+$runtimeHealthStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeHealthStore.kt'
+$runtimeWorkloadRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeWorkloadRegistry.kt'
+$taskManagerStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/TaskManagerStore.kt'
+$prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeProotPoolPlanDryRun.kt'
+$terminalSessionControllerPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/terminal/TerminalSessionController.kt'
 
 $failures = New-Object System.Collections.Generic.List[string]
 
@@ -45,6 +52,13 @@ $browserProxy = Read-Utf8 $browserProxyPath
 $localServer = Read-Utf8 $localServerPath
 $cardRunModels = Read-Utf8 $cardRunModelsPath
 $cardRunStore = Read-Utf8 $cardRunStorePath
+$prootTelemetryStore = Read-Utf8 $prootTelemetryStorePath
+$prootOwnerTerminator = Read-Utf8 $prootOwnerTerminatorPath
+$runtimeHealthStore = Read-Utf8 $runtimeHealthStorePath
+$runtimeWorkloadRegistry = Read-Utf8 $runtimeWorkloadRegistryPath
+$taskManagerStore = Read-Utf8 $taskManagerStorePath
+$prootPoolPlan = Read-Utf8 $prootPoolPlanPath
+$terminalSessionController = Read-Utf8 $terminalSessionControllerPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -95,6 +109,50 @@ Assert-True ($browserProxy -match 'KITE_CARD_INSTANCE_ID') 'Browser proxy enviro
 Assert-True ($browserProxy -match 'cardInstanceId=') 'Browser proxy requests must carry cardInstanceId.'
 Assert-True ($localServer -match 'cardInstanceId') 'Local server must accept cardInstanceId on open-web requests.'
 Assert-True ($bridgeClient -match 'KITE_CARD_INSTANCE_ID') 'direct shell launch must resolve the cardInstanceId from the run environment.'
+Assert-True ($bridgeClient -match 'private fun directRuntimeEnv') 'direct shell launch must build one owner-aware runtime env per run.'
+Assert-True ($bridgeClient -match '"KF_RUNTIME_ID" to ownerId') 'direct shell launch must inject KF_RUNTIME_ID for PRoot ownership telemetry.'
+Assert-True ($bridgeClient -match '"KF_UNIT_ID" to unitId') 'direct shell launch must inject KF_UNIT_ID for PRoot ownership telemetry.'
+Assert-True ($bridgeClient -match 'runtimeOwnerId\(recipe, cardInstanceId\)') 'direct shell launch must derive owner id from recipe and card instance.'
+Assert-True ($bridgeClient -match 'KiteResourceInstallRecipes\.RUNTIME_SOURCE') 'resource shell launches must get resource ownership ids.'
+Assert-True ($bridgeClient -match 'val runEnv = directRuntimeEnv\(recipe, runId, extraEnv\)') 'direct recipe execution must compute identity env once per run.'
+Assert-True ($bridgeClient -match 'executeDirectShellStep\(context, recipe, runId, requestId, step, runEnv, onProgress\)') 'all direct shell steps must receive the owner-aware runtime env.'
+Assert-True ($main -match 'private fun Map<String, String>\.withTerminalOwner') 'terminal card runs must have one helper for PRoot owner env injection.'
+Assert-True ($main.Contains('"KF_RUNTIME_ID" to "terminal:$terminalId"') -and $main.Contains('"KF_UNIT_ID" to "card:$unitId"')) 'terminal launch env must inject terminal owner id and card unit id.'
+$blankTerminal = Function-Body $main 'openCardRunBlankTerminal'
+$terminalStep = Function-Body $main 'executeTerminalRecipeStep'
+Assert-True ($blankTerminal -match 'withTerminalOwner\(record\.id, instanceId\)') 'blank card terminals must launch with terminal owner env.'
+Assert-True ($terminalStep -match 'withTerminalOwner\(record\.id, instanceId\)') 'terminal recipe steps must launch with terminal owner env.'
+Assert-True ($prootTelemetryStore -match 'data class ProotOwnerProcessGroup') 'PRoot telemetry must expose owner process groups.'
+Assert-True ($prootTelemetryStore -match 'data class ProotOwnerProcessIndex') 'PRoot telemetry must expose an owner process index.'
+Assert-True ($prootTelemetryStore -match 'val ownerProcessIndex: ProotOwnerProcessIndex') 'PRoot telemetry snapshots must carry the owner process index.'
+Assert-True ($prootTelemetryStore -match 'private fun buildOwnerProcessIndex') 'PRoot telemetry must build the owner index from the live process table.'
+Assert-True ($prootTelemetryStore -match 'filter \{ it\.state == ProotLiveProcessState\.RUNNING && it\.kfRuntimeId\.isNotBlank\(\) \}') 'owner process index must be derived from live tracees with KF owner ids.'
+Assert-True ($prootTelemetryStore -match 'groupBy \{ it\.kfRuntimeId \}') 'owner process index must group tracees by KF runtime owner id.'
+Assert-True ($prootTelemetryStore -match 'kfRuntimeId = event\.kfRuntimeId\.ifBlank \{ existing\?\.kfRuntimeId \?: parent\?\.kfRuntimeId\.orEmpty\(\) \}') 'fork/clone/vfork events must inherit KF owner id from existing or parent tracees.'
+Assert-True ($prootTelemetryStore -match 'kfUnitId = event\.kfUnitId\.ifBlank \{ existing\?\.kfUnitId \?: parent\?\.kfUnitId\.orEmpty\(\) \}') 'fork/clone/vfork events must inherit KF unit id from existing or parent tracees.'
+Assert-True ($prootTelemetryStore -match 'fun refreshBlocking') 'PRoot telemetry must expose a blocking refresh for stop residue checks.'
+Assert-True ($runtimeHealthStore -match 'CARD\("\u5361\u7247"\)' -and $runtimeHealthStore -match 'RESOURCE\("\u8d44\u6e90"\)') 'RuntimeHealth must model card/resource owner roots explicitly.'
+Assert-True ($runtimeHealthStore -match 'private fun buildProotOwnerRoots') 'RuntimeHealth must build owner roots from PRoot owner index.'
+Assert-True ($runtimeHealthStore -match 'prootTelemetry\.ownerProcessIndex\.groups') 'RuntimeHealth owner roots must consume the owner process index.'
+Assert-True ($runtimeHealthStore -match 'existingTerminalOwnerIds' -and $runtimeHealthStore -match 'excludedOwnerIds: Set<String> = emptySet\(\)') 'RuntimeHealth must skip PRoot terminal owner roots already represented by terminal sessions.'
+Assert-True ($runtimeHealthStore -match 'attributedRootPids = attributedPids \+ ownerTraceePids') 'owner tracees must be excluded from unattributed root generation.'
+Assert-True ($runtimeWorkloadRegistry -match 'proot_owner_index:\$\{ownerKind\.name\.lowercase\(\)\}') 'workload registry must classify card/resource owner roots from the PRoot owner index.'
+Assert-True ($taskManagerStore -match '\u5361\u7247\u5bb9\u5668' -and $taskManagerStore -match '\u8d44\u6e90\u5bb9\u5668') 'task manager must surface card/resource roots as owner containers.'
+Assert-True ($prootPoolPlan -match 'val ownerContainerCount: Int') 'PRoot pool plan must expose owner container count.'
+Assert-True ($prootPoolPlan -match 'val ownerContainerTraceeCount: Int') 'PRoot pool plan must expose owner tracee count.'
+Assert-True ($prootPoolPlan -match 'entry\.ownerKind == RuntimeRootOwnerKind\.CARD' -and $prootPoolPlan -match 'entry\.ownerKind == RuntimeRootOwnerKind\.RESOURCE') 'PRoot pool plan must derive owner container pressure from card/resource owner roots.'
+Assert-True ($prootPoolPlan -match 'proot_pool_plan_owner_container_count' -and $prootPoolPlan -match 'proot_pool_plan_owner_container_tracee_count') 'PRoot pool env output must include owner container pressure.'
+Assert-True ($prootOwnerTerminator -match 'object ProotOwnerProcessTerminator') 'owner stop must have a dedicated PRoot owner terminator.'
+Assert-True ($prootOwnerTerminator -match 'ProotTelemetryStore\.refreshBlocking') 'owner stop must use blocking telemetry refresh for residue checks.'
+Assert-True ($prootOwnerTerminator -match 'KFJni\.sendSignal\(target, signal\)') 'owner stop must signal PRoot tracee process groups/pids directly.'
+Assert-True ($prootOwnerTerminator -match '__kite_owner_stop_owner' -and $prootOwnerTerminator -match '__kite_stop_remaining') 'owner stop must report owner and final remaining tracees.'
+Assert-True ($bridgeClient -match 'ProotOwnerProcessTerminator\.terminate') 'bridge stop must invoke the PRoot owner terminator.'
+Assert-True ($bridgeClient -match 'private fun stopOwnerProcesses') 'bridge stop must collect owner stop output centrally.'
+Assert-True ($terminalSessionController -match 'private fun stopTerminalOwnerProcesses') 'terminal stop must have a dedicated owner stop hook.'
+Assert-True ($terminalSessionController -match 'ProotOwnerProcessTerminator\.terminate\(appContext, ownerId\)') 'terminal stop must invoke the PRoot owner terminator.'
+Assert-True ($terminalSessionController.Contains('"terminal:$it"')) 'terminal stop must derive the owner id from the terminal session id.'
+Assert-True ($bridgeClient -match 'lastOrNull\(\).*substringAfter' -or $bridgeClient -match '(?s)filter \{ it\.startsWith\("__kite_stop_remaining:"\) \}.*lastOrNull\(\)') 'bridge residue parsing must use the final stop remaining marker.'
+Assert-True ($main -match '(?s)private fun stopRemainingProcesses\(result: BridgeResult\).*lastOrNull\(\)') 'UI stop residue parsing must use the final stop remaining marker.'
 Assert-True ($bridgeClient -match 'cardRunPidFilePath') 'detached shell launch must create a pidfile through the pidfile helper.'
 Assert-True ($bridgeClient.Contains('card-runs/${safeId(cardInstanceId)}')) 'detached shell pidfiles must be grouped by cardInstanceId.'
 Assert-True ($bridgeClient.Contains('${safeId(runId)}.pid')) 'detached shell pidfiles must be keyed by runId.'

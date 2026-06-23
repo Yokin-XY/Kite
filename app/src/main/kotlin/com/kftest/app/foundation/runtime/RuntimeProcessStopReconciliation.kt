@@ -175,6 +175,14 @@ object RuntimeProcessStopReconciliation {
                 auto = false
             )
 
+            root.ownerKind == RuntimeRootOwnerKind.CARD ||
+                root.ownerKind == RuntimeRootOwnerKind.RESOURCE -> decision(
+                state = RuntimeProcessUnitObservationState.STOPPED_EXPECTED,
+                reason = "kite_owner_process_group_disappeared_from_proot_owner_index",
+                suppress = true,
+                auto = false
+            )
+
             else -> decision(
                 state = RuntimeProcessUnitObservationState.STOPPED_CRASH_SUSPECTED,
                 reason = "registered_process_missing_crash_suspected:$triggerReason" +

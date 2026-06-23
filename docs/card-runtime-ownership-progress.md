@@ -1,11 +1,22 @@
 # Kite 卡片运行容器化进度
 
 ## 当前阶段
-一期：建立卡片运行所有权。
+二期：把 PRoot 事件事实源接入卡片/资源 owner 容器。
 
 ## 当前原则
-所有启动、停止、查询、清理都围绕 cardInstanceId。
-当前不替换 Ubuntu，不重写 PRoot，不引入新容器方案。
+所有启动、停止、查询、清理都围绕 owner id。
+卡片 owner 使用 `card:<cardInstanceId>`，资源 owner 使用 `resource:<resourceId>`。
+终端 owner 使用 `terminal:<sessionId>`，并用 `KF_UNIT_ID=card:<cardInstanceId>` 回指所属卡片实例。
+当前不替换 Ubuntu，不重写 PRoot，不引入新容器方案；Kite 先复用 Ubuntu/PRoot，并把 PRoot telemetry 作为运行事实源。
+
+## 目标化计划
+总目标：把卡片、资源、终端从 UI 表面提升为 Kite 可登记、可查询、可停止、可复核的 owner 容器；Ubuntu/PRoot 仍是运行底座，PRoot telemetry 是运行事实源。
+
+1. 启动身份：所有进入 Ubuntu/PRoot 的卡片、资源、终端命令都必须带 `KF_RUNTIME_ID/KF_UNIT_ID`。
+2. 事实索引：ProotTelemetryStore 用 fork/clone/vfork/exit/live table 生成 owner process index。
+3. 健康视图：RuntimeHealth/TaskManager/WorkloadRegistry 消费 owner index，不再把 owner tracee 当未知进程。
+4. 停止收束：stop/delete/end 不按 UI 猜 pid，优先按 owner 的 pgid/tracee 收束，再用最终 remaining 复核。
+5. Pool 决策：PRoot pool plan 输出 owner 容器压力，后续是否打开多 PRoot capacity executor 以这个事实为门槛。
 
 ## 已完成
 - 2026-06-22：补齐 CardRun 最小运行单元的 cardInstanceId 语义；CardRunStore 仍复用现有 instanceId 主键，并对外持久化/恢复 cardInstanceId；shell、terminal、Web browser proxy 运行环境都能拿到同一个 card 实例标识。
@@ -18,6 +29,8 @@
 - 2026-06-22：补齐异常退出的最小识别；运行管理展开详情会显示正常停止、正常完成、崩溃/异常、残留、未结束，CardRunStore 不再把进程恢复时未完成运行归成正常停止。
 - 2026-06-22：完成 OnePlus 8T 真实设备启停闭环验收；通过首页真实启动/停止按钮启动临时 shell 卡片，CardRunStore 登记 `cardInstanceId/runId/rootPid/processGroupId/systemSessionId`，停止后回写 Stopped 并清空 run binding，Android 进程表确认 `rootPid/pgid` 无残留。
 - 2026-06-22：修复提交前阻塞；静态验收脚本可通过 `powershell -File` 直接运行，删除活动卡片配置前会先按 cardInstanceId 请求 stop，并中止本次删除。
+- 2026-06-23：补齐 PRoot owner 容器化主链路；KiteBridgeClient 在 direct shell 启动时注入 `KF_RUNTIME_ID/KF_UNIT_ID`，ProotTelemetryStore 从 live tracee 表生成 owner process index，RuntimeHealthStore 把 `card:` / `resource:` owner 变成卡片/资源运行根，TaskManagerStore 和 RuntimeWorkloadRegistry 消费同一事实源，KiteBridgeClient 停止路径追加 ProotOwnerProcessTerminator，按 owner 的 pgid/tracee 发信号并用最终 `__kite_stop_remaining` 复核残留，PRoot pool plan 输出 owner 容器数和 owner tracee 数。
+- 2026-06-23：补齐终端 owner 边界；CardRun 空白终端和 terminal step 启动环境注入 `terminal:<sessionId>` owner，终端停止入口会后台调用 ProotOwnerProcessTerminator 收束 owner tracee，RuntimeHealthStore 跳过已有 terminal session root 对应的 terminal owner root，避免重复展示。
 
 ## 正在进行
 - 暂无
@@ -26,9 +39,10 @@
 - 暂无
 
 ## 下次推荐领取
-1. 一期收口复核：按最终验收逐项确认启动、查看、关闭、删除、异常退出的剩余缺口。
-2. detached pidfile 专项实机复核：如果需要补齐实物证据，构造一张确实走 detached launch 的卡片，确认 `<cardInstanceId>/<runId>.pid` 创建和停止后清理。
-3. RuntimeHealthStore 级运行态复核方案：如果要从一期最小方案升级到完整统一管理，再把 stop 后复核从 bridge 脚本即时检查提升到运行态健康源。
+1. PRoot owner 实机复核：在 OnePlus 8T 上启动会 fork 子进程的卡片，确认 telemetry owner index 出现 `card:<cardInstanceId>`，停止后 owner group 清空。
+2. 资源 owner 实机复核：执行资源 install/uninstall，确认 owner id 为 `resource:<resourceId>`，TaskManager/RuntimeHealth/pool plan 均能看到资源容器。
+3. 终端 owner 实机复核：从卡片打开空白终端或 terminal step，确认 telemetry owner index 出现 `terminal:<sessionId>`，结束终端后 owner group 清空。
+4. 多 PRoot 容量执行复核：在 capacity executor policy 打开后，确认 owner 容器计数进入 pool plan，再决定是否启动绑定的第二 PRoot runtime。
 
 ## 会话记录
 
@@ -161,3 +175,16 @@
 - 完成状态：已完成提交前两个硬阻塞修复。
 - 剩余问题：停止复核仍是 bridge stop 脚本里的 `/proc`/`kill -0` 即时检查，不是 RuntimeHealthStore 级运行态复核；删除活动卡片采用“先停并中止本次删除”，停止完成后需要再次删除。
 - 下次建议：领取“一期收口复核”；如果要补强完整统一管理，再领取 RuntimeHealthStore 级运行态复核方案。
+
+### 2026-06-23
+- 领取任务：目标化实施“卡片/资源作为 PRoot owner 容器”的完整主链路。
+- 领取原因：单纯围绕 `cardInstanceId` 和 pidfile 的一期方案仍偏 UI/进程绑定，无法证明 Ubuntu 内 fork/clone/exec 后的子进程都属于同一个 owner；必须从 PRoot telemetry 事实源接入。
+- 涉及入口或状态源：KiteBridgeClient direct shell env；ProotTelemetryStore live table / owner process index；RuntimeHealthStore roots；RuntimeWorkloadRegistry；TaskManagerStore；RuntimeProotPoolPlanDryRun；ProotOwnerProcessTerminator；MainActivity stop residue parsing；`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`。
+- 验收标准：启动时带 `KF_RUNTIME_ID/KF_UNIT_ID`；PRoot telemetry snapshot 暴露 owner process index；RuntimeHealth 生成 CARD/RESOURCE owner roots 并排除 owner tracee 进入 unattributed；TaskManager 显示卡片/资源容器；终端启动生成 `terminal:<sessionId>` owner，结束终端会按 owner 收束；workload/pool 计划能看到 owner 容器压力；停止时先走旧 binding，再按 owner pgid/tracee 收束，并以最终 `__kite_stop_remaining` 判断是否 Stopped。
+- 明确不做：不替换 Ubuntu 24.04；不重写 PRoot；不自动打开多 PRoot capacity executor policy；不把卡片/资源 owner 混入泛化压力回收自动杀；不做真实设备验收。
+- 修改范围：`app/src/main/java/com/kite/app/bridge/KiteBridgeClient.kt`；`app/src/main/java/com/kite/app/MainActivity.kt`；`app/src/main/kotlin/com/kftest/app/foundation/terminal/TerminalSessionController.kt`；`app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotTelemetryStore.kt`；`ProotOwnerProcessTerminator.kt`；`RuntimeHealthStore.kt`；`RuntimeWorkloadRegistry.kt`；`TaskManagerStore.kt`；`RuntimeProotPoolPlanDryRun.kt`；`RuntimeReclaimer.kt`；`RuntimeStateReconciler.kt`；`RuntimeLifecycleAuthorityMatrix.kt`；`RuntimeProcessStopReconciliation.kt`；`scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；本文件。
+- 验证方式：`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`；`.\gradlew.bat assembleDebug`；`git diff --check`。
+- 验证结果：静态验收脚本通过；debug APK 编译通过；diff whitespace 检查通过，仅有 Git CRLF 提示。
+- 完成状态：已完成代码主链路，未做真实设备 owner telemetry 验收。
+- 剩余问题：Web 表面本身不是独立 Ubuntu 长驻进程，当前 owner 只覆盖 Ubuntu 侧命令/终端/open-url helper；多 PRoot capacity executor 是否实际启动仍受现有 policy/binding gate 控制。
+- 下次建议：先做卡片/资源/终端 owner 实机复核，再决定是否打开 capacity executor policy 做第二 PRoot runtime 实验。

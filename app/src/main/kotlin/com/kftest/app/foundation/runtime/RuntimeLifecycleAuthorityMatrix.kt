@@ -355,6 +355,8 @@ object RuntimeLifecycleAuthorityMatrix {
             RuntimeProcessUnitTier.UNMANAGED -> RuntimeLifecycleAuthorityTier.UNMANAGED
             RuntimeProcessUnitTier.QUARANTINE -> RuntimeLifecycleAuthorityTier.QUARANTINE
             null -> when {
+                ownerKind == RuntimeRootOwnerKind.CARD ||
+                    ownerKind == RuntimeRootOwnerKind.RESOURCE -> RuntimeLifecycleAuthorityTier.FOREGROUND
                 ownerKind == RuntimeRootOwnerKind.UNATTRIBUTED && isOrdinaryUbuntuLeaseCandidate() ->
                     RuntimeLifecycleAuthorityTier.LEASE
                 ownerKind == RuntimeRootOwnerKind.UNATTRIBUTED -> RuntimeLifecycleAuthorityTier.UNMANAGED
@@ -402,6 +404,9 @@ object RuntimeLifecycleAuthorityMatrix {
                 processUnitSource
             ownerKind == RuntimeRootOwnerKind.BACKGROUND_RUNTIME ->
                 "background_runtime_registry"
+            ownerKind == RuntimeRootOwnerKind.CARD ||
+                ownerKind == RuntimeRootOwnerKind.RESOURCE ->
+                "proot_telemetry_owner_process_index"
             ownerKind == RuntimeRootOwnerKind.UNATTRIBUTED ->
                 "process_snapshot_heuristic"
             else -> "runtime_health_store"

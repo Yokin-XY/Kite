@@ -289,6 +289,15 @@ object RuntimeWorkloadRegistry {
                 source = "builtin:terminal",
                 reason = "terminal sessions are interactive workloads"
             )
+            RuntimeRootOwnerKind.CARD,
+            RuntimeRootOwnerKind.RESOURCE -> WorkloadClassification(
+                workloadClass = RuntimeWorkloadClass.INTERACTIVE,
+                owner = RuntimeWorkloadOwner.USER,
+                retention = RuntimeWorkloadRetention.KEEP,
+                lane = RuntimeLaneKind.INTERACTIVE,
+                source = "proot_owner_index:${ownerKind.name.lowercase()}",
+                reason = "PRoot owner index binds this Ubuntu process group to a Kite owner container"
+            )
             RuntimeRootOwnerKind.BACKGROUND_RUNTIME -> classifyBackgroundRuntime()
             RuntimeRootOwnerKind.UNATTRIBUTED -> classifyUnattributed()
         }

@@ -163,6 +163,31 @@ data class ProotProcessLiveTable(
     }
 }
 
+data class ProotOwnerProcessGroup(
+    val ownerId: String,
+    val unitIds: List<String> = emptyList(),
+    val prootPids: List<Int> = emptyList(),
+    val telemetrySessionIds: List<String> = emptyList(),
+    val traceePids: List<Int> = emptyList(),
+    val processGroupIds: List<Int> = emptyList(),
+    val sessionIds: List<Int> = emptyList(),
+    val liveTraceeCount: Int = 0,
+    val lastSeenAtMs: Long = 0L
+)
+
+data class ProotOwnerProcessIndex(
+    val mode: String = "telemetry_owner_process_index_v0",
+    val generatedAtMs: Long = 0L,
+    val sourceStatus: String = "not_started",
+    val ownerCount: Int = 0,
+    val liveTraceeCount: Int = 0,
+    val groups: List<ProotOwnerProcessGroup> = emptyList()
+) {
+    fun summary(): String {
+        return "mode=$mode status=$sourceStatus owners=$ownerCount live=$liveTraceeCount"
+    }
+}
+
 enum class ProotPressureSignalLevel {
     QUIET,
     NORMAL,
@@ -206,6 +231,7 @@ data class ProotTelemetrySnapshot(
     val recentEvents: List<ProotTelemetryEvent> = emptyList(),
     val tracees: List<ProotTraceeRecord> = emptyList(),
     val processLiveTable: ProotProcessLiveTable = ProotProcessLiveTable(),
+    val ownerProcessIndex: ProotOwnerProcessIndex = ProotOwnerProcessIndex(),
     val pressureWindow: ProotPressureWindow = ProotPressureWindow()
 ) {
     fun summary(): String {
@@ -459,6 +485,12 @@ object ProotTelemetryStore {
                 }
             }
         }
+    }
+
+    fun refreshBlocking(context: Context): ProotTelemetrySnapshot {
+        val appContext = context.applicationContext
+        readTelemetry(appContext)
+        return snapshot.value
     }
 
     fun rotateHistoryContaminatedJsonl(
@@ -999,6 +1031,7 @@ object ProotTelemetryStore {
             ProotTelemetryEventType.ForkDetected,
             ProotTelemetryEventType.CloneDetected,
             ProotTelemetryEventType.VforkDetected -> {
+                val parent = event.parentTraceePid?.let(tracees::get)
                 tracees[event.traceePid] = (existing ?: ProotTraceeRecord(
                     traceePid = event.traceePid,
                     traceeVpid = event.traceeVpid,
@@ -1018,8 +1051,8 @@ object ProotTelemetryStore {
                     argvHash = event.argvHash,
                     argvPreview = event.argvPreview,
                     cwd = event.cwd,
-                    kfRuntimeId = event.kfRuntimeId,
-                    kfUnitId = event.kfUnitId
+                    kfRuntimeId = event.kfRuntimeId.ifBlank { parent?.kfRuntimeId.orEmpty() },
+                    kfUnitId = event.kfUnitId.ifBlank { parent?.kfUnitId.orEmpty() }
                 )).copy(
                     telemetrySessionId = event.telemetrySessionId.ifBlank { existing?.telemetrySessionId.orEmpty() },
                     prootStartMs = event.prootStartMs.takeIf { it > 0L } ?: existing?.prootStartMs ?: 0L,
@@ -1028,7 +1061,9 @@ object ProotTelemetryStore {
                     lastEventAtMs = event.timestampMs,
                     lastEventType = event.eventType,
                     lastSourceHook = event.sourceHook,
-                    lastCostLevel = event.costLevel
+                    lastCostLevel = event.costLevel,
+                    kfRuntimeId = event.kfRuntimeId.ifBlank { existing?.kfRuntimeId ?: parent?.kfRuntimeId.orEmpty() },
+                    kfUnitId = event.kfUnitId.ifBlank { existing?.kfUnitId ?: parent?.kfUnitId.orEmpty() }
                 )
                 event.parentTraceePid?.let { parentPid ->
                     tracees[parentPid]?.let { parent ->
@@ -1207,6 +1242,11 @@ object ProotTelemetryStore {
             now = now,
             liveTraceeCount = liveTable.liveTraceeCount
         )
+        val ownerIndex = buildOwnerProcessIndex(
+            liveTable = liveTable,
+            generatedAtMs = now,
+            sourceStatus = collectionStatus
+        )
         return ProotTelemetrySnapshot(
             sourcePath = file.absolutePath,
             collectionStatus = collectionStatus,
@@ -1225,6 +1265,7 @@ object ProotTelemetryStore {
             recentEvents = recentEvents.toList(),
             tracees = traceeList,
             processLiveTable = liveTable,
+            ownerProcessIndex = ownerIndex,
             pressureWindow = pressureWindow
         )
     }
@@ -1277,6 +1318,44 @@ object ProotTelemetryStore {
             exitedTraceeCount = entries.count { it.state == ProotLiveProcessState.EXITED },
             signaledTraceeCount = entries.count { it.state == ProotLiveProcessState.SIGNALED },
             entries = entries
+        )
+    }
+
+    private fun buildOwnerProcessIndex(
+        liveTable: ProotProcessLiveTable,
+        generatedAtMs: Long,
+        sourceStatus: String
+    ): ProotOwnerProcessIndex {
+        val liveEntries = liveTable.entries
+            .filter { it.state == ProotLiveProcessState.RUNNING && it.kfRuntimeId.isNotBlank() }
+        val groups = liveEntries
+            .groupBy { it.kfRuntimeId }
+            .toSortedMap()
+            .map { (ownerId, entries) ->
+                ProotOwnerProcessGroup(
+                    ownerId = ownerId,
+                    unitIds = entries.mapNotNull { it.kfUnitId.takeIf(String::isNotBlank) }.distinct().sorted(),
+                    prootPids = entries.map { it.prootPid }.filter { it > 0 }.distinct().sorted(),
+                    telemetrySessionIds = entries.mapNotNull { it.telemetrySessionId.takeIf(String::isNotBlank) }
+                        .distinct()
+                        .sorted(),
+                    traceePids = entries.map { it.traceePid }.distinct().sorted(),
+                    processGroupIds = entries.mapNotNull { it.processGroupId?.takeIf { pgid -> pgid > 1 } }
+                        .distinct()
+                        .sorted(),
+                    sessionIds = entries.mapNotNull { it.sessionId?.takeIf { sid -> sid > 1 } }
+                        .distinct()
+                        .sorted(),
+                    liveTraceeCount = entries.size,
+                    lastSeenAtMs = entries.maxOfOrNull { it.lastSeenAtMs } ?: 0L
+                )
+            }
+        return ProotOwnerProcessIndex(
+            generatedAtMs = generatedAtMs,
+            sourceStatus = sourceStatus,
+            ownerCount = groups.size,
+            liveTraceeCount = liveEntries.size,
+            groups = groups
         )
     }
 

@@ -10,6 +10,8 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.recipe.KiteRunReport
 import com.kite.app.recipe.KiteStepReport
+import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kftest.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kftest.app.foundation.workspace.WorkspaceBuildSupport
 import org.json.JSONObject
@@ -142,7 +144,7 @@ class KiteBridgeClient(
         }
         val directProcess = directProcesses[runId]
         if (context != null && directProcess != null) {
-            stopDirectProcesses(context, recipe, listOf(directProcess), callback)
+            stopDirectProcesses(context, recipe, listOf(directProcess), cardInstanceId, callback)
             return
         }
         if (context != null) {
@@ -162,7 +164,7 @@ class KiteBridgeClient(
                 stopDirectRuns(context, recipe, listOf(persisted), callback)
                 return
             }
-            callback(stoppedWithoutActiveDirectBinding(recipe, runId))
+            callback(stoppedWithoutActiveDirectBinding(context, recipe, runId, cardInstanceId))
             return
         }
 
@@ -189,11 +191,11 @@ class KiteBridgeClient(
         }
         val directProcess = directProcesses.values.filter { it.recipeId == recipe.id }
         if (context != null && directProcess.isNotEmpty()) {
-            stopDirectProcesses(context, recipe, directProcess, callback)
+            stopDirectProcesses(context, recipe, directProcess, null, callback)
             return
         }
         if (context != null) {
-            callback(stoppedWithoutActiveDirectBinding(recipe, ""))
+            callback(stoppedWithoutActiveDirectBinding(context, recipe, "", null))
             return
         }
 
@@ -382,9 +384,10 @@ class KiteBridgeClient(
                 var rootPid: String? = null
                 var processGroupId: String? = null
                 var systemSessionId: String? = null
+                val runEnv = directRuntimeEnv(recipe, runId, extraEnv)
 
                 for (step in shellSteps) {
-                    val execution = executeDirectShellStep(context, recipe, runId, requestId, step, extraEnv, onProgress)
+                    val execution = executeDirectShellStep(context, recipe, runId, requestId, step, runEnv, onProgress)
                     stepReports.add(execution.report)
                     if (!execution.pid.isNullOrBlank()) pid = execution.pid
                     if (!execution.rootPid.isNullOrBlank()) rootPid = execution.rootPid
@@ -674,6 +677,7 @@ class KiteBridgeClient(
                 }
                 directRuns.remove(binding.runId)
             }
+            output.append(stopOwnerProcesses(context, recipe, bindings.map { it.cardInstanceId }))
             val stoppedOk = !stopPayloadHasRemaining(output.toString())
             if (stoppedOk) {
                 bindings.forEach { binding ->
@@ -716,6 +720,7 @@ class KiteBridgeClient(
         context: Context,
         recipe: KiteRecipe,
         bindings: List<DirectProcessBinding>,
+        cardInstanceIdHint: String?,
         callback: (BridgeResult) -> Unit
     ) {
         val requestId = newRequestId()
@@ -744,6 +749,7 @@ class KiteBridgeClient(
                 }
                 directProcesses.remove(binding.runId)
             }
+            output.append(stopOwnerProcesses(context, recipe, listOf(cardInstanceIdHint)))
             val stoppedOk = !stopPayloadHasRemaining(output.toString())
             val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
             val report = KiteRunReport(
@@ -777,34 +783,43 @@ class KiteBridgeClient(
         }
     }
 
-    private fun stoppedWithoutActiveDirectBinding(recipe: KiteRecipe, runId: String): BridgeResult {
+    private fun stoppedWithoutActiveDirectBinding(
+        context: Context,
+        recipe: KiteRecipe,
+        runId: String,
+        cardInstanceId: String?
+    ): BridgeResult {
         val requestId = newRequestId()
         val resolvedRunId = runId.ifBlank { requestId }
+        val ownerStopOutput = stopOwnerProcesses(context, recipe, listOf(cardInstanceId))
+        val stoppedOk = !stopPayloadHasRemaining(ownerStopOutput)
+        val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
         val report = KiteRunReport(
             protocolVersion = KiteRecipe.PROTOCOL_VERSION,
             requestId = requestId,
             runId = resolvedRunId,
             recipeId = recipe.id,
-            status = KiteRunReport.STATUS_STOPPED,
-            ok = true,
+            status = status,
+            ok = stoppedOk,
             steps = listOf(
                 KiteStepReport(
                     stepId = "local_stop",
                     type = KiteRecipe.STEP_SHELL,
-                    status = KiteRunReport.STATUS_STOPPED,
-                    exitCode = 0,
-                    lastMeaningfulOutput = "没有发现仍在运行的后台进程，已关闭卡片实例。"
+                    status = status,
+                    exitCode = if (stoppedOk) 0 else 1,
+                    lastMeaningfulOutput = ownerStopOutput.trim().ifBlank { "没有发现仍在运行的后台进程，已关闭卡片实例。" }.takeLast(OUTPUT_TAIL_CHARS)
                 )
             )
         )
         diagnostics.logParsedRunReport(recipe, report)
         return BridgeResult(
-            ok = true,
-            accepted = true,
-            status = KiteRunReport.STATUS_STOPPED,
+            ok = stoppedOk,
+            accepted = stoppedOk,
+            status = status,
             message = report.toJson().toString(),
             requestId = requestId,
-            runReport = report
+            runReport = report,
+            errorType = if (stoppedOk) BridgeErrorType.None else BridgeErrorType.BridgeFailed
         )
     }
 
@@ -900,6 +915,57 @@ class KiteBridgeClient(
         extraEnv["KITE_CARD_INSTANCE_ID"]
             ?: extraEnv["KITE_INSTANCE_ID"]
             ?: recipe.id
+
+    private fun directRuntimeEnv(
+        recipe: KiteRecipe,
+        runId: String,
+        extraEnv: Map<String, String>
+    ): Map<String, String> {
+        val cardInstanceId = cardInstanceIdFrom(extraEnv, recipe)
+        val ownerId = extraEnv["KF_RUNTIME_ID"]?.takeIf { it.isNotBlank() }
+            ?: runtimeOwnerId(recipe, cardInstanceId)
+        val unitId = extraEnv["KF_UNIT_ID"]?.takeIf { it.isNotBlank() }
+            ?: "run:${safeId(runId)}"
+        return extraEnv + mapOf(
+            "KF_RUNTIME_ID" to ownerId,
+            "KF_UNIT_ID" to unitId
+        )
+    }
+
+    private fun runtimeOwnerId(recipe: KiteRecipe, cardInstanceId: String): String {
+        // ponytail: bridge only knows recipe/runtime ids; pass CardRun ownerKind here if owner rules grow.
+        return if (recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE) {
+            "resource:${resourceIdFromRecipe(recipe) ?: safeId(cardInstanceId)}"
+        } else {
+            "card:${safeId(cardInstanceId)}"
+        }
+    }
+
+    private fun resourceIdFromRecipe(recipe: KiteRecipe): String? {
+        val clean = recipe.id.removePrefix("resource-")
+        if (clean == recipe.id) return null
+        return when {
+            clean.endsWith("-${KiteResourceInstallRecipes.OP_INSTALL}") ->
+                clean.removeSuffix("-${KiteResourceInstallRecipes.OP_INSTALL}")
+            clean.endsWith("-${KiteResourceInstallRecipes.OP_UNINSTALL}") ->
+                clean.removeSuffix("-${KiteResourceInstallRecipes.OP_UNINSTALL}")
+            else -> null
+        }?.takeIf { it.isNotBlank() }
+    }
+
+    private fun stopOwnerProcesses(
+        context: Context,
+        recipe: KiteRecipe,
+        cardInstanceIds: Collection<String?>
+    ): String {
+        val ownerIds = cardInstanceIds
+            .ifEmpty { listOf(null) }
+            .map { cardInstanceId -> runtimeOwnerId(recipe, cardInstanceId?.takeIf { it.isNotBlank() } ?: recipe.id) }
+            .distinct()
+        return ownerIds.joinToString(separator = "") { ownerId ->
+            ProotOwnerProcessTerminator.terminate(context, ownerId).toStopOutput()
+        }
+    }
 
     private fun cardRunPidDir(cardInstanceId: String): String =
         "${WorkspaceBuildSupport.CONTAINER_HELPER_SYSTEM_STATE_PATH}/card-runs/${safeId(cardInstanceId)}"
@@ -1054,12 +1120,13 @@ class KiteBridgeClient(
     private fun stopPayloadHasRemaining(output: String): Boolean =
         output.lineSequence()
             .filter { it.startsWith("__kite_stop_remaining:") }
-            .map { it.substringAfter(':') }
-            .any { remaining ->
-                remaining.split(',').any { value ->
-                    value.trim().matches(Regex("\\d+"))
-                }
+            .lastOrNull()
+            ?.substringAfter(':')
+            ?.split(',')
+            ?.any { value ->
+                value.trim().matches(Regex("\\d+"))
             }
+            ?: false
 
     private fun numericProcessId(value: String?): String? =
         value?.trim()

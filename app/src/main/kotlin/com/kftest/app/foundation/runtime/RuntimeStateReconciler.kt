@@ -71,6 +71,8 @@ object RuntimeStateReconciler {
                     }
                 }
 
+                RuntimeRootOwnerKind.CARD,
+                RuntimeRootOwnerKind.RESOURCE,
                 RuntimeRootOwnerKind.UNATTRIBUTED -> Unit
             }
         }

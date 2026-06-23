@@ -253,6 +253,8 @@ object TaskManagerStore {
     private fun RuntimeRootSnapshot.buildRootSourceLabel(): String {
         return when (ownerKind) {
             RuntimeRootOwnerKind.TERMINAL -> "终端"
+            RuntimeRootOwnerKind.CARD -> "卡片容器"
+            RuntimeRootOwnerKind.RESOURCE -> "资源容器"
             RuntimeRootOwnerKind.BACKGROUND_RUNTIME -> when (runtimeKind) {
                 BackgroundRuntimeKind.CONTAINER_SUPERVISOR -> "后台 容器骨架"
                 BackgroundRuntimeKind.PROOT_CAPACITY_WORKER -> "后台 PRoot 容量工作器"
@@ -269,6 +271,8 @@ object TaskManagerStore {
             RuntimeRootOwnerKind.TERMINAL -> {
                 actions += TaskManagerAction.OPEN_TERMINAL
             }
+            RuntimeRootOwnerKind.CARD,
+            RuntimeRootOwnerKind.RESOURCE -> Unit
             RuntimeRootOwnerKind.BACKGROUND_RUNTIME -> {
                 actions += TaskManagerAction.STOP_RUNTIME
                 actions += TaskManagerAction.RESTART_RUNTIME

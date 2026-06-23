@@ -13,6 +13,7 @@ import com.kftest.app.foundation.runtime.ContainerProcessStore
 import com.kftest.app.foundation.runtime.HostStopAuditor
 import com.kftest.app.foundation.runtime.HostProcessTerminator
 import com.kftest.app.foundation.runtime.ProcessExitSemantics
+import com.kftest.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kftest.app.foundation.runtime.RuntimeFrameCoordinator
 import com.kftest.app.foundation.runtime.RuntimeStorageGuard
 import com.kftest.app.foundation.workspace.AgentLaunchMode
@@ -1474,6 +1475,7 @@ class TerminalSessionController(
                     ?.let { append("startupCommand=$it\n") }
             }
         )
+        stopTerminalOwnerProcesses(sessionId, reason)
         if (holder.isSessionRunning() || pid > 0) {
             Logger.i(LOG_TAG, "停止终端会话: $sessionId, pid=$pid, reason=$reason")
             val stopAuditSeed = HostStopAuditor.capture(pid, LOG_TAG)
@@ -1552,6 +1554,7 @@ class TerminalSessionController(
                     ?.let { append("startupCommand=$it\n") }
             }
         )
+        stopTerminalOwnerProcesses(record.id, reason)
 
         val report = if (resolvedPid != null && resolvedPid > 0) {
             val stopAuditSeed = HostStopAuditor.capture(resolvedPid, LOG_TAG)
@@ -1599,6 +1602,27 @@ class TerminalSessionController(
             delaysMs = listOf(600L),
             reason = "terminal-stop-detached:${record.id}"
         )
+    }
+
+    private fun stopTerminalOwnerProcesses(sessionId: String, reason: String) {
+        val ownerId = sessionId.trim().takeIf { it.isNotBlank() }?.let { "terminal:$it" } ?: return
+        controllerScope.launch(Dispatchers.IO) {
+            val result = ProotOwnerProcessTerminator.terminate(appContext, ownerId)
+            Logger.i(
+                LOG_TAG,
+                "终端 PRoot owner 停止: owner=$ownerId ok=${result.ok} reason=${result.reason} request=$reason"
+            )
+            writeTerminalActionLog(result.toStopOutput())
+            RuntimeFrameCoordinator.refreshProcessSnapshot(
+                context = appContext,
+                reason = "terminal-owner-stop:$sessionId"
+            )
+            RuntimeFrameCoordinator.scheduleProcessRefreshes(
+                context = appContext,
+                delaysMs = listOf(600L),
+                reason = "terminal-owner-stop:$sessionId"
+            )
+        }
     }
 
     private fun resolveTerminalStopPid(record: ManagedTerminalRecord): Int? {

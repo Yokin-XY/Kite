@@ -8774,7 +8774,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         source = "card_run_blank_terminal"
                     )
                 }.getOrDefault(emptyMap())
-                record to environment
+                record to environment.withTerminalOwner(record.id, instanceId)
             }
             runOnUiThread {
                 val current = CardRunStore.get(instanceId)
@@ -11588,7 +11588,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         recipeId = recipe.id,
                         instanceId = instanceId,
                         source = "terminal_step"
-                    )
+                    ).withTerminalOwner(record.id, instanceId)
                 )
                 if (openSurface) {
                     if (currentScreen == Screen.CardRun && focusedRunInstanceId == instanceId) {
@@ -11633,6 +11633,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             "终端"
         }
         return "$recipeName · $suffix"
+    }
+
+    private fun Map<String, String>.withTerminalOwner(
+        sessionId: String,
+        cardInstanceId: String
+    ): Map<String, String> {
+        val terminalId = sessionId.trim().takeIf { it.isNotBlank() } ?: return this
+        val unitId = cardInstanceId.trim().takeIf { it.isNotBlank() } ?: terminalId
+        return this + mapOf(
+            "KF_RUNTIME_ID" to "terminal:$terminalId",
+            "KF_UNIT_ID" to "card:$unitId"
+        )
     }
 
     private fun stopRecipe(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
@@ -11979,11 +11991,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .lineSequence()
             .map { it.trim() }
             .filter { it.startsWith("__kite_stop_remaining:") }
-            .flatMap { it.substringAfter(':').split(',').asSequence() }
+            .lastOrNull()
+            ?.substringAfter(':')
+            ?.split(',')
+            .orEmpty()
             .map { it.trim() }
             .filter { it.matches(Regex("\\d+")) }
             .distinct()
-            .toList()
 
     private fun stopResidueMarkerSeen(result: BridgeResult): Boolean =
         stopObservationText(result)

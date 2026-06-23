@@ -28,6 +28,8 @@ import org.json.JSONObject
 
 enum class RuntimeRootOwnerKind(val label: String) {
     TERMINAL("终端"),
+    CARD("卡片"),
+    RESOURCE("资源"),
     BACKGROUND_RUNTIME("后台运行项"),
     UNATTRIBUTED("未归属运行根")
 }
@@ -1522,13 +1524,23 @@ object RuntimeHealthStore {
                 runtime.toRuntimeRoot(rootProcess, group, processRefreshedAt)
             }
 
+        val existingTerminalOwnerIds = terminalRoots
+            .mapNotNull { root -> root.ownerId?.takeIf { it.isNotBlank() }?.let { "terminal:$it" } }
+            .toSet()
+        val ownerRoots = buildProotOwnerRoots(
+            prootTelemetry = prootTelemetry,
+            excludedOwnerIds = existingTerminalOwnerIds,
+            processRefreshedAt = processRefreshedAt
+        )
+        val ownerTraceePids = prootTelemetry.ownerProcessIndex.groups
+            .flatMapTo(mutableSetOf()) { it.traceePids }
         val attributedPids = (terminalRoots + runtimeRoots)
             .mapNotNull { it.observedPid }
             .toSet()
         val unownedRoots = buildUnattributedRoots(
             processes = processes,
             prootTelemetry = prootTelemetry,
-            attributedRootPids = attributedPids,
+            attributedRootPids = attributedPids + ownerTraceePids,
             attributedRuntimeRootPids = runtimeRoots.mapNotNullTo(mutableSetOf()) { it.observedPid },
             reclaimerPolicy = reclaimerPolicy,
             processUnitManifest = processUnitManifest,
@@ -1537,7 +1549,7 @@ object RuntimeHealthStore {
         )
 
         return processUnitManifest.applyToRoots(
-            roots = terminalRoots + runtimeRoots + unownedRoots,
+            roots = terminalRoots + ownerRoots + runtimeRoots + unownedRoots,
             pidFileReader = pidFileReader
         )
             .sortedWith(
@@ -1702,6 +1714,74 @@ object RuntimeHealthStore {
         val reason: String
     ) {
         fun unitId(pid: Int): String = "$processUnitIdPrefix:$pid"
+    }
+
+    private fun buildProotOwnerRoots(
+        prootTelemetry: ProotTelemetrySnapshot,
+        excludedOwnerIds: Set<String> = emptySet(),
+        processRefreshedAt: Long
+    ): List<RuntimeRootSnapshot> {
+        val entriesByPid = prootTelemetry.processLiveTable.entries.associateBy { it.traceePid }
+        return prootTelemetry.ownerProcessIndex.groups
+            .mapNotNull { group ->
+                if (group.ownerId in excludedOwnerIds) return@mapNotNull null
+                val ownerKind = group.ownerId.toRuntimeOwnerKind() ?: return@mapNotNull null
+                val rootPid = group.rootTraceePid(entriesByPid)
+                RuntimeRootSnapshot(
+                    ownerKind = ownerKind,
+                    ownerId = group.ownerId,
+                    title = group.ownerTitle(ownerKind),
+                    statusLabel = "running",
+                    observedPid = rootPid,
+                    prootPid = group.prootPids.firstOrNull(),
+                    rootProcessGroupId = group.processGroupIds.singleOrNull(),
+                    rootSessionId = group.sessionIds.singleOrNull(),
+                    processCount = group.liveTraceeCount,
+                    retentionClass = RuntimeRetentionClass.INTERACTIVE,
+                    resident = true,
+                    reclaimPriority = RuntimeRetentionClass.INTERACTIVE.reclaimPriority,
+                    autoReclaimAllowed = false,
+                    classificationSource = "proot_telemetry_owner_process_index",
+                    classificationReason = "PRoot event stream grouped live tracees by KF runtime owner id",
+                    sourceLabel = "PRoot owner index",
+                    commandLine = group.unitIds.joinToString(" "),
+                    observedStatusLabel = "RUNNING",
+                    reality = RuntimeRootReality.OBSERVED,
+                    lastSeenAt = group.lastSeenAtMs.takeIf { it > 0L } ?: processRefreshedAt,
+                    lastStartedAt = group.lastSeenAtMs.takeIf { it > 0L }
+                )
+            }
+    }
+
+    private fun String.toRuntimeOwnerKind(): RuntimeRootOwnerKind? {
+        return when (substringBefore(':')) {
+            "card" -> RuntimeRootOwnerKind.CARD
+            "resource" -> RuntimeRootOwnerKind.RESOURCE
+            "terminal" -> RuntimeRootOwnerKind.TERMINAL
+            else -> null
+        }
+    }
+
+    private fun ProotOwnerProcessGroup.ownerTitle(ownerKind: RuntimeRootOwnerKind): String {
+        val id = ownerId.substringAfter(':', ownerId).ifBlank { ownerId }
+        return when (ownerKind) {
+            RuntimeRootOwnerKind.CARD -> "卡片 $id"
+            RuntimeRootOwnerKind.RESOURCE -> "资源 $id"
+            RuntimeRootOwnerKind.TERMINAL -> "终端 $id"
+            RuntimeRootOwnerKind.BACKGROUND_RUNTIME -> "后台 $id"
+            RuntimeRootOwnerKind.UNATTRIBUTED -> "未归属 $id"
+        }
+    }
+
+    private fun ProotOwnerProcessGroup.rootTraceePid(
+        entriesByPid: Map<Int, ProotLiveProcessEntry>
+    ): Int? {
+        val traceeSet = traceePids.toSet()
+        val candidates = traceePids.filter { pid ->
+            val parent = entriesByPid[pid]?.parentTraceePid
+            parent == null || parent !in traceeSet
+        }
+        return candidates.minOrNull() ?: traceePids.minOrNull()
     }
 
     private fun buildUnattributedRoots(

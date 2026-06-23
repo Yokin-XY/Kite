@@ -254,6 +254,8 @@ data class RuntimeProotPoolPlanDryRunSnapshot(
     val liveTraceeCount: Int = 0,
     val policyLaneCount: Int = 0,
     val activeWorkloadCount: Int = 0,
+    val ownerContainerCount: Int = 0,
+    val ownerContainerTraceeCount: Int = 0,
     val maxPoolSlots: Int = 0,
     val effectivePoolSlots: Int = 0,
     val plannedPoolSlots: Int = 0,
@@ -469,6 +471,8 @@ data class RuntimeProotPoolPlanDryRunSnapshot(
             appendLine("proot_pool_plan_live_tracees=$liveTraceeCount")
             appendLine("proot_pool_plan_policy_lane_count=$policyLaneCount")
             appendLine("proot_pool_plan_active_workload_count=$activeWorkloadCount")
+            appendLine("proot_pool_plan_owner_container_count=$ownerContainerCount")
+            appendLine("proot_pool_plan_owner_container_tracee_count=$ownerContainerTraceeCount")
             appendLine("proot_pool_plan_max_pool_slots=$maxPoolSlots")
             appendLine("proot_pool_plan_effective_pool_slots=$effectivePoolSlots")
             appendLine("proot_pool_plan_planned_pool_slots=$plannedPoolSlots")
@@ -785,6 +789,10 @@ object RuntimeProotPoolPlanDryRun {
             policySubstrateUsable = policySubstrate.policyUsable,
             taskPressure = taskPressure
         )
+        val ownerContainerEntries = workloadRegistry.entries.filter { entry ->
+            entry.ownerKind == RuntimeRootOwnerKind.CARD ||
+                entry.ownerKind == RuntimeRootOwnerKind.RESOURCE
+        }
 
         return RuntimeProotPoolPlanDryRunSnapshot(
             generatedAtMs = now,
@@ -807,6 +815,8 @@ object RuntimeProotPoolPlanDryRun {
             liveTraceeCount = pressureConsumer.liveTraceeCount,
             policyLaneCount = laneAdmission.policyLaneCount,
             activeWorkloadCount = workloadRegistry.totalWorkloads,
+            ownerContainerCount = ownerContainerEntries.size,
+            ownerContainerTraceeCount = ownerContainerEntries.sumOf { it.processCount },
             maxPoolSlots = lanes.sumOf { it.maxConcurrency },
             effectivePoolSlots = lanes.sumOf { it.effectiveMaxConcurrency },
             plannedPoolSlots = lanes.sumOf { it.plannedPoolSlots },
