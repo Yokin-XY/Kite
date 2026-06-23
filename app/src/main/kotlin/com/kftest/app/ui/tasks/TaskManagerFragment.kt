@@ -95,6 +95,7 @@ class TaskManagerFragment : Fragment() {
                 item.linkedRuntimeId.orEmpty(),
                 item.linkedTerminalSessionId.orEmpty(),
                 item.runtimeOwnerId.orEmpty(),
+                item.runtimeUnitId.orEmpty(),
                 item.runtimeOwnerKindLabel.orEmpty(),
                 item.runtimeRealityLabel.orEmpty()
             ).joinToString(separator = "\u001e")
@@ -161,7 +162,7 @@ class TaskManagerFragment : Fragment() {
                     }
 
                     TaskManagerAction.END_PROCESS -> {
-                        TaskManagerStore.endProcess(requireContext(), item.pid)
+                        TaskManagerStore.endProcess(requireContext(), item)
                         showHint("正在结束 ${item.title}")
                         scheduleRefresh()
                     }
@@ -229,6 +230,9 @@ class TaskManagerFragment : Fragment() {
         }
         if (!item.runtimeOwnerKindLabel.isNullOrBlank()) {
             lines += "运行归属: ${item.runtimeOwnerKindLabel} / ${item.runtimeRealityLabel ?: "--"}"
+        }
+        if (!item.runtimeUnitId.isNullOrBlank()) {
+            lines += "运行单元: ${item.runtimeUnitId}"
         }
         if (item.runtimeRootPid != null) {
             lines += "Runtime Root PID: ${item.runtimeRootPid}"

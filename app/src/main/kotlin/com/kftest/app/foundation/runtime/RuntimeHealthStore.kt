@@ -1536,7 +1536,7 @@ object RuntimeHealthStore {
             .mapNotNull { it.ownerId }
             .toSet()
         val ownerTraceePids = prootTelemetry.ownerProcessIndex.groups
-            .filter { group -> group.ownerId in attributedOwnerIds }
+            .filter { group -> group.ownerId in attributedOwnerIds || group.ownerId in existingTerminalOwnerIds }
             .flatMapTo(mutableSetOf()) { it.traceePids }
         val attributedPids = (terminalRoots + runtimeRoots)
             .mapNotNull { it.observedPid }
@@ -2210,6 +2210,16 @@ object RuntimeHealthStore {
                 manualKillPolicy = RuntimeProcessUnitManualKillPolicy.CORE_RECOVER,
                 source = "builtin:container_skeleton",
                 reason = "container supervisor is system skeleton and never enters the ordinary lease pool"
+            )
+            "/runtime/bin/proot" in text ||
+                "link2symlink" in text -> ContainerSkeletonProtection(
+                processUnitIdPrefix = "builtin-proot-entry",
+                displayName = "PRoot 容器入口",
+                tier = RuntimeProcessUnitTier.PROOT_CORE,
+                retentionClass = RuntimeRetentionClass.CRITICAL_CORE,
+                manualKillPolicy = RuntimeProcessUnitManualKillPolicy.CORE_RECOVER,
+                source = "builtin:proot_core",
+                reason = "PRoot entry owns the Ubuntu filesystem boundary and is shown as a system support process"
             )
             executable == "hermes" ||
                 executable == "hermes-gateway" ||

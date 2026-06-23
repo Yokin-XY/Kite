@@ -28,6 +28,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.text.Editable
 import android.text.InputType
+import android.text.method.ScrollingMovementMethod
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextWatcher
@@ -119,6 +120,7 @@ import com.kftest.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
 import com.kftest.app.foundation.runtime.RuntimeHealthStore
 import com.kftest.app.foundation.runtime.RuntimeReclaimer
 import com.kftest.app.foundation.runtime.TaskManagerProcessItem
+import com.kftest.app.foundation.runtime.TaskManagerSnapshot
 import com.kftest.app.foundation.runtime.TaskManagerStore
 import com.kftest.app.foundation.runtime.TerminalSessionItem
 import com.kftest.app.foundation.runtime.TerminalSessionStore
@@ -244,6 +246,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private val runManagementExpandedTerminalIds = mutableSetOf<String>()
     private val runManagementExpandedProcessIds = mutableSetOf<String>()
     private val runManagementExpandedChildProcessIds = mutableSetOf<String>()
+    private val runManagementPendingProcessStopIds = mutableSetOf<Int>()
     private var autoOpenedRootfsRunAt = 0L
     private var lastWorkbenchUrl: String? = null
     private var resourcePageView: View? = null
@@ -1702,20 +1705,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (forceRefresh) {
             requestRuntimePanelSummaryRefresh(force = true)
         }
+        pruneRunManagementPendingProcessStops()
         currentScreen = Screen.Processes
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
-        val summary = runtimePanelSummary()
+        val taskSnapshot = TaskManagerStore.snapshot.value
+        val terminalItems = TerminalSessionStore.snapshot.value.sessions
+        val runs = CardRunStore.runs.value
+        val summary = runtimePanelSummary(taskSnapshot = taskSnapshot)
         root.addView(runManagementHeader(summary))
         root.addView(ScrollView(this).apply {
             isFillViewport = true
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(18), dp(8), dp(18), dp(28))
-                val groups = buildRunManagementGroups()
-                if (groups.isEmpty()) {
+                val groups = buildRunManagementGroups(
+                    runs = runs,
+                    terminalItems = terminalItems,
+                    processItems = taskSnapshot.processes
+                )
+                val otherProcessSections = runManagementOtherProcessSections(groups, taskSnapshot.processes)
+                if (groups.isEmpty() && otherProcessSections.isEmpty()) {
                     addView(TextView(context).apply {
-                        text = "当前没有运行中的卡片"
+                        text = "当前没有运行中的卡片或进程"
                         textSize = 13.5f
                         gravity = Gravity.CENTER
                         setTextColor(tokens.textSecondary)
@@ -1724,6 +1736,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 } else {
                     groups.forEach { group ->
                         addView(runManagementCard(group))
+                    }
+                    otherProcessSections.forEach { (title, processes) ->
+                        addView(runManagementProcessSection(title, processes))
                     }
                 }
             })
@@ -9568,10 +9583,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
 
-    private fun runtimePanelSummary(): RuntimePanelSummary {
+    private fun runtimePanelSummary(
+        taskSnapshot: TaskManagerSnapshot = TaskManagerStore.snapshot.value
+    ): RuntimePanelSummary {
         val health = RuntimeHealthStore.snapshot.value
         val processCount = listOf(
-            TaskManagerStore.snapshot.value.processes.size,
+            taskSnapshot.processes.size,
             health.prootTelemetry.processLiveTable.liveTraceeCount,
             health.processResourceSnapshot.processCount,
             health.processSnapshotMergedProcessCount,
@@ -9629,13 +9646,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     includeFontPadding = false
                 })
                 addView(TextView(context).apply {
-                    text = "按卡片整理终端、网页与进程"
+                    text = "按卡片整理系统与其他进程"
                     textSize = 12.5f
                     setTextColor(tokens.textSecondary)
                     setPadding(0, dp(5), 0, 0)
                 })
                 addView(TextView(context).apply {
-                    text = "运行卡片 ${summary.runningCards} · 终端 ${summary.runningTerminals} · 进程 ${summary.runningProcesses}"
+                    text = "运行卡片 ${summary.runningCards} · 进程 ${summary.runningProcesses}"
                     textSize = 11.5f
                     setTextColor(tokens.textTertiary)
                     setPadding(0, dp(4), 0, 0)
@@ -9644,15 +9661,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 })
             })
             addView(iconButton("↻", dp(42), Color.TRANSPARENT, tokens.textPrimary, dp(16)) {
-                requestRuntimePanelSummaryRefresh(force = true)
-                root.postDelayed({ if (currentScreen == Screen.Processes) showKiteProcessOverview(forceRefresh = false) }, 180L)
+                Toast.makeText(this@MainActivity, "正在刷新运行管理", Toast.LENGTH_SHORT).show()
+                scheduleRunManagementLazyRefresh(force = true)
             })
         }
 
-    private fun buildRunManagementGroups(): List<RunManagementGroup> {
-        val terminalItems = TerminalSessionStore.snapshot.value.sessions
-        val processItems = TaskManagerStore.snapshot.value.processes
-        return CardRunStore.runs.value
+    private fun buildRunManagementGroups(
+        runs: List<RecipeRuntimeState> = CardRunStore.runs.value,
+        terminalItems: List<TerminalSessionItem> = TerminalSessionStore.snapshot.value.sessions,
+        processItems: List<TaskManagerProcessItem> = TaskManagerStore.snapshot.value.processes
+    ): List<RunManagementGroup> {
+        return runs
             .filter { it.countsAsRunManagementCard() }
             .sortedByDescending { it.updatedAt }
             .map { run ->
@@ -9661,8 +9680,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     ?.let { sessionId -> terminalItems.firstOrNull { it.id == sessionId } }
                 val boundPids = run.boundProcessIds()
                 val ownerId = run.runtimeOwnerIdForRunManagement()
+                val unitId = run.runtimeUnitIdForRunManagement()
                 val runProcesses = processItems
-                    .filter { item -> item.belongsToRun(run, boundPids, ownerId) }
+                    .filter { item -> item.belongsToRun(run, boundPids, ownerId, unitId) }
                     .sortedWith(compareBy<TaskManagerProcessItem> { it.parentPid }.thenBy { it.pid })
                 val mainProcess = runProcesses.firstOrNull { it.isMainProcessForRun(boundPids) }
                     ?: runProcesses.firstOrNull()
@@ -9682,6 +9702,45 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
     }
 
+    private fun runManagementOtherProcessSections(
+        groups: List<RunManagementGroup>,
+        processItems: List<TaskManagerProcessItem> = TaskManagerStore.snapshot.value.processes
+    ): List<Pair<String, List<TaskManagerProcessItem>>> {
+        val cardProcessIds = groups
+            .flatMap { group -> listOfNotNull(group.mainProcess) + group.childProcesses }
+            .mapTo(mutableSetOf()) { it.id }
+        val processes = processItems
+            .filterNot { it.id in cardProcessIds }
+            .sortedWith(compareBy<TaskManagerProcessItem> { it.isRunManagementSystemProcess() }.thenBy { it.pid })
+        val systemProcesses = processes.filter { it.isRunManagementSystemProcess() }
+        val otherProcesses = processes.filterNot { it.isRunManagementSystemProcess() }
+        return listOf(
+            "系统" to systemProcesses,
+            "其他" to otherProcesses
+        ).filter { it.second.isNotEmpty() }
+    }
+
+    private fun TaskManagerProcessItem.isRunManagementSystemProcess(): Boolean {
+        val text = listOf(
+            title,
+            sourceLabel,
+            runtimeOwnerKindLabel.orEmpty(),
+            runtimeUnitId.orEmpty(),
+            command,
+            commandLine
+        ).joinToString(" ").lowercase()
+        return runtimeOwnerKindLabel == "后台运行项" ||
+            sourceLabel.startsWith("后台") ||
+            "容器骨架" in text ||
+            "容量工作器" in text ||
+            "supervisord" in text ||
+            "/runtime/bin/proot" in text ||
+            "link2symlink" in text ||
+            "/workspace/.kf/system/" in text ||
+            "locale-check" in text ||
+            "mkdir -p /run/" in text
+    }
+
     private fun RecipeRuntimeState.countsAsRunManagementCard(): Boolean =
         countsAsRuntimePanelCard() ||
             (hasRunBinding() && (status == RecipeRunStatus.Failed || status == RecipeRunStatus.BridgeUnavailable))
@@ -9697,6 +9756,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             RecipeRuntimeState.OWNER_KIND_TERMINAL -> "terminal:${terminalSessionId ?: runId ?: cardInstanceId}"
             else -> "card:${runManagementSafeOwnerId(cardInstanceId)}"
         }
+
+    private fun RecipeRuntimeState.runtimeUnitIdForRunManagement(): String =
+        "card:${cardInstanceId.trim().ifBlank { instanceId }}"
 
     private fun RecipeRuntimeState.resourceIdForRunManagement(): String? {
         if (recipeId.startsWith("resource-")) {
@@ -9715,9 +9777,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun TaskManagerProcessItem.belongsToRun(
         run: RecipeRuntimeState,
         boundPids: Set<Int>,
-        ownerId: String
+        ownerId: String,
+        unitId: String
     ): Boolean {
         if (runtimeOwnerId == ownerId) return true
+        if (runtimeUnitId == unitId) return true
         val terminalId = run.terminalSessionId?.takeIf { it.isNotBlank() }
         if (terminalId != null && linkedTerminalSessionId == terminalId) return true
         if (boundPids.isEmpty()) return false
@@ -9858,13 +9922,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(46), dp(10), 0, 0)
-            runManagementOwnershipRows(group).forEach { row ->
-                addView(runManagementDetailRow(
-                    title = row.first,
-                    subtitle = row.second,
-                    actions = emptyList()
-                ))
-            }
             val surfaceItems = runManagementSurfaceItems(group)
             surfaceItems
                 .filter { it.surface == CardRunSurface.Report }
@@ -9923,40 +9980,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 }
             }
         }
-
-    private fun runManagementOwnershipRows(group: RunManagementGroup): List<Pair<String, String>> {
-        val run = group.run
-        val runBinding = listOfNotNull(
-            run.runId?.takeIf { it.isNotBlank() }?.let { "runId $it" },
-            run.rootPid?.takeIf { it.isNotBlank() }?.let { "rootPid $it" },
-            run.processGroupId?.takeIf { it.isNotBlank() }?.let { "pgid $it" },
-            run.systemSessionId?.takeIf { it.isNotBlank() }?.let { "sid $it" }
-        ).joinToString(" · ").ifBlank { "未绑定执行进程" }
-        val surfaceBinding = listOfNotNull(
-            run.terminalSessionId?.takeIf { it.isNotBlank() }?.let { "terminal $it" },
-            run.nextActionUrl?.takeIf { it.isNotBlank() }?.let { "web ${it.trimForRunManagement(46)}" }
-        ).joinToString(" · ").ifBlank { "暂无 terminal/web" }
-        return listOf(
-            "CardRun" to "cardInstanceId ${run.cardInstanceId}",
-            "执行绑定" to runBinding,
-            "表面绑定" to surfaceBinding,
-            "退出判断" to runManagementExitSummary(run)
-        )
-    }
-
-    private fun runManagementExitSummary(run: RecipeRuntimeState): String {
-        // ponytail: text-derived exit class; add a stored exitReason only when filtering/reporting needs it.
-        val observation = listOfNotNull(run.lastError, run.lastMeaningfulOutput, run.shellReportText)
-            .joinToString("\n")
-        val detail = run.feedbackSummary()?.let { " · $it" }.orEmpty()
-        return when {
-            observation.contains("停止后仍有进程残留") -> "残留$detail"
-            run.status == RecipeRunStatus.Stopped -> "正常停止$detail"
-            run.status == RecipeRunStatus.Completed -> "正常完成$detail"
-            run.status == RecipeRunStatus.Failed || run.status == RecipeRunStatus.BridgeUnavailable -> "崩溃/异常$detail"
-            else -> "未结束 · ${run.status.label}"
-        }
-    }
 
     private fun runManagementSurfaceItems(group: RunManagementGroup): List<CardRunWindowItem> =
         group.recipe
@@ -10065,7 +10088,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         mainProcess != null || childProcesses.isNotEmpty() || run.boundProcessIds().isNotEmpty()
 
     private fun RunManagementGroup.runManagementProcessPreview(): String =
-        runManagementProcessTitle(mainProcess ?: childProcesses.firstOrNull(), run.boundProcessIds().firstOrNull())
+        buildList {
+            val mainPid = mainProcess?.pid?.takeIf { it > 0 } ?: run.boundProcessIds().firstOrNull()
+            mainPid?.let { add("主进程 PID $it") }
+            if (childProcesses.isNotEmpty()) add("子进程 ${childProcesses.size}")
+        }.joinToString(" · ").ifBlank { "已绑定" }
 
     private fun runManagementProcessDetails(group: RunManagementGroup): View =
         LinearLayout(this).apply {
@@ -10079,9 +10106,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     subtitle = mainProcess?.runManagementProcessSubtitle() ?: "卡片运行链路绑定",
                     actions = listOfNotNull(
                         (mainProcess?.pid ?: fallbackPid)?.takeIf { it > 0 }?.let { pid ->
-                            RunManagementAction("停止", danger = true) { stopRunManagementProcess(pid) }
+                            RunManagementAction("结束进程", danger = true) {
+                                showRunManagementProcessDialog(mainProcess, pid)
+                            }
                         }
-                    )
+                    ),
+                    onClick = { showRunManagementProcessDialog(mainProcess, fallbackPid) }
                 ))
             }
             if (group.childProcesses.isNotEmpty()) {
@@ -10097,12 +10127,32 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 if (childExpanded) {
                     group.childProcesses.forEach { process ->
                         addView(runManagementDetailRow(
-                            title = "PID ${process.pid} · ${process.title}",
-                            subtitle = process.commandLine.trimForRunManagement(),
-                            actions = emptyList()
+                            title = runManagementProcessTitle(process, process.pid),
+                            subtitle = process.runManagementProcessSubtitle(),
+                            actions = listOf(
+                                RunManagementAction("结束进程", danger = true) {
+                                    showRunManagementProcessDialog(process, process.pid)
+                                }
+                            ),
+                            onClick = { showRunManagementProcessDialog(process, process.pid) }
                         ))
                     }
                 }
+            }
+        }
+
+    private fun runManagementProcessSection(title: String, processes: List<TaskManagerProcessItem>): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(2))
+            addView(runManagementSectionTitle("$title · ${processes.size}"))
+            processes.forEach { process ->
+                addView(runManagementSurfaceRow(
+                    icon = "PID",
+                    title = runManagementProcessTitle(process, process.pid),
+                    subtitle = process.runManagementProcessSubtitle(),
+                    onClick = { showRunManagementProcessDialog(process, process.pid) }
+                ))
             }
         }
 
@@ -10118,11 +10168,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun runManagementDetailRow(
         title: String,
         subtitle: String,
-        actions: List<RunManagementAction>
+        actions: List<RunManagementAction>,
+        onClick: (() -> Unit)? = null
     ): View =
         row {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(7), 0, dp(7))
+            onClick?.let { click ->
+                isClickable = true
+                setOnClickListener { click() }
+            }
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(TextView(context).apply {
@@ -10199,22 +10254,189 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun runManagementProcessTitle(process: TaskManagerProcessItem?, fallbackPid: Int?): String {
         val pid = process?.pid?.takeIf { it > 0 } ?: fallbackPid
-        val command = process?.commandLine?.ifBlank { process.command }?.ifBlank { process.title }.orEmpty()
         return listOfNotNull(
             pid?.let { "PID $it" },
-            command.takeIf { it.isNotBlank() }?.trimForRunManagement()
+            process?.runManagementProcessName()?.takeIf { it.isNotBlank() }
         ).joinToString(" · ").ifBlank { "主进程" }
     }
 
     private fun TaskManagerProcessItem.runManagementProcessSubtitle(): String =
-        listOf(sourceLabel, stateLabel)
+        listOf(
+            runManagementProcessOwnerLabel(),
+            if (pid in runManagementPendingProcessStopIds) "结束中" else stateLabel
+        )
             .filter { it.isNotBlank() }
             .joinToString(" · ")
+
+    private fun TaskManagerProcessItem.runManagementProcessName(): String {
+        val text = runManagementIdentityText()
+        return when {
+            "supervisord" in text -> "容器守护进程"
+            "/runtime/bin/proot" in text || "link2symlink" in text -> "PRoot 容器入口"
+            "/workspace/.kf/system/bin/kf-runner" in text -> "Kite 命令启动器"
+            "locale-check" in text -> "语言环境检查"
+            "mkdir -p /run/" in text -> "运行目录准备"
+            else -> title.ifBlank { command.ifBlank { commandLine.substringBefore(' ') } }
+                .trimForRunManagement(36)
+                .ifBlank { "进程" }
+        }
+    }
+
+    private fun TaskManagerProcessItem.runManagementProcessPurpose(): String {
+        val text = runManagementIdentityText()
+        return when {
+            "supervisord" in text -> "维护 Ubuntu 容器里的后台服务"
+            "/runtime/bin/proot" in text || "link2symlink" in text -> "启动并隔离 Ubuntu 文件系统"
+            "/workspace/.kf/system/bin/kf-runner" in text -> "执行卡片命令前的统一入口"
+            "locale-check" in text -> "检查 Ubuntu 语言环境"
+            "mkdir -p /run/" in text -> "准备 Ubuntu 运行目录"
+            else -> "卡片或用户启动的普通进程"
+        }
+    }
+
+    private fun TaskManagerProcessItem.runManagementProcessOwnerLabel(): String =
+        when {
+            runtimeUnitId?.startsWith("card:") == true || runtimeOwnerId?.startsWith("card:") == true -> "卡片"
+            runtimeOwnerId?.startsWith("resource:") == true -> "资源"
+            runtimeOwnerId?.startsWith("terminal:") == true || runtimeOwnerKindLabel == "终端" -> "卡片终端"
+            isRunManagementSystemProcess() -> "系统"
+            runtimeOwnerKindLabel.isNullOrBlank() ||
+                runtimeOwnerKindLabel == "未归属运行根" ||
+                sourceLabel == "未归属运行根" -> "未关联卡片"
+            else -> runtimeOwnerKindLabel
+        }
+
+    private fun TaskManagerProcessItem.runManagementIdentityText(): String =
+        listOf(title, sourceLabel, runtimeOwnerKindLabel.orEmpty(), runtimeUnitId.orEmpty(), command, commandLine)
+            .joinToString(" ")
+            .lowercase()
 
     private fun String.trimForRunManagement(maxLength: Int = 72): String {
         val compact = trim().replace(Regex("\\s+"), " ")
         return if (compact.length <= maxLength) compact else compact.take(maxLength - 1) + "…"
     }
+
+    private fun showRunManagementProcessDialog(process: TaskManagerProcessItem?, fallbackPid: Int? = null) {
+        val pid = process?.pid?.takeIf { it > 0 } ?: fallbackPid?.takeIf { it > 0 }
+        if (pid == null) {
+            Toast.makeText(this, "进程 PID 不可用", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val dialog = Dialog(this)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(20).toFloat())
+            addView(TextView(context).apply {
+                text = "进程详情"
+                textSize = 17f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = runManagementProcessDialogText(process, pid)
+                textSize = 12.5f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(12), 0, dp(4))
+                setLineSpacing(dp(2).toFloat(), 1f)
+                maxHeight = dp(280)
+                movementMethod = ScrollingMovementMethod.getInstance()
+                isVerticalScrollBarEnabled = true
+            })
+            addView(row {
+                setPadding(0, dp(16), 0, 0)
+                addView(runManagementDialogButton("取消") { dialog.dismiss() }, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    setMargins(0, 0, dp(8), 0)
+                })
+                addView(runManagementDialogButton("结束进程", danger = true) {
+                    showRunManagementProcessConfirmDialog(process, pid, dialog)
+                }, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    setMargins(dp(8), 0, 0, 0)
+                })
+            })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.9f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun showRunManagementProcessConfirmDialog(
+        process: TaskManagerProcessItem?,
+        pid: Int,
+        detailDialog: Dialog
+    ) {
+        val dialog = Dialog(this)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(20).toFloat())
+            addView(TextView(context).apply {
+                text = "确认结束进程？"
+                textSize = 17f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = "将直接强制结束 PID $pid。进程退出前不会再等待温和停止。"
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(12), 0, dp(4))
+            })
+            addView(row {
+                setPadding(0, dp(16), 0, 0)
+                addView(runManagementDialogButton("取消") { dialog.dismiss() }, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    setMargins(0, 0, dp(8), 0)
+                })
+                addView(runManagementDialogButton("结束进程", danger = true) {
+                    dialog.dismiss()
+                    detailDialog.dismiss()
+                    stopRunManagementProcess(process, pid)
+                }, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    setMargins(dp(8), 0, 0, 0)
+                })
+            })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.86f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun runManagementProcessDialogText(process: TaskManagerProcessItem?, pid: Int): String =
+        buildList {
+            add("PID: $pid")
+            process?.let { item ->
+                add("名称: ${item.runManagementProcessName()}")
+                item.parentPid.takeIf { it > 0 }?.let { add("PPID: $it") }
+                add("状态: ${if (item.pid in runManagementPendingProcessStopIds) "结束中" else item.stateLabel}")
+                add("归属: ${item.runManagementProcessOwnerLabel()}")
+                add("用途: ${item.runManagementProcessPurpose()}")
+                item.commandLine.takeIf { it.isNotBlank() }?.let { add("完整命令:\n${it.trim()}") }
+            }
+        }.joinToString("\n")
+
+    private fun runManagementDialogButton(
+        label: String,
+        danger: Boolean = false,
+        onClick: () -> Unit
+    ): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 14f
+            typeface = if (danger) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(if (danger) tokens.danger else tokens.textPrimary)
+            background = roundedBox(
+                if (danger) tokens.warningSoft else tokens.surface,
+                if (danger) tokens.warningBorder else tokens.border,
+                dp(13).toFloat()
+            )
+            setOnClickListener { onClick() }
+        }
 
     private fun stopRunManagementCard(group: RunManagementGroup) {
         val recipe = group.recipe
@@ -10263,11 +10485,73 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         showKiteProcessOverview(forceRefresh = false)
     }
 
-    private fun stopRunManagementProcess(pid: Int) {
-        TaskManagerStore.endProcess(applicationContext, pid)
-        Toast.makeText(this, "正在停止进程 PID $pid", Toast.LENGTH_SHORT).show()
-        requestRuntimePanelSummaryRefresh(force = true)
-        root.postDelayed({ if (currentScreen == Screen.Processes) showKiteProcessOverview(forceRefresh = false) }, 360L)
+    private fun stopRunManagementProcess(process: TaskManagerProcessItem?, pid: Int) {
+        runManagementPendingProcessStopIds.add(pid)
+        markRunManagementProcessStopAsUserStop(process, pid)
+        TaskManagerStore.endProcess(applicationContext, process, pid)
+        Toast.makeText(this, "正在结束进程 PID $pid，稍后刷新", Toast.LENGTH_SHORT).show()
+        if (currentScreen == Screen.Processes) showKiteProcessOverview(forceRefresh = false)
+        scheduleRunManagementLazyRefresh(force = true)
+    }
+
+    private fun markRunManagementProcessStopAsUserStop(process: TaskManagerProcessItem?, pid: Int) {
+        val run = runManagementRunForProcess(process, pid) ?: return
+        val recipe = recipeForRunState(run) ?: return
+        setRuntimeState(
+            recipe,
+            RecipeRunStatus.Stopped,
+            instanceId = run.instanceId,
+            surface = CardRunSurface.Summary,
+            currentStepIndex = run.currentStepIndex,
+            lastMeaningfulOutput = "已手动结束进程 PID $pid",
+            clearRunBinding = true,
+            clearTerminalSession = true,
+            clearNextActionUrl = true
+        )
+    }
+
+    private fun runManagementRunForProcess(process: TaskManagerProcessItem?, pid: Int): RecipeRuntimeState? {
+        val unitCardId = process?.runtimeUnitId
+            ?.takeIf { it.startsWith("card:") }
+            ?.substringAfter(':')
+            ?.takeIf { it.isNotBlank() }
+        val ownerCardId = process?.runtimeOwnerId
+            ?.takeIf { it.startsWith("card:") }
+            ?.substringAfter(':')
+            ?.takeIf { it.isNotBlank() }
+        val ownerTerminalId = process?.runtimeOwnerId
+            ?.takeIf { it.startsWith("terminal:") }
+            ?.substringAfter(':')
+            ?.takeIf { it.isNotBlank() }
+        return listOfNotNull(unitCardId, ownerCardId)
+            .firstNotNullOfOrNull(CardRunStore::get)
+            ?: ownerTerminalId?.let { terminalId ->
+                CardRunStore.runs.value.firstOrNull { it.terminalSessionId == terminalId }
+            }
+            ?: CardRunStore.runs.value.firstOrNull { run ->
+                pid in run.boundProcessIds()
+            }
+    }
+
+    private fun scheduleRunManagementLazyRefresh(force: Boolean = false) {
+        requestRuntimePanelSummaryRefresh(force = force)
+        listOf(260L, 900L, 1800L).forEach { delayMs ->
+            root.postDelayed({
+                if (currentScreen != Screen.Processes || isFinishing || isDestroyed) return@postDelayed
+                requestRuntimePanelSummaryRefresh(force = false)
+                root.postDelayed({
+                    if (currentScreen == Screen.Processes && !isFinishing && !isDestroyed) {
+                        showKiteProcessOverview(forceRefresh = false)
+                    }
+                }, 180L)
+            }, delayMs)
+        }
+    }
+
+    private fun pruneRunManagementPendingProcessStops() {
+        if (runManagementPendingProcessStopIds.isEmpty()) return
+        val livePids = TaskManagerStore.snapshot.value.processes.mapTo(mutableSetOf()) { it.pid }
+        runManagementPendingProcessStopIds.removeAll(runManagementPendingProcessStopIds.filter { it !in livePids }.toSet())
     }
 
     private fun maybeAutoShowUbuntuRuntimePanel(state: UbuntuRuntimeUiState) {
@@ -12127,6 +12411,22 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 mapOf("remaining" to stopRemaining.joinToString(","))
             )
         }
+        if (stopRemaining.isEmpty() && stopLooksLikeManualKill(result)) {
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Stopped,
+                instanceId = previousState.instanceId,
+                surface = CardRunSurface.Summary,
+                lastMeaningfulOutput = "已停止",
+                clearRunBinding = true,
+                clearTerminalSession = true,
+                clearNextActionUrl = true
+            )
+            diagnostics.logBridgeEvent("stop_killed_output_suppressed", recipe, mapOf("runId" to previousState.runId.orEmpty()))
+            closeCardRunInstanceForStop(recipe, previousState, "stop_killed_output_suppressed")
+            showConsole()
+            return
+        }
         if (stopRemaining.isEmpty() && (result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
             setRuntimeState(
                 recipe,
@@ -12246,6 +12546,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .lineSequence()
             .map { it.trim() }
             .any { it.startsWith("__kite_stop_remaining:") }
+
+    private fun stopLooksLikeManualKill(result: BridgeResult): Boolean =
+        MANUAL_STOP_KILLED_REGEX.containsMatchIn(stopObservationText(result))
 
     private fun stopObservationText(result: BridgeResult): String = buildString {
         result.runReport?.steps.orEmpty().forEach { step ->
@@ -12596,6 +12899,22 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         clearTerminalSession: Boolean = false,
         clearNextActionUrl: Boolean = false
     ) {
+        if (shouldIgnoreRuntimeStateAfterUserStop(
+                recipe = recipe,
+                status = status,
+                instanceId = instanceId,
+                runId = runId,
+                pid = pid,
+                rootPid = rootPid,
+                processGroupId = processGroupId,
+                systemSessionId = systemSessionId,
+                lastMeaningfulOutput = lastMeaningfulOutput,
+                lastError = lastError,
+                shellReportText = shellReportText
+            )
+        ) {
+            return
+        }
         val state = CardRunStore.update(
             recipe = recipe,
             status = status,
@@ -12617,6 +12936,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             clearNextActionUrl = clearNextActionUrl
         )
         runtimeStates[recipe.id] = state
+        if (status == RecipeRunStatus.Stopped) {
+            clearActiveRunInstance(recipe, state.instanceId)
+        }
         updateVisibleCardRunReport(state)
         updateVisibleResourceInstallWizardElapsed()
         diagnostics.logLifecycleEvent(
@@ -12629,6 +12951,61 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             state.lastError
         )
         maybeRefreshConsoleAfterRuntimeState(recipe, state, status)
+    }
+
+    private fun shouldIgnoreRuntimeStateAfterUserStop(
+        recipe: KiteRecipe,
+        status: RecipeRunStatus,
+        instanceId: String?,
+        runId: String?,
+        pid: String?,
+        rootPid: String?,
+        processGroupId: String?,
+        systemSessionId: String?,
+        lastMeaningfulOutput: String?,
+        lastError: String?,
+        shellReportText: String?
+    ): Boolean {
+        if (status == RecipeRunStatus.Stopping || status == RecipeRunStatus.Stopped) return false
+        val targetInstanceId = instanceId
+            ?: activeRunInstanceIds[recipe.id]
+            ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
+            ?: return false
+        val current = CardRunStore.get(targetInstanceId) ?: return false
+        if (current.status != RecipeRunStatus.Stopping && current.status != RecipeRunStatus.Stopped) return false
+        val carriesOldRuntimeResult = listOf(
+            runId,
+            pid,
+            rootPid,
+            processGroupId,
+            systemSessionId,
+            lastMeaningfulOutput,
+            lastError,
+            shellReportText
+        ).any { !it.isNullOrBlank() } || status == RecipeRunStatus.BridgeUnavailable
+        if (!carriesOldRuntimeResult) return false
+        // ponytail: instance-level stale callback gate; replace with request tokens if launches become multi-flight.
+        diagnostics.logRecipeAction(
+            recipe,
+            "runtime_state_ignored_after_user_stop",
+            mapOf(
+                "instanceId" to targetInstanceId,
+                "currentStatus" to current.status.name,
+                "incomingStatus" to status.name,
+                "runId" to runId.orEmpty(),
+                "pid" to pid.orEmpty()
+            )
+        )
+        return true
+    }
+
+    private fun clearActiveRunInstance(recipe: KiteRecipe, instanceId: String) {
+        if (activeRunInstanceIds[recipe.id] == instanceId) {
+            activeRunInstanceIds.remove(recipe.id)
+        }
+        if (focusedRunInstanceId == instanceId && this !is CardRunActivity) {
+            focusedRunInstanceId = null
+        }
     }
 
     private fun maybeRefreshConsoleAfterRuntimeState(
@@ -16439,6 +16816,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val WEB_READY_READ_TIMEOUT_MS = 700
         private const val TERMINAL_STEP_COMMAND_DELAY_MS = 650L
         private const val TERMINAL_STOP_GRACE_MS = 350L
+        private val MANUAL_STOP_KILLED_REGEX = Regex("""\bKilled\b""", RegexOption.IGNORE_CASE)
         private const val RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS = 1_200L
         private const val TOOLCHAIN_WORKSPACE_PROBE_TTL_MS = 5_000L
         private const val REQUEST_DROPZONE_STORAGE = 801

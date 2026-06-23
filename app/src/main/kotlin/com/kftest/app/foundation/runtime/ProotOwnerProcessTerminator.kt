@@ -32,8 +32,11 @@ data class ProotOwnerTerminationResult(
 
 object ProotOwnerProcessTerminator {
     private const val LOG_TAG = "ProotOwnerProcessStop"
-    private const val TERM_GRACE_MS = 700L
-    private const val KILL_GRACE_MS = 350L
+    private const val OWNER_STOP_DEADLINE_MS = 10_000L
+    private const val KILL_WINDOW_MS = 2_000L
+    private const val OWNER_POLL_MS = 700L
+    private const val SIGNAL_BATCH_SIZE = 4
+    private const val SIGNAL_BATCH_DELAY_MS = 180L
 
     private data class OwnerSignalTargets(
         val traceePids: List<Int>,
@@ -57,45 +60,36 @@ object ProotOwnerProcessTerminator {
             )
         val targetTracees = group.traceePids.filter { it > 1 }.distinct().sorted()
         val targetGroups = group.processGroupIds.filter { it > 1 }.distinct().sorted()
-        if (targetTracees.isEmpty() && targetGroups.isEmpty()) {
+        if (targetTracees.isEmpty()) {
             return ProotOwnerTerminationResult(
                 ownerId = cleanOwnerId,
-                reason = "owner_has_no_signal_target"
+                targetProcessGroupIds = targetGroups,
+                reason = "owner_has_no_tracee_signal_target"
             )
         }
 
         Logger.i(
             LOG_TAG,
-            "stop owner=$cleanOwnerId tracees=${targetTracees.joinToString(",")} pgids=${targetGroups.joinToString(",")}"
+            "stop owner=$cleanOwnerId tracees=${targetTracees.joinToString(",")} pgids=${targetGroups.joinToString(",")} pgidMode=report_only deadlineMs=$OWNER_STOP_DEADLINE_MS"
         )
-        val sentTerm = signalTargets(targetGroups, targetTracees, OsConstants.SIGTERM)
-        Thread.sleep(TERM_GRACE_MS)
-        var remaining = remainingTracees(context, cleanOwnerId)
-        if (remaining.isNotEmpty()) {
-            remaining = retireIfOsTargetsGone(
-                context = context,
-                ownerId = cleanOwnerId,
-                remainingTraceePids = remaining,
-                reason = "owner_processes_missing_after_term"
-            )
-        }
+        val deadlineAt = System.currentTimeMillis() + OWNER_STOP_DEADLINE_MS
+        val killWindowAt = deadlineAt - KILL_WINDOW_MS
+        val sentTerm = signalTraceePidsLazily(targetTracees, OsConstants.SIGTERM)
+        var remaining = waitForOwnerExit(
+            context = context,
+            ownerId = cleanOwnerId,
+            deadlineAtMs = killWindowAt,
+            staleTelemetryReason = "owner_processes_missing_after_lazy_term"
+        )
         if (remaining.isNotEmpty()) {
             val killTargets = ownerTargets(context, cleanOwnerId)
-            val sentKill = signalTargets(
-                processGroupIds = killTargets.processGroupIds,
-                traceePids = killTargets.traceePids.ifEmpty { remaining },
-                signal = OsConstants.SIGKILL
+            val sentKill = signalTraceePidsLazily(killTargets.traceePids.ifEmpty { remaining }, OsConstants.SIGKILL)
+            remaining = waitForOwnerExit(
+                context = context,
+                ownerId = cleanOwnerId,
+                deadlineAtMs = deadlineAt,
+                staleTelemetryReason = "owner_processes_missing_after_lazy_kill"
             )
-            Thread.sleep(KILL_GRACE_MS)
-            remaining = remainingTracees(context, cleanOwnerId)
-            if (remaining.isNotEmpty()) {
-                remaining = retireIfOsTargetsGone(
-                    context = context,
-                    ownerId = cleanOwnerId,
-                    remainingTraceePids = remaining,
-                    reason = "owner_processes_missing_after_kill"
-                )
-            }
             return ProotOwnerTerminationResult(
                 ownerId = cleanOwnerId,
                 targetTraceePids = targetTracees,
@@ -114,8 +108,33 @@ object ProotOwnerProcessTerminator {
             remainingTraceePids = emptyList(),
             sentTerminate = sentTerm,
             sentKill = false,
-            reason = "owner_processes_exited_after_term"
+            reason = "owner_processes_exited_after_lazy_term"
         )
+    }
+
+    private fun waitForOwnerExit(
+        context: Context,
+        ownerId: String,
+        deadlineAtMs: Long,
+        staleTelemetryReason: String
+    ): List<Int> {
+        var remaining = remainingTracees(context, ownerId)
+        while (remaining.isNotEmpty() && System.currentTimeMillis() < deadlineAtMs) {
+            val sleepMs = (deadlineAtMs - System.currentTimeMillis())
+                .coerceAtMost(OWNER_POLL_MS)
+                .coerceAtLeast(0L)
+            if (sleepMs > 0L) Thread.sleep(sleepMs)
+            remaining = remainingTracees(context, ownerId)
+            if (remaining.isNotEmpty()) {
+                remaining = retireIfOsTargetsGone(
+                    context = context,
+                    ownerId = ownerId,
+                    remainingTraceePids = remaining,
+                    reason = staleTelemetryReason
+                )
+            }
+        }
+        return remaining
     }
 
     private fun remainingTracees(context: Context, ownerId: String): List<Int> {
@@ -162,20 +181,26 @@ object ProotOwnerProcessTerminator {
         return remainingTracees(context, ownerId)
     }
 
-    private fun signalTargets(
-        processGroupIds: List<Int>,
+    private fun signalTraceePidsLazily(
         traceePids: List<Int>,
         signal: Int
     ): Boolean {
         var sent = false
-        processGroupIds.forEach { pgid ->
-            sent = sendSignal(-pgid, signal, "pgid=$pgid") || sent
-        }
-        // PRoot tracee process groups are not always signalable on Android. The
-        // owner index already gives a bounded direct tracee set, so use both.
-        traceePids.forEach { pid ->
-            sent = sendSignal(pid, signal, "pid=$pid") || sent
-        }
+        // ponytail: avoid negative process-group kills; Android app children can share unsafe pgid boundaries.
+        val targets = traceePids
+            .filter { it > 1 }
+            .distinct()
+            .sorted()
+        targets
+            .chunked(SIGNAL_BATCH_SIZE)
+            .forEachIndexed { index, chunk ->
+                chunk.forEach { pid ->
+                    sent = sendSignal(pid, signal, "pid=$pid") || sent
+                }
+                if (index < (targets.size - 1) / SIGNAL_BATCH_SIZE) {
+                    Thread.sleep(SIGNAL_BATCH_DELAY_MS)
+                }
+            }
         return sent
     }
 

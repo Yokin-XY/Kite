@@ -40,6 +40,7 @@ data class TaskManagerProcessItem(
     val linkedTerminalSessionId: String? = null,
     val linkedTerminalTitle: String? = null,
     val runtimeOwnerId: String? = null,
+    val runtimeUnitId: String? = null,
     val runtimeOwnerKindLabel: String? = null,
     val runtimeRootPid: Int? = null,
     val runtimeRealityLabel: String? = null,
@@ -63,8 +64,10 @@ object TaskManagerStore {
 
     private const val UI_REFRESH_MIN_INTERVAL_MS = 2_000L
     private const val MAX_LIVE_PROCESS_ROWS = 160
+    private const val EMPTY_PROCESS_GRACE_MS = 1_500L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val actionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _snapshot = MutableStateFlow(TaskManagerSnapshot())
     val snapshot: StateFlow<TaskManagerSnapshot> = _snapshot
 
@@ -76,19 +79,23 @@ object TaskManagerStore {
 
     @Volatile
     private var lastRefreshAtMs = 0L
+    @Volatile
+    private var lastNonEmptySnapshot: TaskManagerSnapshot? = null
+    @Volatile
+    private var emptySnapshotStartedAtMs = 0L
 
     init {
         scope.launch {
             RuntimeHealthStore.snapshot.collect { healthSnapshot ->
                 val items = buildTaskItems(healthSnapshot)
-                _snapshot.value = TaskManagerSnapshot(
+                _snapshot.value = stabilizeSnapshot(TaskManagerSnapshot(
                     spaceId = healthSnapshot.spaceId,
                     processes = items,
                     refreshedAt = maxOf(
                         healthSnapshot.reconciledAt,
                         healthSnapshot.prootTelemetry.refreshedAtMs
                     )
-                )
+                ))
             }
         }
     }
@@ -140,7 +147,28 @@ object TaskManagerStore {
     }
 
     fun endProcess(context: Context, pid: Int) {
-        ContainerProcessStore.terminate(context.applicationContext, pid, force = false)
+        ContainerProcessStore.terminate(context.applicationContext, pid, force = true)
+    }
+
+    fun endProcess(context: Context, item: TaskManagerProcessItem) {
+        endProcess(context, item, item.pid)
+    }
+
+    fun endProcess(context: Context, item: TaskManagerProcessItem?, pid: Int) {
+        val ownerId = item?.prootOwnerStopId()
+        if (ownerId == null) {
+            endProcess(context, pid)
+            return
+        }
+        val appContext = context.applicationContext
+        actionScope.launch {
+            val result = ProotOwnerProcessTerminator.terminate(appContext, ownerId)
+            val missedOwner = !result.sentTerminate && !result.sentKill
+            if ((!result.ok || missedOwner) && pid > 0) {
+                ContainerProcessStore.terminate(appContext, pid, force = true)
+            }
+            refresh(appContext, force = true)
+        }
     }
 
     fun stopRuntime(context: Context, runtimeId: String) {
@@ -159,6 +187,14 @@ object TaskManagerStore {
         return _snapshot.value.processes.firstOrNull { it.id == processId }
     }
 
+    private fun TaskManagerProcessItem.prootOwnerStopId(): String? =
+        runtimeOwnerId
+            ?.takeIf { ownerId ->
+                ownerId.startsWith("card:") ||
+                    ownerId.startsWith("resource:") ||
+                    ownerId.startsWith("terminal:")
+            }
+
     @Synchronized
     private fun clearPendingRefresh() {
         pendingRefresh = false
@@ -169,6 +205,26 @@ object TaskManagerStore {
         val shouldRun = pendingRefresh
         pendingRefresh = false
         return shouldRun
+    }
+
+    @Synchronized
+    private fun stabilizeSnapshot(next: TaskManagerSnapshot): TaskManagerSnapshot {
+        if (next.processes.isNotEmpty()) {
+            lastNonEmptySnapshot = next
+            emptySnapshotStartedAtMs = 0L
+            return next
+        }
+        val previous = lastNonEmptySnapshot ?: return next
+        val now = System.currentTimeMillis()
+        if (emptySnapshotStartedAtMs == 0L) {
+            emptySnapshotStartedAtMs = now
+        }
+        // ponytail: short empty grace hides collector gaps; replace with refresh generations if collectors expose them.
+        return if (now - emptySnapshotStartedAtMs < EMPTY_PROCESS_GRACE_MS) {
+            previous.copy(refreshedAt = next.refreshedAt)
+        } else {
+            next
+        }
     }
 
     private fun buildTaskItems(
@@ -182,15 +238,17 @@ object TaskManagerStore {
             .mapNotNull { item -> item.pid.takeIf { it > 0 } }
             .toSet()
 
-        val processItems = healthSnapshot.prootTelemetry.processLiveTable.entries
+        val runningEntries = healthSnapshot.prootTelemetry.processLiveTable.entries
             .filter { entry -> entry.state == ProotLiveProcessState.RUNNING }
+        val entriesByPid = runningEntries.associateBy { it.traceePid }
+        val processItems = runningEntries
             .filterNot { entry -> entry.traceePid in rootPids }
             .sortedWith(
                 compareBy<ProotLiveProcessEntry> { it.commandTitle().lowercase() }
                     .thenBy { it.traceePid }
             )
             .take(MAX_LIVE_PROCESS_ROWS)
-            .map { entry -> entry.toTaskManagerItem() }
+            .map { entry -> entry.toTaskManagerItem(entriesByPid) }
 
         return rootItems + processItems
     }
@@ -220,6 +278,7 @@ object TaskManagerStore {
             linkedTerminalSessionId = ownerId.takeIf { ownerKind == RuntimeRootOwnerKind.TERMINAL },
             linkedTerminalTitle = title.takeIf { ownerKind == RuntimeRootOwnerKind.TERMINAL },
             runtimeOwnerId = ownerId,
+            runtimeUnitId = processUnitId,
             runtimeOwnerKindLabel = ownerKind.label,
             runtimeRootPid = pid.takeIf { it > 0 },
             runtimeRealityLabel = reality.label,
@@ -310,6 +369,7 @@ object TaskManagerStore {
             linkedTerminalSessionId = linkedTerminalSessionId,
             linkedTerminalTitle = linkedTerminalTitle,
             runtimeOwnerId = root?.ownerId,
+            runtimeUnitId = root?.processUnitId,
             runtimeOwnerKindLabel = root?.ownerKind?.label,
             runtimeRootPid = root?.observedPid ?: root?.expectedPid,
             runtimeRealityLabel = root?.reality?.label,
@@ -319,9 +379,15 @@ object TaskManagerStore {
         )
     }
 
-    private fun ProotLiveProcessEntry.toTaskManagerItem(): TaskManagerProcessItem {
+    private fun ProotLiveProcessEntry.toTaskManagerItem(
+        entriesByPid: Map<Int, ProotLiveProcessEntry>
+    ): TaskManagerProcessItem {
         val commandIdentity = commandIdentity()
         val title = commandTitle()
+        val ownerEntry = ownerSource(entriesByPid)
+        val runtimeOwnerId = ownerEntry.kfRuntimeId.takeIf { it.isNotBlank() }
+        val runtimeUnitId = ownerEntry.kfUnitId.takeIf { it.isNotBlank() }
+        val terminalSessionId = ownerEntry.terminalOwnerSessionId()
         return TaskManagerProcessItem(
             id = "ubuntu-process-$traceePid",
             pid = traceePid,
@@ -344,13 +410,49 @@ object TaskManagerStore {
             command = title,
             commandLine = commandIdentity,
             isSynthetic = false,
-            runtimeOwnerId = kfRuntimeId.takeIf { it.isNotBlank() },
+            linkedTerminalSessionId = terminalSessionId,
+            linkedTerminalTitle = terminalSessionId?.let { "终端 $it" },
+            runtimeOwnerId = runtimeOwnerId,
+            runtimeUnitId = runtimeUnitId,
+            runtimeOwnerKindLabel = ownerEntry.runtimeOwnerKindLabel(),
             runtimeRootPid = traceePid,
             runtimeRealityLabel = "PRoot 事件表",
             runtimeLastSeenAt = lastSeenAtMs.takeIf { it > 0L },
-            availableActions = listOf(TaskManagerAction.END_PROCESS, TaskManagerAction.REFRESH)
+            availableActions = listOfNotNull(
+                terminalSessionId?.let { TaskManagerAction.OPEN_TERMINAL },
+                TaskManagerAction.END_PROCESS,
+                TaskManagerAction.REFRESH
+            )
         )
     }
+
+    private fun ProotLiveProcessEntry.ownerSource(
+        entriesByPid: Map<Int, ProotLiveProcessEntry>
+    ): ProotLiveProcessEntry {
+        var current = this
+        val seen = mutableSetOf(traceePid)
+        repeat(8) {
+            if (current.kfRuntimeId.isNotBlank() || current.kfUnitId.isNotBlank()) return current
+            val parentPid = current.parentTraceePid ?: return current
+            if (!seen.add(parentPid)) return current
+            current = entriesByPid[parentPid] ?: return current
+        }
+        return current
+    }
+
+    private fun ProotLiveProcessEntry.terminalOwnerSessionId(): String? =
+        kfRuntimeId
+            .takeIf { it.startsWith("terminal:") }
+            ?.substringAfter(':')
+            ?.takeIf { it.isNotBlank() }
+
+    private fun ProotLiveProcessEntry.runtimeOwnerKindLabel(): String? =
+        when (kfRuntimeId.substringBefore(':')) {
+            "card" -> "卡片"
+            "resource" -> "资源"
+            "terminal" -> "终端"
+            else -> null
+        }
 
     private fun ProotLiveProcessEntry.buildUbuntuProcessSubtitle(commandIdentity: String): String {
         return buildList {

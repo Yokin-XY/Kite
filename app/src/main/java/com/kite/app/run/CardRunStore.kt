@@ -132,6 +132,21 @@ object CardRunStore {
             ?.let { get(it) ?: start(recipe, it) }
             ?: currentForRecipe(recipe.id)
             ?: start(recipe)
+        if (existing.shouldIgnoreStoppedRuntimeWrite(
+                status = status,
+                runId = runId,
+                terminalSessionId = terminalSessionId,
+                pid = pid,
+                rootPid = rootPid,
+                processGroupId = processGroupId,
+                systemSessionId = systemSessionId,
+                lastMeaningfulOutput = lastMeaningfulOutput,
+                lastError = lastError,
+                shellReportText = shellReportText
+            )
+        ) {
+            return existing
+        }
         val beginsNewHistory = existing.status.endsHistoryEntry() &&
             (status.startsHistoryEntry() || status.isImmediateHistoryEnd())
         val resolvedSurface = surface ?: when {
@@ -676,6 +691,41 @@ object CardRunStore {
         this == CardRunStatus.Failed ||
             this == CardRunStatus.BridgeUnavailable ||
             this == CardRunStatus.Stopped
+
+    private fun CardRunState.shouldIgnoreStoppedRuntimeWrite(
+        status: CardRunStatus,
+        runId: String?,
+        terminalSessionId: String?,
+        pid: String?,
+        rootPid: String?,
+        processGroupId: String?,
+        systemSessionId: String?,
+        lastMeaningfulOutput: String?,
+        lastError: String?,
+        shellReportText: String?
+    ): Boolean {
+        if (this.status != CardRunStatus.Stopped) return false
+        if (status == CardRunStatus.Stopped || status == CardRunStatus.Starting) return false
+        val carriesRuntimePayload = listOf(
+            runId,
+            terminalSessionId,
+            pid,
+            rootPid,
+            processGroupId,
+            systemSessionId,
+            lastMeaningfulOutput,
+            lastError,
+            shellReportText
+        ).any { !it.isNullOrBlank() }
+        if (status == CardRunStatus.Opened && !carriesRuntimePayload) return false
+        return status == CardRunStatus.Running ||
+            status == CardRunStatus.WaitingTerminal ||
+            status == CardRunStatus.AlreadyRunning ||
+            status == CardRunStatus.Opened ||
+            status == CardRunStatus.Completed ||
+            status == CardRunStatus.Failed ||
+            status == CardRunStatus.BridgeUnavailable
+    }
 
     private fun CardRunHistoryEntry.normalizedHistoryAfterProcessRestore(): CardRunHistoryEntry =
         if (!status.shouldResetAfterProcessRestore() || endedAt != null) {
