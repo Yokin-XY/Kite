@@ -243,33 +243,18 @@ object ContainerProcessStore {
                     )
                 }
             } else if (force) {
-                if (isContainerProcessAlive(context, pid)) {
-                    killUbuntuProcessPid(
+                killUbuntuProcessPid(
+                    context = context,
+                    pid = pid
+                ).also { outcome ->
+                    Logger.i(
+                        LOG_TAG,
+                        "强制 KO Ubuntu 单进程完成: requester=$requester pid=$pid exited=${outcome.exited} kill=${outcome.sentKill}"
+                    )
+                    writeProcessActionLog(
                         context = context,
-                        pid = pid
-                    ).also { outcome ->
-                        Logger.i(
-                            LOG_TAG,
-                            "强制 KO Ubuntu 单进程完成: requester=$requester pid=$pid exited=${outcome.exited} kill=${outcome.sentKill}"
-                        )
-                        writeProcessActionLog(
-                            context = context,
-                            content = "== 强制 KO Ubuntu 单进程 requester=$requester pid=$pid exited=${outcome.exited} kill=${outcome.sentKill} ==\n"
-                        )
-                    }
-                } else {
-                    HostProcessTerminator.killHostProcess(pid) { message ->
-                        Logger.i(LOG_TAG, "结束进程补偿: pid=$pid $message")
-                    }.also { outcome ->
-                        Logger.i(
-                            LOG_TAG,
-                            "结束进程完成: requester=$requester pid=$pid mode=host_kill exited=${outcome.exited} term=${outcome.sentTerminate} kill=${outcome.sentKill}"
-                        )
-                        writeProcessActionLog(
-                            context = context,
-                            content = "== 结束进程补偿 requester=$requester pid=$pid mode=host_kill exited=${outcome.exited} term=${outcome.sentTerminate} kill=${outcome.sentKill} ==\n"
-                        )
-                    }
+                        content = "== 强制 KO Ubuntu 单进程 requester=$requester pid=$pid exited=${outcome.exited} kill=${outcome.sentKill} ==\n"
+                    )
                 }
             } else if (requester == "runtime_reclaimer") {
                 terminateUbuntuProcessPid(

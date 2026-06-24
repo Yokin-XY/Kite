@@ -83,7 +83,7 @@ object ProotOwnerProcessTerminator {
 
         Logger.i(
             LOG_TAG,
-            "stop owner=$cleanOwnerId tracees=${targetTracees.joinToString(",")} pgids=${targetGroups.joinToString(",")} mode=ubuntu_group_then_pid deadlineMs=$OWNER_STOP_DEADLINE_MS"
+            "stop owner=$cleanOwnerId tracees=${targetTracees.joinToString(",")} pgids=${targetGroups.joinToString(",")} mode=ubuntu_pid_tree deadlineMs=$OWNER_STOP_DEADLINE_MS"
         )
         val stopResult = runUbuntuOwnerKill(
             context = context.applicationContext,
@@ -228,9 +228,10 @@ object ProotOwnerProcessTerminator {
             kf_owner_pids='$pids'
             kf_owner_pgids='$pgids'
             kf_sent_kill=false
-            printf '__kite_owner_stop_mode:ubuntu-force-kill\n'
+            printf '__kite_owner_stop_mode:ubuntu-pid-tree-force-kill\n'
             printf '__kite_owner_stop_targets:%s\n' "${'$'}(printf '%s\n' ${'$'}kf_owner_pids | tr '\n' ',')"
             printf '__kite_owner_stop_pgid:%s\n' "${'$'}(printf '%s\n' ${'$'}kf_owner_pgids | tr '\n' ',')"
+            kf_signal_targets=""
             kf_is_live_process() {
               [ -n "${'$'}1" ] || return 1
               [ -d "/proc/${'$'}1" ] || return 1
@@ -238,20 +239,47 @@ object ProotOwnerProcessTerminator {
               [ "${'$'}kf_state" = "Z" ] && return 1
               kill -0 "${'$'}1" >/dev/null 2>&1
             }
-            kf_collect_remaining() {
+            kf_add_target() {
+              case "${'$'}1" in
+                ''|*[!0-9]*|0|1) return 0 ;;
+              esac
+              case " ${'$'}kf_signal_targets " in
+                *" ${'$'}1 "*) ;;
+                *) kf_signal_targets="${'$'}kf_signal_targets ${'$'}1" ;;
+              esac
+            }
+            kf_children_of() {
+              ps -eo pid=,ppid= 2>/dev/null | awk -v p="${'$'}1" '${'$'}2 == p { print ${'$'}1 }'
+            }
+            kf_collect_tree() {
+              kf_todo="${'$'}1"
+              kf_seen=""
+              while [ -n "${'$'}kf_todo" ]; do
+                kf_next=""
+                for kf_parent in ${'$'}kf_todo; do
+                  for kf_child in ${'$'}(kf_children_of "${'$'}kf_parent"); do
+                    case " ${'$'}kf_seen " in
+                      *" ${'$'}kf_child "*) ;;
+                      *) kf_add_target "${'$'}kf_child"; kf_seen="${'$'}kf_seen ${'$'}kf_child"; kf_next="${'$'}kf_next ${'$'}kf_child" ;;
+                    esac
+                  done
+                done
+                kf_todo="${'$'}kf_next"
+              done
+            }
+            kf_refresh_targets() {
               for kf_pid in ${'$'}kf_owner_pids; do
+                kf_add_target "${'$'}kf_pid"
+                kf_collect_tree "${'$'}kf_pid"
+              done
+            }
+            kf_collect_remaining() {
+              for kf_pid in ${'$'}kf_signal_targets; do
                 kf_is_live_process "${'$'}kf_pid" && printf '%s\n' "${'$'}kf_pid"
               done
             }
-            kf_kill_groups() {
-              for kf_pgid in ${'$'}kf_owner_pgids; do
-                [ -n "${'$'}kf_pgid" ] || continue
-                kill -KILL -- "-${'$'}kf_pgid" >/dev/null 2>&1 || kill -KILL "-${'$'}kf_pgid" >/dev/null 2>&1 || true
-                kf_sent_kill=true
-              done
-            }
             kf_kill_pids() {
-              for kf_pid in ${'$'}kf_owner_pids; do
+              for kf_pid in ${'$'}kf_signal_targets; do
                 [ -n "${'$'}kf_pid" ] || continue
                 [ "${'$'}kf_pid" = "${'$'}${'$'}" ] && continue
                 [ -n "${'$'}PPID" ] && [ "${'$'}kf_pid" = "${'$'}PPID" ] && continue
@@ -261,9 +289,9 @@ object ProotOwnerProcessTerminator {
             }
             kf_attempt=0
             while [ "${'$'}kf_attempt" -lt $OWNER_STOP_ATTEMPTS ]; do
+              kf_refresh_targets
               kf_remaining=${'$'}(kf_collect_remaining)
               [ -n "${'$'}kf_remaining" ] || break
-              kf_kill_groups
               kf_kill_pids
               sleep $OWNER_STOP_SLEEP_SECONDS
               kf_attempt=${'$'}((kf_attempt + 1))

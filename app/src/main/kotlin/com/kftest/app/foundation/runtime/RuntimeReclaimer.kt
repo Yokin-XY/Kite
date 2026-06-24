@@ -341,7 +341,7 @@ object RuntimeReclaimer {
                     executed = false,
                     reason = "owner_process_terminate_failed:${termination.reason}",
                     signal = signal,
-                    targetMode = "proot_owner_process_group_and_tracee"
+                    targetMode = "proot_owner_pid_tree"
                 )
             }
             recordOwnerExecutionRequest(
@@ -353,7 +353,7 @@ object RuntimeReclaimer {
                 executed = true,
                 reason = "runtime_reclaimer_terminated_owner_processes:${termination.reason}",
                 signal = signal,
-                targetMode = "proot_owner_process_group_and_tracee"
+                targetMode = "proot_owner_pid_tree"
             )
         }.getOrElse { error ->
             synchronized(this) {

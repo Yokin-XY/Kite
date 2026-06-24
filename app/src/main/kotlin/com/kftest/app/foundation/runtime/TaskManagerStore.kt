@@ -162,11 +162,7 @@ object TaskManagerStore {
         }
         val appContext = context.applicationContext
         actionScope.launch {
-            val result = ProotOwnerProcessTerminator.terminate(appContext, ownerId)
-            val missedOwner = !result.sentTerminate && !result.sentKill
-            if ((!result.ok || missedOwner) && pid > 0) {
-                ContainerProcessStore.terminate(appContext, pid, force = true)
-            }
+            ProotOwnerProcessTerminator.terminate(appContext, ownerId)
             refresh(appContext, force = true)
         }
     }
@@ -189,6 +185,7 @@ object TaskManagerStore {
 
     private fun TaskManagerProcessItem.prootOwnerStopId(): String? =
         runtimeOwnerId
+            ?.takeIf { id.startsWith("root-") }
             ?.takeIf { ownerId ->
                 ownerId.startsWith("card:") ||
                     ownerId.startsWith("resource:") ||
