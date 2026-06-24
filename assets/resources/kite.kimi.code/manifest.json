@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.kimi.code",
+  "base": {
+    "name": "Kimi Code",
+    "description": "Moonshot AI 的终端编码助手",
+    "version": "official",
+    "icon": {
+      "type": "asset",
+      "value": "resources/kite.kimi.code/icon.png",
+      "fallbackText": "Ki",
+      "fit": "fullBleed"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "category": "AI",
+    "accent": "blue",
+    "sizeLabel": "网络包",
+    "longDescription": "Kimi Code 是 Moonshot AI 面向终端的 AI 编码助手，可以读写代码、运行命令、搜索文件和获取网页。Kite 使用官方 install script 获取 kimi 命令；登录、Kimi Code OAuth、Moonshot API Key 和兼容 Provider 设置都留在终端运行态完成，不写入资源卡 JSON。",
+    "recommendations": [
+      {
+        "resourceId": "kite.curl",
+        "label": "下载工具"
+      },
+      {
+        "resourceId": "kite.git",
+        "label": "源码工具"
+      },
+      {
+        "resourceId": "kite.qwen.code",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.codex.cli",
+        "label": "同类 Agent"
+      }
+    ],
+    "tags": [
+      "kimi",
+      "moonshot",
+      "coding-agent",
+      "terminal",
+      "ai",
+      "mcp"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.kimi",
+      "agent.moonshot.kimi-code"
+    ],
+    "base": [
+      "kite.git",
+      "kite.curl"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "official_script",
+    "url": "https://code.kimi.com/kimi-code/install.sh",
+    "repository": "https://github.com/MoonshotAI/kimi-code",
+    "command": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.kimi.code",
+    "installRoot": "/workspace/.kf/software/kite.kimi.code",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+        "managedCommands": [
+          "kimi"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 600000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Kimi Code",
+          "description": "在终端里启动 Kimi Code",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Kimi Code 首次启动可在 /login 中选择 Kimi Code OAuth 或 Moonshot API Key。\"\nkimi\n"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": [
+          "kimi"
+        ],
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Kimi Code",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Kimi Code",
+          "description": "在终端里启动 Kimi Code",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Kimi Code 首次启动可在 /login 中选择 Kimi Code OAuth 或 Moonshot API Key。\"\nkimi\n"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -168,7 +168,7 @@ SH
             install_root="${softwarePath(resourceId)}"
             user_home="${'$'}install_root/user-home"
             export HOME="${'$'}user_home"
-            export PATH="$WORKSPACE_BIN_ROOT:${'$'}install_root/bin:${'$'}HOME/.local/bin:${'$'}HOME/.codex/bin:${'$'}HOME/.claude/local:${'$'}HOME/.opencode/bin:/root/.local/bin:/root/.codex/bin:/root/.claude/local:/root/.opencode/bin:${'$'}PATH"
+            export PATH="$WORKSPACE_BIN_ROOT:${'$'}install_root/bin:${'$'}HOME/.local/bin:${'$'}HOME/.kimi-code/bin:${'$'}HOME/.codex/bin:${'$'}HOME/.claude/local:${'$'}HOME/.opencode/bin:/root/.local/bin:/root/.kimi-code/bin:/root/.codex/bin:/root/.claude/local:/root/.opencode/bin:${'$'}PATH"
             echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}install_root"
             $cleanLine
             mkdir -p "${'$'}install_root" "${'$'}install_root/bin" "${'$'}user_home" "$WORKSPACE_BIN_ROOT"
@@ -185,10 +185,12 @@ SH
                   "${'$'}install_root/bin/${'$'}command_name" \
                   "${'$'}npm_prefix/bin/${'$'}command_name" \
                   "${'$'}HOME/.local/bin/${'$'}command_name" \
+                  "${'$'}HOME/.kimi-code/bin/${'$'}command_name" \
                   "${'$'}HOME/.codex/bin/${'$'}command_name" \
                   "${'$'}HOME/.claude/local/${'$'}command_name" \
                   "${'$'}HOME/.opencode/bin/${'$'}command_name" \
                   "/root/.local/bin/${'$'}command_name" \
+                  "/root/.kimi-code/bin/${'$'}command_name" \
                   "/root/.codex/bin/${'$'}command_name" \
                   "/root/.claude/local/${'$'}command_name" \
                   "/root/.opencode/bin/${'$'}command_name" \

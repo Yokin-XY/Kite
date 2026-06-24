@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.qwen.code",
+  "base": {
+    "name": "Qwen Code",
+    "description": "通义千问的终端编码 Agent",
+    "version": "npm",
+    "icon": {
+      "type": "asset",
+      "value": "resources/kite.qwen.code/icon.png",
+      "fallbackText": "Qw",
+      "fit": "fullBleed"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "category": "AI",
+    "accent": "purple",
+    "sizeLabel": "网络包",
+    "longDescription": "Qwen Code 是 QwenLM 面向终端的开源 AI 编码 Agent，支持交互式终端 UI、headless 模式、Provider/API Key 配置和 ACP/daemon 等能力。Kite 使用 npm 包安装 qwen 命令；认证和模型选择由 qwen 的 /auth 流程在终端里完成。",
+    "recommendations": [
+      {
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.git",
+        "label": "源码工具"
+      },
+      {
+        "resourceId": "kite.kimi.code",
+        "label": "同类 Agent"
+      },
+      {
+        "resourceId": "kite.google.antigravity",
+        "label": "同类 CLI"
+      }
+    ],
+    "tags": [
+      "qwen",
+      "alibaba",
+      "coding-agent",
+      "terminal",
+      "ai",
+      "acp"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.qwen",
+      "agent.qwen.code"
+    ],
+    "base": [
+      "kite.nodejs",
+      "kite.git"
+    ],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "npm",
+    "package": "@qwen-code/qwen-code",
+    "repository": "https://github.com/QwenLM/qwen-code",
+    "command": "npm install -g @qwen-code/qwen-code@latest"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.qwen.code",
+    "installRoot": "/workspace/.kf/software/kite.qwen.code",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "npm install -g @qwen-code/qwen-code@latest",
+        "managedCommands": [
+          "qwen"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 600000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Qwen Code",
+          "description": "在终端里启动 Qwen Code",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Qwen Code 首次启动用 /auth 配置 Qwen 或其他 Provider。\"\nqwen\n"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": [
+          "qwen"
+        ],
+        "npmUninstallPackage": "@qwen-code/qwen-code",
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Qwen Code",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Qwen Code",
+          "description": "在终端里启动 Qwen Code",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Qwen Code 首次启动用 /auth 配置 Qwen 或其他 Provider。\"\nqwen\n"
+          }
+        ]
+      }
+    }
+  ]
+}

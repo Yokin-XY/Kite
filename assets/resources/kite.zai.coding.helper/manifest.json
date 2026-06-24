@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.zai.coding.helper",
+  "base": {
+    "name": "Z.AI Helper",
+    "description": "GLM Coding Plan 的命令行配置助手",
+    "version": "npm",
+    "icon": {
+      "type": "asset",
+      "value": "resources/kite.zai.coding.helper/icon.png",
+      "fallbackText": "Z",
+      "fit": "fullBleed"
+    }
+  },
+  "display": {
+    "sections": [
+      "featured"
+    ],
+    "category": "AI",
+    "accent": "teal",
+    "sizeLabel": "网络包",
+    "longDescription": "Z.AI Coding Tool Helper 是 Z.AI 官方命令行助手，用于把 GLM Coding Plan 接入 Claude Code、OpenCode、Crush、Factory Droid 等 CLI 工具，并管理 API Key、工具安装和 MCP 配置。ZCode 桌面 ADE 和终端 CLI 是分开的；Kite 这里只接入官方 CLI helper。",
+    "recommendations": [
+      {
+        "resourceId": "kite.nodejs",
+        "label": "运行时"
+      },
+      {
+        "resourceId": "kite.claude.code",
+        "label": "可配置工具"
+      },
+      {
+        "resourceId": "kite.opencode",
+        "label": "可配置工具"
+      },
+      {
+        "resourceId": "kite.google.antigravity",
+        "label": "同类 CLI"
+      }
+    ],
+    "tags": [
+      "zai",
+      "glm",
+      "coding-helper",
+      "terminal",
+      "ai",
+      "mcp"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "cli.zai.coding-helper",
+      "tool.glm-coding-plan-helper"
+    ],
+    "base": [
+      "kite.nodejs"
+    ],
+    "defaults": [],
+    "extensions": [
+      "kite.claude.code",
+      "kite.opencode"
+    ]
+  },
+  "source": {
+    "type": "npm",
+    "package": "@z_ai/coding-helper",
+    "repository": "https://docs.z.ai/devpack/extension/coding-tool-helper",
+    "command": "npm install -g @z_ai/coding-helper"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.zai.coding.helper",
+    "installRoot": "/workspace/.kf/software/kite.zai.coding.helper",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "npm install -g @z_ai/coding-helper",
+        "managedCommands": [
+          "coding-helper",
+          "chelper"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 600000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Z.AI Helper",
+          "description": "启动 GLM Coding Plan 配置助手",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Z.AI Coding Helper 会引导输入 GLM Coding Plan API Key，并可配置 Claude Code、OpenCode 等工具。\"\ncoding-helper\n"
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": ":",
+        "managedCommands": [
+          "coding-helper",
+          "chelper"
+        ],
+        "npmUninstallPackage": "@z_ai/coding-helper",
+        "timeoutMs": 180000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "Z.AI Helper",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Z.AI Helper",
+          "description": "启动 GLM Coding Plan 配置助手",
+          "icon": {
+            "type": "builtin",
+            "name": "bot"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "terminal",
+            "text": "cd /workspace\necho \"Z.AI Coding Helper 会引导输入 GLM Coding Plan API Key，并可配置 Claude Code、OpenCode 等工具。\"\ncoding-helper\n"
+          }
+        ]
+      }
+    }
+  ]
+}
