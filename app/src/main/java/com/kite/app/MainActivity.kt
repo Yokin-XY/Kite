@@ -262,6 +262,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var resourceSectionHost: LinearLayout? = null
     private var resourceSearchBar: ResourceSearchBar? = null
     private var resourceSearchQuery: String = ""
+    private var resourceSearchContentHost: LinearLayout? = null
+    private var currentResourceSearchQuery: String = ""
+    private var resourceSearchRequestSerial = 0L
+    private var resourceSearchRenderKey = ""
     private var resourceHomeTab: String = RESOURCE_HOME_TAB_ALL
     private var resourceSectionsRenderKey: String = ""
     private var resourceSectionsRenderedRequestKey: String = ""
@@ -615,6 +619,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             Screen.RecipeMore -> returnToRecipeFormFromMore()
             Screen.ThemeSettings -> showSettings()
             Screen.ResourceManage -> showResources()
+            Screen.ResourceSearch -> showResources()
             Screen.ResourceMore -> currentResourceDetailId?.let { showResourceDetail(it) } ?: showResources()
             Screen.ResourceRawJson -> currentResourceDetailId?.let { showResourceDetail(it) } ?: showResources()
             Screen.ResourceDetail -> showResources()
@@ -907,6 +912,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         invalidateResourceCatalogCache()
         when (currentScreen) {
             Screen.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
+            Screen.ResourceSearch -> requestResourceSearchRefresh()
             Screen.CardRun -> requestVisibleResourceInstallWizardRefresh(signal.reason)
             Screen.ResourceDetail -> currentResourceDetailId?.let { showResourceDetail(it) }
             Screen.ResourceMore -> currentResourceDetailId?.let { resourceId ->
@@ -1487,6 +1493,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 showResources()
                 true
             }
+            Screen.ResourceSearch -> {
+                showResources()
+                true
+            }
             Screen.ResourceManage -> {
                 showResourceManage()
                 true
@@ -1970,8 +1980,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
         }
         val searchPill = ResourceSearchBar(this) { query ->
-            resourceSearchQuery = query
-            requestResourceSectionsRefresh(query = query, forceCatalogRefresh = false)
+            showResourceSearch(query)
         }
         resourceSearchBar = searchPill
         return FrameLayout(this).apply {
@@ -1982,6 +1991,150 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             addView(searchPill)
         }.also {
             resourcePageView = it
+        }
+    }
+
+    private fun showResourceSearch(initialQuery: String = currentResourceSearchQuery) {
+        currentScreen = Screen.ResourceSearch
+        currentResourceDetailId = null
+        currentResourceSearchQuery = initialQuery.trim()
+        resourceSearchRenderKey = ""
+        root.setBackgroundColor(tokens.pageBackground)
+        clearRootForScreen()
+        resourceSearchContentHost = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val searchInput = resourceSearchInput(currentResourceSearchQuery)
+        root.addView(resourceSearchTopBar(searchInput))
+        root.addView(ScrollView(this).apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(22), dp(12), dp(22), dp(88))
+                addView(resourceSearchContentHost)
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        requestResourceSearchRefresh()
+        searchInput.requestFocus()
+        searchInput.post {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.showSoftInput(searchInput, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun resourceSearchTopBar(searchInput: EditText): View = row {
+        setPadding(dp(16), dp(12), dp(16), dp(8))
+        gravity = Gravity.CENTER_VERTICAL
+        addView(iconButton("‹", dp(44), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { showResources() })
+        addView(FrameLayout(context).apply {
+            background = roundedBox(tokens.surfaceElevated, tokens.border, dp(22).toFloat())
+            layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply {
+                setMargins(dp(6), 0, dp(10), 0)
+            }
+            addView(TextView(context).apply {
+                text = "⌕"
+                textSize = 28f
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(tokens.textPrimary)
+            }, FrameLayout.LayoutParams(dp(44), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START or Gravity.CENTER_VERTICAL))
+            addView(searchInput, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ).apply {
+                setMargins(dp(44), 0, dp(42), 0)
+            })
+            addView(TextView(context).apply {
+                text = "×"
+                textSize = 22f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                includeFontPadding = false
+                setTextColor(tokens.textTertiary)
+                setOnClickListener {
+                    searchInput.setText("")
+                    searchInput.requestFocus()
+                }
+            }, FrameLayout.LayoutParams(dp(42), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END or Gravity.CENTER_VERTICAL))
+        })
+    }
+
+    private fun resourceSearchInput(initialQuery: String): EditText =
+        EditText(this).apply {
+            setText(initialQuery)
+            setSelection(text?.length ?: 0)
+            hint = "搜索资源"
+            textSize = 17f
+            includeFontPadding = false
+            setSingleLine(true)
+            maxLines = 1
+            background = null
+            inputType = InputType.TYPE_CLASS_TEXT
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            setPadding(0, 0, 0, 0)
+            setTextColor(tokens.textPrimary)
+            setHintTextColor(tokens.textTertiary)
+            addTextChangedListener(simpleTextWatcher { query ->
+                currentResourceSearchQuery = query.trim()
+                requestResourceSearchRefresh()
+            })
+            setOnEditorActionListener { view, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                    currentResourceSearchQuery = view.text?.toString().orEmpty().trim()
+                    requestResourceSearchRefresh()
+                    hideKeyboard(view)
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+    private fun hideKeyboard(anchor: View) {
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+            ?.hideSoftInputFromWindow(anchor.windowToken, 0)
+    }
+
+    private fun requestResourceSearchRefresh(
+        query: String = currentResourceSearchQuery,
+        forceCatalogRefresh: Boolean = false
+    ) {
+        val host = resourceSearchContentHost ?: return
+        val requestId = ++resourceSearchRequestSerial
+        if (host.childCount == 0) {
+            host.addView(resourceRequestStateBlock("正在搜索资源", "资源列表会在后台加载。", loading = true))
+        }
+        thread(name = "KiteResourceSearch-$requestId", isDaemon = true) {
+            val result = runCatching {
+                val cleanQuery = query.trim()
+                val resources = resourceCatalog(forceRefresh = forceCatalogRefresh)
+                resources.searchResourceItems(cleanQuery)
+            }
+            runOnUiThread {
+                if (requestId != resourceSearchRequestSerial || currentScreen != Screen.ResourceSearch) return@runOnUiThread
+                result.onSuccess { items ->
+                    renderResourceSearchResults(host, query.trim(), items)
+                }.onFailure { error ->
+                    host.removeAllViews()
+                    host.addView(resourceRequestStateBlock("资源搜索失败", error.message ?: error.javaClass.simpleName))
+                }
+            }
+        }
+    }
+
+    private fun renderResourceSearchResults(host: LinearLayout, query: String, items: List<ResourceItem>) {
+        val renderKey = buildString {
+            append(query)
+            items.forEach { item ->
+                append('|').append(item.id).append(':').append(item.stateLabel).append(':').append(item.actionLabel)
+            }
+        }
+        if (resourceSearchRenderKey == renderKey && host.childCount > 0) return
+        resourceSearchRenderKey = renderKey
+        host.removeAllViews()
+        if (items.isEmpty()) {
+            host.addView(resourceSearchEmptyState(query))
+        } else {
+            host.addView(resourceListSection("搜索结果", items, showTitle = false))
         }
     }
 
@@ -2263,6 +2416,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceSectionHost = null
         resourceSearchBar = null
         resourceSearchQuery = ""
+        resourceSearchContentHost = null
+        currentResourceSearchQuery = ""
+        resourceSearchRenderKey = ""
         resourceHomeTab = RESOURCE_HOME_TAB_ALL
         resourceSectionsRenderKey = ""
         resourceSectionsRenderedRequestKey = ""
@@ -2297,6 +2453,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 resourceCatalogBackgroundRefreshInFlight = false
                 when (currentScreen) {
                     Screen.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
+                    Screen.ResourceSearch -> requestResourceSearchRefresh()
                     Screen.CardRun -> requestVisibleResourceInstallWizardRefresh("catalog:$reason")
                     Screen.ResourceMore -> refreshResourceMoreActionsFromCache()
                     Screen.ResourceManage -> requestResourceManageRefresh(forceCatalogRefresh = false, reason = "catalog:$reason")
@@ -2660,7 +2817,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private inner class ResourceSearchBar(
         context: Context,
-        private val onQueryChanged: (String) -> Unit
+        private val onSearchRequested: (String) -> Unit
     ) : FrameLayout(context) {
         private val expandedWidth = dp(184)
         private val collapsedWidth = dp(42)
@@ -2687,20 +2844,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             setPadding(0, 0, 0, 0)
             setTextColor(tokens.textPrimary)
             setHintTextColor(tokens.textTertiary)
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                    onQueryChanged(s?.toString().orEmpty())
-                }
-                override fun afterTextChanged(s: Editable?) = Unit
-            })
+            setOnClickListener { onSearchRequested(text?.toString().orEmpty()) }
             setOnFocusChangeListener { _, hasFocus ->
-                if (hasFocus) setCollapsed(false, focusInput = false)
+                if (hasFocus) onSearchRequested(text?.toString().orEmpty())
             }
             setOnEditorActionListener { view, actionId, _ ->
                 if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    view.clearFocus()
-                    hideKeyboard()
+                    onSearchRequested(view.text?.toString().orEmpty())
                     true
                 } else {
                     false
@@ -2715,9 +2865,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             elevation = dp(5).toFloat()
             clipChildren = true
             clipToPadding = true
-            setOnClickListener {
-                setCollapsed(false, focusInput = true)
-            }
+            setOnClickListener { onSearchRequested(inputView.text?.toString().orEmpty()) }
             addView(inputView, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -2766,22 +2914,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     inputView.alpha = if (nextCollapsed) 0f else 1f
                     inputView.isEnabled = !nextCollapsed
                     background = searchBackground(if (nextCollapsed) 0f else 1f)
-                    if (focusInput && !nextCollapsed) focusSearchInput()
+                    if (focusInput && !nextCollapsed) onSearchRequested(inputView.text?.toString().orEmpty())
                 }
             })
-        }
-
-        private fun focusSearchInput() {
-            inputView.requestFocus()
-            inputView.post {
-                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                imm?.showSoftInput(inputView, InputMethodManager.SHOW_IMPLICIT)
-            }
-        }
-
-        private fun hideKeyboard() {
-            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.hideSoftInputFromWindow(inputView.windowToken, 0)
         }
 
         private fun searchBackground(progress: Float): GradientDrawable =
@@ -2793,24 +2928,64 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun ResourceItem.matchesResourceQuery(query: String): Boolean {
-        val needle = query.lowercase()
-        return listOf(
-            name,
-            description,
-            version,
-            sizeLabel,
-            stateLabel,
-            section,
-            actionLabel,
-            iconText,
-            iconAsset,
-            accent
-        ).any { it.lowercase().contains(needle) } ||
-            steps.any { step ->
-                step.type.lowercase().contains(needle) ||
-                    step.title.lowercase().contains(needle) ||
-                    step.preview.lowercase().contains(needle)
+        return resourceSearchScore(query) > 0
+    }
+
+    private fun List<ResourceItem>.searchResourceItems(query: String): List<ResourceItem> {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) return this
+        return mapIndexedNotNull { index, item ->
+            val score = item.resourceSearchScore(cleanQuery)
+            if (score <= 0) null else Triple(score, index, item)
+        }
+            .sortedWith(compareByDescending<Triple<Int, Int, ResourceItem>> { it.first }.thenBy { it.second })
+            .map { it.third }
+    }
+
+    private fun ResourceItem.resourceSearchScore(query: String): Int {
+        val needle = normalizeResourceSearchText(query)
+        if (needle.isBlank()) return 0
+        val compactName = normalizeResourceSearchText(name)
+        val acronym = resourceSearchAcronym(name)
+        val nameIndex = compactName.indexOf(needle)
+        return when {
+            compactName == needle -> 10_000
+            compactName.startsWith(needle) -> 9_000 - (compactName.length - needle.length).coerceAtLeast(0)
+            nameIndex >= 0 -> 8_000 - (nameIndex * 80) - (compactName.length - needle.length).coerceAtMost(80)
+            acronym.startsWith(needle) -> 7_000
+            needle.length == 1 -> 0
+            normalizeResourceSearchText(description).contains(needle) -> 3_000
+            needle.length < 3 -> 0
+            else -> resourceFuzzyNameScore(needle, compactName)
+        }
+    }
+
+    private fun normalizeResourceSearchText(value: String): String =
+        value.lowercase().filter { it.isLetterOrDigit() }
+
+    private fun resourceSearchAcronym(value: String): String =
+        value.split(Regex("""[^A-Za-z0-9\u4e00-\u9fff]+"""))
+            .mapNotNull { token -> token.firstOrNull()?.lowercaseChar() }
+            .joinToString("")
+
+    private fun resourceFuzzyNameScore(needle: String, candidate: String): Int {
+        if (needle.length < 3 || candidate.isBlank()) return 0
+        val samePosition = needle.indices.count { index ->
+            index < candidate.length && needle[index] == candidate[index]
+        }
+        var ordered = 0
+        var cursor = 0
+        needle.forEach { char ->
+            val foundAt = candidate.indexOf(char, cursor)
+            if (foundAt >= 0) {
+                ordered++
+                cursor = foundAt + 1
             }
+        }
+        val samePercent = samePosition * 100 / needle.length
+        val orderedPercent = ordered * 100 / needle.length
+        if (samePercent < 60 && orderedPercent < 75) return 0
+        return 4_000 + samePercent * 8 + orderedPercent * 4 - kotlin.math.abs(candidate.length - needle.length).coerceAtMost(80)
     }
 
     private fun resourceSearchEmptyState(query: String): View =
@@ -2973,7 +3148,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         items: List<ResourceItem>,
         startIndex: Int = 0
     ) {
-        if (currentScreen != Screen.Resources) {
+        if (currentScreen != Screen.Resources && currentScreen != Screen.ResourceSearch) {
             resourceSectionsDirty = true
             return
         }
@@ -7178,7 +7353,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val canComplete = canCompleteCurrentCardStep(actionRecipe, actionState)
         val currentWebUrl = (actionState.nextActionUrl
             ?.takeIf { it.isNotBlank() }
-            ?: lastWorkbenchUrl?.takeIf { it.isNotBlank() }).orEmpty()
+            ?: lastWorkbenchUrl?.takeIf { it.isNotBlank() })
+            ?.let { redactUrlCredentials(it) }
+            .orEmpty()
         val actions = mutableListOf<Pair<String, () -> Unit>>()
         if (!isWebChrome && canComplete) {
             actions += "继续" to { completeCurrentCardStep(actionRecipe, actionState) }
@@ -7580,9 +7757,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun showCardRunWebView(parentHost: FrameLayout, recipe: KiteRecipe, url: String) {
         val target = url.trim().ifBlank { DEFAULT_LOCAL_URL }
-        diagnostics.logOpenWebAttempt(recipe, target, "card_run_surface")
+        val displayTarget = redactUrlCredentials(target)
+        diagnostics.logOpenWebAttempt(recipe, displayTarget, "card_run_surface")
         diagnostics.writeWebAppStatus(
-            url = target,
+            url = displayTarget,
             title = recipe.name,
             state = "opening",
             recipeId = recipe.id,
@@ -8569,7 +8747,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             if (error.isNotBlank()) lines += "错误：$error"
             if (output.isNotBlank() && output != error) lines += "输出：$output"
         }
-        if (!state.nextActionUrl.isNullOrBlank()) lines += "网页：${state.nextActionUrl}"
+        if (!state.nextActionUrl.isNullOrBlank()) lines += "网页：${redactUrlCredentials(state.nextActionUrl)}"
         if (!hasReport && error.isBlank() && output.isBlank() && state.nextActionUrl.isNullOrBlank()) {
             lines += "暂无输出。一次性命令请使用“等待结束”，例如 python3 -V。"
         }
@@ -15769,9 +15947,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun openWeb(url: String, source: String, recipe: KiteRecipe? = null) {
         val target = url.trim().ifBlank { DEFAULT_LOCAL_URL }
-        diagnostics.logOpenWebAttempt(recipe, target, source)
+        val displayTarget = redactUrlCredentials(target)
+        diagnostics.logOpenWebAttempt(recipe, displayTarget, source)
         diagnostics.writeWebAppStatus(
-            url = target,
+            url = displayTarget,
             title = recipe?.name,
             state = "opening",
             recipeId = recipe?.id,
@@ -16478,14 +16657,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun compactUrlForCard(url: String): String {
         if (url.isBlank()) return "未填写网址"
+        val displayUrl = redactUrlCredentials(url)
         return runCatching {
-            val parsed = Uri.parse(url)
+            val parsed = Uri.parse(displayUrl)
             val host = parsed.host.orEmpty()
-            if (host.isBlank()) return@runCatching url.take(90)
+            if (host.isBlank()) return@runCatching displayUrl.take(90)
             val port = parsed.port.takeIf { it > 0 }?.let { ":$it" }.orEmpty()
             val path = parsed.path.orEmpty().takeIf { it.isNotBlank() && it != "/" }.orEmpty()
             "$host$port$path".take(90)
-        }.getOrDefault(url.take(90))
+        }.getOrDefault(displayUrl.take(90))
+    }
+
+    private fun redactUrlCredentials(url: String?): String {
+        val value = url.orEmpty()
+        if (value.isBlank()) return value
+        return runCatching {
+            val parsed = java.net.URI(value)
+            if (parsed.userInfo.isNullOrBlank() || parsed.host.isNullOrBlank()) {
+                value
+            } else {
+                java.net.URI(parsed.scheme, null, parsed.host, parsed.port, parsed.path, parsed.query, parsed.fragment).toString()
+            }
+        }.getOrDefault(value)
     }
 
     private fun cardTitle(text: String): TextView = TextView(this).apply {
@@ -17179,6 +17372,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         CreateConfig,
         RecipeMore,
         Resources,
+        ResourceSearch,
         ResourceManage,
         ResourceDetail,
         ResourceMore,
