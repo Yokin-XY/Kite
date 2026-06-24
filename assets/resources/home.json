@@ -43,6 +43,32 @@
       "style": "list"
     }
   ],
+  "tabs": [
+    {
+      "id": "all",
+      "label": "全部"
+    },
+    {
+      "id": "angel-cli",
+      "label": "Angel CLI",
+      "sections": [
+        {
+          "id": "angel-cli",
+          "title": "Angel CLI",
+          "items": [
+            "kite.opencode",
+            "kite.openclaw",
+            "kite.reasonix",
+            "kite.hermes.core",
+            "kite.codex.cli",
+            "kite.claude.code",
+            "kite.mimo.code"
+          ],
+          "style": "list"
+        }
+      ]
+    }
+  ],
   "hero": {
     "resourceId": "kite.mimo.code",
     "imageAsset": "resources/kite.mimo.code/banner.png",
@@ -50,11 +76,6 @@
   },
   "chips": [
     "全部",
-    "已获取",
-    "本地",
-    "Python",
-    "Node",
-    "AI",
-    "系统工具"
+    "Angel CLI"
   ]
 }

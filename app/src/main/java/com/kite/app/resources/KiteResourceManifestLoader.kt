@@ -87,6 +87,7 @@ data class KiteResourceDisplayRowSpec(
 data class KiteResourceHomeLayout(
     val sections: List<KiteResourceHomeSection>,
     val hero: KiteResourceHomeHero?,
+    val tabs: List<KiteResourceHomeTab>,
     val chips: List<String>,
     val rawJson: JSONObject
 )
@@ -96,6 +97,12 @@ data class KiteResourceHomeSection(
     val title: String,
     val style: String,
     val items: List<String>
+)
+
+data class KiteResourceHomeTab(
+    val id: String,
+    val label: String,
+    val sections: List<KiteResourceHomeSection>
 )
 
 data class KiteResourceHomeHero(
@@ -442,19 +449,7 @@ class KiteResourceManifestLoader(private val context: Context) {
         }.getOrNull()
 
     private fun parseHomeLayout(json: JSONObject): KiteResourceHomeLayout {
-        val sectionsJson = json.optJSONArray("sections") ?: JSONArray()
-        val sections = buildList {
-            for (index in 0 until sectionsJson.length()) {
-                val section = sectionsJson.optJSONObject(index) ?: continue
-                val id = section.optString("id").trim()
-                val title = section.optString("title").trim()
-                val style = section.optString("style").trim()
-                val items = section.optJSONArray("items").toStringList()
-                if (id.isNotBlank() && title.isNotBlank()) {
-                    add(KiteResourceHomeSection(id = id, title = title, style = style, items = items))
-                }
-            }
-        }
+        val sections = parseHomeSections(json.optJSONArray("sections") ?: JSONArray())
         val heroJson = json.optJSONObject("hero")
         val hero = heroJson?.let {
             val resourceId = it.optString("resourceId").trim()
@@ -474,9 +469,42 @@ class KiteResourceManifestLoader(private val context: Context) {
         return KiteResourceHomeLayout(
             sections = sections,
             hero = hero,
+            tabs = parseHomeTabs(json.optJSONArray("tabs")),
             chips = json.optJSONArray("chips").toStringList(),
             rawJson = json.deepCopy()
         )
+    }
+
+    private fun parseHomeSections(sectionsJson: JSONArray): List<KiteResourceHomeSection> =
+        buildList {
+            for (index in 0 until sectionsJson.length()) {
+                val section = sectionsJson.optJSONObject(index) ?: continue
+                val id = section.optString("id").trim()
+                val title = section.optString("title").trim()
+                val style = section.optString("style").trim()
+                val items = section.optJSONArray("items").toStringList()
+                if (id.isNotBlank() && title.isNotBlank()) {
+                    add(KiteResourceHomeSection(id = id, title = title, style = style, items = items))
+                }
+            }
+        }
+
+    private fun parseHomeTabs(tabsJson: JSONArray?): List<KiteResourceHomeTab> {
+        if (tabsJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until tabsJson.length()) {
+                val tab = tabsJson.optJSONObject(index) ?: continue
+                val label = tab.optString("label").trim()
+                if (label.isBlank()) continue
+                add(
+                    KiteResourceHomeTab(
+                        id = tab.optString("id").trim().ifBlank { label },
+                        label = label,
+                        sections = parseHomeSections(tab.optJSONArray("sections") ?: JSONArray())
+                    )
+                )
+            }
+        }
     }
 
     private fun parseManifest(json: JSONObject): KiteResourceManifest {

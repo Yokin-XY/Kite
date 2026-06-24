@@ -89,9 +89,11 @@ import com.kite.app.resources.KiteResourceInstallSignal
 import com.kite.app.resources.KiteResourceInstallSpec
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceDisplayRowSpec
+import com.kite.app.resources.KiteResourceHomeSection
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.resources.KiteResourceHomeLayout
+import com.kite.app.resources.KiteResourceHomeTab
 import com.kite.app.resources.KiteResourcePreviewSpec
 import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRequestPolicy
@@ -109,6 +111,7 @@ import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.web.KiteWebShell
+import com.google.android.material.tabs.TabLayout
 import com.kftest.app.R
 import com.kftest.app.foundation.bootstrap.BootstrapCoordinator
 import com.kftest.app.foundation.bootstrap.BootstrapSnapshot
@@ -251,6 +254,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var resourceSectionHost: LinearLayout? = null
     private var resourceSearchBar: ResourceSearchBar? = null
     private var resourceSearchQuery: String = ""
+    private var resourceHomeTab: String = RESOURCE_HOME_TAB_ALL
     private var resourceSectionsRenderKey: String = ""
     private var resourceSectionsRenderedRequestKey: String = ""
     private var resourceSectionsRequestSerial = 0L
@@ -1939,7 +1943,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setPadding(dp(22), 0, dp(22), dp(96))
                 addView(resourceHeader())
                 addView(resourceHero())
-                addView(resourceCategoryChips())
+                addView(resourceCategoryTabs())
                 resourceSectionHost = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     layoutParams = LinearLayout.LayoutParams(
@@ -1982,7 +1986,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         forceCatalogRefresh: Boolean = false
     ): Boolean {
         val sectionHost = resourceSectionHost ?: return false
-        val payload = buildResourceSectionsPayload(query, forceCatalogRefresh)
+        val payload = buildResourceSectionsPayload(query, forceCatalogRefresh, resourceHomeTab)
         return renderResourceSectionsPayload(sectionHost, payload)
     }
 
@@ -1991,7 +1995,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         forceCatalogRefresh: Boolean = false
     ) {
         val sectionHost = resourceSectionHost ?: return
-        val requestKey = KiteResourceRequestPolicy.storeListKey(query)
+        val tabId = resourceHomeTab
+        val requestKey = resourceSectionsRequestKey(query, tabId)
         val hasRenderedSections = sectionHost.childCount > 0
         if (
             !forceCatalogRefresh &&
@@ -2007,7 +2012,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceSectionsInFlightKey = requestKey
         resourceInstallStore.clearExpiredPageCache()
         thread(name = "KiteResourceSections-$requestId-${requestKey.take(24)}", isDaemon = true) {
-            val result = runCatching { buildResourceSectionsPayload(query, forceCatalogRefresh) }
+            val result = runCatching { buildResourceSectionsPayload(query, forceCatalogRefresh, tabId) }
             runOnUiThread {
                 if (requestId != resourceSectionsRequestSerial || currentScreen != Screen.Resources) {
                     if (resourceSectionsInFlightKey == requestKey) resourceSectionsInFlightKey = null
@@ -2028,29 +2033,45 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
+    private fun resourceSectionsRequestKey(query: String, tabId: String): String =
+        "${KiteResourceRequestPolicy.storeListKey(query)}:tab:${KiteResourceInstallRecipes.safeId(tabId)}"
+
     private fun buildResourceSectionsPayload(
         query: String,
-        forceCatalogRefresh: Boolean
+        forceCatalogRefresh: Boolean,
+        tabId: String
     ): ResourceSectionsPayload {
         val resources = resourceCatalog(forceRefresh = forceCatalogRefresh)
         val cleanQuery = query.trim()
         val visibleResources = if (cleanQuery.isBlank()) resources else resources.filter { it.matchesResourceQuery(cleanQuery) }
-        val sections = buildResourceHomeSections(visibleResources, resourceManifestLoader.requestHomeLayout())
+        val sections = buildResourceHomeSections(visibleResources, resourceManifestLoader.requestHomeLayout(), tabId)
         return ResourceSectionsPayload(
             query = cleanQuery,
             resources = visibleResources,
             sections = sections,
-            renderKey = buildResourceSectionsRenderKey(cleanQuery, visibleResources, sections)
+            renderKey = buildResourceSectionsRenderKey(tabId, cleanQuery, visibleResources, sections)
         )
     }
 
     private fun buildResourceHomeSections(
         resources: List<ResourceItem>,
-        layout: KiteResourceHomeLayout?
+        layout: KiteResourceHomeLayout?,
+        tabId: String
+    ): List<ResourceHomeSectionUi> {
+        val tab = layout?.tabs.orEmpty().firstOrNull { it.id == tabId }
+        val sectionSpecs = tab?.sections?.takeIf { it.isNotEmpty() } ?: layout?.sections.orEmpty()
+        val includeFallback = tab == null || tab.id == RESOURCE_HOME_TAB_ALL || tab.sections.isEmpty()
+        return buildResourceHomeSections(resources, sectionSpecs, includeFallback)
+    }
+
+    private fun buildResourceHomeSections(
+        resources: List<ResourceItem>,
+        sectionSpecs: List<KiteResourceHomeSection>,
+        includeFallback: Boolean
     ): List<ResourceHomeSectionUi> {
         val resourcesById = resources.associateBy { it.id }
         val usedIds = linkedSetOf<String>()
-        val layoutSections = layout?.sections.orEmpty().mapNotNull { section ->
+        val layoutSections = sectionSpecs.mapNotNull { section ->
             val sectionItems = section.items.mapNotNull { resourceId ->
                 resourcesById[resourceId]?.also { usedIds.add(it.id) }
             }
@@ -2060,7 +2081,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 ResourceHomeSectionUi(id = section.id, title = section.title, style = section.style, items = sectionItems)
             }
         }
-        val fallbackSections = resources
+        val fallbackSections = if (!includeFallback) {
+            emptyList()
+        } else {
+            resources
             .filterNot { it.id in usedIds }
             .groupBy { it.section }
             .mapNotNull { (title, items) ->
@@ -2072,6 +2096,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     items = items
                 )
             }
+        }
         return layoutSections + fallbackSections
     }
 
@@ -2175,11 +2200,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun buildResourceSectionsRenderKey(
+        tabId: String,
         query: String,
         resources: List<ResourceItem>,
         sections: List<ResourceHomeSectionUi>
     ): String =
         buildString {
+            append(tabId)
+            append(':')
             append(query)
             sections.forEach { section ->
                 append("|section:")
@@ -2220,6 +2248,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceSectionHost = null
         resourceSearchBar = null
         resourceSearchQuery = ""
+        resourceHomeTab = RESOURCE_HOME_TAB_ALL
         resourceSectionsRenderKey = ""
         resourceSectionsRenderedRequestKey = ""
         resourceSectionsRenderSerial++
@@ -2829,62 +2858,83 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
-    private fun resourceCategoryChips(): View =
-        HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(row {
-                val labels = resourceManifestLoader.requestHomeLayout()?.chips.orEmpty()
-                    .ifEmpty { listOf("全部", "已获取", "本地", "Python", "Node", "AI", "系统工具") }
-                labels.forEachIndexed { index, label ->
-                    addView(TextView(context).apply {
-                        text = label
-                        textSize = 12.5f
-                        typeface = if (index == 0) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                        setTextColor(if (index == 0) tokens.buttonText else tokens.textPrimary)
-                        setPadding(dp(13), dp(8), dp(13), dp(8))
-                        background = roundedBox(
-                            if (index == 0) tokens.primaryStrong else tokens.surface,
-                            if (index == 0) tokens.primaryStrong else tokens.border,
-                            dp(18).toFloat()
-                        )
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                            .apply { setMargins(0, 0, dp(8), 0) }
-                    })
+    private fun resourceCategoryTabs(): View =
+        TabLayout(this).apply {
+            contentDescription = "资源分类"
+            tabMode = TabLayout.MODE_SCROLLABLE
+            tabGravity = TabLayout.GRAVITY_START
+            setBackgroundColor(Color.TRANSPARENT)
+            setSelectedTabIndicatorColor(tokens.primaryStrong)
+            setTabTextColors(tokens.textSecondary, tokens.primaryStrong)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 0, 0, dp(14)) }
+
+            val tabs = resourceHomeTabs(resourceManifestLoader.requestHomeLayout())
+            val selectedId = resourceHomeTab.takeIf { selected -> tabs.any { it.id == selected } }
+                ?: RESOURCE_HOME_TAB_ALL
+            resourceHomeTab = selectedId
+            tabs.forEach { homeTab ->
+                addTab(newTab().setText(homeTab.label).setTag(homeTab.id), homeTab.id == selectedId)
+            }
+            addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+                override fun onTabSelected(tab: TabLayout.Tab) {
+                    val nextTab = tab.tag as? String ?: RESOURCE_HOME_TAB_ALL
+                    if (resourceHomeTab == nextTab) return
+                    resourceHomeTab = nextTab
+                    resourceSectionsDirty = true
+                    requestResourceSectionsRefresh(forceCatalogRefresh = false)
                 }
+
+                override fun onTabUnselected(tab: TabLayout.Tab) = Unit
+                override fun onTabReselected(tab: TabLayout.Tab) = Unit
             })
         }
+
+    private fun resourceHomeTabs(layout: KiteResourceHomeLayout?): List<KiteResourceHomeTab> {
+        val tabs = layout?.tabs.orEmpty()
+        if (tabs.isNotEmpty()) return tabs
+        return listOf(KiteResourceHomeTab(RESOURCE_HOME_TAB_ALL, "全部", emptyList()))
+    }
 
     private fun resourceSection(section: ResourceHomeSectionUi): View =
         if (section.style.equals("shelf", ignoreCase = true)) {
             resourceToolShelfSection(section)
         } else {
-            resourceListSection(title = section.title, items = section.items)
+            resourceListSection(
+                title = section.title,
+                items = section.items,
+                showTitle = resourceHomeTab == RESOURCE_HOME_TAB_ALL || section.id != resourceHomeTab
+            )
         }
 
-    private fun resourceListSection(title: String, items: List<ResourceItem>): View {
+    private fun resourceListSection(title: String, items: List<ResourceItem>, showTitle: Boolean = true): View {
         if (items.isEmpty()) return LinearLayout(this)
         val sectionView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(24), 0, 0)
+            setPadding(0, if (showTitle) dp(24) else 0, 0, 0)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            addView(row {
-                gravity = Gravity.CENTER_VERTICAL
-                addView(TextView(context).apply {
-                    text = title
-                    textSize = 19f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            if (showTitle) {
+                addView(row {
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(TextView(context).apply {
+                        text = title
+                        textSize = 19f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(tokens.textPrimary)
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    })
+                    addView(TextView(context).apply {
+                        text = "查看全部 ›"
+                        textSize = 12f
+                        setTextColor(tokens.primaryStrong)
+                    })
                 })
-                addView(TextView(context).apply {
-                    text = "查看全部 ›"
-                    textSize = 12f
-                    setTextColor(tokens.primaryStrong)
-                })
-            })
+            }
         }
         val rowsHost = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2892,7 +2942,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
             elevation = dp(1).toFloat()
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                .apply { setMargins(0, dp(12), 0, 0) }
+                .apply { setMargins(0, if (showTitle) dp(12) else 0, 0, 0) }
         }
         sectionView.addView(rowsHost)
         rowsHost.post { renderResourceListRowsBatch(sectionView, rowsHost, items) }
@@ -16790,6 +16840,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val RESOURCE_CURL = "kite.curl"
         private const val RESOURCE_PYTHON = "kite.python"
         private const val RESOURCE_UV = "kite.uv"
+        private const val RESOURCE_HOME_TAB_ALL = "all"
         private const val RESOURCE_TOOL_SHELF_ITEM_WIDTH_DP = 68
         private const val RESOURCE_TOOL_SHELF_ITEM_GAP_DP = 7
         private const val RESOURCE_TOOL_SHELF_ICON_SIZE_DP = 58
