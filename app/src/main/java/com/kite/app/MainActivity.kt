@@ -7730,7 +7730,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val actionState = wizardChildRun?.second ?: state
         if (canCompleteCurrentCardStep(actionRecipe, actionState)) {
             completeCurrentCardStep(actionRecipe, actionState)
+            return
         }
+        closeCardRunTask()
     }
 
     private fun canCompleteCurrentCardStep(recipe: KiteRecipe, state: RecipeRuntimeState): Boolean {
