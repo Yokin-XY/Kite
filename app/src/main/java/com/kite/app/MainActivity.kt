@@ -12552,7 +12552,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             appendLine(step.stdoutTail)
             appendLine(step.stderrTail)
         }
+        appendLine(result.message)
         appendLine(result.rawBody)
+    }
+
+    private fun bridgeFailureArrivedAfterManualStop(recipe: KiteRecipe, result: BridgeResult): RecipeRuntimeState? {
+        val currentState = runtimeStateFor(recipe)
+        if (currentState.status != RecipeRunStatus.Stopping && currentState.status != RecipeRunStatus.Stopped) return null
+        val report = result.runReport
+        val failed = result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE ||
+            report?.hasMismatch() == true ||
+            report?.ok == false ||
+            report?.status == KiteRunReport.STATUS_FAILED ||
+            (!result.ok && !result.accepted)
+        if (!failed || !stopLooksLikeManualKill(result)) return null
+        return currentState
     }
 
     private fun handleStopResult(recipe: KiteRecipe, previousState: RecipeRuntimeState, result: BridgeResult) {
@@ -12608,6 +12622,27 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val rootPid = report?.rootPid ?: pid
         val processGroupId = report?.processGroupId
         val systemSessionId = report?.systemSessionId
+
+        bridgeFailureArrivedAfterManualStop(recipe, result)?.let { stoppedState ->
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Stopped,
+                instanceId = stoppedState.instanceId,
+                surface = CardRunSurface.Summary,
+                lastMeaningfulOutput = "已停止",
+                clearRunBinding = true,
+                clearTerminalSession = true,
+                clearNextActionUrl = true
+            )
+            diagnostics.logRecipeAction(
+                recipe,
+                "bridge_killed_output_suppressed_after_stop",
+                mapOf("requestId" to requestId, "runId" to runId.orEmpty())
+            )
+            closeCardRunInstanceForStop(recipe, stoppedState, "bridge_killed_output_suppressed_after_stop")
+            showConsole()
+            return
+        }
 
         if (result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE) {
             setRuntimeState(
