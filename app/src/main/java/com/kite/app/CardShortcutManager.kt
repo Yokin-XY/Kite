@@ -112,12 +112,7 @@ object CardShortcutManager {
 
     private fun customShortcutBitmap(context: Context, recipe: KiteRecipe): Bitmap? {
         if (recipe.icon.type != KiteRecipeIcon.TYPE_IMAGE || recipe.icon.source.isBlank()) return null
-        val file = if (recipe.icon.source.startsWith("/") || recipe.icon.source.contains(":")) {
-            File(recipe.icon.source)
-        } else {
-            File(context.filesDir, recipe.icon.source)
-        }
-        val source = if (file.exists()) BitmapFactory.decodeFile(file.absolutePath) else null
+        val source = decodeCustomShortcutSource(context, recipe.icon.source)
         source ?: return null
         val size = 144
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -135,6 +130,23 @@ object CardShortcutManager {
         canvas.restore()
         source.recycle()
         return bitmap
+    }
+
+    private fun decodeCustomShortcutSource(context: Context, source: String): Bitmap? {
+        val file = if (source.startsWith("/") || source.contains(":")) {
+            File(source)
+        } else {
+            File(context.filesDir, source)
+        }
+        if (file.exists()) return BitmapFactory.decodeFile(file.absolutePath)
+
+        val normalized = source.trim().trimStart('/')
+        if (normalized.isBlank() || normalized.contains("..")) return null
+        return runCatching {
+            context.assets.open(normalized).use { stream ->
+                BitmapFactory.decodeStream(stream)
+            }
+        }.getOrNull()
     }
 
     private fun shortcutBitmap(recipe: KiteRecipe): Bitmap {
