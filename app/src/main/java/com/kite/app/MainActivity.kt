@@ -5592,13 +5592,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         action: KiteResourceShellAction
     ): String =
         when (operation) {
-            KiteResourceInstallRecipes.OP_INSTALL -> KiteResourceInstallRecipes.manifestInstallCommand(
-                resourceId = item.id,
-                displayName = item.name,
-                rawCommand = action.cmd,
-                managedCommands = action.managedCommands,
-                cleanInstallRoot = action.cleanInstallRoot
-            )
+            KiteResourceInstallRecipes.OP_INSTALL -> bundledToolchainManifestInstallCommand(item, action.cmd)
+                ?: KiteResourceInstallRecipes.manifestInstallCommand(
+                    resourceId = item.id,
+                    displayName = item.name,
+                    rawCommand = action.cmd,
+                    managedCommands = action.managedCommands,
+                    cleanInstallRoot = action.cleanInstallRoot
+                )
             KiteResourceInstallRecipes.OP_UNINSTALL -> KiteResourceInstallRecipes.manifestUninstallCommand(
                 resourceId = item.id,
                 rawCommand = action.cmd,
@@ -5607,6 +5608,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
             else -> action.cmd
         }
+
+    private fun bundledToolchainManifestInstallCommand(item: ResourceItem, command: String): String? {
+        if (!item.isBundledResource()) return null
+        val trimmed = command.trim()
+        if (trimmed != "install.sh" && !trimmed.startsWith("install.sh ")) return null
+        val mode = trimmed.removePrefix("install.sh").trim().ifBlank { "--install" }
+        if (!Regex("""--?[A-Za-z0-9][A-Za-z0-9_-]*""").matches(mode)) return null
+        return KiteResourceInstallRecipes.localToolchainCommand(item.id, mode)
+    }
 
     private fun resourceInstallRecipe(item: ResourceItem): KiteRecipe? {
         val steps = resourceManifestRecipeSteps(item, KiteResourceInstallRecipes.OP_INSTALL)
