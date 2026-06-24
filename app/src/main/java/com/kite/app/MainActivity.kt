@@ -6739,10 +6739,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun consolePages(): List<ConsolePage> {
-        val opened = runtimeStates.values.count { it.status in RecipeRunStatus.activeStatuses }
-        val stopped = runtimeStates.values.count {
-            it.status == RecipeRunStatus.Stopped || it.status == RecipeRunStatus.BridgeUnavailable
-        }
+        val opened = currentRecipes.count { isConsoleOpenedRecipe(it) }
+        val stopped = currentRecipes.count { isConsoleStoppedRecipe(it) }
         val base = listOf(
             ConsolePage(CONSOLE_PAGE_ALL, "▦  全部 ${currentRecipes.size}"),
             ConsolePage(CONSOLE_PAGE_OPENED, "▶  已打开 $opened"),
@@ -6784,14 +6782,31 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun recipesForConsolePage(): List<KiteRecipe> =
         when (consolePageId) {
             CONSOLE_PAGE_ALL -> currentRecipes
-            CONSOLE_PAGE_OPENED -> currentRecipes.filter { runtimeStateFor(it).status in RecipeRunStatus.activeStatuses }
-            CONSOLE_PAGE_STOPPED -> currentRecipes.filter {
-                val status = runtimeStateFor(it).status
-                status == RecipeRunStatus.Stopped || status == RecipeRunStatus.BridgeUnavailable
-            }
+            CONSOLE_PAGE_OPENED -> currentRecipes.filter { isConsoleOpenedRecipe(it) }
+            CONSOLE_PAGE_STOPPED -> currentRecipes.filter { isConsoleStoppedRecipe(it) }
             else -> consoleGroupId(consolePageId)
                 ?.let { groupId -> currentRecipes.filter { recipe -> recipeInGroup(recipe, groupId) } }
                 ?: currentRecipes
+        }
+
+    private fun isConsoleOpenedRecipe(recipe: KiteRecipe): Boolean =
+        when (runtimeStateFor(recipe).status) {
+            RecipeRunStatus.Starting,
+            RecipeRunStatus.Running,
+            RecipeRunStatus.WaitingTerminal,
+            RecipeRunStatus.AlreadyRunning,
+            RecipeRunStatus.Opened,
+            RecipeRunStatus.Stopping -> true
+            else -> false
+        }
+
+    private fun isConsoleStoppedRecipe(recipe: KiteRecipe): Boolean =
+        when (runtimeStateFor(recipe).status) {
+            RecipeRunStatus.Stopped,
+            RecipeRunStatus.Completed,
+            RecipeRunStatus.Failed,
+            RecipeRunStatus.BridgeUnavailable -> true
+            else -> false
         }
 
     private fun renderConsolePageBody() {
