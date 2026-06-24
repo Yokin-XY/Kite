@@ -10,6 +10,7 @@ data class KiteRecipe(
     val description: String,
     val type: String,
     val category: String = "",
+    val groupId: String = "",
     val defaultUrl: String,
     val shortcut: Boolean,
     val icon: KiteRecipeIcon = KiteRecipeIcon.defaultForType(type),
@@ -63,7 +64,10 @@ data class KiteRecipe(
                 .put("name", name)
                 .put("description", description)
                 .apply {
-                    if (includeLocalIdentity) put("category", normalizeCategory(category))
+                    if (includeLocalIdentity) {
+                        put("category", normalizeCategory(category))
+                        put("groupId", normalizeGroupId(groupId))
+                    }
                 }
                 .put("icon", icon.toJson())
         )
@@ -176,6 +180,7 @@ data class KiteRecipe(
                 description = header?.optString("description") ?: json.optString("description"),
                 type = type,
                 category = normalizeCategory(header?.optString("category") ?: json.optString("category")),
+                groupId = normalizeGroupId(header?.optString("groupId") ?: json.optString("groupId")),
                 defaultUrl = defaultUrl,
                 shortcut = header?.optBoolean("shortcut") ?: json.optBoolean("shortcut", false),
                 icon = icon,
@@ -320,6 +325,9 @@ data class KiteRecipe(
             val normalized = category?.trim().orEmpty()
             return if (normalized.equals(CATEGORY_UNCATEGORIZED, ignoreCase = true)) "" else normalized
         }
+
+        fun normalizeGroupId(groupId: String?): String =
+            groupId?.trim().orEmpty()
     }
 }
 

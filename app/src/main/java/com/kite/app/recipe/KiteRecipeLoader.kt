@@ -415,6 +415,7 @@ class KiteRecipeLoader(
             description = input.description.ifBlank { defaultDescription(inferredType) },
             type = inferredType,
             category = KiteRecipe.normalizeCategory(input.category),
+            groupId = KiteRecipe.normalizeGroupId(input.groupId),
             defaultUrl = defaultUrl,
             shortcut = input.shortcut,
             icon = icon,
@@ -432,7 +433,8 @@ class KiteRecipeLoader(
                     "createdAt" to now,
                     "runtimeSource" to it.runtimeSource,
                     "icon" to it.icon.name,
-                    "category" to it.category
+                    "category" to it.category,
+                    "groupId" to it.groupId
                 )
             )
         }
@@ -585,7 +587,8 @@ class KiteRecipeLoader(
             mapOf(
                 "runtimeSource" to recipe.runtimeSource,
                 "icon" to recipe.icon.name,
-                "category" to recipe.category
+                "category" to recipe.category,
+                "groupId" to recipe.groupId
             )
         )
     }
@@ -609,6 +612,7 @@ data class NewRecipeInput(
     val type: String,
     val name: String,
     val category: String = "",
+    val groupId: String = "",
     val url: String,
     val command: String,
     val shortcut: Boolean,

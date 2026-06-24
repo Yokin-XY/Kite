@@ -3,7 +3,6 @@ package com.kite.app
 import android.animation.ValueAnimator
 import android.animation.LayoutTransition
 import android.app.ActivityManager
-import android.app.AlertDialog
 import android.app.Dialog
 import android.app.NotificationManager
 import android.Manifest
@@ -74,6 +73,8 @@ import com.kite.app.bridge.KiteLocalServer
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.DropZoneStatus
 import com.kite.app.dropzone.KiteDropZoneManager
+import com.kite.app.recipe.KiteCardGroup
+import com.kite.app.recipe.KiteCardGroupStore
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
@@ -188,16 +189,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private val activeRunInstanceIds = mutableMapOf<String, String>()
     private val cardRunWindowHiddenSurfaces = mutableMapOf<String, MutableSet<String>>()
     private val actionRouter = KiteActionRouter()
+    private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
     private var currentScreen: Screen = Screen.Console
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var consolePageId: String = CONSOLE_PAGE_ALL
-    private val consoleCustomPageLabels = mutableListOf<String>()
     private var consolePageTabsView: TabLayout? = null
     private var consolePageBodyHost: FrameLayout? = null
     private var selectedType = KiteRecipe.TYPE_OPEN_URL
     private var selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_OPEN_URL)
     private var selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
     private var selectedIconSource = ""
+    private var selectedGroupId = ""
+    private var groupSelectionDetailView: TextView? = null
     private var formShortcutRequested = false
     private var formLaunchOpenInstance = true
     private var recipeMoreDraft: RecipeFormDraft? = null
@@ -1543,6 +1546,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             selectedIconName = selectedIconName,
             selectedIconType = selectedIconType,
             selectedIconSource = selectedIconSource,
+            groupId = selectedGroupId,
             name = nameInput.text?.toString().orEmpty(),
             description = if (::descriptionInput.isInitialized) descriptionInput.text?.toString().orEmpty() else "",
             url = if (::urlInput.isInitialized) urlInput.text?.toString().orEmpty() else "",
@@ -1811,6 +1815,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         consoleCardBindings.clear()
         consolePageTabsView = null
         consolePageBodyHost = null
+        groupSelectionDetailView = null
         val transaction = supportFragmentManager.beginTransaction()
         var changed = false
 
@@ -6741,13 +6746,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val base = listOf(
             ConsolePage(CONSOLE_PAGE_ALL, "▦  全部 ${currentRecipes.size}"),
             ConsolePage(CONSOLE_PAGE_OPENED, "▶  已打开 $opened"),
-            ConsolePage(CONSOLE_PAGE_STOPPED, "■  已停止 $stopped"),
-            ConsolePage("placeholder-1", "分页 1"),
-            ConsolePage("placeholder-2", "分页 2"),
-            ConsolePage("placeholder-3", "分页 3")
+            ConsolePage(CONSOLE_PAGE_STOPPED, "■  已停止 $stopped")
         )
-        return base + consoleCustomPageLabels.mapIndexed { index, label ->
-            ConsolePage("$CONSOLE_PAGE_CUSTOM_PREFIX$index", label)
+        return base + cardGroupStore.groups().map { group ->
+            ConsolePage(consoleGroupPageId(group.id), group.name)
         }
     }
 
@@ -6770,11 +6772,27 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         statusPill.setOnClickListener { openPanel() }
     }
 
-    private fun consolePageBody(): View =
-        when (consolePageId) {
-            CONSOLE_PAGE_ALL -> recipeGrid()
-            else -> emptyConsolePage(consolePages().firstOrNull { it.id == consolePageId }?.label.orEmpty())
+    private fun consolePageBody(): View {
+        val recipes = recipesForConsolePage()
+        return if (recipes.isEmpty() && consolePageId != CONSOLE_PAGE_ALL) {
+            emptyConsolePage(consolePages().firstOrNull { it.id == consolePageId }?.label.orEmpty())
+        } else {
+            recipeGrid(recipes)
         }.withConsolePageSwipe()
+    }
+
+    private fun recipesForConsolePage(): List<KiteRecipe> =
+        when (consolePageId) {
+            CONSOLE_PAGE_ALL -> currentRecipes
+            CONSOLE_PAGE_OPENED -> currentRecipes.filter { runtimeStateFor(it).status in RecipeRunStatus.activeStatuses }
+            CONSOLE_PAGE_STOPPED -> currentRecipes.filter {
+                val status = runtimeStateFor(it).status
+                status == RecipeRunStatus.Stopped || status == RecipeRunStatus.BridgeUnavailable
+            }
+            else -> consoleGroupId(consolePageId)
+                ?.let { groupId -> currentRecipes.filter { recipe -> recipeInGroup(recipe, groupId) } }
+                ?: currentRecipes
+        }
 
     private fun renderConsolePageBody() {
         renderConsolePageBody(consolePageBodyHost ?: return)
@@ -6856,23 +6874,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun showAddConsolePageDialog() {
-        val defaultName = "分页 ${consoleCustomPageLabels.size + 4}"
-        val input = EditText(this).apply {
-            setSingleLine(true)
-            setText(defaultName)
-            selectAll()
+        showCardGroupDialog(selectedGroupId = consoleGroupId(consolePageId).orEmpty()) { group ->
+            consolePageId = consoleGroupPageId(group.id)
+            showConsole()
         }
-        AlertDialog.Builder(this)
-            .setTitle("添加分页")
-            .setView(input)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("添加") { _, _ ->
-                val label = input.text?.toString()?.trim().orEmpty().ifBlank { defaultName }
-                consoleCustomPageLabels.add(label)
-                consolePageId = "$CONSOLE_PAGE_CUSTOM_PREFIX${consoleCustomPageLabels.lastIndex}"
-                showConsole()
-            }
-            .show()
     }
 
     private fun systemStatusPill(): TextView = TextView(this).apply {
@@ -11191,7 +11196,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         })
     }
 
-    private fun recipeGrid(): View {
+    private fun recipeGrid(recipes: List<KiteRecipe> = currentRecipes): View {
         val swipeRefresh = SwipeRefreshLayout(this).apply {
             setColorSchemeColors(tokens.primaryStrong)
             setProgressBackgroundColorSchemeColor(tokens.surfaceElevated)
@@ -11210,7 +11215,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             clipToPadding = false
         }
         val cardWidth = ((resources.displayMetrics.widthPixels - dp(36)) / 2).coerceAtLeast(dp(132))
-        currentRecipes.forEach { recipe ->
+        recipes.forEach { recipe ->
             grid.addView(recipeCard(recipe), GridLayout.LayoutParams().apply {
                 width = cardWidth
                 height = dp(130)
@@ -11507,7 +11512,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun recipeCategoryLabel(recipe: KiteRecipe): String =
-        KiteRecipe.normalizeCategory(recipe.category)
+        recipeGroupLabel(recipe).ifBlank { "未分组" }
 
     private fun recipeStepCueText(recipe: KiteRecipe, state: RecipeRuntimeState): String {
         val steps = recipe.steps
@@ -13298,6 +13303,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         selectedIconSource = draft?.selectedIconSource
             ?: recipe?.icon?.source
             ?: ""
+        selectedGroupId = draft?.groupId ?: recipe?.groupId.orEmpty()
         if (selectedIconType != KiteRecipeIcon.TYPE_IMAGE || selectedIconSource.isBlank()) {
             selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
             selectedIconSource = ""
@@ -13323,11 +13329,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         setPadding(0, dp(16), 0, dp(8))
                     })
                     addView(recentRunHistoryPanel(recipe))
+                    addView(cardGroupConfigRow())
                 } else {
                     addView(formDivider())
                     addView(navigationRow("启动配置") { showRecipeFormMoreMenu() }.apply {
                         setPadding(0, dp(16), 0, dp(8))
                     })
+                    addView(cardGroupConfigRow())
                 }
             })
         }
@@ -13409,6 +13417,173 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
         })
     }
+
+    private fun cardGroupConfigRow(): View = row {
+        setPadding(0, dp(16), 0, dp(4))
+        isClickable = true
+        isFocusable = true
+        setOnClickListener {
+            showCardGroupDialog(selectedGroupId) { group ->
+                selectedGroupId = group.id
+                groupSelectionDetailView?.text = formGroupLabel()
+            }
+        }
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(context).apply {
+                text = "所属分组"
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            groupSelectionDetailView = TextView(context).apply {
+                text = formGroupLabel()
+                textSize = 11f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(3), dp(8), 0)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+            }
+            addView(groupSelectionDetailView)
+        })
+        addView(TextView(context).apply {
+            text = "选择"
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(tokens.primaryStrong)
+            background = roundedBox(tokens.primarySubtle, tokens.primarySoft, dp(14).toFloat())
+            layoutParams = LinearLayout.LayoutParams(dp(66), dp(34))
+        })
+    }
+
+    private fun showCardGroupDialog(selectedGroupId: String, onSelected: (KiteCardGroup) -> Unit) {
+        val dialog = Dialog(this)
+        val input = EditText(this).apply {
+            hint = "新建分组"
+            textSize = 13f
+            setSingleLine(true)
+            setTextColor(tokens.textPrimary)
+            setHintTextColor(tokens.textTertiary)
+            setPadding(dp(12), 0, dp(12), 0)
+            background = roundedBox(tokens.inputBackground, tokens.border, dp(12).toFloat())
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
+            addView(TextView(context).apply {
+                text = "选择分组"
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+                gravity = Gravity.CENTER
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(ScrollView(context).apply {
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    val groups = cardGroupStore.groups()
+                    if (groups.isEmpty()) {
+                        addView(TextView(context).apply {
+                            text = "还没有分组"
+                            textSize = 13f
+                            gravity = Gravity.CENTER
+                            setTextColor(tokens.textTertiary)
+                            setPadding(0, dp(24), 0, dp(24))
+                        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                    } else {
+                        groups.forEach { group ->
+                            addView(cardGroupDialogRow(group, group.id == selectedGroupId) {
+                                onSelected(group)
+                                dialog.dismiss()
+                            })
+                        }
+                    }
+                })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(230)).apply {
+                setMargins(0, dp(14), 0, dp(14))
+            })
+            addView(row {
+                gravity = Gravity.CENTER_VERTICAL
+                addView(input, LinearLayout.LayoutParams(0, dp(44), 1f))
+                addView(TextView(context).apply {
+                    text = "新建"
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setTextColor(Color.WHITE)
+                    background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(14).toFloat())
+                    setOnClickListener {
+                        val name = input.text?.toString()?.trim().orEmpty()
+                        if (name.isBlank()) {
+                            Toast.makeText(context, "请输入分组名", Toast.LENGTH_SHORT).show()
+                            return@setOnClickListener
+                        }
+                        val group = cardGroupStore.create(name)
+                        onSelected(group)
+                        dialog.dismiss()
+                    }
+                }, LinearLayout.LayoutParams(dp(72), dp(44)).apply {
+                    setMargins(dp(10), 0, 0, 0)
+                })
+            })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.CENTER)
+            setLayout((resources.displayMetrics.widthPixels * 0.86f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+    }
+
+    private fun cardGroupDialogRow(group: KiteCardGroup, selected: Boolean, onClick: () -> Unit): View =
+        TextView(this).apply {
+            text = group.name
+            textSize = 14f
+            typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            gravity = Gravity.CENTER_VERTICAL
+            setTextColor(if (selected) tokens.primaryStrong else tokens.textPrimary)
+            setPadding(dp(14), 0, dp(14), 0)
+            background = roundedBox(
+                if (selected) tokens.primarySubtle else tokens.surface,
+                if (selected) tokens.primarySoft else tokens.border,
+                dp(14).toFloat()
+            )
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
+                setMargins(0, 0, 0, dp(8))
+            }
+            setOnClickListener { onClick() }
+        }
+
+    private fun formGroupLabel(): String =
+        cardGroupName(selectedGroupId)
+            ?: KiteRecipe.normalizeCategory(editingRecipe?.category).ifBlank { "未分组" }
+
+    private fun recipeGroupLabel(recipe: KiteRecipe): String =
+        cardGroupName(recipe.groupId)
+            ?: KiteRecipe.normalizeCategory(recipe.category)
+
+    private fun cardGroupName(groupId: String): String? =
+        groupId.takeIf { it.isNotBlank() }
+            ?.let { id -> cardGroupStore.groups().firstOrNull { it.id == id }?.name }
+
+    private fun recipeInGroup(recipe: KiteRecipe, groupId: String): Boolean {
+        if (recipe.groupId == groupId) return true
+        val groupName = cardGroupName(groupId) ?: return false
+        return recipe.groupId.isBlank() && KiteRecipe.normalizeCategory(recipe.category) == groupName
+    }
+
+    private fun consoleGroupPageId(groupId: String): String =
+        "$CONSOLE_PAGE_GROUP_PREFIX$groupId"
+
+    private fun consoleGroupId(pageId: String): String? =
+        pageId.takeIf { it.startsWith(CONSOLE_PAGE_GROUP_PREFIX) }
+            ?.removePrefix(CONSOLE_PAGE_GROUP_PREFIX)
+            ?.takeIf { it.isNotBlank() }
 
     private fun recipeEditorRunActions(recipe: KiteRecipe): View =
         LinearLayout(this).apply {
@@ -14633,6 +14808,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val baseline = baselineRecipeFormSnapshot(editingRecipe)
         return buildList {
             if (current.name != baseline.name || current.description != baseline.description) add("基础信息")
+            if (current.groupId != baseline.groupId) add("所属分组")
             if (
                 current.selectedIconName != baseline.selectedIconName ||
                 current.selectedIconType != baseline.selectedIconType ||
@@ -14746,6 +14922,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             selectedIconName = selectedIconName,
             selectedIconType = selectedIconType,
             selectedIconSource = selectedIconSource,
+            groupId = selectedGroupId,
             shortcutRequested = formShortcutRequested,
             launchOpenInstance = formLaunchOpenInstance,
             steps = formSteps.map { it.normalizedCopy() }
@@ -14759,6 +14936,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_COMMAND_WEB),
                 selectedIconType = KiteRecipeIcon.TYPE_BUILTIN,
                 selectedIconSource = "",
+                groupId = "",
                 shortcutRequested = false,
                 launchOpenInstance = true,
                 steps = emptyList()
@@ -14781,6 +14959,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 KiteRecipeIcon.TYPE_BUILTIN
             },
             selectedIconSource = iconSource,
+            groupId = recipe.groupId,
             shortcutRequested = false,
             launchOpenInstance = recipe.launch.openInstance,
             steps = recipe.steps.map { RecipeStepDraft.fromStep(it).normalizedCopy() }
@@ -14860,12 +15039,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 name = KiteRecipeIcon.normalizeName(iconName, inferredType)
             )
         }
+        val group = cardGroupStore.groups().firstOrNull { it.id == (draft?.groupId ?: selectedGroupId) }
 
         return existingRecipe.copy(
             name = draft?.name?.trim()?.ifBlank { existingRecipe.name } ?: existingRecipe.name,
             description = draft?.description?.trim()?.ifBlank { existingRecipe.description }
                 ?: existingRecipe.description,
             type = inferredType,
+            category = group?.name ?: existingRecipe.category,
+            groupId = group?.id ?: existingRecipe.groupId,
             defaultUrl = normalizedSteps
                 .firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB && it.url.isNotBlank() }
                 ?.url
@@ -14904,6 +15086,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val defaultUrl = normalizedSteps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB }?.url.orEmpty()
         val requestShortcut = draft?.shortcutRequested ?: formShortcutRequested
         val openInstanceOnStart = draft?.launchOpenInstance ?: formLaunchOpenInstance
+        val group = cardGroupStore.groups().firstOrNull { it.id == (draft?.groupId ?: selectedGroupId) }
 
         runCatching {
             recipeLoader.saveUserRecipe(
@@ -14911,7 +15094,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     id = editingRecipe?.id,
                     type = inferredType,
                     name = name,
-                    category = editingRecipe?.category.orEmpty(),
+                    category = group?.name ?: editingRecipe?.category.orEmpty(),
+                    groupId = group?.id ?: editingRecipe?.groupId.orEmpty(),
                     url = defaultUrl,
                     command = "",
                     shortcut = false,
@@ -16602,6 +16786,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val selectedIconName: String,
         val selectedIconType: String,
         val selectedIconSource: String,
+        val groupId: String,
         val name: String,
         val description: String,
         val url: String,
@@ -16618,6 +16803,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 .put("selectedIconName", selectedIconName)
                 .put("selectedIconType", selectedIconType)
                 .put("selectedIconSource", selectedIconSource)
+                .put("groupId", groupId)
                 .put("name", name)
                 .put("description", description)
                 .put("url", url)
@@ -16662,6 +16848,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         selectedIconName = json.optString("selectedIconName").ifBlank { KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_COMMAND_WEB) },
                         selectedIconType = json.optString("selectedIconType").ifBlank { KiteRecipeIcon.TYPE_BUILTIN },
                         selectedIconSource = json.optString("selectedIconSource"),
+                        groupId = json.optString("groupId"),
                         name = json.optString("name"),
                         description = json.optString("description"),
                         url = json.optString("url"),
@@ -16681,6 +16868,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val selectedIconName: String,
         val selectedIconType: String,
         val selectedIconSource: String,
+        val groupId: String,
         val shortcutRequested: Boolean,
         val launchOpenInstance: Boolean,
         val steps: List<RecipeStepDraft>
@@ -16994,7 +17182,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val CONSOLE_PAGE_ALL = "all"
         private const val CONSOLE_PAGE_OPENED = "opened"
         private const val CONSOLE_PAGE_STOPPED = "stopped"
-        private const val CONSOLE_PAGE_CUSTOM_PREFIX = "custom-"
+        private const val CONSOLE_PAGE_GROUP_PREFIX = "group:"
         private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
