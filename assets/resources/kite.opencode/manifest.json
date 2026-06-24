@@ -62,7 +62,7 @@
     "type": "official_script",
     "url": "https://opencode.ai/install",
     "repository": "https://github.com/anomalyco/opencode",
-    "command": "curl -fsSL https://opencode.ai/install | bash"
+    "command": "curl -fL https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-arm64.tar.gz | tar -xz"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.opencode",
@@ -73,7 +73,7 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "export OPENCODE_INSTALL_DIR=\"$install_root/bin\"\ncurl -fsSL https://opencode.ai/install | bash",
+        "cmd": "arch=\"$(uname -m)\"\ncase \"$arch\" in\n  aarch64|arm64) target=\"linux-arm64\" ;;\n  x86_64|amd64) target=\"linux-x64\" ;;\n  *) echo \"Unsupported OS/Arch: linux/$arch\"; exit 1 ;;\nesac\narchive=\"$install_root/opencode-$target.tar.gz\"\ntmp_dir=\"$install_root/tmp-opencode\"\nrm -rf \"$tmp_dir\" \"$archive\"\nmkdir -p \"$tmp_dir\" \"$install_root/bin\"\ncurl -fL \"https://github.com/anomalyco/opencode/releases/latest/download/opencode-$target.tar.gz\" -o \"$archive\"\ntar -xzf \"$archive\" -C \"$tmp_dir\"\ncp \"$tmp_dir/opencode\" \"$install_root/bin/opencode\"\nchmod 755 \"$install_root/bin/opencode\"\nrm -rf \"$tmp_dir\" \"$archive\"",
         "managedCommands": [
           "opencode"
         ],
