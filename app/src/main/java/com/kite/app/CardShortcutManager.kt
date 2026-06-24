@@ -28,8 +28,7 @@ object CardShortcutManager {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
         val shortcutManager = context.getSystemService(ShortcutManager::class.java) ?: return false
         val id = shortcutId(recipeId)
-        return shortcutManager.pinnedShortcuts.any { it.id == id } ||
-            shortcutManager.dynamicShortcuts.any { it.id == id }
+        return shortcutManager.pinnedShortcuts.any { it.id == id }
     }
 
     fun requestPinnedShortcut(context: Context, recipe: KiteRecipe): Boolean {

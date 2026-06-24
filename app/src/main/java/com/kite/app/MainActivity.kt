@@ -160,7 +160,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private lateinit var bridgeClient: KiteBridgeClient
     private lateinit var webShell: KiteWebShell
     private lateinit var localServer: KiteLocalServer
-    private lateinit var cardLocalSettings: CardLocalSettingsStore
     private lateinit var resourceInstallStore: KiteResourceInstallStore
     private lateinit var resourceManifestLoader: KiteResourceManifestLoader
     private lateinit var themeStore: SharedPreferences
@@ -173,7 +172,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private lateinit var urlInput: EditText
     private lateinit var commandInput: EditText
     private lateinit var workdirInput: EditText
-    private lateinit var shortcutSwitch: Switch
     private lateinit var launchInstanceSwitch: Switch
     private lateinit var commandFieldContainer: View
     private lateinit var urlFieldContainer: View
@@ -193,7 +191,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
     private var selectedIconSource = ""
     private var formShortcutRequested = false
-    private var shortcutSwitchInternalChange = false
     private var formLaunchOpenInstance = true
     private var recipeMoreDraft: RecipeFormDraft? = null
     private var avatarTileRefresh: (() -> Unit)? = null
@@ -301,7 +298,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         bridgeClient = KiteBridgeClient(diagnostics, applicationContext)
         webView = WebView(this)
         webShell = KiteWebShell(this, webView, diagnostics) { }
-        cardLocalSettings = CardLocalSettingsStore(this)
         resourceInstallStore = KiteResourceInstallStore(this)
         resourceManifestLoader = KiteResourceManifestLoader(this)
         prewarmResourceCatalog()
@@ -13057,8 +13053,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             selectedIconSource = ""
             selectedIconName = KiteRecipeIcon.normalizeName(selectedIconName, selectedType)
         }
-        val recipeId = recipe?.id.orEmpty()
-        formShortcutRequested = draft?.shortcutRequested ?: (recipeId.isNotBlank() && cardLocalSettings.shortcutRequested(recipeId))
+        formShortcutRequested = draft?.shortcutRequested ?: false
         formLaunchOpenInstance = draft?.launchOpenInstance ?: (recipe?.launch?.openInstance ?: true)
         clearRootForScreen()
         root.addView(createTopBar(if (recipe == null) "新建配置" else "编辑配置", saveAction = recipe == null))
@@ -14369,7 +14364,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         commandInput.setText(draft?.command ?: shellStep?.cmd.orEmpty())
         workdirInput.setText(draft?.workdir ?: shellStep?.workdir ?: recipe?.execution?.workdir.orEmpty())
         urlInput.setText(draft?.url ?: openUrl)
-        setShortcutSwitchChecked(formShortcutRequested)
         if (::launchInstanceSwitch.isInitialized) launchInstanceSwitch.isChecked = formLaunchOpenInstance
     }
 
@@ -14537,7 +14531,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 KiteRecipeIcon.TYPE_BUILTIN
             },
             selectedIconSource = iconSource,
-            shortcutRequested = recipe.id.isNotBlank() && cardLocalSettings.shortcutRequested(recipe.id),
+            shortcutRequested = false,
             launchOpenInstance = recipe.launch.openInstance,
             steps = recipe.steps.map { RecipeStepDraft.fromStep(it).normalizedCopy() }
         )
@@ -14561,40 +14555,31 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
-    private fun handleShortcutSwitchChanged(isChecked: Boolean) {
-        if (shortcutSwitchInternalChange) return
-        if (!isChecked) {
-            formShortcutRequested = false
-            return
-        }
-
+    private fun handleShortcutRequestAction() {
         val existingRecipe = editingRecipe
         if (existingRecipe == null || existingRecipe.id.isBlank()) {
             formShortcutRequested = true
-            Toast.makeText(this, "保存后会向桌面发起创建申请", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "保存后会申请桌面图标", Toast.LENGTH_SHORT).show()
             return
         }
 
-        if (CardShortcutManager.hasPinnedShortcut(this, existingRecipe.id)) {
-            formShortcutRequested = true
-            cardLocalSettings.setShortcutRequested(existingRecipe.id, true)
+        requestShortcutForRecipe(shortcutRecipeForCurrentForm(existingRecipe))
+    }
+
+    private fun requestShortcutForRecipe(recipe: KiteRecipe): Boolean {
+        if (recipe.id.isBlank()) return false
+        if (CardShortcutManager.hasPinnedShortcut(this, recipe.id)) {
             Toast.makeText(this, "桌面图标已存在", Toast.LENGTH_SHORT).show()
-            return
+            return true
         }
 
-        val requested = CardShortcutManager.requestPinnedShortcut(
-            this,
-            shortcutRecipeForCurrentForm(existingRecipe)
-        )
+        val requested = CardShortcutManager.requestPinnedShortcut(this, recipe)
         if (requested) {
-            formShortcutRequested = true
-            cardLocalSettings.setShortcutRequested(existingRecipe.id, true)
             Toast.makeText(this, "已提交桌面快捷方式申请", Toast.LENGTH_SHORT).show()
         } else {
-            formShortcutRequested = false
-            setShortcutSwitchChecked(false)
             Toast.makeText(this, "当前桌面不支持自动创建快捷方式", Toast.LENGTH_SHORT).show()
         }
+        return requested
     }
 
     private fun shortcutRecipeForCurrentForm(existingRecipe: KiteRecipe): KiteRecipe {
@@ -14640,16 +14625,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         )
     }
 
-    private fun setShortcutSwitchChecked(checked: Boolean) {
-        if (!::shortcutSwitch.isInitialized || shortcutSwitch.isChecked == checked) return
-        shortcutSwitchInternalChange = true
-        try {
-            shortcutSwitch.isChecked = checked
-        } finally {
-            shortcutSwitchInternalChange = false
-        }
-    }
-
     private fun saveRecipeForm() {
         val draft = snapshotRecipeFormDraft()
         val name = draft?.name?.trim()
@@ -14679,12 +14654,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val defaultUrl = normalizedSteps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB }?.url.orEmpty()
         val requestShortcut = draft?.shortcutRequested ?: formShortcutRequested
         val openInstanceOnStart = draft?.launchOpenInstance ?: formLaunchOpenInstance
-        val previousShortcutRequested = editingRecipe?.id
-            ?.takeIf { it.isNotBlank() }
-            ?.let { recipeId ->
-                cardLocalSettings.shortcutRequested(recipeId) ||
-                    CardShortcutManager.hasPinnedShortcut(this, recipeId)
-            } == true
 
         runCatching {
             recipeLoader.saveUserRecipe(
@@ -14705,20 +14674,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 )
             )
         }.onSuccess { savedRecipe ->
-            val shortcutAlreadyKnown = previousShortcutRequested ||
-                cardLocalSettings.shortcutRequested(savedRecipe.id) ||
-                CardShortcutManager.hasPinnedShortcut(this, savedRecipe.id)
-            if (requestShortcut && !shortcutAlreadyKnown) {
-                val requested = CardShortcutManager.requestPinnedShortcut(this, savedRecipe)
-                if (requested) {
-                    cardLocalSettings.setShortcutRequested(savedRecipe.id, true)
-                    Toast.makeText(this, "已提交桌面快捷方式申请", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "当前桌面不支持自动创建快捷方式", Toast.LENGTH_SHORT).show()
-                }
-            } else {
-                cardLocalSettings.setShortcutRequested(savedRecipe.id, requestShortcut || shortcutAlreadyKnown)
-            }
+            if (requestShortcut) requestShortcutForRecipe(savedRecipe)
             Toast.makeText(this, "已保存配置", Toast.LENGTH_SHORT).show()
             editingRecipe = null
             clearRecipeDraftState()
@@ -15593,20 +15549,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             override fun afterTextChanged(s: Editable?) = Unit
         }
 
-    private fun toggleRow(): View = row {
-        setPadding(0, dp(3), 0, dp(8))
-        addView(TextView(context).apply {
-            text = "创建快捷方式到桌面"
-            textSize = 13f
-            setTextColor(tokens.textPrimary)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        shortcutSwitch = Switch(context).apply {
-            isChecked = formShortcutRequested
-            setOnCheckedChangeListener { _, isChecked -> handleShortcutSwitchChanged(isChecked) }
-        }
-        addView(shortcutSwitch)
-    }
+    private fun toggleRow(): View = shortcutActionRow("创建快捷方式到桌面")
+
+    private fun shortcutActionRow(title: String): View =
+        localActionRow(
+            title = title,
+            detail = when {
+                formShortcutRequested && editingRecipe?.id.isNullOrBlank() -> "保存时会弹出桌面确认。"
+                editingRecipe?.id.isNullOrBlank() -> "点击后保存卡片时弹出桌面确认。"
+                else -> "点击后立即弹出桌面确认。"
+            },
+            actionLabel = "申请"
+        ) { handleShortcutRequestAction() }
 
     private fun launchOptionsPanel(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -15622,14 +15576,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             }
         })
         addView(divider())
-        addView(localSwitchRow(
-            title = "申请桌面图标",
-            detail = "已有卡片会立即弹出桌面确认；新建卡片会在保存后继续申请。",
-            checked = formShortcutRequested
-        ) {
-            shortcutSwitch = it
-            it.setOnCheckedChangeListener { _, isChecked -> handleShortcutSwitchChanged(isChecked) }
-        })
+        addView(shortcutActionRow("申请桌面图标"))
     }
 
     private fun localSwitchRow(title: String, detail: String, checked: Boolean, bind: (Switch) -> Unit): View = row {
@@ -15653,6 +15600,40 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val switch = Switch(context).apply { isChecked = checked }
         bind(switch)
         addView(switch)
+    }
+
+    private fun localActionRow(title: String, detail: String, actionLabel: String, onClick: () -> Unit): View = row {
+        setPadding(0, dp(4), 0, dp(4))
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { onClick() }
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(context).apply {
+                text = title
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = detail
+                textSize = 10.8f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(2), dp(8), 0)
+            })
+        })
+        addView(TextView(context).apply {
+            text = actionLabel
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(tokens.primaryStrong)
+            background = roundedBox(tokens.primarySubtle, tokens.primarySoft, dp(14).toFloat())
+            layoutParams = LinearLayout.LayoutParams(dp(66), dp(34))
+            setOnClickListener { onClick() }
+        })
     }
 
     private fun navigationRow(label: String, onClick: (() -> Unit)? = null): View = row {
