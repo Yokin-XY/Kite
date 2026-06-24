@@ -3,6 +3,7 @@ package com.kite.app
 import android.animation.ValueAnimator
 import android.animation.LayoutTransition
 import android.app.ActivityManager
+import android.app.AlertDialog
 import android.app.Dialog
 import android.app.NotificationManager
 import android.Manifest
@@ -189,6 +190,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private val actionRouter = KiteActionRouter()
     private var currentScreen: Screen = Screen.Console
     private var currentRecipes: List<KiteRecipe> = emptyList()
+    private var consolePageId: String = CONSOLE_PAGE_ALL
+    private val consoleCustomPageLabels = mutableListOf<String>()
+    private var consolePageTabsView: TabLayout? = null
+    private var consolePageBodyHost: FrameLayout? = null
     private var selectedType = KiteRecipe.TYPE_OPEN_URL
     private var selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_OPEN_URL)
     private var selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
@@ -1678,11 +1683,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             showCardRunSurface(focusedRecipe)
             return
         }
+        if (consolePages().none { it.id == consolePageId }) consolePageId = CONSOLE_PAGE_ALL
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         root.addView(consoleHeader())
         ubuntuRuntimeBanner()?.let { root.addView(it) }
-        root.addView(recipeGrid(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val pageHost = FrameLayout(this).also { consolePageBodyHost = it }
+        renderConsolePageBody(pageHost)
+        root.addView(pageHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomNavigation())
     }
 
@@ -1801,6 +1809,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         cardRunReportBinding = null
         resourceInstallWizardBinding = null
         consoleCardBindings.clear()
+        consolePageTabsView = null
+        consolePageBodyHost = null
         val transaction = supportFragmentManager.beginTransaction()
         var changed = false
 
@@ -2863,6 +2873,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             contentDescription = "资源分类"
             tabMode = TabLayout.MODE_SCROLLABLE
             tabGravity = TabLayout.GRAVITY_START
+            isFocusable = false
+            isFocusableInTouchMode = false
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             setBackgroundColor(Color.TRANSPARENT)
             setSelectedTabIndicatorColor(tokens.primaryStrong)
             setTabTextColors(tokens.textSecondary, tokens.primaryStrong)
@@ -6676,19 +6689,66 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             })
         })
 
-        addView(HorizontalScrollView(context).apply {
-            isHorizontalScrollBarEnabled = false
-            setPadding(0, dp(12), 0, 0)
-            addView(row {
-                val opened = runtimeStates.values.count { it.status in RecipeRunStatus.activeStatuses }
-                val stopped = runtimeStates.values.count {
-                    it.status == RecipeRunStatus.Stopped || it.status == RecipeRunStatus.BridgeUnavailable
+        addView(consolePageTabs())
+    }
+
+    private fun consolePageTabs(): View = row {
+        setPadding(0, dp(12), 0, 0)
+        val pages = consolePages()
+        val selectedId = consolePageId.takeIf { selected -> pages.any { it.id == selected } } ?: CONSOLE_PAGE_ALL
+        consolePageId = selectedId
+        addView(TabLayout(context).apply {
+            consolePageTabsView = this
+            contentDescription = "配置分页"
+            tabMode = TabLayout.MODE_SCROLLABLE
+            tabGravity = TabLayout.GRAVITY_START
+            isFocusable = false
+            isFocusableInTouchMode = false
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            setBackgroundColor(Color.TRANSPARENT)
+            setSelectedTabIndicatorColor(tokens.primaryStrong)
+            setTabTextColors(tokens.textSecondary, tokens.primaryStrong)
+            pages.forEach { page ->
+                addTab(newTab().setText(page.label).setTag(page.id), page.id == selectedId)
+            }
+            addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+                override fun onTabSelected(tab: TabLayout.Tab) {
+                    selectConsolePage(tab.tag as? String ?: CONSOLE_PAGE_ALL)
                 }
-                addView(chip("▦  全部 ${currentRecipes.size}", true))
-                addView(chip("▶  已打开 $opened", false))
-                addView(chip("■  已停止 $stopped", false))
+
+                override fun onTabUnselected(tab: TabLayout.Tab) = Unit
+                override fun onTabReselected(tab: TabLayout.Tab) = Unit
             })
+        }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        addView(TextView(context).apply {
+            text = "+"
+            textSize = 23f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.primaryStrong)
+            background = roundedBox(tokens.surface, tokens.border, dp(18).toFloat())
+            setOnClickListener { showAddConsolePageDialog() }
+        }, LinearLayout.LayoutParams(dp(42), dp(38)).apply {
+            setMargins(dp(8), dp(5), 0, 0)
         })
+    }
+
+    private fun consolePages(): List<ConsolePage> {
+        val opened = runtimeStates.values.count { it.status in RecipeRunStatus.activeStatuses }
+        val stopped = runtimeStates.values.count {
+            it.status == RecipeRunStatus.Stopped || it.status == RecipeRunStatus.BridgeUnavailable
+        }
+        val base = listOf(
+            ConsolePage(CONSOLE_PAGE_ALL, "▦  全部 ${currentRecipes.size}"),
+            ConsolePage(CONSOLE_PAGE_OPENED, "▶  已打开 $opened"),
+            ConsolePage(CONSOLE_PAGE_STOPPED, "■  已停止 $stopped"),
+            ConsolePage("placeholder-1", "分页 1"),
+            ConsolePage("placeholder-2", "分页 2"),
+            ConsolePage("placeholder-3", "分页 3")
+        )
+        return base + consoleCustomPageLabels.mapIndexed { index, label ->
+            ConsolePage("$CONSOLE_PAGE_CUSTOM_PREFIX$index", label)
+        }
     }
 
     private fun systemTitleButton(): View = row {
@@ -6708,6 +6768,111 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val openPanel = { showUbuntuRuntimePanel(auto = false, anchor = statusPill) }
         setOnClickListener { openPanel() }
         statusPill.setOnClickListener { openPanel() }
+    }
+
+    private fun consolePageBody(): View =
+        when (consolePageId) {
+            CONSOLE_PAGE_ALL -> recipeGrid()
+            else -> emptyConsolePage(consolePages().firstOrNull { it.id == consolePageId }?.label.orEmpty())
+        }.withConsolePageSwipe()
+
+    private fun renderConsolePageBody() {
+        renderConsolePageBody(consolePageBodyHost ?: return)
+    }
+
+    private fun renderConsolePageBody(host: FrameLayout) {
+        consoleCardBindings.clear()
+        host.removeAllViews()
+        host.addView(consolePageBody(), FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+    }
+
+    private fun View.withConsolePageSwipe(): View {
+        val page = this
+        return object : FrameLayout(this@MainActivity) {
+            private var downX = 0f
+            private var downY = 0f
+
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = event.x
+                        downY = event.y
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val dx = event.x - downX
+                        val dy = event.y - downY
+                        if (kotlin.math.abs(dx) > dp(54) && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.4f) {
+                            selectConsolePageOffset(if (dx < 0) 1 else -1)
+                            return true
+                        }
+                    }
+                }
+                return super.dispatchTouchEvent(event)
+            }
+        }.apply {
+            addView(page, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+        }
+    }
+
+    private fun selectConsolePageOffset(offset: Int) {
+        val pages = consolePages()
+        val index = pages.indexOfFirst { it.id == consolePageId }
+        val next = (index.takeIf { it >= 0 } ?: 0) + offset
+        pages.getOrNull(next)?.let { selectConsolePage(it.id) }
+    }
+
+    private fun selectConsolePage(pageId: String) {
+        if (consolePageId == pageId) return
+        consolePageId = pageId
+        consolePageTabsView?.let { tabs ->
+            for (index in 0 until tabs.tabCount) {
+                val tab = tabs.getTabAt(index) ?: continue
+                if (tab.tag == pageId && tabs.selectedTabPosition != index) {
+                    tabs.selectTab(tab)
+                    break
+                }
+            }
+        }
+        renderConsolePageBody()
+    }
+
+    private fun emptyConsolePage(label: String): View =
+        FrameLayout(this).apply {
+            addView(TextView(context).apply {
+                text = label.removePrefix("▶  ").removePrefix("■  ").ifBlank { "分页" }
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.textTertiary)
+                background = roundedBox(tokens.surface, tokens.border, dp(22).toFloat())
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(88), Gravity.TOP).apply {
+                setMargins(dp(18), dp(16), dp(18), 0)
+            })
+        }
+
+    private fun showAddConsolePageDialog() {
+        val defaultName = "分页 ${consoleCustomPageLabels.size + 4}"
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            setText(defaultName)
+            selectAll()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("添加分页")
+            .setView(input)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("添加") { _, _ ->
+                val label = input.text?.toString()?.trim().orEmpty().ifBlank { defaultName }
+                consoleCustomPageLabels.add(label)
+                consolePageId = "$CONSOLE_PAGE_CUSTOM_PREFIX${consoleCustomPageLabels.lastIndex}"
+                showConsole()
+            }
+            .show()
     }
 
     private fun systemStatusPill(): TextView = TextView(this).apply {
@@ -16197,17 +16362,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         setOnClickListener { onClick() }
     }
 
-    private fun chip(text: String, selected: Boolean): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 13f
-        typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-        setTextColor(if (selected) tokens.buttonText else tokens.textPrimary)
-        setPadding(dp(13), dp(8), dp(13), dp(8))
-        background = roundedBox(if (selected) tokens.primaryStrong else tokens.surface, if (selected) tokens.primaryStrong else tokens.border, dp(24).toFloat())
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            .apply { setMargins(0, 0, dp(8), 0) }
-    }
-
     private fun dropZoneButton(text: String, onClick: () -> Unit): TextView = TextView(this).apply {
         this.text = text
         textSize = 12f
@@ -16682,6 +16836,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val actionHost: FrameLayout
     )
 
+    private data class ConsolePage(
+        val id: String,
+        val label: String
+    )
+
     private data class ResourceSectionsPayload(
         val query: String,
         val resources: List<ResourceItem>,
@@ -16832,6 +16991,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val TERMINAL_FRAGMENT_TAG = "kite-terminal"
         private const val CARD_RUN_TERMINAL_FRAGMENT_TAG = "kite-card-run-terminal"
         private const val TERMINAL_FRAGMENT_INITIAL_SESSION_ARG = "initial_session_id"
+        private const val CONSOLE_PAGE_ALL = "all"
+        private const val CONSOLE_PAGE_OPENED = "opened"
+        private const val CONSOLE_PAGE_STOPPED = "stopped"
+        private const val CONSOLE_PAGE_CUSTOM_PREFIX = "custom-"
         private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
