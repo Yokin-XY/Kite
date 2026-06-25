@@ -7926,6 +7926,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun canCompleteCurrentCardStep(recipe: KiteRecipe, state: RecipeRuntimeState): Boolean {
         val step = recipe.steps.getOrNull(state.currentStepIndex) ?: return false
         return when (step.type) {
+            KiteRecipe.STEP_SHELL -> state.surface == CardRunSurface.Report &&
+                state.currentStepIndex < recipe.steps.lastIndex &&
+                !state.shellReportText.isNullOrBlank() &&
+                (state.status == RecipeRunStatus.Running || state.status == RecipeRunStatus.AlreadyRunning)
             KiteRecipe.STEP_TERMINAL -> state.status == RecipeRunStatus.WaitingTerminal && !state.terminalSessionId.isNullOrBlank()
             KiteRecipe.STEP_OPEN_WEB -> state.surface == CardRunSurface.Web && !state.nextActionUrl.isNullOrBlank()
             else -> false
@@ -7970,6 +7974,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             lastOutput = when (step?.type) {
                 KiteRecipe.STEP_TERMINAL -> "终端已由用户标记完成"
                 KiteRecipe.STEP_OPEN_WEB -> "网页已由用户标记完成"
+                KiteRecipe.STEP_SHELL -> "SH 报告已由用户确认继续"
                 else -> "步骤已由用户标记完成"
             }
         )
@@ -8386,6 +8391,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     val latest = CardRunStore.get(state.instanceId) ?: state
                     copyTextToClipboard("Kite SH 输出", cardRunOutputText(latest), "已复制 SH 输出")
                 })
+                if (canCompleteCurrentCardStep(recipe, state)) {
+                    addView(reportToolButton("›", "继续") {
+                        val latest = CardRunStore.get(state.instanceId) ?: state
+                        if (canCompleteCurrentCardStep(recipe, latest)) {
+                            completeCurrentCardStep(recipe, latest)
+                        }
+                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                        setMargins(dp(12), 0, 0, 0)
+                    })
+                }
             })
             val outputTextView = TextView(context).apply {
                 text = lineNumberedOutput(outputText)
@@ -12360,6 +12375,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val rootPid = report?.rootPid ?: pid
         val processGroupId = report?.processGroupId
         val systemSessionId = report?.systemSessionId
+
+        if (currentState != null && currentState.currentStepIndex > stepIndex) {
+            diagnostics.logRecipeAction(
+                recipe,
+                "sequence_shell_result_ignored_after_manual_continue",
+                mapOf(
+                    "stepIndex" to stepIndex.toString(),
+                    "currentStepIndex" to currentState.currentStepIndex.toString(),
+                    "requestId" to requestId,
+                    "runId" to runId.orEmpty()
+                )
+            )
+            return
+        }
+        val currentRunId = currentState?.runId
+        if (!currentRunId.isNullOrBlank() && !runId.isNullOrBlank() && currentRunId != runId) {
+            diagnostics.logRecipeAction(
+                recipe,
+                "sequence_shell_result_ignored_for_stale_run",
+                mapOf(
+                    "stepIndex" to stepIndex.toString(),
+                    "currentRunId" to currentRunId,
+                    "incomingRunId" to runId,
+                    "requestId" to requestId
+                )
+            )
+            return
+        }
 
         if (result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE) {
             setRuntimeState(

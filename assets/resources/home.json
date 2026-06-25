@@ -42,7 +42,8 @@
       "id": "more",
       "title": "更多资源",
       "items": [
-        "kite.hermes.webui"
+        "kite.hermes.webui",
+        "kite.cc-switch.web"
       ],
       "style": "list"
     }
