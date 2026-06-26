@@ -86,11 +86,28 @@ public class LorieView extends SurfaceView {
         int width = getMeasuredWidth();
         int height = getMeasuredHeight();
         if (width <= 0 || height <= 0) return;
-        setRendererZoom(X11ViewportPlan.autoZoomPercent(width, height));
-        updateInputViewport(0, 0, width, height, 0, 0, width, height);
-        setViewport(0, 0, width, height, width, height);
+        X11ViewportPlan.Layout layout = X11ViewportPlan.fitLandscapeDesktop(width, height);
+        setRendererZoom(100);
+        updateInputViewport(
+                layout.viewportLeft,
+                layout.viewportTop,
+                layout.viewportWidth,
+                layout.viewportHeight,
+                0,
+                0,
+                layout.desktopWidth,
+                layout.desktopHeight
+        );
+        setViewport(
+                layout.viewportLeft,
+                layout.viewportTop,
+                layout.viewportWidth,
+                layout.viewportHeight,
+                layout.desktopWidth,
+                layout.desktopHeight
+        );
         int framerate = getDisplay() != null ? Math.round(getDisplay().getRefreshRate()) : 60;
-        sendWindowChange(width, height, Math.max(30, framerate), "kite");
+        sendWindowChange(layout.desktopWidth, layout.desktopHeight, Math.max(30, framerate), "kite");
     }
 
     private void updateInputViewport(
@@ -251,13 +268,42 @@ public class LorieView extends SurfaceView {
 }
 
 final class X11ViewportPlan {
+    private static final int LANDSCAPE_DESKTOP_WIDTH = 1280;
+    private static final int LANDSCAPE_DESKTOP_HEIGHT = 720;
+
     private X11ViewportPlan() {}
 
-    static int autoZoomPercent(int width, int height) {
-        if (width <= 0 || height <= 0) return 100;
-        if (height <= width) return 100;
-        float portraitRatio = height / (float) width;
-        int zoom = Math.round(portraitRatio * 70f);
-        return Math.max(100, Math.min(160, zoom));
+    static Layout fitLandscapeDesktop(int viewWidth, int viewHeight) {
+        return fit(viewWidth, viewHeight, LANDSCAPE_DESKTOP_WIDTH, LANDSCAPE_DESKTOP_HEIGHT);
+    }
+
+    private static Layout fit(int viewWidth, int viewHeight, int desktopWidth, int desktopHeight) {
+        if (viewWidth <= 0 || viewHeight <= 0) {
+            return new Layout(0, 0, 1, 1, desktopWidth, desktopHeight);
+        }
+        float scale = Math.min(viewWidth / (float) desktopWidth, viewHeight / (float) desktopHeight);
+        int viewportWidth = Math.max(1, Math.round(desktopWidth * scale));
+        int viewportHeight = Math.max(1, Math.round(desktopHeight * scale));
+        int viewportLeft = (viewWidth - viewportWidth) / 2;
+        int viewportTop = (viewHeight - viewportHeight) / 2;
+        return new Layout(viewportLeft, viewportTop, viewportWidth, viewportHeight, desktopWidth, desktopHeight);
+    }
+
+    static final class Layout {
+        final int viewportLeft;
+        final int viewportTop;
+        final int viewportWidth;
+        final int viewportHeight;
+        final int desktopWidth;
+        final int desktopHeight;
+
+        Layout(int viewportLeft, int viewportTop, int viewportWidth, int viewportHeight, int desktopWidth, int desktopHeight) {
+            this.viewportLeft = viewportLeft;
+            this.viewportTop = viewportTop;
+            this.viewportWidth = viewportWidth;
+            this.viewportHeight = viewportHeight;
+            this.desktopWidth = desktopWidth;
+            this.desktopHeight = desktopHeight;
+        }
     }
 }
