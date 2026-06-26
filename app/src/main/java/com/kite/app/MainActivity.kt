@@ -3497,7 +3497,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun resourceHasSplitActions(item: ResourceItem): Boolean =
         item.actionLabel == "获取中" ||
-            (resourceIsInstalled(item) && item.actionLabel == "打开") ||
+            (resourceIsInstalled(item) && (item.actionLabel == "打开" || item.actionLabel == "运行中")) ||
             resourceHasFailedInstallActions(item)
 
     private fun resourceHasFailedInstallActions(item: ResourceItem): Boolean =
@@ -3508,7 +3508,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun resourceSecondaryActionButton(item: ResourceItem): TextView =
         TextView(this).apply {
             val isCancel = item.actionLabel == "获取中" || resourceHasFailedInstallActions(item)
-            text = if (isCancel) "取消" else "卸载"
+            val isRunningOpen = item.actionLabel == "运行中"
+            text = when {
+                isCancel -> "取消"
+                isRunningOpen -> "中止"
+                else -> "卸载"
+            }
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -3520,6 +3525,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 setOnClickListener {
                     if (item.actionLabel == "获取中") {
                         handleResourceCancelInstallTask(item)
+                    } else if (isRunningOpen) {
+                        handleResourceOpenStopAction(item)
                     } else if (isCancel) {
                         handleResourceFailedInstallCancel(item)
                     } else {
@@ -4164,7 +4171,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             "获取", "重新获取", "安装", "重新安装" -> handleResourceInstallAction(item)
             "处理中", "获取中" -> reopenResourceInstallWizard(item)
             "卸载中" -> Toast.makeText(this, "${item.name} 正在卸载", Toast.LENGTH_SHORT).show()
-            "打开" -> {
+            "打开", "运行中" -> {
                 val recipe = resourceOpenRecipe(item)
                 if (recipe == null) {
                     Toast.makeText(this, "${item.name} 的打开动作稍后接入", Toast.LENGTH_SHORT).show()
@@ -5640,10 +5647,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun resourceIsInstalled(item: ResourceItem): Boolean =
-        item.stateLabel == "已安装" || item.stateLabel == "已获取"
+        item.stateLabel == "已安装" || item.stateLabel == "已获取" || item.stateLabel == "运行中"
 
     private fun resourceItemIsInstalled(item: ResourceItem?): Boolean =
-        item?.stateLabel == "已安装" || item?.stateLabel == "已获取"
+        item?.stateLabel == "已安装" || item?.stateLabel == "已获取" || item?.stateLabel == "运行中"
 
     private fun resourcePlanStepIsInstalled(
         resourceId: String,
@@ -5676,6 +5683,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 focusedRunInstanceId = existing.instanceId
                 activeRunInstanceIds[recipe.id] = existing.instanceId
                 runtimeStates[recipe.id] = existing
+                invalidateResourceCatalogCache()
                 if (shouldOpenCardRunTaskFromHome(recipe)) {
                     startActivity(
                         CardRunIntents.launchIntent(
@@ -5705,6 +5713,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             stepId = item.id
         )
         runtimeStates[recipe.id] = state
+        invalidateResourceCatalogCache()
         if (shouldOpenCardRunTaskFromHome(recipe)) {
             startActivity(
                 CardRunIntents.launchIntent(
@@ -5727,12 +5736,39 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         Toast.makeText(this, "正在打开 ${item.name}", Toast.LENGTH_SHORT).show()
     }
 
+    private fun handleResourceOpenStopAction(item: ResourceItem) {
+        val recipe = resourceOpenRecipe(item)
+        if (recipe == null) {
+            Toast.makeText(this, "${item.name} 的运行入口不存在", Toast.LENGTH_SHORT).show()
+            return
+        }
+        CardRunStore.registerRecipe(recipe)
+        val state = CardRunStore.currentForRecipe(recipe.id)?.takeIf { resourceOpenRunIsReusable(it) }
+        if (state == null) {
+            invalidateResourceCatalogCache()
+            refreshResourceScreenIfVisible()
+            Toast.makeText(this, "${item.name} 没有运行中的实例", Toast.LENGTH_SHORT).show()
+            return
+        }
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = state.instanceId
+        activeRunInstanceIds[recipe.id] = state.instanceId
+        runtimeStates[recipe.id] = state
+        stopRecipe(recipe, state)
+        invalidateResourceCatalogCache()
+        Toast.makeText(this, "正在中止 ${item.name}", Toast.LENGTH_SHORT).show()
+    }
+
     private fun resourceOpenRunIsReusable(state: RecipeRuntimeState): Boolean =
         state.status == RecipeRunStatus.Starting ||
             state.status == RecipeRunStatus.WaitingTerminal ||
             state.status == RecipeRunStatus.Running ||
             state.status == RecipeRunStatus.AlreadyRunning ||
             state.status == RecipeRunStatus.Opened
+
+    private fun resourceOpenRunIsReusable(resourceId: String): Boolean =
+        CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, "open"))
+            ?.let { resourceOpenRunIsReusable(it) } == true
 
     private fun addResourceHomeCard(item: ResourceItem) {
         val template = resourceHomeCardTemplate(item)
@@ -6550,9 +6586,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             val uninstalling = uninstalling(resourceId)
             val failed = installFailed(resourceId)
             val failedOperation = failedOperation(resourceId)
+            val openRunning = recordedInstalled && !installing && !uninstalling && !failed && resourceOpenRunIsReusable(resourceId)
             return ResourceRuntimeLabels(
-                state = stateLabelForResource(recordedInstalled, installing, uninstalling, failed, failedOperation, idleLabel),
-                action = actionLabelForResource(recordedInstalled, installing, uninstalling, failed, failedOperation),
+                state = if (openRunning) "运行中" else stateLabelForResource(recordedInstalled, installing, uninstalling, failed, failedOperation, idleLabel),
+                action = if (openRunning) "运行中" else actionLabelForResource(recordedInstalled, installing, uninstalling, failed, failedOperation),
                 busy = busy(resourceId)
             )
         }
@@ -6609,9 +6646,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             val uninstalling = uninstalling(RESOURCE_NODE_RUNTIME)
             val failed = installFailed(RESOURCE_NODE_RUNTIME)
             val failedOperation = failedOperation(RESOURCE_NODE_RUNTIME)
+            val openRunning = nodeInstalled && !installing && !uninstalling && !failed && resourceOpenRunIsReusable(RESOURCE_NODE_RUNTIME)
             return ResourceRuntimeLabels(
-                state = stateLabelForResource(nodeInstalled, installing, uninstalling, failed, failedOperation, "本地包"),
-                action = actionLabelForResource(nodeInstalled, installing, uninstalling, failed, failedOperation),
+                state = if (openRunning) "运行中" else stateLabelForResource(nodeInstalled, installing, uninstalling, failed, failedOperation, "本地包"),
+                action = if (openRunning) "运行中" else actionLabelForResource(nodeInstalled, installing, uninstalling, failed, failedOperation),
                 busy = busy(RESOURCE_NODE_RUNTIME) || toolchainRunning
             )
         }
@@ -13478,6 +13516,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             clearNextActionUrl = clearNextActionUrl
         )
         runtimeStates[recipe.id] = state
+        if (recipe.runtimeSource == RESOURCE_OPEN_RUNTIME_SOURCE) {
+            invalidateResourceCatalogCache()
+        }
         if (status == RecipeRunStatus.Stopped) {
             clearActiveRunInstance(recipe, state.instanceId)
         }
