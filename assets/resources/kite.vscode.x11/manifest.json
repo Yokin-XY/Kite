@@ -83,8 +83,8 @@
         },
         "recipe": [
           {
-            "type": "x11",
-            "cmd": "if ! command -v code >/dev/null 2>&1; then echo 'VS Code 还没有安装完整，请先点获取或重新获取。'; exit 127; fi; mkdir -p /workspace/.kf/cache/vscode-x11/extensions /workspace/.kf/runtime/vscode-x11/user-data; ELECTRON_DISABLE_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 GTK_USE_PORTAL=0 code --no-sandbox --disable-gpu --disable-dev-shm-usage --ozone-platform=x11 --user-data-dir=/workspace/.kf/runtime/vscode-x11/user-data --extensions-dir=/workspace/.kf/cache/vscode-x11/extensions /workspace",
+            "type": "shell",
+            "cmd": "set -e\nif ! command -v code >/dev/null 2>&1; then echo 'VS Code 还没有安装完整，请先点获取或重新获取。'; exit 127; fi\nmkdir -p /workspace/.kf/cache/vscode-x11/extensions /workspace/.kf/runtime/vscode-x11/user-data\nproxy=\"${KITE_DESKTOP_PROXY:-/workspace/.kf/bin/kite-open-desktop}\"\nif [ ! -x \"$proxy\" ]; then echo 'Kite X11 桌面代理不可用，请重新打开实例。'; exit 127; fi\n\"$proxy\" \"ELECTRON_DISABLE_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 GTK_USE_PORTAL=0 code --no-sandbox --disable-gpu --disable-dev-shm-usage --ozone-platform=x11 --user-data-dir=/workspace/.kf/runtime/vscode-x11/user-data --extensions-dir=/workspace/.kf/cache/vscode-x11/extensions /workspace\"",
             "runMode": "detached",
             "surfaceMode": "panel",
             "workdir": "/workspace",
@@ -123,8 +123,8 @@
         },
         "recipe": [
           {
-            "type": "x11",
-            "cmd": "if ! command -v code >/dev/null 2>&1; then echo 'VS Code 还没有安装完整，请先点获取或重新获取。'; exit 127; fi; mkdir -p /workspace/.kf/cache/vscode-x11/extensions /workspace/.kf/runtime/vscode-x11/user-data; ELECTRON_DISABLE_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 GTK_USE_PORTAL=0 code --no-sandbox --disable-gpu --disable-dev-shm-usage --ozone-platform=x11 --user-data-dir=/workspace/.kf/runtime/vscode-x11/user-data --extensions-dir=/workspace/.kf/cache/vscode-x11/extensions /workspace",
+            "type": "shell",
+            "cmd": "set -e\nif ! command -v code >/dev/null 2>&1; then echo 'VS Code 还没有安装完整，请先点获取或重新获取。'; exit 127; fi\nmkdir -p /workspace/.kf/cache/vscode-x11/extensions /workspace/.kf/runtime/vscode-x11/user-data\nproxy=\"${KITE_DESKTOP_PROXY:-/workspace/.kf/bin/kite-open-desktop}\"\nif [ ! -x \"$proxy\" ]; then echo 'Kite X11 桌面代理不可用，请重新打开实例。'; exit 127; fi\n\"$proxy\" \"ELECTRON_DISABLE_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 GTK_USE_PORTAL=0 code --no-sandbox --disable-gpu --disable-dev-shm-usage --ozone-platform=x11 --user-data-dir=/workspace/.kf/runtime/vscode-x11/user-data --extensions-dir=/workspace/.kf/cache/vscode-x11/extensions /workspace\"",
             "runMode": "detached",
             "surfaceMode": "panel",
             "workdir": "/workspace",
