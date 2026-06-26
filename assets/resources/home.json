@@ -43,6 +43,7 @@
       "id": "more",
       "title": "更多资源",
       "items": [
+        "kite.pcmanfm.x11",
         "kite.hermes.webui",
         "kite.cc-switch.web"
       ],

@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.pcmanfm.x11",
+  "base": {
+    "name": "PCManFM",
+    "description": "轻量文件管理器",
+    "version": "ubuntu apt",
+    "icon": {
+      "type": "text",
+      "value": "FM"
+    }
+  },
+  "display": {
+    "sections": [
+      "more"
+    ],
+    "category": "GUI",
+    "accent": "cyan",
+    "sizeLabel": "文件管理器",
+    "longDescription": "安装 Ubuntu apt 源里的 PCManFM，用来验证 Kite 的 SH/终端请求式 X11 渲染链路，也可作为轻量文件管理器使用。",
+    "requirementRows": [
+      {
+        "label": "运行环境",
+        "value": "Ubuntu + Kite PRoot"
+      },
+      {
+        "label": "显示能力",
+        "value": "SH 请求 Kite 内嵌 X11"
+      }
+    ],
+    "tags": [
+      "file-manager",
+      "pcmanfm",
+      "x11"
+    ]
+  },
+  "relations": {
+    "provides": [
+      "surface.file-manager.x11",
+      "surface.x11.native"
+    ],
+    "base": [],
+    "defaults": [],
+    "extensions": []
+  },
+  "source": {
+    "type": "ubuntu_apt",
+    "url": "apt://pcmanfm"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.pcmanfm.x11",
+    "installRoot": "/workspace/.kf/software/kite.pcmanfm.x11",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "shell",
+        "cmd": "set -e\nif ! command -v apt-get >/dev/null 2>&1; then echo '当前实例缺少 apt-get，无法安装 PCManFM'; exit 127; fi\nmkdir -p \"$install_root\" /workspace/.kf/runtime/pcmanfm-x11\nexport DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y pcmanfm dbus-x11 shared-mime-info xdg-utils adwaita-icon-theme fonts-dejavu-core\ntest -x /usr/bin/pcmanfm\npcmanfm --version || true\necho 'PCManFM installed for Kite embedded X11'",
+        "managedCommands": [
+          "pcmanfm"
+        ],
+        "cleanInstallRoot": true,
+        "timeoutMs": 900000
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "PCManFM",
+          "description": "启动轻量文件管理器",
+          "icon": {
+            "type": "builtin",
+            "name": "web"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "shell",
+            "cmd": "set -e\nif ! command -v pcmanfm >/dev/null 2>&1; then echo 'PCManFM 还没有安装完整，请先点获取或重新获取。'; exit 127; fi\nmkdir -p /workspace/.kf/runtime/pcmanfm-x11\nproxy=\"${KITE_DESKTOP_PROXY:-/workspace/.kf/bin/kite-open-desktop}\"\nif [ ! -x \"$proxy\" ]; then echo 'Kite X11 桌面代理不可用，请重新打开实例。'; exit 127; fi\ndesktop_cmd=\"if command -v dbus-launch >/dev/null 2>&1; then exec dbus-launch --exit-with-session pcmanfm --no-desktop /workspace; else exec pcmanfm --no-desktop /workspace; fi\"\n\"$proxy\" \"$desktop_cmd\"",
+            "runMode": "detached",
+            "surfaceMode": "panel",
+            "workdir": "/workspace",
+            "timeoutMs": 180000
+          }
+        ]
+      }
+    },
+    "uninstall": [
+      {
+        "type": "shell",
+        "cmd": "apt-get remove -y pcmanfm || true; rm -rf /workspace/.kf/runtime/pcmanfm-x11 /workspace/.kf/software/kite.pcmanfm.x11",
+        "managedCommands": [
+          "pcmanfm"
+        ],
+        "timeoutMs": 600000
+      }
+    ]
+  },
+  "homeCards": [
+    {
+      "label": "PCManFM",
+      "policy": "manual",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "PCManFM",
+          "description": "启动轻量文件管理器",
+          "icon": {
+            "type": "builtin",
+            "name": "web"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "shell",
+            "cmd": "set -e\nif ! command -v pcmanfm >/dev/null 2>&1; then echo 'PCManFM 还没有安装完整，请先点获取或重新获取。'; exit 127; fi\nmkdir -p /workspace/.kf/runtime/pcmanfm-x11\nproxy=\"${KITE_DESKTOP_PROXY:-/workspace/.kf/bin/kite-open-desktop}\"\nif [ ! -x \"$proxy\" ]; then echo 'Kite X11 桌面代理不可用，请重新打开实例。'; exit 127; fi\ndesktop_cmd=\"if command -v dbus-launch >/dev/null 2>&1; then exec dbus-launch --exit-with-session pcmanfm --no-desktop /workspace; else exec pcmanfm --no-desktop /workspace; fi\"\n\"$proxy\" \"$desktop_cmd\"",
+            "runMode": "detached",
+            "surfaceMode": "panel",
+            "workdir": "/workspace",
+            "timeoutMs": 180000
+          }
+        ]
+      }
+    }
+  ]
+}
