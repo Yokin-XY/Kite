@@ -86,6 +86,7 @@ public class LorieView extends SurfaceView {
         int width = getMeasuredWidth();
         int height = getMeasuredHeight();
         if (width <= 0 || height <= 0) return;
+        setRendererZoom(X11ViewportPlan.autoZoomPercent(width, height));
         updateInputViewport(0, 0, width, height, 0, 0, width, height);
         setViewport(0, 0, width, height, width, height);
         int framerate = getDisplay() != null ? Math.round(getDisplay().getRefreshRate()) : 60;
@@ -247,4 +248,16 @@ public class LorieView extends SurfaceView {
     public native boolean sendKeyEvent(int scanCode, int keyCode, boolean keyDown, int a);
     public native void sendTextEvent(byte[] text);
     public static native boolean requestConnection();
+}
+
+final class X11ViewportPlan {
+    private X11ViewportPlan() {}
+
+    static int autoZoomPercent(int width, int height) {
+        if (width <= 0 || height <= 0) return 100;
+        if (height <= width) return 100;
+        float portraitRatio = height / (float) width;
+        int zoom = Math.round(portraitRatio * 70f);
+        return Math.max(100, Math.min(160, zoom));
+    }
 }
