@@ -122,6 +122,8 @@ object CardRunStore {
         lastError: String? = null,
         shellReportText: String? = null,
         nextActionUrl: String? = null,
+        x11Display: String? = null,
+        x11SocketPath: String? = null,
         clearRunBinding: Boolean = false,
         clearTerminalSession: Boolean = false,
         clearNextActionUrl: Boolean = false
@@ -136,6 +138,8 @@ object CardRunStore {
                 status = status,
                 runId = runId,
                 terminalSessionId = terminalSessionId,
+                x11Display = x11Display,
+                x11SocketPath = x11SocketPath,
                 pid = pid,
                 rootPid = rootPid,
                 processGroupId = processGroupId,
@@ -152,6 +156,7 @@ object CardRunStore {
         val resolvedSurface = surface ?: when {
             !nextActionUrl.isNullOrBlank() -> CardRunSurface.Web
             !terminalSessionId.isNullOrBlank() -> CardRunSurface.Terminal
+            !x11Display.isNullOrBlank() -> CardRunSurface.X11
             !lastError.isNullOrBlank() || !lastMeaningfulOutput.isNullOrBlank() || !shellReportText.isNullOrBlank() -> CardRunSurface.Report
             else -> existing.surface
         }
@@ -174,6 +179,8 @@ object CardRunStore {
             lastError = lastError,
             shellReportText = shellReportText ?: existing.shellReportText,
             nextActionUrl = if (clearRunBinding || clearNextActionUrl) null else nextActionUrl ?: existing.nextActionUrl,
+            x11Display = if (clearRunBinding) null else x11Display ?: existing.x11Display,
+            x11SocketPath = if (clearRunBinding) null else x11SocketPath ?: existing.x11SocketPath,
             createdAt = if (beginsNewHistory) now else existing.createdAt,
             updatedAt = now
         )
@@ -424,7 +431,9 @@ object CardRunStore {
             systemSessionId = null,
             lastMeaningfulOutput = lastMeaningfulOutput ?: PROCESS_RESTORE_ABORTED_MESSAGE,
             lastError = lastError ?: PROCESS_RESTORE_ABORTED_MESSAGE,
-            nextActionUrl = null
+            nextActionUrl = null,
+            x11Display = null,
+            x11SocketPath = null
         )
     }
 
@@ -597,6 +606,7 @@ object CardRunStore {
             KiteRecipe.STEP_SHELL -> cmd ?: text
             KiteRecipe.STEP_TERMINAL -> text ?: cmd
             KiteRecipe.STEP_OPEN_WEB -> resolvedUrl ?: url ?: defaultUrl
+            KiteRecipe.STEP_X11 -> cmd ?: text
             KiteRecipe.STEP_ANDROID_ACTION -> action
             else -> cmd ?: text ?: url ?: action
         }.orEmpty().lineSequence()
@@ -612,6 +622,7 @@ object CardRunStore {
                 KiteRecipe.STEP_SHELL -> "SH"
                 KiteRecipe.STEP_TERMINAL -> "终端"
                 KiteRecipe.STEP_OPEN_WEB -> "网页"
+                KiteRecipe.STEP_X11 -> "X11"
                 KiteRecipe.STEP_ANDROID_ACTION -> "本机"
                 else -> type.ifBlank { "步骤" }
             },
@@ -696,6 +707,8 @@ object CardRunStore {
         status: CardRunStatus,
         runId: String?,
         terminalSessionId: String?,
+        x11Display: String?,
+        x11SocketPath: String?,
         pid: String?,
         rootPid: String?,
         processGroupId: String?,
@@ -709,6 +722,8 @@ object CardRunStore {
         val carriesRuntimePayload = listOf(
             runId,
             terminalSessionId,
+            x11Display,
+            x11SocketPath,
             pid,
             rootPid,
             processGroupId,
@@ -762,6 +777,8 @@ object CardRunStore {
             .put("lastError", lastError.orEmpty().take(MAX_STORED_TEXT_CHARS))
             .put("shellReportText", shellReportText.orEmpty().takeLast(MAX_STORED_TEXT_CHARS))
             .put("nextActionUrl", nextActionUrl.orEmpty())
+            .put("x11Display", x11Display.orEmpty())
+            .put("x11SocketPath", x11SocketPath.orEmpty())
             .put("createdAt", createdAt)
             .put("updatedAt", updatedAt)
 
@@ -821,6 +838,8 @@ object CardRunStore {
             lastError = optString("lastError").takeIf { it.isNotBlank() },
             shellReportText = optString("shellReportText").takeIf { it.isNotBlank() },
             nextActionUrl = optString("nextActionUrl").takeIf { it.isNotBlank() },
+            x11Display = optString("x11Display").takeIf { it.isNotBlank() },
+            x11SocketPath = optString("x11SocketPath").takeIf { it.isNotBlank() },
             createdAt = createdAt,
             updatedAt = updatedAt
         )

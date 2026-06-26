@@ -39,7 +39,7 @@ data class KiteRecipe(
         actionSteps(actionName).any { it.type == STEP_SHELL && !it.cmd.isNullOrBlank() }
 
     fun hasUbuntuStep(actionName: String = ACTION_START): Boolean =
-        actionSteps(actionName).any { it.type == STEP_SHELL || it.type == STEP_TERMINAL }
+        actionSteps(actionName).any { it.type == STEP_SHELL || it.type == STEP_TERMINAL || it.type == STEP_X11 }
 
     fun openWebUrl(actionName: String = ACTION_START): String =
         openWebUrlFromSteps(actionSteps(actionName)).ifBlank { defaultUrl }
@@ -129,6 +129,7 @@ data class KiteRecipe(
         const val STEP_OPEN_WEB = "open_web"
         const val STEP_SHELL = "shell"
         const val STEP_TERMINAL = "terminal"
+        const val STEP_X11 = "x11"
         const val STEP_ANDROID_ACTION = "android_action"
 
         const val ANDROID_ACTION_PREPARE_AI_ENV = "prepare_ai_env"
@@ -288,7 +289,7 @@ data class KiteRecipe(
             steps.firstOrNull { it.type == STEP_OPEN_WEB && !it.url.isNullOrBlank() }?.url.orEmpty()
 
         private fun inferTypeFromSteps(steps: List<KiteRecipeStep>): String {
-            val hasCommand = steps.any { it.type == STEP_SHELL || it.type == STEP_TERMINAL }
+            val hasCommand = steps.any { it.type == STEP_SHELL || it.type == STEP_TERMINAL || it.type == STEP_X11 }
             val hasOpenWeb = steps.any { it.type == STEP_OPEN_WEB }
             return when {
                 hasCommand && hasOpenWeb -> TYPE_COMMAND_WEB
@@ -575,6 +576,7 @@ data class KiteRecipeStep(
             if (params != null) put("params", params)
             if (!text.isNullOrBlank()) put("text", text)
             if (!session.isNullOrBlank()) put("session", session)
+            if (!runMode.isNullOrBlank()) put("runMode", runMode)
             if (surfaceMode != KiteRecipe.SURFACE_MODE_AUTO) put("surfaceMode", surfaceMode)
             if (!workdir.isNullOrBlank()) put("workdir", workdir)
             if (timeoutMs != null) put("timeoutMs", timeoutMs)

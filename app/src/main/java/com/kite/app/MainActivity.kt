@@ -69,6 +69,8 @@ import com.kite.app.bridge.BridgeResult
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.bridge.KiteBrowserOpenRequest
 import com.kite.app.bridge.KiteBrowserProxyInstaller
+import com.kite.app.bridge.KiteDesktopOpenRequest
+import com.kite.app.bridge.KiteDesktopOpenResponse
 import com.kite.app.bridge.KiteLocalServer
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.DropZoneStatus
@@ -103,11 +105,14 @@ import com.kite.app.resources.KiteResourceRegistryEntry
 import com.kite.app.resources.KiteResourceShellAction
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunBrowserRouter
+import com.kite.app.run.CardRunDesktopRouter
 import com.kite.app.run.CardRunHistoryEntry
 import com.kite.app.run.CardRunHistoryStep
 import com.kite.app.run.CardRunSurface
 import com.kite.app.run.CardRunStatus as RecipeRunStatus
 import com.kite.app.run.CardRunStore
+import com.kite.app.run.KiteX11SurfacePlan
+import com.kite.app.run.KiteX11SurfaceServer
 import com.kite.app.run.PendingTerminalFlow
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
@@ -233,6 +238,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var focusedRunRecipeId: String? = null
     private var focusedRunInstanceId: String? = null
     private var registeredBrowserInstanceId: String? = null
+    private var registeredDesktopInstanceId: String? = null
     private var registeredCardRunCloserInstanceId: String? = null
     private var currentResourceDetailId: String? = null
     private var resourceDetailRequestSerial = 0L
@@ -317,9 +323,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceInstallStore = KiteResourceInstallStore(this)
         resourceManifestLoader = KiteResourceManifestLoader(this)
         prewarmResourceCatalog()
-        localServer = KiteLocalServer(applicationContext, diagnostics) { request ->
-            runOnUiThread { handleBrowserOpenRequest(request) }
-        }
+        localServer = KiteLocalServer(
+            context = applicationContext,
+            diagnostics = diagnostics,
+            openWeb = { request ->
+                runOnUiThread { handleBrowserOpenRequest(request) }
+            },
+            openDesktop = { request ->
+                handleDesktopOpenRequest(request)
+            }
+        )
         if (shouldStartLocalServer()) {
             localServer.start()
             localServerStarted = true
@@ -370,6 +383,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (runtimeAction.isBlank()) return false
 
         if (!RuntimeAutomationActions.isEnabled(applicationContext, runtimeAction)) {
+            clearRuntimeAutomationExtras(intent)
             return true
         }
         when (runtimeAction.lowercase()) {
@@ -389,6 +403,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             ACTION_STOP_BACKGROUND_RUNTIME -> stopBackgroundRuntimeFromAutomation(intent)
             ACTION_RECLAIM_OWNER_RUNTIME -> reclaimOwnerRuntimeFromAutomation(intent)
             ACTION_START_RESOURCE_OWNER_PROBE -> startResourceOwnerProbeFromAutomation(intent)
+            ACTION_START_RESOURCE_INSTALL -> startResourceInstallFromAutomation(intent)
+            ACTION_START_RESOURCE_OPEN -> startResourceOpenFromAutomation(intent)
             ACTION_STOP_CARD_RUN -> stopCardRunFromAutomation(intent)
             else -> diagnostics.logRecipeEvent(
                 "kite_runtime_automation_ignored",
@@ -396,10 +412,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 mapOf("runtimeAction" to runtimeAction)
             )
         }
+        clearRuntimeAutomationExtras(intent)
+        return true
+    }
+
+    private fun clearRuntimeAutomationExtras(intent: Intent) {
         intent.removeExtra(EXTRA_AUTOMATION_RUNTIME_ACTION)
         intent.removeExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES)
         intent.removeExtra(EXTRA_AUTOMATION_OWNER_ID)
-        return true
+        intent.removeExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_TARGET_ID)
+        setIntent(intent)
     }
 
     private fun stopBackgroundRuntimeFromAutomation(sourceIntent: Intent?) {
@@ -547,6 +569,69 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         )
     }
 
+    private fun startResourceOpenFromAutomation(sourceIntent: Intent?) {
+        val resourceId = sourceIntent
+            ?.getStringExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_TARGET_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { KiteResourceInstallRecipes.safeId(it) }
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_resource_open_missing_id",
+                null,
+                emptyMap()
+            )
+        invalidateResourceCatalogCache()
+        val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_resource_open_missing_resource",
+                null,
+                mapOf("resourceId" to resourceId)
+            )
+        val recipe = resourceOpenRecipe(item)
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_resource_open_missing_recipe",
+                null,
+                mapOf("resourceId" to resourceId)
+            )
+        diagnostics.logRecipeEvent(
+            "kite_runtime_automation_resource_open_start",
+            recipe,
+            mapOf("resourceId" to resourceId)
+        )
+        startResourceOpen(item, recipe)
+    }
+
+    private fun startResourceInstallFromAutomation(sourceIntent: Intent?) {
+        val resourceId = sourceIntent
+            ?.getStringExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_TARGET_ID)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { KiteResourceInstallRecipes.safeId(it) }
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_resource_install_missing_id",
+                null,
+                emptyMap()
+            )
+        invalidateResourceCatalogCache()
+        val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_resource_install_missing_resource",
+                null,
+                mapOf("resourceId" to resourceId)
+            )
+        val recipe = resourceInstallRecipe(item)
+            ?: return diagnostics.logRecipeEvent(
+                "kite_runtime_automation_resource_install_missing_recipe",
+                null,
+                mapOf("resourceId" to resourceId)
+            )
+        diagnostics.logRecipeEvent(
+            "kite_runtime_automation_resource_install_start",
+            recipe,
+            mapOf("resourceId" to resourceId)
+        )
+        cacheResourceExecutionManifest(item.id)
+        startResourceInstall(item, recipe)
+    }
+
     private fun resourceOwnerProbeRecipe(resourceId: String): KiteRecipe {
         val step = KiteRecipeStep(
             id = "resource_owner_probe_$resourceId",
@@ -600,6 +685,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     override fun onDestroy() {
         closeResourceInstallTaskIfActivityDestroyed()
         CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
+        CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
         CardRunTaskCloser.unregister(registeredCardRunCloserInstanceId)
         if (localServerStarted) {
             localServer.stop()
@@ -686,6 +772,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         activeRunInstanceIds[recipe.id] = state.instanceId
         runtimeStates[recipe.id] = state
         registerCardRunBrowserHandler(recipe, instanceId)
+        registerCardRunDesktopHandler(recipe, instanceId)
         registerCardRunTaskCloser(instanceId)
         diagnostics.logRecipeAction(
             recipe,
@@ -762,6 +849,27 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 KiteRecipe.ACTION_START to KiteRecipeAction(
                     id = KiteRecipe.ACTION_START,
                     steps = listOf(KiteRecipeStep(id = "open_$recipeId", type = KiteRecipe.STEP_OPEN_WEB, url = url))
+                )
+            ),
+            runtimeSource = "temporary"
+        )
+
+    private fun temporaryDesktopRecipe(recipeId: String, command: String, title: String = "临时桌面"): KiteRecipe =
+        KiteRecipe(
+            id = recipeId,
+            name = title,
+            description = "由 Ubuntu 桌面请求临时打开",
+            type = KiteRecipe.TYPE_START_SERVICE,
+            category = "temporary",
+            defaultUrl = "",
+            shortcut = false,
+            execution = KiteExecution.steps(
+                listOf(KiteRecipeStep(id = "desktop_$recipeId", type = KiteRecipe.STEP_X11, cmd = command))
+            ),
+            actions = linkedMapOf(
+                KiteRecipe.ACTION_START to KiteRecipeAction(
+                    id = KiteRecipe.ACTION_START,
+                    steps = listOf(KiteRecipeStep(id = "desktop_$recipeId", type = KiteRecipe.STEP_X11, cmd = command))
                 )
             ),
             runtimeSource = "temporary"
@@ -2430,7 +2538,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun invalidateResourceCatalogCache() {
         resourceCatalogDirty = true
         resourceSectionsDirty = true
+        cachedResourceCatalog = null
+        cachedResourceCatalogUpdatedAt = 0L
         cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
+        resourceManifestLoader.invalidate()
     }
 
     private fun invalidateResourceUiCache() {
@@ -7276,6 +7387,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 cardRunWebAddressInputBody(actionRecipe, surfaceState),
                 FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             )
+        } else if (state.surface == CardRunSurface.X11) {
+            surfaceHost.addView(
+                cardRunX11SurfaceBody(recipe, surfaceState),
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            )
         } else if (state.surface == CardRunSurface.InstallWizard) {
             surfaceHost.addView(ScrollView(this).apply {
                 addView(resourceInstallWizardContent())
@@ -7799,6 +7915,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             CardRunSurface.Report, CardRunSurface.Summary -> "SH 报告"
             CardRunSurface.Terminal -> "终端"
             CardRunSurface.Web -> "网页"
+            CardRunSurface.X11 -> "X11"
             CardRunSurface.InstallWizard -> "获取向导"
         }
 
@@ -8013,6 +8130,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 (state.status == RecipeRunStatus.Running || state.status == RecipeRunStatus.AlreadyRunning)
             KiteRecipe.STEP_TERMINAL -> state.status == RecipeRunStatus.WaitingTerminal && !state.terminalSessionId.isNullOrBlank()
             KiteRecipe.STEP_OPEN_WEB -> state.surface == CardRunSurface.Web && !state.nextActionUrl.isNullOrBlank()
+            KiteRecipe.STEP_X11 -> state.surface == CardRunSurface.X11 && !state.x11Display.isNullOrBlank()
             else -> false
         }
     }
@@ -8055,6 +8173,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             lastOutput = when (step?.type) {
                 KiteRecipe.STEP_TERMINAL -> "终端已由用户标记完成"
                 KiteRecipe.STEP_OPEN_WEB -> "网页已由用户标记完成"
+                KiteRecipe.STEP_X11 -> "X11 GUI 已由用户标记完成"
                 KiteRecipe.STEP_SHELL -> "SH 报告已由用户确认继续"
                 else -> "步骤已由用户标记完成"
             }
@@ -8118,7 +8237,45 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             when (state.surface) {
                 CardRunSurface.Terminal -> Unit
                 CardRunSurface.Web -> addView(cardRunPlaceholderPanel("网页", state.nextActionUrl ?: "还没有网页地址。"))
+                CardRunSurface.X11 -> addView(cardRunX11SurfaceBody(recipe, state))
                 else -> addView(cardRunReportPanel(recipe, state))
+            }
+        }
+
+    private fun x11TaskTitle(recipe: KiteRecipe): String = recipe.name.ifBlank { "X11" }
+
+    private fun cardRunX11SurfaceBody(recipe: KiteRecipe, state: RecipeRuntimeState): View =
+        FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            val display = state.x11Display?.takeIf { it.isNotBlank() }
+            if (display == null) {
+                addView(
+                    cardRunPlaceholderPanel(x11TaskTitle(recipe), "DISPLAY=待分配"),
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        setMargins(dp(16), dp(16), dp(16), 0)
+                    }
+                )
+                return@apply
+            }
+            val binding = KiteX11SurfacePlan.binding(display)
+            runCatching {
+                KiteX11SurfaceServer.surfaceView(this@MainActivity, binding)
+            }.onSuccess { surface ->
+                addView(surface, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }.onFailure { error ->
+                addView(
+                    cardRunPlaceholderPanel(
+                        x11TaskTitle(recipe),
+                        listOf(
+                            "DISPLAY=${binding.display}",
+                            "socket=${binding.socketPath}",
+                            "native X11 启动失败：${error.message.orEmpty()}"
+                        ).joinToString("\n")
+                    ),
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        setMargins(dp(16), dp(16), dp(16), 0)
+                    }
+                )
             }
         }
 
@@ -9379,6 +9536,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 cardRunWindowWebCaption(rootState.nextActionUrl)
             )
         }
+        rootState.x11Display?.takeIf { it.isNotBlank() }?.let { display ->
+            addItem(rootState, CardRunSurface.X11, "x11", "X11", "DISPLAY=$display")
+        }
         CardRunStore.childrenOf(rootState.instanceId)
             .sortedBy { it.createdAt }
             .forEach { child ->
@@ -9392,6 +9552,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         cardRunWindowWebTitle(child.nextActionUrl),
                         cardRunWindowWebCaption(child.nextActionUrl)
                     )
+                } else if (!child.x11Display.isNullOrBlank()) {
+                    addItem(child, CardRunSurface.X11, "x11", "X11", "DISPLAY=${child.x11Display}")
                 }
             }
         if (items.isEmpty() && rootState.instanceId.isNotBlank()) {
@@ -9623,6 +9785,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         when (surface) {
             CardRunSurface.Web -> "web"
             CardRunSurface.Terminal -> "terminal"
+            CardRunSurface.X11 -> "x11"
             else -> "report"
         }
 
@@ -9630,6 +9793,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         when (kind) {
             "web" -> R.drawable.card_run_window_icon_web
             "terminal" -> R.drawable.card_run_window_icon_terminal
+            "x11" -> R.drawable.card_run_window_icon_terminal
             "report" -> R.drawable.card_run_window_icon_shell
             else -> R.drawable.card_run_window_icon_shell
         }
@@ -9696,6 +9860,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             add(CardRunMenuAction("◎", cardRunWebSurfaceLabel(url)) {
                 dialog.dismiss()
                 selectCardRunSurface(recipe, CardRunSurface.Web)
+            })
+        }
+        state.x11Display?.takeIf { it.isNotBlank() }?.let { display ->
+            add(CardRunMenuAction("X11", "X11 $display") {
+                dialog.dismiss()
+                selectCardRunSurface(recipe, CardRunSurface.X11)
             })
         }
     }
@@ -10483,6 +10653,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                         onClick = { openRunManagementSurface(group, item) }
                     ))
                 }
+            surfaceItems
+                .filter { it.surface == CardRunSurface.X11 }
+                .forEach { item ->
+                    addView(runManagementSurfaceRow(
+                        icon = "X11",
+                        title = item.title,
+                        subtitle = item.caption,
+                        onClick = { openRunManagementSurface(group, item) }
+                    ))
+                }
             if (group.hasProcessBinding()) {
                 val processExpanded = runManagementExpandedProcessIds.contains(group.run.instanceId)
                 addView(runManagementSurfaceRow(
@@ -10505,7 +10685,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             .filter { item ->
                 item.surface == CardRunSurface.Report ||
                     item.surface == CardRunSurface.Terminal ||
-                    item.surface == CardRunSurface.Web
+                    item.surface == CardRunSurface.Web ||
+                    item.surface == CardRunSurface.X11
             }
 
     private fun runManagementSurfaceRow(
@@ -12134,6 +12315,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             KiteRecipe.STEP_TERMINAL -> runUbuntuStepWhenReady(recipe, stepIndex, runId, pid, CardRunSurface.Terminal) {
                 executeTerminalRecipeStep(recipe, step, stepIndex)
             }
+            KiteRecipe.STEP_X11 -> runUbuntuStepWhenReady(recipe, stepIndex, runId, pid, CardRunSurface.X11) {
+                executeX11RecipeStep(recipe, step, stepIndex, runId, pid)
+            }
             KiteRecipe.STEP_OPEN_WEB -> {
                 val url = step.url.orEmpty().ifBlank { recipe.defaultUrl }
                 if (url.isBlank()) {
@@ -12215,6 +12399,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun surfaceForStep(step: KiteRecipeStep): CardRunSurface = when (step.type) {
         KiteRecipe.STEP_OPEN_WEB -> CardRunSurface.Web
         KiteRecipe.STEP_TERMINAL -> CardRunSurface.Terminal
+        KiteRecipe.STEP_X11 -> CardRunSurface.X11
         KiteRecipe.STEP_SHELL,
         KiteRecipe.STEP_ANDROID_ACTION -> CardRunSurface.Report
         else -> CardRunSurface.Summary
@@ -12271,6 +12456,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 mayAutoOpenSurface && (
                     step.type == KiteRecipe.STEP_OPEN_WEB ||
                         step.type == KiteRecipe.STEP_TERMINAL ||
+                        step.type == KiteRecipe.STEP_X11 ||
                         step.type == KiteRecipe.STEP_SHELL
                     )
             }
@@ -12550,6 +12736,235 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             shellReportText = shellReport
         )
         executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput)
+    }
+
+    private fun executeX11RecipeStep(
+        recipe: KiteRecipe,
+        step: KiteRecipeStep,
+        stepIndex: Int,
+        previousRunId: String?,
+        previousPid: String?
+    ) {
+        val instanceId = ensureRunInstanceId(recipe)
+        val command = step.cmd.orEmpty().ifBlank { step.text.orEmpty() }
+        if (command.isBlank()) {
+            setRuntimeState(
+                recipe,
+                RecipeRunStatus.Failed,
+                instanceId = instanceId,
+                surface = CardRunSurface.Report,
+                currentStepIndex = stepIndex,
+                runId = previousRunId,
+                pid = previousPid,
+                lastError = "x11_missing_command"
+            )
+            markResourceInstallFailed(recipe, previousRunId, "x11_missing_command")
+            toastIfNotResourceRecipe(recipe, "X11 步骤缺少命令")
+            showRunSurfaceOrConsole(recipe)
+            return
+        }
+        val binding = CardRunStore.get(instanceId)?.x11Display?.let { KiteX11SurfacePlan.binding(it) }
+            ?: KiteX11SurfacePlan.allocate(
+                instanceId = instanceId,
+                occupiedDisplays = CardRunStore.snapshot()
+                    .filterNot { it.instanceId == instanceId }
+                    .mapNotNull { it.x11Display }
+                    .toSet()
+            )
+        setRuntimeState(
+            recipe,
+            RecipeRunStatus.Running,
+            instanceId = instanceId,
+            surface = CardRunSurface.Report,
+            currentStepIndex = stepIndex,
+            runId = previousRunId,
+            pid = previousPid,
+            lastMeaningfulOutput = "${x11TaskTitle(recipe)} native X11 准备中",
+            x11Display = binding.display,
+            x11SocketPath = binding.socketPath,
+            clearNextActionUrl = true
+        )
+        if (shouldOpenStepSurface(recipe, step)) {
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = instanceId
+            showCardRunLoadingSurface(recipe, "正在准备 X11")
+        }
+        thread(name = "KiteX11Start-${recipe.id.take(32)}", isDaemon = true) {
+            val x11Start = KiteX11SurfaceServer.ensureStarted(applicationContext, binding)
+            runOnUiThread {
+                if (x11Start.isFailure) {
+                    val message = x11Start.exceptionOrNull()?.message ?: "native X11 启动失败"
+                    setRuntimeState(
+                        recipe,
+                        RecipeRunStatus.Failed,
+                        instanceId = instanceId,
+                        surface = CardRunSurface.Report,
+                        currentStepIndex = stepIndex,
+                        runId = previousRunId,
+                        pid = previousPid,
+                        lastError = message,
+                        x11Display = binding.display,
+                        x11SocketPath = binding.socketPath
+                    )
+                    markResourceInstallFailed(recipe, previousRunId, message)
+                    toastIfNotResourceRecipe(recipe, message.take(120))
+                    showRunSurfaceOrConsole(recipe)
+                    return@runOnUiThread
+                }
+                launchX11RecipeStep(
+                    recipe = recipe,
+                    step = step,
+                    stepIndex = stepIndex,
+                    instanceId = instanceId,
+                    command = command,
+                    binding = binding,
+                    previousRunId = previousRunId,
+                    previousPid = previousPid
+                )
+            }
+        }
+    }
+
+    private fun launchX11RecipeStep(
+        recipe: KiteRecipe,
+        step: KiteRecipeStep,
+        stepIndex: Int,
+        instanceId: String,
+        command: String,
+        binding: com.kite.app.run.KiteX11SurfaceBinding,
+        previousRunId: String?,
+        previousPid: String?
+    ) {
+        val openSurface = shouldOpenStepSurface(recipe, step)
+        val waitForUserSignal = openSurface && shouldRenderInCardRun(recipe)
+        val title = x11TaskTitle(recipe)
+        setRuntimeState(
+            recipe,
+            RecipeRunStatus.Running,
+            instanceId = instanceId,
+            surface = CardRunSurface.X11,
+            currentStepIndex = stepIndex,
+            runId = previousRunId,
+            pid = previousPid,
+            lastMeaningfulOutput = "$title native X11 启动中",
+            x11Display = binding.display,
+            x11SocketPath = binding.socketPath,
+            clearNextActionUrl = true
+        )
+        if (openSurface) {
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = instanceId
+            showCardRunSurface(recipe)
+        }
+        val x11Step = step.copy(
+            type = KiteRecipe.STEP_SHELL,
+            cmd = command,
+            runMode = step.runMode ?: KiteRecipe.RUN_MODE_DETACHED
+        )
+        val stepRecipe = recipe.copy(
+            execution = KiteExecution.steps(listOf(x11Step)),
+            actions = linkedMapOf(
+                KiteRecipe.ACTION_START to KiteRecipeAction(
+                    id = KiteRecipe.ACTION_START,
+                    steps = listOf(x11Step),
+                    expected = step.expected ?: recipe.expected
+                )
+            ),
+            expected = step.expected ?: recipe.expected
+        )
+        bridgeClient.runRecipe(
+            stepRecipe,
+            extraEnv = KiteBrowserProxyInstaller.environment(
+                context = applicationContext,
+                recipeId = recipe.id,
+                instanceId = instanceId,
+                source = "x11_step"
+            ) + binding.environment(),
+            onProgress = { progress ->
+                runOnUiThread {
+                    handleX11Progress(recipe, stepIndex, binding, progress)
+                }
+            }
+        ) { result ->
+            runOnUiThread {
+                handleX11Result(recipe, stepIndex, instanceId, binding, result, waitForUserSignal)
+            }
+        }
+    }
+
+    private fun handleX11Progress(
+        recipe: KiteRecipe,
+        stepIndex: Int,
+        binding: com.kite.app.run.KiteX11SurfaceBinding,
+        progress: BridgeProgress
+    ) {
+        if (progress.recipeId != recipe.id) return
+        val state = runtimeStates[recipe.id] ?: CardRunStore.currentForRecipe(recipe.id) ?: return
+        if (state.currentStepIndex != stepIndex || state.surface != CardRunSurface.X11) return
+        val updated = CardRunStore.update(
+            recipe = recipe,
+            status = RecipeRunStatus.Running,
+            instanceId = state.instanceId,
+            surface = CardRunSurface.X11,
+            currentStepIndex = stepIndex,
+            runId = progress.runId,
+            pid = progress.pid,
+            rootPid = progress.rootPid,
+            processGroupId = progress.processGroupId,
+            systemSessionId = progress.systemSessionId,
+            lastMeaningfulOutput = progress.lastMeaningfulOutput.ifBlank { "${x11TaskTitle(recipe)} native X11 运行中" },
+            x11Display = binding.display,
+            x11SocketPath = binding.socketPath
+        )
+        runtimeStates[recipe.id] = updated
+    }
+
+    private fun handleX11Result(
+        recipe: KiteRecipe,
+        stepIndex: Int,
+        instanceId: String,
+        binding: com.kite.app.run.KiteX11SurfaceBinding,
+        result: BridgeResult,
+        waitForUserSignal: Boolean
+    ) {
+        val report = result.runReport
+        val runId = report?.runId ?: result.requestId
+        val lastOutput = report?.lastMeaningfulOutput() ?: result.message.take(500)
+        val status = when {
+            result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE -> RecipeRunStatus.BridgeUnavailable
+            result.accepted -> RecipeRunStatus.Running
+            else -> RecipeRunStatus.Failed
+        }
+        setRuntimeState(
+            recipe,
+            status,
+            instanceId = instanceId,
+            surface = if (status == RecipeRunStatus.Failed || status == RecipeRunStatus.BridgeUnavailable) CardRunSurface.Report else CardRunSurface.X11,
+            currentStepIndex = stepIndex,
+            runId = runId,
+            pid = report?.pid,
+            rootPid = report?.rootPid,
+            processGroupId = report?.processGroupId,
+            systemSessionId = report?.systemSessionId,
+            lastMeaningfulOutput = if (status == RecipeRunStatus.Running) {
+                val pid = report?.pid ?: report?.rootPid ?: report?.processGroupId ?: report?.systemSessionId
+                "${x11TaskTitle(recipe)} native X11 运行中${pid?.let { " pid=$it" }.orEmpty()}"
+            } else null,
+            lastError = if (status == RecipeRunStatus.Running) null else lastOutput.ifBlank { result.status },
+            x11Display = binding.display.takeIf { status == RecipeRunStatus.Running },
+            x11SocketPath = binding.socketPath.takeIf { status == RecipeRunStatus.Running }
+        )
+        if (status != RecipeRunStatus.Running) {
+            markResourceInstallFailed(recipe, runId, lastOutput.ifBlank { result.status })
+            toastIfNotResourceRecipe(recipe, lastOutput.take(120).ifBlank { "X11 启动失败" })
+            showRunSurfaceOrConsole(recipe)
+            return
+        }
+        if (stepIndex < recipe.steps.lastIndex && !waitForUserSignal) {
+            executeRecipeStep(recipe, stepIndex + 1, runId, report?.pid, lastOutput)
+        } else {
+            showRunSurfaceOrConsole(recipe)
+        }
     }
 
     private fun executeTerminalRecipeStep(
@@ -13475,6 +13890,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         lastError: String? = null,
         shellReportText: String? = null,
         nextActionUrl: String? = null,
+        x11Display: String? = null,
+        x11SocketPath: String? = null,
         clearRunBinding: Boolean = false,
         clearTerminalSession: Boolean = false,
         clearNextActionUrl: Boolean = false
@@ -13490,7 +13907,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 systemSessionId = systemSessionId,
                 lastMeaningfulOutput = lastMeaningfulOutput,
                 lastError = lastError,
-                shellReportText = shellReportText
+                shellReportText = shellReportText,
+                x11Display = x11Display,
+                x11SocketPath = x11SocketPath
             )
         ) {
             return
@@ -13511,6 +13930,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             lastError = lastError,
             shellReportText = shellReportText,
             nextActionUrl = nextActionUrl,
+            x11Display = x11Display,
+            x11SocketPath = x11SocketPath,
             clearRunBinding = clearRunBinding,
             clearTerminalSession = clearTerminalSession,
             clearNextActionUrl = clearNextActionUrl
@@ -13547,7 +13968,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         systemSessionId: String?,
         lastMeaningfulOutput: String?,
         lastError: String?,
-        shellReportText: String?
+        shellReportText: String?,
+        x11Display: String?,
+        x11SocketPath: String?
     ): Boolean {
         if (status == RecipeRunStatus.Stopping || status == RecipeRunStatus.Stopped) return false
         val targetInstanceId = instanceId
@@ -13564,7 +13987,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             systemSessionId,
             lastMeaningfulOutput,
             lastError,
-            shellReportText
+            shellReportText,
+            x11Display,
+            x11SocketPath
         ).any { !it.isNullOrBlank() } || status == RecipeRunStatus.BridgeUnavailable
         if (!carriesOldRuntimeResult) return false
         // ponytail: instance-level stale callback gate; replace with request tokens if launches become multi-flight.
@@ -15965,6 +16390,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
+    private fun registerCardRunDesktopHandler(recipe: KiteRecipe, instanceId: String) {
+        if (this !is CardRunActivity || instanceId.isBlank()) return
+        if (registeredDesktopInstanceId != instanceId) {
+            CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
+            registeredDesktopInstanceId = instanceId
+        }
+        CardRunDesktopRouter.register(instanceId) { request ->
+            runOnUiThread { focusDesktopRequestInCardRun(recipe, instanceId, request) }
+            true
+        }
+    }
+
     private fun handleBrowserOpenRequest(request: KiteBrowserOpenRequest) {
         val normalized = request.copy(url = request.url.trim())
         if (normalized.url.isBlank()) return
@@ -15988,6 +16425,154 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         openTemporaryBrowserRequest(normalized)
+    }
+
+    private fun handleDesktopOpenRequest(request: KiteDesktopOpenRequest): KiteDesktopOpenResponse {
+        val normalized = request.copy(command = request.command.trim())
+        if (normalized.command.isBlank()) {
+            return KiteDesktopOpenResponse(false, normalized.recipeId, normalized.instanceId, "", "")
+        }
+        val accepted = acceptDesktopOpenRequest(normalized)
+        if (accepted.accepted) {
+            accepted.instanceId?.let { CardRunDesktopRouter.dispatch(normalized.copy(recipeId = accepted.recipeId, instanceId = it)) }
+        }
+        return accepted
+    }
+
+    private fun acceptDesktopOpenRequest(request: KiteDesktopOpenRequest): KiteDesktopOpenResponse {
+        val existingState = request.instanceId?.takeIf { it.isNotBlank() }?.let { CardRunStore.get(it) }
+        val recipeId = request.recipeId?.takeIf { it.isNotBlank() }
+            ?: existingState?.recipeId
+            ?: "temp_desktop_${UUID.randomUUID().toString().replace("-", "")}"
+        val recipe = CardRunStore.registeredRecipe(recipeId)
+            ?: currentRecipes.firstOrNull { it.id == recipeId }
+            ?: runCatching { recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId } }.getOrNull()
+            ?: temporaryDesktopRecipe(recipeId, request.command, request.title?.takeIf { it.isNotBlank() } ?: "临时桌面")
+        val instanceId = request.instanceId?.takeIf { it.isNotBlank() } ?: CardRunIntents.newInstanceId(recipe.id)
+        val binding = existingState?.x11Display?.let { KiteX11SurfacePlan.binding(it) }
+            ?: KiteX11SurfacePlan.allocate(
+                instanceId = instanceId,
+                occupiedDisplays = CardRunStore.snapshot()
+                    .filterNot { it.instanceId == instanceId }
+                    .mapNotNull { it.x11Display }
+                    .toSet()
+            )
+        CardRunStore.registerRecipe(recipe)
+        CardRunStore.start(
+            recipe = recipe,
+            instanceId = instanceId,
+            ownerKind = RecipeRuntimeState.OWNER_KIND_X11,
+            stepId = "desktop_request"
+        )
+        val preparingState = CardRunStore.update(
+            recipe = recipe,
+            status = RecipeRunStatus.Running,
+            instanceId = instanceId,
+            ownerKind = RecipeRuntimeState.OWNER_KIND_X11,
+            stepId = "desktop_request",
+            surface = CardRunSurface.Report,
+            currentStepIndex = 0,
+            lastMeaningfulOutput = "正在准备 X11 桌面：${request.command.take(120)}",
+            x11Display = binding.display,
+            x11SocketPath = binding.socketPath,
+            clearNextActionUrl = true
+        )
+        runOnUiThread {
+            activeRunInstanceIds[recipe.id] = instanceId
+            runtimeStates[recipe.id] = preparingState
+            if (request.instanceId.isNullOrBlank()) {
+                startActivity(
+                    CardRunIntents.launchIntent(
+                        context = this,
+                        recipeId = recipe.id,
+                        instanceId = instanceId,
+                        launchSource = CardRunIntents.SOURCE_CARD,
+                        autoStart = false
+                    )
+                )
+            } else if (this is CardRunActivity && focusedRunInstanceId == instanceId) {
+                showCardRunLoadingSurface(recipe, "正在准备 X11 桌面")
+            }
+        }
+        val x11Start = KiteX11SurfaceServer.ensureStarted(applicationContext, binding)
+        if (x11Start.isFailure) {
+            val message = x11Start.exceptionOrNull()?.message ?: "native X11 启动失败"
+            val failedState = CardRunStore.update(
+                recipe = recipe,
+                status = RecipeRunStatus.Failed,
+                instanceId = instanceId,
+                ownerKind = RecipeRuntimeState.OWNER_KIND_X11,
+                stepId = "desktop_request",
+                surface = CardRunSurface.Report,
+                currentStepIndex = 0,
+                lastError = message,
+                x11Display = binding.display,
+                x11SocketPath = binding.socketPath
+            )
+            runOnUiThread {
+                runtimeStates[recipe.id] = failedState
+                if (this is CardRunActivity && focusedRunInstanceId == instanceId) showRunSurfaceOrConsole(recipe)
+            }
+            diagnostics.logRecipeAction(
+                recipe,
+                "desktop_request_x11_failed",
+                mapOf(
+                    "instanceId" to instanceId,
+                    "source" to request.source,
+                    "display" to binding.display,
+                    "error" to message
+                )
+            )
+            return KiteDesktopOpenResponse(false, recipe.id, instanceId, "", "")
+        }
+
+        val state = CardRunStore.update(
+            recipe = recipe,
+            status = RecipeRunStatus.Running,
+            instanceId = instanceId,
+            ownerKind = RecipeRuntimeState.OWNER_KIND_X11,
+            stepId = "desktop_request",
+            surface = CardRunSurface.X11,
+            currentStepIndex = 0,
+            lastMeaningfulOutput = "Ubuntu 请求桌面：${request.command.take(120)}",
+            x11Display = binding.display,
+            x11SocketPath = binding.socketPath,
+            clearNextActionUrl = true
+        )
+        runOnUiThread {
+            activeRunInstanceIds[recipe.id] = instanceId
+            runtimeStates[recipe.id] = state
+            if (this is CardRunActivity && focusedRunInstanceId == instanceId) {
+                showCardRunSurface(recipe)
+            }
+        }
+        diagnostics.logRecipeAction(
+            recipe,
+            "desktop_request_accepted",
+            mapOf(
+                "instanceId" to instanceId,
+                "source" to request.source,
+                "display" to binding.display,
+                "command" to request.command.take(500)
+            )
+        )
+        return KiteDesktopOpenResponse(true, recipe.id, instanceId, binding.display, binding.socketPath)
+    }
+
+    private fun focusDesktopRequestInCardRun(
+        recipe: KiteRecipe,
+        instanceId: String,
+        request: KiteDesktopOpenRequest
+    ) {
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = instanceId
+        title = recipe.name
+        diagnostics.logRecipeAction(
+            recipe,
+            "desktop_request_opened_in_instance",
+            mapOf("instanceId" to instanceId, "source" to request.source, "command" to request.command.take(500))
+        )
+        showCardRunSurface(recipe)
     }
 
     private fun openTemporaryBrowserRequest(request: KiteBrowserOpenRequest) {
@@ -16736,6 +17321,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             KiteRecipe.STEP_SHELL -> "SH"
             KiteRecipe.STEP_TERMINAL -> "终端"
             KiteRecipe.STEP_OPEN_WEB -> "网页"
+            KiteRecipe.STEP_X11 -> "X11"
             KiteRecipe.STEP_ANDROID_ACTION -> "本机"
             else -> if (recipe.defaultUrl.isNotBlank()) "网页" else "卡片"
         }
@@ -16767,6 +17353,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             firstStep?.type == KiteRecipe.STEP_SHELL -> "SH · ${compactCommand(firstStep.cmd ?: firstStep.text.orEmpty())}"
             firstStep?.type == KiteRecipe.STEP_TERMINAL -> "终端 · ${compactCommand(firstStep.cmd ?: firstStep.text.orEmpty()).ifBlank { "打开交互" }}"
             firstStep?.type == KiteRecipe.STEP_OPEN_WEB -> "网页 · ${compactUrlForCard(firstStep.url.orEmpty())}"
+            firstStep?.type == KiteRecipe.STEP_X11 -> "X11 · ${compactCommand(firstStep.cmd ?: firstStep.text.orEmpty())}"
             firstStep?.type == KiteRecipe.STEP_ANDROID_ACTION -> "本机 · ${(firstStep.action ?: "系统动作").trim()}"
             recipe.defaultUrl.isNotBlank() -> "网页 · ${compactUrlForCard(recipe.defaultUrl)}"
             recipe.description.isNotBlank() -> recipe.description
@@ -17573,6 +18160,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val ACTION_STOP_BACKGROUND_RUNTIME = "stop_background_runtime"
         private const val ACTION_RECLAIM_OWNER_RUNTIME = "reclaim_owner_runtime"
         private const val ACTION_START_RESOURCE_OWNER_PROBE = "start_resource_owner_probe"
+        private const val ACTION_START_RESOURCE_INSTALL = "start_resource_install"
+        private const val ACTION_START_RESOURCE_OPEN = "start_resource_open"
         private const val ACTION_STOP_CARD_RUN = "stop_card_run"
         private const val RESOURCE_OWNER_PROBE_ID = "kite.owner.telemetry.probe"
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"

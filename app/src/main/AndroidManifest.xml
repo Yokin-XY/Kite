@@ -97,6 +97,11 @@
                 android:value="Device control API server" />
         </service>
 
+        <service
+            android:name="com.kite.app.run.KiteX11ServerService"
+            android:exported="false"
+            android:process=":x11" />
+
         <receiver
             android:name="com.kftest.app.foundation.runtime.RuntimeControlledLeaseProbeRegistrationReceiver"
             android:exported="true">

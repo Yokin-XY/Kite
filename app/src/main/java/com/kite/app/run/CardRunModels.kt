@@ -38,6 +38,7 @@ enum class CardRunSurface(val label: String) {
     Report("报告"),
     Terminal("终端"),
     Web("网页"),
+    X11("X11"),
     InstallWizard("安装向导")
 }
 
@@ -62,6 +63,8 @@ data class CardRunState(
     val lastError: String? = null,
     val shellReportText: String? = null,
     val nextActionUrl: String? = null,
+    val x11Display: String? = null,
+    val x11SocketPath: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {
@@ -80,11 +83,13 @@ data class CardRunState(
             !pid.isNullOrBlank() ||
             !rootPid.isNullOrBlank() ||
             !processGroupId.isNullOrBlank() ||
-            !terminalSessionId.isNullOrBlank()
+            !terminalSessionId.isNullOrBlank() ||
+            !x11Display.isNullOrBlank()
 
     fun recommendedSurface(): CardRunSurface = when {
         !nextActionUrl.isNullOrBlank() -> CardRunSurface.Web
         !terminalSessionId.isNullOrBlank() -> CardRunSurface.Terminal
+        !x11Display.isNullOrBlank() -> CardRunSurface.X11
         failureSummary() != null || !lastMeaningfulOutput.isNullOrBlank() -> CardRunSurface.Report
         else -> CardRunSurface.Summary
     }
@@ -108,6 +113,7 @@ data class CardRunState(
         const val OWNER_KIND_INSTALL_WIZARD = "install_wizard"
         const val OWNER_KIND_TERMINAL = "terminal"
         const val OWNER_KIND_WEB = "web"
+        const val OWNER_KIND_X11 = "x11"
 
         fun fromRecipeStatus(recipeId: String, status: String): CardRunState =
             CardRunState(

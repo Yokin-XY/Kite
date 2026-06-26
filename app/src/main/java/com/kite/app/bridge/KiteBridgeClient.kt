@@ -629,7 +629,7 @@ class KiteBridgeClient(
         val output = process.output
         val runMeta = extractRunBindingMeta(output)
         val pid = runMeta.rootPid ?: extractPid(output)
-        val success = !process.timedOut && process.exitCode == 0 && !pid.isNullOrBlank()
+        val success = detachedStartAccepted(process.timedOut, process.exitCode, pid)
         return DirectStepExecution(
             ok = success,
             detached = success,
@@ -646,7 +646,7 @@ class KiteBridgeClient(
                 exitCode = process.exitCode,
                 lastMeaningfulOutput = lastMeaningfulLine(output).ifBlank { logPath },
                 stdoutTail = output.takeLast(OUTPUT_TAIL_CHARS),
-                stderrTail = if (process.timedOut) "timeout" else "",
+                stderrTail = if (process.timedOut && !success) "timeout" else "",
                 matchResult = null
             )
         )
@@ -1232,6 +1232,9 @@ private data class RunBindingMeta(
     fun isEmpty(): Boolean =
         rootPid.isNullOrBlank() && processGroupId.isNullOrBlank() && systemSessionId.isNullOrBlank()
 }
+
+internal fun detachedStartAccepted(timedOut: Boolean, exitCode: Int, pid: String?): Boolean =
+    !pid.isNullOrBlank() && (exitCode == 0 || timedOut)
 
 enum class BridgeErrorType {
     None,

@@ -15,7 +15,8 @@ import kotlin.concurrent.thread
 class KiteLocalServer(
     context: Context,
     private val diagnostics: KiteDiagnostics,
-    private val openWeb: (KiteBrowserOpenRequest) -> Unit
+    private val openWeb: (KiteBrowserOpenRequest) -> Unit,
+    private val openDesktop: (KiteDesktopOpenRequest) -> KiteDesktopOpenResponse
 ) {
     private val appContext = context.applicationContext
 
@@ -135,6 +136,27 @@ class KiteLocalServer(
                     }
                 }
 
+                method in setOf("GET", "POST") && path == "/open-desktop" -> {
+                    val openRequest = parseOpenDesktopRequest(query, request.body)
+                    if (openRequest == null) {
+                        writeJson(client, 400, JSONObject().put("ok", false).put("error", "missing_command"))
+                    } else {
+                        val response = openDesktop(openRequest)
+                        writeJson(
+                            client,
+                            if (response.accepted) 200 else 500,
+                            JSONObject()
+                                .put("ok", response.accepted)
+                                .put("accepted", response.accepted)
+                                .put("recipeId", response.recipeId ?: "")
+                                .put("instanceId", response.instanceId ?: "")
+                                .put("cardInstanceId", response.instanceId ?: "")
+                                .put("display", response.display)
+                                .put("socketPath", response.socketPath)
+                        )
+                    }
+                }
+
                 else -> writeJson(client, 404, JSONObject().put("ok", false).put("error", "not_found"))
             }
         }
@@ -158,6 +180,32 @@ class KiteLocalServer(
             source = json?.optString("source")?.takeIf { it.isNotBlank() }
                 ?: query["source"]?.takeIf { it.isNotBlank() }
                 ?: KiteBrowserOpenRequest.SOURCE_UBUNTU_BROWSER
+        )
+    }
+
+    private fun parseOpenDesktopRequest(query: Map<String, String>, body: String): KiteDesktopOpenRequest? {
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        val rawBody = body.trim().takeIf { it.isNotBlank() && !it.startsWith("{") }
+        val command = json?.optString("command")?.takeIf { it.isNotBlank() }
+            ?: json?.optString("cmd")?.takeIf { it.isNotBlank() }
+            ?: query["command"]?.takeIf { it.isNotBlank() }
+            ?: query["cmd"]?.takeIf { it.isNotBlank() }
+            ?: rawBody
+            ?: return null
+        return KiteDesktopOpenRequest(
+            command = command,
+            title = json?.optString("title")?.takeIf { it.isNotBlank() }
+                ?: query["title"]?.takeIf { it.isNotBlank() }
+                ?: command.take(80),
+            recipeId = json?.optString("recipeId")?.takeIf { it.isNotBlank() }
+                ?: query["recipeId"]?.takeIf { it.isNotBlank() },
+            instanceId = json?.optString("cardInstanceId")?.takeIf { it.isNotBlank() }
+                ?: json?.optString("instanceId")?.takeIf { it.isNotBlank() }
+                ?: query["cardInstanceId"]?.takeIf { it.isNotBlank() }
+                ?: query["instanceId"]?.takeIf { it.isNotBlank() },
+            source = json?.optString("source")?.takeIf { it.isNotBlank() }
+                ?: query["source"]?.takeIf { it.isNotBlank() }
+                ?: KiteDesktopOpenRequest.SOURCE_UBUNTU_DESKTOP
         )
     }
 
@@ -239,6 +287,7 @@ class KiteLocalServer(
         200 -> "OK"
         400 -> "Bad Request"
         404 -> "Not Found"
+        500 -> "Internal Server Error"
         else -> "OK"
     }
 

@@ -661,7 +661,7 @@ PY
 }
 
 private fun KiteRecipe.Companion.inferTypeForResourceSteps(steps: List<KiteRecipeStep>): String {
-    val hasCommand = steps.any { it.type == KiteRecipe.STEP_SHELL || it.type == KiteRecipe.STEP_TERMINAL }
+    val hasCommand = steps.any { it.type == KiteRecipe.STEP_SHELL || it.type == KiteRecipe.STEP_TERMINAL || it.type == KiteRecipe.STEP_X11 }
     val hasOpenWeb = steps.any { it.type == KiteRecipe.STEP_OPEN_WEB }
     return when {
         hasCommand && hasOpenWeb -> KiteRecipe.TYPE_COMMAND_WEB

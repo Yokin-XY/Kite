@@ -15,6 +15,26 @@ data class KiteBrowserOpenRequest(
     }
 }
 
+data class KiteDesktopOpenRequest(
+    val command: String,
+    val title: String? = null,
+    val recipeId: String? = null,
+    val instanceId: String? = null,
+    val source: String = SOURCE_UBUNTU_DESKTOP
+) {
+    companion object {
+        const val SOURCE_UBUNTU_DESKTOP = "ubuntu_desktop"
+    }
+}
+
+data class KiteDesktopOpenResponse(
+    val accepted: Boolean,
+    val recipeId: String?,
+    val instanceId: String?,
+    val display: String,
+    val socketPath: String
+)
+
 object KiteBrowserProxyInstaller {
     const val ENDPOINT = "http://127.0.0.1:8791/open-web"
     const val CONTAINER_COMMAND = "/workspace/.kf/bin/kite-open-url"
@@ -28,6 +48,7 @@ object KiteBrowserProxyInstaller {
         source: String
     ): Map<String, String> {
         ensureInstalled(context.applicationContext)
+        KiteDesktopProxyInstaller.ensureInstalled(context.applicationContext)
         return linkedMapOf(
             "KITE_OPEN_URL_ENDPOINT" to ENDPOINT,
             "KITE_RECIPE_ID" to recipeId,
@@ -36,7 +57,9 @@ object KiteBrowserProxyInstaller {
             "KITE_BROWSER_SOURCE" to source,
             "KITE_BROWSER_PROXY" to CONTAINER_COMMAND,
             "BROWSER" to CONTAINER_COMMAND
-        )
+        ).apply {
+            putAll(KiteDesktopProxyInstaller.environmentVars(recipeId, instanceId, source))
+        }
     }
 
     fun defaultEnvironment(
@@ -44,12 +67,15 @@ object KiteBrowserProxyInstaller {
         source: String
     ): Map<String, String> {
         ensureInstalled(context.applicationContext)
+        KiteDesktopProxyInstaller.ensureInstalled(context.applicationContext)
         return linkedMapOf(
             "KITE_OPEN_URL_ENDPOINT" to ENDPOINT,
             "KITE_BROWSER_SOURCE" to source,
             "KITE_BROWSER_PROXY" to CONTAINER_COMMAND,
             "BROWSER" to CONTAINER_COMMAND
-        )
+        ).apply {
+            putAll(KiteDesktopProxyInstaller.environmentVars(recipeId = "", instanceId = "", source = source))
+        }
     }
 
     fun ensureInstalled(context: Context) {
@@ -171,5 +197,82 @@ object KiteBrowserProxyInstaller {
         |
         |printf 'Kite browser proxy could not reach Android endpoint: %s\n' "${'$'}url" >&2
         |exit 0
+    """.trimMargin()
+}
+
+object KiteDesktopProxyInstaller {
+    const val ENDPOINT = "http://127.0.0.1:8791/open-desktop"
+    const val CONTAINER_COMMAND = "/workspace/.kf/bin/kite-open-desktop"
+    private const val MARKER = "# Kite generated desktop proxy"
+
+    fun environmentVars(
+        recipeId: String,
+        instanceId: String,
+        source: String
+    ): Map<String, String> = linkedMapOf(
+        "KITE_OPEN_DESKTOP_ENDPOINT" to ENDPOINT,
+        "KITE_DESKTOP_SOURCE" to source,
+        "KITE_DESKTOP_PROXY" to CONTAINER_COMMAND,
+        "KITE_RECIPE_ID" to recipeId,
+        "KITE_CARD_INSTANCE_ID" to instanceId,
+        "KITE_INSTANCE_ID" to instanceId
+    )
+
+    fun ensureInstalled(context: Context) {
+        runCatching {
+            val container = WorkSurfaceRuntimeBridge.resolveActiveContainer(context.applicationContext)
+            val binDir = File(container.workspacePath, ".kf/bin").also { it.mkdirs() }
+            val target = File(binDir, "kite-open-desktop")
+            if (shouldWrite(target)) {
+                target.writeText(proxyScript())
+                target.setExecutable(true, false)
+            }
+        }
+    }
+
+    private fun shouldWrite(file: File): Boolean {
+        if (!file.exists()) return true
+        val head = runCatching { file.readText().take(256) }.getOrDefault("")
+        return head.contains(MARKER)
+    }
+
+    private fun proxyScript(): String = """
+        |#!/usr/bin/env sh
+        |$MARKER
+        |command="${'$'}*"
+        |if [ -z "${'$'}command" ]; then
+        |  printf 'usage: kite-open-desktop <command>\n' >&2
+        |  exit 2
+        |fi
+        |
+        |endpoint="${'$'}{KITE_OPEN_DESKTOP_ENDPOINT:-$ENDPOINT}"
+        |recipe="${'$'}{KITE_RECIPE_ID:-}"
+        |instance="${'$'}{KITE_CARD_INSTANCE_ID:-${'$'}{KITE_INSTANCE_ID:-}}"
+        |source="${'$'}{KITE_DESKTOP_SOURCE:-${KiteDesktopOpenRequest.SOURCE_UBUNTU_DESKTOP}}"
+        |query="recipeId=${'$'}recipe&instanceId=${'$'}instance&cardInstanceId=${'$'}instance&source=${'$'}source"
+        |
+        |if command -v curl >/dev/null 2>&1; then
+        |  response="${'$'}(printf '%s' "${'$'}command" | curl -fsS -X POST \
+        |    -H 'Content-Type: text/plain; charset=utf-8' \
+        |    --data-binary @- \
+        |    "${'$'}endpoint?${'$'}query" 2>/dev/null)" || response=""
+        |elif command -v wget >/dev/null 2>&1; then
+        |  response="${'$'}(wget -q -O - --post-data="${'$'}command" "${'$'}endpoint?${'$'}query" 2>/dev/null)" || response=""
+        |else
+        |  printf 'Kite desktop proxy needs curl or wget\n' >&2
+        |  exit 127
+        |fi
+        |
+        |display="${'$'}(printf '%s' "${'$'}response" | sed -n 's/.*"display":"\([^"]*\)".*/\1/p')"
+        |socket="${'$'}(printf '%s' "${'$'}response" | sed -n 's/.*"socketPath":"\([^"]*\)".*/\1/p')"
+        |if [ -z "${'$'}display" ]; then
+        |  printf 'Kite desktop proxy could not allocate display for: %s\n' "${'$'}command" >&2
+        |  exit 1
+        |fi
+        |
+        |export DISPLAY="${'$'}display"
+        |export KITE_X11_DISPLAY="${'$'}display"
+        |export KITE_X11_SOCKET="${'$'}socket"
+        |sh -lc "${'$'}command"
     """.trimMargin()
 }

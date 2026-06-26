@@ -17,6 +17,7 @@
       "title": "厂商工具",
       "items": [
         "kite.codex.cli",
+        "kite.vscode.x11",
         "kite.claude.code",
         "kite.kimi.code",
         "kite.qwen.code",
