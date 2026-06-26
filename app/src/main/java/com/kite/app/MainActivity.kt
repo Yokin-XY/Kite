@@ -5659,7 +5659,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun temporaryResourceRecipe(item: ResourceItem, action: String, template: JSONObject): KiteRecipe {
         val json = JSONObject(template.toString())
         val base = json.optJSONObject("base") ?: JSONObject().also { json.put("base", it) }
-        val runtimeId = "tmp-${KiteResourceInstallRecipes.safeId(item.id)}-$action-${UUID.randomUUID()}"
+        val runtimeId = KiteResourceInstallRecipes.recipeId(item.id, action)
         base.put("id", runtimeId)
         if (base.optString("name").isBlank()) base.put("name", item.name)
         if (base.optString("description").isBlank()) base.put("description", item.description)
@@ -5669,15 +5669,48 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun startResourceOpen(item: ResourceItem, recipe: KiteRecipe) {
         CardRunStore.registerRecipe(recipe)
+        CardRunStore.currentForRecipe(recipe.id)
+            ?.takeIf { resourceOpenRunIsReusable(it) }
+            ?.let { existing ->
+                focusedRunRecipeId = recipe.id
+                focusedRunInstanceId = existing.instanceId
+                activeRunInstanceIds[recipe.id] = existing.instanceId
+                runtimeStates[recipe.id] = existing
+                if (shouldOpenCardRunTaskFromHome(recipe)) {
+                    startActivity(
+                        CardRunIntents.launchIntent(
+                            context = this,
+                            recipeId = recipe.id,
+                            instanceId = existing.instanceId,
+                            launchSource = CardRunIntents.SOURCE_CARD,
+                            autoStart = false
+                        )
+                    )
+                } else {
+                    showCardRunSurface(recipe)
+                }
+                Toast.makeText(this, "${item.name} 已在运行，正在打开原实例", Toast.LENGTH_SHORT).show()
+                return
+            }
+        val instanceId = activeRunInstanceIds[recipe.id]
+            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
+            ?: recipe.id
         focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = recipe.id
-        activeRunInstanceIds[recipe.id] = recipe.id
+        focusedRunInstanceId = instanceId
+        activeRunInstanceIds[recipe.id] = instanceId
+        val state = CardRunStore.start(
+            recipe = recipe,
+            instanceId = instanceId,
+            ownerKind = RecipeRuntimeState.OWNER_KIND_RESOURCE,
+            stepId = item.id
+        )
+        runtimeStates[recipe.id] = state
         if (shouldOpenCardRunTaskFromHome(recipe)) {
             startActivity(
                 CardRunIntents.launchIntent(
                     context = this,
                     recipeId = recipe.id,
-                    instanceId = recipe.id,
+                    instanceId = instanceId,
                     launchSource = CardRunIntents.SOURCE_CARD,
                     autoStart = true
                 )
@@ -5685,14 +5718,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         } else {
             startRecipe(
                 recipe,
-                runtimeStateFor(recipe),
-                preferredInstanceId = recipe.id,
+                state,
+                preferredInstanceId = instanceId,
                 openConsoleOnStart = recipe.launch.openInstance,
                 renderOnStart = recipe.launch.openInstance
             )
         }
         Toast.makeText(this, "正在打开 ${item.name}", Toast.LENGTH_SHORT).show()
     }
+
+    private fun resourceOpenRunIsReusable(state: RecipeRuntimeState): Boolean =
+        state.status == RecipeRunStatus.Starting ||
+            state.status == RecipeRunStatus.WaitingTerminal ||
+            state.status == RecipeRunStatus.Running ||
+            state.status == RecipeRunStatus.AlreadyRunning ||
+            state.status == RecipeRunStatus.Opened
 
     private fun addResourceHomeCard(item: ResourceItem) {
         val template = resourceHomeCardTemplate(item)
@@ -6291,11 +6331,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         id == RESOURCE_NODE_RUNTIME || id == RESOURCE_KF_TOOL_ENV || id == RESOURCE_UV
 
     private fun resourceIdForRecipe(recipe: KiteRecipe): String? {
-        if (recipe.runtimeSource != KiteResourceInstallRecipes.RUNTIME_SOURCE) return null
+        val supportedSource = recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE ||
+            recipe.runtimeSource == RESOURCE_OPEN_RUNTIME_SOURCE
+        if (!supportedSource) return null
         val raw = recipe.id.removePrefix("resource")
             .trimStart('-')
             .removeSuffix("-${KiteResourceInstallRecipes.OP_INSTALL}")
             .removeSuffix("-${KiteResourceInstallRecipes.OP_UNINSTALL}")
+            .removeSuffix("-open")
         return raw.takeIf { it.isNotBlank() }
     }
 
