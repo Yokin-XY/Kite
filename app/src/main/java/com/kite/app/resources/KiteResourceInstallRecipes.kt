@@ -164,19 +164,94 @@ SH
             set -e
             install_root="${softwarePath(resourceId)}"
             user_home="${'$'}install_root/user-home"
+            npm_prefix="${'$'}install_root/npm-global"
             export HOME="${'$'}user_home"
-            export PATH="$WORKSPACE_BIN_ROOT:${'$'}install_root/bin:${'$'}HOME/.local/bin:${'$'}HOME/.kimi-code/bin:${'$'}HOME/.codex/bin:${'$'}HOME/.claude/local:${'$'}HOME/.opencode/bin:/root/.local/bin:/root/.kimi-code/bin:/root/.codex/bin:/root/.claude/local:/root/.opencode/bin:${'$'}PATH"
+            export npm_config_prefix="${'$'}npm_prefix"
+            export PATH="$WORKSPACE_BIN_ROOT:${'$'}install_root/bin:${'$'}npm_prefix/bin:${'$'}HOME/.local/bin:${'$'}HOME/.kimi-code/bin:${'$'}HOME/.codex/bin:${'$'}HOME/.claude/local:${'$'}HOME/.opencode/bin:/root/.local/bin:/root/.kimi-code/bin:/root/.codex/bin:/root/.claude/local:/root/.opencode/bin:${'$'}PATH"
+            command_ledger="${'$'}install_root/.kite-managed-commands"
+            command_snapshot_after="${'$'}install_root/.kite-commands-after"
+            explicit_commands="$commandList"
+            public_command_roots="${'$'}install_root/bin ${'$'}npm_prefix/bin ${'$'}HOME/.local/bin ${'$'}HOME/.kimi-code/bin ${'$'}HOME/.codex/bin ${'$'}HOME/.claude/local ${'$'}HOME/.opencode/bin"
+            remove_recorded_command_links() {
+              [ -f "${'$'}command_ledger" ] || return 0
+              while IFS='	' read -r command_name target_path; do
+                [ -n "${'$'}command_name" ] || continue
+                link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                current_target="${'$'}(readlink "${'$'}link_path" 2>/dev/null || true)"
+                if [ "${'$'}current_target" = "${'$'}target_path" ]; then
+                  rm -f "${'$'}link_path"
+                fi
+              done < "${'$'}command_ledger"
+            }
+            is_explicit_command() {
+              for explicit_command in ${'$'}explicit_commands; do
+                [ "${'$'}explicit_command" = "${'$'}1" ] && return 0
+              done
+              return 1
+            }
+            is_public_command_name() {
+              case "${'$'}1" in
+                ""|.*|activate|activate.*|deactivate*|python|python[0-9]*|pip|pip[0-9]*|node|npm|npx|corepack|uv|uvx)
+                  return 1
+                  ;;
+              esac
+              return 0
+            }
+            snapshot_public_commands() {
+              for command_root in ${'$'}public_command_roots; do
+                [ -d "${'$'}command_root" ] || continue
+                for command_path in "${'$'}command_root"/*; do
+                  [ -e "${'$'}command_path" ] || [ -L "${'$'}command_path" ] || continue
+                  [ -x "${'$'}command_path" ] || [ -L "${'$'}command_path" ] || continue
+                  command_name="${'$'}{command_path##*/}"
+                  is_public_command_name "${'$'}command_name" || continue
+                  printf '%s\t%s\n' "${'$'}command_name" "${'$'}command_path"
+                done
+              done | sort -u
+            }
             echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}install_root"
+            remove_recorded_command_links
             $cleanLine
-            mkdir -p "${'$'}install_root" "${'$'}install_root/bin" "${'$'}user_home" "$WORKSPACE_BIN_ROOT"
+            mkdir -p "${'$'}install_root" "${'$'}install_root/bin" "${'$'}npm_prefix/bin" "${'$'}user_home" "$WORKSPACE_BIN_ROOT"
             echo "KITE_RESOURCE_STEP manifest-install ${safeId(resourceId)}"
             $rawCommand
-            npm_prefix="${'$'}(npm prefix -g 2>/dev/null || true)"
-            managed_commands="$commandList"
+            snapshot_public_commands > "${'$'}command_snapshot_after"
+            auto_commands="${'$'}(cut -f1 "${'$'}command_snapshot_after" || true)"
+            managed_commands="${'$'}(
+              printf '%s\n%s\n' "${'$'}explicit_commands" "${'$'}auto_commands" |
+                tr ' ' '\n' |
+                sed '/^${'$'}/d' |
+                sort -u |
+                tr '\n' ' '
+            )"
+            : > "${'$'}command_ledger"
             if [ -n "${'$'}managed_commands" ]; then
               for command_name in ${'$'}managed_commands; do
                 [ -n "${'$'}command_name" ] || continue
-                rm -f "$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                existing_target="${'$'}(readlink "${'$'}link_path" 2>/dev/null || true)"
+                if [ -e "${'$'}link_path" ] || [ -L "${'$'}link_path" ]; then
+                  case "${'$'}existing_target" in
+                    "${'$'}install_root"/*|"${'$'}HOME"/*)
+                      rm -f "${'$'}link_path"
+                      ;;
+                    "")
+                      echo "KITE_RESOURCE_STEP command-conflict ${'$'}command_name"
+                      if is_explicit_command "${'$'}command_name"; then
+                        exit 127
+                      fi
+                      continue
+                      ;;
+                    *)
+                      echo "KITE_RESOURCE_STEP command-conflict ${'$'}command_name -> ${'$'}existing_target"
+                      if is_explicit_command "${'$'}command_name"; then
+                        exit 127
+                      fi
+                      continue
+                      ;;
+                  esac
+                fi
+                linked_command=
                 for candidate in \
                   "$WORKSPACE_BIN_ROOT/${'$'}command_name" \
                   "${'$'}install_root/bin/${'$'}command_name" \
@@ -191,21 +266,32 @@ SH
                   "/root/.codex/bin/${'$'}command_name" \
                   "/root/.claude/local/${'$'}command_name" \
                   "/root/.opencode/bin/${'$'}command_name" \
-                  "/usr/local/bin/${'$'}command_name"; do
+                  "/usr/local/bin/${'$'}command_name" \
+                  "/usr/bin/${'$'}command_name" \
+                  "/bin/${'$'}command_name"; do
                   if [ -x "${'$'}candidate" ]; then
                     echo "KITE_RESOURCE_STEP link-command ${'$'}command_name"
                     ln -sfn "${'$'}candidate" "$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                    printf '%s\t%s\n' "${'$'}command_name" "${'$'}candidate" >> "${'$'}command_ledger"
+                    linked_command=1
                     break
                   fi
                 done
+                if [ -z "${'$'}linked_command" ]; then
+                  if is_explicit_command "${'$'}command_name"; then
+                    echo "$displayName installed, but command ${'$'}command_name could not be linked."
+                    exit 127
+                  fi
+                  continue
+                fi
                 hash -r 2>/dev/null || true
                 if ! command -v "${'$'}command_name" >/dev/null 2>&1; then
                   echo "$displayName installed, but command ${'$'}command_name was not found."
                   exit 127
                 fi
-                "${'$'}command_name" --version || "${'$'}command_name" --help | head -40 || true
               done
             fi
+            rm -f "${'$'}command_snapshot_after"
             printf '%s\n' 'installed_by_kite' > "${'$'}install_root/ownership"
             echo "$displayName installed by manifest action"
         """.trimIndent()
@@ -222,7 +308,12 @@ SH
         val packageList = npmUninstallPackages.map(::safeNpmPackage).filter { it.isNotBlank() }.distinct().joinToString(" ")
         return """
             set +e
-            export PATH="$WORKSPACE_BIN_ROOT:/root/.local/bin:${'$'}PATH"
+            install_root="${softwarePath(resourceId)}"
+            user_home="${'$'}install_root/user-home"
+            npm_prefix="${'$'}install_root/npm-global"
+            export HOME="${'$'}user_home"
+            export npm_config_prefix="${'$'}npm_prefix"
+            export PATH="$WORKSPACE_BIN_ROOT:${'$'}install_root/bin:${'$'}npm_prefix/bin:${'$'}HOME/.local/bin:${'$'}HOME/.kimi-code/bin:${'$'}HOME/.codex/bin:${'$'}HOME/.claude/local:${'$'}HOME/.opencode/bin:/root/.local/bin:${'$'}PATH"
             echo "KITE_RESOURCE_STEP manifest-uninstall ${safeId(resourceId)}"
             $rawCommand
             if command -v npm >/dev/null 2>&1; then
@@ -236,13 +327,30 @@ SH
               fi
             fi
             managed_commands="$commandList"
+            command_ledger="${'$'}install_root/.kite-managed-commands"
+            if [ -f "${'$'}command_ledger" ]; then
+              while IFS='	' read -r command_name target_path; do
+                [ -n "${'$'}command_name" ] || continue
+                link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                current_target="${'$'}(readlink "${'$'}link_path" 2>/dev/null || true)"
+                if [ "${'$'}current_target" = "${'$'}target_path" ]; then
+                  rm -f "${'$'}link_path"
+                fi
+              done < "${'$'}command_ledger"
+            fi
             if [ -n "${'$'}managed_commands" ]; then
               for command_name in ${'$'}managed_commands; do
                 [ -n "${'$'}command_name" ] || continue
-                rm -f "$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                current_target="${'$'}(readlink "${'$'}link_path" 2>/dev/null || true)"
+                case "${'$'}current_target" in
+                  "${'$'}install_root"/*)
+                    rm -f "${'$'}link_path"
+                    ;;
+                esac
               done
             fi
-            rm -rf ${softwarePath(resourceId)}
+            rm -rf "${'$'}install_root"
             exit 0
         """.trimIndent()
     }
