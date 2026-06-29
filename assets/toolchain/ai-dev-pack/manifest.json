@@ -1,7 +1,7 @@
 {
   "packId": "ai-dev-pack",
   "displayName": "KF tool environment",
-  "version": 14,
+  "version": 17,
   "description": "Official KFShell toolchain pack for runtime repair, command-line tools, and developer workflows.",
   "installScript": "install.sh",
   "installTarget": "/workspace/.kf/toolchains",
@@ -11,40 +11,34 @@
   },
   "packages": {
     "node": {
-      "version": "24.15.0",
-      "file": "packages/node-v24.15.0-linux-arm64.tar.xz",
-      "source": "https://nodejs.org/dist/v24.15.0/"
+      "version": "26.4.0",
+      "file": "packages/node-v26.4.0-linux-arm64.tar.xz",
+      "source": "https://nodejs.org/dist/v26.4.0/"
+    },
+    "libatomic": {
+      "version": "1.2.0",
+      "file": "packages/libatomic.so.1.2.0",
+      "source": "https://ports.ubuntu.com/ubuntu-ports/pool/main/g/gcc-14/libatomic1_14.2.0-4ubuntu2~24.04.1_arm64.deb"
     },
     "uv": {
-      "version": "0.11.1",
+      "version": "0.11.25",
       "file": "packages/uv-aarch64-unknown-linux-gnu.tar.gz",
-      "source": "https://github.com/astral-sh/uv/releases/tag/0.11.1"
+      "source": "https://github.com/astral-sh/uv/releases/tag/0.11.25"
     },
     "pnpm": {
-      "version": "10.33.2",
-      "file": "packages/pnpm-10.33.2.tgz",
-      "source": "https://registry.npmjs.org/pnpm/-/pnpm-10.33.2.tgz"
+      "version": "11.9.0",
+      "file": "packages/pnpm-11.9.0.tgz",
+      "source": "https://registry.npmjs.org/pnpm/-/pnpm-11.9.0.tgz"
+    },
+    "python": {
+      "version": "3.14.6",
+      "buildTag": "20260623",
+      "file": "packages/cpython-3.14.6+20260623-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "source": "https://github.com/astral-sh/python-build-standalone/releases/tag/20260623"
     },
     "adb": {
-      "version": "managed-apt",
-      "source": "Ubuntu apt packages adb + fastboot"
+      "version": "rootfs",
+      "source": "Kite offline rootfs"
     }
-  },
-  "aptPackages": [
-    "python3-pip",
-    "python3-venv",
-    "pkg-config",
-    "bzip2",
-    "less",
-    "gnupg",
-    "tree",
-    "rsync",
-    "zstd",
-    "zip",
-    "fd-find",
-    "jq",
-    "ripgrep",
-    "adb",
-    "fastboot"
-  ]
+  }
 }

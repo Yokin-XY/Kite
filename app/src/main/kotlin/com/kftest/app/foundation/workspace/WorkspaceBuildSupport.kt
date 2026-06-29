@@ -6,6 +6,7 @@ import com.kftest.app.foundation.runtime.ExternalExchangeManager
 import com.kftest.app.foundation.runtime.RuntimeControlledLeaseProbeRegistration
 import com.kftest.app.foundation.runtime.RuntimeControlledLeaseProbeRegistrationReceiver
 import java.io.File
+import java.nio.file.Files
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -46,8 +47,10 @@ object WorkspaceBuildSupport {
     private const val SERVICE_SHIM_NAME = "service"
     private const val SUPERVISORCTL_WRAPPER_NAME = "supervisorctl"
     private const val ADB_WRAPPER_NAME = "adb"
+    private const val FASTBOOT_WRAPPER_NAME = "fastboot"
     private const val ADB_CHECK_SCRIPT_NAME = "kf-adb-check"
     private const val ADB_BRIDGE_SCRIPT_NAME = "kf-adb-bridge"
+    private const val ANDROID_SHELL_BRIDGE_SCRIPT_NAME = "kf-android-sh"
     private const val HOST_SURFACE_SCRIPT_NAME = "kf-host"
     private const val ENV_SURFACE_SCRIPT_NAME = "kf-env"
     private const val RUNTIME_SURFACE_SCRIPT_NAME = "kf-runtime"
@@ -193,6 +196,9 @@ object WorkspaceBuildSupport {
                 dir.mkdirs()
             }
         }
+        chmodIfPossible(helperSystemDir, 0b111101101)
+        chmodIfPossible(helperSystemBinDir, 0b111101101)
+        chmodIfPossible(helperSystemStateDir, 0b111101101)
 
         writeTextIfChanged(
             File(helperRoot, "README.txt"),
@@ -227,17 +233,26 @@ object WorkspaceBuildSupport {
         writeTextIfChanged(supervisorctlWrapper, buildSupervisorctlWrapperScript())
         supervisorctlWrapper.setExecutable(true, false)
 
-        val adbWrapper = File(helperBinDir, ADB_WRAPPER_NAME)
+        val adbWrapper = File(helperSystemBinDir, ADB_WRAPPER_NAME)
         writeTextIfChanged(adbWrapper, buildAdbClientWrapperScript())
         adbWrapper.setExecutable(true, false)
 
-        val adbCheckScript = File(helperBinDir, ADB_CHECK_SCRIPT_NAME)
+        val adbCheckScript = File(helperSystemBinDir, ADB_CHECK_SCRIPT_NAME)
         writeTextIfChanged(adbCheckScript, buildAdbCheckScript())
         adbCheckScript.setExecutable(true, false)
 
-        val adbBridgeScript = File(helperBinDir, ADB_BRIDGE_SCRIPT_NAME)
+        val adbBridgeScript = File(helperSystemBinDir, ADB_BRIDGE_SCRIPT_NAME)
         writeTextIfChanged(adbBridgeScript, buildAdbBridgeScript())
         adbBridgeScript.setExecutable(true, false)
+
+        val fastbootWrapper = File(helperSystemBinDir, FASTBOOT_WRAPPER_NAME)
+        writeTextIfChanged(fastbootWrapper, buildFastbootClientWrapperScript())
+        fastbootWrapper.setExecutable(true, false)
+        removeLegacyAdbScripts(helperBinDir)
+
+        val androidShellBridgeScript = File(helperBinDir, ANDROID_SHELL_BRIDGE_SCRIPT_NAME)
+        writeTextIfChanged(androidShellBridgeScript, buildAndroidShellBridgeScript())
+        androidShellBridgeScript.setExecutable(true, false)
 
         val hostSurfaceScript = File(helperBinDir, HOST_SURFACE_SCRIPT_NAME)
         writeTextIfChanged(hostSurfaceScript, buildHostSurfaceScript())
@@ -312,6 +327,7 @@ object WorkspaceBuildSupport {
 
         writeTextIfChanged(File(helperRoot, HOST_CONTRACT_FILE_NAME), buildHostContractJson())
         syncToolchainCommandWrappers(workspaceDir, helperBinDir)
+        chmodIfPossible(helperSystemBinDir, 0b101101101)
     }
 
     fun installSystemComponents(context: Context, workspaceDir: File) {
@@ -460,6 +476,21 @@ object WorkspaceBuildSupport {
                         text.contains("supervisord backend")
                 )
             if (ownedLegacyShim) {
+                file.delete()
+            }
+        }
+    }
+
+    private fun removeLegacyAdbScripts(helperBinDir: File) {
+        listOf(ADB_WRAPPER_NAME, ADB_CHECK_SCRIPT_NAME, ADB_BRIDGE_SCRIPT_NAME).forEach { name ->
+            val file = File(helperBinDir, name)
+            if (!file.isFile) return@forEach
+            val text = runCatching { file.readText() }.getOrDefault("")
+            if (
+                text.contains("KFSHELL_ADB") ||
+                text.contains("kf-adb-bridge") ||
+                text.contains("KF_ADB_HOST_SELF_SERIAL")
+            ) {
                 file.delete()
             }
         }
@@ -959,6 +990,19 @@ object WorkspaceBuildSupport {
         """.trimMargin() + "\n"
     }
 
+    private fun buildFastbootClientWrapperScript(): String {
+        return """
+            |#!/usr/bin/env sh
+            |REAL_FASTBOOT="${'$'}{KF_REAL_FASTBOOT:-/usr/bin/fastboot}"
+            |if [ -x "${'$'}REAL_FASTBOOT" ]; then
+            |  exec "${'$'}REAL_FASTBOOT" "${'$'}@"
+            |fi
+            |echo "fastboot: real fastboot binary not found at ${'$'}REAL_FASTBOOT" >&2
+            |echo "hint: rebuild Kite offline rootfs with fastboot included." >&2
+            |exit 127
+        """.trimMargin() + "\n"
+    }
+
     private fun buildAdbBridgeScript(): String {
         return """
             |#!/usr/bin/env sh
@@ -1089,7 +1133,40 @@ object WorkspaceBuildSupport {
             |  request_id="req-$(date +%s%N 2>/dev/null || date +%s)-${'$'}${'$'}"
             |  request_file="${'$'}request_dir/${'$'}request_id.req"
             |  response_file="${'$'}response_dir/${'$'}request_id.resp"
-            |  command_b64="$(printf '%s' "${'$'}command" | base64 | tr -d '\n')"
+            |  stdout_stream="${'$'}response_dir/${'$'}request_id.stdout.stream"
+            |  stderr_stream="${'$'}response_dir/${'$'}request_id.stderr.stream"
+            |  cancel_file="${'$'}response_dir/${'$'}request_id.cancel"
+            |  stdout_pos=0
+            |  stderr_pos=0
+            |
+            |  flush_streams() {
+            |    if [ -f "${'$'}stdout_stream" ]; then
+            |      size="$(wc -c < "${'$'}stdout_stream" 2>/dev/null | tr -d ' ')"
+            |      case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
+            |      if [ "${'$'}size" -gt "${'$'}stdout_pos" ]; then
+            |        if [ -z "${'$'}output_file" ]; then
+            |          tail -c +$((stdout_pos + 1)) "${'$'}stdout_stream"
+            |        fi
+            |        stdout_pos="${'$'}size"
+            |      fi
+            |    fi
+            |    if [ -f "${'$'}stderr_stream" ]; then
+            |      size="$(wc -c < "${'$'}stderr_stream" 2>/dev/null | tr -d ' ')"
+            |      case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
+            |      if [ "${'$'}size" -gt "${'$'}stderr_pos" ]; then
+            |        tail -c +$((stderr_pos + 1)) "${'$'}stderr_stream" >&2
+            |        stderr_pos="${'$'}size"
+            |      fi
+            |    fi
+            |  }
+            |
+            |  cancel_bridge_request() {
+            |    touch "${'$'}cancel_file" 2>/dev/null || true
+            |    rm -f "${'$'}request_file" "${'$'}request_file.tmp"
+            |    flush_streams
+            |    exit 130
+            |  }
+            |  trap cancel_bridge_request INT TERM
             |
             |  {
             |    echo "id=${'$'}request_id"
@@ -1100,9 +1177,8 @@ object WorkspaceBuildSupport {
             |  } > "${'$'}request_file.tmp"
             |  mv "${'$'}request_file.tmp" "${'$'}request_file"
             |
-            |  timeout_sec="${'$'}{KF_ADB_BRIDGE_TIMEOUT_SEC:-35}"
-            |  end_at=$(( $(date +%s) + timeout_sec ))
-            |  while [ "$(date +%s)" -le "${'$'}end_at" ]; do
+            |  while :; do
+            |    flush_streams
             |    if [ -f "${'$'}response_file" ]; then
             |      stdout_file="${'$'}response_file.stdout"
             |      stderr_file="${'$'}response_file.stderr"
@@ -1113,12 +1189,16 @@ object WorkspaceBuildSupport {
             |      if [ -n "${'$'}output_file" ]; then
             |        cat "${'$'}stdout_file" > "${'$'}output_file"
             |      elif [ -s "${'$'}stdout_file" ]; then
-            |        cat "${'$'}stdout_file"
+            |        size="$(wc -c < "${'$'}stdout_file" 2>/dev/null | tr -d ' ')"
+            |        case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
+            |        [ "${'$'}size" -gt "${'$'}stdout_pos" ] && tail -c +$((stdout_pos + 1)) "${'$'}stdout_file"
             |      fi
             |      if [ -s "${'$'}stderr_file" ]; then
-            |        cat "${'$'}stderr_file" >&2
+            |        size="$(wc -c < "${'$'}stderr_file" 2>/dev/null | tr -d ' ')"
+            |        case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
+            |        [ "${'$'}size" -gt "${'$'}stderr_pos" ] && tail -c +$((stderr_pos + 1)) "${'$'}stderr_file" >&2
             |      fi
-            |      rm -f "${'$'}stdout_file" "${'$'}stderr_file"
+            |      rm -f "${'$'}stdout_file" "${'$'}stderr_file" "${'$'}stdout_stream" "${'$'}stderr_stream" "${'$'}cancel_file"
             |      case "${'$'}exit_code" in
             |        ''|*[!0-9]*) return 125 ;;
             |        *) return "${'$'}exit_code" ;;
@@ -1126,10 +1206,6 @@ object WorkspaceBuildSupport {
             |    fi
             |    sleep 0.15
             |  done
-            |  rm -f "${'$'}request_file"
-            |  echo "error: kf-host-self adb shell bridge timed out waiting for APK response" >&2
-            |  echo "hint: make sure KFShell service is running and Shizuku permission is granted" >&2
-            |  return 124
             |}
             |
             |submit_shell_request() {
@@ -1321,6 +1397,172 @@ object WorkspaceBuildSupport {
         """.trimMargin() + "\n"
     }
 
+    private fun buildAndroidShellBridgeScript(): String {
+        return """
+            |#!/usr/bin/env sh
+            |set +e
+            |
+            |BRIDGE_DIR="${'$'}{KF_ANDROID_SH_BRIDGE_DIR:-/workspace/.kf/android-shell-bridge}"
+            |
+            |usage() {
+            |  cat <<'EOF'
+            |Usage:
+            |  kf-android-sh [-e KEY=VALUE] '<android shell command>'
+            |  kf-android-sh [-e KEY=VALUE] /exchange/script.sh
+            |
+            |Runs the command or script with Android /system/bin/sh as the Kite APK user.
+            |It is not ADB, root, or Shizuku.
+            |EOF
+            |}
+            |
+            |need_base64() {
+            |  command -v base64 >/dev/null 2>&1 || {
+            |    echo "error: kf-android-sh requires base64 in Ubuntu" >&2
+            |    exit 127
+            |  }
+            |}
+            |
+            |encode_b64_text() {
+            |  printf '%s' "${'$'}1" | base64 | tr -d '\n'
+            |}
+            |
+            |encode_b64_file() {
+            |  base64 "${'$'}1" | tr -d '\n'
+            |}
+            |
+            |decode_b64_file_value_to_file() {
+            |  key="${'$'}1"
+            |  file="${'$'}2"
+            |  target="${'$'}3"
+            |  value="$(grep "^${'$'}key=" "${'$'}file" | tail -n 1 | sed "s/^${'$'}key=//")"
+            |  printf '%s' "${'$'}value" | base64 -d > "${'$'}target" 2>/dev/null || printf '%s' "${'$'}value" | base64 --decode > "${'$'}target" 2>/dev/null
+            |}
+            |
+            |submit_request() {
+            |  mode="${'$'}1"
+            |  command_text="${'$'}2"
+            |  script_file="${'$'}3"
+            |  env_text="${'$'}4"
+            |  request_dir="${'$'}BRIDGE_DIR/requests"
+            |  response_dir="${'$'}BRIDGE_DIR/responses"
+            |  mkdir -p "${'$'}request_dir" "${'$'}response_dir"
+            |  request_id="req-$(date +%s%N 2>/dev/null || date +%s)-${'$'}${'$'}"
+            |  request_file="${'$'}request_dir/${'$'}request_id.req"
+            |  response_file="${'$'}response_dir/${'$'}request_id.resp"
+            |  stdout_stream="${'$'}response_dir/${'$'}request_id.stdout.stream"
+            |  stderr_stream="${'$'}response_dir/${'$'}request_id.stderr.stream"
+            |  cancel_file="${'$'}response_dir/${'$'}request_id.cancel"
+            |  stdout_pos=0
+            |  stderr_pos=0
+            |
+            |  flush_streams() {
+            |    if [ -f "${'$'}stdout_stream" ]; then
+            |      size="$(wc -c < "${'$'}stdout_stream" 2>/dev/null | tr -d ' ')"
+            |      case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
+            |      if [ "${'$'}size" -gt "${'$'}stdout_pos" ]; then
+            |        tail -c +$((stdout_pos + 1)) "${'$'}stdout_stream"
+            |        stdout_pos="${'$'}size"
+            |      fi
+            |    fi
+            |    if [ -f "${'$'}stderr_stream" ]; then
+            |      size="$(wc -c < "${'$'}stderr_stream" 2>/dev/null | tr -d ' ')"
+            |      case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
+            |      if [ "${'$'}size" -gt "${'$'}stderr_pos" ]; then
+            |        tail -c +$((stderr_pos + 1)) "${'$'}stderr_stream" >&2
+            |        stderr_pos="${'$'}size"
+            |      fi
+            |    fi
+            |  }
+            |
+            |  cancel_request() {
+            |    touch "${'$'}cancel_file" 2>/dev/null || true
+            |    rm -f "${'$'}request_file" "${'$'}request_file.tmp"
+            |    flush_streams
+            |    exit 130
+            |  }
+            |  trap cancel_request INT TERM
+            |
+            |  {
+            |    echo "id=${'$'}request_id"
+            |    echo "mode=${'$'}mode"
+            |    [ -n "${'$'}command_text" ] && echo "command_b64=$(encode_b64_text "${'$'}command_text")"
+            |    [ -n "${'$'}script_file" ] && echo "script_b64=$(encode_b64_file "${'$'}script_file")"
+            |    [ -n "${'$'}env_text" ] && echo "env_b64=$(encode_b64_text "${'$'}env_text")"
+            |  } > "${'$'}request_file.tmp"
+            |  mv "${'$'}request_file.tmp" "${'$'}request_file"
+            |
+            |  while :; do
+            |    flush_streams
+            |    if [ -f "${'$'}response_file" ]; then
+            |      stdout_file="${'$'}response_file.stdout"
+            |      stderr_file="${'$'}response_file.stderr"
+            |      decode_b64_file_value_to_file stdout_b64 "${'$'}response_file" "${'$'}stdout_file"
+            |      decode_b64_file_value_to_file stderr_b64 "${'$'}response_file" "${'$'}stderr_file"
+            |      exit_code="$(grep '^exit_code=' "${'$'}response_file" | tail -n 1 | sed 's/^exit_code=//')"
+            |      rm -f "${'$'}response_file"
+            |      if [ -s "${'$'}stdout_file" ]; then
+            |        size="$(wc -c < "${'$'}stdout_file" 2>/dev/null | tr -d ' ')"
+            |        case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
+            |        [ "${'$'}size" -gt "${'$'}stdout_pos" ] && tail -c +$((stdout_pos + 1)) "${'$'}stdout_file"
+            |      fi
+            |      if [ -s "${'$'}stderr_file" ]; then
+            |        size="$(wc -c < "${'$'}stderr_file" 2>/dev/null | tr -d ' ')"
+            |        case "${'$'}size" in ''|*[!0-9]*) size=0 ;; esac
+            |        [ "${'$'}size" -gt "${'$'}stderr_pos" ] && tail -c +$((stderr_pos + 1)) "${'$'}stderr_file" >&2
+            |      fi
+            |      rm -f "${'$'}stdout_file" "${'$'}stderr_file" "${'$'}stdout_stream" "${'$'}stderr_stream" "${'$'}cancel_file"
+            |      case "${'$'}exit_code" in
+            |        ''|*[!0-9]*) return 125 ;;
+            |        *) return "${'$'}exit_code" ;;
+            |      esac
+            |    fi
+            |    sleep 0.15
+            |  done
+            |}
+            |
+            |need_base64
+            |env_text=""
+            |while [ "${'$'}#" -gt 0 ]; do
+            |  case "${'$'}1" in
+            |    -e)
+            |      shift
+            |      [ "${'$'}#" -gt 0 ] || { echo "error: -e requires KEY=VALUE" >&2; exit 2; }
+            |      case "${'$'}1" in
+            |        *=*) ;;
+            |        *) echo "error: -e requires KEY=VALUE" >&2; exit 2 ;;
+            |      esac
+            |      if [ -z "${'$'}env_text" ]; then
+            |        env_text="${'$'}1"
+            |      else
+            |        env_text="${'$'}env_text
+            |${'$'}1"
+            |      fi
+            |      shift
+            |      ;;
+            |    --)
+            |      shift
+            |      break
+            |      ;;
+            |    -h|--help|help)
+            |      usage
+            |      exit 0
+            |      ;;
+            |    *)
+            |      break
+            |      ;;
+            |  esac
+            |done
+            |
+            |[ "${'$'}#" -gt 0 ] || { usage >&2; exit 2; }
+            |
+            |if [ "${'$'}#" -eq 1 ] && [ -f "${'$'}1" ]; then
+            |  submit_request script "" "${'$'}1" "${'$'}env_text"
+            |else
+            |  submit_request command "${'$'}*" "" "${'$'}env_text"
+            |fi
+        """.trimMargin() + "\n"
+    }
+
     private fun buildHostSurfaceScript(): String {
         return """
             |#!/usr/bin/env sh
@@ -1395,6 +1637,31 @@ object WorkspaceBuildSupport {
             |  echo "KFSHELL_HOST_BIND_CHECK_END"
             |}
             |
+            |post_local_server() {
+            |  endpoint="${'$'}1"
+            |  body="${'$'}2"
+            |  url="${'$'}{KF_HOST_LOCAL_SERVER_URL:-http://127.0.0.1:8791}${'$'}endpoint"
+            |  if command -v curl >/dev/null 2>&1; then
+            |    curl -fsS -X POST --data-binary "${'$'}body" "${'$'}url"
+            |    return "${'$'}?"
+            |  fi
+            |  if command -v wget >/dev/null 2>&1; then
+            |    wget -qO- --post-data="${'$'}body" "${'$'}url"
+            |    return "${'$'}?"
+            |  fi
+            |  echo "error: kf-host needs curl or wget to call Android local server" >&2
+            |  return 127
+            |}
+            |
+            |install_apk() {
+            |  apk_path="${'$'}1"
+            |  if [ -z "${'$'}apk_path" ]; then
+            |    echo "hint: usage: kf-host install-apk /exchange/downloads/app.apk" >&2
+            |    return 2
+            |  fi
+            |  post_local_server "/install-apk" "${'$'}apk_path"
+            |}
+            |
             |doctor() {
             |  echo "KFSHELL_HOST_SURFACE_BEGIN"
             |  echo "network_mode=${'$'}{KF_HOST_NETWORK_MODE:-shared_host_stack}"
@@ -1428,6 +1695,7 @@ object WorkspaceBuildSupport {
             |  kf-host endpoints
             |  kf-host policy
             |  kf-host check-bind <address> <port>
+            |  kf-host install-apk <apk-path>
             |
             |This is the stable host integration surface for AI and shell workflows.
             |EOF
@@ -1449,6 +1717,10 @@ object WorkspaceBuildSupport {
             |  check-bind|check-port)
             |    shift
             |    check_bind "${'$'}@"
+            |    ;;
+            |  install-apk|install_apk)
+            |    shift
+            |    install_apk "${'$'}@"
             |    ;;
             |  -h|--help|help)
             |    usage
@@ -1537,6 +1809,7 @@ object WorkspaceBuildSupport {
             |    "endpoints": "kf-host endpoints",
             |    "policy": "kf-host policy",
             |    "checkBind": "kf-host check-bind <address> <port>",
+            |    "installApk": "kf-host install-apk <apk-path>",
             |    "envDoctor": "kf-env doctor",
             |    "envLimits": "kf-env limits",
             |    "envRuntime": "kf-env runtime",
@@ -2213,7 +2486,7 @@ object WorkspaceBuildSupport {
             |
             |print_shims() {
             |  echo "KFSHELL_ENV_SHIMS_BEGIN"
-            |  for cmd in ps pgrep pkill kill pidof pstree free top kf-resource-sampler systemctl service supervisorctl ss proot adb fd claude opencode pnpm pnpx node npm npx uv uvx fastboot kf-host kf-runtime kf-adb-check kf-adb-bridge kf-gradle; do
+            |  for cmd in ps pgrep pkill kill pidof pstree free top kf-resource-sampler systemctl service supervisorctl ss proot adb fd claude opencode pnpm pnpx node npm npx uv uvx fastboot kf-host kf-runtime kf-adb-check kf-adb-bridge kf-android-sh kf-gradle; do
             |    path="$(command -v "${'$'}cmd" 2>/dev/null || true)"
             |    if [ -n "${'$'}path" ]; then
             |      echo "${'$'}cmd=${'$'}path"
@@ -3120,6 +3393,7 @@ object WorkspaceBuildSupport {
             ADB_WRAPPER_NAME,
             ADB_CHECK_SCRIPT_NAME,
             ADB_BRIDGE_SCRIPT_NAME,
+            ANDROID_SHELL_BRIDGE_SCRIPT_NAME,
             HOST_SURFACE_SCRIPT_NAME,
             ENV_SURFACE_SCRIPT_NAME,
             RUNTIME_SURFACE_SCRIPT_NAME,
@@ -3199,6 +3473,9 @@ object WorkspaceBuildSupport {
             if (!parent.exists()) {
                 parent.mkdirs()
             }
+        }
+        if (Files.isSymbolicLink(file.toPath())) {
+            file.delete()
         }
         if (file.exists() && file.readText() == content) {
             return

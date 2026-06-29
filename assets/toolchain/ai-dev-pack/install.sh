@@ -6,10 +6,13 @@ PACK_DIR="${KF_TOOLCHAIN_PACK_DIR:-/workspace/.kf/toolchains/ai-dev-pack}"
 TOOLCHAIN_DIR="${KF_TOOLCHAIN_DIR:-/workspace/.kf/toolchains}"
 BIN_DIR="${KF_TOOLCHAIN_BIN_DIR:-/workspace/.kf/bin}"
 LOG_PREFIX="toolchain"
-NODE_VERSION="24.15.0"
-UV_VERSION="0.11.1"
-PNPM_VERSION="10.33.2"
-ADB_VERSION="managed-apt"
+NODE_VERSION="26.4.0"
+UV_VERSION="0.11.25"
+PNPM_VERSION="11.9.0"
+PYTHON_VERSION="3.14.6"
+PYTHON_BUILD_TAG="20260623"
+ADB_VERSION="rootfs"
+LIBATOMIC_VERSION="1.2.0"
 
 PASS=0
 WARN=0
@@ -29,18 +32,6 @@ emit() {
 
 has() {
   command -v "$1" >/dev/null 2>&1
-}
-
-version_probe() {
-  local seconds="$1"
-  shift
-  local output
-  output="$(timeout -k 2s "${seconds}s" "$@" 2>&1 | head -n 1 || true)"
-  if [ -n "$output" ]; then
-    printf '%s' "$output"
-  else
-    printf '%s' "version probe timed out or produced no output"
-  fi
 }
 
 ensure_dirs() {
@@ -70,58 +61,75 @@ write_wrapper() {
   chmod +x "$BIN_DIR/$name"
 }
 
+write_node_wrapper() {
+  local name="$1"
+  local target="$2"
+  local lib_dir="$3"
+  write_wrapper "$name" "#!/usr/bin/env sh
+export LD_LIBRARY_PATH=\"$lib_dir\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}\"
+exec \"$target\" \"\$@\""
+}
+
 repair_wrappers() {
   if ! has fd && has fdfind; then
     write_wrapper fd '#!/usr/bin/env sh
 exec fdfind "$@"'
   fi
   write_wrapper systemctl '#!/usr/bin/env sh
-echo "KFShell runs Android/proot without systemd. Use supervisorctl or KFShell runtime controls instead." >&2
+echo "KFShell runs Android/proot without systemd. Use KFShell runtime controls instead." >&2
 exit 3'
   write_wrapper service '#!/usr/bin/env sh
-echo "KFShell does not provide SysV/systemd service management. Use supervisorctl or KFShell runtime controls instead." >&2
+echo "KFShell does not provide SysV/systemd service management. Use KFShell runtime controls instead." >&2
 exit 3'
 }
 
-install_apt_baseline() {
-  if ! has apt-get; then
-    emit WARN apt "apt-get missing; skip Ubuntu package completion"
-    return
+install_python() {
+  local archive="$PACK_DIR/packages/cpython-$PYTHON_VERSION+$PYTHON_BUILD_TAG-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+  local tar_flags="-xzf"
+  if [ ! -f "$archive" ]; then
+    archive="$PACK_DIR/packages/cpython-$PYTHON_VERSION+$PYTHON_BUILD_TAG-aarch64-unknown-linux-gnu-install_only_stripped.tar"
+    tar_flags="-xf"
   fi
-  local packages="python3-pip python3-venv pkg-config bzip2 less gnupg tree rsync zstd zip fd-find jq ripgrep adb fastboot"
-  emit PASS apt "requested packages: $packages"
-  if has dpkg-query; then
-    local missing=""
-    local pkg
-    for pkg in $packages; do
-      if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
-        missing="$missing $pkg"
-      fi
-    done
-    if [ -z "$missing" ]; then
-      emit PASS apt-install "Ubuntu package baseline already satisfied"
+  local target="$TOOLCHAIN_DIR/python-$PYTHON_VERSION"
+  if [ ! -x "$target/bin/python3.14" ]; then
+    if [ ! -f "$archive" ]; then
+      emit FAIL python-package "missing bundled package: $PACK_DIR/packages/cpython-$PYTHON_VERSION+$PYTHON_BUILD_TAG-aarch64-unknown-linux-gnu-install_only_stripped.tar[.gz]"
       return
     fi
-    packages="${missing# }"
-    emit WARN apt-missing "installing missing Ubuntu packages:$packages"
+    rm -rf "$target.tmp" "$target"
+    mkdir -p "$target.tmp" "$target"
+    tar "$tar_flags" "$archive" -C "$target.tmp"
+    local tar_code=$?
+    if [ "$tar_code" -ne 0 ]; then
+      rm -rf "$target.tmp" "$target"
+      emit FAIL python-install "extract failed with exitCode=$tar_code"
+      return
+    fi
+    local pybin
+    pybin="$(find "$target.tmp" -type f -name python3.14 | head -n 1)"
+    if [ -z "$pybin" ]; then
+      rm -rf "$target.tmp" "$target"
+      emit FAIL python-install "python3.14 binary not found after extract"
+      return
+    fi
+    local pydir
+    pydir="$(cd "$(dirname "$pybin")/.." && pwd)"
+    cp -a "$pydir"/. "$target"/
+    rm -rf "$target.tmp"
   fi
-  apt-get update
-  local update_code=$?
-  if [ "$update_code" -ne 0 ]; then
-    emit WARN apt-update "apt-get update failed with exitCode=$update_code; offline bundled tools will still be installed"
-    return
+  ln -sfn "$target/bin/python3.14" "$BIN_DIR/python3.14"
+  ln -sfn "$target/bin/python3.14" "$BIN_DIR/python3"
+  ln -sfn "$target/bin/python3.14" "$BIN_DIR/python"
+  if [ -x "$target/bin/pip3" ]; then
+    ln -sfn "$target/bin/pip3" "$BIN_DIR/pip3"
+    ln -sfn "$target/bin/pip3" "$BIN_DIR/pip"
   fi
-  DEBIAN_FRONTEND=noninteractive apt-get install -y $packages
-  local install_code=$?
-  if [ "$install_code" -eq 0 ]; then
-    emit PASS apt-install "Ubuntu package baseline installed or already present"
-  else
-    emit WARN apt-install "apt-get install failed with exitCode=$install_code"
-  fi
+  emit PASS python-install "python $PYTHON_VERSION installed"
 }
 
 install_node() {
   local archive="$PACK_DIR/packages/node-v$NODE_VERSION-linux-arm64.tar.xz"
+  local libatomic="$PACK_DIR/packages/libatomic.so.$LIBATOMIC_VERSION"
   local target="$TOOLCHAIN_DIR/node-v$NODE_VERSION"
   if [ ! -x "$target/bin/node" ]; then
     if [ ! -f "$archive" ]; then
@@ -139,10 +147,22 @@ install_node() {
     fi
     mv "$target.tmp" "$target"
   fi
-  ln -sfn "$target/bin/node" "$BIN_DIR/node"
-  ln -sfn "$target/bin/npm" "$BIN_DIR/npm"
-  ln -sfn "$target/bin/npx" "$BIN_DIR/npx"
-  emit PASS node-install "$(version_probe 10 "$BIN_DIR/node" --version)"
+  if [ ! -f "$libatomic" ]; then
+    emit FAIL node-libatomic "missing bundled package: $libatomic"
+    return
+  fi
+  mkdir -p "$target/lib"
+  cp "$libatomic" "$target/lib/libatomic.so.$LIBATOMIC_VERSION"
+  local cp_code=$?
+  if [ "$cp_code" -ne 0 ]; then
+    emit FAIL node-libatomic "copy failed with exitCode=$cp_code"
+    return
+  fi
+  ln -sfn "libatomic.so.$LIBATOMIC_VERSION" "$target/lib/libatomic.so.1"
+  write_node_wrapper node "$target/bin/node" "$target/lib"
+  write_node_wrapper npm "$target/bin/npm" "$target/lib"
+  write_node_wrapper npx "$target/bin/npx" "$target/lib"
+  emit PASS node-install "node $NODE_VERSION installed"
 }
 
 install_uv() {
@@ -183,12 +203,16 @@ install_uv() {
   fi
   ln -sfn "$target/uv" "$BIN_DIR/uv"
   [ -x "$target/uvx" ] && ln -sfn "$target/uvx" "$BIN_DIR/uvx"
-  emit PASS uv-install "$(version_probe 10 "$BIN_DIR/uv" --version)"
+  emit PASS uv-install "uv $UV_VERSION installed"
 }
 
 install_pnpm() {
   local archive="$PACK_DIR/packages/pnpm-$PNPM_VERSION.tgz"
   local target="$TOOLCHAIN_DIR/pnpm-$PNPM_VERSION"
+  if ! has node; then
+    emit FAIL pnpm-install "node command missing; install kite.nodejs first"
+    return
+  fi
   if [ ! -f "$target/package/bin/pnpm.cjs" ]; then
     if [ ! -f "$archive" ]; then
       emit FAIL pnpm-package "missing bundled package: $archive"
@@ -209,269 +233,56 @@ install_pnpm() {
 exec node \"$target/package/bin/pnpm.cjs\" \"\$@\""
   write_wrapper pnpx "#!/usr/bin/env sh
 exec node \"$target/package/bin/pnpx.cjs\" \"\$@\""
-  emit PASS pnpm-install "$(version_probe 10 "$BIN_DIR/pnpm" --version)"
+  emit PASS pnpm-install "pnpm $PNPM_VERSION installed"
 }
 
-is_kfshell_adb_wrapper() {
-  local file="$1"
-  [ -f "$file" ] || return 1
-  grep -q 'ensure_host_self_connected' "$file" 2>/dev/null && grep -q 'REAL_ADB=' "$file" 2>/dev/null
-}
-
-restore_system_adb_if_wrapped() {
-  local target=""
-  if [ -e /usr/bin/adb ]; then
-    target="$(readlink -f /usr/bin/adb 2>/dev/null || printf '%s' /usr/bin/adb)"
+rootfs_command_path() {
+  local name="$1"
+  local lookup="$name"
+  if [ "$name" = "fd" ] && ! PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin" command -v fd >/dev/null 2>&1; then
+    lookup="fdfind"
   fi
+  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin" command -v "$lookup" 2>/dev/null
+}
 
-  if is_kfshell_adb_wrapper /usr/bin/adb || { [ -n "$target" ] && is_kfshell_adb_wrapper "$target"; }; then
-    emit WARN adb-repair "system adb was overwritten by a KFShell wrapper; reinstalling Ubuntu adb package"
-    if ! has apt-get; then
-      emit WARN adb-repair "apt-get missing; cannot restore system adb automatically"
-      return
-    fi
-    DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y adb
-    local reinstall_code=$?
-    if [ "$reinstall_code" -eq 0 ]; then
-      emit PASS adb-repair "Ubuntu adb package restored"
+install_rootfs_command() {
+  local name="$1"
+  local required="${2:-required}"
+  local real
+  real="$(rootfs_command_path "$name" || true)"
+  if [ -z "$real" ] || [ ! -x "$real" ]; then
+    if [ "$required" = "optional" ]; then
+      emit WARN "$name-install" "optional rootfs command missing: $name"
     else
-      emit WARN adb-repair "adb package reinstall failed with exitCode=$reinstall_code"
+      emit FAIL "$name-install" "missing rootfs command: $name"
     fi
-  fi
-}
-
-install_adb() {
-  local adb_path=""
-  local fastboot_path=""
-
-  restore_system_adb_if_wrapped
-
-  if [ -x /usr/bin/adb ]; then
-    adb_path="/usr/bin/adb"
-  elif PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin" command -v adb >/dev/null 2>&1; then
-    adb_path="$(PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin" command -v adb)"
-  fi
-
-  if [ -x /usr/bin/fastboot ]; then
-    fastboot_path="/usr/bin/fastboot"
-  elif PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin" command -v fastboot >/dev/null 2>&1; then
-    fastboot_path="$(PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin" command -v fastboot)"
-  fi
-
-  if [ -z "$adb_path" ] || [ ! -x "$adb_path" ]; then
-    emit FAIL adb-install "adb binary missing after apt baseline"
     return
   fi
-
-  local adb_target
-  adb_target="$(readlink -f "$adb_path" 2>/dev/null || printf '%s' "$adb_path")"
-  if is_kfshell_adb_wrapper "$adb_path" || is_kfshell_adb_wrapper "$adb_target"; then
-    emit FAIL adb-install "system adb is still a KFShell wrapper after repair; refusing to create recursive wrapper"
-    return
-  fi
-
-write_wrapper adb "#!/usr/bin/env sh
-REAL_ADB=\"$adb_path\"
-
-resolve_host_self_port() {
-  port=\"\"
-  case \"\${KF_ADB_HOST_SELF_PORT:-}\" in
-    ''|0|*[!0-9]*) ;;
-    *)
-      printf '%s' \"\$KF_ADB_HOST_SELF_PORT\"
-      return 0
-      ;;
-  esac
-  if [ -x /system/bin/getprop ]; then
-    port=\"\$(/system/bin/getprop service.adb.tls.port 2>/dev/null | tr -d '\r')\"
-  elif command -v getprop >/dev/null 2>&1; then
-    port=\"\$(getprop service.adb.tls.port 2>/dev/null | tr -d '\r')\"
-  fi
-  case \"\$port\" in
-    ''|0|*[!0-9]*) return 1 ;;
-  esac
-  printf '%s' \"\$port\"
-}
-
-resolve_host_self_serial() {
-  printf '%s' \"\${KF_ADB_HOST_SELF_SERIAL:-kf-host-self}\"
-}
-
-should_skip_autoconnect() {
-  expect_value=0
-  subcommand=\"\"
-  for arg in \"\$@\"; do
-    if [ \"\$expect_value\" -eq 1 ]; then
-      expect_value=0
-      continue
-    fi
-    case \"\$arg\" in
-      --)
-        break
-        ;;
-      -s|-t|-H|-P|-L)
-        expect_value=1
-        ;;
-      -a|-d|-e)
-        ;;
-      -*)
-        ;;
-      *)
-        subcommand=\"\$arg\"
-        break
-        ;;
-    esac
-  done
-  case \"\$subcommand\" in
-    ''|help|version|start-server|kill-server|server|pair|connect|disconnect|keygen|mdns)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-first_subcommand() {
-  expect_value=0
-  for arg in \"\$@\"; do
-    if [ \"\$expect_value\" -eq 1 ]; then
-      expect_value=0
-      continue
-    fi
-    case \"\$arg\" in
-      --)
-        break
-        ;;
-      -s|-t|-H|-P|-L)
-        expect_value=1
-        ;;
-      -a|-d|-e)
-        ;;
-      -*)
-        ;;
-      *)
-        printf '%s' \"\$arg\"
-        return 0
-        ;;
-    esac
-  done
-  return 1
-}
-
-selected_serial() {
-  expect_serial=0
-  for arg in \"\$@\"; do
-    if [ \"\$expect_serial\" -eq 1 ]; then
-      printf '%s' \"\$arg\"
-      return 0
-    fi
-    case \"\$arg\" in
-      -s)
-        expect_serial=1
-        ;;
-      -s*)
-        printf '%s' \"\${arg#-s}\"
-        return 0
-        ;;
-    esac
-  done
-  return 1
-}
-
-is_host_self_target() {
-  case \"\$1\" in
-    \"\${KF_ADB_HOST_SELF_SERIAL:-kf-host-self}\"|kf-host-self|host-self-adb)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-print_devices_with_host_self() {
-  echo \"List of devices attached\"
-  printf '%s\tdevice\n' \"\${KF_ADB_HOST_SELF_SERIAL:-kf-host-self}\"
-  if [ \"\${KF_ADB_INCLUDE_STANDARD_DEVICES:-1}\" = \"1\" ]; then
-    timeout -k 2s \"\${KF_ADB_STANDARD_SCAN_TIMEOUT_SEC:-3}s\" \"\$REAL_ADB\" \"\$@\" 2>&1 \\
-      | awk 'NR == 1 && /^List of devices attached/ { next } NF > 0 { print }'
-  fi
-}
-
-run_adb_with_watchdog() {
-  seconds=\"\$1\"
-  shift
-  tmp=\"\$(mktemp \"\${TMPDIR:-/tmp}/kf-adb.XXXXXX\")\" || tmp=\"/tmp/kf-adb.\$\$\"
-  timed_out=\"\${tmp}.timeout\"
-  \"\$REAL_ADB\" \"\$@\" >\"\$tmp\" 2>&1 &
-  pid=\"\$!\"
-  (
-    sleep \"\$seconds\"
-    if kill -0 \"\$pid\" >/dev/null 2>&1; then
-      : >\"\$timed_out\"
-      kill \"\$pid\" >/dev/null 2>&1 || true
-      sleep 2
-      kill -9 \"\$pid\" >/dev/null 2>&1 || true
-      if command -v pkill >/dev/null 2>&1; then
-        pkill -x adb >/dev/null 2>&1 || true
-      fi
-    fi
-  ) &
-  watchdog=\"\$!\"
-  wait \"\$pid\"
-  status=\"\$?\"
-  kill \"\$watchdog\" >/dev/null 2>&1 || true
-  cat \"\$tmp\" 2>/dev/null || true
-  if [ -f \"\$timed_out\" ]; then
-    rm -f \"\$tmp\" \"\$timed_out\"
-    echo \"error: kfshell adb watchdog timed out: adb \$*\"
-    echo \"hint: adb client is installed, but adb server startup is blocked or hanging in this container session.\"
-    exit 124
-  fi
-  rm -f \"\$tmp\" \"\$timed_out\"
-  return \"\$status\"
-}
-
-ensure_host_self_connected() {
-  [ \"\${KF_ADB_HOST_SELF_AUTOCONNECT:-1}\" = \"0\" ] && return 0
-  should_skip_autoconnect \"\$@\" && return 0
-  serial=\"\$(resolve_host_self_serial || true)\"
-  [ -n \"\$serial\" ] || return 0
-  case \"\$serial\" in
-    kf-host-self|host-self-adb)
-      return 0
-      ;;
-  esac
-  timeout -k 2s 5s \"\$REAL_ADB\" connect \"\$serial\" >/dev/null 2>&1 || true
-}
-
-ensure_host_self_connected \"\$@\"
-subcommand=\"\$(first_subcommand \"\$@\" || true)\"
-target=\"\$(selected_serial \"\$@\" || true)\"
-case \"\$subcommand\" in
-  devices)
-    print_devices_with_host_self \"\$@\"
-    exit 0
-    ;;
-esac
-if [ -n \"\$target\" ] && is_host_self_target \"\$target\"; then
-  exec kf-adb-bridge adb \"\$@\"
-fi
-exec \"\$REAL_ADB\" \"\$@\"
-"
-  if [ -n "$fastboot_path" ] && [ -x "$fastboot_path" ]; then
-    ln -sfn "$fastboot_path" "$BIN_DIR/fastboot"
+  mkdir -p "$TOOLCHAIN_DIR/bin" "$BIN_DIR"
+  if [ "$name" = "fd" ] && [ "$(basename "$real")" = "fdfind" ]; then
+    rm -f "$TOOLCHAIN_DIR/bin/$name"
+    printf '%s\n' "#!/usr/bin/env sh
+exec \"$real\" \"\$@\"" > "$TOOLCHAIN_DIR/bin/$name"
+    chmod +x "$TOOLCHAIN_DIR/bin/$name"
   else
-    rm -f "$BIN_DIR/fastboot"
+    ln -sfn "$real" "$TOOLCHAIN_DIR/bin/$name"
   fi
+  ln -sfn "$TOOLCHAIN_DIR/bin/$name" "$BIN_DIR/$name"
+  emit PASS "$name-install" "$name linked from $real"
+}
 
-  adb_probe="$(version_probe 5 "$BIN_DIR/adb" version)"
-  if [ -n "$adb_probe" ]; then
-    emit PASS adb-install "$adb_probe"
-  else
-    emit WARN adb-install "managed adb installed, but version probe timed out or produced no output"
-  fi
+install_system_tools() {
+  install_pnpm
+  local required_commands="wget jq rg fd zip"
+  local optional_commands="unzip zstd file tar gzip gunzip xz unxz bzip2 bunzip2 ps pgrep pkill pidof top free ip ss netstat ping dig nslookup host update-ca-certificates less tree rsync patch sed awk grep find xargs sort uniq head tail cut tr wc tee env which whoami id uname date sleep timeout kill sha256sum sha1sum md5sum base64 chmod chown chgrp ln readlink realpath mkdir rmdir rm cp mv touch du df stat"
+  local command_name
+  for command_name in $required_commands; do
+    install_rootfs_command "$command_name"
+  done
+  for command_name in $optional_commands; do
+    install_rootfs_command "$command_name" optional
+  done
+  repair_wrappers
 }
 
 version_line() {
@@ -481,13 +292,20 @@ version_line() {
   if has "$command_name"; then
     local path
     path="$(command -v "$command_name")"
-    local version
+    local probe_output
     if [ "$command_name" = "adb" ]; then
-      version="$(version_probe 5 "$command_name" version)"
+      probe_output="$(timeout -k 2s 5s "$command_name" version 2>&1)"
     else
-      version="$(version_probe 5 "$command_name" --version)"
+      probe_output="$(timeout -k 2s 5s "$command_name" --version 2>&1)"
     fi
-    emit PASS "inventory:$name" "path=$path | version=$version | source=$source"
+    local probe_code="$?"
+    local version
+    version="$(printf '%s\n' "$probe_output" | head -n 1)"
+    if [ "$probe_code" -eq 0 ] && [ -n "$version" ]; then
+      emit PASS "inventory:$name" "path=$path | version=$version | source=$source"
+    else
+      emit FAIL "inventory:$name" "path=$path | version=${version:-no output} | exitCode=$probe_code | source=$source"
+    fi
   else
     emit WARN "inventory:$name" "missing | source=$source"
   fi
@@ -510,17 +328,16 @@ doctor() {
   version_line uvx uvx "ai-dev-pack"
   version_line pnpm pnpm "ai-dev-pack"
   version_line python3 python3 "Ubuntu/rootfs"
-  version_line pip3 pip3 "Ubuntu apt"
-  version_line jq jq "Ubuntu apt"
+  version_line pip3 pip3 "offline rootfs"
+  version_line jq jq "offline rootfs"
   version_line fd fd "KFShell wrapper or fd-find"
-  version_line rg rg "Ubuntu apt"
-  version_line zstd zstd "Ubuntu apt"
-  version_line zip zip "Ubuntu apt"
-  version_line pkg-config pkg-config "Ubuntu apt"
-  version_line tree tree "Ubuntu apt"
-  version_line rsync rsync "Ubuntu apt"
-  version_line supervisorctl supervisorctl "Ubuntu apt"
-  version_line adb adb "ai-dev-pack managed adb"
+  version_line rg rg "offline rootfs"
+  version_line zstd zstd "offline rootfs"
+  version_line zip zip "offline rootfs"
+  version_line pkg-config pkg-config "offline rootfs"
+  version_line tree tree "offline rootfs"
+  version_line rsync rsync "offline rootfs"
+  version_line supervisorctl supervisorctl "offline rootfs"
   echo "SUMMARY PASS=$PASS WARN=$WARN FAIL=$FAIL"
   echo "KFSHELL_AI_DEV_PACK_DOCTOR_END"
 }
@@ -560,7 +377,6 @@ main() {
   ensure_dirs
   export PATH="$BIN_DIR:/root/.local/bin:$PATH"
   export UV_LINK_MODE=copy
-  repair_wrappers
 
   case "$MODE" in
     --doctor|doctor)
@@ -574,17 +390,30 @@ main() {
       install_uv
       doctor_uv
       ;;
+    --install-python|install-python|python)
+      install_python
+      ;;
+    --install-pnpm|install-pnpm|pnpm)
+      install_pnpm
+      ;;
+    --install-git|install-git|git)
+      install_rootfs_command git
+      ;;
+    --install-curl|install-curl|curl)
+      install_rootfs_command curl
+      ;;
+    --install-system-tools|install-system-tools|system-tools)
+      install_system_tools
+      ;;
     *)
-      install_apt_baseline
+      install_python
       install_node
       install_uv
-      install_pnpm
-      install_adb
-      repair_wrappers
-      doctor
+      install_system_tools
       ;;
   esac
 
+  echo "SUMMARY PASS=$PASS WARN=$WARN FAIL=$FAIL"
   echo "KFSHELL_AI_DEV_PACK_END"
   [ "$FAIL" -eq 0 ] || exit 2
   exit 0

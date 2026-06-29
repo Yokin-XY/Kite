@@ -4,7 +4,7 @@
   "base": {
     "name": "Git",
     "description": "源码下载与版本管理工具",
-    "version": "apt",
+    "version": "rootfs",
     "icon": {
       "type": "asset",
       "value": "resources/kite.git/icon.png",
@@ -17,8 +17,8 @@
     ],
     "category": "系统工具",
     "accent": "orange",
-    "sizeLabel": "网络包",
-    "longDescription": "Git 是 Hermes 本体和后续源码型资源的底层工具卡。安装时先检查当前 Ubuntu 环境是否已有 git；已有则只登记为可用，没有则通过 apt 安装 git 与 ca-certificates，并记录这次安装的 ownership。",
+    "sizeLabel": "内置底座",
+    "longDescription": "Git 是 Hermes 本体和后续源码型资源的底层工具卡。首次启动和资源获取都会从内置工具包缓存把 rootfs 内置 Git 接入 /workspace/.kf/software/kite.git 与 /workspace/.kf/bin。",
     "recommendations": [
       {
         "resourceId": "kite.curl",
@@ -47,11 +47,8 @@
     ]
   },
   "source": {
-    "type": "apt",
-    "packages": [
-      "git",
-      "ca-certificates"
-    ]
+    "type": "bundled",
+    "asset": "toolchain/ai-dev-pack"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.git",
@@ -62,7 +59,7 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "apt-get install -y git ca-certificates"
+        "cmd": "install.sh --install-git"
       }
     ],
     "open": {
@@ -92,7 +89,7 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove git when installed_by_kite; otherwise clear Kite resource record only"
+        "cmd": "rm -rf /workspace/.kf/software/kite.git /workspace/.kf/cache/resources/kite.git; rm -f /workspace/.kf/bin/git"
       }
     ]
   },

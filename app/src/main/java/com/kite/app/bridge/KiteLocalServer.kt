@@ -16,7 +16,8 @@ class KiteLocalServer(
     context: Context,
     private val diagnostics: KiteDiagnostics,
     private val openWeb: (KiteBrowserOpenRequest) -> Unit,
-    private val openDesktop: (KiteDesktopOpenRequest) -> KiteDesktopOpenResponse
+    private val openDesktop: (KiteDesktopOpenRequest) -> KiteDesktopOpenResponse,
+    private val installApk: (KiteInstallApkRequest) -> KiteInstallApkResponse
 ) {
     private val appContext = context.applicationContext
 
@@ -157,6 +158,25 @@ class KiteLocalServer(
                     }
                 }
 
+                method in setOf("GET", "POST") && path == "/install-apk" -> {
+                    val installRequest = parseInstallApkRequest(query, request.body)
+                    if (installRequest == null) {
+                        writeJson(client, 400, JSONObject().put("ok", false).put("error", "missing_path"))
+                    } else {
+                        val response = installApk(installRequest)
+                        writeJson(
+                            client,
+                            if (response.accepted) 200 else 400,
+                            JSONObject()
+                                .put("ok", response.accepted)
+                                .put("accepted", response.accepted)
+                                .put("path", response.path)
+                                .put("resolvedPath", response.resolvedPath)
+                                .put("error", response.error)
+                        )
+                    }
+                }
+
                 else -> writeJson(client, 404, JSONObject().put("ok", false).put("error", "not_found"))
             }
         }
@@ -206,6 +226,23 @@ class KiteLocalServer(
             source = json?.optString("source")?.takeIf { it.isNotBlank() }
                 ?: query["source"]?.takeIf { it.isNotBlank() }
                 ?: KiteDesktopOpenRequest.SOURCE_UBUNTU_DESKTOP
+        )
+    }
+
+    private fun parseInstallApkRequest(query: Map<String, String>, body: String): KiteInstallApkRequest? {
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        val rawBody = body.trim().takeIf { it.isNotBlank() && !it.startsWith("{") }
+        val path = json?.optString("path")?.takeIf { it.isNotBlank() }
+            ?: json?.optString("apk")?.takeIf { it.isNotBlank() }
+            ?: query["path"]?.takeIf { it.isNotBlank() }
+            ?: query["apk"]?.takeIf { it.isNotBlank() }
+            ?: rawBody
+            ?: return null
+        return KiteInstallApkRequest(
+            path = path,
+            source = json?.optString("source")?.takeIf { it.isNotBlank() }
+                ?: query["source"]?.takeIf { it.isNotBlank() }
+                ?: KiteInstallApkRequest.SOURCE_UBUNTU_SHELL
         )
     }
 

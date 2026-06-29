@@ -71,6 +71,8 @@ import com.kite.app.bridge.KiteBrowserOpenRequest
 import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.bridge.KiteDesktopOpenRequest
 import com.kite.app.bridge.KiteDesktopOpenResponse
+import com.kite.app.bridge.KiteInstallApkRequest
+import com.kite.app.bridge.KiteInstallApkResponse
 import com.kite.app.bridge.KiteLocalServer
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.DropZoneStatus
@@ -124,6 +126,7 @@ import com.kftest.app.foundation.bootstrap.BootstrapCoordinator
 import com.kftest.app.foundation.bootstrap.BootstrapSnapshot
 import com.kftest.app.foundation.bootstrap.BootstrapStage
 import com.kftest.app.foundation.runtime.AssetExtractor
+import com.kftest.app.foundation.runtime.ExternalExchangeManager
 import com.kftest.app.foundation.runtime.RuntimeAutomationActions
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kftest.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
@@ -145,6 +148,7 @@ import com.kftest.app.ui.terminal.KiteTerminalShellTheme
 import com.kftest.app.ui.terminal.TerminalChromeHost
 import com.kftest.app.ui.terminal.TerminalFragment
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -174,6 +178,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private lateinit var resourceManifestLoader: KiteResourceManifestLoader
     private lateinit var themeStore: SharedPreferences
     private lateinit var appSettings: SharedPreferences
+    private lateinit var rootHost: FrameLayout
     private lateinit var root: LinearLayout
     private lateinit var webView: WebView
 
@@ -226,6 +231,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var pendingRuntimePermissionBootstrap = false
     private var runtimePermissionRequestInFlight = false
     private var firstRunRuntimeGateShown = false
+    private var bootstrapResourceGateInFlight = false
     private var firstRunPermissionOnboardingInFlight = false
     private var firstRunPermissionRequestInFlight = false
     private var firstRunRuntimePermissionsRequested = false
@@ -256,6 +262,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var runtimePanelCardCountView: TextView? = null
     private var runtimePanelTerminalCountView: TextView? = null
     private var runtimePanelProcessCountView: TextView? = null
+    private var runtimeGateOverlay: FrameLayout? = null
+    private var runtimeGateTitleView: TextView? = null
+    private var runtimeGateDetailView: TextView? = null
+    private var runtimeGateProgressBar: ProgressBar? = null
+    private var runtimeGateProgressTextView: TextView? = null
+    private var runtimeGateActionButton: TextView? = null
     private val runManagementExpandedIds = mutableSetOf<String>()
     private val runManagementExpandedTerminalIds = mutableSetOf<String>()
     private val runManagementExpandedProcessIds = mutableSetOf<String>()
@@ -280,6 +292,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var resourceSectionsInFlightKey: String? = null
     private var resourceSectionsDirty = true
     private var resourceDetailInFlightKey: String? = null
+    private var resourceDetailContentHost: FrameLayout? = null
     private var resourceManageContentHost: LinearLayout? = null
     private var resourceManageRequestSerial = 0L
     private var currentResourceInstallTargetId: String? = null
@@ -299,6 +312,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     private var lastConsoleRuntimeRefreshAt = 0L
     private var cardRunReportBinding: CardRunReportBinding? = null
+    private var cardRunReportRefreshScheduled = false
+    private var cardRunReportLastRefreshAt = 0L
+    private var pendingCardRunReportState: RecipeRuntimeState? = null
     private var resourceInstallWizardBinding: ResourceInstallWizardBinding? = null
     private var resourceInstallWizardRefreshSerial = 0L
     private var foregroundLiveTickScheduled = false
@@ -331,6 +347,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             },
             openDesktop = { request ->
                 handleDesktopOpenRequest(request)
+            },
+            installApk = { request ->
+                handleInstallApkRequest(request)
             }
         )
         if (shouldStartLocalServer()) {
@@ -338,11 +357,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             localServerStarted = true
         }
 
+        rootHost = FrameLayout(this).apply {
+            setBackgroundColor(tokens.pageBackground)
+        }
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(tokens.pageBackground)
         }
-        setContentView(root)
+        rootHost.addView(root, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        setContentView(rootHost)
+        updateRuntimeGateOverlay()
         observeUbuntuBootstrapState()
         observeRootfsExtractionProgress()
         observeRuntimeBootstrapProgress()
@@ -660,6 +687,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resumePendingFirstRunPermissionOnboarding()
         resumePendingRuntimePermissionBootstrap()
         refreshResourceScreenIfVisible()
+        ensureBundledToolBootstrapIfNeeded("resume")
         when (currentScreen) {
             Screen.Console -> showConsole()
             Screen.Settings -> showSettings()
@@ -1022,7 +1050,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             Screen.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
             Screen.ResourceSearch -> requestResourceSearchRefresh()
             Screen.CardRun -> requestVisibleResourceInstallWizardRefresh(signal.reason)
-            Screen.ResourceDetail -> currentResourceDetailId?.let { showResourceDetail(it) }
+            Screen.ResourceDetail -> currentResourceDetailId?.let { refreshVisibleResourceDetail(it) }
             Screen.ResourceMore -> currentResourceDetailId?.let { resourceId ->
                 resourceCatalogForUiRender("resource_more_signal")
                     .firstOrNull { item -> item.id == resourceId }
@@ -1135,19 +1163,45 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (this is CardRunActivity || firstRunRuntimeGateShown) return
         firstRunRuntimeGateShown = true
         thread(name = "KiteFirstRunRuntimeGate", isDaemon = true) {
-            val baseReady = runCatching { WorkSurfaceRuntimeBridge.isBaseImageReady(applicationContext) }
-                .getOrDefault(false)
-            if (baseReady) return@thread
+            val permissionState = currentRuntimePermissionState()
+            if (!permissionState.ready) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    setUbuntuRuntimeState(buildRuntimePermissionUiState(baseImageReady = false) ?: return@runOnUiThread)
+                }
+                return@thread
+            }
+            val runtimeReady = runCatching {
+                WorkSurfaceRuntimeBridge.isDefaultContainerReady(applicationContext)
+            }.getOrDefault(false)
+            val bootstrapResourcesSettled = runtimeReady &&
+                ToolchainPackInstaller.bootstrapResourcesSettled(applicationContext)
+            if (runtimeReady && bootstrapResourcesSettled) {
+                runOnUiThread { setUbuntuRuntimeState(UbuntuRuntimeUiState.hidden()) }
+                return@thread
+            }
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                val permissionState = currentRuntimePermissionState()
-                if (!permissionState.ready) {
-                    setUbuntuRuntimeState(buildRuntimePermissionUiState(baseImageReady = false) ?: return@runOnUiThread)
-                    showUbuntuRuntimePanel(auto = true)
-                } else {
-                    setUbuntuRuntimeState(runtimeDeployPendingState())
-                    showUbuntuRuntimePanel(auto = true)
-                    ensureKfRuntimeBootstrap()
+                setUbuntuRuntimeState(runtimeDeployPendingState())
+                ensureKfRuntimeBootstrap()
+            }
+        }
+    }
+
+    private fun ensureBundledToolBootstrapIfNeeded(reason: String) {
+        if (this is CardRunActivity || bootstrapResourceGateInFlight) return
+        bootstrapResourceGateInFlight = true
+        thread(name = "KiteBundledToolBootstrapGate-${reason.take(24)}", isDaemon = true) {
+            val permissionReady = currentRuntimePermissionState().ready
+            val resourcesSettled = permissionReady &&
+                ToolchainPackInstaller.bootstrapResourcesSettled(applicationContext)
+            runOnUiThread {
+                bootstrapResourceGateInFlight = false
+                if (isFinishing || isDestroyed || !permissionReady || resourcesSettled) return@runOnUiThread
+                setUbuntuRuntimeState(runtimeDeployPendingState())
+                ensureKfRuntimeBootstrap()
+                if (currentScreen == Screen.Resources) {
+                    requestResourceSectionsRefresh(forceCatalogRefresh = true)
                 }
             }
         }
@@ -1343,21 +1397,39 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             val state = runCatching {
                 val baseReady = WorkSurfaceRuntimeBridge.isBaseImageReady(applicationContext)
                 buildRuntimePermissionUiState(baseImageReady = baseReady) ?: if (baseReady) {
-                    UbuntuRuntimeUiState.hidden()
+                    if (WorkSurfaceRuntimeBridge.isDefaultContainerReady(applicationContext)) {
+                        if (ToolchainPackInstaller.bootstrapResourcesSettled(applicationContext)) {
+                            UbuntuRuntimeUiState.hidden()
+                        } else {
+                            runtimeDeployPendingState()
+                        }
+                    } else {
+                        UbuntuRuntimeUiState(
+                            title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u672a\u90e8\u7f72",
+                            detail = "系统镜像已经解压完成，正在准备 PRoot、工作区和内置工具安装路径。",
+                            blocksUbuntuActions = true,
+                            isProblem = false,
+                            showProgress = true,
+                            progressText = "等待首次部署"
+                        )
+                    }
                 } else {
                     UbuntuRuntimeUiState(
                         title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u672a\u90e8\u7f72",
                         detail = "\u9996\u6b21\u542f\u52a8 Ubuntu \u5361\u7247\u6216\u7ec8\u7aef\u65f6\u4f1a\u5148\u89e3\u538b\u7cfb\u7edf\u955c\u50cf\u3002",
-                        blocksUbuntuActions = false,
-                        isProblem = false
+                        blocksUbuntuActions = true,
+                        isProblem = false,
+                        showProgress = true,
+                        progressText = "等待首次部署"
                     )
                 }
             }.getOrElse { error ->
                 UbuntuRuntimeUiState(
-                    title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u72b6\u6001\u672a\u77e5",
-                    detail = error.message ?: error.javaClass.simpleName,
-                    blocksUbuntuActions = false,
-                    isProblem = true
+                    title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u542f\u52a8\u6821\u9a8c\u672a\u901a\u8fc7",
+                    detail = "系统镜像可能已经存在，但最小 shell 没有成功启动。\n${error.message ?: error.javaClass.simpleName}",
+                    blocksUbuntuActions = true,
+                    isProblem = true,
+                    canRetry = true
                 )
             }
             runOnUiThread { setUbuntuRuntimeState(state) }
@@ -1369,6 +1441,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         if (ubuntuRuntimeState == state) return
         ubuntuRuntimeState = state
         renderUbuntuRuntimePanelState()
+        updateRuntimeGateOverlay()
         maybeAutoShowUbuntuRuntimePanel(state)
         if (::root.isInitialized && currentScreen == Screen.Console && shouldRefreshConsoleForRuntimeState(previous, state)) {
             showConsole()
@@ -1454,22 +1527,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             )
 
             AssetExtractor.RootfsExtractionPhase.READY -> {
+                if (latestRuntimeBootstrapProgress.active) return null
                 when (latestBootstrapSnapshot.stage) {
                     BootstrapStage.ROOTFS_EXTRACTING,
                     BootstrapStage.BASE_BOOTSTRAP -> {
-                        if (latestRuntimeBootstrapProgress.active) {
-                            null
-                        } else {
-                            UbuntuRuntimeUiState(
-                                title = "正在初始化基础环境",
-                                detail = "系统镜像已经解压完成，正在补齐 apt、dpkg 和常用基础工具。这个阶段可能比解压更久，完成后会继续准备工作区。",
-                                blocksUbuntuActions = true,
-                                isProblem = false,
-                                progressPercent = 55,
-                                progressText = "总进度 55%",
-                                showProgress = true
-                            )
-                        }
+                        UbuntuRuntimeUiState(
+                            title = "正在初始化基础环境",
+                            detail = "系统镜像已经解压完成，正在准备 PRoot、工作区和内置工具安装路径。",
+                            blocksUbuntuActions = true,
+                            isProblem = false,
+                            progressPercent = 55,
+                            progressText = "总进度 55%",
+                            showProgress = true
+                        )
                     }
                     BootstrapStage.IDLE,
                     BootstrapStage.READY -> UbuntuRuntimeUiState.hidden()
@@ -1930,6 +2000,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         terminalBottomNavigation = null
         cardRunReportBinding = null
         resourceInstallWizardBinding = null
+        resourceDetailContentHost = null
         consoleCardBindings.clear()
         consolePageTabsView = null
         consolePageBodyHost = null
@@ -2053,6 +2124,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun showResources() {
         currentResourceDetailId = null
         currentScreen = Screen.Resources
+        ensureBundledToolBootstrapIfNeeded("show_resources")
         root.setBackgroundColor(tokens.pageBackground)
         val page = ensureResourcePage()
         val nav = ensureResourcePageNav()
@@ -2362,6 +2434,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         } else {
             resources
             .filterNot { it.id in usedIds }
+            .filterNot { it.section == "仅搜索" }
             .groupBy { it.section }
             .mapNotNull { (title, items) ->
                 val cleanTitle = title.ifBlank { "更多资源" }
@@ -2532,6 +2605,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceSectionsRenderedRequestKey = ""
         resourceSectionsRenderSerial++
         resourceSectionsDirty = true
+        resourceDetailContentHost = null
         resourceManageContentHost = null
     }
 
@@ -3657,6 +3731,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         val contentHost = FrameLayout(this)
+        resourceDetailContentHost = contentHost
         root.addView(contentHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomNavigation())
         val seedItem = initialItem ?: cachedResourceCatalog?.firstOrNull { it.id == resourceId }
@@ -3697,6 +3772,44 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     else -> {
                         if (seedItem == null) renderResourceDetailMissing(contentHost, resourceId)
                     }
+                }
+            }
+        }
+    }
+
+    private fun refreshVisibleResourceDetail(resourceId: String) {
+        val contentHost = resourceDetailContentHost
+        if (contentHost == null || currentScreen != Screen.ResourceDetail || currentResourceDetailId != resourceId) {
+            showResourceDetail(resourceId)
+            return
+        }
+        val requestKey = KiteResourceRequestPolicy.resourceDetailKey(resourceId)
+        val requestId = ++resourceDetailRequestSerial
+        resourceDetailInFlightKey = requestKey
+        thread(name = "KiteResourceDetailRefresh-$requestId-${requestKey.take(24)}", isDaemon = true) {
+            val result = runCatching {
+                resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId }
+            }
+            runOnUiThread {
+                if (
+                    requestId != resourceDetailRequestSerial ||
+                    currentScreen != Screen.ResourceDetail ||
+                    currentResourceDetailId != resourceId ||
+                    resourceDetailContentHost !== contentHost
+                ) {
+                    if (resourceDetailInFlightKey == requestKey) resourceDetailInFlightKey = null
+                    return@runOnUiThread
+                }
+                if (resourceDetailInFlightKey == requestKey) resourceDetailInFlightKey = null
+                val item = result.getOrNull()
+                when {
+                    item != null -> {
+                        renderResourceDetailContent(contentHost, item)
+                        cacheResourceDetailPayload(item)
+                        requestResourceDetailMedia(item)
+                    }
+                    result.isFailure -> renderResourceDetailError(contentHost, resourceId, result.exceptionOrNull())
+                    else -> renderResourceDetailMissing(contentHost, resourceId)
                 }
             }
         }
@@ -5943,7 +6056,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 cmd = resourceManifestActionCommand(item, operation, action),
                 surfaceMode = action.surfaceMode.ifBlank { KiteRecipe.SURFACE_MODE_PANEL },
                 workdir = action.workdir.ifBlank { "/workspace" },
-                timeoutMs = action.timeoutMs.takeIf { it > 0L } ?: 600_000L
+                timeoutMs = action.timeoutMs.takeIf { it > 0L } ?: 1_800_000L
             )
         }
     }
@@ -6233,6 +6346,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 showResourceInstallWizard()
                 return
             }
+            val registryEntry = resourceInstallStore.registryEntry(runningId)
+            if (registryEntry.bootstrapInstallStillRunning() || registryEntry.installMutationIsFresh()) {
+                showResourceInstallWizard()
+                return
+            }
             val recipe = resourceCatalog(forceRefresh = false)
                 .firstOrNull { it.id == runningId }
                 ?.let { resourceInstallRecipe(it) }
@@ -6457,7 +6575,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                     showResources()
                 }
             }
-            Screen.ResourceDetail -> currentResourceDetailId?.let { showResourceDetail(it) }
+            Screen.ResourceDetail -> currentResourceDetailId?.let { refreshVisibleResourceDetail(it) }
             Screen.ResourceMore -> currentResourceDetailId?.let { resourceId ->
                 resourceCatalogForUiRender("resource_more_refresh")
                     .firstOrNull { it.id == resourceId }
@@ -6475,7 +6593,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun ResourceItem.isBundledResource(): Boolean =
-        id == RESOURCE_NODE_RUNTIME || id == RESOURCE_KF_TOOL_ENV || id == RESOURCE_UV
+        resourceManifestLoader.requestManifest(id)?.sourceType == "bundled"
 
     private fun resourceIdForRecipe(recipe: KiteRecipe): String? {
         val supportedSource = recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE ||
@@ -6595,6 +6713,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             registryEntry?.uninstalling == true -> KiteResourceInstallStore.OP_UNINSTALL
             else -> return false
         }
+        if (operation == KiteResourceInstallStore.OP_INSTALL && registryEntry.bootstrapInstallStillRunning()) {
+            return false
+        }
         val planStepStatus = resourceInstallStore.planStepStatus(resourceId)
         if (
             operation == KiteResourceInstallStore.OP_INSTALL &&
@@ -6608,6 +6729,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val run = CardRunStore.currentForRecipe(recipeId)
         val stillRunning = run?.isBusy() == true || run?.isActive() == true
         if (!stillRunning) {
+            if (registryEntry.installMutationIsFresh()) {
+                return false
+            }
             val reason = if (operation == KiteResourceInstallStore.OP_UNINSTALL) {
                 "卸载流程异常中断"
             } else {
@@ -6623,6 +6747,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             return true
         }
         return false
+    }
+
+    private fun KiteResourceRegistryEntry?.bootstrapInstallStillRunning(): Boolean =
+        this?.runId?.startsWith(ToolchainPackInstaller.BOOTSTRAP_RESOURCE_RUN_PREFIX) == true &&
+            ToolchainPackInstaller.state.value.phase == ToolchainInstallPhase.RUNNING
+
+    private fun KiteResourceRegistryEntry?.installMutationIsFresh(): Boolean {
+        val updatedAt = this?.updatedAt ?: return false
+        return updatedAt > 0L && System.currentTimeMillis() - updatedAt < RESOURCE_INSTALL_STALE_GRACE_MS
     }
 
     private fun resourceCatalog(forceRefresh: Boolean = false): List<ResourceItem> {
@@ -6707,11 +6840,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val toolchain = ToolchainPackInstaller.state.value
         val workspaceSnapshot = toolchainWorkspaceSnapshot(allowProbe = allowWorkspaceProbe)
         val nodeWorkspaceInstalled = workspaceSnapshot.nodeInstalled
-        fun clearInstalledIfWorkspaceMissing(resourceId: String, workspaceInstalled: Boolean): Boolean {
-            if (!allowWorkspaceProbe || resourceId !in managedResourceIds || !recordedInstalled(resourceId) || workspaceInstalled) return false
-            resourceInstallStore.clear(resourceId)
-            return true
-        }
         fun restoreInstalledIfWorkspacePresent(
             resourceId: String,
             workspaceInstalled: Boolean,
@@ -6732,13 +6860,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             return true
         }
         val nodeManifest = visibleManifests.firstOrNull { it.id == RESOURCE_NODE_RUNTIME }
-        val workspaceStateNormalized = clearInstalledIfWorkspaceMissing(RESOURCE_NODE_RUNTIME, nodeWorkspaceInstalled) ||
-            restoreInstalledIfWorkspacePresent(
-                resourceId = RESOURCE_NODE_RUNTIME,
-                workspaceInstalled = nodeWorkspaceInstalled,
-                version = nodeManifest?.version?.ifBlank { "24.15.0" } ?: "24.15.0",
-                summary = "Node.js workspace files verified"
-            )
+        val workspaceStateNormalized = restoreInstalledIfWorkspacePresent(
+            resourceId = RESOURCE_NODE_RUNTIME,
+            workspaceInstalled = nodeWorkspaceInstalled,
+            version = nodeManifest?.version?.ifBlank { "26.4.0" } ?: "26.4.0",
+            summary = "Node.js workspace files verified"
+        )
         if (workspaceStateNormalized) {
             registrySnapshot = resourceInstallStore.registrySnapshot(managedResourceIds)
         }
@@ -6748,11 +6875,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 return labelsForResource(manifest.id, resourceIdleLabelForManifest(manifest))
             }
             val recordedInstalled = recordedInstalled(RESOURCE_NODE_RUNTIME)
-            val nodeInstalled = if (allowWorkspaceProbe) {
-                nodeWorkspaceInstalled
-            } else {
-                nodeWorkspaceInstalled || recordedInstalled
-            }
+            val nodeInstalled = recordedInstalled || nodeWorkspaceInstalled
             val installing = toolchainRunning || installing(RESOURCE_NODE_RUNTIME)
             val uninstalling = uninstalling(RESOURCE_NODE_RUNTIME)
             val failed = installFailed(RESOURCE_NODE_RUNTIME)
@@ -6999,6 +7122,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             "featured" -> "精选推荐"
             "quick" -> "快速开始"
             "more" -> "更多资源"
+            "search-only" -> "仅搜索"
             else -> ""
         }
 
@@ -8641,7 +8765,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 }
             })
             val outputTextView = TextView(context).apply {
-                text = lineNumberedOutput(outputText)
+                text = liveCardRunOutputText(outputText)
                 minimumHeight = dp(260)
                 textSize = 13f
                 typeface = Typeface.MONOSPACE
@@ -8812,7 +8936,43 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun updateVisibleCardRunReport(state: RecipeRuntimeState) {
         val binding = cardRunReportBinding ?: return
         if (binding.instanceId != state.instanceId || currentScreen != Screen.CardRun) return
-        binding.outputTextView?.text = lineNumberedOutput(cardRunOutputText(state))
+        pendingCardRunReportState = state
+        scheduleVisibleCardRunReportRefresh()
+    }
+
+    private fun scheduleVisibleCardRunReportRefresh() {
+        if (!::root.isInitialized || cardRunReportRefreshScheduled) return
+        val now = System.currentTimeMillis()
+        val elapsed = now - cardRunReportLastRefreshAt
+        val delayMs = if (cardRunReportLastRefreshAt == 0L || elapsed >= CARD_RUN_REPORT_REFRESH_INTERVAL_MS) {
+            0L
+        } else {
+            CARD_RUN_REPORT_REFRESH_INTERVAL_MS - elapsed
+        }
+        val render = Runnable {
+            cardRunReportRefreshScheduled = false
+            val state = pendingCardRunReportState ?: return@Runnable
+            pendingCardRunReportState = null
+            renderVisibleCardRunReport(state)
+        }
+        cardRunReportRefreshScheduled = true
+        if (delayMs > 0L) {
+            root.postDelayed(render, delayMs)
+        } else if (Looper.myLooper() == Looper.getMainLooper()) {
+            render.run()
+        } else {
+            root.post(render)
+        }
+    }
+
+    private fun renderVisibleCardRunReport(state: RecipeRuntimeState) {
+        val binding = cardRunReportBinding ?: return
+        if (binding.instanceId != state.instanceId || currentScreen != Screen.CardRun) return
+        cardRunReportLastRefreshAt = System.currentTimeMillis()
+        val outputText = liveCardRunOutputText(cardRunOutputText(state))
+        binding.outputTextView?.let { textView ->
+            updateCardRunReportOutputText(textView, outputText)
+        }
         if (state.isBusy() || state.isActive()) {
             binding.outputScrollView?.let { scrollView ->
                 scrollView.post { scrollView.fullScroll(View.FOCUS_DOWN) }
@@ -8937,6 +9097,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private fun reportOutputViewportHeight(): Int {
         val screenBoundedHeight = (resources.displayMetrics.heightPixels * 0.42f).toInt()
         return screenBoundedHeight.coerceIn(dp(260), dp(420))
+    }
+
+    private fun liveCardRunOutputText(text: String): String =
+        text.ifBlank { "暂无输出。" }
+
+    private fun updateCardRunReportOutputText(textView: TextView, outputText: String) {
+        val current = textView.text?.toString().orEmpty()
+        when {
+            current == outputText -> Unit
+            current == "暂无输出。" -> textView.text = outputText
+            outputText.startsWith(current) -> textView.append(outputText.substring(current.length))
+            else -> textView.text = outputText
+        }
     }
 
     private fun extractShellOutput(report: String): String {
@@ -9070,7 +9243,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
     private fun String.normalizeShellStreamForDisplay(): String =
-        replace('\r', '\n')
+        replace(ANSI_ESCAPE_REGEX, "")
+            .replace('\r', '\n')
             .lineSequence()
             .joinToString("\n") { it.trimEnd() }
             .trimEnd()
@@ -10208,6 +10382,124 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }.getOrDefault(false)
     }
 
+    private fun updateRuntimeGateOverlay() {
+        if (!::rootHost.isInitialized) return
+        val state = ubuntuRuntimeState
+        if (!shouldShowRuntimeGate(state)) {
+            runtimeGateOverlay?.visibility = View.GONE
+            return
+        }
+        val overlay = runtimeGateOverlay ?: createRuntimeGateOverlay().also { view ->
+            runtimeGateOverlay = view
+            rootHost.addView(view, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+        }
+        overlay.visibility = View.VISIBLE
+        overlay.bringToFront()
+        overlay.setBackgroundColor(colorWithAlpha(tokens.pageBackground, 238))
+        runtimeGateTitleView?.apply {
+            text = state.title.ifBlank { "正在准备 Ubuntu" }
+            setTextColor(if (state.isProblem) tokens.danger else tokens.textPrimary)
+        }
+        runtimeGateDetailView?.apply {
+            text = state.detail
+            visibility = if (state.detail.isBlank()) View.GONE else View.VISIBLE
+        }
+        runtimeGateProgressBar?.apply {
+            visibility = if (state.showProgress && !state.isProblem) View.VISIBLE else View.GONE
+            isIndeterminate = state.progressPercent == null
+            progress = state.progressPercent ?: 0
+            progressDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
+            indeterminateDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
+        }
+        runtimeGateProgressTextView?.apply {
+            text = state.progressText.ifBlank {
+                if (state.showProgress && !state.isProblem) "正在执行首次准备" else ""
+            }
+            visibility = if (text.isBlank()) View.GONE else View.VISIBLE
+        }
+        runtimeGateActionButton?.apply {
+            val actionVisible = runtimePanelUsesPrimaryAction(state)
+            visibility = if (actionVisible) View.VISIBLE else View.GONE
+            text = when {
+                state.firstRunPermissionOnboarding -> state.permissionActionLabel.ifBlank { "开始授权" }
+                state.requiresPermission -> state.permissionActionLabel.ifBlank { "打开授权 / 继续" }
+                state.canRetry -> "重新检查 / 继续部署"
+                else -> ""
+            }
+            setOnClickListener { handleRuntimePanelAction() }
+        }
+    }
+
+    private fun shouldShowRuntimeGate(state: UbuntuRuntimeUiState): Boolean =
+        state.visible && (
+            state.blocksUbuntuActions ||
+                state.requiresPermission ||
+                state.firstRunPermissionOnboarding ||
+                state.isProblem
+            )
+
+    private fun createRuntimeGateOverlay(): FrameLayout {
+        val overlay = FrameLayout(this).apply {
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+        }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(22), dp(22), dp(20))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
+            elevation = dp(10).toFloat()
+            addView(TextView(context).apply {
+                runtimeGateTitleView = this
+                textSize = 20f
+                typeface = Typeface.DEFAULT_BOLD
+                includeFontPadding = false
+            })
+            addView(TextView(context).apply {
+                runtimeGateDetailView = this
+                textSize = 13f
+                setTextColor(tokens.textSecondary)
+                setLineSpacing(dp(3).toFloat(), 1f)
+                setPadding(0, dp(12), 0, 0)
+            })
+            addView(ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+                runtimeGateProgressBar = this
+                max = 100
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(7)).apply {
+                    setMargins(0, dp(18), 0, 0)
+                }
+            })
+            addView(TextView(context).apply {
+                runtimeGateProgressTextView = this
+                textSize = 12f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(8), 0, 0)
+            })
+            addView(TextView(context).apply {
+                runtimeGateActionButton = this
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.buttonText)
+                background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(16).toFloat())
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
+                    setMargins(0, dp(18), 0, 0)
+                }
+            })
+        }
+        overlay.addView(card, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER
+        ).apply {
+            setMargins(dp(24), 0, dp(24), 0)
+        })
+        return overlay
+    }
+
     private fun runtimeProgressView(state: UbuntuRuntimeUiState, compact: Boolean): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -11253,6 +11545,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun maybeAutoShowUbuntuRuntimePanel(state: UbuntuRuntimeUiState) {
+        if (shouldShowRuntimeGate(state)) return
         val startedAt = latestRootfsProgress.startedAt
         if (!state.autoOpenPanel || startedAt <= 0L || autoOpenedRootfsRunAt == startedAt) return
         autoOpenedRootfsRunAt = startedAt
@@ -11279,6 +11572,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun showUbuntuRuntimePanel(auto: Boolean, anchor: View? = null) {
+        if (auto && shouldShowRuntimeGate(ubuntuRuntimeState)) return
         val existing = ubuntuRuntimeDialog
         if (existing?.isShowing == true) {
             requestRuntimePanelSummaryRefresh(force = !auto)
@@ -12059,6 +12353,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         diagnostics.logRecipeAction(recipe, "card_click", mapOf("type" to recipe.type, "status" to state.status.name))
         if (state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping) return
         if (isUbuntuActionBlocked(recipe)) {
+            ensureKfRuntimeBootstrap()
+            showUbuntuRuntimePanel(auto = true)
             Toast.makeText(this, ubuntuRuntimeState.title, Toast.LENGTH_SHORT).show()
             return
         }
@@ -12117,6 +12413,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 val url = route.nextUrl ?: recipe.openWebUrl(route.actionName)
                 setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = url)
                 if (url.isNotBlank()) openWeb(url, "recipe_card", recipe)
+            }
+            KiteRecipe.ANDROID_ACTION_INSTALL_APK -> {
+                val response = handleInstallApkRequest(KiteInstallApkRequest(installApkPathFromStep(route.step), "recipe_card"))
+                if (response.accepted) {
+                    setRuntimeState(recipe, RecipeRunStatus.Opened, lastMeaningfulOutput = "已打开安装器：${response.resolvedPath}")
+                } else {
+                    setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = response.error.ifBlank { "install_apk_failed" })
+                    Toast.makeText(this, response.error.ifBlank { "install_apk_failed" }, Toast.LENGTH_SHORT).show()
+                }
             }
             else -> {
                 setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = "unsupported_android_action")
@@ -12221,7 +12526,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 title = "\u6b63\u5728\u90e8\u7f72 Ubuntu",
                 detail = "当前步骤需要 Ubuntu，正在检查系统镜像、工作区和容器。",
                 blocksUbuntuActions = true,
-                isProblem = false
+                isProblem = false,
+                showProgress = true,
+                progressText = "正在检查系统镜像"
             )
         )
         thread(name = "KiteUbuntuPreflight", isDaemon = true) {
@@ -12240,7 +12547,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                             title = "\u6b63\u5728\u51c6\u5907 Ubuntu \u5de5\u4f5c\u533a",
                             detail = "\u7cfb\u7edf\u955c\u50cf\u5df2\u5c31\u7eea\uff0c\u6b63\u5728\u521d\u59cb\u5316\u9ed8\u8ba4\u7a7a\u95f4\u548c\u5bb9\u5668\u3002",
                             blocksUbuntuActions = true,
-                            isProblem = false
+                            isProblem = false,
+                            showProgress = true,
+                            progressText = "正在准备工作区"
                         )
                     )
                 }
@@ -12598,6 +12907,25 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             KiteRecipe.ANDROID_ACTION_TOOLCHAIN_DOCTOR -> {
                 ToolchainPackInstaller.doctor(applicationContext)
                 executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput ?: "安卓动作完成：toolchain_doctor")
+            }
+            KiteRecipe.ANDROID_ACTION_INSTALL_APK -> {
+                val response = handleInstallApkRequest(KiteInstallApkRequest(installApkPathFromStep(step), "recipe_sequence"))
+                if (response.accepted) {
+                    executeRecipeStep(recipe, stepIndex + 1, runId, pid, "已打开安装器：${response.resolvedPath}")
+                } else {
+                    setRuntimeState(
+                        recipe,
+                        RecipeRunStatus.Failed,
+                        surface = CardRunSurface.Report,
+                        currentStepIndex = stepIndex,
+                        runId = runId,
+                        pid = pid,
+                        lastError = response.error.ifBlank { "install_apk_failed" }
+                    )
+                    markResourceInstallFailed(recipe, runId, response.error.ifBlank { "install_apk_failed" })
+                    toastIfNotResourceRecipe(recipe, response.error.ifBlank { "install_apk_failed" })
+                    showRunSurfaceOrConsole(recipe)
+                }
             }
             else -> {
                 setRuntimeState(
@@ -16439,6 +16767,60 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         return accepted
     }
 
+    private fun handleInstallApkRequest(request: KiteInstallApkRequest): KiteInstallApkResponse {
+        val normalizedPath = request.path.trim()
+        if (normalizedPath.isBlank()) {
+            return KiteInstallApkResponse(false, request.path, error = "missing_path")
+        }
+        val apkFile = resolveInstallApkFile(normalizedPath)
+            ?: return KiteInstallApkResponse(false, normalizedPath, error = "unsupported_path")
+        if (!apkFile.name.endsWith(".apk", ignoreCase = true)) {
+            return KiteInstallApkResponse(false, normalizedPath, apkFile.absolutePath, "not_apk")
+        }
+        if (!apkFile.isFile) {
+            return KiteInstallApkResponse(false, normalizedPath, apkFile.absolutePath, "apk_not_found")
+        }
+        runOnUiThread { openApkInstaller(apkFile) }
+        return KiteInstallApkResponse(true, normalizedPath, apkFile.absolutePath)
+    }
+
+    private fun installApkPathFromStep(step: KiteRecipeStep): String =
+        step.params?.optString("path")?.takeIf { it.isNotBlank() }
+            ?: step.params?.optString("apk")?.takeIf { it.isNotBlank() }
+            ?: step.cmd?.takeIf { it.isNotBlank() }
+            ?: step.text?.takeIf { it.isNotBlank() }
+            ?: ""
+
+    private fun resolveInstallApkFile(path: String): File? {
+        val rawPath = if (path.startsWith("file://", ignoreCase = true)) {
+            Uri.parse(path).path.orEmpty()
+        } else {
+            path
+        }.trim()
+        if (rawPath.isBlank()) return null
+        return when {
+            rawPath == ExternalExchangeManager.CONTAINER_MOUNT_PATH -> null
+            rawPath.startsWith("${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/") -> {
+                val relative = rawPath.removePrefix("${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/")
+                File(ExternalExchangeManager.ensureExchangeDir(this), relative)
+            }
+            rawPath.startsWith("/sdcard/") || rawPath.startsWith("/storage/") -> File(rawPath)
+            else -> null
+        }?.absoluteFile
+    }
+
+    private fun openApkInstaller(apkFile: File) {
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apkFile)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, "application/vnd.android.package-archive")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        runCatching { startActivity(intent) }
+            .onSuccess { Toast.makeText(this, "已打开安装器：${apkFile.name}", Toast.LENGTH_SHORT).show() }
+            .onFailure { error ->
+                Toast.makeText(this, "无法打开安装器：${error.message.orEmpty()}", Toast.LENGTH_SHORT).show()
+            }
+    }
+
     private fun acceptDesktopOpenRequest(request: KiteDesktopOpenRequest): KiteDesktopOpenResponse {
         val existingState = request.instanceId?.takeIf { it.isNotBlank() }?.let { CardRunStore.get(it) }
         val recipeId = request.recipeId?.takeIf { it.isNotBlank() }
@@ -17530,6 +17912,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
     private fun tintBackgroundBorder(color: Int): Int = KiteTheme.tint(color, 0.72f)
 
+    private fun colorWithAlpha(color: Int, alpha: Int): Int =
+        Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
+
     private fun displayAccentName(recipe: KiteRecipe): String =
         recipe.card.accent.ifBlank { "primary" }
 
@@ -18171,8 +18556,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         private const val WEB_READY_READ_TIMEOUT_MS = 700
         private const val TERMINAL_STEP_COMMAND_DELAY_MS = 650L
         private const val TERMINAL_STOP_GRACE_MS = 350L
+        private const val CARD_RUN_REPORT_REFRESH_INTERVAL_MS = 33L
+        private val ANSI_ESCAPE_REGEX = Regex("""\u001B\[[0-9;?]*[ -/]*[@-~]""")
         private val MANUAL_STOP_KILLED_REGEX = Regex("""\bKilled\b""", RegexOption.IGNORE_CASE)
         private const val RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS = 1_200L
+        private const val RESOURCE_INSTALL_STALE_GRACE_MS = 5_000L
         private const val TOOLCHAIN_WORKSPACE_PROBE_TTL_MS = 5_000L
         private const val REQUEST_DROPZONE_STORAGE = 801
         private const val REQUEST_PICK_RECIPE_ICON = 802

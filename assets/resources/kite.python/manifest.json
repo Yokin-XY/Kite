@@ -4,7 +4,7 @@
   "base": {
     "name": "Python",
     "description": "Hermes 本体需要的 Python 运行时",
-    "version": ">=3.11,<3.14",
+    "version": "3.14.6",
     "icon": {
       "type": "asset",
       "value": "resources/kite.python/icon.png",
@@ -17,8 +17,8 @@
     ],
     "category": "Python",
     "accent": "blue",
-    "sizeLabel": "网络包",
-    "longDescription": "Python 是 Hermes 的基础层资源。Hermes 当前声明 Python >=3.11,<3.14；这张卡负责补齐 python3、venv、pip 和证书能力，并把可用状态登记到 Kite。卸载时不移除系统 Python，只清除 Kite 的资源登记。",
+    "sizeLabel": "内置底座",
+    "longDescription": "Python 是 Kite 离线基础层资源。首次启动和资源获取都会从内置工具包缓存安装 Python 3.14 到 /workspace/.kf/software/kite.python，并通过 /workspace/.kf/bin 暴露命令。",
     "recommendations": [
       {
         "resourceId": "kite.uv",
@@ -39,7 +39,7 @@
   },
   "relations": {
     "provides": [
-      "runtime.python>=3.11<3.14",
+      "runtime.python>=3.14<3.15",
       "tool.pip",
       "tool.venv"
     ],
@@ -50,13 +50,8 @@
     ]
   },
   "source": {
-    "type": "apt",
-    "packages": [
-      "python3",
-      "python3-venv",
-      "python3-pip",
-      "ca-certificates"
-    ]
+    "type": "bundled",
+    "asset": "toolchain/ai-dev-pack"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.python",
@@ -67,7 +62,7 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "apt-get install -y python3 python3-venv python3-pip ca-certificates"
+        "cmd": "install.sh --install-python"
       }
     ],
     "open": {
@@ -97,7 +92,7 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "clear Kite resource record only; do not remove system Python"
+        "cmd": "rm -rf /workspace/.kf/software/kite.python /workspace/.kf/cache/resources/kite.python; rm -f /workspace/.kf/bin/python /workspace/.kf/bin/python3 /workspace/.kf/bin/python3.14 /workspace/.kf/bin/pip /workspace/.kf/bin/pip3"
       }
     ]
   },

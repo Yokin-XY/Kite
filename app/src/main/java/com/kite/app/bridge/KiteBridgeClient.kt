@@ -893,8 +893,24 @@ class KiteBridgeClient(
         )
     }
 
-    private fun lastMeaningfulLine(output: String): String =
-        output.lineSequence().map { it.trim() }.filter { it.isNotBlank() }.lastOrNull().orEmpty()
+    private fun lastMeaningfulLine(output: String): String {
+        var last = ""
+        var lastNonEndMarker = ""
+        var summary = ""
+        var fail = ""
+        output.lineSequence().forEach { raw ->
+            val line = raw.trim()
+            if (line.isBlank()) return@forEach
+            last = line
+            if (!line.isEndMarkerLine()) lastNonEndMarker = line
+            if (line.startsWith("SUMMARY ")) summary = line
+            if (line.startsWith("FAIL\t") || line.startsWith("FAIL ")) fail = line
+        }
+        return fail.ifBlank { summary.ifBlank { lastNonEndMarker.ifBlank { last } } }
+    }
+
+    private fun String.isEndMarkerLine(): Boolean =
+        endsWith("_END") && all { it == '_' || it.isUpperCase() || it.isDigit() }
 
     private fun updateDirectProcessBinding(runId: String, output: String) {
         val meta = extractRunBindingMeta(output)

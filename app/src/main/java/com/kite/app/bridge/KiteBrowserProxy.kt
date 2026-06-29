@@ -35,6 +35,22 @@ data class KiteDesktopOpenResponse(
     val socketPath: String
 )
 
+data class KiteInstallApkRequest(
+    val path: String,
+    val source: String = SOURCE_UBUNTU_SHELL
+) {
+    companion object {
+        const val SOURCE_UBUNTU_SHELL = "ubuntu_shell"
+    }
+}
+
+data class KiteInstallApkResponse(
+    val accepted: Boolean,
+    val path: String,
+    val resolvedPath: String = "",
+    val error: String = ""
+)
+
 object KiteBrowserProxyInstaller {
     const val ENDPOINT = "http://127.0.0.1:8791/open-web"
     const val CONTAINER_COMMAND = "/workspace/.kf/bin/kite-open-url"

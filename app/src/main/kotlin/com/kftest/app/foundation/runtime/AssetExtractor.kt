@@ -40,8 +40,14 @@ object AssetExtractor {
     private const val TMP_DIR = "tmp"
     private const val LOGS_DIR = "logs"
     private const val ROOTFS_READY_MARKER = ".kf-rootfs-ready"
+    private const val ROOTFS_READY_MARKER_SCHEMA = "2"
     private const val PERMISSION_MASK = 0x1FF
     private const val PROGRESS_EMIT_INTERVAL_MS = 500L
+    private val ROOTFS_REQUIRED_FILES = listOf(
+        "bin/sh",
+        "bin/bash",
+        "usr/bin/env"
+    )
 
     enum class RootfsExtractionPhase {
         IDLE,
@@ -158,8 +164,7 @@ object AssetExtractor {
 
     fun isBaseImageReady(context: Context, profile: BaseImageProfile = BaseImageProfile.DEFAULT): Boolean {
         val layout = getRuntimeLayout(context, profile)
-        return File(layout.baseImageDir, "bin/bash").exists() &&
-            File(layout.baseImageDir, ROOTFS_READY_MARKER).exists()
+        return isRootfsReady(layout.baseImageDir, profile)
     }
 
     private fun ensureRuntimeDirectories(layout: RuntimeLayout) {
@@ -334,7 +339,7 @@ object AssetExtractor {
 
     private fun extractBaseRootfsIfNeeded(context: Context, destinationDir: File, profile: BaseImageProfile) {
         val readyMarker = File(destinationDir, ROOTFS_READY_MARKER)
-        if (File(destinationDir, "bin/bash").exists() && readyMarker.exists()) {
+        if (isRootfsReady(destinationDir, profile)) {
             Logger.i("AssetExtractor", "基础 rootfs 已就绪，跳过解压 (${profile.label})")
             publishRootfsProgress(
                 phase = RootfsExtractionPhase.READY,
@@ -342,6 +347,9 @@ object AssetExtractor {
                 message = "基础 rootfs 已就绪"
             )
             return
+        }
+        if (readyMarker.exists()) {
+            Logger.i("AssetExtractor", "基础 rootfs 就绪标记过期或不完整，准备重新解压 (${profile.label})")
         }
 
         Logger.i("AssetExtractor", "开始准备基础 rootfs: ${profile.label} -> ${destinationDir.absolutePath}")
@@ -359,7 +367,7 @@ object AssetExtractor {
             Logger.i("AssetExtractor", "APK 中未找到 ${profile.label} 的 rootfs 资源，尝试从 exchange 导入")
             val exchangeSource = resolveExchangeRootfsSource(context, profile)
             if (exchangeSource != null) {
-                importRootfsFromExchange(exchangeSource, destinationDir, readyMarker, startedAt)
+                importRootfsFromExchange(exchangeSource, destinationDir, readyMarker, profile, startedAt)
                 return
             }
             val message = "APK 中未找到 ${profile.label} 的 rootfs 资源，且 exchange 中无可用源"
@@ -397,20 +405,9 @@ object AssetExtractor {
             message = "正在校验系统镜像",
             startedAt = startedAt
         )
-        if (!File(destinationDir, "bin/bash").exists()) {
-            deleteRecursively(destinationDir)
-            val message = "基础镜像不完整，缺少 bin/bash"
-            publishRootfsProgress(
-                phase = RootfsExtractionPhase.FAILED,
-                sourceLabel = rootfsAsset,
-                message = "系统镜像校验失败，下次会重新解压",
-                errorMessage = message,
-                startedAt = startedAt
-            )
-            throw IllegalStateException(message)
-        }
+        verifyRootfsOrThrow(destinationDir, rootfsAsset, startedAt)
 
-        readyMarker.writeText("ready\n")
+        readyMarker.writeText(rootfsReadyMarker(profile))
         publishRootfsProgress(
             phase = RootfsExtractionPhase.READY,
             sourceLabel = rootfsAsset,
@@ -422,6 +419,48 @@ object AssetExtractor {
         )
         Logger.i("AssetExtractor", "基础 rootfs 解压完成")
     }
+
+    private fun isRootfsReady(destinationDir: File, profile: BaseImageProfile): Boolean {
+        if (missingRootfsFiles(destinationDir).isNotEmpty()) return false
+        val marker = File(destinationDir, ROOTFS_READY_MARKER)
+        if (!marker.exists()) return false
+        val lines = runCatching { marker.readLines().toSet() }.getOrDefault(emptySet())
+        return rootfsReadyMarkerLines(profile).all { it in lines }
+    }
+
+    private fun verifyRootfsOrThrow(
+        destinationDir: File,
+        sourceLabel: String,
+        startedAt: Long
+    ) {
+        val missing = missingRootfsFiles(destinationDir)
+        if (missing.isEmpty()) return
+        deleteRecursively(destinationDir)
+        val message = "基础镜像不完整，缺少 ${missing.joinToString(", ")}"
+        publishRootfsProgress(
+            phase = RootfsExtractionPhase.FAILED,
+            sourceLabel = sourceLabel,
+            message = "系统镜像校验失败，下次会重新解压",
+            errorMessage = message,
+            startedAt = startedAt
+        )
+        throw IllegalStateException(message)
+    }
+
+    private fun missingRootfsFiles(destinationDir: File): List<String> =
+        ROOTFS_REQUIRED_FILES.filterNot { relativePath -> File(destinationDir, relativePath).exists() }
+
+    private fun rootfsReadyMarker(profile: BaseImageProfile): String =
+        rootfsReadyMarkerLines(profile).joinToString(separator = "\n", postfix = "\n")
+
+    private fun rootfsReadyMarkerLines(profile: BaseImageProfile): List<String> =
+        listOf(
+            "schema=$ROOTFS_READY_MARKER_SCHEMA",
+            "profile=${profile.codename}",
+            "versionId=${profile.versionId}",
+            "imageDirName=${profile.imageDirName}",
+            "requiredFiles=${ROOTFS_REQUIRED_FILES.joinToString(",")}"
+        )
 
     private fun extractTarAsset(context: Context, assetPath: String, destinationDir: File, startedAt: Long) {
         val isCompressedTar = assetPath.endsWith(".gz")
@@ -690,7 +729,13 @@ object AssetExtractor {
         return null
     }
 
-    private fun importRootfsFromExchange(source: File, destinationDir: File, readyMarker: File, startedAt: Long) {
+    private fun importRootfsFromExchange(
+        source: File,
+        destinationDir: File,
+        readyMarker: File,
+        profile: BaseImageProfile,
+        startedAt: Long
+    ) {
         Logger.i("AssetExtractor", "从 exchange 导入 rootfs: ${source.absolutePath} -> ${destinationDir.absolutePath}")
         deleteRecursively(destinationDir)
         destinationDir.mkdirs()
@@ -731,19 +776,8 @@ object AssetExtractor {
             entriesExtracted = _rootfsProgress.value.entriesExtracted,
             startedAt = startedAt
         )
-        if (!File(destinationDir, "bin/bash").exists()) {
-            deleteRecursively(destinationDir)
-            val message = "exchange rootfs 不完整，缺少 bin/bash"
-            publishRootfsProgress(
-                phase = RootfsExtractionPhase.FAILED,
-                sourceLabel = source.name,
-                message = "exchange rootfs 校验失败，下次会重新导入",
-                errorMessage = message,
-                startedAt = startedAt
-            )
-            throw IllegalStateException(message)
-        }
-        readyMarker.writeText("ready\n")
+        verifyRootfsOrThrow(destinationDir, source.name, startedAt)
+        readyMarker.writeText(rootfsReadyMarker(profile))
         publishRootfsProgress(
             phase = RootfsExtractionPhase.READY,
             sourceLabel = source.name,

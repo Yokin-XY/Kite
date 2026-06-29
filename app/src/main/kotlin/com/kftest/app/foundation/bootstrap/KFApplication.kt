@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import com.kftest.app.foundation.logging.Logger
+import com.kftest.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kftest.app.foundation.runtime.HostSelfAdbBridgeWorker
 import com.kftest.app.foundation.runtime.RuntimeLifecycleSignalStore
 import com.kftest.app.foundation.runtime.RuntimePressureResponder
@@ -42,8 +43,9 @@ class KFApplication : Application() {
         Logger.i("App", "KFShell 应用启动")
         markLaunchStage("App", "Application.onCreate")
         registerRuntimeLifecycleSignals()
+        AndroidShellBridgeWorker.start(this)
         HostSelfAdbBridgeWorker.start(this)
-        markLaunchStage("App", "host-self adb bridge worker 就绪")
+        markLaunchStage("App", "Android shell / host-self bridge workers 就绪")
         createNotificationChannels()
         markLaunchStage("App", "通知通道就绪")
     }

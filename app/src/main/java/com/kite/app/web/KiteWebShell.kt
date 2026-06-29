@@ -1,11 +1,14 @@
 package com.kite.app.web
 
 import android.app.Activity
+import android.app.DownloadManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.HttpAuthHandler
+import android.webkit.URLUtil
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -13,6 +16,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewFeature
 import com.kite.app.diagnostics.KiteDiagnostics
+import com.kftest.app.foundation.runtime.ExternalExchangeManager
+import java.io.File
 import java.net.URI
 
 class KiteWebShell(
@@ -98,6 +103,10 @@ class KiteWebShell(
                 }
             }
         }
+
+        webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            enqueueDownload(url, userAgent, contentDisposition, mimeType)
+        }
     }
 
     fun open(
@@ -144,6 +153,67 @@ class KiteWebShell(
             )
             onStatus("External URL ignored: $url")
         }
+    }
+
+    private fun enqueueDownload(
+        url: String,
+        userAgent: String?,
+        contentDisposition: String?,
+        mimeType: String?
+    ) {
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        if (uri?.scheme !in setOf("http", "https")) {
+            openExternal(url)
+            return
+        }
+        val downloadUri = uri ?: return
+        val downloadsDir = File(ExternalExchangeManager.ensureExchangeDir(activity), DOWNLOADS_DIR_NAME).apply {
+            mkdirs()
+        }
+        val target = uniqueDownloadFile(
+            downloadsDir,
+            sanitizeDownloadName(URLUtil.guessFileName(url, contentDisposition, mimeType))
+        )
+        val request = DownloadManager.Request(downloadUri)
+            .setTitle(target.name)
+            .setDescription("${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/$DOWNLOADS_DIR_NAME/${target.name}")
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setDestinationUri(Uri.fromFile(target))
+        if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
+        if (!mimeType.isNullOrBlank()) request.setMimeType(mimeType)
+        val manager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+        if (manager == null) {
+            openExternal(url)
+            return
+        }
+        runCatching { manager.enqueue(request) }
+            .onSuccess {
+                onStatus("Downloading: ${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/$DOWNLOADS_DIR_NAME/${target.name}")
+            }
+            .onFailure {
+                openExternal(url)
+            }
+    }
+
+    private fun sanitizeDownloadName(name: String): String {
+        val cleaned = name
+            .replace(Regex("""[\\/:*?"<>|\u0000-\u001F]+"""), "_")
+            .trim()
+            .take(120)
+        return cleaned.ifBlank { "download.bin" }
+    }
+
+    private fun uniqueDownloadFile(directory: File, fileName: String): File {
+        val dot = fileName.lastIndexOf('.')
+        val stem = if (dot > 0) fileName.substring(0, dot) else fileName
+        val extension = if (dot > 0) fileName.substring(dot) else ""
+        var candidate = File(directory, fileName)
+        var suffix = 2
+        while (candidate.exists()) {
+            candidate = File(directory, "$stem-$suffix$extension")
+            suffix += 1
+        }
+        return candidate
     }
 
     private fun isLocalUrl(url: String): Boolean {
@@ -198,5 +268,9 @@ class KiteWebShell(
             val currentPort = runCatching { Uri.parse(currentUrl).port }.getOrDefault(-1)
             return port <= 0 || currentPort <= 0 || currentPort == port
         }
+    }
+
+    companion object {
+        private const val DOWNLOADS_DIR_NAME = "downloads"
     }
 }

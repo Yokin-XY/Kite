@@ -15,10 +15,8 @@ class KiteResourceInstallStore(context: Context) {
     private val registry = KiteResourceRegistry(context)
     private val installedSnapshots = KiteInstalledResourceSnapshotStore(context)
     private val pageCache = KiteResourcePageCacheStore(context)
-    private val _signals = MutableStateFlow(KiteResourceInstallSignal())
-    private var revision = 0L
 
-    val signals: StateFlow<KiteResourceInstallSignal> = _signals
+    val signals: StateFlow<KiteResourceInstallSignal> = sharedSignals
 
     fun status(resourceId: String): String? =
         registry.status(resourceId)
@@ -146,16 +144,22 @@ class KiteResourceInstallStore(context: Context) {
     }
 
     private fun emitSignal(reason: String, resourceId: String? = null, targetResourceId: String? = null) {
-        revision += 1
-        _signals.value = KiteResourceInstallSignal(
-            revision = revision,
-            reason = reason,
-            resourceId = resourceId,
-            targetResourceId = targetResourceId
-        )
+        synchronized(signalLock) {
+            revision += 1
+            sharedSignals.value = KiteResourceInstallSignal(
+                revision = revision,
+                reason = reason,
+                resourceId = resourceId,
+                targetResourceId = targetResourceId
+            )
+        }
     }
 
     companion object {
+        private val signalLock = Any()
+        private val sharedSignals = MutableStateFlow(KiteResourceInstallSignal())
+        private var revision = 0L
+
         const val STATUS_INSTALLED = KiteResourceRegistry.STATUS_INSTALLED
         const val STATUS_FAILED = KiteResourceRegistry.STATUS_FAILED
         const val STATUS_INSTALLING = KiteResourceRegistry.STATUS_INSTALLING

@@ -18,6 +18,7 @@ class KiteRecipeLoader(
     private val legacyUserRecipeDir = File(context.filesDir, "recipes").apply { mkdirs() }
     private val legacyImportedRecipeDir = File(legacyUserRecipeDir, "imported").apply { mkdirs() }
     private val runReportsDir = File(context.filesDir, "recipe-runs").apply { mkdirs() }
+    private val loadedRecipeFiles = linkedMapOf<String, File>()
 
     fun loadAllRecipes(): List<KiteRecipe> {
         val cardsDir = sharedCardsDir()
@@ -100,11 +101,17 @@ class KiteRecipeLoader(
         if (marker.exists()) return
         val recipeFiles = context.assets.list("recipes").orEmpty()
             .filter { it.endsWith(".json", ignoreCase = true) }
+        if (recipeFiles.isEmpty()) return
+        var hasFailure = false
         recipeFiles.forEach { name ->
             runCatching {
                 val json = JSONObject(readAsset("recipes/$name"))
                 val id = recipeIdFromJson(json).ifBlank { name.removeSuffix(".json") }
-                val target = uniqueTargetFile(cardsDir, "${safeFileName(id)}.json")
+                val safeId = safeFileName(id)
+                val target = File(cardsDir, "$safeId.json")
+                if (target.exists()) {
+                    return@runCatching
+                }
                 target.writeText(json.toString(2))
                 diagnostics.logRecipeEvent(
                     "recipe_asset_seeded",
@@ -117,9 +124,19 @@ class KiteRecipeLoader(
                     null,
                     mapOf("file" to name, "error" to it.message.orEmpty())
                 )
+                hasFailure = true
             }
         }
-        marker.writeText(Instant.now().toString())
+        if (!hasFailure) {
+            runCatching { marker.writeText(Instant.now().toString()) }
+                .onFailure {
+                    diagnostics.logRecipeEvent(
+                        "recipe_asset_seed_marker_failed",
+                        null,
+                        mapOf("file" to marker.name, "error" to it.message.orEmpty())
+                    )
+                }
+        }
     }
 
     private fun migrateLegacyPrivateRecipes(cardsDir: File) {
@@ -243,6 +260,7 @@ class KiteRecipeLoader(
             if (canonicalize) {
                 recipe = canonicalizeRecipeFile(file, json, recipe)
             }
+            loadedRecipeFiles[recipe.id] = file
             usedIds.add(recipe.id)
             logRecipeLoaded(recipe)
             recipe
@@ -331,7 +349,7 @@ class KiteRecipeLoader(
             add("legacy_header_fields")
         }
         if (json.has("id")) add("legacy_top_level_id")
-        if (json.has("card") || json.has("status") || json.has("accent")) add("legacy_card_state")
+        if (json.has("status") || json.has("accent")) add("legacy_card_state")
         if (json.has("execution")) add("legacy_execution")
         if (json.has("expected") || json.has("taskLabel") || json.has("taskMode")) add("legacy_runtime_fields")
         if (json.has("steps")) add("legacy_steps")
@@ -531,13 +549,16 @@ class KiteRecipeLoader(
 
     private fun deleteRecipeFiles(recipeId: String): Boolean {
         val safeId = safeFileName(recipeId)
-        val files = sharedRecipeFiles(sharedCardsDir()).filter { file ->
+        val trackedFile = loadedRecipeFiles[recipeId]
+        val files = (listOfNotNull(trackedFile) + sharedRecipeFiles(sharedCardsDir()).filter { file ->
             file.nameWithoutExtension == safeId ||
                 runCatching { recipeIdFromJson(JSONObject(file.readText())) == recipeId }.getOrDefault(false)
-        }
-        return files.fold(false) { deletedAny, file ->
+        }).distinctBy { it.absolutePath }
+        val deleted = files.fold(false) { deletedAny, file ->
             runCatching { file.delete() }.getOrDefault(false) || deletedAny
         }
+        if (deleted) loadedRecipeFiles.remove(recipeId)
+        return deleted
     }
 
     private fun uniqueTargetFile(directory: File, fileName: String): File {
@@ -597,7 +618,8 @@ class KiteRecipeLoader(
         context.assets.open(assetPath).bufferedReader().use { it.readText() }
 
     companion object {
-        private const val ASSET_SEED_MARKER = ".asset-presets-seeded-v1"
+        // Keep stable: changing this marker re-seeds preset cards for existing users.
+        private const val ASSET_SEED_MARKER = ".asset-presets-seeded-v4"
         private const val LEGACY_MIGRATION_MARKER = ".legacy-private-migrated-v1"
         private const val DEPRECATED_ASSET_CLEANUP_MARKER = ".deprecated-asset-presets-cleaned-v1"
         private const val DEPRECATED_HERMES_WEBUI_FILE_STEM = "hermes-webui"

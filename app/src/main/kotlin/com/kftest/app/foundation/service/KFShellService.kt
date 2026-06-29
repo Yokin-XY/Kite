@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import com.kftest.app.R
 import com.kftest.app.foundation.bootstrap.KFApplication
 import com.kftest.app.foundation.logging.Logger
+import com.kftest.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kftest.app.foundation.runtime.HostSelfAdbBridgeWorker
 import com.kftest.app.foundation.runtime.RuntimeOverviewStore
 import com.kftest.app.foundation.runtime.RuntimeFrameCoordinator
@@ -174,6 +175,7 @@ class KFShellService : Service() {
     override fun onCreate() {
         super.onCreate()
         acquireWakeLock()
+        AndroidShellBridgeWorker.start(applicationContext)
         HostSelfAdbBridgeWorker.start(applicationContext)
     }
 

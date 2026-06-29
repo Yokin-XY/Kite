@@ -4,7 +4,7 @@
   "base": {
     "name": "curl",
     "description": "网络下载命令",
-    "version": "apt",
+    "version": "rootfs",
     "icon": {
       "type": "asset",
       "value": "resources/kite.curl/icon.png",
@@ -18,8 +18,8 @@
     ],
     "category": "系统工具",
     "accent": "orange",
-    "sizeLabel": "网络包",
-    "longDescription": "curl 是网络型资源下载安装脚本的基础层工具。Hermes 需要用它下载官方 install.sh；安装时先检查当前 Ubuntu 环境是否已有 curl，已有则只登记为可用，没有则通过 apt 安装 curl 与 ca-certificates。",
+    "sizeLabel": "内置底座",
+    "longDescription": "curl 是网络型资源下载安装脚本的基础层工具。首次启动和资源获取都会从内置工具包缓存把 rootfs 内置 curl 接入 /workspace/.kf/software/kite.curl 与 /workspace/.kf/bin。",
     "recommendations": [
       {
         "resourceId": "kite.git",
@@ -48,11 +48,8 @@
     ]
   },
   "source": {
-    "type": "apt",
-    "packages": [
-      "curl",
-      "ca-certificates"
-    ]
+    "type": "bundled",
+    "asset": "toolchain/ai-dev-pack"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.curl",
@@ -63,7 +60,7 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "apt-get install -y curl ca-certificates"
+        "cmd": "install.sh --install-curl"
       }
     ],
     "open": {
@@ -93,7 +90,7 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove curl when installed_by_kite; otherwise clear Kite resource record only"
+        "cmd": "rm -rf /workspace/.kf/software/kite.curl /workspace/.kf/cache/resources/kite.curl; rm -f /workspace/.kf/bin/curl"
       }
     ]
   },

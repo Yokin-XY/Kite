@@ -2,12 +2,15 @@ package com.kftest.app.foundation.toolchain
 
 import android.content.Context
 import android.system.Os
+import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceRegistry
 import com.kftest.app.foundation.capability.CapabilityCallerType
 import com.kftest.app.foundation.capability.CapabilityDomain
 import com.kftest.app.foundation.capability.CapabilityGate
 import com.kftest.app.foundation.capability.CapabilityOutputLevel
 import com.kftest.app.foundation.capability.CapabilityRequest
 import com.kftest.app.foundation.logging.Logger
+import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kftest.app.foundation.workspace.WorkspaceBuildSupport
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +34,24 @@ object ToolchainPackInstaller {
     private const val STATUS_FILE = "status.json"
     private const val INSTALL_TIMEOUT_SECONDS = 900L
     private const val OUTPUT_LIMIT = 48_000
+    const val BOOTSTRAP_RESOURCE_RUN_PREFIX = "bootstrap:"
+    private const val RESOURCE_NODEJS = "kite.nodejs"
+    private const val RESOURCE_PYTHON = "kite.python"
+    private const val RESOURCE_UV = "kite.uv"
+    private const val RESOURCE_GIT = "kite.git"
+    private const val RESOURCE_CURL = "kite.curl"
+    private const val RESOURCE_TOOL_ENV = "kite.tool.env"
+    private const val NODE_VERSION = "26.4.0"
+    private const val PYTHON_VERSION = "3.14.6"
+    private const val UV_VERSION = "0.11.25"
+    private val BOOTSTRAP_RESOURCES = listOf(
+        BootstrapResource(RESOURCE_NODEJS, "--install-node", NODE_VERSION, "Node.js"),
+        BootstrapResource(RESOURCE_PYTHON, "--install-python", PYTHON_VERSION, "Python"),
+        BootstrapResource(RESOURCE_UV, "--install-uv", UV_VERSION, "uv"),
+        BootstrapResource(RESOURCE_GIT, "--install-git", "rootfs", "Git"),
+        BootstrapResource(RESOURCE_CURL, "--install-curl", "rootfs", "curl"),
+        BootstrapResource(RESOURCE_TOOL_ENV, "--install-system-tools", "v16", "系统工具集合")
+    )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val running = AtomicBoolean(false)
@@ -41,6 +62,10 @@ object ToolchainPackInstaller {
 
     fun prepareAiEnv(context: Context) {
         runPack(context, ToolchainAction.PREPARE)
+    }
+
+    fun prepareAiEnvForBootstrap(context: Context): ToolchainInstallState {
+        return runPackBlocking(context, ToolchainAction.PREPARE, reportBootstrapProgress = true)
     }
 
     fun prepareNode(context: Context) {
@@ -64,9 +89,9 @@ object ToolchainPackInstaller {
 
     fun isNodeRuntimeInstalled(context: Context): Boolean {
         val workspaceDir = workspaceDirOrNull(context.applicationContext) ?: return false
-        val newNode = File(workspaceDir, ".kf/software/kite.nodejs/node-v24.15.0/bin/node")
-        val componentNode = File(workspaceDir, ".kf/components/kite.nodejs/node-v24.15.0/bin/node")
-        val legacyNode = File(workspaceDir, ".kf/toolchains/node-v24.15.0/bin/node")
+        val newNode = File(workspaceDir, ".kf/software/kite.nodejs/node-v26.4.0/bin/node")
+        val componentNode = File(workspaceDir, ".kf/components/kite.nodejs/node-v26.4.0/bin/node")
+        val legacyNode = File(workspaceDir, ".kf/toolchains/node-v26.4.0/bin/node")
         return (workspacePathExists(newNode, workspaceDir) ||
             workspacePathExists(componentNode, workspaceDir) ||
             workspacePathExists(legacyNode, workspaceDir)) &&
@@ -75,12 +100,40 @@ object ToolchainPackInstaller {
             workspacePathExists(File(workspaceDir, ".kf/bin/npx"), workspaceDir)
     }
 
+    fun isPythonRuntimeInstalled(context: Context): Boolean {
+        val workspaceDir = workspaceDirOrNull(context.applicationContext) ?: return false
+        val resourcePython = File(workspaceDir, ".kf/software/kite.python/python-3.14.6/bin/python3.14")
+        val legacyPython = File(workspaceDir, ".kf/toolchains/python-3.14.6/bin/python3.14")
+        return (workspacePathExists(resourcePython, workspaceDir) ||
+            workspacePathExists(legacyPython, workspaceDir)) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/python3"), workspaceDir)
+    }
+
     fun isToolchainPackInstalled(context: Context): Boolean {
         val workspaceDir = workspaceDirOrNull(context.applicationContext) ?: return false
-        return isNodeRuntimeInstalled(context) &&
+        return isPythonRuntimeInstalled(context) &&
+            isNodeRuntimeInstalled(context) &&
             workspacePathExists(File(workspaceDir, ".kf/bin/pnpm"), workspaceDir) &&
-            workspacePathExists(File(workspaceDir, ".kf/bin/uv"), workspaceDir)
+            workspacePathExists(File(workspaceDir, ".kf/bin/uv"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/curl"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/git"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/wget"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/jq"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/rg"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/fd"), workspaceDir) &&
+            workspacePathExists(File(workspaceDir, ".kf/bin/zip"), workspaceDir)
     }
+
+    fun bootstrapResourcesSettled(context: Context): Boolean {
+        return runCatching {
+            val ids = BOOTSTRAP_RESOURCES.map { it.resourceId }
+            val snapshot = KiteResourceInstallStore(context.applicationContext).registrySnapshot(ids)
+            ids.all { id -> bootstrapResourceStatusSettled(snapshot[id]?.status.orEmpty()) }
+        }.getOrDefault(false)
+    }
+
+    internal fun bootstrapResourceStatusSettled(status: String): Boolean =
+        status == KiteResourceRegistry.STATUS_INSTALLED || status == KiteResourceRegistry.STATUS_FAILED
 
     fun refreshState(context: Context) {
         _state.value = readStatus(context.applicationContext)
@@ -98,65 +151,270 @@ object ToolchainPackInstaller {
             return
         }
         scope.launch {
-            val startedAt = System.currentTimeMillis()
-            _state.value = ToolchainInstallState(
-                phase = ToolchainInstallPhase.RUNNING,
-                action = action.name.lowercase(),
-                startedAt = startedAt,
-                updatedAt = startedAt,
-                summary = "Preparing $PACK_ID"
+            try {
+                runPackLocked(appContext, action)
+            } finally {
+                running.set(false)
+            }
+        }
+    }
+
+    private fun runPackBlocking(
+        context: Context,
+        action: ToolchainAction,
+        reportBootstrapProgress: Boolean = false
+    ): ToolchainInstallState {
+        val appContext = context.applicationContext
+        auditToolchainCapability(action)
+        if (!running.compareAndSet(false, true)) {
+            Logger.i(LOG_TAG, "Ignore blocking $action request while installer is already running")
+            return _state.value
+        }
+        return try {
+            runPackLocked(appContext, action, reportBootstrapProgress)
+        } finally {
+            running.set(false)
+        }
+    }
+
+    private fun runPackLocked(
+        appContext: Context,
+        action: ToolchainAction,
+        reportBootstrapProgress: Boolean = false
+    ): ToolchainInstallState {
+        val startedAt = System.currentTimeMillis()
+        _state.value = ToolchainInstallState(
+            phase = ToolchainInstallPhase.RUNNING,
+            action = action.name.lowercase(),
+            startedAt = startedAt,
+            updatedAt = startedAt,
+            summary = "Preparing $PACK_ID"
+        )
+        appendLog(appContext, "== $PACK_ID ${action.name.lowercase()} start ==")
+        if (action == ToolchainAction.PREPARE) {
+            return runPreparePackLocked(appContext, startedAt, reportBootstrapProgress)
+        }
+        return runCatching {
+            val manifest = extractRuntimePack(appContext)
+            val workspacePackDir = mirrorPackIntoWorkspace(appContext)
+            val result = executeInstallScript(
+                context = appContext,
+                action = action,
+                workspacePackDir = workspacePackDir
             )
-            appendLog(appContext, "== $PACK_ID ${action.name.lowercase()} start ==")
-            runCatching {
-                val manifest = extractRuntimePack(appContext)
-                val workspacePackDir = mirrorPackIntoWorkspace(appContext)
-                val result = executeInstallScript(
-                    context = appContext,
-                    action = action,
-                    workspacePackDir = workspacePackDir
-                )
-                val phase = if (result.exitCode == 0 && !result.timedOut) {
-                    ToolchainInstallPhase.SUCCEEDED
-                } else {
-                    ToolchainInstallPhase.FAILED
-                }
-                val summary = result.summaryLine()
-                    ?: "exitCode=${result.exitCode} timedOut=${result.timedOut}"
-                val status = ToolchainInstallState(
-                    phase = phase,
-                    action = action.name.lowercase(),
-                    packId = manifest.packId,
-                    packVersion = manifest.version,
-                    startedAt = startedAt,
-                    updatedAt = System.currentTimeMillis(),
-                    exitCode = result.exitCode,
-                    timedOut = result.timedOut,
-                    summary = summary,
-                    logPath = logFile(appContext).absolutePath,
-                    outputPreview = result.output.takeLast(4_000)
-                )
+            val phase = if (result.exitCode == 0 && !result.timedOut) {
+                ToolchainInstallPhase.SUCCEEDED
+            } else {
+                ToolchainInstallPhase.FAILED
+            }
+            val summary = result.summaryLine()
+                ?: "exitCode=${result.exitCode} timedOut=${result.timedOut}"
+            ToolchainInstallState(
+                phase = phase,
+                action = action.name.lowercase(),
+                packId = manifest.packId,
+                packVersion = manifest.version,
+                startedAt = startedAt,
+                updatedAt = System.currentTimeMillis(),
+                exitCode = result.exitCode,
+                timedOut = result.timedOut,
+                summary = summary,
+                logPath = logFile(appContext).absolutePath,
+                outputPreview = result.output.takeLast(4_000)
+            ).also { status ->
                 _state.value = status
                 writeStatus(appContext, status)
                 appendLog(appContext, result.toLogBlock())
                 Logger.i(LOG_TAG, "$PACK_ID ${action.name.lowercase()} complete: $summary")
-            }.onFailure { error ->
-                val status = ToolchainInstallState(
-                    phase = ToolchainInstallPhase.FAILED,
-                    action = action.name.lowercase(),
-                    startedAt = startedAt,
-                    updatedAt = System.currentTimeMillis(),
-                    summary = error.message ?: error::class.java.simpleName,
-                    logPath = logFile(appContext).absolutePath,
-                    outputPreview = error.stackTraceToString().take(4_000)
-                )
+            }
+        }.getOrElse { error ->
+            ToolchainInstallState(
+                phase = ToolchainInstallPhase.FAILED,
+                action = action.name.lowercase(),
+                startedAt = startedAt,
+                updatedAt = System.currentTimeMillis(),
+                summary = error.message ?: error::class.java.simpleName,
+                logPath = logFile(appContext).absolutePath,
+                outputPreview = error.stackTraceToString().take(4_000)
+            ).also { status ->
                 _state.value = status
                 writeStatus(appContext, status)
                 appendLog(appContext, "== $PACK_ID ${action.name.lowercase()} failed ==\n${error.stackTraceToString()}")
                 Logger.e(LOG_TAG, "$PACK_ID ${action.name.lowercase()} failed: ${error.message}")
             }
-            running.set(false)
         }
     }
+
+    private fun runPreparePackLocked(
+        appContext: Context,
+        startedAt: Long,
+        reportBootstrapProgress: Boolean
+    ): ToolchainInstallState {
+        return runCatching {
+            val manifest = extractRuntimePack(appContext)
+            val totalSteps = BOOTSTRAP_RESOURCES.size
+            val resourceResults = BOOTSTRAP_RESOURCES.mapIndexed { index, resource ->
+                val stepIndex = index + 1
+                markBootstrapResourceInstalling(appContext, resource)
+                if (reportBootstrapProgress) {
+                    RuntimeBootstrapProgress.bundledToolStarted(resource.label, stepIndex, totalSteps)
+                }
+                val result = runCatching {
+                    val resourcePackDir = mirrorPackIntoResource(appContext, resource.resourceId)
+                    executeInstallScript(
+                        context = appContext,
+                        mode = resource.mode,
+                        workspacePackDir = resourcePackDir,
+                        workspacePackPath = resourcePackWorkspacePath(resource.resourceId),
+                        toolchainDir = "/workspace/.kf/software/${safeResourceId(resource.resourceId)}",
+                        binDir = WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
+                    )
+                }.getOrElse { error ->
+                    ToolchainCommandResult(
+                        exitCode = -1,
+                        timedOut = false,
+                        durationMs = 0L,
+                        output = error.stackTraceToString().take(OUTPUT_LIMIT)
+                    )
+                }
+                if (reportBootstrapProgress) {
+                    RuntimeBootstrapProgress.bundledToolCompleted(
+                        resource.label,
+                        stepIndex,
+                        totalSteps,
+                        result.exitCode != 0 || result.timedOut
+                    )
+                }
+                recordBootstrapResourceResult(appContext, resource, result)
+                appendLog(appContext, result.toLogBlock(resource.resourceId))
+                resource to result
+            }
+
+            val failedResources = resourceResults
+                .filter { (_, result) -> result.exitCode != 0 || result.timedOut }
+                .map { (resource, _) -> resource.resourceId }
+            val phase = ToolchainInstallPhase.SUCCEEDED
+            val summary = buildString {
+                append("SUMMARY resources=")
+                append(BOOTSTRAP_RESOURCES.size)
+                append(" failed=")
+                append(failedResources.size)
+                if (failedResources.isNotEmpty()) append(" ids=${failedResources.joinToString(",")}")
+            }
+            ToolchainInstallState(
+                phase = phase,
+                action = ToolchainAction.PREPARE.name.lowercase(),
+                packId = manifest.packId,
+                packVersion = manifest.version,
+                startedAt = startedAt,
+                updatedAt = System.currentTimeMillis(),
+                exitCode = if (failedResources.isNotEmpty()) 2 else 0,
+                timedOut = resourceResults.any { (_, result) -> result.timedOut },
+                summary = summary,
+                logPath = logFile(appContext).absolutePath,
+                outputPreview = resourceResults.map { it.second }
+                    .joinToString("\n") { it.output.takeLast(1_000) }
+                    .takeLast(4_000)
+            ).also { status ->
+                _state.value = status
+                writeStatus(appContext, status)
+                Logger.i(LOG_TAG, "$PACK_ID prepare complete: $summary")
+            }
+        }.getOrElse { error ->
+            markBootstrapResourcesFailed(appContext, error.message ?: error::class.java.simpleName)
+            ToolchainInstallState(
+                phase = ToolchainInstallPhase.FAILED,
+                action = ToolchainAction.PREPARE.name.lowercase(),
+                startedAt = startedAt,
+                updatedAt = System.currentTimeMillis(),
+                summary = error.message ?: error::class.java.simpleName,
+                logPath = logFile(appContext).absolutePath,
+                outputPreview = error.stackTraceToString().take(4_000)
+            ).also { status ->
+                _state.value = status
+                writeStatus(appContext, status)
+                appendLog(appContext, "== $PACK_ID prepare failed ==\n${error.stackTraceToString()}")
+                Logger.e(LOG_TAG, "$PACK_ID prepare failed: ${error.message}")
+            }
+        }
+    }
+
+    private fun markBootstrapResourceInstalling(context: Context, resource: BootstrapResource) {
+        runCatching {
+            val store = KiteResourceInstallStore(context)
+            store.markInstalling(resource.resourceId, "$BOOTSTRAP_RESOURCE_RUN_PREFIX${resource.resourceId}")
+        }.onFailure { error ->
+            Logger.e(LOG_TAG, "Failed to mark bootstrap resource ${resource.resourceId} installing: ${error.message}")
+        }
+    }
+
+    private fun markBootstrapResourcesFailed(context: Context, reason: String) {
+        runCatching {
+            val store = KiteResourceInstallStore(context)
+            BOOTSTRAP_RESOURCES.forEach { resource ->
+                store.markFailed(resource.resourceId, KiteResourceInstallStore.OP_INSTALL, null, reason)
+            }
+        }.onFailure { error ->
+            Logger.e(LOG_TAG, "Failed to mark bootstrap resources failed: ${error.message}")
+        }
+    }
+
+    private fun recordBootstrapResourceResult(
+        context: Context,
+        resource: BootstrapResource,
+        result: ToolchainCommandResult
+    ) {
+        runCatching {
+            val store = KiteResourceInstallStore(context)
+            val registration = resolveBootstrapResourceRegistration(
+                resourceId = resource.resourceId,
+                version = resource.version,
+                exitCode = result.exitCode,
+                timedOut = result.timedOut,
+                summary = result.summaryLine() ?: "exitCode=${result.exitCode} timedOut=${result.timedOut}"
+            )
+            if (registration.installed) {
+                store.markInstalled(registration.resourceId, registration.version, null, registration.summary)
+            } else {
+                store.markFailed(
+                    registration.resourceId,
+                    KiteResourceInstallStore.OP_INSTALL,
+                    null,
+                    registration.summary
+                )
+            }
+        }.onFailure { error ->
+            Logger.e(LOG_TAG, "Failed to register bootstrap resource ${resource.resourceId}: ${error.message}")
+        }
+    }
+
+    internal fun resolveBootstrapResourceRegistration(
+        resourceId: String,
+        version: String,
+        exitCode: Int,
+        timedOut: Boolean,
+        summary: String
+    ): BootstrapResourceRegistration =
+        BootstrapResourceRegistration(
+            resourceId = resourceId,
+            version = version,
+            installed = exitCode == 0 && !timedOut,
+            summary = summary
+        )
+
+    internal data class BootstrapResourceRegistration(
+        val resourceId: String,
+        val version: String,
+        val installed: Boolean,
+        val summary: String
+    )
+
+    private data class BootstrapResource(
+        val resourceId: String,
+        val mode: String,
+        val version: String,
+        val label: String
+    )
 
     private fun auditToolchainCapability(action: ToolchainAction) {
         CapabilityGate.evaluate(
@@ -223,16 +481,34 @@ object ToolchainPackInstaller {
         action: ToolchainAction,
         workspacePackDir: File
     ): ToolchainCommandResult {
-        val scriptPath = "/workspace/.kf/toolchains/$PACK_ID/install.sh"
         val mode = when (action) {
-            ToolchainAction.PREPARE -> "--install"
+            ToolchainAction.PREPARE -> error("PREPARE uses the fixed bootstrap resource flow")
             ToolchainAction.NODE -> "--install-node"
             ToolchainAction.DOCTOR -> "--doctor"
         }
+        return executeInstallScript(
+            context = context,
+            mode = mode,
+            workspacePackDir = workspacePackDir,
+            workspacePackPath = "/workspace/.kf/toolchains/$PACK_ID",
+            toolchainDir = "/workspace/.kf/toolchains",
+            binDir = WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
+        )
+    }
+
+    private fun executeInstallScript(
+        context: Context,
+        mode: String,
+        workspacePackDir: File,
+        workspacePackPath: String,
+        toolchainDir: String,
+        binDir: String
+    ): ToolchainCommandResult {
+        val scriptPath = "$workspacePackPath/install.sh"
         val payload = """
-            export KF_TOOLCHAIN_PACK_DIR=/workspace/.kf/toolchains/$PACK_ID
-            export KF_TOOLCHAIN_DIR=/workspace/.kf/toolchains
-            export KF_TOOLCHAIN_BIN_DIR=/workspace/.kf/bin
+            export KF_TOOLCHAIN_PACK_DIR=$workspacePackPath
+            export KF_TOOLCHAIN_DIR=$toolchainDir
+            export KF_TOOLCHAIN_BIN_DIR=$binDir
             export UV_LINK_MODE=copy
             chmod +x "$scriptPath" 2>/dev/null || true
             bash "$scriptPath" "$mode"
@@ -382,12 +658,16 @@ object ToolchainPackInstaller {
     }
 
     private fun ToolchainCommandResult.summaryLine(): String? {
-        return output.lineSequence().lastOrNull { it.startsWith("SUMMARY ") }
+        return bootstrapSummaryLine(output)
     }
 
-    private fun ToolchainCommandResult.toLogBlock(): String {
+    internal fun bootstrapSummaryLine(output: String): String? =
+        output.lineSequence().lastOrNull { it.startsWith("FAIL\t") || it.startsWith("FAIL ") }
+            ?: output.lineSequence().lastOrNull { it.startsWith("SUMMARY ") }
+
+    private fun ToolchainCommandResult.toLogBlock(label: String = PACK_ID): String {
         return buildString {
-            appendLine("== $PACK_ID result ==")
+            appendLine("== $label result ==")
             appendLine("exitCode=$exitCode timedOut=$timedOut durationMs=$durationMs")
             appendLine(output.take(OUTPUT_LIMIT))
         }

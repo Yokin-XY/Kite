@@ -4,7 +4,7 @@
   "base": {
     "name": "Node.js",
     "description": "现代 JavaScript 运行环境",
-    "version": "24.15.0",
+    "version": "26.4.0",
     "icon": {
       "type": "asset",
       "value": "resources/kite.nodejs/icon.png",
@@ -17,8 +17,8 @@
     ],
     "category": "JavaScript",
     "accent": "green",
-    "sizeLabel": "30.1 MB",
-    "longDescription": "Node.js 是资源页第一条真实样本。它从 Kite 内置资源缓存解压，按注册名安装到软件区，并把 node、npm、npx 暴露到 /workspace/.kf/bin，供后续 Hermes WebUI、网页工具和卡片脚本使用。",
+    "sizeLabel": "内置包",
+    "longDescription": "Node.js 是 Kite 离线基础层的一部分。资源卡只把内置 Node.js 26.4.0 暴露到 /workspace/.kf/bin，供后续 Hermes WebUI、网页工具和卡片脚本使用。",
     "recommendations": [
       {
         "resourceId": "kite.hermes.webui",
@@ -46,7 +46,7 @@
   },
   "relations": {
     "provides": [
-      "runtime.node>=24",
+      "runtime.node>=26",
       "tool.npm",
       "tool.npx"
     ],
@@ -102,7 +102,7 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove software root and node/npm/npx wrappers"
+        "cmd": "rm -rf /workspace/.kf/software/kite.nodejs /workspace/.kf/cache/resources/kite.nodejs; rm -f /workspace/.kf/bin/node /workspace/.kf/bin/npm /workspace/.kf/bin/npx"
       }
     ],
     "reinstall": [

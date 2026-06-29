@@ -25,6 +25,8 @@ object KiteResourceInstallRecipes {
     const val WORKSPACE_BIN_ROOT = "/workspace/.kf/bin"
     const val OP_INSTALL = "install"
     const val OP_UNINSTALL = "uninstall"
+    private const val TOOL_ENV_BIN_COMMANDS =
+        "pnpm pnpx wget jq rg fd zip unzip zstd file tar gzip gunzip xz unxz bzip2 bunzip2 ps pgrep pkill pidof top free ip ss netstat ping dig nslookup host update-ca-certificates less tree rsync patch sed awk grep find xargs sort uniq head tail cut tr wc tee env which whoami id uname date sleep timeout kill sha256sum sha1sum md5sum base64 chmod chown chgrp ln readlink realpath mkdir rmdir rm cp mv touch du df stat systemctl service"
 
     fun localPackPath(resourceId: String, packId: String = "ai-dev-pack"): String =
         "$WORKSPACE_RESOURCE_ROOT/${safeId(resourceId)}/$packId"
@@ -96,13 +98,8 @@ object KiteResourceInstallRecipes {
               fi
               echo "KITE_RESOURCE_STEP repair-hermes-core-pip"
               if ! python3 -m venv --help >/dev/null 2>&1 || ! python3 -m pip --version >/dev/null 2>&1; then
-                if ! command -v apt-get >/dev/null 2>&1; then
-                  echo "缺少 pip/venv，且当前 Ubuntu 环境无法通过 apt-get 补齐。"
-                  exit 127
-                fi
-                echo "KITE_RESOURCE_STEP apt-install python-pip-venv"
-                apt-get update
-                DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip ca-certificates
+                echo "缺少 pip/venv：Kite 离线 rootfs 打包不完整。"
+                exit 127
               fi
               if ! "${'$'}agent_python" -m ensurepip --upgrade; then
                 python3 -m pip --python "${'$'}agent_python" install --upgrade pip
@@ -294,13 +291,8 @@ SH
             if ! "${'$'}agent_python" -m pip --version >/dev/null 2>&1; then
               echo "KITE_RESOURCE_STEP bootstrap-hermes-core-pip"
               if ! python3 -m venv --help >/dev/null 2>&1 || ! python3 -m pip --version >/dev/null 2>&1; then
-                if ! command -v apt-get >/dev/null 2>&1; then
-                  echo "缺少 pip/venv，且当前 Ubuntu 环境无法通过 apt-get 补齐。"
-                  exit 127
-                fi
-                echo "KITE_RESOURCE_STEP apt-install python-pip-venv"
-                apt-get update
-                DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip ca-certificates
+                echo "缺少 pip/venv：Kite 离线 rootfs 打包不完整。"
+                exit 127
               fi
               if ! "${'$'}agent_python" -m ensurepip --upgrade; then
                 python3 -m pip --python "${'$'}agent_python" install --upgrade pip
@@ -334,15 +326,8 @@ SH
               echo "KITE_RESOURCE_STEP git-present ${'$'}(command -v git)"
               echo "preexisting" > "${'$'}install_root/ownership"
             else
-              if ! command -v apt-get >/dev/null 2>&1; then
-                echo "缺少 apt-get：当前 Ubuntu 环境无法安装 Git。"
-                exit 127
-              fi
-              echo "KITE_RESOURCE_STEP apt-update"
-              apt-get update
-              echo "KITE_RESOURCE_STEP apt-install git ca-certificates"
-              DEBIAN_FRONTEND=noninteractive apt-get install -y git ca-certificates
-              echo "installed_by_kite" > "${'$'}install_root/ownership"
+              echo "缺少 git：Kite 离线 rootfs 打包不完整。"
+              exit 127
             fi
             git --version
         """.trimIndent()
@@ -352,16 +337,7 @@ SH
             set +e
             install_root="${softwarePath("kite.git")}"
             ownership="${'$'}install_root/ownership"
-            if [ -f "${'$'}ownership" ] && grep -q '^installed_by_kite${'$'}' "${'$'}ownership"; then
-              if command -v apt-get >/dev/null 2>&1; then
-                echo "KITE_RESOURCE_STEP apt-remove git"
-                DEBIAN_FRONTEND=noninteractive apt-get remove -y git
-              else
-                echo "apt-get missing; cannot remove git package"
-              fi
-            else
-              echo "Git was preexisting or ownership is unknown; clearing Kite resource record only"
-            fi
+            echo "Git belongs to Kite offline rootfs; clearing Kite resource record only"
             rm -rf "${'$'}install_root"
             exit 0
         """.trimIndent()
@@ -375,15 +351,8 @@ SH
               echo "KITE_RESOURCE_STEP curl-present ${'$'}(command -v curl)"
               echo "preexisting" > "${'$'}install_root/ownership"
             else
-              if ! command -v apt-get >/dev/null 2>&1; then
-                echo "缺少 apt-get：当前 Ubuntu 环境无法安装 curl。"
-                exit 127
-              fi
-              echo "KITE_RESOURCE_STEP apt-update"
-              apt-get update
-              echo "KITE_RESOURCE_STEP apt-install curl ca-certificates"
-              DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates
-              echo "installed_by_kite" > "${'$'}install_root/ownership"
+              echo "缺少 curl：Kite 离线 rootfs 打包不完整。"
+              exit 127
             fi
             curl --version | head -1
         """.trimIndent()
@@ -393,16 +362,7 @@ SH
             set +e
             install_root="${softwarePath("kite.curl")}"
             ownership="${'$'}install_root/ownership"
-            if [ -f "${'$'}ownership" ] && grep -q '^installed_by_kite${'$'}' "${'$'}ownership"; then
-              if command -v apt-get >/dev/null 2>&1; then
-                echo "KITE_RESOURCE_STEP apt-remove curl"
-                DEBIAN_FRONTEND=noninteractive apt-get remove -y curl
-              else
-                echo "apt-get missing; cannot remove curl package"
-              fi
-            else
-              echo "curl was preexisting or ownership is unknown; clearing Kite resource record only"
-            fi
+            echo "curl belongs to Kite offline rootfs; clearing Kite resource record only"
             rm -rf "${'$'}install_root"
             exit 0
         """.trimIndent()
@@ -415,7 +375,7 @@ SH
             python_ready=0
             if command -v python3 >/dev/null 2>&1 && python3 - <<'PY'
 import sys
-raise SystemExit(0 if (3, 11) <= sys.version_info < (3, 14) else 1)
+raise SystemExit(0 if (3, 14) <= sys.version_info < (3, 15) else 1)
 PY
             then
               echo "KITE_RESOURCE_STEP python-present ${'$'}(python3 --version 2>&1)"
@@ -426,19 +386,13 @@ PY
               fi
             fi
             if [ "${'$'}python_ready" -ne 1 ]; then
-              if ! command -v apt-get >/dev/null 2>&1; then
-                echo "缺少 apt-get：当前 Ubuntu 环境无法安装 Python。"
-                exit 127
-              fi
-              echo "KITE_RESOURCE_STEP apt-update"
-              apt-get update
-              echo "KITE_RESOURCE_STEP apt-install python3 python3-venv python3-pip ca-certificates"
-              DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-venv python3-pip ca-certificates
+              echo "缺少 Python 3.14 / pip / venv：Kite 离线 rootfs 打包不完整。"
+              exit 127
             fi
             python3 - <<'PY'
 import sys
-if not ((3, 11) <= sys.version_info < (3, 14)):
-    raise SystemExit(f"Python {sys.version.split()[0]} is outside Hermes range >=3.11,<3.14")
+if not ((3, 14) <= sys.version_info < (3, 15)):
+    raise SystemExit(f"Python {sys.version.split()[0]} is outside Kite range >=3.14,<3.15")
 print("python_version=" + sys.version.split()[0])
 PY
             python3 -m venv --help >/dev/null
@@ -471,7 +425,7 @@ PY
             echo "KITE_RESOURCE_STEP remove-software ${softwarePath("kite.nodejs")}"
             rm -rf ${softwarePath("kite.nodejs")}
             rm -rf /workspace/.kf/components/kite.nodejs
-            rm -rf /workspace/.kf/toolchains/node-v24.15.0
+            rm -rf /workspace/.kf/toolchains/node-v26.4.0
             echo "KITE_RESOURCE_STEP remove-bin node npm npx"
             rm -f $WORKSPACE_BIN_ROOT/node $WORKSPACE_BIN_ROOT/npm $WORKSPACE_BIN_ROOT/npx
             rm -rf ${localPackPath("kite.nodejs").substringBeforeLast("/")}
@@ -484,14 +438,11 @@ PY
             echo "KITE_RESOURCE_STEP remove-software ${softwarePath("kite.tool.env")}"
             rm -rf ${softwarePath("kite.tool.env")}
             rm -rf /workspace/.kf/components/kite.tool.env
-            rm -rf /workspace/.kf/toolchains/node-v24.15.0
-            rm -rf /workspace/.kf/toolchains/uv-0.11.1
-            rm -rf /workspace/.kf/toolchains/pnpm-10.33.2
+            rm -rf /workspace/.kf/toolchains/pnpm-11.9.0
             echo "KITE_RESOURCE_STEP remove-bin tool-env"
-            rm -f $WORKSPACE_BIN_ROOT/node $WORKSPACE_BIN_ROOT/npm $WORKSPACE_BIN_ROOT/npx
-            rm -f $WORKSPACE_BIN_ROOT/pnpm $WORKSPACE_BIN_ROOT/uv $WORKSPACE_BIN_ROOT/uvx
-            rm -f $WORKSPACE_BIN_ROOT/adb $WORKSPACE_BIN_ROOT/fastboot
-            rm -f $WORKSPACE_BIN_ROOT/fd $WORKSPACE_BIN_ROOT/systemctl $WORKSPACE_BIN_ROOT/service
+            for command_name in $TOOL_ENV_BIN_COMMANDS; do
+              rm -f "$WORKSPACE_BIN_ROOT/${'$'}command_name"
+            done
             rm -rf ${localPackPath("kite.tool.env").substringBeforeLast("/")}
             echo "KF tool environment resource removed"
         """.trimIndent()
@@ -553,19 +504,18 @@ PY
               case "${'$'}resource_id" in
                 kite.nodejs)
                   rm -f "$WORKSPACE_BIN_ROOT/node" "$WORKSPACE_BIN_ROOT/npm" "$WORKSPACE_BIN_ROOT/npx"
-                  rm -rf /workspace/.kf/components/kite.nodejs /workspace/.kf/toolchains/node-v24.15.0
+                  rm -rf /workspace/.kf/components/kite.nodejs /workspace/.kf/toolchains/node-v26.4.0
                   ;;
                 kite.uv)
                   rm -f "$WORKSPACE_BIN_ROOT/uv" "$WORKSPACE_BIN_ROOT/uvx"
-                  rm -rf /workspace/.kf/toolchains/uv-0.11.1
+                  rm -rf /workspace/.kf/toolchains/uv-0.11.25
                   ;;
                 kite.tool.env)
-                  rm -f "$WORKSPACE_BIN_ROOT/node" "$WORKSPACE_BIN_ROOT/npm" "$WORKSPACE_BIN_ROOT/npx"
-                  rm -f "$WORKSPACE_BIN_ROOT/pnpm" "$WORKSPACE_BIN_ROOT/uv" "$WORKSPACE_BIN_ROOT/uvx"
-                  rm -f "$WORKSPACE_BIN_ROOT/adb" "$WORKSPACE_BIN_ROOT/fastboot"
-                  rm -f "$WORKSPACE_BIN_ROOT/fd" "$WORKSPACE_BIN_ROOT/systemctl" "$WORKSPACE_BIN_ROOT/service"
+                  for command_name in $TOOL_ENV_BIN_COMMANDS; do
+                    rm -f "$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                  done
                   rm -rf /workspace/.kf/components/kite.tool.env
-                  rm -rf /workspace/.kf/toolchains/node-v24.15.0 /workspace/.kf/toolchains/uv-0.11.1 /workspace/.kf/toolchains/pnpm-10.33.2
+                  rm -rf /workspace/.kf/toolchains/pnpm-11.9.0
                   ;;
                 kite.hermes.core)
                   rm -f "$WORKSPACE_BIN_ROOT/hermes"

@@ -36,7 +36,7 @@ deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ jammy-security main restri
     ),
     NOBLE(
         label = "Ubuntu 24.04 LTS (Noble)",
-        versionId = "24.04",
+        versionId = "24.04-kite-offline-20260627",
         codename = "noble",
         assetTarGz = "rootfs/ubuntu-base-24.04-arm64.tar.gz",
         assetTar = "rootfs/ubuntu-base-24.04-arm64.tar",

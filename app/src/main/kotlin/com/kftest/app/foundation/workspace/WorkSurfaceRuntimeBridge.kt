@@ -48,6 +48,14 @@ object WorkSurfaceRuntimeBridge {
         return AssetExtractor.isBaseImageReady(context.applicationContext)
     }
 
+    fun isDefaultContainerReady(context: Context): Boolean {
+        return KFContainerManager.isDefaultContainerReady(context.applicationContext)
+    }
+
+    fun ensureRuntimeOperational(context: Context) {
+        KFContainerManager.ensureRuntimeOperational(context.applicationContext)
+    }
+
     fun getRuntimeLayout(context: Context): AssetExtractor.RuntimeLayout {
         return KFContainerManager.getRuntimeLayout(context.applicationContext)
     }

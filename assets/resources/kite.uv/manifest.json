@@ -4,7 +4,7 @@
   "base": {
     "name": "uv",
     "description": "Hermes 本体安装 Python 依赖的高速包管理器",
-    "version": "0.11.1",
+    "version": "0.11.25",
     "icon": {
       "type": "asset",
       "value": "resources/kite.uv/icon.png",
@@ -19,7 +19,7 @@
     "category": "Python",
     "accent": "green",
     "sizeLabel": "内置包",
-    "longDescription": "uv 是 Hermes 安装 Python 依赖和管理虚拟环境的基础工具卡。Kite 使用内置 ai-dev-pack 中的 uv 0.11.1，只安装 uv/uvx 到 /workspace/.kf/bin，不顺带安装完整工具合集。",
+    "longDescription": "uv 是 Hermes 安装 Python 依赖和管理虚拟环境的基础工具卡。Kite 使用内置 ai-dev-pack 中的 uv 0.11.25，只安装 uv/uvx 到 /workspace/.kf/bin，不顺带安装完整工具合集。",
     "recommendations": [
       {
         "resourceId": "kite.python",
@@ -92,7 +92,7 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove software root and uv/uvx wrappers"
+        "cmd": "rm -rf /workspace/.kf/software/kite.uv /workspace/.kf/cache/resources/kite.uv; rm -f /workspace/.kf/bin/uv /workspace/.kf/bin/uvx"
       }
     ]
   },

@@ -8,7 +8,8 @@ import java.io.File
 object ExternalExchangeManager {
 
     private const val LOG_TAG = "ExternalExchange"
-    private const val EXCHANGE_ROOT_NAME = "KF"
+    private const val EXCHANGE_ROOT_NAME = "Kite"
+    private const val LEGACY_EXCHANGE_ROOT_NAME = "KF"
     private const val README_FILE_NAME = "README.txt"
     private const val CARD_SCHEMA_FILE_NAME = "HOME_CARD_SCHEMA.md"
     private const val FILES_DIR_NAME = "files"
@@ -25,11 +26,12 @@ object ExternalExchangeManager {
     @Synchronized
     fun ensureExchangeDir(context: Context): File {
         val appContext = context.applicationContext
-        val exchangeDir = resolveHostExchangeDir(appContext)
+        val exchangeDir = resolveHostExchangeDir()
         if (!exchangeDir.exists()) {
             val created = exchangeDir.mkdirs()
             Logger.i(LOG_TAG, "Create external delivery directory: path=${exchangeDir.absolutePath} created=$created")
         }
+        migrateLegacyExchange(appContext, exchangeDir)
         ensureDeliverySubdirs(exchangeDir)
         ensureCardSchemaGuide(File(exchangeDir, CARDS_DIR_NAME))
         ensureReadme(exchangeDir)
@@ -72,9 +74,12 @@ object ExternalExchangeManager {
         }
     }
 
-    private fun resolveHostExchangeDir(context: Context): File {
-        resolveDownloadRootIfWritable()?.let { return it }
+    private fun resolveHostExchangeDir(): File = downloadExchangeDir()
 
+    private fun downloadExchangeDir(rootName: String = EXCHANGE_ROOT_NAME): File =
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), rootName)
+
+    private fun mediaExchangeDir(context: Context, rootName: String): File {
         // Production and development builds share the same package-stable media directory.
         val sharedPackageName = "com.kftest.app"
         val mediaRoot = context.externalMediaDirs
@@ -84,27 +89,29 @@ object ExternalExchangeManager {
             .firstOrNull()
             ?: File("/sdcard/Android/media/${sharedPackageName}")
 
-        return if (mediaRoot.name == EXCHANGE_ROOT_NAME) {
+        return if (mediaRoot.name == rootName) {
             mediaRoot
         } else {
-            File(mediaRoot, EXCHANGE_ROOT_NAME)
+            File(mediaRoot, rootName)
         }
     }
 
-    private fun resolveDownloadRootIfWritable(): File? {
-        val downloadRoot = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        return try {
-            if (!downloadRoot.exists() && !downloadRoot.mkdirs()) {
-                Logger.i(LOG_TAG, "Public Download directory cannot be created; falling back to app media: ${downloadRoot.absolutePath}")
-                return null
+    private fun migrateLegacyExchange(context: Context, exchangeDir: File) {
+        listOf(
+            downloadExchangeDir(LEGACY_EXCHANGE_ROOT_NAME),
+            mediaExchangeDir(context, LEGACY_EXCHANGE_ROOT_NAME)
+        ).distinctBy { it.absolutePath }.forEach { legacyDir ->
+            if (!legacyDir.exists() || legacyDir.absolutePath == exchangeDir.absolutePath) return@forEach
+            legacyDir.listFiles().orEmpty().forEach childLoop@ { child ->
+                val target = File(exchangeDir, child.name)
+                if (target.exists()) return@childLoop
+                runCatching {
+                    child.copyRecursively(target, overwrite = false)
+                    child.deleteRecursively()
+                }.onFailure { throwable ->
+                    Logger.i(LOG_TAG, "Legacy exchange migration skipped: from=${child.absolutePath} error=${throwable.message}")
+                }
             }
-            val probe = File(downloadRoot, ".kfshell_write_probe")
-            probe.writeText("ok")
-            probe.delete()
-            File(downloadRoot, EXCHANGE_ROOT_NAME)
-        } catch (throwable: Throwable) {
-            Logger.i(LOG_TAG, "Public Download directory is not writable; falling back to app media: ${throwable.message}")
-            null
         }
     }
 
@@ -140,24 +147,27 @@ object ExternalExchangeManager {
         if (readme.exists()) {
             return
         }
-        readme.writeText(
-            """
-            KFShell file delivery area.
+        runCatching {
+            readme.writeText(
+                """
+                Kite file delivery area.
 
-            Container paths:
-            - /chuan: preferred short transfer path.
-            - /chuan/in: files delivered from Android into Linux.
-            - /chuan/out: files exported from Linux back to Android.
-            - /exchange/cards: shared Kite card JSON directory.
-            - /exchange: compatibility alias for existing scripts.
+                Container paths:
+                - /chuan: preferred short transfer path.
+                - /chuan/in: files delivered from Android into Linux.
+                - /chuan/out: files exported from Linux back to Android.
+                - /exchange/cards: shared Kite card JSON directory.
+                - /exchange: compatibility alias for existing scripts.
 
-            If Android allows public Download access, this directory is backed by Download/KF.
-            If not, KFShell falls back to its app media directory.
+                This directory is backed by Download/Kite so humans can find, add, edit, and delete shared files.
 
-            Keep shared app data here: cards, imports, delivery files, and export files.
-            Move real projects into /workspace before building or editing heavily.
-            """.trimIndent() + "\n"
-        )
+                Keep shared app data here: cards, imports, delivery files, and export files.
+                Move real projects into /workspace before building or editing heavily.
+                """.trimIndent() + "\n"
+            )
+        }.onFailure { throwable ->
+            Logger.i(LOG_TAG, "Exchange README is not writable; keep startup running: ${throwable.message}")
+        }
     }
 
     private fun ensureCardSchemaGuide(cardsDir: File) {
@@ -168,8 +178,7 @@ object ExternalExchangeManager {
             Put home card JSON files in this directory.
 
             Android path:
-            - /sdcard/Download/KF/cards
-            - fallback: /sdcard/Android/media/com.kftest.app/KF/cards
+            - /sdcard/Download/Kite/cards
 
             Ubuntu/PRoot path:
             - /exchange/cards

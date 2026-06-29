@@ -15,6 +15,8 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.LinkedHashMap
 import java.util.TimeZone
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 /**
  * 建房层内核。
@@ -31,6 +33,15 @@ import java.util.TimeZone
 object KFContainerManager {
     private const val PROOT_TELEMETRY_MODE = "debug_jsonl_lifecycle_v0"
     private const val PROOT_TELEMETRY_FILE_NAME = "kf-proot-telemetry.jsonl"
+    private const val RUNTIME_SMOKE_TOKEN = "KITE_RUNTIME_READY"
+    private const val RUNTIME_SMOKE_TIMEOUT_MS = 12_000L
+    private const val CONTAINER_ROOTFS_READY_MARKER = ".kf-container-rootfs-ready"
+    private const val CONTAINER_ROOTFS_READY_MARKER_SCHEMA = "1"
+    private val CONTAINER_ROOTFS_REQUIRED_FILES = listOf(
+        "bin/sh",
+        "bin/bash",
+        "usr/bin/env"
+    )
 
     /**
      * 容器网络配置的唯一真相源。
@@ -84,7 +95,7 @@ object KFContainerManager {
         val missingFiles: List<String>
     ) {
         val ready: Boolean
-            get() = hasPackages && hasDpkgPreconfigure
+            get() = hasPackages
 
         fun summary(): String {
             val missingSummary = if (missingFiles.isEmpty()) {
@@ -119,26 +130,15 @@ object KFContainerManager {
         9997 to "android_everybody"
     )
     private val BOOTSTRAP_REQUIRED_FILES = listOf(
+        "bin/sh",
         "bin/bash",
         "usr/bin/env",
         "usr/bin/find",
         "usr/bin/grep",
         "usr/bin/sed",
-        "usr/bin/git",
-        "usr/bin/curl",
-        "usr/bin/wget",
+        "usr/bin/tar",
         "usr/bin/xz",
-        "usr/bin/file",
-        "usr/bin/unzip",
-        "usr/bin/make",
-        "usr/bin/gcc",
-        "usr/bin/dig",
-        "usr/bin/netstat",
-        "usr/sbin/ip",
-        "usr/bin/ps",
-        "usr/bin/supervisord",
-        "usr/bin/supervisorctl",
-        "etc/ssl/certs/ca-certificates.crt"
+        "var/lib/dpkg/status"
     )
 
     private val _containerState = MutableStateFlow<ContainerRecord?>(null)
@@ -187,7 +187,18 @@ object KFContainerManager {
             loadRegistry(layout.registryFile)
         }
         val existing = registry.firstOrNull { it.id == DEFAULT_CONTAINER_ID }
-        val container = existing ?: createDefaultContainer(layout)
+        val container = when {
+            existing == null -> createDefaultContainer(layout)
+            isDefaultContainerRecordCurrent(existing, layout) -> existing
+            else -> {
+                Logger.i(
+                    "ContainerManager",
+                    "默认容器记录已过期，重建系统层: id=${existing.id}, rootfs=${existing.rootfsPath}"
+                )
+                deleteContainerRootfsIfSafe(existing, layout)
+                createDefaultContainer(layout)
+            }
+        }
 
         traceStage("ensureContainerFilesystem(${container.id})") {
             ensureContainerFilesystem(context, layout, container)
@@ -264,6 +275,15 @@ object KFContainerManager {
         return loadRegistry(registryFile).firstOrNull { it.id == DEFAULT_CONTAINER_ID }?.also {
             _containerState.value = it
         }
+    }
+
+    fun isDefaultContainerReady(context: Context): Boolean {
+        val layout = AssetExtractor.getRuntimeLayout(context.applicationContext)
+        if (!AssetExtractor.isBaseImageReady(context.applicationContext, layout.profile)) return false
+        val saved = getSavedContainer(context.applicationContext) ?: return false
+        return isDefaultContainerRecordCurrent(saved, layout) &&
+            isContainerRootfsReady(File(saved.rootfsPath), layout.profile) &&
+            File(saved.workspacePath).isDirectory
     }
 
     @Synchronized
@@ -352,6 +372,40 @@ object KFContainerManager {
             ) + " " +
                 buildInlineCommandArgv(commandArgv)
         )
+    }
+
+    @Synchronized
+    fun ensureRuntimeOperational(context: Context) {
+        val config = buildContainerExecConfig(
+            context = context,
+            workingDirectory = RuntimeBoundary.CONTAINER_ROOT_HOME,
+            payload = "printf '$RUNTIME_SMOKE_TOKEN\n'",
+            loginShell = true
+        )
+        val process = ProcessBuilder(config.command)
+            .redirectErrorStream(true)
+            .apply { environment().putAll(config.env) }
+            .start()
+        val output = StringBuilder()
+        val reader = thread(start = true, isDaemon = true, name = "KiteRuntimeSmokeReader") {
+            runCatching {
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line -> output.append(line).append('\n') }
+                }
+            }
+        }
+        val completed = process.waitFor(RUNTIME_SMOKE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        if (!completed) {
+            process.destroyForcibly()
+            reader.join(500L)
+            throw IllegalStateException("Ubuntu 启动校验超时")
+        }
+        reader.join(1_000L)
+        val exitCode = process.exitValue()
+        if (exitCode != 0 || !output.contains(RUNTIME_SMOKE_TOKEN)) {
+            val message = output.toString().trim().take(360).ifBlank { "无输出" }
+            throw IllegalStateException("Ubuntu 启动校验失败，exitCode=$exitCode，output=$message")
+        }
     }
 
     @Synchronized
@@ -526,16 +580,23 @@ object KFContainerManager {
 
         // 暂留桥接：入口层仍需要借建房层解析当前容器 PATH，判断工作面里是否已经装好命令。
         // 后续如果工作面拥有独立的命令索引或探测器，这段应迁出 KFContainerManager。
-        val container = resolveLaunchContainer(context)
+        val layout = ensureBaseImageReady(context)
+        val container = resolveLaunchContainer(context, layout)
         return buildShellPath(container)
             .split(':')
             .mapNotNull { pathEntry -> resolveCommandHostFile(container, pathEntry, commandName) }
             .any { candidate -> candidate.exists() && candidate.isFile }
     }
 
-    private fun resolveLaunchContainer(context: Context): ContainerRecord {
+    private fun resolveLaunchContainer(
+        context: Context,
+        layout: AssetExtractor.RuntimeLayout = ensureBaseImageReady(context)
+    ): ContainerRecord {
         val saved = getSavedContainer(context)
-        if (saved != null && File(saved.rootfsPath).exists()) {
+        if (saved != null &&
+            isDefaultContainerRecordCurrent(saved, layout) &&
+            isContainerRootfsReady(File(saved.rootfsPath), layout.profile)
+        ) {
             return saved
         }
         return ensureDefaultContainer(context)
@@ -550,7 +611,7 @@ object KFContainerManager {
             AssetExtractor.prepareRuntime(context)
         }
         val container = traceStage("resolveLaunchContainer($caller)") {
-            resolveLaunchContainer(context)
+            resolveLaunchContainer(context, layout)
         }
         if (refreshRuntimeFiles) {
             traceStage("refreshContainerRuntimeFiles($caller)") {
@@ -848,7 +909,7 @@ object KFContainerManager {
             "ContainerManager",
             "检查当前空间文件系统: id=${container.id}, rootfs=${containerRootfs.absolutePath}, bash=${File(containerRootfs, "bin/bash").exists()}"
         )
-        if (!File(containerRootfs, "bin/bash").exists()) {
+        if (!isContainerRootfsReady(containerRootfs, layout.profile)) {
             traceStage("cloneBaseImage(${container.id})") {
                 cloneBaseImage(layout.baseImageDir, containerRootfs)
             }
@@ -864,6 +925,9 @@ object KFContainerManager {
         }
         traceStage("ensureContainerBootstrap(${container.id})") {
             ensureContainerBootstrap(context, layout, containerRootfs, layout.profile)
+        }
+        traceStage("writeContainerRootfsReady(${container.id})") {
+            writeContainerRootfsReadyMarker(containerRootfs, layout.profile)
         }
 
         traceStage("ensureWorkspace(${container.id})") {
@@ -917,33 +981,15 @@ object KFContainerManager {
             "ContainerManager",
             "当前空间 bootstrap 状态: marker=${marker.exists()}, ${health.summary()}"
         )
-        if (marker.exists() && health.ready) {
+        if (health.ready) {
+            if (!marker.exists()) {
+                marker.writeText("ready\n")
+            }
             Logger.i("ContainerManager", "当前空间基础工具链已就绪，跳过重型补齐")
             return
         }
 
-        Logger.i("ContainerManager", "开始为当前空间补齐基础工具链")
-        runCatching {
-            traceStage("installBootstrapPackages(container-bootstrap)") {
-                installBootstrapPackages(context, layout, rootfsDir)
-            }
-            traceStage("normalizeSyntheticHostLinks(container-bootstrap)") {
-                normalizeSyntheticHostLinks(rootfsDir)
-            }
-            val refreshedHealth = inspectBootstrapHealth(rootfsDir)
-            Logger.i(
-                "ContainerManager",
-                "当前空间 bootstrap 补齐后状态: ${refreshedHealth.summary()}"
-            )
-            if (refreshedHealth.ready) {
-                marker.writeText("ready\n")
-                Logger.i("ContainerManager", "当前空间基础工具链已就绪")
-            } else {
-                Logger.e("ContainerManager", "当前空间补齐完成后仍缺少关键工具")
-            }
-        }.onFailure { error ->
-            Logger.e("ContainerManager", "当前空间工具链补齐失败: ${error.message}")
-        }
+        throw incompleteOfflineRootfs("当前空间", health)
     }
 
     /**
@@ -1161,33 +1207,15 @@ object KFContainerManager {
             "ContainerManager",
             "基础镜像 bootstrap 状态: marker=${marker.exists()}, ${health.summary()}"
         )
-        if (marker.exists() && health.ready) {
+        if (health.ready) {
+            if (!marker.exists()) {
+                marker.writeText("ready\n")
+            }
             Logger.i("ContainerManager", "基础镜像基础工具链已就绪，跳过重型补齐")
             return
         }
 
-        Logger.i("ContainerManager", "开始为基础镜像补齐基础工具链")
-        runCatching {
-            traceStage("installBootstrapPackages(base-image)") {
-                installBootstrapPackages(context, layout, layout.baseImageDir)
-            }
-            traceStage("normalizeSyntheticHostLinks(base-image)") {
-                normalizeSyntheticHostLinks(layout.baseImageDir)
-            }
-            val refreshedHealth = inspectBootstrapHealth(layout.baseImageDir)
-            Logger.i(
-                "ContainerManager",
-                "基础镜像 bootstrap 补齐后状态: ${refreshedHealth.summary()}"
-            )
-            if (refreshedHealth.ready) {
-                marker.writeText("ready\n")
-                Logger.i("ContainerManager", "基础镜像基础工具链已就绪")
-            } else {
-                Logger.e("ContainerManager", "基础镜像自举完成后仍缺少关键工具")
-            }
-        }.onFailure { error ->
-            Logger.e("ContainerManager", "基础镜像自举失败: ${error.message}")
-        }
+        throw incompleteOfflineRootfs("基础镜像", health)
     }
 
     private fun ensurePackageManagerFiles(rootfsDir: File, profile: BaseImageProfile) {
@@ -1380,6 +1408,14 @@ object KFContainerManager {
         return inspectBootstrapHealth(rootfsDir).ready
     }
 
+    private fun incompleteOfflineRootfs(scope: String, health: BootstrapHealth): IllegalStateException {
+        val missing = health.missingFiles.joinToString(limit = 12)
+        val message = "$scope 定制 rootfs 缺少基础工具: $missing"
+        Logger.e("ContainerManager", "$message; ${health.summary()}")
+        RuntimeBootstrapProgress.failed(message)
+        return IllegalStateException(message)
+    }
+
     private fun hasSyntheticHostLinks(rootfsDir: File): Boolean {
         val rootPrefix = rootfsDir.absolutePath
         return rootfsDir.walkTopDown().any { entry ->
@@ -1445,80 +1481,61 @@ object KFContainerManager {
         return null
     }
 
-    /**
-     * 为 bootstrap 场景构建网络配置计划。
-     *
-     * bootstrap 过程中没有完整的 ContainerRecord，
-     * 因此构造一个伪记录（仅用于 buildNetworkPlan），注入到 installBootstrapPackages 链路。
-     */
-    private fun buildNetworkPlanForBootstrap(
-        context: Context,
-        layout: AssetExtractor.RuntimeLayout,
-        rootfsDir: File
-    ): ContainerNetworkPlan {
-        val pseudoContainer = ContainerRecord(
-            id = "bootstrap",
-            displayName = "bootstrap",
-            imageName = layout.profile.imageName,
-            rootfsPath = rootfsDir.absolutePath,
-            workspacePath = layout.tmpDir.absolutePath,
-            createdAt = 0L,
-            networkMode = NetworkMode.HOST
-        )
-        return buildNetworkPlan(context, layout, pseudoContainer)
+    private fun isDefaultContainerRecordCurrent(
+        container: ContainerRecord,
+        layout: AssetExtractor.RuntimeLayout
+    ): Boolean {
+        val expectedRootfs = File(File(layout.containersDir, DEFAULT_CONTAINER_ID), "rootfs").absolutePath
+        val expectedWorkspace = File(layout.sharedDir, DEFAULT_CONTAINER_ID).absolutePath
+        return container.id == DEFAULT_CONTAINER_ID &&
+            container.imageName == layout.profile.imageName &&
+            container.baseProfile == layout.profile.codename &&
+            File(container.rootfsPath).absolutePath == expectedRootfs &&
+            File(container.workspacePath).absolutePath == expectedWorkspace
     }
 
-    private fun installBootstrapPackages(
-        context: Context,
-        layout: AssetExtractor.RuntimeLayout,
-        rootfsDir: File
+    private fun isContainerRootfsReady(rootfsDir: File, profile: BaseImageProfile): Boolean {
+        if (missingContainerRootfsFiles(rootfsDir).isNotEmpty()) return false
+        val marker = File(rootfsDir, CONTAINER_ROOTFS_READY_MARKER)
+        if (!marker.exists()) return false
+        val lines = runCatching { marker.readLines().toSet() }.getOrDefault(emptySet())
+        return containerRootfsReadyMarkerLines(profile).all { it in lines }
+    }
+
+    private fun missingContainerRootfsFiles(rootfsDir: File): List<String> =
+        CONTAINER_ROOTFS_REQUIRED_FILES.filterNot { relativePath -> File(rootfsDir, relativePath).exists() }
+
+    private fun writeContainerRootfsReadyMarker(rootfsDir: File, profile: BaseImageProfile) {
+        File(rootfsDir, CONTAINER_ROOTFS_READY_MARKER)
+            .writeText(containerRootfsReadyMarkerLines(profile).joinToString(separator = "\n", postfix = "\n"))
+    }
+
+    private fun containerRootfsReadyMarkerLines(profile: BaseImageProfile): List<String> =
+        listOf(
+            "schema=$CONTAINER_ROOTFS_READY_MARKER_SCHEMA",
+            "profile=${profile.codename}",
+            "versionId=${profile.versionId}",
+            "imageName=${profile.imageName}",
+            "imageDirName=${profile.imageDirName}",
+            "requiredFiles=${CONTAINER_ROOTFS_REQUIRED_FILES.joinToString(",")}"
+        )
+
+    private fun deleteContainerRootfsIfSafe(
+        container: ContainerRecord,
+        layout: AssetExtractor.RuntimeLayout
     ) {
-        // 获取 bootstrap 专用网络配置（包括 resolv.conf bind mount）
-        val bootstrapNetworkPlan = buildNetworkPlanForBootstrap(context, layout, rootfsDir)
-
-        val payload =
-            "export DEBIAN_FRONTEND=noninteractive TMPDIR=/tmp; " +
-                "mkdir -p /tmp /var/tmp; " +
-                "chmod 1777 /tmp /var/tmp; " +
-                "dpkg --configure -a; " +
-                "apt-get update && " +
-                "apt-get install -y " +
-                "bash coreutils findutils sed grep " +
-                "ca-certificates curl wget git xz-utils unzip file " +
-                "zstd zip fd-find jq " +
-                "build-essential procps iproute2 net-tools dnsutils supervisor"
-
-        // 使用统一的 proot argv 生成，不再手写完整命令
-        val prootArgv = buildBootstrapProotArgv(
-            layout = layout,
-            rootfsDir = rootfsDir,
-            networkPlan = bootstrapNetworkPlan
-        )
-
-        val command = arrayOf(
-            "/system/bin/sh",
-            "-c",
-            buildInlineShellEnvironment(buildBootstrapEnvironment(layout)) + " " +
-                buildInlineCommandArgv(prootArgv + listOf("/bin/bash", "-lc", payload))
-        )
-
-        val process = ProcessBuilder(*command)
-            .redirectErrorStream(true)
-            .start()
-
-        val output = StringBuilder()
-        process.inputStream.bufferedReader().useLines { lines ->
-            lines.forEach { line ->
-                output.append(line).append('\n')
-                RuntimeBootstrapProgress.baseBootstrapOutput(line)
-            }
+        val rootfsDir = File(container.rootfsPath).absoluteFile
+        val containersDir = layout.containersDir.absoluteFile
+        val insideRuntimeContainers = generateSequence(rootfsDir) { it.parentFile }
+            .any { it == containersDir }
+        if (!insideRuntimeContainers) {
+            Logger.e(
+                "ContainerManager",
+                "跳过默认容器清理，rootfs 不在当前 runtime 容器目录内: ${rootfsDir.absolutePath}"
+            )
+            return
         }
-        val exitCode = process.waitFor()
-        if (exitCode != 0) {
-            Logger.e("ContainerManager", "基础镜像自举安装失败，exitCode=$exitCode, output=$output")
-            RuntimeBootstrapProgress.failed("基础镜像基础工具安装失败，exitCode=$exitCode")
-            throw IllegalStateException("基础镜像基础工具安装失败")
-        }
+        deleteRecursively(rootfsDir)
     }
 
     /**

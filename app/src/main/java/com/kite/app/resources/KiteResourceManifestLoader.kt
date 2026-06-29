@@ -668,7 +668,7 @@ class KiteResourceManifestLoader(private val context: Context) {
                         cmd = cmd,
                         surfaceMode = action.optString("surfaceMode", "panel"),
                         workdir = action.optString("workdir", "/workspace"),
-                        timeoutMs = action.optLong("timeoutMs", 600_000L),
+                        timeoutMs = action.optLong("timeoutMs", 1_800_000L),
                         managedCommands = managedCommands,
                         cleanInstallRoot = action.optBoolean("cleanInstallRoot", false),
                         npmUninstallPackages = npmUninstallPackages

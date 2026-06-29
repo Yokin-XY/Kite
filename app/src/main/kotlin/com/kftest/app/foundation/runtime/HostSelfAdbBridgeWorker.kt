@@ -19,6 +19,7 @@ import moe.shizuku.server.IShizukuService
 import rikka.shizuku.Shizuku
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
@@ -34,7 +35,6 @@ object HostSelfAdbBridgeWorker {
     private const val PROCESSING_DIR = "processing"
     private const val RESPONSE_DIR = "responses"
     private const val POLL_INTERVAL_MS = 180L
-    private const val COMMAND_TIMEOUT_MS = 30_000L
     private const val MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -89,12 +89,19 @@ object HostSelfAdbBridgeWorker {
             return
         }
 
+        val stream = BridgeStream(
+            stdout = File(responseDir, "${request.id}.stdout.stream"),
+            stderr = File(responseDir, "${request.id}.stderr.stream"),
+            cancel = File(responseDir, "${request.id}.cancel")
+        )
+        stream.clear()
+
         val result = when (request.kind) {
-            "shell" -> executeShell(context, request.command, appendTextNewline = true)
-            "exec-out" -> executeShell(context, request.command, appendTextNewline = false)
-            "pull" -> executeShell(context, "cat ${shellQuote(request.remotePath)}", appendTextNewline = false)
-            "push" -> writeRemoteFile(request)
-            "install" -> installPackage(context, request)
+            "shell" -> executeShell(context, request.command, appendTextNewline = true, stream)
+            "exec-out" -> executeShell(context, request.command, appendTextNewline = false, stream)
+            "pull" -> executeShell(context, "cat ${shellQuote(request.remotePath)}", appendTextNewline = false, stream)
+            "push" -> writeRemoteFile(request, stream)
+            "install" -> installPackage(context, request, stream)
             else -> BridgeResult(
                 exitCode = 125,
                 stdout = ByteArray(0),
@@ -109,16 +116,21 @@ object HostSelfAdbBridgeWorker {
         requestFile.delete()
     }
 
-    private fun executeShell(context: Context, command: String, appendTextNewline: Boolean): BridgeResult {
+    private fun executeShell(
+        context: Context,
+        command: String,
+        appendTextNewline: Boolean,
+        stream: BridgeStream
+    ): BridgeResult {
         if (command.isBlank()) {
             return BridgeResult(125, ByteArray(0), "interactive adb shell is not supported by kf-host-self V0\n".toByteArray())
         }
-        executeInputTextCompat(context, command)?.let { return it }
+        executeInputTextCompat(context, command, stream)?.let { return it }
 
-        return executeRawShell(command, appendTextNewline)
+        return executeRawShell(command, appendTextNewline, stream)
     }
 
-    private fun executeRawShell(command: String, appendTextNewline: Boolean): BridgeResult {
+    private fun executeRawShell(command: String, appendTextNewline: Boolean, stream: BridgeStream): BridgeResult {
         if (command.isBlank()) {
             return BridgeResult(125, ByteArray(0), "interactive adb shell is not supported by kf-host-self V0\n".toByteArray())
         }
@@ -143,21 +155,22 @@ object HostSelfAdbBridgeWorker {
 
             val stdout = ByteArrayOutputStream()
             val stderr = ByteArrayOutputStream()
-            val stdoutThread = drainAsync(remote.inputStream, stdout)
-            val stderrThread = drainAsync(remote.errorStream, stderr)
+            val stdoutThread = drainAsync(remote.inputStream, stdout, stream.stdout)
+            val stderrThread = drainAsync(remote.errorStream, stderr, stream.stderr)
 
-            val completed = runCatching {
-                remote.waitForTimeout(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS.name)
-            }.getOrElse {
-                false
-            }
-            if (!completed) {
-                runCatching { remote.destroy() }
-                return BridgeResult(
-                    exitCode = 124,
-                    stdout = stdout.toByteArray(),
-                    stderr = stderr.toByteArray() + "kf-host-self command timed out\n".toByteArray()
-                )
+            while (true) {
+                val completed = runCatching {
+                    remote.waitForTimeout(500L, TimeUnit.MILLISECONDS.name)
+                }.getOrDefault(false)
+                if (completed) break
+                if (stream.cancel.exists()) {
+                    runCatching { remote.destroy() }
+                    return BridgeResult(
+                        exitCode = 130,
+                        stdout = stdout.toByteArray(),
+                        stderr = stderr.toByteArray() + "kf-host-self command cancelled\n".toByteArray()
+                    )
+                }
             }
 
             stdoutThread.join(1_000L)
@@ -172,15 +185,15 @@ object HostSelfAdbBridgeWorker {
         }
     }
 
-    private fun writeRemoteFile(request: BridgeRequest): BridgeResult {
+    private fun writeRemoteFile(request: BridgeRequest, stream: BridgeStream): BridgeResult {
         if (request.remotePath.isBlank()) {
             return BridgeResult(125, ByteArray(0), "adb push requires a remote path\n".toByteArray())
         }
         val command = "cat > ${shellQuote(request.remotePath)}"
-        return runRemoteProcess(command = command, stdin = request.payload, appendTextNewline = true)
+        return runRemoteProcess(command = command, stdin = request.payload, appendTextNewline = true, stream)
     }
 
-    private fun installPackage(context: Context, request: BridgeRequest): BridgeResult {
+    private fun installPackage(context: Context, request: BridgeRequest, stream: BridgeStream): BridgeResult {
         if (request.payload.isEmpty()) {
             return BridgeResult(125, ByteArray(0), "adb install requires a local APK payload\n".toByteArray())
         }
@@ -188,7 +201,8 @@ object HostSelfAdbBridgeWorker {
         val writeResult = runRemoteProcess(
             command = "cat > ${shellQuote(tempPath)}",
             stdin = request.payload,
-            appendTextNewline = true
+            appendTextNewline = true,
+            stream = stream
         )
         if (writeResult.exitCode != 0) {
             return writeResult
@@ -204,10 +218,10 @@ object HostSelfAdbBridgeWorker {
             append(shellQuote(tempPath))
             append("; exit \$code")
         }
-        return executeShell(context, installCommand, appendTextNewline = true)
+        return executeShell(context, installCommand, appendTextNewline = true, stream)
     }
 
-    private fun executeInputTextCompat(context: Context, command: String): BridgeResult? {
+    private fun executeInputTextCompat(context: Context, command: String, stream: BridgeStream): BridgeResult? {
         val text = parseInputTextCompatPayload(command) ?: return null
         if (text.none { it.code > 127 || it == '\n' || it == '\t' }) {
             return null
@@ -217,7 +231,8 @@ object HostSelfAdbBridgeWorker {
             clipboard.setPrimaryClip(ClipData.newPlainText("kf-host-self-input-text", text))
             val pasteResult = executeRawShell(
                 command = "input keyevent ${KeyEvent.KEYCODE_PASTE}",
-                appendTextNewline = true
+                appendTextNewline = true,
+                stream = stream
             )
             if (pasteResult.exitCode == 0) {
                 BridgeResult(0, ByteArray(0), pasteResult.stderr)
@@ -255,7 +270,8 @@ object HostSelfAdbBridgeWorker {
     private fun runRemoteProcess(
         command: String,
         stdin: ByteArray,
-        appendTextNewline: Boolean
+        appendTextNewline: Boolean,
+        stream: BridgeStream
     ): BridgeResult {
         val status = ShizukuBridgeStatus.snapshotForExecution()
         if (status.status != ShizukuBridgeStatus.STATUS_READY) {
@@ -272,19 +288,22 @@ object HostSelfAdbBridgeWorker {
             val remote = service.newProcess(arrayOf("/system/bin/sh", "-c", command), null, "/")
             val stdout = ByteArrayOutputStream()
             val stderr = ByteArrayOutputStream()
-            val stdoutThread = drainAsync(remote.inputStream, stdout)
-            val stderrThread = drainAsync(remote.errorStream, stderr)
+            val stdoutThread = drainAsync(remote.inputStream, stdout, stream.stdout)
+            val stderrThread = drainAsync(remote.errorStream, stderr, stream.stderr)
             ParcelFileDescriptor.AutoCloseOutputStream(remote.outputStream).use { output ->
                 output.write(stdin)
                 output.flush()
             }
 
-            val completed = runCatching {
-                remote.waitForTimeout(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS.name)
-            }.getOrDefault(false)
-            if (!completed) {
-                runCatching { remote.destroy() }
-                return BridgeResult(124, stdout.toByteArray(), stderr.toByteArray() + "kf-host-self command timed out\n".toByteArray())
+            while (true) {
+                val completed = runCatching {
+                    remote.waitForTimeout(500L, TimeUnit.MILLISECONDS.name)
+                }.getOrDefault(false)
+                if (completed) break
+                if (stream.cancel.exists()) {
+                    runCatching { remote.destroy() }
+                    return BridgeResult(130, stdout.toByteArray(), stderr.toByteArray() + "kf-host-self command cancelled\n".toByteArray())
+                }
             }
             stdoutThread.join(1_000L)
             stderrThread.join(1_000L)
@@ -300,11 +319,14 @@ object HostSelfAdbBridgeWorker {
 
     private fun drainAsync(
         descriptor: ParcelFileDescriptor?,
-        output: ByteArrayOutputStream
+        output: ByteArrayOutputStream,
+        streamFile: File
     ): Thread {
         return thread(start = true, isDaemon = true, name = "kf-adb-bridge-drain") {
             if (descriptor == null) return@thread
+            streamFile.parentFile?.mkdirs()
             ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                FileOutputStream(streamFile, true).use { stream ->
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                 var total = 0
                 while (true) {
@@ -314,9 +336,24 @@ object HostSelfAdbBridgeWorker {
                     if (remaining <= 0) break
                     val accepted = minOf(read, remaining)
                     output.write(buffer, 0, accepted)
+                    stream.write(buffer, 0, accepted)
+                    stream.flush()
                     total += accepted
                 }
+                }
             }
+        }
+    }
+
+    private data class BridgeStream(
+        val stdout: File,
+        val stderr: File,
+        val cancel: File
+    ) {
+        fun clear() {
+            stdout.delete()
+            stderr.delete()
+            cancel.delete()
         }
     }
 

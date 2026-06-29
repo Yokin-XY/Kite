@@ -3,42 +3,66 @@
   "id": "kite.tool.env",
   "base": {
     "name": "工具环境合集",
-    "description": "pnpm、uv、adb 与常用命令合集",
-    "version": "v14",
+    "description": "pnpm、wget、jq、rg、fd、zip、unzip、zstd、file、procps、iproute2、net-tools、dnsutils 常用命令合集",
+    "version": "v16",
     "icon": {
       "type": "text",
       "value": ">_"
     }
   },
   "display": {
-    "sections": [],
+    "sections": [
+      "search-only"
+    ],
     "category": "系统工具",
     "accent": "teal",
     "sizeLabel": "内置包",
-    "longDescription": "工具环境合集是隐藏的底层资源包，提供 pnpm、uv、adb 与常用命令合集。它不直接进入资源首页，只作为能力提供者被上层资源复用。",
+    "longDescription": "工具环境合集是隐藏的底层资源包，必需接入 pnpm、wget、jq、rg、fd、zip；离线 rootfs 里已有的压缩、网络、DNS、进程、文本和文件类常用命令会尽量接入。curl 与 Git 是独立资源，ADB/fastboot 属于 Kite 系统命令层，不参与资源注册和卸载。",
     "recommendations": [],
     "tags": [
       "tool",
       "node",
       "pnpm",
-      "uv",
-      "adb"
+      "wget",
+      "jq",
+      "rg",
+      "fd",
+      "zip",
+      "unzip",
+      "zstd",
+      "file",
+      "procps",
+      "iproute2",
+      "net-tools",
+      "dnsutils",
+      "system",
+      "archive",
+      "network",
+      "dns",
+      "process"
     ]
   },
   "relations": {
     "provides": [
-      "runtime.node>=24",
-      "tool.npm",
-      "tool.npx",
       "tool.pnpm",
-      "tool.uv",
-      "tool.uvx",
-      "tool.adb",
-      "tool.fastboot",
+      "tool.wget",
       "tool.ripgrep",
-      "tool.jq"
+      "tool.fd",
+      "tool.jq",
+      "tool.zip",
+      "tool.archive",
+      "tool.network",
+      "tool.dns",
+      "tool.procps",
+      "tool.iproute2",
+      "tool.net-tools",
+      "tool.coreutils",
+      "tool.textutils",
+      "tool.file"
     ],
-    "base": [],
+    "base": [
+      "kite.nodejs"
+    ],
     "defaults": [],
     "extensions": []
   },
@@ -55,7 +79,7 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "install.sh --install"
+        "cmd": "install.sh --install-system-tools"
       }
     ],
     "open": {
@@ -63,8 +87,8 @@
       "recipe": {
         "base": {
           "id": "",
-          "name": "工具环境合集",
-          "description": "检查常用开发工具命令",
+            "name": "工具环境合集",
+          "description": "检查常用系统工具命令",
           "icon": {
             "type": "builtin",
             "name": "tools"
@@ -76,7 +100,7 @@
         "recipe": [
           {
             "type": "shell",
-            "cmd": "node --version && npm --version && uv --version && rg --version | head -1 || true",
+            "cmd": "for c in pnpm wget jq rg fd zip unzip zstd file ps ip ss netstat dig nslookup host; do printf \"%s: \" \"$c\"; if command -v \"$c\" >/dev/null 2>&1; then \"$c\" --version 2>&1 | sed -n '1p' || echo present; else echo missing; fi; done",
             "surfaceMode": "panel"
           }
         ]
@@ -85,7 +109,7 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove software root and tool wrappers"
+        "cmd": "rm -rf /workspace/.kf/software/kite.tool.env /workspace/.kf/cache/resources/kite.tool.env; for c in pnpm pnpx wget jq rg fd zip unzip zstd file tar gzip gunzip xz unxz bzip2 bunzip2 ps pgrep pkill pidof top free ip ss netstat ping dig nslookup host update-ca-certificates less tree rsync patch sed awk grep find xargs sort uniq head tail cut tr wc tee env which whoami id uname date sleep timeout kill sha256sum sha1sum md5sum base64 chmod chown chgrp ln readlink realpath mkdir rmdir rm cp mv touch du df stat systemctl service; do rm -f \"/workspace/.kf/bin/$c\"; done"
       }
     ]
   },
