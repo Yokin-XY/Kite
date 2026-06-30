@@ -17,7 +17,8 @@
 | T3 统一源码包名 | P1 | done | namespace+137源文件+5测试文件统一;编译/测试/APK 全绿 |
 | T4 contracts 子包 | P1 | partial | T4.1 model 下沉 done;T4.2-4.4 实现类接口反转延后 |
 | T5 斩断反向依赖 | P1 | done | 4处反向依赖归零;3接口反转+ContentProvider注入 |
-| T6 ScreenRouter + 首个 Fragment | P2 | in_progress | P1 完成,进入 P2 |
+| T6.0 路由契约测试 | P2 前置 | done | 7 条 Robolectric 路由测试(ADR-014) |
+| T6 ScreenRouter + 首个 Fragment | P2 | in_progress | T6a ScreenRouter 骨架 done;T6b RecipeDetail Fragment 待续 |
 | T7 拆资源 Screen(4个) | P2 | pending | 依赖 T6 |
 | T8 拆 CardRun/Terminal + ViewModel | P2 | pending | 依赖 T7 |
 | T9 收敛 showCardRunSurface | P2 | pending | 依赖 T8 |
