@@ -16,8 +16,8 @@
 | T2 Bridge 协议契约测试 | P0 | done | 31 条测试全绿(25 协议解析 + 6 detached) |
 | T3 统一源码包名 | P1 | done | namespace+137源文件+5测试文件统一;编译/测试/APK 全绿 |
 | T4 contracts 子包 | P1 | partial | T4.1 model 下沉 done;T4.2-4.4 实现类接口反转延后 |
-| T5 斩断反向依赖 | P1 | pending | 分析完成,待执行(4处反向依赖+解法已记录在日志) |
-| T6 ScreenRouter + 首个 Fragment | P2 | pending | 依赖 T1-T5 |
+| T5 斩断反向依赖 | P1 | done | 4处反向依赖归零;3接口反转+ContentProvider注入 |
+| T6 ScreenRouter + 首个 Fragment | P2 | in_progress | P1 完成,进入 P2 |
 | T7 拆资源 Screen(4个) | P2 | pending | 依赖 T6 |
 | T8 拆 CardRun/Terminal + ViewModel | P2 | pending | 依赖 T7 |
 | T9 收敛 showCardRunSurface | P2 | pending | 依赖 T8 |
@@ -52,6 +52,27 @@
 - 修正:Python 脚本里 ACTIVITY 原误指死代码 ui.main.MainActivity,改为真实注册的 MainActivity
 
 **决策**:ADR-001 修订为"彻底统一含 namespace"(用户拍板);ADR-010 按子包分批(实际因 import 跨包特性,文本替换一次性做、验证一次性做)。
+
+### T6 [blocked-需真机或测试保护] ScreenRouter + RecipeDetail Fragment
+
+**触发 Playbook §0.4 停下**:T6 影响 19591 行 God Activity 的 Screen 路由(用户可见流程),验收硬性要求真机校准(§6),但当前环境无真机;且 UI 路由无测试保护(P0 测试只覆盖 Store/协议)。
+
+**三问自检**:
+- 目标:搭 ScreenRouter + 抽 RecipeDetail Fragment,验证整套机制。
+- 验收:RecipeDetail 由 Fragment 渲染、老函数删除、其他 Screen 不受影响、**真机走通**。
+- 前置:T1-T5 done。✅ 但真机校准不可用。
+
+**真实复杂度**(2026-06-30 explore 摸清):
+- `Screen.RecipeDetail` 不是配方详情主页(那是 CreateConfig),而是 3 个只读子页面:showRecipeRawJson(17155)/showRecipeRunHistoryDetail(17281)/showRecipeRunHistoryStepReport(17394)
+- `showRunHistoryDetail`(17304)/`showRunHistoryStepReport` 与 Screen.ResourceMore 共用 → 不能整体搬走
+- 无中心路由函数,17 处分散赋值 currentScreen;无 Screen 历史栈,onBackPressed 硬编码回退映射
+- rootHost(FrameLayout,181/368/379)可作 Fragment 容器;root(LinearLayout,182)是命令式 View 挂载点
+- clearRootForScreen(2172)是全局副作用中枢,Fragment 路径仍需调它清场
+- RecipeDetail 子页面通过 backAction 闭包串联,Fragment 化要改 Fragment back stack
+
+**风险**:在无真机、无 UI 测试保护下动 Screen 路由,改坏用户可见流程概率高。
+
+**待用户决策**:见 AskUserQuestion(真机可用性 / 是否先补 UI 测试 / 是否调整 P2 策略)。
 
 ### T5 [分析完成,待执行] 斩断 foundation→业务层反向依赖
 

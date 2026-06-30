@@ -40,7 +40,13 @@
 - **理由**(用户拍板):保持执行效率,信任 Playbook 的治理机制和 P0 测试防线。
 - **影响**:T5-T12 的执行节奏。
 
-## ADR-013 T4.2-T4.4 实现类接口反转延后到 P2 之后
+## ADR-014 P2 前置:先补 UI 路由测试再拆 God Activity
+
+- **日期**:2026-06-30
+- **决策**:在 T6 之前插入 T6.0——给 MainActivity 的 Screen 路由补 Robolectric 测试,锁住路由行为(navigate/back/restore),再做 T6-T9。真机校准延后到 P2 末尾统一做。
+- **理由**(用户拍板):P2 影响 19591 行 God Activity 的用户可见流程,T6 验收硬性要求真机(§6)但当前无真机;UI 路由又无测试保护。先补路由测试,既能在无真机下安全推进 P2,又把"路由行为契约"钉死,防止 T6-T9 改坏。
+- **新增任务**:T6.0(路由测试),作为 T6 的前置。
+- **影响**:任务列表新增 T6.0;P2 推进方式变为"测试先行"。
 
 - **日期**:2026-06-30
 - **决策**:T4 以 T4.1(纯 model 下沉)为可交付成果;T4.2-T4.4(KFContainerManager ↔ WorkSurfaceRuntimeBridge/KFWorkspaceManager/WorkspaceBuildSupport 的接口反转)延后到 P2 拆 God Activity 之后。

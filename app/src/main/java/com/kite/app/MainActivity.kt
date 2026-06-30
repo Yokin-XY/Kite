@@ -199,6 +199,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private val activeRunInstanceIds = mutableMapOf<String, String>()
     private val cardRunWindowHiddenSurfaces = mutableMapOf<String, MutableSet<String>>()
     private val actionRouter = KiteActionRouter()
+    /**
+     * Screen 路由收口(T6)。过渡期把 navigate 委托回老的 show* 方法;
+     * 后续各 Screen 逐个 Fragment 化时,在此替换为 routeToFragment。
+     */
+    private val screenRouter: ScreenRouter by lazy {
+        ScreenRouter(this) { screen -> dispatchLegacyScreen(screen) }
+    }
     private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
     private var currentScreen: Screen = Screen.Console
 
@@ -2208,6 +2215,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             transaction.commitNowAllowingStateLoss()
         }
         root.removeAllViews()
+    }
+
+    /**
+     * 过渡期:ScreenRouter 的老路径分发。把 Screen 枚举映射到老的 show* 方法。
+     * T6b 起逐个 Screen 改走 Fragment 时,这些分支会被 routeToFragment 取代。
+     * 仅无参、可在路由层触发的 Screen 在此分发;带参 Screen(如 ResourceDetail 需 resourceId)
+     * 仍由各自的 show*(args) 直接调用,不经过此无参入口。
+     */
+    private fun dispatchLegacyScreen(screen: Screen) {
+        when (screen) {
+            Screen.Console -> showConsole()
+            Screen.Settings -> showSettings()
+            Screen.ThemeSettings -> showThemeSettings()
+            Screen.Resources -> showResources()
+            // 带 arg 或条件复杂的 Screen 暂不在无参路由分发,保留各自入口
+            else -> Unit
+        }
     }
 
     private fun applyKiteTerminalTheme() {
@@ -19470,7 +19494,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
-    private enum class Screen {
+    internal enum class Screen {
         Console,
         Terminal,
         Workbench,
