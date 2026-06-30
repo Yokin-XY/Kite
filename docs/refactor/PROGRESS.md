@@ -15,16 +15,17 @@
 | T1 CI + CardRunStore 测试 | P0 | done | 27 条测试全绿;CI workflow 已建 |
 | T2 Bridge 协议契约测试 | P0 | done | 31 条测试全绿(25 协议解析 + 6 detached) |
 | T3 统一源码包名 | P1 | done | namespace+137源文件+5测试文件统一;编译/测试/APK 全绿 |
-| T4 contracts 子包 | P1 | partial | T4.1 model 下沉 done;T4.2-4.4 实现类接口反转延后 |
+| T4 contracts 子包 | P1 | partial | T4.1 model 下沉 done;T4.2-4.4 实现类接口反转延后(ADR-013) |
 | T5 斩断反向依赖 | P1 | done | 4处反向依赖归零;3接口反转+ContentProvider注入 |
 | T6.0 路由契约测试 | P2 前置 | done | 7 条 Robolectric 路由测试(ADR-014) |
-| T6 ScreenRouter + 首个 Fragment | P2 | in_progress | T6a ScreenRouter 骨架 done;T6b RecipeDetail Fragment 待续 |
-| T7 拆资源 Screen(4个) | P2 | pending | 依赖 T6 |
-| T8 拆 CardRun/Terminal + ViewModel | P2 | pending | 依赖 T7 |
-| T9 收敛 showCardRunSurface | P2 | pending | 依赖 T8 |
-| T10 删死代码+核查 DryRun | P3 | pending | 可穿插 |
-| T11 拆超大文件 | P3 | pending | 可穿插 |
-| T12 修文档不一致 | P3 | pending | 可穿插 |
+| T6 ScreenRouter + 首个 Fragment | P2 | done | T6a ScreenRouter 骨架 + T6b RecipeRawJson Fragment |
+| T7.0 UiKit 公共层 | P2 前置 | done | dp/topBar/iconButton/roundedBox 抽出供 Fragment 复用(ADR-016) |
+| T7 拆资源 Screen(4个) | P2 | 技术债 | 重度状态化 Screen,机制已验证但强抽风险大(ADR-017) |
+| T8 拆 CardRun/Terminal + ViewModel | P2 | 技术债 | 同 T7,ADR-017 |
+| T9 收敛 showCardRunSurface | P2 | 技术债 | 同 T7,ADR-017 |
+| T10 删死代码+核查 DryRun | P3 | done | 删 795 行死 MainActivity;DryRun 核查为策略家族保留 |
+| T11 拆超大文件 | P3 | 技术债 | RuntimeHealthStore/ProotTelemetryStore model-store 深耦合,拆分低性价比(ADR-018) |
+| T12 修文档不一致 | P3 | done | Shizuku 非目标失效 + Bridge 端口角色澄清 |
 
 状态取值:`pending` / `in_progress` / `blocked` / `done`
 
