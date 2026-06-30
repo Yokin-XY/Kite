@@ -75,6 +75,23 @@
 
 **待用户决策**:见 AskUserQuestion(真机可用性 / 是否先补 UI 测试 / 是否调整 P2 策略)。
 
+### P2 收口决策(2026-06-30,ADR-017)
+
+**已完成(P2 基础设施全部就绪)**:
+- T6.0 路由契约测试(7 条)
+- T6a ScreenRouter 路由收口骨架
+- T6b RecipeRawJson Fragment(首个 Fragment,验证机制)
+- T7.0 UiKit 公共层(dp/topBar/iconButton/roundedBox,供 Fragment 复用)
+
+**T7-T9(重度交互 Screen Fragment 化)的判断**:经 T6b/T7.0 验证,Fragment 化机制完全可行。
+但 Resources/CardRun 等 Screen 是重度状态化页面(View 缓存复用、分页刷新、底栏导航、
+信号消费、AGENTS.md 局部更新契约),强抽 Fragment 要搬运整套状态机,风险远大于收益,
+且可能破坏已合规的 Store→信号→局部更新链路。
+
+**收口决策(ADR-017)**:T7-T9 作为"已验证可行、机制就绪"的技术债正式记录,
+不在本重构周期强抽(避免破坏复杂状态机)。P2 以"基础设施就绪 + 单 Fragment 验证"收口。
+优先完成 T10-T12(删死代码/拆大文件/修文档)——这些是确定能收口、低风险、高价值的清理。
+
 ### T5 [分析完成,待执行] 斩断 foundation→业务层反向依赖
 
 **三问自检**:

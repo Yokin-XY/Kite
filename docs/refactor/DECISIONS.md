@@ -40,7 +40,13 @@
 - **理由**(用户拍板):保持执行效率,信任 Playbook 的治理机制和 P0 测试防线。
 - **影响**:T5-T12 的执行节奏。
 
-## ADR-016 P2 策略:先抽 UiKit 公共层再抽 Fragment
+## ADR-017 P2 收口:T7-T9 列为技术债,优先 T10-T12
+
+- **日期**:2026-06-30
+- **决策**:P2 以"基础设施就绪 + 单 Fragment 验证"收口。T7-T9(资源/CardRun 重度交互 Screen 的 Fragment 化)作为已验证可行的技术债记录,不在本周期强抽;优先完成 T10-T12(删死代码/拆大文件/修文档)。
+- **理由**:T6b/T7.0 已证明 Fragment 化机制可行(ScreenRouter/UiKit/容器/back 处理全部跑通)。但 Resources 等是重度状态化页面(View 缓存、分页刷新、信号消费、AGENTS.md 局部更新契约),强抽 Fragment 需搬运整套状态机,风险大于收益,可能破坏已合规的 Store→信号→局部更新链路。T10-T12 则是确定能收口、低风险、高价值的清理。
+- **T7-T9 何时做**:机制已就绪,未来可按 T6b 模式逐个迁移(需配合对各 Screen 状态机的细致解耦)。
+- **影响**:重构以"P0+P1 全部完成 + P2 基础设施完成 + P3 清理收口"作为本周期终点。
 
 - **日期**:2026-06-30
 - **决策**:T7-T9 前,先把 MainActivity 的通用 UI 工具(dp/topBar/tokens/row/iconButton/配色)抽到独立 UiKit,供所有 Fragment 复用;再抽资源/CardRun Fragment。

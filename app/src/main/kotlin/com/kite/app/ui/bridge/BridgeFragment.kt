@@ -101,7 +101,9 @@ class BridgeFragment : Fragment() {
     }
 
     private fun adbCommand(action: String): String {
-        return "adb shell am start-activity -n ${requireContext().packageName}/.ui.main.MainActivity " +
+        // 指向真实注册的 com.kite.app.MainActivity(它处理 toolchain_action automation intent)。
+        // 原 .ui.main.MainActivity 是未注册的死代码(T10 已删),该 adb 命令本就跑不通。
+        return "adb shell am start-activity -n ${requireContext().packageName}/.MainActivity " +
             "--es toolchain_action $action"
     }
 
