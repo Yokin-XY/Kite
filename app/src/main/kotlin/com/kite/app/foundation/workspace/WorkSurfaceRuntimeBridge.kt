@@ -25,7 +25,7 @@ internal data class WorkSurfaceRuntimeDefaults(
  * 只放：工作面进入底层所需的稳定入口与默认值。
  * 不放：UI 路由、任务分发、具体业务编排。
  */
-object WorkSurfaceRuntimeBridge {
+object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceContract {
 
     internal val defaults = WorkSurfaceRuntimeDefaults(
         workspaceDir = WorkspaceBuildSupport.CONTAINER_WORKSPACE_ROOT,
@@ -36,7 +36,7 @@ object WorkSurfaceRuntimeBridge {
     val containerState
         get() = KFContainerManager.containerState
 
-    fun getSavedContainer(context: Context): ContainerRecord? {
+    override fun getSavedContainer(context: Context): ContainerRecord? {
         return KFContainerManager.getSavedContainer(context.applicationContext)
     }
 
@@ -64,7 +64,7 @@ object WorkSurfaceRuntimeBridge {
         return getRuntimeLayout(context).runtimeRoot
     }
 
-    fun getLogsDir(context: Context): File {
+    override fun getLogsDir(context: Context): File {
         return getRuntimeLayout(context).logsDir
     }
 
@@ -72,9 +72,9 @@ object WorkSurfaceRuntimeBridge {
         return ExternalExchangeManager.ensureExchangeDir(context.applicationContext)
     }
 
-    fun resolveRuntimeSnapshot(
+    override fun resolveRuntimeSnapshot(
         context: Context,
-        container: ContainerRecord? = null
+        container: ContainerRecord?
     ): RuntimeBoundarySnapshot {
         return RuntimeBoundary.resolveSnapshot(
             context = context.applicationContext,
@@ -82,10 +82,10 @@ object WorkSurfaceRuntimeBridge {
         )
     }
 
-    fun describeHostPath(
+    override fun describeHostPath(
         context: Context,
         path: String?,
-        container: ContainerRecord? = null
+        container: ContainerRecord?
     ): String {
         return RuntimeBoundary.describeHostPath(
             context = context.applicationContext,
@@ -173,19 +173,19 @@ object WorkSurfaceRuntimeBridge {
         }
     }
 
-    fun actionRouteLabel(action: RuntimeActionKind): String {
+    override fun actionRouteLabel(action: RuntimeActionKind): String {
         return RuntimeBoundary.routeFor(action).label
     }
 
-    fun hostPathAliases(container: ContainerRecord): Set<String> {
+    override fun hostPathAliases(container: ContainerRecord): Set<String> {
         return RuntimeBoundary.hostPathAliases(container)
     }
 
-    fun hostPathAliases(rootfsPath: String, workspacePath: String): Set<String> {
+    override fun hostPathAliases(rootfsPath: String, workspacePath: String): Set<String> {
         return RuntimeBoundary.hostPathAliases(rootfsPath, workspacePath)
     }
 
-    fun containerPathAliases(): Set<String> {
+    override fun containerPathAliases(): Set<String> {
         return RuntimeBoundary.containerPathAliases()
     }
 
@@ -203,7 +203,7 @@ object WorkSurfaceRuntimeBridge {
         return KFContainerManager.ensureDefaultContainer(context.applicationContext)
     }
 
-    fun resolveActiveContainer(context: Context): ContainerRecord {
+    override fun resolveActiveContainer(context: Context): ContainerRecord {
         return getSavedContainer(context) ?: ensureDefaultContainer(context)
     }
 
@@ -222,7 +222,7 @@ object WorkSurfaceRuntimeBridge {
         KFContainerManager.markRunning(context.applicationContext, pid)
     }
 
-    fun markContainerStopped(context: Context) {
+    override fun markContainerStopped(context: Context) {
         KFContainerManager.markStopped(context.applicationContext)
     }
 
