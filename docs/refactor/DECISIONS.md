@@ -40,7 +40,13 @@
 - **理由**(用户拍板):保持执行效率,信任 Playbook 的治理机制和 P0 测试防线。
 - **影响**:T5-T12 的执行节奏。
 
-## ADR-015 真机全程可用,P2 走真机验证
+## ADR-016 P2 策略:先抽 UiKit 公共层再抽 Fragment
+
+- **日期**:2026-06-30
+- **决策**:T7-T9 前,先把 MainActivity 的通用 UI 工具(dp/topBar/tokens/row/iconButton/配色)抽到独立 UiKit,供所有 Fragment 复用;再抽资源/CardRun Fragment。
+- **理由**(用户拍板):T6b 验证了 Fragment 机制,但 RecipeRawJsonFragment 是自包含只读页,复刻了 dp/顶栏/配色。若 T7-T9 的重度交互 Screen 也各自复刻,会产生大量重复 UI 代码,反而更乱。先抽 UiKit 公共层,后续 Fragment 复用,代码更干净。
+- **新增任务**:T7.0(UiKit 公共层),作为 T7 前置。
+- **影响**:T7 拆成 T7.0(UiKit)+ T7(资源 Fragment)。
 
 - **日期**:2026-06-30
 - **决策**:P2(T6b-T9)每个 Fragment 抽取后,走真机验证闭环:构建→安装到 1+8T(serial 3f8bbaad)→启动→截图。不再把真机校准延后。

@@ -169,7 +169,8 @@ import org.json.JSONObject
 
 open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     RecipeRawJsonFragment.RecipeProvider,
-    RecipeRawJsonFragment.RecipeRawJsonHost {
+    RecipeRawJsonFragment.RecipeRawJsonHost,
+    RecipeRawJsonFragment.UiKitProvider {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
@@ -17238,6 +17239,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     /** RecipeRawJsonFragment.RecipeProvider 实现:按 id 加载最新 recipe。 */
     override fun latestRecipeFor(recipeId: String): KiteRecipe? = latestRecipeById(recipeId)
+
+    /** RecipeRawJsonFragment.UiKitProvider 实现:共享 Activity 的主题 tokens 给 Fragment。 */
+    override fun provideUiKit(): com.kite.app.ui.UiKit =
+        com.kite.app.ui.UiKit(this, tokens)
 
     private fun latestRecipeById(recipeId: String): KiteRecipe {
         val seed = currentRecipes.firstOrNull { it.id == recipeId || it.name == recipeId }

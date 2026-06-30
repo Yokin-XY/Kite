@@ -12,6 +12,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import com.kite.app.theme.ThemeTokens
+import com.kite.app.ui.UiKit
 
 /**
  * T6b 样板:把 Screen.RecipeDetail 中的"原始 JSON"只读页抽成 Fragment。
@@ -52,8 +54,11 @@ class RecipeRawJsonFragment : Fragment() {
 
     private fun buildContent(): View {
         val ctx = requireContext()
-        val density = resources.displayMetrics.density
-        fun dp(v: Int) = (v * density).toInt()
+        // 复用公共 UiKit(T7.0):不再自己写 dp/顶栏/配色,与 Activity 保持视觉一致。
+        // 宿主 Activity 必须提供 UiKit(含正确主题 tokens)。
+        val ui = (activity as? UiKitProvider)?.provideUiKit()
+            ?: error("宿主 Activity 必须实现 UiKitProvider")
+        val host = activity as? RecipeRawJsonHost
 
         val recipe = recipeId?.let { provider.latestRecipeFor(it) }
         val jsonText = recipe?.toJson(includeLocalIdentity = true)?.toString(2)
@@ -62,38 +67,24 @@ class RecipeRawJsonFragment : Fragment() {
         return LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#0F1115"))
-            // 顶栏:返回按钮 + 标题
-            addView(LinearLayout(ctx).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(18), dp(14), dp(18), dp(10))
-                addView(TextView(ctx).apply {
-                    text = "‹"
-                    textSize = 22f
-                    setTextColor(Color.parseColor("#E6E8EC"))
-                    setPadding(dp(12), dp(6), dp(12), dp(6))
-                    setOnClickListener { (activity as? RecipeRawJsonHost)?.onExitRecipeRawJson() }
-                })
-                addView(TextView(ctx).apply {
-                    text = "原始 JSON"
-                    textSize = 20f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(Color.parseColor("#E6E8EC"))
-                    gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                })
-                addView(View(ctx), LinearLayout.LayoutParams(dp(44), dp(44)))
-            })
+            // 顶栏:复用 UiKit.topBar
+            addView(ui.topBar(ctx, "原始 JSON") { host?.onExitRecipeRawJson() })
             // JSON 文本
             addView(ScrollView(ctx).apply {
                 addView(TextView(ctx).apply {
                     text = jsonText
                     textSize = 13f
                     setTextColor(Color.parseColor("#C8CDD6"))
-                    setPadding(dp(24), dp(20), dp(24), dp(28))
+                    setPadding(ui.dp(24), ui.dp(20), ui.dp(24), ui.dp(28))
                     typeface = Typeface.MONOSPACE
                 })
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
+    }
+
+    /** 宿主可提供共享的 UiKit(含正确主题 tokens);不提供则用默认深色。 */
+    interface UiKitProvider {
+        fun provideUiKit(): UiKit
     }
 
     interface RecipeRawJsonHost {
