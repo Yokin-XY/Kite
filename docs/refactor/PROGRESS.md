@@ -15,8 +15,8 @@
 | T1 CI + CardRunStore 测试 | P0 | done | 27 条测试全绿;CI workflow 已建 |
 | T2 Bridge 协议契约测试 | P0 | done | 31 条测试全绿(25 协议解析 + 6 detached) |
 | T3 统一源码包名 | P1 | done | namespace+137源文件+5测试文件统一;编译/测试/APK 全绿 |
-| T4 contracts 子包 | P1 | in_progress | 依赖 T3 done |
-| T5 斩断反向依赖 | P1 | pending | 依赖 T3 |
+| T4 contracts 子包 | P1 | partial | T4.1 model 下沉 done;T4.2-4.4 实现类接口反转延后 |
+| T5 斩断反向依赖 | P1 | pending | 分析完成,待执行(4处反向依赖+解法已记录在日志) |
 | T6 ScreenRouter + 首个 Fragment | P2 | pending | 依赖 T1-T5 |
 | T7 拆资源 Screen(4个) | P2 | pending | 依赖 T6 |
 | T8 拆 CardRun/Terminal + ViewModel | P2 | pending | 依赖 T7 |
@@ -42,6 +42,53 @@
 
 **实现摘要**:协议消费的纯逻辑入口是 `KiteRunReport.fromJsonOrNull`,不耦合 HTTP,直接单测。
 用 Robolectric 跑(因 Android org.json.JSONObject 在纯 JUnit 下 "not mocked")。
+
+### T3 [done] 统一源码包名
+
+**验收结果**:
+- [x] namespace + 137 源文件 + 5 测试文件统一到 com.kite.app
+- [x] `grep -r "com.kftest" app/src` 源码 0 命中(仅历史提交保留)
+- [x] compileDebugKotlin 通过 / testDebugUnitTest 全绿 / assembleDebug 成功
+- 修正:Python 脚本里 ACTIVITY 原误指死代码 ui.main.MainActivity,改为真实注册的 MainActivity
+
+**决策**:ADR-001 修订为"彻底统一含 namespace"(用户拍板);ADR-010 按子包分批(实际因 import 跨包特性,文本替换一次性做、验证一次性做)。
+
+### T5 [分析完成,待执行] 斩断 foundation→业务层反向依赖
+
+**三问自检**:
+- 目标:foundation 子树对 MainActivity/CardRunActivity/KiteResourceInstallStore/KiteResourceRegistry/KiteBrowserProxyInstaller 的 import 归零。
+- 验收:上述 import 归零;编译+测试绿。
+- 前置:T3 done。✅
+
+**4 处反向依赖与具体用法**(2026-06-30 读源码确认):
+
+1. **KFShellService.kt**(3 处,均为 Activity 类引用):
+   - :201 `MainActivity::class.java.name` — onTaskRemoved 检查被移除任务是否主任务
+   - :214 `CardRunActivity::class.java.name` — finishCardRunDocumentTasks 过滤卡片运行任务
+   - :227 `Intent(this, MainActivity::class.java)` — 通知 PendingIntent 跳转
+   - 解法:抽 `KiteTaskContract` 接口(foundation 定义),提供 `mainActivityClass: Class<*>` 和 `cardRunActivityClass: Class<*>`,在 KFApplication.onCreate 注入。
+
+2. **TerminalSessionController.kt:971**:`KiteBrowserProxyInstaller.defaultEnvironment(appContext, "terminal_page")`
+   - 解法:抽 `BrowserEnvironmentProvider` 接口,或把 defaultEnvironment 下沉到一个 foundation 可访问的工具。
+
+3. **ToolchainPackInstaller.kt**(多处):用 `KiteResourceInstallStore(ctx)` 查询/标记失败,`KiteResourceRegistry.STATUS_INSTALLED/FAILED` 常量。
+   - 解法:抽 `ResourceInstallPort` 接口(查询/标记失败),常量 STATUS_INSTALLED/FAILED 下沉到 contracts 或 foundation。
+
+**执行计划**(下次继续时):
+- [ ] 在 foundation 定义 3 个接口(KiteTaskContract/BrowserEnvironmentProvider/ResourceInstallPort)
+- [ ] 业务层实现接口,KFApplication 注入
+- [ ] 验证 import 归零 + 编译测试绿
+
+**T4.1 [done] 纯 model 下沉**(2026-06-30):
+- 下沉 Container*/Runtime*枚举/BaseImageProfile/Space*/ManagedTerminal*/Agent* 到 contracts
+- 双向依赖 23 符号 → 11 符号(均为实现类,model 部分已消除)
+- 编译 + 全量测试全绿
+- 关键决策:ProcessExitSemantics 不下沉(引用 service),RuntimeBoundary object 留 runtime(有行为),AgentRuntimeRecord.fromJson fallback 改空串
+
+**T4.2-T4.4 [延后] 实现类接口反转**:
+- 涉及 KFContainerManager ↔ WorkSurfaceRuntimeBridge/KFWorkspaceManager/WorkspaceBuildSupport 的密集双向调用(WorkSurfaceRuntimeBridge 委托 KFContainerManager 20+ 方法,反向亦然)
+- 判断:在 P2 拆 God Activity 之前做此深度接口反转风险高、边际收益低(这些 Manager 的调用方在 Activity 拆分后才会清晰;且无 UI 测试保护这些路径)
+- 决策:延后到 P2 之后,届时调用方清晰、可借 ViewModel 注入接口。当前 T4 以 model 下沉(T4.1)为可交付成果。
 
 ### T3 [blocked-需用户决策] 统一源码包名
 

@@ -21,7 +21,32 @@
 - **日期**:2026-06-30
 - **决策**:T3 的 137 文件迁移按 foundation 子包(runtime/workspace/service/terminal/toolchain/bootstrap/capability 等)、ui 子包、bridge 等分批进行,每批一个提交,每批编译+测试验证。
 - **理由**(用户拍板):137 文件一次性批量改风险高、出错难定位;分批迁移慢但安全,P0 测试全程兜底。
+- **实际执行**:因 import 跨包特性(改一个 package,所有引用方都要同时改),文本替换与验证一次性完成,但提交保持原子。
 - **影响**:T3 的提交粒度。
+
+## ADR-011 T4 彻底重构含接口反转
+
+- **日期**:2026-06-30
+- **决策**:T4 不只下沉纯 model,还要给实现类的双向耦合抽接口做依赖反转,彻底消除 runtime ↔ workspace 双向依赖。
+- **理由**(用户拍板):真正消除双向依赖才算治本;只下沉 model 留下实现类互引等于没解决核心问题。
+- **执行策略**:分两步——① 纯 model(enums/data class)下沉到 contracts;② 实现类互引用 contracts 接口反转(如 KFContainerManager 与 KFWorkspaceManager 之间定义 contracts 接口)。每步编译+测试验证。
+- **风险**:技术难度最高的一步,逐个设计接口,改错会破坏编译,靠 P0 测试 + 全量编译兜底。
+- **影响**:T4 的范围与执行方式。
+
+## ADR-012 后续任务继续自主推进
+
+- **日期**:2026-06-30
+- **决策**:T4 之后所有任务继续自主推进,仅在 Playbook §0.4 列明的必须停下情况才找用户(产品决策、范围超界、真机不可用等)。
+- **理由**(用户拍板):保持执行效率,信任 Playbook 的治理机制和 P0 测试防线。
+- **影响**:T5-T12 的执行节奏。
+
+## ADR-013 T4.2-T4.4 实现类接口反转延后到 P2 之后
+
+- **日期**:2026-06-30
+- **决策**:T4 以 T4.1(纯 model 下沉)为可交付成果;T4.2-T4.4(KFContainerManager ↔ WorkSurfaceRuntimeBridge/KFWorkspaceManager/WorkspaceBuildSupport 的接口反转)延后到 P2 拆 God Activity 之后。
+- **理由**(用户拍板):这些 object 单例有 20+ 方法密集互调,在 P2 之前做深度接口反转风险高、边际收益低——调用方在 Activity 拆分后才清晰,且这些路径无 UI 测试保护。延后到 P2 后可借 ViewModel 注入接口。
+- **现状**:双向依赖已从 23 符号降至 11(纯 model 已消除),剩余为实现类互引,记录为已知技术债。
+- **影响**:T4 状态标记 partial;T6-T9 完成后回头做 T4.2-T4.4。
 
 ## ADR-002 foundation→业务层反向依赖用接口反转,而非事件总线
 
