@@ -201,6 +201,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private val actionRouter = KiteActionRouter()
     private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
     private var currentScreen: Screen = Screen.Console
+
+    /**
+     * 仅用于单元测试:暴露当前 Screen 的枚举名(字符串),供 Robolectric 路由测试断言。
+     * 用字符串而非 Screen 类型,避免把 private nested enum 改成 internal。
+     * 生产代码不应调用。
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun currentScreenNameForTest(): String = currentScreen.name
+
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var consolePageId: String = CONSOLE_PAGE_ALL
     private var consolePageTabsView: TabLayout? = null
