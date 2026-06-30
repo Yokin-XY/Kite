@@ -56,8 +56,8 @@ SUMMARY_PATH = WORKSPACE / "proot-device-calibration-p0-summary.json"
 CHECKPOINT_PATH = WORKSPACE / "proot-device-calibration-p0-checkpoint.json"
 OVERLAY_PATH = WORKSPACE / "proot-device-calibration.json"
 WORKER_COST_LOG = WORKSPACE / "pt-worker-cost-curve-v1.jsonl"
-PKG = "com.kftest.app"
-ACTIVITY = "com.kftest.app/.ui.main.MainActivity"
+PKG = "com.kite.app"
+ACTIVITY = "com.kite.app/com.kite.app.MainActivity"
 
 
 def now_ms() -> int:

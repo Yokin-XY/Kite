@@ -8,13 +8,20 @@
 
 ---
 
-## ADR-001 保留 namespace/applicationId 分离,但统一源码物理路径
+## ADR-001 包名统一策略:彻底统一(含 namespace)
+
+- **日期**:2026-06-30(初版)→ 2026-06-30(用户决策后修订)
+- **决策**:T3 中**连 namespace 一起**改成 `com.kite.app`。即 `build.gradle` 的 `namespace` 从 `com.kftest.app` 改为 `com.kite.app`,源码 package/import/路径全部统一到 `com.kite.app`,R 类也生成在 `com.kite.app`。`applicationId` 本就是 `com.kite.app`,无需改。
+- **理由**(用户拍板):彻底统一最干净,真正消除双包名。保留 namespace 而只改源码路径会导致"源码在 com.kite.app 但 R 在 com.kftest.app"的分裂,每个文件要 import com.kftest.app.R,反而引入新的不统一,违背初衷。
+- **修订前备选**(已否决):保留 namespace 只改源码路径 —— 否决,理由如上。
+- **影响**:T3 的执行方式;generated R 包路径变化;全量编译验证必需。
+
+## ADR-010 T3 改动节奏:按子包分批迁移
 
 - **日期**:2026-06-30
-- **决策**:T3 中**保留** `namespace=com.kftest.app` + `applicationId=com.kite.app` 的分离(合法且常见),但把**源码物理路径**统一到 `com/kite/app/`。
-- **理由**:namespace 决定 R/BuildConfig 生成包,改它牵涉 generated 代码和资源引用,风险大;而源码路径统一即可消除"双源码树互引"这个真正的恶果。改动最小化。
-- **影响**:T3 的执行方式。
-- **备选方案(否决)**:连 namespace 一起改成 com.kite.app —— 否决,风险/收益比差。
+- **决策**:T3 的 137 文件迁移按 foundation 子包(runtime/workspace/service/terminal/toolchain/bootstrap/capability 等)、ui 子包、bridge 等分批进行,每批一个提交,每批编译+测试验证。
+- **理由**(用户拍板):137 文件一次性批量改风险高、出错难定位;分批迁移慢但安全,P0 测试全程兜底。
+- **影响**:T3 的提交粒度。
 
 ## ADR-002 foundation→业务层反向依赖用接口反转,而非事件总线
 

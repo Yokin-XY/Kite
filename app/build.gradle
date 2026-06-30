@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace "com.kftest.app"
+    namespace "com.kite.app"
     compileSdk 34
 
     defaultConfig {

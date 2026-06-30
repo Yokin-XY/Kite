@@ -14,9 +14,8 @@
 |---|---|---|---|
 | T1 CI + CardRunStore 测试 | P0 | done | 27 条测试全绿;CI workflow 已建 |
 | T2 Bridge 协议契约测试 | P0 | done | 31 条测试全绿(25 协议解析 + 6 detached) |
-| T2 Bridge 协议契约测试 | P0 | pending | 与 T1 并行 |
-| T3 统一源码包名 | P1 | pending | 依赖 T1,T2 |
-| T4 contracts 子包 | P1 | pending | 依赖 T3 |
+| T3 统一源码包名 | P1 | done | namespace+137源文件+5测试文件统一;编译/测试/APK 全绿 |
+| T4 contracts 子包 | P1 | in_progress | 依赖 T3 done |
 | T5 斩断反向依赖 | P1 | pending | 依赖 T3 |
 | T6 ScreenRouter + 首个 Fragment | P2 | pending | 依赖 T1-T5 |
 | T7 拆资源 Screen(4个) | P2 | pending | 依赖 T6 |
@@ -44,7 +43,29 @@
 **实现摘要**:协议消费的纯逻辑入口是 `KiteRunReport.fromJsonOrNull`,不耦合 HTTP,直接单测。
 用 Robolectric 跑(因 Android org.json.JSONObject 在纯 JUnit 下 "not mocked")。
 
-### T3 [in_progress] 统一源码包名(待启动前评估)
+### T3 [blocked-需用户决策] 统一源码包名
+
+**触发 Playbook §0.4 停下条件**(改动范围巨大 + 架构决策需用户拍板)
+
+**三问自检**:
+- 目标:消除 com.kftest.app / com.kite.app 双源码树互引。
+- 验收:源码里 com.kftest.app 引用归零(仅 build.gradle namespace 保留);编译+测试绿。
+- 前置:T1,T2 done。✅
+
+**评估出的规模与风险**(2026-06-30 读源码确认):
+- 137 个 Kotlin 文件要从 com/kftest/ 搬到 com/kite/
+- 152 个文件含 com.kftest.app import 要改
+- Manifest 6 处类名 + 1 处 action 字符串
+- 1 个 Python 脚本引用
+
+**关键架构冲突(需用户决策)**:
+ADR-001 说"保留 namespace=com.kftest.app"。但 Android 里:
+- namespace 决定生成的 R 类 / BuildConfig 的包(com.kftest.app.R)
+- 源码 package 声明必须和文件路径一致
+- Manifest 的 android:name 必须能解析到真实 package 的类
+若保留 namespace 但改源码 package 为 com.kite.app,R 类引用会出现"源码在 com.kite.app 但 R 在 com.kftest.app"的分裂,且每个文件都要 import com.kftest.app.R——这违背了"统一"的初衷。
+
+**待用户决策**:T3 的正确执行方式(见下方 AskUserQuestion)。
 
 **三问自检**(2026-06-30):
 - 目标:给 KiteBridgeClient 补全面的协议契约测试(≥15 条),覆盖 5 种响应+边界+错误路径。

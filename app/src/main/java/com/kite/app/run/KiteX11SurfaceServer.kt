@@ -7,7 +7,7 @@ import android.os.IBinder
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.view.View
-import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.termux.x11.LorieView
 import java.io.File
 import java.util.concurrent.CountDownLatch

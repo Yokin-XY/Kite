@@ -19,7 +19,7 @@
     <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
 
     <application
-        android:name="com.kftest.app.foundation.bootstrap.KFApplication"
+        android:name="com.kite.app.foundation.bootstrap.KFApplication"
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
@@ -79,12 +79,12 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
-            android:name="com.kftest.app.ui.logs.LogActivity"
+            android:name="com.kite.app.ui.logs.LogActivity"
             android:exported="false"
             android:label="KFShell 日志" />
 
         <service
-            android:name="com.kftest.app.foundation.service.KFShellService"
+            android:name="com.kite.app.foundation.service.KFShellService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
@@ -93,7 +93,7 @@
         </service>
 
         <service
-            android:name="com.kftest.app.bridge.service.FlaskApiService"
+            android:name="com.kite.app.bridge.service.FlaskApiService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
@@ -107,10 +107,10 @@
             android:process=":x11" />
 
         <receiver
-            android:name="com.kftest.app.foundation.runtime.RuntimeControlledLeaseProbeRegistrationReceiver"
+            android:name="com.kite.app.foundation.runtime.RuntimeControlledLeaseProbeRegistrationReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.kftest.app.action.REGISTER_CONTROLLED_LEASE_PROBE" />
+                <action android:name="com.kite.app.action.REGISTER_CONTROLLED_LEASE_PROBE" />
             </intent-filter>
         </receiver>
 

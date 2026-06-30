@@ -3,7 +3,7 @@ package com.kite.app.recipe
 import android.content.Context
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.KiteDropZoneManager
-import com.kftest.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.runtime.ExternalExchangeManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File

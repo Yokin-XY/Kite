@@ -4,7 +4,7 @@ import android.content.Context
 import android.os.Environment
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.recipe.KiteRecipe
-import com.kftest.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.runtime.ExternalExchangeManager
 import org.json.JSONObject
 import java.io.File
 import java.text.Normalizer

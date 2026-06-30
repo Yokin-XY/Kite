@@ -1,7 +1,7 @@
 package com.kite.app.bridge
 
 import android.content.Context
-import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.io.File
 
 data class KiteBrowserOpenRequest(
