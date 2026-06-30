@@ -696,6 +696,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resumePendingRuntimePermissionBootstrap()
         rebindVisibleResourceStateOnResume()
         ensureBundledToolBootstrapIfNeeded("resume")
+        if (this is CardRunActivity && rebindFocusedCardRunSurface("resume")) return
         when (currentScreen) {
             Screen.Console -> showConsole()
             Screen.Settings -> showSettings()
@@ -775,7 +776,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         val autoStart = sourceIntent?.getBooleanExtra(CardRunIntents.EXTRA_AUTO_START, true) ?: true
         val launchSource = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_LAUNCH_SOURCE).orEmpty()
         val launchKey = "$recipeId:$instanceId:$autoStart:$launchSource"
-        if (consumedCardRunLaunchKey == launchKey) return true
+        val existingLaunchState = CardRunStore.get(instanceId)
+        if (
+            consumedCardRunLaunchKey == launchKey &&
+            !shouldRestartConsumedCardRunLaunch(autoStart, existingLaunchState)
+        ) {
+            if (this is CardRunActivity) {
+                rebindCardRunLaunchSurface(sourceIntent, recipeId, instanceId, "duplicate_launch")
+            }
+            return true
+        }
         consumedCardRunLaunchKey = launchKey
 
         val isResourceInstallWizardLaunch = launchSource == CardRunIntents.SOURCE_RESOURCE_INSTALL ||
@@ -791,14 +801,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
 
         val recipes = recipeLoader.loadAllRecipes()
         currentRecipes = recipes
-        val recipe = recipes.firstOrNull { it.id == recipeId }
-            ?: CardRunStore.registeredRecipe(recipeId)
-            ?: temporaryRecipeFromIntent(sourceIntent, recipeId)
+        val recipe = resolveCardRunLaunchRecipe(sourceIntent, recipeId)
         if (recipe == null) {
             Toast.makeText(this, "未找到卡片：$recipeId", Toast.LENGTH_SHORT).show()
             diagnostics.logRecipeEvent("card_run_launch_missing_recipe", null, mapOf("recipeId" to recipeId))
             return true
         }
+        CardRunStore.registerRecipe(recipe)
 
         focusedRunRecipeId = recipe.id
         focusedRunInstanceId = instanceId
@@ -827,6 +836,75 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         } else {
             showConsole()
         }
+        return true
+    }
+
+    private fun shouldRestartConsumedCardRunLaunch(autoStart: Boolean, state: RecipeRuntimeState?): Boolean {
+        if (!autoStart) return false
+        return state == null ||
+            state.status == RecipeRunStatus.Stopped ||
+            state.status == RecipeRunStatus.Completed ||
+            state.status == RecipeRunStatus.Failed ||
+            state.status == RecipeRunStatus.BridgeUnavailable ||
+            state.status == RecipeRunStatus.Unknown
+    }
+
+    private fun resolveCardRunLaunchRecipe(sourceIntent: Intent?, recipeId: String): KiteRecipe? {
+        val recipes = currentRecipes.takeIf { it.isNotEmpty() } ?: recipeLoader.loadAllRecipes().also {
+            currentRecipes = it
+        }
+        return recipes.firstOrNull { it.id == recipeId }
+            ?: CardRunStore.registeredRecipe(recipeId)
+            ?: temporaryRecipeFromIntent(sourceIntent, recipeId)
+            ?: resourceOpenRecipeFromLaunchRecipeId(recipeId)
+    }
+
+    private fun resourceOpenRecipeFromLaunchRecipeId(recipeId: String): KiteRecipe? {
+        val resourceId = resourceIdForOpenRunRecipeId(recipeId) ?: return null
+        return runCatching {
+            resourceCatalog(forceRefresh = false)
+                .firstOrNull { it.id == resourceId }
+                ?.let { resourceOpenRecipe(it) }
+        }.getOrNull()
+    }
+
+    private fun rebindFocusedCardRunSurface(reason: String): Boolean {
+        val recipeId = focusedRunRecipeId
+            ?.takeIf { it.isNotBlank() }
+            ?: intent?.getStringExtra(CardRunIntents.EXTRA_RECIPE_ID)?.takeIf { it.isNotBlank() }
+            ?: return false
+        val instanceId = focusedRunInstanceId
+            ?.takeIf { it.isNotBlank() }
+            ?: intent?.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID)?.takeIf { it.isNotBlank() }
+            ?: recipeId
+        return rebindCardRunLaunchSurface(intent, recipeId, instanceId, reason)
+    }
+
+    private fun rebindCardRunLaunchSurface(
+        sourceIntent: Intent?,
+        recipeId: String,
+        instanceId: String,
+        reason: String
+    ): Boolean {
+        val recipe = resolveCardRunLaunchRecipe(sourceIntent, recipeId) ?: return false
+        CardRunStore.registerRecipe(recipe)
+        val state = CardRunStore.get(instanceId) ?: CardRunStore.currentForRecipe(recipe.id)
+        val resolvedInstanceId = state?.instanceId ?: instanceId
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = resolvedInstanceId
+        activeRunInstanceIds[recipe.id] = resolvedInstanceId
+        state?.let { runtimeStates[recipe.id] = it }
+        title = recipe.name
+        applyCardTaskDescription(recipe)
+        registerCardRunBrowserHandler(recipe, resolvedInstanceId)
+        registerCardRunDesktopHandler(recipe, resolvedInstanceId)
+        registerCardRunTaskCloser(resolvedInstanceId)
+        diagnostics.logRecipeAction(
+            recipe,
+            "card_run_task_rebound",
+            mapOf("instanceId" to resolvedInstanceId, "reason" to reason)
+        )
+        showCardRunSurface(recipe)
         return true
     }
 
@@ -1025,6 +1103,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                             updateVisibleCardRunReport(state)
                         }
                     }
+                    rebindVisibleCardRunSurfaceFromStore(runs)
                     if (currentScreen == Screen.Console && consoleCardBindings.isNotEmpty()) {
                         currentRecipes.forEach { recipe ->
                             val state = CardRunStore.currentForRecipe(recipe.id)
@@ -1040,6 +1119,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
                 }
             }
         }
+    }
+
+    private fun rebindVisibleCardRunSurfaceFromStore(runs: List<RecipeRuntimeState>) {
+        if (currentScreen != Screen.CardRun) return
+        val instanceId = focusedRunInstanceId?.takeIf { it.isNotBlank() } ?: return
+        val state = runs.firstOrNull { it.instanceId == instanceId } ?: return
+        val recipe = recipeForRunState(state) ?: return
+        val wizardChildRun = resourceInstallWizardSelectedRun(recipe, state.surface)
+        val actionRecipe = wizardChildRun?.first ?: recipe
+        val surfaceState = wizardChildRun?.second ?: state
+        val surfaceSignature = cardRunSurfaceSignature(recipe, state, actionRecipe, surfaceState)
+        if (surfaceSignature == cardRunSurfaceSignature) return
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = state.instanceId
+        activeRunInstanceIds[recipe.id] = state.instanceId
+        runtimeStates[recipe.id] = state
+        showCardRunSurface(recipe)
     }
 
     private fun observeResourceInstallSignals() {
@@ -8317,6 +8413,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             actionRecipe.id,
             surfaceState.instanceId,
             surfaceState.surface.name,
+            surfaceState.terminalSessionId.orEmpty(),
+            surfaceState.nextActionUrl.orEmpty(),
+            surfaceState.x11Display.orEmpty(),
+            surfaceState.x11SocketPath.orEmpty(),
             activeResourceInstallWizard?.selectedResourceId.orEmpty(),
             activeResourceInstallWizard?.selectedOperation.orEmpty(),
             activeResourceInstallWizard?.selectedSurface?.name.orEmpty()
