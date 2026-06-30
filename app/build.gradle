@@ -29,6 +29,13 @@ android {
             assets.srcDir "../assets"
         }
     }
+
+    testOptions {
+        unitTests {
+            // Robolectric 需要读取 Android 资源/manifest,必须开启
+            includeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -50,4 +57,9 @@ dependencies {
     implementation "dev.rikka.shizuku:api:13.1.5"
     implementation "dev.rikka.shizuku:provider:13.1.5"
     testImplementation "junit:junit:4.13.2"
+    // T1: 引入 Robolectric,让 CardRunStore 等依赖 Android Context 的模块可在 JVM 上单测
+    testImplementation "org.robolectric:robolectric:4.11.1"
+    testImplementation "androidx.test:core:1.5.0"
+    testImplementation "androidx.test.ext:junit:1.1.5"
+    testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3"
 }
