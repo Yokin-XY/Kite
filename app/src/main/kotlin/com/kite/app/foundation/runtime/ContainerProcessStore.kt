@@ -1,4 +1,6 @@
-package com.kite.app.foundation.runtime
+﻿package com.kite.app.foundation.runtime
+
+import com.kite.app.foundation.contracts.ContainerRecord
 
 import android.content.Context
 import android.system.OsConstants
@@ -10,10 +12,10 @@ import com.kite.app.foundation.service.isActiveRuntime
 import com.kite.app.foundation.terminal.TerminalRuntimeEntry
 import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.ManagedTerminalRecord
-import com.kite.app.foundation.workspace.ManagedTerminalStatus
+import com.kite.app.foundation.contracts.ManagedTerminalRecord
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
-import com.kite.app.foundation.workspace.isLiveProcessStatus
+import com.kite.app.foundation.contracts.isLiveProcessStatus
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope

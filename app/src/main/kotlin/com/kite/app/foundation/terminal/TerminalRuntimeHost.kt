@@ -2,7 +2,7 @@ package com.kite.app.foundation.terminal
 
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
-import com.kite.app.foundation.workspace.ManagedTerminalRecord
+import com.kite.app.foundation.contracts.ManagedTerminalRecord
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.termux.terminal.TerminalSession

@@ -1,4 +1,4 @@
-package com.kite.app.foundation.workspace
+package com.kite.app.foundation.contracts
 
 fun ManagedTerminalStatus.isArchivedStatus(): Boolean {
     return this == ManagedTerminalStatus.EXITED ||

@@ -1,4 +1,6 @@
-package com.kite.app.foundation.runtime
+﻿package com.kite.app.foundation.runtime
+
+import com.kite.app.foundation.contracts.RuntimeActionKind
 
 import android.content.Context
 import com.kite.app.foundation.capability.CapabilityCallerType
@@ -11,7 +13,7 @@ import com.kite.app.foundation.service.BackgroundRuntimeHost
 import com.kite.app.foundation.service.SupervisordServiceHealthStore
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.SpaceRecord
+import com.kite.app.foundation.contracts.SpaceRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

@@ -1,8 +1,10 @@
-package com.kite.app.foundation.service
+﻿package com.kite.app.foundation.service
+
+import com.kite.app.foundation.contracts.RuntimeActionKind
 
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
-import com.kite.app.foundation.runtime.ContainerRecord
+import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.runtime.HostProcessInspector
 import com.kite.app.foundation.runtime.HostProcessRecord
 import com.kite.app.foundation.runtime.HostStopAuditor
@@ -1992,7 +1994,7 @@ object BackgroundRuntimeHost {
 
     private fun backgroundRuntimeRouteLabel(): String {
         return WorkSurfaceRuntimeBridge.actionRouteLabel(
-            com.kite.app.foundation.runtime.RuntimeActionKind.BACKGROUND_RUNTIME
+            com.kite.app.foundation.contracts.RuntimeActionKind.BACKGROUND_RUNTIME
         )
     }
 

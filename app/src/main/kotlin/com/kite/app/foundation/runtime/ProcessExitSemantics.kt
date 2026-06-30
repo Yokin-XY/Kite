@@ -1,7 +1,7 @@
 package com.kite.app.foundation.runtime
 
 import com.kite.app.foundation.service.BackgroundRuntimeStatus
-import com.kite.app.foundation.workspace.ManagedTerminalStatus
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import kotlin.math.abs
 
 object ProcessExitSemantics {

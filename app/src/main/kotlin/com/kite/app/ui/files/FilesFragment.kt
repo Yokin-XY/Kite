@@ -11,7 +11,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.R
 import com.kite.app.foundation.runtime.FileWatchStore
-import com.kite.app.foundation.runtime.ContainerRecord
+import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

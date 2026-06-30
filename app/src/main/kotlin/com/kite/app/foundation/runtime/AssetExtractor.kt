@@ -1,4 +1,6 @@
-package com.kite.app.foundation.runtime
+﻿package com.kite.app.foundation.runtime
+
+import com.kite.app.foundation.contracts.BaseImageProfile
 
 import android.content.Context
 import android.system.Os

@@ -1,55 +1,22 @@
-package com.kite.app.foundation.runtime
+﻿package com.kite.app.foundation.runtime
+
+import com.kite.app.foundation.contracts.ContainerRecord
 
 import android.content.Context
+import com.kite.app.foundation.contracts.RuntimeActionKind
+import com.kite.app.foundation.contracts.RuntimeActionRoute
+import com.kite.app.foundation.contracts.RuntimeBoundarySnapshot
+import com.kite.app.foundation.contracts.RuntimePathRole
 import java.io.File
-
-enum class RuntimePathRole(val label: String) {
-    RUNTIME_PRIVATE("runtime 私有区"),
-    BASE_IMAGE("只读骨架"),
-    CONTAINER_ROOTFS("容器系统层"),
-    WORKSPACE("工作区热路径"),
-    WORKSPACE_BUILD_SUPPORT("工作区构建辅助区"),
-    EXCHANGE("交换区"),
-    LOGS("日志区"),
-    TMP("临时区"),
-    UNKNOWN("未知区域")
-}
-
-enum class RuntimeActionKind(val label: String) {
-    CONTAINER_BOOTSTRAP("容器启动与自举"),
-    TERMINAL_COMMAND("终端真实命令"),
-    BACKGROUND_RUNTIME("后台运行项"),
-    PROCESS_SAMPLING("真实进程采样"),
-    WORKSPACE_BROWSE("工作区浏览"),
-    LOG_VIEW("日志查看"),
-    EXCHANGE_TRANSFER("交换区传输"),
-    MOBILE_BUILD("手机端构建"),
-    TOOL_ENTRY("工具入口")
-}
-
-enum class RuntimeActionRoute(val label: String) {
-    PROOT("默认 PRoot"),
-    NATIVE("默认原生"),
-    BRIDGE("需要桥接"),
-    DUAL("可双路")
-}
-
-data class RuntimeBoundarySnapshot(
-    val runtimeRoot: File,
-    val baseImageDir: File,
-    val containerRootfsDir: File?,
-    val workspaceDir: File?,
-    val workspaceBuildSupportDir: File?,
-    val exchangeDir: File,
-    val logsDir: File,
-    val tmpDir: File
-)
 
 /**
  * 建房层的路径与边界词典。
  *
  * 只放：底层路径角色、动作路由、snapshot/classify、路径别名。
  * 不放：UI 提示、工作面默认值、入口层流程。
+ *
+ * 注:纯数据契约(RuntimePathRole/RuntimeActionKind/RuntimeActionRoute/RuntimeBoundarySnapshot)
+ * 已下沉到 foundation.contracts,本 object 只保留带行为的方法。
  */
 object RuntimeBoundary {
 

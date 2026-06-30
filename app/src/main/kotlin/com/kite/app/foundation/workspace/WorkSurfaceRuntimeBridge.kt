@@ -2,15 +2,15 @@ package com.kite.app.foundation.workspace
 
 import android.content.Context
 import com.kite.app.foundation.runtime.AssetExtractor
-import com.kite.app.foundation.runtime.ContainerRecord
-import com.kite.app.foundation.runtime.ContainerExecConfig
-import com.kite.app.foundation.runtime.ContainerLaunchConfig
+import com.kite.app.foundation.contracts.ContainerRecord
+import com.kite.app.foundation.contracts.ContainerExecConfig
+import com.kite.app.foundation.contracts.ContainerLaunchConfig
 import com.kite.app.foundation.runtime.ExternalExchangeManager
 import com.kite.app.foundation.runtime.KFContainerManager
-import com.kite.app.foundation.runtime.RuntimeActionKind
+import com.kite.app.foundation.contracts.RuntimeActionKind
 import com.kite.app.foundation.runtime.RuntimeBoundary
-import com.kite.app.foundation.runtime.RuntimeBoundarySnapshot
-import com.kite.app.foundation.runtime.RuntimePathRole
+import com.kite.app.foundation.contracts.RuntimeBoundarySnapshot
+import com.kite.app.foundation.contracts.RuntimePathRole
 import java.io.File
 
 internal data class WorkSurfaceRuntimeDefaults(

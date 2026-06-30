@@ -1,4 +1,4 @@
-package com.kite.app.foundation.runtime
+package com.kite.app.foundation.contracts
 
 import org.json.JSONObject
 

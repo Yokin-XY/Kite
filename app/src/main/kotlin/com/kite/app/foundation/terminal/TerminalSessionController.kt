@@ -1,4 +1,8 @@
-package com.kite.app.foundation.terminal
+﻿package com.kite.app.foundation.terminal
+
+import com.kite.app.foundation.contracts.AgentRuntimeStatus
+import com.kite.app.foundation.contracts.AgentLaunchMode
+import com.kite.app.foundation.contracts.AgentRuntimeRecord
 
 import android.content.Context
 import com.kite.app.bridge.KiteBrowserProxyInstaller
@@ -17,16 +21,13 @@ import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.ProotTelemetryStore
 import com.kite.app.foundation.runtime.RuntimeFrameCoordinator
 import com.kite.app.foundation.runtime.RuntimeStorageGuard
-import com.kite.app.foundation.workspace.AgentLaunchMode
-import com.kite.app.foundation.workspace.AgentRuntimeRecord
-import com.kite.app.foundation.workspace.AgentRuntimeStatus
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.ManagedTerminalRecord
-import com.kite.app.foundation.workspace.ManagedTerminalStatus
-import com.kite.app.foundation.workspace.SpaceRecord
+import com.kite.app.foundation.contracts.ManagedTerminalRecord
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
+import com.kite.app.foundation.contracts.SpaceRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
-import com.kite.app.foundation.workspace.isArchivedRecord
-import com.kite.app.foundation.workspace.isLiveProcessStatus
+import com.kite.app.foundation.contracts.isArchivedRecord
+import com.kite.app.foundation.contracts.isLiveProcessStatus
 import com.termux.terminal.TerminalEmulator
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient

@@ -6,7 +6,7 @@ import com.kite.app.foundation.service.BackgroundRuntimeRegistry
 import com.kite.app.foundation.terminal.TerminalRuntimeEntry
 import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.SpaceRecord
+import com.kite.app.foundation.contracts.SpaceRecord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

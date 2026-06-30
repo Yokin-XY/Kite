@@ -139,7 +139,7 @@ import com.kite.app.foundation.runtime.TerminalSessionItem
 import com.kite.app.foundation.runtime.TerminalSessionStore
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
-import com.kite.app.foundation.workspace.ManagedTerminalStatus
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.toolchain.ToolchainInstallPhase
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.workspace.KFWorkspaceManager

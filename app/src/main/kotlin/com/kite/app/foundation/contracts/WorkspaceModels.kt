@@ -1,4 +1,4 @@
-package com.kite.app.foundation.workspace
+package com.kite.app.foundation.contracts
 
 import org.json.JSONObject
 
@@ -210,7 +210,7 @@ data class AgentRuntimeRecord(
                 displayName = json.optString("displayName", json.getString("id")),
                 workingDirectory = json.optString(
                     "workingDirectory",
-                    WorkSurfaceRuntimeBridge.defaults.workspaceDir
+                    ""
                 ),
                 launchCommand = json.optString("launchCommand", ""),
                 launchMode = AgentLaunchMode.valueOf(

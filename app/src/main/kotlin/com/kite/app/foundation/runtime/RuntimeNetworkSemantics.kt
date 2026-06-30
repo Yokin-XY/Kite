@@ -1,4 +1,6 @@
-package com.kite.app.foundation.runtime
+﻿package com.kite.app.foundation.runtime
+
+import com.kite.app.foundation.contracts.NetworkMode
 
 enum class RuntimeNetworkTopologyKind(val label: String) {
     SHARED_HOST_STACK("共享宿主网络栈"),

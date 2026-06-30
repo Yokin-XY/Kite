@@ -1,8 +1,8 @@
 package com.kite.app.foundation.terminal
 
-import com.kite.app.foundation.workspace.ManagedTerminalKind
-import com.kite.app.foundation.workspace.ManagedTerminalRecord
-import com.kite.app.foundation.workspace.ManagedTerminalStatus
+import com.kite.app.foundation.contracts.ManagedTerminalKind
+import com.kite.app.foundation.contracts.ManagedTerminalRecord
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File

@@ -1,4 +1,6 @@
-package com.kite.app.foundation.runtime
+﻿package com.kite.app.foundation.runtime
+
+import com.kite.app.foundation.contracts.NetworkMode
 
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
@@ -11,7 +13,7 @@ import com.kite.app.foundation.service.isActiveRuntime
 import com.kite.app.foundation.terminal.TerminalRuntimeEntry
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
-import com.kite.app.foundation.workspace.isLiveProcessStatus
+import com.kite.app.foundation.contracts.isLiveProcessStatus
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

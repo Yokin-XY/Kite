@@ -4,11 +4,11 @@ import android.content.Context
 import com.kite.app.foundation.service.WorkstationActionGateway
 import com.kite.app.foundation.terminal.TerminalRuntimeEntry
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
-import com.kite.app.foundation.workspace.ManagedTerminalStatus
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.logging.Logger
-import com.kite.app.foundation.workspace.isArchivedStatus
-import com.kite.app.foundation.workspace.isLiveProcessStatus
-import com.kite.app.foundation.workspace.isOpenableStatus
+import com.kite.app.foundation.contracts.isArchivedStatus
+import com.kite.app.foundation.contracts.isLiveProcessStatus
+import com.kite.app.foundation.contracts.isOpenableStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

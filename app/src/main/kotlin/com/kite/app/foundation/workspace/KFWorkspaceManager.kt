@@ -1,4 +1,18 @@
-package com.kite.app.foundation.workspace
+﻿package com.kite.app.foundation.workspace
+
+import com.kite.app.foundation.contracts.isLiveProcessStatus
+import com.kite.app.foundation.contracts.isArchivedRecord
+
+import com.kite.app.foundation.contracts.AgentKind
+import com.kite.app.foundation.contracts.AgentRuntimeStatus
+import com.kite.app.foundation.contracts.AgentLaunchMode
+import com.kite.app.foundation.contracts.AgentRuntimeRecord
+
+import com.kite.app.foundation.contracts.SpaceStatus
+import com.kite.app.foundation.contracts.ManagedTerminalKind
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
+import com.kite.app.foundation.contracts.SpaceRecord
+import com.kite.app.foundation.contracts.ManagedTerminalRecord
 
 import android.content.Context
 import com.kite.app.foundation.logging.Logger

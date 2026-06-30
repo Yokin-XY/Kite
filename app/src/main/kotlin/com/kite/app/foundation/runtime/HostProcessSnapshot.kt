@@ -1,4 +1,6 @@
-package com.kite.app.foundation.runtime
+﻿package com.kite.app.foundation.runtime
+
+import com.kite.app.foundation.contracts.ContainerRecord
 
 import android.os.Process as AndroidProcess
 import com.kite.app.foundation.logging.Logger

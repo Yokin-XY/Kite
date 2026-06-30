@@ -16,11 +16,11 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.kite.app.R
-import com.kite.app.foundation.runtime.ContainerRecord
+import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.runtime.ProotTelemetryRepairAction
 import com.kite.app.foundation.runtime.ProotTelemetryRepairReadiness
 import com.kite.app.foundation.runtime.ProotTelemetryStore
-import com.kite.app.foundation.runtime.RuntimeActionKind
+import com.kite.app.foundation.contracts.RuntimeActionKind
 import com.kite.app.foundation.runtime.RuntimeAutomationActions
 import com.kite.app.foundation.runtime.RuntimeDiagnostics
 import com.kite.app.foundation.runtime.RuntimeHealthSnapshot

@@ -10,10 +10,10 @@ import com.kite.app.foundation.service.BackgroundRuntimeStatus
 import com.kite.app.foundation.service.isActiveStatus
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.ManagedTerminalRecord
-import com.kite.app.foundation.workspace.ManagedTerminalStatus
+import com.kite.app.foundation.contracts.ManagedTerminalRecord
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
-import com.kite.app.foundation.workspace.isLiveProcessStatus
+import com.kite.app.foundation.contracts.isLiveProcessStatus
 
 data class RuntimeReconciliationReport(
     val reason: String,

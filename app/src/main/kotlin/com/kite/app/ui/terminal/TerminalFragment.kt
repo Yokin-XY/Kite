@@ -56,7 +56,7 @@ import com.kite.app.foundation.bootstrap.BootstrapSnapshot
 import com.kite.app.foundation.bootstrap.BootstrapStage
 import com.kite.app.foundation.bootstrap.KFApplication
 import com.kite.app.foundation.logging.Logger
-import com.kite.app.foundation.runtime.ContainerRecord
+import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.runtime.TerminalSessionItem
 import com.kite.app.foundation.runtime.TerminalSessionStore
 import com.kite.app.foundation.runtime.TerminalSessionsSnapshot
@@ -65,8 +65,8 @@ import com.kite.app.foundation.terminal.TerminalSessionController
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.terminal.TerminalSessionUiCallbacks
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.ManagedTerminalStatus
-import com.kite.app.foundation.workspace.SpaceRecord
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
+import com.kite.app.foundation.contracts.SpaceRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.termux.terminal.TerminalColors
 import com.termux.terminal.TerminalSession
