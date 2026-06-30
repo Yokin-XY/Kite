@@ -5,7 +5,6 @@ import com.kite.app.foundation.contracts.AgentLaunchMode
 import com.kite.app.foundation.contracts.AgentRuntimeRecord
 
 import android.content.Context
-import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.foundation.bootstrap.KFApplication
 import com.kite.app.foundation.capability.CapabilityCallerType
 import com.kite.app.foundation.capability.CapabilityDomain
@@ -968,7 +967,7 @@ class TerminalSessionController(
             WorkSurfaceRuntimeBridge.buildTerminalLaunchConfig(appContext)
         }
         val browserEnv = withContext(Dispatchers.IO) {
-            KiteBrowserProxyInstaller.defaultEnvironment(appContext, "terminal_page")
+            BrowserEnvironmentProviderHost.get().defaultEnvironment(appContext, "terminal_page")
         }
         val sessionEnvOverrides = browserEnv + launchEnvOverrides.remove(record.id).orEmpty()
 

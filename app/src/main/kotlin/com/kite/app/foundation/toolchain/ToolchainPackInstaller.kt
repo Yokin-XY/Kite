@@ -2,8 +2,6 @@ package com.kite.app.foundation.toolchain
 
 import android.content.Context
 import android.system.Os
-import com.kite.app.resources.KiteResourceInstallStore
-import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.foundation.capability.CapabilityCallerType
 import com.kite.app.foundation.capability.CapabilityDomain
 import com.kite.app.foundation.capability.CapabilityGate
@@ -126,14 +124,14 @@ object ToolchainPackInstaller {
 
     fun bootstrapResourcesSettled(context: Context): Boolean {
         return runCatching {
+            val port = ToolchainResourcePortHost.get()
             val ids = BOOTSTRAP_RESOURCES.map { it.resourceId }
-            val snapshot = KiteResourceInstallStore(context.applicationContext).registrySnapshot(ids)
-            ids.all { id -> bootstrapResourceStatusSettled(snapshot[id]?.status.orEmpty()) }
+            ids.all { id -> bootstrapResourceStatusSettled(port.statusOf(context.applicationContext, id)) }
         }.getOrDefault(false)
     }
 
     internal fun bootstrapResourceStatusSettled(status: String): Boolean =
-        status == KiteResourceRegistry.STATUS_INSTALLED || status == KiteResourceRegistry.STATUS_FAILED
+        status == ToolchainResourcePort.STATUS_INSTALLED || status == ToolchainResourcePort.STATUS_FAILED
 
     fun refreshState(context: Context) {
         _state.value = readStatus(context.applicationContext)
@@ -341,8 +339,11 @@ object ToolchainPackInstaller {
 
     private fun markBootstrapResourceInstalling(context: Context, resource: BootstrapResource) {
         runCatching {
-            val store = KiteResourceInstallStore(context)
-            store.markInstalling(resource.resourceId, "$BOOTSTRAP_RESOURCE_RUN_PREFIX${resource.resourceId}")
+            ToolchainResourcePortHost.get().markInstalling(
+                context,
+                resource.resourceId,
+                "$BOOTSTRAP_RESOURCE_RUN_PREFIX${resource.resourceId}"
+            )
         }.onFailure { error ->
             Logger.e(LOG_TAG, "Failed to mark bootstrap resource ${resource.resourceId} installing: ${error.message}")
         }
@@ -350,9 +351,9 @@ object ToolchainPackInstaller {
 
     private fun markBootstrapResourcesFailed(context: Context, reason: String) {
         runCatching {
-            val store = KiteResourceInstallStore(context)
+            val port = ToolchainResourcePortHost.get()
             BOOTSTRAP_RESOURCES.forEach { resource ->
-                store.markFailed(resource.resourceId, KiteResourceInstallStore.OP_INSTALL, null, reason)
+                port.markFailed(context, resource.resourceId, null, reason)
             }
         }.onFailure { error ->
             Logger.e(LOG_TAG, "Failed to mark bootstrap resources failed: ${error.message}")
@@ -365,7 +366,7 @@ object ToolchainPackInstaller {
         result: ToolchainCommandResult
     ) {
         runCatching {
-            val store = KiteResourceInstallStore(context)
+            val port = ToolchainResourcePortHost.get()
             val registration = resolveBootstrapResourceRegistration(
                 resourceId = resource.resourceId,
                 version = resource.version,
@@ -374,11 +375,11 @@ object ToolchainPackInstaller {
                 summary = result.summaryLine() ?: "exitCode=${result.exitCode} timedOut=${result.timedOut}"
             )
             if (registration.installed) {
-                store.markInstalled(registration.resourceId, registration.version, null, registration.summary)
+                port.markInstalled(context, registration.resourceId, registration.version, null, registration.summary)
             } else {
-                store.markFailed(
+                port.markFailed(
+                    context,
                     registration.resourceId,
-                    KiteResourceInstallStore.OP_INSTALL,
                     null,
                     registration.summary
                 )

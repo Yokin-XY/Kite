@@ -18,8 +18,6 @@ import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kite.app.foundation.runtime.HostSelfAdbBridgeWorker
 import com.kite.app.foundation.runtime.RuntimeOverviewStore
 import com.kite.app.foundation.runtime.RuntimeFrameCoordinator
-import com.kite.app.CardRunActivity
-import com.kite.app.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -198,7 +196,7 @@ class KFShellService : Service() {
 
     private fun closeCardRunTasksIfMainTaskRemoved(rootIntent: Intent?) {
         val removedComponent = rootIntent?.component?.className.orEmpty()
-        if (removedComponent != MainActivity::class.java.name) {
+        if (removedComponent != KiteTaskContractHost.get().mainActivityClassName) {
             return
         }
         val closedCount = finishCardRunDocumentTasks()
@@ -208,10 +206,11 @@ class KFShellService : Service() {
     private fun finishCardRunDocumentTasks(): Int {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return 0
         val manager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return 0
+        val cardRunClassName = KiteTaskContractHost.get().cardRunActivityClassName
         var closedCount = 0
         manager.appTasks.forEach { task ->
             val baseIntent = task.taskInfo.baseIntent
-            val isCardRunTask = baseIntent.component?.className == CardRunActivity::class.java.name
+            val isCardRunTask = baseIntent.component?.className == cardRunClassName
             if (isCardRunTask) {
                 task.finishAndRemoveTask()
                 closedCount += 1
@@ -224,7 +223,7 @@ class KFShellService : Service() {
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, MainActivity::class.java),
+            KiteTaskContractHost.get().buildMainActivityIntent(this),
             PendingIntent.FLAG_IMMUTABLE
         )
 

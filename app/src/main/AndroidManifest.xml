@@ -38,6 +38,12 @@
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <provider
+            android:name="com.kite.app.KiteTaskContractInitializer"
+            android:authorities="${applicationId}.task-contract"
+            android:exported="false"
+            android:initOrder="1" />
+
+        <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"
