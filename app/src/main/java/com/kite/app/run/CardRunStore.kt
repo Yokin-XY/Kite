@@ -2,6 +2,7 @@ package com.kite.app.run
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.annotation.VisibleForTesting
 import com.kite.app.recipe.KiteRecipe
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,6 +46,26 @@ object CardRunStore {
         if (normalized != loaded) {
             persistRuns()
         }
+    }
+
+    /**
+     * 仅用于单元测试:把单例内存状态清空回未初始化,使各测试互不污染。
+     * 不改动磁盘 SharedPreferences 内容(进程恢复类测试需要预先 seed 磁盘数据)。
+     * 生产代码不应调用,因此标注 @VisibleForTesting。
+     */
+    @VisibleForTesting
+    @Synchronized
+    fun resetForTest() {
+        synchronized(persistScheduleLock) {
+            persistScheduled = false
+            historyPersistScheduled = false
+        }
+        registeredRecipes.clear()
+        runsByInstance.clear()
+        historiesByRecipe.clear()
+        _runs.value = emptyList()
+        prefs = null
+        initialized = false
     }
 
     @Synchronized

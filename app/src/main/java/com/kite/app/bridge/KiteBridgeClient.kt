@@ -11,9 +11,9 @@ import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.recipe.KiteRunReport
 import com.kite.app.recipe.KiteStepReport
 import com.kite.app.resources.KiteResourceInstallRecipes
-import com.kftest.app.foundation.runtime.ProotOwnerProcessTerminator
-import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
-import com.kftest.app.foundation.workspace.WorkspaceBuildSupport
+import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
+import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.foundation.workspace.WorkspaceBuildSupport
 import org.json.JSONObject
 import java.net.ConnectException
 import java.net.HttpURLConnection

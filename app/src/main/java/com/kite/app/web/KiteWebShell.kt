@@ -16,7 +16,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewFeature
 import com.kite.app.diagnostics.KiteDiagnostics
-import com.kftest.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.runtime.ExternalExchangeManager
 import java.io.File
 import java.net.URI
 

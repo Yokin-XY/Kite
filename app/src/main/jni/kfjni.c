@@ -134,7 +134,7 @@ static int create_subprocess(JNIEnv* env,
  * Method:    createProotProcess
  * Signature: (Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[III)I
  */
-JNIEXPORT jint JNICALL Java_com_kftest_app_foundation_jni_KFJni_createProotProcess(
+JNIEXPORT jint JNICALL Java_com_kite_app_foundation_jni_KFJni_createProotProcess(
         JNIEnv* env,
         jclass KF_UNUSED(clazz),
         jstring cmd,
@@ -216,7 +216,7 @@ JNIEXPORT jint JNICALL Java_com_kftest_app_foundation_jni_KFJni_createProotProce
  * Method:    setPtyWindowSize
  * Signature: (III)V
  */
-JNIEXPORT void JNICALL Java_com_kftest_app_foundation_jni_KFJni_setPtyWindowSize(
+JNIEXPORT void JNICALL Java_com_kite_app_foundation_jni_KFJni_setPtyWindowSize(
         JNIEnv* KF_UNUSED(env),
         jclass KF_UNUSED(clazz),
         jint fd,
@@ -236,7 +236,7 @@ JNIEXPORT void JNICALL Java_com_kftest_app_foundation_jni_KFJni_setPtyWindowSize
  * Method:    waitFor
  * Signature: (I)I
  */
-JNIEXPORT jint JNICALL Java_com_kftest_app_foundation_jni_KFJni_waitFor(
+JNIEXPORT jint JNICALL Java_com_kite_app_foundation_jni_KFJni_waitFor(
         JNIEnv* KF_UNUSED(env),
         jclass KF_UNUSED(clazz),
         jint pid)
@@ -257,7 +257,7 @@ JNIEXPORT jint JNICALL Java_com_kftest_app_foundation_jni_KFJni_waitFor(
  * Method:    closeFd
  * Signature: (I)V
  */
-JNIEXPORT void JNICALL Java_com_kftest_app_foundation_jni_KFJni_closeFd(
+JNIEXPORT void JNICALL Java_com_kite_app_foundation_jni_KFJni_closeFd(
         JNIEnv* KF_UNUSED(env),
         jclass KF_UNUSED(clazz),
         jint fileDescriptor)
@@ -270,7 +270,7 @@ JNIEXPORT void JNICALL Java_com_kftest_app_foundation_jni_KFJni_closeFd(
  * Method:    sendSignal
  * Signature: (II)Z
  */
-JNIEXPORT jboolean JNICALL Java_com_kftest_app_foundation_jni_KFJni_sendSignal(
+JNIEXPORT jboolean JNICALL Java_com_kite_app_foundation_jni_KFJni_sendSignal(
         JNIEnv* KF_UNUSED(env),
         jclass KF_UNUSED(clazz),
         jint pid,

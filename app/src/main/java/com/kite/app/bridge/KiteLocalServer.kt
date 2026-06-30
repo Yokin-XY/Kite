@@ -2,7 +2,7 @@ package com.kite.app.bridge
 
 import android.content.Context
 import com.kite.app.diagnostics.KiteDiagnostics
-import com.kftest.app.foundation.toolchain.ToolchainPackInstaller
+import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import org.json.JSONObject
 import java.net.BindException
 import java.net.InetAddress

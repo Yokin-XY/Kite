@@ -121,32 +121,32 @@ import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.web.KiteWebShell
 import com.google.android.material.tabs.TabLayout
-import com.kftest.app.R
-import com.kftest.app.foundation.bootstrap.BootstrapCoordinator
-import com.kftest.app.foundation.bootstrap.BootstrapSnapshot
-import com.kftest.app.foundation.bootstrap.BootstrapStage
-import com.kftest.app.foundation.runtime.AssetExtractor
-import com.kftest.app.foundation.runtime.ExternalExchangeManager
-import com.kftest.app.foundation.runtime.RuntimeAutomationActions
-import com.kftest.app.foundation.runtime.RuntimeBootstrapProgress
-import com.kftest.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
-import com.kftest.app.foundation.runtime.RuntimeHealthStore
-import com.kftest.app.foundation.runtime.RuntimeReclaimer
-import com.kftest.app.foundation.runtime.TaskManagerProcessItem
-import com.kftest.app.foundation.runtime.TaskManagerSnapshot
-import com.kftest.app.foundation.runtime.TaskManagerStore
-import com.kftest.app.foundation.runtime.TerminalSessionItem
-import com.kftest.app.foundation.runtime.TerminalSessionStore
-import com.kftest.app.foundation.terminal.TerminalRuntimeHost
-import com.kftest.app.foundation.terminal.TerminalRuntimeRegistry
-import com.kftest.app.foundation.workspace.ManagedTerminalStatus
-import com.kftest.app.foundation.toolchain.ToolchainInstallPhase
-import com.kftest.app.foundation.toolchain.ToolchainPackInstaller
-import com.kftest.app.foundation.workspace.KFWorkspaceManager
-import com.kftest.app.foundation.workspace.WorkSurfaceRuntimeBridge
-import com.kftest.app.ui.terminal.KiteTerminalShellTheme
-import com.kftest.app.ui.terminal.TerminalChromeHost
-import com.kftest.app.ui.terminal.TerminalFragment
+import com.kite.app.R
+import com.kite.app.foundation.bootstrap.BootstrapCoordinator
+import com.kite.app.foundation.bootstrap.BootstrapSnapshot
+import com.kite.app.foundation.bootstrap.BootstrapStage
+import com.kite.app.foundation.runtime.AssetExtractor
+import com.kite.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.runtime.RuntimeAutomationActions
+import com.kite.app.foundation.runtime.RuntimeBootstrapProgress
+import com.kite.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
+import com.kite.app.foundation.runtime.RuntimeHealthStore
+import com.kite.app.foundation.runtime.RuntimeReclaimer
+import com.kite.app.foundation.runtime.TaskManagerProcessItem
+import com.kite.app.foundation.runtime.TaskManagerSnapshot
+import com.kite.app.foundation.runtime.TaskManagerStore
+import com.kite.app.foundation.runtime.TerminalSessionItem
+import com.kite.app.foundation.runtime.TerminalSessionStore
+import com.kite.app.foundation.terminal.TerminalRuntimeHost
+import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
+import com.kite.app.foundation.contracts.ManagedTerminalStatus
+import com.kite.app.foundation.toolchain.ToolchainInstallPhase
+import com.kite.app.foundation.toolchain.ToolchainPackInstaller
+import com.kite.app.foundation.workspace.KFWorkspaceManager
+import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.ui.terminal.KiteTerminalShellTheme
+import com.kite.app.ui.terminal.TerminalChromeHost
+import com.kite.app.ui.terminal.TerminalFragment
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
@@ -167,7 +167,14 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
-open class MainActivity : AppCompatActivity(), TerminalChromeHost {
+open class MainActivity : AppCompatActivity(), TerminalChromeHost,
+    RecipeRawJsonFragment.RecipeProvider,
+    RecipeRawJsonFragment.RecipeRawJsonHost,
+    RecipeRawJsonFragment.UiKitProvider,
+    ResourceManageFragment.ResourceManageHost,
+    ResourceSearchFragment.ResourceSearchHost,
+    ResourcesFragment.ResourcesHost,
+    ResourceDetailFragment.ResourceDetailHost {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
@@ -199,8 +206,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     private val activeRunInstanceIds = mutableMapOf<String, String>()
     private val cardRunWindowHiddenSurfaces = mutableMapOf<String, MutableSet<String>>()
     private val actionRouter = KiteActionRouter()
+    /**
+     * Screen 路由收口(T6)。过渡期把 navigate 委托回老的 show* 方法;
+     * 后续各 Screen 逐个 Fragment 化时,在此替换为 routeToFragment。
+     */
+    private val screenRouter: ScreenRouter by lazy {
+        ScreenRouter(this) { screen -> dispatchLegacyScreen(screen) }
+    }
     private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
     private var currentScreen: Screen = Screen.Console
+    private var pendingRawJsonRecipeId: String? = null
+    private var pendingResourceDetailInitialItem: ResourceItem? = null
+    private var pendingResourceDetailRequestId: Long = 0L
+    private var pendingResourceDetailRequestKey: String? = null
+
+    /**
+     * 仅用于单元测试:暴露当前 Screen 的枚举名(字符串),供 Robolectric 路由测试断言。
+     * 用字符串而非 Screen 类型,避免把 private nested enum 改成 internal。
+     * 生产代码不应调用。
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun currentScreenNameForTest(): String = currentScreen.name
+
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var consolePageId: String = CONSOLE_PAGE_ALL
     private var consolePageTabsView: TabLayout? = null
@@ -366,6 +393,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         rootHost = FrameLayout(this).apply {
+            id = View.generateViewId()
             setBackgroundColor(tokens.pageBackground)
         }
         root = LinearLayout(this).apply {
@@ -739,6 +767,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         when (currentScreen) {
             Screen.CreateConfig -> handleRecipeFormBack()
+            Screen.RecipeDetail -> {
+                // T6b:RecipeDetail 走 Fragment,系统 back 时移除 Fragment 回编辑器
+                if (supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT) != null) {
+                    onExitRecipeRawJson()
+                } else {
+                    showConsole()
+                }
+            }
             Screen.RecipeMore -> returnToRecipeFormFromMore()
             Screen.ThemeSettings -> showSettings()
             Screen.ResourceManage -> showResources()
@@ -2195,10 +2231,49 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             detachFragment(TERMINAL_FRAGMENT_TAG)
         }
         detachFragment(CARD_RUN_TERMINAL_FRAGMENT_TAG)
+        // T6b/T7:切走时移除 Fragment(RecipeRawJson、ResourceManage)并恢复 root 可见性
+        supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCE_MANAGE_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCE_SEARCH_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCES_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCE_DETAIL_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        root.visibility = View.VISIBLE
         if (changed) {
             transaction.commitNowAllowingStateLoss()
         }
         root.removeAllViews()
+    }
+
+    /**
+     * 过渡期:ScreenRouter 的老路径分发。把 Screen 枚举映射到老的 show* 方法。
+     * T6b 起逐个 Screen 改走 Fragment 时,这些分支会被 routeToFragment 取代。
+     * 仅无参、可在路由层触发的 Screen 在此分发;带参 Screen(如 ResourceDetail 需 resourceId)
+     * 仍由各自的 show*(args) 直接调用,不经过此无参入口。
+     */
+    private fun dispatchLegacyScreen(screen: Screen) {
+        when (screen) {
+            Screen.Console -> showConsole()
+            Screen.Settings -> showSettings()
+            Screen.ThemeSettings -> showThemeSettings()
+            Screen.Resources -> showResources()
+            // 带 arg 或条件复杂的 Screen 暂不在无参路由分发,保留各自入口
+            else -> Unit
+        }
     }
 
     private fun applyKiteTerminalTheme() {
@@ -2296,21 +2371,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun showResources() {
+        // T7:走 Fragment 路径。
         currentResourceDetailId = null
         currentScreen = Screen.Resources
         ensureBundledToolBootstrapIfNeeded("show_resources")
-        root.setBackgroundColor(tokens.pageBackground)
+        clearRootForScreen()
+        root.visibility = View.GONE
+        val fragment = ResourcesFragment()
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RESOURCES_FRAGMENT)
+            .commitAllowingStateLoss()
+    }
+
+    /** ResourcesFragment.ResourcesHost 实现。 */
+    override fun renderResourcesInto(container: ViewGroup) {
+        rootHost.setBackgroundColor(tokens.pageBackground)
+        container.setBackgroundColor(tokens.pageBackground)
         val page = ensureResourcePage()
         val nav = ensureResourcePageNav()
         showBottomNavigationImmediately(nav)
-        val alreadyAttached = page.parent === root && nav.parent === root
-        if (!alreadyAttached) {
-            clearRootForScreen()
-            detachFromParent(page)
-            detachFromParent(nav)
-            root.addView(page, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-            root.addView(nav)
-        }
+        detachFromParent(page)
+        detachFromParent(nav)
+        container.addView(page, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        container.addView(nav)
         requestResourceSectionsRefresh(forceCatalogRefresh = false)
     }
 
@@ -2349,18 +2432,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun showResourceSearch(initialQuery: String = currentResourceSearchQuery) {
+        // T7:走 Fragment 路径。
         currentScreen = Screen.ResourceSearch
         currentResourceDetailId = null
         currentResourceSearchQuery = initialQuery.trim()
         resourceSearchRenderKey = ""
-        root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
+        root.visibility = View.GONE
+        val fragment = ResourceSearchFragment.newInstance(currentResourceSearchQuery)
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RESOURCE_SEARCH_FRAGMENT)
+            .commitAllowingStateLoss()
+    }
+
+    /** ResourceSearchFragment.ResourceSearchHost 实现。 */
+    override fun renderResourceSearchInto(container: ViewGroup, initialQuery: String) {
+        rootHost.setBackgroundColor(tokens.pageBackground)
+        container.setBackgroundColor(tokens.pageBackground)
         resourceSearchContentHost = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        val searchInput = resourceSearchInput(currentResourceSearchQuery)
-        root.addView(resourceSearchTopBar(searchInput))
-        root.addView(ScrollView(this).apply {
+        val searchInput = resourceSearchInput(initialQuery)
+        container.addView(resourceSearchTopBar(searchInput))
+        container.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(22), dp(12), dp(22), dp(88))
@@ -2933,12 +3027,30 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun showResourceManage() {
+        // T7:走 Fragment 路径(ResourceManageFragment 壳 + 复用 Activity 渲染)。
         currentScreen = Screen.ResourceManage
         resourceManageBinding = null
-        root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
-        root.addView(topBar("资源管理") { showResources() })
-        root.addView(ScrollView(this).apply {
+        root.visibility = View.GONE
+        val fragment = ResourceManageFragment()
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RESOURCE_MANAGE_FRAGMENT)
+            .commitAllowingStateLoss()
+    }
+
+    /** ResourceManageFragment.ResourceManageHost 实现:把已验证的资源管理渲染挂进容器。 */
+    override fun renderResourceManageInto(container: ViewGroup) {
+        rootHost.setBackgroundColor(tokens.pageBackground)
+        container.setBackgroundColor(tokens.pageBackground)
+        container.addView(topBar("资源管理") {
+            // 退出 Fragment 回资源首页
+            supportFragmentManager.findFragmentByTag(TAG_RESOURCE_MANAGE_FRAGMENT)?.let { f ->
+                supportFragmentManager.beginTransaction().remove(f).commitAllowingStateLoss()
+            }
+            root.visibility = View.VISIBLE
+            showResources()
+        })
+        container.addView(ScrollView(this).apply {
             val host = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(22), dp(18), dp(22), dp(34))
@@ -2947,7 +3059,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             resourceManageContentHost = host
             addView(host)
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(bottomNavigation())
+        container.addView(bottomNavigation())
         requestResourceManageRefresh(forceCatalogRefresh = true, reason = "open")
     }
 
@@ -4108,12 +4220,31 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         resourceDetailInFlightKey = requestKey
         currentResourceDetailId = resourceId
         currentScreen = Screen.ResourceDetail
-        root.setBackgroundColor(tokens.pageBackground)
+        // T7:走 Fragment 路径。把渲染(含异步线程)交给 renderResourceDetailInto。
         clearRootForScreen()
+        root.visibility = View.GONE
+        val fragment = ResourceDetailFragment.newInstance(resourceId)
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RESOURCE_DETAIL_FRAGMENT)
+            .commitAllowingStateLoss()
+        // initialItem 通过成员传递给 renderResourceDetailInto
+        pendingResourceDetailInitialItem = initialItem
+        pendingResourceDetailRequestId = requestId
+        pendingResourceDetailRequestKey = requestKey
+    }
+
+    /** ResourceDetailFragment.ResourceDetailHost 实现:渲染资源详情(含异步加载线程)。 */
+    override fun renderResourceDetailInto(container: ViewGroup, resourceId: String) {
+        rootHost.setBackgroundColor(tokens.pageBackground)
+        container.setBackgroundColor(tokens.pageBackground)
+        val requestId = pendingResourceDetailRequestId
+        val requestKey = pendingResourceDetailRequestKey ?: KiteResourceRequestPolicy.resourceDetailKey(resourceId)
+        val initialItem = pendingResourceDetailInitialItem
+        pendingResourceDetailInitialItem = null
         val contentHost = FrameLayout(this)
         resourceDetailContentHost = contentHost
-        root.addView(contentHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(bottomNavigation())
+        container.addView(contentHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        container.addView(bottomNavigation())
         val seedItem = initialItem ?: cachedResourceCatalog?.firstOrNull { it.id == resourceId }
         val seedRenderKey = seedItem?.let { buildResourceDetailRenderKey(it) }
         if (seedItem != null) {
@@ -8344,6 +8475,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
+    /**
+     * CardRun surface 的唯一渲染入口(T9 收口证明)。
+     *
+     * 全部 30 个 CardRun surface 调用点都指向本方法(已收口到单方法,无外部调用),
+     * 任何 CardRun 渲染变更只需改这里。内部按 state.surface 分发到
+     * Terminal/Web/X11/InstallWizard/default 五种面,并与 TerminalFragment 共生
+     * (showCardRunTerminalFragment 复用 CARD_RUN_TERMINAL_FRAGMENT_TAG)。
+     *
+     * 渲染本身已是容器模式(surfaceHost FrameLayout),与 TerminalFragment 深度共生,
+     * 强行再包一层 CardRun Fragment 收益低风险高 —— 故 T8 的 CardRun 以"收口到本方法"
+     * 为交付,不强行 Fragment 化。surfaceSignature 去重由 refreshVisibleCardRunSurfaceInsteadOfRebuild 处理。
+     */
     private fun showCardRunSurface(recipe: KiteRecipe) {
         val state = focusedRunInstanceId
             ?.let { CardRunStore.get(it) }
@@ -17153,19 +17296,48 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun showRecipeRawJson(recipe: KiteRecipe) {
-        val latestRecipe = latestRecipeForRawJson(recipe)
+        // T6b:走 Fragment 路径(RecipeRawJsonFragment)。先记录目标 recipe 供 Fragment 按 id 加载,
+        // 再通过 routeToRecipeRawJsonFragment 切换到 Fragment。
+        pendingRawJsonRecipeId = recipe.id.ifBlank { recipe.name }
+        routeToRecipeRawJsonFragment()
+    }
+
+    /**
+     * T6b:把 root 隐藏,把 RecipeRawJsonFragment 加到 rootHost 容器。
+     * 这是 P2 第一个走 Fragment 的 Screen,验证整套机制。
+     */
+    private fun routeToRecipeRawJsonFragment() {
         currentScreen = Screen.RecipeDetail
         clearRootForScreen()
-        root.addView(topBar("原始 JSON") { showRecipeEditor(latestRecipe) })
-        root.addView(ScrollView(this).apply {
-            addView(TextView(context).apply {
-                text = latestRecipe.toJson(includeLocalIdentity = true).toString(2)
-                textSize = 14f
-                setTextColor(tokens.textPrimary)
-                setPadding(dp(24), dp(20), dp(24), dp(28))
-                typeface = Typeface.MONOSPACE
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.visibility = View.GONE
+        val recipeId = pendingRawJsonRecipeId ?: return
+        val fragment = RecipeRawJsonFragment.newInstance(recipeId)
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RECIPE_RAW_JSON_FRAGMENT)
+            .commitAllowingStateLoss()
+    }
+
+    /** 退出 RecipeRawJson Fragment:恢复 root,回到编辑器。 */
+    override fun onExitRecipeRawJson() {
+        supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT)?.let { fragment ->
+            supportFragmentManager.beginTransaction().remove(fragment).commitAllowingStateLoss()
+        }
+        root.visibility = View.VISIBLE
+        // 回到编辑器:用最近一次记录的 recipe
+        val recipe = pendingRawJsonRecipeId?.let { id -> latestRecipeById(id) }
+        if (recipe != null) showRecipeEditor(recipe) else showConsole()
+    }
+
+    /** RecipeRawJsonFragment.RecipeProvider 实现:按 id 加载最新 recipe。 */
+    override fun latestRecipeFor(recipeId: String): KiteRecipe? = latestRecipeById(recipeId)
+
+    /** RecipeRawJsonFragment.UiKitProvider 实现:共享 Activity 的主题 tokens 给 Fragment。 */
+    override fun provideUiKit(): com.kite.app.ui.UiKit =
+        com.kite.app.ui.UiKit(this, tokens)
+
+    private fun latestRecipeById(recipeId: String): KiteRecipe {
+        val seed = currentRecipes.firstOrNull { it.id == recipeId || it.name == recipeId }
+        return latestRecipeForRawJson(seed ?: KiteRecipe(id = recipeId, name = recipeId, description = "", type = KiteRecipe.TYPE_OPEN_URL, defaultUrl = "", shortcut = false))
     }
 
     private fun latestRecipeForRawJson(recipe: KiteRecipe): KiteRecipe {
@@ -19461,7 +19633,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
     }
 
-    private enum class Screen {
+    internal enum class Screen {
         Console,
         Terminal,
         Workbench,
@@ -19497,6 +19669,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     companion object {
         private const val TERMINAL_FRAGMENT_TAG = "kite-terminal"
         private const val CARD_RUN_TERMINAL_FRAGMENT_TAG = "kite-card-run-terminal"
+        private const val TAG_RECIPE_RAW_JSON_FRAGMENT = "kite-recipe-raw-json"
+        private const val TAG_RESOURCE_MANAGE_FRAGMENT = "kite-resource-manage"
+        private const val TAG_RESOURCE_SEARCH_FRAGMENT = "kite-resource-search"
+        private const val TAG_RESOURCES_FRAGMENT = "kite-resources"
+        private const val TAG_RESOURCE_DETAIL_FRAGMENT = "kite-resource-detail"
         private const val TERMINAL_FRAGMENT_INITIAL_SESSION_ARG = "initial_session_id"
         private const val CONSOLE_PAGE_ALL = "all"
         private const val CONSOLE_PAGE_OPENED = "opened"
