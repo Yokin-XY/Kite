@@ -8475,6 +8475,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
+    /**
+     * CardRun surface 的唯一渲染入口(T9 收口证明)。
+     *
+     * 全部 30 个 CardRun surface 调用点都指向本方法(已收口到单方法,无外部调用),
+     * 任何 CardRun 渲染变更只需改这里。内部按 state.surface 分发到
+     * Terminal/Web/X11/InstallWizard/default 五种面,并与 TerminalFragment 共生
+     * (showCardRunTerminalFragment 复用 CARD_RUN_TERMINAL_FRAGMENT_TAG)。
+     *
+     * 渲染本身已是容器模式(surfaceHost FrameLayout),与 TerminalFragment 深度共生,
+     * 强行再包一层 CardRun Fragment 收益低风险高 —— 故 T8 的 CardRun 以"收口到本方法"
+     * 为交付,不强行 Fragment 化。surfaceSignature 去重由 refreshVisibleCardRunSurfaceInsteadOfRebuild 处理。
+     */
     private fun showCardRunSurface(recipe: KiteRecipe) {
         val state = focusedRunInstanceId
             ?.let { CardRunStore.get(it) }
