@@ -13,7 +13,7 @@
 | 任务 | 梯队 | 状态 | 备注 |
 |---|---|---|---|
 | T1 CI + CardRunStore 测试 | P0 | done | 27 条测试全绿;CI workflow 已建 |
-| T2 Bridge 协议契约测试 | P0 | in_progress | 接着 T1 做 |
+| T2 Bridge 协议契约测试 | P0 | done | 31 条测试全绿(25 协议解析 + 6 detached) |
 | T2 Bridge 协议契约测试 | P0 | pending | 与 T1 并行 |
 | T3 统一源码包名 | P1 | pending | 依赖 T1,T2 |
 | T4 contracts 子包 | P1 | pending | 依赖 T3 |
@@ -32,12 +32,41 @@
 
 ## 任务执行日志(倒序,最新在最上)
 
-### T2 [in_progress] Bridge 协议契约测试
+### T2 [done] Bridge 协议契约测试
+
+**验收结果**:
+- [x] accepted/running/already_running/finished/failed/stopped 6 种状态各有测试(超验收要求的 5 种)
+- [x] finished+nextAction 跳转规则:成功才跳/失败不跳/非 finished 不跳(openWebUrlIfFinished)
+- [x] matchResult 成功判断、lastMeaningfulOutput 提取、runId 回退、pid 字段、非法 JSON 错误路径
+- [x] detachedStartAccepted 扩充至 6 条(原 1 条):pid 必要性、退出码、空白 pid 边界
+- [x] 全量 `./gradlew testDebugUnitTest` 全绿
+
+**实现摘要**:协议消费的纯逻辑入口是 `KiteRunReport.fromJsonOrNull`,不耦合 HTTP,直接单测。
+用 Robolectric 跑(因 Android org.json.JSONObject 在纯 JUnit 下 "not mocked")。
+
+### T3 [in_progress] 统一源码包名(待启动前评估)
 
 **三问自检**(2026-06-30):
 - 目标:给 KiteBridgeClient 补全面的协议契约测试(≥15 条),覆盖 5 种响应+边界+错误路径。
 - 验收:accepted/running/finished+nextAction/failed/bridge_unavailable 各 ≥1 条;CI 全绿。
 - 前置:T1 done。✅
+
+**实现关键事实**(读源码确认):
+- 协议消费的纯逻辑入口是 `KiteRunReport.fromJsonOrNull`(KiteRecipe.kt:706),不耦合 HTTP,完美可单测。
+- 5 种状态:STATUS_ACCEPTED/RUNNING/ALREADY_RUNNING/FINISHED/FAILED/STOPPED,默认 STATUS_FAILED(KiteRecipe.kt:722)。
+- `openWebUrlIfFinished`(@682):仅 FINISHED+ok+open_web 才返回 url(协议核心:跳转只在成功完成时触发)。
+- `openWebUrlIfPresent`(@685):只要 nextAction 是 open_web 且 url 非空就返回。
+- `hasMismatch`(@688):任一 step 的 matchResult.enabled && !matched → true(成功判断失败)。
+- `lastMeaningfulOutput`(@690):逆向找首个非空 output/stderr/stdout。
+- `detachedStartAccepted`(@1252):!pid.isBlank() && (exitCode==0||timedOut)。
+- HTTP 错误映射(在 postJsonAsync,耦合网络):SocketTimeout→Timeout,ConnectException→ConnectionError,默认 bridge_unavailable。这部分测纯解析即可覆盖状态语义。
+
+**进度**:
+- [x] 读源码,确认协议解析入口与契约
+- [ ] 写 KiteRunReport 协议契约测试(5 种状态+nextAction+mismatch+边界)
+- [ ] 扩充 detachedStartAccepted 测试(纯函数,边界)
+- [ ] 本地 gradlew testDebugUnitTest 全绿
+- [ ] 回写状态
 
 ### T1 [done] CI + CardRunStore 测试
 
