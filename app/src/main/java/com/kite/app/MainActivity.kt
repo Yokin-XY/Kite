@@ -170,7 +170,8 @@ import org.json.JSONObject
 open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     RecipeRawJsonFragment.RecipeProvider,
     RecipeRawJsonFragment.RecipeRawJsonHost,
-    RecipeRawJsonFragment.UiKitProvider {
+    RecipeRawJsonFragment.UiKitProvider,
+    ResourceManageFragment.ResourceManageHost {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
@@ -2224,8 +2225,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             detachFragment(TERMINAL_FRAGMENT_TAG)
         }
         detachFragment(CARD_RUN_TERMINAL_FRAGMENT_TAG)
-        // T6b:切走时移除 RecipeRawJson Fragment 并恢复 root 可见性
+        // T6b/T7:切走时移除 Fragment(RecipeRawJson、ResourceManage)并恢复 root 可见性
         supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCE_MANAGE_FRAGMENT)?.let { fragment ->
             transaction.remove(fragment)
             changed = true
         }
@@ -2985,12 +2990,30 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showResourceManage() {
+        // T7:走 Fragment 路径(ResourceManageFragment 壳 + 复用 Activity 渲染)。
         currentScreen = Screen.ResourceManage
         resourceManageBinding = null
-        root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
-        root.addView(topBar("资源管理") { showResources() })
-        root.addView(ScrollView(this).apply {
+        root.visibility = View.GONE
+        val fragment = ResourceManageFragment()
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RESOURCE_MANAGE_FRAGMENT)
+            .commitAllowingStateLoss()
+    }
+
+    /** ResourceManageFragment.ResourceManageHost 实现:把已验证的资源管理渲染挂进容器。 */
+    override fun renderResourceManageInto(container: ViewGroup) {
+        rootHost.setBackgroundColor(tokens.pageBackground)
+        container.setBackgroundColor(tokens.pageBackground)
+        container.addView(topBar("资源管理") {
+            // 退出 Fragment 回资源首页
+            supportFragmentManager.findFragmentByTag(TAG_RESOURCE_MANAGE_FRAGMENT)?.let { f ->
+                supportFragmentManager.beginTransaction().remove(f).commitAllowingStateLoss()
+            }
+            root.visibility = View.VISIBLE
+            showResources()
+        })
+        container.addView(ScrollView(this).apply {
             val host = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(22), dp(18), dp(22), dp(34))
@@ -2999,7 +3022,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             resourceManageContentHost = host
             addView(host)
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(bottomNavigation())
+        container.addView(bottomNavigation())
         requestResourceManageRefresh(forceCatalogRefresh = true, reason = "open")
     }
 
@@ -19579,6 +19602,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val TERMINAL_FRAGMENT_TAG = "kite-terminal"
         private const val CARD_RUN_TERMINAL_FRAGMENT_TAG = "kite-card-run-terminal"
         private const val TAG_RECIPE_RAW_JSON_FRAGMENT = "kite-recipe-raw-json"
+        private const val TAG_RESOURCE_MANAGE_FRAGMENT = "kite-resource-manage"
         private const val TERMINAL_FRAGMENT_INITIAL_SESSION_ARG = "initial_session_id"
         private const val CONSOLE_PAGE_ALL = "all"
         private const val CONSOLE_PAGE_OPENED = "opened"
