@@ -40,7 +40,18 @@
 - **理由**(用户拍板):保持执行效率,信任 Playbook 的治理机制和 P0 测试防线。
 - **影响**:T5-T12 的执行节奏。
 
-## ADR-014 P2 前置:先补 UI 路由测试再拆 God Activity
+## ADR-015 真机全程可用,P2 走真机验证
+
+- **日期**:2026-06-30
+- **决策**:P2(T6b-T9)每个 Fragment 抽取后,走真机验证闭环:构建→安装到 1+8T(serial 3f8bbaad)→启动→截图。不再把真机校准延后。
+- **理由**(用户指正):之前误判"无真机"。实际环境 ADB 在 D:\KF\Android\Sdk\platform-tools\adb,1+8T 在线。AGENTS.md 一直要求真机检查,现在全程可用。
+- **真机命令**(以 toolchain.md 为准):
+  - 构建:`./gradlew :app:assembleDebug`
+  - 安装:`adb -s 3f8bbaad install -r app/build/outputs/apk/debug/app-debug.apk`
+  - 启动:`adb -s 3f8bbaad shell am start -n com.kite.app/com.kite.app.MainActivity`
+  - 截图:`MSYS_NO_PATHCONV=1 adb -s 3f8bbaad shell screencap -p /sdcard/x.png` 再 pull(Git Bash 需 MSYS_NO_PATHCONV 绕过路径转换)
+- **Git Hygiene**:截图不入 git(.gitignore 已忽略 /kite-*.png),仅用于当场验证。
+- **影响**:T6b-T9 验收改为"真机走通";撤销之前"真机延后"的判断。
 
 - **日期**:2026-06-30
 - **决策**:在 T6 之前插入 T6.0——给 MainActivity 的 Screen 路由补 Robolectric 测试,锁住路由行为(navigate/back/restore),再做 T6-T9。真机校准延后到 P2 末尾统一做。

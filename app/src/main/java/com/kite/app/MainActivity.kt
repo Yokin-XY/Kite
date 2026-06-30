@@ -167,7 +167,9 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
-open class MainActivity : AppCompatActivity(), TerminalChromeHost {
+open class MainActivity : AppCompatActivity(), TerminalChromeHost,
+    RecipeRawJsonFragment.RecipeProvider,
+    RecipeRawJsonFragment.RecipeRawJsonHost {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
@@ -208,6 +210,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
     private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
     private var currentScreen: Screen = Screen.Console
+    private var pendingRawJsonRecipeId: String? = null
 
     /**
      * 仅用于单元测试:暴露当前 Screen 的枚举名(字符串),供 Robolectric 路由测试断言。
@@ -382,6 +385,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
 
         rootHost = FrameLayout(this).apply {
+            id = View.generateViewId()
             setBackgroundColor(tokens.pageBackground)
         }
         root = LinearLayout(this).apply {
@@ -755,6 +759,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
         }
         when (currentScreen) {
             Screen.CreateConfig -> handleRecipeFormBack()
+            Screen.RecipeDetail -> {
+                // T6b:RecipeDetail 走 Fragment,系统 back 时移除 Fragment 回编辑器
+                if (supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT) != null) {
+                    onExitRecipeRawJson()
+                } else {
+                    showConsole()
+                }
+            }
             Screen.RecipeMore -> returnToRecipeFormFromMore()
             Screen.ThemeSettings -> showSettings()
             Screen.ResourceManage -> showResources()
@@ -2211,6 +2223,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
             detachFragment(TERMINAL_FRAGMENT_TAG)
         }
         detachFragment(CARD_RUN_TERMINAL_FRAGMENT_TAG)
+        // T6b:切走时移除 RecipeRawJson Fragment 并恢复 root 可见性
+        supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        root.visibility = View.VISIBLE
         if (changed) {
             transaction.commitNowAllowingStateLoss()
         }
@@ -17186,19 +17204,44 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     }
 
     private fun showRecipeRawJson(recipe: KiteRecipe) {
-        val latestRecipe = latestRecipeForRawJson(recipe)
+        // T6b:走 Fragment 路径(RecipeRawJsonFragment)。先记录目标 recipe 供 Fragment 按 id 加载,
+        // 再通过 routeToRecipeRawJsonFragment 切换到 Fragment。
+        pendingRawJsonRecipeId = recipe.id.ifBlank { recipe.name }
+        routeToRecipeRawJsonFragment()
+    }
+
+    /**
+     * T6b:把 root 隐藏,把 RecipeRawJsonFragment 加到 rootHost 容器。
+     * 这是 P2 第一个走 Fragment 的 Screen,验证整套机制。
+     */
+    private fun routeToRecipeRawJsonFragment() {
         currentScreen = Screen.RecipeDetail
         clearRootForScreen()
-        root.addView(topBar("原始 JSON") { showRecipeEditor(latestRecipe) })
-        root.addView(ScrollView(this).apply {
-            addView(TextView(context).apply {
-                text = latestRecipe.toJson(includeLocalIdentity = true).toString(2)
-                textSize = 14f
-                setTextColor(tokens.textPrimary)
-                setPadding(dp(24), dp(20), dp(24), dp(28))
-                typeface = Typeface.MONOSPACE
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.visibility = View.GONE
+        val recipeId = pendingRawJsonRecipeId ?: return
+        val fragment = RecipeRawJsonFragment.newInstance(recipeId)
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RECIPE_RAW_JSON_FRAGMENT)
+            .commitAllowingStateLoss()
+    }
+
+    /** 退出 RecipeRawJson Fragment:恢复 root,回到编辑器。 */
+    override fun onExitRecipeRawJson() {
+        supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT)?.let { fragment ->
+            supportFragmentManager.beginTransaction().remove(fragment).commitAllowingStateLoss()
+        }
+        root.visibility = View.VISIBLE
+        // 回到编辑器:用最近一次记录的 recipe
+        val recipe = pendingRawJsonRecipeId?.let { id -> latestRecipeById(id) }
+        if (recipe != null) showRecipeEditor(recipe) else showConsole()
+    }
+
+    /** RecipeRawJsonFragment.RecipeProvider 实现:按 id 加载最新 recipe。 */
+    override fun latestRecipeFor(recipeId: String): KiteRecipe? = latestRecipeById(recipeId)
+
+    private fun latestRecipeById(recipeId: String): KiteRecipe {
+        val seed = currentRecipes.firstOrNull { it.id == recipeId || it.name == recipeId }
+        return latestRecipeForRawJson(seed ?: KiteRecipe(id = recipeId, name = recipeId, description = "", type = KiteRecipe.TYPE_OPEN_URL, defaultUrl = "", shortcut = false))
     }
 
     private fun latestRecipeForRawJson(recipe: KiteRecipe): KiteRecipe {
@@ -19530,6 +19573,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost {
     companion object {
         private const val TERMINAL_FRAGMENT_TAG = "kite-terminal"
         private const val CARD_RUN_TERMINAL_FRAGMENT_TAG = "kite-card-run-terminal"
+        private const val TAG_RECIPE_RAW_JSON_FRAGMENT = "kite-recipe-raw-json"
         private const val TERMINAL_FRAGMENT_INITIAL_SESSION_ARG = "initial_session_id"
         private const val CONSOLE_PAGE_ALL = "all"
         private const val CONSOLE_PAGE_OPENED = "opened"
