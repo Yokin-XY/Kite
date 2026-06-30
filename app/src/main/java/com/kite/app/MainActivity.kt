@@ -171,7 +171,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     RecipeRawJsonFragment.RecipeProvider,
     RecipeRawJsonFragment.RecipeRawJsonHost,
     RecipeRawJsonFragment.UiKitProvider,
-    ResourceManageFragment.ResourceManageHost {
+    ResourceManageFragment.ResourceManageHost,
+    ResourceSearchFragment.ResourceSearchHost,
+    ResourcesFragment.ResourcesHost,
+    ResourceDetailFragment.ResourceDetailHost {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
@@ -213,6 +216,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
     private var currentScreen: Screen = Screen.Console
     private var pendingRawJsonRecipeId: String? = null
+    private var pendingResourceDetailInitialItem: ResourceItem? = null
+    private var pendingResourceDetailRequestId: Long = 0L
+    private var pendingResourceDetailRequestKey: String? = null
 
     /**
      * 仅用于单元测试:暴露当前 Screen 的枚举名(字符串),供 Robolectric 路由测试断言。
@@ -2234,6 +2240,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             transaction.remove(fragment)
             changed = true
         }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCE_SEARCH_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCES_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCE_DETAIL_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
         root.visibility = View.VISIBLE
         if (changed) {
             transaction.commitNowAllowingStateLoss()
@@ -2353,21 +2371,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showResources() {
+        // T7:走 Fragment 路径。
         currentResourceDetailId = null
         currentScreen = Screen.Resources
         ensureBundledToolBootstrapIfNeeded("show_resources")
-        root.setBackgroundColor(tokens.pageBackground)
+        clearRootForScreen()
+        root.visibility = View.GONE
+        val fragment = ResourcesFragment()
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RESOURCES_FRAGMENT)
+            .commitAllowingStateLoss()
+    }
+
+    /** ResourcesFragment.ResourcesHost 实现。 */
+    override fun renderResourcesInto(container: ViewGroup) {
+        rootHost.setBackgroundColor(tokens.pageBackground)
+        container.setBackgroundColor(tokens.pageBackground)
         val page = ensureResourcePage()
         val nav = ensureResourcePageNav()
         showBottomNavigationImmediately(nav)
-        val alreadyAttached = page.parent === root && nav.parent === root
-        if (!alreadyAttached) {
-            clearRootForScreen()
-            detachFromParent(page)
-            detachFromParent(nav)
-            root.addView(page, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-            root.addView(nav)
-        }
+        detachFromParent(page)
+        detachFromParent(nav)
+        container.addView(page, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        container.addView(nav)
         requestResourceSectionsRefresh(forceCatalogRefresh = false)
     }
 
@@ -2406,18 +2432,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showResourceSearch(initialQuery: String = currentResourceSearchQuery) {
+        // T7:走 Fragment 路径。
         currentScreen = Screen.ResourceSearch
         currentResourceDetailId = null
         currentResourceSearchQuery = initialQuery.trim()
         resourceSearchRenderKey = ""
-        root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
+        root.visibility = View.GONE
+        val fragment = ResourceSearchFragment.newInstance(currentResourceSearchQuery)
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RESOURCE_SEARCH_FRAGMENT)
+            .commitAllowingStateLoss()
+    }
+
+    /** ResourceSearchFragment.ResourceSearchHost 实现。 */
+    override fun renderResourceSearchInto(container: ViewGroup, initialQuery: String) {
+        rootHost.setBackgroundColor(tokens.pageBackground)
+        container.setBackgroundColor(tokens.pageBackground)
         resourceSearchContentHost = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        val searchInput = resourceSearchInput(currentResourceSearchQuery)
-        root.addView(resourceSearchTopBar(searchInput))
-        root.addView(ScrollView(this).apply {
+        val searchInput = resourceSearchInput(initialQuery)
+        container.addView(resourceSearchTopBar(searchInput))
+        container.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(22), dp(12), dp(22), dp(88))
@@ -4183,12 +4220,31 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         resourceDetailInFlightKey = requestKey
         currentResourceDetailId = resourceId
         currentScreen = Screen.ResourceDetail
-        root.setBackgroundColor(tokens.pageBackground)
+        // T7:走 Fragment 路径。把渲染(含异步线程)交给 renderResourceDetailInto。
         clearRootForScreen()
+        root.visibility = View.GONE
+        val fragment = ResourceDetailFragment.newInstance(resourceId)
+        supportFragmentManager.beginTransaction()
+            .replace(rootHost.id, fragment, TAG_RESOURCE_DETAIL_FRAGMENT)
+            .commitAllowingStateLoss()
+        // initialItem 通过成员传递给 renderResourceDetailInto
+        pendingResourceDetailInitialItem = initialItem
+        pendingResourceDetailRequestId = requestId
+        pendingResourceDetailRequestKey = requestKey
+    }
+
+    /** ResourceDetailFragment.ResourceDetailHost 实现:渲染资源详情(含异步加载线程)。 */
+    override fun renderResourceDetailInto(container: ViewGroup, resourceId: String) {
+        rootHost.setBackgroundColor(tokens.pageBackground)
+        container.setBackgroundColor(tokens.pageBackground)
+        val requestId = pendingResourceDetailRequestId
+        val requestKey = pendingResourceDetailRequestKey ?: KiteResourceRequestPolicy.resourceDetailKey(resourceId)
+        val initialItem = pendingResourceDetailInitialItem
+        pendingResourceDetailInitialItem = null
         val contentHost = FrameLayout(this)
         resourceDetailContentHost = contentHost
-        root.addView(contentHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(bottomNavigation())
+        container.addView(contentHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        container.addView(bottomNavigation())
         val seedItem = initialItem ?: cachedResourceCatalog?.firstOrNull { it.id == resourceId }
         val seedRenderKey = seedItem?.let { buildResourceDetailRenderKey(it) }
         if (seedItem != null) {
@@ -19603,6 +19659,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val CARD_RUN_TERMINAL_FRAGMENT_TAG = "kite-card-run-terminal"
         private const val TAG_RECIPE_RAW_JSON_FRAGMENT = "kite-recipe-raw-json"
         private const val TAG_RESOURCE_MANAGE_FRAGMENT = "kite-resource-manage"
+        private const val TAG_RESOURCE_SEARCH_FRAGMENT = "kite-resource-search"
+        private const val TAG_RESOURCES_FRAGMENT = "kite-resources"
+        private const val TAG_RESOURCE_DETAIL_FRAGMENT = "kite-resource-detail"
         private const val TERMINAL_FRAGMENT_INITIAL_SESSION_ARG = "initial_session_id"
         private const val CONSOLE_PAGE_ALL = "all"
         private const val CONSOLE_PAGE_OPENED = "opened"
