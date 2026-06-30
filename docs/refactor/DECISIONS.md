@@ -40,7 +40,13 @@
 - **理由**(用户拍板):保持执行效率,信任 Playbook 的治理机制和 P0 测试防线。
 - **影响**:T5-T12 的执行节奏。
 
-## ADR-018 (撤销) T7-T9/T11 不再降级,全部做完
+## ADR-019 T8 CardRun 以收口到单方法为交付,不强行 Fragment 化
+
+- **日期**:2026-06-30
+- **决策**:CardRun surface 不强行包 Fragment,以"showCardRunSurface 收口为唯一渲染入口 + 文档化"作为 T8 交付。
+- **理由**:T9 已证明 30 个调用点全收口到 showCardRunSurface(private,无外部调用)。该方法内部已是容器模式(surfaceHost),按 surface 分发到 5 种面,与 TerminalFragment 深度共生(复用 CARD_RUN_TERMINAL_FRAGMENT_TAG)。强行再包 Fragment:① 收益低(已是容器模式);② 风险高(共生关系 + surfaceSignature 字段/方法同名歧义)。资源 Screen(T7)是独立页适合 Fragment,CardRun 是单一复杂渲染器适合收口到方法。
+- **交付**:showCardRunSurface 加 KDoc 标注唯一入口;30 调用点收口事实记录。
+- **与 T7 的区别**:T7 资源页是多个独立 Screen,Fragment 化让它们各自隔离;CardRun 是一个多分支渲染器,收口到方法比包 Fragment 更合适。
 
 - **日期**:2026-06-30 初版(降级) → 同日撤销
 - **撤销原因**(用户明确):用户要求"计划要一次性推完,要收口",不接受用"风险大/性价比低"把 T7-T9/T11 降级为技术债。T6b/T7.0 已验证 Fragment 化机制完全可行(ScreenRouter + UiKit + Fragment 容器 + back 处理 + 真机验证全部跑通),剩下是逐个啃,无真正技术障碍。
