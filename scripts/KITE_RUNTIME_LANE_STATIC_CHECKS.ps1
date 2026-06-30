@@ -11,19 +11,22 @@ $browserProxyPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteB
 $localServerPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteLocalServer.kt'
 $cardRunModelsPath = Join-Path $Root 'app/src/main/java/com/kite/app/run/CardRunModels.kt'
 $cardRunStorePath = Join-Path $Root 'app/src/main/java/com/kite/app/run/CardRunStore.kt'
-$prootTelemetryStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotTelemetryStore.kt'
-$prootOwnerTerminatorPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/ProotOwnerProcessTerminator.kt'
-$runtimeHealthStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeHealthStore.kt'
-$runtimeReclaimerPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeReclaimer.kt'
-$runtimeWorkloadRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeWorkloadRegistry.kt'
-$runtimeAutomationActionsPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeAutomationActions.kt'
-$runtimeMemoryLifecycleRuleTriggerPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeMemoryLifecycleRuleTrigger.kt'
-$backgroundRuntimeRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/service/BackgroundRuntimeRegistry.kt'
-$taskManagerStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/TaskManagerStore.kt'
-$containerProcessStorePath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/ContainerProcessStore.kt'
-$taskManagerFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/ui/tasks/TaskManagerFragment.kt'
-$prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/runtime/RuntimeProotPoolPlanDryRun.kt'
-$terminalSessionControllerPath = Join-Path $Root 'app/src/main/kotlin/com/kftest/app/foundation/terminal/TerminalSessionController.kt'
+$prootTelemetryStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryStore.kt'
+$prootOwnerTerminatorPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotOwnerProcessTerminator.kt'
+$runtimeHealthStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthStore.kt'
+$runtimeReclaimerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeReclaimer.kt'
+$runtimeWorkloadRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeWorkloadRegistry.kt'
+$runtimeAutomationActionsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeAutomationActions.kt'
+$runtimeMemoryLifecycleRuleTriggerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeMemoryLifecycleRuleTrigger.kt'
+$backgroundRuntimeRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/service/BackgroundRuntimeRegistry.kt'
+$taskManagerStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/TaskManagerStore.kt'
+$containerProcessStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ContainerProcessStore.kt'
+$taskManagerFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/tasks/TaskManagerFragment.kt'
+$prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeProotPoolPlanDryRun.kt'
+$terminalSessionControllerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/terminal/TerminalSessionController.kt'
+# T11 拆分后的 model 文件(Store 检查需合并 Models)
+$prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
+$runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
 
 $failures = New-Object System.Collections.Generic.List[string]
 
@@ -59,8 +62,17 @@ $localServer = Read-Utf8 $localServerPath
 $cardRunModels = Read-Utf8 $cardRunModelsPath
 $cardRunStore = Read-Utf8 $cardRunStorePath
 $prootTelemetryStore = Read-Utf8 $prootTelemetryStorePath
+# T11 拆分后 model 定义移到 ProotTelemetryModels.kt。用 Get-Content -Raw 读取
+# (该文件经 sed 提取,ReadAllText 对其返回空,Get-Content -Raw 可靠)。
+$prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
+$prootTelemetryModels = Get-Content -Path $prootTelemetryModelsPath -Raw -Encoding UTF8
+# 在读取点立即合并(避免后续作用域诡异行为)
+$prootTelemetryAll = $prootTelemetryStore + "`n" + $prootTelemetryModels
 $prootOwnerTerminator = Read-Utf8 $prootOwnerTerminatorPath
 $runtimeHealthStore = Read-Utf8 $runtimeHealthStorePath
+# T11 拆分后 model 定义移到 RuntimeHealthModels.kt,合并读取
+$runtimeHealthModels = Read-Utf8 $runtimeHealthModelsPath
+$runtimeHealthStore = $runtimeHealthStore + "`n" + $runtimeHealthModels
 $runtimeReclaimer = Read-Utf8 $runtimeReclaimerPath
 $runtimeWorkloadRegistry = Read-Utf8 $runtimeWorkloadRegistryPath
 $runtimeAutomationActions = Read-Utf8 $runtimeAutomationActionsPath
@@ -186,9 +198,11 @@ $blankTerminal = Function-Body $main 'openCardRunBlankTerminal'
 $terminalStep = Function-Body $main 'executeTerminalRecipeStep'
 Assert-True ($blankTerminal -match 'withTerminalOwner\(record\.id, instanceId\)') 'blank card terminals must launch with terminal owner env.'
 Assert-True ($terminalStep -match 'withTerminalOwner\(record\.id, instanceId\)') 'terminal recipe steps must launch with terminal owner env.'
-Assert-True ($prootTelemetryStore -match 'data class ProotOwnerProcessGroup') 'PRoot telemetry must expose owner process groups.'
-Assert-True ($prootTelemetryStore -match 'data class ProotOwnerProcessIndex') 'PRoot telemetry must expose an owner process index.'
-Assert-True ($prootTelemetryStore -match 'val ownerProcessIndex: ProotOwnerProcessIndex') 'PRoot telemetry snapshots must carry the owner process index.'
+# T11:model 定义已移到 ProotTelemetryModels.kt。用 Select-String 直接扫文件(规避变量合并的诡异行为)。
+# T11:model 定义已移到 ProotTelemetryModels.kt。$prootTelemetryAll 已在读取点合并(store+models)。
+Assert-True ($prootTelemetryAll -match 'data class ProotOwnerProcessGroup') 'PRoot telemetry must expose owner process groups.'
+Assert-True ($prootTelemetryAll -match 'data class ProotOwnerProcessIndex') 'PRoot telemetry must expose an owner process index.'
+Assert-True ($prootTelemetryAll -match 'val ownerProcessIndex: ProotOwnerProcessIndex') 'PRoot telemetry snapshots must carry the owner process index.'
 Assert-True ($prootTelemetryStore -match 'private fun buildOwnerProcessIndex') 'PRoot telemetry must build the owner index from the live process table.'
 Assert-True ($prootTelemetryStore -match 'filter \{ it\.state == ProotLiveProcessState\.RUNNING && it\.kfRuntimeId\.isNotBlank\(\) \}') 'owner process index must be derived from live tracees with KF owner ids.'
 Assert-True ($prootTelemetryStore -match 'groupBy \{ it\.kfRuntimeId \}') 'owner process index must group tracees by KF runtime owner id.'
@@ -201,7 +215,7 @@ Assert-True ($prootTelemetryStore -match 'lastOffsetBytes = currentLength') 'rot
 Assert-True ($prootTelemetryStore -match 'belongsToRotationBaseline') 'rotated telemetry baseline must have a bounded time window instead of replaying arbitrary history.'
 Assert-True ($prootTelemetryStore -match 'fun retireOwnerTracees') 'PRoot telemetry store must support owner tombstones after confirmed control-plane stop.'
 Assert-True ($prootTelemetryStore -match 'RETIRE_PROOT_OWNER_TRACEES' -and $prootTelemetryStore -match 'kite_owner_retire_') 'owner tombstones must be written as explicit same-source telemetry events.'
-Assert-True ($prootTelemetryStore -match 'ProotTelemetryEventType\.TraceeExited\.name' -and $prootTelemetryStore -match 'android_control_plane_owner_tombstone_same_telemetry_source_no_proc_scan') 'owner tombstones must retire running tracees without falling back to /proc scans.'
+Assert-True ($prootTelemetryAll -match 'ProotTelemetryEventType\.TraceeExited\.name' -and $prootTelemetryAll -match 'android_control_plane_owner_tombstone_same_telemetry_source_no_proc_scan') 'owner tombstones must retire running tracees without falling back to /proc scans.'
 Assert-True ($runtimeHealthStore -match 'CARD\("\u5361\u7247"\)' -and $runtimeHealthStore -match 'RESOURCE\("\u8d44\u6e90"\)') 'RuntimeHealth must model card/resource owner roots explicitly.'
 Assert-True ($runtimeHealthStore -match 'private fun buildProotOwnerRoots') 'RuntimeHealth must build owner roots from PRoot owner index.'
 Assert-True ($runtimeHealthStore -match 'prootTelemetry\.ownerProcessIndex\.groups') 'RuntimeHealth owner roots must consume the owner process index.'
@@ -322,8 +336,13 @@ Assert-True ($main -notmatch 'private fun runManagementOwnershipRows|private fun
 Assert-True ($main -match 'private fun RunManagementGroup\.runManagementProcessPreview' -and $main -match '\u4e3b\u8fdb\u7a0b PID' -and $main -match '\u5b50\u8fdb\u7a0b') 'run management process preview should summarize PID/count instead of repeating the command line.'
 
 $showManage = Function-Body $main 'showResourceManage'
-Assert-True ($showManage -notmatch 'resourceCatalog\(forceRefresh = true\)|planSnapshot\(\)|registrySnapshot\(') 'showResourceManage must not synchronously build catalog or DB snapshots.'
-Assert-True ($showManage -match 'requestResourceManageRefresh') 'showResourceManage should request a background payload.'
+# T7:资源管理走 Fragment,渲染逻辑迁到 renderResourceManageInto(override fun,非 private),
+# 单独提取其函数体。
+$renderManagePattern = "(?s)override fun renderResourceManageInto\b.*?(?=\n    private fun |\n    private data class |\n    private enum class |\n    companion object|\n    override fun |\z)"
+$renderManage = [regex]::Match($main, $renderManagePattern).Value
+$resourceManageFlow = $showManage + "`n" + $renderManage
+Assert-True ($resourceManageFlow -notmatch 'resourceCatalog\(forceRefresh = true\)|planSnapshot\(\)|registrySnapshot\(') 'showResourceManage must not synchronously build catalog or DB snapshots.'
+Assert-True ($resourceManageFlow -match 'requestResourceManageRefresh') 'showResourceManage should request a background payload.'
 
 $consoleRefresh = Function-Body $main 'maybeRefreshConsoleAfterRuntimeState'
 Assert-True ($consoleRefresh -match 'updateVisibleConsoleCard') 'console runtime refresh should update a visible card first.'
