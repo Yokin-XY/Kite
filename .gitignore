@@ -11,6 +11,10 @@ local.properties
 
 # Local planning and workspace notes.
 /docs/*
+# 重构治理文件(Playbook/PROGRESS/DECISIONS)是工程基础设施,需纳入版本控制,
+# 以抗上下文压缩、支持 PR 审查。其他 docs 仍按本地笔记处理。
+!/docs/refactor/
+!/docs/refactor/**
 !/docs/screenshots/
 /docs/screenshots/*
 !/docs/screenshots/kite-*.png
