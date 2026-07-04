@@ -15,6 +15,12 @@ local.properties
 # 以抗上下文压缩、支持 PR 审查。其他 docs 仍按本地笔记处理。
 !/docs/refactor/
 !/docs/refactor/**
+!/docs/browser-login/
+!/docs/browser-login/**
+!/docs/parallel-workstreams/
+!/docs/parallel-workstreams/**
+!/docs/x11-super-operation/
+!/docs/x11-super-operation/**
 !/docs/screenshots/
 /docs/screenshots/*
 !/docs/screenshots/kite-*.png

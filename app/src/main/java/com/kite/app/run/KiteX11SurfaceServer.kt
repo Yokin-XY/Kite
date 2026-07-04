@@ -90,8 +90,14 @@ object KiteX11SurfaceServer {
             runCatching { context.unbindService(connection) }
             "native X11 service 启动超时"
         }
+        val binder = connected ?: error("native X11 service 未返回 Binder")
+        val startError = readStartError(binder)
+        check(startError.isBlank()) {
+            runCatching { context.unbindService(connection) }
+            "native X11 service 启动失败：$startError"
+        }
         serviceConnection = connection
-        return connected ?: error("native X11 service 未返回 Binder")
+        return binder
     }
 
     private fun requestXConnection(): ParcelFileDescriptor {
@@ -103,8 +109,26 @@ object KiteX11SurfaceServer {
                 "native X server 连接请求失败"
             }
             val hasFd = reply.readInt()
-            check(hasFd == 1) { "native X server 未返回连接 fd" }
+            check(hasFd == 1) {
+                val startError = readStartError(binder)
+                if (startError.isBlank()) "native X server 未返回连接 fd" else "native X server 未返回连接 fd：$startError"
+            }
             return ParcelFileDescriptor.CREATOR.createFromParcel(reply)
+        } finally {
+            data.recycle()
+            reply.recycle()
+        }
+    }
+
+    private fun readStartError(binder: IBinder): String {
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        return try {
+            if (!binder.transact(KiteX11ServerService.TRANSACTION_GET_START_ERROR, data, reply, 0)) {
+                ""
+            } else {
+                reply.readString().orEmpty()
+            }
         } finally {
             data.recycle()
             reply.recycle()

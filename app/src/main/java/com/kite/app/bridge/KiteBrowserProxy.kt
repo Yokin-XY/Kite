@@ -32,7 +32,8 @@ data class KiteDesktopOpenResponse(
     val recipeId: String?,
     val instanceId: String?,
     val display: String,
-    val socketPath: String
+    val socketPath: String,
+    val error: String = ""
 )
 
 data class KiteInstallApkRequest(

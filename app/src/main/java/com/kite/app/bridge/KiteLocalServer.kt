@@ -154,6 +154,7 @@ class KiteLocalServer(
                                 .put("cardInstanceId", response.instanceId ?: "")
                                 .put("display", response.display)
                                 .put("socketPath", response.socketPath)
+                                .put("error", response.error)
                         )
                     }
                 }

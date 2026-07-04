@@ -18,6 +18,18 @@ class KiteVscodeResourceLaunchTest {
         }
     }
 
+    @Test
+    fun pcmanfmLaunchConstrainsWindowToFixed1080pDesktop() {
+        val manifest = resourceManifest("kite.pcmanfm.x11").readText()
+
+        assertTrue(manifest.contains("xdotool"))
+        assertTrue(manifest.contains("win_width=\$KITE_X11_DESKTOP_WIDTH"))
+        assertTrue(manifest.contains("win_height=\$KITE_X11_DESKTOP_HEIGHT"))
+        assertTrue(manifest.contains("--new-win /workspace"))
+        assertTrue(manifest.contains("xdotool windowmove"))
+        assertTrue(manifest.contains("xdotool windowsize"))
+    }
+
     private fun resourceManifest(resourceId: String): File =
         listOf(
             File("assets/resources/$resourceId/manifest.json"),

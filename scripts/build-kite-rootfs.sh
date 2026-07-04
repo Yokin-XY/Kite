@@ -160,6 +160,7 @@ EOF
   as_root_without_host_proxy chroot "$ROOTFS_DIR" env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends "${APT_PACKAGES[@]}"
   write_manifest
   as_root chroot "$ROOTFS_DIR" apt-get clean
+  as_root rm -f "$ROOTFS_DIR/etc/apt/apt.conf.d/99kite-proxy"
   as_root rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"* "$ROOTFS_DIR/tmp/"* "$ROOTFS_DIR/var/tmp/"*
   as_root rm -f "$ROOTFS_DIR/usr/bin/qemu-aarch64-static"
   unbind_mounts

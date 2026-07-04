@@ -1,51 +1,234 @@
-# Kite agent rules
+# Kite 行为管理规范
 
-This project uses Ponytail-style guidance for coding-agent work.
-Source: https://github.com/DietrichGebert/ponytail
-Adapted from Ponytail, MIT License, copyright (c) 2026 DietrichGebert.
+## 中文优先
 
-## Ponytail, Lazy Senior Dev Mode
+- 默认用中文交流、写说明、写项目文档、写面向人的注释。
+- 能用中文说清楚的规范，不要用英文术语堆砌。
+- 代码名、类名、函数名、字段名、命令、日志、第三方产品名可以保留英文。
+- 必须保留英文时，第一次出现尽量补一句中文解释。
+- 面向用户的交付说明必须让项目使用者能看懂，不要只写给模型看。
 
-Be efficient, not careless. Before writing code, stop at the first rung that
-holds:
+## 真机检查习惯
 
-1. Does this need to be built at all? If not, skip it.
-2. Does the standard library already do this? Use it.
-3. Does a native platform feature cover it? Use it.
-4. Does an already-installed dependency solve it? Use it.
-5. Can this be one line? Make it one line.
-6. Only then, write the minimum code that works.
+Kite 的用户可见改动，能上真机看就尽量上真机看。
 
-Rules:
+尤其是这些地方：
 
-- No abstractions that were not explicitly requested.
-- No new dependency if the existing platform or dependency set can cover it.
-- No boilerplate nobody asked for.
-- Prefer deletion over addition, boring over clever, and the fewest files possible.
-- Question complex requests when a simpler path may cover the real need.
-- Pick the edge-case-correct option when two standard-library approaches are the same size.
-- Mark intentional shortcuts with a `ponytail:` comment.
+- 首页卡片。
+- 资源卡片。
+- 安装向导。
+- 运行窗口。
+- 终端、报告、网页显示面。
+- 点击反馈、状态变化、刷新效果。
 
-If a shortcut has a known ceiling, the `ponytail:` comment must name the ceiling
-and the upgrade path.
+这不是要求每个小改动都必须装手机，而是说：只要改动会影响用户看到的流程，
+就应该尽量让用户能在真机上看到效果。
 
-Never be lazy about trust-boundary validation, data-loss prevention, security,
-accessibility, real-device calibration, or anything explicitly requested.
+默认绑定 1+8T：
 
-Non-trivial logic needs one runnable check: the smallest test, assertion, or
-self-check that fails if the logic breaks. Trivial one-liners do not need a test.
+```text
+serial: 3f8bbaad
+model:  KB2000
+device: OnePlus8T
+product: OnePlus8T_CH
+```
 
-## Kite Real-Device Review Habit
+构建、安装、运行检查、截图默认都使用这台 1+8T，除非用户明确指定其他设备。
+ADB 路径、构建命令、安装命令仍以 `references/toolchain.md` 为准。
 
-For Kite, user-visible changes should be made inspectable on the real phone
-when practical. This applies especially to visible UI behavior, runtime flow,
-cards, resources, terminal/report/Web surfaces, install flows, and interaction
-feedback.
+## 交互状态的总规则
 
-Do not treat phone deployment as a rigid requirement for every tiny edit. The
-goal is to get the changed effect in front of the user for human review when it
-materially improves confidence.
+Kite 里的用户操作，不是“点一下按钮，等后台慢慢刷新页面”。
 
-Default device, ADB, build, and install details belong in
-`references/toolchain.md`. This file defines the review habit, not the device
-contract.
+正确理解是：
+
+```text
+用户点击
+-> 软件马上承诺：我收到这个操作了，正在处理
+-> 后台慢慢确认：继续等待、成功、失败、需要重试
+-> 页面只更新相关位置
+```
+
+一句话：
+
+```text
+用户点击要快，后台确认要准，页面更新要稳。
+```
+
+这里的“马上承诺”，就是乐观状态。它不是假装成功，而是告诉用户：
+软件已经收到你的操作，正在处理，先不要重复点。
+
+## 用户点击后的行为
+
+用户点击“获取”“安装”“打开”“停止”“卸载”“继续”等按钮后，
+界面必须立刻进入处理中状态。
+
+例子：
+
+- 点击获取后，按钮应立刻变成“获取中”或类似状态。
+- 点击安装后，首页卡片和安装向导都应知道这个资源正在安装。
+- 点击停止后，不能还显示成可以继续重复点的状态。
+- 点击打开后，应该显示正在打开、正在恢复已有实例，或者正在等待运行窗口。
+
+后台真实结果可以晚一点回来，但前台按钮不能晚几秒才变。
+
+## 后台确认
+
+后台必须给前台明确的确认结果。确认结果分三类：
+
+- 继续等待：后台已经收到，或者任务还在做，前台保持处理中。
+- 成功或失败：成功就显示成功状态，失败就显示失败状态和可重试入口。
+- 等待超时：一段合理等待后还没有确认，就进入“待确认”“请重试”或失败状态。
+
+等待超时不能悄悄恢复成最初的可点击状态。
+
+用户必须知道：
+
+- 这个操作还在做。
+- 这个操作已经成功。
+- 这个操作失败了。
+- 这个操作没有等到确认，需要重试或等待校准。
+
+## 谁改状态，谁发信号
+
+状态不能由页面随便宣布。
+
+比如资源是否安装、任务是否运行、停止是否成功，不能由某个页面自己查几个
+数据源后临时决定。应该由负责这个状态的模块写入状态，并发出轻量信号。
+
+简单说：
+
+```text
+状态拥有者负责改状态和发信号。
+页面负责提交用户意图和显示状态。
+```
+
+资源安装、卸载、失败、安装计划等状态，优先走 `KiteResourceInstallStore`
+和资源登记记录。
+
+运行实例、终端、网页地址、报告文本等运行状态，优先走 `CardRunStore`。
+
+页面不要把这些事实复制一份到自己的本地状态里长期维护。
+
+## 信号不是刷新页面
+
+信号的意思是：“某个状态变了。”
+
+信号的意思不是：“把整个页面刷新一遍。”
+
+状态变化后，应该这样处理：
+
+- 当前页面看得见相关卡片，就只更新那张卡片或那个按钮。
+- 当前页面看得见安装向导，就只更新相关步骤、按钮、进度文字。
+- 当前页面看得见报告，就只更新相关报告文本。
+- 页面不可见时，只记录这个地方需要校准，等回到前台再轻量更新。
+
+不要因为一个资源状态变了，就重建整个资源首页。
+不要因为一个安装步骤变了，就重建整个安装向导。
+
+## 刷新和闪烁
+
+普通状态变化不能用整页刷新解决。
+
+禁止为了同步状态而做这些事：
+
+- 整个页面白一下。
+- 滚动位置跳回顶部。
+- 弹窗或短提示一闪而过。
+- 清空大容器再重新塞回所有内容。
+- 重建终端、报告、网页显示面。
+- 用 `refreshResourceScreenIfVisible()` 当成万能同步按钮。
+- 用 `showCardRunSurface(...)` 处理普通状态变化。
+- 在页面绘制或绑定控件时做文件扫描、安装探测、清单重读、数据库查询、网络健康检查。
+
+允许的方式：
+
+- 只更新受影响的按钮。
+- 只更新受影响的卡片。
+- 只更新受影响的安装步骤。
+- 只更新当前可见的报告片段。
+- 页面不可见时只记脏，回前台再校准。
+- 大列表使用缓存和分批绑定，避免一次性重建。
+
+整页刷新只应该用于真正的页面切换、页面结构变化，或者用户明确要求刷新。
+
+## 弹窗和短提示
+
+短提示和弹窗只能用于离散结果，或者需要用户做决定的地方。
+
+不要用连续短提示表达普通进度。
+
+普通进度应该显示在：
+
+- 按钮文字。
+- 卡片状态。
+- 安装向导步骤。
+- 报告文本。
+- 进度行。
+
+后台状态变化不应该突然弹出一个用户没请求的提示层。
+
+## 返回前台
+
+用户从安装向导、运行窗口、详情页或后台任务返回首页时，首页必须先显示
+已有的处理中状态，再做后台校准。
+
+不能出现这种效果：
+
+```text
+返回首页
+-> 先显示默认状态
+-> 页面闪一下
+-> 过几秒才变成真实状态
+```
+
+应该是：
+
+```text
+返回首页
+-> 先显示已经承诺的处理中状态
+-> 只校准相关卡片或按钮
+-> 后台确认后再变成成功、失败或继续等待
+```
+
+返回前台时要保留页面结构和滚动位置。
+
+## 监控只是兜底
+
+监控、扫描、探测只能用来兜底纠偏，不能成为主要同步方式。
+
+主要同步方式应该是：
+
+```text
+用户点击
+-> 写入处理中状态
+-> 发出状态信号
+-> 局部更新可见界面
+-> 后台确认后校准
+```
+
+兜底方式才是：
+
+```text
+长时间没有确认
+-> 做轻量探测
+-> 显示待确认、失败或可重试
+```
+
+不要依赖“过几秒刷新一次页面”来让用户终于看到正确状态。
+
+## 改状态问题时先这样查
+
+遇到按钮慢变、首页不同步、安装向导闪、页面白一下、弹窗乱闪时，
+先按这个顺序查：
+
+1. 用户点击后，有没有立刻写入处理中状态。
+2. 负责这个状态的模块有没有发出信号。
+3. 其他页面有没有读取同一份显示状态。
+4. 当前可见页面是不是只更新了受影响控件。
+5. 不可见页面是不是只记脏，而不是偷偷重建。
+6. 后台有没有发出继续等待、成功、失败或超时结果。
+7. 超时后有没有进入可解释状态。
+8. 有没有整页刷新、清空容器、重新导航、连续短提示或绘制时重型探测。
+
+这些没有查清楚前，不要先加刷新、轮询、弹窗或新的页面本地状态。

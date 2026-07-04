@@ -20,6 +20,8 @@ class KiteResourceInstallRecipesCommandExposureTest {
         assertTrue(script.contains(".kite-managed-commands"))
         assertTrue(script.contains("remove_recorded_command_links"))
         assertTrue(script.contains("export npm_config_prefix=\"${'$'}npm_prefix\""))
+        assertTrue(script.contains("clear-build-apt-proxy"))
+        assertTrue(script.contains("/etc/apt/apt.conf.d/99kite-proxy"))
         assertTrue(script.contains("python|python[0-9]*|pip|pip[0-9]*|node|npm|npx|corepack|uv|uvx"))
         assertTrue(script.contains("command -v \"${'$'}command_name\""))
         assertFalse(script.contains("--version"))
@@ -38,7 +40,9 @@ class KiteResourceInstallRecipesCommandExposureTest {
         )
 
         assertTrue(script.contains("is_explicit_command"))
+        assertTrue(script.contains("is_safe_explicit_command_target"))
         assertTrue(script.contains("if is_explicit_command \"${'$'}command_name\"; then"))
+        assertTrue(script.contains("is_explicit_command \"${'$'}command_name\" && is_safe_explicit_command_target"))
         assertTrue(script.contains("exit 127"))
         assertTrue(script.contains("\"/usr/bin/${'$'}command_name\""))
         assertTrue(script.contains("\"/bin/${'$'}command_name\""))

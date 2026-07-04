@@ -17,15 +17,28 @@ class KiteX11ServerService : Service() {
     private var entryPoint: CmdEntryPoint? = null
     private var activeDisplay: String? = null
     private var activeRootfsPath: String? = null
+    private var lastStartError: String? = null
 
     override fun onBind(intent: Intent?): IBinder {
-        intent?.let { startFromIntent(it) }
+        intent?.let { startFromIntentSafely(it) }
         return binder
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        intent?.let { startFromIntent(it) }
+        intent?.let { startFromIntentSafely(it) }
         return START_STICKY
+    }
+
+    @Synchronized
+    private fun startFromIntentSafely(intent: Intent) {
+        runCatching {
+            startFromIntent(intent)
+        }.onSuccess {
+            lastStartError = null
+        }.onFailure { error ->
+            lastStartError = error.message?.takeIf { it.isNotBlank() }
+                ?: error::class.java.simpleName
+        }
     }
 
     @Synchronized
@@ -59,7 +72,14 @@ class KiteX11ServerService : Service() {
 
     private inner class X11Binder : Binder() {
         override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-            if (code != TRANSACTION_GET_X_CONNECTION || reply == null) {
+            if (reply == null) {
+                return super.onTransact(code, data, reply, flags)
+            }
+            if (code == TRANSACTION_GET_START_ERROR) {
+                reply.writeString(lastStartError.orEmpty())
+                return true
+            }
+            if (code != TRANSACTION_GET_X_CONNECTION) {
                 return super.onTransact(code, data, reply, flags)
             }
             val fd: ParcelFileDescriptor? = synchronized(this@KiteX11ServerService) {
@@ -77,6 +97,7 @@ class KiteX11ServerService : Service() {
 
     companion object {
         const val TRANSACTION_GET_X_CONNECTION: Int = IBinder.FIRST_CALL_TRANSACTION
+        const val TRANSACTION_GET_START_ERROR: Int = IBinder.FIRST_CALL_TRANSACTION + 1
         private const val EXTRA_DISPLAY = "display"
         private const val EXTRA_ROOTFS = "rootfs"
         private const val EXTRA_XKB_ROOT = "xkb_root"

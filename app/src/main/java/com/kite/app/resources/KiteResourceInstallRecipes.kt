@@ -189,6 +189,32 @@ SH
               done
               return 1
             }
+            is_safe_explicit_command_target() {
+              target_path="${'$'}1"
+              target_name="${'$'}2"
+              [ -n "${'$'}target_path" ] || return 1
+              [ -x "${'$'}target_path" ] || return 1
+              case "${'$'}target_path" in
+                "${'$'}install_root/bin/${'$'}target_name"|\
+                "${'$'}npm_prefix/bin/${'$'}target_name"|\
+                "${'$'}HOME/.local/bin/${'$'}target_name"|\
+                "${'$'}HOME/.kimi-code/bin/${'$'}target_name"|\
+                "${'$'}HOME/.codex/bin/${'$'}target_name"|\
+                "${'$'}HOME/.claude/local/${'$'}target_name"|\
+                "${'$'}HOME/.opencode/bin/${'$'}target_name"|\
+                "/root/.local/bin/${'$'}target_name"|\
+                "/root/.kimi-code/bin/${'$'}target_name"|\
+                "/root/.codex/bin/${'$'}target_name"|\
+                "/root/.claude/local/${'$'}target_name"|\
+                "/root/.opencode/bin/${'$'}target_name"|\
+                "/usr/local/bin/${'$'}target_name"|\
+                "/usr/bin/${'$'}target_name"|\
+                "/bin/${'$'}target_name")
+                  return 0
+                  ;;
+              esac
+              return 1
+            }
             is_public_command_name() {
               case "${'$'}1" in
                 ""|.*|activate|activate.*|deactivate*|python|python[0-9]*|pip|pip[0-9]*|node|npm|npx|corepack|uv|uvx)
@@ -213,6 +239,11 @@ SH
             remove_recorded_command_links
             $cleanLine
             mkdir -p "${'$'}install_root" "${'$'}install_root/bin" "${'$'}npm_prefix/bin" "${'$'}user_home" "$WORKSPACE_BIN_ROOT"
+            kite_build_apt_proxy_conf="/etc/apt/apt.conf.d/99kite-proxy"
+            if [ -f "${'$'}kite_build_apt_proxy_conf" ]; then
+              echo "KITE_RESOURCE_STEP clear-build-apt-proxy ${'$'}kite_build_apt_proxy_conf"
+              rm -f "${'$'}kite_build_apt_proxy_conf" || true
+            fi
             echo "KITE_RESOURCE_STEP manifest-install ${safeId(resourceId)}"
             $rawCommand
             snapshot_public_commands > "${'$'}command_snapshot_after"
@@ -243,11 +274,15 @@ SH
                       continue
                       ;;
                     *)
-                      echo "KITE_RESOURCE_STEP command-conflict ${'$'}command_name -> ${'$'}existing_target"
-                      if is_explicit_command "${'$'}command_name"; then
-                        exit 127
+                      if is_explicit_command "${'$'}command_name" && is_safe_explicit_command_target "${'$'}existing_target" "${'$'}command_name"; then
+                        rm -f "${'$'}link_path"
+                      else
+                        echo "KITE_RESOURCE_STEP command-conflict ${'$'}command_name -> ${'$'}existing_target"
+                        if is_explicit_command "${'$'}command_name"; then
+                          exit 127
+                        fi
+                        continue
                       fi
-                      continue
                       ;;
                   esac
                 fi

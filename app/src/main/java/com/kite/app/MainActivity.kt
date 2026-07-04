@@ -45,6 +45,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewConfiguration
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
@@ -734,6 +736,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     override fun onPause() {
         persistRecipeDraftIfNeeded()
+        restoreCardRunSystemBarsIfNeeded()
         super.onPause()
     }
 
@@ -748,6 +751,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     override fun onDestroy() {
+        restoreCardRunSystemBarsIfNeeded()
         closeResourceInstallTaskIfActivityDestroyed()
         CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
         CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
@@ -8495,6 +8499,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val actionRecipe = wizardChildRun?.first ?: recipe
         val surfaceState = wizardChildRun?.second ?: state
         val surfaceSignature = cardRunSurfaceSignature(recipe, state, actionRecipe, surfaceState)
+        applyCardRunSystemBarsForSurface(state.surface)
         if (refreshVisibleCardRunSurfaceInsteadOfRebuild(surfaceSignature, state, surfaceState)) return
         currentScreen = Screen.CardRun
         root.setBackgroundColor(Color.rgb(246, 247, 249))
@@ -8541,6 +8546,43 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         addCardRunFloatingCapsule(surfaceHost, recipe, state, actionRecipe, surfaceState)
+    }
+
+    private fun applyCardRunSystemBarsForSurface(surface: CardRunSurface) {
+        if (this !is CardRunActivity) return
+        val immersive = surface == CardRunSurface.X11
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(!immersive)
+            window.insetsController?.let { controller ->
+                if (immersive) {
+                    controller.hide(WindowInsets.Type.systemBars())
+                    controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                } else {
+                    controller.show(WindowInsets.Type.systemBars())
+                }
+            }
+        } else {
+            window.decorView.systemUiVisibility = if (immersive) {
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            } else {
+                0
+            }
+        }
+    }
+
+    private fun restoreCardRunSystemBarsIfNeeded() {
+        if (this !is CardRunActivity) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(true)
+            window.insetsController?.show(WindowInsets.Type.systemBars())
+        } else {
+            window.decorView.systemUiVisibility = 0
+        }
     }
 
     private fun cardRunSurfaceSignature(
@@ -13945,6 +13987,27 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         if (state.currentStepIndex != stepIndex || state.status != RecipeRunStatus.Running) return
         val output = progress.outputTail.normalizeShellStreamForDisplay()
         val reportText = buildStreamingShellReport(step, output)
+        if (state.hasActiveX11Handoff(stepIndex)) {
+            val updated = CardRunStore.update(
+                recipe = recipe,
+                status = RecipeRunStatus.Running,
+                instanceId = state.instanceId,
+                surface = CardRunSurface.X11,
+                currentStepIndex = stepIndex,
+                runId = progress.runId,
+                pid = progress.pid,
+                rootPid = progress.rootPid,
+                processGroupId = progress.processGroupId,
+                systemSessionId = progress.systemSessionId,
+                lastMeaningfulOutput = progress.lastMeaningfulOutput.ifBlank { "X11 桌面运行中" },
+                shellReportText = reportText,
+                x11Display = state.x11Display,
+                x11SocketPath = state.x11SocketPath
+            )
+            runtimeStates[recipe.id] = updated
+            updateVisibleResourceInstallWizardElapsed()
+            return
+        }
         val updated = CardRunStore.update(
             recipe = recipe,
             status = RecipeRunStatus.Running,
@@ -13963,6 +14026,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         updateVisibleCardRunReport(updated)
         updateVisibleResourceInstallWizardElapsed()
     }
+
+    private fun RecipeRuntimeState.hasActiveX11Handoff(stepIndex: Int): Boolean =
+        status == RecipeRunStatus.Running &&
+            currentStepIndex == stepIndex &&
+            surface == CardRunSurface.X11 &&
+            !x11Display.isNullOrBlank()
 
     private fun buildStreamingShellReport(step: KiteRecipeStep, output: String): String =
         buildString {
@@ -14142,6 +14211,39 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             "sequence_shell_ok",
             mapOf("requestId" to requestId, "status" to result.status, "stepIndex" to stepIndex.toString())
         )
+        if (currentState?.hasActiveX11Handoff(stepIndex) == true &&
+            (result.accepted || result.status == KiteRunReport.STATUS_RUNNING || report?.status == KiteRunReport.STATUS_RUNNING)
+        ) {
+            val updated = CardRunStore.update(
+                recipe = recipe,
+                status = RecipeRunStatus.Running,
+                instanceId = currentState.instanceId,
+                surface = CardRunSurface.X11,
+                currentStepIndex = stepIndex,
+                runId = runId,
+                pid = pid,
+                rootPid = rootPid,
+                processGroupId = processGroupId,
+                systemSessionId = systemSessionId,
+                lastMeaningfulOutput = lastOutput ?: "X11 桌面运行中",
+                shellReportText = shellReport,
+                x11Display = currentState.x11Display,
+                x11SocketPath = currentState.x11SocketPath
+            )
+            runtimeStates[recipe.id] = updated
+            diagnostics.logRecipeAction(
+                recipe,
+                "sequence_shell_x11_handoff_preserved",
+                mapOf(
+                    "requestId" to requestId,
+                    "stepIndex" to stepIndex.toString(),
+                    "instanceId" to currentState.instanceId,
+                    "display" to currentState.x11Display.orEmpty()
+                )
+            )
+            updateVisibleResourceInstallWizardElapsed()
+            return
+        }
         setRuntimeState(
             recipe,
             RecipeRunStatus.Running,
@@ -17879,7 +17981,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun handleDesktopOpenRequest(request: KiteDesktopOpenRequest): KiteDesktopOpenResponse {
         val normalized = request.copy(command = request.command.trim())
         if (normalized.command.isBlank()) {
-            return KiteDesktopOpenResponse(false, normalized.recipeId, normalized.instanceId, "", "")
+            return KiteDesktopOpenResponse(false, normalized.recipeId, normalized.instanceId, "", "", "missing_command")
         }
         val accepted = acceptDesktopOpenRequest(normalized)
         if (accepted.accepted) {
@@ -18026,7 +18128,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     "error" to message
                 )
             )
-            return KiteDesktopOpenResponse(false, recipe.id, instanceId, "", "")
+            return KiteDesktopOpenResponse(false, recipe.id, instanceId, "", "", message)
         }
 
         val state = CardRunStore.update(
