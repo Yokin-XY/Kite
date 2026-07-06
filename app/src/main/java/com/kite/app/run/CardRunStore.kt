@@ -3,6 +3,7 @@ package com.kite.app.run
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.annotation.VisibleForTesting
+import com.kite.app.browser.BrowserHandoffPolicy
 import com.kite.app.recipe.KiteRecipe
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -594,13 +595,14 @@ object CardRunStore {
             )
         }.toMutableList()
         val nextUrl = state.nextActionUrl?.takeIf { it.isNotBlank() }
-        if (nextUrl != null && rows.none { it.type == KiteRecipe.STEP_OPEN_WEB && it.detail == nextUrl }) {
+        val persistedNextUrl = nextUrl?.redactedUrlForPersistence()
+        if (persistedNextUrl != null && rows.none { it.type == KiteRecipe.STEP_OPEN_WEB && it.detail == persistedNextUrl }) {
             rows.add(
                 CardRunHistoryStep(
                     index = rows.size,
                     type = KiteRecipe.STEP_OPEN_WEB,
                     label = "网页",
-                    detail = nextUrl.take(MAX_HISTORY_DETAIL_CHARS)
+                    detail = persistedNextUrl.take(MAX_HISTORY_DETAIL_CHARS)
                 )
             )
         }
@@ -630,7 +632,9 @@ object CardRunStore {
             KiteRecipe.STEP_X11 -> cmd ?: text
             KiteRecipe.STEP_ANDROID_ACTION -> action
             else -> cmd ?: text ?: url ?: action
-        }.orEmpty().lineSequence()
+        }.orEmpty().let { value ->
+            if (type == KiteRecipe.STEP_OPEN_WEB) value.redactedUrlForPersistence() else value
+        }.lineSequence()
             .map { it.trim() }
             .firstOrNull { it.isNotBlank() }
             .orEmpty()
@@ -797,7 +801,7 @@ object CardRunStore {
             .put("lastMeaningfulOutput", lastMeaningfulOutput.orEmpty().take(MAX_STORED_TEXT_CHARS))
             .put("lastError", lastError.orEmpty().take(MAX_STORED_TEXT_CHARS))
             .put("shellReportText", shellReportText.orEmpty().takeLast(MAX_STORED_TEXT_CHARS))
-            .put("nextActionUrl", nextActionUrl.orEmpty())
+            .put("nextActionUrl", nextActionUrl.orEmpty().redactedUrlForPersistence())
             .put("x11Display", x11Display.orEmpty())
             .put("x11SocketPath", x11SocketPath.orEmpty())
             .put("createdAt", createdAt)
@@ -826,7 +830,7 @@ object CardRunStore {
             .put("index", index)
             .put("type", type)
             .put("label", label)
-            .put("detail", detail.take(MAX_HISTORY_DETAIL_CHARS))
+            .put("detail", detail.redactedUrlForPersistence().take(MAX_HISTORY_DETAIL_CHARS))
             .put("reportText", reportText.takeLast(MAX_HISTORY_REPORT_CHARS))
 
     private fun JSONObject.toCardRunStateOrNull(): CardRunState? {
@@ -903,12 +907,19 @@ object CardRunStore {
             index = optInt("index", 0),
             type = optString("type"),
             label = optString("label").ifBlank { optString("type").ifBlank { "步骤" } },
-            detail = optString("detail").take(MAX_HISTORY_DETAIL_CHARS),
+            detail = optString("detail").redactedUrlForPersistence().take(MAX_HISTORY_DETAIL_CHARS),
             reportText = optString("reportText").takeLast(MAX_HISTORY_REPORT_CHARS)
         )
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(name: String, default: T): T =
         runCatching { enumValueOf<T>(name) }.getOrDefault(default)
+
+    private fun String.redactedUrlForPersistence(): String =
+        if (startsWith("http://", ignoreCase = true) || startsWith("https://", ignoreCase = true)) {
+            BrowserHandoffPolicy.redactedUrlForDiagnostics(this)
+        } else {
+            this
+        }
 
     private const val PREFS_NAME = "kite_card_run_store"
     private const val KEY_RUNS = "runs_v1"

@@ -2,6 +2,7 @@ package com.kite.app.diagnostics
 
 import android.content.Context
 import android.webkit.ConsoleMessage
+import com.kite.app.browser.BrowserHandoffPolicy
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRunReport
 import org.json.JSONObject
@@ -41,7 +42,7 @@ class KiteDiagnostics(context: Context) {
         errorsLog.appendText(
             JSONObject()
                 .put("at", Instant.now().toString())
-                .put("url", url)
+                .put("url", BrowserHandoffPolicy.redactedUrlForDiagnostics(url))
                 .put("code", code)
                 .put("description", description)
                 .toString() + "\n"
@@ -49,7 +50,7 @@ class KiteDiagnostics(context: Context) {
     }
 
     fun logExternalUrl(url: String) {
-        consoleLog.appendText("${Instant.now()} EXTERNAL open_in_system_browser $url\n")
+        consoleLog.appendText("${Instant.now()} EXTERNAL open_in_system_browser ${BrowserHandoffPolicy.redactedUrlForDiagnostics(url)}\n")
     }
 
     fun logLocalServer(message: String) {
@@ -165,7 +166,7 @@ class KiteDiagnostics(context: Context) {
                 "ok" to report.ok.toString(),
                 "steps" to report.steps.size.toString(),
                 "nextActionType" to (report.nextAction?.type ?: ""),
-                "nextActionUrl" to (report.nextAction?.url ?: ""),
+                "nextActionUrl" to (report.nextAction?.url?.let(BrowserHandoffPolicy::redactedUrlForDiagnostics) ?: ""),
                 "hasMismatch" to report.hasMismatch().toString()
             )
         )
@@ -175,7 +176,7 @@ class KiteDiagnostics(context: Context) {
         logBridgeEvent(
             "open_web_attempted",
             recipe,
-            mapOf("url" to url, "source" to source)
+            mapOf("url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(url), "source" to source)
         )
     }
 
@@ -183,7 +184,7 @@ class KiteDiagnostics(context: Context) {
         logBridgeEvent(
             "open_web_failed",
             recipe,
-            mapOf("url" to url, "reason" to reason)
+            mapOf("url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(url), "reason" to reason)
         )
     }
 
@@ -207,7 +208,7 @@ class KiteDiagnostics(context: Context) {
             JSONObject()
                 .put("at", Instant.now().toString())
                 .put("openedAt", Instant.now().toString())
-                .put("url", url)
+                .put("url", BrowserHandoffPolicy.redactedUrlForDiagnostics(url))
                 .put("title", title ?: JSONObject.NULL)
                 .put("state", state)
                 .put("recipeId", recipeId ?: JSONObject.NULL)

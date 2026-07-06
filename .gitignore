@@ -17,6 +17,8 @@ local.properties
 !/docs/refactor/**
 !/docs/browser-login/
 !/docs/browser-login/**
+!/docs/browser-automation/
+!/docs/browser-automation/**
 !/docs/parallel-workstreams/
 !/docs/parallel-workstreams/**
 !/docs/x11-super-operation/

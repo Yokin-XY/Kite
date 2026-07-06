@@ -11,10 +11,16 @@ import android.webkit.HttpAuthHandler
 import android.webkit.URLUtil
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewFeature
+import com.kite.app.browser.BrowserHandoffDecision
+import com.kite.app.browser.BrowserHandoffLauncher
+import com.kite.app.browser.BrowserHandoffPolicy
+import com.kite.app.browser.BrowserHandoffRequest
+import com.kite.app.browser.automation.BrowserAutomationController
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.runtime.ExternalExchangeManager
 import java.io.File
@@ -24,10 +30,13 @@ class KiteWebShell(
     private val activity: Activity,
     private val webView: WebView,
     private val diagnostics: KiteDiagnostics,
-    private val onStatus: (String) -> Unit
+    private val onStatus: (String) -> Unit,
+    private val browserHandoffLauncher: BrowserHandoffLauncher? = null,
+    private val browserAutomationController: BrowserAutomationController? = null
 ) {
     private var currentRecipeId: String? = null
     private var currentRecipeName: String? = null
+    private var currentInstanceId: String? = null
     private var currentOpenSource: String? = null
     private var pendingHttpAuth: BasicHttpAuth? = null
 
@@ -44,6 +53,12 @@ class KiteWebShell(
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
                 diagnostics.logConsole(consoleMessage)
+                browserAutomationController?.recordConsoleMessage(
+                    level = consoleMessage.messageLevel().name,
+                    message = consoleMessage.message().orEmpty(),
+                    sourceId = consoleMessage.sourceId(),
+                    lineNumber = consoleMessage.lineNumber()
+                )
                 return true
             }
         }
@@ -54,12 +69,7 @@ class KiteWebShell(
                 request: WebResourceRequest
             ): Boolean {
                 val url = request.url.toString()
-                return if (shouldStayInWebView(url)) {
-                    false
-                } else {
-                    openExternal(url)
-                    true
-                }
+                return handleNavigation(url)
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -72,6 +82,19 @@ class KiteWebShell(
                     openSource = currentOpenSource
                 )
                 onStatus("Loaded: $url")
+                browserAutomationController?.onPageFinished(url, view.title)
+            }
+
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                browserAutomationController?.recordNetworkRequest(
+                    method = request.method.orEmpty(),
+                    url = request.url.toString(),
+                    isForMainFrame = request.isForMainFrame
+                )
+                return super.shouldInterceptRequest(view, request)
             }
 
             override fun onReceivedError(
@@ -87,6 +110,21 @@ class KiteWebShell(
                     )
                     onStatus("Load failed: ${request.url}")
                 }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView,
+                request: WebResourceRequest,
+                errorResponse: WebResourceResponse
+            ) {
+                browserAutomationController?.recordNetworkHttpError(
+                    method = request.method.orEmpty(),
+                    url = request.url.toString(),
+                    isForMainFrame = request.isForMainFrame,
+                    statusCode = errorResponse.statusCode,
+                    reasonPhrase = errorResponse.reasonPhrase
+                )
+                super.onReceivedHttpError(view, request, errorResponse)
             }
 
             override fun onReceivedHttpAuthRequest(
@@ -113,15 +151,31 @@ class KiteWebShell(
         url: String,
         recipeId: String? = null,
         recipeName: String? = null,
-        openSource: String? = null
+        instanceId: String? = null,
+        openSource: String? = null,
+        automationEnabled: Boolean = false
     ) {
         currentRecipeId = recipeId
         currentRecipeName = recipeName
+        currentInstanceId = instanceId
         currentOpenSource = openSource
         val preparedUrl = prepareBasicAuthUrl(url)
+        if (handleInitialUrl(preparedUrl)) {
+            browserAutomationController?.closeActiveSession()
+            return
+        }
         if (shouldStayInWebView(preparedUrl)) {
+            browserAutomationController?.prepareLoad(
+                enabled = automationEnabled,
+                recipeId = recipeId,
+                recipeName = recipeName,
+                instanceId = instanceId,
+                source = openSource,
+                url = preparedUrl
+            )
             webView.loadUrl(preparedUrl)
         } else {
+            browserAutomationController?.closeActiveSession()
             openExternal(preparedUrl)
         }
     }
@@ -130,12 +184,75 @@ class KiteWebShell(
         url: String,
         recipeId: String? = null,
         recipeName: String? = null,
-        openSource: String? = null
+        instanceId: String? = null,
+        openSource: String? = null,
+        automationEnabled: Boolean = false
     ) {
         currentRecipeId = recipeId
         currentRecipeName = recipeName
+        currentInstanceId = instanceId
         currentOpenSource = openSource
-        webView.loadUrl(prepareBasicAuthUrl(url))
+        val preparedUrl = prepareBasicAuthUrl(url)
+        if (handleInitialUrl(preparedUrl)) {
+            browserAutomationController?.closeActiveSession()
+            return
+        }
+        browserAutomationController?.prepareLoad(
+            enabled = automationEnabled,
+            recipeId = recipeId,
+            recipeName = recipeName,
+            instanceId = instanceId,
+            source = openSource,
+            url = preparedUrl
+        )
+        webView.loadUrl(preparedUrl)
+    }
+
+    private fun handleNavigation(url: String): Boolean {
+        val decision = BrowserHandoffPolicy.classify(url, currentOpenSource)
+        return when (decision) {
+            BrowserHandoffDecision.StayInWebView -> false
+            BrowserHandoffDecision.OpenExternalBrowser -> {
+                browserAutomationController?.markNavigationBlocked(url, "external_browser")
+                openExternal(url)
+                true
+            }
+            is BrowserHandoffDecision.StartAuthHandoff,
+            is BrowserHandoffDecision.StartCliCallbackHandoff -> {
+                browserAutomationController?.markNavigationBlocked(url, "auth_handoff")
+                launchBrowserHandoff(url, decision) || run {
+                    openExternal(url)
+                    true
+                }
+            }
+            is BrowserHandoffDecision.ShowUnsupportedFallback -> {
+                browserAutomationController?.markNavigationBlocked(url, decision.reason)
+                openExternal(url)
+                true
+            }
+        }
+    }
+
+    private fun handleInitialUrl(url: String): Boolean {
+        val decision = BrowserHandoffPolicy.classify(url, currentOpenSource)
+        if (!BrowserHandoffPolicy.isHandoff(decision)) return false
+        return launchBrowserHandoff(url, decision)
+    }
+
+    private fun launchBrowserHandoff(url: String, decision: BrowserHandoffDecision): Boolean {
+        val launcher = browserHandoffLauncher ?: return false
+        val request = BrowserHandoffRequest(
+            url = url,
+            recipeId = currentRecipeId,
+            recipeName = currentRecipeName,
+            instanceId = currentInstanceId,
+            source = currentOpenSource
+        )
+        return launcher.launchBrowserHandoff(request, decision).also { accepted ->
+            if (accepted) {
+                onStatus("Waiting for browser login: $url")
+            }
+        }
     }
 
     private fun openExternal(url: String) {
@@ -224,19 +341,7 @@ class KiteWebShell(
     }
 
     private fun shouldStayInWebView(url: String): Boolean {
-        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
-        val scheme = uri.scheme ?: return false
-        if (scheme !in setOf("http", "https")) return false
-        if (isLocalUrl(url)) return true
-        val source = currentOpenSource.orEmpty()
-        return source in setOf(
-            "card_run_surface",
-            "browser_proxy",
-            "ubuntu_browser",
-            "terminal_page",
-            "terminal_step",
-            "shell_step"
-        )
+        return BrowserHandoffPolicy.classify(url, currentOpenSource) == BrowserHandoffDecision.StayInWebView
     }
 
     fun capabilitySummary(): Map<String, Any> = mapOf(

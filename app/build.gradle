@@ -50,6 +50,7 @@ dependencies {
     implementation "androidx.recyclerview:recyclerview:1.3.2"
     implementation "androidx.cardview:cardview:1.0.0"
     implementation "androidx.swiperefreshlayout:swiperefreshlayout:1.1.0"
+    implementation "androidx.browser:browser:1.8.0"
     implementation "androidx.webkit:webkit:1.10.0"
     implementation "com.github.termux.termux-app:terminal-emulator:v0.118.3"
     implementation project(":terminal-view-local")

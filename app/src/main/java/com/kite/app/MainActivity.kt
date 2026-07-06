@@ -63,8 +63,29 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.browser.customtabs.CustomTabsIntent
 import com.kite.app.action.KiteActionRoute
 import com.kite.app.action.KiteActionRouter
+import com.kite.app.browser.BrowserAuthRedirect
+import com.kite.app.browser.BrowserAuthRedirectParser
+import com.kite.app.browser.BrowserAuthSession
+import com.kite.app.browser.BrowserAuthSessionKind
+import com.kite.app.browser.BrowserAuthSessionStatus
+import com.kite.app.browser.BrowserAuthSessionStore
+import com.kite.app.browser.BrowserHandoffDecision
+import com.kite.app.browser.BrowserHandoffLauncher
+import com.kite.app.browser.BrowserHandoffPolicy
+import com.kite.app.browser.BrowserHandoffRequest
+import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.browser.automation.BrowserAutomationAction
+import com.kite.app.browser.automation.BrowserAutomationActionResult
+import com.kite.app.browser.automation.BrowserAutomationActionScript
+import com.kite.app.browser.automation.BrowserAutomationController
+import com.kite.app.browser.automation.BrowserAutomationControllerRegistry
+import com.kite.app.browser.automation.BrowserAutomationEvent
+import com.kite.app.browser.automation.BrowserAutomationEventKind
+import com.kite.app.browser.automation.BrowserAutomationResultStatus
+import com.kite.app.browser.automation.BrowserAutomationSessionStore
 import com.kite.app.bridge.BridgeErrorType
 import com.kite.app.bridge.BridgeProgress
 import com.kite.app.bridge.BridgeResult
@@ -161,6 +182,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Calendar
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.max
 import kotlin.math.min
@@ -182,6 +206,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var dropZoneManager: KiteDropZoneManager
     private lateinit var bridgeClient: KiteBridgeClient
     private lateinit var webShell: KiteWebShell
+    private lateinit var browserAuthSessions: BrowserAuthSessionStore
+    private lateinit var browserAutomationSessions: BrowserAutomationSessionStore
+    private lateinit var browserAutomationController: BrowserAutomationController
     private lateinit var localServer: KiteLocalServer
     private lateinit var resourceInstallStore: KiteResourceInstallStore
     private lateinit var resourceManifestLoader: KiteResourceManifestLoader
@@ -371,8 +398,26 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         dropZoneManager = KiteDropZoneManager(this, diagnostics)
         dropZoneStatus = dropZoneManager.prepareDropZone()
         bridgeClient = KiteBridgeClient(diagnostics, applicationContext)
+        browserAuthSessions = BrowserAuthSessionStore(applicationContext)
         webView = WebView(this)
-        webShell = KiteWebShell(this, webView, diagnostics) { }
+        browserAutomationSessions = BrowserAutomationSessionStore(applicationContext)
+        browserAutomationController = BrowserAutomationController(
+            webView = webView,
+            store = browserAutomationSessions,
+            onEvent = { event ->
+                runOnUiThread { handleBrowserAutomationEvent(event) }
+            }
+        )
+        webShell = KiteWebShell(
+            activity = this,
+            webView = webView,
+            diagnostics = diagnostics,
+            onStatus = { },
+            browserHandoffLauncher = BrowserHandoffLauncher { request, decision ->
+                launchBrowserHandoff(request, decision)
+            },
+            browserAutomationController = browserAutomationController
+        )
         resourceInstallStore = KiteResourceInstallStore(this)
         resourceManifestLoader = KiteResourceManifestLoader(this)
         prewarmResourceCatalog()
@@ -387,6 +432,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             },
             installApk = { request ->
                 handleInstallApkRequest(request)
+            },
+            browserAutomationAction = { action ->
+                handleBrowserAutomationActionRequest(action)
+            },
+            browserAutomationEnabled = {
+                browserRuntimeMode() == BrowserRuntimeMode.AutomationBrowser
             }
         )
         if (shouldStartLocalServer()) {
@@ -416,9 +467,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         observeRuntimePanelSummarySignals()
         observeResourceInstallSignals()
         applyRecentTaskVisibilitySetting()
-        val handledAutomationIntent = handleRuntimeAutomationIntent(intent)
-        val handledLaunchIntent = !handledAutomationIntent && handleCardRunLaunchIntent(intent)
-        if (!handledLaunchIntent && !restoreScreenFromBundle(savedInstanceState) && !restoreRecipeDraftFromSettings()) {
+        val handledBrowserAuthRedirect = handleBrowserAuthRedirect(intent)
+        val handledAutomationIntent = !handledBrowserAuthRedirect && handleRuntimeAutomationIntent(intent)
+        val handledLaunchIntent = !handledBrowserAuthRedirect && !handledAutomationIntent && handleCardRunLaunchIntent(intent)
+        if (!handledBrowserAuthRedirect && !handledLaunchIntent && !restoreScreenFromBundle(savedInstanceState) && !restoreRecipeDraftFromSettings()) {
             showConsole()
         }
         refreshUbuntuRuntimeState()
@@ -435,8 +487,219 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (handleBrowserAuthRedirect(intent)) return
         if (handleRuntimeAutomationIntent(intent)) return
         handleCardRunLaunchIntent(intent)
+    }
+
+    private fun handleBrowserAuthRedirect(sourceIntent: Intent?): Boolean {
+        val data = sourceIntent?.data?.toString()?.takeIf { it.isNotBlank() } ?: return false
+        val redirect = BrowserAuthRedirectParser.parse(data) ?: return false
+        val session = browserAuthSessions.markReturned(redirect)
+        if (session == null) {
+            diagnostics.logRecipeEvent(
+                "browser_auth_redirect_unmatched",
+                null,
+                mapOf("hasState" to (!redirect.state.isNullOrBlank()).toString())
+            )
+            Toast.makeText(this, "浏览器已返回，但没有匹配的登录会话", Toast.LENGTH_LONG).show()
+            return true
+        }
+        deliverBrowserAuthRedirect(session, redirect)
+        return true
+    }
+
+    private fun deliverBrowserAuthRedirect(session: BrowserAuthSession, redirect: BrowserAuthRedirect) {
+        val recipe = session.recipeId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
+        val instanceId = session.instanceId?.takeIf { it.isNotBlank() }
+        if (recipe == null || instanceId == null) {
+            browserAuthSessions.markFailed(session.sessionId, "missing_target")
+            Toast.makeText(this, "浏览器已返回，但找不到发起登录的运行实例", Toast.LENGTH_LONG).show()
+            diagnostics.logRecipeEvent(
+                "browser_auth_redirect_missing_target",
+                recipe,
+                mapOf(
+                    "sessionId" to session.sessionId,
+                    "recipeId" to session.recipeId.orEmpty(),
+                    "instanceId" to session.instanceId.orEmpty()
+                )
+            )
+            return
+        }
+
+        val failed = session.status == BrowserAuthSessionStatus.Failed || !redirect.error.isNullOrBlank()
+        val summary = if (failed) {
+            "浏览器登录返回失败：${redirect.error ?: session.failureReason ?: "unknown"}"
+        } else {
+            "浏览器登录已返回，等待发起方确认登录状态"
+        }
+        val report = buildString {
+            appendLine(summary)
+            appendLine("sessionId=${session.sessionId}")
+            appendLine("kind=${session.kind.name}")
+            appendLine("state=${if (redirect.state.isNullOrBlank()) "missing" else "matched"}")
+            appendLine("code=${if (redirect.code.isNullOrBlank()) "missing" else "present"}")
+            if (!redirect.error.isNullOrBlank()) appendLine("error=${redirect.error}")
+        }.trim()
+        val updated = CardRunStore.update(
+            recipe = recipe,
+            status = if (failed) RecipeRunStatus.Failed else RecipeRunStatus.Opened,
+            instanceId = instanceId,
+            surface = CardRunSurface.Report,
+            lastMeaningfulOutput = summary,
+            lastError = if (failed) summary else null,
+            shellReportText = report,
+            clearNextActionUrl = true
+        )
+        if (failed) {
+            browserAuthSessions.markFailed(session.sessionId, redirect.error ?: session.failureReason ?: "redirect_failed")
+        } else {
+            browserAuthSessions.markDelivered(session.sessionId)
+        }
+        activeRunInstanceIds[recipe.id] = instanceId
+        runtimeStates[recipe.id] = updated
+        focusedRunRecipeId = recipe.id
+        focusedRunInstanceId = instanceId
+        diagnostics.logRecipeAction(
+            recipe,
+            "browser_auth_redirect_delivered",
+            mapOf(
+                "instanceId" to instanceId,
+                "sessionId" to session.sessionId,
+                "kind" to session.kind.name,
+                "hasCode" to (!redirect.code.isNullOrBlank()).toString(),
+                "hasError" to (!redirect.error.isNullOrBlank()).toString()
+            )
+        )
+        if (this is CardRunActivity) {
+            title = recipe.name
+            showCardRunSurface(recipe)
+        } else {
+            startActivity(
+                CardRunIntents.launchIntent(
+                    context = this,
+                    recipeId = recipe.id,
+                    instanceId = instanceId,
+                    launchSource = CardRunIntents.SOURCE_BROWSER_PROXY,
+                    autoStart = false
+                )
+            )
+        }
+    }
+
+    private fun expireBrowserAuthSessionsOnResume() {
+        browserAuthSessions.expirePending()
+        browserAuthSessions.expiredNeedingRuntimeSync().forEach { session ->
+            if (updateExpiredBrowserAuthSession(session)) {
+                browserAuthSessions.markRuntimeNotified(session.sessionId)
+            }
+        }
+    }
+
+    private fun updateExpiredBrowserAuthSession(session: BrowserAuthSession): Boolean {
+        val instanceId = session.instanceId?.takeIf { it.isNotBlank() }
+        if (instanceId == null) {
+            val recipe = session.recipeId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
+            diagnostics.logRecipeEvent(
+                "browser_auth_session_expired_missing_instance",
+                recipe,
+                mapOf(
+                    "sessionId" to session.sessionId,
+                    "kind" to session.kind.name,
+                    "recipeId" to session.recipeId.orEmpty()
+                )
+            )
+            return true
+        }
+
+        val existing = CardRunStore.get(instanceId)
+        if (existing == null) {
+            val recipe = session.recipeId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
+            diagnostics.logRecipeEvent(
+                "browser_auth_session_expired_no_active_run",
+                recipe,
+                mapOf(
+                    "instanceId" to instanceId,
+                    "sessionId" to session.sessionId,
+                    "kind" to session.kind.name,
+                    "recipeId" to session.recipeId.orEmpty()
+                )
+            )
+            return true
+        }
+        val recipe = session.recipeId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
+            ?: findRecipeById(existing.recipeId)
+            ?: CardRunStore.registeredRecipe(existing.recipeId)
+        if (recipe == null) {
+            diagnostics.logRecipeEvent(
+                "browser_auth_session_expired_missing_target",
+                null,
+                mapOf(
+                    "sessionId" to session.sessionId,
+                    "kind" to session.kind.name,
+                    "recipeId" to session.recipeId.orEmpty(),
+                    "instanceId" to instanceId
+                )
+            )
+            return false
+        }
+        val preserveTerminalSurface = session.kind == BrowserAuthSessionKind.CliLoopback &&
+            existing.surface == CardRunSurface.Terminal &&
+            !existing.terminalSessionId.isNullOrBlank()
+        val summary = if (session.kind == BrowserAuthSessionKind.CliLoopback) {
+            "浏览器登录回传待确认，请按 CLI 提示重试或粘贴授权 code"
+        } else {
+            "浏览器登录等待超时，请重新打开登录页"
+        }
+        val report = buildString {
+            appendLine(summary)
+            appendLine("sessionId=${session.sessionId}")
+            appendLine("kind=${session.kind.name}")
+            appendLine("reason=${session.failureReason ?: "expired"}")
+            session.redirectUri?.takeIf { it.isNotBlank() }?.let { appendLine("redirectUri=$it") }
+        }.trim()
+        val updated = CardRunStore.update(
+            recipe = recipe,
+            status = if (preserveTerminalSurface) {
+                existing.status
+            } else {
+                RecipeRunStatus.Failed
+            },
+            instanceId = instanceId,
+            surface = if (preserveTerminalSurface) CardRunSurface.Terminal else CardRunSurface.Report,
+            currentStepIndex = existing.currentStepIndex,
+            runId = existing.runId,
+            terminalSessionId = existing.terminalSessionId,
+            pid = existing.pid,
+            rootPid = existing.rootPid,
+            processGroupId = existing.processGroupId,
+            systemSessionId = existing.systemSessionId,
+            lastMeaningfulOutput = summary,
+            lastError = if (preserveTerminalSurface) null else summary,
+            shellReportText = if (preserveTerminalSurface) existing.shellReportText else report,
+            clearNextActionUrl = true
+        )
+        activeRunInstanceIds[recipe.id] = instanceId
+        runtimeStates[recipe.id] = updated
+        diagnostics.logRecipeEvent(
+            "browser_auth_session_expired",
+            recipe,
+            mapOf(
+                "instanceId" to instanceId,
+                "sessionId" to session.sessionId,
+                "kind" to session.kind.name,
+                "preserveTerminalSurface" to preserveTerminalSurface.toString()
+            )
+        )
+        return true
     }
 
     private fun handleRuntimeAutomationIntent(sourceIntent: Intent?): Boolean {
@@ -726,6 +989,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         resumePendingRuntimePermissionBootstrap()
         rebindVisibleResourceStateOnResume()
         ensureBundledToolBootstrapIfNeeded("resume")
+        expireBrowserAuthSessionsOnResume()
         if (this is CardRunActivity && rebindFocusedCardRunSurface("resume")) return
         when (currentScreen) {
             Screen.Console -> showConsole()
@@ -2308,6 +2572,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(22), dp(8), dp(22), dp(96))
                 addView(settingsRow("主题", "主题色、背景色和卡片色彩") { showThemeSettings() })
+                addView(settingsRow("浏览器模式", browserRuntimeMode().title) { showBrowserRuntimeModeDialog() }.apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { setMargins(0, dp(12), 0, 0) }
+                })
                 addView(settingsSwitchRow(
                     title = "回前台保持现场",
                     subtitle = "切出去复制内容再回来时，保留正在编辑的配置和当前页面。",
@@ -2342,6 +2612,109 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomNavigation())
     }
+
+    private fun browserRuntimeMode(): BrowserRuntimeMode =
+        BrowserRuntimeMode.fromStorageKey(appSettings.getString(KEY_BROWSER_RUNTIME_MODE, null))
+
+    private fun saveBrowserRuntimeMode(mode: BrowserRuntimeMode) {
+        appSettings.edit().putString(KEY_BROWSER_RUNTIME_MODE, mode.storageKey).apply()
+    }
+
+    private fun showBrowserRuntimeModeDialog() {
+        val dialog = Dialog(this)
+        val currentMode = browserRuntimeMode()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
+            addView(TextView(context).apply {
+                text = "浏览器模式"
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = "选择网页运行面；账号授权仍遵守系统浏览器回跳边界。"
+                textSize = 12.5f
+                setTextColor(tokens.textSecondary)
+                setPadding(0, dp(6), 0, dp(12))
+            })
+            BrowserRuntimeMode.values().forEach { mode ->
+                addView(browserRuntimeModeChoiceRow(mode, mode == currentMode) {
+                    saveBrowserRuntimeMode(mode)
+                    dialog.dismiss()
+                    Toast.makeText(context, "已切换为：${mode.title}", Toast.LENGTH_SHORT).show()
+                    showSettings()
+                })
+            }
+            addView(TextView(context).apply {
+                text = "关闭"
+                gravity = Gravity.CENTER
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textSecondary)
+                background = roundedBox(tokens.surface, tokens.border, dp(14).toFloat())
+                setPadding(0, dp(11), 0, dp(11))
+                setOnClickListener { dialog.dismiss() }
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, dp(12), 0, 0) }
+            })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setGravity(Gravity.CENTER)
+        dialog.window?.setLayout(
+            (resources.displayMetrics.widthPixels * 0.9f).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    private fun browserRuntimeModeChoiceRow(
+        mode: BrowserRuntimeMode,
+        selected: Boolean,
+        onClick: () -> Unit
+    ): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(12), dp(12))
+            background = roundedBox(
+                if (selected) tokens.primarySubtle else tokens.surface,
+                if (selected) tokens.primaryStrong else tokens.border,
+                dp(16).toFloat()
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, dp(8), 0, 0) }
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply {
+                    text = mode.title
+                    textSize = 15f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                })
+                addView(TextView(context).apply {
+                    text = mode.summary
+                    textSize = 12f
+                    setTextColor(tokens.textSecondary)
+                    setPadding(0, dp(4), dp(10), 0)
+                })
+            })
+            addView(TextView(context).apply {
+                text = if (selected) "✓" else ""
+                textSize = 18f
+                gravity = Gravity.CENTER
+                setTextColor(tokens.primaryStrong)
+                layoutParams = LinearLayout.LayoutParams(dp(28), dp(40))
+            })
+            setOnClickListener { onClick() }
+        }
 
     private fun showThemeSettings() {
         currentScreen = Screen.ThemeSettings
@@ -8521,7 +8894,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         } else if (state.surface == CardRunSurface.Terminal) {
             surfaceHost.addView(cardRunLoadingBody("正在准备终端"), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         } else if (state.surface == CardRunSurface.Web && webUrl != null) {
-            showCardRunWebView(surfaceHost, actionRecipe, webUrl)
+            showCardRunWebView(surfaceHost, actionRecipe, surfaceState, webUrl)
         } else if (state.surface == CardRunSurface.Web) {
             surfaceHost.addView(
                 cardRunWebAddressInputBody(actionRecipe, surfaceState),
@@ -9166,7 +9539,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun showCardRunWebView(parentHost: FrameLayout, recipe: KiteRecipe, url: String) {
+    private fun showCardRunWebView(
+        parentHost: FrameLayout,
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        url: String
+    ) {
         val target = url.trim().ifBlank { DEFAULT_LOCAL_URL }
         val displayTarget = redactUrlCredentials(target)
         diagnostics.logOpenWebAttempt(recipe, displayTarget, "card_run_surface")
@@ -9178,10 +9556,503 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             recipeName = recipe.name,
             openSource = "card_run_surface"
         )
+        val decision = BrowserHandoffPolicy.classify(target, "card_run_surface")
+        when (decision) {
+            is BrowserHandoffDecision.StartAuthHandoff,
+            is BrowserHandoffDecision.StartCliCallbackHandoff -> {
+                parentHost.addView(
+                    cardRunBrowserAuthWaitingBody(recipe, state, target, decision),
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                )
+                launchBrowserHandoff(
+                    request = BrowserHandoffRequest(
+                        url = target,
+                        recipeId = recipe.id,
+                        recipeName = recipe.name,
+                        instanceId = state.instanceId,
+                        source = "card_run_surface"
+                    ),
+                    decision = decision,
+                    rerenderFocusedSurface = false
+                )
+                return
+            }
+            BrowserHandoffDecision.OpenExternalBrowser -> {
+                val opened = openCustomTabOrSystemBrowser(Uri.parse(target))
+                parentHost.addView(
+                    cardRunExternalBrowserBody(recipe, target, opened),
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                )
+                diagnostics.logRecipeEvent(
+                    if (opened) "browser_external_opened" else "browser_external_open_failed",
+                    recipe,
+                    mapOf(
+                        "instanceId" to state.instanceId,
+                        "source" to "card_run_surface",
+                        "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(target)
+                    )
+                )
+                return
+            }
+            is BrowserHandoffDecision.ShowUnsupportedFallback,
+            BrowserHandoffDecision.StayInWebView -> Unit
+        }
         val parent = webView.parent
         if (parent is ViewGroup) parent.removeView(webView)
         parentHost.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        webShell.loadInWebView(target, recipeId = recipe.id, recipeName = recipe.name, openSource = "card_run_surface")
+        val automationEnabled = browserRuntimeMode() == BrowserRuntimeMode.AutomationBrowser
+        webShell.loadInWebView(
+            target,
+            recipeId = recipe.id,
+            recipeName = recipe.name,
+            instanceId = state.instanceId,
+            openSource = "card_run_surface",
+            automationEnabled = automationEnabled
+        )
+    }
+
+    private fun handleBrowserAutomationEvent(event: BrowserAutomationEvent) {
+        val session = event.session
+        val recipeId = session.recipeId?.takeIf { it.isNotBlank() } ?: return
+        val instanceId = session.instanceId?.takeIf { it.isNotBlank() } ?: return
+        val recipe = findRecipeById(recipeId) ?: CardRunStore.registeredRecipe(recipeId) ?: return
+        val existing = CardRunStore.get(instanceId)
+        val status = browserAutomationRunStatus(event, existing?.status)
+        val isFatalFailure = event.kind == BrowserAutomationEventKind.Failed
+        val actionFailed = event.actionResult?.succeeded == false
+        val updated = CardRunStore.update(
+            recipe = recipe,
+            status = status,
+            instanceId = instanceId,
+            parentInstanceId = existing?.parentInstanceId,
+            ownerKind = existing?.ownerKind,
+            stepId = existing?.stepId,
+            surface = if (isFatalFailure) CardRunSurface.Report else existing?.surface ?: CardRunSurface.Web,
+            currentStepIndex = existing?.currentStepIndex,
+            runId = existing?.runId,
+            terminalSessionId = existing?.terminalSessionId,
+            pid = existing?.pid,
+            rootPid = existing?.rootPid,
+            processGroupId = existing?.processGroupId,
+            systemSessionId = existing?.systemSessionId,
+            lastMeaningfulOutput = browserAutomationSummary(event),
+            lastError = if (isFatalFailure || actionFailed) event.message.take(500) else null,
+            shellReportText = browserAutomationReport(event)
+        )
+        runtimeStates[recipe.id] = updated
+        updateVisibleCardRunReport(updated)
+    }
+
+    private fun handleBrowserAutomationActionRequest(action: BrowserAutomationAction): BrowserAutomationActionResult {
+        if (browserRuntimeMode() != BrowserRuntimeMode.AutomationBrowser) {
+            return BrowserAutomationActionScript.rejectedResult(
+                action = action,
+                sessionId = action.sessionId ?: action.instanceId ?: "mode_not_enabled",
+                errorCode = "mode_not_enabled",
+                detail = "当前浏览器模式不是自动浏览器"
+            )
+        }
+        val targetController = browserAutomationControllerFor(action)
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            val reference = AtomicReference<BrowserAutomationActionResult>()
+            targetController.performAction(action) { result ->
+                reference.set(result)
+            }
+            return reference.get() ?: BrowserAutomationActionScript.rejectedResult(
+                action = action,
+                sessionId = action.sessionId ?: action.instanceId ?: "no_result",
+                errorCode = "no_result",
+                detail = "自动浏览器没有返回动作结果"
+            )
+        }
+        val latch = CountDownLatch(1)
+        val reference = AtomicReference<BrowserAutomationActionResult>()
+        runOnUiThread {
+            targetController.performAction(action) { result ->
+                reference.set(result)
+                latch.countDown()
+            }
+        }
+        val timeoutMs = (action.timeoutMs + 1_000L).coerceAtMost(16_000L)
+        val completed = latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        return if (completed) {
+            reference.get() ?: BrowserAutomationActionScript.rejectedResult(
+                action = action,
+                sessionId = action.sessionId ?: action.instanceId ?: "no_result",
+                errorCode = "no_result",
+                detail = "自动浏览器没有返回动作结果"
+            )
+        } else {
+            BrowserAutomationActionResult(
+                actionId = action.actionId,
+                sessionId = action.sessionId ?: action.instanceId ?: "timeout",
+                type = action.type,
+                status = BrowserAutomationResultStatus.TimedOut,
+                durationMs = timeoutMs,
+                url = "",
+                title = null,
+                message = "action request timed out",
+                errorCode = "request_timeout",
+                errorDetail = action.displaySummary()
+            )
+        }
+    }
+
+    private fun browserAutomationControllerFor(action: BrowserAutomationAction): BrowserAutomationController {
+        val session = action.sessionId
+            ?.takeIf { it.isNotBlank() }
+            ?.let(browserAutomationSessions::get)
+            ?: action.instanceId
+                ?.takeIf { it.isNotBlank() }
+                ?.let(browserAutomationSessions::latestForInstance)
+            ?: browserAutomationSessions.latestOpenSession()
+        return session
+            ?.sessionId
+            ?.let(BrowserAutomationControllerRegistry::controllerFor)
+            ?: BrowserAutomationControllerRegistry.latestController()
+            ?: browserAutomationController
+    }
+
+    private fun browserAutomationRunStatus(
+        event: BrowserAutomationEvent,
+        currentStatus: RecipeRunStatus?
+    ): RecipeRunStatus =
+        when (event.kind) {
+            BrowserAutomationEventKind.SessionOpening -> when (currentStatus) {
+                RecipeRunStatus.Starting,
+                RecipeRunStatus.Running,
+                RecipeRunStatus.WaitingTerminal,
+                RecipeRunStatus.AlreadyRunning,
+                RecipeRunStatus.Opened -> currentStatus
+                else -> RecipeRunStatus.Starting
+            }
+            BrowserAutomationEventKind.SnapshotReady -> when (currentStatus) {
+                RecipeRunStatus.Running,
+                RecipeRunStatus.WaitingTerminal,
+                RecipeRunStatus.AlreadyRunning -> currentStatus
+                else -> RecipeRunStatus.Opened
+            }
+            BrowserAutomationEventKind.ActionFinished -> when (currentStatus) {
+                RecipeRunStatus.Running,
+                RecipeRunStatus.WaitingTerminal,
+                RecipeRunStatus.AlreadyRunning -> currentStatus
+                else -> RecipeRunStatus.Opened
+            }
+            BrowserAutomationEventKind.Failed -> when (currentStatus) {
+                RecipeRunStatus.Running,
+                RecipeRunStatus.WaitingTerminal,
+                RecipeRunStatus.AlreadyRunning -> currentStatus
+                else -> RecipeRunStatus.Failed
+            }
+        }
+
+    private fun browserAutomationSummary(event: BrowserAutomationEvent): String =
+        when (event.kind) {
+            BrowserAutomationEventKind.SessionOpening -> "自动浏览器正在打开页面"
+            BrowserAutomationEventKind.SnapshotReady -> {
+                val snapshot = event.snapshot
+                val title = snapshot?.title?.takeIf { it.isNotBlank() } ?: snapshot?.url ?: event.session.url
+                "自动浏览器已采集页面快照：$title"
+            }
+            BrowserAutomationEventKind.ActionFinished -> {
+                val result = event.actionResult
+                if (result?.succeeded == true) {
+                    "自动浏览器动作完成：${result.type.wireName}"
+                } else {
+                    "自动浏览器动作失败：${result?.errorCode ?: "unknown"}"
+                }
+            }
+            BrowserAutomationEventKind.Failed -> event.message.take(500)
+        }
+
+    private fun browserAutomationReport(event: BrowserAutomationEvent): String {
+        val session = event.session
+        val snapshot = event.snapshot
+        return buildString {
+            appendLine("自动浏览器")
+            appendLine("Session: ${session.sessionId}")
+            appendLine("状态: ${session.status}")
+            appendLine("URL: ${snapshot?.url ?: session.url}")
+            if (!snapshot?.title.isNullOrBlank()) appendLine("标题: ${snapshot?.title}")
+            if (!snapshot?.readyState.isNullOrBlank()) appendLine("DOM: ${snapshot?.readyState}")
+            appendLine("消息: ${event.message}")
+            if (!event.errorCode.isNullOrBlank()) appendLine("错误码: ${event.errorCode}")
+            event.actionResult?.let { result ->
+                appendLine()
+                appendLine("动作结果")
+                appendLine("Action: ${result.actionId}")
+                appendLine("类型: ${result.type.wireName}")
+                appendLine("结果: ${result.status}")
+                appendLine("耗时: ${result.durationMs}ms")
+                appendLine("匹配数量: ${result.matchedCount}")
+                appendLine("消息: ${result.message}")
+                if (!result.snapshotId.isNullOrBlank()) appendLine("快照: ${result.snapshotId}")
+                if (!result.artifactPath.isNullOrBlank()) appendLine("证据文件: ${result.artifactPath}")
+                if (!result.errorCode.isNullOrBlank()) appendLine("错误码: ${result.errorCode}")
+                if (!result.errorDetail.isNullOrBlank()) appendLine("错误详情: ${result.errorDetail}")
+            }
+            if (snapshot != null) {
+                appendLine()
+                appendLine("页面摘要")
+                appendLine(snapshot.text.ifBlank { "(页面没有可见文本)" }.take(1200))
+                appendLine()
+                appendLine("元素摘要: ${snapshot.elementCount} 个 DOM 节点，采样 ${snapshot.elements.size} 个可交互元素")
+                snapshot.elements.take(20).forEach { element ->
+                    val label = listOfNotNull(
+                        element.tag,
+                        element.role?.let { "role=$it" },
+                        element.type?.let { "type=$it" },
+                        element.text?.let { "text=$it" },
+                        element.placeholder?.let { "placeholder=$it" },
+                        element.ariaLabel?.let { "aria=$it" }
+                    ).joinToString(" ")
+                    appendLine("- #${element.index} $label visible=${element.visible} enabled=${element.enabled}")
+                }
+                if (snapshot.accessibility.isNotEmpty()) {
+                    appendLine()
+                    appendLine("语义摘要: ${snapshot.accessibility.size} 个节点")
+                    snapshot.accessibility.take(20).forEach { node ->
+                        val state = listOfNotNull(
+                            node.level?.let { "level=$it" },
+                            node.checked?.takeIf { it.isNotBlank() }?.let { "checked=$it" },
+                            node.selected?.let { "selected=$it" },
+                            node.expanded?.let { "expanded=$it" }
+                        ).joinToString(" ")
+                        appendLine("- #${node.index} ${node.role} name=${node.name} tag=${node.tag} enabled=${node.enabled} $state".trim())
+                    }
+                }
+            }
+        }.take(4000)
+    }
+
+    private fun cardRunBrowserAuthWaitingBody(
+        recipe: KiteRecipe,
+        state: RecipeRuntimeState,
+        url: String,
+        decision: BrowserHandoffDecision
+    ): View =
+        FrameLayout(this).apply {
+            setBackgroundColor(tokens.pageBackground)
+            val isCli = decision is BrowserHandoffDecision.StartCliCallbackHandoff
+            val titleText = if (isCli) "正在等待 CLI 登录回传" else "正在等待浏览器登录返回"
+            val bodyText = if (isCli) {
+                "登录页已用安全浏览器打开。若浏览器回到 Android 本机 localhost，而 CLI 未收到结果，请使用该工具的 device code 或复制回调 URL 粘回终端。"
+            } else {
+                "登录页已用安全浏览器打开。返回后 Kite 会校验 state，并把结果交回当前运行实例。"
+            }
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(24), dp(28), dp(24), dp(28))
+                addView(ProgressBar(context).apply {
+                    isIndeterminate = true
+                    layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+                })
+                addView(TextView(context).apply {
+                    text = titleText
+                    textSize = 18f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setPadding(0, dp(18), 0, 0)
+                })
+                addView(TextView(context).apply {
+                    text = bodyText
+                    textSize = 13f
+                    setTextColor(tokens.textSecondary)
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setPadding(0, dp(10), 0, 0)
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                addView(row {
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(20), 0, 0)
+                    addView(cardRunCapsuleAction("重新打开") {
+                        launchBrowserHandoff(
+                            request = BrowserHandoffRequest(
+                                url = url,
+                                recipeId = recipe.id,
+                                recipeName = recipe.name,
+                                instanceId = state.instanceId,
+                                source = "card_run_surface"
+                            ),
+                            decision = decision,
+                            force = true,
+                            rerenderFocusedSurface = false
+                        )
+                    }, LinearLayout.LayoutParams(dp(112), dp(36)))
+                    addView(cardRunCapsuleAction("复制地址") {
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("Kite login URL", url))
+                        Toast.makeText(this@MainActivity, "已复制登录地址", Toast.LENGTH_SHORT).show()
+                    }, LinearLayout.LayoutParams(dp(112), dp(36)).apply {
+                        setMargins(dp(10), 0, 0, 0)
+                    })
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        }
+
+    private fun cardRunExternalBrowserBody(
+        recipe: KiteRecipe,
+        url: String,
+        opened: Boolean
+    ): View =
+        FrameLayout(this).apply {
+            setBackgroundColor(tokens.pageBackground)
+            val titleText = if (opened) "已在系统浏览器打开" else "无法打开系统浏览器"
+            val bodyText = if (opened) {
+                "登录页使用系统浏览器承载。这个授权地址没有配置回到 Kite 的 redirect，完成后请按网页或工具提示继续。"
+            } else {
+                "Kite 没能启动系统浏览器。可以复制地址后手动打开。"
+            }
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(24), dp(28), dp(24), dp(28))
+                addView(TextView(context).apply {
+                    text = titleText
+                    textSize = 18f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(if (opened) tokens.textPrimary else tokens.danger)
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                addView(TextView(context).apply {
+                    text = bodyText
+                    textSize = 13f
+                    setTextColor(tokens.textSecondary)
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setPadding(0, dp(10), 0, 0)
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                addView(row {
+                    gravity = Gravity.CENTER
+                    setPadding(0, dp(20), 0, 0)
+                    addView(cardRunCapsuleAction("重新打开") {
+                        val reopened = openCustomTabOrSystemBrowser(Uri.parse(url))
+                        diagnostics.logRecipeEvent(
+                            if (reopened) "browser_external_reopened" else "browser_external_reopen_failed",
+                            recipe,
+                            mapOf(
+                                "source" to "card_run_surface",
+                                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(url)
+                            )
+                        )
+                    }, LinearLayout.LayoutParams(dp(112), dp(36)))
+                    addView(cardRunCapsuleAction("复制地址") {
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("Kite external URL", url))
+                        Toast.makeText(this@MainActivity, "已复制地址", Toast.LENGTH_SHORT).show()
+                    }, LinearLayout.LayoutParams(dp(112), dp(36)).apply {
+                        setMargins(dp(10), 0, 0, 0)
+                    })
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        }
+
+    private fun launchBrowserHandoff(
+        request: BrowserHandoffRequest,
+        decision: BrowserHandoffDecision
+    ): Boolean =
+        launchBrowserHandoff(request, decision, force = false, rerenderFocusedSurface = true)
+
+    private fun launchBrowserHandoff(
+        request: BrowserHandoffRequest,
+        decision: BrowserHandoffDecision,
+        force: Boolean = false,
+        rerenderFocusedSurface: Boolean = true
+    ): Boolean {
+        if (!BrowserHandoffPolicy.isHandoff(decision)) return false
+        val existing = if (!force) {
+            browserAuthSessions.findPending(request.instanceId, request.url)
+        } else {
+            null
+        }
+        if (existing != null) return true
+
+        val session = browserAuthSessions.createPending(request, decision)
+        updateBrowserHandoffWaitingState(session, request, rerenderFocusedSurface)
+        val uri = Uri.parse(request.url)
+        val opened = openCustomTabOrSystemBrowser(uri)
+
+        val recipe = request.recipeId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
+        diagnostics.logRecipeEvent(
+            if (opened) "browser_auth_handoff_opened" else "browser_auth_handoff_open_failed",
+            recipe,
+            mapOf(
+                "instanceId" to request.instanceId.orEmpty(),
+                "sessionId" to session.sessionId,
+                "kind" to session.kind.name,
+                "source" to request.source.orEmpty(),
+                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url)
+            )
+        )
+        if (!opened) {
+            browserAuthSessions.markFailed(session.sessionId, "external_browser_open_failed")
+            Toast.makeText(this, "无法打开安全浏览器", Toast.LENGTH_LONG).show()
+        }
+        return opened
+    }
+
+    private fun openSystemBrowserForHandoff(uri: Uri): Boolean =
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, uri))
+        }.isSuccess
+
+    private fun openCustomTabOrSystemBrowser(uri: Uri): Boolean =
+        runCatching {
+            CustomTabsIntent.Builder()
+                .setShowTitle(true)
+                .build()
+                .launchUrl(this, uri)
+        }.isSuccess || openSystemBrowserForHandoff(uri)
+
+    private fun updateBrowserHandoffWaitingState(
+        session: BrowserAuthSession,
+        request: BrowserHandoffRequest,
+        rerenderFocusedSurface: Boolean
+    ) {
+        val recipe = request.recipeId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
+            ?: return
+        val instanceId = request.instanceId?.takeIf { it.isNotBlank() } ?: return
+        val existing = CardRunStore.get(instanceId)
+        val status = when (existing?.status) {
+            RecipeRunStatus.Starting,
+            RecipeRunStatus.Running,
+            RecipeRunStatus.WaitingTerminal -> existing.status
+            else -> RecipeRunStatus.Opened
+        }
+        val message = when (session.kind) {
+            BrowserAuthSessionKind.CliLoopback -> "已打开安全浏览器，等待 CLI 登录回传"
+            BrowserAuthSessionKind.AppRedirect -> "已打开安全浏览器，等待登录返回 Kite"
+            BrowserAuthSessionKind.ExternalOnly -> "已打开系统浏览器"
+        }
+        val preserveTerminalSurface = session.kind == BrowserAuthSessionKind.CliLoopback &&
+            existing?.surface == CardRunSurface.Terminal &&
+            !existing.terminalSessionId.isNullOrBlank()
+        val targetSurface = if (preserveTerminalSurface) CardRunSurface.Terminal else CardRunSurface.Web
+        val updated = CardRunStore.update(
+            recipe = recipe,
+            status = status,
+            instanceId = instanceId,
+            surface = targetSurface,
+            currentStepIndex = existing?.currentStepIndex,
+            runId = existing?.runId,
+            terminalSessionId = existing?.terminalSessionId,
+            pid = existing?.pid,
+            lastMeaningfulOutput = message,
+            nextActionUrl = request.url.takeUnless { preserveTerminalSurface }
+        )
+        activeRunInstanceIds[recipe.id] = instanceId
+        runtimeStates[recipe.id] = updated
+        if (rerenderFocusedSurface && this is CardRunActivity && focusedRunInstanceId == instanceId) {
+            showCardRunSurface(recipe)
+        }
     }
 
     private fun cardRunWebAddressInputBody(recipe: KiteRecipe, state: RecipeRuntimeState): View =
@@ -9291,7 +10162,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         diagnostics.logRecipeAction(
             recipe,
             "card_run_manual_web_open",
-            mapOf("instanceId" to instanceId, "url" to url.take(500))
+            mapOf("instanceId" to instanceId, "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(url))
         )
         showCardRunSurface(recipe)
     }
@@ -13803,7 +14674,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     diagnostics.logRecipeAction(
                         recipe,
                         "open_web_surface_suppressed",
-                        mapOf("stepIndex" to stepIndex.toString(), "url" to url)
+                        mapOf(
+                            "stepIndex" to stepIndex.toString(),
+                            "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(url)
+                        )
                     )
                 }
                 if (stepIndex < steps.lastIndex) {
@@ -15268,14 +16142,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         pid: String?,
         lastOutput: String?
     ) {
+        val diagnosticUrl = BrowserHandoffPolicy.redactedUrlForDiagnostics(url)
         if (!shouldProbeWebReady(url)) {
-            diagnostics.logBridgeEvent("open_web_after_ready", recipe, mapOf("url" to url, "mode" to "probe_skipped"))
+            diagnostics.logBridgeEvent("open_web_after_ready", recipe, mapOf("url" to diagnosticUrl, "mode" to "probe_skipped"))
             setRuntimeState(recipe, finalStatus, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, nextActionUrl = url)
             openWeb(url, "bridge_next_action", recipe)
             return
         }
 
-        diagnostics.logBridgeEvent("web_ready_probe_start", recipe, mapOf("url" to url, "runId" to runId.orEmpty()))
+        diagnostics.logBridgeEvent("web_ready_probe_start", recipe, mapOf("url" to diagnosticUrl, "runId" to runId.orEmpty()))
         thread(name = "KiteWebReadyProbe", isDaemon = true) {
             val deadline = System.currentTimeMillis() + WEB_READY_TIMEOUT_MS
             var attempt = 0
@@ -15299,15 +16174,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             }
             runOnUiThread {
                 if (ready) {
-                    diagnostics.logBridgeEvent("web_ready_probe_success", recipe, mapOf("url" to url, "attempts" to attempt.toString()))
-                    diagnostics.logBridgeEvent("open_web_after_ready", recipe, mapOf("url" to url, "runId" to runId.orEmpty()))
+                    diagnostics.logBridgeEvent("web_ready_probe_success", recipe, mapOf("url" to diagnosticUrl, "attempts" to attempt.toString()))
+                    diagnostics.logBridgeEvent("open_web_after_ready", recipe, mapOf("url" to diagnosticUrl, "runId" to runId.orEmpty()))
                     setRuntimeState(recipe, finalStatus, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, nextActionUrl = url)
                     openWeb(url, "bridge_next_action_ready", recipe)
                 } else {
                     diagnostics.logBridgeEvent(
                         "web_ready_probe_timeout",
                         recipe,
-                        mapOf("url" to url, "attempts" to attempt.toString(), "lastError" to lastError.take(500))
+                        mapOf("url" to diagnosticUrl, "attempts" to attempt.toString(), "lastError" to lastError.take(500))
                     )
                     val message = "\u670d\u52a1\u672a\u54cd\u5e94\uff0c\u8bf7\u786e\u8ba4\u542f\u52a8\u65e5\u5fd7"
                     setRuntimeState(
@@ -17967,7 +18842,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             diagnostics.logRecipeAction(
                 recipe,
                 "browser_request_waiting_for_instance",
-                mapOf("instanceId" to instanceId, "source" to normalized.source, "url" to normalized.url.take(500))
+                mapOf(
+                    "instanceId" to instanceId,
+                    "source" to normalized.source,
+                    "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(normalized.url)
+                )
             )
             if (this is CardRunActivity && focusedRunInstanceId == instanceId) {
                 showCardRunSurface(recipe)
@@ -18198,7 +19077,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         diagnostics.logRecipeAction(
             recipe,
             "browser_request_opened_temporary_instance",
-            mapOf("instanceId" to instanceId, "source" to request.source, "url" to request.url.take(500))
+            mapOf(
+                "instanceId" to instanceId,
+                "source" to request.source,
+                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url)
+            )
         )
         runCatching {
             startActivity(intent)
@@ -18214,6 +19097,33 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         instanceId: String,
         request: KiteBrowserOpenRequest
     ) {
+        val decision = BrowserHandoffPolicy.classify(request.url, request.source)
+        if (decision is BrowserHandoffDecision.StartCliCallbackHandoff) {
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = instanceId
+            title = recipe.name
+            launchBrowserHandoff(
+                request = BrowserHandoffRequest(
+                    url = request.url,
+                    recipeId = recipe.id,
+                    recipeName = recipe.name,
+                    instanceId = instanceId,
+                    source = request.source
+                ),
+                decision = decision,
+                rerenderFocusedSurface = false
+            )
+            diagnostics.logRecipeAction(
+                recipe,
+                "browser_cli_loopback_handoff_opened_in_instance",
+                mapOf(
+                    "instanceId" to instanceId,
+                    "source" to request.source,
+                    "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url)
+                )
+            )
+            return
+        }
         val state = updateBrowserRequestState(recipe, instanceId, request)
         focusedRunRecipeId = recipe.id
         focusedRunInstanceId = state.instanceId
@@ -18221,7 +19131,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         diagnostics.logRecipeAction(
             recipe,
             "browser_request_opened_in_instance",
-            mapOf("instanceId" to instanceId, "source" to request.source, "url" to request.url.take(500))
+            mapOf(
+                "instanceId" to instanceId,
+                "source" to request.source,
+                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url)
+            )
         )
         showCardRunSurface(recipe)
     }
@@ -19851,6 +20765,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val KEY_RECIPE_DRAFT = "recipe_draft"
         private const val KEY_RECIPE_DRAFT_SAVED_AT = "recipe_draft_saved_at"
         private const val KEY_RECIPE_ICON_COLLECTION = "recipe_icon_collection"
+        private const val KEY_BROWSER_RUNTIME_MODE = "browser_runtime_mode"
         private const val STATE_CURRENT_SCREEN = "kite_current_screen"
         private const val STATE_WORKBENCH_URL = "kite_workbench_url"
         private const val STATE_RECIPE_DRAFT = "kite_recipe_draft"
