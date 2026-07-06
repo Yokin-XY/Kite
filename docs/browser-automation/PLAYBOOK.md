@@ -476,3 +476,40 @@
   - [x] `/browser-automation/runs`、`/browser-automation/session` 和 `/browser-automation/observe.recentRun` 使用同一套校准后的 run 结果。
   - [x] 单测、构建和 OnePlus 8T 真机验证通过；默认模式门禁不回退。
 - 依赖：A31。
+
+### A33 WebView 自动浏览器归位与封口
+
+- 问题证据：用户明确纠正第二模式的当前目标：它不是用来解决 Google / ChatGPT 这类强认证，而是先把已经基本完成的元素化能力归位到设置页“自动浏览器”这个二选一状态里。第二模式当前应定义为 WebView 自动浏览器，即 WebView 承载、元素化、自动控制和后续自身登录态持久化验证；完整内置浏览器是封口之后的新阶段，不混入本次提交。
+- 解法：把 A0-A32 的实测元素化能力、现有设置二选一模式、WebView 持久化待验证项和完整浏览器后续线重新归纳。保留 `webview_system_auth` 作为第一模式，保留 `automation_browser` 作为 WebView 自动浏览器模式；不新增第三个顶层设置项，不声称 WebView 已解决强认证。
+- 验收标准：
+  - [x] 明确设置页仍只有 `webview_system_auth` 和 `automation_browser` 两个用户模式。
+  - [x] 明确 `automation_browser` 当前封口为 WebView 自动浏览器方案。
+  - [x] 明确 A0-A32 的元素化能力已完成单测、构建和 OnePlus 8T 真机验证。
+  - [x] 明确 WebView 登录态/站点状态持久化尚未作为真实网站验收完成，只作为后续验证项。
+  - [x] 明确完整内置浏览器另起下一阶段，不混入本次 WebView 封口提交。
+  - [x] `PROGRESS.md` 和 `DECISIONS.md` 回写 A33 状态与决策。
+- 依赖：A32 已完成并由本地 commit `e8bddf0 checkpoint: 浏览器登录回跳与自动浏览器底座` 封口。
+
+### A34 WebView 登录态持久化验证
+
+- 问题证据：第二模式已经有元素化和自动控制能力，但“用户登录过某个普通网站后，下次打开是否仍为登录态”还没有被单独验证。用户当前关心的是 WebView 自己的持续化，而不是强认证挑战。
+- 解法：使用无账号本地测试页先验证 cookie、localStorage、IndexedDB 在同一 WebView profile 内的保存和恢复；再选择普通低风险网站做人工登录态复用验证。不得保存账号、密码、cookie、token 或 authorization 原文。
+- 验收标准：
+  - [ ] 本地测试页能写入并读取 cookie、localStorage、IndexedDB。
+  - [ ] 关闭 Web surface 后重新打开，同源状态仍可读。
+  - [ ] App 重启后，同源状态仍可读，或明确记录失败原因。
+  - [ ] 普通网站人工登录态复用有真机证据，且不记录敏感原文。
+  - [ ] 默认 `webview_system_auth` 模式和系统浏览器登录回跳不回退。
+  - [ ] 不改动 X11 / MEIZU 任务线。
+- 依赖：A33。
+
+### A35 完整内置浏览器新阶段准备
+
+- 问题证据：WebView 自动浏览器可以先封口，但用户后续目标仍包括“真正完整进入 Kite 软件内部的一整套浏览器流程”。这与 A33 的 WebView 封口不是同一件事。
+- 解法：在 A33 commit 后另起任务线研究完整内置浏览器，候选包括 GeckoView/WebExtension、Chromium 级嵌入或其它真正浏览器内核。该线先做原型和代价评估，不覆盖现有 WebView 自动浏览器。
+- 验收标准：
+  - [ ] 形成完整内置浏览器候选矩阵。
+  - [ ] 明确是否需要新增设置项、替换引擎或保留实验开关。
+  - [ ] 明确 APK 体积、启动耗时、profile 持久化、元素化接口和崩溃风险验证方式。
+  - [ ] 与 A33 WebView 封口提交分离。
+- 依赖：A33。

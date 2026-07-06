@@ -278,3 +278,19 @@
 - 理由：真机 A31 发现 run 汇总层可能先因 HTTP 等待窗口超时写入 `request_timeout`，但 WebView action 随后完成并写入成功结果。如果恢复查询继续显示旧 timeout，外部智能体会看到互相矛盾的事实，难以判断是否重试。
 - 安全边界：校准只接受同 `actionId`、同 `sessionId`、完成时间不早于原 timeout、且自身不是 `request_timeout` 的 action result；没有迟到落库结果时，真实 timeout 保持 `TimedOut/request_timeout`。这不是按站点、页面或测试 runId 的特判，也不改变登录/OAuth 外部分流边界。
 - 影响：`/browser-automation/runs`、`/browser-automation/session` 和 `/browser-automation/observe.recentRun` 会看到同一份校准后的 run 结果。open-run 在短暂迟到窗口内优先返回最终 action 结果，减少刚返回即矛盾的恢复状态。
+
+## ADR-A037 自动浏览器当前封口为 WebView 方案
+
+- 日期：2026-07-06
+- 决策：设置页继续只有 `webview_system_auth` 和 `automation_browser` 两个用户模式；`automation_browser` 当前封口为 WebView 自动浏览器方案，承载 A0-A32 已完成的元素化、自动控制、观察和证据能力。WebView 自身登录态持久化作为下一步单独验证，不把强认证通过率作为第二模式当前验收。
+- 理由：用户明确指出第二模式的重点不是解决 Google / ChatGPT 强认证，而是让已登录过的网站下次打开仍然保留状态。A0-A32 已经在 OnePlus 8T 上完成元素化闭环，适合先封口为 WebView 自动浏览器；继续把强认证混进第二模式会让任务目标跑偏。
+- 安全边界：不保存账号、密码、cookie、token 或 authorization code 原文；不把系统浏览器 cookie 导入 WebView；不把某个登录页特判成通用能力；第一模式的系统浏览器登录回跳保持不变。
+- 影响：本次提交只封口 WebView 自动浏览器和文档归位。后续 A34 验证 WebView cookie/localStorage/IndexedDB 和普通网站登录态复用；完整内置浏览器另起阶段。
+
+## ADR-A038 完整内置浏览器与本次 WebView 封口分离
+
+- 日期：2026-07-06
+- 决策：真正完整进入 Kite 软件内部的一整套浏览器流程，作为 A33 封口后的新阶段处理；不混进本次 WebView 自动浏览器提交。候选方案可以继续研究 GeckoView/WebExtension、Chromium 级嵌入或其它真正浏览器内核，但不得覆盖现有 WebView 默认路径。
+- 理由：当前代码的 `BrowserRuntimeMode`、`KiteWebShell`、`BrowserAutomationController` 和 LocalServer action/run/observe 都已经围绕 WebView 自动浏览器跑通。完整内置浏览器会涉及依赖、APK 体积、surface 生命周期、profile、扩展/content script 或其它引擎接口，属于新工程阶段。
+- 安全边界：完整浏览器研究不改变第一模式登录回跳；不伪造已通过的持久化或强认证结果；不在未验证前替换已封口的 WebView 自动浏览器。
+- 影响：A35 以后再进入完整内置浏览器路线。`docs/browser-automation/REAL_BROWSER_RESEARCH.md` 保留为后续参考，不作为本次提交的完成声明。

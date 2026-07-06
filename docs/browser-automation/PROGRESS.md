@@ -1,6 +1,6 @@
 # Kite 浏览器自动化进度
 
-最后更新：2026-07-05 A32 完成，run/open-run 迟到 action 结果校准已通过单测、构建、OnePlus 8T 和默认模式门禁验证。
+最后更新：2026-07-06 A33 完成，WebView 自动浏览器已归位为设置页第二模式；A0-A32 已由本地 commit `e8bddf0` 封口，当前准备再次提交文档封口。
 
 ## 当前状态总览
 
@@ -39,8 +39,37 @@
 | A30 observe 补同名元素 target index | done | observe 建议 target 已带 index；同名按钮 index=0/1 真机验证通过 |
 | A31 补 disabled/readonly 动作可执行性守卫 | done | 动作层已拒绝 disabled/readonly 伪成功；observe、单测、构建、OnePlus 8T 和默认模式门禁通过 |
 | A32 补 run/open-run 迟到 action 结果校准 | done | action history 校准、4 秒短等待、runs/session/observe 一致性和默认模式门禁均已验证 |
+| A33 WebView 自动浏览器归位与封口 | done | 第二模式归位为 WebView 元素化 + 自动控制 + 后续自身持久化验证；完整浏览器另起后续阶段 |
+| A34 WebView 登录态持久化验证 | pending | 下一步验证 cookie/localStorage/IndexedDB 和普通网站登录态复用 |
+| A35 完整内置浏览器新阶段准备 | pending | A33 封口后再研究真正完整内置浏览器，不混入本次提交 |
 
 状态取值：`pending` / `in_progress` / `blocked` / `done`
+
+## 三问自检：A33 WebView 自动浏览器归位与封口
+
+1. 目标是什么？引用 PLAYBOOK A33：把 A0-A32 已完成的元素化能力归位为设置页第二模式，也就是 `automation_browser` 的 WebView 自动浏览器方案；完整内置浏览器另起后续阶段。
+2. 完成标准是什么？明确设置页仍只有 `webview_system_auth` 和 `automation_browser` 两个用户模式；明确 `automation_browser` 当前封口为 WebView 自动浏览器；明确元素化已测过，WebView 登录态持久化还未作为真实网站验收完成；完整浏览器不混入本次封口。
+3. 前置任务是否完成？A32 已完成并验证；浏览器线本地 commit `e8bddf0 checkpoint: 浏览器登录回跳与自动浏览器底座` 已封口；当前只进入浏览器自动化方向，不进入 X11 / MEIZU 任务线。
+
+## 2026-07-06 A33 归位记录
+
+- Git 基线：`codex/browser-login-return` 当前最新提交为 `e8bddf0 checkpoint: 浏览器登录回跳与自动浏览器底座`，启动 A33 前工作树干净。
+- 用户澄清：第二模式当前不是为强认证服务，而是 WebView 自动浏览器；重点是元素化和后续自身持久化。Google/ChatGPT 这类登录挑战不是第二模式第一验收。
+- 设置归位：用户设置仍是两种模式：`webview_system_auth` 表示 WebView + 系统浏览器登录回跳；`automation_browser` 表示 WebView 自动浏览器。
+- 测试状态：A0-A32 的元素化、action/run/open-run、observe、截图、iframe、open shadow、actionability 和默认模式门禁已经完成单测、构建、OnePlus 8T 真机验证。
+- 未完成状态：WebView 自身登录态持久化还没有作为真实网站验收完成；A34 会单独验证 cookie、localStorage、IndexedDB 和普通网站登录态复用。
+- 后续分线：完整内置浏览器作为 A35 之后的新阶段，候选可继续参考 `docs/browser-automation/REAL_BROWSER_RESEARCH.md`，但不混入本次 WebView 封口提交。
+
+## 2026-07-06 A33 完成记录
+
+- 调研文件：`docs/browser-automation/REAL_BROWSER_RESEARCH.md` 已降级为后续完整内置浏览器参考，不作为第二模式当前验收。
+- 入口侦察：`app/src/main/java/com/kite/app/browser/BrowserRuntimeMode.kt` 当前只有 `webview_system_auth` 与 `automation_browser` 两个用户模式；`MainActivity.showSettings()` 直接枚举这两个值。
+- WebView 入口：`KiteWebShell` 负责 Android WebView、`BrowserHandoffPolicy`、下载、console/network 和 `BrowserAutomationController` 绑定。
+- 自动化门禁：`MainActivity.showCardRunWebView(...)` 只在 `BrowserRuntimeMode.AutomationBrowser` 下给 WebView 开启 automation；`KiteLocalServer` 的 action/run/open-run 也受同一模式门禁约束。
+- Gradle 入口：`app/build.gradle` 已有 `androidx.browser` 和 `androidx.webkit`，当前没有 GeckoView 依赖；真浏览器原型需要新增依赖前先确认体积、仓库和构建影响。
+- 决策回写：`DECISIONS.md` 新增 ADR-A037 和 ADR-A038；A33 验收项已在 `PLAYBOOK.md` 勾选。
+- 检查：`git diff --check` 通过，仅有已有 LF/CRLF 提示。
+- 单测：`.\gradlew.bat :app:testDebugUnitTest --tests "com.kite.app.browser.automation.*" --console=plain --no-parallel` 通过，输出 `BUILD SUCCESSFUL`。
 
 ## 三问自检：A32 run/open-run 迟到 action 结果校准
 

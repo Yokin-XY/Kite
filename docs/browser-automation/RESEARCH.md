@@ -1,10 +1,26 @@
 # 浏览器自动化资料调研
 
-最后更新：2026-07-05
+最后更新：2026-07-06
 
 ## 1. 结论先行
 
-Kite 的“自动浏览器”应分三层做：
+Kite 的“自动浏览器”当前已归位为 WebView 方案：
+
+1. A0-A32 已完成：App 内受控 WebView 自动化。
+   - 适合本地端口 Web UI、资源页面、普通网页和 Kite 自己的运行面。
+   - 已具备 observe、action、run/open-run、截图、网络/console、iframe、open shadow、actionability 和恢复查询。
+   - 设置页第二模式 `automation_browser` 当前就封口为这个 WebView 自动浏览器方案。
+
+2. A34 后续要验证的是 WebView 自身持久化。
+   - 目标是“用户已经登录过普通网站后，下次打开是否仍保持登录态”。
+   - 先验证 cookie、localStorage、IndexedDB，再做普通网站人工登录态复用验证。
+   - Google / ChatGPT 等强认证挑战不作为第二模式当前验收。
+
+3. 完整内置浏览器是下一阶段。
+   - 候选包括 GeckoView + WebExtension、Chromium 级嵌入或其它真正浏览器内核。
+   - 详见 `docs/browser-automation/REAL_BROWSER_RESEARCH.md`，该文件是后续参考，不是本次 WebView 封口完成声明。
+
+旧的三层路线仍作为背景参考：
 
 1. 第一阶段：App 内受控 WebView 自动化。
    - 适合本地端口 Web UI、资源页面、普通网页。
@@ -38,6 +54,30 @@ Kite 的“自动浏览器”应分三层做：
 - 来源：https://developer.android.com/reference/android/webkit/WebView
 - 要点：`setWebContentsDebuggingEnabled` 会让 WebView 的 HTML/CSS/JS 可被 adb/DevTools 检查和修改；官方文档明确指出这有安全风险，生产环境不应随意开启。
 - 对 Kite 的意义：自动浏览器不能简单等同于“永久打开 WebView debugging”。生产能力应优先走 App 内受控 action 协议，CDP 只作为显式调试/实验。
+
+### Android CookieManager / WebStorage / WebView data directory
+
+- 来源：https://developer.android.com/reference/android/webkit/CookieManager、https://developer.android.com/reference/android/webkit/WebStorage、https://developer.android.com/reference/android/webkit/WebView
+- 要点：CookieManager 管理 App 的 WebView 实例使用的 cookies，并提供 `flush()` 写入持久存储；WebStorage 管理 WebView 的 JavaScript storage API；`setDataDirectorySuffix` 定义当前进程 WebView 数据目录，多进程 WebView 数据目录不能直接共享。
+- 对 Kite 的意义：WebView 持久化是可验证路线，但它是 App 自己的 WebView profile，不等同于系统 Chrome/Custom Tabs 的登录态。
+
+### Chrome Auth Tab / Custom Tabs
+
+- 来源：https://developer.chrome.com/docs/android/custom-tabs/guide-auth-tab、https://developer.android.com/develop/ui/views/layout/webapps/overview-of-android-custom-tabs
+- 要点：Auth Tab 是面向 Android App 的专用认证 Custom Tab，完成后通过 https 或 custom scheme 回调 App；Custom Tabs 提供 App 内定制浏览器体验，但承载者仍是浏览器。
+- 对 Kite 的意义：它是强认证回跳桥，不是 Kite 可注入、可观察 DOM、可执行 action 的自动浏览器 surface。
+
+### GeckoView / WebExtensions
+
+- 来源：https://mozilla.github.io/geckoview/、https://firefox-source-docs.mozilla.org/mobile/android/geckoview/consumer/web-extensions.html
+- 要点：GeckoView 可把 Gecko 浏览器引擎嵌入 Android App；GeckoView 支持通过 WebExtensions 与网页内容双向通信。
+- 对 Kite 的意义：这是“内嵌真正浏览器”的首个候选。元素化可以走扩展/content script 模型，但强认证接受度、APK 体积和 profile 持久化必须真机验证。
+
+### ChromeDriver Android / Appium mobile web
+
+- 来源：https://developer.chrome.com/docs/chromedriver/get-started/android、https://appium.github.io/appium.io/docs/en/writing-running-appium/web/mobile-web/
+- 要点：ChromeDriver 支持 Android Chrome 和启用 WebView debugging 的 WebView；Appium 支持自动化真实或模拟 Android 设备上的 Chrome，但需要 Chrome、Chromedriver 和对应设备/版本配置。
+- 对 Kite 的意义：这是“真实手机 Chrome + 真实 profile”的最高保真外部控制路线，适合开发者 lane 和长时间设备托管，不等同于 App 内嵌浏览器控件。
 
 ### Chrome DevTools Protocol
 
@@ -92,6 +132,10 @@ Kite 的“自动浏览器”应分三层做：
 | 路线 | 优点 | 风险 | Kite 判断 |
 | --- | --- | --- | --- |
 | 受控 WebView + action 协议 | 与 App 状态绑定最紧，成本低，适合本地 Web UI | 需要自己做 selector、wait、报告 | 第一阶段主线 |
+| WebView 持久化 | 保留现有能力，普通站点可复用 WebView 自己的 cookie/storage | 不共享系统 Chrome/Custom Tabs cookie；真实网站登录态尚未验收 | A34 验证 |
+| Auth Tab / Custom Tabs | 官方强认证体验，复用系统浏览器能力 | 不能 DOM 自动化，不能当自动浏览器 surface | 认证桥 |
+| GeckoView + WebExtension | App 内嵌真浏览器引擎，扩展模型适合元素化 | 不共享 Chrome profile；强认证接受度、体积和兼容要实测 | 内嵌真浏览器首个原型 |
+| Android Chrome + ChromeDriver/Appium | 真实 Chrome/profile，强认证保真最高，生态成熟 | 依赖 ADB、host server、版本匹配和前台 Chrome | 外部真 Chrome lane |
 | WebView debugging + CDP | DOM/Network/Runtime 能力强，生态成熟 | 生产安全风险，debug 依赖 ADB/DevTools | 第二阶段实验/调试 |
 | Playwright Android | AI/测试生态熟悉，支持 Chrome/WebView | experimental，设备要求和限制较多 | 外部测试和兼容参考 |
 | Appium Hybrid | 移动测试成熟，WebView context 模型清楚 | 重依赖 server/Chromedriver/version | 外部测试参考 |
