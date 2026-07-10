@@ -245,7 +245,18 @@ SH
               rm -f "${'$'}kite_build_apt_proxy_conf" || true
             fi
             echo "KITE_RESOURCE_STEP manifest-install ${safeId(resourceId)}"
-            $rawCommand
+            set +e
+            (
+              set -e
+              $rawCommand
+            )
+            manifest_install_status=${'$'}?
+            set -e
+            if [ "${'$'}manifest_install_status" -ne 0 ]; then
+              echo "KITE_RESOURCE_STEP manifest-install-failed ${safeId(resourceId)} exit=${'$'}manifest_install_status"
+              rm -f "${'$'}command_snapshot_after"
+              exit "${'$'}manifest_install_status"
+            fi
             snapshot_public_commands > "${'$'}command_snapshot_after"
             auto_commands="${'$'}(cut -f1 "${'$'}command_snapshot_after" || true)"
             managed_commands="${'$'}(

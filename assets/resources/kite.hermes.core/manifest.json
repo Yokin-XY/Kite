@@ -82,7 +82,11 @@
     "install": [
       {
         "type": "shell",
-        "cmd": "curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o install.sh && bash install.sh --dir /workspace/.kf/software/kite.hermes.core/hermes-agent --hermes-home /workspace/.kf/software/kite.hermes.core/home --skip-setup --skip-browser --non-interactive"
+        "cmd": "curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o install.sh && bash install.sh --dir /workspace/.kf/software/kite.hermes.core/hermes-agent --hermes-home /workspace/.kf/software/kite.hermes.core/home --skip-setup --skip-browser --non-interactive",
+        "managedCommands": [
+          "hermes"
+        ],
+        "cleanInstallRoot": true
       }
     ],
     "open": {

@@ -50,6 +50,27 @@ class KiteResourceInstallRecipesCommandExposureTest {
     }
 
     @Test
+    fun manifestInstallPropagatesManifestCommandFailureBeforeRecordingOwnership() {
+        val script = KiteResourceInstallRecipes.manifestInstallCommand(
+            resourceId = "kite.example",
+            displayName = "Example",
+            rawCommand = "curl -fsSL https://invalid.example/install.sh -o install.sh && bash install.sh",
+            managedCommands = listOf("example"),
+            cleanInstallRoot = true
+        )
+
+        val commandIndex = script.indexOf("curl -fsSL https://invalid.example/install.sh")
+        val failureCheckIndex = script.indexOf("manifest-install-failed kite.example")
+        val ownershipIndex = script.indexOf("installed_by_kite")
+
+        assertTrue(script.contains("manifest_install_status=${'$'}?"))
+        assertTrue(script.contains("exit \"${'$'}manifest_install_status\""))
+        assertTrue(commandIndex >= 0)
+        assertTrue(failureCheckIndex > commandIndex)
+        assertTrue(ownershipIndex > failureCheckIndex)
+    }
+
+    @Test
     fun manifestUninstallRemovesOnlyLedgerOwnedCommandLinks() {
         val script = KiteResourceInstallRecipes.manifestUninstallCommand(
             resourceId = "kite.example",
