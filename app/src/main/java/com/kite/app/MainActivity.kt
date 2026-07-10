@@ -148,6 +148,7 @@ import com.kite.app.R
 import com.kite.app.foundation.bootstrap.BootstrapCoordinator
 import com.kite.app.foundation.bootstrap.BootstrapSnapshot
 import com.kite.app.foundation.bootstrap.BootstrapStage
+import com.kite.app.foundation.bootstrap.StartupTraceStore
 import com.kite.app.foundation.runtime.AssetExtractor
 import com.kite.app.foundation.runtime.ExternalExchangeManager
 import com.kite.app.foundation.runtime.RuntimeAutomationActions
@@ -385,7 +386,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private val consoleCardBindings = mutableMapOf<String, RecipeCardBinding>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        StartupTraceStore.markStage(this, "main.super_on_create")
         super.onCreate(savedInstanceState)
+        StartupTraceStore.markStage(this, "main.diagnostics_and_settings")
         diagnostics = KiteDiagnostics(this)
         diagnostics.writeCapabilityReport()
         themeStore = getSharedPreferences("kite_theme", MODE_PRIVATE)
@@ -399,6 +402,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         dropZoneStatus = dropZoneManager.prepareDropZone()
         bridgeClient = KiteBridgeClient(diagnostics, applicationContext)
         browserAuthSessions = BrowserAuthSessionStore(applicationContext)
+        StartupTraceStore.markStage(this, "main.webview_create")
         webView = WebView(this)
         browserAutomationSessions = BrowserAutomationSessionStore(applicationContext)
         browserAutomationController = BrowserAutomationController(
@@ -418,6 +422,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             },
             browserAutomationController = browserAutomationController
         )
+        StartupTraceStore.markStage(this, "main.resources_and_server")
         resourceInstallStore = KiteResourceInstallStore(this)
         resourceManifestLoader = KiteResourceManifestLoader(this)
         prewarmResourceCatalog()
@@ -445,6 +450,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             localServerStarted = true
         }
 
+        StartupTraceStore.markStage(this, "main.content_view")
         rootHost = FrameLayout(this).apply {
             id = View.generateViewId()
             setBackgroundColor(tokens.pageBackground)
@@ -458,6 +464,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
         setContentView(rootHost)
+        StartupTraceStore.markStage(this, "main.observers_and_intent")
         updateRuntimeGateOverlay()
         observeUbuntuBootstrapState()
         observeRootfsExtractionProgress()
@@ -474,6 +481,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             showConsole()
         }
         refreshUbuntuRuntimeState()
+        StartupTraceStore.markStage(this, "main.permissions_and_runtime_gate")
         if (!maybeStartFirstRunPermissionOnboarding()) {
             maybeStartFirstRunRuntimeGate()
         }
@@ -984,18 +992,24 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     override fun onResume() {
         super.onResume()
+        StartupTraceStore.markStage(this, "main.resume_permissions")
         applyRecentTaskVisibilitySetting()
         resumePendingFirstRunPermissionOnboarding()
         resumePendingRuntimePermissionBootstrap()
+        StartupTraceStore.markStage(this, "main.resume_runtime_and_visible_state")
         rebindVisibleResourceStateOnResume()
         ensureBundledToolBootstrapIfNeeded("resume")
         expireBrowserAuthSessionsOnResume()
-        if (this is CardRunActivity && rebindFocusedCardRunSurface("resume")) return
+        if (this is CardRunActivity && rebindFocusedCardRunSurface("resume")) {
+            rootHost.post { StartupTraceStore.markReady(applicationContext) }
+            return
+        }
         when (currentScreen) {
             Screen.Console -> showConsole()
             Screen.Settings -> showSettings()
             else -> Unit
         }
+        rootHost.post { StartupTraceStore.markReady(applicationContext) }
     }
 
     override fun onPause() {

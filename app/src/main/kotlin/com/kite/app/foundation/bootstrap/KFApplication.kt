@@ -27,26 +27,39 @@ class KFApplication : Application() {
         fun markLaunchStage(tag: String, stage: String) {
             val startedAt = launchStartedAtElapsed
             if (startedAt <= 0L) {
-                Logger.i(tag, "冷启动时序: $stage")
+                runCatching { Logger.i(tag, "冷启动时序: $stage") }
                 return
             }
             val delta = SystemClock.elapsedRealtime() - startedAt
-            Logger.i(tag, "冷启动时序 +${delta}ms: $stage")
+            runCatching { Logger.i(tag, "冷启动时序 +${delta}ms: $stage") }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
         launchStartedAtElapsed = SystemClock.elapsedRealtime()
-        TerminalUiPreferences.applySavedTheme(this)
-        Logger.init(this)
-        Logger.i("App", "KFShell 应用启动")
+        StartupTraceStore.prepareProcess(this)
+        StartupTraceStore.runApplicationStage(this, "application.saved_theme") {
+            TerminalUiPreferences.applySavedTheme(this)
+        }
+        StartupTraceStore.runApplicationStage(this, "application.logger") {
+            Logger.init(this)
+            Logger.i("App", "KFShell 应用启动")
+        }
         markLaunchStage("App", "Application.onCreate")
-        registerRuntimeLifecycleSignals()
-        AndroidShellBridgeWorker.start(this)
-        HostSelfAdbBridgeWorker.start(this)
+        StartupTraceStore.runApplicationStage(this, "application.lifecycle_signals") {
+            registerRuntimeLifecycleSignals()
+        }
+        StartupTraceStore.runApplicationStage(this, "application.android_shell_bridge") {
+            AndroidShellBridgeWorker.start(this)
+        }
+        StartupTraceStore.runApplicationStage(this, "application.host_self_bridge") {
+            HostSelfAdbBridgeWorker.start(this)
+        }
         markLaunchStage("App", "Android shell / host-self bridge workers 就绪")
-        createNotificationChannels()
+        StartupTraceStore.runApplicationStage(this, "application.notification_channels") {
+            createNotificationChannels()
+        }
         markLaunchStage("App", "通知通道就绪")
     }
 
