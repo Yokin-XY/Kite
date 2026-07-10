@@ -1468,25 +1468,36 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun consumeResourceInstallSignal(signal: KiteResourceInstallSignal) {
+        syncVisibleResourceState(
+            reason = signal.reason,
+            preferredResourceIds = listOfNotNull(signal.resourceId, signal.targetResourceId)
+        )
+    }
+
+    private fun syncVisibleResourceState(
+        reason: String,
+        preferredResourceIds: Collection<String> = emptyList()
+    ) {
+        // 每个 Activity 都有自己的资源缓存。即使当前不在资源页，也要先标脏，
+        // 避免稍后进入资源页时继续显示状态变化前的按钮文字。
+        invalidateResourceRuntimeStateCache()
         when (currentScreen) {
             Screen.Resources,
             Screen.ResourceSearch -> {
-                invalidateResourceRuntimeStateCache()
                 requestVisibleResourceItemStatePatch(
-                    reason = signal.reason,
-                    preferredResourceIds = listOfNotNull(signal.resourceId, signal.targetResourceId)
+                    reason = reason,
+                    preferredResourceIds = preferredResourceIds
                 )
             }
-            Screen.CardRun -> requestVisibleResourceInstallWizardRefresh(signal.reason)
-            Screen.ResourceDetail -> requestVisibleResourceDetailStatePatch(signal.reason)
-            Screen.ResourceMore -> invalidateResourceRuntimeStateCache()
+            Screen.CardRun -> requestVisibleResourceInstallWizardRefresh(reason)
+            Screen.ResourceDetail -> requestVisibleResourceDetailStatePatch(reason)
+            Screen.ResourceMore -> Unit
             Screen.ResourceManage -> {
-                invalidateResourceRuntimeStateCache()
                 requestVisibleResourceItemStatePatch(
-                    reason = signal.reason,
-                    preferredResourceIds = listOfNotNull(signal.resourceId, signal.targetResourceId)
+                    reason = reason,
+                    preferredResourceIds = preferredResourceIds
                 )
-                requestResourceManageRefresh(forceCatalogRefresh = false, reason = signal.reason)
+                requestResourceManageRefresh(forceCatalogRefresh = false, reason = reason)
             }
             else -> Unit
         }
@@ -1544,10 +1555,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         if (this is CardRunActivity || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
         when (currentScreen) {
             Screen.Resources,
-            Screen.ResourceSearch -> {
-                invalidateResourceRuntimeStateCache()
-                requestVisibleResourceItemStatePatch("resume")
-            }
+            Screen.ResourceSearch,
+            Screen.ResourceDetail,
+            Screen.ResourceMore,
+            Screen.ResourceManage -> syncVisibleResourceState("resume")
             else -> Unit
         }
     }

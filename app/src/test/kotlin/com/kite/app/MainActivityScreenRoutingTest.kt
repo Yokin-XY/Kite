@@ -1,7 +1,9 @@
 package com.kite.app
 
 import android.os.Bundle
+import com.kite.app.resources.KiteResourceInstallSignal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -34,6 +36,40 @@ class MainActivityScreenRoutingTest {
         val method = MainActivity::class.java.getDeclaredMethod(methodName)
         method.isAccessible = true
         method.invoke(activity)
+    }
+
+    private fun invokeResourceSignal(activity: MainActivity, signal: KiteResourceInstallSignal) {
+        val method = MainActivity::class.java.getDeclaredMethod(
+            "consumeResourceInstallSignal",
+            KiteResourceInstallSignal::class.java
+        )
+        method.isAccessible = true
+        method.invoke(activity, signal)
+    }
+
+    private fun setResourceCatalogDirty(activity: MainActivity, dirty: Boolean) {
+        val field = MainActivity::class.java.getDeclaredField("resourceCatalogDirty")
+        field.isAccessible = true
+        field.setBoolean(activity, dirty)
+    }
+
+    private fun resourceCatalogDirty(activity: MainActivity): Boolean {
+        val field = MainActivity::class.java.getDeclaredField("resourceCatalogDirty")
+        field.isAccessible = true
+        return field.getBoolean(activity)
+    }
+
+    private fun setCurrentScreen(activity: MainActivity, screenName: String) {
+        val field = MainActivity::class.java.getDeclaredField("currentScreen")
+        field.isAccessible = true
+        val screen = field.type.enumConstants.first { (it as Enum<*>).name == screenName }
+        field.set(activity, screen)
+    }
+
+    private fun resourceItemPatchRequestSerial(activity: MainActivity): Long {
+        val field = MainActivity::class.java.getDeclaredField("resourceItemPatchRequestSerial")
+        field.isAccessible = true
+        return field.getLong(activity)
     }
 
     // ------------------------------------------------------------------
@@ -70,6 +106,55 @@ class MainActivityScreenRoutingTest {
         invokeShow(activity, "showSettings")
         invokeShow(activity, "showConsole")
         assertEquals("Console", activity.currentScreenNameForTest())
+    }
+
+    @Test
+    fun `资源完成信号在非资源页面也必须标脏缓存`() {
+        val activity = createActivity()
+        setResourceCatalogDirty(activity, false)
+
+        invokeResourceSignal(
+            activity,
+            KiteResourceInstallSignal(
+                revision = 1L,
+                reason = "markInstalled",
+                resourceId = "kite.hermes.core"
+            )
+        )
+
+        assertTrue(resourceCatalogDirty(activity))
+        assertEquals("Console", activity.currentScreenNameForTest())
+    }
+
+    @Test
+    fun `资源状态信号在每个资源显示面都必须先标脏缓存`() {
+        val activity = createActivity()
+        val screens = listOf("Resources", "ResourceSearch", "ResourceDetail", "ResourceMore", "ResourceManage")
+
+        screens.forEachIndexed { index, screenName ->
+            setCurrentScreen(activity, screenName)
+            setResourceCatalogDirty(activity, false)
+            val patchSerialBefore = resourceItemPatchRequestSerial(activity)
+
+            invokeResourceSignal(
+                activity,
+                KiteResourceInstallSignal(
+                    revision = index + 1L,
+                    reason = "state-transition-$screenName",
+                    resourceId = "kite.hermes.core"
+                )
+            )
+
+            if (screenName in listOf("Resources", "ResourceSearch", "ResourceManage")) {
+                assertTrue(
+                    "$screenName must request a visible item patch",
+                    resourceItemPatchRequestSerial(activity) > patchSerialBefore
+                )
+            } else {
+                assertTrue("$screenName must retain a dirty catalog until it can rebind", resourceCatalogDirty(activity))
+            }
+            assertEquals(screenName, activity.currentScreenNameForTest())
+        }
     }
 
     // ------------------------------------------------------------------
