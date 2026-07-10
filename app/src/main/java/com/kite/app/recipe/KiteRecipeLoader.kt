@@ -7,6 +7,7 @@ import com.kite.app.foundation.runtime.ExternalExchangeManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.text.Normalizer
 import java.time.Instant
 import java.util.Locale
@@ -128,7 +129,7 @@ class KiteRecipeLoader(
             }
         }
         if (!hasFailure) {
-            runCatching { marker.writeText(Instant.now().toString()) }
+            writeRecipeMaintenanceMarker(cardsDir, marker.name, Instant.now().toString())
                 .onFailure {
                     diagnostics.logRecipeEvent(
                         "recipe_asset_seed_marker_failed",
@@ -167,7 +168,16 @@ class KiteRecipeLoader(
                     }
                 }
         }
-        if (!hasFailure) marker.writeText(Instant.now().toString())
+        if (!hasFailure) {
+            writeRecipeMaintenanceMarker(cardsDir, marker.name, Instant.now().toString())
+                .onFailure {
+                    diagnostics.logRecipeEvent(
+                        "recipe_migration_marker_failed",
+                        null,
+                        mapOf("file" to marker.absolutePath, "error" to it.message.orEmpty())
+                    )
+                }
+        }
     }
 
     private fun removeDeprecatedAssetRecipesIfNeeded(cardsDir: File) {
@@ -204,7 +214,16 @@ class KiteRecipeLoader(
                 )
             }
         }
-        if (!hasFailure) marker.writeText(Instant.now().toString())
+        if (!hasFailure) {
+            writeRecipeMaintenanceMarker(cardsDir, marker.name, Instant.now().toString())
+                .onFailure {
+                    diagnostics.logRecipeEvent(
+                        "recipe_deprecated_asset_cleanup_marker_failed",
+                        null,
+                        mapOf("file" to marker.absolutePath, "error" to it.message.orEmpty())
+                    )
+                }
+        }
     }
 
     private fun isDeprecatedHermesWebUiPreset(json: JSONObject): Boolean {
@@ -626,6 +645,19 @@ class KiteRecipeLoader(
         private const val DEPRECATED_HERMES_WEBUI_NAME = "Hermes WebUI"
         private const val DEPRECATED_HERMES_WEBUI_START_COMMAND = "hermes-web-ui start --port 8648"
         private const val DEPRECATED_HERMES_WEBUI_OPEN_URL = "http://127.0.0.1:8648"
+    }
+}
+
+internal fun writeRecipeMaintenanceMarker(
+    cardsDir: File,
+    markerName: String,
+    markerValue: String
+): Result<File> = runCatching {
+    if (!cardsDir.isDirectory && !cardsDir.mkdirs() && !cardsDir.isDirectory) {
+        throw IOException("Unable to create cards directory: ${cardsDir.absolutePath}")
+    }
+    File(cardsDir, markerName).also { marker ->
+        marker.writeText(markerValue)
     }
 }
 
