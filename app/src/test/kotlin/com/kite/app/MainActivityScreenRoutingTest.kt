@@ -128,10 +128,10 @@ class MainActivityScreenRoutingTest {
 
     @Test
     fun `资源状态信号在每个资源显示面都必须先标脏缓存`() {
-        val activity = createActivity()
         val screens = listOf("Resources", "ResourceSearch", "ResourceDetail", "ResourceMore", "ResourceManage")
 
         screens.forEachIndexed { index, screenName ->
+            val activity = createActivity()
             setCurrentScreen(activity, screenName)
             setResourceCatalogDirty(activity, false)
             val patchSerialBefore = resourceItemPatchRequestSerial(activity)

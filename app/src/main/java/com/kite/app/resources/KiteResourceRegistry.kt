@@ -18,9 +18,10 @@ data class KiteResourceRegistryEntry(
 ) {
     val installed: Boolean get() = status == KiteResourceRegistry.STATUS_INSTALLED
     val failed: Boolean get() = status == KiteResourceRegistry.STATUS_FAILED
+    val preparing: Boolean get() = status == KiteResourceRegistry.STATUS_PREPARING
     val installing: Boolean get() = status == KiteResourceRegistry.STATUS_INSTALLING
     val uninstalling: Boolean get() = status == KiteResourceRegistry.STATUS_UNINSTALLING
-    val busy: Boolean get() = installing || uninstalling
+    val busy: Boolean get() = preparing || installing || uninstalling
 }
 
 data class KiteResourcePlanSnapshot(
@@ -55,11 +56,14 @@ class KiteResourceRegistry(context: Context) {
     fun isInstalling(resourceId: String): Boolean =
         status(resourceId) == STATUS_INSTALLING
 
+    fun isPreparing(resourceId: String): Boolean =
+        status(resourceId) == STATUS_PREPARING
+
     fun isUninstalling(resourceId: String): Boolean =
         status(resourceId) == STATUS_UNINSTALLING
 
     fun isBusy(resourceId: String): Boolean =
-        isInstalling(resourceId) || isUninstalling(resourceId)
+        isPreparing(resourceId) || isInstalling(resourceId) || isUninstalling(resourceId)
 
     fun failedOperation(resourceId: String): String =
         registryString(resourceId, COL_OPERATION)
@@ -173,6 +177,16 @@ class KiteResourceRegistry(context: Context) {
             operation = OP_INSTALL,
             runId = runId.orEmpty(),
             summary = "获取中"
+        )
+    }
+
+    fun markPreparing(resourceId: String) {
+        upsertRegistry(
+            resourceId = resourceId,
+            status = STATUS_PREPARING,
+            operation = OP_INSTALL,
+            runId = "",
+            summary = "准备中"
         )
     }
 
@@ -788,6 +802,7 @@ class KiteResourceRegistry(context: Context) {
     companion object {
         const val STATUS_INSTALLED = "installed"
         const val STATUS_FAILED = "failed"
+        const val STATUS_PREPARING = "preparing"
         const val STATUS_INSTALLING = "installing"
         const val STATUS_UNINSTALLING = "uninstalling"
         const val OP_INSTALL = "install"

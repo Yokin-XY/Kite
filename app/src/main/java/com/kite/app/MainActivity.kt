@@ -128,6 +128,7 @@ import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRequestPolicy
 import com.kite.app.resources.KiteResourceRegistryEntry
 import com.kite.app.resources.KiteResourceShellAction
+import com.kite.app.resources.KiteResourceUiProjector
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunBrowserRouter
 import com.kite.app.run.CardRunDesktopRouter
@@ -372,6 +373,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var resourceCatalogBackgroundRefreshInFlight = false
     private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     private var resourceOpenRunSignature = ""
+    private var resourceOpenRunStatusByResourceId: Map<String, RecipeRunStatus> = emptyMap()
+    private var resourceUiRevision = 0L
     private var resourceRunUiRefreshPosted = false
     private var lastConsoleRuntimeRefreshAt = 0L
     private var cardRunSurfaceSignature = ""
@@ -1470,13 +1473,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun consumeResourceInstallSignal(signal: KiteResourceInstallSignal) {
         syncVisibleResourceState(
             reason = signal.reason,
-            preferredResourceIds = listOfNotNull(signal.resourceId, signal.targetResourceId)
+            preferredResourceIds = signal.affectedResourceIds +
+                listOfNotNull(signal.resourceId, signal.targetResourceId),
+            revision = signal.revision
         )
     }
 
     private fun syncVisibleResourceState(
         reason: String,
-        preferredResourceIds: Collection<String> = emptyList()
+        preferredResourceIds: Collection<String> = emptyList(),
+        revision: Long = 0L
     ) {
         // 每个 Activity 都有自己的资源缓存。即使当前不在资源页，也要先标脏，
         // 避免稍后进入资源页时继续显示状态变化前的按钮文字。
@@ -1484,19 +1490,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         when (currentScreen) {
             Screen.Resources,
             Screen.ResourceSearch -> {
-                requestVisibleResourceItemStatePatch(
-                    reason = reason,
-                    preferredResourceIds = preferredResourceIds
-                )
+                if (convergeVisibleResourceState(reason, preferredResourceIds, revision).isEmpty()) {
+                    requestVisibleResourceItemStatePatch(reason, preferredResourceIds)
+                }
             }
             Screen.CardRun -> requestVisibleResourceInstallWizardRefresh(reason)
-            Screen.ResourceDetail -> requestVisibleResourceDetailStatePatch(reason)
+            Screen.ResourceDetail -> {
+                if (convergeVisibleResourceState(reason, preferredResourceIds, revision).isEmpty()) {
+                    requestVisibleResourceDetailStatePatch(reason)
+                }
+            }
             Screen.ResourceMore -> Unit
             Screen.ResourceManage -> {
-                requestVisibleResourceItemStatePatch(
-                    reason = reason,
-                    preferredResourceIds = preferredResourceIds
-                )
+                if (convergeVisibleResourceState(reason, preferredResourceIds, revision).isEmpty()) {
+                    requestVisibleResourceItemStatePatch(reason, preferredResourceIds)
+                }
                 requestResourceManageRefresh(forceCatalogRefresh = false, reason = reason)
             }
             else -> Unit
@@ -1506,9 +1514,26 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun consumeResourceOpenRunSignals(runs: List<RecipeRuntimeState>) {
         val signature = buildResourceOpenRunSignature(runs)
         if (signature == resourceOpenRunSignature) return
+        val nextStatuses = runs
+            .asSequence()
+            .mapNotNull { state ->
+                resourceIdForOpenRunRecipeId(state.recipeId)?.let { resourceId -> resourceId to state }
+            }
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, states) -> states.maxByOrNull { it.updatedAt }?.status }
+            .mapNotNull { (resourceId, status) -> status?.let { resourceId to it } }
+            .toMap()
+        val changedResourceIds = (resourceOpenRunStatusByResourceId.keys + nextStatuses.keys)
+            .filter { resourceOpenRunStatusByResourceId[it] != nextStatuses[it] }
+        resourceOpenRunStatusByResourceId = nextStatuses
         resourceOpenRunSignature = signature
         invalidateResourceRuntimeStateCache()
-        requestResourceRunStateUiRefresh()
+        resourceUiRevision += 1
+        syncVisibleResourceState(
+            reason = "resource_open_run_state",
+            preferredResourceIds = changedResourceIds,
+            revision = resourceUiRevision
+        )
     }
 
     private fun buildResourceOpenRunSignature(runs: List<RecipeRuntimeState>): String =
@@ -1542,10 +1567,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             resourceRunUiRefreshPosted = false
             when (currentScreen) {
                 Screen.Resources,
-                Screen.ResourceSearch -> requestVisibleResourceItemStatePatch("resource_open_run_state")
-                Screen.ResourceDetail -> requestVisibleResourceDetailStatePatch("resource_open_run_state")
+                Screen.ResourceSearch,
+                Screen.ResourceDetail -> {
+                    resourceUiRevision += 1
+                    convergeVisibleResourceState("resource_open_run_state", revision = resourceUiRevision)
+                }
                 Screen.ResourceMore -> invalidateResourceRuntimeStateCache()
-                Screen.ResourceManage -> requestResourceManageRefresh(forceCatalogRefresh = false, reason = "resource_open_run_state")
+                Screen.ResourceManage -> {
+                    resourceUiRevision += 1
+                    convergeVisibleResourceState("resource_open_run_state", revision = resourceUiRevision)
+                    requestResourceManageRefresh(forceCatalogRefresh = false, reason = "resource_open_run_state")
+                }
                 else -> Unit
             }
         }
@@ -3284,9 +3316,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun invalidateResourceRuntimeStateCache() {
         resourceCatalogDirty = true
-        cachedResourceCatalog = null
         cachedResourceCatalogUpdatedAt = 0L
-        cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     }
 
     private fun invalidateResourceUiCache() {
@@ -3359,24 +3389,177 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun applyVisibleResourceItemStatePatch(itemsById: Map<String, ResourceItem>) {
+    private fun applyVisibleResourceItemStatePatch(
+        itemsById: Map<String, ResourceItem>,
+        revision: Long = 0L
+    ) {
         purgeResourceItemBindings()
         itemsById.forEach { (resourceId, item) ->
             resourceItemBindings[resourceId]
                 .orEmpty()
                 .filter { it.root.isAttachedToWindow }
-                .forEach { binding -> bindResourceItemState(binding, item) }
+                .forEach { binding -> bindResourceItemState(binding, item, revision) }
         }
     }
 
-    private fun bindResourceItemState(binding: ResourceItemBinding, item: ResourceItem) {
+    private fun bindResourceItemState(binding: ResourceItemBinding, item: ResourceItem, revision: Long = 0L) {
+        binding.item = item
+        if (revision > 0L) binding.appliedRevision = revision
         binding.root.setOnClickListener { showResourceDetail(item.id, item) }
         binding.stateTextView?.text = "${item.version} · ${item.sizeLabel} · ${item.stateLabel}"
         binding.actionButton?.let { bindResourceActionButton(it, item, binding.compactAction) }
     }
 
+    private fun resourceRuntimeFactsFromStore(item: ResourceItem): ResourceRuntimeFacts {
+        val resourceId = KiteResourceInstallRecipes.safeId(item.id)
+        val entry = resourceInstallStore.registryEntry(resourceId)
+        val plan = resourceInstallStore.planSnapshot()
+        val inPlan = resourceId.isNotBlank() &&
+            (resourceId == plan.targetResourceId || resourceId in plan.resourceIds)
+        val planStatus = plan.stepStatus(resourceId)
+        val planFailed = inPlan && (
+            planStatus == KiteResourceInstallStore.PLAN_STEP_FAILED ||
+                planStatus == KiteResourceInstallStore.PLAN_STEP_BLOCKED ||
+                (resourceId == plan.targetResourceId && plan.resourceIds.any { id ->
+                    val status = plan.stepStatus(id)
+                    status == KiteResourceInstallStore.PLAN_STEP_FAILED ||
+                        status == KiteResourceInstallStore.PLAN_STEP_BLOCKED
+                })
+            )
+        val planBusy = inPlan && !planFailed && when {
+            planStatus == KiteResourceInstallStore.PLAN_STEP_RUNNING -> true
+            planStatus == KiteResourceInstallStore.PLAN_STEP_DONE -> false
+            planStatus.isNotBlank() -> true
+            resourceId == plan.targetResourceId ->
+                plan.pendingResourceIds.isNotEmpty() || plan.runningResourceIds.isNotEmpty()
+            else -> false
+        }
+        val failed = entry?.failed == true || planFailed
+        return ResourceRuntimeFacts(
+            installed = entry?.installed == true ||
+                (item.id == RESOURCE_NODE_RUNTIME && item.runtimeFacts.installed && entry == null),
+            preparing = entry?.preparing == true,
+            installing = entry?.installing == true || planBusy,
+            uninstalling = entry?.uninstalling == true,
+            failed = failed,
+            failedOperation = entry?.operation.orEmpty()
+                .ifBlank { if (failed) KiteResourceInstallStore.OP_INSTALL else "" },
+            idleStateLabel = item.runtimeFacts.idleStateLabel,
+            extraBusy = item.runtimeFacts.extraBusy
+        )
+    }
+
+    private fun projectResourceItemRuntime(item: ResourceItem): ResourceItem {
+        val facts = resourceRuntimeFactsFromStore(item)
+        val openRunStatus = CardRunStore
+            .currentForRecipe(KiteResourceInstallRecipes.recipeId(item.id, "open"))
+            ?.status
+        val projection = KiteResourceUiProjector.project(
+            installed = facts.installed,
+            preparing = facts.preparing,
+            installing = facts.installing,
+            uninstalling = facts.uninstalling,
+            failed = facts.failed,
+            failedOperation = facts.failedOperation,
+            idleStateLabel = facts.idleStateLabel,
+            openRunStatus = openRunStatus,
+            extraBusy = facts.extraBusy
+        )
+        return item.copy(
+            stateLabel = projection.stateLabel,
+            actionLabel = projection.actionLabel,
+            actionEnabled = projection.actionEnabled,
+            secondaryActionLabel = projection.secondaryActionLabel,
+            runtimeFacts = facts
+        )
+    }
+
+    private fun convergeVisibleResourceState(
+        reason: String,
+        preferredResourceIds: Collection<String> = emptyList(),
+        revision: Long = 0L
+    ): Map<String, ResourceItem> {
+        purgeResourceItemBindings()
+        val preferredIds = preferredResourceIds
+            .map { KiteResourceInstallRecipes.safeId(it) }
+            .filter { it.isNotBlank() }
+            .toSet()
+        val visibleIds = visibleResourceItemBindingIds()
+        val detailItem = resourceDetailBinding
+            ?.takeIf { currentScreen == Screen.ResourceDetail && it.contentHost === resourceDetailContentHost }
+            ?.item
+        val targetIds = if (preferredIds.isEmpty()) {
+            visibleIds + listOfNotNull(detailItem?.id)
+        } else {
+            preferredIds + visibleIds.filter { it in preferredIds } +
+                listOfNotNull(detailItem?.id?.takeIf { it in preferredIds })
+        }
+        if (targetIds.isEmpty()) return emptyMap()
+        val projected = targetIds.mapNotNull { resourceId ->
+            val base = resourceItemBindings[resourceId]
+                .orEmpty()
+                .firstOrNull { it.root.isAttachedToWindow }
+                ?.item
+                ?: detailItem?.takeIf { it.id == resourceId }
+            base?.let { resourceId to projectResourceItemRuntime(it) }
+        }.toMap()
+        if (projected.isEmpty()) return emptyMap()
+        applyVisibleResourceItemStatePatch(projected, revision)
+        projected.values.forEach { item -> patchVisibleResourceDetailState(item, revision) }
+        scheduleResourceStateConvergenceCheck(reason, projected, revision)
+        return projected
+    }
+
+    private fun scheduleResourceStateConvergenceCheck(
+        reason: String,
+        expectedItems: Map<String, ResourceItem>,
+        revision: Long
+    ) {
+        if (!::root.isInitialized || expectedItems.isEmpty()) return
+        root.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            purgeResourceItemBindings()
+            val latestExpectedItems = expectedItems.mapValues { (_, item) -> projectResourceItemRuntime(item) }
+            val mismatched = latestExpectedItems.filter { (resourceId, expected) ->
+                val listMismatch = resourceItemBindings[resourceId]
+                    .orEmpty()
+                    .filter { it.root.isAttachedToWindow }
+                    .any { binding ->
+                        binding.actionButton?.text?.toString() != expected.actionLabel ||
+                            (binding.stateTextView != null &&
+                                !binding.stateTextView.text.toString().endsWith(expected.stateLabel))
+                    }
+                val detailMismatch = resourceDetailBinding
+                    ?.takeIf { currentScreen == Screen.ResourceDetail && it.resourceId == resourceId }
+                    ?.let { binding ->
+                        val splitExpected = resourceHasSplitActions(expected)
+                        binding.actionBinding.primaryButton.text?.toString() != expected.actionLabel ||
+                            binding.actionBinding.secondaryButton.visibility == View.VISIBLE != splitExpected ||
+                            (splitExpected &&
+                                binding.actionBinding.secondaryButton.text?.toString() != resourceSecondaryActionLabel(expected))
+                    } == true
+                listMismatch || detailMismatch
+            }
+            if (mismatched.isEmpty()) return@postDelayed
+            applyVisibleResourceItemStatePatch(mismatched, revision)
+            mismatched.values.forEach { item -> patchVisibleResourceDetailState(item, revision) }
+            diagnostics.logRecipeEvent(
+                "resource_state_convergence_deadline_missed",
+                null,
+                mapOf(
+                    "reason" to reason,
+                    "revision" to revision.toString(),
+                    "resourceIds" to mismatched.keys.joinToString(",")
+                )
+            )
+        }, RESOURCE_STATE_CONVERGENCE_DEADLINE_MS)
+    }
+
     private fun resourceCatalogForUiRender(reason: String): List<ResourceItem> {
-        cachedResourceCatalog?.let { return it }
+        cachedResourceCatalog?.let { cached ->
+            if (resourceCatalogDirty) requestResourceCatalogBackgroundRefresh(reason)
+            return cached.map { item -> projectResourceItemRuntime(item) }
+        }
         requestResourceCatalogBackgroundRefresh(reason)
         return emptyList()
     }
@@ -4272,6 +4455,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             registerResourceItemBinding(
                 ResourceItemBinding(
                     resourceId = item.id,
+                    item = item,
                     root = root,
                     stateTextView = null,
                     actionButton = actionButton,
@@ -4326,6 +4510,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             registerResourceItemBinding(
                 ResourceItemBinding(
                     resourceId = item.id,
+                    item = item,
                     root = root,
                     stateTextView = stateTextView,
                     actionButton = actionButton,
@@ -4509,14 +4694,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun resourceActionEnabled(actionLabel: String, busy: Boolean): Boolean =
-        when (actionLabel) {
-            "启动中", "停止中" -> false
-            "获取中" -> true
-            "卸载中", "处理中" -> false
-            else -> !busy
-        }
-
     private fun resourceDetailActionArea(item: ResourceItem): ResourceDetailActionBinding {
         val primaryButton = TextView(this)
         val secondaryButton = TextView(this)
@@ -4556,9 +4733,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun resourceHasSplitActions(item: ResourceItem): Boolean =
-        item.actionLabel == "获取中" ||
-            (resourceIsInstalled(item) && (item.actionLabel == "打开" || item.actionLabel == "运行中")) ||
-            resourceHasFailedInstallActions(item)
+        item.secondaryActionLabel != null
 
     private fun resourceHasFailedInstallActions(item: ResourceItem): Boolean =
         item.actionLabel == "重新获取" &&
@@ -4572,11 +4747,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val isCancel = item.actionLabel == "获取中" || resourceHasFailedInstallActions(item)
         val isRunningOpen = item.actionLabel == "运行中"
         button.apply {
-            text = when {
-                isCancel -> "取消"
-                isRunningOpen -> "中止"
-                else -> "卸载"
-            }
+            text = resourceSecondaryActionLabel(item)
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -4601,6 +4772,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             }
         }
     }
+
+    private fun resourceSecondaryActionLabel(item: ResourceItem): String =
+        item.secondaryActionLabel ?: "卸载"
 
     private fun showResourceDetail(resourceId: String, initialItem: ResourceItem? = null) {
         val requestKey = KiteResourceRequestPolicy.resourceDetailKey(resourceId)
@@ -4825,6 +4999,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
         resourceDetailBinding = ResourceDetailBinding(
             resourceId = item.id,
+            item = item,
             contentHost = contentHost,
             actionHost = actionHost,
             actionBinding = actionBinding,
@@ -4888,7 +5063,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
-    private fun patchVisibleResourceDetailState(item: ResourceItem): Boolean {
+    private fun patchVisibleResourceDetailState(item: ResourceItem, revision: Long = 0L): Boolean {
         val binding = resourceDetailBinding ?: return false
         if (
             currentScreen != Screen.ResourceDetail ||
@@ -4896,11 +5071,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             binding.resourceId != item.id ||
             binding.contentHost !== resourceDetailContentHost
         ) return false
-        patchResourceDetailState(binding, item)
+        patchResourceDetailState(binding, item, revision)
         return true
     }
 
-    private fun patchResourceDetailState(binding: ResourceDetailBinding, item: ResourceItem) {
+    private fun patchResourceDetailState(binding: ResourceDetailBinding, item: ResourceItem, revision: Long = 0L) {
+        binding.item = item
+        if (revision > 0L) binding.appliedRevision = revision
         bindResourceDetailActionArea(binding.actionBinding, item)
         binding.renderKey = buildResourceDetailRenderKey(item)
     }
@@ -5447,14 +5624,31 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             handleResourceReinstallAction(item)
             return
         }
+        resourceInstallStore.markPreparing(item.id)
+        invalidateResourceRuntimeStateCache()
+        convergeVisibleResourceState(
+            reason = "resource_install_prepare",
+            preferredResourceIds = listOf(item.id),
+            revision = resourceInstallStore.signals.value.revision
+        )
         val requestId = ++resourceInstallPlanRequestSerial
         thread(name = "KiteResourceInstallPlan-$requestId-${item.id}", isDaemon = true) {
             val result = runCatching { buildResourceInstallPlan(item) }
             runOnUiThread {
-                if (requestId != resourceInstallPlanRequestSerial) return@runOnUiThread
+                if (requestId != resourceInstallPlanRequestSerial) {
+                    if (resourceInstallStore.isPreparing(item.id)) resourceInstallStore.clear(item.id)
+                    return@runOnUiThread
+                }
                 result.onSuccess { plan ->
                     handleResourceInstallPlanReady(item, plan)
                 }.onFailure { error ->
+                    resourceInstallStore.markFailed(
+                        item.id,
+                        KiteResourceInstallStore.OP_INSTALL,
+                        null,
+                        error.message ?: error.javaClass.simpleName
+                    )
+                    invalidateResourceRuntimeStateCache()
                     showResourceDiscreteToast("执行队列准备失败：${error.message ?: error.javaClass.simpleName}")
                 }
             }
@@ -5468,6 +5662,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun handleResourceInstallPlanReady(item: ResourceItem, plan: ResourceInstallPlan) {
         if (plan.missing.isNotEmpty()) {
+            resourceInstallStore.clear(item.id)
+            invalidateResourceRuntimeStateCache()
             val missingNames = plan.missing
                 .map { it.resource?.name ?: it.requirement }
                 .distinct()
@@ -5476,6 +5672,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             return
         }
         if (plan.steps.isEmpty()) {
+            resourceInstallStore.clear(item.id)
+            invalidateResourceRuntimeStateCache()
             showResourceDiscreteToast("${item.name} 已经就绪")
             return
         }
@@ -5505,6 +5703,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             .map { resourceId ->
                 if (
                     resourceInstallStore.status(resourceId) != null &&
+                    resourceInstallStore.status(resourceId) != KiteResourceInstallStore.STATUS_PREPARING &&
                     !resourceInstallStore.isInstalled(resourceId)
                 ) {
                     resourceInstallStore.clear(resourceId)
@@ -7174,10 +7373,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
 
     private fun resourceIsInstalled(item: ResourceItem): Boolean =
-        item.stateLabel == "已安装" || item.stateLabel == "已获取" || item.stateLabel == "运行中"
+        item.runtimeFacts.installed && !item.runtimeFacts.uninstalling
 
     private fun resourceItemIsInstalled(item: ResourceItem?): Boolean =
-        item?.stateLabel == "已安装" || item?.stateLabel == "已获取" || item?.stateLabel == "运行中"
+        item?.runtimeFacts?.let { facts -> facts.installed && !facts.uninstalling } == true
 
     private fun resourcePlanStepIsInstalled(
         resourceId: String,
@@ -7289,7 +7488,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         focusedRunInstanceId = state.instanceId
         activeRunInstanceIds[recipe.id] = state.instanceId
         runtimeStates[recipe.id] = state
-        stopRecipe(recipe, state)
+        stopRecipe(recipe, state, navigateToConsole = false)
         invalidateResourceRuntimeStateCache()
         requestVisibleResourceItemStatePatch("resource_open_stop", listOf(item.id))
         showResourceDiscreteToast("正在中止 ${item.name}")
@@ -7305,20 +7504,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun resourceOpenRunIsReusable(resourceId: String): Boolean =
         CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, "open"))
             ?.let { resourceOpenRunIsReusable(it) } == true
-
-    private fun resourceOpenRunLabels(resourceId: String): ResourceRuntimeLabels? =
-        CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, "open"))
-            ?.let { state ->
-                when (state.status) {
-                    RecipeRunStatus.Starting -> ResourceRuntimeLabels("启动中", "启动中", busy = true)
-                    RecipeRunStatus.Stopping -> ResourceRuntimeLabels("停止中", "停止中", busy = true)
-                    RecipeRunStatus.WaitingTerminal -> ResourceRuntimeLabels("等待终端", "运行中", busy = false)
-                    RecipeRunStatus.Running,
-                    RecipeRunStatus.AlreadyRunning,
-                    RecipeRunStatus.Opened -> ResourceRuntimeLabels("运行中", "运行中", busy = false)
-                    else -> null
-                }
-            }
 
     private fun addResourceHomeCard(item: ResourceItem) {
         val template = resourceHomeCardTemplate(item)
@@ -7751,6 +7936,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun startResourceInstall(item: ResourceItem, recipe: KiteRecipe) {
         resourceInstallStore.markInstalling(item.id)
         invalidateResourceRuntimeStateCache()
+        convergeVisibleResourceState(
+            reason = "resource_install_start",
+            preferredResourceIds = listOf(item.id),
+            revision = resourceInstallStore.signals.value.revision
+        )
         startResourceRun(
             item = item,
             recipe = recipe,
@@ -7773,6 +7963,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
         resourceInstallStore.markUninstalling(item.id)
         invalidateResourceRuntimeStateCache()
+        convergeVisibleResourceState(
+            reason = "resource_uninstall_start",
+            preferredResourceIds = listOf(item.id),
+            revision = resourceInstallStore.signals.value.revision
+        )
         startResourceRun(item, recipe, stageBundledResource = false, openRunTask = false)
         requestVisibleResourceItemStatePatch("resource_uninstall_start", listOf(item.id))
     }
@@ -8059,11 +8254,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         registryEntry: KiteResourceRegistryEntry? = resourceInstallStore.registryEntry(resourceId)
     ): Boolean {
         val operation = when {
+            registryEntry?.preparing == true -> KiteResourceInstallStore.OP_INSTALL
             registryEntry?.installing == true -> KiteResourceInstallStore.OP_INSTALL
             registryEntry?.uninstalling == true -> KiteResourceInstallStore.OP_UNINSTALL
             else -> return false
         }
         if (operation == KiteResourceInstallStore.OP_INSTALL && registryEntry.bootstrapInstallStillRunning()) {
+            return false
+        }
+        if (registryEntry.preparing && registryEntry.preparingMutationIsFresh()) {
             return false
         }
         val planStepStatus = resourceInstallStore.planStepStatus(resourceId)
@@ -8106,6 +8305,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun KiteResourceRegistryEntry?.installMutationIsFresh(): Boolean {
         val updatedAt = this?.updatedAt ?: return false
         return updatedAt > 0L && System.currentTimeMillis() - updatedAt < RESOURCE_INSTALL_STALE_GRACE_MS
+    }
+
+    private fun KiteResourceRegistryEntry?.preparingMutationIsFresh(): Boolean {
+        val updatedAt = this?.updatedAt ?: return false
+        return updatedAt > 0L && System.currentTimeMillis() - updatedAt < RESOURCE_PREPARING_STALE_GRACE_MS
     }
 
     private fun resourceCatalog(forceRefresh: Boolean = false): List<ResourceItem> {
@@ -8178,36 +8382,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             return cleanId == planSnapshot.targetResourceId &&
                 (planSnapshot.pendingResourceIds.isNotEmpty() || planSnapshot.runningResourceIds.isNotEmpty())
         }
-        fun actionLabelForResource(
-            installed: Boolean,
-            installing: Boolean,
-            uninstalling: Boolean,
-            failed: Boolean,
-            failedOperation: String
-        ): String = when {
-            installing -> "获取中"
-            uninstalling -> "卸载中"
-            installed -> "打开"
-            failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "继续卸载"
-            failed -> "重新获取"
-            else -> "获取"
-        }
-        fun stateLabelForResource(
-            installed: Boolean,
-            installing: Boolean,
-            uninstalling: Boolean,
-            failed: Boolean,
-            failedOperation: String,
-            idleLabel: String
-        ): String = when {
-            installing -> "获取中"
-            uninstalling -> "卸载中"
-            installed -> "已获取"
-            failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败"
-            failed -> "获取失败"
-            else -> idleLabel
-        }
-        fun labelsForResource(resourceId: String, idleLabel: String = "未获取"): ResourceRuntimeLabels {
+        fun runtimeFactsForResource(resourceId: String, idleLabel: String = "未获取"): ResourceRuntimeFacts {
             val recordedInstalled = recordedInstalled(resourceId)
             val planBusy = installPlanBusy(resourceId)
             val installing = installing(resourceId) || planBusy
@@ -8215,15 +8390,39 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             val failed = installFailed(resourceId) || installPlanFailed(resourceId)
             val failedOperation = failedOperation(resourceId)
                 .ifBlank { if (failed) KiteResourceInstallStore.OP_INSTALL else "" }
-            val openRunLabels = if (recordedInstalled && !installing && !uninstalling && !failed) {
-                resourceOpenRunLabels(resourceId)
+            return ResourceRuntimeFacts(
+                installed = recordedInstalled,
+                preparing = registrySnapshot[resourceId]?.preparing == true,
+                installing = installing,
+                uninstalling = uninstalling,
+                failed = failed,
+                failedOperation = failedOperation,
+                idleStateLabel = idleLabel,
+                extraBusy = busy(resourceId) || planBusy
+            )
+        }
+        fun labelsForFacts(resourceId: String, facts: ResourceRuntimeFacts): ResourceRuntimeLabels {
+            val openRunStatus = if (facts.installed && !facts.installing && !facts.uninstalling && !facts.failed) {
+                CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, "open"))?.status
             } else {
                 null
             }
-            return openRunLabels ?: ResourceRuntimeLabels(
-                state = stateLabelForResource(recordedInstalled, installing, uninstalling, failed, failedOperation, idleLabel),
-                action = actionLabelForResource(recordedInstalled, installing, uninstalling, failed, failedOperation),
-                busy = busy(resourceId) || planBusy
+            val projection = KiteResourceUiProjector.project(
+                installed = facts.installed,
+                preparing = facts.preparing,
+                installing = facts.installing,
+                uninstalling = facts.uninstalling,
+                failed = facts.failed,
+                failedOperation = facts.failedOperation,
+                idleStateLabel = facts.idleStateLabel,
+                openRunStatus = openRunStatus,
+                extraBusy = facts.extraBusy
+            )
+            return ResourceRuntimeLabels(
+                state = projection.stateLabel,
+                action = projection.actionLabel,
+                actionEnabled = projection.actionEnabled,
+                secondaryAction = projection.secondaryActionLabel
             )
         }
         val toolchain = ToolchainPackInstaller.state.value
@@ -8259,9 +8458,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             registrySnapshot = resourceInstallStore.registrySnapshot(managedResourceIds)
         }
         val toolchainRunning = toolchain.phase == ToolchainInstallPhase.RUNNING
-        fun labelsForManifest(manifest: KiteResourceManifest): ResourceRuntimeLabels {
+        fun runtimeFactsForManifest(manifest: KiteResourceManifest): ResourceRuntimeFacts {
             if (manifest.id != RESOURCE_NODE_RUNTIME) {
-                return labelsForResource(manifest.id, resourceIdleLabelForManifest(manifest))
+                return runtimeFactsForResource(manifest.id, resourceIdleLabelForManifest(manifest))
             }
             val recordedInstalled = recordedInstalled(RESOURCE_NODE_RUNTIME)
             val nodeInstalled = recordedInstalled || nodeWorkspaceInstalled
@@ -8271,26 +8470,24 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             val failed = installFailed(RESOURCE_NODE_RUNTIME) || installPlanFailed(RESOURCE_NODE_RUNTIME)
             val failedOperation = failedOperation(RESOURCE_NODE_RUNTIME)
                 .ifBlank { if (failed) KiteResourceInstallStore.OP_INSTALL else "" }
-            val openRunLabels = if (nodeInstalled && !installing && !uninstalling && !failed) {
-                resourceOpenRunLabels(RESOURCE_NODE_RUNTIME)
-            } else {
-                null
-            }
-            if (openRunLabels != null) {
-                return openRunLabels.copy(busy = openRunLabels.busy || toolchainRunning)
-            }
-            return ResourceRuntimeLabels(
-                state = stateLabelForResource(nodeInstalled, installing, uninstalling, failed, failedOperation, "本地包"),
-                action = actionLabelForResource(nodeInstalled, installing, uninstalling, failed, failedOperation),
-                busy = busy(RESOURCE_NODE_RUNTIME) || toolchainRunning || planBusy
+            return ResourceRuntimeFacts(
+                installed = nodeInstalled,
+                preparing = registrySnapshot[RESOURCE_NODE_RUNTIME]?.preparing == true,
+                installing = installing,
+                uninstalling = uninstalling,
+                failed = failed,
+                failedOperation = failedOperation,
+                idleStateLabel = "本地包",
+                extraBusy = busy(RESOURCE_NODE_RUNTIME) || toolchainRunning || planBusy
             )
         }
         val catalog = visibleManifests.map { manifest ->
-            val labels = labelsForManifest(manifest)
+            val facts = runtimeFactsForManifest(manifest)
+            val labels = labelsForFacts(manifest.id, facts)
             resourceItemFromManifest(
                 manifest = manifest,
                 labels = labels,
-                actionEnabled = resourceActionEnabled(labels.action, labels.busy)
+                runtimeFacts = facts
             )
         }
         cachedResourceCatalog = catalog
@@ -8331,7 +8528,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun resourceItemFromManifest(
         manifest: KiteResourceManifest,
         labels: ResourceRuntimeLabels,
-        actionEnabled: Boolean
+        runtimeFacts: ResourceRuntimeFacts
     ): ResourceItem {
         val sourceLabel = resourceSourceLabel(manifest.sourceType)
             .ifBlank { manifest.sourceType.ifBlank { "本地定义" } }
@@ -8353,7 +8550,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             sourceLabel = sourceLabel,
             stateLabel = labels.state,
             actionLabel = labels.action,
-            actionEnabled = actionEnabled,
+            actionEnabled = labels.actionEnabled,
+            secondaryActionLabel = labels.secondaryAction,
+            runtimeFacts = runtimeFacts,
             includes = resourceIncludesForManifest(manifest),
             notes = resourceNotesForManifest(manifest),
             steps = resourceStepsForManifest(manifest),
@@ -15554,14 +15753,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         )
     }
 
-    private fun stopRecipe(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
-        stopRecipeByCardInstanceId(recipe, previousState.cardInstanceId, previousState)
+    private fun stopRecipe(
+        recipe: KiteRecipe,
+        previousState: RecipeRuntimeState,
+        navigateToConsole: Boolean = true
+    ) {
+        stopRecipeByCardInstanceId(recipe, previousState.cardInstanceId, previousState, navigateToConsole)
     }
 
     private fun stopRecipeByCardInstanceId(
         recipe: KiteRecipe,
         cardInstanceId: String,
-        fallbackState: RecipeRuntimeState? = null
+        fallbackState: RecipeRuntimeState? = null,
+        navigateToConsole: Boolean = true
     ) {
         val previousState = CardRunStore.get(cardInstanceId)
             ?: fallbackState?.takeIf { it.recipeId == recipe.id }
@@ -15601,7 +15805,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 clearNextActionUrl = true
             )
             closeCardRunInstanceForStop(recipe, previousState, "stop_opened_web")
-            showConsole()
+            if (navigateToConsole) showConsole()
             return
         }
         if (terminalSessionId != null) {
@@ -15632,8 +15836,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     lastMeaningfulOutput = previousState.lastMeaningfulOutput,
                     nextActionUrl = previousState.nextActionUrl
                 )
-                showConsole()
-                val callback: (BridgeResult) -> Unit = { result -> runOnUiThread { handleStopResultV2(recipe, previousState, result) } }
+                if (navigateToConsole) showConsole()
+                val callback: (BridgeResult) -> Unit = { result ->
+                    runOnUiThread { handleStopResultV2(recipe, previousState, result, navigateToConsole = navigateToConsole) }
+                }
                 diagnostics.logBridgeEvent(
                     "stop_terminal_process_request_sent",
                     recipe,
@@ -15669,7 +15875,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 clearTerminalSession = true
             )
             closeCardRunInstanceForStop(recipe, previousState, "stop_terminal_session")
-            showConsole()
+            if (navigateToConsole) showConsole()
             return
         }
 
@@ -15685,8 +15891,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             lastMeaningfulOutput = previousState.lastMeaningfulOutput,
             nextActionUrl = previousState.nextActionUrl
         )
-        showConsole()
-        val callback: (BridgeResult) -> Unit = { result -> runOnUiThread { handleStopResultV2(recipe, previousState, result) } }
+        if (navigateToConsole) showConsole()
+        val callback: (BridgeResult) -> Unit = { result ->
+            runOnUiThread { handleStopResultV2(recipe, previousState, result, navigateToConsole = navigateToConsole) }
+        }
         diagnostics.logBridgeEvent(
             "stop_request_sent",
             recipe,
@@ -15733,10 +15941,22 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             !processGroupId.isNullOrBlank() ||
             !systemSessionId.isNullOrBlank()
 
-    private fun retryStopRequestAfterStableBridge(recipe: KiteRecipe, previousState: RecipeRuntimeState) {
+    private fun retryStopRequestAfterStableBridge(
+        recipe: KiteRecipe,
+        previousState: RecipeRuntimeState,
+        navigateToConsole: Boolean
+    ) {
         diagnostics.logBridgeEvent("stop_timeout_bridge_stable_retry", recipe, mapOf("runId" to previousState.runId.orEmpty()))
         val callback: (BridgeResult) -> Unit = { retryResult ->
-            runOnUiThread { handleStopResultV2(recipe, previousState, retryResult, retriedAfterStableBridge = true) }
+            runOnUiThread {
+                handleStopResultV2(
+                    recipe,
+                    previousState,
+                    retryResult,
+                    retriedAfterStableBridge = true,
+                    navigateToConsole = navigateToConsole
+                )
+            }
         }
         if (!previousState.runId.isNullOrBlank()) {
             bridgeClient.stopRun(
@@ -15767,7 +15987,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         recipe: KiteRecipe,
         previousState: RecipeRuntimeState,
         result: BridgeResult,
-        retriedAfterStableBridge: Boolean = false
+        retriedAfterStableBridge: Boolean = false,
+        navigateToConsole: Boolean = true
     ) {
         activeRunInstanceIds[recipe.id] = previousState.instanceId
         val report = result.runReport
@@ -15805,7 +16026,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             )
             diagnostics.logBridgeEvent("stop_killed_output_suppressed", recipe, mapOf("runId" to previousState.runId.orEmpty()))
             closeCardRunInstanceForStop(recipe, previousState, "stop_killed_output_suppressed")
-            showConsole()
+            if (navigateToConsole) showConsole()
             return
         }
         if (stopRemaining.isEmpty() && (result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
@@ -15825,7 +16046,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             )
             diagnostics.logBridgeEvent("stop_success", recipe, mapOf("runId" to previousState.runId.orEmpty()))
             closeCardRunInstanceForStop(recipe, previousState, "stop_success")
-            showConsole()
+            if (navigateToConsole) showConsole()
             return
         }
 
@@ -15834,7 +16055,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             bridgeClient.checkStatus { status ->
                 runOnUiThread {
                     if (status.ok || status.accepted) {
-                        retryStopRequestAfterStableBridge(recipe, previousState)
+                        retryStopRequestAfterStableBridge(recipe, previousState, navigateToConsole)
                     } else {
                         diagnostics.logBridgeEvent("stop_connection_error", recipe, mapOf("message" to status.message.take(500)))
                         setRuntimeState(
@@ -15848,7 +16069,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                             systemSessionId = previousState.systemSessionId,
                             lastError = "Bridge 连接失败"
                         )
-                        showConsole()
+                        if (navigateToConsole) showConsole()
                     }
                 }
             }
@@ -15906,7 +16127,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             nextActionUrl = previousState.nextActionUrl
         )
         Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show()
-        showConsole()
+        if (navigateToConsole) showConsole()
     }
 
     private fun stopRemainingProcesses(result: BridgeResult): List<String> =
@@ -20372,6 +20593,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val stateLabel: String,
         val actionLabel: String,
         val actionEnabled: Boolean = true,
+        val secondaryActionLabel: String? = null,
+        val runtimeFacts: ResourceRuntimeFacts,
         val includes: List<String>,
         val notes: List<String>,
         val steps: List<ResourceStep>,
@@ -20414,23 +20637,39 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private data class ResourceRuntimeLabels(
         val state: String,
         val action: String,
-        val busy: Boolean
+        val actionEnabled: Boolean,
+        val secondaryAction: String? = null
+    )
+
+    private data class ResourceRuntimeFacts(
+        val installed: Boolean,
+        val preparing: Boolean,
+        val installing: Boolean,
+        val uninstalling: Boolean,
+        val failed: Boolean,
+        val failedOperation: String,
+        val idleStateLabel: String,
+        val extraBusy: Boolean = false
     )
 
     private data class ResourceItemBinding(
         val resourceId: String,
+        var item: ResourceItem,
         val root: View,
         val stateTextView: TextView?,
         val actionButton: TextView?,
-        val compactAction: Boolean
+        val compactAction: Boolean,
+        var appliedRevision: Long = 0L
     )
 
     private data class ResourceDetailBinding(
         val resourceId: String,
+        var item: ResourceItem,
         val contentHost: FrameLayout,
         val actionHost: LinearLayout,
         val actionBinding: ResourceDetailActionBinding,
-        var renderKey: String
+        var renderKey: String,
+        var appliedRevision: Long = 0L
     )
 
     private data class ResourceDetailActionBinding(
@@ -20778,6 +21017,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private val MANUAL_STOP_KILLED_REGEX = Regex("""\bKilled\b""", RegexOption.IGNORE_CASE)
         private const val RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS = 1_200L
         private const val RESOURCE_INSTALL_STALE_GRACE_MS = 5_000L
+        private const val RESOURCE_PREPARING_STALE_GRACE_MS = 30_000L
+        private const val RESOURCE_STATE_CONVERGENCE_DEADLINE_MS = 250L
         private const val TOOLCHAIN_WORKSPACE_PROBE_TTL_MS = 5_000L
         private const val REQUEST_DROPZONE_STORAGE = 801
         private const val REQUEST_PICK_RECIPE_ICON = 802
