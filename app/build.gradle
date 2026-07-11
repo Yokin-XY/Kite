@@ -12,7 +12,7 @@ android {
         minSdk 28
         targetSdk 28
         versionCode 1
-        versionName "0.3-dev"
+        versionName "0.0.1"
     }
 
     compileOptions {
@@ -35,6 +35,11 @@ android {
             // Robolectric 需要读取 Android 资源/manifest,必须开启
             includeAndroidResources = true
         }
+    }
+
+    lint {
+        // Kite 当前通过 GitHub 直接分发，并依赖 targetSdk 28 的兼容行为。
+        disable "ExpiredTargetSdkVersion"
     }
 }
 
