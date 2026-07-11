@@ -6,6 +6,17 @@ import org.junit.Test
 
 class KiteResourceInstallRecipesCommandExposureTest {
     @Test
+    fun bundledToolchainStagesCommandsInResourceOwnedBin() {
+        val script = KiteResourceInstallRecipes.localToolchainCommand(
+            resourceId = "kite.nodejs",
+            mode = "--install-node"
+        )
+
+        assertTrue(script.contains("export KF_TOOLCHAIN_BIN_DIR=\"${'$'}KF_TOOLCHAIN_DIR/bin\""))
+        assertFalse(script.contains("export KF_TOOLCHAIN_BIN_DIR=\"${KiteResourceInstallRecipes.WORKSPACE_BIN_ROOT}\""))
+    }
+
+    @Test
     fun manifestInstallAutoDiscoversResourceOwnedCommands() {
         val script = KiteResourceInstallRecipes.manifestInstallCommand(
             resourceId = "kite.example",
@@ -44,6 +55,9 @@ class KiteResourceInstallRecipesCommandExposureTest {
         assertTrue(script.contains("is_safe_explicit_command_target"))
         assertTrue(script.contains("if is_explicit_command \"${'$'}command_name\"; then"))
         assertTrue(script.contains("is_safe_explicit_command_target \"${'$'}existing_target\" \"${'$'}command_name\""))
+        assertTrue(script.contains("legacy_kite_wrapper_target"))
+        assertTrue(script.contains("adopt-legacy-command"))
+        assertTrue(script.contains("\"${'$'}install_root\"/*)"))
         assertTrue(script.contains("exit 127"))
         assertTrue(script.contains("\"/usr/bin/${'$'}command_name\""))
         assertTrue(script.contains("\"/bin/${'$'}command_name\""))
@@ -84,6 +98,27 @@ class KiteResourceInstallRecipesCommandExposureTest {
         assertTrue(script.contains("readlink"))
         assertTrue(script.contains("export npm_config_prefix=\"${'$'}npm_prefix\""))
         assertTrue(script.contains("if [ \"${'$'}current_target\" = \"${'$'}target_path\" ]; then"))
+        assertTrue(script.contains("legacy_kite_wrapper_target"))
+        assertTrue(script.contains("[ \"${'$'}wrapper_target\" = \"${'$'}target_path\" ]"))
         assertTrue(script.contains("\"${'$'}install_root\"/*)"))
+    }
+
+    @Test
+    fun manifestRollbackKeepsPreexistingPublicCommands() {
+        val script = KiteResourceInstallRecipes.manifestInstallCommand(
+            resourceId = "kite.example",
+            displayName = "Example",
+            rawCommand = ":",
+            managedCommands = listOf("example"),
+            cleanInstallRoot = true
+        )
+
+        assertTrue(script.contains("if [ -e \"${'$'}link_path\" ] || [ -L \"${'$'}link_path\" ]; then"))
+        assertTrue(script.contains("ln -s \"${'$'}target_path\" \"${'$'}link_path\""))
+        assertFalse(
+            script.contains(
+                "ln -sfn \"${'$'}target_path\" \"${KiteResourceInstallRecipes.WORKSPACE_BIN_ROOT}/${'$'}command_name\""
+            )
+        )
     }
 }

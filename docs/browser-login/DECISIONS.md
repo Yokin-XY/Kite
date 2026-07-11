@@ -521,3 +521,10 @@
 - 决策：Kite 设置中新增浏览器运行模式选择：默认“WebView + 系统浏览器登录”继续承载本地 Web UI 和普通网页，并把 OAuth/SSO 授权交给系统浏览器；“自动浏览器”作为后续实验模式的显式入口，先只建立持久化状态和产品边界，不宣称自动化内核已完成。
 - 理由：用户要求长期推进自动浏览器能力，但当前已经验证有效的官方路线是 external user-agent。自动浏览器未来主要服务元素化、网页自动操作和非敏感会话管理；涉及 Google/OpenAI/Anthropic 等账号授权时，仍必须优先尊重官方外部浏览器、state/PKCE、callback/fallback 和账号所有权验证要求。
 - 影响：后续实现可以读取统一的浏览器运行模式来选择自动化控制面，但不得因为切到自动浏览器就把 OAuth 授权页拉回 WebView，也不得把 UA/指纹伪装作为默认登录方案。自动浏览器未完成前，设置入口只能表达实验意图和后续能力，不伪造成功状态。
+
+## ADR-B075 CLI 保留原生交互，Kite 只做透明回调桥
+
+- 日期：2026-07-11
+- 决策：资源“打开”只启动 CLI 自身，由 CLI 展示登录、设备码和 API Key 等原生选项；Kite 不预先执行 `codex login`，也不增加 provider 状态判据或 owner-confirmed 接口。CliLoopback 桥只解决 Android `localhost` 地址族差异：浏览器请求原样转给 CLI，CLI 的 HTTP 响应原样回给浏览器。
+- 理由：OnePlus 8T 人工实测证明，强制登录守卫跳过了 Codex 原生三选一流程；把 `CallbackForwarded` 延迟到 CLI 响应后再记录，也改变了已验证成功的透明代理时序。稳定版应恢复双方原有协议，而不是在中间新增第二套完成协议。
+- 影响：Kite 不读取、不保存、不交换 token/code，也不替 CLI 判断凭据是否落盘。`CallbackForwarded` 只表示回调请求已经交给真实发起方；最终登录结果继续由 CLI 的原生终端状态和用户人工账号验证确认。其他满足 loopback OAuth 的 CLI 复用同一通道，不增加 provider 单点特判。

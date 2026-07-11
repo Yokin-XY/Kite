@@ -4,7 +4,7 @@
   "base": {
     "name": "Codex CLI",
     "description": "OpenAI 的终端编码助手",
-    "version": "official",
+    "version": "npm",
     "icon": {
       "type": "asset",
       "value": "resources/kite.codex.cli/icon.png",
@@ -18,11 +18,11 @@
     "category": "AI",
     "accent": "teal",
     "sizeLabel": "网络包",
-    "longDescription": "Codex CLI 是 OpenAI 面向终端的编码助手。Kite 使用官方 standalone installer 获取命令入口，并把 codex 暴露到 /workspace/.kf/bin；登录、模型和项目权限仍由 Codex 自己在终端里引导，不写入资源卡 JSON。",
+    "longDescription": "Codex CLI 是 OpenAI 面向终端的编码助手。Kite 使用 OpenAI 官方 NPM 包获取对应平台的 codex 命令，并把它暴露到 /workspace/.kf/bin；登录、模型和项目权限仍由 Codex 自己在终端里引导，不写入资源卡 JSON。",
     "recommendations": [
       {
-        "resourceId": "kite.curl",
-        "label": "下载工具"
+        "resourceId": "kite.nodejs",
+        "label": "安装运行时"
       },
       {
         "resourceId": "kite.claude.code",
@@ -51,15 +51,15 @@
       "agent.openai.codex"
     ],
     "base": [
-      "kite.git",
-      "kite.curl"
+      "kite.nodejs",
+      "kite.git"
     ],
     "defaults": [],
     "extensions": []
   },
   "source": {
-    "type": "official_script",
-    "url": "https://chatgpt.com/codex/install.sh",
+    "type": "npm",
+    "package": "@openai/codex",
     "repository": "https://github.com/openai/codex"
   },
   "paths": {
@@ -73,19 +73,13 @@
         "type": "managed",
         "steps": [
           {
-            "id": "download-codex-installer",
-            "type": "download",
-            "url": "https://chatgpt.com/codex/install.sh",
-            "destination": "$install_root/.kite-downloads/install.sh"
-          },
-          {
-            "id": "run-codex-installer",
-            "type": "script",
-            "interpreter": "sh",
-            "path": "$install_root/.kite-downloads/install.sh",
-            "env": {
-              "CODEX_NON_INTERACTIVE": "1"
-            }
+            "id": "install-codex-package",
+            "type": "npm",
+            "packages": [
+              "@openai/codex@latest"
+            ],
+            "retryAttempts": 5,
+            "retryDelaySeconds": 3
           }
         ],
         "managedCommands": [
@@ -95,7 +89,7 @@
         "verify": [
           {
             "id": "codex-command",
-            "cmd": "command -v codex >/dev/null 2>&1"
+            "cmd": "codex --version >/dev/null 2>&1"
           }
         ],
         "timeoutMs": 600000
@@ -131,6 +125,7 @@
         "managedCommands": [
           "codex"
         ],
+        "npmUninstallPackage": "@openai/codex",
         "timeoutMs": 180000
       }
     ]

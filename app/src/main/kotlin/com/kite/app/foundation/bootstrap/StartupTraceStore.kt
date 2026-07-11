@@ -13,6 +13,8 @@ object StartupTraceStore {
     private const val PREFS_NAME = "kite_startup_trace"
     private const val STATUS_RUNNING = "running"
     private const val STATUS_READY = "ready"
+    private const val STATUS_INTERRUPTED = "interrupted"
+    private const val LEGACY_INCOMPLETE_FAILURE_STATUS = "previous_process_incomplete"
     private const val MAX_TIMELINE_CHARS = 4_000
     private const val MAX_STACK_CHARS = 12_000
 
@@ -30,6 +32,7 @@ object StartupTraceStore {
 
     fun prepareProcess(context: Context) {
         val appContext = context.applicationContext
+        discardLegacyIncompleteFailure(appContext)
         capturePreviousIncompleteAttempt(appContext)
         beginAttempt(appContext, "application.process_created")
         installUncaughtHandler(appContext)
@@ -102,6 +105,11 @@ object StartupTraceStore {
     }
 
     fun clearFailureForRetry(context: Context) {
+        clearPendingFailure(context)
+        beginAttempt(context, "guard.retry_requested")
+    }
+
+    private fun clearPendingFailure(context: Context) {
         prefs(context).edit()
             .remove("failure_pending")
             .remove("failure_status")
@@ -114,7 +122,6 @@ object StartupTraceStore {
             .remove("failure_timeline")
             .remove("failure_device")
             .commit()
-        beginAttempt(context, "guard.retry_requested")
     }
 
     fun recordGuardFailure(context: Context, stage: String, error: Throwable) {
@@ -162,14 +169,20 @@ object StartupTraceStore {
         val prefs = prefs(context)
         if (prefs.getBoolean("failure_pending", false)) return
         if (prefs.getString("current_status", "") != STATUS_RUNNING) return
-        persistFailure(
-            context = context,
-            status = "previous_process_incomplete",
-            stage = prefs.getString("current_stage", "unknown").orEmpty(),
-            exceptionClass = "",
-            exceptionMessage = "上一次进程在首个界面确认成功前结束。",
-            stackTrace = ""
-        )
+        prefs.edit()
+            .putString("last_incomplete_attempt_id", prefs.getString("current_attempt_id", "").orEmpty())
+            .putString("last_incomplete_stage", prefs.getString("current_stage", "unknown").orEmpty())
+            .putLong("last_incomplete_at_ms", System.currentTimeMillis())
+            .putString("last_incomplete_timeline", prefs.getString("current_timeline", "").orEmpty())
+            .putString("current_status", STATUS_INTERRUPTED)
+            .commit()
+    }
+
+    private fun discardLegacyIncompleteFailure(context: Context) {
+        val prefs = prefs(context)
+        if (!prefs.getBoolean("failure_pending", false)) return
+        if (prefs.getString("failure_status", "") != LEGACY_INCOMPLETE_FAILURE_STATUS) return
+        clearPendingFailure(context)
     }
 
     private fun installUncaughtHandler(context: Context) {

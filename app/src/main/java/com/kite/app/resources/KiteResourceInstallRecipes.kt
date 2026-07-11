@@ -56,7 +56,7 @@ object KiteResourceInstallRecipes {
             export KF_RESOURCE_ID="${safeId(resourceId)}"
             export KF_TOOLCHAIN_PACK_DIR="$packPath"
             export KF_TOOLCHAIN_DIR="$installRoot"
-            export KF_TOOLCHAIN_BIN_DIR="$WORKSPACE_BIN_ROOT"
+            export KF_TOOLCHAIN_BIN_DIR="${'$'}KF_TOOLCHAIN_DIR/bin"
             export UV_LINK_MODE="copy"
             $cleanCommand
             echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}KF_TOOLCHAIN_DIR"
@@ -185,6 +185,46 @@ SH
             command_snapshot_after="${'$'}install_root/.kite-commands-after"
             explicit_commands="$commandList"
             public_command_roots="${'$'}install_root/bin ${'$'}npm_prefix/bin ${'$'}HOME/.local/bin ${'$'}HOME/.kimi-code/bin ${'$'}HOME/.codex/bin ${'$'}HOME/.claude/local ${'$'}HOME/.opencode/bin"
+            legacy_kite_wrapper_target() {
+              wrapper_path="${'$'}1"
+              [ -f "${'$'}wrapper_path" ] || return 1
+              [ ! -L "${'$'}wrapper_path" ] || return 1
+              [ -x "${'$'}wrapper_path" ] || return 1
+              [ "${'$'}(sed -n '1p' "${'$'}wrapper_path" 2>/dev/null)" = '#!/usr/bin/env sh' ] || return 1
+              wrapper_lines="${'$'}(awk 'END { print NR }' "${'$'}wrapper_path" 2>/dev/null)"
+              case "${'$'}wrapper_lines" in
+                2)
+                  exec_line="${'$'}(sed -n '2p' "${'$'}wrapper_path" 2>/dev/null)"
+                  ;;
+                3)
+                  env_line="${'$'}(sed -n '2p' "${'$'}wrapper_path" 2>/dev/null)"
+                  case "${'$'}env_line" in
+                    'export LD_LIBRARY_PATH="'*'${'$'}{LD_LIBRARY_PATH:+:${'$'}LD_LIBRARY_PATH}"') ;;
+                    *) return 1 ;;
+                  esac
+                  exec_line="${'$'}(sed -n '3p' "${'$'}wrapper_path" 2>/dev/null)"
+                  ;;
+                *)
+                  return 1
+                  ;;
+              esac
+              case "${'$'}exec_line" in
+                'exec "'*'" "${'$'}@"') exec_payload="${'$'}{exec_line#exec }" ;;
+                'exec node "'*'" "${'$'}@"') exec_payload="${'$'}{exec_line#exec node }" ;;
+                *) return 1 ;;
+              esac
+              wrapper_target="${'$'}{exec_payload#\"}"
+              wrapper_target="${'$'}{wrapper_target%%\"*}"
+              case "${'$'}wrapper_target" in
+                "${'$'}install_root"/*)
+                  [ -e "${'$'}wrapper_target" ] || return 1
+                  printf '%s\n' "${'$'}wrapper_target"
+                  ;;
+                *)
+                  return 1
+                  ;;
+              esac
+            }
             remove_ledger_links() {
               ledger_path="${'$'}1"
               [ -f "${'$'}ledger_path" ] || return 0
@@ -202,8 +242,12 @@ SH
               [ -f "${'$'}ledger_path" ] || return 0
               while IFS='	' read -r command_name target_path; do
                 [ -n "${'$'}command_name" ] || continue
+                link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                if [ -e "${'$'}link_path" ] || [ -L "${'$'}link_path" ]; then
+                  continue
+                fi
                 if [ -x "${'$'}target_path" ] || [ -L "${'$'}target_path" ]; then
-                  ln -sfn "${'$'}target_path" "$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                  ln -s "${'$'}target_path" "${'$'}link_path"
                 fi
               done < "${'$'}ledger_path"
             }
@@ -336,11 +380,16 @@ SH
                 [ -n "${'$'}command_name" ] || continue
                 link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
                 existing_target="${'$'}(readlink "${'$'}link_path" 2>/dev/null || true)"
+                legacy_wrapper_target="${'$'}(legacy_kite_wrapper_target "${'$'}link_path" 2>/dev/null || true)"
                 linked_command=
                 if [ -e "${'$'}link_path" ] || [ -L "${'$'}link_path" ]; then
                   if [ -n "${'$'}existing_target" ] && is_safe_explicit_command_target "${'$'}existing_target" "${'$'}command_name"; then
                     echo "KITE_RESOURCE_STEP command-present ${'$'}command_name"
                     printf '%s\t%s\n' "${'$'}command_name" "${'$'}existing_target" >> "${'$'}command_ledger"
+                    linked_command=1
+                  elif [ -n "${'$'}legacy_wrapper_target" ]; then
+                    echo "KITE_RESOURCE_STEP adopt-legacy-command ${'$'}command_name"
+                    printf '%s\t%s\n' "${'$'}command_name" "${'$'}legacy_wrapper_target" >> "${'$'}command_ledger"
                     linked_command=1
                   else
                     echo "KITE_RESOURCE_STEP command-conflict ${'$'}command_name${'$'}{existing_target:+ -> ${'$'}existing_target}"
@@ -421,6 +470,38 @@ SH
             export HOME="${'$'}user_home"
             export npm_config_prefix="${'$'}npm_prefix"
             export PATH="$WORKSPACE_BIN_ROOT:${'$'}install_root/bin:${'$'}npm_prefix/bin:${'$'}HOME/.local/bin:${'$'}HOME/.kimi-code/bin:${'$'}HOME/.codex/bin:${'$'}HOME/.claude/local:${'$'}HOME/.opencode/bin:/root/.local/bin:${'$'}PATH"
+            legacy_kite_wrapper_target() {
+              wrapper_path="${'$'}1"
+              [ -f "${'$'}wrapper_path" ] || return 1
+              [ ! -L "${'$'}wrapper_path" ] || return 1
+              [ -x "${'$'}wrapper_path" ] || return 1
+              [ "${'$'}(sed -n '1p' "${'$'}wrapper_path" 2>/dev/null)" = '#!/usr/bin/env sh' ] || return 1
+              wrapper_lines="${'$'}(awk 'END { print NR }' "${'$'}wrapper_path" 2>/dev/null)"
+              case "${'$'}wrapper_lines" in
+                2)
+                  exec_line="${'$'}(sed -n '2p' "${'$'}wrapper_path" 2>/dev/null)"
+                  ;;
+                3)
+                  env_line="${'$'}(sed -n '2p' "${'$'}wrapper_path" 2>/dev/null)"
+                  case "${'$'}env_line" in
+                    'export LD_LIBRARY_PATH="'*'${'$'}{LD_LIBRARY_PATH:+:${'$'}LD_LIBRARY_PATH}"') ;;
+                    *) return 1 ;;
+                  esac
+                  exec_line="${'$'}(sed -n '3p' "${'$'}wrapper_path" 2>/dev/null)"
+                  ;;
+                *)
+                  return 1
+                  ;;
+              esac
+              case "${'$'}exec_line" in
+                'exec "'*'" "${'$'}@"') exec_payload="${'$'}{exec_line#exec }" ;;
+                'exec node "'*'" "${'$'}@"') exec_payload="${'$'}{exec_line#exec node }" ;;
+                *) return 1 ;;
+              esac
+              wrapper_target="${'$'}{exec_payload#\"}"
+              wrapper_target="${'$'}{wrapper_target%%\"*}"
+              printf '%s\n' "${'$'}wrapper_target"
+            }
             echo "KITE_RESOURCE_STEP manifest-uninstall ${safeId(resourceId)}"
             $rawCommand
             if command -v npm >/dev/null 2>&1; then
@@ -441,6 +522,11 @@ SH
                 link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
                 current_target="${'$'}(readlink "${'$'}link_path" 2>/dev/null || true)"
                 if [ "${'$'}current_target" = "${'$'}target_path" ]; then
+                  rm -f "${'$'}link_path"
+                  continue
+                fi
+                wrapper_target="${'$'}(legacy_kite_wrapper_target "${'$'}link_path" 2>/dev/null || true)"
+                if [ -n "${'$'}wrapper_target" ] && [ "${'$'}wrapper_target" = "${'$'}target_path" ]; then
                   rm -f "${'$'}link_path"
                 fi
               done < "${'$'}command_ledger"

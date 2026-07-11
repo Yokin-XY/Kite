@@ -163,18 +163,18 @@ $innerParts.Add("export PATH=/workspace/.kf/bin:/usr/local/sbin:/usr/local/bin:/
 
 if ($selectedTargets -contains "codex") {
     $innerParts.Add("echo ---codex-post-auth-version---")
-    $innerParts.Add("HOME=/workspace/.kf/software/kite.codex.cli/user-home codex --version 2>&1; echo version_exit=`$?")
+    $innerParts.Add("HOME=/root codex --version 2>&1; echo version_exit=`$?")
     $innerParts.Add("echo ---codex-post-auth-login-status---")
-    $innerParts.Add("HOME=/workspace/.kf/software/kite.codex.cli/user-home codex login status 2>&1; echo status_exit=`$?")
+    $innerParts.Add("HOME=/root codex login status 2>&1; echo status_exit=`$?")
     $innerParts.Add("echo ---codex-post-auth-doctor-json---")
-    $innerParts.Add("HOME=/workspace/.kf/software/kite.codex.cli/user-home codex doctor --json 2>&1; echo doctor_exit=`$?")
+    $innerParts.Add("HOME=/root codex doctor --json 2>&1; echo doctor_exit=`$?")
 }
 
 if ($selectedTargets -contains "claude") {
     $innerParts.Add("echo ---claude-post-auth-version---")
-    $innerParts.Add("HOME=/workspace/.kf/software/kite.claude.code/user-home claude --version 2>&1; echo version_exit=`$?")
+    $innerParts.Add("HOME=/root claude --version 2>&1; echo version_exit=`$?")
     $innerParts.Add("echo ---claude-post-auth-status-json---")
-    $innerParts.Add("HOME=/workspace/.kf/software/kite.claude.code/user-home claude auth status --json 2>&1; echo status_exit=`$?")
+    $innerParts.Add("HOME=/root claude auth status --json 2>&1; echo status_exit=`$?")
 }
 
 $inner = ($innerParts.ToArray() -join "; ")

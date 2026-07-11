@@ -10750,9 +10750,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     ellipsize = TextUtils.TruncateAt.END
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 })
-                addView(cardRunStatusBadge(state), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22)).apply {
+                val statusBadgeTextView = cardRunStatusBadge(state)
+                addView(statusBadgeTextView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22)).apply {
                     setMargins(dp(12), 0, 0, 0)
                 })
+                registerCardRunReportBinding(
+                    recipeId = recipe.id,
+                    state = state,
+                    statusBadgeTextView = statusBadgeTextView
+                )
             })
             addView(row {
                 gravity = Gravity.BOTTOM
@@ -10796,6 +10802,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
 
     private fun cardRunStatusBadge(state: RecipeRuntimeState): TextView {
+        return TextView(this).apply {
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setPadding(dp(8), 0, dp(8), 0)
+            applyCardRunStatusBadge(this, state)
+        }
+    }
+
+    private fun applyCardRunStatusBadge(view: TextView, state: RecipeRuntimeState) {
         val isFailure = state.failureSummary() != null
         val isDone = state.status == RecipeRunStatus.Completed
         val isStopped = state.status == RecipeRunStatus.Stopped
@@ -10818,16 +10835,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             isStopped -> "已停止"
             else -> state.status.label
         }
-        return TextView(this).apply {
-            text = label
-            textSize = 11f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setPadding(dp(8), 0, dp(8), 0)
-            setTextColor(color)
-            background = roundedBox(backgroundColor, Color.TRANSPARENT, dp(11).toFloat(), 0)
-        }
+        view.text = label
+        view.setTextColor(color)
+        view.background = roundedBox(backgroundColor, Color.TRANSPARENT, dp(11).toFloat(), 0)
     }
 
     private fun cardRunFailureInsightCard(recipe: KiteRecipe, state: RecipeRuntimeState): View? {
@@ -11171,7 +11181,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         outputTextView: TextView? = null,
         outputScrollView: ScrollView? = null,
         footerTextView: TextView? = null,
-        elapsedTextView: TextView? = null
+        elapsedTextView: TextView? = null,
+        statusBadgeTextView: TextView? = null
     ) {
         val current = cardRunReportBinding?.takeIf { it.instanceId == state.instanceId }
         cardRunReportBinding = CardRunReportBinding(
@@ -11180,7 +11191,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             outputTextView = outputTextView ?: current?.outputTextView,
             outputScrollView = outputScrollView ?: current?.outputScrollView,
             footerTextView = footerTextView ?: current?.footerTextView,
-            elapsedTextView = elapsedTextView ?: current?.elapsedTextView
+            elapsedTextView = elapsedTextView ?: current?.elapsedTextView,
+            statusBadgeTextView = statusBadgeTextView ?: current?.statusBadgeTextView
         )
         scheduleForegroundLiveTickIfNeeded()
     }
@@ -11232,6 +11244,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
         binding.footerTextView?.text = reportFooterLabel(state)
         binding.elapsedTextView?.text = formatRunDuration(state)
+        binding.statusBadgeTextView?.let { applyCardRunStatusBadge(it, state) }
         if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
             scheduleForegroundLiveTickIfNeeded()
         }
@@ -11243,6 +11256,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val state = CardRunStore.get(binding.instanceId) ?: return false
         binding.elapsedTextView?.text = formatRunDuration(state)
         binding.footerTextView?.text = reportFooterLabel(state)
+        binding.statusBadgeTextView?.let { applyCardRunStatusBadge(it, state) }
         return state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened
     }
 
@@ -11434,25 +11448,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun commandHintFor(state: RecipeRuntimeState): String? {
         val text = listOfNotNull(state.lastError, state.lastMeaningfulOutput, state.shellReportText).joinToString("\n")
-        val missingCommand = Regex("""(?:^|\n).*?:\s*([A-Za-z0-9_.+-]+): command not found""")
-            .find(text)
-            ?.groupValues
-            ?.getOrNull(1)
-        return when {
-            text.contains("python: command not found", ignoreCase = true) ->
-                "当前环境没有 python 这个别名。先试 python3 -V；如果以后想直接用 python，可以再补一个别名。"
-            text.contains("python3: command not found", ignoreCase = true) ->
-                "当前环境没有 Python 3，需要先安装 Python。"
-            missingCommand != null ->
-                "没有找到命令：$missingCommand。一般是还没安装、命令名写错，或者当前环境的 PATH 没包含它。"
-            text.contains("Permission denied", ignoreCase = true) ->
-                "权限不足，或者这个文件还没有执行权限。"
-            text.contains("No such file or directory", ignoreCase = true) ->
-                "路径或文件不存在，先检查命令里的目录和文件名。"
-            text.contains("timed out", ignoreCase = true) || text.contains("timeout", ignoreCase = true) ->
-                "命令超时，可能还在等待输入、网络、服务启动，或者命令本身卡住了。"
-            else -> null
-        }
+        return cardRunCommandHint(state.status, text)
     }
 
     private fun shellReportText(report: KiteRunReport?, recipe: KiteRecipe): String? {
@@ -20793,7 +20789,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val outputTextView: TextView?,
         val outputScrollView: ScrollView?,
         val footerTextView: TextView?,
-        val elapsedTextView: TextView?
+        val elapsedTextView: TextView?,
+        val statusBadgeTextView: TextView?
     )
 
     private data class ResourceInstallWizardBinding(
@@ -21115,5 +21112,31 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ManagedTerminalStatus.STOPPED
         )
         private var activeResourceInstallWizard: ResourceInstallWizardContext? = null
+    }
+}
+
+internal fun cardRunCommandHint(status: RecipeRunStatus, text: String): String? {
+    if (status != RecipeRunStatus.Failed && status != RecipeRunStatus.BridgeUnavailable) return null
+    val missingCommand = Regex("""(?:^|\n).*?:\s*([A-Za-z0-9_.+-]+): command not found""")
+        .find(text)
+        ?.groupValues
+        ?.getOrNull(1)
+    val timeoutSignal = Regex(
+        """(?i)(?:\btimed\s+out\b|\btimedOut\s*=\s*true\b|命令超时|(?:^|[\s:=])timeout(?:$|[\s.,;]))"""
+    ).containsMatchIn(text)
+    return when {
+        text.contains("python: command not found", ignoreCase = true) ->
+            "当前环境没有 python 这个别名。先试 python3 -V；如果以后想直接用 python，可以再补一个别名。"
+        text.contains("python3: command not found", ignoreCase = true) ->
+            "当前环境没有 Python 3，需要先安装 Python。"
+        missingCommand != null ->
+            "没有找到命令：$missingCommand。一般是还没安装、命令名写错，或者当前环境的 PATH 没包含它。"
+        text.contains("Permission denied", ignoreCase = true) ->
+            "权限不足，或者这个文件还没有执行权限。"
+        text.contains("No such file or directory", ignoreCase = true) ->
+            "路径或文件不存在，先检查命令里的目录和文件名。"
+        timeoutSignal ->
+            "命令超时，可能还在等待输入、网络、服务启动，或者命令本身卡住了。"
+        else -> null
     }
 }

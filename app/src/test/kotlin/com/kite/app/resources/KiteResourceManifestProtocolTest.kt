@@ -16,6 +16,35 @@ class KiteResourceManifestProtocolTest {
     private val context by lazy { ApplicationProvider.getApplicationContext<Context>() }
 
     @Test
+    fun codexUsesOfficialNpmPackageWithDeclaredDependencies() {
+        val manifestFile = File(resourceRoot(), "kite.codex.cli/manifest.json")
+        val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
+        val installAction = manifest.installActions.single()
+        val installStep = installAction.installSteps.single()
+        val uninstallAction = manifest.uninstallActions.single()
+
+        assertEquals("npm", manifest.sourceType)
+        assertEquals(listOf("kite.nodejs", "kite.git"), manifest.baseRequirements)
+        assertEquals(KiteResourceInstallPlanCompiler.STEP_NPM, installStep.type)
+        assertEquals(listOf("@openai/codex@latest"), installStep.packages)
+        assertEquals(5, installStep.retryAttempts)
+        assertEquals(3, installStep.retryDelaySeconds)
+        assertEquals(listOf("codex"), installAction.managedCommands)
+        assertTrue(installAction.verifications.any { it.cmd.contains("codex --version") })
+        assertEquals(listOf("@openai/codex"), uninstallAction.npmUninstallPackages)
+        val openCommand = manifest.openRecipe
+            ?.optJSONArray("recipe")
+            ?.optJSONObject(0)
+            ?.optString("text")
+            .orEmpty()
+        assertTrue(openCommand.contains("Codex CLI 首次启动会要求登录 ChatGPT 或配置 API Key。"))
+        assertTrue(openCommand.lines().any { it.trim() == "codex" })
+        assertFalse(openCommand.contains("codex login"))
+        assertFalse(openCommand.contains("kite-auth-run"))
+        assertEquals(openCommand, manifest.homeCards.single().recipe.optJSONArray("recipe").optJSONObject(0).optString("text"))
+    }
+
+    @Test
     fun claudeCodeUsesOfficialNpmPackageWithDeclaredDependencies() {
         val manifestFile = File(resourceRoot(), "kite.claude.code/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())

@@ -55,16 +55,31 @@ class StartupTraceStoreTest {
     }
 
     @Test
-    fun nextProcessPreservesLastStageWhenPreviousLaunchNeverReachedFirstFrame() {
+    fun nextProcessRecordsLastStageWithoutBlockingWhenPreviousLaunchWasInterrupted() {
         StartupTraceStore.prepareProcess(context)
         StartupTraceStore.markStage(context, "main.webview_create")
 
         StartupTraceStore.prepareProcess(context)
 
-        val failure = requireNotNull(StartupTraceStore.readFailure(context))
-        assertEquals("previous_process_incomplete", failure.status)
-        assertEquals("main.webview_create", failure.stage)
-        assertTrue(failure.timeline.contains("main.webview_create"))
+        assertFalse(StartupTraceStore.hasFailure(context))
+        val prefs = context.getSharedPreferences("kite_startup_trace", Context.MODE_PRIVATE)
+        assertEquals("main.webview_create", prefs.getString("last_incomplete_stage", null))
+        assertTrue(prefs.getString("last_incomplete_timeline", "").orEmpty().contains("main.webview_create"))
+    }
+
+    @Test
+    fun legacyIncompleteFailureIsClearedDuringUpgrade() {
+        context.getSharedPreferences("kite_startup_trace", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("failure_pending", true)
+            .putString("failure_status", "previous_process_incomplete")
+            .putString("failure_stage", "application.notification_channels.completed")
+            .commit()
+
+        StartupTraceStore.prepareProcess(context)
+
+        assertFalse(StartupTraceStore.hasFailure(context))
+        assertEquals(null, StartupTraceStore.readFailure(context))
     }
 
     @Test

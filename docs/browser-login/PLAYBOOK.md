@@ -158,3 +158,16 @@
   - [x] 自动浏览器模式不得绕回 WebView 承载 OAuth，也不得通过 UA/指纹伪装作为默认登录方案。
   - [x] 有最小单测或构建验证；用户可见入口尽量在 OnePlus 8T 上安装检查。
 - 依赖：B4；B5 可以继续等待真实账号，不阻塞 B6 的设置地基。
+
+### B7 稳定交付版认证事务收口
+
+- 问题证据：稳定版回归曾把 Codex“打开”改成强制 `codex login`，跳过原生三选一首屏；人工账号授权后浏览器回调长时间转圈并失败。另有 `previous_process_incomplete` 历史诊断错误拦截正常启动。
+- 解法：恢复 CLI 原生启动流程和已验证的透明双向 loopback relay；删除额外登录守卫与确认接口。历史进程中断只保留诊断记录，真实未捕获异常仍进入启动失败页。
+- 验收标准：
+  - [x] Codex open/home recipe 只启动 `codex`，真机显示官方三选一首屏。
+  - [x] loopback relay 完整转发浏览器请求和 CLI 响应，不解析、不改写 OAuth 字段。
+  - [x] 删除 `kite-auth-run`、owner-confirmed 接口和相关平行状态。
+  - [x] `previous_process_incomplete` 不再设置阻塞失败，并能清理旧版本留下的同类待处理记录。
+  - [x] 相关单测、构建、OnePlus 8T 安装、冷启动、中断恢复、截图和崩溃日志检查完成。
+  - [ ] 用户在 OnePlus 8T 从原生首屏完成一次真实 Codex 账号授权，确认浏览器收到 CLI 响应并回到终端。
+- 依赖：B4、B5 真实链路证据。

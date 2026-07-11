@@ -1,6 +1,6 @@
 # Kite 浏览器登录回跳进度
 
-最后更新：2026-07-05 B6 完成浏览器运行模式切换地基，OnePlus 8T 已验证设置入口和持久化
+最后更新：2026-07-11 B7 已恢复原生 CLI 流程和透明双向回调桥，等待真实账号最终验收
 
 ## 当前状态总览
 
@@ -13,8 +13,53 @@
 | B4 实现最小通用登录回跳 | done | 已实现 URL 分类、Custom Tabs handoff、session/redirect 骨架，并完成 OnePlus 验证 |
 | B5 扩展多站点兼容矩阵 | in_progress | OpenAI/Codex 与 Claude Code 均已验证到真实账号页、CliLoopback pending 和终端保留；完整账号授权 callback 仍需用户账号补证 |
 | B6 浏览器运行模式切换与自动浏览器地基 | done | 设置页模式入口、持久化、默认回退和自动浏览器边界已完成；自动浏览器内核仍是后续任务 |
+| B7 稳定交付版认证事务收口 | in_progress | 原生 Codex 三选一首屏、透明双向 relay、非阻塞历史诊断和真机自动验证已完成；等待用户真实账号最终验收 |
 
 状态取值：`pending` / `in_progress` / `blocked` / `done`
+
+### B7 [in_progress] 稳定交付版认证事务收口
+
+三问自检：
+
+1. 目标：引用 `PLAYBOOK.md` 的 B7，恢复 WebView + 系统浏览器稳定版的原生 Codex 交互，并让 browser callback 与 CLI HTTP listener 形成透明双向通信。
+2. 完成标准：Codex 打开后显示官方三选一首屏；浏览器请求和 CLI 响应完整往返；不新增 provider 特判或第二套认证状态；历史进程中断不拦截正常启动；完成单测、构建和 OnePlus 8T 真机验证。
+3. 前置任务：B4/B5 已有外部浏览器、loopback、终端保留和真机证据；`4eb78f4` 是已人工验证成功的回调桥基线；资源安装相关未提交改动必须保留并共同验证。
+
+当前证据：
+
+- 回归 APK 中 Codex open recipe 被改成 `kite-auth-run codex`，真机打开资源后直接执行 `codex login`，与用户要求的官方三选一流程不符。
+- 失败现场中 `127.0.0.1:1455` 的 Codex listener 和 `[::1]:1455` 的 Kite relay 同时存在，但 session 只有 `RelayReady`、没有 `CallbackForwarded`；浏览器最终显示网页不可用。
+- `previous_process_incomplete` 来自上一进程未到首帧的历史状态，不是当前进程真实异常，不应设置 `failure_pending`。
+
+已实现：
+
+- Codex open/home recipe 恢复为直接启动 `codex`；NPM 安装、依赖和卸载改造保持不变。
+- 删除 `kite-auth-run`、`/browser-auth/owner-confirmed` 以及相关 owner 状态，避免绕过 CLI 原生交互。
+- `BrowserLoopbackCallbackBridge` 恢复已验证的全双工代理：请求头交给 CLI 后继续转发请求体，同时把 CLI 响应完整复制回浏览器。
+- `BrowserAuthSessionStore` 恢复单一 `CallbackForwarded -> Delivered` 传输状态，不把 Kite 自己变成第二个认证 owner。
+- `StartupTraceStore` 将上次中断记入 `last_incomplete_*`，不再生成阻塞失败；升级时自动清理旧 `previous_process_incomplete` 待处理记录。
+
+验证证据：
+
+- 目标单测覆盖 loopback 请求/响应往返、session 状态、启动中断语义、Codex manifest 和资源安装协议；结果 `BUILD SUCCESSFUL`。
+- `assembleDebug`：`BUILD SUCCESSFUL`；OnePlus 8T `adb install -r`：`Success`。
+- 冷启动直接进入 `MainActivity`，到达 `main.first_frame_ready`；logcat 无 `AndroidRuntime` 或 `ActivityTaskManager` 错误。
+- 真机构造上一状态为 `running` 后再次冷启动，仍直接进入 `MainActivity`；旧阶段写入 `last_incomplete_*`，新进程重新到 `ready`。
+- 真机打开 Codex 资源后显示官方三选一首屏：ChatGPT、Device Code、API Key；未自动打开系统浏览器。
+- `browser-login-smoke-test.ps1 -Serial 3f8bbaad`：`status=passed`，外部浏览器 handoff、AppRedirect 回跳、敏感临时值脱敏和无崩溃/ANR 检查全部通过。
+- APK：`app/build/outputs/apk/debug/app-debug.apk`，大小 `231.67 MiB`，SHA-256 `1A596DC4550D6602B5B981D8DF7ADC8DF69CED2D1AD06127BC6F1F8182787A7E`。
+
+剩余验收：
+
+- 用户从当前官方三选一首屏选择 ChatGPT，完成一次真实账号授权；确认系统浏览器收到 CLI HTTP 响应，并自动回到终端完成登录。
+- 通过后再检查 CLI 原生登录状态与冷启动持久化，B7 才改为 done 并形成稳定版提交边界。
+
+压力分诊：
+
+- 主要通道：Terminal Runtime + Web Surface；状态拥有者为 CLI 进程、`BrowserAuthSessionStore` 与 `CardRunStore`。
+- 事件来源：CLI 发出的授权 URL、系统浏览器 loopback callback、CLI HTTP response。
+- 禁止路径：不自动替用户选择登录方式，不读取或转存 token/code，不增加 provider 单点协议，不轮询整页，不重建终端/WebView。
+- 验证边界：单测保护透明传输和状态语义；真机验证安装、启动恢复和原生首屏；真实账号授权由用户人工验证。
 
 ## 待验证清单
 
