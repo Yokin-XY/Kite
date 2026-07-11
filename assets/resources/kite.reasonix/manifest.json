@@ -65,8 +65,7 @@
   "source": {
     "type": "npm",
     "package": "reasonix",
-    "repository": "https://github.com/esengine/deepseek-reasonix",
-    "command": "npm install -g reasonix"
+    "repository": "https://github.com/esengine/deepseek-reasonix"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.reasonix",
@@ -76,13 +75,27 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "npm install -g reasonix",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-reasonix-package",
+            "type": "npm",
+            "packages": [
+              "reasonix"
+            ]
+          }
+        ],
         "managedCommands": [
           "reasonix",
           "dsnix"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "reasonix-commands",
+            "cmd": "command -v reasonix >/dev/null 2>&1 && command -v dsnix >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

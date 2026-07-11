@@ -57,12 +57,60 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "set -e\nif ! command -v apt-get >/dev/null 2>&1; then\n  echo '当前实例缺少 apt-get，无法安装 VS Code'\n  exit 127\nfi\narch=\"$(dpkg --print-architecture 2>/dev/null || uname -m)\"\ncase \"$arch\" in\n  arm64|aarch64) ;;\n  *) echo \"VS Code 当前仅验证 arm64/aarch64，当前架构: $arch\"; exit 1 ;;\nesac\nmkdir -p \"$install_root\" /workspace/.kf/cache/vscode-x11/extensions\nexport DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y wget gpg ca-certificates apt-transport-https xkb-data fonts-dejavu-core\ninstall -d -m 0755 /etc/apt/keyrings\nwget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /etc/apt/keyrings/packages.microsoft.gpg\nchmod 0644 /etc/apt/keyrings/packages.microsoft.gpg\nprintf 'Types: deb\\nURIs: https://packages.microsoft.com/repos/code\\nSuites: stable\\nComponents: main\\nArchitectures: arm64\\nSigned-By: /etc/apt/keyrings/packages.microsoft.gpg\\n' > /etc/apt/sources.list.d/vscode.sources\napt-get update\napt-get install -y code\ntest -x /usr/bin/code || test -x /usr/share/code/code\ncode --version || true\necho 'VS Code installed for Kite embedded X11'",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "check-vscode-architecture",
+            "type": "shell",
+            "cmd": "arch=\"$(dpkg --print-architecture 2>/dev/null || uname -m)\"\ncase \"$arch\" in\n  arm64|aarch64) ;;\n  *) echo \"VS Code 当前仅验证 arm64/aarch64，当前架构: $arch\"; exit 1 ;;\nesac\nmkdir -p \"$install_root\" /workspace/.kf/cache/vscode-x11/extensions"
+          },
+          {
+            "id": "install-vscode-repository-tools",
+            "type": "apt",
+            "update": true,
+            "packages": [
+              "gpg",
+              "ca-certificates",
+              "apt-transport-https",
+              "xkb-data",
+              "fonts-dejavu-core"
+            ]
+          },
+          {
+            "id": "download-microsoft-signing-key",
+            "type": "download",
+            "url": "https://packages.microsoft.com/keys/microsoft.asc",
+            "destination": "$install_root/microsoft.asc"
+          },
+          {
+            "id": "configure-vscode-repository",
+            "type": "shell",
+            "cmd": "install -d -m 0755 /etc/apt/keyrings\ngpg --dearmor < \"$install_root/microsoft.asc\" > /etc/apt/keyrings/packages.microsoft.gpg\nchmod 0644 /etc/apt/keyrings/packages.microsoft.gpg\nprintf 'Types: deb\\nURIs: https://packages.microsoft.com/repos/code\\nSuites: stable\\nComponents: main\\nArchitectures: arm64\\nSigned-By: /etc/apt/keyrings/packages.microsoft.gpg\\n' > /etc/apt/sources.list.d/vscode.sources"
+          },
+          {
+            "id": "install-vscode-package",
+            "type": "apt",
+            "update": true,
+            "packages": [
+              "code"
+            ]
+          },
+          {
+            "id": "check-vscode-binary",
+            "type": "shell",
+            "cmd": "test -x /usr/bin/code || test -x /usr/share/code/code"
+          }
+        ],
         "managedCommands": [
           "code"
         ],
-        "cleanInstallRoot": true,
+        "cleanInstallRoot": false,
+        "verify": [
+          {
+            "id": "vscode-command",
+            "cmd": "code --version >/dev/null"
+          }
+        ],
         "timeoutMs": 1800000
       }
     ],

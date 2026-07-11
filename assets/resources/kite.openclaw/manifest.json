@@ -60,8 +60,7 @@
   "source": {
     "type": "npm",
     "package": "openclaw",
-    "repository": "https://github.com/openclaw/openclaw",
-    "command": "npm install -g openclaw@latest"
+    "repository": "https://github.com/openclaw/openclaw"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.openclaw",
@@ -71,12 +70,26 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "npm install -g openclaw@latest",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-openclaw-package",
+            "type": "npm",
+            "packages": [
+              "openclaw@latest"
+            ]
+          }
+        ],
         "managedCommands": [
           "openclaw"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "openclaw-command",
+            "cmd": "command -v openclaw >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

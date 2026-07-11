@@ -86,12 +86,38 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "arch=; case $(uname -m) in x86_64|amd64) arch=x86_64 ;; aarch64|arm64) arch=aarch64 ;; *) echo unsupported_arch $(uname -m); exit 1 ;; esac; bin_dir=$install_root/bin; server=$install_root/cc-switch-server; mkdir -p $bin_dir; downloaded=; for suffix in -musl ''; do url=https://github.com/Laliet/cc-switch-web/releases/latest/download/cc-switch-server-linux-${arch}${suffix}; echo KITE_RESOURCE_STEP download-cc-switch-web $url; if curl -fL $url -o $server.tmp; then mv $server.tmp $server; downloaded=1; break; fi; rm -f $server.tmp; done; if [ ! $downloaded ]; then echo failed_to_download_cc_switch_web; exit 1; fi; chmod +x $server; launcher=$bin_dir/ccswitch-kite; printf '%s\n' '#!/usr/bin/env bash' 'set -e' 'resource_root=/workspace/.kf/software/kite.cc-switch.web' 'server=$resource_root/cc-switch-server' 'runtime_dir=$resource_root/runtime' 'pid_file=$runtime_dir/cc-switch-web.pid' 'log_file=$runtime_dir/cc-switch-web.log' 'host=${CC_SWITCH_WEB_HOST:-127.0.0.1}' 'port=${2:-8766}' 'web_user=${CC_SWITCH_WEB_USER:-admin}' 'web_pass=${CC_SWITCH_WEB_PASSWORD:-kite-local}' 'home_dir=${CC_SWITCH_HOME:-${HOME:-/root}}' 'ensure_credentials(){ mkdir -p $home_dir/.cc-switch; echo $web_user > $home_dir/.cc-switch/web_username; echo $web_pass > $home_dir/.cc-switch/web_password; chmod 600 $home_dir/.cc-switch/web_username $home_dir/.cc-switch/web_password 2>/dev/null || true; }' 'is_running(){ pid=$(cat $pid_file 2>/dev/null || true); [ ${pid:-} ] && kill -0 $pid 2>/dev/null; }' 'case ${1:-start} in' 'start) mkdir -p $runtime_dir; ensure_credentials; if is_running; then echo already_running http://$host:$port; exit 0; fi; if ! command -v setsid >/dev/null 2>&1; then echo missing setsid; exit 127; fi; rm -f $pid_file; echo KITE_RESOURCE_STEP start-server $host:$port; HOME=$home_dir HOST=$host PORT=$port ENABLE_HSTS=false setsid $server >> $log_file 2>&1 < /dev/null & echo $! > $pid_file; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do if curl -fsS -u $web_user:$web_pass http://$host:$port/ >/dev/null 2>&1; then echo ready http://$host:$port; echo login $web_user / $web_pass; exit 0; fi; if ! is_running; then echo cc-switch-web exited; tail -40 $log_file || true; exit 1; fi; sleep 1; done; echo cc-switch-web did not become ready; tail -40 $log_file || true; exit 1 ;;' 'stop) if is_running; then kill $(cat $pid_file) || true; fi; rm -f $pid_file; echo stopped ;;' 'status) if is_running; then echo running http://$host:$port; else echo stopped; exit 1; fi ;;' 'password) ensure_credentials; echo user $web_user; echo password $web_pass; echo password_file $home_dir/.cc-switch/web_password ;;' '--help|-h|help) echo usage: ccswitch-kite start PORT/status PORT/stop/password ;;' '*) echo usage: ccswitch-kite start PORT/status PORT/stop/password; exit 2 ;;' 'esac' > $launcher; chmod +x $launcher; $launcher --help >/dev/null; echo CC Switch Web installed at $install_root",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "select-cc-switch-architecture",
+            "type": "shell",
+            "cmd": "case \"$(uname -m)\" in\n  x86_64|amd64) resource_arch=x86_64 ;;\n  aarch64|arm64) resource_arch=aarch64 ;;\n  *) echo \"Unsupported architecture: $(uname -m)\"; exit 1 ;;\nesac\nserver=\"$install_root/cc-switch-server\"\nmkdir -p \"$install_root/bin\""
+          },
+          {
+            "id": "download-cc-switch-release",
+            "type": "download",
+            "urls": [
+              "https://github.com/Laliet/cc-switch-web/releases/latest/download/cc-switch-server-linux-${resource_arch}-musl",
+              "https://github.com/Laliet/cc-switch-web/releases/latest/download/cc-switch-server-linux-${resource_arch}"
+            ],
+            "destination": "$server"
+          },
+          {
+            "id": "write-cc-switch-launcher",
+            "type": "shell",
+            "cmd": "chmod +x \"$server\"\nlauncher=\"$install_root/bin/ccswitch-kite\"\ncat > \"$launcher\" <<'SH'\n#!/usr/bin/env bash\nset -e\nresource_root=/workspace/.kf/software/kite.cc-switch.web\nserver=$resource_root/cc-switch-server\nruntime_dir=$resource_root/runtime\npid_file=$runtime_dir/cc-switch-web.pid\nlog_file=$runtime_dir/cc-switch-web.log\nhost=${CC_SWITCH_WEB_HOST:-127.0.0.1}\nport=${2:-8766}\nweb_user=${CC_SWITCH_WEB_USER:-admin}\nweb_pass=${CC_SWITCH_WEB_PASSWORD:-kite-local}\nhome_dir=${CC_SWITCH_HOME:-${HOME:-/root}}\nensure_credentials() {\n  mkdir -p \"$home_dir/.cc-switch\"\n  printf '%s\\n' \"$web_user\" > \"$home_dir/.cc-switch/web_username\"\n  printf '%s\\n' \"$web_pass\" > \"$home_dir/.cc-switch/web_password\"\n  chmod 600 \"$home_dir/.cc-switch/web_username\" \"$home_dir/.cc-switch/web_password\" 2>/dev/null || true\n}\nis_running() {\n  pid=$(cat \"$pid_file\" 2>/dev/null || true)\n  [ -n \"${pid:-}\" ] && kill -0 \"$pid\" 2>/dev/null\n}\ncase \"${1:-start}\" in\n  start)\n    mkdir -p \"$runtime_dir\"\n    ensure_credentials\n    if is_running; then echo \"already_running http://$host:$port\"; exit 0; fi\n    command -v setsid >/dev/null 2>&1 || { echo 'missing setsid'; exit 127; }\n    rm -f \"$pid_file\"\n    echo \"KITE_RESOURCE_STEP start-server $host:$port\"\n    HOME=\"$home_dir\" HOST=\"$host\" PORT=\"$port\" ENABLE_HSTS=false setsid \"$server\" >> \"$log_file\" 2>&1 < /dev/null &\n    echo $! > \"$pid_file\"\n    for i in $(seq 1 30); do\n      if curl -fsS -u \"$web_user:$web_pass\" \"http://$host:$port/\" >/dev/null 2>&1; then echo \"ready http://$host:$port\"; exit 0; fi\n      if ! is_running; then echo 'cc-switch-web exited'; tail -40 \"$log_file\" || true; exit 1; fi\n      sleep 1\n    done\n    echo 'cc-switch-web did not become ready'; tail -40 \"$log_file\" || true; exit 1 ;;\n  stop) if is_running; then kill \"$(cat \"$pid_file\")\" || true; fi; rm -f \"$pid_file\"; echo stopped ;;\n  status) if is_running; then echo \"running http://$host:$port\"; else echo stopped; exit 1; fi ;;\n  password) ensure_credentials; echo \"user $web_user\"; echo \"password $web_pass\" ;;\n  --help|-h|help) echo 'usage: ccswitch-kite start PORT/status PORT/stop/password' ;;\n  *) echo 'usage: ccswitch-kite start PORT/status PORT/stop/password'; exit 2 ;;\nesac\nSH\nchmod +x \"$launcher\""
+          }
+        ],
         "managedCommands": [
           "ccswitch-kite"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "cc-switch-launcher",
+            "cmd": "ccswitch-kite --help >/dev/null"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

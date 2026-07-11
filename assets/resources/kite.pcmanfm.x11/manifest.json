@@ -55,12 +55,38 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "set -e\nif ! command -v apt-get >/dev/null 2>&1; then echo '当前实例缺少 apt-get，无法安装 PCManFM'; exit 127; fi\nmkdir -p \"$install_root\" /workspace/.kf/runtime/pcmanfm-x11\nexport DEBIAN_FRONTEND=noninteractive\napt-get update\napt-get install -y pcmanfm dbus-x11 xdotool shared-mime-info xdg-utils adwaita-icon-theme fonts-dejavu-core\ntest -x /usr/bin/pcmanfm\necho 'PCManFM installed for Kite embedded X11'",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-pcmanfm-packages",
+            "type": "apt",
+            "update": true,
+            "packages": [
+              "pcmanfm",
+              "dbus-x11",
+              "xdotool",
+              "shared-mime-info",
+              "xdg-utils",
+              "adwaita-icon-theme",
+              "fonts-dejavu-core"
+            ]
+          },
+          {
+            "id": "prepare-pcmanfm-runtime",
+            "type": "shell",
+            "cmd": "mkdir -p \"$install_root\" /workspace/.kf/runtime/pcmanfm-x11\ntest -x /usr/bin/pcmanfm"
+          }
+        ],
         "managedCommands": [
           "pcmanfm"
         ],
-        "cleanInstallRoot": true,
+        "cleanInstallRoot": false,
+        "verify": [
+          {
+            "id": "pcmanfm-command",
+            "cmd": "command -v pcmanfm >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 900000
       }
     ],

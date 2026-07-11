@@ -115,6 +115,7 @@ import com.kite.app.recipe.KiteStepReport
 import com.kite.app.recipe.NewRecipeInput
 import com.kite.app.recipe.NewRecipeStepInput
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.resources.KiteResourceInstallPlanCompiler
 import com.kite.app.resources.KiteResourceInstallSignal
 import com.kite.app.resources.KiteResourceInstallSpec
 import com.kite.app.resources.KiteResourceInstallStore
@@ -7630,14 +7631,20 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         action: KiteResourceShellAction
     ): String =
         when (operation) {
-            KiteResourceInstallRecipes.OP_INSTALL -> bundledToolchainManifestInstallCommand(item, action.cmd)
-                ?: KiteResourceInstallRecipes.manifestInstallCommand(
+            KiteResourceInstallRecipes.OP_INSTALL -> {
+                val bundledCommand = KiteResourceInstallPlanCompiler.bundledCommand(action)
+                    ?.let { bundledToolchainManifestInstallCommand(item, it, cleanInstallRoot = false) }
+                    ?: bundledToolchainManifestInstallCommand(item, action.cmd, cleanInstallRoot = true)
+                val installCommand = bundledCommand ?: KiteResourceInstallPlanCompiler.compile(action)
+                KiteResourceInstallRecipes.manifestInstallCommand(
                     resourceId = item.id,
                     displayName = item.name,
-                    rawCommand = action.cmd,
+                    rawCommand = installCommand,
                     managedCommands = action.managedCommands,
-                    cleanInstallRoot = action.cleanInstallRoot
+                    cleanInstallRoot = action.cleanInstallRoot,
+                    verificationCommand = KiteResourceInstallPlanCompiler.compileVerification(action)
                 )
+            }
             KiteResourceInstallRecipes.OP_UNINSTALL -> KiteResourceInstallRecipes.manifestUninstallCommand(
                 resourceId = item.id,
                 rawCommand = action.cmd,
@@ -7647,13 +7654,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             else -> action.cmd
         }
 
-    private fun bundledToolchainManifestInstallCommand(item: ResourceItem, command: String): String? {
+    private fun bundledToolchainManifestInstallCommand(
+        item: ResourceItem,
+        command: String,
+        cleanInstallRoot: Boolean
+    ): String? {
         if (!item.isBundledResource()) return null
         val trimmed = command.trim()
         if (trimmed != "install.sh" && !trimmed.startsWith("install.sh ")) return null
         val mode = trimmed.removePrefix("install.sh").trim().ifBlank { "--install" }
         if (!Regex("""--?[A-Za-z0-9][A-Za-z0-9_-]*""").matches(mode)) return null
-        return KiteResourceInstallRecipes.localToolchainCommand(item.id, mode)
+        return KiteResourceInstallRecipes.localToolchainCommand(item.id, mode, cleanInstallRoot)
     }
 
     private fun resourceInstallRecipe(item: ResourceItem): KiteRecipe? {
@@ -8758,10 +8769,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun resourceActionPreview(action: KiteResourceShellAction): String =
-        action.cmd.lineSequence()
-            .firstOrNull { it.isNotBlank() }
-            .orEmpty()
-            .take(160)
+        KiteResourceInstallPlanCompiler.preview(action)
 
     private fun resourceSectionLabel(section: String?): String =
         when (section) {

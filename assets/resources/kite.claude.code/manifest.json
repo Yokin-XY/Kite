@@ -4,7 +4,7 @@
   "base": {
     "name": "Claude Code",
     "description": "Anthropic 的终端编码助手",
-    "version": "official",
+    "version": "npm",
     "icon": {
       "type": "asset",
       "value": "resources/kite.claude.code/icon.png",
@@ -19,11 +19,15 @@
     "category": "AI",
     "accent": "orange",
     "sizeLabel": "网络包",
-    "longDescription": "Claude Code 是 Anthropic 面向终端的编码助手。Kite 使用官方 native installer 获取 claude 命令，并只负责资源获取、wrapper 暴露和首页卡模板；登录和项目授权在终端表面完成。",
+    "longDescription": "Claude Code 是 Anthropic 面向终端的编码助手。Kite 使用 Anthropic 官方 NPM 包获取对应平台的原生 claude 命令，并负责依赖安装、命令暴露和结果验证；登录和项目授权仍在终端表面完成。",
     "recommendations": [
       {
-        "resourceId": "kite.curl",
-        "label": "下载工具"
+        "resourceId": "kite.nodejs",
+        "label": "安装运行时"
+      },
+      {
+        "resourceId": "kite.git",
+        "label": "源码工具"
       },
       {
         "resourceId": "kite.codex.cli",
@@ -52,16 +56,15 @@
       "agent.anthropic.claude-code"
     ],
     "base": [
-      "kite.git",
-      "kite.curl"
+      "kite.nodejs",
+      "kite.git"
     ],
     "defaults": [],
     "extensions": []
   },
   "source": {
-    "type": "official_script",
-    "url": "https://claude.ai/install.sh",
-    "command": "curl -fsSL https://claude.ai/install.sh | bash"
+    "type": "npm",
+    "package": "@anthropic-ai/claude-code"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.claude.code",
@@ -71,13 +74,32 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "curl -fsSL https://claude.ai/install.sh | bash",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-claude-code-package",
+            "type": "npm",
+            "packages": [
+              "@anthropic-ai/claude-code@latest"
+            ],
+            "args": [
+              "--allow-scripts=@anthropic-ai/claude-code"
+            ],
+            "retryAttempts": 5,
+            "retryDelaySeconds": 3
+          }
+        ],
         "managedCommands": [
           "claude"
         ],
         "cleanInstallRoot": true,
-        "timeoutMs": 600000
+        "verify": [
+          {
+            "id": "claude-command",
+            "cmd": "claude --version >/dev/null 2>&1"
+          }
+        ],
+        "timeoutMs": 900000
       }
     ],
     "open": {
@@ -110,6 +132,7 @@
         "managedCommands": [
           "claude"
         ],
+        "npmUninstallPackage": "@anthropic-ai/claude-code",
         "timeoutMs": 180000
       }
     ]

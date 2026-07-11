@@ -60,8 +60,7 @@
   "source": {
     "type": "official_script",
     "url": "https://chatgpt.com/codex/install.sh",
-    "repository": "https://github.com/openai/codex",
-    "command": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"
+    "repository": "https://github.com/openai/codex"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.codex.cli",
@@ -71,12 +70,34 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-codex-installer",
+            "type": "download",
+            "url": "https://chatgpt.com/codex/install.sh",
+            "destination": "$install_root/.kite-downloads/install.sh"
+          },
+          {
+            "id": "run-codex-installer",
+            "type": "script",
+            "interpreter": "sh",
+            "path": "$install_root/.kite-downloads/install.sh",
+            "env": {
+              "CODEX_NON_INTERACTIVE": "1"
+            }
+          }
+        ],
         "managedCommands": [
           "codex"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "codex-command",
+            "cmd": "command -v codex >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

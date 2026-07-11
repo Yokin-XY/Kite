@@ -62,8 +62,7 @@
   "source": {
     "type": "npm",
     "package": "@qwen-code/qwen-code",
-    "repository": "https://github.com/QwenLM/qwen-code",
-    "command": "npm install -g @qwen-code/qwen-code@latest"
+    "repository": "https://github.com/QwenLM/qwen-code"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.qwen.code",
@@ -73,12 +72,26 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "npm install -g @qwen-code/qwen-code@latest",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-qwen-package",
+            "type": "npm",
+            "packages": [
+              "@qwen-code/qwen-code@latest"
+            ]
+          }
+        ],
         "managedCommands": [
           "qwen"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "qwen-command",
+            "cmd": "command -v qwen >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

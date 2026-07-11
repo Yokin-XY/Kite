@@ -62,8 +62,7 @@
   "source": {
     "type": "official_script",
     "url": "https://antigravity.google/cli/install.sh",
-    "repository": "https://antigravity.google",
-    "command": "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+    "repository": "https://antigravity.google"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.google.antigravity",
@@ -73,12 +72,31 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-antigravity-installer",
+            "type": "download",
+            "url": "https://antigravity.google/cli/install.sh",
+            "destination": "$install_root/.kite-downloads/install.sh"
+          },
+          {
+            "id": "run-antigravity-installer",
+            "type": "script",
+            "interpreter": "bash",
+            "path": "$install_root/.kite-downloads/install.sh"
+          }
+        ],
         "managedCommands": [
           "agy"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "antigravity-command",
+            "cmd": "command -v agy >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

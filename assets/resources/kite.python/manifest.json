@@ -61,8 +61,27 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "install.sh --install-python"
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-bundled-python",
+            "type": "bundled",
+            "cmd": "install.sh --install-python"
+          }
+        ],
+        "managedCommands": [
+          "python",
+          "python3",
+          "pip",
+          "pip3"
+        ],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "python-runtime",
+            "cmd": "python3 --version && python3 -m venv --help >/dev/null && python3 -m pip --version"
+          }
+        ]
       }
     ],
     "open": {

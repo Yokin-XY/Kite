@@ -11,6 +11,7 @@ import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.recipe.KiteRunReport
 import com.kite.app.recipe.KiteStepReport
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.resources.KiteResourceInstallOutput
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
@@ -898,6 +899,8 @@ class KiteBridgeClient(
         var lastNonEndMarker = ""
         var summary = ""
         var fail = ""
+        var resourceFailure = ""
+        var resourceProgress = ""
         output.lineSequence().forEach { raw ->
             val line = raw.trim()
             if (line.isBlank()) return@forEach
@@ -905,8 +908,21 @@ class KiteBridgeClient(
             if (!line.isEndMarkerLine()) lastNonEndMarker = line
             if (line.startsWith("SUMMARY ")) summary = line
             if (line.startsWith("FAIL\t") || line.startsWith("FAIL ")) fail = line
+            KiteResourceInstallOutput.summary(line)?.let { structuredSummary ->
+                if (KiteResourceInstallOutput.isFailure(line)) {
+                    resourceFailure = structuredSummary
+                } else {
+                    resourceProgress = structuredSummary
+                }
+            }
         }
-        return fail.ifBlank { summary.ifBlank { lastNonEndMarker.ifBlank { last } } }
+        return fail.ifBlank {
+            resourceFailure.ifBlank {
+                summary.ifBlank {
+                    resourceProgress.ifBlank { lastNonEndMarker.ifBlank { last } }
+                }
+            }
+        }
     }
 
     private fun String.isEndMarkerLine(): Boolean =

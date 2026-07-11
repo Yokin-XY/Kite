@@ -61,8 +61,25 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "install.sh --install-uv"
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-bundled-uv",
+            "type": "bundled",
+            "cmd": "install.sh --install-uv"
+          }
+        ],
+        "managedCommands": [
+          "uv",
+          "uvx"
+        ],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "uv-runtime",
+            "cmd": "uv --version && uvx --version"
+          }
+        ]
       }
     ],
     "open": {

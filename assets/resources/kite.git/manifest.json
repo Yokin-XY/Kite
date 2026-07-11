@@ -58,8 +58,24 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "install.sh --install-git"
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-bundled-git",
+            "type": "bundled",
+            "cmd": "install.sh --install-git"
+          }
+        ],
+        "managedCommands": [
+          "git"
+        ],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "git-runtime",
+            "cmd": "git --version"
+          }
+        ]
       }
     ],
     "open": {

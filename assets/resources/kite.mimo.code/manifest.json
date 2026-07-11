@@ -68,8 +68,7 @@
   "source": {
     "type": "npm",
     "package": "@mimo-ai/cli",
-    "repository": "https://github.com/XiaomiMiMo/MiMo-Code",
-    "command": "npm install -g @mimo-ai/cli"
+    "repository": "https://github.com/XiaomiMiMo/MiMo-Code"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.mimo.code",
@@ -79,12 +78,26 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "npm install -g @mimo-ai/cli",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-mimo-package",
+            "type": "npm",
+            "packages": [
+              "@mimo-ai/cli"
+            ]
+          }
+        ],
         "managedCommands": [
           "mimo"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "mimo-command",
+            "cmd": "command -v mimo >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

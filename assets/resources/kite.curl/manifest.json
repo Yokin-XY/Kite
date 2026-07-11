@@ -59,8 +59,24 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "install.sh --install-curl"
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-bundled-curl",
+            "type": "bundled",
+            "cmd": "install.sh --install-curl"
+          }
+        ],
+        "managedCommands": [
+          "curl"
+        ],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "curl-runtime",
+            "cmd": "curl --version | head -1"
+          }
+        ]
       }
     ],
     "open": {

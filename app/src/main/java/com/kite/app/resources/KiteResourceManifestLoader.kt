@@ -44,7 +44,34 @@ data class KiteResourceShellAction(
     val timeoutMs: Long,
     val managedCommands: List<String>,
     val cleanInstallRoot: Boolean,
-    val npmUninstallPackages: List<String>
+    val npmUninstallPackages: List<String>,
+    val installSteps: List<KiteResourceInstallStep> = emptyList(),
+    val verifications: List<KiteResourceInstallVerification> = emptyList()
+)
+
+data class KiteResourceInstallStep(
+    val id: String,
+    val type: String,
+    val cmd: String = "",
+    val urls: List<String> = emptyList(),
+    val destination: String = "",
+    val sha256: String = "",
+    val interpreter: String = "",
+    val path: String = "",
+    val arguments: List<String> = emptyList(),
+    val environment: Map<String, String> = emptyMap(),
+    val packages: List<String> = emptyList(),
+    val updateIndex: Boolean = false,
+    val repository: String = "",
+    val ref: String = "",
+    val depth: Int = 1,
+    val retryAttempts: Int = 4,
+    val retryDelaySeconds: Int = 2
+)
+
+data class KiteResourceInstallVerification(
+    val id: String,
+    val cmd: String
 )
 
 data class KiteResourceHomeCard(
@@ -175,6 +202,9 @@ class KiteResourceManifestLoader(private val context: Context) {
 
     fun requestExecutionManifestJson(resourceId: String): JSONObject? =
         requestManifest(resourceId)?.rawJson?.deepCopy()
+
+    internal fun parseManifestJson(rawJson: String): KiteResourceManifest =
+        parseManifest(JSONObject(rawJson))
 
     fun requestRelationTargets(resourceId: String): KiteResourceRelationTargets {
         val manifest = requestManifest(resourceId)
@@ -553,7 +583,7 @@ class KiteResourceManifestLoader(private val context: Context) {
             defaultRequirements = relations.optJSONArray("defaults").toStringList(),
             extensions = relations.optJSONArray("extensions").toStringList(),
             sourceType = source.optString("type"),
-            installActions = parseShellActions(actions.optJSONArray("install")),
+            installActions = parseInstallActions(actions.optJSONArray("install")),
             uninstallActions = parseShellActions(actions.optJSONArray("uninstall")),
             openRecipe = openRecipe,
             homeCards = parseHomeCards(json.optJSONArray("homeCards")),
@@ -646,6 +676,22 @@ class KiteResourceManifestLoader(private val context: Context) {
         }
     }
 
+    private fun parseInstallActions(actionsJson: JSONArray?): List<KiteResourceShellAction> {
+        if (actionsJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until actionsJson.length()) {
+                val action = actionsJson.optJSONObject(index) ?: continue
+                val type = action.optString("type").trim()
+                val cmd = action.optString("cmd")
+                val installSteps = parseInstallSteps(action.optJSONArray("steps"))
+                val supported = (type == "shell" && cmd.isNotBlank()) ||
+                    (type == "managed" && installSteps.isNotEmpty())
+                if (!supported) continue
+                add(parseAction(action, type, cmd, installSteps))
+            }
+        }
+    }
+
     private fun parseShellActions(actionsJson: JSONArray?): List<KiteResourceShellAction> {
         if (actionsJson == null) return emptyList()
         return buildList {
@@ -654,24 +700,86 @@ class KiteResourceManifestLoader(private val context: Context) {
                 val type = action.optString("type")
                 val cmd = action.optString("cmd")
                 if (type != "shell" || cmd.isBlank()) continue
-                val managedCommands = (
-                    action.optJSONArray("managedCommands").toStringList() +
-                        listOf(action.optString("managedCommand")).filter { it.isNotBlank() }
-                    ).distinct()
-                val npmUninstallPackages = (
-                    action.optJSONArray("npmUninstallPackages").toStringList() +
-                        listOf(action.optString("npmUninstallPackage")).filter { it.isNotBlank() }
+                add(parseAction(action, type, cmd))
+            }
+        }
+    }
+
+    private fun parseAction(
+        action: JSONObject,
+        type: String,
+        cmd: String,
+        installSteps: List<KiteResourceInstallStep> = emptyList()
+    ): KiteResourceShellAction {
+        val managedCommands = (
+            action.optJSONArray("managedCommands").toStringList() +
+                listOf(action.optString("managedCommand")).filter { it.isNotBlank() }
+            ).distinct()
+        val npmUninstallPackages = (
+            action.optJSONArray("npmUninstallPackages").toStringList() +
+                listOf(action.optString("npmUninstallPackage")).filter { it.isNotBlank() }
+            ).distinct()
+        return KiteResourceShellAction(
+            type = type,
+            cmd = cmd,
+            surfaceMode = action.optString("surfaceMode", "panel"),
+            workdir = action.optString("workdir", "/workspace"),
+            timeoutMs = action.optLong("timeoutMs", 1_800_000L),
+            managedCommands = managedCommands,
+            cleanInstallRoot = action.optBoolean("cleanInstallRoot", false),
+            npmUninstallPackages = npmUninstallPackages,
+            installSteps = installSteps,
+            verifications = parseInstallVerifications(action.optJSONArray("verify"))
+        )
+    }
+
+    private fun parseInstallSteps(stepsJson: JSONArray?): List<KiteResourceInstallStep> {
+        if (stepsJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until stepsJson.length()) {
+                val step = stepsJson.optJSONObject(index) ?: continue
+                val type = step.optString("type").trim()
+                if (type.isBlank()) continue
+                val urls = (
+                    listOf(step.optString("url")).filter { it.isNotBlank() } +
+                        step.optJSONArray("urls").toStringList()
                     ).distinct()
                 add(
-                    KiteResourceShellAction(
+                    KiteResourceInstallStep(
+                        id = step.optString("id").trim().ifBlank { "${type}_${index + 1}" },
                         type = type,
-                        cmd = cmd,
-                        surfaceMode = action.optString("surfaceMode", "panel"),
-                        workdir = action.optString("workdir", "/workspace"),
-                        timeoutMs = action.optLong("timeoutMs", 1_800_000L),
-                        managedCommands = managedCommands,
-                        cleanInstallRoot = action.optBoolean("cleanInstallRoot", false),
-                        npmUninstallPackages = npmUninstallPackages
+                        cmd = step.optString("cmd"),
+                        urls = urls,
+                        destination = step.optString("destination"),
+                        sha256 = step.optString("sha256").trim(),
+                        interpreter = step.optString("interpreter").trim(),
+                        path = step.optString("path"),
+                        arguments = step.optJSONArray("args").toStringList(),
+                        environment = step.optJSONObject("env").toStringMap(),
+                        packages = step.optJSONArray("packages").toStringList(),
+                        updateIndex = step.optBoolean("update", false),
+                        repository = step.optString("repository").ifBlank { step.optString("url") },
+                        ref = step.optString("ref").trim(),
+                        depth = step.optInt("depth", 1).coerceIn(0, 1000),
+                        retryAttempts = step.optInt("retryAttempts", 4).coerceIn(1, 10),
+                        retryDelaySeconds = step.optInt("retryDelaySeconds", 2).coerceIn(0, 60)
+                    )
+                )
+            }
+        }
+    }
+
+    private fun parseInstallVerifications(verifyJson: JSONArray?): List<KiteResourceInstallVerification> {
+        if (verifyJson == null) return emptyList()
+        return buildList {
+            for (index in 0 until verifyJson.length()) {
+                val verification = verifyJson.optJSONObject(index) ?: continue
+                val cmd = verification.optString("cmd")
+                if (cmd.isBlank()) continue
+                add(
+                    KiteResourceInstallVerification(
+                        id = verification.optString("id").trim().ifBlank { "verify_${index + 1}" },
+                        cmd = cmd
                     )
                 )
             }
@@ -707,6 +815,16 @@ class KiteResourceManifestLoader(private val context: Context) {
             for (index in 0 until length()) {
                 val value = optString(index)
                 if (value.isNotBlank()) add(value)
+            }
+        }
+    }
+
+    private fun JSONObject?.toStringMap(): Map<String, String> {
+        if (this == null) return emptyMap()
+        return buildMap {
+            keys().forEach { key ->
+                val value = optString(key)
+                if (key.isNotBlank() && value.isNotBlank()) put(key, value)
             }
         }
     }

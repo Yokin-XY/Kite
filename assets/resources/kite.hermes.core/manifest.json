@@ -81,12 +81,55 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o install.sh && bash install.sh --dir /workspace/.kf/software/kite.hermes.core/hermes-agent --hermes-home /workspace/.kf/software/kite.hermes.core/home --skip-setup --skip-browser --non-interactive",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-hermes-installer",
+            "type": "download",
+            "url": "https://hermes-agent.nousresearch.com/install.sh",
+            "destination": "$install_root/.kite-downloads/install.sh"
+          },
+          {
+            "id": "run-hermes-installer",
+            "type": "script",
+            "interpreter": "bash",
+            "path": "$install_root/.kite-downloads/install.sh",
+            "args": [
+              "--dir",
+              "$install_root/hermes-agent",
+              "--hermes-home",
+              "$install_root/home",
+              "--skip-setup",
+              "--skip-browser",
+              "--non-interactive"
+            ],
+            "env": {
+              "HERMES_HOME": "$install_root/home",
+              "HERMES_INSTALL_DIR": "$install_root/hermes-agent",
+              "UV_CACHE_DIR": "$install_root/uv-cache",
+              "UV_LINK_MODE": "copy",
+              "UV_NO_CONFIG": "1",
+              "UV_PYTHON_BIN_DIR": "$install_root/uv-bin",
+              "UV_PYTHON_INSTALL_DIR": "$install_root/uv-python"
+            }
+          },
+          {
+            "id": "write-hermes-launcher",
+            "type": "shell",
+            "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif ! \"$agent_python\" -m pip --version >/dev/null 2>&1; then\n  \"$agent_python\" -m ensurepip --upgrade || python3 -m pip --python \"$agent_python\" install --upgrade pip\nfi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\""
+          }
+        ],
         "managedCommands": [
           "hermes"
         ],
-        "cleanInstallRoot": true
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "hermes-command",
+            "cmd": "hermes --help >/dev/null"
+          }
+        ],
+        "timeoutMs": 1800000
       }
     ],
     "open": {

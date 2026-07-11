@@ -64,8 +64,7 @@
   "source": {
     "type": "npm",
     "package": "@z_ai/coding-helper",
-    "repository": "https://docs.z.ai/devpack/extension/coding-tool-helper",
-    "command": "npm install -g @z_ai/coding-helper"
+    "repository": "https://docs.z.ai/devpack/extension/coding-tool-helper"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.zai.coding.helper",
@@ -75,13 +74,27 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "npm install -g @z_ai/coding-helper",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-zai-helper-package",
+            "type": "npm",
+            "packages": [
+              "@z_ai/coding-helper"
+            ]
+          }
+        ],
         "managedCommands": [
           "coding-helper",
           "chelper"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "zai-helper-commands",
+            "cmd": "command -v coding-helper >/dev/null 2>&1 && command -v chelper >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

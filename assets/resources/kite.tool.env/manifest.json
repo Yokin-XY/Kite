@@ -78,8 +78,33 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "install.sh --install-system-tools"
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-bundled-tools",
+            "type": "bundled",
+            "cmd": "install.sh --install-system-tools"
+          }
+        ],
+        "managedCommands": [
+          "pnpm",
+          "pnpx",
+          "wget",
+          "jq",
+          "rg",
+          "fd",
+          "zip",
+          "unzip",
+          "zstd",
+          "file"
+        ],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "tool-runtime",
+            "cmd": "for command_name in pnpm wget jq rg fd zip unzip zstd file; do command -v \"$command_name\" >/dev/null 2>&1 || exit 127; done"
+          }
+        ]
       }
     ],
     "open": {

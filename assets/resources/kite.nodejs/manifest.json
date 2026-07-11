@@ -71,8 +71,26 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "install.sh --install-node"
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-bundled-node",
+            "type": "bundled",
+            "cmd": "install.sh --install-node"
+          }
+        ],
+        "managedCommands": [
+          "node",
+          "npm",
+          "npx"
+        ],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "node-runtime",
+            "cmd": "node --version && npm --version && npx --version"
+          }
+        ]
       }
     ],
     "open": {

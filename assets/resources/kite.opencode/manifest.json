@@ -59,10 +59,9 @@
     "extensions": []
   },
   "source": {
-    "type": "official_script",
-    "url": "https://opencode.ai/install",
+    "type": "github_release",
     "repository": "https://github.com/anomalyco/opencode",
-    "command": "curl -fL https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-arm64.tar.gz | tar -xz"
+    "assetPattern": "opencode-{target}.tar.gz"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.opencode",
@@ -72,12 +71,35 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "arch=\"$(uname -m)\"\ncase \"$arch\" in\n  aarch64|arm64) target=\"linux-arm64\" ;;\n  x86_64|amd64) target=\"linux-x64\" ;;\n  *) echo \"Unsupported OS/Arch: linux/$arch\"; exit 1 ;;\nesac\narchive=\"$install_root/opencode-$target.tar.gz\"\ntmp_dir=\"$install_root/tmp-opencode\"\nrm -rf \"$tmp_dir\" \"$archive\"\nmkdir -p \"$tmp_dir\" \"$install_root/bin\"\ncurl -fL \"https://github.com/anomalyco/opencode/releases/latest/download/opencode-$target.tar.gz\" -o \"$archive\"\ntar -xzf \"$archive\" -C \"$tmp_dir\"\ncp \"$tmp_dir/opencode\" \"$install_root/bin/opencode\"\nchmod 755 \"$install_root/bin/opencode\"\nrm -rf \"$tmp_dir\" \"$archive\"",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "select-opencode-architecture",
+            "type": "shell",
+            "cmd": "arch=\"$(uname -m)\"\ncase \"$arch\" in\n  aarch64|arm64) target=\"linux-arm64\" ;;\n  x86_64|amd64) target=\"linux-x64\" ;;\n  *) echo \"Unsupported OS/Arch: linux/$arch\"; exit 1 ;;\nesac\narchive=\"$install_root/opencode-$target.tar.gz\"\ntmp_dir=\"$install_root/tmp-opencode\"\nmkdir -p \"$tmp_dir\" \"$install_root/bin\""
+          },
+          {
+            "id": "download-opencode-release",
+            "type": "download",
+            "url": "https://github.com/anomalyco/opencode/releases/latest/download/opencode-$target.tar.gz",
+            "destination": "$archive"
+          },
+          {
+            "id": "install-opencode-binary",
+            "type": "shell",
+            "cmd": "tar -tzf \"$archive\" >/dev/null\ntar -xzf \"$archive\" -C \"$tmp_dir\"\ntest -x \"$tmp_dir/opencode\"\ninstall -m 0755 \"$tmp_dir/opencode\" \"$install_root/bin/opencode\"\nrm -rf \"$tmp_dir\" \"$archive\""
+          }
+        ],
         "managedCommands": [
           "opencode"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "opencode-command",
+            "cmd": "command -v opencode >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

@@ -40,9 +40,17 @@ object KiteResourceInstallRecipes {
     fun recipeId(resourceId: String, operation: String): String =
         "resource-${safeId(resourceId)}-${safeId(operation)}"
 
-    fun localToolchainCommand(resourceId: String, mode: String): String {
+    fun localToolchainCommand(resourceId: String, mode: String, cleanInstallRoot: Boolean = true): String {
         val packPath = localPackPath(resourceId)
         val installRoot = installRoot(resourceId)
+        val cleanCommand = if (cleanInstallRoot) {
+            """
+                echo "KITE_RESOURCE_STEP clean-install-root ${'$'}KF_TOOLCHAIN_DIR"
+                rm -rf "${'$'}KF_TOOLCHAIN_DIR"
+            """.trimIndent()
+        } else {
+            ":"
+        }
         return """
             set -e
             export KF_RESOURCE_ID="${safeId(resourceId)}"
@@ -50,8 +58,7 @@ object KiteResourceInstallRecipes {
             export KF_TOOLCHAIN_DIR="$installRoot"
             export KF_TOOLCHAIN_BIN_DIR="$WORKSPACE_BIN_ROOT"
             export UV_LINK_MODE="copy"
-            echo "KITE_RESOURCE_STEP clean-install-root ${'$'}KF_TOOLCHAIN_DIR"
-            rm -rf "${'$'}KF_TOOLCHAIN_DIR"
+            $cleanCommand
             echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}KF_TOOLCHAIN_DIR"
             mkdir -p "${'$'}KF_TOOLCHAIN_DIR" "${'$'}KF_TOOLCHAIN_BIN_DIR"
             chmod +x "${'$'}KF_TOOLCHAIN_PACK_DIR/install.sh" 2>/dev/null || true
@@ -155,14 +162,20 @@ SH
         displayName: String,
         rawCommand: String,
         managedCommands: List<String>,
-        cleanInstallRoot: Boolean
+        cleanInstallRoot: Boolean,
+        verificationCommand: String = ":"
     ): String {
         val safeCommands = managedCommands.map(::safeCommandName).filter { it.isNotBlank() }.distinct()
         val commandList = safeCommands.joinToString(" ")
-        val cleanLine = if (cleanInstallRoot) """rm -rf "${'$'}install_root"""" else ":"
+        val transactionalClean = if (cleanInstallRoot) "1" else "0"
         return """
             set -e
             install_root="${softwarePath(resourceId)}"
+            backup_root="${'$'}install_root.kite-backup"
+            old_ledger_snapshot="${'$'}install_root.kite-old-commands.${'$'}${'$'}"
+            failed_ledger_snapshot="${'$'}install_root.kite-failed-commands.${'$'}${'$'}"
+            transactional_clean="$transactionalClean"
+            transaction_committed=0
             user_home="${'$'}install_root/user-home"
             npm_prefix="${'$'}install_root/npm-global"
             export HOME="${'$'}user_home"
@@ -172,8 +185,9 @@ SH
             command_snapshot_after="${'$'}install_root/.kite-commands-after"
             explicit_commands="$commandList"
             public_command_roots="${'$'}install_root/bin ${'$'}npm_prefix/bin ${'$'}HOME/.local/bin ${'$'}HOME/.kimi-code/bin ${'$'}HOME/.codex/bin ${'$'}HOME/.claude/local ${'$'}HOME/.opencode/bin"
-            remove_recorded_command_links() {
-              [ -f "${'$'}command_ledger" ] || return 0
+            remove_ledger_links() {
+              ledger_path="${'$'}1"
+              [ -f "${'$'}ledger_path" ] || return 0
               while IFS='	' read -r command_name target_path; do
                 [ -n "${'$'}command_name" ] || continue
                 link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
@@ -181,7 +195,48 @@ SH
                 if [ "${'$'}current_target" = "${'$'}target_path" ]; then
                   rm -f "${'$'}link_path"
                 fi
-              done < "${'$'}command_ledger"
+              done < "${'$'}ledger_path"
+            }
+            restore_ledger_links() {
+              ledger_path="${'$'}1"
+              [ -f "${'$'}ledger_path" ] || return 0
+              while IFS='	' read -r command_name target_path; do
+                [ -n "${'$'}command_name" ] || continue
+                if [ -x "${'$'}target_path" ] || [ -L "${'$'}target_path" ]; then
+                  ln -sfn "${'$'}target_path" "$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                fi
+              done < "${'$'}ledger_path"
+            }
+            cleanup_obsolete_command_links() {
+              [ -f "${'$'}old_ledger_snapshot" ] || return 0
+              while IFS='	' read -r command_name target_path; do
+                [ -n "${'$'}command_name" ] || continue
+                if ! cut -f1 "${'$'}command_ledger" 2>/dev/null | grep -Fxq "${'$'}command_name"; then
+                  link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                  current_target="${'$'}(readlink "${'$'}link_path" 2>/dev/null || true)"
+                  if [ "${'$'}current_target" = "${'$'}target_path" ]; then
+                    rm -f "${'$'}link_path"
+                  fi
+                fi
+              done < "${'$'}old_ledger_snapshot"
+            }
+            rollback_install_transaction() {
+              transaction_status=${'$'}?
+              trap - EXIT
+              if [ "${'$'}transactional_clean" = "1" ] && [ "${'$'}transaction_committed" != "1" ]; then
+                echo "KITE_RESOURCE_STEP rollback-install ${safeId(resourceId)}"
+                if [ -f "${'$'}command_ledger" ]; then
+                  cp "${'$'}command_ledger" "${'$'}failed_ledger_snapshot" 2>/dev/null || true
+                fi
+                remove_ledger_links "${'$'}failed_ledger_snapshot"
+                rm -rf "${'$'}install_root"
+                if [ -e "${'$'}backup_root" ] || [ -L "${'$'}backup_root" ]; then
+                  mv "${'$'}backup_root" "${'$'}install_root"
+                fi
+                restore_ledger_links "${'$'}old_ledger_snapshot"
+              fi
+              rm -f "${'$'}old_ledger_snapshot" "${'$'}failed_ledger_snapshot"
+              exit "${'$'}transaction_status"
             }
             is_explicit_command() {
               for explicit_command in ${'$'}explicit_commands; do
@@ -195,13 +250,8 @@ SH
               [ -n "${'$'}target_path" ] || return 1
               [ -x "${'$'}target_path" ] || return 1
               case "${'$'}target_path" in
-                "${'$'}install_root/bin/${'$'}target_name"|\
-                "${'$'}npm_prefix/bin/${'$'}target_name"|\
-                "${'$'}HOME/.local/bin/${'$'}target_name"|\
-                "${'$'}HOME/.kimi-code/bin/${'$'}target_name"|\
-                "${'$'}HOME/.codex/bin/${'$'}target_name"|\
-                "${'$'}HOME/.claude/local/${'$'}target_name"|\
-                "${'$'}HOME/.opencode/bin/${'$'}target_name"|\
+                "${'$'}install_root"/*|\
+                "${'$'}HOME"/*|\
                 "/root/.local/bin/${'$'}target_name"|\
                 "/root/.kimi-code/bin/${'$'}target_name"|\
                 "/root/.codex/bin/${'$'}target_name"|\
@@ -236,8 +286,21 @@ SH
               done | sort -u
             }
             echo "KITE_RESOURCE_STEP prepare-install-root ${'$'}install_root"
-            remove_recorded_command_links
-            $cleanLine
+            if [ -e "${'$'}backup_root" ] || [ -L "${'$'}backup_root" ]; then
+              echo "KITE_RESOURCE_STEP recover-interrupted-install ${safeId(resourceId)}"
+              rm -rf "${'$'}install_root"
+              mv "${'$'}backup_root" "${'$'}install_root"
+            fi
+            if [ -f "${'$'}command_ledger" ]; then
+              cp "${'$'}command_ledger" "${'$'}old_ledger_snapshot"
+            fi
+            if [ "${'$'}transactional_clean" = "1" ]; then
+              rm -rf "${'$'}backup_root"
+              if [ -e "${'$'}install_root" ] || [ -L "${'$'}install_root" ]; then
+                mv "${'$'}install_root" "${'$'}backup_root"
+              fi
+              trap rollback_install_transaction EXIT
+            fi
             mkdir -p "${'$'}install_root" "${'$'}install_root/bin" "${'$'}npm_prefix/bin" "${'$'}user_home" "$WORKSPACE_BIN_ROOT"
             kite_build_apt_proxy_conf="/etc/apt/apt.conf.d/99kite-proxy"
             if [ -f "${'$'}kite_build_apt_proxy_conf" ]; then
@@ -255,6 +318,7 @@ SH
             if [ "${'$'}manifest_install_status" -ne 0 ]; then
               echo "KITE_RESOURCE_STEP manifest-install-failed ${safeId(resourceId)} exit=${'$'}manifest_install_status"
               rm -f "${'$'}command_snapshot_after"
+              echo "KITE_RESOURCE_FAILURE stage=install step=${safeId(resourceId)} exit=${'$'}manifest_install_status"
               exit "${'$'}manifest_install_status"
             fi
             snapshot_public_commands > "${'$'}command_snapshot_after"
@@ -272,73 +336,70 @@ SH
                 [ -n "${'$'}command_name" ] || continue
                 link_path="$WORKSPACE_BIN_ROOT/${'$'}command_name"
                 existing_target="${'$'}(readlink "${'$'}link_path" 2>/dev/null || true)"
-                if [ -e "${'$'}link_path" ] || [ -L "${'$'}link_path" ]; then
-                  case "${'$'}existing_target" in
-                    "${'$'}install_root"/*|"${'$'}HOME"/*)
-                      rm -f "${'$'}link_path"
-                      ;;
-                    "")
-                      echo "KITE_RESOURCE_STEP command-conflict ${'$'}command_name"
-                      if is_explicit_command "${'$'}command_name"; then
-                        exit 127
-                      fi
-                      continue
-                      ;;
-                    *)
-                      if is_explicit_command "${'$'}command_name" && is_safe_explicit_command_target "${'$'}existing_target" "${'$'}command_name"; then
-                        rm -f "${'$'}link_path"
-                      else
-                        echo "KITE_RESOURCE_STEP command-conflict ${'$'}command_name -> ${'$'}existing_target"
-                        if is_explicit_command "${'$'}command_name"; then
-                          exit 127
-                        fi
-                        continue
-                      fi
-                      ;;
-                  esac
-                fi
                 linked_command=
-                for candidate in \
-                  "$WORKSPACE_BIN_ROOT/${'$'}command_name" \
-                  "${'$'}install_root/bin/${'$'}command_name" \
-                  "${'$'}npm_prefix/bin/${'$'}command_name" \
-                  "${'$'}HOME/.local/bin/${'$'}command_name" \
-                  "${'$'}HOME/.kimi-code/bin/${'$'}command_name" \
-                  "${'$'}HOME/.codex/bin/${'$'}command_name" \
-                  "${'$'}HOME/.claude/local/${'$'}command_name" \
-                  "${'$'}HOME/.opencode/bin/${'$'}command_name" \
-                  "/root/.local/bin/${'$'}command_name" \
-                  "/root/.kimi-code/bin/${'$'}command_name" \
-                  "/root/.codex/bin/${'$'}command_name" \
-                  "/root/.claude/local/${'$'}command_name" \
-                  "/root/.opencode/bin/${'$'}command_name" \
-                  "/usr/local/bin/${'$'}command_name" \
-                  "/usr/bin/${'$'}command_name" \
-                  "/bin/${'$'}command_name"; do
-                  if [ -x "${'$'}candidate" ]; then
-                    echo "KITE_RESOURCE_STEP link-command ${'$'}command_name"
-                    ln -sfn "${'$'}candidate" "$WORKSPACE_BIN_ROOT/${'$'}command_name"
-                    printf '%s\t%s\n' "${'$'}command_name" "${'$'}candidate" >> "${'$'}command_ledger"
+                if [ -e "${'$'}link_path" ] || [ -L "${'$'}link_path" ]; then
+                  if [ -n "${'$'}existing_target" ] && is_safe_explicit_command_target "${'$'}existing_target" "${'$'}command_name"; then
+                    echo "KITE_RESOURCE_STEP command-present ${'$'}command_name"
+                    printf '%s\t%s\n' "${'$'}command_name" "${'$'}existing_target" >> "${'$'}command_ledger"
                     linked_command=1
-                    break
+                  else
+                    echo "KITE_RESOURCE_STEP command-conflict ${'$'}command_name${'$'}{existing_target:+ -> ${'$'}existing_target}"
+                    if is_explicit_command "${'$'}command_name"; then
+                      exit 127
+                    fi
+                    continue
                   fi
-                done
+                fi
+                if [ -z "${'$'}linked_command" ]; then
+                  for candidate in \
+                    "$WORKSPACE_BIN_ROOT/${'$'}command_name" \
+                    "${'$'}install_root/bin/${'$'}command_name" \
+                    "${'$'}npm_prefix/bin/${'$'}command_name" \
+                    "${'$'}HOME/.local/bin/${'$'}command_name" \
+                    "${'$'}HOME/.kimi-code/bin/${'$'}command_name" \
+                    "${'$'}HOME/.codex/bin/${'$'}command_name" \
+                    "${'$'}HOME/.claude/local/${'$'}command_name" \
+                    "${'$'}HOME/.opencode/bin/${'$'}command_name" \
+                    "/root/.local/bin/${'$'}command_name" \
+                    "/root/.kimi-code/bin/${'$'}command_name" \
+                    "/root/.codex/bin/${'$'}command_name" \
+                    "/root/.claude/local/${'$'}command_name" \
+                    "/root/.opencode/bin/${'$'}command_name" \
+                    "/usr/local/bin/${'$'}command_name" \
+                    "/usr/bin/${'$'}command_name" \
+                    "/bin/${'$'}command_name"; do
+                    if [ -x "${'$'}candidate" ]; then
+                      echo "KITE_RESOURCE_STEP link-command ${'$'}command_name"
+                      ln -sfn "${'$'}candidate" "$WORKSPACE_BIN_ROOT/${'$'}command_name"
+                      printf '%s\t%s\n' "${'$'}command_name" "${'$'}candidate" >> "${'$'}command_ledger"
+                      linked_command=1
+                      break
+                    fi
+                  done
+                fi
                 if [ -z "${'$'}linked_command" ]; then
                   if is_explicit_command "${'$'}command_name"; then
-                    echo "$displayName installed, but command ${'$'}command_name could not be linked."
+                    echo "KITE_RESOURCE_FAILURE stage=verify step=command-link command=${'$'}command_name reason=not-found"
                     exit 127
                   fi
                   continue
                 fi
                 hash -r 2>/dev/null || true
                 if ! command -v "${'$'}command_name" >/dev/null 2>&1; then
-                  echo "$displayName installed, but command ${'$'}command_name was not found."
+                  echo "KITE_RESOURCE_FAILURE stage=verify step=command-path command=${'$'}command_name reason=not-on-path"
                   exit 127
                 fi
               done
             fi
             rm -f "${'$'}command_snapshot_after"
+            $verificationCommand
+            cleanup_obsolete_command_links
+            echo "KITE_RESOURCE_STEP commit-install ${safeId(resourceId)}"
             printf '%s\n' 'installed_by_kite' > "${'$'}install_root/ownership"
+            transaction_committed=1
+            rm -rf "${'$'}backup_root" 2>/dev/null || true
+            rm -f "${'$'}old_ledger_snapshot" "${'$'}failed_ledger_snapshot"
+            trap - EXIT
             echo "$displayName installed by manifest action"
         """.trimIndent()
     }

@@ -62,8 +62,7 @@
   "source": {
     "type": "official_script",
     "url": "https://code.kimi.com/kimi-code/install.sh",
-    "repository": "https://github.com/MoonshotAI/kimi-code",
-    "command": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash"
+    "repository": "https://github.com/MoonshotAI/kimi-code"
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.kimi.code",
@@ -73,12 +72,31 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+        "type": "managed",
+        "steps": [
+          {
+            "id": "download-kimi-installer",
+            "type": "download",
+            "url": "https://code.kimi.com/kimi-code/install.sh",
+            "destination": "$install_root/.kite-downloads/install.sh"
+          },
+          {
+            "id": "run-kimi-installer",
+            "type": "script",
+            "interpreter": "bash",
+            "path": "$install_root/.kite-downloads/install.sh"
+          }
+        ],
         "managedCommands": [
           "kimi"
         ],
         "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "kimi-command",
+            "cmd": "command -v kimi >/dev/null 2>&1"
+          }
+        ],
         "timeoutMs": 600000
       }
     ],

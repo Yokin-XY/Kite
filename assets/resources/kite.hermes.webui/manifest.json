@@ -73,8 +73,32 @@
   "actions": {
     "install": [
       {
-        "type": "shell",
-        "cmd": "git clone --depth=1 https://github.com/nesquena/hermes-webui.git /workspace/.kf/software/kite.hermes.webui/hermes-webui && (/workspace/.kf/software/kite.hermes.core/hermes-agent/venv/bin/python -m ensurepip --upgrade || python3 -m pip --python /workspace/.kf/software/kite.hermes.core/hermes-agent/venv/bin/python install --upgrade pip) && /workspace/.kf/software/kite.hermes.core/hermes-agent/venv/bin/python -m pip install -r /workspace/.kf/software/kite.hermes.webui/hermes-webui/requirements.txt"
+        "type": "managed",
+        "steps": [
+          {
+            "id": "clone-hermes-webui",
+            "type": "git",
+            "repository": "https://github.com/nesquena/hermes-webui.git",
+            "destination": "$install_root/hermes-webui",
+            "depth": 1
+          },
+          {
+            "id": "install-hermes-webui-runtime",
+            "type": "shell",
+            "cmd": "repo_dir=\"$install_root/hermes-webui\"\nhermes_core_root=/workspace/.kf/software/kite.hermes.core\nhermes_agent_dir=\"$hermes_core_root/hermes-agent\"\nhermes_home=\"$hermes_core_root/home\"\nagent_python=\"$hermes_agent_dir/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif ! \"$agent_python\" -m pip --version >/dev/null 2>&1; then\n  \"$agent_python\" -m ensurepip --upgrade || python3 -m pip --python \"$agent_python\" install --upgrade pip\nfi\necho 'KITE_RESOURCE_STEP install-python-deps hermes-webui'\n\"$agent_python\" -m pip install -r \"$repo_dir/requirements.txt\"\necho 'KITE_RESOURCE_STEP validate-runtime hermes-webui'\nHERMES_HOME=\"$hermes_home\" HERMES_WEBUI_AGENT_DIR=\"$hermes_agent_dir\" PYTHONPATH=\"$hermes_agent_dir${PYTHONPATH:+:$PYTHONPATH}\" \"$agent_python\" - <<'PY'\nimport yaml\nimport cryptography\nfrom run_agent import AIAgent\nprint('Hermes WebUI runtime import check OK')\nPY\nmkdir -p \"$install_root/bin\" \"$install_root/state\"\ncat > \"$install_root/bin/hermes-webui-kite\" <<'SH'\n#!/usr/bin/env bash\nset -e\nresource_root=/workspace/.kf/software/kite.hermes.webui\nrepo_dir=$resource_root/hermes-webui\nstate_dir=$resource_root/state\nhermes_core_root=/workspace/.kf/software/kite.hermes.core\nhermes_agent_dir=$hermes_core_root/hermes-agent\nhermes_home=$hermes_core_root/home\nagent_python=$hermes_agent_dir/venv/bin/python\nexport PATH=/workspace/.kf/bin:/root/.local/bin:$PATH\nexport HERMES_HOME=$hermes_home\nexport HERMES_WEBUI_AGENT_DIR=$hermes_agent_dir\nexport HERMES_WEBUI_PYTHON=$agent_python\nexport HERMES_WEBUI_STATE_DIR=$state_dir\nexport HERMES_WEBUI_HOST=${HERMES_WEBUI_HOST:-127.0.0.1}\nexport HERMES_WEBUI_PORT=${HERMES_WEBUI_PORT:-8787}\ncd \"$repo_dir\"\nexec ./ctl.sh \"$@\"\nSH\nchmod +x \"$install_root/bin/hermes-webui-kite\""
+          }
+        ],
+        "managedCommands": [
+          "hermes-webui-kite"
+        ],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "hermes-webui-command",
+            "cmd": "command -v hermes-webui-kite >/dev/null 2>&1"
+          }
+        ],
+        "timeoutMs": 1800000
       }
     ],
     "open": {
