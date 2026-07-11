@@ -3533,20 +3533,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         revision: Long = 0L
     ): Map<String, ResourceItem> {
         purgeResourceItemBindings()
-        val preferredIds = preferredResourceIds
-            .map { KiteResourceInstallRecipes.safeId(it) }
-            .filter { it.isNotBlank() }
-            .toSet()
         val visibleIds = visibleResourceItemBindingIds()
         val detailItem = resourceDetailBinding
             ?.takeIf { currentScreen == Screen.ResourceDetail && it.contentHost === resourceDetailContentHost }
             ?.item
-        val targetIds = if (preferredIds.isEmpty()) {
-            visibleIds + listOfNotNull(detailItem?.id)
-        } else {
-            preferredIds + visibleIds.filter { it in preferredIds } +
-                listOfNotNull(detailItem?.id?.takeIf { it in preferredIds })
-        }
+        val targetIds = resourceStatePatchTargetIds(
+            visibleResourceIds = visibleIds,
+            preferredResourceIds = preferredResourceIds,
+            detailResourceId = detailItem?.id
+        )
         if (targetIds.isEmpty()) return emptyMap()
         val projected = targetIds.mapNotNull { resourceId ->
             val base = resourceItemBindings[resourceId]
@@ -6958,33 +6953,67 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             val requestId = ++resourceInstallWizardRefreshSerial
             val targetId = binding.targetResourceId
             val planIds = binding.planResourceIds
+            val catalogSnapshot = cachedResourceCatalog
+            if (catalogSnapshot != null) {
+                val uiState = runCatching {
+                    buildResourceInstallWizardUiState(targetId, planIds, catalogSnapshot)
+                }.getOrNull() ?: return@post
+                applyVisibleResourceInstallWizardRefreshIfCurrent(
+                    binding = binding,
+                    requestId = requestId,
+                    uiState = uiState,
+                    reason = reason,
+                    path = "memory"
+                )
+                return@post
+            }
             thread(name = "KiteInstallWizardRefresh", isDaemon = true) {
                 val uiState = runCatching {
                     buildResourceInstallWizardUiState(targetId, planIds)
                 }.getOrNull() ?: return@thread
                 runOnUiThread {
-                    if (requestId != resourceInstallWizardRefreshSerial) return@runOnUiThread
-                    if (resourceInstallWizardBinding !== binding || currentScreen != Screen.CardRun) return@runOnUiThread
-                    applyResourceInstallWizardUiState(binding, uiState)
-                    diagnostics.logRecipeEvent(
-                        "install_wizard_local_refresh",
-                        null,
-                        mapOf(
-                            "reason" to reason,
-                            "target" to targetId,
-                            "rows" to uiState.planIds.size.toString()
-                        )
+                    applyVisibleResourceInstallWizardRefreshIfCurrent(
+                        binding = binding,
+                        requestId = requestId,
+                        uiState = uiState,
+                        reason = reason,
+                        path = "background"
                     )
                 }
             }
         }
     }
 
+    private fun applyVisibleResourceInstallWizardRefreshIfCurrent(
+        binding: ResourceInstallWizardBinding,
+        requestId: Long,
+        uiState: ResourceInstallWizardUiState,
+        reason: String,
+        path: String
+    ) {
+        if (requestId != resourceInstallWizardRefreshSerial) return
+        if (resourceInstallWizardBinding !== binding || currentScreen != Screen.CardRun) return
+        applyResourceInstallWizardUiState(binding, uiState)
+        diagnostics.logRecipeEvent(
+            "install_wizard_local_refresh",
+            null,
+            mapOf(
+                "reason" to reason,
+                "target" to uiState.targetId,
+                "rows" to uiState.planIds.size.toString(),
+                "path" to path
+            )
+        )
+    }
+
     private fun buildResourceInstallWizardUiState(
         targetId: String,
-        seedPlanIds: List<String>
+        seedPlanIds: List<String>,
+        catalogSnapshot: List<ResourceItem>? = null
     ): ResourceInstallWizardUiState {
-        val catalog = (cachedResourceCatalog ?: resourceCatalog(forceRefresh = false)).associateBy { it.id }
+        val catalog = (catalogSnapshot ?: cachedResourceCatalog ?: resourceCatalog(forceRefresh = false))
+            .map { item -> projectResourceItemRuntime(item) }
+            .associateBy { it.id }
         val planSnapshot = resourceInstallStore.planSnapshot()
         val pendingIds = planSnapshot.pendingResourceIds
         val planIds = seedPlanIds
@@ -21114,6 +21143,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private var activeResourceInstallWizard: ResourceInstallWizardContext? = null
     }
 }
+
+internal fun resourceStatePatchTargetIds(
+    visibleResourceIds: Collection<String>,
+    preferredResourceIds: Collection<String> = emptyList(),
+    detailResourceId: String? = null
+): Set<String> =
+    (visibleResourceIds + preferredResourceIds + listOfNotNull(detailResourceId))
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .map { KiteResourceInstallRecipes.safeId(it) }
+        .toCollection(linkedSetOf())
 
 internal fun cardRunCommandHint(status: RecipeRunStatus, text: String): String? {
     if (status != RecipeRunStatus.Failed && status != RecipeRunStatus.BridgeUnavailable) return null

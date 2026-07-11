@@ -67,4 +67,27 @@ class KiteResourceInstallStoreSignalTest {
         assertTrue(store.planSnapshot().resourceIds.isEmpty())
         assertTrue(store.signals.value.affectedResourceIds.containsAll(listOf(dependencyId, targetId)))
     }
+
+    @Test
+    fun `连续信号只保留最新事件但共享快照保留全部事实`() {
+        val store = KiteResourceInstallStore(context)
+        val suffix = System.nanoTime()
+        val installingId = "test.resource.installing.$suffix"
+        val failedId = "test.resource.failed.$suffix"
+
+        store.clear(installingId)
+        store.clear(failedId)
+        store.markInstalling(installingId, "install-run")
+        val installingRevision = store.signals.value.revision
+        store.markFailed(failedId, KiteResourceInstallStore.OP_INSTALL, "failed-run", "network")
+
+        val latestSignal = store.signals.value
+        assertTrue(latestSignal.revision > installingRevision)
+        assertEquals(listOf(failedId), latestSignal.affectedResourceIds)
+        assertTrue(store.registryEntry(installingId)?.installing == true)
+        assertTrue(store.registryEntry(failedId)?.failed == true)
+
+        store.clear(installingId)
+        store.clear(failedId)
+    }
 }
