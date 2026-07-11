@@ -161,6 +161,50 @@ class BrowserAuthSessionStoreTest {
     }
 
     @Test
+    fun forwardedLoopbackCallbackBecomesAOneShotRuntimeSignal() {
+        val store = BrowserAuthSessionStore(context)
+        val now = 1_000L
+        val session = store.createCliLoopbackSession(now = now)
+
+        store.markLoopbackCallbackChannel(
+            sessionId = session.sessionId,
+            status = BrowserAuthCallbackChannelStatus.RelayReady,
+            now = now + 1
+        )
+        store.markLoopbackCallbackForwarded(session.sessionId, now = now + 2)
+
+        val forwarded = store.forwardedLoopbackNeedingRuntimeSync().single()
+        assertEquals(BrowserAuthSessionStatus.Delivered, forwarded.status)
+        assertEquals(BrowserAuthCallbackChannelStatus.Forwarded, forwarded.callbackChannelStatus)
+        assertNull(forwarded.callbackChannelFailureReason)
+        assertNull(store.findPending("instance", cliLoopbackUrl(), now = now + 3))
+
+        store.markRuntimeNotified(session.sessionId, now = now + 4)
+
+        assertTrue(store.forwardedLoopbackNeedingRuntimeSync().isEmpty())
+    }
+
+    @Test
+    fun relayFailureCannotDowngradeAnAlreadyForwardedCallback() {
+        val store = BrowserAuthSessionStore(context)
+        val now = 1_000L
+        val session = store.createCliLoopbackSession(now = now)
+
+        store.markLoopbackCallbackForwarded(session.sessionId, now = now + 1)
+        store.markLoopbackCallbackChannel(
+            sessionId = session.sessionId,
+            status = BrowserAuthCallbackChannelStatus.RelayUnavailable,
+            reason = "late_connection_failed",
+            now = now + 2
+        )
+
+        val forwarded = store.forwardedLoopbackNeedingRuntimeSync().single()
+        assertEquals(BrowserAuthSessionStatus.Delivered, forwarded.status)
+        assertEquals(BrowserAuthCallbackChannelStatus.Forwarded, forwarded.callbackChannelStatus)
+        assertNull(forwarded.callbackChannelFailureReason)
+    }
+
+    @Test
     fun markReturnedDoesNotReviveExpiredAppRedirectSession() {
         val store = BrowserAuthSessionStore(context)
         val now = 1_000L

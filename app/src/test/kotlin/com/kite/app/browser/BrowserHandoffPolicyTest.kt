@@ -160,6 +160,42 @@ class BrowserHandoffPolicyTest {
     }
 
     @Test
+    fun loopbackEndpointExposesOnlyTransportCoordinates() {
+        val endpoint = BrowserHandoffPolicy.loopbackCallbackEndpoint(
+            "http://localhost:43299/oauth/callback"
+        )
+
+        checkNotNull(endpoint)
+        assertEquals("localhost", endpoint.host)
+        assertEquals(43299, endpoint.port)
+        assertEquals("/oauth/callback", endpoint.path)
+        assertEquals(BrowserLoopbackHostKind.Localhost, endpoint.hostKind)
+    }
+
+    @Test
+    fun ipv4LoopbackRangeIsAcceptedWithoutProviderRules() {
+        val endpoint = BrowserHandoffPolicy.loopbackCallbackEndpoint(
+            "http://127.23.45.67:9876/callback"
+        )
+
+        checkNotNull(endpoint)
+        assertEquals(BrowserLoopbackHostKind.Ipv4, endpoint.hostKind)
+        assertEquals(9876, endpoint.port)
+    }
+
+    @Test
+    fun loopbackEndpointRejectsCredentialsAndFragments() {
+        assertEquals(
+            null,
+            BrowserHandoffPolicy.loopbackCallbackEndpoint("http://user@localhost:1455/callback")
+        )
+        assertEquals(
+            null,
+            BrowserHandoffPolicy.loopbackCallbackEndpoint("http://localhost:1455/callback#token")
+        )
+    }
+
+    @Test
     fun oidcHybridResponseTypeStartsExternalAuthHandoff() {
         val decision = BrowserHandoffPolicy.classify(
             url = "https://login.example.test/oauth2/authorize" +

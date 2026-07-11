@@ -13,6 +13,20 @@ data class BrowserHandoffRequest(
     val source: String? = null
 )
 
+enum class BrowserLoopbackHostKind {
+    Localhost,
+    Ipv4,
+    Ipv6
+}
+
+data class BrowserLoopbackCallbackEndpoint(
+    val redirectUri: String,
+    val host: String,
+    val port: Int,
+    val path: String,
+    val hostKind: BrowserLoopbackHostKind
+)
+
 fun interface BrowserHandoffLauncher {
     fun launchBrowserHandoff(
         request: BrowserHandoffRequest,
@@ -135,9 +149,32 @@ object BrowserHandoffPolicy {
     }
 
     fun isLoopbackRedirectUri(value: String): Boolean {
-        val uri = parseUri(value) ?: return false
-        val scheme = uri.scheme?.lowercase(Locale.US) ?: return false
-        return scheme == "http" && isLoopbackHost(uri.host)
+        return loopbackCallbackEndpoint(value) != null
+    }
+
+    fun loopbackCallbackEndpoint(value: String): BrowserLoopbackCallbackEndpoint? {
+        val uri = parseUri(value) ?: return null
+        val scheme = uri.scheme?.lowercase(Locale.US) ?: return null
+        if (scheme != "http" || !uri.rawUserInfo.isNullOrBlank() || !uri.rawFragment.isNullOrBlank()) return null
+        val host = normalizeLoopbackHost(uri.host) ?: return null
+        val hostKind = when {
+            host == "localhost" -> BrowserLoopbackHostKind.Localhost
+            isIpv4LoopbackHost(host) -> BrowserLoopbackHostKind.Ipv4
+            host == "::1" || host == "0:0:0:0:0:0:0:1" -> BrowserLoopbackHostKind.Ipv6
+            else -> return null
+        }
+        val port = when {
+            uri.port in 1..65535 -> uri.port
+            uri.port == -1 -> 80
+            else -> return null
+        }
+        return BrowserLoopbackCallbackEndpoint(
+            redirectUri = value,
+            host = host,
+            port = port,
+            path = uri.rawPath?.takeIf { it.isNotBlank() } ?: "/",
+            hostKind = hostKind
+        )
     }
 
     fun isKiteAppRedirectUri(value: String): Boolean {
@@ -187,16 +224,26 @@ object BrowserHandoffPolicy {
     }
 
     private fun isLoopbackHost(host: String?): Boolean {
-        val normalized = host
+        val normalized = normalizeLoopbackHost(host) ?: return false
+        return normalized == "localhost" ||
+            isIpv4LoopbackHost(normalized) ||
+            normalized == "::1" ||
+            normalized == "0:0:0:0:0:0:0:1"
+    }
+
+    private fun normalizeLoopbackHost(host: String?): String? =
+        host
             ?.trim()
             ?.removePrefix("[")
             ?.removeSuffix("]")
             ?.lowercase(Locale.US)
-            ?: return false
-        return normalized == "127.0.0.1" ||
-            normalized == "localhost" ||
-            normalized == "::1" ||
-            normalized == "0:0:0:0:0:0:0:1"
+
+    private fun isIpv4LoopbackHost(host: String): Boolean {
+        val parts = host.split(".")
+        if (parts.size != 4 || parts.firstOrNull() != "127") return false
+        return parts.all { part ->
+            part.isNotBlank() && part.all(Char::isDigit) && part.toIntOrNull() in 0..255
+        }
     }
 
     private fun queryParameters(uri: URI): Map<String, List<String>> {

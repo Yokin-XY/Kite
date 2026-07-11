@@ -20,6 +20,14 @@ enum class BrowserAuthSessionStatus {
     Expired
 }
 
+enum class BrowserAuthCallbackChannelStatus {
+    Unprepared,
+    Direct,
+    RelayReady,
+    Forwarded,
+    RelayUnavailable
+}
+
 data class BrowserAuthSession(
     val sessionId: String,
     val kind: BrowserAuthSessionKind,
@@ -37,7 +45,10 @@ data class BrowserAuthSession(
     val status: BrowserAuthSessionStatus,
     val returnedUrl: String? = null,
     val failureReason: String? = null,
-    val runtimeNotifiedAt: Long? = null
+    val runtimeNotifiedAt: Long? = null,
+    val callbackChannelStatus: BrowserAuthCallbackChannelStatus = BrowserAuthCallbackChannelStatus.Unprepared,
+    val callbackChannelUpdatedAt: Long? = null,
+    val callbackChannelFailureReason: String? = null
 )
 
 class BrowserAuthSessionStore(context: Context) {
@@ -131,6 +142,48 @@ class BrowserAuthSessionStore(context: Context) {
     }
 
     @Synchronized
+    fun markLoopbackCallbackChannel(
+        sessionId: String,
+        status: BrowserAuthCallbackChannelStatus,
+        reason: String? = null,
+        now: Long = System.currentTimeMillis()
+    ) {
+        update(sessionId) { session ->
+            if (session.kind != BrowserAuthSessionKind.CliLoopback ||
+                session.status !in setOf(BrowserAuthSessionStatus.Pending, BrowserAuthSessionStatus.Delivered) ||
+                (session.callbackChannelStatus == BrowserAuthCallbackChannelStatus.Forwarded &&
+                    status != BrowserAuthCallbackChannelStatus.Forwarded)
+            ) {
+                session
+            } else {
+                session.copy(
+                    callbackChannelStatus = status,
+                    callbackChannelUpdatedAt = now,
+                    callbackChannelFailureReason = reason?.takeIf { it.isNotBlank() }
+                )
+            }
+        }
+    }
+
+    @Synchronized
+    fun markLoopbackCallbackForwarded(sessionId: String, now: Long = System.currentTimeMillis()) {
+        update(sessionId) { session ->
+            if (session.kind != BrowserAuthSessionKind.CliLoopback ||
+                session.status != BrowserAuthSessionStatus.Pending
+            ) {
+                session
+            } else {
+                session.copy(
+                    status = BrowserAuthSessionStatus.Delivered,
+                    callbackChannelStatus = BrowserAuthCallbackChannelStatus.Forwarded,
+                    callbackChannelUpdatedAt = now,
+                    callbackChannelFailureReason = null
+                )
+            }
+        }
+    }
+
+    @Synchronized
     fun markFailed(sessionId: String, reason: String) {
         update(sessionId) { it.copy(status = BrowserAuthSessionStatus.Failed, failureReason = reason) }
     }
@@ -160,6 +213,15 @@ class BrowserAuthSessionStore(context: Context) {
     fun expiredNeedingRuntimeSync(): List<BrowserAuthSession> =
         loadAll().filter {
             it.status == BrowserAuthSessionStatus.Expired && it.runtimeNotifiedAt == null
+        }
+
+    @Synchronized
+    fun forwardedLoopbackNeedingRuntimeSync(): List<BrowserAuthSession> =
+        loadAll().filter {
+            it.kind == BrowserAuthSessionKind.CliLoopback &&
+                it.status == BrowserAuthSessionStatus.Delivered &&
+                it.callbackChannelStatus == BrowserAuthCallbackChannelStatus.Forwarded &&
+                it.runtimeNotifiedAt == null
         }
 
     @Synchronized
@@ -254,6 +316,9 @@ class BrowserAuthSessionStore(context: Context) {
             .put("returnedUrl", returnedUrl.orEmpty())
             .put("failureReason", failureReason.orEmpty())
             .put("runtimeNotifiedAt", runtimeNotifiedAt ?: 0L)
+            .put("callbackChannelStatus", callbackChannelStatus.name)
+            .put("callbackChannelUpdatedAt", callbackChannelUpdatedAt ?: 0L)
+            .put("callbackChannelFailureReason", callbackChannelFailureReason.orEmpty())
 
     private fun JSONObject.toBrowserAuthSessionOrNull(): BrowserAuthSession? {
         val sessionId = optString("sessionId").takeIf { it.isNotBlank() } ?: return null
@@ -284,7 +349,13 @@ class BrowserAuthSessionStore(context: Context) {
                 .takeIf { it.isNotBlank() }
                 ?.let { BrowserAuthRedirectParser.parse(it)?.redactedUrl ?: it },
             failureReason = optString("failureReason").takeIf { it.isNotBlank() },
-            runtimeNotifiedAt = optLong("runtimeNotifiedAt").takeIf { it > 0L }
+            runtimeNotifiedAt = optLong("runtimeNotifiedAt").takeIf { it > 0L },
+            callbackChannelStatus = enumValueOrDefault(
+                optString("callbackChannelStatus"),
+                BrowserAuthCallbackChannelStatus.Unprepared
+            ),
+            callbackChannelUpdatedAt = optLong("callbackChannelUpdatedAt").takeIf { it > 0L },
+            callbackChannelFailureReason = optString("callbackChannelFailureReason").takeIf { it.isNotBlank() }
         )
     }
 

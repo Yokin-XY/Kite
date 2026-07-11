@@ -76,6 +76,7 @@ import com.kite.app.browser.BrowserHandoffDecision
 import com.kite.app.browser.BrowserHandoffLauncher
 import com.kite.app.browser.BrowserHandoffPolicy
 import com.kite.app.browser.BrowserHandoffRequest
+import com.kite.app.browser.BrowserLoopbackCallbackBridge
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.browser.automation.BrowserAutomationAction
 import com.kite.app.browser.automation.BrowserAutomationActionResult
@@ -209,6 +210,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var bridgeClient: KiteBridgeClient
     private lateinit var webShell: KiteWebShell
     private lateinit var browserAuthSessions: BrowserAuthSessionStore
+    private lateinit var browserLoopbackCallbackBridge: BrowserLoopbackCallbackBridge
     private lateinit var browserAutomationSessions: BrowserAutomationSessionStore
     private lateinit var browserAutomationController: BrowserAutomationController
     private lateinit var localServer: KiteLocalServer
@@ -405,6 +407,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         dropZoneStatus = dropZoneManager.prepareDropZone()
         bridgeClient = KiteBridgeClient(diagnostics, applicationContext)
         browserAuthSessions = BrowserAuthSessionStore(applicationContext)
+        browserLoopbackCallbackBridge = BrowserLoopbackCallbackBridge.get(applicationContext)
         StartupTraceStore.markStage(this, "main.webview_create")
         webView = WebView(this)
         browserAutomationSessions = BrowserAutomationSessionStore(applicationContext)
@@ -601,12 +604,60 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun expireBrowserAuthSessionsOnResume() {
-        browserAuthSessions.expirePending()
+        browserAuthSessions.expirePending().forEach { session ->
+            browserLoopbackCallbackBridge.stop(session.sessionId)
+        }
+        browserAuthSessions.forwardedLoopbackNeedingRuntimeSync().forEach { session ->
+            if (updateForwardedLoopbackBrowserAuthSession(session)) {
+                browserAuthSessions.markRuntimeNotified(session.sessionId)
+            }
+        }
         browserAuthSessions.expiredNeedingRuntimeSync().forEach { session ->
             if (updateExpiredBrowserAuthSession(session)) {
                 browserAuthSessions.markRuntimeNotified(session.sessionId)
             }
         }
+    }
+
+    private fun updateForwardedLoopbackBrowserAuthSession(session: BrowserAuthSession): Boolean {
+        val instanceId = session.instanceId?.takeIf { it.isNotBlank() } ?: return true
+        val existing = CardRunStore.get(instanceId) ?: return true
+        val recipe = session.recipeId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
+            ?: findRecipeById(existing.recipeId)
+            ?: CardRunStore.registeredRecipe(existing.recipeId)
+            ?: return false
+        val summary = "浏览器回调已交给登录发起方，正在由发起方确认登录结果"
+        val updated = CardRunStore.update(
+            recipe = recipe,
+            status = existing.status,
+            instanceId = instanceId,
+            surface = existing.surface,
+            currentStepIndex = existing.currentStepIndex,
+            runId = existing.runId,
+            terminalSessionId = existing.terminalSessionId,
+            pid = existing.pid,
+            rootPid = existing.rootPid,
+            processGroupId = existing.processGroupId,
+            systemSessionId = existing.systemSessionId,
+            lastMeaningfulOutput = summary,
+            lastError = existing.lastError,
+            shellReportText = existing.shellReportText,
+            nextActionUrl = existing.nextActionUrl
+        )
+        activeRunInstanceIds[recipe.id] = instanceId
+        runtimeStates[recipe.id] = updated
+        diagnostics.logRecipeEvent(
+            "browser_loopback_callback_forwarded",
+            recipe,
+            mapOf(
+                "instanceId" to instanceId,
+                "sessionId" to session.sessionId,
+                "channel" to session.callbackChannelStatus.name
+            )
+        )
+        return true
     }
 
     private fun updateExpiredBrowserAuthSession(session: BrowserAuthSession): Boolean {
@@ -666,7 +717,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             existing.surface == CardRunSurface.Terminal &&
             !existing.terminalSessionId.isNullOrBlank()
         val summary = if (session.kind == BrowserAuthSessionKind.CliLoopback) {
-            "浏览器登录回传待确认，请按 CLI 提示重试或粘贴授权 code"
+            "未在等待时间内确认浏览器回调，登录结果请以发起方终端为准"
         } else {
             "浏览器登录等待超时，请重新打开登录页"
         }
@@ -675,6 +726,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             appendLine("sessionId=${session.sessionId}")
             appendLine("kind=${session.kind.name}")
             appendLine("reason=${session.failureReason ?: "expired"}")
+            appendLine("callbackChannel=${session.callbackChannelStatus.name}")
             session.redirectUri?.takeIf { it.isNotBlank() }?.let { appendLine("redirectUri=$it") }
         }.trim()
         val updated = CardRunStore.update(
@@ -10057,10 +10109,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     ): View =
         FrameLayout(this).apply {
             setBackgroundColor(tokens.pageBackground)
-            val isCli = decision is BrowserHandoffDecision.StartCliCallbackHandoff
-            val titleText = if (isCli) "正在等待 CLI 登录回传" else "正在等待浏览器登录返回"
-            val bodyText = if (isCli) {
-                "登录页已用安全浏览器打开。若浏览器回到 Android 本机 localhost，而 CLI 未收到结果，请使用该工具的 device code 或复制回调 URL 粘回终端。"
+            val isLoopback = decision is BrowserHandoffDecision.StartCliCallbackHandoff
+            val titleText = if (isLoopback) "正在等待浏览器回调" else "正在等待浏览器登录返回"
+            val bodyText = if (isLoopback) {
+                "登录页已用安全浏览器打开。回调会通过 Android 本机 loopback 原样交给登录发起方，由发起方校验并保存登录状态。"
             } else {
                 "登录页已用安全浏览器打开。返回后 Kite 会校验 state，并把结果交回当前运行实例。"
             }
@@ -10197,6 +10249,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
         val session = browserAuthSessions.createPending(request, decision)
         updateBrowserHandoffWaitingState(session, request, rerenderFocusedSurface)
+        val loopbackPreparation = if (decision is BrowserHandoffDecision.StartCliCallbackHandoff) {
+            browserLoopbackCallbackBridge.prepare(session)
+        } else {
+            null
+        }
         val uri = Uri.parse(request.url)
         val opened = openCustomTabOrSystemBrowser(uri)
 
@@ -10211,10 +10268,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 "sessionId" to session.sessionId,
                 "kind" to session.kind.name,
                 "source" to request.source.orEmpty(),
-                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url)
+                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url),
+                "callbackChannel" to (loopbackPreparation?.mode?.name ?: "app_redirect"),
+                "callbackPort" to loopbackPreparation?.port?.toString().orEmpty()
             )
         )
         if (!opened) {
+            browserLoopbackCallbackBridge.stop(session.sessionId)
             browserAuthSessions.markFailed(session.sessionId, "external_browser_open_failed")
             Toast.makeText(this, "无法打开安全浏览器", Toast.LENGTH_LONG).show()
         }
@@ -10252,7 +10312,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             else -> RecipeRunStatus.Opened
         }
         val message = when (session.kind) {
-            BrowserAuthSessionKind.CliLoopback -> "已打开安全浏览器，等待 CLI 登录回传"
+            BrowserAuthSessionKind.CliLoopback -> "已打开安全浏览器，等待登录发起方接收回调"
             BrowserAuthSessionKind.AppRedirect -> "已打开安全浏览器，等待登录返回 Kite"
             BrowserAuthSessionKind.ExternalOnly -> "已打开系统浏览器"
         }
