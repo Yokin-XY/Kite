@@ -1035,3 +1035,31 @@ T007 主壳旧实现删除与最终验收：
 T007 状态：completed。关键壳层提交为 `57c0199`，旧主壳删除提交为 `0c40b56`。
 
 下一步：进入 T008，先审计运行管理页、运行时状态面板、刷新入口和停止确认的真实所有权，再建立 `runtime-management` Feature 的状态与动作合同。
+
+## T008 运行管理与运行时面板
+
+### 三问自检
+
+目标是什么？建立 `runtime-management` Feature，把卡片、终端、后台运行项和 PID 的归属投影、动作语义与可见页面移出 `MainActivity`；页面只消费 UiState 并提交刷新、打开、停止、结束和回收意图。
+
+完成标准是什么？一个 UiState 可追踪卡片、终端、服务和 PID；停止动作先进入请求中/待确认，执行层确认后才成为已停止或失败；内存压力继续经过既有策略链；可见状态变化只更新受影响行，不靠整页重建和固定延迟轮询。
+
+依赖是否满足？T006 已将运行开始和停止收口到进程级编排，T007 已让运行显示面脱离主壳。运行管理现在可以只聚合事实与提交动作，不再承担执行或显示面生命周期。
+
+### 所有权与压力审计
+
+- `showKiteProcessOverview()` 直接读取 `CardRunStore`、`TerminalSessionStore` 和 `TaskManagerStore`，同时完成归属推导、整页绘制、展开状态、Dialog 与动作执行；每次展开行也会 `clearRootForScreen()` 后重建整页。
+- 停止和刷新依赖 `260/900/1800ms` 固定延迟再次调用整页入口，Store 信号不是主要同步方式。
+- `stopRunManagementProcess()` 在执行进程结束前先把关联 CardRun 写成 `Stopped` 并清空绑定；终止失败无法恢复事实，结束子进程也可能错误停止整张卡片。
+- `TaskManagerStore.prootOwnerStopId()` 同时要求同一个字符串以 `root-` 和 `card:/resource:/terminal:` 开头，拥有者级终止路径实际不可达。
+- 运行状态弹层、首次权限门和运行管理页共用主壳字段，但它们的事实来源不同：准入/权限属于 runtime bootstrap，卡片/终端/PID 计数属于运行管理快照，不能继续混成一套页面本地状态。
+
+T008 统一快照与投影合同结果：
+
+- 新增 Application 层 `RuntimeManagementSnapshot`，把 CardRun、终端和进程作为三类结构化事实输入；不保存 View、导航或页面展开状态。
+- 新增纯 `RuntimeManagementProjector` 与 Feature UiState。根运行实例形成唯一分组，子实例显示面折叠到父实例；进程按 owner、unit、terminal 和明确 PID 绑定评分后只归属一处。
+- 根进程只有 owner-root 或明确绑定 PID 才能成立，不再用“列表第一项”猜主进程；主进程动作路由到 `StopRun`，子进程保持 `EndProcess`，避免结束子进程时把整项任务判停。
+- 动作使用数据命令，不在 UiState 保存闭包；`Requested/AwaitingConfirmation/Failed` 只改变动作标签和可用性，不提前修改 CardRun 事实。
+- 5 个纯单测覆盖完整归属、子实例折叠、待确认动作、Stopping 语义和系统/未归属分区；目标测试、Kotlin 编译、架构检查和差异检查通过。
+
+下一步：实现 Android `RuntimeManagementGateway`，把三个现有 Store 映射到统一快照，并先修复拥有者级进程停止目标解析；随后接确认型动作协调器。

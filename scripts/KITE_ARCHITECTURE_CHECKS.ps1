@@ -35,6 +35,9 @@ $baselinePath = Join-Path $Root 'docs/stabilization/architecture-baseline.json'
 $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
 $cardRunPath = Join-Path $Root 'app/src/main/java/com/kite/app/CardRunActivity.kt'
 $runSurfaceHostPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceHost.kt'
+$runtimeManagementSnapshotPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementSnapshot.kt'
+$runtimeManagementContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementFeatureContract.kt'
+$runtimeManagementProjectorPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementProjector.kt'
 $installSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/RunInstallWizardSurfaceBinding.kt'
 $legacyFeatureInstallBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunInstallWizardSurfaceBinding.kt'
 $screenRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/AppNavigator.kt'
@@ -47,6 +50,9 @@ Assert-Architecture (Test-Path $baselinePath) 'Architecture baseline is missing.
 Assert-Architecture (Test-Path $mainPath) 'MainActivity source is missing.'
 Assert-Architecture (Test-Path $cardRunPath) 'CardRunActivity source is missing.'
 Assert-Architecture (Test-Path $runSurfaceHostPath) 'RunSurfaceHost source is missing.'
+Assert-Architecture (Test-Path $runtimeManagementSnapshotPath) 'Runtime-management snapshot contract is missing.'
+Assert-Architecture (Test-Path $runtimeManagementContractPath) 'Runtime-management feature contract is missing.'
+Assert-Architecture (Test-Path $runtimeManagementProjectorPath) 'Runtime-management projector is missing.'
 Assert-Architecture (Test-Path $installSurfaceBindingPath) 'Run install-wizard shell adapter is missing.'
 Assert-Architecture (-not (Test-Path $legacyFeatureInstallBindingPath)) 'Run install-wizard adapter must not live inside the run-surface feature.'
 Assert-Architecture (Test-Path $screenRouterPath) 'AppNavigator source is missing.'
@@ -56,6 +62,9 @@ if ($failures.Count -eq 0) {
     $main = [System.IO.File]::ReadAllText($mainPath, [System.Text.Encoding]::UTF8)
     $cardRun = [System.IO.File]::ReadAllText($cardRunPath, [System.Text.Encoding]::UTF8)
     $runSurfaceHost = [System.IO.File]::ReadAllText($runSurfaceHostPath, [System.Text.Encoding]::UTF8)
+    $runtimeManagementSnapshot = [System.IO.File]::ReadAllText($runtimeManagementSnapshotPath, [System.Text.Encoding]::UTF8)
+    $runtimeManagementContract = [System.IO.File]::ReadAllText($runtimeManagementContractPath, [System.Text.Encoding]::UTF8)
+    $runtimeManagementProjector = [System.IO.File]::ReadAllText($runtimeManagementProjectorPath, [System.Text.Encoding]::UTF8)
     $screenRouter = [System.IO.File]::ReadAllText($screenRouterPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
@@ -133,6 +142,21 @@ if ($failures.Count -eq 0) {
         $runSurfaceHost -match 'fun\s+reconcile\s*\(' -and
         $runSurfaceHost -match 'fun\s+dispose\s*\('
     ) 'RunSurfaceHost must own render, reconcile, and display disposal entry points.'
+    Assert-Architecture (
+        $runtimeManagementSnapshot -match 'val\s+runs:\s*List<CardRunState>' -and
+        $runtimeManagementSnapshot -match 'val\s+terminals:\s*List<RuntimeManagedTerminal>' -and
+        $runtimeManagementSnapshot -match 'val\s+processes:\s*List<RuntimeManagedProcess>'
+    ) 'Runtime management must consume one structured run, terminal, and process snapshot.'
+    Assert-Architecture (
+        $runtimeManagementContract -match 'sealed interface RuntimeManagementActionTarget' -and
+        $runtimeManagementContract -match 'AwaitingConfirmation' -and
+        $runtimeManagementContract -notmatch '\(\)\s*->\s*Unit'
+    ) 'Runtime-management UI actions must be data commands with explicit confirmation state, not View callbacks.'
+    Assert-Architecture (
+        $runtimeManagementProjector -match 'assignProcesses\(' -and
+        $runtimeManagementProjector -match 'RuntimeManagementMutation' -and
+        $runtimeManagementProjector -notmatch 'TaskManagerStore|TerminalSessionStore|CardRunStore|android\.|androidx\.|Context|View'
+    ) 'Runtime-management projection must stay pure and must not read stores or Android UI directly.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
