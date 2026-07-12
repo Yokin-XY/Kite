@@ -119,6 +119,23 @@ class ResourceRunCoordinatorTest {
         assertEquals(1, gateway.savedSnapshots.size)
     }
 
+    @Test
+    fun `安装向导只向协调器提交启动下一计划项`() {
+        val gateway = FakeResourceRunGateway()
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(gateway, hub)
+        gateway.pendingResources += listOf("installed", "next")
+        gateway.installedFacts += "installed"
+        gateway.advanceResults["installed"] = listOf("next")
+        gateway.plannedInstalls["next"] = launch("next", KiteResourceInstallRecipes.OP_INSTALL)
+
+        assertTrue(coordinator.startNextPlannedInstall("wizard-instance"))
+
+        assertEquals(listOf("installed"), gateway.advancedResources)
+        assertEquals(listOf("next"), gateway.planStepsStarted)
+        assertEquals("wizard-instance", gateway.startedRequests.single().parentInstanceId)
+    }
+
     private fun coordinator(
         gateway: FakeResourceRunGateway,
         hub: RunLifecycleEventHub
@@ -175,6 +192,8 @@ private class FakeResourceRunGateway : ResourceRunGateway {
     val planStepsStarted = mutableListOf<String>()
     val advanceResults = mutableMapOf<String, List<String>>()
     val plannedInstalls = mutableMapOf<String, ResourceRunLaunchRequest>()
+    val pendingResources = mutableListOf<String>()
+    val installedFacts = mutableSetOf<String>()
     private var generation = 100L
 
     override fun recipe(resourceId: String, operation: String): KiteRecipe? =
@@ -233,12 +252,14 @@ private class FakeResourceRunGateway : ResourceRunGateway {
 
     override fun resumePlanFrom(resourceId: String): Boolean = true
 
-    override fun isInstalled(resourceId: String): Boolean = false
+    override fun isInstalled(resourceId: String): Boolean = resourceId in installedFacts
 
     override fun markPlanStepRunning(resourceId: String): Boolean {
         planStepsStarted += resourceId
         return true
     }
+
+    override fun pendingPlanResourceIds(): List<String> = pendingResources.toList()
 
     override fun plannedInstall(resourceId: String, parentInstanceId: String?): ResourceRunLaunchRequest? =
         plannedInstalls[resourceId]?.copy(parentInstanceId = parentInstanceId)

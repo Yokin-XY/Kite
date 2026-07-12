@@ -998,3 +998,11 @@ T007 共享浏览器 handoff 编排结果：
 共享浏览器 handoff 状态：completed，待独立提交。
 
 下一步：实现轻量 CardRunActivity 的 Store 观察、Host 装配、continue/stop/back chrome 与各显示绑定，然后切断 MainActivity 继承并做真机回归。
+
+T007 资源向导计划动作边界：
+
+- `ResourceRunCoordinator.startNextPlannedInstall(parentInstanceId)` 成为安装向导“开始获取”的 Application 入口；页面不再需要读取资源目录、判断已安装项、编译配方或直接推进队列。
+- `ResourceRunGateway` 只新增读取既有 pending plan 的合同，没有新增 Store；Android 适配器仍从 `KiteResourceInstallStore` 读取唯一计划事实。
+- 单测覆盖跳过已安装项、推进计划、只启动下一待执行项和继承向导 parent instance；资源协调器目标测试与 Debug Kotlin 编译通过。
+
+资源向导计划动作边界状态：completed，待独立提交。

@@ -52,6 +52,7 @@ internal interface ResourceRunGateway {
     fun resumePlanFrom(resourceId: String): Boolean
     fun isInstalled(resourceId: String): Boolean
     fun markPlanStepRunning(resourceId: String): Boolean
+    fun pendingPlanResourceIds(): List<String>
     fun plannedInstall(resourceId: String, parentInstanceId: String?): ResourceRunLaunchRequest?
 }
 
@@ -121,6 +122,9 @@ internal class ResourceRunCoordinator(
     }
 
     fun owns(instanceId: String): Boolean = activeRuns.containsKey(instanceId)
+
+    fun startNextPlannedInstall(parentInstanceId: String?): Boolean =
+        startNextPlannedInstall(gateway.pendingPlanResourceIds(), parentInstanceId)
 
     override fun onStateCommitted(event: RunLifecycleEvent) {
         val active = activeRuns[event.state.instanceId] ?: return
@@ -203,7 +207,7 @@ internal class ResourceRunCoordinator(
         }
     }
 
-    private fun startNextPlannedInstall(resourceIds: List<String>, parentInstanceId: String?) {
+    private fun startNextPlannedInstall(resourceIds: List<String>, parentInstanceId: String?): Boolean {
         var remaining = resourceIds
         while (remaining.isNotEmpty()) {
             val resourceId = remaining.first()
@@ -220,12 +224,13 @@ internal class ResourceRunCoordinator(
                     "执行队列缺少资源定义"
                 )
                 gateway.failPlanAt(resourceId)
-                return
+                return false
             }
-            if (!gateway.markPlanStepRunning(resourceId)) return
+            if (!gateway.markPlanStepRunning(resourceId)) return false
             start(request)
-            return
+            return true
         }
+        return false
     }
 
     private fun operationLabel(operation: String): String = when (operation) {

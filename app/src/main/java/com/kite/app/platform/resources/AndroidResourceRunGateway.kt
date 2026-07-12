@@ -168,6 +168,9 @@ internal class AndroidResourceRunGateway(
     override fun markPlanStepRunning(resourceId: String): Boolean =
         installStore.markPlanStepRunning(resourceId)
 
+    override fun pendingPlanResourceIds(): List<String> =
+        installStore.pendingPlanResourceIds()
+
     override fun plannedInstall(
         resourceId: String,
         parentInstanceId: String?
