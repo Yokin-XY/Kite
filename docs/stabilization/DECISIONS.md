@@ -270,3 +270,13 @@
 理由：把卡片终端作为普通会话持久化会留下 `REGISTERED` 记录。用户完成卡片步骤时，控制器关闭目标后会把历史记录当 fallback 重新启动，造成页面已完成而另一个 `proot/bash` 仍存活。直接改为 embedded 后，若定向写入只查持久化列表，又会在启动稍慢时丢失首条命令。
 
 影响：卡片终端的事实仍由 `CardRunStore.terminalSessionId` 持有，普通终端列表不再出现卡片执行残影。页面离开不结束会话；只有用户完成步骤、停止运行或执行终态才闭合 embedded 资源。真机验收必须同时检查 CardRun 状态、命令只执行一次、目标进程归零和 Kite 宿主存活。
+
+## ADR-S027 运行显示面由单一 Host 管理可见绑定
+
+状态：accepted
+
+决策：每个运行窗口只创建一个 `RunSurfaceHost`。Host 根据 `RunSurfaceUiState.structureKey` 持有并替换唯一 `RunSurfaceBinding`；Report、Terminal、Web、X11 和安装向导分别拥有自己的显示绑定与局部更新入口。Activity 负责 Android 壳层和平台适配装配，不得保存显示面内部控件或复制运行事实。
+
+理由：旧实现把报告 TextView、终端 Fragment、共享 WebView、X11 View 和安装向导字段全部放在 `MainActivity`，导致普通状态变化、页面切换与底层任务生命周期互相影响。只拆文件而继续让 Activity 维护这些字段，仍然不会形成真正的职责边界。
+
+影响：`CardRunStore` 继续是运行事实唯一拥有者，`RunSurfaceProjector` 负责事实到显示状态的转换。Host 的 attach、render、tick、dispose 都只影响可见绑定；用户显式继续或停止才通过 Action Gateway 进入 `RunOrchestrator`。迁移按 Report 样板逐面进行，静态护栏禁止旧报告绑定回流。

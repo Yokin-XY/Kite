@@ -62,6 +62,8 @@ $androidResourceRecipeFactoryPath = Join-Path $Root 'app/src/main/java/com/kite/
 $androidResourceRunGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceRunGateway.kt'
 $runSurfaceContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceContract.kt'
 $runSurfaceControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceController.kt'
+$runSurfaceHostPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceHost.kt'
+$runReportScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunReportScreen.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -173,6 +175,8 @@ $androidResourceRecipeFactory = Read-Utf8 $androidResourceRecipeFactoryPath
 $androidResourceRunGateway = Read-Utf8 $androidResourceRunGatewayPath
 $runSurfaceContract = Read-Utf8 $runSurfaceContractPath
 $runSurfaceController = Read-Utf8 $runSurfaceControllerPath
+$runSurfaceHost = Read-Utf8 $runSurfaceHostPath
+$runReportScreen = Read-Utf8 $runReportScreenPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -241,7 +245,8 @@ Assert-True ($androidResourceRecipeFactory -match 'KiteResourceInstallPlanCompil
 Assert-True ($kiteAppGraph -match 'val resourceRunCoordinator: ResourceRunCoordinator by lazy' -and $kiteAppGraph -match 'lifecycleHub = runLifecycleEventHub') 'Resource run coordination and lifecycle events must be process composition-root dependencies.'
 Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'
 Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
-Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'
+Assert-True ($runSurfaceHost -match 'private var binding: RunSurfaceBinding' -and $runReportScreen -match 'override fun render\(state: RunSurfaceUiState\)' -and $runReportScreen -match 'private val outputText = TextView') 'report page must own its local output binding through RunSurfaceHost.'
+Assert-True ($main -notmatch 'cardRunReportBinding|updateVisibleCardRunReport|renderVisibleCardRunReport') 'MainActivity must not retain the legacy report binding or render loop.'
 Assert-True ($main -match 'resourceInstallWizardSurface\?\.tick' -and $resourceInstallWizardScreen -match 'fun tick\(') 'install wizard must keep elapsed binding inside its feature screen.'
 Assert-True ($main -match '(?s)private fun showConsole\b.*HomeFragment' -and $main -notmatch 'consoleCardBindings|consolePageBodyHost|private fun recipeGrid|updateVisibleConsoleCard') 'Home card views, bindings, and page state must remain owned by HomeFragment and HomeScreen.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'

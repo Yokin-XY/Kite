@@ -26,7 +26,52 @@ class RunSurfaceControllerTest {
         val updated = controller.update(recipe, second)
 
         assertEquals(attached.structureKey, updated?.structureKey)
-        assertEquals(RunSurfaceContent.Report("第二段"), updated?.content)
+        assertEquals("第二段", (updated?.content as? RunSurfaceContent.Report)?.outputText)
+    }
+
+    @Test
+    fun `报告投影清理运行标记并保留命令`() {
+        val recipe = recipe(KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "printf hello"))
+        val ui = controller.attach(
+            recipe,
+            state(
+                surface = CardRunSurface.Report,
+                report = "命令：printf hello\n结果：成功\n有效输出：hello\n__kite_root_pid:123"
+            )
+        )
+
+        val report = ui.content as RunSurfaceContent.Report
+        assertEquals("hello", report.outputText)
+        assertEquals("printf hello", report.currentCommand)
+        assertEquals("printf hello", report.fullCommand)
+    }
+
+    @Test
+    fun `概览沿用报告显示合同而不建立第二套页面状态`() {
+        val recipe = recipe(KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "echo ok"))
+
+        val ui = controller.attach(recipe, state(surface = CardRunSurface.Summary, report = "输出：ok"))
+
+        assertTrue(ui.content is RunSurfaceContent.Report)
+        assertEquals("ok", (ui.content as RunSurfaceContent.Report).outputText)
+    }
+
+    @Test
+    fun `失败提示由投影层稳定生成`() {
+        val recipe = recipe(KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "curl example.com"))
+
+        val ui = controller.attach(
+            recipe,
+            state(
+                surface = CardRunSurface.Report,
+                status = CardRunStatus.Failed,
+                lastError = "curl: (28) Operation timed out after 30000 milliseconds"
+            )
+        )
+
+        val report = ui.content as RunSurfaceContent.Report
+        assertTrue(report.failed)
+        assertTrue(report.commandHint.orEmpty().contains("命令超时"))
     }
 
     @Test
@@ -86,7 +131,8 @@ class RunSurfaceControllerTest {
         status: CardRunStatus = CardRunStatus.Running,
         terminalSessionId: String? = null,
         nextActionUrl: String? = null,
-        report: String? = null
+        report: String? = null,
+        lastError: String? = null
     ): CardRunState = CardRunState(
         instanceId = instanceId,
         recipeId = "recipe-1",
@@ -97,6 +143,7 @@ class RunSurfaceControllerTest {
         stepCount = 1,
         terminalSessionId = terminalSessionId,
         nextActionUrl = nextActionUrl,
+        lastError = lastError,
         shellReportText = report,
         createdAt = 1L,
         updatedAt = 1L

@@ -12,7 +12,14 @@ internal data class RunSurfaceTarget(
 
 internal sealed interface RunSurfaceContent {
     data object Summary : RunSurfaceContent
-    data class Report(val text: String) : RunSurfaceContent
+    data class Report(
+        val outputText: String,
+        val currentCommand: String,
+        val fullCommand: String,
+        val commandHint: String?,
+        val insight: RunReportInsight?,
+        val failed: Boolean
+    ) : RunSurfaceContent
     data class Terminal(val sessionId: String?) : RunSurfaceContent
     data class Web(val url: String?) : RunSurfaceContent
     data class X11(val display: String?, val socketPath: String?) : RunSurfaceContent
@@ -27,6 +34,9 @@ internal data class RunSurfaceUiState(
     val surface: CardRunSurface,
     val content: RunSurfaceContent,
     val structureKey: String,
+    val currentStepIndex: Int,
+    val stepCount: Int,
+    val createdAt: Long,
     val canCompleteCurrentStep: Boolean,
     val canStop: Boolean,
     val updatedAt: Long
@@ -41,12 +51,12 @@ internal object RunSurfaceProjector {
     fun project(recipe: KiteRecipe, state: CardRunState): RunSurfaceUiState {
         val surface = state.surface
         val content = when (surface) {
-            CardRunSurface.Report -> RunSurfaceContent.Report(reportText(state))
+            CardRunSurface.Report -> RunReportPresenter.project(recipe, state)
             CardRunSurface.Terminal -> RunSurfaceContent.Terminal(state.terminalSessionId)
             CardRunSurface.Web -> RunSurfaceContent.Web(state.nextActionUrl)
             CardRunSurface.X11 -> RunSurfaceContent.X11(state.x11Display, state.x11SocketPath)
             CardRunSurface.InstallWizard -> RunSurfaceContent.InstallWizard
-            CardRunSurface.Summary -> RunSurfaceContent.Summary
+            CardRunSurface.Summary -> RunReportPresenter.project(recipe, state)
         }
         return RunSurfaceUiState(
             target = RunSurfaceTarget(recipe.id, state.instanceId),
@@ -56,6 +66,9 @@ internal object RunSurfaceProjector {
             surface = surface,
             content = content,
             structureKey = structureKey(state, surface),
+            currentStepIndex = state.currentStepIndex,
+            stepCount = state.stepCount,
+            createdAt = state.createdAt,
             canCompleteCurrentStep = canCompleteCurrentStep(recipe, state),
             canStop = state.isInterruptible() || state.hasRunBinding(),
             updatedAt = state.updatedAt
@@ -90,10 +103,4 @@ internal object RunSurfaceProjector {
         }
     }
 
-    private fun reportText(state: CardRunState): String = when {
-        !state.shellReportText.isNullOrBlank() -> state.shellReportText
-        !state.lastError.isNullOrBlank() -> state.lastError
-        !state.lastMeaningfulOutput.isNullOrBlank() -> state.lastMeaningfulOutput
-        else -> state.status.label
-    }.orEmpty()
 }

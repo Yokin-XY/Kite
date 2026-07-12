@@ -7,7 +7,7 @@
 ```text
 方向：第二阶段业务架构迁移
 状态：in_progress
-当前任务：T007 运行窗口与显示面，正在盘点继承边界与显示面所有权
+当前任务：T007 运行窗口与显示面，报告显示面已迁移，正在迁移 terminal/web 绑定
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -920,3 +920,16 @@ T007 合同层结果：
 - 纯单测覆盖报告局部更新键稳定、终端会话绑定、跨实例迟到状态门禁，以及页面离开不停止任务；目标单测和架构检查通过。
 
 下一步：提交合同层；随后建立 Android `RunSurfaceGateway` 和轻量 `CardRunActivity` 启动壳，先迁移 Report 显示面与返回/停止/继续，再迁移 Terminal、Web、X11 和安装向导。
+
+T007 报告显示面样板结果：
+
+- 新增 Android `RunSurfaceHost`，同一时刻只持有一份 `RunSurfaceBinding`；结构键变化才替换显示面，普通状态更新直接交给当前 binding。Host 的 `dispose()` 只清理 View 与回调，不调用停止或推进任务。
+- 新增 `RunReportScreen` 与 `RunReportPresenter`。报告输出、状态徽标、耗时、失败解释、命令查看、复制和继续按钮均由 Feature 自己绑定，`MainActivity` 不再保存 TextView、ScrollView、节流时间戳或待绘制状态。
+- Summary 与 Report 共用一套报告显示合同，不再维护外观相同但状态来源不同的第二套概览页。
+- CardRunStore 更新仍先由 `RunSurfaceProjector` 校验同一实例，再局部追加输出或更新徽标；报告文本变化不会重建整个运行窗口，页面销毁只释放显示绑定。
+- 删除 Activity 内旧报告绘制、局部绑定和计时循环约 700 行；架构债务快照降至 `lines=12336, functions=541, fields=109, inheritedActivities=1`。
+- 报告投影测试覆盖结构键稳定、进程标记清洗、命令保留、Summary 共用合同和失败提示；目标单测、Debug Kotlin 编译、架构检查及运行车道静态检查通过。
+
+报告显示面迁移状态：completed，待独立提交。
+
+下一步：让 terminal 与 Web 各自实现 `RunSurfaceBinding`，把 Fragment/WebView 的 attach、update、dispose 从 MainActivity 移入显示面适配器；随后再让 `CardRunActivity` 脱离继承。
