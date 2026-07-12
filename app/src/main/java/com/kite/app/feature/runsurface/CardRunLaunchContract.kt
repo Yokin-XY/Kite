@@ -18,9 +18,15 @@ internal data class CardRunLaunchTarget(
     val instanceId: String,
     val autoStart: Boolean,
     val launchSource: String,
+    val missingStatePolicy: CardRunMissingStatePolicy,
     val installTargetResourceId: String?,
     val installPlanResourceIds: List<String>
 )
+
+internal enum class CardRunMissingStatePolicy {
+    Create,
+    RequireExisting
+}
 
 internal sealed interface CardRunLaunchResolution {
     data class Resolved(val target: CardRunLaunchTarget) : CardRunLaunchResolution
@@ -50,6 +56,15 @@ internal class CardRunLaunchResolver(
                 instanceId = instanceId,
                 autoStart = request.autoStart,
                 launchSource = request.launchSource.trim(),
+                missingStatePolicy = if (
+                    request.autoStart ||
+                    !request.temporaryUrl.isNullOrBlank() ||
+                    !request.installTargetResourceId.isNullOrBlank()
+                ) {
+                    CardRunMissingStatePolicy.Create
+                } else {
+                    CardRunMissingStatePolicy.RequireExisting
+                },
                 installTargetResourceId = request.installTargetResourceId?.trim()?.takeIf { it.isNotBlank() },
                 installPlanResourceIds = request.installPlanResourceIds
                     .map(String::trim)

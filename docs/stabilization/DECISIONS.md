@@ -330,3 +330,13 @@
 理由：认证桥的正确性不取决于页面长相，而取决于 session、state、loopback 和目标 run instance 的顺序一致。若 MainActivity 与 CardRunActivity 分别复制编排，任何一边漏写等待事实、漏停端口或重复打开都会重现“浏览器拿到返回但软件没接住”的问题。
 
 影响：Application 协调器不依赖 Android UI；SessionStore、LoopbackBridge、CardRunStore、Custom Tabs 和诊断由 Platform Gateway 适配。页面只消费返回结果与目标事实，不直接调用 `createPending` 或 `prepare`。
+
+## ADR-S033 运行窗口是独立轻量应用壳
+
+状态：accepted
+
+决策：`CardRunActivity` 直接继承 `AppCompatActivity`，只装配一个目标实例的启动解析、运行事实观察、显示面 Host、运行控制动作和必要平台适配。它不得继承 `MainActivity`，不得初始化首页、资源目录、设置、首次向导或主壳服务，也不得复制底层任务状态。
+
+理由：继承完整主壳会让每个运行窗口同时创建两套不相关能力，使启动耗时、内存、导航和生命周期彼此污染；即使把显示代码拆成文件，只要 Activity 仍继承并持有主壳状态，职责所有权就没有真正转移。独立壳让显示生命周期可以重建或关闭，而进程级运行事实和任务继续存在。
+
+影响：所有运行窗口必须从 `CardRunStore` 恢复指定 `recipeId + instanceId`，通过 `RunSurfaceHost` 组合显示绑定，通过 `RunOrchestrator` 提交继续和停止。`autoStart=false` 的恢复请求找不到既有事实时必须明确拒绝，不能新建空白运行；只有首次启动、临时网页和安装向导允许创建。系统返回只结束当前 Activity task；外部浏览器回跳、终端恢复和报告更新按实例事实重新投影。机器护栏永久要求 `activitiesInheritingMainActivity=0`。

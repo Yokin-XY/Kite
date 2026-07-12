@@ -17,6 +17,8 @@ internal interface RunSurfaceBinding {
 
     fun reload(): Boolean = false
 
+    fun reconcile(): Boolean = false
+
     fun dispose() = Unit
 }
 
@@ -108,6 +110,8 @@ internal class RunSurfaceHost(
     fun handleBack(): Boolean = binding?.handleBack() == true
 
     fun reload(): Boolean = binding?.reload() == true
+
+    fun reconcile(): Boolean = binding?.reconcile() == true
 
     fun dispose() {
         binding?.dispose()

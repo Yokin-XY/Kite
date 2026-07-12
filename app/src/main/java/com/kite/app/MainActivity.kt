@@ -296,6 +296,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     @androidx.annotation.VisibleForTesting
     internal fun activityDisplaySurfacesReleasedForTest(): Boolean = activityDisplaySurfacesReleased
 
+    /** T007 迁移哨兵；独立 CardRunActivity 验收后删除所有调用方。 */
+    private fun isLegacyCardRunShell(): Boolean = false
+
     private fun enterScreen(screen: AppDestination, onBack: (() -> Unit)? = null) {
         currentScreen = screen
         appNavigator.enter(screen, onBack)
@@ -595,7 +598,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 "hasError" to (!redirect.error.isNullOrBlank()).toString()
             )
         )
-        if (this is CardRunActivity) {
+        if (isLegacyCardRunShell()) {
             title = recipe.name
             showCardRunSurface(recipe)
         } else {
@@ -1063,7 +1066,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         rebindVisibleResourceStateOnResume()
         ensureBundledToolBootstrapIfNeeded("resume")
         expireBrowserAuthSessionsOnResume()
-        if (this is CardRunActivity && rebindFocusedCardRunSurface("resume")) {
+        if (isLegacyCardRunShell() && rebindFocusedCardRunSurface("resume")) {
             rootHost.post { StartupTraceStore.markReady(applicationContext) }
             return
         }
@@ -1127,7 +1130,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun handleAppNavigationBack() {
         if (handleWebViewBackSignal()) return
-        when (val action = appNavigator.resolveBack(this is CardRunActivity)) {
+        when (val action = appNavigator.resolveBack(isLegacyCardRunShell())) {
             NavigationBackAction.System -> dispatchSystemBack()
             NavigationBackAction.CardRunTask -> handleCardRunBackSignal()
             NavigationBackAction.Contextual -> appNavigator.invokeContextualBack()
@@ -1172,7 +1175,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             consumedCardRunLaunchKey == launchKey &&
             !shouldRestartConsumedCardRunLaunch(autoStart, existingLaunchState)
         ) {
-            if (this is CardRunActivity) {
+            if (isLegacyCardRunShell()) {
                 rebindCardRunLaunchSurface(sourceIntent, recipeId, instanceId, "duplicate_launch")
             }
             return true
@@ -1186,7 +1189,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 return true
             }
             showResourceDiscreteToast("获取向导缺少队列信息")
-            if (this is CardRunActivity) finish()
+            if (isLegacyCardRunShell()) finish()
             return true
         }
 
@@ -1222,7 +1225,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
         if (autoStart) {
             startRecipe(recipe, state, instanceId)
-        } else if (this is CardRunActivity) {
+        } else if (isLegacyCardRunShell()) {
             showCardRunSurface(recipe)
         } else {
             showConsole()
@@ -1587,7 +1590,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             .joinToString("|")
 
     private fun requestResourceRunStateUiRefresh() {
-        if (this is CardRunActivity || !::root.isInitialized) return
+        if (isLegacyCardRunShell() || !::root.isInitialized) return
         when (currentScreen) {
             AppDestination.Resources,
             AppDestination.ResourceSearch,
@@ -1612,7 +1615,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun rebindVisibleResourceStateOnResume() {
-        if (this is CardRunActivity || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
+        if (isLegacyCardRunShell() || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
         when (currentScreen) {
             AppDestination.Resources,
             AppDestination.ResourceSearch,
@@ -1628,7 +1631,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ?: currentRecipes.firstOrNull { it.id == state.recipeId }
 
     private fun maybeStartFirstRunPermissionOnboarding(): Boolean {
-        if (this is CardRunActivity) return false
+        if (isLegacyCardRunShell()) return false
         if (appSettings.getBoolean(KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE, false)) return false
         appSettings.edit().putBoolean(KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE, true).apply()
         firstRunPermissionOnboardingInFlight = true
@@ -1722,7 +1725,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }.distinct().ifEmpty { listOf("当前所需权限") }
 
     private fun maybeStartFirstRunRuntimeGate() {
-        if (this is CardRunActivity || firstRunRuntimeGateShown) return
+        if (isLegacyCardRunShell() || firstRunRuntimeGateShown) return
         firstRunRuntimeGateShown = true
         thread(name = "KiteFirstRunRuntimeGate", isDaemon = true) {
             val permissionState = currentRuntimePermissionState()
@@ -1751,7 +1754,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun ensureBundledToolBootstrapIfNeeded(reason: String) {
-        if (this is CardRunActivity || bootstrapResourceGateInFlight) return
+        if (isLegacyCardRunShell() || bootstrapResourceGateInFlight) return
         bootstrapResourceGateInFlight = true
         thread(name = "KiteBundledToolBootstrapGate-${reason.take(24)}", isDaemon = true) {
             val permissionReady = currentRuntimePermissionState().ready
@@ -2183,7 +2186,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         appSettings.getBoolean(KEY_RESTORE_LAST_SCREEN, true)
 
     private fun applyRecentTaskVisibilitySetting() {
-        if (this is CardRunActivity || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || !::appSettings.isInitialized) {
+        if (isLegacyCardRunShell() || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || !::appSettings.isInitialized) {
             return
         }
         val hideFromRecents = shouldHideMainTaskFromRecents()
@@ -2358,7 +2361,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showConsole() {
         enterScreen(AppDestination.Console)
         val focusedRecipe = focusedRunRecipe()
-        if (this is CardRunActivity && focusedRecipe != null) {
+        if (isLegacyCardRunShell() && focusedRecipe != null) {
             showCardRunSurface(focusedRecipe)
             return
         }
@@ -3527,7 +3530,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 currentResourceInstallTargetId = null
                 resourceInstallWizardPlanIds = emptyList()
                 activeResourceInstallWizard = null
-                if (this is CardRunActivity && currentScreen == AppDestination.CardRun) {
+                if (isLegacyCardRunShell() && currentScreen == AppDestination.CardRun) {
                     closeCardRunTask()
                 } else {
                     settleVisibleResourceMutation("cancel_failed_install")
@@ -3633,7 +3636,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         invalidateResourceRuntimeStateCache()
         closeResourceInstallWizardInstance(targetId, removeRunState = true)
         if (closeWizard) {
-            if (this is CardRunActivity) {
+            if (isLegacyCardRunShell()) {
                 closeCardRunTask()
             } else {
                 showResources()
@@ -3673,7 +3676,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun releaseResourceInstallWizardSurfaceIfActivityDestroyed() {
-        if (this !is CardRunActivity || isChangingConfigurations) return
+        if (!isLegacyCardRunShell() || isChangingConfigurations) return
         if (!::resourceInstallStore.isInitialized) return
         val context = activeResourceInstallWizard ?: return
         if (focusedRunInstanceId != context.wizardInstanceId && focusedRunRecipeId != context.wizardRecipeId) return
@@ -3854,7 +3857,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             currentStepIndex = 0,
             lastMeaningfulOutput = "等待获取确认"
         )
-        if (this !is CardRunActivity && currentScreen != AppDestination.CardRun) {
+        if (!isLegacyCardRunShell() && currentScreen != AppDestination.CardRun) {
             startActivity(
                 CardRunIntents.resourceInstallWizardIntent(
                     context = this,
@@ -3927,7 +3930,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             lastMeaningfulOutput = "等待获取确认"
         )
         title = wizardRecipe.name
-        if (this is CardRunActivity) {
+        if (isLegacyCardRunShell()) {
             applyCardTaskDescription(wizardRecipe)
             registerCardRunTaskCloser(wizardInstanceId)
         }
@@ -4000,7 +4003,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 currentResourceInstallTargetId = null
                 resourceInstallWizardPlanIds = emptyList()
                 activeResourceInstallWizard = null
-                if (this is CardRunActivity) {
+                if (isLegacyCardRunShell()) {
                     closeCardRunTask()
                 } else {
                     appNavigator.navigate(AppDestination.Resources)
@@ -4762,7 +4765,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             focusedRunInstanceId = state.instanceId
         }
         when {
-            this is CardRunActivity && openRunTask && !returnToInstallWizard -> showCardRunSurface(recipe)
+            isLegacyCardRunShell() && openRunTask && !returnToInstallWizard -> showCardRunSurface(recipe)
             returnToInstallWizard -> showResourceInstallWizard()
             !openRunTask -> refreshResourceScreenIfVisible()
             else -> startActivity(
@@ -4785,7 +4788,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun refreshResourceScreenIfVisible() {
-        if (this is CardRunActivity || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
+        if (isLegacyCardRunShell() || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
         invalidateResourceRuntimeStateCache()
         when (currentScreen) {
             AppDestination.Resources -> Unit
@@ -4798,7 +4801,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun settleVisibleResourceMutation(reason: String) {
-        if (this is CardRunActivity || !::root.isInitialized) return
+        if (isLegacyCardRunShell() || !::root.isInitialized) return
         when (currentScreen) {
             AppDestination.Resources,
             AppDestination.ResourceSearch,
@@ -5550,7 +5553,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun applyCardRunSystemBarsForSurface(surface: CardRunSurface) {
-        if (this !is CardRunActivity) return
+        if (!isLegacyCardRunShell()) return
         val immersive = surface == CardRunSurface.X11
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(!immersive)
@@ -5577,7 +5580,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun restoreCardRunSystemBarsIfNeeded() {
-        if (this !is CardRunActivity) return
+        if (!isLegacyCardRunShell()) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(true)
             window.insetsController?.show(WindowInsets.Type.systemBars())
@@ -6424,7 +6427,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         result.targetUpdate?.let { update ->
             activeRunInstanceIds[update.recipe.id] = update.state.instanceId
             runtimeStates[update.recipe.id] = update.state
-            if (rerenderFocusedSurface && this is CardRunActivity && focusedRunInstanceId == update.state.instanceId) {
+            if (rerenderFocusedSurface && isLegacyCardRunShell() && focusedRunInstanceId == update.state.instanceId) {
                 showCardRunSurface(update.recipe)
             }
         }
@@ -7736,7 +7739,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
 
     private fun closeCardRunTask() {
-        if (this !is CardRunActivity) {
+        if (!isLegacyCardRunShell()) {
             if (!currentResourceInstallTargetId.isNullOrBlank()) {
                 showResourceInstallWizard()
                 return
@@ -7792,7 +7795,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun registerCardRunTaskCloser(instanceId: String) {
-        if (this !is CardRunActivity || instanceId.isBlank()) return
+        if (!isLegacyCardRunShell() || instanceId.isBlank()) return
         if (registeredCardRunCloserInstanceId == instanceId) return
         CardRunTaskCloser.unregister(registeredCardRunCloserInstanceId)
         registeredCardRunCloserInstanceId = instanceId
@@ -7810,7 +7813,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             recipe.id
         ).firstOrNull { !it.isNullOrBlank() } ?: return
 
-        val closedLiveInstance = if (this is CardRunActivity && focusedRunInstanceId == instanceId) {
+        val closedLiveInstance = if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) {
             closeCardRunTask()
             true
         } else {
@@ -9585,7 +9588,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun shouldOpenCardRunTaskFromHome(recipe: KiteRecipe): Boolean =
-        this !is CardRunActivity && recipe.launch.openInstance
+        !isLegacyCardRunShell() && recipe.launch.openInstance
 
     private fun handleRecipeAction(recipe: KiteRecipe) = handleRecipeActionWithRouter(recipe)
 
@@ -9646,13 +9649,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         )
         val firstStep = recipe.steps.firstOrNull()
         val deferInitialSurfaceUntilTerminalReady =
-            firstStep?.type == KiteRecipe.STEP_TERMINAL && (this is CardRunActivity || !openConsoleOnStart)
+            firstStep?.type == KiteRecipe.STEP_TERMINAL && (isLegacyCardRunShell() || !openConsoleOnStart)
         if (!renderOnStart) {
             if (!keepCurrentFocus) {
                 focusedRunRecipeId = recipe.id
                 focusedRunInstanceId = instanceId
             }
-        } else if (openConsoleOnStart && this !is CardRunActivity) {
+        } else if (openConsoleOnStart && !isLegacyCardRunShell()) {
             showConsole()
         } else {
             focusedRunRecipeId = recipe.id
@@ -9670,11 +9673,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
 
     private fun shouldRenderInCardRun(recipe: KiteRecipe): Boolean =
-        this is CardRunActivity && focusedRunRecipeId == recipe.id
+        isLegacyCardRunShell() && focusedRunRecipeId == recipe.id
 
     private fun shouldStayOnRunSurface(): Boolean =
         currentScreen == AppDestination.CardRun ||
-            this is CardRunActivity
+            isLegacyCardRunShell()
 
     private fun showRunSurfaceOrConsole(recipe: KiteRecipe) {
         if (renderResourceInstallWizardFor(recipe)) {
@@ -9701,7 +9704,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             KiteRecipe.SURFACE_MODE_PANEL -> true
             KiteRecipe.SURFACE_MODE_SILENT -> false
             else -> {
-                val mayAutoOpenSurface = this is CardRunActivity ||
+                val mayAutoOpenSurface = isLegacyCardRunShell() ||
                     currentScreen == AppDestination.CardRun ||
                     recipe.launch.openInstance
                 mayAutoOpenSurface && (
@@ -9970,7 +9973,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         if (activeRunInstanceIds[recipe.id] == instanceId) {
             activeRunInstanceIds.remove(recipe.id)
         }
-        if (focusedRunInstanceId == instanceId && this !is CardRunActivity) {
+        if (focusedRunInstanceId == instanceId && !isLegacyCardRunShell()) {
             focusedRunInstanceId = null
         }
     }
@@ -10639,7 +10642,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
 
     private fun registerCardRunBrowserHandler(recipe: KiteRecipe, instanceId: String) {
-        if (this !is CardRunActivity || instanceId.isBlank()) return
+        if (!isLegacyCardRunShell() || instanceId.isBlank()) return
         if (registeredBrowserInstanceId != instanceId) {
             CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
             registeredBrowserInstanceId = instanceId
@@ -10651,7 +10654,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun registerCardRunDesktopHandler(recipe: KiteRecipe, instanceId: String) {
-        if (this !is CardRunActivity || instanceId.isBlank()) return
+        if (!isLegacyCardRunShell() || instanceId.isBlank()) return
         if (registeredDesktopInstanceId != instanceId) {
             CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
             registeredDesktopInstanceId = instanceId
@@ -10682,7 +10685,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(normalized.url)
                 )
             )
-            if (this is CardRunActivity && focusedRunInstanceId == instanceId) {
+            if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) {
                 showCardRunSurface(recipe)
             }
             return
@@ -10808,7 +10811,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                         autoStart = false
                     )
                 )
-            } else if (this is CardRunActivity && focusedRunInstanceId == instanceId) {
+            } else if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) {
                 showCardRunLoadingSurface(recipe, "正在准备 X11 桌面")
             }
         }
@@ -10829,7 +10832,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             )
             runOnUiThread {
                 runtimeStates[recipe.id] = failedState
-                if (this is CardRunActivity && focusedRunInstanceId == instanceId) showRunSurfaceOrConsole(recipe)
+                if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) showRunSurfaceOrConsole(recipe)
             }
             diagnostics.logRecipeAction(
                 recipe,
@@ -10860,7 +10863,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         runOnUiThread {
             activeRunInstanceIds[recipe.id] = instanceId
             runtimeStates[recipe.id] = state
-            if (this is CardRunActivity && focusedRunInstanceId == instanceId) {
+            if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) {
                 showCardRunSurface(recipe)
             }
         }
@@ -11037,7 +11040,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         clearRootForScreen()
         val parent = webView.parent
         if (parent is ViewGroup) parent.removeView(webView)
-        if (this is CardRunActivity && recipe != null) {
+        if (isLegacyCardRunShell() && recipe != null) {
             val state = focusedRunInstanceId
                 ?.let { CardRunStore.get(it) }
                 ?: runtimeStateFor(recipe)

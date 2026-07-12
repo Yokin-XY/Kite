@@ -33,6 +33,10 @@ function Imported-Types {
 
 $baselinePath = Join-Path $Root 'docs/stabilization/architecture-baseline.json'
 $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
+$cardRunPath = Join-Path $Root 'app/src/main/java/com/kite/app/CardRunActivity.kt'
+$runSurfaceHostPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceHost.kt'
+$installSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/RunInstallWizardSurfaceBinding.kt'
+$legacyFeatureInstallBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunInstallWizardSurfaceBinding.kt'
 $screenRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/AppNavigator.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
@@ -41,11 +45,17 @@ $sourceRoots = @(
 
 Assert-Architecture (Test-Path $baselinePath) 'Architecture baseline is missing.'
 Assert-Architecture (Test-Path $mainPath) 'MainActivity source is missing.'
+Assert-Architecture (Test-Path $cardRunPath) 'CardRunActivity source is missing.'
+Assert-Architecture (Test-Path $runSurfaceHostPath) 'RunSurfaceHost source is missing.'
+Assert-Architecture (Test-Path $installSurfaceBindingPath) 'Run install-wizard shell adapter is missing.'
+Assert-Architecture (-not (Test-Path $legacyFeatureInstallBindingPath)) 'Run install-wizard adapter must not live inside the run-surface feature.'
 Assert-Architecture (Test-Path $screenRouterPath) 'AppNavigator source is missing.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
     $main = [System.IO.File]::ReadAllText($mainPath, [System.Text.Encoding]::UTF8)
+    $cardRun = [System.IO.File]::ReadAllText($cardRunPath, [System.Text.Encoding]::UTF8)
+    $runSurfaceHost = [System.IO.File]::ReadAllText($runSurfaceHostPath, [System.Text.Encoding]::UTF8)
     $screenRouter = [System.IO.File]::ReadAllText($screenRouterPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
@@ -96,6 +106,23 @@ if ($failures.Count -eq 0) {
         $limit = [long]$baseline.legacyBoundaryDebt.$name
         Assert-Architecture ([long]$metrics[$name] -le $limit) "Legacy boundary debt '$name' increased: $($metrics[$name]) > $limit."
     }
+
+    Assert-Architecture (
+        $cardRun -match 'class\s+CardRunActivity\s*:\s*AppCompatActivity\(\),\s*TerminalChromeHost'
+    ) 'CardRunActivity must remain an independent AppCompatActivity shell.'
+    Assert-Architecture (
+        $cardRun -notmatch 'class\s+CardRunActivity\s*:\s*MainActivity'
+    ) 'CardRunActivity must not inherit MainActivity.'
+    Assert-Architecture (
+        $cardRun -match 'RunSurfaceHost\s*\(' -and
+        $cardRun -match 'CardRunLaunchResolver\s*\(' -and
+        $cardRun -match 'CardRunStore\.runs\.collect'
+    ) 'CardRunActivity must compose launch resolution, shared run facts, and RunSurfaceHost.'
+    Assert-Architecture (
+        $runSurfaceHost -match 'fun\s+render\s*\(' -and
+        $runSurfaceHost -match 'fun\s+reconcile\s*\(' -and
+        $runSurfaceHost -match 'fun\s+dispose\s*\('
+    ) 'RunSurfaceHost must own render, reconcile, and display disposal entry points.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)

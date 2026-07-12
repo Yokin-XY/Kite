@@ -1006,3 +1006,18 @@ T007 资源向导计划动作边界：
 - 单测覆盖跳过已安装项、推进计划、只启动下一待执行项和继承向导 parent instance；资源协调器目标测试与 Debug Kotlin 编译通过。
 
 资源向导计划动作边界状态：completed，待独立提交。
+
+T007 独立轻量运行壳结果：
+
+- `CardRunActivity` 已直接继承 `AppCompatActivity`，不再启动 `MainActivity` 的首页、资源目录、设置、服务预热和首次向导链；当前架构护栏确认 `activitiesInheritingMainActivity=0`。
+- 新壳只组合无副作用的 `CardRunLaunchResolver`、唯一运行事实 `CardRunStore`、进程级 `RunOrchestrator`、共享 `BrowserHandoffCoordinator` 与单一 `RunSurfaceHost`。迟到的其他实例状态不能替换当前显示面。
+- Report、Terminal、Web、X11 与安装向导均通过独立 `RunSurfaceBinding` 接入；浏览器自动化更新和资源打开配方解析被收口为 Platform 适配器，安装向导通过 Shell 组合资源 Feature，不制造跨 Feature 依赖。
+- 运行窗口控制条只提交“继续、停止、刷新、关闭”动作。系统返回和关闭窗口仅释放显示绑定；继续后才由编排器把 `WaitingTerminal` 写成 `Completed`，停止才进入停止协调器。
+- 启动合同区分“允许创建新事实”和“必须恢复既有事实”：首次运行、临时网页和安装向导可以创建；通知或已有运行窗口的 `autoStart=false` 恢复若找不到实例，只显示“该运行已经结束”，不再伪造一个空白 `Starting` 实例。
+- 机器护栏新增独立 Activity、Host 组合、Store 观察和显示生命周期入口检查，并禁止安装向导适配器回流到 `feature.runsurface`。
+- 全量 `:app:testDebugUnitTest :app:assembleDebug`、架构检查和运行车道静态检查通过；债务快照为 `lines=11914, functions=532, fields=109, inheritedActivities=0`。
+- OnePlus 8T `3f8bbaad`：正式 `/open-web` 可加载、页内后退后仍停留同一运行实例；通用 OAuth + loopback 会打开系统浏览器，返回后恢复同一等待页；OpenClaw 终端恢复同一 embedded session，关闭窗口不改变 `WaitingTerminal`，点击继续后 Store 为 `Completed`、session 清空且目标进程归零；进程重启后的缺失恢复请求未新增 Store 事实并显示确定错误；安装向导在不执行下载时可独立打开。全链无 `AndroidRuntime` 崩溃。
+
+独立轻量运行壳状态：completed，待独立提交。
+
+下一步：删除 `MainActivity` 内已因继承切断而不可达的旧 CardRun 壳层分支和迁移哨兵，保留首页发起运行窗口所需的窄入口；随后补齐 T007 最终回归并关闭任务。

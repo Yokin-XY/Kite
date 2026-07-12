@@ -31,6 +31,7 @@ class CardRunLaunchResolverTest {
         assertEquals(recipe, resolved.recipe)
         assertEquals("run-1", resolved.instanceId)
         assertEquals("card", resolved.launchSource)
+        assertEquals(CardRunMissingStatePolicy.Create, resolved.missingStatePolicy)
         assertEquals(listOf("a", "b"), resolved.installPlanResourceIds)
     }
 
@@ -49,6 +50,38 @@ class CardRunLaunchResolverTest {
 
         assertEquals("registered", resolved.instanceId)
         assertEquals(false, resolved.autoStart)
+        assertEquals(CardRunMissingStatePolicy.RequireExisting, resolved.missingStatePolicy)
+    }
+
+    @Test
+    fun `temporary web and install wizard may create state without auto start`() {
+        val resolver = CardRunLaunchResolver(
+            catalogRecipes = { emptyList() },
+            registeredRecipe = { null },
+            specialRecipe = { request -> recipe(request.recipeId) }
+        )
+
+        val web = resolver.resolve(
+            CardRunLaunchRequest(
+                recipeId = "web",
+                instanceId = "web-run",
+                autoStart = false,
+                launchSource = "browser_proxy",
+                temporaryUrl = "https://example.com"
+            )
+        ) as CardRunLaunchResolution.Resolved
+        val wizard = resolver.resolve(
+            CardRunLaunchRequest(
+                recipeId = "wizard",
+                instanceId = "wizard-run",
+                autoStart = false,
+                launchSource = "resource_install",
+                installTargetResourceId = "kite.demo"
+            )
+        ) as CardRunLaunchResolution.Resolved
+
+        assertEquals(CardRunMissingStatePolicy.Create, web.target.missingStatePolicy)
+        assertEquals(CardRunMissingStatePolicy.Create, wizard.target.missingStatePolicy)
     }
 
     @Test
