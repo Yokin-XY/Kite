@@ -177,3 +177,17 @@ D1 结论：导航合同和必要接入已完成；后续 D2-D5 只能消费 `Sc
 - `scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：通过。
 
 下一步：提交本节点，审计并迁移资源获取、打开、停止、卸载和重试入口。
+
+### D2 资源动作入口
+
+- 新增 `KiteResourceActionRequest`，统一 Install、ReopenInstall、Open、Stop、Uninstall、CancelInstall、CancelFailedInstall 等意图。
+- 资源卡片主按钮由 `KiteResourceActionCoordinator` 把过渡期投影标签归一化为意图。
+- 资源详情副按钮、失败取消、向导重试和卸载后续接全部改为 `submitResourceAction`。
+- 安装、卸载、打开、停止的既有执行函数保持为动作入口下游，不搬动 Store 或执行核心。
+- 源码扫描确认，页面与续接逻辑不再直接调用这些处理器，直接调用只存在于统一分发函数内。
+
+验证：
+
+- `KiteResourceActionCoordinatorTest`、`KiteRecipeActionCoordinatorTest`、`MainActivityScreenRoutingTest`：`BUILD SUCCESSFUL`。
+
+下一步：收口安装向导的开始获取、完成和异常处理动作。

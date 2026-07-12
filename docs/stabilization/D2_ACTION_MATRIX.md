@@ -29,14 +29,16 @@
 
 | 动作 | 当前状态 | 目标统一入口 | 状态 |
 | --- | --- | --- | --- |
-| 获取/安装 | 待获取、失败 | ResourceAction Intake | pending |
-| 打开 | 已安装、未运行 | ResourceAction Intake | pending |
-| 停止 | 运行中 | ResourceAction Intake | pending |
-| 卸载 | 已安装、失败残留 | ResourceAction Intake | pending |
-| 重试/继续 | 失败、安装计划中 | ResourceAction Intake | pending |
+| 获取/安装 | 待获取、失败 | ResourceAction Intake | done |
+| 打开 | 已安装、未运行 | ResourceAction Intake | done |
+| 停止 | 运行中 | ResourceAction Intake | done |
+| 卸载 | 已安装、失败残留 | ResourceAction Intake | done |
+| 取消 | 获取中、失败残留 | ResourceAction Intake | done |
+| 继续计划/完成 | 安装计划中 | InstallPlan Action Intake | pending |
 
 ## 自动化证据
 
 - `KiteRecipeActionCoordinatorTest`：忙碌去重、运行中主动作、已有实例、运行环境阻塞、独立任务和路由委托。
 - `KiteActionRouterTest`：命名动作、停止兜底、缺失与空动作。
 - `KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：首页和编辑页不得绕过共享动作入口。
+- `KiteResourceActionCoordinatorTest`：资源投影标签与恢复安装向导统一为稳定意图。

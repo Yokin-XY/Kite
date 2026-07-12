@@ -72,6 +72,10 @@ import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.action.KiteRecipeActionPlan
 import com.kite.app.action.KiteRecipeActionRequest
 import com.kite.app.action.KiteRecipeActionSource
+import com.kite.app.action.KiteResourceActionCoordinator
+import com.kite.app.action.KiteResourceActionIntent
+import com.kite.app.action.KiteResourceActionRequest
+import com.kite.app.action.KiteResourceActionSource
 import com.kite.app.browser.BrowserAuthRedirect
 import com.kite.app.browser.BrowserAuthRedirectParser
 import com.kite.app.browser.BrowserAuthSession
@@ -4801,13 +4805,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             if (item.actionEnabled) {
                 setOnClickListener {
                     if (item.actionLabel == "获取中") {
-                        handleResourceCancelInstallTask(item)
+                        submitResourceAction(item, KiteResourceActionIntent.CancelInstall, KiteResourceActionSource.Detail)
                     } else if (isRunningOpen) {
-                        handleResourceOpenStopAction(item)
+                        submitResourceAction(item, KiteResourceActionIntent.Stop, KiteResourceActionSource.Detail)
                     } else if (isCancel) {
-                        handleResourceFailedInstallCancel(item)
+                        submitResourceAction(item, KiteResourceActionIntent.CancelFailedInstall, KiteResourceActionSource.Detail)
                     } else {
-                        handleResourceUninstallAction(item)
+                        submitResourceAction(item, KiteResourceActionIntent.Uninstall, KiteResourceActionSource.Detail)
                     }
                 }
             }
@@ -5591,18 +5595,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
 
     private fun handleResourceAction(item: ResourceItem) {
-        if (
-            item.actionLabel in listOf("获取", "重新获取", "安装", "重新安装") &&
-            resourceActionShouldReopenInstallWizard(item)
-        ) {
-            reopenResourceInstallWizard(item)
-            return
-        }
-        when (item.actionLabel) {
-            "获取", "重新获取", "安装", "重新安装" -> handleResourceInstallAction(item)
-            "处理中", "获取中" -> reopenResourceInstallWizard(item)
-            "卸载中" -> showResourceDiscreteToast("${item.name} 正在卸载")
-            "打开", "运行中" -> {
+        val intent = KiteResourceActionCoordinator.primaryIntent(
+            actionLabel = item.actionLabel,
+            reopenInstall = resourceActionShouldReopenInstallWizard(item)
+        )
+        submitResourceAction(item, intent, KiteResourceActionSource.Card)
+    }
+
+    private fun submitResourceAction(
+        item: ResourceItem,
+        intent: KiteResourceActionIntent,
+        source: KiteResourceActionSource
+    ) {
+        val request = KiteResourceActionRequest(item.id, intent, source)
+        diagnostics.logBridgeEvent(
+            "resource_action_submit",
+            null,
+            mapOf("resourceId" to request.resourceId, "intent" to intent.name, "source" to source.logValue)
+        )
+        when (request.intent) {
+            KiteResourceActionIntent.Install -> handleResourceInstallAction(item)
+            KiteResourceActionIntent.ReopenInstall -> reopenResourceInstallWizard(item)
+            KiteResourceActionIntent.Open -> {
                 val recipe = resourceOpenRecipe(item)
                 if (recipe == null) {
                     showResourceDiscreteToast("${item.name} 的打开动作稍后接入")
@@ -5610,10 +5624,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     startResourceOpen(item, recipe)
                 }
             }
-            "卸载", "继续卸载" -> {
-                handleResourceUninstallAction(item)
-            }
-            else -> showResourceDiscreteToast("正在处理 ${item.name}")
+            KiteResourceActionIntent.Stop -> handleResourceOpenStopAction(item)
+            KiteResourceActionIntent.Uninstall -> handleResourceUninstallAction(item)
+            KiteResourceActionIntent.CancelInstall -> handleResourceCancelInstallTask(item)
+            KiteResourceActionIntent.CancelFailedInstall -> handleResourceFailedInstallCancel(item)
+            KiteResourceActionIntent.BusyStatus -> showResourceDiscreteToast("${item.name} 正在卸载")
+            KiteResourceActionIntent.Unsupported -> showResourceDiscreteToast("正在处理 ${item.name}")
         }
     }
 
@@ -5774,7 +5790,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 invalidateResourceRuntimeStateCache()
             showResourceDiscreteToast("已移除 ${item.name} 的获取记录")
             if (continuation == ResourceUninstallContinuation.Reinstall) {
-                handleResourceInstallAction(item)
+                submitResourceAction(item, KiteResourceActionIntent.Install, KiteResourceActionSource.Continuation)
             } else if (continuation == ResourceUninstallContinuation.CancelFailedInstall) {
                 resourceInstallStore.clearPlan()
                 currentResourceInstallTargetId = null
@@ -8262,7 +8278,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                             refreshResourceScreenIfVisible()
                         } else {
                             showResourceDiscreteToast("${item.name} 残留已卸载，继续获取")
-                            handleResourceInstallAction(item)
+                            submitResourceAction(item, KiteResourceActionIntent.Install, KiteResourceActionSource.Wizard)
                         }
                     }
                     ResourceUninstallContinuation.CancelFailedInstall -> {

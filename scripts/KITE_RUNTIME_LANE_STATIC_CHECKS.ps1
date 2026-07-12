@@ -163,6 +163,12 @@ Assert-True ($editorRecipeStart -match 'submitRecipeAction' -and $editorRecipeSt
 Assert-True ($editorRecipeActions -match 'KiteRecipeActionIntent\.Open' -and $editorRecipeActions -match 'KiteRecipeActionIntent\.Stop') 'editor open and stop must submit explicit shared action intents.'
 Assert-True ($editorRecipeActions -notmatch '\bstopRecipe\s*\(' -and $editorRecipeActions -notmatch '\bopenRecipeRunInstance\s*\(') 'editor action buttons must not bypass the shared action intake.'
 
+$resourcePrimaryAction = Function-Body $main 'handleResourceAction'
+$resourceSecondaryActions = Function-Body $main 'bindResourceSecondaryActionButton'
+Assert-True ($resourcePrimaryAction -match 'KiteResourceActionCoordinator\.primaryIntent' -and $resourcePrimaryAction -match 'submitResourceAction') 'resource primary actions must resolve and submit through the shared action intake.'
+Assert-True ($resourceSecondaryActions -match 'KiteResourceActionIntent\.CancelInstall' -and $resourceSecondaryActions -match 'KiteResourceActionIntent\.Stop' -and $resourceSecondaryActions -match 'KiteResourceActionIntent\.Uninstall') 'resource detail secondary actions must submit explicit shared intents.'
+Assert-True ($resourceSecondaryActions -notmatch '\bhandleResource(?:Install|Uninstall|OpenStop|Cancel|Failed)') 'resource detail buttons must not bypass the shared action intake.'
+
 $showRunManagement = Function-Body $main 'showKiteProcessOverview'
 Assert-True ($showRunManagement -match 'runManagementHeader') 'run management page should use the run-management header.'
 Assert-True ($showRunManagement -notmatch 'kiteProcessSummaryBlock') 'run management page must not render the old three-count summary card.'
