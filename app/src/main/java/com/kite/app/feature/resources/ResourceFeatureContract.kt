@@ -3,11 +3,10 @@ package com.kite.app.feature.resources
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.action.KiteResourceActionRequest
 import com.kite.app.action.KiteResourceActionSource
+import com.kite.app.application.resources.ResourceFeatureDescriptor
+import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.resources.KiteResourceInstallStepUiProjection
-import com.kite.app.resources.KiteResourcePlanSnapshot
-import com.kite.app.resources.KiteResourceRegistryEntry
 import com.kite.app.resources.KiteResourceUiProjection
-import com.kite.app.run.CardRunStatus
 
 internal enum class ResourceCatalogPhase {
     Idle,
@@ -29,13 +28,6 @@ internal enum class ResourceItemPhase {
     UninstallFailed,
     Busy
 }
-
-internal data class ResourceFeatureDescriptor(
-    val id: String,
-    val name: String,
-    val baselineInstalled: Boolean = false,
-    val idleStateLabel: String = "未获取"
-)
 
 internal data class ResourceItemUiState(
     val descriptor: ResourceFeatureDescriptor,
@@ -88,14 +80,4 @@ internal sealed interface ResourceFeatureAction {
 internal sealed interface ResourceFeatureEffect {
     data class ActionRequested(val request: KiteResourceActionRequest) : ResourceFeatureEffect
     data class ActionUnavailable(val resourceId: String, val reason: String) : ResourceFeatureEffect
-}
-
-internal interface ResourceFeatureGateway {
-    suspend fun loadCatalog(forceRefresh: Boolean): List<ResourceFeatureDescriptor>
-
-    fun registrySnapshot(resourceIds: Collection<String>): Map<String, KiteResourceRegistryEntry>
-
-    fun planSnapshot(): KiteResourcePlanSnapshot
-
-    fun openRunStatus(resourceId: String): CardRunStatus?
 }

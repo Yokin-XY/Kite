@@ -8,14 +8,20 @@ import android.app.Activity
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import com.kite.app.application.resources.ResourceFeatureDependenciesOwner
+import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kite.app.foundation.runtime.HostSelfAdbBridgeWorker
 import com.kite.app.foundation.runtime.RuntimeLifecycleSignalStore
 import com.kite.app.foundation.runtime.RuntimePressureResponder
 import com.kite.app.ui.terminal.TerminalUiPreferences
+import com.kite.app.shell.KiteAppGraph
 
-class KFApplication : Application() {
+class KFApplication : Application(), ResourceFeatureDependenciesOwner {
+
+    override val resourceFeatureGateway: ResourceFeatureGateway
+        get() = KiteAppGraph.from(this).resourceFeatureGateway
 
     companion object {
         const val CHANNEL_SHELL = "kfshell_service"

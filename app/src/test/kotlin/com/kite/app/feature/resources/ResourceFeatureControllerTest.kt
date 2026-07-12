@@ -2,12 +2,17 @@ package com.kite.app.feature.resources
 
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.action.KiteResourceActionSource
+import com.kite.app.application.resources.ResourceFeatureDescriptor
+import com.kite.app.application.resources.ResourceFeatureChange
+import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceRegistryEntry
 import com.kite.app.run.CardRunStatus
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -173,6 +178,7 @@ class ResourceFeatureControllerTest {
     }
 
     private class FakeGateway : ResourceFeatureGateway {
+        override val changes: Flow<ResourceFeatureChange> = emptyFlow()
         var catalog = listOf(ResourceFeatureDescriptor("tool", "Tool"))
         val registry = linkedMapOf<String, KiteResourceRegistryEntry>()
         var plan = KiteResourcePlanSnapshot()
@@ -192,6 +198,8 @@ class ResourceFeatureControllerTest {
         override fun planSnapshot(): KiteResourcePlanSnapshot = plan
 
         override fun openRunStatus(resourceId: String): CardRunStatus? = runStatuses[resourceId]
+
+        override fun homeLayout() = null
     }
 
     private fun entry(

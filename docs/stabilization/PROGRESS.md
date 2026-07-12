@@ -7,7 +7,7 @@
 ```text
 方向：第二阶段业务架构迁移
 状态：in_progress
-当前任务：T004 资源页面所有权迁移，等待 T003 提交后启动
+当前任务：T004 资源页面所有权迁移，正在迁移资源目录与搜索
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -627,3 +627,25 @@ T003 结果：
 T003 状态：completed。
 
 下一步：提交 T003，进入 T004；按目录、搜索、详情、管理、安装向导顺序迁移视图所有权。
+
+### T004 三问
+
+- 目标是什么：让资源目录、搜索、详情、管理和安装向导真正拥有自己的视图、绑定和局部更新，删除四个 Activity 渲染 Host。
+- 完成标准是什么：对应 `PLAYBOOK.md` T004 五项；每个页面单独迁移、测试、真机验证，滚动、返回、安装状态和失败重试不回归。
+- 依赖是否满足：T003 已完成并提交为 `9eda767`，统一资源状态合同可供页面接入，依赖满足。
+
+迁移策略：
+
+- Shell 在 Fragment 外托管全局底栏；资源 Feature 只渲染页面内容并通过 Effect 请求导航/动作。
+- Gateway 合同下沉到 Application，Android/manifest/Store 适配器放到 Platform；Fragment 不导入 AppGraph、MainActivity 或 Platform 实现。
+- 先完成资源目录与搜索，证明数据、主题、导航和状态更新链；再迁详情、管理和安装向导。
+- 旧 Activity 方法在对应页面真机验收后立即删除，不保留两套活跃渲染。
+
+T004 基础接线：
+
+- `ResourceFeatureGateway` 从 Feature 实现细节上移为 Application 合同，Android manifest、安装 Store、运行 Store 和 Node 工作区探测由 Platform 适配器组合。
+- `KFApplication` 只暴露 Application 合同，Fragment 无需导入 `KiteAppGraph` 或 Platform 实现。
+- 安装 Store 与 `CardRunStore` 的变化合并为 `ResourceFeatureChange`；页面收到事件后只调用 Controller 重投影已有目录，不重新读取 manifest、不轮询，也不把事实复制进页面。
+- `ResourceFeatureControllerTest`、Debug Kotlin 编译和架构依赖检查通过；MainActivity 债务指标未增长。
+
+下一步：迁移资源目录 Fragment 的视图、绑定、滚动与分类状态，接入轻量变化流并删除 `ResourcesHost`。

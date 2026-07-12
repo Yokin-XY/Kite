@@ -26,6 +26,7 @@ object KiteResourceInstallRecipes {
     const val WORKSPACE_BIN_ROOT = "/workspace/.kf/bin"
     const val OP_INSTALL = "install"
     const val OP_UNINSTALL = "uninstall"
+    const val OP_OPEN = "open"
     private const val TOOL_ENV_BIN_COMMANDS =
         "pnpm pnpx wget jq rg fd zip unzip zstd file tar gzip gunzip xz unxz bzip2 bunzip2 ps pgrep pkill pidof top free ip ss netstat ping dig nslookup host update-ca-certificates less tree rsync patch sed awk grep find xargs sort uniq head tail cut tr wc tee env which whoami id uname date sleep timeout kill sha256sum sha1sum md5sum base64 chmod chown chgrp ln readlink realpath mkdir rmdir rm cp mv touch du df stat systemctl service"
 

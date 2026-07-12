@@ -3,6 +3,8 @@ package com.kite.app.feature.resources
 import com.kite.app.action.KiteResourceActionCoordinator
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.action.KiteResourceActionRequest
+import com.kite.app.application.resources.ResourceFeatureDescriptor
+import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.resources.KiteResourceInstallStepUiProjector
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceRuntimeFacts
