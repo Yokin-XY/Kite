@@ -1104,7 +1104,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             return
         }
         when (currentScreen) {
-            Screen.Console -> showConsole()
+            Screen.Console -> resumeConsoleSurface()
             Screen.Settings -> showSettings()
             else -> Unit
         }
@@ -2501,6 +2501,26 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         renderConsolePageBody(pageHost)
         root.addView(pageHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomNavigation())
+    }
+
+    private fun resumeConsoleSurface() {
+        val existingSurface = consolePageBodyHost
+        val latestDropZoneStatus = dropZoneManager.prepareDropZone()
+        val latestRecipes = recipeLoader.loadAllRecipes()
+        val canReuse = existingSurface?.parent != null &&
+            root.visibility == View.VISIBLE &&
+            latestDropZoneStatus == dropZoneStatus &&
+            latestRecipes == currentRecipes
+        dropZoneStatus = latestDropZoneStatus
+        if (!canReuse) {
+            showConsole()
+            return
+        }
+        currentRecipes = latestRecipes
+        refreshRecipeRuntimeStates(currentRecipes)
+        currentRecipes.forEach { recipe ->
+            runtimeStates[recipe.id]?.let { state -> updateVisibleConsoleCard(recipe, state) }
+        }
     }
 
     private fun refreshRecipeRuntimeStates(recipes: List<KiteRecipe> = currentRecipes) {

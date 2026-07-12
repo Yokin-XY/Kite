@@ -6,6 +6,7 @@ import android.webkit.WebView
 import com.kite.app.resources.KiteResourceInstallSignal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -308,5 +309,19 @@ class MainActivityScreenRoutingTest {
         controller.pause().stop().destroy()
 
         assertTrue(activity.activityDisplaySurfacesReleasedForTest())
+    }
+
+    @Test
+    fun `Console 回前台复用现有显示面`() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).create().start().resume()
+        val activity = controller.get()
+        val field = MainActivity::class.java.getDeclaredField("consolePageBodyHost").apply {
+            isAccessible = true
+        }
+        val before = field.get(activity)
+
+        controller.pause().resume()
+
+        assertSame(before, field.get(activity))
     }
 }

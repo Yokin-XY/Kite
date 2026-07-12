@@ -463,3 +463,22 @@ D5 状态：completed。
 - 启动诊断单测、Debug 构建和静态护栏通过；无崩溃、ANR 或输入超时。
 
 下一步：审计 `onResume` 对 Console/Settings 的整页重建，只在显示面缺失时重建，已存在页面改为局部校准。
+
+### Console 回前台复用
+
+- `onCreate` 已完成 Console 首次渲染，旧 `onResume` 随后无条件再次 `showConsole()`，重复加载配方、清空绑定和重建整页。
+- 新增 `resumeConsoleSurface`：显示面仍挂载、投放区状态相同且配方结构未变时，保留页面和滚动现场，只校准运行卡片。
+- 页面缺失、投放区变化或配方变化时仍回到完整 `showConsole()`，不牺牲正确性。
+- 设置页继续完整校准系统权限，不纳入本次复用。
+
+下一步：运行 Console 生命周期测试并再次采样 OnePlus 8T 冷启动及后台返回。
+
+验证：
+
+- Console 生命周期测试确认 pause/resume 前后复用同一个 `consolePageBodyHost`。
+- OnePlus 8T 三次冷启动 `TotalTime`：1722、1489、1452ms，平均 1554.3ms。
+- 三次内部首帧：1537、1330、1512ms，平均 1459.7ms。
+- 热返回 221ms，前后 PID 均为 `4773`，稳定帧截图确认首页完整且现场保留。
+- 相对最初 1734ms 单次基线，当前三次平均减少约 180ms；无崩溃、ANR 或输入超时。
+
+下一步：执行最终全量测试、构建、静态检查和 APK 审计，并区分 APK 分发体积与安装后 rootfs/工具链占用。
