@@ -71,6 +71,7 @@ $runX11SurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feat
 $runInstallWizardSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/RunInstallWizardSurfaceBinding.kt'
 $browserHandoffCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/browser/BrowserHandoffCoordinator.kt'
 $androidBrowserHandoffGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserHandoffGateway.kt'
+$androidBrowserAutomationRunUpdaterPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserAutomationRunUpdater.kt'
 $runtimeManagementCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementCoordinator.kt'
 $runtimeManagementGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementGateway.kt'
 $androidRuntimeManagementGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runtimemanagement/AndroidRuntimeManagementGateway.kt'
@@ -204,6 +205,7 @@ $runX11SurfaceBinding = Read-Utf8 $runX11SurfaceBindingPath
 $runInstallWizardSurfaceBinding = Read-Utf8 $runInstallWizardSurfaceBindingPath
 $browserHandoffCoordinator = Read-Utf8 $browserHandoffCoordinatorPath
 $androidBrowserHandoffGateway = Read-Utf8 $androidBrowserHandoffGatewayPath
+$androidBrowserAutomationRunUpdater = Read-Utf8 $androidBrowserAutomationRunUpdaterPath
 $runtimeManagementCoordinator = Read-Utf8 $runtimeManagementCoordinatorPath
 $runtimeManagementGateway = Read-Utf8 $runtimeManagementGatewayPath
 $androidRuntimeManagementGateway = Read-Utf8 $androidRuntimeManagementGatewayPath
@@ -298,6 +300,8 @@ Assert-True ($main -notmatch 'cardRunX11SurfaceBody|x11TaskTitle') 'MainActivity
 Assert-True ($main -match 'browserHandoffCoordinator\.launch' -and $main -notmatch 'browserAuthSessions\.createPending\(request, decision\)|browserLoopbackCallbackBridge\.prepare\(session\)') 'MainActivity must delegate browser handoff sequencing to BrowserHandoffCoordinator.'
 Assert-True ($browserHandoffCoordinator -match '(?s)createPending\(request, decision\).*updateWaiting\(session, request\).*prepareCallback\(session\).*openExternal\(request\.url\)' -and $browserHandoffCoordinator -notmatch 'import android\.|import androidx\.') 'Browser handoff coordinator must preserve side-effect order without Android UI dependencies.'
 Assert-True ($androidBrowserHandoffGateway -match 'CardRunStore\.update' -and $androidBrowserHandoffGateway -match 'loopbackBridge\.prepare' -and $androidBrowserHandoffGateway -match 'sessions\.markFailed') 'Android browser handoff gateway must own Store, loopback, and session adapters.'
+Assert-True ($main -match 'browserAutomationRunUpdater\.update\(event\)' -and $main -notmatch 'browserAutomationRunStatus|browserAutomationSummary|browserAutomationReport') 'MainActivity must delegate automation event projection to the shared platform updater.'
+Assert-True ($androidBrowserAutomationRunUpdater -match 'CardRunStore\.update' -and $androidBrowserAutomationRunUpdater -notmatch 'MainActivity|CardRunActivity|android\.view|android\.widget') 'Browser automation run projection must stay in the shared platform adapter.'
 Assert-True ($runInstallWizardSurfaceBinding -match 'override fun tick\(now: Long\): Boolean = surface\.tick\(now\)' -and $resourceInstallWizardScreen -match 'fun tick\(' -and $main -notmatch 'ResourceInstallWizardSurface|resourceInstallWizardSurface') 'install wizard must keep elapsed binding inside its feature screen.'
 Assert-True ($main -match '(?s)private fun showConsole\b.*HomeFragment' -and $main -notmatch 'consoleCardBindings|consolePageBodyHost|private fun recipeGrid|updateVisibleConsoleCard') 'Home card views, bindings, and page state must remain owned by HomeFragment and HomeScreen.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'

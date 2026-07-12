@@ -86,8 +86,6 @@ import com.kite.app.browser.automation.BrowserAutomationActionResult
 import com.kite.app.browser.automation.BrowserAutomationActionScript
 import com.kite.app.browser.automation.BrowserAutomationController
 import com.kite.app.browser.automation.BrowserAutomationControllerRegistry
-import com.kite.app.browser.automation.BrowserAutomationEvent
-import com.kite.app.browser.automation.BrowserAutomationEventKind
 import com.kite.app.browser.automation.BrowserAutomationResultStatus
 import com.kite.app.browser.automation.BrowserAutomationSessionStore
 import com.kite.app.bridge.BridgeResult
@@ -165,6 +163,7 @@ import com.kite.app.feature.resources.ResourcesFragment
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserHandoffLaunchResult
+import com.kite.app.platform.browser.AndroidBrowserAutomationRunUpdater
 import com.kite.app.application.resources.ResourceRunContinuation
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceRunLaunchRequest
@@ -363,11 +362,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         StartupTraceStore.markStage(this, "main.webview_create")
         webView = WebView(this)
         browserAutomationSessions = appGraph.browserAutomationSessions
+        val browserAutomationRunUpdater = AndroidBrowserAutomationRunUpdater { recipeId ->
+            findRecipeById(recipeId) ?: CardRunStore.registeredRecipe(recipeId)
+        }
         browserAutomationController = BrowserAutomationController(
             webView = webView,
             store = browserAutomationSessions,
             onEvent = { event ->
-                runOnUiThread { handleBrowserAutomationEvent(event) }
+                runOnUiThread {
+                    browserAutomationRunUpdater.update(event)?.let { updated ->
+                        runtimeStates[updated.recipeId] = updated
+                    }
+                }
             }
         )
         webShell = KiteWebShell(
@@ -4492,37 +4498,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         startActivity(launchIntent)
     }
 
-    private fun handleBrowserAutomationEvent(event: BrowserAutomationEvent) {
-        val session = event.session
-        val recipeId = session.recipeId?.takeIf { it.isNotBlank() } ?: return
-        val instanceId = session.instanceId?.takeIf { it.isNotBlank() } ?: return
-        val recipe = findRecipeById(recipeId) ?: CardRunStore.registeredRecipe(recipeId) ?: return
-        val existing = CardRunStore.get(instanceId)
-        val status = browserAutomationRunStatus(event, existing?.status)
-        val isFatalFailure = event.kind == BrowserAutomationEventKind.Failed
-        val actionFailed = event.actionResult?.succeeded == false
-        val updated = CardRunStore.update(
-            recipe = recipe,
-            status = status,
-            instanceId = instanceId,
-            parentInstanceId = existing?.parentInstanceId,
-            ownerKind = existing?.ownerKind,
-            stepId = existing?.stepId,
-            surface = if (isFatalFailure) CardRunSurface.Report else existing?.surface ?: CardRunSurface.Web,
-            currentStepIndex = existing?.currentStepIndex,
-            runId = existing?.runId,
-            terminalSessionId = existing?.terminalSessionId,
-            pid = existing?.pid,
-            rootPid = existing?.rootPid,
-            processGroupId = existing?.processGroupId,
-            systemSessionId = existing?.systemSessionId,
-            lastMeaningfulOutput = browserAutomationSummary(event),
-            lastError = if (isFatalFailure || actionFailed) event.message.take(500) else null,
-            shellReportText = browserAutomationReport(event)
-        )
-        runtimeStates[recipe.id] = updated
-    }
-
     private fun handleBrowserAutomationActionRequest(action: BrowserAutomationAction): BrowserAutomationActionResult {
         if (browserRuntimeMode() != BrowserRuntimeMode.AutomationBrowser) {
             return BrowserAutomationActionScript.rejectedResult(
@@ -4591,118 +4566,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ?.let(BrowserAutomationControllerRegistry::controllerFor)
             ?: BrowserAutomationControllerRegistry.latestController()
             ?: browserAutomationController
-    }
-
-    private fun browserAutomationRunStatus(
-        event: BrowserAutomationEvent,
-        currentStatus: RecipeRunStatus?
-    ): RecipeRunStatus =
-        when (event.kind) {
-            BrowserAutomationEventKind.SessionOpening -> when (currentStatus) {
-                RecipeRunStatus.Starting,
-                RecipeRunStatus.Running,
-                RecipeRunStatus.WaitingTerminal,
-                RecipeRunStatus.AlreadyRunning,
-                RecipeRunStatus.Opened -> currentStatus
-                else -> RecipeRunStatus.Starting
-            }
-            BrowserAutomationEventKind.SnapshotReady -> when (currentStatus) {
-                RecipeRunStatus.Running,
-                RecipeRunStatus.WaitingTerminal,
-                RecipeRunStatus.AlreadyRunning -> currentStatus
-                else -> RecipeRunStatus.Opened
-            }
-            BrowserAutomationEventKind.ActionFinished -> when (currentStatus) {
-                RecipeRunStatus.Running,
-                RecipeRunStatus.WaitingTerminal,
-                RecipeRunStatus.AlreadyRunning -> currentStatus
-                else -> RecipeRunStatus.Opened
-            }
-            BrowserAutomationEventKind.Failed -> when (currentStatus) {
-                RecipeRunStatus.Running,
-                RecipeRunStatus.WaitingTerminal,
-                RecipeRunStatus.AlreadyRunning -> currentStatus
-                else -> RecipeRunStatus.Failed
-            }
-        }
-
-    private fun browserAutomationSummary(event: BrowserAutomationEvent): String =
-        when (event.kind) {
-            BrowserAutomationEventKind.SessionOpening -> "自动浏览器正在打开页面"
-            BrowserAutomationEventKind.SnapshotReady -> {
-                val snapshot = event.snapshot
-                val title = snapshot?.title?.takeIf { it.isNotBlank() } ?: snapshot?.url ?: event.session.url
-                "自动浏览器已采集页面快照：$title"
-            }
-            BrowserAutomationEventKind.ActionFinished -> {
-                val result = event.actionResult
-                if (result?.succeeded == true) {
-                    "自动浏览器动作完成：${result.type.wireName}"
-                } else {
-                    "自动浏览器动作失败：${result?.errorCode ?: "unknown"}"
-                }
-            }
-            BrowserAutomationEventKind.Failed -> event.message.take(500)
-        }
-
-    private fun browserAutomationReport(event: BrowserAutomationEvent): String {
-        val session = event.session
-        val snapshot = event.snapshot
-        return buildString {
-            appendLine("自动浏览器")
-            appendLine("Session: ${session.sessionId}")
-            appendLine("状态: ${session.status}")
-            appendLine("URL: ${snapshot?.url ?: session.url}")
-            if (!snapshot?.title.isNullOrBlank()) appendLine("标题: ${snapshot?.title}")
-            if (!snapshot?.readyState.isNullOrBlank()) appendLine("DOM: ${snapshot?.readyState}")
-            appendLine("消息: ${event.message}")
-            if (!event.errorCode.isNullOrBlank()) appendLine("错误码: ${event.errorCode}")
-            event.actionResult?.let { result ->
-                appendLine()
-                appendLine("动作结果")
-                appendLine("Action: ${result.actionId}")
-                appendLine("类型: ${result.type.wireName}")
-                appendLine("结果: ${result.status}")
-                appendLine("耗时: ${result.durationMs}ms")
-                appendLine("匹配数量: ${result.matchedCount}")
-                appendLine("消息: ${result.message}")
-                if (!result.snapshotId.isNullOrBlank()) appendLine("快照: ${result.snapshotId}")
-                if (!result.artifactPath.isNullOrBlank()) appendLine("证据文件: ${result.artifactPath}")
-                if (!result.errorCode.isNullOrBlank()) appendLine("错误码: ${result.errorCode}")
-                if (!result.errorDetail.isNullOrBlank()) appendLine("错误详情: ${result.errorDetail}")
-            }
-            if (snapshot != null) {
-                appendLine()
-                appendLine("页面摘要")
-                appendLine(snapshot.text.ifBlank { "(页面没有可见文本)" }.take(1200))
-                appendLine()
-                appendLine("元素摘要: ${snapshot.elementCount} 个 DOM 节点，采样 ${snapshot.elements.size} 个可交互元素")
-                snapshot.elements.take(20).forEach { element ->
-                    val label = listOfNotNull(
-                        element.tag,
-                        element.role?.let { "role=$it" },
-                        element.type?.let { "type=$it" },
-                        element.text?.let { "text=$it" },
-                        element.placeholder?.let { "placeholder=$it" },
-                        element.ariaLabel?.let { "aria=$it" }
-                    ).joinToString(" ")
-                    appendLine("- #${element.index} $label visible=${element.visible} enabled=${element.enabled}")
-                }
-                if (snapshot.accessibility.isNotEmpty()) {
-                    appendLine()
-                    appendLine("语义摘要: ${snapshot.accessibility.size} 个节点")
-                    snapshot.accessibility.take(20).forEach { node ->
-                        val state = listOfNotNull(
-                            node.level?.let { "level=$it" },
-                            node.checked?.takeIf { it.isNotBlank() }?.let { "checked=$it" },
-                            node.selected?.let { "selected=$it" },
-                            node.expanded?.let { "expanded=$it" }
-                        ).joinToString(" ")
-                        appendLine("- #${node.index} ${node.role} name=${node.name} tag=${node.tag} enabled=${node.enabled} $state".trim())
-                    }
-                }
-            }
-        }.take(4000)
     }
 
     private fun launchBrowserHandoff(

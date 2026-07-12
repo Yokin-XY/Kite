@@ -1116,3 +1116,28 @@ T008 runtime-status Chrome 与最终验收：
 T008 状态：completed。关键提交为 `5c9fd04`、`5b47c19`、`50b1c47`。
 
 下一步：进入 T009，先锁定普通 Web、系统浏览器认证、自动化显示和 CardRun Web 四条现有入口及认证回跳基线，再迁移显示职责，禁止改写已验证的通用 loopback 协议。
+
+## T009 Web、浏览器与认证边界
+
+### 三问自检
+
+目标是什么？让普通工作台 Web 显示由独立 `web` Feature 拥有，让系统浏览器认证、loopback 回调和自动化运行事实继续通过 Application/Platform 边界工作；主壳只负责导航、Intent 路由和 Android Shell effect。
+
+完成标准是什么？普通 Web、CardRun Web、系统认证与自动化会话各有明确所有者；OAuth/loopback 参数不被页面改写；首次安装、覆盖安装和进程重建后的回跳都定位原运行实例；销毁 WebView 只释放显示资源，不终止后台任务或认证会话。
+
+依赖是否满足？T002 已固定导航与恢复合同，T007 已让 CardRun Web 独占显示实例并建立共享 `BrowserHandoffCoordinator`。当前可以迁移普通工作台，而不触碰已验证的 callback 协议。
+
+### 入口与所有权审计
+
+- CardRun Web 已由 `RunWebSurfaceBinding` 独立持有 `WebView/KiteWebShell/BrowserAutomationController`，不再依赖主壳共享 WebView。
+- 系统认证副作用顺序已收口到 `BrowserHandoffCoordinator + AndroidBrowserHandoffGateway`；但 App redirect 的解析、投递和目标 Activity 恢复仍留在主壳。
+- 普通工作台仍由 `MainActivity` 在 `onCreate()` 创建共享 WebView、Shell 与自动化 Controller，`showWorkbench()` 直接拼页面，Activity 销毁时手工释放整组显示资源。
+- 自动化事件在主壳与独立运行壳各有一份 CardRun 状态投影。先让二者共用 `AndroidBrowserAutomationRunUpdater`，避免页面迁移时继续复制状态判断和报告格式。
+
+T009 自动化运行事实收口结果：
+
+- `MainActivity` 已改用与 `CardRunActivity` 相同的 `AndroidBrowserAutomationRunUpdater`；自动化事件只由这一 Platform 适配器写入 `CardRunStore`。
+- 删除主壳内重复的状态转换、摘要与报告拼装，静态守卫禁止这些实现回流主壳。
+- 此小段不改变浏览器模式、WebView 页面、认证参数、loopback 监听或回跳路由。
+
+下一步：建立普通工作台 `WebWorkbenchFragment/Screen` 和窄 Result Contract，使 WebView、Shell、自动化 Controller、历史返回与显示销毁全部迁出主壳。
