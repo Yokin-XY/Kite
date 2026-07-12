@@ -7,7 +7,7 @@
 ```text
 方向：第二阶段业务架构迁移
 状态：in_progress
-当前任务：T003 资源模块状态与控制边界，等待 T002 收口提交后启动
+当前任务：T004 资源页面所有权迁移，等待 T003 提交后启动
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -598,3 +598,32 @@ T002 结果：
 T002 状态：completed。
 
 下一步：提交 T002 收口与机器基线，再执行 T003 三问，先建立资源 Feature 状态合同，不直接搬 UI。
+
+### T003 三问
+
+- 目标是什么：建立资源目录、详情、搜索、管理和安装向导共用的状态、动作、Effect 与依赖合同，不迁移视图。
+- 完成标准是什么：对应 `PLAYBOOK.md` T003 四项；事实继续来自现有 Store/Projector，Controller 不持有 View 或导航，并覆盖完整资源状态转换。
+- 依赖是否满足：T002 已完成，导航、Intent 与组合根收口提交为 `5c439ff`、`d9bbee0`、`6cd5323`，依赖满足。
+
+当前事实：
+
+- `KiteResourceInstallStore` 已提供 registry snapshot、plan snapshot 和轻量 signals。
+- `KiteResourceRuntimeFactsProjector` 已能合并 registry 与计划事实，`KiteResourceUiProjector` 已统一主/次动作标签。
+- `KiteResourceActionCoordinator` 已把显示标签映射为稳定动作意图，但页面仍自行决定何时调用和如何执行。
+- `ResourceItem` 仍是 Activity 私有显示模型；T003 只建立可供各页面连接的状态合同，完整内容模型在 T004 迁移。
+
+下一步：新增 `feature.resources` 合同和纯 Controller，用 fake gateway 验证准备、安装、失败、运行、停止、卸载和取消语义。
+
+T003 结果：
+
+- 新增统一 `ResourceFeatureUiState`、`ResourceFeatureAction`、`ResourceFeatureEffect` 和 `ResourceFeatureGateway`。
+- 每个资源 UiState 同时携带确定 phase、现有 UI projection、主动作意图、次动作意图和 registry 诊断摘要。
+- 安装向导步骤继续复用 `KiteResourceInstallStepUiProjector`；目录/详情状态继续复用 RuntimeFacts 与 UiProjector。
+- Controller 只读取 Gateway 快照并返回 ActionRequest，不调用 `markInstalling`、`markFailed`、`beginPlan` 等事实写入口。
+- Mutex 保证刷新、事实校准和动作请求串行，避免旧目录结果覆盖新事实。
+- 测试覆盖未获取、准备、安装、等待终端、运行、停止中、卸载、安装失败、卸载失败、取消、目录失败和事实校准。
+- 全量 Debug 单测、Debug 构建、运行车道/架构检查和 APK 体积审计通过；MainActivity 机器债务没有增长。
+
+T003 状态：completed。
+
+下一步：提交 T003，进入 T004；按目录、搜索、详情、管理、安装向导顺序迁移视图所有权。

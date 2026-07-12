@@ -32,6 +32,8 @@ $resourceInstallRecipesPath = Join-Path $Root 'app/src/main/java/com/kite/app/re
 $appNavigatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/AppNavigator.kt'
 $appIntentRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/AppIntentRouter.kt'
 $kiteAppGraphPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/KiteAppGraph.kt'
+$resourceFeatureContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceFeatureContract.kt'
+$resourceFeatureControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceFeatureController.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -113,6 +115,8 @@ $resourceInstallRecipes = Read-Utf8 $resourceInstallRecipesPath
 $appNavigator = Read-Utf8 $appNavigatorPath
 $appIntentRouter = Read-Utf8 $appIntentRouterPath
 $kiteAppGraph = Read-Utf8 $kiteAppGraphPath
+$resourceFeatureContract = Read-Utf8 $resourceFeatureContractPath
+$resourceFeatureController = Read-Utf8 $resourceFeatureControllerPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -131,6 +135,11 @@ Assert-True ($mainOnCreate -match 'KiteAppGraph\.from\(applicationContext\)') 'M
 Assert-True ($mainOnCreate -notmatch 'KiteDiagnostics\(' -and $mainOnCreate -notmatch 'BrowserAuthSessionStore\(' -and $mainOnCreate -notmatch 'KiteResourceInstallStore\(') 'MainActivity must not recreate process dependencies directly.'
 Assert-True ($appIntentRouter -match 'BrowserAuthRedirectParser\.parse' -and $appIntentRouter -match 'EXTRA_RUNTIME_ACTION' -and $appIntentRouter -match 'CardRunIntents\.EXTRA_RECIPE_ID') 'AppIntentRouter must preserve browser, automation, then card-run classification.'
 Assert-True ($kiteAppGraph -match 'context\.applicationContext' -and $kiteAppGraph -notmatch 'android\.app\.Activity|android\.view\.View') 'KiteAppGraph must retain only application context and non-View dependencies.'
+Assert-True ($resourceFeatureContract -match 'ResourceFeatureUiState' -and $resourceFeatureContract -match 'ResourceFeatureAction' -and $resourceFeatureContract -match 'ResourceFeatureEffect' -and $resourceFeatureContract -match 'ResourceFeatureGateway') 'Resource feature must expose one shared state, action, effect, and dependency contract.'
+Assert-True ($resourceFeatureController -match 'KiteResourceRuntimeFactsProjector\.project' -and $resourceFeatureController -match 'KiteResourceUiProjector\.project' -and $resourceFeatureController -match 'KiteResourceInstallStepUiProjector\.project') 'Resource feature state must reuse existing fact and UI projectors.'
+Assert-True ($resourceFeatureController -match 'KiteResourceActionCoordinator\.primaryIntent' -and $resourceFeatureController -match 'KiteResourceActionRequest') 'Resource feature actions must reuse the stable resource action contract.'
+Assert-True ($resourceFeatureController -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.))') 'Resource feature controller must remain independent from Android views and navigation.'
+Assert-True ($resourceFeatureController -notmatch '\.(markInstalling|markPreparing|markUninstalling|markInstalled|markFailed|beginPlan|clearPlan)\s*\(') 'Resource feature controller must not write installation facts owned by KiteResourceInstallStore.'
 Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'
 Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
 Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'

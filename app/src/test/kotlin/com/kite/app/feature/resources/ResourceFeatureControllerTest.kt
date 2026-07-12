@@ -1,0 +1,208 @@
+package com.kite.app.feature.resources
+
+import com.kite.app.action.KiteResourceActionIntent
+import com.kite.app.action.KiteResourceActionSource
+import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourcePlanSnapshot
+import com.kite.app.resources.KiteResourceRegistry
+import com.kite.app.resources.KiteResourceRegistryEntry
+import com.kite.app.run.CardRunStatus
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class ResourceFeatureControllerTest {
+    @Test
+    fun `未获取资源投影为可获取且动作请求保持来源`() = runTest {
+        val gateway = FakeGateway()
+        val controller = ResourceFeatureController(gateway)
+
+        controller.dispatch(ResourceFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        assertEquals(ResourceCatalogPhase.Ready, controller.state.value.phase)
+        assertEquals(ResourceItemPhase.NotInstalled, item.phase)
+        assertEquals("获取", item.projection.actionLabel)
+        assertEquals(KiteResourceActionIntent.Install, item.primaryIntent)
+        assertNull(item.secondaryIntent)
+
+        val effect = controller.dispatch(
+            ResourceFeatureAction.Primary("tool", KiteResourceActionSource.Detail)
+        ) as ResourceFeatureEffect.ActionRequested
+        assertEquals("tool", effect.request.resourceId)
+        assertEquals(KiteResourceActionIntent.Install, effect.request.intent)
+        assertEquals(KiteResourceActionSource.Detail, effect.request.source)
+    }
+
+    @Test
+    fun `安装计划运行中统一投影为可恢复向导和可取消`() = runTest {
+        val gateway = FakeGateway().apply {
+            plan = KiteResourcePlanSnapshot(
+                targetResourceId = "tool",
+                resourceIds = listOf("tool"),
+                runningResourceIds = listOf("tool"),
+                stepStatusByResourceId = mapOf("tool" to KiteResourceInstallStore.PLAN_STEP_RUNNING)
+            )
+        }
+        val controller = ResourceFeatureController(gateway)
+
+        controller.dispatch(ResourceFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        assertEquals(ResourceItemPhase.Installing, item.phase)
+        assertEquals("获取中", item.projection.actionLabel)
+        assertEquals(KiteResourceActionIntent.ReopenInstall, item.primaryIntent)
+        assertEquals(KiteResourceActionIntent.CancelInstall, item.secondaryIntent)
+        assertEquals("获取中", controller.state.value.plan.steps.single().projection.statusLabel)
+    }
+
+    @Test
+    fun `安装失败统一提供重新获取和清理失败安装`() = runTest {
+        val gateway = FakeGateway().apply {
+            registry["tool"] = entry(
+                status = KiteResourceRegistry.STATUS_FAILED,
+                operation = KiteResourceInstallStore.OP_INSTALL,
+                summary = "network_failed"
+            )
+        }
+        val controller = ResourceFeatureController(gateway)
+
+        controller.dispatch(ResourceFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        assertEquals(ResourceItemPhase.InstallFailed, item.phase)
+        assertEquals("重新获取", item.projection.actionLabel)
+        assertEquals(KiteResourceActionIntent.Install, item.primaryIntent)
+        assertEquals(KiteResourceActionIntent.CancelFailedInstall, item.secondaryIntent)
+        assertEquals("network_failed", item.registrySummary)
+    }
+
+    @Test
+    fun `已安装且运行中的资源统一提供打开和中止`() = runTest {
+        val gateway = FakeGateway().apply {
+            registry["tool"] = entry(status = KiteResourceRegistry.STATUS_INSTALLED)
+            runStatuses["tool"] = CardRunStatus.Running
+        }
+        val controller = ResourceFeatureController(gateway)
+
+        controller.dispatch(ResourceFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        assertEquals(ResourceItemPhase.Running, item.phase)
+        assertEquals("运行中", item.projection.actionLabel)
+        assertEquals(KiteResourceActionIntent.Open, item.primaryIntent)
+        assertEquals(KiteResourceActionIntent.Stop, item.secondaryIntent)
+
+        val effect = controller.dispatch(
+            ResourceFeatureAction.Secondary("tool", KiteResourceActionSource.Card)
+        ) as ResourceFeatureEffect.ActionRequested
+        assertEquals(KiteResourceActionIntent.Stop, effect.request.intent)
+    }
+
+    @Test
+    fun `卸载失败保持继续卸载而不是错误回到获取`() = runTest {
+        val gateway = FakeGateway().apply {
+            registry["tool"] = entry(
+                status = KiteResourceRegistry.STATUS_FAILED,
+                operation = KiteResourceInstallStore.OP_UNINSTALL
+            )
+        }
+        val controller = ResourceFeatureController(gateway)
+
+        controller.dispatch(ResourceFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        assertEquals(ResourceItemPhase.UninstallFailed, item.phase)
+        assertEquals("继续卸载", item.projection.actionLabel)
+        assertEquals(KiteResourceActionIntent.Uninstall, item.primaryIntent)
+    }
+
+    @Test
+    fun `准备安装卸载以及运行过渡态都有确定语义`() = runTest {
+        val cases = listOf(
+            Triple(KiteResourceRegistry.STATUS_PREPARING, null, ResourceItemPhase.Preparing),
+            Triple(KiteResourceRegistry.STATUS_INSTALLING, null, ResourceItemPhase.Installing),
+            Triple(KiteResourceRegistry.STATUS_UNINSTALLING, null, ResourceItemPhase.Uninstalling),
+            Triple(KiteResourceRegistry.STATUS_INSTALLED, null, ResourceItemPhase.Installed),
+            Triple(KiteResourceRegistry.STATUS_INSTALLED, CardRunStatus.Starting, ResourceItemPhase.Starting),
+            Triple(KiteResourceRegistry.STATUS_INSTALLED, CardRunStatus.WaitingTerminal, ResourceItemPhase.Running),
+            Triple(KiteResourceRegistry.STATUS_INSTALLED, CardRunStatus.Stopping, ResourceItemPhase.Stopping)
+        )
+
+        cases.forEach { (registryStatus, runStatus, expectedPhase) ->
+            val gateway = FakeGateway().apply {
+                registry["tool"] = entry(status = registryStatus)
+                runStatus?.let { runStatuses["tool"] = it }
+            }
+            val controller = ResourceFeatureController(gateway)
+            controller.dispatch(ResourceFeatureAction.Refresh())
+
+            assertEquals(expectedPhase, controller.state.value.item("tool")!!.phase)
+        }
+    }
+
+    @Test
+    fun `事实校准只重投影现有目录而不重新加载目录`() = runTest {
+        val gateway = FakeGateway()
+        val controller = ResourceFeatureController(gateway)
+        controller.dispatch(ResourceFeatureAction.Refresh())
+        val initialRevision = controller.state.value.revision
+        gateway.registry["tool"] = entry(status = KiteResourceRegistry.STATUS_PREPARING)
+
+        controller.dispatch(ResourceFeatureAction.ReconcileFacts)
+
+        assertEquals(1, gateway.loadCount)
+        assertTrue(controller.state.value.revision > initialRevision)
+        assertEquals(ResourceItemPhase.Preparing, controller.state.value.item("tool")!!.phase)
+    }
+
+    @Test
+    fun `目录失败保留已有投影并暴露确定错误`() = runTest {
+        val gateway = FakeGateway()
+        val controller = ResourceFeatureController(gateway)
+        controller.dispatch(ResourceFeatureAction.Refresh())
+        gateway.loadFailure = IllegalStateException("catalog_failed")
+
+        controller.dispatch(ResourceFeatureAction.Refresh(forceCatalogRefresh = true))
+
+        assertEquals(ResourceCatalogPhase.Failed, controller.state.value.phase)
+        assertEquals("catalog_failed", controller.state.value.errorMessage)
+        assertEquals(listOf("tool"), controller.state.value.items.map(ResourceItemUiState::resourceId))
+    }
+
+    private class FakeGateway : ResourceFeatureGateway {
+        var catalog = listOf(ResourceFeatureDescriptor("tool", "Tool"))
+        val registry = linkedMapOf<String, KiteResourceRegistryEntry>()
+        var plan = KiteResourcePlanSnapshot()
+        val runStatuses = linkedMapOf<String, CardRunStatus>()
+        var loadFailure: Throwable? = null
+        var loadCount: Int = 0
+
+        override suspend fun loadCatalog(forceRefresh: Boolean): List<ResourceFeatureDescriptor> {
+            loadCount += 1
+            loadFailure?.let { throw it }
+            return catalog
+        }
+
+        override fun registrySnapshot(resourceIds: Collection<String>): Map<String, KiteResourceRegistryEntry> =
+            registry.filterKeys { it in resourceIds }
+
+        override fun planSnapshot(): KiteResourcePlanSnapshot = plan
+
+        override fun openRunStatus(resourceId: String): CardRunStatus? = runStatuses[resourceId]
+    }
+
+    private fun entry(
+        status: String,
+        operation: String = "",
+        summary: String = ""
+    ): KiteResourceRegistryEntry = KiteResourceRegistryEntry(
+        resourceId = "tool",
+        status = status,
+        operation = operation,
+        summary = summary,
+        updatedAt = 123L
+    )
+}
