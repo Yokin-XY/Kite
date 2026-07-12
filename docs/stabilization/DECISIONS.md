@@ -390,3 +390,13 @@
 理由：这四个表面显示的是同一份状态，旧实现却把二十余个 View 字段和多套绑定函数放在主壳。把它们各自拆成页面会复制状态，把它们继续留在 Activity 又无法建立所有权。单一 Chrome owner 既能局部更新，又能把 Android Dialog/Window 生命周期限制在可见层。
 
 影响：Main 只处理权限、系统设置和导航 Effect，并在 Destination 变化时传入是否抑制临时 Chrome；资源页抑制只影响显示，不改变 bootstrap。状态弹层刷新必须同时校准 bootstrap 与运行管理 Gateway。主题变化先 dispose 旧 Chrome 再按当前 UiState 重建，Activity 销毁只释放可见绑定。
+
+## ADR-S039 普通 Web 工作台拥有显示生命周期，认证桥保持进程级
+
+状态：accepted
+
+决策：普通工作台由 `WebWorkbenchFragment/Screen` 独占 `WebView`、`KiteWebShell`、网页历史和自动化显示会话。系统浏览器认证仍统一进入进程级 `BrowserHandoffCoordinator`；Feature 只提交原始 request 与既有 policy decision，不读取或写入认证 session、loopback 端口和 CardRun 事实。
+
+理由：主壳共享 WebView 会让 Activity 冷启动提前创建浏览器资源，并把工作台销毁、自动化 session 与整个应用生命周期绑定。另一方面，认证正确性依赖进程级 session 与 callback channel，不能随 Fragment 重建而消失。把显示和认证拆开后，页面可以独立释放，已发起登录仍能由应用入口接收并恢复目标运行实例。
+
+影响：主壳不得重新持有 `webView/webShell/browserAutomationController`，普通工作台返回优先消费网页历史。工作台销毁可以关闭自己的自动化显示 session，但不得停止 CardRun、后台进程或 `BrowserAuthSessionStore` 会话。自动化 API 只能控制 Registry 中仍存活的 Web 显示面，没有显示面时返回可解释失败，禁止回退到无关页面的共享控制器。

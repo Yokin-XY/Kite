@@ -25,6 +25,7 @@ import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.platform.resources.AndroidResourceFeatureGateway
 import com.kite.app.platform.browser.AndroidBrowserHandoffGateway
+import com.kite.app.platform.browser.AndroidExternalBrowserLauncher
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.platform.resources.AndroidResourceRecipeFactory
 import com.kite.app.platform.resources.AndroidResourceRunGateway
@@ -33,6 +34,7 @@ import com.kite.app.platform.runs.AndroidRecipeExecutor
 import com.kite.app.platform.runs.AndroidRunStateGateway
 import com.kite.app.platform.runtimemanagement.AndroidRuntimeManagementGateway
 import com.kite.app.platform.runtimebootstrap.AndroidRuntimeBootstrapGateway
+import com.kite.app.run.CardRunStore
 
 /**
  * Kite 进程级组合根。这里只装配已有能力，不承载页面状态或业务流程。
@@ -48,6 +50,15 @@ internal class KiteAppGraph private constructor(context: Context) {
     }
     val browserAutomationSessions: BrowserAutomationSessionStore by lazy {
         BrowserAutomationSessionStore(appContext)
+    }
+    val webWorkbenchHandoffCoordinator: BrowserHandoffCoordinator by lazy {
+        createBrowserHandoffCoordinator(
+            recipeResolver = { recipeId ->
+                CardRunStore.registeredRecipe(recipeId)
+                    ?: recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
+            },
+            openExternal = { url -> AndroidExternalBrowserLauncher.open(appContext, url) }
+        )
     }
     val resourceInstallStore: KiteResourceInstallStore by lazy { KiteResourceInstallStore(appContext) }
     val resourceManifestLoader: KiteResourceManifestLoader by lazy { KiteResourceManifestLoader(appContext) }

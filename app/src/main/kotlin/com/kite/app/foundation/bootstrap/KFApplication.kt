@@ -22,9 +22,10 @@ import com.kite.app.foundation.runtime.RuntimeLifecycleSignalStore
 import com.kite.app.foundation.runtime.RuntimePressureResponder
 import com.kite.app.ui.terminal.TerminalUiPreferences
 import com.kite.app.shell.KiteAppGraph
+import com.kite.app.feature.web.WebWorkbenchDependenciesOwner
 
 class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner,
-    RuntimeManagementDependenciesOwner {
+    RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner {
 
     override val resourceFeatureGateway: ResourceFeatureGateway
         get() = KiteAppGraph.from(this).resourceFeatureGateway
@@ -37,6 +38,19 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
 
     override val runtimeManagementCoordinator: RuntimeManagementCoordinator
         get() = KiteAppGraph.from(this).runtimeManagementCoordinator
+
+    override val webWorkbenchDiagnostics
+        get() = KiteAppGraph.from(this).diagnostics
+
+    override val webWorkbenchAutomationSessions
+        get() = KiteAppGraph.from(this).browserAutomationSessions
+
+    override fun launchWebWorkbenchHandoff(
+        request: com.kite.app.browser.BrowserHandoffRequest,
+        decision: com.kite.app.browser.BrowserHandoffDecision
+    ): Boolean = KiteAppGraph.from(this).webWorkbenchHandoffCoordinator
+        .launch(request, decision)
+        .accepted
 
     companion object {
         const val CHANNEL_SHELL = "kfshell_service"

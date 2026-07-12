@@ -2,8 +2,7 @@ package com.kite.app
 
 import android.os.Bundle
 import android.os.Looper
-import android.view.ViewGroup
-import android.webkit.WebView
+import com.kite.app.feature.web.WebWorkbenchFragment
 import com.kite.app.feature.resources.ResourceFeatureRequest
 import com.kite.app.feature.resources.ResourceFeatureResultContract
 import com.kite.app.resources.KiteResourceInstallSignal
@@ -33,16 +32,6 @@ import org.robolectric.Shadows.shadowOf
  */
 @RunWith(RobolectricTestRunner::class)
 class MainActivityScreenRoutingTest {
-
-    private class BackTrackingWebView(activity: MainActivity) : WebView(activity) {
-        var goBackCalls: Int = 0
-
-        override fun canGoBack(): Boolean = true
-
-        override fun goBack() {
-            goBackCalls += 1
-        }
-    }
 
     private fun createActivity(savedInstanceState: Bundle? = null): MainActivity =
         Robolectric.buildActivity(MainActivity::class.java)
@@ -94,11 +83,15 @@ class MainActivityScreenRoutingTest {
         activity.enterScreenForTest(screenName)
     }
 
-    private fun replaceWebView(activity: MainActivity, webView: WebView) {
-        val field = MainActivity::class.java.getDeclaredField("webView")
-        field.isAccessible = true
-        field.set(activity, webView)
-        activity.addContentView(webView, ViewGroup.LayoutParams(1, 1))
+    private fun invokeShowWorkbench(activity: MainActivity, url: String) {
+        val method = MainActivity::class.java.getDeclaredMethod(
+            "showWorkbench",
+            String::class.java,
+            String::class.java,
+            com.kite.app.recipe.KiteRecipe::class.java
+        )
+        method.isAccessible = true
+        method.invoke(activity, url, "test", null)
     }
 
     // ------------------------------------------------------------------
@@ -281,16 +274,16 @@ class MainActivityScreenRoutingTest {
     }
 
     @Test
-    fun `Workbench 有网页历史时 back 应只回退网页`() {
+    fun `Workbench 由独立 Feature 承载且返回应用首页`() {
         val activity = createResumedActivity()
-        val webView = BackTrackingWebView(activity)
-        replaceWebView(activity, webView)
-        setCurrentScreen(activity, "Workbench")
+        invokeShowWorkbench(activity, "about:blank")
+        activity.supportFragmentManager.executePendingTransactions()
+
+        assertNotNull(activity.supportFragmentManager.findFragmentByTag("kite-web-workbench"))
 
         activity.onBackPressedDispatcher.onBackPressed()
 
-        assertEquals(1, webView.goBackCalls)
-        assertEquals("Workbench", activity.currentScreenNameForTest())
+        assertEquals("Console", activity.currentScreenNameForTest())
     }
 
     // ------------------------------------------------------------------
@@ -335,13 +328,16 @@ class MainActivityScreenRoutingTest {
     }
 
     @Test
-    fun `Activity 销毁只释放显示面`() {
+    fun `Activity 销毁由 Workbench Feature 释放显示面`() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).create().start().resume()
         val activity = controller.get()
+        invokeShowWorkbench(activity, "about:blank")
+        activity.supportFragmentManager.executePendingTransactions()
+        val fragment = activity.supportFragmentManager.findFragmentByTag("kite-web-workbench") as WebWorkbenchFragment
 
         controller.pause().stop().destroy()
 
-        assertTrue(activity.activityDisplaySurfacesReleasedForTest())
+        assertTrue(fragment.displayReleasedForTest())
     }
 
     @Test

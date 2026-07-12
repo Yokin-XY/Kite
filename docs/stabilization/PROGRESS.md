@@ -1141,3 +1141,14 @@ T009 自动化运行事实收口结果：
 - 此小段不改变浏览器模式、WebView 页面、认证参数、loopback 监听或回跳路由。
 
 下一步：建立普通工作台 `WebWorkbenchFragment/Screen` 和窄 Result Contract，使 WebView、Shell、自动化 Controller、历史返回与显示销毁全部迁出主壳。
+
+T009 普通 Web 工作台迁移结果：
+
+- 新增 `WebWorkbenchFragment/Screen`。普通工作台独占自己的 `WebView`、`KiteWebShell`、网页历史和自动化 Controller；Fragment 销毁只关闭自动化显示会话并销毁 WebView。
+- 主壳不再预创建共享 WebView，不再持有 `webShell/browserAutomationController`，也不再通过 Activity `onDestroy()` 清理 Feature 的显示资源。系统返回先由工作台处理网页历史，无历史时才进入 `AppNavigator`。
+- 浏览器自动化动作只投递给 `BrowserAutomationControllerRegistry` 中仍存活的显示面；没有可见控制器时返回确定的 `display_not_available`，不再把其他页面的 session 错投给主壳共享 WebView。
+- 浏览器模式为“自动浏览器”时，普通工作台现在会真实创建自动化 session；旧实现虽创建了 Controller，却始终以默认 `automationEnabled=false` 打开页面。
+- `KFApplication` 通过窄依赖合同向 Feature 提供诊断、自动化 session store 和进程级 handoff；系统浏览器由 Platform launcher 打开，Feature 不创建或保存认证事实。
+- 目标测试覆盖网页历史返回、无历史退出、自动化 session 创建/关闭和 Activity 销毁时的显示释放；Kotlin 编译与架构/运行车道守卫通过。主壳债务降至 `lines=7193, functions=354, fields=70, hosts=4, runtimeStateRefs=33`。
+
+下一步：把 App redirect 的解析、state 匹配、目标运行实例投递和进程重建恢复收口为 Application 协调器，并补齐首次安装、覆盖安装、进程重建三类认证回跳合同测试。

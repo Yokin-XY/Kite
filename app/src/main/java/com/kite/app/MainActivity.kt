@@ -40,7 +40,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import android.webkit.WebView
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -76,7 +75,6 @@ import com.kite.app.browser.BrowserAuthSessionKind
 import com.kite.app.browser.BrowserAuthSessionStatus
 import com.kite.app.browser.BrowserAuthSessionStore
 import com.kite.app.browser.BrowserHandoffDecision
-import com.kite.app.browser.BrowserHandoffLauncher
 import com.kite.app.browser.BrowserHandoffPolicy
 import com.kite.app.browser.BrowserHandoffRequest
 import com.kite.app.browser.BrowserLoopbackCallbackBridge
@@ -140,7 +138,6 @@ import com.kite.app.shell.NavigationBackAction
 import com.kite.app.shell.RestorePolicy
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
-import com.kite.app.web.KiteWebShell
 import com.kite.app.R
 import com.kite.app.foundation.bootstrap.StartupTraceStore
 import com.kite.app.foundation.runtime.ExternalExchangeManager
@@ -163,7 +160,6 @@ import com.kite.app.feature.resources.ResourcesFragment
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserHandoffLaunchResult
-import com.kite.app.platform.browser.AndroidBrowserAutomationRunUpdater
 import com.kite.app.application.resources.ResourceRunContinuation
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceRunLaunchRequest
@@ -183,6 +179,8 @@ import com.kite.app.feature.runtimebootstrap.RuntimeStatusAction
 import com.kite.app.feature.runtimebootstrap.RuntimeStatusFeatureController
 import com.kite.app.feature.runtimebootstrap.RuntimeStatusFeatureEffect
 import com.kite.app.feature.runtimebootstrap.RuntimeStatusUiState
+import com.kite.app.feature.web.WebWorkbenchFragment
+import com.kite.app.feature.web.WebWorkbenchTarget
 import com.kite.app.feature.recipeeditor.RecipeEditorDraft
 import com.kite.app.feature.recipeeditor.RecipeEditorFragment
 import com.kite.app.feature.recipeeditor.RecipeEditorRequest
@@ -218,12 +216,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
     private lateinit var bridgeClient: KiteBridgeClient
-    private lateinit var webShell: KiteWebShell
     private lateinit var browserAuthSessions: BrowserAuthSessionStore
     private lateinit var browserLoopbackCallbackBridge: BrowserLoopbackCallbackBridge
     private lateinit var browserHandoffCoordinator: BrowserHandoffCoordinator
     private lateinit var browserAutomationSessions: BrowserAutomationSessionStore
-    private lateinit var browserAutomationController: BrowserAutomationController
     private lateinit var localServer: KiteLocalServer
     private lateinit var resourceInstallStore: KiteResourceInstallStore
     private lateinit var resourceManifestLoader: KiteResourceManifestLoader
@@ -236,8 +232,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var appSettings: SharedPreferences
     private lateinit var rootHost: FrameLayout
     private lateinit var root: LinearLayout
-    private lateinit var webView: WebView
-    private var activityDisplaySurfacesReleased = false
 
     private val runtimeStates = mutableMapOf<String, RecipeRuntimeState>()
     private val activeRunInstanceIds = mutableMapOf<String, String>()
@@ -269,9 +263,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val screen = AppDestination.valueOf(screenName)
         enterScreen(screen)
     }
-
-    @androidx.annotation.VisibleForTesting
-    internal fun activityDisplaySurfacesReleasedForTest(): Boolean = activityDisplaySurfacesReleased
 
     private fun enterScreen(screen: AppDestination, onBack: (() -> Unit)? = null) {
         currentScreen = screen
@@ -360,32 +351,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             openExternal = { url -> openCustomTabOrSystemBrowser(Uri.parse(url)) }
         )
         StartupTraceStore.markStage(this, "main.webview_create")
-        webView = WebView(this)
         browserAutomationSessions = appGraph.browserAutomationSessions
-        val browserAutomationRunUpdater = AndroidBrowserAutomationRunUpdater { recipeId ->
-            findRecipeById(recipeId) ?: CardRunStore.registeredRecipe(recipeId)
-        }
-        browserAutomationController = BrowserAutomationController(
-            webView = webView,
-            store = browserAutomationSessions,
-            onEvent = { event ->
-                runOnUiThread {
-                    browserAutomationRunUpdater.update(event)?.let { updated ->
-                        runtimeStates[updated.recipeId] = updated
-                    }
-                }
-            }
-        )
-        webShell = KiteWebShell(
-            activity = this,
-            webView = webView,
-            diagnostics = diagnostics,
-            onStatus = { },
-            browserHandoffLauncher = BrowserHandoffLauncher { request, decision ->
-                launchBrowserHandoff(request, decision)
-            },
-            browserAutomationController = browserAutomationController
-        )
         StartupTraceStore.markStage(this, "main.resources_and_server")
         resourceInstallStore = appGraph.resourceInstallStore
         resourceManifestLoader = appGraph.resourceManifestLoader
@@ -1029,7 +995,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_CURRENT_SCREEN, currentScreen.name)
-        lastWorkbenchUrl?.let { outState.putString(STATE_WORKBENCH_URL, it) }
+        val workbenchUrl = (supportFragmentManager.findFragmentByTag(TAG_WEB_WORKBENCH_FRAGMENT) as? WebWorkbenchFragment)
+            ?.currentUrlForState()
+            ?: lastWorkbenchUrl
+        workbenchUrl?.let { outState.putString(STATE_WORKBENCH_URL, it) }
         (supportFragmentManager.findFragmentByTag(TAG_RECIPE_EDITOR_FRAGMENT) as? RecipeEditorFragment)
             ?.currentDraftRaw()
             ?.let { outState.putString(STATE_RECIPE_DRAFT, it) }
@@ -1038,26 +1007,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     override fun onDestroy() {
         if (::runtimeStatusChrome.isInitialized) runtimeStatusChrome.dispose()
-        releaseActivityDisplaySurfaces()
         if (localServerStarted) {
             localServer.stop()
         }
         super.onDestroy()
-    }
-
-    private fun releaseActivityDisplaySurfaces() {
-        if (activityDisplaySurfacesReleased) return
-        activityDisplaySurfacesReleased = true
-        if (::browserAutomationController.isInitialized) {
-            browserAutomationController.closeActiveSession()
-        }
-        if (::webView.isInitialized) {
-            (webView.parent as? ViewGroup)?.removeView(webView)
-            webView.stopLoading()
-            webView.onPause()
-            webView.removeAllViews()
-            webView.destroy()
-        }
     }
 
     private fun requestNavigationBack() {
@@ -1065,7 +1018,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun handleAppNavigationBack() {
-        if (handleWebViewBackSignal()) return
         when (val action = appNavigator.resolveBack()) {
             NavigationBackAction.System -> dispatchSystemBack()
             NavigationBackAction.Contextual -> appNavigator.invokeContextualBack()
@@ -1080,14 +1032,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         } finally {
             navigationBackCallback.isEnabled = true
         }
-    }
-
-    private fun handleWebViewBackSignal(): Boolean {
-        if (!::webView.isInitialized) return false
-        if (currentScreen != AppDestination.Workbench) return false
-        if (webView.parent == null || !webView.canGoBack()) return false
-        webView.goBack()
-        return true
     }
 
     override fun onPostResume() {
@@ -1959,6 +1903,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             changed = true
         }
         supportFragmentManager.findFragmentByTag(TAG_RUNTIME_MANAGEMENT_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_WEB_WORKBENCH_FRAGMENT)?.let { fragment ->
             transaction.remove(fragment)
             changed = true
         }
@@ -4508,6 +4456,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             )
         }
         val targetController = browserAutomationControllerFor(action)
+            ?: return BrowserAutomationActionScript.rejectedResult(
+                action = action,
+                sessionId = action.sessionId ?: action.instanceId ?: "display_not_available",
+                errorCode = "display_not_available",
+                detail = "自动浏览器显示面当前不可用"
+            )
         if (Looper.myLooper() == Looper.getMainLooper()) {
             val reference = AtomicReference<BrowserAutomationActionResult>()
             targetController.performAction(action) { result ->
@@ -4553,7 +4507,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun browserAutomationControllerFor(action: BrowserAutomationAction): BrowserAutomationController {
+    private fun browserAutomationControllerFor(action: BrowserAutomationAction): BrowserAutomationController? {
         val session = action.sessionId
             ?.takeIf { it.isNotBlank() }
             ?.let(browserAutomationSessions::get)
@@ -4565,7 +4519,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ?.sessionId
             ?.let(BrowserAutomationControllerRegistry::controllerFor)
             ?: BrowserAutomationControllerRegistry.latestController()
-            ?: browserAutomationController
     }
 
     private fun launchBrowserHandoff(
@@ -6427,13 +6380,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showWorkbench(url: String, source: String, recipe: KiteRecipe?) {
         lastWorkbenchUrl = url
         enterScreen(AppDestination.Workbench)
-        root.setBackgroundColor(tokens.pageBackground)
-        clearRootForScreen()
-        val parent = webView.parent
-        if (parent is ViewGroup) parent.removeView(webView)
-        root.addView(topBar("Kite 工作台", ::requestNavigationBack))
-        root.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        webShell.open(url, recipeId = recipe?.id, recipeName = recipe?.name, openSource = source)
+        showFeatureFragment(
+            fragment = WebWorkbenchFragment.newInstance(
+                target = WebWorkbenchTarget(
+                    url = url,
+                    source = source,
+                    recipeId = recipe?.id,
+                    recipeName = recipe?.name,
+                    automationEnabled = browserRuntimeMode() == BrowserRuntimeMode.AutomationBrowser
+                ),
+                pageBackground = tokens.pageBackground,
+                textPrimary = tokens.textPrimary
+            ),
+            tag = TAG_WEB_WORKBENCH_FRAGMENT,
+            showBottomNavigation = false
+        )
     }
 
     private fun topBar(title: String, onBack: () -> Unit): View = row {
@@ -7154,6 +7115,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val TAG_HOME_FRAGMENT = "kite-home"
         private const val TAG_RESOURCE_DETAIL_FRAGMENT = "kite-resource-detail"
         private const val TAG_RUNTIME_MANAGEMENT_FRAGMENT = "kite-runtime-management"
+        private const val TAG_WEB_WORKBENCH_FRAGMENT = "kite-web-workbench"
         private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
