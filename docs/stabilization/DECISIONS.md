@@ -280,3 +280,13 @@
 理由：旧实现把报告 TextView、终端 Fragment、共享 WebView、X11 View 和安装向导字段全部放在 `MainActivity`，导致普通状态变化、页面切换与底层任务生命周期互相影响。只拆文件而继续让 Activity 维护这些字段，仍然不会形成真正的职责边界。
 
 影响：`CardRunStore` 继续是运行事实唯一拥有者，`RunSurfaceProjector` 负责事实到显示状态的转换。Host 的 attach、render、tick、dispose 都只影响可见绑定；用户显式继续或停止才通过 Action Gateway 进入 `RunOrchestrator`。迁移按 Report 样板逐面进行，静态护栏禁止旧报告绑定回流。
+
+## ADR-S028 运行窗口返回只解除可见绑定
+
+状态：accepted
+
+决策：系统返回、运行窗口关闭和 Activity 销毁只离开当前显示面，不自动完成等待步骤、不停止运行实例，也不取消资源安装计划。完成步骤、停止实例和取消计划必须分别来自可见的“继续”“停止”“取消”用户动作。
+
+理由：返回属于导航意图，不是运行控制意图。旧实现会在终端等待时把返回解释为完成，并在关闭窗口时根据运行绑定自动停止；用户只是离开页面，后台 shell 或安装队列却被改变，既违反常规交互，也让显示生命周期拥有了执行生命周期。
+
+影响：Terminal Fragment detach、Report Screen dispose、WebView unbind 和 CardRunActivity finish 都不得写运行事实。首页或运行记录重新打开时必须从 `CardRunStore` 恢复同一 instance 与 surface；显式运行控制继续进入 `RunOrchestrator`，不得再按页面类型增加关闭即停止的特判。

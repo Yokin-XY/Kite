@@ -933,3 +933,16 @@ T007 报告显示面样板结果：
 报告显示面迁移状态：completed，待独立提交。
 
 下一步：让 terminal 与 Web 各自实现 `RunSurfaceBinding`，把 Fragment/WebView 的 attach、update、dispose 从 MainActivity 移入显示面适配器；随后再让 `CardRunActivity` 脱离继承。
+
+T007 终端显示面与返回语义结果：
+
+- 新增 `RunTerminalSurfaceBinding`：根据同一实例的 `terminalSessionId` 挂载 `TerminalFragment.detailOnly`；session 未就绪时由绑定自己显示准备状态，销毁时只 detach Fragment，不调用 `TerminalSessionController`、Bridge 或 `RunOrchestrator.stop`。
+- `MainActivity` 删除 CardRun 终端容器 ID、Fragment tag、session 参数解析和 `showCardRunTerminalFragment`，终端可见生命周期不再由 Activity 字段维护。
+- 真机审计发现旧返回键把 `WaitingTerminal` 直接解释为“完成当前步骤”，关闭运行窗口还可能自动提交停止；现已改为返回只关闭任务窗口，顶部“继续”才完成步骤，明确“停止”才停止任务。
+- 安装向导根页面离开不再暗中调用取消运行链；显式取消入口仍负责停止和清理，普通返回只释放显示面。
+- OnePlus 8T `3f8bbaad`：OpenClaw 进入 `WaitingTerminal`，session 为 `embedded-space-main-1783877264318`；返回首页后状态、surface 和 session 完全不变，首页显示“已打开 1”。从编辑页“打开”恢复后仍绑定同一 session；点击“继续”后才变为 `Completed` 并清空 terminalSessionId。全链无 `AndroidRuntime`。
+- 目标单测、Debug Kotlin 编译、Debug APK、架构检查和运行车道静态检查通过；债务快照为 `lines=12263, functions=538, fields=108, inheritedActivities=1`。
+
+终端显示面迁移状态：completed，待独立提交。
+
+下一步：迁移 Web 显示绑定和浏览器回跳可见恢复，让共享 WebView、认证等待页和外部浏览器打开都通过同一实例合同；完成后再抽出独立 CardRunActivity 壳。

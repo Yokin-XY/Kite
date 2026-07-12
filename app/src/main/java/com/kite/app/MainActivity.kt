@@ -173,6 +173,8 @@ import com.kite.app.feature.runsurface.RunSurfaceHost
 import com.kite.app.feature.runsurface.RunSurfaceProjector
 import com.kite.app.feature.runsurface.RunSurfaceUiState
 import com.kite.app.feature.runsurface.StaticRunSurfaceBinding
+import com.kite.app.feature.runsurface.RunSurfaceContent
+import com.kite.app.feature.runsurface.RunTerminalSurfaceBinding
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.runtime.TerminalSessionItem
 import com.kite.app.foundation.runtime.TerminalSessionStore
@@ -299,7 +301,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var themeConfig = ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
     private var tokens = KiteTheme.resolve(themeConfig)
     private val terminalContainerId = View.generateViewId()
-    private val cardRunTerminalContainerId = View.generateViewId()
     private var terminalBottomNavigation: View? = null
     private var isTerminalDetailMode = false
     private var kfRuntimeBootstrapRequested = false
@@ -2550,7 +2551,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
         detachFragment(TAG_HOME_FRAGMENT)
         detachFragment(TAG_RECIPE_EDITOR_FRAGMENT)
-        detachFragment(CARD_RUN_TERMINAL_FRAGMENT_TAG)
         // T6b/T7:切走时移除 Fragment(RecipeRawJson、ResourceManage)并恢复 root 可见性
         supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT)?.let { fragment ->
             transaction.remove(fragment)
@@ -3646,20 +3646,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         } else {
             refreshResourceScreenIfVisible()
         }
-    }
-
-    private fun closeResourceInstallWizardAndCancelRuns(context: ResourceInstallWizardContext?) {
-        val targetId = context?.targetResourceId ?: currentResourceInstallTargetId.orEmpty()
-        val planIds = context?.planResourceIds.orEmpty()
-            .ifEmpty { resourceInstallWizardPlanIds }
-            .ifEmpty { resourceInstallStore.planResourceIds() }
-        val resourceIds = resolveResourceInstallTaskIds(targetId, planIds)
-        stopResourceInstallRunsForCancel(resourceIds)
-        clearResourceInstallTask(
-            targetResourceId = targetId,
-            planResourceIds = resourceIds,
-            closeWizard = false
-        )
     }
 
     private fun closeResourceInstallWizardInstance(
@@ -5475,14 +5461,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     /**
      * CardRun surface 的唯一渲染入口(T9 收口证明)。
      *
-     * 全部 30 个 CardRun surface 调用点都指向本方法(已收口到单方法,无外部调用),
-     * 任何 CardRun 渲染变更只需改这里。内部按 state.surface 分发到
-     * Terminal/Web/X11/InstallWizard/default 五种面,并与 TerminalFragment 共生
-     * (showCardRunTerminalFragment 复用 CARD_RUN_TERMINAL_FRAGMENT_TAG)。
-     *
-     * 渲染本身已是容器模式(surfaceHost FrameLayout),与 TerminalFragment 深度共生,
-     * 强行再包一层 CardRun Fragment 收益低风险高 —— 故 T8 的 CardRun 以"收口到本方法"
-     * 为交付,不强行 Fragment 化。surfaceSignature 去重由 refreshVisibleCardRunSurfaceInsteadOfRebuild 处理。
+     * 过渡期 Shell 入口：只投影当前实例并装配 RunSurfaceHost。
+     * Report 与 Terminal 已由各自绑定拥有显示生命周期；Web、X11 与安装向导按 T007
+     * 继续迁移，全部完成后 CardRunActivity 将脱离 MainActivity。
      */
     private fun showCardRunSurface(recipe: KiteRecipe) {
         val state = focusedRunInstanceId
@@ -5532,18 +5513,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         wizardChildRun: Pair<KiteRecipe, RecipeRuntimeState>?,
         projected: RunSurfaceUiState
     ): RunSurfaceBinding {
-        val terminalSessionId = actionState.terminalSessionId?.takeIf { it.isNotBlank() }
+        if (projected.content is RunSurfaceContent.Terminal) {
+            applyKiteTerminalTheme()
+            return RunTerminalSurfaceBinding(
+                context = this,
+                fragmentManager = supportFragmentManager,
+                instanceId = projected.target.instanceId,
+                tokens = tokens
+            ).also { it.render(projected) }
+        }
         val webUrl = actionState.nextActionUrl?.takeIf { it.isNotBlank() }
         val view = when {
-            rootState.surface == CardRunSurface.Terminal && terminalSessionId != null -> {
-                applyKiteTerminalTheme()
-                FrameLayout(this).apply {
-                    id = cardRunTerminalContainerId
-                    setBackgroundColor(tokens.pageBackground)
-                    post { showCardRunTerminalFragment(terminalSessionId) }
-                }
-            }
-            rootState.surface == CardRunSurface.Terminal -> cardRunLoadingBody("正在准备终端")
             rootState.surface == CardRunSurface.Web && webUrl != null -> FrameLayout(this).also {
                 showCardRunWebView(it, actionRecipe, actionState, webUrl)
             }
@@ -5685,21 +5665,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 })
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         }
-
-    private fun showCardRunTerminalFragment(sessionId: String) {
-        val currentFragment = supportFragmentManager
-            .findFragmentByTag(CARD_RUN_TERMINAL_FRAGMENT_TAG) as? TerminalFragment
-        val currentSessionId = currentFragment
-            ?.arguments
-            ?.getString(TERMINAL_FRAGMENT_INITIAL_SESSION_ARG)
-        if (currentFragment?.isAdded == true && !currentFragment.isDetached && currentSessionId == sessionId) {
-            return
-        }
-        val fragment = TerminalFragment.detailOnly(sessionId)
-        supportFragmentManager.beginTransaction()
-            .replace(cardRunTerminalContainerId, fragment, CARD_RUN_TERMINAL_FRAGMENT_TAG)
-            .commitAllowingStateLoss()
-    }
 
     private fun cardRunTopBar(
         recipe: KiteRecipe,
@@ -6847,17 +6812,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
 
     private fun handleCardRunBackSignal() {
-        val recipe = focusedRunRecipe() ?: return
-        val state = focusedRunInstanceId
-            ?.let { CardRunStore.get(it) }
-            ?: runtimeStateFor(recipe)
-        val wizardChildRun = resourceInstallWizardSelectedRun(recipe, state.surface)
-        val actionRecipe = wizardChildRun?.first ?: recipe
-        val actionState = wizardChildRun?.second ?: state
-        if (canCompleteCurrentCardStep(actionRecipe, actionState)) {
-            completeCurrentCardStep(actionRecipe, actionState)
-            return
-        }
         closeCardRunTask()
     }
 
@@ -8163,7 +8117,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 showResourceInstallWizard(activeResourceInstallWizard?.targetResourceId)
                 return
             }
-            closeResourceInstallWizardAndCancelRuns(activeResourceInstallWizard)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 finishAndRemoveTask()
             } else {
@@ -8178,36 +8131,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             showResourceInstallWizard(activeResourceInstallWizard?.targetResourceId)
             return
         }
-        val focusedState = focusedRecipe?.let { recipe ->
-            focusedRunInstanceId?.let { CardRunStore.get(it) }
-                ?: runtimeStates[recipe.id]
-                ?: CardRunStore.currentForRecipe(recipe.id)
-        }
-        if (focusedRecipe != null && focusedState != null && shouldStopRunWhenClosingInstance(focusedState)) {
-            submitRecipeAction(
-                KiteRecipeActionRequest(
-                    recipe = focusedRecipe,
-                    intent = KiteRecipeActionIntent.Stop,
-                    source = KiteRecipeActionSource.RunSurface,
-                    instanceId = focusedState.instanceId
-                )
-            )
-            return
-        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             finishAndRemoveTask()
         } else {
             finish()
         }
     }
-
-    private fun shouldStopRunWhenClosingInstance(state: RecipeRuntimeState): Boolean =
-        state.hasRunBinding() &&
-            state.status != RecipeRunStatus.Stopping &&
-            state.status != RecipeRunStatus.Stopped &&
-            state.status != RecipeRunStatus.Completed &&
-            state.status != RecipeRunStatus.Failed &&
-            state.status != RecipeRunStatus.BridgeUnavailable
 
     private fun registerCardRunTaskCloser(instanceId: String) {
         if (this !is CardRunActivity || instanceId.isBlank()) return
@@ -12251,7 +12180,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     companion object {
         private const val TERMINAL_FRAGMENT_TAG = "kite-terminal"
-        private const val CARD_RUN_TERMINAL_FRAGMENT_TAG = "kite-card-run-terminal"
         private const val TAG_RECIPE_RAW_JSON_FRAGMENT = "kite-recipe-raw-json"
         private const val TAG_RECIPE_EDITOR_FRAGMENT = "kite-recipe-editor"
         private const val TAG_RESOURCE_MANAGE_FRAGMENT = "kite-resource-manage"
@@ -12259,7 +12187,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val TAG_RESOURCES_FRAGMENT = "kite-resources"
         private const val TAG_HOME_FRAGMENT = "kite-home"
         private const val TAG_RESOURCE_DETAIL_FRAGMENT = "kite-resource-detail"
-        private const val TERMINAL_FRAGMENT_INITIAL_SESSION_ARG = "initial_session_id"
         private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"

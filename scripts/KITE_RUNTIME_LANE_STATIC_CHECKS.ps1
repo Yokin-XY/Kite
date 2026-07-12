@@ -64,6 +64,7 @@ $runSurfaceContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/featur
 $runSurfaceControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceController.kt'
 $runSurfaceHostPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceHost.kt'
 $runReportScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunReportScreen.kt'
+$runTerminalSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunTerminalSurfaceBinding.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -177,6 +178,7 @@ $runSurfaceContract = Read-Utf8 $runSurfaceContractPath
 $runSurfaceController = Read-Utf8 $runSurfaceControllerPath
 $runSurfaceHost = Read-Utf8 $runSurfaceHostPath
 $runReportScreen = Read-Utf8 $runReportScreenPath
+$runTerminalSurfaceBinding = Read-Utf8 $runTerminalSurfaceBindingPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -247,6 +249,9 @@ Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)'
 Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
 Assert-True ($runSurfaceHost -match 'private var binding: RunSurfaceBinding' -and $runReportScreen -match 'override fun render\(state: RunSurfaceUiState\)' -and $runReportScreen -match 'private val outputText = TextView') 'report page must own its local output binding through RunSurfaceHost.'
 Assert-True ($main -notmatch 'cardRunReportBinding|updateVisibleCardRunReport|renderVisibleCardRunReport') 'MainActivity must not retain the legacy report binding or render loop.'
+Assert-True ($runTerminalSurfaceBinding -match 'TerminalFragment\.detailOnly' -and $runTerminalSurfaceBinding -match '\.detach\(fragment\)' -and $runTerminalSurfaceBinding -notmatch 'stop\(|RunOrchestrator|TerminalSessionController') 'terminal surface binding must own Fragment attach/detach without stopping the shell session.'
+Assert-True ($main -notmatch 'showCardRunTerminalFragment|cardRunTerminalContainerId|CARD_RUN_TERMINAL_FRAGMENT_TAG') 'MainActivity must not retain the legacy CardRun terminal Fragment binding.'
+Assert-True ($main -match '(?s)private fun handleCardRunBackSignal\(\)\s*\{\s*closeCardRunTask\(\)\s*\}' -and $main -match '(?s)private fun closeCardRunTask\b.*?finishAndRemoveTask\(\).*?(?=\n    private fun )') 'CardRun back must detach the task window instead of completing or stopping the run.'
 Assert-True ($main -match 'resourceInstallWizardSurface\?\.tick' -and $resourceInstallWizardScreen -match 'fun tick\(') 'install wizard must keep elapsed binding inside its feature screen.'
 Assert-True ($main -match '(?s)private fun showConsole\b.*HomeFragment' -and $main -notmatch 'consoleCardBindings|consolePageBodyHost|private fun recipeGrid|updateVisibleConsoleCard') 'Home card views, bindings, and page state must remain owned by HomeFragment and HomeScreen.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'
