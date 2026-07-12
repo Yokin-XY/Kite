@@ -151,9 +151,7 @@ class CardRunActivity : AppCompatActivity(), TerminalChromeHost {
 
     override fun onResume() {
         super.onResume()
-        graph.browserAuthSessions.expirePending().forEach { session ->
-            graph.browserLoopbackCallbackBridge.stop(session.sessionId)
-        }
+        graph.browserAuthRedirectCoordinator.reconcile()
         currentTarget?.instanceId?.let(CardRunStore::get)?.let(::renderState)
         StartupTraceStore.markReady(applicationContext)
     }

@@ -1152,3 +1152,14 @@ T009 普通 Web 工作台迁移结果：
 - 目标测试覆盖网页历史返回、无历史退出、自动化 session 创建/关闭和 Activity 销毁时的显示释放；Kotlin 编译与架构/运行车道守卫通过。主壳债务降至 `lines=7193, functions=354, fields=70, hosts=4, runtimeStateRefs=33`。
 
 下一步：把 App redirect 的解析、state 匹配、目标运行实例投递和进程重建恢复收口为 Application 协调器，并补齐首次安装、覆盖安装、进程重建三类认证回跳合同测试。
+
+T009 认证回跳协调结果：
+
+- 新增无 Android UI 依赖的 `BrowserAuthRedirectCoordinator`，固定执行顺序为解析通用回跳、匹配持久化 session、解析目标实例、投影 CardRun 结果、标记 delivered/failed、记录诊断。
+- 新增 `AndroidBrowserAuthRedirectGateway` 适配 `BrowserAuthSessionStore`、`CardRunStore`、loopback bridge 和诊断；MainActivity 只把 Intent URL 交给协调器，并按返回的 `recipeId + instanceId` 打开独立运行窗口。
+- pending 过期、CLI loopback 已转发和过期运行事实的同步也进入同一协调器；`MainActivity` 与 `CardRunActivity` 恢复时调用同一 `reconcile()`，不再各自直接操作 session store。
+- 回跳 URL 只经 `BrowserAuthRedirectParser` 解析，state/code/error 不由页面补写或改名；没有新增 Codex、Claude 或提供方专属分支。
+- 纯单测覆盖非回跳、state 未匹配、成功交付、提供方失败、协调器重建后交付和恢复同步；持久化测试使用两个新的 `BrowserAuthSessionStore` 实例证明升级/进程重建后仍按原 state 匹配同一 session。
+- 目标测试、Kotlin 编译与架构/运行车道守卫通过。主壳降至 `lines=6963, functions=350, fields=69, runtimeStateRefs=30`。
+
+下一步：执行真机普通 Web、自动化 session、通用 App redirect 和 CLI loopback 回归；先用可控测试回跳验证首次安装/覆盖升级/进程强杀后的实例路由，再复核真实 Codex 登录桥不退化。

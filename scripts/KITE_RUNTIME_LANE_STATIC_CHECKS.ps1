@@ -70,7 +70,9 @@ $runWebSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feat
 $runX11SurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunX11SurfaceBinding.kt'
 $runInstallWizardSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/RunInstallWizardSurfaceBinding.kt'
 $browserHandoffCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/browser/BrowserHandoffCoordinator.kt'
+$browserAuthRedirectCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/browser/BrowserAuthRedirectCoordinator.kt'
 $androidBrowserHandoffGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserHandoffGateway.kt'
+$androidBrowserAuthRedirectGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserAuthRedirectGateway.kt'
 $androidBrowserAutomationRunUpdaterPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserAutomationRunUpdater.kt'
 $webWorkbenchFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/web/WebWorkbenchFragment.kt'
 $webWorkbenchScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/web/WebWorkbenchScreen.kt'
@@ -206,7 +208,9 @@ $runWebSurfaceBinding = Read-Utf8 $runWebSurfaceBindingPath
 $runX11SurfaceBinding = Read-Utf8 $runX11SurfaceBindingPath
 $runInstallWizardSurfaceBinding = Read-Utf8 $runInstallWizardSurfaceBindingPath
 $browserHandoffCoordinator = Read-Utf8 $browserHandoffCoordinatorPath
+$browserAuthRedirectCoordinator = Read-Utf8 $browserAuthRedirectCoordinatorPath
 $androidBrowserHandoffGateway = Read-Utf8 $androidBrowserHandoffGatewayPath
+$androidBrowserAuthRedirectGateway = Read-Utf8 $androidBrowserAuthRedirectGatewayPath
 $androidBrowserAutomationRunUpdater = Read-Utf8 $androidBrowserAutomationRunUpdaterPath
 $webWorkbenchFragment = Read-Utf8 $webWorkbenchFragmentPath
 $webWorkbenchScreen = Read-Utf8 $webWorkbenchScreenPath
@@ -304,6 +308,9 @@ Assert-True ($main -notmatch 'cardRunX11SurfaceBody|x11TaskTitle') 'MainActivity
 Assert-True ($main -match 'browserHandoffCoordinator\.launch' -and $main -notmatch 'browserAuthSessions\.createPending\(request, decision\)|browserLoopbackCallbackBridge\.prepare\(session\)') 'MainActivity must delegate browser handoff sequencing to BrowserHandoffCoordinator.'
 Assert-True ($browserHandoffCoordinator -match '(?s)createPending\(request, decision\).*updateWaiting\(session, request\).*prepareCallback\(session\).*openExternal\(request\.url\)' -and $browserHandoffCoordinator -notmatch 'import android\.|import androidx\.') 'Browser handoff coordinator must preserve side-effect order without Android UI dependencies.'
 Assert-True ($androidBrowserHandoffGateway -match 'CardRunStore\.update' -and $androidBrowserHandoffGateway -match 'loopbackBridge\.prepare' -and $androidBrowserHandoffGateway -match 'sessions\.markFailed') 'Android browser handoff gateway must own Store, loopback, and session adapters.'
+Assert-True ($main -match 'browserAuthRedirectCoordinator\.handle\(rawUrl\)' -and $main -notmatch 'browserAuthSessions\.markReturned|deliverBrowserAuthRedirect|updateForwardedLoopbackBrowserAuthSession|updateExpiredBrowserAuthSession') 'MainActivity must delegate auth return sequencing and runtime synchronization to BrowserAuthRedirectCoordinator.'
+Assert-True ($browserAuthRedirectCoordinator -match '(?s)matchReturned\(redirect\).*resolveTarget\(session\).*projectDelivery\(target, session, redirect, failed\).*markDelivered' -and $browserAuthRedirectCoordinator -notmatch 'import android\.|import androidx\.') 'Browser auth redirect coordinator must preserve delivery order without Android UI dependencies.'
+Assert-True ($androidBrowserAuthRedirectGateway -match 'sessions\.markReturned' -and $androidBrowserAuthRedirectGateway -match 'CardRunStore\.update' -and $androidBrowserAuthRedirectGateway -match 'loopbackBridge\.stop') 'Android auth redirect gateway must own persisted session, CardRun, and callback adapters.'
 Assert-True ($cardRunActivity -match 'browserAutomationUpdater\.update\(event\)' -and $main -notmatch 'browserAutomationRunStatus|browserAutomationSummary|browserAutomationReport') 'Card-run automation events must delegate to the shared platform updater without a MainActivity copy.'
 Assert-True ($androidBrowserAutomationRunUpdater -match 'CardRunStore\.update' -and $androidBrowserAutomationRunUpdater -notmatch 'MainActivity|CardRunActivity|android\.view|android\.widget') 'Browser automation run projection must stay in the shared platform adapter.'
 Assert-True ($main -match 'WebWorkbenchFragment\.newInstance' -and $main -notmatch 'private lateinit var webView|private lateinit var webShell|handleWebViewBackSignal|releaseActivityDisplaySurfaces') 'MainActivity must route ordinary Web display to the web Feature without owning its WebView lifecycle.'

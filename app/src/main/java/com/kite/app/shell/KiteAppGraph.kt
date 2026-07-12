@@ -4,6 +4,7 @@ import android.content.Context
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
+import com.kite.app.application.browser.BrowserAuthRedirectCoordinator
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runs.RunExecutionEffectBus
@@ -25,6 +26,7 @@ import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.platform.resources.AndroidResourceFeatureGateway
 import com.kite.app.platform.browser.AndroidBrowserHandoffGateway
+import com.kite.app.platform.browser.AndroidBrowserAuthRedirectGateway
 import com.kite.app.platform.browser.AndroidExternalBrowserLauncher
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.platform.resources.AndroidResourceRecipeFactory
@@ -53,11 +55,18 @@ internal class KiteAppGraph private constructor(context: Context) {
     }
     val webWorkbenchHandoffCoordinator: BrowserHandoffCoordinator by lazy {
         createBrowserHandoffCoordinator(
-            recipeResolver = { recipeId ->
-                CardRunStore.registeredRecipe(recipeId)
-                    ?: recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
-            },
+            recipeResolver = ::resolveRecipe,
             openExternal = { url -> AndroidExternalBrowserLauncher.open(appContext, url) }
+        )
+    }
+    val browserAuthRedirectCoordinator: BrowserAuthRedirectCoordinator by lazy {
+        BrowserAuthRedirectCoordinator(
+            AndroidBrowserAuthRedirectGateway(
+                sessions = browserAuthSessions,
+                loopbackBridge = browserLoopbackCallbackBridge,
+                diagnostics = diagnostics,
+                recipeResolver = ::resolveRecipe
+            )
         )
     }
     val resourceInstallStore: KiteResourceInstallStore by lazy { KiteResourceInstallStore(appContext) }
@@ -136,6 +145,10 @@ internal class KiteAppGraph private constructor(context: Context) {
             openExternal = openExternal
         )
     )
+
+    private fun resolveRecipe(recipeId: String): KiteRecipe? =
+        CardRunStore.registeredRecipe(recipeId)
+            ?: recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
 
     companion object {
         @Volatile

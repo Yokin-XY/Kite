@@ -68,16 +68,9 @@ import com.kite.app.application.runs.RunExecutionEffect
 import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartRequest
-import com.kite.app.browser.BrowserAuthRedirect
-import com.kite.app.browser.BrowserAuthRedirectParser
-import com.kite.app.browser.BrowserAuthSession
-import com.kite.app.browser.BrowserAuthSessionKind
-import com.kite.app.browser.BrowserAuthSessionStatus
-import com.kite.app.browser.BrowserAuthSessionStore
 import com.kite.app.browser.BrowserHandoffDecision
 import com.kite.app.browser.BrowserHandoffPolicy
 import com.kite.app.browser.BrowserHandoffRequest
-import com.kite.app.browser.BrowserLoopbackCallbackBridge
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.browser.automation.BrowserAutomationAction
 import com.kite.app.browser.automation.BrowserAutomationActionResult
@@ -160,6 +153,8 @@ import com.kite.app.feature.resources.ResourcesFragment
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserHandoffLaunchResult
+import com.kite.app.application.browser.BrowserAuthRedirectCoordinator
+import com.kite.app.application.browser.BrowserAuthRedirectResult
 import com.kite.app.application.resources.ResourceRunContinuation
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceRunLaunchRequest
@@ -216,8 +211,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
     private lateinit var bridgeClient: KiteBridgeClient
-    private lateinit var browserAuthSessions: BrowserAuthSessionStore
-    private lateinit var browserLoopbackCallbackBridge: BrowserLoopbackCallbackBridge
+    private lateinit var browserAuthRedirectCoordinator: BrowserAuthRedirectCoordinator
     private lateinit var browserHandoffCoordinator: BrowserHandoffCoordinator
     private lateinit var browserAutomationSessions: BrowserAutomationSessionStore
     private lateinit var localServer: KiteLocalServer
@@ -344,8 +338,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         dropZoneManager = appGraph.createDropZoneManager()
         dropZoneStatus = dropZoneManager.prepareDropZone()
         bridgeClient = appGraph.bridgeClient
-        browserAuthSessions = appGraph.browserAuthSessions
-        browserLoopbackCallbackBridge = appGraph.browserLoopbackCallbackBridge
+        browserAuthRedirectCoordinator = appGraph.browserAuthRedirectCoordinator
         browserHandoffCoordinator = appGraph.createBrowserHandoffCoordinator(
             recipeResolver = { recipeId -> findRecipeById(recipeId) ?: CardRunStore.registeredRecipe(recipeId) },
             openExternal = { url -> openCustomTabOrSystemBrowser(Uri.parse(url)) }
@@ -438,257 +431,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun handleBrowserAuthRedirect(sourceIntent: Intent?): Boolean {
-        val data = sourceIntent?.data?.toString()?.takeIf { it.isNotBlank() } ?: return false
-        val redirect = BrowserAuthRedirectParser.parse(data) ?: return false
-        val session = browserAuthSessions.markReturned(redirect)
-        if (session == null) {
-            diagnostics.logRecipeEvent(
-                "browser_auth_redirect_unmatched",
-                null,
-                mapOf("hasState" to (!redirect.state.isNullOrBlank()).toString())
-            )
-            Toast.makeText(this, "浏览器已返回，但没有匹配的登录会话", Toast.LENGTH_LONG).show()
-            return true
-        }
-        deliverBrowserAuthRedirect(session, redirect)
-        return true
-    }
-
-    private fun deliverBrowserAuthRedirect(session: BrowserAuthSession, redirect: BrowserAuthRedirect) {
-        val recipe = session.recipeId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
-        val instanceId = session.instanceId?.takeIf { it.isNotBlank() }
-        if (recipe == null || instanceId == null) {
-            browserAuthSessions.markFailed(session.sessionId, "missing_target")
-            Toast.makeText(this, "浏览器已返回，但找不到发起登录的运行实例", Toast.LENGTH_LONG).show()
-            diagnostics.logRecipeEvent(
-                "browser_auth_redirect_missing_target",
-                recipe,
-                mapOf(
-                    "sessionId" to session.sessionId,
-                    "recipeId" to session.recipeId.orEmpty(),
-                    "instanceId" to session.instanceId.orEmpty()
+        val rawUrl = sourceIntent?.dataString?.takeIf(String::isNotBlank) ?: return false
+        return when (val result = browserAuthRedirectCoordinator.handle(rawUrl)) {
+            BrowserAuthRedirectResult.NotRedirect -> false
+            BrowserAuthRedirectResult.Unmatched -> {
+                Toast.makeText(this, "浏览器已返回，但没有匹配的登录会话", Toast.LENGTH_LONG).show()
+                true
+            }
+            is BrowserAuthRedirectResult.MissingTarget -> {
+                Toast.makeText(this, "浏览器已返回，但找不到发起登录的运行实例", Toast.LENGTH_LONG).show()
+                true
+            }
+            is BrowserAuthRedirectResult.DeliveryFailed -> {
+                Toast.makeText(this, "浏览器登录结果暂时无法交给运行实例", Toast.LENGTH_LONG).show()
+                true
+            }
+            is BrowserAuthRedirectResult.Delivered -> {
+                startActivity(
+                    CardRunIntents.launchIntent(
+                        context = this,
+                        recipeId = result.recipeId,
+                        instanceId = result.instanceId,
+                        launchSource = CardRunIntents.SOURCE_BROWSER_PROXY,
+                        autoStart = false
+                    )
                 )
-            )
-            return
-        }
-
-        val failed = session.status == BrowserAuthSessionStatus.Failed || !redirect.error.isNullOrBlank()
-        val summary = if (failed) {
-            "浏览器登录返回失败：${redirect.error ?: session.failureReason ?: "unknown"}"
-        } else {
-            "浏览器登录已返回，等待发起方确认登录状态"
-        }
-        val report = buildString {
-            appendLine(summary)
-            appendLine("sessionId=${session.sessionId}")
-            appendLine("kind=${session.kind.name}")
-            appendLine("state=${if (redirect.state.isNullOrBlank()) "missing" else "matched"}")
-            appendLine("code=${if (redirect.code.isNullOrBlank()) "missing" else "present"}")
-            if (!redirect.error.isNullOrBlank()) appendLine("error=${redirect.error}")
-        }.trim()
-        val updated = CardRunStore.update(
-            recipe = recipe,
-            status = if (failed) RecipeRunStatus.Failed else RecipeRunStatus.Opened,
-            instanceId = instanceId,
-            surface = CardRunSurface.Report,
-            lastMeaningfulOutput = summary,
-            lastError = if (failed) summary else null,
-            shellReportText = report,
-            clearNextActionUrl = true
-        )
-        if (failed) {
-            browserAuthSessions.markFailed(session.sessionId, redirect.error ?: session.failureReason ?: "redirect_failed")
-        } else {
-            browserAuthSessions.markDelivered(session.sessionId)
-        }
-        activeRunInstanceIds[recipe.id] = instanceId
-        runtimeStates[recipe.id] = updated
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = instanceId
-        diagnostics.logRecipeAction(
-            recipe,
-            "browser_auth_redirect_delivered",
-            mapOf(
-                "instanceId" to instanceId,
-                "sessionId" to session.sessionId,
-                "kind" to session.kind.name,
-                "hasCode" to (!redirect.code.isNullOrBlank()).toString(),
-                "hasError" to (!redirect.error.isNullOrBlank()).toString()
-            )
-        )
-        startActivity(
-            CardRunIntents.launchIntent(
-                context = this,
-                recipeId = recipe.id,
-                instanceId = instanceId,
-                launchSource = CardRunIntents.SOURCE_BROWSER_PROXY,
-                autoStart = false
-            )
-        )
-    }
-
-    private fun expireBrowserAuthSessionsOnResume() {
-        browserAuthSessions.expirePending().forEach { session ->
-            browserLoopbackCallbackBridge.stop(session.sessionId)
-        }
-        browserAuthSessions.forwardedLoopbackNeedingRuntimeSync().forEach { session ->
-            if (updateForwardedLoopbackBrowserAuthSession(session)) {
-                browserAuthSessions.markRuntimeNotified(session.sessionId)
+                true
             }
         }
-        browserAuthSessions.expiredNeedingRuntimeSync().forEach { session ->
-            if (updateExpiredBrowserAuthSession(session)) {
-                browserAuthSessions.markRuntimeNotified(session.sessionId)
-            }
-        }
-    }
-
-    private fun updateForwardedLoopbackBrowserAuthSession(session: BrowserAuthSession): Boolean {
-        val instanceId = session.instanceId?.takeIf { it.isNotBlank() } ?: return true
-        val existing = CardRunStore.get(instanceId) ?: return true
-        val recipe = session.recipeId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
-            ?: findRecipeById(existing.recipeId)
-            ?: CardRunStore.registeredRecipe(existing.recipeId)
-            ?: return false
-        val summary = "浏览器回调已交给登录发起方，正在由发起方确认登录结果"
-        val updated = CardRunStore.update(
-            recipe = recipe,
-            status = existing.status,
-            instanceId = instanceId,
-            surface = existing.surface,
-            currentStepIndex = existing.currentStepIndex,
-            runId = existing.runId,
-            terminalSessionId = existing.terminalSessionId,
-            pid = existing.pid,
-            rootPid = existing.rootPid,
-            processGroupId = existing.processGroupId,
-            systemSessionId = existing.systemSessionId,
-            lastMeaningfulOutput = summary,
-            lastError = existing.lastError,
-            shellReportText = existing.shellReportText,
-            nextActionUrl = existing.nextActionUrl
-        )
-        activeRunInstanceIds[recipe.id] = instanceId
-        runtimeStates[recipe.id] = updated
-        diagnostics.logRecipeEvent(
-            "browser_loopback_callback_forwarded",
-            recipe,
-            mapOf(
-                "instanceId" to instanceId,
-                "sessionId" to session.sessionId,
-                "channel" to session.callbackChannelStatus.name
-            )
-        )
-        return true
-    }
-
-    private fun updateExpiredBrowserAuthSession(session: BrowserAuthSession): Boolean {
-        val instanceId = session.instanceId?.takeIf { it.isNotBlank() }
-        if (instanceId == null) {
-            val recipe = session.recipeId
-                ?.takeIf { it.isNotBlank() }
-                ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
-            diagnostics.logRecipeEvent(
-                "browser_auth_session_expired_missing_instance",
-                recipe,
-                mapOf(
-                    "sessionId" to session.sessionId,
-                    "kind" to session.kind.name,
-                    "recipeId" to session.recipeId.orEmpty()
-                )
-            )
-            return true
-        }
-
-        val existing = CardRunStore.get(instanceId)
-        if (existing == null) {
-            val recipe = session.recipeId
-                ?.takeIf { it.isNotBlank() }
-                ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
-            diagnostics.logRecipeEvent(
-                "browser_auth_session_expired_no_active_run",
-                recipe,
-                mapOf(
-                    "instanceId" to instanceId,
-                    "sessionId" to session.sessionId,
-                    "kind" to session.kind.name,
-                    "recipeId" to session.recipeId.orEmpty()
-                )
-            )
-            return true
-        }
-        val recipe = session.recipeId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
-            ?: findRecipeById(existing.recipeId)
-            ?: CardRunStore.registeredRecipe(existing.recipeId)
-        if (recipe == null) {
-            diagnostics.logRecipeEvent(
-                "browser_auth_session_expired_missing_target",
-                null,
-                mapOf(
-                    "sessionId" to session.sessionId,
-                    "kind" to session.kind.name,
-                    "recipeId" to session.recipeId.orEmpty(),
-                    "instanceId" to instanceId
-                )
-            )
-            return false
-        }
-        val preserveTerminalSurface = session.kind == BrowserAuthSessionKind.CliLoopback &&
-            existing.surface == CardRunSurface.Terminal &&
-            !existing.terminalSessionId.isNullOrBlank()
-        val summary = if (session.kind == BrowserAuthSessionKind.CliLoopback) {
-            "未在等待时间内确认浏览器回调，登录结果请以发起方终端为准"
-        } else {
-            "浏览器登录等待超时，请重新打开登录页"
-        }
-        val report = buildString {
-            appendLine(summary)
-            appendLine("sessionId=${session.sessionId}")
-            appendLine("kind=${session.kind.name}")
-            appendLine("reason=${session.failureReason ?: "expired"}")
-            appendLine("callbackChannel=${session.callbackChannelStatus.name}")
-            session.redirectUri?.takeIf { it.isNotBlank() }?.let { appendLine("redirectUri=$it") }
-        }.trim()
-        val updated = CardRunStore.update(
-            recipe = recipe,
-            status = if (preserveTerminalSurface) {
-                existing.status
-            } else {
-                RecipeRunStatus.Failed
-            },
-            instanceId = instanceId,
-            surface = if (preserveTerminalSurface) CardRunSurface.Terminal else CardRunSurface.Report,
-            currentStepIndex = existing.currentStepIndex,
-            runId = existing.runId,
-            terminalSessionId = existing.terminalSessionId,
-            pid = existing.pid,
-            rootPid = existing.rootPid,
-            processGroupId = existing.processGroupId,
-            systemSessionId = existing.systemSessionId,
-            lastMeaningfulOutput = summary,
-            lastError = if (preserveTerminalSurface) null else summary,
-            shellReportText = if (preserveTerminalSurface) existing.shellReportText else report,
-            clearNextActionUrl = true
-        )
-        activeRunInstanceIds[recipe.id] = instanceId
-        runtimeStates[recipe.id] = updated
-        diagnostics.logRecipeEvent(
-            "browser_auth_session_expired",
-            recipe,
-            mapOf(
-                "instanceId" to instanceId,
-                "sessionId" to session.sessionId,
-                "kind" to session.kind.name,
-                "preserveTerminalSurface" to preserveTerminalSurface.toString()
-            )
-        )
-        return true
     }
 
     private fun handleRuntimeAutomationIntent(sourceIntent: Intent?): Boolean {
@@ -980,7 +750,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         StartupTraceStore.markStage(this, "main.resume_runtime_and_visible_state")
         rebindVisibleResourceStateOnResume()
         runtimeStatusController.ensureReady()
-        expireBrowserAuthSessionsOnResume()
+        browserAuthRedirectCoordinator.reconcile()
         when (currentScreen) {
             AppDestination.Console -> resumeConsoleSurface()
             AppDestination.Settings -> showSettings()

@@ -400,3 +400,13 @@
 理由：主壳共享 WebView 会让 Activity 冷启动提前创建浏览器资源，并把工作台销毁、自动化 session 与整个应用生命周期绑定。另一方面，认证正确性依赖进程级 session 与 callback channel，不能随 Fragment 重建而消失。把显示和认证拆开后，页面可以独立释放，已发起登录仍能由应用入口接收并恢复目标运行实例。
 
 影响：主壳不得重新持有 `webView/webShell/browserAutomationController`，普通工作台返回优先消费网页历史。工作台销毁可以关闭自己的自动化显示 session，但不得停止 CardRun、后台进程或 `BrowserAuthSessionStore` 会话。自动化 API 只能控制 Registry 中仍存活的 Web 显示面，没有显示面时返回可解释失败，禁止回退到无关页面的共享控制器。
+
+## ADR-S040 认证回跳由进程级协调器完成确定性交付
+
+状态：accepted
+
+决策：所有 `kite-auth://callback` 回跳统一进入 `BrowserAuthRedirectCoordinator`。协调器按持久化 state 匹配 session，解析 `recipeId + instanceId` 目标，先把结果投影到唯一 `CardRunStore`，再把 session 标记为 delivered 或 failed；只有投影成功才允许 Shell 打开目标运行窗口。
+
+理由：旧实现把解析、session 状态、运行事实和 Activity 跳转写在主壳同一方法中，进程重建后容易依赖尚未恢复的页面字段。认证 session 本来已持久化，CardRun 也有进程级事实，因此回跳交付不应依赖发起页面仍存在。固定副作用顺序还能避免“浏览器已返回、session 已消费，但运行实例没有收到”的半完成状态。
+
+影响：MainActivity 只解释协调器结果并执行目标 Activity 跳转，不得直接调用 `markReturned/markDelivered/markFailed`。CLI loopback 的 callback 转发和过期同步也通过同一协调器校准。协议解析保持通用，禁止按 Codex、Claude、Google 等提供方增加页面特判或改写 code/state/error。
