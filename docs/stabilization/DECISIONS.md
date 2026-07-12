@@ -190,3 +190,13 @@
 理由：卡片运行信号频繁，若与目录结构使用同一刷新路径，会让首页滚动、分页和点击反馈随着后台任务反复重建。反过来，配置保存或分组变化确实会改变卡片集合，必须允许受控结构更新。
 
 影响：`HomeScreen` 持有结构签名与卡片 Binding，`HomeFeatureController` 复用 `KiteCardRunUiProjector`；Shell 不再观察 `CardRunStore` 后直接更新首页 View，也不得用 `showConsole()` 处理普通运行变化。
+
+## ADR-S019 配方编辑只允许一份草稿事实
+
+状态：accepted
+
+决策：配方编辑过程中的名称、描述、图标、分组、启动选项、快捷方式请求和步骤顺序统一存入 `RecipeEditorDraft`。输入框和弹窗只提交 Action，不再各自长期保存平行字段；保存时由草稿一次性生成 `NewRecipeInput`。
+
+理由：旧 Activity 同时维护输入框、十余个可变字段、`formSteps`、`recipeMoreDraft` 和持久化 JSON，返回更多配置或图片选择后容易由较旧的一份状态覆盖新输入。单一草稿可以让未保存判断、进程恢复和校验使用同一事实。
+
+影响：编辑器 Controller 拥有草稿与校验，Gateway 拥有配置写入和不透明草稿字符串持久化；Shell 只处理页面导航、系统图片选择、桌面快捷方式和运行 Effect，不得读取输入框拼装保存请求。

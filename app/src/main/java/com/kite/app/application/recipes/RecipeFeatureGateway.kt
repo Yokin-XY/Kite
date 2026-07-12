@@ -35,6 +35,10 @@ interface RecipeFeatureGateway {
     suspend fun createGroup(name: String): KiteCardGroup
 
     suspend fun refreshExternalRecipes(): RecipeExternalRefreshResult
+
+    fun restoredEditorDraft(maxAgeMs: Long): String?
+
+    fun saveEditorDraft(rawJson: String?)
 }
 
 interface RecipeFeatureDependenciesOwner {

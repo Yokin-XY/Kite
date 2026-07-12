@@ -1,5 +1,6 @@
 package com.kite.app.platform.recipes
 
+import android.content.Context
 import com.kite.app.application.recipes.RecipeFeatureChange
 import com.kite.app.application.recipes.RecipeExternalRefreshResult
 import com.kite.app.application.recipes.RecipeFeatureGateway
@@ -21,10 +22,15 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.withContext
 
 internal class AndroidRecipeFeatureGateway(
+    context: Context,
     private val recipeLoader: KiteRecipeLoader,
     private val groupStore: KiteCardGroupStore,
     private val dropZoneManager: KiteDropZoneManager
 ) : RecipeFeatureGateway {
+    private val appContext = context.applicationContext
+    private val settings by lazy {
+        appContext.getSharedPreferences(APP_SETTINGS, Context.MODE_PRIVATE)
+    }
     private val mutationChanges = MutableSharedFlow<RecipeFeatureChange>(extraBufferCapacity = 8)
 
     override val changes: Flow<RecipeFeatureChange> = merge(
@@ -97,15 +103,43 @@ internal class AndroidRecipeFeatureGateway(
                 )
             }
 
+    override fun restoredEditorDraft(maxAgeMs: Long): String? {
+        val raw = settings.getString(KEY_EDITOR_DRAFT, null)?.takeIf { it.isNotBlank() } ?: return null
+        val savedAt = settings.getLong(KEY_EDITOR_DRAFT_SAVED_AT, 0L)
+        if (savedAt <= 0L || System.currentTimeMillis() - savedAt > maxAgeMs.coerceAtLeast(0L)) {
+            saveEditorDraft(null)
+            return null
+        }
+        return raw
+    }
+
+    override fun saveEditorDraft(rawJson: String?) {
+        settings.edit().apply {
+            if (rawJson.isNullOrBlank()) {
+                remove(KEY_EDITOR_DRAFT)
+                remove(KEY_EDITOR_DRAFT_SAVED_AT)
+            } else {
+                putString(KEY_EDITOR_DRAFT, rawJson)
+                putLong(KEY_EDITOR_DRAFT_SAVED_AT, System.currentTimeMillis())
+            }
+        }.apply()
+    }
+
     companion object {
         fun create(
+            context: Context,
             recipeLoader: KiteRecipeLoader,
             groupStore: KiteCardGroupStore,
             dropZoneManager: KiteDropZoneManager
         ): AndroidRecipeFeatureGateway = AndroidRecipeFeatureGateway(
+            context,
             recipeLoader,
             groupStore,
             dropZoneManager
         )
+
+        private const val APP_SETTINGS = "kite_app_settings"
+        private const val KEY_EDITOR_DRAFT = "recipe_draft"
+        private const val KEY_EDITOR_DRAFT_SAVED_AT = "recipe_draft_saved_at"
     }
 }

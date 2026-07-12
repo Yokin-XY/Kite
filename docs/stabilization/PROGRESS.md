@@ -763,3 +763,13 @@ T005 首页迁移结果：
 首页迁移状态：completed，待独立提交。
 
 下一步：迁移配方编辑器；先建立草稿状态与校验合同，再按表单、图标、步骤、分组、保存/删除和未保存返回顺序转移所有权。
+
+T005 编辑器合同层结果：
+
+- 新增 `RecipeEditorDraft` 与 `RecipeEditorStepDraft`，名称、描述、图标、分组、启动选项、快捷方式请求和有序步骤只有一份草稿事实。
+- `RecipeEditorController` 统一初始化、脏状态、模板、增删改序步骤、校验、分组创建、保存、删除、草稿持久化和运行校准，不持有 View、Context、导航或具体 Store。
+- 保存与删除只经过 `RecipeFeatureGateway`；旧 `recipe_draft` 与保存时间键由 Platform 适配器兼容读取，Activity 不需要再拥有草稿存储。
+- 编辑页启动请求与首页启动请求现在产生相同动作计划；独立运行页策略只由卡片 `launch.openInstance` 决定，不再由页面来源暗中改变。
+- 测试覆盖已有/新建初始化、缺名与缺步骤字段校验、输入归一化、分组保存、草稿 JSON 往返以及首页/编辑器动作计划一致性。
+
+下一步：提交编辑器合同层；随后让 `RecipeEditorFragment/Screen` 接管真实表单、图标选择、步骤弹窗、分组、未保存返回与保存/删除 Effect。

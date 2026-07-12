@@ -45,6 +45,8 @@ $homeFeatureControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/fea
 $homeFeatureFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeFragment.kt'
 $homeScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeScreen.kt'
 $homeFeatureViewSupportPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeFeatureViewSupport.kt'
+$recipeEditorContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeEditorContract.kt'
+$recipeEditorControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeEditorController.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -139,6 +141,8 @@ $homeFeatureController = Read-Utf8 $homeFeatureControllerPath
 $homeFeatureFragment = Read-Utf8 $homeFeatureFragmentPath
 $homeScreen = Read-Utf8 $homeScreenPath
 $homeFeatureViewSupport = Read-Utf8 $homeFeatureViewSupportPath
+$recipeEditorContract = Read-Utf8 $recipeEditorContractPath
+$recipeEditorController = Read-Utf8 $recipeEditorControllerPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -171,6 +175,10 @@ Assert-True ($homeFeatureController -notmatch '\.(startRecipe|stopRecipe|execute
 Assert-True ($homeFeatureFragment -match '(?s)repeatOnLifecycle\(Lifecycle\.State\.STARTED\).*HomeFeatureAction\.ReconcileRuns') 'Home feature must reconcile run-owner facts whenever it returns to the foreground.'
 Assert-True ($homeScreen -match 'structureSignature' -and $homeScreen -match 'factory\.bind' -and $homeScreen -match 'fun acknowledge\(') 'Home screen must separate structural rebuilds from local run-state binding and immediate action acknowledgement.'
 Assert-True ($homeScreen -notmatch 'CardRunStore|KiteRecipeLoader|MainActivity') 'Home screen must only project supplied state and must not read stores, files, or the shell.'
+Assert-True ($recipeEditorContract -match 'RecipeEditorDraft' -and $recipeEditorContract -match 'RecipeEditorStepDraft' -and $recipeEditorContract -match 'validationErrors') 'Recipe editor contract must own its draft, ordered steps, and validation result.'
+Assert-True ($recipeEditorController -match 'gateway\.saveRecipe' -and $recipeEditorController -match 'gateway\.deleteRecipe' -and $recipeEditorController -match 'KiteRecipeActionRequest') 'Recipe editor controller must save configuration through the recipe gateway and submit runs through the shared action contract.'
+Assert-True ($recipeEditorController -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|run\.CardRunStore))') 'Recipe editor controller must remain independent from Android views, navigation, and concrete run stores.'
+Assert-True ($recipeEditorController -notmatch '\.(startRecipe|stopRecipe|executeRecipe|saveUserRecipe|deleteUserRecipe)\s*\(') 'Recipe editor controller must not bypass gateway or execute recipe steps.'
 Assert-True ($kiteAppGraph -match 'val recipeLoader: KiteRecipeLoader by lazy' -and $kiteAppGraph -match 'val cardGroupStore: KiteCardGroupStore by lazy' -and $kiteAppGraph -match 'val recipeFeatureGateway: RecipeFeatureGateway by lazy') 'Recipe loader, group store, and gateway must be process composition-root dependencies.'
 Assert-True ($kiteAppGraph -match 'fun createRecipeLoader\(\): KiteRecipeLoader = recipeLoader' -and $main -notmatch 'KiteCardGroupStore\(applicationContext\)') 'Shell callers must reuse process-owned recipe and group facts instead of constructing parallel stores.'
 Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'

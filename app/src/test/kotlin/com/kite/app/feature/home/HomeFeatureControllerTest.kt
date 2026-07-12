@@ -169,6 +169,10 @@ class HomeFeatureControllerTest {
             recipesAfterExternalRefresh?.let { recipes = it }
             return RecipeExternalRefreshResult("已刷新", 0, 0, 0)
         }
+
+        override fun restoredEditorDraft(maxAgeMs: Long): String? = null
+
+        override fun saveEditorDraft(rawJson: String?) = Unit
     }
 
     private companion object {
