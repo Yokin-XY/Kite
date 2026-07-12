@@ -391,6 +391,10 @@ $resourceManageFlow = $showManage + "`n" + $renderManage
 Assert-True ($resourceManageFlow -notmatch 'resourceCatalog\(forceRefresh = true\)|planSnapshot\(\)|registrySnapshot\(') 'showResourceManage must not synchronously build catalog or DB snapshots.'
 Assert-True ($resourceManageFlow -match 'requestResourceManageRefresh') 'showResourceManage should request a background payload.'
 
+$installWizardRowState = Function-Body $main 'resourceInstallWizardRowState'
+Assert-True ($installWizardRowState -match 'KiteResourceInstallStepUiProjector\.project') 'install wizard rows must consume the shared step projection.'
+Assert-True ($installWizardRowState -notmatch 'statusLabel\s*=\s*when') 'install wizard rows must not keep a parallel status-label decision tree.'
+
 $consoleRefresh = Function-Body $main 'maybeRefreshConsoleAfterRuntimeState'
 Assert-True ($consoleRefresh -match 'updateVisibleConsoleCard') 'console runtime refresh should update a visible card first.'
 

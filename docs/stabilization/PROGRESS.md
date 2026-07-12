@@ -232,3 +232,17 @@ D2 结论：页面只提交动作意图，协调器只生成轻量计划；运�
 - 依赖是否满足：P0、D1、D2 已完成；动作入口现在可稳定发出状态变化，依赖满足。
 
 下一步：先以资源卡片与安装向导为样板，核对 Store 事实、`KiteResourceUiProjector` 和各页面本地判断的重复部分。
+
+### D3 安装向导步骤投影样板
+
+- 发现资源卡片已使用 `KiteResourceUiProjector`，安装向导步骤仍在 Activity 内平行解释相同安装事实。
+- 新增 `KiteResourceInstallStepUiProjector`，统一卸载、失败、计划运行、完成、阻塞和等待的优先级。
+- 投影器输出状态文字、语义色调、失败和卸载标记；Activity 只把语义色调映射到主题 token。
+- 安装向导行不再维护本地 `statusLabel when`，Store 与计划事实仍由原拥有者提供。
+
+验证：
+
+- `KiteResourceInstallStepUiProjectorTest` 与 `KiteResourceUiProjectorTest`：`BUILD SUCCESSFUL`。
+- 静态护栏禁止安装向导恢复平行状态文字决策树。
+
+下一步：把资源详情、资源首页和安装向导的可见绑定统一消费相同 Resource UiState，并审计整页刷新残留。

@@ -143,6 +143,8 @@ import com.kite.app.resources.KiteResourceRequestPolicy
 import com.kite.app.resources.KiteResourceRegistryEntry
 import com.kite.app.resources.KiteResourceShellAction
 import com.kite.app.resources.KiteResourceUiProjector
+import com.kite.app.resources.KiteResourceInstallStepUiProjector
+import com.kite.app.resources.KiteResourceStepTone
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunBrowserRouter
 import com.kite.app.run.CardRunDesktopRouter
@@ -6711,38 +6713,29 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val runOperation = resourceVisibleRunOperation(resourceId, registryEntry)
         val recipeState = resourceRunStateForOperation(resourceId, runOperation)
         val planStepStatus = planSnapshot?.stepStatus(resourceId) ?: resourceInstallStore.planStepStatus(resourceId)
-        val uninstalling = registryEntry?.uninstalling == true
-        val uninstallFailed = registryEntry?.failed == true &&
-            registryEntry.operation == KiteResourceInstallStore.OP_UNINSTALL
-        val failed = registryEntry?.failed == true ||
-            planStepStatus == KiteResourceInstallStore.PLAN_STEP_FAILED
-        val blocked = planStepStatus == KiteResourceInstallStore.PLAN_STEP_BLOCKED
-        val running = planStepStatus == KiteResourceInstallStore.PLAN_STEP_RUNNING
         val installed = resourceItemIsInstalled(item) || registryEntry?.installed == true
-        val statusLabel = when {
-            uninstalling -> "卸载中"
-            uninstallFailed || failed -> "需卸载"
-            running -> "获取中"
-            installed -> "已完成"
-            blocked -> "已暂停"
-            isActive -> "待获取"
-            else -> "待获取"
-        }
-        val tone = when {
-            uninstallFailed || failed -> tokens.danger
-            statusLabel == "获取中" -> tokens.primaryStrong
-            statusLabel == "卸载中" -> tokens.primaryStrong
-            statusLabel == "已完成" -> tokens.success
-            else -> tokens.textSecondary
+        val projection = KiteResourceInstallStepUiProjector.project(
+            uninstalling = registryEntry?.uninstalling == true,
+            failed = registryEntry?.failed == true,
+            failedOperation = registryEntry?.operation.orEmpty(),
+            planStepStatus = planStepStatus,
+            installed = installed,
+            isActive = isActive
+        )
+        val tone = when (projection.tone) {
+            KiteResourceStepTone.Primary -> tokens.primaryStrong
+            KiteResourceStepTone.Success -> tokens.success
+            KiteResourceStepTone.Danger -> tokens.danger
+            KiteResourceStepTone.Neutral -> tokens.textSecondary
         }
         return ResourceInstallWizardRowState(
             runOperation = runOperation,
             recipeState = recipeState,
-            statusLabel = statusLabel,
+            statusLabel = projection.statusLabel,
             tone = tone,
             subtitle = resourceInstallWizardStepSubtitle(item, index, total, recipeState),
-            failed = failed || uninstallFailed,
-            uninstalling = uninstalling,
+            failed = projection.failed,
+            uninstalling = projection.uninstalling,
             canOpenRunSurface = item != null && recipeState != null,
             secondarySurface = recipeState?.surface
         )
