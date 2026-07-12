@@ -9,16 +9,16 @@ for local development and device runtime use.
 Known bundled third-party components retain their upstream license
 terms:
 
-- `app/src/main/assets/rootfs/ubuntu-base-24.04-arm64.tar.gz`: Ubuntu
+- `app/src/main/assets/rootfs/ubuntu-base-24.04-arm64.tgz`: Ubuntu
   24.04 ARM64 base rootfs and packages. Ubuntu package licenses and
   Canonical/Ubuntu notices continue to apply.
 - `assets/toolchain/ai-dev-pack/packages/node-v26.4.0-linux-arm64.tar.xz`:
   Node.js binary distribution and bundled npm dependencies.
 - `assets/toolchain/ai-dev-pack/packages/pnpm-11.9.0.tgz`: pnpm package
   archive from npm.
-- `assets/toolchain/ai-dev-pack/packages/cpython-3.14.6+20260623-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz`:
+- `assets/toolchain/ai-dev-pack/packages/cpython-3.14.6+20260623-aarch64-unknown-linux-gnu-install_only_stripped.tgz`:
   Python standalone build from Astral.
-- `assets/toolchain/ai-dev-pack/packages/uv-aarch64-unknown-linux-gnu.tar.gz`:
+- `assets/toolchain/ai-dev-pack/packages/uv-aarch64-unknown-linux-gnu.tgz`:
   uv binary archive from Astral.
 - `assets/proot/*`: packaged PRoot, loader, libtalloc, and KF patched
   PRoot assets. The current descriptor is `assets/proot/proot-runtime.json`;

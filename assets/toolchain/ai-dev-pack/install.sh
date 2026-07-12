@@ -84,7 +84,7 @@ exit 3'
 }
 
 install_python() {
-  local archive="$PACK_DIR/packages/cpython-$PYTHON_VERSION+$PYTHON_BUILD_TAG-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+  local archive="$PACK_DIR/packages/cpython-$PYTHON_VERSION+$PYTHON_BUILD_TAG-aarch64-unknown-linux-gnu-install_only_stripped.tgz"
   local tar_flags="-xzf"
   if [ ! -f "$archive" ]; then
     archive="$PACK_DIR/packages/cpython-$PYTHON_VERSION+$PYTHON_BUILD_TAG-aarch64-unknown-linux-gnu-install_only_stripped.tar"
@@ -93,7 +93,7 @@ install_python() {
   local target="$TOOLCHAIN_DIR/python-$PYTHON_VERSION"
   if [ ! -x "$target/bin/python3.14" ]; then
     if [ ! -f "$archive" ]; then
-      emit FAIL python-package "missing bundled package: $PACK_DIR/packages/cpython-$PYTHON_VERSION+$PYTHON_BUILD_TAG-aarch64-unknown-linux-gnu-install_only_stripped.tar[.gz]"
+      emit FAIL python-package "missing bundled package: $PACK_DIR/packages/cpython-$PYTHON_VERSION+$PYTHON_BUILD_TAG-aarch64-unknown-linux-gnu-install_only_stripped.tar or .tgz"
       return
     fi
     rm -rf "$target.tmp" "$target"
@@ -166,12 +166,12 @@ install_node() {
 }
 
 install_uv() {
-  local archive="$PACK_DIR/packages/uv-aarch64-unknown-linux-gnu.tar.gz"
+  local archive="$PACK_DIR/packages/uv-aarch64-unknown-linux-gnu.tgz"
   [ -f "$archive" ] || archive="$PACK_DIR/packages/uv-aarch64-unknown-linux-gnu.tar"
   local target="$TOOLCHAIN_DIR/uv-$UV_VERSION"
   if [ ! -x "$target/uv" ]; then
     if [ ! -f "$archive" ]; then
-      emit FAIL uv-package "missing bundled package: $PACK_DIR/packages/uv-aarch64-unknown-linux-gnu.tar[.gz]"
+      emit FAIL uv-package "missing bundled package: $PACK_DIR/packages/uv-aarch64-unknown-linux-gnu.tar or .tgz"
       return
     fi
     rm -rf "$target.tmp" "$target"

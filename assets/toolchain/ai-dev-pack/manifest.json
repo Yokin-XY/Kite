@@ -22,7 +22,7 @@
     },
     "uv": {
       "version": "0.11.25",
-      "file": "packages/uv-aarch64-unknown-linux-gnu.tar.gz",
+      "file": "packages/uv-aarch64-unknown-linux-gnu.tgz",
       "source": "https://github.com/astral-sh/uv/releases/tag/0.11.25"
     },
     "pnpm": {
@@ -33,7 +33,7 @@
     "python": {
       "version": "3.14.6",
       "buildTag": "20260623",
-      "file": "packages/cpython-3.14.6+20260623-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "file": "packages/cpython-3.14.6+20260623-aarch64-unknown-linux-gnu-install_only_stripped.tgz",
       "source": "https://github.com/astral-sh/python-build-standalone/releases/tag/20260623"
     },
     "adb": {

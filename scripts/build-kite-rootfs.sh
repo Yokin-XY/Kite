@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${KITE_ROOTFS_WORK_DIR:-/tmp/kite-rootfs-build}"
 CACHE_DIR="${KITE_ROOTFS_CACHE_DIR:-$WORK_DIR/cache}"
 ROOTFS_DIR="$WORK_DIR/rootfs"
-OUT_FILE="$REPO_ROOT/app/src/main/assets/rootfs/ubuntu-base-24.04-arm64.tar.gz"
+OUT_FILE="$REPO_ROOT/app/src/main/assets/rootfs/ubuntu-base-24.04-arm64.tgz"
 
 CODENAME="${KITE_ROOTFS_CODENAME:-noble}"
 if [ -n "${KITE_UBUNTU_PORTS_MIRROR:-}" ]; then

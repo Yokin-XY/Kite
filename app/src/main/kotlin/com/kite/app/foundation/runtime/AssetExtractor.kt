@@ -465,7 +465,7 @@ object AssetExtractor {
         )
 
     private fun extractTarAsset(context: Context, assetPath: String, destinationDir: File, startedAt: Long) {
-        val isCompressedTar = assetPath.endsWith(".gz")
+        val isCompressedTar = assetPath.isGzipTarArchive()
 
         context.assets.open(assetPath).use { assetInput ->
             val totalBytes = runCatching { assetInput.available().toLong() }.getOrDefault(0L)
@@ -724,6 +724,8 @@ object AssetExtractor {
 
     private fun resolveExchangeRootfsSource(context: Context, profile: BaseImageProfile): File? {
         val exchangeDir = ExternalExchangeManager.ensureExchangeDir(context)
+        val candidateTgz = File(exchangeDir, "${profile.imageDirName}-rootfs.tgz")
+        if (candidateTgz.exists() && candidateTgz.length() > 0) return candidateTgz
         val candidate = File(exchangeDir, "${profile.imageDirName}-rootfs.tar.gz")
         if (candidate.exists() && candidate.length() > 0) return candidate
         val candidateTar = File(exchangeDir, "${profile.imageDirName}-rootfs.tar")
@@ -742,7 +744,7 @@ object AssetExtractor {
         deleteRecursively(destinationDir)
         destinationDir.mkdirs()
         try {
-            val isCompressed = source.name.endsWith(".gz")
+            val isCompressed = source.name.isGzipTarArchive()
             val countingInput = CountingInputStream(BufferedInputStream(source.inputStream()))
             val archiveInput: InputStream = if (isCompressed) {
                 GZIPInputStream(countingInput)
@@ -868,3 +870,6 @@ object AssetExtractor {
         }
     }
 }
+
+private fun String.isGzipTarArchive(): Boolean =
+    endsWith(".gz", ignoreCase = true) || endsWith(".tgz", ignoreCase = true)
