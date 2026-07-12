@@ -158,6 +158,9 @@ import com.kite.app.run.CardRunStore
 import com.kite.app.run.KiteX11SurfacePlan
 import com.kite.app.run.KiteX11SurfaceServer
 import com.kite.app.run.PendingTerminalFlow
+import com.kite.app.run.KiteCardRunUiProjector
+import com.kite.app.run.KiteRunPrimaryAction
+import com.kite.app.run.KiteRunUiTone
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
@@ -13092,18 +13095,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             }
         }
 
-    private fun runManagementStatusColors(status: RecipeRunStatus): SemanticColors = when (status) {
-        RecipeRunStatus.Starting,
-        RecipeRunStatus.WaitingTerminal -> SemanticColors(tokens.info, tokens.infoSoft, tokens.infoBorder)
-        RecipeRunStatus.Running,
-        RecipeRunStatus.AlreadyRunning,
-        RecipeRunStatus.Opened -> SemanticColors(tokens.success, tokens.successSoft, tokens.successBorder)
-        RecipeRunStatus.Stopping,
-        RecipeRunStatus.Failed,
-        RecipeRunStatus.BridgeUnavailable -> SemanticColors(tokens.warning, tokens.warningSoft, tokens.warningBorder)
-        RecipeRunStatus.Completed,
-        RecipeRunStatus.Stopped,
-        RecipeRunStatus.Unknown -> SemanticColors(tokens.textSecondary, tokens.surface, tokens.border)
+    private fun runManagementStatusColors(status: RecipeRunStatus): SemanticColors =
+        cardRunUiToneColors(KiteCardRunUiProjector.project(status).tone)
+
+    private fun cardRunUiToneColors(tone: KiteRunUiTone): SemanticColors = when (tone) {
+        KiteRunUiTone.Info -> SemanticColors(tokens.info, tokens.infoSoft, tokens.infoBorder)
+        KiteRunUiTone.Success -> SemanticColors(tokens.success, tokens.successSoft, tokens.successBorder)
+        KiteRunUiTone.Warning -> SemanticColors(tokens.warning, tokens.warningSoft, tokens.warningBorder)
+        KiteRunUiTone.Danger -> SemanticColors(tokens.danger, tokens.dangerSoft, tokens.dangerBorder)
+        KiteRunUiTone.Neutral -> SemanticColors(tokens.textSecondary, tokens.surface, tokens.border)
     }
 
     private fun runManagementDetails(group: RunManagementGroup): View =
@@ -14287,29 +14287,22 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun recipePowerButton(recipe: KiteRecipe, state: RecipeRuntimeState, ubuntuBlocked: Boolean): TextView =
         TextView(this).apply {
-            val disabled = state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping || ubuntuBlocked
-            val interruptible = state.isInterruptible()
-            text = when {
-                ubuntuBlocked -> "等待"
-                state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable -> "重试"
-                interruptible -> "停止"
-                state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping -> "处理中"
-                else -> "启动"
-            }
+            val projection = KiteCardRunUiProjector.project(state.status, ubuntuBlocked)
+            text = projection.primaryActionLabel
             textSize = 12.5f
             includeFontPadding = false
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            alpha = if (disabled) 0.62f else 1f
-            val fill = when {
-                state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable -> tokens.danger
-                interruptible -> tokens.warning
+            alpha = if (projection.primaryActionEnabled) 1f else 0.62f
+            val fill = when (projection.primaryAction) {
+                KiteRunPrimaryAction.Retry -> tokens.danger
+                KiteRunPrimaryAction.Stop -> tokens.warning
                 else -> tokens.primaryStrong
             }
             background = roundedBox(fill, fill, dp(16).toFloat())
-            isEnabled = !disabled
-            if (!disabled) setOnClickListener {
+            isEnabled = projection.primaryActionEnabled
+            if (projection.primaryActionEnabled) setOnClickListener {
                 handleRecipeActionWithRouter(recipe)
             }
         }
@@ -14489,20 +14482,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun recipeStatusPresentation(state: RecipeRuntimeState): RecipeStatusBadge? {
-        if (state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable) {
-            return RecipeStatusBadge("失败", tokens.danger, tokens.dangerSoft)
-        }
-        if (state.status == RecipeRunStatus.WaitingTerminal || state.status == RecipeRunStatus.Opened) {
-            return RecipeStatusBadge("手动操作", tokens.info, tokens.infoSoft)
-        }
-        if (state.status == RecipeRunStatus.Starting ||
-            state.status == RecipeRunStatus.Stopping ||
-            state.status == RecipeRunStatus.Running ||
-            state.status == RecipeRunStatus.AlreadyRunning
-        ) {
-            return RecipeStatusBadge("运行中", tokens.success, tokens.successSoft)
-        }
-        return null
+        val projection = KiteCardRunUiProjector.project(state.status)
+        val label = projection.badgeLabel ?: return null
+        val colors = cardRunUiToneColors(projection.tone)
+        return RecipeStatusBadge(label, colors.text, colors.background)
     }
 
     private fun recipeCategoryLabel(recipe: KiteRecipe): String =

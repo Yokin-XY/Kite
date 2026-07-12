@@ -274,3 +274,17 @@ D2 结论：页面只提交动作意图，协调器只生成轻量计划；运�
 - 资源投影、向导步骤投影和 MainActivity 路由测试：`BUILD SUCCESSFUL`。
 
 下一步：审计首页卡片与进程管理的运行状态投影，消除页面各自判断 Starting/Running/Stopping 的分叉。
+
+### D3 卡片运行状态投影
+
+- 新增 `KiteCardRunUiProjector`，统一 badge、语义色调、主动作、按钮文字、可用性、live 和 problem。
+- 首页主按钮与状态徽标改为消费共享投影。
+- 进程管理状态颜色改为消费同一语义色调，失败不再与停止中共用警告色。
+- 执行状态机和 `CardRunStore` 写入路径未改动。
+
+验证：
+
+- `KiteCardRunUiProjectorTest` 覆盖运行/停止、失败重试和运行环境阻塞。
+- 卡片、资源事实和 MainActivity 路由定向测试：`BUILD SUCCESSFUL`。
+
+下一步：D3 全量单测与构建，OnePlus 8T 验证首页、资源页、向导和运行管理状态一致性。
