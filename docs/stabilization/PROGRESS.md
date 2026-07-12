@@ -377,3 +377,12 @@ D4 状态：completed。
 - 目标单测通过。
 
 下一步：真机确认面板外观和八个默认动作入口未回归，随后处理进程管理双实现。
+
+### D5 进程管理单入口
+
+- 确认用户实际入口为 `showKiteProcessOverview()` 的“运行管理”，事实源为 `TaskManagerStore`、`CardRunStore` 和 `TerminalSessionStore`。
+- 删除无路由、无 Manifest、无调用方的旧 `TaskManagerFragment` 及其两份专用布局。
+- 删除只供旧页面使用的字符串和颜色；当前运行管理的视觉与行为不变。
+- 静态护栏不再要求维护失联页面，只校验当前运行管理按 owner、unit 和 PID 使用 `TaskManagerStore`。
+
+下一步：构建验证资源清理完整，再选择资源模块的一条反向 Activity 渲染链转移真实所有权。

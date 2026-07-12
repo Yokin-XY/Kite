@@ -32,13 +32,4 @@
     <color name="terminal_page_gray_chip">#C9CED6</color>
     <color name="terminal_page_input_bg">#F4F6F8</color>
 
-    <color name="task_page_tile_green">#16965A</color>
-    <color name="task_page_tile_blue">#4E80E6</color>
-    <color name="task_page_tile_red">#D96C63</color>
-    <color name="task_page_chip_green_bg">#E8F7EF</color>
-    <color name="task_page_chip_green_text">#178A55</color>
-    <color name="task_page_chip_gray_bg">#EEF1F5</color>
-    <color name="task_page_chip_gray_text">#717985</color>
-    <color name="task_page_chip_red_bg">#FBEAEC</color>
-    <color name="task_page_chip_red_text">#C1535B</color>
 </resources>

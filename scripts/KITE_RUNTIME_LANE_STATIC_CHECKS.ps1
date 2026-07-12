@@ -22,7 +22,6 @@ $runtimePressureResponderPath = Join-Path $Root 'app/src/main/kotlin/com/kite/ap
 $backgroundRuntimeRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/service/BackgroundRuntimeRegistry.kt'
 $taskManagerStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/TaskManagerStore.kt'
 $containerProcessStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ContainerProcessStore.kt'
-$taskManagerFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/tasks/TaskManagerFragment.kt'
 $prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeProotPoolPlanDryRun.kt'
 $terminalSessionControllerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/terminal/TerminalSessionController.kt'
 $terminalFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalFragment.kt'
@@ -98,7 +97,6 @@ $runtimePressureResponder = Read-Utf8 $runtimePressureResponderPath
 $backgroundRuntimeRegistry = Read-Utf8 $backgroundRuntimeRegistryPath
 $taskManagerStore = Read-Utf8 $taskManagerStorePath
 $containerProcessStore = Read-Utf8 $containerProcessStorePath
-$taskManagerFragment = Read-Utf8 $taskManagerFragmentPath
 $prootPoolPlan = Read-Utf8 $prootPoolPlanPath
 $terminalSessionController = Read-Utf8 $terminalSessionControllerPath
 $terminalFragment = Read-Utf8 $terminalFragmentPath
@@ -222,7 +220,6 @@ Assert-True ($main -match 'private fun scheduleRunManagementLazyRefresh' -and $m
 Assert-True ($taskManagerStore -match '(?s)fun endProcess\(context: Context, pid: Int\).*ContainerProcessStore\.terminate\(context\.applicationContext, pid, force = true\)') 'task manager pid-only manual end-process must keep force termination fallback.'
 Assert-True ($taskManagerStore -match 'fun endProcess\(context: Context, item: TaskManagerProcessItem' -and $taskManagerStore -match 'ProotOwnerProcessTerminator\.terminate\(appContext, ownerId\)' -and $taskManagerStore -match 'private fun TaskManagerProcessItem\.prootOwnerStopId' -and $taskManagerStore -match 'id\.startsWith\("root-"\)' -and $taskManagerStore -notmatch 'missedOwner') 'task manager manual end-process must reserve owner stop for root rows; concrete process rows must stay pid-only.'
 Assert-True ($stopRunManagementProcess -match 'TaskManagerStore\.endProcess\(applicationContext, process, pid\)') 'run management manual process stop must pass owner facts to TaskManagerStore.'
-Assert-True ($taskManagerFragment -match 'TaskManagerStore\.endProcess\(requireContext\(\), item\)') 'legacy task manager process stop must pass owner facts to TaskManagerStore.'
 Assert-True ($containerProcessStore -match '(?s)else if \(force\).*killUbuntuProcessPid\(' -and $containerProcessStore -notmatch '(?s)else if \(force\).*HostProcessTerminator\.killHostProcess') 'manual force termination must stay inside Ubuntu pid kill and never fall back to host PID kill.'
 
 Assert-True ($cardRunStore -match '(?s)fun initialize\b.*?shouldDropCurrentAfterProcessRestore') 'CardRunStore must not restore stale current runs after process restart.'
@@ -282,8 +279,6 @@ Assert-True ($taskManagerStore -match 'private fun ProotLiveProcessEntry\.termin
 Assert-True ($taskManagerStore -match 'private fun ProotLiveProcessEntry\.runtimeOwnerKindLabel' -and $taskManagerStore -match 'runtimeOwnerKindLabel = ownerEntry\.runtimeOwnerKindLabel\(\)') 'task manager PRoot process rows must expose owner kind labels.'
 Assert-True ($taskManagerStore -match 'private fun stabilizeSnapshot' -and $taskManagerStore -match 'EMPTY_PROCESS_GRACE_MS') 'task manager snapshots must smooth transient empty collector gaps.'
 Assert-True ($taskManagerStore -match 'private fun ProotLiveProcessEntry\.ownerSource' -and $taskManagerStore -match 'entriesByPid\[parentPid\]' -and $taskManagerStore -match 'val ownerEntry = ownerSource\(entriesByPid\)') 'task manager PRoot rows must inherit owner identity from parent tracees when child events are missing tags.'
-Assert-True ($taskManagerFragment -match 'item\.runtimeOwnerId\.orEmpty\(\)') 'task manager render signatures must include runtime owner id.'
-Assert-True ($taskManagerFragment -match 'item\.runtimeUnitId\.orEmpty\(\)') 'task manager render signatures must include runtime unit id.'
 $runManagementGroups = Function-Body $main 'buildRunManagementGroups'
 Assert-True ($runManagementGroups -match 'runtimeOwnerIdForRunManagement\(\)' -and $runManagementGroups -match 'runtimeUnitIdForRunManagement\(\)' -and $runManagementGroups -match 'belongsToRun\(run, boundPids, ownerId, unitId\)') 'run management groups must match CardRun rows by owner and unit id, not only pid bindings.'
 $belongsToRun = Function-Body $main 'TaskManagerProcessItem.belongsToRun'
