@@ -8,6 +8,7 @@ import com.kite.app.feature.resources.ResourceFeatureRequest
 import com.kite.app.feature.resources.ResourceFeatureResultContract
 import com.kite.app.resources.KiteResourceInstallSignal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -266,6 +267,17 @@ class MainActivityScreenRoutingTest {
         activity.onBackPressedDispatcher.onBackPressed()
 
         assertEquals("Console", activity.currentScreenNameForTest())
+    }
+
+    @Test
+    fun `首次新建配置必须创建编辑 Fragment 而不是复用空引用`() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+
+        invokeShow(activity, "showCreateConfig")
+        activity.supportFragmentManager.executePendingTransactions()
+
+        assertEquals("CreateConfig", activity.currentScreenNameForTest())
+        assertNotNull(activity.supportFragmentManager.findFragmentByTag("kite-recipe-editor"))
     }
 
     @Test

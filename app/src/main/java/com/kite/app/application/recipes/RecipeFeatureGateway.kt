@@ -19,6 +19,12 @@ data class RecipeExternalRefreshResult(
     val invalid: Int
 )
 
+sealed interface RecipeDeleteResult {
+    data class RequiresStop(val run: CardRunState) : RecipeDeleteResult
+    data class Deleted(val removedCardInstanceIds: Set<String>) : RecipeDeleteResult
+    data object Missing : RecipeDeleteResult
+}
+
 interface RecipeFeatureGateway {
     val changes: Flow<RecipeFeatureChange>
 
@@ -30,15 +36,23 @@ interface RecipeFeatureGateway {
 
     suspend fun saveRecipe(input: NewRecipeInput): KiteRecipe
 
-    suspend fun deleteRecipe(recipeId: String): Boolean
+    suspend fun deleteRecipe(recipeId: String): RecipeDeleteResult
 
     suspend fun createGroup(name: String): KiteCardGroup
 
     suspend fun refreshExternalRecipes(): RecipeExternalRefreshResult
 
+    fun invalidateCatalog(reason: String, affectedRecipeIds: Set<String> = emptySet())
+
     fun restoredEditorDraft(maxAgeMs: Long): String?
 
     fun saveEditorDraft(rawJson: String?)
+
+    fun customEditorIconSources(): List<String>
+
+    fun readEditorIcon(source: String): ByteArray?
+
+    suspend fun saveEditorIcon(pngBytes: ByteArray): String
 }
 
 interface RecipeFeatureDependenciesOwner {

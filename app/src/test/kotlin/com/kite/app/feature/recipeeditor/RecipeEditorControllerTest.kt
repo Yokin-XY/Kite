@@ -7,6 +7,7 @@ import com.kite.app.action.KiteRecipeActionPlan
 import com.kite.app.action.KiteRecipeActionRequest
 import com.kite.app.action.KiteRecipeActionSource
 import com.kite.app.application.recipes.RecipeExternalRefreshResult
+import com.kite.app.application.recipes.RecipeDeleteResult
 import com.kite.app.application.recipes.RecipeFeatureChange
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.recipe.KiteCardGroup
@@ -117,6 +118,41 @@ class RecipeEditorControllerTest {
     }
 
     @Test
+    fun deleteActiveRecipeRequestsSharedStopBeforeDeleting() = runTest {
+        val gateway = FakeGateway()
+        val activeRun = gateway.runs.getValue("tool")
+        gateway.deleteResult = RecipeDeleteResult.RequiresStop(activeRun)
+        val controller = RecipeEditorController(gateway, initiallyRuntimeBlocked = false)
+        controller.dispatch(RecipeEditorAction.Initialize("tool"))
+
+        val effect = controller.dispatch(RecipeEditorAction.Delete)
+
+        val stop = effect as RecipeEditorEffect.DeleteRequiresStop
+        assertEquals(KiteRecipeActionIntent.Stop, stop.request.intent)
+        assertEquals(KiteRecipeActionSource.Editor, stop.request.source)
+        assertEquals(activeRun.instanceId, stop.request.instanceId)
+        assertEquals(RecipeEditorPhase.Ready, controller.state.value.phase)
+        assertEquals(1, gateway.recipes.size)
+    }
+
+    @Test
+    fun deleteClosedRecipeReturnsOnlyCleanupInstanceIds() = runTest {
+        val gateway = FakeGateway()
+        gateway.deleteResult = RecipeDeleteResult.Deleted(setOf("closed-one", "closed-two"))
+        val controller = RecipeEditorController(gateway, initiallyRuntimeBlocked = false)
+        controller.dispatch(RecipeEditorAction.Initialize("tool"))
+
+        val effect = controller.dispatch(RecipeEditorAction.Delete)
+
+        assertEquals(
+            RecipeEditorEffect.Deleted("tool", setOf("closed-one", "closed-two")),
+            effect
+        )
+        assertTrue(gateway.recipes.isEmpty())
+        assertEquals(null, gateway.persistedDraft)
+    }
+
+    @Test
     fun draftRoundTripPreservesIconLaunchAndStepOrder() {
         val draft = RecipeEditorDraft(
             editingRecipeId = "tool",
@@ -150,6 +186,7 @@ class RecipeEditorControllerTest {
         )
         var savedInput: NewRecipeInput? = null
         var persistedDraft: String? = "old"
+        var deleteResult: RecipeDeleteResult = RecipeDeleteResult.Deleted(emptySet())
 
         override suspend fun loadRecipes(forceRefresh: Boolean): List<KiteRecipe> = recipes
 
@@ -170,9 +207,12 @@ class RecipeEditorControllerTest {
             )
         }
 
-        override suspend fun deleteRecipe(recipeId: String): Boolean {
-            recipes = recipes.filterNot { it.id == recipeId }
-            return true
+        override suspend fun deleteRecipe(recipeId: String): RecipeDeleteResult {
+            val result = deleteResult
+            if (result is RecipeDeleteResult.Deleted) {
+                recipes = recipes.filterNot { it.id == recipeId }
+            }
+            return result
         }
 
         override suspend fun createGroup(name: String): KiteCardGroup =
@@ -181,11 +221,19 @@ class RecipeEditorControllerTest {
         override suspend fun refreshExternalRecipes(): RecipeExternalRefreshResult =
             RecipeExternalRefreshResult("ok", 0, 0, 0)
 
+        override fun invalidateCatalog(reason: String, affectedRecipeIds: Set<String>) = Unit
+
         override fun restoredEditorDraft(maxAgeMs: Long): String? = persistedDraft
 
         override fun saveEditorDraft(rawJson: String?) {
             persistedDraft = rawJson
         }
+
+        override fun customEditorIconSources(): List<String> = emptyList()
+
+        override fun readEditorIcon(source: String): ByteArray? = null
+
+        override suspend fun saveEditorIcon(pngBytes: ByteArray): String = "recipe-icons/test.png"
     }
 
     private companion object {

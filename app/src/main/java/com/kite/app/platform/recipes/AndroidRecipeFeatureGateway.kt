@@ -3,6 +3,7 @@ package com.kite.app.platform.recipes
 import android.content.Context
 import com.kite.app.application.recipes.RecipeFeatureChange
 import com.kite.app.application.recipes.RecipeExternalRefreshResult
+import com.kite.app.application.recipes.RecipeDeleteResult
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.dropzone.KiteDropZoneManager
 import com.kite.app.recipe.KiteCardGroup
@@ -11,6 +12,7 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.NewRecipeInput
 import com.kite.app.run.CardRunState
+import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -20,6 +22,9 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import java.io.File
+import java.util.UUID
 
 internal class AndroidRecipeFeatureGateway(
     context: Context,
@@ -31,7 +36,12 @@ internal class AndroidRecipeFeatureGateway(
     private val settings by lazy {
         appContext.getSharedPreferences(APP_SETTINGS, Context.MODE_PRIVATE)
     }
-    private val mutationChanges = MutableSharedFlow<RecipeFeatureChange>(extraBufferCapacity = 8)
+    private val mutationChanges = MutableSharedFlow<RecipeFeatureChange>(
+        replay = 1,
+        extraBufferCapacity = 8
+    )
+    @Volatile
+    private var cachedRecipes: List<KiteRecipe>? = null
 
     override val changes: Flow<RecipeFeatureChange> = merge(
         CardRunStore.runs.drop(1).map { runs ->
@@ -43,42 +53,68 @@ internal class AndroidRecipeFeatureGateway(
         mutationChanges.asSharedFlow()
     )
 
-    override suspend fun loadRecipes(forceRefresh: Boolean): List<KiteRecipe> =
-        withContext(Dispatchers.IO) { recipeLoader.loadAllRecipes() }
+    override suspend fun loadRecipes(forceRefresh: Boolean): List<KiteRecipe> {
+        if (!forceRefresh) cachedRecipes?.let { return it }
+        return withContext(Dispatchers.IO) { recipeLoader.loadAllRecipes() }
+            .also { cachedRecipes = it }
+    }
 
     override fun groups(): List<KiteCardGroup> = groupStore.groups()
 
     override fun runSnapshot(recipeId: String): CardRunState? =
         CardRunStore.currentForRecipe(recipeId)
 
-    override suspend fun saveRecipe(input: NewRecipeInput): KiteRecipe =
-        withContext(Dispatchers.IO) { recipeLoader.saveUserRecipe(input) }.also { recipe ->
-            mutationChanges.tryEmit(
-                RecipeFeatureChange(
-                    reason = "recipe_saved",
-                    affectedRecipeIds = setOf(recipe.id),
-                    catalogInvalidated = true
-                )
-            )
+    override suspend fun saveRecipe(input: NewRecipeInput): KiteRecipe {
+        val (recipe, catalog) = withContext(Dispatchers.IO) {
+            val saved = recipeLoader.saveUserRecipe(input)
+            saved to recipeLoader.loadAllRecipes()
         }
+        cachedRecipes = catalog
+        mutationChanges.tryEmit(
+            RecipeFeatureChange(
+                reason = "recipe_saved",
+                affectedRecipeIds = setOf(recipe.id),
+                catalogInvalidated = true
+            )
+        )
+        return recipe
+    }
 
-    override suspend fun deleteRecipe(recipeId: String): Boolean =
-        withContext(Dispatchers.IO) {
+    override suspend fun deleteRecipe(recipeId: String): RecipeDeleteResult {
+        CardRunStore.currentForRecipe(recipeId)
+            ?.takeIf(::mustStopBeforeDelete)
+            ?.let { return RecipeDeleteResult.RequiresStop(it) }
+        val deleted = withContext(Dispatchers.IO) {
             recipeLoader.loadAllRecipes()
                 .firstOrNull { it.id == recipeId }
                 ?.let(recipeLoader::deleteRecipe)
                 ?: false
-        }.also { deleted ->
-            if (deleted) {
-                mutationChanges.tryEmit(
-                    RecipeFeatureChange(
-                        reason = "recipe_deleted",
-                        affectedRecipeIds = setOf(recipeId),
-                        catalogInvalidated = true
-                    )
-                )
-            }
         }
+        if (!deleted) return RecipeDeleteResult.Missing
+        val removedCardInstanceIds = CardRunStore.removeClosedRunStatesForRecipes(listOf(recipeId))
+        cachedRecipes = withContext(Dispatchers.IO) { recipeLoader.loadAllRecipes() }
+        mutationChanges.tryEmit(
+            RecipeFeatureChange(
+                reason = "recipe_deleted",
+                affectedRecipeIds = setOf(recipeId),
+                catalogInvalidated = true
+            )
+        )
+        return RecipeDeleteResult.Deleted(removedCardInstanceIds)
+    }
+
+    private fun mustStopBeforeDelete(run: CardRunState): Boolean =
+        run.status == CardRunStatus.Opened ||
+            run.isBusy() ||
+            run.isActive() ||
+            (
+                run.hasRunBinding() &&
+                    run.status != CardRunStatus.Stopping &&
+                    run.status != CardRunStatus.Stopped &&
+                    run.status != CardRunStatus.Completed &&
+                    run.status != CardRunStatus.Failed &&
+                    run.status != CardRunStatus.BridgeUnavailable
+                )
 
     override suspend fun createGroup(name: String): KiteCardGroup =
         withContext(Dispatchers.IO) { groupStore.create(name) }.also {
@@ -98,10 +134,19 @@ internal class AndroidRecipeFeatureGateway(
                 )
             }
             .also {
-                mutationChanges.tryEmit(
-                    RecipeFeatureChange(reason = "external_recipes_refreshed", catalogInvalidated = true)
-                )
+                invalidateCatalog("external_recipes_refreshed")
             }
+
+    override fun invalidateCatalog(reason: String, affectedRecipeIds: Set<String>) {
+        cachedRecipes = null
+        mutationChanges.tryEmit(
+            RecipeFeatureChange(
+                reason = reason,
+                affectedRecipeIds = affectedRecipeIds,
+                catalogInvalidated = true
+            )
+        )
+    }
 
     override fun restoredEditorDraft(maxAgeMs: Long): String? {
         val raw = settings.getString(KEY_EDITOR_DRAFT, null)?.takeIf { it.isNotBlank() } ?: return null
@@ -125,6 +170,52 @@ internal class AndroidRecipeFeatureGateway(
         }.apply()
     }
 
+    override fun customEditorIconSources(): List<String> {
+        val raw = settings.getString(KEY_EDITOR_ICON_COLLECTION, "[]").orEmpty()
+        return runCatching {
+            val json = JSONArray(raw)
+            buildList {
+                for (index in 0 until json.length()) {
+                    val source = json.optString(index).takeIf(String::isNotBlank) ?: continue
+                    if (editorIconExists(source)) add(source)
+                }
+            }.distinct()
+        }.getOrDefault(emptyList())
+    }
+
+    override fun readEditorIcon(source: String): ByteArray? {
+        val value = source.trim().takeIf { it.isNotBlank() && !it.contains("..") } ?: return null
+        val file = if (value.startsWith("/")) File(value) else File(appContext.filesDir, value)
+        if (file.isFile) return runCatching { file.readBytes() }.getOrNull()
+        val asset = value.trimStart('/')
+        return runCatching { appContext.assets.open(asset).use { it.readBytes() } }.getOrNull()
+    }
+
+    private fun editorIconExists(source: String): Boolean {
+        val value = source.trim().takeIf { it.isNotBlank() && !it.contains("..") } ?: return false
+        val file = if (value.startsWith("/")) File(value) else File(appContext.filesDir, value)
+        if (file.isFile) return true
+        return runCatching { appContext.assets.open(value.trimStart('/')).use { true } }.getOrDefault(false)
+    }
+
+    override suspend fun saveEditorIcon(pngBytes: ByteArray): String = withContext(Dispatchers.IO) {
+        require(pngBytes.isNotEmpty()) { "empty_icon" }
+        require(pngBytes.size <= MAX_EDITOR_ICON_BYTES) { "icon_too_large" }
+        File(appContext.filesDir, "recipe-icons").apply {
+            if (!exists() && !mkdirs()) error("icon_directory_failed")
+        }
+        val relative = "recipe-icons/${UUID.randomUUID()}.png"
+        File(appContext.filesDir, relative).writeBytes(pngBytes)
+        val merged = (listOf(relative) + customEditorIconSources()).distinct().take(48)
+        settings.edit()
+            .putString(
+                KEY_EDITOR_ICON_COLLECTION,
+                JSONArray().apply { merged.forEach(::put) }.toString()
+            )
+            .apply()
+        relative
+    }
+
     companion object {
         fun create(
             context: Context,
@@ -141,5 +232,7 @@ internal class AndroidRecipeFeatureGateway(
         private const val APP_SETTINGS = "kite_app_settings"
         private const val KEY_EDITOR_DRAFT = "recipe_draft"
         private const val KEY_EDITOR_DRAFT_SAVED_AT = "recipe_draft_saved_at"
+        private const val KEY_EDITOR_ICON_COLLECTION = "recipe_icon_collection"
+        private const val MAX_EDITOR_ICON_BYTES = 5 * 1024 * 1024
     }
 }

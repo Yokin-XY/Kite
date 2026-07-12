@@ -4,6 +4,7 @@ import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.action.KiteRecipeActionSource
 import com.kite.app.application.recipes.RecipeFeatureChange
 import com.kite.app.application.recipes.RecipeExternalRefreshResult
+import com.kite.app.application.recipes.RecipeDeleteResult
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteExecution
@@ -160,7 +161,8 @@ class HomeFeatureControllerTest {
 
         override suspend fun saveRecipe(input: NewRecipeInput): KiteRecipe = error("not used")
 
-        override suspend fun deleteRecipe(recipeId: String): Boolean = false
+        override suspend fun deleteRecipe(recipeId: String): RecipeDeleteResult =
+            RecipeDeleteResult.Missing
 
         override suspend fun createGroup(name: String): KiteCardGroup =
             KiteCardGroup("group", name).also { groups = groups + it }
@@ -170,9 +172,17 @@ class HomeFeatureControllerTest {
             return RecipeExternalRefreshResult("已刷新", 0, 0, 0)
         }
 
+        override fun invalidateCatalog(reason: String, affectedRecipeIds: Set<String>) = Unit
+
         override fun restoredEditorDraft(maxAgeMs: Long): String? = null
 
         override fun saveEditorDraft(rawJson: String?) = Unit
+
+        override fun customEditorIconSources(): List<String> = emptyList()
+
+        override fun readEditorIcon(source: String): ByteArray? = null
+
+        override suspend fun saveEditorIcon(pngBytes: ByteArray): String = "recipe-icons/test.png"
     }
 
     private companion object {

@@ -4,6 +4,7 @@ import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.action.KiteRecipeActionRequest
 import com.kite.app.action.KiteRecipeActionSource
 import com.kite.app.application.recipes.RecipeFeatureGateway
+import com.kite.app.application.recipes.RecipeDeleteResult
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.run.CardRunState
@@ -109,8 +110,11 @@ internal class RecipeEditorController(
                         normalizedId.isBlank() -> restoredDraft.editingRecipeId.isBlank()
                         else -> false
                     }
-                    val draft = if (restoredMatches) restoredDraft!!.normalized() else baseline
-                    val run = recipe?.let { gateway.runSnapshot(it.id) }
+                    val draft = restoredDraft
+                        ?.takeIf { restoredMatches }
+                        ?.normalized()
+                        ?: baseline
+                    val run = recipe?.let(::runFor)
                     mutableState.value = RecipeEditorUiState(
                         phase = RecipeEditorPhase.Ready,
                         originalRecipe = recipe,
@@ -220,7 +224,7 @@ internal class RecipeEditorController(
     private fun publishRun() {
         val state = mutableState.value
         val recipe = state.originalRecipe
-        val run = recipe?.let { gateway.runSnapshot(it.id) }
+        val run = recipe?.let(::runFor)
         mutableState.value = state.copy(
             groups = gateway.groups(),
             run = run,
@@ -279,13 +283,14 @@ internal class RecipeEditorController(
             onSuccess = { saved ->
                 gateway.saveEditorDraft(null)
                 val baseline = RecipeEditorDraft.fromRecipe(saved)
+                val run = runFor(saved)
                 mutableState.value = mutableState.value.copy(
                     phase = RecipeEditorPhase.Ready,
                     originalRecipe = saved,
                     baseline = baseline,
                     draft = baseline,
-                    run = gateway.runSnapshot(saved.id),
-                    runProjection = gateway.runSnapshot(saved.id)?.let {
+                    run = run,
+                    runProjection = run.let {
                         KiteCardRunUiProjector.project(
                             it.status,
                             mutableState.value.runtimeBlocked && saved.hasUbuntuStep()
@@ -297,7 +302,7 @@ internal class RecipeEditorController(
             },
             onFailure = { error ->
                 mutableState.value = mutableState.value.copy(
-                    phase = RecipeEditorPhase.Failed,
+                    phase = RecipeEditorPhase.Ready,
                     errorMessage = error.message ?: error.javaClass.simpleName,
                     revision = mutableState.value.revision + 1L
                 )
@@ -313,22 +318,41 @@ internal class RecipeEditorController(
         mutableState.value = state.copy(phase = RecipeEditorPhase.Deleting, errorMessage = null)
         return runCatching { gateway.deleteRecipe(recipe.id) }
             .fold(
-                onSuccess = { deleted ->
-                    if (!deleted) {
-                        mutableState.value = mutableState.value.copy(
-                            phase = RecipeEditorPhase.Failed,
-                            errorMessage = "delete_failed",
-                            revision = mutableState.value.revision + 1L
-                        )
-                        RecipeEditorEffect.Failed("delete", "删除失败")
-                    } else {
-                        gateway.saveEditorDraft(null)
-                        RecipeEditorEffect.Deleted(recipe.id)
+                onSuccess = { result ->
+                    when (result) {
+                        is RecipeDeleteResult.RequiresStop -> {
+                            mutableState.value = mutableState.value.copy(
+                                phase = RecipeEditorPhase.Ready,
+                                run = result.run,
+                                errorMessage = "请等待运行停止后再删除",
+                                revision = mutableState.value.revision + 1L
+                            )
+                            RecipeEditorEffect.DeleteRequiresStop(
+                                KiteRecipeActionRequest(
+                                    recipe = recipe,
+                                    intent = KiteRecipeActionIntent.Stop,
+                                    source = KiteRecipeActionSource.Editor,
+                                    instanceId = result.run.instanceId
+                                )
+                            )
+                        }
+                        is RecipeDeleteResult.Deleted -> {
+                            gateway.saveEditorDraft(null)
+                            RecipeEditorEffect.Deleted(recipe.id, result.removedCardInstanceIds)
+                        }
+                        RecipeDeleteResult.Missing -> {
+                            mutableState.value = mutableState.value.copy(
+                                phase = RecipeEditorPhase.Ready,
+                                errorMessage = "delete_failed",
+                                revision = mutableState.value.revision + 1L
+                            )
+                            RecipeEditorEffect.Failed("delete", "删除失败")
+                        }
                     }
                 },
                 onFailure = { error ->
                     mutableState.value = mutableState.value.copy(
-                        phase = RecipeEditorPhase.Failed,
+                        phase = RecipeEditorPhase.Ready,
                         errorMessage = error.message ?: error.javaClass.simpleName,
                         revision = mutableState.value.revision + 1L
                     )
@@ -336,4 +360,7 @@ internal class RecipeEditorController(
                 }
             )
     }
+
+    private fun runFor(recipe: KiteRecipe): CardRunState =
+        gateway.runSnapshot(recipe.id) ?: CardRunState.fromRecipeStatus(recipe.id, "unknown")
 }

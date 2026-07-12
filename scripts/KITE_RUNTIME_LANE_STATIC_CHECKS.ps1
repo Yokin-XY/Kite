@@ -47,6 +47,9 @@ $homeScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/H
 $homeFeatureViewSupportPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeFeatureViewSupport.kt'
 $recipeEditorContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeEditorContract.kt'
 $recipeEditorControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeEditorController.kt'
+$recipeEditorFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeEditorFragment.kt'
+$recipeEditorScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeEditorScreen.kt'
+$androidRecipeFeatureGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/recipes/AndroidRecipeFeatureGateway.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -73,7 +76,7 @@ function Function-Body {
         [string]$Source,
         [string]$Name
     )
-    $pattern = "(?s)private fun $([regex]::Escape($Name))\b.*?(?=\n    private fun |\n    private data class |\n    private enum class |\n    companion object|\n    override fun |\z)"
+    $pattern = "(?s)private (?:suspend )?fun $([regex]::Escape($Name))\b.*?(?=\n    private (?:suspend )?fun |\n    private data class |\n    private enum class |\n    companion object|\n    override fun |\z)"
     return [regex]::Match($Source, $pattern).Value
 }
 
@@ -143,6 +146,9 @@ $homeScreen = Read-Utf8 $homeScreenPath
 $homeFeatureViewSupport = Read-Utf8 $homeFeatureViewSupportPath
 $recipeEditorContract = Read-Utf8 $recipeEditorContractPath
 $recipeEditorController = Read-Utf8 $recipeEditorControllerPath
+$recipeEditorFragment = Read-Utf8 $recipeEditorFragmentPath
+$recipeEditorScreen = Read-Utf8 $recipeEditorScreenPath
+$androidRecipeFeatureGateway = Read-Utf8 $androidRecipeFeatureGatewayPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -173,6 +179,13 @@ Assert-True ($homeFeatureController -match 'KiteCardRunUiProjector\.project' -an
 Assert-True ($homeFeatureController -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|run\.CardRunStore))') 'Home feature controller must remain independent from Android views, navigation, and concrete run stores.'
 Assert-True ($homeFeatureController -notmatch '\.(startRecipe|stopRecipe|executeRecipe|saveUserRecipe|deleteRecipe)\s*\(') 'Home feature controller must not execute recipes or mutate recipe facts.'
 Assert-True ($homeFeatureFragment -match '(?s)repeatOnLifecycle\(Lifecycle\.State\.STARTED\).*HomeFeatureAction\.ReconcileRuns') 'Home feature must reconcile run-owner facts whenever it returns to the foreground.'
+Assert-True ($homeFeatureFragment -match 'change\.catalogInvalidated' -and $homeFeatureFragment -match 'HomeFeatureAction\.Refresh') 'Home feature must reconcile catalog facts when a recipe mutation is replayed.'
+Assert-True ($androidRecipeFeatureGateway -match 'MutableSharedFlow<RecipeFeatureChange>\(\s*replay = 1' -and $androidRecipeFeatureGateway -match '@Volatile\s+private var cachedRecipes') 'Recipe mutations must be replayable and backed by one process catalog snapshot.'
+Assert-True ($androidRecipeFeatureGateway -match '(?s)cachedRecipes = catalog\s+mutationChanges\.tryEmit' -and $androidRecipeFeatureGateway -match '(?s)cachedRecipes = withContext.*removeClosedRunStatesForRecipes|(?s)removeClosedRunStatesForRecipes.*cachedRecipes = withContext') 'Recipe save and delete must update the catalog snapshot before publishing mutation signals.'
+$addResourceHomeCard = Function-Body $main 'addResourceHomeCard'
+$refreshDropZoneRecipes = Function-Body $main 'refreshDropZoneRecipes'
+Assert-True ($addResourceHomeCard -match 'recipeFeatureGateway\.invalidateCatalog\("resource_home_card_added"\)') 'Resource home-card writes must invalidate the shared recipe catalog snapshot.'
+Assert-True ($refreshDropZoneRecipes -match 'recipeFeatureGateway\.refreshExternalRecipes\(\)' -and $refreshDropZoneRecipes -notmatch 'dropZoneManager\.scanAndImport\(\)') 'Shell drop-zone refresh must use the shared recipe gateway instead of bypassing its catalog state.'
 Assert-True ($homeScreen -match 'structureSignature' -and $homeScreen -match 'factory\.bind' -and $homeScreen -match 'fun acknowledge\(') 'Home screen must separate structural rebuilds from local run-state binding and immediate action acknowledgement.'
 Assert-True ($homeScreen -notmatch 'CardRunStore|KiteRecipeLoader|MainActivity') 'Home screen must only project supplied state and must not read stores, files, or the shell.'
 Assert-True ($recipeEditorContract -match 'RecipeEditorDraft' -and $recipeEditorContract -match 'RecipeEditorStepDraft' -and $recipeEditorContract -match 'validationErrors') 'Recipe editor contract must own its draft, ordered steps, and validation result.'
@@ -228,12 +241,11 @@ $showRuntimePanel = Function-Body $main 'showUbuntuRuntimePanel'
 Assert-True ($showRuntimePanel -match 'requestRuntimePanelSummaryRefresh') 'opening runtime panel should request throttled summary refresh.'
 
 $consoleRecipeAction = Function-Body $main 'handleRecipeActionWithRouter'
-$editorRecipeStart = Function-Body $main 'startRecipeFromEditor'
-$editorRecipeActions = Function-Body $main 'renderRecipeEditorActionRow'
+$editorRecipeRun = Function-Body $recipeEditorController 'requestRun'
 Assert-True ($consoleRecipeAction -match 'submitRecipeAction') 'console recipe actions must submit through the shared action intake.'
-Assert-True ($editorRecipeStart -match 'submitRecipeAction' -and $editorRecipeStart -notmatch '\bstartRecipe\s*\(') 'editor start must submit through the shared action intake instead of starting directly.'
-Assert-True ($editorRecipeActions -match 'KiteRecipeActionIntent\.Open' -and $editorRecipeActions -match 'KiteRecipeActionIntent\.Stop') 'editor open and stop must submit explicit shared action intents.'
-Assert-True ($editorRecipeActions -notmatch '\bstopRecipe\s*\(' -and $editorRecipeActions -notmatch '\bopenRecipeRunInstance\s*\(') 'editor action buttons must not bypass the shared action intake.'
+Assert-True ($editorRecipeRun -match 'KiteRecipeActionRequest' -and $editorRecipeRun -match 'KiteRecipeActionSource\.Editor' -and $editorRecipeRun -notmatch '\bstartRecipe\s*\(') 'editor start must submit through the shared action intake instead of starting directly.'
+Assert-True ($recipeEditorScreen -match 'KiteRecipeActionIntent\.Open' -and $recipeEditorScreen -match 'KiteRecipeActionIntent\.Stop' -and $recipeEditorScreen -match 'KiteRecipeActionIntent\.Start') 'editor open, stop and start controls must submit explicit shared action intents.'
+Assert-True ($recipeEditorFragment -match 'RecipeEditorResultContract\.actionRequest' -and $recipeEditorFragment -notmatch '\bstopRecipe\s*\(' -and $recipeEditorFragment -notmatch '\bopenRecipeRunInstance\s*\(') 'editor action buttons must not bypass the shared action intake.'
 
 $resourcePrimaryAction = Function-Body $main 'handleResourceAction'
 $resourceSecondaryIntent = Function-Body $resourceFeatureController 'secondaryIntent'
@@ -396,14 +408,14 @@ Assert-True ($bridgeClient -match '__kite_pid_file_cleaned') 'pidfile cleanup mu
 Assert-True ($bridgeClient -match 'rm -f --') 'pidfile cleanup must delete only the resolved pidfile path.'
 Assert-True ($bridgeClient -match 'pidFilePath = execution\.pidFilePath') 'direct run bindings must retain the launch pidfile path.'
 Assert-True ($bridgeClient.Contains('if (stoppedOk)') -and $bridgeClient.Contains('cleanCardRunPidFile(context, binding.pidFilePath)')) 'pidfile cleanup must run only after process stop succeeds.'
-Assert-True ($main -match 'private fun shouldStopRunBeforeDelete') 'delete recipe flow must have an active-run stop guard.'
-$deleteConfirm = Function-Body $main 'showDeleteRecipeConfirmSheet'
-Assert-True ($deleteConfirm -match 'shouldStopRunBeforeDelete' -and $deleteConfirm -match 'stopRecipeByCardInstanceId\(recipe, activeDeleteState\.cardInstanceId, activeDeleteState\)') 'delete recipe flow must stop an active card run before deleting the recipe.'
-Assert-True ($deleteConfirm -match 'return@setOnClickListener') 'delete recipe flow must not delete active recipes in the same click after requesting stop.'
+Assert-True ($androidRecipeFeatureGateway -match 'private fun mustStopBeforeDelete' -and $androidRecipeFeatureGateway -match 'RecipeDeleteResult\.RequiresStop') 'delete recipe flow must have an active-run stop guard.'
+$deleteRecipe = Function-Body $recipeEditorController 'delete'
+Assert-True ($deleteRecipe -match 'RecipeEditorEffect\.DeleteRequiresStop' -and $deleteRecipe -match 'KiteRecipeActionIntent\.Stop' -and $deleteRecipe -match 'instanceId = result\.run\.instanceId') 'delete recipe flow must stop an active card run before deleting the recipe.'
+Assert-True ($deleteRecipe -match 'when \(result\)' -and $deleteRecipe -match 'RecipeDeleteResult\.Deleted') 'delete recipe flow must not delete active recipes in the same action after requesting stop.'
 Assert-True ($cardRunStore -match 'fun removeClosedRunStatesForRecipes') 'card deletion cleanup must use a closed-run-only CardRunStore entry.'
 Assert-True ($cardRunStore -match 'activeInstanceIds' -and $cardRunStore -match 'status\.endsHistoryEntry\(\)' -and $cardRunStore -match 'entry\.isClosed\(\)') 'closed-run cleanup must preserve active instances while removing ended run state/history.'
-Assert-True ($main -match 'removeClosedRunStatesForRecipes\(listOf\(recipe\.id\)\)') 'delete recipe flow must clean only closed CardRun state for the deleted card.'
-Assert-True ($main -match 'cleanCardRunPidDirs\(removedCardInstanceIds\)') 'delete recipe flow must request pid directory cleanup for removed cardInstanceIds.'
+Assert-True ($androidRecipeFeatureGateway -match 'removeClosedRunStatesForRecipes\(listOf\(recipeId\)\)') 'delete recipe flow must clean only closed CardRun state for the deleted card.'
+Assert-True ($main -match 'cleanCardRunPidDirs\(request\.removedCardInstanceIds\)') 'delete recipe flow must request pid directory cleanup for removed cardInstanceIds.'
 Assert-True ($bridgeClient -match 'fun cleanCardRunPidDirs') 'bridge client must expose card pid directory cleanup.'
 Assert-True ($bridgeClient -match 'private fun cleanCardRunPidDirPayload') 'pid directory cleanup must derive its payload from a cardInstanceId.'
 Assert-True ($bridgeClient.Contains('rm -rf -- ${shellQuote(dir)}')) 'pid directory cleanup must delete only the derived card-run pid directory.'

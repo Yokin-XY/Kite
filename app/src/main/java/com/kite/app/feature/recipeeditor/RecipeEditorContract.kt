@@ -267,7 +267,8 @@ internal sealed interface RecipeEditorAction {
 
 internal sealed interface RecipeEditorEffect {
     data class Saved(val recipeId: String, val shortcutRequested: Boolean) : RecipeEditorEffect
-    data class Deleted(val recipeId: String) : RecipeEditorEffect
+    data class Deleted(val recipeId: String, val removedCardInstanceIds: Set<String>) : RecipeEditorEffect
+    data class DeleteRequiresStop(val request: KiteRecipeActionRequest) : RecipeEditorEffect
     data class ActionRequested(val request: KiteRecipeActionRequest) : RecipeEditorEffect
     data class GroupCreated(val group: KiteCardGroup) : RecipeEditorEffect
     data class ValidationFailed(val errors: List<RecipeEditorValidationError>) : RecipeEditorEffect
