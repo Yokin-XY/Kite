@@ -1,13 +1,13 @@
 # Kite 主线稳定化进度
 
-最后更新：2026-07-12
+最后更新：2026-07-13
 
 ## 当前恢复指针
 
 ```text
 方向：第二阶段业务架构迁移
 状态：in_progress
-当前任务：T007 运行窗口与显示面，报告显示面已迁移，正在迁移 terminal/web 绑定
+当前任务：T008 运行管理与运行时面板，准备审计状态所有权和页面边界
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -22,7 +22,7 @@
 | D3 状态投影 | done | 资源事实、向导步骤和 CardRun 显示语义已统一，后台更新不再越权导航 |
 | D4 生命周期和资源预算 | completed | 生命周期合同、压力链、构建和真机验证完成 |
 | D5 功能模块与扩展点 | completed | 终端扩展点、进程管理单入口和真机验收完成 |
-| 第二阶段架构迁移 | planned | 采用模块化单体与单向状态流，按 T001-T012 顺序迁移真实职责 |
+| 第二阶段架构迁移 | in_progress | T001-T007 已完成，下一步迁移运行管理与运行时面板 |
 
 ## P0 公共安全网记录
 
@@ -1021,3 +1021,17 @@ T007 独立轻量运行壳结果：
 独立轻量运行壳状态：completed，待独立提交。
 
 下一步：删除 `MainActivity` 内已因继承切断而不可达的旧 CardRun 壳层分支和迁移哨兵，保留首页发起运行窗口所需的窄入口；随后补齐 T007 最终回归并关闭任务。
+
+T007 主壳旧实现删除与最终验收：
+
+- `MainActivity` 已删除旧 CardRun terminal/report/web/X11/安装向导显示面、浮动控制条、路由注册和生命周期分支；运行入口只读取既有 `CardRunStore` 实例并启动独立 `CardRunActivity`。
+- `AppNavigator` 不再把独立运行窗口当作主应用内部 Destination。历史保存值 `CardRun` 无法解析时安全回到控制台，主壳返回规则不再决定运行任务退出。
+- 删除迁移哨兵和不可达兼容分支后，主壳从 `11914` 行、`532` 个成员函数、`109` 个私有字段降至 `9398` 行、`433` 个成员函数、`100` 个私有字段；运行事实引用从 `50` 降至 `35`，继承主壳的 Activity 保持为 `0`。
+- 架构守卫明确禁止 `RunSurfaceHost`、各运行绑定、安装向导显示面和 `showCardRunSurface` 回流主壳；生命周期守卫直接检查 `CardRunActivity.onDestroy()` 只能解绑和释放显示资源，不能停止任务或清空事实。
+- 全量 `:app:testDebugUnitTest :app:assembleDebug`、架构检查、运行车道静态检查和差异检查通过；代码封口提交为 `0c40b56`。
+- OnePlus 8T `3f8bbaad` 正式产品链验证：OpenClaw 关闭窗口后仍保持同一 `instanceId=1782789184211`、`WaitingTerminal` 和 `terminalSessionId=embedded-space-main-1783886694976`；从运行管理展开“终端窗口”并点击“打开”后进入独立 `CardRunActivity`，仍绑定同一实例和会话。
+- 同机资源首页点击 OpenCode“获取”会在独立 `CardRunActivity` 打开安装向导，未点击“开始获取”时不执行安装；显式点击 OpenClaw“停止”后首页立即变为“启动”，Store 确认为 `Stopped` 且终端绑定清空。全链无 `AndroidRuntime` 崩溃。
+
+T007 状态：completed。关键壳层提交为 `57c0199`，旧主壳删除提交为 `0c40b56`。
+
+下一步：进入 T008，先审计运行管理页、运行时状态面板、刷新入口和停止确认的真实所有权，再建立 `runtime-management` Feature 的状态与动作合同。

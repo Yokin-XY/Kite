@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-07-12",
-  "capturedCommit": "d9bbee0",
+  "capturedAt": "2026-07-13",
+  "capturedCommit": "0c40b56",
   "mainActivity": {
-    "physicalLines": 21133,
-    "memberFunctions": 854,
-    "privateFields": 171,
-    "hostInterfaces": 8,
-    "resourceRenderDelegates": 4,
-    "resourceFunctions": 64,
-    "runtimeStatesReferences": 64
+    "physicalLines": 9398,
+    "memberFunctions": 433,
+    "privateFields": 100,
+    "hostInterfaces": 4,
+    "resourceRenderDelegates": 0,
+    "resourceFunctions": 31,
+    "runtimeStatesReferences": 35
   },
   "legacyBoundaryDebt": {
     "screenRouterMainActivityScreenReferences": 0,
-    "activitiesInheritingMainActivity": 1
+    "activitiesInheritingMainActivity": 0
   },
   "targetPackages": [
     "com.kite.app.shell",

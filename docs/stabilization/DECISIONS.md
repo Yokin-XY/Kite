@@ -340,3 +340,13 @@
 理由：继承完整主壳会让每个运行窗口同时创建两套不相关能力，使启动耗时、内存、导航和生命周期彼此污染；即使把显示代码拆成文件，只要 Activity 仍继承并持有主壳状态，职责所有权就没有真正转移。独立壳让显示生命周期可以重建或关闭，而进程级运行事实和任务继续存在。
 
 影响：所有运行窗口必须从 `CardRunStore` 恢复指定 `recipeId + instanceId`，通过 `RunSurfaceHost` 组合显示绑定，通过 `RunOrchestrator` 提交继续和停止。`autoStart=false` 的恢复请求找不到既有事实时必须明确拒绝，不能新建空白运行；只有首次启动、临时网页和安装向导允许创建。系统返回只结束当前 Activity task；外部浏览器回跳、终端恢复和报告更新按实例事实重新投影。机器护栏永久要求 `activitiesInheritingMainActivity=0`。
+
+## ADR-S034 独立运行任务不属于主应用导航栈
+
+状态：accepted
+
+决策：`AppNavigator` 只管理主应用内部 Destination，不声明 CardRun 或运行显示面类型。首页、运行管理、资源向导、浏览器请求和桌面请求需要显示运行实例时，只能携带明确 `recipeId + instanceId` 启动独立 `CardRunActivity`；`MainActivity` 不渲染运行显示面，也不处理其返回和关闭策略。
+
+理由：运行窗口已经是独立 Android task，若主导航仍保留 CardRun Destination，返回键、恢复状态和页面历史会形成第二套所有权；旧显示代码也容易借这个入口重新接回主壳。运行管理可以展示同一 Store 的摘要，但“查看运行”必须打开事实所指向的独立任务，而不是复制显示状态。
+
+影响：历史保存值 `CardRun` 视为未知 Destination 并回到控制台；关闭独立任务后由 Android 恢复原主壳位置。静态护栏同时禁止 `AppDestination.CardRun`、`DestinationKind.RunSurface`、`NavigationBackAction.CardRunTask` 和 `showCardRunSurface` 回流。

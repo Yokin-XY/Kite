@@ -310,10 +310,10 @@ Controller 提供 UiState 和 Action，Activity 只负责导航到资源 Destina
 
 验收标准：
 
-- [ ] `CardRunActivity` 不再继承 `MainActivity`。
-- [ ] terminal、report、web 各自拥有显示生命周期和局部更新入口。
-- [ ] 页面离开只解绑显示面，用户停止才停止任务。
-- [ ] 外部浏览器回跳、终端恢复和报告更新仍回到正确实例。
+- [x] `CardRunActivity` 不再继承 `MainActivity`。
+- [x] terminal、report、web 各自拥有显示生命周期和局部更新入口。
+- [x] 页面离开只解绑显示面，用户停止才停止任务。
+- [x] 外部浏览器回跳、终端恢复和报告更新仍回到正确实例。
 
 依赖：T006。
 
