@@ -26,6 +26,7 @@ $taskManagerFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/
 $prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeProotPoolPlanDryRun.kt'
 $terminalSessionControllerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/terminal/TerminalSessionController.kt'
 $terminalFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalFragment.kt'
+$terminalPanelActionRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalPanelActionRegistry.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -101,6 +102,7 @@ $taskManagerFragment = Read-Utf8 $taskManagerFragmentPath
 $prootPoolPlan = Read-Utf8 $prootPoolPlanPath
 $terminalSessionController = Read-Utf8 $terminalSessionControllerPath
 $terminalFragment = Read-Utf8 $terminalFragmentPath
+$terminalPanelActionRegistry = Read-Utf8 $terminalPanelActionRegistryPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -423,6 +425,11 @@ $pressureHandler = Function-Body $runtimePressureResponder 'handlePressure'
 Assert-True ($lowMemoryResponse -match 'RuntimeLifecycleSignalStore\.onLowMemory\(\)' -and $lowMemoryResponse -notmatch '\bonTrimMemory\s*\(') 'Low-memory handling must preserve its own lifecycle fact instead of rewriting it as a regular trim event.'
 Assert-True ($pressureHandler -match 'RuntimeFrameCoordinator\.refreshTaskManager|RuntimeFrameCoordinator\.refreshProcessSnapshot') 'Memory pressure must enter the existing runtime snapshot refresh chain.'
 Assert-True ($pressureHandler -notmatch 'destroyProcess|terminateForRuntimeReclaimer|stopRecipe|endSession') 'Memory callbacks must not directly terminate runs, processes, or terminal sessions.'
+$renderTerminalPanel = Function-Body $terminalFragment 'renderTerminalPanelPage'
+$buildTerminalPanel = Function-Body $terminalFragment 'buildTerminalPanelPage'
+Assert-True ($renderTerminalPanel -match 'TerminalPanelActionRegistry\.snapshot\(\)') 'Terminal panel pages must come from the action registry.'
+Assert-True ($buildTerminalPanel -match 'action\.handler\.execute\(terminalPanelActionHost, anchor\)') 'Terminal panel tiles must execute registered actions through the terminal host contract.'
+Assert-True ($terminalPanelActionRegistry -match 'fun register\(' -and $terminalPanelActionRegistry -match 'fun unregister\(') 'Terminal panel registry must expose stable extension operations.'
 
 $consoleRefresh = Function-Body $main 'maybeRefreshConsoleAfterRuntimeState'
 Assert-True ($consoleRefresh -match 'updateVisibleConsoleCard') 'console runtime refresh should update a visible card first.'

@@ -80,6 +80,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.roundToInt
 
 class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallbacks {
 
@@ -131,6 +132,26 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private var lastManagedSessionsRenderSignature: String = ""
     private var isDetailMode = false
     private var isTerminalPanelExpanded = false
+    private val terminalPanelActionHost = object : TerminalPanelActionHost {
+        override fun sendInput(input: String) {
+            sendTerminalInput(input)
+        }
+
+        override fun adjustFont(step: Int) {
+            applyFontSize(TerminalUiPreferences.stepFontSize(currentFontSizeDp, step), true)
+        }
+
+        override fun pasteClipboard() {
+            pasteFromClipboard()
+        }
+
+        override fun showThemeMenu(anchor: View) {
+            this@TerminalFragment.showThemeMenu(anchor)
+        }
+
+        override fun themeLabel(): String =
+            TerminalUiPreferences.loadThemeMode(requireContext()).label
+    }
     private var terminalPanelPageIndex = 0
     private var sessionNoteJob: Job? = null
     private var terminalRefreshJob: Job? = null
@@ -611,8 +632,9 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private fun renderTerminalPanelPage() {
         terminalControlPage.removeAllViews()
-        terminalControlPage.addView(buildTerminalPanelPageContainer(buildTerminalControlPage()))
-        terminalControlPage.addView(buildTerminalPanelPageContainer(buildTerminalUtilityPage()))
+        TerminalPanelActionRegistry.snapshot().forEach { page ->
+            terminalControlPage.addView(buildTerminalPanelPageContainer(buildTerminalPanelPage(page)))
+        }
         terminalControlPager.post {
             updateTerminalPanelPageWidths()
             terminalControlPager.scrollTo(terminalPanelPageIndex * terminalControlPager.width, 0)
@@ -620,7 +642,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun setTerminalPanelPage(pageIndex: Int) {
-        val nextPage = pageIndex.coerceIn(0, 1)
+        val nextPage = pageIndex.coerceIn(0, (terminalControlPage.childCount - 1).coerceAtLeast(0))
         if (terminalPanelPageIndex == nextPage) {
             return
         }
@@ -662,7 +684,9 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         if (!::terminalControlPager.isInitialized || terminalControlPager.width <= 0) {
             return
         }
-        terminalPanelPageIndex = if (terminalControlPager.scrollX >= terminalControlPager.width / 2) 1 else 0
+        terminalPanelPageIndex = (terminalControlPager.scrollX.toFloat() / terminalControlPager.width)
+            .roundToInt()
+            .coerceIn(0, (terminalControlPage.childCount - 1).coerceAtLeast(0))
         terminalControlPager.smoothScrollTo(terminalPanelPageIndex * terminalControlPager.width, 0)
     }
 
@@ -713,53 +737,31 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         return lineHeight * TERMINAL_COMPOSER_MAX_LINES + dp(4)
     }
 
-    private fun buildTerminalControlPage(): View {
-        return LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), 0, dp(2), 0)
-            addView(
-                buildPanelGrid(
-                    listOf(
-                        PanelButton("Ctrl+C", "中断", R.drawable.ic_terminal_interrupt) { sendTerminalInput("\u0003") },
-                        PanelButton("Ctrl+L", "清屏", R.drawable.ic_terminal_clear_line) { sendTerminalInput("\u000c") },
-                        PanelButton("A-", "缩小字体") {
-                            applyFontSize(TerminalUiPreferences.stepFontSize(currentFontSizeDp, -1), true)
-                        },
-                        PanelButton("A+", "放大字体") {
-                            applyFontSize(TerminalUiPreferences.stepFontSize(currentFontSizeDp, 1), true)
-                        }
-                    )
-                ),
-                LinearLayout.LayoutParams(dp(166), ViewGroup.LayoutParams.WRAP_CONTENT)
-            )
-            addView(
-                buildDpadCluster(),
-                LinearLayout.LayoutParams(dp(132), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    marginStart = dp(12)
-                }
-            )
-        }
-    }
-
-    private fun buildTerminalUtilityPage(): View {
+    private fun buildTerminalPanelPage(page: TerminalPanelPage): View {
         return LinearLayout(requireContext()).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(dp(2), 0, dp(2), 0)
             addView(
                 buildPanelGrid(
-                    listOf(
-                        PanelButton("Esc", "取消") { sendTerminalInput("\u001b") },
-                        PanelButton("Tab", "补全") { sendTerminalInput("\t") },
-                        PanelButton("粘贴", "剪贴板") { pasteFromClipboard() },
-                        PanelButton("主题", TerminalUiPreferences.loadThemeMode(requireContext()).label) {
-                            showThemeMenu(it)
-                        }
-                    )
+                    page.actions.map { action ->
+                        PanelButton(
+                            title = action.title,
+                            subtitle = action.resolvedSubtitle(terminalPanelActionHost),
+                            iconRes = action.iconRes
+                        ) { anchor -> action.handler.execute(terminalPanelActionHost, anchor) }
+                    }
                 ),
                 LinearLayout.LayoutParams(dp(166), ViewGroup.LayoutParams.WRAP_CONTENT)
             )
+            if (page.showDpad) {
+                addView(
+                    buildDpadCluster(),
+                    LinearLayout.LayoutParams(dp(132), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        marginStart = dp(12)
+                    }
+                )
+            }
         }
     }
 
