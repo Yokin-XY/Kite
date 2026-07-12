@@ -162,7 +162,9 @@ import com.kite.app.run.KiteCardRunUiProjector
 import com.kite.app.run.KiteRunPrimaryAction
 import com.kite.app.run.KiteRunUiTone
 import com.kite.app.shell.AppDestination
+import com.kite.app.shell.AppIntentRouter
 import com.kite.app.shell.AppNavigator
+import com.kite.app.shell.KiteAppGraph
 import com.kite.app.shell.NavigationBackAction
 import com.kite.app.shell.RestorePolicy
 import com.kite.app.theme.KiteTheme
@@ -438,7 +440,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, navigationBackCallback)
         StartupTraceStore.markStage(this, "main.diagnostics_and_settings")
-        diagnostics = KiteDiagnostics(this)
+        val appGraph = KiteAppGraph.from(applicationContext)
+        diagnostics = appGraph.diagnostics
         diagnostics.writeCapabilityReport()
         themeStore = getSharedPreferences("kite_theme", MODE_PRIVATE)
         appSettings = getSharedPreferences("kite_app_settings", MODE_PRIVATE)
@@ -446,15 +449,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         themeConfig = loadThemeConfig()
         tokens = KiteTheme.resolve(themeConfig)
         applyKiteTerminalTheme()
-        recipeLoader = KiteRecipeLoader(this, diagnostics)
-        dropZoneManager = KiteDropZoneManager(this, diagnostics)
+        recipeLoader = appGraph.createRecipeLoader()
+        dropZoneManager = appGraph.createDropZoneManager()
         dropZoneStatus = dropZoneManager.prepareDropZone()
-        bridgeClient = KiteBridgeClient(diagnostics, applicationContext)
-        browserAuthSessions = BrowserAuthSessionStore(applicationContext)
-        browserLoopbackCallbackBridge = BrowserLoopbackCallbackBridge.get(applicationContext)
+        bridgeClient = appGraph.bridgeClient
+        browserAuthSessions = appGraph.browserAuthSessions
+        browserLoopbackCallbackBridge = appGraph.browserLoopbackCallbackBridge
         StartupTraceStore.markStage(this, "main.webview_create")
         webView = WebView(this)
-        browserAutomationSessions = BrowserAutomationSessionStore(applicationContext)
+        browserAutomationSessions = appGraph.browserAutomationSessions
         browserAutomationController = BrowserAutomationController(
             webView = webView,
             store = browserAutomationSessions,
@@ -473,8 +476,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             browserAutomationController = browserAutomationController
         )
         StartupTraceStore.markStage(this, "main.resources_and_server")
-        resourceInstallStore = KiteResourceInstallStore(this)
-        resourceManifestLoader = KiteResourceManifestLoader(this)
+        resourceInstallStore = appGraph.resourceInstallStore
+        resourceManifestLoader = appGraph.resourceManifestLoader
         prewarmResourceCatalog()
         localServer = KiteLocalServer(
             context = applicationContext,
@@ -524,10 +527,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         observeRuntimePanelSummarySignals()
         observeResourceInstallSignals()
         applyRecentTaskVisibilitySetting()
-        val handledBrowserAuthRedirect = handleBrowserAuthRedirect(intent)
-        val handledAutomationIntent = !handledBrowserAuthRedirect && handleRuntimeAutomationIntent(intent)
-        val handledLaunchIntent = !handledBrowserAuthRedirect && !handledAutomationIntent && handleCardRunLaunchIntent(intent)
-        if (!handledBrowserAuthRedirect && !handledLaunchIntent && !restoreScreenFromBundle(savedInstanceState) && !restoreRecipeDraftFromSettings()) {
+        val handledLaunchIntent = AppIntentRouter.dispatch(
+            intent,
+            ::handleBrowserAuthRedirect,
+            ::handleRuntimeAutomationIntent,
+            ::handleCardRunLaunchIntent
+        )
+        if (!handledLaunchIntent && !restoreScreenFromBundle(savedInstanceState) && !restoreRecipeDraftFromSettings()) {
             showConsole()
         }
         refreshUbuntuRuntimeState()
@@ -545,9 +551,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (handleBrowserAuthRedirect(intent)) return
-        if (handleRuntimeAutomationIntent(intent)) return
-        handleCardRunLaunchIntent(intent)
+        AppIntentRouter.dispatch(
+            intent,
+            ::handleBrowserAuthRedirect,
+            ::handleRuntimeAutomationIntent,
+            ::handleCardRunLaunchIntent
+        )
     }
 
     private fun handleBrowserAuthRedirect(sourceIntent: Intent?): Boolean {
@@ -812,7 +821,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun handleRuntimeAutomationIntent(sourceIntent: Intent?): Boolean {
         val intent = sourceIntent ?: return false
         val runtimeAction = intent
-            .getStringExtra(EXTRA_AUTOMATION_RUNTIME_ACTION)
+            .getStringExtra(AppIntentRouter.EXTRA_RUNTIME_ACTION)
             ?.trim()
             .orEmpty()
         if (runtimeAction.isBlank()) return false
@@ -852,7 +861,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun clearRuntimeAutomationExtras(intent: Intent) {
-        intent.removeExtra(EXTRA_AUTOMATION_RUNTIME_ACTION)
+        intent.removeExtra(AppIntentRouter.EXTRA_RUNTIME_ACTION)
         intent.removeExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES)
         intent.removeExtra(EXTRA_AUTOMATION_OWNER_ID)
         intent.removeExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_TARGET_ID)
@@ -21025,7 +21034,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val RESOURCE_LIST_ROW_RENDER_BATCH_DELAY_MS = 16L
         private const val RESOURCE_OPEN_RUNTIME_SOURCE = "resource_open"
         private const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE = "resource_install_wizard"
-        private const val EXTRA_AUTOMATION_RUNTIME_ACTION = "runtime_action"
         private const val EXTRA_AUTOMATION_RUNTIME_ID = "runtime_id"
         private const val EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES = "probe_target_live_tracees"
         private const val EXTRA_AUTOMATION_OWNER_ID = "owner_id"
