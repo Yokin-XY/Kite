@@ -25,6 +25,7 @@ import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.net.BindException
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -61,7 +62,11 @@ class KiteLocalServer(
                     while (running) {
                         val client = runCatching { socket.accept() }.getOrNull() ?: continue
                         thread(name = "KiteLocalServerClient", isDaemon = true) {
-                            handleClient(client)
+                            runCatching { handleClient(client) }
+                                .onFailure { error ->
+                                    runCatching { client.close() }
+                                    diagnostics.logLocalServer(localServerClientFailureEvent(error))
+                                }
                         }
                     }
                 }
@@ -1360,4 +1365,10 @@ class KiteLocalServer(
         val requestLine: String,
         val body: String
     )
+}
+
+internal fun localServerClientFailureEvent(error: Throwable): String {
+    val kind = if (error is IOException) "disconnected" else "failed"
+    val detail = error.javaClass.simpleName.ifBlank { "unknown" }
+    return "local_server_client_$kind:$detail"
 }

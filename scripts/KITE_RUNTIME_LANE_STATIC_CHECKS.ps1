@@ -229,6 +229,7 @@ Assert-True ($cardRunStore -match 'optString\("cardInstanceId"\)') 'CardRunStore
 Assert-True ($browserProxy -match 'KITE_CARD_INSTANCE_ID') 'Browser proxy environment must export KITE_CARD_INSTANCE_ID.'
 Assert-True ($browserProxy -match 'cardInstanceId=') 'Browser proxy requests must carry cardInstanceId.'
 Assert-True ($localServer -match 'cardInstanceId') 'Local server must accept cardInstanceId on open-web requests.'
+Assert-True ($localServer -match 'runCatching \{ handleClient\(client\) \}' -and $localServer -match 'localServerClientFailureEvent\(error\)') 'Each local-server client must have an exception boundary so one disconnected socket cannot crash the app process.'
 Assert-True ($bridgeClient -match 'KITE_CARD_INSTANCE_ID') 'direct shell launch must resolve the cardInstanceId from the run environment.'
 Assert-True ($bridgeClient -match 'private fun directRuntimeEnv') 'direct shell launch must build one owner-aware runtime env per run.'
 Assert-True ($bridgeClient -match '"KF_RUNTIME_ID" to ownerId') 'direct shell launch must inject KF_RUNTIME_ID for PRoot ownership telemetry.'

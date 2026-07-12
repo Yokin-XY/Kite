@@ -427,3 +427,20 @@ D5 状态：completed。
 - OnePlus 8T 覆盖安装成功，冷启动 1784ms，进程正常；未发现崩溃、ANR、输入超时或资产读取异常。
 
 下一步：继续量化启动阶段和剩余体积大项；rootfs、离线工具链和 X11 原生库的去留涉及发行能力边界，不在没有迁移通道时直接删除。
+
+### 本地服务单连接崩溃边界
+
+- OnePlus 启动诊断中发现真实 `uncaught_exception`：浏览器/客户端提前断开后，`KiteLocalServer.writeBytes` 抛出 `SocketException: Broken pipe`。
+- 原实现的每客户端线程没有异常边界，单连接写失败会进入全局未捕获处理器并杀死整个应用进程。
+- 每个客户端请求现在独立捕获：`IOException` 记为客户端断开，其他错误记为单请求失败；服务主循环和应用进程继续运行。
+- 新增分类单测和静态护栏，禁止 `handleClient` 再次裸奔在线程入口。
+
+下一步：复现客户端提前断开，确认服务仍可接受后续 `/status` 请求且进程 PID 不变。
+
+验证：
+
+- OnePlus 8T 通过 ADB 转发连续 8 次发送请求后 TCP RST 断开。
+- 测试前后应用 PID 均为 `32264`，随后 `/status` 返回 `{"ok":true,"app":"Kite","version":"0.3","server":"running"}`。
+- 目标单测、Debug 构建和运行车道静态检查通过；未出现 `FATAL EXCEPTION`、ANR 或新的未捕获 `Broken pipe`。
+
+下一步：恢复启动耗时优化，优先减少不必要的主线程同步持久化和重复页面重建。
