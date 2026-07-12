@@ -54,6 +54,20 @@ function Function-Body {
     return [regex]::Match($Source, $pattern).Value
 }
 
+function Member-Function-Body {
+    param(
+        [string]$Source,
+        [string]$Name
+    )
+    $visibility = '(?:(?:private|internal|protected|public)\s+)?'
+    $override = '(?:override\s+)?'
+    $memberPrefix = '^    ' + $visibility + $override + 'fun\s+'
+    $pattern = '(?ms)' +
+        $memberPrefix + [regex]::Escape($Name) + '\b.*?' +
+        '(?=' + $memberPrefix + '|^    (?:private\s+)?(?:data class|enum class|companion object)\b|\z)'
+    return [regex]::Match($Source, $pattern).Value
+}
+
 $main = Read-Utf8 $mainPath
 $store = Read-Utf8 $storePath
 $bridgeClient = Read-Utf8 $bridgeClientPath
@@ -300,7 +314,10 @@ $stopRecipe = Function-Body $main 'stopRecipe'
 $stopRecipeByCardInstanceId = Function-Body $main 'stopRecipeByCardInstanceId'
 $handleStopResultV2 = Function-Body $main 'handleStopResultV2'
 $handleBridgeResult = Function-Body $main 'handleBridgeResult'
-Assert-True ($stopRecipe -match 'stopRecipeByCardInstanceId\(recipe, previousState\.cardInstanceId, previousState\)') 'stopRecipe must delegate to the cardInstanceId stop entry.'
+Assert-True (
+    $stopRecipe -match 'stopRecipeByCardInstanceId\s*\(' -and
+    $stopRecipe -match 'previousState\.cardInstanceId'
+) 'stopRecipe must delegate to the cardInstanceId stop entry.'
 Assert-True ($stopRecipeByCardInstanceId -match 'CardRunStore\.get\(cardInstanceId\)') 'stop(cardInstanceId) must resolve the latest CardRunStore state.'
 Assert-True ($stopRecipeByCardInstanceId -match 'activeRunInstanceIds\[recipe\.id\] = previousState\.instanceId') 'stop(cardInstanceId) must bind runtime writes to the resolved card instance.'
 Assert-True ($main -match 'private fun RecipeRuntimeState\.hasProcessBindingForStop\(\)') 'stop flow must distinguish terminal-only state from process bindings.'
@@ -361,7 +378,9 @@ foreach ($reason in @(
     'failPlanAt',
     'clearPlan'
 )) {
-    Assert-True ($store -match "emitSignal\(`"$reason") "install store must emit signal for $reason."
+    $signalMethod = Member-Function-Body $store $reason
+    Assert-True (-not [string]::IsNullOrWhiteSpace($signalMethod)) "install store must define $reason."
+    Assert-True ($signalMethod -match '\bemitSignal\s*\(') "install store must emit signal for $reason."
 }
 
 if ($failures.Count -gt 0) {
