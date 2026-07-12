@@ -100,3 +100,13 @@
 理由：系统可能在很短时间内连续提升内存压力。固定冷却会吞掉更严重事件，而 `onLowMemory` 复用普通 trim 入口还会覆盖真实低内存信号。真正是否回收必须继续由租约、归属、前台状态和用户锁定规则共同决定。
 
 影响：后续显示资源释放可以响应内存压力，但任务或进程回收不得绕过 `RuntimeMemoryLifecycleRuleTrigger`、`RuntimeLifecycleStrategyActivator` 和 `RuntimeReclaimer` 的既有合同。
+
+## ADR-S010 扩展点归模块，失联页面直接退役
+
+状态：accepted
+
+决策：终端快捷动作由 `TerminalPanelActionRegistry` 管理，终端 Fragment 只提供能力并渲染注册快照。没有路由、Manifest 或调用方的旧 `TaskManagerFragment` 直接删除，不再与当前运行管理双线维护。
+
+理由：模块化以职责所有权和真实入口为准，不以文件数量为准。继续保留失联页面只会让状态、动作和静态检查同时维护两套行为。
+
+影响：新增终端快捷动作通过注册表扩展；进程管理统一消费 `TaskManagerStore`，不得恢复平行页面或独立进程事实。

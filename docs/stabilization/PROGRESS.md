@@ -21,7 +21,7 @@
 | D2 动作编排 | done | 卡片、资源、向导和明确实例动作均经过统一入口 |
 | D3 状态投影 | done | 资源事实、向导步骤和 CardRun 显示语义已统一，后台更新不再越权导航 |
 | D4 生命周期和资源预算 | completed | 生命周期合同、压力链、构建和真机验证完成 |
-| D5 功能模块与扩展点 | in_progress | 开始转移 MainActivity 职责并建立终端动作扩展点 |
+| D5 功能模块与扩展点 | completed | 终端扩展点、进程管理单入口和真机验收完成 |
 
 ## P0 公共安全网记录
 
@@ -386,3 +386,24 @@ D4 状态：completed。
 - 静态护栏不再要求维护失联页面，只校验当前运行管理按 owner、unit 和 PID 使用 `TaskManagerStore`。
 
 下一步：构建验证资源清理完整，再选择资源模块的一条反向 Activity 渲染链转移真实所有权。
+
+### D5 验收关闭
+
+验证：
+
+- 终端功能链由 `TerminalFragment` 拥有页面和显示状态，由 `TerminalPanelActionRegistry` 拥有动作定义与顺序，不反向委托 Activity 渲染。
+- 进程管理只保留 `showKiteProcessOverview()` 用户入口，统一消费 `TaskManagerStore`；失联 Fragment 和 607 行专用代码/资源已删除。
+- `:app:testDebugUnitTest :app:assembleDebug` 与静态车道检查通过。
+- OnePlus 8T 第一页显示 Ctrl+C、Ctrl+L、字体和方向键；第二页显示 Esc、Tab、粘贴和当前主题。
+- OnePlus 8T 运行状态显示终端 1、进程 2；运行管理显示同一份 2 个进程事实。
+- logcat 未发现崩溃、ANR 或输入超时。
+
+D5 状态：completed。
+
+## 五方向完成后的优化节点
+
+- 目标：量化启动耗时、APK 体积和 `MainActivity` 剩余职责，不用大重写破坏已验收行为。
+- 完成标准：先形成可复查基线，再只处理收益明确、风险可控的热点。
+- 当前依赖：D1-D5 均已完成，具备稳定行为基线。
+
+下一步：分析 Debug APK 组成、启动主线程阶段耗时和 MainActivity 体量，选择第一个可验证优化。
