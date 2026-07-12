@@ -1,40 +1,181 @@
 package com.kite.app
 
-import androidx.fragment.app.FragmentActivity
+internal enum class DestinationKind {
+    Root,
+    Child,
+    Editor,
+    RunSurface
+}
+
+internal sealed interface BackPolicy {
+    data object System : BackPolicy
+    data class Parent(val screen: MainActivity.Screen) : BackPolicy
+    data class Contextual(val fallback: MainActivity.Screen) : BackPolicy
+}
+
+internal sealed interface RestorePolicy {
+    data object None : RestorePolicy
+    data object Direct : RestorePolicy
+    data class AsParent(val screen: MainActivity.Screen) : RestorePolicy
+    data object RecipeDraft : RestorePolicy
+    data object WorkbenchUrl : RestorePolicy
+}
+
+internal data class Destination(
+    val screen: MainActivity.Screen,
+    val kind: DestinationKind,
+    val backPolicy: BackPolicy,
+    val restorePolicy: RestorePolicy = RestorePolicy.None
+)
+
+internal sealed interface NavigationBackAction {
+    data object System : NavigationBackAction
+    data object CardRunTask : NavigationBackAction
+    data object Contextual : NavigationBackAction
+    data class Navigate(val screen: MainActivity.Screen) : NavigationBackAction
+}
 
 /**
- * Screen 路由收口(P2 拆 God Activity 的基础设施,T6 第一步)。
+ * Kite 的导航合同中心。
  *
- * 背景:MainActivity(19591 行)原本没有中心化路由 —— 17 处分散地
- * `currentScreen = Screen.X` 紧接着各自调 show*()。T6 引入本类作为统一入口,
- * 把"切到某个 Screen"的行为收口到 navigate(),为后续把各 Screen 逐个迁到 Fragment 铺路。
- *
- * 过渡期策略(抽屉式,ADR-003):
- * - 当前所有 Screen 仍走老命令式 show* 路径(navigateLegacy),由 Activity 提供 LegacyScreenSink 回调。
- * - T6b 起逐个 Screen 改走 Fragment(routeToFragment),老路径逐步退役。
- * - 任何时候停下,项目仍可正常运行(老的分散路由仍可用,本类是新增收口层)。
- *
- * 注:本类不持有 Screen 状态(状态仍由 MainActivity.currentScreen 管理),
- * 仅提供收口入口与过渡期钩子,避免一次性大爆炸改动。
+ * 这里仅拥有目标页、返回策略和恢复策略，不拥有页面渲染、业务状态或运行实例。
+ * 过渡期仍由 MainActivity 的老 show* 方法完成渲染，但所有返回判断可以先依赖同一份合同。
  */
 internal class ScreenRouter(
-    private val activity: FragmentActivity,
-    private val legacySink: LegacyScreenSink
+    private val legacySink: LegacyScreenSink,
+    initialScreen: MainActivity.Screen = MainActivity.Screen.Console
 ) {
+    private var contextualBackAction: (() -> Unit)? = null
 
-    /**
-     * 统一导航入口。目标:未来所有 Screen 切换都经此方法,而非分散赋值。
-     * 过渡期:暂全部委托老路径。
-     */
+    var currentScreen: MainActivity.Screen = initialScreen
+        private set
+
+    fun enter(screen: MainActivity.Screen, onBack: (() -> Unit)? = null) {
+        currentScreen = screen
+        contextualBackAction = onBack
+    }
+
     fun navigate(screen: MainActivity.Screen) {
         legacySink.navigateToLegacy(screen)
     }
 
-    /**
-     * 由 MainActivity 实现,把 Screen 切换委托回老的 show* 方法。
-     * 这是过渡期的兼容桥梁 —— 等 Screen 逐个 Fragment 化后,这些分支会被 routeToFragment 取代。
-     */
+    fun destination(screen: MainActivity.Screen = currentScreen): Destination =
+        destinations.getValue(screen)
+
+    fun resolveBack(isCardRunTask: Boolean): NavigationBackAction {
+        if (isCardRunTask) return NavigationBackAction.CardRunTask
+        return when (val policy = destination().backPolicy) {
+            BackPolicy.System -> NavigationBackAction.System
+            is BackPolicy.Parent -> NavigationBackAction.Navigate(policy.screen)
+            is BackPolicy.Contextual -> if (contextualBackAction != null) {
+                NavigationBackAction.Contextual
+            } else {
+                NavigationBackAction.Navigate(policy.fallback)
+            }
+        }
+    }
+
+    fun invokeContextualBack(): Boolean {
+        val action = contextualBackAction ?: return false
+        action()
+        return true
+    }
+
     fun interface LegacyScreenSink {
         fun navigateToLegacy(screen: MainActivity.Screen)
+    }
+
+    companion object {
+        private val destinations: Map<MainActivity.Screen, Destination> = listOf(
+            Destination(
+                MainActivity.Screen.Console,
+                DestinationKind.Root,
+                BackPolicy.System
+            ),
+            Destination(
+                MainActivity.Screen.Terminal,
+                DestinationKind.Root,
+                BackPolicy.Parent(MainActivity.Screen.Console),
+                RestorePolicy.Direct
+            ),
+            Destination(
+                MainActivity.Screen.Workbench,
+                DestinationKind.Child,
+                BackPolicy.Parent(MainActivity.Screen.Console),
+                RestorePolicy.WorkbenchUrl
+            ),
+            Destination(
+                MainActivity.Screen.CardRun,
+                DestinationKind.RunSurface,
+                BackPolicy.Parent(MainActivity.Screen.Console)
+            ),
+            Destination(
+                MainActivity.Screen.RecipeDetail,
+                DestinationKind.Child,
+                BackPolicy.Contextual(MainActivity.Screen.Console)
+            ),
+            Destination(
+                MainActivity.Screen.CreateConfig,
+                DestinationKind.Editor,
+                BackPolicy.Contextual(MainActivity.Screen.Console),
+                RestorePolicy.RecipeDraft
+            ),
+            Destination(
+                MainActivity.Screen.RecipeMore,
+                DestinationKind.Child,
+                BackPolicy.Contextual(MainActivity.Screen.Console)
+            ),
+            Destination(
+                MainActivity.Screen.Resources,
+                DestinationKind.Root,
+                BackPolicy.Parent(MainActivity.Screen.Console),
+                RestorePolicy.Direct
+            ),
+            Destination(
+                MainActivity.Screen.ResourceSearch,
+                DestinationKind.Child,
+                BackPolicy.Parent(MainActivity.Screen.Resources),
+                RestorePolicy.AsParent(MainActivity.Screen.Resources)
+            ),
+            Destination(
+                MainActivity.Screen.ResourceManage,
+                DestinationKind.Child,
+                BackPolicy.Parent(MainActivity.Screen.Resources),
+                RestorePolicy.Direct
+            ),
+            Destination(
+                MainActivity.Screen.ResourceDetail,
+                DestinationKind.Child,
+                BackPolicy.Parent(MainActivity.Screen.Resources)
+            ),
+            Destination(
+                MainActivity.Screen.ResourceMore,
+                DestinationKind.Child,
+                BackPolicy.Contextual(MainActivity.Screen.Resources),
+                RestorePolicy.AsParent(MainActivity.Screen.Resources)
+            ),
+            Destination(
+                MainActivity.Screen.ResourceRawJson,
+                DestinationKind.Child,
+                BackPolicy.Contextual(MainActivity.Screen.Resources)
+            ),
+            Destination(
+                MainActivity.Screen.Processes,
+                DestinationKind.Child,
+                BackPolicy.Parent(MainActivity.Screen.Console)
+            ),
+            Destination(
+                MainActivity.Screen.Settings,
+                DestinationKind.Root,
+                BackPolicy.Parent(MainActivity.Screen.Console),
+                RestorePolicy.Direct
+            ),
+            Destination(
+                MainActivity.Screen.ThemeSettings,
+                DestinationKind.Child,
+                BackPolicy.Parent(MainActivity.Screen.Settings),
+                RestorePolicy.Direct
+            )
+        ).associateBy(Destination::screen)
     }
 }

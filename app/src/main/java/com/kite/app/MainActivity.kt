@@ -245,7 +245,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
      * 后续各 Screen 逐个 Fragment 化时,在此替换为 routeToFragment。
      */
     private val screenRouter: ScreenRouter by lazy {
-        ScreenRouter(this) { screen -> dispatchLegacyScreen(screen) }
+        ScreenRouter(
+            legacySink = ScreenRouter.LegacyScreenSink { screen -> dispatchLegacyScreen(screen) }
+        )
     }
     private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
     private var currentScreen: Screen = Screen.Console

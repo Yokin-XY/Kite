@@ -7,7 +7,7 @@
 ```text
 方向：D1 导航与返回规则统一
 状态：in_progress
-当前任务：审计导航入口并建立 Destination + BackPolicy 合同
+当前任务：Destination + BackPolicy 合同已建立，准备接入 Activity 返回入口
 代码分支：main
 代码策略：会话分支，Git 单主线，阶段性本地提交
 ```
@@ -69,3 +69,15 @@
 3. 先写纯合同与测试，再让现有入口渐进接入。
 4. 不改页面视觉，不改动作执行、资源 Store、浏览器认证和运行生命周期。
 5. 每形成一个可构建、可回退的小段立即本地提交。
+
+## D1 执行记录
+
+### 导航合同与矩阵
+
+- 17 个 `currentScreen` 写入点已盘点，共覆盖 16 个 Screen。
+- 返回行为归为系统、父页面、上下文、CardRun 任务四种合同。
+- Web 历史和终端详情定义为 Activity 合同前的显示面优先消费者。
+- `ScreenRouter` 现在拥有完整 Destination、BackPolicy 和 RestorePolicy 表。
+- 新增 7 条纯合同测试，目标完整性、父子关系、上下文、恢复和委托全部通过。
+
+下一步：把 MainActivity 的系统 back、顶部返回、Screen 登记和状态恢复接入同一合同。
