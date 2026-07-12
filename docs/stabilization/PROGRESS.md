@@ -1217,3 +1217,16 @@ T010 设置 Feature 与主题边界结果：
 - 设置 Gateway、Projector、Controller、Result Contract、局部绑定和主题必要重绑目标测试通过；既有 Main 路由合同继续通过。主壳债务降至 `lines=6652, functions=341, fields=65`。
 
 下一步：补充设置/首次引导架构守卫，执行全量单测与 Debug 构建，再在 OnePlus 8T 分别验证已有用户升级、主题切换、系统通知/文件设置返回和全新安装引导。
+
+T010 最终验收：
+
+- 全量 `:app:testDebugUnitTest :app:assembleDebug` 通过：422 项测试、0 失败、1 项既有跳过；架构与运行车道守卫通过。架构棘轮更新为 `lines=6652, functions=341, fields=65, hosts=4, runtimeStateRefs=30`。
+- OnePlus 8T `3f8bbaad` 已有用户覆盖升级冷启动 1947ms；原设置值和投放区均即时投影，设置 -> 主题 -> 系统 back 回设置路径正确，未出现首次引导重放。
+- 主题切换到蓝色时应用 PID 保持 `20386`，主题页与底部导航即时换色，偏好同步落盘；没有重启进程、Bootstrap、CardRun 或浏览器会话。
+- 系统通知设置页返回后仍停在设置页并校准真实开关；投放区刷新完成后同样留在设置页，确认修复旧的无条件跳首页行为。
+- 清空应用数据模拟首次安装：通知权限拒绝后系统事实保持 `granted=false`，一次性引导阶段持久化为 `Completed`，运行环境继续通过独立 runtime gate 准备。强杀重启冷启动 1563ms，不再重复首次授权窗口；环境准备完成后可进入设置，通知行明确显示“未开启”并保留稍后授权入口。
+- 两轮真机均未发现 Kite `AndroidRuntime` 崩溃；首次准备和进程重建期间设置、引导与 runtime 状态没有互相覆盖。
+
+T010 状态：completed。关键提交为 `3318411`、`76062af`。
+
+下一步：进入 T011，先审计终端 Fragment、TerminalChromeHost、主壳快捷面板和终端会话恢复的真实边界，迁移前固定显示生命周期与扩展动作合同。
