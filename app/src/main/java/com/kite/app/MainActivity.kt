@@ -67,6 +67,11 @@ import androidx.activity.OnBackPressedCallback
 import androidx.browser.customtabs.CustomTabsIntent
 import com.kite.app.action.KiteActionRoute
 import com.kite.app.action.KiteActionRouter
+import com.kite.app.action.KiteRecipeActionCoordinator
+import com.kite.app.action.KiteRecipeActionIntent
+import com.kite.app.action.KiteRecipeActionPlan
+import com.kite.app.action.KiteRecipeActionRequest
+import com.kite.app.action.KiteRecipeActionSource
 import com.kite.app.browser.BrowserAuthRedirect
 import com.kite.app.browser.BrowserAuthRedirectParser
 import com.kite.app.browser.BrowserAuthSession
@@ -241,6 +246,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private val activeRunInstanceIds = mutableMapOf<String, String>()
     private val cardRunWindowHiddenSurfaces = mutableMapOf<String, MutableSet<String>>()
     private val actionRouter = KiteActionRouter()
+    private val recipeActionCoordinator = KiteRecipeActionCoordinator(actionRouter)
     /**
      * Screen 路由收口(T6)。过渡期把 navigate 委托回老的 show* 方法;
      * 后续各 Screen 逐个 Fragment 化时,在此替换为 routeToFragment。
@@ -14653,49 +14659,77 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
 
     private fun handleRecipeActionWithRouter(recipe: KiteRecipe) {
-        val state = runtimeStateFor(recipe)
-        diagnostics.logRecipeAction(recipe, "card_click", mapOf("type" to recipe.type, "status" to state.status.name))
-        if (state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping) return
-        if (isUbuntuActionBlocked(recipe)) {
-            ensureKfRuntimeBootstrap()
-            if (shouldSuppressTransientRuntimeChrome()) {
-                requestResourceRuntimeInlineRefresh(recipe, "ubuntu_runtime_blocked")
-            } else {
-                showUbuntuRuntimePanel(auto = true)
-                Toast.makeText(this, ubuntuRuntimeState.title, Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
-
-        if (state.isInterruptible()) {
-            stopRecipe(recipe, state)
-            return
-        }
-
-        val actionName = KiteRecipe.ACTION_START
-        if (actionName == KiteRecipe.ACTION_START && shouldOpenCardRunTaskFromHome(recipe)) {
-            diagnostics.logRecipeAction(recipe, "card_run_task_requested", mapOf("source" to CardRunIntents.SOURCE_CARD))
-            startActivity(
-                CardRunIntents.launchIntent(
-                    context = this,
-                    recipeId = recipe.id,
-                    launchSource = CardRunIntents.SOURCE_CARD,
-                    autoStart = true
-                )
+        submitRecipeAction(
+            KiteRecipeActionRequest(
+                recipe = recipe,
+                intent = KiteRecipeActionIntent.Primary,
+                source = KiteRecipeActionSource.ConsoleCard,
+                openTaskOnStart = shouldOpenCardRunTaskFromHome(recipe)
             )
-            return
+        )
+    }
+
+    private fun submitRecipeAction(
+        request: KiteRecipeActionRequest,
+        afterDispatch: () -> Unit = {}
+    ) {
+        val recipe = request.recipe
+        val state = runtimeStateFor(recipe)
+        diagnostics.logRecipeAction(
+            recipe,
+            "action_submit",
+            mapOf(
+                "intent" to request.intent.name,
+                "source" to request.source.logValue,
+                "status" to state.status.name
+            )
+        )
+        when (val plan = recipeActionCoordinator.plan(request, state, isUbuntuActionBlocked(recipe))) {
+            is KiteRecipeActionPlan.Ignored -> Unit
+            KiteRecipeActionPlan.RuntimeRequired -> {
+                ensureKfRuntimeBootstrap()
+                if (shouldSuppressTransientRuntimeChrome()) {
+                    requestResourceRuntimeInlineRefresh(recipe, "ubuntu_runtime_blocked")
+                } else {
+                    showUbuntuRuntimePanel(auto = true)
+                    Toast.makeText(this, ubuntuRuntimeState.title, Toast.LENGTH_SHORT).show()
+                }
+            }
+            KiteRecipeActionPlan.OpenRun -> openRecipeRunInstance(recipe)
+            KiteRecipeActionPlan.LaunchTask -> {
+                diagnostics.logRecipeAction(recipe, "card_run_task_requested", mapOf("source" to CardRunIntents.SOURCE_CARD))
+                startActivity(
+                    CardRunIntents.launchIntent(
+                        context = this,
+                        recipeId = recipe.id,
+                        launchSource = CardRunIntents.SOURCE_CARD,
+                        autoStart = true
+                    )
+                )
+            }
+            KiteRecipeActionPlan.Stop -> stopRecipe(recipe, state)
+            is KiteRecipeActionPlan.Execute -> executeRecipeActionRoute(request, state, plan.route)
         }
-        when (val route = actionRouter.route(recipe, actionName)) {
+        afterDispatch()
+    }
+
+    private fun executeRecipeActionRoute(
+        request: KiteRecipeActionRequest,
+        state: RecipeRuntimeState,
+        route: KiteActionRoute
+    ) {
+        val recipe = request.recipe
+        when (route) {
             is KiteActionRoute.StopRecipe -> stopRecipe(recipe, state)
             is KiteActionRoute.RunRecipe -> startRecipe(
                 route.recipe,
                 state,
-                openConsoleOnStart = route.recipe.launch.openInstance,
-                renderOnStart = route.recipe.launch.openInstance
+                openConsoleOnStart = request.source != KiteRecipeActionSource.Editor && route.recipe.launch.openInstance,
+                renderOnStart = true
             )
             is KiteActionRoute.OpenWeb -> {
                 setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = route.url)
-                openWeb(route.url, "recipe_card", recipe)
+                openWeb(route.url, request.source.logValue, recipe)
             }
             is KiteActionRoute.NativeAction -> runNativeAction(recipe, route)
             is KiteActionRoute.Unsupported -> {
@@ -17093,7 +17127,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 textColor = tokens.primaryStrong,
                 enabled = state.status != RecipeRunStatus.Stopping
             ) {
-                openRecipeRunInstance(recipe)
+                submitRecipeAction(
+                    KiteRecipeActionRequest(recipe, KiteRecipeActionIntent.Open, KiteRecipeActionSource.Editor)
+                ) { renderRecipeEditorActionRow(actionRow, recipe) }
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 7f))
             actionRow.addView(View(this).apply {
                 setBackgroundColor(tokens.border)
@@ -17105,8 +17141,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 textColor = tokens.danger,
                 enabled = state.status != RecipeRunStatus.Stopping
             ) {
-                stopRecipe(recipe, state)
-                actionRow.postDelayed({ renderRecipeEditorActionRow(actionRow, recipe) }, 180L)
+                submitRecipeAction(
+                    KiteRecipeActionRequest(recipe, KiteRecipeActionIntent.Stop, KiteRecipeActionSource.Editor)
+                ) {
+                    actionRow.postDelayed({ renderRecipeEditorActionRow(actionRow, recipe) }, 180L)
+                }
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 3f))
         } else {
             val blocked = isUbuntuActionBlocked(recipe)
@@ -17126,47 +17165,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun startRecipeFromEditor(recipe: KiteRecipe, actionRow: LinearLayout) {
-        val state = runtimeStateFor(recipe)
-        if (state.status == RecipeRunStatus.Starting || state.status == RecipeRunStatus.Stopping) return
-        if (isUbuntuActionBlocked(recipe)) {
-            Toast.makeText(this, ubuntuRuntimeState.title, Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (state.isInterruptible()) {
-            renderRecipeEditorActionRow(actionRow, recipe)
-            return
-        }
-
-        when (val route = actionRouter.route(recipe, KiteRecipe.ACTION_START)) {
-            is KiteActionRoute.RunRecipe -> {
-                startRecipe(route.recipe, state, openConsoleOnStart = false, renderOnStart = true)
-                renderRecipeEditorActionRow(actionRow, recipe)
-            }
-            is KiteActionRoute.OpenWeb -> {
-                val instanceId = ensureRunInstanceId(recipe)
-                setRuntimeState(
-                    recipe,
-                    RecipeRunStatus.Opened,
-                    instanceId = instanceId,
-                    surface = CardRunSurface.Web,
-                    nextActionUrl = route.url
-                )
-                renderRecipeEditorActionRow(actionRow, recipe)
-            }
-            is KiteActionRoute.NativeAction -> {
-                runNativeAction(recipe, route)
-                renderRecipeEditorActionRow(actionRow, recipe)
-            }
-            is KiteActionRoute.StopRecipe -> {
-                stopRecipe(recipe, state)
-                actionRow.postDelayed({ renderRecipeEditorActionRow(actionRow, recipe) }, 180L)
-            }
-            is KiteActionRoute.Unsupported -> {
-                setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = route.reason)
-                Toast.makeText(this, route.reason, Toast.LENGTH_SHORT).show()
-                renderRecipeEditorActionRow(actionRow, recipe)
-            }
-        }
+        submitRecipeAction(
+            KiteRecipeActionRequest(recipe, KiteRecipeActionIntent.Start, KiteRecipeActionSource.Editor)
+        ) { renderRecipeEditorActionRow(actionRow, recipe) }
     }
 
     private fun recipeEditorActionButton(

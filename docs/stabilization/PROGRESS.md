@@ -161,3 +161,19 @@ D1 结论：导航合同和必要接入已完成；后续 D2-D5 只能消费 `Sc
 - 禁止边界：动作入口不得直接执行 PRoot/终端重活，不复制运行事实，不用页面刷新掩盖动作分叉。
 
 下一步：列出所有用户动作入口和最终委托，先以卡片首页/编辑页作为第一条完整迁移链。
+
+### D2 卡片动作第一条迁移链
+
+- 新增 `KiteRecipeActionRequest`，明确 Primary、Start、Open、Stop 意图和 ConsoleCard、Editor、RunSurface 来源。
+- 新增纯 `KiteRecipeActionCoordinator`，只生成 Ignored、RuntimeRequired、OpenRun、LaunchTask、Stop、Execute 计划。
+- 首页卡片和编辑页启动、打开、停止全部改为调用 `submitRecipeAction`。
+- `startRecipe`、`stopRecipe`、CardRunActivity、运行环境准备和 `CardRunStore` 所有权保持不变。
+- 已有运行绑定时，编辑页 Start 归一化为 OpenRun，避免重复创建运行实例。
+- 保留编辑页原行为：启动中仍允许显式打开或停止，只有重复 Primary/Start 被拦截。
+
+验证：
+
+- `KiteRecipeActionCoordinatorTest`、`KiteActionRouterTest`、`MainActivityScreenRoutingTest`：`BUILD SUCCESSFUL`。
+- `scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：通过。
+
+下一步：提交本节点，审计并迁移资源获取、打开、停止、卸载和重试入口。

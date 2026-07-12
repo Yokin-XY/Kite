@@ -155,6 +155,14 @@ Assert-True ($runtimePanelCounts -notmatch 'showCardRunSurface|showConsole|showK
 $showRuntimePanel = Function-Body $main 'showUbuntuRuntimePanel'
 Assert-True ($showRuntimePanel -match 'requestRuntimePanelSummaryRefresh') 'opening runtime panel should request throttled summary refresh.'
 
+$consoleRecipeAction = Function-Body $main 'handleRecipeActionWithRouter'
+$editorRecipeStart = Function-Body $main 'startRecipeFromEditor'
+$editorRecipeActions = Function-Body $main 'renderRecipeEditorActionRow'
+Assert-True ($consoleRecipeAction -match 'submitRecipeAction') 'console recipe actions must submit through the shared action intake.'
+Assert-True ($editorRecipeStart -match 'submitRecipeAction' -and $editorRecipeStart -notmatch '\bstartRecipe\s*\(') 'editor start must submit through the shared action intake instead of starting directly.'
+Assert-True ($editorRecipeActions -match 'KiteRecipeActionIntent\.Open' -and $editorRecipeActions -match 'KiteRecipeActionIntent\.Stop') 'editor open and stop must submit explicit shared action intents.'
+Assert-True ($editorRecipeActions -notmatch '\bstopRecipe\s*\(' -and $editorRecipeActions -notmatch '\bopenRecipeRunInstance\s*\(') 'editor action buttons must not bypass the shared action intake.'
+
 $showRunManagement = Function-Body $main 'showKiteProcessOverview'
 Assert-True ($showRunManagement -match 'runManagementHeader') 'run management page should use the run-management header.'
 Assert-True ($showRunManagement -notmatch 'kiteProcessSummaryBlock') 'run management page must not render the old three-count summary card.'
