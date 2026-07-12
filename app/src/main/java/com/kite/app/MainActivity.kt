@@ -241,6 +241,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var rootHost: FrameLayout
     private lateinit var root: LinearLayout
     private lateinit var webView: WebView
+    private var activityDisplaySurfacesReleased = false
 
     private lateinit var nameInput: EditText
     private lateinit var descriptionInput: EditText
@@ -294,6 +295,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val screen = Screen.valueOf(screenName)
         enterScreen(screen)
     }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun activityDisplaySurfacesReleasedForTest(): Boolean = activityDisplaySurfacesReleased
 
     private fun enterScreen(screen: Screen, onBack: (() -> Unit)? = null) {
         currentScreen = screen
@@ -1125,14 +1129,30 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     override fun onDestroy() {
         restoreCardRunSystemBarsIfNeeded()
-        closeResourceInstallTaskIfActivityDestroyed()
+        releaseResourceInstallWizardSurfaceIfActivityDestroyed()
         CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
         CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
         CardRunTaskCloser.unregister(registeredCardRunCloserInstanceId)
+        releaseActivityDisplaySurfaces()
         if (localServerStarted) {
             localServer.stop()
         }
         super.onDestroy()
+    }
+
+    private fun releaseActivityDisplaySurfaces() {
+        if (activityDisplaySurfacesReleased) return
+        activityDisplaySurfacesReleased = true
+        if (::browserAutomationController.isInitialized) {
+            browserAutomationController.closeActiveSession()
+        }
+        if (::webView.isInitialized) {
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            webView.stopLoading()
+            webView.onPause()
+            webView.removeAllViews()
+            webView.destroy()
+        }
     }
 
     private fun requestNavigationBack() {
@@ -5939,7 +5959,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun closeResourceInstallTaskIfActivityDestroyed() {
+    private fun releaseResourceInstallWizardSurfaceIfActivityDestroyed() {
         if (this !is CardRunActivity || isChangingConfigurations) return
         if (!::resourceInstallStore.isInitialized) return
         val context = activeResourceInstallWizard ?: return

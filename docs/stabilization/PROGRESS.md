@@ -313,3 +313,18 @@ D2 结论：页面只提交动作意图，协调器只生成轻量计划；运�
 - 依赖是否满足：D1-D3 已完成，导航、动作和状态事实边界已稳定，依赖满足。
 
 下一步：从 `onStop/onDestroy/onTrimMemory`、终端 attach/detach、WebView 和 RuntimeReclaimer 开始建立生命周期矩阵。
+
+### D4 Activity 显示面释放
+
+- 新增生命周期矩阵，明确页面切换、Activity/Fragment 销毁、用户停止和内存压力的不同合同。
+- `onDestroy` 新增 `releaseActivityDisplaySurfaces`：关闭 Activity 级浏览器自动化 session，detach 并 destroy WebView。
+- 该释放路径不调用 `stopRecipe`、`CardRunStore`、`TerminalRuntimeHost.release` 或资源计划清理。
+- 资源向导销毁函数改名为 `releaseResourceInstallWizardSurfaceIfActivityDestroyed`，明确只释放向导显示实例，不停止安装子任务。
+- 终端 Fragment 继续使用 `TerminalRuntimeHost.detachUi`，不结束终端 session。
+
+验证：
+
+- MainActivity 生命周期测试确认销毁后显示面释放标记成立。
+- 静态护栏锁定 WebView 释放和后台运行事实保留边界。
+
+下一步：审计 `RuntimePressureResponder` 的 trim/low-memory 路径，确保刷新快照后真正进入现有策略与回收链，且不回收用户锁定运行。

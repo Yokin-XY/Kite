@@ -299,4 +299,14 @@ class MainActivityScreenRoutingTest {
 
         assertEquals("Console", activity.currentScreenNameForTest())
     }
+
+    @Test
+    fun `Activity 销毁只释放显示面`() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).create().start().resume()
+        val activity = controller.get()
+
+        controller.pause().stop().destroy()
+
+        assertTrue(activity.activityDisplaySurfacesReleasedForTest())
+    }
 }
