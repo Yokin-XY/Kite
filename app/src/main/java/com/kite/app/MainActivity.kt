@@ -190,6 +190,10 @@ import com.kite.app.feature.resources.ResourceInstallWizardSurface
 import com.kite.app.feature.resources.ResourceSearchFragment
 import com.kite.app.feature.resources.ResourcesFragment
 import com.kite.app.application.resources.ResourceFeatureGateway
+import com.kite.app.application.resources.ResourceRunContinuation
+import com.kite.app.application.resources.ResourceRunCoordinator
+import com.kite.app.application.resources.ResourceRunLaunchRequest
+import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.feature.home.HomeFeatureRequest
 import com.kite.app.feature.home.HomeFeatureResultContract
@@ -242,6 +246,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var recipeFeatureGateway: RecipeFeatureGateway
     private lateinit var runOrchestrator: RunOrchestrator
     private lateinit var runExecutionEffectBus: RunExecutionEffectBus
+    private lateinit var resourceRunCoordinator: ResourceRunCoordinator
     private lateinit var themeStore: SharedPreferences
     private lateinit var appSettings: SharedPreferences
     private lateinit var rootHost: FrameLayout
@@ -387,6 +392,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         CardRunStore.initialize(applicationContext)
         runOrchestrator = appGraph.runOrchestrator
         runExecutionEffectBus = appGraph.runExecutionEffectBus
+        resourceRunCoordinator = appGraph.resourceRunCoordinator
         themeConfig = loadThemeConfig()
         tokens = KiteTheme.resolve(themeConfig)
         applyKiteTerminalTheme()
@@ -5018,7 +5024,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun startResourceInstall(item: ResourceItem, recipe: KiteRecipe) {
-        resourceInstallStore.markInstalling(item.id)
         invalidateResourceRuntimeStateCache()
         startResourceRun(
             item = item,
@@ -5034,14 +5039,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         recipe: KiteRecipe,
         continuation: ResourceUninstallContinuation = ResourceUninstallContinuation.None
     ) {
-        if (continuation != ResourceUninstallContinuation.None) {
-            pendingResourceUninstallContinuations[item.id] = continuation
-        } else {
-            pendingResourceUninstallContinuations.remove(item.id)
-        }
-        resourceInstallStore.markUninstalling(item.id)
         invalidateResourceRuntimeStateCache()
-        startResourceRun(item, recipe, stageBundledResource = false, openRunTask = false)
+        startResourceRun(
+            item = item,
+            recipe = recipe,
+            stageBundledResource = false,
+            openRunTask = false,
+            continuation = continuation
+        )
     }
 
     private fun startResourceRun(
@@ -5049,109 +5054,63 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         recipe: KiteRecipe,
         stageBundledResource: Boolean,
         openRunTask: Boolean = true,
-        returnToInstallWizard: Boolean = false
+        returnToInstallWizard: Boolean = false,
+        continuation: ResourceUninstallContinuation = ResourceUninstallContinuation.None
     ) {
         val parentInstanceId = activeResourceInstallWizard
             ?.wizardInstanceId
             ?.takeIf { returnToInstallWizard }
         val instanceId = resourceRunInstanceId(item.id, recipe)
-        CardRunStore.registerRecipe(recipe)
-        activeRunInstanceIds[recipe.id] = instanceId
         if (openRunTask && !returnToInstallWizard) {
             suppressedResourceRunSurfaceRecipeIds.remove(recipe.id)
         } else {
             suppressedResourceRunSurfaceRecipeIds.add(recipe.id)
         }
-        runtimeStates[recipe.id] = CardRunStore.start(
-            recipe = recipe,
-            instanceId = instanceId,
-            parentInstanceId = parentInstanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_RESOURCE,
-            stepId = item.id
+        val result = resourceRunCoordinator.start(
+            ResourceRunLaunchRequest(
+                resourceId = item.id,
+                recipe = recipe,
+                operation = resourceOperationForRecipe(recipe) ?: KiteResourceInstallRecipes.OP_INSTALL,
+                stageBundledResource = stageBundledResource,
+                parentInstanceId = parentInstanceId,
+                preferredInstanceId = instanceId,
+                continuation = continuation.toResourceRunContinuation()
+            )
         )
+        val state = when (result) {
+            is ResourceRunLaunchResult.Accepted -> result.state
+            is ResourceRunLaunchResult.Rejected -> {
+                showResourceDiscreteToast("资源运行未启动：${result.reason}")
+                return
+            }
+        }
+        activeRunInstanceIds[recipe.id] = state.instanceId
+        runtimeStates[recipe.id] = state
         if (openRunTask && !returnToInstallWizard) {
             focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = instanceId
+            focusedRunInstanceId = state.instanceId
         }
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Starting,
-            surface = CardRunSurface.Report,
-            currentStepIndex = 0,
-            lastMeaningfulOutput = "正在准备资源：${item.name}",
-            shellReportText = "资源：${item.name}\n来源：${item.sourceLabel}\n结果：正在准备资源"
-        )
-        if (this is CardRunActivity && openRunTask && !returnToInstallWizard) {
-            showCardRunSurface(recipe)
+        when {
+            this is CardRunActivity && openRunTask && !returnToInstallWizard -> showCardRunSurface(recipe)
+            returnToInstallWizard -> showResourceInstallWizard()
+            !openRunTask -> refreshResourceScreenIfVisible()
+            else -> startActivity(
+                CardRunIntents.launchIntent(
+                    context = this,
+                    recipeId = recipe.id,
+                    instanceId = state.instanceId,
+                    launchSource = CardRunIntents.SOURCE_CARD,
+                    autoStart = false
+                )
+            )
         }
+    }
 
-        thread(name = "KiteResourceInstall-${item.id}", isDaemon = true) {
-            val staged = runCatching {
-                if (stageBundledResource) {
-                    ToolchainPackInstaller.stageLocalResourcePack(applicationContext, item.id)
-                }
-            }
-            runOnUiThread {
-                staged.onSuccess {
-                    if (this is CardRunActivity && (openRunTask || returnToInstallWizard)) {
-                        startRecipe(
-                            recipe,
-                            runtimeStateFor(recipe),
-                            instanceId,
-                            openConsoleOnStart = false,
-                            renderOnStart = openRunTask && !returnToInstallWizard,
-                            keepCurrentFocus = returnToInstallWizard
-                        )
-                        if (returnToInstallWizard) {
-                            showResourceInstallWizard()
-                        }
-                    } else if (!openRunTask) {
-                        startRecipe(
-                            recipe,
-                            runtimeStateFor(recipe),
-                            instanceId,
-                            openConsoleOnStart = false,
-                            renderOnStart = false,
-                            keepCurrentFocus = true
-                        )
-                        if (returnToInstallWizard) {
-                            showResourceInstallWizard()
-                        } else {
-                            refreshResourceScreenIfVisible()
-                        }
-                    } else {
-                        startActivity(
-                            CardRunIntents.launchIntent(
-                                context = this,
-                                recipeId = recipe.id,
-                                instanceId = instanceId,
-                                launchSource = CardRunIntents.SOURCE_CARD,
-                                autoStart = true
-                            )
-                        )
-                    }
-                }.onFailure { error ->
-                    val message = "资源准备失败：${error.message ?: error.javaClass.simpleName}"
-                    setRuntimeState(
-                        recipe,
-                        RecipeRunStatus.Failed,
-                        surface = CardRunSurface.Report,
-                        currentStepIndex = 0,
-                        lastError = message,
-                        shellReportText = "资源：${item.name}\n来源：${item.sourceLabel}\n结果：$message"
-                    )
-                    markResourceInstallFailed(recipe, null, message)
-                    if (returnToInstallWizard) {
-                        showResourceInstallWizard()
-                    } else if (this is CardRunActivity && openRunTask) {
-                        showCardRunSurface(recipe)
-                    } else {
-                        showResourceDiscreteToast(message.take(120))
-                        refreshResourceScreenIfVisible()
-                    }
-                }
-            }
-        }
+    private fun ResourceUninstallContinuation.toResourceRunContinuation(): ResourceRunContinuation = when (this) {
+        ResourceUninstallContinuation.None -> ResourceRunContinuation.None
+        ResourceUninstallContinuation.Reinstall -> ResourceRunContinuation.Reinstall
+        ResourceUninstallContinuation.CancelFailedInstall -> ResourceRunContinuation.CancelFailedInstall
+        ResourceUninstallContinuation.ResumeInstallWizard -> ResourceRunContinuation.ResumeInstallWizard
     }
 
     private fun refreshResourceScreenIfVisible() {
@@ -11221,8 +11180,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         )
     }
 
-    private fun recipeUsesProcessRunOrchestrator(recipe: KiteRecipe): Boolean =
-        recipe.runtimeSource != KiteResourceInstallRecipes.RUNTIME_SOURCE
+    private fun recipeUsesProcessRunOrchestrator(@Suppress("UNUSED_PARAMETER") recipe: KiteRecipe): Boolean = true
 
     private fun startRecipeWithOrchestrator(
         recipe: KiteRecipe,

@@ -240,3 +240,13 @@
 理由：终端步骤历史上把会话 ID 同时写进 `runId`。把它误当 Bridge 运行 ID 会向错误目标发送 `stop-run`，甚至终止 Kite 宿主。另一方面，强杀成功常以信号退出产生非零结果，仅看 `ok/status` 会把已经清零的进程恢复成“运行中”。身份归一化与残留审计分别解决“杀错对象”和“结果解释错误”。
 
 影响：`RecipeStopRequest` 提供唯一的 `bridgeRunId/hasBridgeProcessBinding` 规则，Application 与 Platform 不得各自猜测。`StopCoordinator` 是停止结果唯一解释器；页面、Bridge 回调和资源卡不得绕过它直接写 `Stopped`，也不得因退出码非零而忽略明确的残留证据。
+
+## ADR-S024 资源结算属于进程级运行生命周期
+
+状态：accepted
+
+决策：资源安装和卸载继续使用 `KiteResourceInstallStore` 作为资源事实拥有者，但何时登记成功、失败、取消以及何时推进依赖计划，由进程级 `ResourceRunCoordinator` 在收到已提交的 CardRun 生命周期事件后决定。页面只提交资源运行请求和选择显示位置，不参与命令执行或结算。
+
+理由：旧链在 Activity 的 shell 回调末尾调用 `markResourceRunSuccess/markResourceInstallFailed`。页面停止收集、运行窗口销毁或 Activity 被重建时，命令可以完成而注册机与队列不更新。把结算放入进程协调器后，执行、CardRun 事实和资源登记形成一条不依赖页面可见性的纵向业务链。
+
+影响：运行事实仍先写 `CardRunStore`，资源协调器只消费提交后的事件并写资源 Store；`RunLifecycleEventHub` 不得缓存或复制状态。manifest 到有限配方的编译属于 Platform Gateway，安装计划推进属于 Application Coordinator。Activity、Fragment 和资源 Screen 不得再调用 Bridge、ToolchainPackInstaller 或自行宣布资源完成。

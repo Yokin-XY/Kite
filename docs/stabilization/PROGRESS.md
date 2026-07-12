@@ -855,3 +855,19 @@ T006 停止与取消迁移结果：
 停止与取消迁移状态：completed，待独立提交。
 
 下一步：迁移资源安装运行的成功、失败、回滚、取消和登记回写，让资源运行也进入同一编排器；完成后删除 Activity 内旧步骤执行与停止链。
+
+T006 资源运行生命周期迁移结果：
+
+- 新增进程内 `RunLifecycleEventHub`；每次 `RunOrchestrator` 完成 `CardRunStore` 写入后才通知订阅者。Hub 不保存状态、不重放页面事件，也不读取 Store，因此不是第二份运行事实。
+- `ResourceRunCoordinator` 进程级拥有资源准备、有限运行启动、成功/失败/取消结算、安装计划推进和卸载续接；它只依赖 Gateway、RunOrchestrator 与事实事件，不引用 Android、Activity、View、导航或具体 CardRunStore。
+- `AndroidResourceRunGateway` 适配资源登记、已安装快照、本地包准备和 CardRun 状态；`AndroidResourceRecipeFactory` 直接从 manifest actions 编译安装/卸载配方，并保留既有 bundled/legacy 兼容命令。
+- 资源入口不再启动 Activity 线程执行 `ToolchainPackInstaller` 或调用 `startRecipe`；页面提交 `ResourceRunLaunchRequest` 后只决定是否打开运行窗口或留在安装向导。
+- 有限资源配方的最终状态由运行编排器确定为 `Completed`，并清除已退出命令留下的 run/PID/PGID/SID 绑定；注册机结算不再由 Activity 的 shell 回调猜测。
+- 安装完成先登记资源和保存清单快照，再推进 plan；有下一依赖时由进程协调器直接编译并启动，页面不可见不会中断队列。失败、Bridge 不可用和用户停止分别写入确定失败/取消原因并阻断当前安装步骤。
+- 纯测试覆盖安装登记与下一资源自动启动、失败阻断、卸载后重新获取、重复终态幂等，以及 OpenCode/Node.js 清单配方编译；全量 Debug 单测与 Debug APK 通过。
+- OnePlus 8T `3f8bbaad` 实测 OpenCode：点击开始后立即把 Kite 退到后台，66MB 获取仍自行完成；回前台资源首页直接显示“打开”，`/workspace/.kf/bin/opencode` 链接存在，安装 CardRun 为 `Completed`。
+- 同机卸载约 2 秒完成，详情按钮立即恢复“获取”，命令链接消失，卸载 CardRun 为 `Completed`；全链 logcat 无 `AndroidRuntime` 崩溃。测试结束设备恢复为 OpenCode 未获取状态。
+
+资源运行生命周期迁移状态：completed，待独立提交。
+
+下一步：删除 Activity 中已无产品入口的 legacyStartRecipe、executeRecipeStep、旧 shell/terminal/X11/Android 分派、旧资源成功失败结算和 legacy stop；随后收紧机器护栏并做 T006 最终真机回归。

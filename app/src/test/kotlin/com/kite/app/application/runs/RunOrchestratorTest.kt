@@ -3,6 +3,7 @@ package com.kite.app.application.runs
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeStep
+import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
@@ -46,6 +47,48 @@ class RunOrchestratorTest {
         assertEquals(RunCommandResult.Accepted("same-instance"), first)
         assertEquals(RunCommandResult.Ignored("instance_already_active"), second)
         assertEquals(1, executor.executeRequests.size)
+    }
+
+    @Test
+    fun `有限资源流程完成后清除执行绑定并发布已提交事实`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val lifecycleEvents = mutableListOf<RunLifecycleEvent>()
+        val orchestrator = RunOrchestrator(
+            stateGateway = gateway,
+            executor = executor,
+            lifecycleSink = lifecycleEvents::add
+        )
+        val recipe = recipe("resource-finite", KiteRecipe.STEP_SHELL).copy(
+            runtimeSource = KiteResourceInstallRecipes.RUNTIME_SOURCE
+        )
+        orchestrator.start(RunStartRequest(recipe, "resource-finite-instance"))
+        val request = executor.executeRequests.single()
+
+        executor.emit(
+            RecipeExecutionEvent.Completed(
+                instanceId = request.instanceId,
+                generation = request.generation,
+                stepIndex = request.stepIndex,
+                mutation = RunStateMutation(
+                    status = CardRunStatus.Running,
+                    currentStepIndex = request.stepIndex,
+                    runId = "resource-run",
+                    pid = "123",
+                    rootPid = "123",
+                    processGroupId = "123",
+                    systemSessionId = "123",
+                    lastMeaningfulOutput = "安装完成"
+                )
+            )
+        )
+
+        val state = gateway.state("resource-finite-instance")
+        assertEquals(CardRunStatus.Completed, state?.status)
+        assertEquals(null, state?.runId)
+        assertEquals(null, state?.pid)
+        assertEquals(CardRunStatus.Completed, lifecycleEvents.last().state.status)
+        assertEquals("resource-finite-instance", lifecycleEvents.last().state.instanceId)
     }
 
     @Test

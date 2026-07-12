@@ -3,8 +3,10 @@ package com.kite.app.shell
 import android.content.Context
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.application.resources.ResourceFeatureGateway
+import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runs.RunExecutionEffectBus
+import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.browser.BrowserAuthSessionStore
 import com.kite.app.browser.BrowserLoopbackCallbackBridge
@@ -17,6 +19,8 @@ import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.platform.resources.AndroidResourceFeatureGateway
+import com.kite.app.platform.resources.AndroidResourceRecipeFactory
+import com.kite.app.platform.resources.AndroidResourceRunGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
 import com.kite.app.platform.runs.AndroidRecipeExecutor
 import com.kite.app.platform.runs.AndroidRunStateGateway
@@ -51,11 +55,29 @@ internal class KiteAppGraph private constructor(context: Context) {
         AndroidRecipeFeatureGateway.create(appContext, recipeLoader, cardGroupStore, createDropZoneManager())
     }
     val runExecutionEffectBus: RunExecutionEffectBus by lazy { RunExecutionEffectBus() }
+    val runLifecycleEventHub: RunLifecycleEventHub by lazy { RunLifecycleEventHub() }
     val runOrchestrator: RunOrchestrator by lazy {
         RunOrchestrator(
             stateGateway = AndroidRunStateGateway(),
             executor = AndroidRecipeExecutor(appContext, bridgeClient, diagnostics),
-            effectSink = runExecutionEffectBus
+            effectSink = runExecutionEffectBus,
+            lifecycleSink = runLifecycleEventHub
+        )
+    }
+    private val resourceRecipeFactory: AndroidResourceRecipeFactory by lazy {
+        AndroidResourceRecipeFactory(resourceManifestLoader)
+    }
+    val resourceRunCoordinator: ResourceRunCoordinator by lazy {
+        ResourceRunCoordinator(
+            gateway = AndroidResourceRunGateway(
+                context = appContext,
+                installStore = resourceInstallStore,
+                manifestLoader = resourceManifestLoader,
+                recipeFactory = resourceRecipeFactory,
+                diagnostics = diagnostics
+            ),
+            runOrchestrator = runOrchestrator,
+            lifecycleHub = runLifecycleEventHub
         )
     }
 

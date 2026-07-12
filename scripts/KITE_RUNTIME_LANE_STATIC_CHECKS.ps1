@@ -53,9 +53,13 @@ $androidRecipeFeatureGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/a
 $runExecutionContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunExecutionContract.kt'
 $runOrchestratorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunOrchestrator.kt'
 $runExecutionEffectBusPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunExecutionEffectBus.kt'
+$runLifecycleEventHubPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunLifecycleEventHub.kt'
 $stopCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/StopCoordinator.kt'
 $androidRecipeExecutorPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeExecutor.kt'
 $androidRunStateGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRunStateGateway.kt'
+$resourceRunCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceRunCoordinator.kt'
+$androidResourceRecipeFactoryPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceRecipeFactory.kt'
+$androidResourceRunGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceRunGateway.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -158,9 +162,13 @@ $androidRecipeFeatureGateway = Read-Utf8 $androidRecipeFeatureGatewayPath
 $runExecutionContract = Read-Utf8 $runExecutionContractPath
 $runOrchestrator = Read-Utf8 $runOrchestratorPath
 $runExecutionEffectBus = Read-Utf8 $runExecutionEffectBusPath
+$runLifecycleEventHub = Read-Utf8 $runLifecycleEventHubPath
 $stopCoordinator = Read-Utf8 $stopCoordinatorPath
 $androidRecipeExecutor = Read-Utf8 $androidRecipeExecutorPath
 $androidRunStateGateway = Read-Utf8 $androidRunStateGatewayPath
+$resourceRunCoordinator = Read-Utf8 $resourceRunCoordinatorPath
+$androidResourceRecipeFactory = Read-Utf8 $androidResourceRecipeFactoryPath
+$androidResourceRunGateway = Read-Utf8 $androidResourceRunGatewayPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -216,11 +224,17 @@ $runApplicationLayer = $runExecutionContract + "`n" + $runOrchestrator + "`n" + 
 Assert-True ($runApplicationLayer -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|bridge\.|platform\.))') 'Run application layer must remain independent from Android, concrete bridge/platform adapters, and page navigation.'
 Assert-True ($runOrchestrator -notmatch 'Toast|startActivity|showConsole|showCardRunSurface|WebView|TerminalRuntimeHost|KiteBridgeClient') 'Run orchestrator must not perform page or execution-core work directly.'
 Assert-True ($runExecutionEffectBus -match 'MutableSharedFlow<RunExecutionEffect>' -and $runExecutionEffectBus -notmatch 'replay\s*=') 'Run presentation effects must stay one-shot while durable recovery remains in CardRunStore.'
+Assert-True ($runLifecycleEventHub -match 'CopyOnWriteArrayList<RunLifecycleSink>' -and $runLifecycleEventHub -notmatch 'MutableStateFlow|mutableMapOf') 'Run lifecycle events must notify after fact commits without becoming a second state store.'
 Assert-True ($androidRecipeExecutor -match 'class AndroidRecipeExecutor' -and $androidRecipeExecutor -match 'when \(request\.step\.type\)' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_SHELL' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_TERMINAL' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_OPEN_WEB' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_X11' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_ANDROID_ACTION') 'Android recipe executor must dispatch every supported step through the shared execution port.'
 Assert-True ($androidRecipeExecutor -match '!request\.hasBridgeProcessBinding\(\)' -and $androidRecipeExecutor -match 'val bridgeRunId = request\.bridgeRunId\(\)') 'Android stop execution must bypass Bridge for terminal-only sessions and use only the normalized Bridge run id.'
 Assert-True ($androidRecipeExecutor -match 'residueMarkerObserved = observationLines\.any' -and $androidRecipeExecutor -match 'residueMarkerObserved = residueMarkerObserved') 'Android stop execution must preserve explicit Bridge residue-audit evidence for StopCoordinator.'
 Assert-True ($androidRecipeExecutor -notmatch '(?m)^import\s+(android\.app\.Activity|android\.view\.|android\.widget\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|feature\.))') 'Android recipe executor must remain independent from pages, View widgets, Shell, and Feature code.'
 Assert-True ($androidRunStateGateway -match 'CardRunStore\.(registerRecipe|registeredRecipe|get|currentForRecipe|start|update)') 'Android run-state adapter must keep CardRunStore as the single run-fact owner.'
+Assert-True ($resourceRunCoordinator -match 'class ResourceRunCoordinator' -and $resourceRunCoordinator -match 'RunLifecycleEventHub' -and $resourceRunCoordinator -match 'startNextPlannedInstall') 'Resource run coordination must own terminal settlement and dependency-plan continuation at process scope.'
+Assert-True ($resourceRunCoordinator -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|run\.CardRunStore))') 'Resource run coordinator must remain independent from Android pages, navigation, and concrete CardRunStore.'
+Assert-True ($androidResourceRunGateway -match 'CardRunStore\.start' -and $androidResourceRunGateway -match 'installStore\.markInstalled' -and $androidResourceRunGateway -match 'installStore\.saveInstalledSnapshot') 'Android resource gateway must adapt CardRun and resource registry facts for the process coordinator.'
+Assert-True ($androidResourceRecipeFactory -match 'KiteResourceInstallPlanCompiler\.compile' -and $androidResourceRecipeFactory -match 'KiteResourceInstallRecipes\.toRecipe') 'Resource run recipes must be compiled from manifests through the shared install compiler.'
+Assert-True ($kiteAppGraph -match 'val resourceRunCoordinator: ResourceRunCoordinator by lazy' -and $kiteAppGraph -match 'lifecycleHub = runLifecycleEventHub') 'Resource run coordination and lifecycle events must be process composition-root dependencies.'
 Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'
 Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
 Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'
@@ -247,10 +261,12 @@ Assert-True ($main -match '(?s)private fun resourceOwnerProbeRecipe\b.*KiteResou
 $startRecipe = Function-Body $main 'startRecipe'
 $startRecipeWithOrchestrator = Function-Body $main 'startRecipeWithOrchestrator'
 $legacyStartRecipe = Function-Body $main 'legacyStartRecipe'
+$startResourceRun = Function-Body $main 'startResourceRun'
 Assert-True ($startRecipe -match 'recipeUsesProcessRunOrchestrator' -and $startRecipe -match 'startRecipeWithOrchestrator' -and $startRecipe -match 'legacyStartRecipe') 'Start intake must explicitly separate migrated orchestration from the bounded resource compatibility path.'
 Assert-True ($startRecipeWithOrchestrator -match 'runOrchestrator\.start' -and $startRecipeWithOrchestrator -match 'ownerKind = previousState\.ownerKind' -and $startRecipeWithOrchestrator -match 'stepId = previousState\.stepId') 'RunOrchestrator start must preserve the existing CardRun owner identity.'
 Assert-True ($legacyStartRecipe -match 'ownerKind = previousState\.ownerKind' -and $legacyStartRecipe -match 'stepId = previousState\.stepId') 'The temporary resource compatibility start must preserve CardRun owner identity.'
 Assert-True ($kiteAppGraph -match 'val runOrchestrator: RunOrchestrator by lazy' -and $kiteAppGraph -match 'AndroidRecipeExecutor\(appContext, bridgeClient, diagnostics\)') 'Run orchestration and execution adapter must be process composition-root dependencies.'
+Assert-True ($startResourceRun -match 'resourceRunCoordinator\.start' -and $startResourceRun -notmatch 'thread\(|startRecipe\(|ToolchainPackInstaller\.|setRuntimeState\(') 'Resource run intake must delegate preparation and execution to the process coordinator without page-owned execution.'
 
 $handleProgress = Function-Body $main 'handleShellProgress'
 Assert-True ($handleProgress -notmatch 'showCardRunSurface|showConsole|renderResourceInstallWizardFor') 'handleShellProgress must not redraw whole surfaces.'
