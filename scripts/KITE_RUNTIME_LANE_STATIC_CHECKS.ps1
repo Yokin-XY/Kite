@@ -67,6 +67,8 @@ $runReportScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/r
 $runTerminalSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunTerminalSurfaceBinding.kt'
 $runWebSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunWebSurfaceBinding.kt'
 $runX11SurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunX11SurfaceBinding.kt'
+$browserHandoffCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/browser/BrowserHandoffCoordinator.kt'
+$androidBrowserHandoffGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserHandoffGateway.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -183,6 +185,8 @@ $runReportScreen = Read-Utf8 $runReportScreenPath
 $runTerminalSurfaceBinding = Read-Utf8 $runTerminalSurfaceBindingPath
 $runWebSurfaceBinding = Read-Utf8 $runWebSurfaceBindingPath
 $runX11SurfaceBinding = Read-Utf8 $runX11SurfaceBindingPath
+$browserHandoffCoordinator = Read-Utf8 $browserHandoffCoordinatorPath
+$androidBrowserHandoffGateway = Read-Utf8 $androidBrowserHandoffGatewayPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -261,6 +265,9 @@ Assert-True ($main -match 'runSurfaceHost\?\.reload\(\)' -and $main -notmatch 'w
 Assert-True ($main -notmatch 'showCardRunWebView|cardRunBrowserAuthWaitingBody|cardRunExternalBrowserBody|cardRunWebAddressInputBody') 'MainActivity must not retain the legacy CardRun Web display builders.'
 Assert-True ($runX11SurfaceBinding -match 'KiteX11SurfaceServer\.surfaceView' -and $runX11SurfaceBinding -match 'override fun dispose\(\)' -and $runX11SurfaceBinding -notmatch 'RunOrchestrator|stop\(') 'X11 surface binding must own only the visible LorieView lifecycle.'
 Assert-True ($main -notmatch 'cardRunX11SurfaceBody|x11TaskTitle') 'MainActivity must not retain the legacy CardRun X11 display builder.'
+Assert-True ($main -match 'browserHandoffCoordinator\.launch' -and $main -notmatch 'browserAuthSessions\.createPending\(request, decision\)|browserLoopbackCallbackBridge\.prepare\(session\)') 'MainActivity must delegate browser handoff sequencing to BrowserHandoffCoordinator.'
+Assert-True ($browserHandoffCoordinator -match '(?s)createPending\(request, decision\).*updateWaiting\(session, request\).*prepareCallback\(session\).*openExternal\(request\.url\)' -and $browserHandoffCoordinator -notmatch 'import android\.|import androidx\.') 'Browser handoff coordinator must preserve side-effect order without Android UI dependencies.'
+Assert-True ($androidBrowserHandoffGateway -match 'CardRunStore\.update' -and $androidBrowserHandoffGateway -match 'loopbackBridge\.prepare' -and $androidBrowserHandoffGateway -match 'sessions\.markFailed') 'Android browser handoff gateway must own Store, loopback, and session adapters.'
 Assert-True ($main -match 'resourceInstallWizardSurface\?\.tick' -and $resourceInstallWizardScreen -match 'fun tick\(') 'install wizard must keep elapsed binding inside its feature screen.'
 Assert-True ($main -match '(?s)private fun showConsole\b.*HomeFragment' -and $main -notmatch 'consoleCardBindings|consolePageBodyHost|private fun recipeGrid|updateVisibleConsoleCard') 'Home card views, bindings, and page state must remain owned by HomeFragment and HomeScreen.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'

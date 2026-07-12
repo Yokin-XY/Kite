@@ -987,3 +987,14 @@ T007 轻量运行壳启动合同结果：
 轻量运行壳启动合同状态：completed，待独立提交。
 
 下一步：建立共享浏览器 handoff 适配器和轻量运行 chrome；随后让独立 CardRunActivity 组合 resolver、CardRunStore、RunOrchestrator 与 RunSurfaceHost。
+
+T007 共享浏览器 handoff 编排结果：
+
+- 新增无 Android UI 依赖的 `BrowserHandoffCoordinator`：复用 pending、创建 session、写等待事实、准备 loopback、打开外部浏览器、失败回滚的副作用顺序由一处拥有。
+- 新增 `AndroidBrowserHandoffGateway` 适配 SessionStore、LoopbackBridge、CardRunStore、诊断和外部浏览器；KiteAppGraph 提供 Activity 级工厂，MainActivity 删除原先约 90 行私有认证编排并改用同一协调器。
+- 单测覆盖已有 session 不重复打开、新 session 严格先写等待状态、系统浏览器失败必定关闭/标失败，以及非 handoff 请求不触碰 Gateway；机器护栏禁止 session 创建与 loopback 准备回流 MainActivity。
+- 浏览器目标单测、Debug APK、架构检查和运行车道检查通过。OnePlus 8T 用通用 OAuth + `127.0.0.1:1456/callback` 冒烟：系统浏览器成为前台，返回后仍回原 CardRunActivity，并显示“正在等待浏览器回调 / 重新打开 / 复制地址”，logcat 无崩溃。
+
+共享浏览器 handoff 状态：completed，待独立提交。
+
+下一步：实现轻量 CardRunActivity 的 Store 观察、Host 装配、continue/stop/back chrome 与各显示绑定，然后切断 MainActivity 继承并做真机回归。

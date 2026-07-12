@@ -3,6 +3,7 @@ package com.kite.app.shell
 import android.content.Context
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.application.resources.ResourceFeatureGateway
+import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runs.RunExecutionEffectBus
@@ -19,6 +20,8 @@ import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.platform.resources.AndroidResourceFeatureGateway
+import com.kite.app.platform.browser.AndroidBrowserHandoffGateway
+import com.kite.app.recipe.KiteRecipe
 import com.kite.app.platform.resources.AndroidResourceRecipeFactory
 import com.kite.app.platform.resources.AndroidResourceRunGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
@@ -84,6 +87,19 @@ internal class KiteAppGraph private constructor(context: Context) {
     fun createRecipeLoader(): KiteRecipeLoader = recipeLoader
 
     fun createDropZoneManager(): KiteDropZoneManager = KiteDropZoneManager(appContext, diagnostics)
+
+    fun createBrowserHandoffCoordinator(
+        recipeResolver: (String) -> KiteRecipe?,
+        openExternal: (String) -> Boolean
+    ): BrowserHandoffCoordinator = BrowserHandoffCoordinator(
+        AndroidBrowserHandoffGateway(
+            sessions = browserAuthSessions,
+            loopbackBridge = browserLoopbackCallbackBridge,
+            diagnostics = diagnostics,
+            recipeResolver = recipeResolver,
+            openExternal = openExternal
+        )
+    )
 
     companion object {
         @Volatile

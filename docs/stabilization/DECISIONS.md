@@ -320,3 +320,13 @@
 理由：旧 `handleCardRunLaunchIntent` 同时解析 Intent、加载目录、创建特殊配方、启动实例、注册路由和绘制页面。任何恢复或重复 Intent 都可能在“还没确认目标”时产生执行副作用，且独立 Activity 只能复制整条私有链。先固定无副作用的解析边界，才能让启动幂等、错误可解释并对壳层做纯测试。
 
 影响：解析成功后由 Activity 壳显式登记 recipe，再根据 target 的 autoStart 决定是否提交 `RunOrchestrator.start`。解析失败只能展示错误并退出，不得用默认 recipe 或当前页面状态猜测目标。
+
+## ADR-S032 系统浏览器 handoff 只有一条副作用序列
+
+状态：accepted
+
+决策：所有运行壳发起系统浏览器认证时统一调用 `BrowserHandoffCoordinator`。固定顺序为复用 pending、创建 session、写入目标实例等待事实、准备 callback channel、打开外部浏览器；外部浏览器打开失败必须停止 callback channel 并把同一 session 标记失败。
+
+理由：认证桥的正确性不取决于页面长相，而取决于 session、state、loopback 和目标 run instance 的顺序一致。若 MainActivity 与 CardRunActivity 分别复制编排，任何一边漏写等待事实、漏停端口或重复打开都会重现“浏览器拿到返回但软件没接住”的问题。
+
+影响：Application 协调器不依赖 Android UI；SessionStore、LoopbackBridge、CardRunStore、Custom Tabs 和诊断由 Platform Gateway 适配。页面只消费返回结果与目标事实，不直接调用 `createPending` 或 `prepare`。

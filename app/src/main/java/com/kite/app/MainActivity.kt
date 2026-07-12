@@ -195,6 +195,8 @@ import com.kite.app.feature.resources.ResourceInstallWizardSurface
 import com.kite.app.feature.resources.ResourceSearchFragment
 import com.kite.app.feature.resources.ResourcesFragment
 import com.kite.app.application.resources.ResourceFeatureGateway
+import com.kite.app.application.browser.BrowserHandoffCoordinator
+import com.kite.app.application.browser.BrowserHandoffLaunchResult
 import com.kite.app.application.resources.ResourceRunContinuation
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceRunLaunchRequest
@@ -241,6 +243,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var webShell: KiteWebShell
     private lateinit var browserAuthSessions: BrowserAuthSessionStore
     private lateinit var browserLoopbackCallbackBridge: BrowserLoopbackCallbackBridge
+    private lateinit var browserHandoffCoordinator: BrowserHandoffCoordinator
     private lateinit var browserAutomationSessions: BrowserAutomationSessionStore
     private lateinit var browserAutomationController: BrowserAutomationController
     private lateinit var localServer: KiteLocalServer
@@ -400,6 +403,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         bridgeClient = appGraph.bridgeClient
         browserAuthSessions = appGraph.browserAuthSessions
         browserLoopbackCallbackBridge = appGraph.browserLoopbackCallbackBridge
+        browserHandoffCoordinator = appGraph.createBrowserHandoffCoordinator(
+            recipeResolver = { recipeId -> findRecipeById(recipeId) ?: CardRunStore.registeredRecipe(recipeId) },
+            openExternal = { url -> openCustomTabOrSystemBrowser(Uri.parse(url)) }
+        )
         StartupTraceStore.markStage(this, "main.webview_create")
         webView = WebView(this)
         browserAutomationSessions = appGraph.browserAutomationSessions
@@ -6413,46 +6420,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         force: Boolean = false,
         rerenderFocusedSurface: Boolean = true
     ): Boolean {
-        if (!BrowserHandoffPolicy.isHandoff(decision)) return false
-        val existing = if (!force) {
-            browserAuthSessions.findPending(request.instanceId, request.url)
-        } else {
-            null
+        val result = browserHandoffCoordinator.launch(request, decision, force)
+        result.targetUpdate?.let { update ->
+            activeRunInstanceIds[update.recipe.id] = update.state.instanceId
+            runtimeStates[update.recipe.id] = update.state
+            if (rerenderFocusedSurface && this is CardRunActivity && focusedRunInstanceId == update.state.instanceId) {
+                showCardRunSurface(update.recipe)
+            }
         }
-        if (existing != null) return true
-
-        val session = browserAuthSessions.createPending(request, decision)
-        updateBrowserHandoffWaitingState(session, request, rerenderFocusedSurface)
-        val loopbackPreparation = if (decision is BrowserHandoffDecision.StartCliCallbackHandoff) {
-            browserLoopbackCallbackBridge.prepare(session)
-        } else {
-            null
-        }
-        val uri = Uri.parse(request.url)
-        val opened = openCustomTabOrSystemBrowser(uri)
-
-        val recipe = request.recipeId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
-        diagnostics.logRecipeEvent(
-            if (opened) "browser_auth_handoff_opened" else "browser_auth_handoff_open_failed",
-            recipe,
-            mapOf(
-                "instanceId" to request.instanceId.orEmpty(),
-                "sessionId" to session.sessionId,
-                "kind" to session.kind.name,
-                "source" to request.source.orEmpty(),
-                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url),
-                "callbackChannel" to (loopbackPreparation?.mode?.name ?: "app_redirect"),
-                "callbackPort" to loopbackPreparation?.port?.toString().orEmpty()
-            )
-        )
-        if (!opened) {
-            browserLoopbackCallbackBridge.stop(session.sessionId)
-            browserAuthSessions.markFailed(session.sessionId, "external_browser_open_failed")
+        if (result is BrowserHandoffLaunchResult.Failed) {
             Toast.makeText(this, "无法打开安全浏览器", Toast.LENGTH_LONG).show()
         }
-        return opened
+        return result.accepted
     }
 
     private fun openSystemBrowserForHandoff(uri: Uri): Boolean =
@@ -6467,51 +6446,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 .build()
                 .launchUrl(this, uri)
         }.isSuccess || openSystemBrowserForHandoff(uri)
-
-    private fun updateBrowserHandoffWaitingState(
-        session: BrowserAuthSession,
-        request: BrowserHandoffRequest,
-        rerenderFocusedSurface: Boolean
-    ) {
-        val recipe = request.recipeId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { findRecipeById(it) ?: CardRunStore.registeredRecipe(it) }
-            ?: return
-        val instanceId = request.instanceId?.takeIf { it.isNotBlank() } ?: return
-        val existing = CardRunStore.get(instanceId)
-        val status = when (existing?.status) {
-            RecipeRunStatus.Starting,
-            RecipeRunStatus.Running,
-            RecipeRunStatus.WaitingTerminal -> existing.status
-            else -> RecipeRunStatus.Opened
-        }
-        val message = when (session.kind) {
-            BrowserAuthSessionKind.CliLoopback -> "已打开安全浏览器，等待登录发起方接收回调"
-            BrowserAuthSessionKind.AppRedirect -> "已打开安全浏览器，等待登录返回 Kite"
-            BrowserAuthSessionKind.ExternalOnly -> "已打开系统浏览器"
-        }
-        val preserveTerminalSurface = session.kind == BrowserAuthSessionKind.CliLoopback &&
-            existing?.surface == CardRunSurface.Terminal &&
-            !existing.terminalSessionId.isNullOrBlank()
-        val targetSurface = if (preserveTerminalSurface) CardRunSurface.Terminal else CardRunSurface.Web
-        val updated = CardRunStore.update(
-            recipe = recipe,
-            status = status,
-            instanceId = instanceId,
-            surface = targetSurface,
-            currentStepIndex = existing?.currentStepIndex,
-            runId = existing?.runId,
-            terminalSessionId = existing?.terminalSessionId,
-            pid = existing?.pid,
-            lastMeaningfulOutput = message,
-            nextActionUrl = request.url.takeUnless { preserveTerminalSurface }
-        )
-        activeRunInstanceIds[recipe.id] = instanceId
-        runtimeStates[recipe.id] = updated
-        if (rerenderFocusedSurface && this is CardRunActivity && focusedRunInstanceId == instanceId) {
-            showCardRunSurface(recipe)
-        }
-    }
 
     private fun openCardRunManualWebUrl(recipe: KiteRecipe, state: RecipeRuntimeState, rawUrl: String) {
         val url = normalizeManualCardRunUrl(rawUrl)
