@@ -1103,3 +1103,16 @@ T008 runtime-status 合同与平台 Gateway 结果：
 - 10 个投影/Controller 目标测试和 Debug Kotlin 编译通过；静态守卫锁定 Application、Feature、Platform 依赖方向和 IO 探测边界。
 
 下一步：建立 `RuntimeStatusChrome` 接管运行状态 Dialog、准入 Overlay 和局部 View binding；主壳只处理权限/设置页/进程页 Shell effect。
+
+T008 runtime-status Chrome 与最终验收：
+
+- `RuntimeStatusChrome` 接管状态胶囊、控制台内联提示、首次准入 Overlay 和运行状态 Dialog；Dialog/进度/数量 View 引用不再属于 `MainActivity`，同一事实变化只绑定现有控件。
+- Main 只收 `ContinueFirstRunPermissionOnboarding`、权限请求、全部文件设置和打开进程页四类 Shell effect；主题变化会重建 Chrome token，页面切换会重新计算资源页的临时部署层抑制规则。
+- 运行状态刷新同时校准 bootstrap 与 runtime-management Gateway；Android 运行 Gateway 首次创建即主动轻量刷新，修复弹层先显示 `终端 0`、第二次进入才变正确的问题。
+- 真机发现并修复“顶部终端计数为 1、正文却为空”的投影缺口：未绑定 CardRun 的 live terminal 现在显示为独立终端行并提供确认型结束动作；后台服务、资源任务和终端进程保留明确分区。
+- 主壳删除旧 readiness 线程、三个 Store 计数观察器、运行状态映射、Dialog/Overlay 绘制和 21 个 View/状态字段。架构棘轮更新为 `7368` 行、`361` 个成员函数、`74` 个私有字段、`34` 个运行事实引用。
+- 全量 `:app:testDebugUnitTest :app:assembleDebug`、架构检查和运行车道静态检查通过。OnePlus 8T `3f8bbaad` 覆盖安装冷启动约 2.1-2.3 秒；状态弹层首次打开显示 `终端 1 / 进程 2`，进入运行管理可见独立终端和结束动作，系统返回恢复原首页，全链无 Kite `AndroidRuntime` 崩溃。
+
+T008 状态：completed。关键提交为 `5c9fd04`、`5b47c19`、`50b1c47`。
+
+下一步：进入 T009，先锁定普通 Web、系统浏览器认证、自动化显示和 CardRun Web 四条现有入口及认证回跳基线，再迁移显示职责，禁止改写已验证的通用 loopback 协议。

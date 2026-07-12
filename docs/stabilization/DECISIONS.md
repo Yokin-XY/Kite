@@ -380,3 +380,13 @@
 理由：旧弹层直接读取三个运行 Store，同时把权限检查、文件探测和 Bootstrap 进度存入 Activity 字段。这样弹层刷新会做重型探测，权限恢复会重建运行数量，且首次授权的临时阶段可能覆盖真实部署失败。两类事实分别拥有后，页面仍可显示统一状态，但不会制造一个包办所有运行事实的新 Store。
 
 影响：readiness 探测必须在 Platform Gateway 的 IO 调度器执行；Projector 和 Controller 不得引用 Android View、具体 Store 或 Foundation 单例。重试通过 Gateway 请求 Bootstrap，权限和系统设置页通过 Shell effect 执行。T010 可以迁移 onboarding 流程，但不能改变 runtime-status 的事实合同。
+
+## ADR-S038 运行状态 Chrome 拥有可见绑定但不拥有运行事实
+
+状态：accepted
+
+决策：状态胶囊、控制台内联提示、准入 Overlay 与运行状态 Dialog 统一由 Activity 级 `RuntimeStatusChrome` 持有。Chrome 只消费 `RuntimeStatusUiState` 并回传一个主动作；它可以随主题或 Activity 生命周期销毁重建，但不得停止任务、修改权限事实、探测文件系统或读取 Store。
+
+理由：这四个表面显示的是同一份状态，旧实现却把二十余个 View 字段和多套绑定函数放在主壳。把它们各自拆成页面会复制状态，把它们继续留在 Activity 又无法建立所有权。单一 Chrome owner 既能局部更新，又能把 Android Dialog/Window 生命周期限制在可见层。
+
+影响：Main 只处理权限、系统设置和导航 Effect，并在 Destination 变化时传入是否抑制临时 Chrome；资源页抑制只影响显示，不改变 bootstrap。状态弹层刷新必须同时校准 bootstrap 与运行管理 Gateway。主题变化先 dispose 旧 Chrome 再按当前 UiState 重建，Activity 销毁只释放可见绑定。
