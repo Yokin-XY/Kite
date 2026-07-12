@@ -282,7 +282,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             handleAppNavigationBack()
         }
     }
-    private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
+    private val cardGroupStore by lazy { KiteAppGraph.from(applicationContext).cardGroupStore }
     private var currentScreen: AppDestination = AppDestination.Console
     private var pendingRawJsonRecipeId: String? = null
 

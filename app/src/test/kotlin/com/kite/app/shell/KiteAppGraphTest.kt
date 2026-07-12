@@ -23,13 +23,17 @@ class KiteAppGraphTest {
         assertSame(first.browserAutomationSessions, second.browserAutomationSessions)
         assertSame(first.resourceInstallStore, second.resourceInstallStore)
         assertSame(first.resourceManifestLoader, second.resourceManifestLoader)
+        assertSame(first.recipeLoader, second.recipeLoader)
+        assertSame(first.cardGroupStore, second.cardGroupStore)
+        assertSame(first.recipeFeatureGateway, second.recipeFeatureGateway)
     }
 
     @Test
-    fun `页面可变加载器由组合根按使用方创建`() {
+    fun `配方事实复用进程依赖而页面工具按使用方创建`() {
         val graph = KiteAppGraph.from(ApplicationProvider.getApplicationContext())
 
-        assertNotSame(graph.createRecipeLoader(), graph.createRecipeLoader())
+        assertSame(graph.recipeLoader, graph.createRecipeLoader())
+        assertSame(graph.createRecipeLoader(), graph.createRecipeLoader())
         assertNotSame(graph.createDropZoneManager(), graph.createDropZoneManager())
     }
 }

@@ -7,7 +7,7 @@
 ```text
 方向：第二阶段业务架构迁移
 状态：in_progress
-当前任务：T004 资源页面所有权迁移，正在迁移资源目录与搜索
+当前任务：T005 首页卡片与配方编辑模块，正在建立共享合同并迁移首页
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -724,3 +724,27 @@ T004 资源安装向导结果：
 T004 状态：completed。目录、搜索、详情、管理和安装向导均已迁移并分段提交。
 
 下一步：进入 T005；先建立首页卡片与配方编辑目的矩阵，盘点 Loader/Store、草稿、分组、图标、步骤编辑和运行动作的真实所有权。
+
+### T005 三问
+
+- 目标是什么：把首页卡片投影与配方编辑拆成两个 Feature；首页只组合配方、分组和运行事实并提交动作，编辑器只拥有草稿、校验和配置写入。
+- 完成标准是什么：对应 `PLAYBOOK.md` T005 四项；首页运行变化局部更新，编辑草稿可恢复且未保存返回可解释，两处启动产生同一动作计划，旧 Activity 字段与渲染链删除。
+- 依赖是否满足：T002 动作合同与 T004 资源页面迁移均已完成；`KiteRecipeActionCoordinator`、`CardRunStore`、`KiteRecipeLoader` 与分组 Store 的真实边界已经核对，依赖满足。
+
+真实所有权矩阵：
+
+- 配方文件事实归 `KiteRecipeLoader`，卡片分组归 `KiteCardGroupStore`，运行事实归 `CardRunStore`。
+- 首页只读取三类事实，复用 `KiteCardRunUiProjector`，并提交 `KiteRecipeActionRequest`；不得执行配方步骤或写运行事实。
+- 编辑器后续通过同一 Gateway 保存/删除配方与创建分组；不得直接创建、停止或选择运行实例。
+- Shell 只落地导航、文件选择、动作执行和系统能力 Effect，不保存 Feature 草稿或复制卡片运行状态。
+
+T005 合同层结果：
+
+- 新增进程级 `RecipeFeatureGateway`，统一 Loader、分组 Store 与运行快照的读取边界，并将配置变化和运行变化暴露为轻量信号。
+- `KiteAppGraph` 现在只创建一份 `KiteRecipeLoader` 与 `KiteCardGroupStore`；首页和编辑器不再各自形成事实缓存。
+- 新增纯 `HomeFeatureController`，统一目录、分组、运行投影、Ubuntu 环境阻塞和首页主动作 Effect，不引用 Android View、导航或执行器。
+- 定向测试覆盖统一状态、纯网页卡片不被 Ubuntu 阻塞、稳定动作请求、运行校准不重读目录和目录失败保留旧卡片。
+- 机器护栏锁定首页 Controller 的依赖边界，以及 Loader/分组 Store 的进程唯一性。
+- 全量 300 项 Debug 单测（1 项既有跳过）、Debug APK 构建与运行车道静态检查通过；`MainActivity` 债务基线未增长。
+
+下一步：提交 T005 合同层；随后迁移首页卡片、分组、滚动与运行局部绑定，删除 Activity 内对应状态和渲染链。

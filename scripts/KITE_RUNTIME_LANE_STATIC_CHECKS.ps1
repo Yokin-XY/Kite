@@ -39,6 +39,9 @@ $resourceManageFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/fe
 $resourceManageScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceManageScreen.kt'
 $resourceInstallWizardPresentationPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceInstallWizardPresentation.kt'
 $resourceInstallWizardScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceInstallWizardScreen.kt'
+$recipeFeatureGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/recipes/RecipeFeatureGateway.kt'
+$homeFeatureContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeFeatureContract.kt'
+$homeFeatureControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeFeatureController.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -127,6 +130,9 @@ $resourceManageFragment = Read-Utf8 $resourceManageFragmentPath
 $resourceManageScreen = Read-Utf8 $resourceManageScreenPath
 $resourceInstallWizardPresentation = Read-Utf8 $resourceInstallWizardPresentationPath
 $resourceInstallWizardScreen = Read-Utf8 $resourceInstallWizardScreenPath
+$recipeFeatureGateway = Read-Utf8 $recipeFeatureGatewayPath
+$homeFeatureContract = Read-Utf8 $homeFeatureContractPath
+$homeFeatureController = Read-Utf8 $homeFeatureControllerPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -151,6 +157,13 @@ Assert-True ($resourceFeatureController -match 'KiteResourceActionCoordinator\.p
 Assert-True ($resourceFeatureController -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.))') 'Resource feature controller must remain independent from Android views and navigation.'
 Assert-True ($resourceFeatureController -notmatch '\.(markInstalling|markPreparing|markUninstalling|markInstalled|markFailed|beginPlan|clearPlan)\s*\(') 'Resource feature controller must not write installation facts owned by KiteResourceInstallStore.'
 Assert-True ($resourceFeatureFragment -match '(?s)repeatOnLifecycle\(Lifecycle\.State\.STARTED\).*ResourceFeatureAction\.ReconcileFacts') 'resource features must reconcile owner facts whenever their view returns to the foreground.'
+Assert-True ($recipeFeatureGateway -match 'interface RecipeFeatureGateway' -and $recipeFeatureGateway -match 'loadRecipes' -and $recipeFeatureGateway -match 'runSnapshot') 'Home and recipe editor must share one application recipe gateway contract.'
+Assert-True ($homeFeatureContract -match 'HomeFeatureUiState' -and $homeFeatureContract -match 'HomeFeatureAction' -and $homeFeatureContract -match 'HomeFeatureEffect') 'Home feature must expose one state, action, and effect contract.'
+Assert-True ($homeFeatureController -match 'KiteCardRunUiProjector\.project' -and $homeFeatureController -match 'KiteRecipeActionRequest') 'Home feature must reuse the shared run projector and recipe action request.'
+Assert-True ($homeFeatureController -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|run\.CardRunStore))') 'Home feature controller must remain independent from Android views, navigation, and concrete run stores.'
+Assert-True ($homeFeatureController -notmatch '\.(startRecipe|stopRecipe|executeRecipe|saveUserRecipe|deleteRecipe)\s*\(') 'Home feature controller must not execute recipes or mutate recipe facts.'
+Assert-True ($kiteAppGraph -match 'val recipeLoader: KiteRecipeLoader by lazy' -and $kiteAppGraph -match 'val cardGroupStore: KiteCardGroupStore by lazy' -and $kiteAppGraph -match 'val recipeFeatureGateway: RecipeFeatureGateway by lazy') 'Recipe loader, group store, and gateway must be process composition-root dependencies.'
+Assert-True ($kiteAppGraph -match 'fun createRecipeLoader\(\): KiteRecipeLoader = recipeLoader' -and $main -notmatch 'KiteCardGroupStore\(applicationContext\)') 'Shell callers must reuse process-owned recipe and group facts instead of constructing parallel stores.'
 Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'
 Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
 Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'
