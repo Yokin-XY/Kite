@@ -344,10 +344,10 @@ Controller 提供 UiState 和 Action，Activity 只负责导航到资源 Destina
 
 验收标准：
 
-- [ ] 普通 Web 显示、系统认证和自动化会话职责分开。
-- [ ] OAuth/loopback 参数原样桥接，不制造 Codex 或 Claude 专属特判。
-- [ ] 首次安装、覆盖安装、进程重建后的回跳都能路由到正确实例。
-- [ ] WebView 销毁、后台任务和认证会话具有不同生命周期。
+- [x] 普通 Web 显示、系统认证和自动化会话职责分开。
+- [x] OAuth/loopback 参数原样桥接，不制造 Codex 或 Claude 专属特判。
+- [x] 首次安装、覆盖安装、进程重建后的回跳都能路由到正确实例。
+- [x] WebView 销毁、后台任务和认证会话具有不同生命周期。
 
 依赖：T002、T007。
 

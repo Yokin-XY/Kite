@@ -1173,3 +1173,15 @@ T009 回跳重建缺口与修复：
 - 全新卸载安装触发了 OnePlus 的系统安装安全确认和全部文件权限页；完成系统确认后，首次启动创建 session、回跳和目标窗口恢复成功。三条链路均无 `AndroidRuntime` 崩溃。
 
 下一步：提交本次真机发现的恢复修复，随后跑 T009 全量单测、Debug 构建、架构守卫和最终真机 Web/认证回归，完成任务封口。
+
+T009 最终验收：
+
+- 全量 `:app:testDebugUnitTest :app:assembleDebug`、架构检查和运行车道静态检查通过；架构棘轮更新为 `lines=6963, functions=350, fields=69, hosts=4, runtimeStateRefs=30`。
+- OnePlus 8T `3f8bbaad` 全新安装：完成系统安装确认和全部文件权限后，通用 App redirect 从系统浏览器回跳到原 CardRun，报告显示 `state=matched / code=present`，无崩溃。
+- 同机覆盖安装与强杀进程：pending session 分别跨 APK 覆盖和 `am force-stop` 保存；回跳均冷启动并直接进入原 `CardRunActivity`，session 最终为 Delivered。
+- 通用 CLI loopback 请求保留 `http://127.0.0.1:1457/callback`，session 类型为 CliLoopback、callback channel 为 Direct；原始回调地址没有被页面替换，真实 token/账号不参与测试。
+- 可见截图确认回跳报告已经绑定目标运行实例；logcat 的 `AndroidRuntime` 崩溃筛选为空。
+
+T009 状态：completed。关键提交为 `10008f6`、`9d272ee`、`94efb65`。
+
+下一步：进入 T010，审计设置页、主题重建、首次权限 onboarding、系统设置返回和 rootfs 准备的真实所有权，先固定一次性步骤与可重入步骤的合同。

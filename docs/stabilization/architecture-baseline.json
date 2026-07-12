@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "capturedAt": "2026-07-13",
-  "capturedCommit": "50b1c47",
+  "capturedCommit": "94efb65",
   "mainActivity": {
-    "physicalLines": 7368,
-    "memberFunctions": 361,
-    "privateFields": 74,
+    "physicalLines": 6963,
+    "memberFunctions": 350,
+    "privateFields": 69,
     "hostInterfaces": 4,
     "resourceRenderDelegates": 0,
     "resourceFunctions": 30,
-    "runtimeStatesReferences": 34
+    "runtimeStatesReferences": 30
   },
   "legacyBoundaryDebt": {
     "screenRouterMainActivityScreenReferences": 0,
