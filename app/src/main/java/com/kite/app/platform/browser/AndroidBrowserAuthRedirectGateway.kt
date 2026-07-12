@@ -26,10 +26,21 @@ internal class AndroidBrowserAuthRedirectGateway(
     override fun resolveTarget(session: BrowserAuthSession): BrowserAuthRedirectTarget? {
         val instanceId = session.instanceId?.takeIf(String::isNotBlank) ?: return null
         val existing = CardRunStore.get(instanceId)
+        val history = session.recipeId
+            ?.takeIf(String::isNotBlank)
+            ?.let(CardRunStore::historyForRecipe)
+            ?.firstOrNull { it.instanceId == instanceId }
+        val persistedRecipeId = existing?.recipeId ?: history?.recipeId
         val recipe = session.recipeId
             ?.takeIf(String::isNotBlank)
             ?.let(::resolveRecipe)
-            ?: existing?.recipeId?.let(::resolveRecipe)
+            ?: persistedRecipeId?.let(::resolveRecipe)
+            ?: persistedRecipeId?.let { recipeId ->
+                browserAuthRecoveryRecipe(
+                    recipeId = recipeId,
+                    recipeName = session.recipeName ?: history?.recipeName
+                )
+            }
             ?: return null
         return BrowserAuthRedirectTarget(recipe, instanceId)
     }
@@ -244,3 +255,14 @@ internal class AndroidBrowserAuthRedirectGateway(
     private fun resolveRecipe(recipeId: String): KiteRecipe? =
         recipeResolver(recipeId) ?: CardRunStore.registeredRecipe(recipeId)
 }
+
+/** 只为已经持久化的 CardRun 恢复投影身份，不创建动作或执行能力。 */
+internal fun browserAuthRecoveryRecipe(recipeId: String, recipeName: String?): KiteRecipe =
+    KiteRecipe(
+        id = recipeId,
+        name = recipeName?.takeIf(String::isNotBlank) ?: "浏览器登录",
+        description = "恢复浏览器登录返回",
+        type = "web",
+        defaultUrl = "",
+        shortcut = false
+    )

@@ -1163,3 +1163,13 @@ T009 认证回跳协调结果：
 - 目标测试、Kotlin 编译与架构/运行车道守卫通过。主壳降至 `lines=6963, functions=350, fields=69, runtimeStateRefs=30`。
 
 下一步：执行真机普通 Web、自动化 session、通用 App redirect 和 CLI loopback 回归；先用可控测试回跳验证首次安装/覆盖升级/进程强杀后的实例路由，再复核真实 Codex 登录桥不退化。
+
+T009 回跳重建缺口与修复：
+
+- OnePlus 8T 首轮覆盖升级测试中，持久化 session 能正确匹配 state，但临时网页配方只存在于旧进程内存；`CardRunStore` 按既有策略把未确认运行归档后，目标解析返回 `missing_target`。
+- 修复不保留整条旧运行，也不为未知 session 造实例：Gateway 只有在同一 `instanceId` 仍有当前 CardRun，或持久化历史中存在完全匹配记录时，才创建一个无动作、无执行能力的最小 Web 投影配方，用于把回跳结果恢复成报告面。
+- 恢复配方不包含 URL、token、code 或提供方信息，只保留 recipeId、显示名称和 `type=web`；静态守卫同时禁止 Codex、Claude、OpenAI、Google 等专属分支。
+- 重新构建并覆盖升级后，同一测试链从 Pending session 经进程重建直接冷启动到原 `CardRunActivity`，session 为 Delivered；强杀应用进程后回跳同样冷启动到目标运行窗口。
+- 全新卸载安装触发了 OnePlus 的系统安装安全确认和全部文件权限页；完成系统确认后，首次启动创建 session、回跳和目标窗口恢复成功。三条链路均无 `AndroidRuntime` 崩溃。
+
+下一步：提交本次真机发现的恢复修复，随后跑 T009 全量单测、Debug 构建、架构守卫和最终真机 Web/认证回归，完成任务封口。
