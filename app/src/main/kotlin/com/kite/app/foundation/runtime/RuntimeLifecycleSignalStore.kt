@@ -159,6 +159,13 @@ object RuntimeLifecycleSignalStore {
             else -> level.toString()
         }
     }
+
+    @Synchronized
+    internal fun resetForTests() {
+        startedActivityIds.clear()
+        resumedActivityIds.clear()
+        _snapshot.value = RuntimeLifecycleSignalSnapshot()
+    }
 }
 
 private fun String.toLifecycleEnvValue(): String {

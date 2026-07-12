@@ -90,3 +90,13 @@
 理由：首页、编辑页、资源详情和运行管理曾分别拼接启动、打开、停止、卸载和重试流程，容易重复创建实例或让同一动作表现不同。
 
 影响：后续 D3-D5 不得把执行流程重新放回按钮回调；协调器不写运行事实、不阻塞重活，`CardRunStore` 和 `KiteResourceInstallStore` 所有权不变。
+
+## ADR-S009 内存回调只触发策略刷新
+
+状态：accepted
+
+决策：Android `onTrimMemory` 和 `onLowMemory` 只记录生命周期事实并请求现有运行快照刷新，不新增直接杀进程路径。同级或更低压力允许在冷却窗口内合并，但升级压力必须立即进入刷新链。
+
+理由：系统可能在很短时间内连续提升内存压力。固定冷却会吞掉更严重事件，而 `onLowMemory` 复用普通 trim 入口还会覆盖真实低内存信号。真正是否回收必须继续由租约、归属、前台状态和用户锁定规则共同决定。
+
+影响：后续显示资源释放可以响应内存压力，但任务或进程回收不得绕过 `RuntimeMemoryLifecycleRuleTrigger`、`RuntimeLifecycleStrategyActivator` 和 `RuntimeReclaimer` 的既有合同。

@@ -328,3 +328,17 @@ D2 结论：页面只提交动作意图，协调器只生成轻量计划；运�
 - 静态护栏锁定 WebView 释放和后台运行事实保留边界。
 
 下一步：审计 `RuntimePressureResponder` 的 trim/low-memory 路径，确保刷新快照后真正进入现有策略与回收链，且不回收用户锁定运行。
+
+### D4 系统内存压力交接
+
+- `RuntimePressureResponder` 只把 Android 内存事件转换为现有运行快照刷新，不直接终止任务。
+- 普通 trim 与 `onLowMemory` 分别记录真实事件，低内存状态不再被紧接着的普通 trim 覆盖。
+- 同级或更低压力在 2.5 秒窗口内合并；更高级压力可以越过冷却，避免关键刷新被较早的低级事件吞掉。
+- 刷新后的快照继续经 `RuntimeMemoryLifecycleRuleTrigger`、`RuntimeLifecycleStrategyActivator` 和 `RuntimeReclaimer`；用户锁定、前台、系统核心、匹配歧义和租约未到期仍由既有准入合同阻断。
+
+验证：
+
+- `RuntimePressureResponderTest` 覆盖同级冷却、压力升级和前台 Activity 存在时的低内存事实保留。
+- 目标单测通过。
+
+下一步：审计卡片、终端、WebView 与后台服务的准入和可恢复显示资源回收边界，补齐 D4 剩余合同后执行全量构建和 OnePlus 8T 压力验证。
