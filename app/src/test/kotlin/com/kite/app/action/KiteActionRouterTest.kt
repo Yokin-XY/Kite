@@ -75,6 +75,32 @@ class KiteActionRouterTest {
     }
 
     @Test
+    fun `网页和安卓动作都必须进入统一运行配方`() {
+        val steps = listOf(
+            KiteRecipeStep(id = "web", type = KiteRecipe.STEP_OPEN_WEB, url = "https://example.com"),
+            KiteRecipeStep(
+                id = "android",
+                type = KiteRecipe.STEP_ANDROID_ACTION,
+                action = KiteRecipe.ANDROID_ACTION_TOOLCHAIN_DOCTOR
+            )
+        )
+        val recipe = recipeWithActions(
+            actions = mapOf(
+                KiteRecipe.ACTION_START to KiteRecipeAction(
+                    id = KiteRecipe.ACTION_START,
+                    steps = steps
+                )
+            )
+        )
+
+        val route = router.route(recipe, KiteRecipe.ACTION_START)
+
+        assertTrue(route is KiteActionRoute.RunRecipe)
+        route as KiteActionRoute.RunRecipe
+        assertEquals(steps, route.recipe.steps)
+    }
+
+    @Test
     fun `不存在的动作必须返回可诊断的缺失结果`() {
         val recipe = recipeWithActions()
 

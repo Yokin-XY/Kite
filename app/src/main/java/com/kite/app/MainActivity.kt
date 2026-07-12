@@ -97,8 +97,6 @@ import com.kite.app.browser.automation.BrowserAutomationEvent
 import com.kite.app.browser.automation.BrowserAutomationEventKind
 import com.kite.app.browser.automation.BrowserAutomationResultStatus
 import com.kite.app.browser.automation.BrowserAutomationSessionStore
-import com.kite.app.bridge.BridgeErrorType
-import com.kite.app.bridge.BridgeProgress
 import com.kite.app.bridge.BridgeResult
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.bridge.KiteBrowserOpenRequest
@@ -145,7 +143,6 @@ import com.kite.app.run.CardRunStatus as RecipeRunStatus
 import com.kite.app.run.CardRunStore
 import com.kite.app.run.KiteX11SurfacePlan
 import com.kite.app.run.KiteX11SurfaceServer
-import com.kite.app.run.PendingTerminalFlow
 import com.kite.app.run.KiteCardRunUiProjector
 import com.kite.app.run.KiteRunUiTone
 import com.kite.app.shell.AppDestination
@@ -175,8 +172,6 @@ import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.runtime.TerminalSessionItem
 import com.kite.app.foundation.runtime.TerminalSessionStore
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
-import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
-import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.toolchain.ToolchainInstallPhase
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.workspace.KFWorkspaceManager
@@ -212,7 +207,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import java.io.File
-import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Calendar
 import java.util.UUID
@@ -313,7 +307,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var firstRunRuntimePermissionsRequested = false
     private var firstRunAllFilesSettingsOpened = false
     private var ubuntuRuntimeState = UbuntuRuntimeUiState.checking()
-    private var pendingTerminalFlow: PendingTerminalFlow? = null
     private var localServerStarted = false
     private var consumedCardRunLaunchKey: String? = null
     private var focusedRunRecipeId: String? = null
@@ -353,7 +346,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var resourceInstallWizardPlanIds: List<String> = emptyList()
     private var resourceInstallPlanRequestSerial = 0L
     private val suppressedResourceRunSurfaceRecipeIds = mutableSetOf<String>()
-    private val pendingResourceUninstallContinuations = mutableMapOf<String, ResourceUninstallContinuation>()
     private var cachedResourceCatalog: List<ResourceItem>? = null
     private var cachedResourceCatalogUpdatedAt = 0L
     private var resourceCatalogDirty = true
@@ -472,7 +464,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         observeUbuntuBootstrapState()
         observeRootfsExtractionProgress()
         observeRuntimeBootstrapProgress()
-        observeTerminalFlowSignals()
         observeRunExecutionEffects()
         observeCardRunStoreSignals()
         observeRuntimePanelSummarySignals()
@@ -1437,42 +1428,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun observeTerminalFlowSignals() {
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                TerminalRuntimeRegistry.entries.collect { entries ->
-                    val pending = pendingTerminalFlow ?: return@collect
-                    val terminal = entries.firstOrNull { it.sessionId == pending.sessionId } ?: return@collect
-                    if (terminal.status !in terminalFlowFinishedStatuses) return@collect
-                    val activeRun = CardRunStore.get(pending.instanceId)
-                    if (activeRun == null || activeRun.recipeId != pending.recipeId) {
-                        pendingTerminalFlow = null
-                        return@collect
-                    }
-
-                    pendingTerminalFlow = null
-                    val recipe = currentRecipes.firstOrNull { it.id == pending.recipeId }
-                        ?: recipeLoader.loadAllRecipes().firstOrNull { it.id == pending.recipeId }
-                        ?: return@collect
-                    diagnostics.logRecipeAction(
-                        recipe,
-                        "terminal_step_finished",
-                        mapOf(
-                            "sessionId" to pending.sessionId,
-                            "status" to terminal.status.name,
-                            "exitCode" to (terminal.lastExitCode?.toString() ?: "")
-                        )
-                    )
-                    advanceAfterUserCompletedStep(
-                        recipe = recipe,
-                        state = activeRun,
-                        nextStepIndex = pending.nextStepIndex,
-                        lastOutput = "终端已结束：${terminal.status.label}"
-                    )
-                }
-            }
-        }
-    }
 
     private fun observeRunExecutionEffects() {
         lifecycleScope.launch {
@@ -3551,7 +3506,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 ) {
                     resourceInstallStore.clear(resourceId)
                 }
-                pendingResourceUninstallContinuations.remove(resourceId)
                 KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
             }
         recipeIds.forEach { recipeId ->
@@ -3566,14 +3520,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun handleResourceUninstallAction(
         item: ResourceItem,
-        continuation: ResourceUninstallContinuation = pendingResourceUninstallContinuations[item.id]
-            ?: ResourceUninstallContinuation.None
+        continuation: ResourceUninstallContinuation = ResourceUninstallContinuation.None
     ) {
         val recipe = resourceUninstallRecipe(item)
         if (recipe == null) {
-            pendingResourceUninstallContinuations.remove(item.id)
-                resourceInstallStore.clear(item.id)
-                invalidateResourceRuntimeStateCache()
+            resourceInstallStore.clear(item.id)
+            invalidateResourceRuntimeStateCache()
             showResourceDiscreteToast("已移除 ${item.name} 的获取记录")
             if (continuation == ResourceUninstallContinuation.Reinstall) {
                 submitResourceAction(item, KiteResourceActionIntent.Install, KiteResourceActionSource.Continuation)
@@ -3662,7 +3614,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val targetId = targetResourceId.orEmpty()
         val resourceIds = resolveResourceInstallTaskIds(targetId, planResourceIds)
         resourceIds.forEach { resourceId ->
-            pendingResourceUninstallContinuations.remove(resourceId)
             if (
                 resourceInstallStore.status(resourceId) != null &&
                 !resourceInstallStore.isInstalled(resourceId) &&
@@ -4153,7 +4104,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun runResourceWizardUninstall(item: ResourceItem) {
         val recipe = resourceUninstallRecipe(item)
         if (recipe == null) {
-            pendingResourceUninstallContinuations.remove(item.id)
             resourceInstallStore.clear(item.id)
             resourceInstallStore.resumePlanFrom(item.id)
             invalidateResourceRuntimeStateCache()
@@ -4634,245 +4584,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         return json
     }
 
-    private fun resourceManifestRecipeSteps(item: ResourceItem, operation: String): List<KiteRecipeStep> {
-        val actions = when (operation) {
-            KiteResourceInstallRecipes.OP_INSTALL -> resourceManifestLoader.requestInstallActions(item.id)
-            KiteResourceInstallRecipes.OP_UNINSTALL -> resourceManifestLoader.requestUninstallActions(item.id)
-            else -> emptyList()
-        }
-        return actions.mapIndexed { index, action ->
-            KiteRecipeStep(
-                id = "${operation}_${KiteResourceInstallRecipes.safeId(item.id)}_${index + 1}",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = resourceManifestActionCommand(item, operation, action),
-                surfaceMode = action.surfaceMode.ifBlank { KiteRecipe.SURFACE_MODE_PANEL },
-                workdir = action.workdir.ifBlank { "/workspace" },
-                timeoutMs = action.timeoutMs.takeIf { it > 0L } ?: 1_800_000L
-            )
-        }
-    }
 
-    private fun resourceManifestActionCommand(
-        item: ResourceItem,
-        operation: String,
-        action: KiteResourceShellAction
-    ): String =
-        when (operation) {
-            KiteResourceInstallRecipes.OP_INSTALL -> {
-                val bundledCommand = KiteResourceInstallPlanCompiler.bundledCommand(action)
-                    ?.let { bundledToolchainManifestInstallCommand(item, it, cleanInstallRoot = false) }
-                    ?: bundledToolchainManifestInstallCommand(item, action.cmd, cleanInstallRoot = true)
-                val installCommand = bundledCommand ?: KiteResourceInstallPlanCompiler.compile(action)
-                KiteResourceInstallRecipes.manifestInstallCommand(
-                    resourceId = item.id,
-                    displayName = item.name,
-                    rawCommand = installCommand,
-                    managedCommands = action.managedCommands,
-                    cleanInstallRoot = action.cleanInstallRoot,
-                    verificationCommand = KiteResourceInstallPlanCompiler.compileVerification(action)
-                )
-            }
-            KiteResourceInstallRecipes.OP_UNINSTALL -> KiteResourceInstallRecipes.manifestUninstallCommand(
-                resourceId = item.id,
-                rawCommand = action.cmd,
-                managedCommands = action.managedCommands,
-                npmUninstallPackages = action.npmUninstallPackages
-            )
-            else -> action.cmd
-        }
 
-    private fun bundledToolchainManifestInstallCommand(
-        item: ResourceItem,
-        command: String,
-        cleanInstallRoot: Boolean
-    ): String? {
-        if (!item.isBundledResource()) return null
-        val trimmed = command.trim()
-        if (trimmed != "install.sh" && !trimmed.startsWith("install.sh ")) return null
-        val mode = trimmed.removePrefix("install.sh").trim().ifBlank { "--install" }
-        if (!Regex("""--?[A-Za-z0-9][A-Za-z0-9_-]*""").matches(mode)) return null
-        return KiteResourceInstallRecipes.localToolchainCommand(item.id, mode, cleanInstallRoot)
-    }
 
-    private fun resourceInstallRecipe(item: ResourceItem): KiteRecipe? {
-        val steps = resourceManifestRecipeSteps(item, KiteResourceInstallRecipes.OP_INSTALL)
-            .ifEmpty { legacyResourceInstallStep(item)?.let { listOf(it) }.orEmpty() }
-        if (steps.isEmpty()) return null
-        return KiteResourceInstallRecipes.toRecipe(
-            KiteResourceInstallSpec(
-                id = item.id,
-                name = "${item.name} 获取",
-                description = item.description,
-                category = "resource",
-                iconName = resourceRecipeIcon(item),
-                steps = steps
-            )
-        )
-    }
+    private fun resourceInstallRecipe(item: ResourceItem): KiteRecipe? =
+        resourceRunCoordinator.recipe(item.id, KiteResourceInstallRecipes.OP_INSTALL)
 
-    private fun legacyResourceInstallStep(item: ResourceItem): KiteRecipeStep? =
-        when (item.id) {
-            RESOURCE_NODE_RUNTIME -> KiteRecipeStep(
-                id = "install_node",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.localToolchainCommand(item.id, "--install-node"),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 900_000L
-            )
-            RESOURCE_KF_TOOL_ENV -> KiteRecipeStep(
-                id = "install_tool_env",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.localToolchainCommand(item.id, "--install"),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 900_000L
-            )
-            RESOURCE_HERMES_WEBUI -> KiteRecipeStep(
-                id = "install_hermes_webui",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.hermesWebUiInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 900_000L
-            )
-            RESOURCE_GIT -> KiteRecipeStep(
-                id = "install_git",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.gitInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 300_000L
-            )
-            RESOURCE_CURL -> KiteRecipeStep(
-                id = "install_curl",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.curlInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 300_000L
-            )
-            RESOURCE_PYTHON -> KiteRecipeStep(
-                id = "install_python",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.pythonInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 600_000L
-            )
-            RESOURCE_UV -> KiteRecipeStep(
-                id = "install_uv",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.localToolchainCommand(item.id, "--install-uv"),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 300_000L
-            )
-            RESOURCE_HERMES_CORE -> KiteRecipeStep(
-                id = "install_hermes_core",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.hermesCoreInstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 1_800_000L
-            )
-            else -> null
-        }
 
-    private fun resourceUninstallRecipe(item: ResourceItem): KiteRecipe? {
-        val steps = resourceManifestRecipeSteps(item, KiteResourceInstallRecipes.OP_UNINSTALL)
-            .ifEmpty { legacyResourceUninstallStep(item)?.let { listOf(it) }.orEmpty() }
-        if (steps.isEmpty()) return null
-        return KiteResourceInstallRecipes.toRecipe(
-            KiteResourceInstallSpec(
-                id = item.id,
-                name = "${item.name} 卸载",
-                description = item.description,
-                category = "resource",
-                iconName = resourceRecipeIcon(item),
-                operation = KiteResourceInstallRecipes.OP_UNINSTALL,
-                actionLabel = "卸载",
-                steps = steps
-            )
-        )
-    }
+    private fun resourceUninstallRecipe(item: ResourceItem): KiteRecipe? =
+        resourceRunCoordinator.recipe(item.id, KiteResourceInstallRecipes.OP_UNINSTALL)
 
-    private fun legacyResourceUninstallStep(item: ResourceItem): KiteRecipeStep? =
-        when (item.id) {
-            RESOURCE_NODE_RUNTIME -> KiteRecipeStep(
-                id = "uninstall_node",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.nodeUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 300_000L
-            )
-            RESOURCE_KF_TOOL_ENV -> KiteRecipeStep(
-                id = "uninstall_tool_env",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.toolEnvUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 300_000L
-            )
-            RESOURCE_HERMES_WEBUI -> KiteRecipeStep(
-                id = "uninstall_hermes_webui",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.hermesWebUiUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 300_000L
-            )
-            RESOURCE_GIT -> KiteRecipeStep(
-                id = "uninstall_git",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.gitUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 300_000L
-            )
-            RESOURCE_CURL -> KiteRecipeStep(
-                id = "uninstall_curl",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.curlUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 300_000L
-            )
-            RESOURCE_PYTHON -> KiteRecipeStep(
-                id = "uninstall_python",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.pythonUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 120_000L
-            )
-            RESOURCE_UV -> KiteRecipeStep(
-                id = "uninstall_uv",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.uvUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 120_000L
-            )
-            RESOURCE_HERMES_CORE -> KiteRecipeStep(
-                id = "uninstall_hermes_core",
-                type = KiteRecipe.STEP_SHELL,
-                cmd = KiteResourceInstallRecipes.hermesCoreUninstallCommand(),
-                surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-                workdir = "/workspace",
-                timeoutMs = 180_000L
-            )
-            else -> null
-        }
 
-    private fun resourceRecipeIcon(item: ResourceItem): String =
-        when {
-            item.id == RESOURCE_GIT || item.id == RESOURCE_CURL || item.id == RESOURCE_UV -> KiteRecipeIcon.ICON_CODE
-            item.category == "AI" -> KiteRecipeIcon.ICON_BOT
-            item.category == "Node" || item.category == "JavaScript" || item.category == "Python" -> KiteRecipeIcon.ICON_CODE
-            else -> KiteRecipeIcon.ICON_TOOLS
-        }
 
     private fun buildResourceInstallPlan(target: ResourceItem): ResourceInstallPlan {
         val catalogList = resourceCatalog(forceRefresh = true)
@@ -4952,21 +4674,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 showResourceInstallWizard()
                 return
             }
-            val recipe = resourceCatalog(forceRefresh = false)
-                .firstOrNull { it.id == runningId }
-                ?.let { resourceInstallRecipe(it) }
-            if (recipe != null) {
-                markResourceInstallFailed(recipe, null, "获取流程异常中断")
-            } else {
-                resourceInstallStore.markFailed(
-                    runningId,
-                    KiteResourceInstallStore.OP_INSTALL,
-                    null,
-                    "获取流程异常中断"
-                )
-                resourceInstallStore.failPlanAt(runningId)
-                invalidateResourceRuntimeStateCache()
-            }
+            resourceInstallStore.markFailed(
+                runningId,
+                KiteResourceInstallStore.OP_INSTALL,
+                null,
+                "获取流程异常中断"
+            )
+            resourceInstallStore.failPlanAt(runningId)
+            invalidateResourceRuntimeStateCache()
             showResourceInstallWizard()
             return
         }
@@ -5012,23 +4727,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         )
     }
 
-    private fun continueResourceInstallPlanAfter(resourceId: String) {
-        val remaining = resourceInstallStore.advancePlanAfter(resourceId)
-        if (remaining.isEmpty()) {
-            showResourceDiscreteToast("资源执行队列完成")
-            if (currentResourceInstallTargetId != null) showResourceInstallWizard()
-            return
-        }
-        if (currentResourceInstallTargetId != null) showResourceInstallWizard()
-        startNextResourceInstallFromPlan()
-    }
 
     private fun startResourceInstall(item: ResourceItem, recipe: KiteRecipe) {
         invalidateResourceRuntimeStateCache()
         startResourceRun(
             item = item,
             recipe = recipe,
-            stageBundledResource = item.isBundledResource(),
+            stageBundledResource = resourceRunCoordinator.isBundled(item.id),
             openRunTask = !resourceInstallWizardSurfaceActive(),
             returnToInstallWizard = resourceInstallWizardSurfaceActive()
         )
@@ -5146,8 +4851,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         )
     }
 
-    private fun ResourceItem.isBundledResource(): Boolean =
-        resourceManifestLoader.requestManifest(id)?.sourceType == "bundled"
 
     private fun resourceIdForRecipe(recipe: KiteRecipe): String? {
         val supportedSource = recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE ||
@@ -5177,93 +4880,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun markResourceRunSuccess(recipe: KiteRecipe, runId: String?, summary: String?) {
-        when (resourceOperationForRecipe(recipe)) {
-            KiteResourceInstallRecipes.OP_INSTALL -> markResourceInstallSuccess(recipe, runId, summary)
-            KiteResourceInstallRecipes.OP_UNINSTALL -> resourceIdForRecipe(recipe)?.let { resourceId ->
-                val continuation = pendingResourceUninstallContinuations.remove(resourceId)
-                    ?: ResourceUninstallContinuation.None
-                resourceInstallStore.clear(resourceId)
-                invalidateResourceRuntimeStateCache()
-                when (continuation) {
-                    ResourceUninstallContinuation.Reinstall -> {
-                        val item = resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId }
-                        if (item == null) {
-                            showResourceDiscreteToast("卸载完成，但获取目标缺少资源定义")
-                            refreshResourceScreenIfVisible()
-                        } else {
-                            showResourceDiscreteToast("${item.name} 残留已卸载，继续获取")
-                            submitResourceAction(item, KiteResourceActionIntent.Install, KiteResourceActionSource.Wizard)
-                        }
-                    }
-                    ResourceUninstallContinuation.CancelFailedInstall -> {
-                        resourceInstallStore.clearPlan()
-                        closeResourceInstallWizardInstance(resourceId, removeRunState = true)
-                        showResourceDiscreteToast("残留已卸载，获取任务已取消")
-                        if (this is CardRunActivity && currentScreen == AppDestination.CardRun) {
-                            closeCardRunTask()
-                        } else {
-                            refreshResourceScreenIfVisible()
-                        }
-                    }
-                    ResourceUninstallContinuation.ResumeInstallWizard -> {
-                        resourceInstallStore.resumePlanFrom(resourceId)
-                        showResourceDiscreteToast("已卸载异常资源，可继续当前执行队列")
-                        refreshResourceScreenIfVisible()
-                    }
-                    ResourceUninstallContinuation.None -> {
-                        refreshResourceScreenIfVisible()
-                    }
-                }
-            }
-        }
-    }
 
-    private fun markResourceInstallSuccess(recipe: KiteRecipe, runId: String?, summary: String?) {
-        val resourceId = resourceIdForRecipe(recipe) ?: return
-        val item = resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId }
-        val version = item?.version.orEmpty()
-        resourceInstallStore.markInstalled(resourceId, version, runId, summary)
-        saveInstalledResourceSnapshot(resourceId, item, version)
-        invalidateResourceRuntimeStateCache()
-        continueResourceInstallPlanAfter(resourceId)
-    }
 
-    private fun saveInstalledResourceSnapshot(resourceId: String, item: ResourceItem?, version: String) {
-        val manifest = resourceManifestLoader.requestManifest(resourceId)
-        val snapshotIconAsset = manifest?.iconAsset?.ifBlank { item?.iconAsset.orEmpty() } ?: item?.iconAsset.orEmpty()
-        val snapshotIconText = manifest?.iconText?.ifBlank { item?.iconText.orEmpty() } ?: item?.iconText.orEmpty()
-        val snapshotIconFit = manifest?.iconFit?.ifBlank { item?.iconFit.orEmpty() } ?: item?.iconFit.orEmpty()
-        val iconJson = JSONObject().apply {
-            if (snapshotIconAsset.isNotBlank()) {
-                put("type", "asset")
-                put("value", snapshotIconAsset)
-                put("fallbackText", snapshotIconText)
-                if (snapshotIconFit.isNotBlank()) put("fit", snapshotIconFit)
-            } else {
-                put("type", "text")
-                put("value", snapshotIconText)
-            }
-        }.toString()
-        val manifestJson = resourceManifestLoader.requestExecutionManifestJson(resourceId)?.toString().orEmpty()
-        resourceInstallStore.saveInstalledSnapshot(
-            resourceId = resourceId,
-            name = manifest?.name?.ifBlank { item?.name.orEmpty() } ?: item?.name.orEmpty(),
-            iconJson = iconJson,
-            version = manifest?.version?.ifBlank { version } ?: version,
-            manifestJson = manifestJson
-        )
-    }
 
-    private fun markResourceInstallFailed(recipe: KiteRecipe, runId: String?, reason: String?) {
-        val resourceId = resourceIdForRecipe(recipe) ?: return
-        val operation = resourceOperationForRecipe(recipe) ?: KiteResourceInstallStore.OP_INSTALL
-        resourceInstallStore.markFailed(resourceId, operation, runId, reason)
-        if (operation == KiteResourceInstallStore.OP_INSTALL) {
-            resourceInstallStore.failPlanAt(resourceId)
-        }
-        invalidateResourceRuntimeStateCache()
-    }
 
     private fun normalizeStaleResourceState(
         resourceId: String,
@@ -7233,86 +6852,24 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun completeCurrentCardStep(recipe: KiteRecipe, state: RecipeRuntimeState) {
-        val step = recipe.steps.getOrNull(state.currentStepIndex)
-        if (step != null && recipeUsesProcessRunOrchestrator(recipe)) {
-            val output = when (step.type) {
-                KiteRecipe.STEP_TERMINAL -> "终端已由用户标记完成"
-                KiteRecipe.STEP_OPEN_WEB -> "网页已由用户标记完成"
-                KiteRecipe.STEP_X11 -> "X11 GUI 已由用户标记完成"
-                KiteRecipe.STEP_SHELL -> "SH 报告已由用户确认继续"
-                else -> "步骤已由用户标记完成"
-            }
-            diagnostics.logRecipeAction(
-                recipe,
-                "orchestrated_step_completed_by_user",
-                mapOf(
-                    "type" to step.type,
-                    "instanceId" to state.instanceId,
-                    "stepIndex" to state.currentStepIndex.toString()
-                )
-            )
-            runOrchestrator.completeCurrentStep(state.instanceId, output)
-            return
-        }
-        val pending = if (step?.type == KiteRecipe.STEP_TERMINAL) {
-            pendingTerminalFlow?.takeIf {
-                it.recipeId == recipe.id &&
-                    (it.instanceId == state.instanceId || it.sessionId == state.terminalSessionId)
-            }
-        } else {
-            null
-        }
-        val nextStepIndex = pending?.nextStepIndex ?: (state.currentStepIndex + 1).coerceAtLeast(0)
-        val hasNextStep = nextStepIndex < recipe.steps.size
-        if (step?.type == KiteRecipe.STEP_TERMINAL) {
-            pendingTerminalFlow = pendingTerminalFlow?.takeUnless {
-                it.recipeId == recipe.id &&
-                    (it.instanceId == state.instanceId || it.sessionId == state.terminalSessionId)
-            }
-            if (hasNextStep) state.terminalSessionId?.takeIf { it.isNotBlank() }?.let {
-                TerminalRuntimeHost.endSession(applicationContext, it)
-            }
+        val step = recipe.steps.getOrNull(state.currentStepIndex) ?: return
+        val output = when (step.type) {
+            KiteRecipe.STEP_TERMINAL -> "终端已由用户标记完成"
+            KiteRecipe.STEP_OPEN_WEB -> "网页已由用户标记完成"
+            KiteRecipe.STEP_X11 -> "X11 GUI 已由用户标记完成"
+            KiteRecipe.STEP_SHELL -> "SH 报告已由用户确认继续"
+            else -> "步骤已由用户标记完成"
         }
         diagnostics.logRecipeAction(
             recipe,
-            "card_step_completed_by_user",
+            "orchestrated_step_completed_by_user",
             mapOf(
-                "type" to step?.type.orEmpty(),
-                "sessionId" to state.terminalSessionId.orEmpty(),
+                "type" to step.type,
+                "instanceId" to state.instanceId,
                 "stepIndex" to state.currentStepIndex.toString(),
-                "nextStepIndex" to nextStepIndex.toString()
             )
         )
-        advanceAfterUserCompletedStep(
-            recipe = recipe,
-            state = state,
-            nextStepIndex = nextStepIndex,
-            lastOutput = when (step?.type) {
-                KiteRecipe.STEP_TERMINAL -> "终端已由用户标记完成"
-                KiteRecipe.STEP_OPEN_WEB -> "网页已由用户标记完成"
-                KiteRecipe.STEP_X11 -> "X11 GUI 已由用户标记完成"
-                KiteRecipe.STEP_SHELL -> "SH 报告已由用户确认继续"
-                else -> "步骤已由用户标记完成"
-            }
-        )
-    }
-
-    private fun advanceAfterUserCompletedStep(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        nextStepIndex: Int,
-        lastOutput: String
-    ) {
-        if (nextStepIndex >= recipe.steps.size) {
-            return
-        }
-        executeRecipeStep(
-            recipe = recipe,
-            stepIndex = nextStepIndex,
-            runId = state.runId ?: state.terminalSessionId,
-            pid = state.pid,
-            lastOutput = lastOutput
-        )
+        runOrchestrator.completeCurrentStep(state.instanceId, output)
     }
 
     private fun cardRunControlPill(recipe: KiteRecipe, state: RecipeRuntimeState): View = row {
@@ -11104,11 +10661,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 openConsoleOnStart = request.source != KiteRecipeActionSource.Editor && route.recipe.launch.openInstance,
                 renderOnStart = true
             )
-            is KiteActionRoute.OpenWeb -> {
-                setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = route.url)
-                openWeb(route.url, request.source.logValue, recipe)
-            }
-            is KiteActionRoute.NativeAction -> runNativeAction(recipe, route)
             is KiteActionRoute.Unsupported -> {
                 setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = route.reason)
                 Toast.makeText(this, route.reason, Toast.LENGTH_SHORT).show()
@@ -11118,36 +10670,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun shouldOpenCardRunTaskFromHome(recipe: KiteRecipe): Boolean =
         this !is CardRunActivity && recipe.launch.openInstance
-
-    private fun runNativeAction(recipe: KiteRecipe, route: KiteActionRoute.NativeAction) {
-        when (route.step.action) {
-            KiteRecipe.ANDROID_ACTION_PREPARE_AI_ENV -> {
-                ToolchainPackInstaller.prepareAiEnv(applicationContext)
-                val url = route.nextUrl ?: recipe.openWebUrl(route.actionName)
-                setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = url)
-                if (url.isNotBlank()) openWeb(url, "recipe_card", recipe)
-            }
-            KiteRecipe.ANDROID_ACTION_TOOLCHAIN_DOCTOR -> {
-                ToolchainPackInstaller.doctor(applicationContext)
-                val url = route.nextUrl ?: recipe.openWebUrl(route.actionName)
-                setRuntimeState(recipe, RecipeRunStatus.Opened, nextActionUrl = url)
-                if (url.isNotBlank()) openWeb(url, "recipe_card", recipe)
-            }
-            KiteRecipe.ANDROID_ACTION_INSTALL_APK -> {
-                val response = handleInstallApkRequest(KiteInstallApkRequest(installApkPathFromStep(route.step), "recipe_card"))
-                if (response.accepted) {
-                    setRuntimeState(recipe, RecipeRunStatus.Opened, lastMeaningfulOutput = "已打开安装器：${response.resolvedPath}")
-                } else {
-                    setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = response.error.ifBlank { "install_apk_failed" })
-                    Toast.makeText(this, response.error.ifBlank { "install_apk_failed" }, Toast.LENGTH_SHORT).show()
-                }
-            }
-            else -> {
-                setRuntimeState(recipe, RecipeRunStatus.Failed, lastError = "unsupported_android_action")
-                Toast.makeText(this, "unsupported_android_action", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
 
     private fun handleRecipeAction(recipe: KiteRecipe) = handleRecipeActionWithRouter(recipe)
 
@@ -11159,18 +10681,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         renderOnStart: Boolean = true,
         keepCurrentFocus: Boolean = false
     ) {
-        if (recipeUsesProcessRunOrchestrator(recipe)) {
-            startRecipeWithOrchestrator(
-                recipe = recipe,
-                previousState = previousState,
-                preferredInstanceId = preferredInstanceId,
-                openConsoleOnStart = openConsoleOnStart,
-                renderOnStart = renderOnStart,
-                keepCurrentFocus = keepCurrentFocus
-            )
-            return
-        }
-        legacyStartRecipe(
+        startRecipeWithOrchestrator(
             recipe = recipe,
             previousState = previousState,
             preferredInstanceId = preferredInstanceId,
@@ -11179,8 +10690,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             keepCurrentFocus = keepCurrentFocus
         )
     }
-
-    private fun recipeUsesProcessRunOrchestrator(@Suppress("UNUSED_PARAMETER") recipe: KiteRecipe): Boolean = true
 
     private fun startRecipeWithOrchestrator(
         recipe: KiteRecipe,
@@ -11240,290 +10749,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun legacyStartRecipe(
-        recipe: KiteRecipe,
-        previousState: RecipeRuntimeState,
-        preferredInstanceId: String? = null,
-        openConsoleOnStart: Boolean = true,
-        renderOnStart: Boolean = true,
-        keepCurrentFocus: Boolean = false
-    ) {
-        if (previousState.status == RecipeRunStatus.Failed || previousState.status == RecipeRunStatus.BridgeUnavailable) {
-            diagnostics.logLifecycleEvent(recipe, "retry", previousState.runId, previousState.pid, previousState.status.name)
-        }
-        if (previousState.hasRunBinding()) {
-            diagnostics.logLifecycleEvent(
-                recipe,
-                "cleanup_skipped",
-                previousState.runId,
-                previousState.pid,
-                previousState.status.name,
-                previousState.lastMeaningfulOutput,
-                previousState.lastError
-            )
-        }
-        CardRunStore.start(
-            recipe = recipe,
-            instanceId = preferredInstanceId ?: activeRunInstanceIds[recipe.id] ?: recipe.id,
-            parentInstanceId = previousState.parentInstanceId,
-            ownerKind = previousState.ownerKind,
-            stepId = previousState.stepId
-        ).also {
-            activeRunInstanceIds[recipe.id] = it.instanceId
-            runtimeStates[recipe.id] = it
-        }
-        val firstStep = recipe.steps.firstOrNull()
-        val initialSurface = firstStep?.let { surfaceForStep(it) } ?: CardRunSurface.Summary
-        val deferInitialSurfaceUntilTerminalReady =
-            firstStep?.type == KiteRecipe.STEP_TERMINAL && (this is CardRunActivity || !openConsoleOnStart)
-        diagnostics.logRecipeAction(
-            recipe,
-            "recipe_sequence_start",
-            mapOf(
-                "steps" to recipe.steps.joinToString(" -> ") { it.type },
-                "initialSurface" to initialSurface.name,
-                "deferInitialSurface" to deferInitialSurfaceUntilTerminalReady.toString()
-            )
-        )
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Starting,
-            surface = initialSurface,
-            currentStepIndex = 0,
-            lastMeaningfulOutput = "正在启动流程"
-        )
-        if (!renderOnStart) {
-            if (!keepCurrentFocus) {
-                focusedRunRecipeId = recipe.id
-                focusedRunInstanceId = activeRunInstanceIds[recipe.id]
-            }
-        } else if (openConsoleOnStart && this !is CardRunActivity) {
-            showConsole()
-        } else {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = activeRunInstanceIds[recipe.id]
-            if (!deferInitialSurfaceUntilTerminalReady) {
-                showCardRunSurface(recipe)
-            } else {
-                showCardRunLoadingSurface(recipe, "正在准备终端")
-            }
-        }
-        executeRecipeStep(recipe, stepIndex = 0)
-    }
 
-    private fun runUbuntuStepWhenReady(
-        recipe: KiteRecipe,
-        stepIndex: Int,
-        runId: String?,
-        pid: String?,
-        surface: CardRunSurface,
-        onReady: () -> Unit
-    ) {
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Running,
-            surface = surface,
-            currentStepIndex = stepIndex,
-            runId = runId,
-            pid = pid,
-            lastMeaningfulOutput = "正在准备 Ubuntu",
-            clearNextActionUrl = true
-        )
-        setUbuntuRuntimeState(
-            UbuntuRuntimeUiState(
-                title = "\u6b63\u5728\u90e8\u7f72 Ubuntu",
-                detail = "当前步骤需要 Ubuntu，正在检查系统镜像、工作区和容器。",
-                blocksUbuntuActions = true,
-                isProblem = false,
-                showProgress = true,
-                progressText = "正在检查系统镜像"
-            )
-        )
-        thread(name = "KiteUbuntuPreflight", isDaemon = true) {
-            val context = applicationContext
-            val ready = runCatching {
-                val baseReady = WorkSurfaceRuntimeBridge.isBaseImageReady(context)
-                diagnostics.logBridgeEvent(
-                    "ubuntu_preflight_start",
-                    recipe,
-                    mapOf("baseImageReady" to baseReady.toString())
-                )
-                WorkSurfaceRuntimeBridge.ensureBaseImageReady(context)
-                runOnUiThread {
-                    setUbuntuRuntimeState(
-                        UbuntuRuntimeUiState(
-                            title = "\u6b63\u5728\u51c6\u5907 Ubuntu \u5de5\u4f5c\u533a",
-                            detail = "\u7cfb\u7edf\u955c\u50cf\u5df2\u5c31\u7eea\uff0c\u6b63\u5728\u521d\u59cb\u5316\u9ed8\u8ba4\u7a7a\u95f4\u548c\u5bb9\u5668\u3002",
-                            blocksUbuntuActions = true,
-                            isProblem = false,
-                            showProgress = true,
-                            progressText = "正在准备工作区"
-                        )
-                    )
-                }
-                KFWorkspaceManager.ensureDefaultSpace(context)
-                WorkSurfaceRuntimeBridge.ensureDefaultContainer(context)
-                TerminalRuntimeHost.refreshRuntimeSnapshot(context)
-                diagnostics.logBridgeEvent("ubuntu_preflight_ok", recipe)
-            }
-            ready.onSuccess {
-                runOnUiThread { setUbuntuRuntimeState(UbuntuRuntimeUiState.hidden()) }
-                runOnUiThread { onReady() }
-            }.onFailure { error ->
-                val message = "Ubuntu \u73af\u5883\u672a\u5c31\u7eea: ${error.message ?: error.javaClass.simpleName}"
-                runOnUiThread {
-                    setUbuntuRuntimeState(
-                        UbuntuRuntimeUiState(
-                            title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u90e8\u7f72\u5931\u8d25",
-                            detail = message,
-                            blocksUbuntuActions = false,
-                            isProblem = true
-                        )
-                    )
-                    setRuntimeState(
-                        recipe,
-                        RecipeRunStatus.BridgeUnavailable,
-                        currentStepIndex = stepIndex,
-                        runId = runId,
-                        pid = pid,
-                        lastError = message
-                    )
-                    diagnostics.logBridgeEvent(
-                        "ubuntu_preflight_failed",
-                        recipe,
-                        mapOf("message" to message.take(500))
-                    )
-                    markResourceInstallFailed(recipe, runId, message)
-                    toastIfNotResourceRecipe(recipe, message.take(120))
-                    showRunSurfaceOrConsole(recipe)
-                }
-            }
-        }
-    }
 
-    private fun executeRecipeStep(
-        recipe: KiteRecipe,
-        stepIndex: Int,
-        runId: String? = null,
-        pid: String? = null,
-        lastOutput: String? = null
-    ) {
-        val steps = recipe.steps
-        if (stepIndex >= steps.size) {
-            markResourceRunSuccess(recipe, runId, lastOutput)
-            setRuntimeState(
-                recipe,
-                finishedRecipeStatus(recipe, pid),
-                surface = CardRunSurface.Report,
-                currentStepIndex = stepIndex,
-                runId = runId,
-                pid = pid,
-                lastMeaningfulOutput = lastOutput ?: "流程已完成"
-            )
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
 
-        val step = steps[stepIndex]
-        when (step.type) {
-            KiteRecipe.STEP_SHELL -> runUbuntuStepWhenReady(recipe, stepIndex, runId, pid, CardRunSurface.Report) {
-                executeShellRecipeStep(recipe, step, stepIndex, runId, pid)
-            }
-            KiteRecipe.STEP_TERMINAL -> runUbuntuStepWhenReady(recipe, stepIndex, runId, pid, CardRunSurface.Terminal) {
-                executeTerminalRecipeStep(recipe, step, stepIndex)
-            }
-            KiteRecipe.STEP_X11 -> runUbuntuStepWhenReady(recipe, stepIndex, runId, pid, CardRunSurface.X11) {
-                executeX11RecipeStep(recipe, step, stepIndex, runId, pid)
-            }
-            KiteRecipe.STEP_OPEN_WEB -> {
-                val url = step.url.orEmpty().ifBlank { recipe.defaultUrl }
-                if (url.isBlank()) {
-                    setRuntimeState(
-                        recipe,
-                        RecipeRunStatus.Failed,
-                        currentStepIndex = stepIndex,
-                        runId = runId,
-                        pid = pid,
-                        lastError = "open_web_missing_url"
-                    )
-                    markResourceInstallFailed(recipe, runId, "open_web_missing_url")
-                    toastIfNotResourceRecipe(recipe, "打开网页步骤缺少地址")
-                    showRunSurfaceOrConsole(recipe)
-                    return
-                }
-                val hostedByInstallWizard = resourceInstallWizardShouldHost(recipe)
-                val openSurface = shouldOpenStepSurface(recipe, step)
-                val waitForUserSignal = (openSurface && shouldRenderInCardRun(recipe)) ||
-                    (hostedByInstallWizard && KiteRecipe.normalizeSurfaceMode(step.surfaceMode) != KiteRecipe.SURFACE_MODE_SILENT)
-                setRuntimeState(
-                    recipe,
-                    if (!pid.isNullOrBlank()) RecipeRunStatus.Running else RecipeRunStatus.Opened,
-                    surface = CardRunSurface.Web,
-                    currentStepIndex = stepIndex,
-                    runId = runId,
-                    pid = pid,
-                    lastMeaningfulOutput = lastOutput,
-                    nextActionUrl = url
-                )
-                if (openSurface) {
-                    if (shouldRenderInCardRun(recipe)) {
-                        focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
-                        showCardRunSurface(recipe)
-                    } else {
-                        openWeb(url, "recipe_sequence", recipe)
-                    }
-                } else if (hostedByInstallWizard) {
-                    renderResourceInstallWizardFor(recipe)
-                } else {
-                    diagnostics.logRecipeAction(
-                        recipe,
-                        "open_web_surface_suppressed",
-                        mapOf(
-                            "stepIndex" to stepIndex.toString(),
-                            "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(url)
-                        )
-                    )
-                }
-                if (stepIndex < steps.lastIndex) {
-                    if (waitForUserSignal) {
-                        diagnostics.logRecipeAction(
-                            recipe,
-                            "open_web_waiting_for_user_completion",
-                            mapOf("stepIndex" to stepIndex.toString(), "nextStepIndex" to (stepIndex + 1).toString())
-                        )
-                    } else {
-                        executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput)
-                    }
-                } else if (!openSurface && !waitForUserSignal) {
-                    showRunSurfaceOrConsole(recipe)
-                }
-            }
-            KiteRecipe.STEP_ANDROID_ACTION -> executeAndroidRecipeStep(recipe, step, stepIndex, runId, pid, lastOutput)
-            else -> {
-                setRuntimeState(
-                    recipe,
-                    RecipeRunStatus.Failed,
-                    surface = surfaceForStep(step),
-                    currentStepIndex = stepIndex,
-                    runId = runId,
-                    pid = pid,
-                    lastError = "unsupported_step:${step.type}"
-                )
-                markResourceInstallFailed(recipe, runId, "unsupported_step:${step.type}")
-                toastIfNotResourceRecipe(recipe, "暂不支持的步骤：${step.type}")
-                showRunSurfaceOrConsole(recipe)
-            }
-        }
-    }
-
-    private fun surfaceForStep(step: KiteRecipeStep): CardRunSurface = when (step.type) {
-        KiteRecipe.STEP_OPEN_WEB -> CardRunSurface.Web
-        KiteRecipe.STEP_TERMINAL -> CardRunSurface.Terminal
-        KiteRecipe.STEP_X11 -> CardRunSurface.X11
-        KiteRecipe.STEP_SHELL,
-        KiteRecipe.STEP_ANDROID_ACTION -> CardRunSurface.Report
-        else -> CardRunSurface.Summary
-    }
 
     private fun shouldRenderInCardRun(recipe: KiteRecipe): Boolean =
         this is CardRunActivity && focusedRunRecipeId == recipe.id
@@ -11549,20 +10777,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun showConsoleUnlessEditingRecipe(recipe: KiteRecipe) {
-        if (currentScreen == AppDestination.CreateConfig || currentScreen == AppDestination.RecipeMore) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
-        } else {
-            showConsole()
-        }
-    }
 
-    private fun toastIfNotResourceRecipe(recipe: KiteRecipe, message: String) {
-        if (!recipeUsesResourceInlineStatus(recipe)) {
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-        }
-    }
 
     private fun shouldOpenStepSurface(recipe: KiteRecipe, step: KiteRecipeStep): Boolean {
         if (resourceRunSurfaceSuppressed(recipe)) return false
@@ -11583,742 +10798,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun executeShellRecipeStep(
-        recipe: KiteRecipe,
-        step: KiteRecipeStep,
-        stepIndex: Int,
-        previousRunId: String?,
-        previousPid: String?
-    ) {
-        val instanceId = ensureRunInstanceId(recipe)
-        if (step.cmd.isNullOrBlank()) {
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Failed,
-                surface = CardRunSurface.Report,
-                currentStepIndex = stepIndex,
-                runId = previousRunId,
-                pid = previousPid,
-                lastError = "shell_missing_command"
-            )
-            markResourceInstallFailed(recipe, previousRunId, "shell_missing_command")
-            toastIfNotResourceRecipe(recipe, "sh 命令步骤缺少命令")
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
-        val stepRecipe = recipe.copy(
-            execution = KiteExecution.steps(listOf(step)),
-            actions = linkedMapOf(
-                KiteRecipe.ACTION_START to KiteRecipeAction(
-                    id = KiteRecipe.ACTION_START,
-                    steps = listOf(step),
-                    expected = step.expected ?: recipe.expected
-                )
-            ),
-            expected = step.expected ?: recipe.expected
-        )
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Running,
-            surface = CardRunSurface.Report,
-            currentStepIndex = stepIndex,
-            runId = previousRunId,
-            pid = previousPid,
-            lastMeaningfulOutput = "正在执行 sh：${step.cmd.take(80)}",
-            shellReportText = "命令：${step.cmd}\n结果：执行中",
-            clearNextActionUrl = true
-        )
-        if (shouldOpenStepSurface(recipe, step)) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = instanceId
-            showCardRunSurface(recipe)
-        } else if (!renderResourceInstallWizardFor(recipe) && !resourceRunSurfaceSuppressed(recipe)) {
-            showConsoleUnlessEditingRecipe(recipe)
-        }
-        bridgeClient.runRecipe(
-            stepRecipe,
-            extraEnv = KiteBrowserProxyInstaller.environment(
-                context = applicationContext,
-                recipeId = recipe.id,
-                instanceId = instanceId,
-                source = "shell_step"
-            ),
-            onProgress = { progress ->
-                runOnUiThread { handleShellProgress(recipe, step, stepIndex, progress) }
-            }
-        ) { result ->
-            runOnUiThread {
-                handleSequenceShellResult(recipe, stepIndex, result)
-            }
-        }
-    }
 
-    private fun handleShellProgress(
-        recipe: KiteRecipe,
-        step: KiteRecipeStep,
-        stepIndex: Int,
-        progress: BridgeProgress
-    ) {
-        if (progress.recipeId != recipe.id) return
-        val state = runtimeStates[recipe.id] ?: CardRunStore.currentForRecipe(recipe.id) ?: return
-        if (state.currentStepIndex != stepIndex || state.status != RecipeRunStatus.Running) return
-        val output = progress.outputTail.normalizeShellStreamForDisplay()
-        val reportText = buildStreamingShellReport(step, output)
-        if (state.hasActiveX11Handoff(stepIndex)) {
-            val updated = CardRunStore.update(
-                recipe = recipe,
-                status = RecipeRunStatus.Running,
-                instanceId = state.instanceId,
-                surface = CardRunSurface.X11,
-                currentStepIndex = stepIndex,
-                runId = progress.runId,
-                pid = progress.pid,
-                rootPid = progress.rootPid,
-                processGroupId = progress.processGroupId,
-                systemSessionId = progress.systemSessionId,
-                lastMeaningfulOutput = progress.lastMeaningfulOutput.ifBlank { "X11 桌面运行中" },
-                shellReportText = reportText,
-                x11Display = state.x11Display,
-                x11SocketPath = state.x11SocketPath
-            )
-            runtimeStates[recipe.id] = updated
-            resourceInstallWizardSurface?.tick()
-            return
-        }
-        val updated = CardRunStore.update(
-            recipe = recipe,
-            status = RecipeRunStatus.Running,
-            instanceId = state.instanceId,
-            surface = CardRunSurface.Report,
-            currentStepIndex = stepIndex,
-            runId = progress.runId,
-            pid = progress.pid,
-            rootPid = progress.rootPid,
-            processGroupId = progress.processGroupId,
-            systemSessionId = progress.systemSessionId,
-            lastMeaningfulOutput = progress.lastMeaningfulOutput.ifBlank { "正在执行 sh" },
-            shellReportText = reportText
-        )
-        runtimeStates[recipe.id] = updated
-        updateVisibleCardRunReport(updated)
-        resourceInstallWizardSurface?.tick()
-    }
 
-    private fun RecipeRuntimeState.hasActiveX11Handoff(stepIndex: Int): Boolean =
-        status == RecipeRunStatus.Running &&
-            currentStepIndex == stepIndex &&
-            surface == CardRunSurface.X11 &&
-            !x11Display.isNullOrBlank()
 
-    private fun buildStreamingShellReport(step: KiteRecipeStep, output: String): String =
-        buildString {
-            append("命令：").append(step.cmd.orEmpty()).append('\n')
-            append("结果：执行中")
-            if (output.isNotBlank()) {
-                append("\n原始输出：\n").append(output)
-            }
-        }
 
-    private fun executeAndroidRecipeStep(
-        recipe: KiteRecipe,
-        step: KiteRecipeStep,
-        stepIndex: Int,
-        runId: String?,
-        pid: String?,
-        lastOutput: String?
-    ) {
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Running,
-            surface = CardRunSurface.Report,
-            currentStepIndex = stepIndex,
-            runId = runId,
-            pid = pid,
-            lastMeaningfulOutput = "正在执行安卓动作：${step.action.orEmpty()}",
-            clearNextActionUrl = true
-        )
-        when (step.action) {
-            KiteRecipe.ANDROID_ACTION_PREPARE_AI_ENV -> {
-                ToolchainPackInstaller.prepareAiEnv(applicationContext)
-                executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput ?: "安卓动作完成：prepare_ai_env")
-            }
-            KiteRecipe.ANDROID_ACTION_TOOLCHAIN_DOCTOR -> {
-                ToolchainPackInstaller.doctor(applicationContext)
-                executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput ?: "安卓动作完成：toolchain_doctor")
-            }
-            KiteRecipe.ANDROID_ACTION_INSTALL_APK -> {
-                val response = handleInstallApkRequest(KiteInstallApkRequest(installApkPathFromStep(step), "recipe_sequence"))
-                if (response.accepted) {
-                    executeRecipeStep(recipe, stepIndex + 1, runId, pid, "已打开安装器：${response.resolvedPath}")
-                } else {
-                    setRuntimeState(
-                        recipe,
-                        RecipeRunStatus.Failed,
-                        surface = CardRunSurface.Report,
-                        currentStepIndex = stepIndex,
-                        runId = runId,
-                        pid = pid,
-                        lastError = response.error.ifBlank { "install_apk_failed" }
-                    )
-                    markResourceInstallFailed(recipe, runId, response.error.ifBlank { "install_apk_failed" })
-                    toastIfNotResourceRecipe(recipe, response.error.ifBlank { "install_apk_failed" })
-                    showRunSurfaceOrConsole(recipe)
-                }
-            }
-            else -> {
-                setRuntimeState(
-                    recipe,
-                    RecipeRunStatus.Failed,
-                    surface = CardRunSurface.Report,
-                    currentStepIndex = stepIndex,
-                    runId = runId,
-                    pid = pid,
-                    lastError = "unsupported_android_action"
-                )
-                markResourceInstallFailed(recipe, runId, "unsupported_android_action")
-                toastIfNotResourceRecipe(recipe, "unsupported_android_action")
-                showRunSurfaceOrConsole(recipe)
-            }
-        }
-    }
 
-    private fun handleSequenceShellResult(
-        recipe: KiteRecipe,
-        stepIndex: Int,
-        result: BridgeResult
-    ) {
-        val currentState = runtimeStates[recipe.id] ?: CardRunStore.currentForRecipe(recipe.id)
-        if (currentState?.currentStepIndex == stepIndex &&
-            (currentState.status == RecipeRunStatus.Stopping || currentState.status == RecipeRunStatus.Stopped)
-        ) {
-            diagnostics.logRecipeAction(
-                recipe,
-                "sequence_shell_result_ignored_after_stop",
-                mapOf("stepIndex" to stepIndex.toString(), "status" to currentState.status.name)
-            )
-            return
-        }
-        val report = result.runReport
-        if (report != null) diagnostics.writeRunReport(report)
-        val requestId = (report?.requestId ?: result.requestId).orEmpty()
-        val runId = report?.runId ?: result.requestId
-        val lastOutput = report?.lastMeaningfulOutput()
-        val shellReport = shellReportText(report, recipe)
-        val pid = report?.pid ?: extractPid(lastOutput) ?: extractPid(result.message)
-        val rootPid = report?.rootPid ?: pid
-        val processGroupId = report?.processGroupId
-        val systemSessionId = report?.systemSessionId
 
-        if (currentState != null && currentState.currentStepIndex > stepIndex) {
-            diagnostics.logRecipeAction(
-                recipe,
-                "sequence_shell_result_ignored_after_manual_continue",
-                mapOf(
-                    "stepIndex" to stepIndex.toString(),
-                    "currentStepIndex" to currentState.currentStepIndex.toString(),
-                    "requestId" to requestId,
-                    "runId" to runId.orEmpty()
-                )
-            )
-            return
-        }
-        val currentRunId = currentState?.runId
-        if (!currentRunId.isNullOrBlank() && !runId.isNullOrBlank() && currentRunId != runId) {
-            diagnostics.logRecipeAction(
-                recipe,
-                "sequence_shell_result_ignored_for_stale_run",
-                mapOf(
-                    "stepIndex" to stepIndex.toString(),
-                    "currentRunId" to currentRunId,
-                    "incomingRunId" to runId,
-                    "requestId" to requestId
-                )
-            )
-            return
-        }
 
-        if (result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE) {
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.BridgeUnavailable,
-                currentStepIndex = stepIndex,
-                runId = runId,
-                pid = pid,
-                rootPid = rootPid,
-                processGroupId = processGroupId,
-                systemSessionId = systemSessionId,
-                shellReportText = shellReport,
-                lastError = result.message
-            )
-            diagnostics.logRecipeAction(recipe, "sequence_shell_bridge_unavailable", mapOf("requestId" to requestId))
-            markResourceInstallFailed(recipe, runId, result.message.ifBlank { "Ubuntu 命令通道不可用" })
-            toastIfNotResourceRecipe(recipe, "Ubuntu 命令通道不可用")
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
 
-        if (report?.hasMismatch() == true || report?.ok == false || report?.status == KiteRunReport.STATUS_FAILED || (!result.ok && !result.accepted)) {
-            val message = report?.lastMeaningfulOutput() ?: result.message.ifBlank { "sh 命令执行失败" }
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Failed,
-                currentStepIndex = stepIndex,
-                runId = runId,
-                pid = pid,
-                rootPid = rootPid,
-                processGroupId = processGroupId,
-                systemSessionId = systemSessionId,
-                lastMeaningfulOutput = lastOutput,
-                shellReportText = shellReport,
-                lastError = message
-            )
-            diagnostics.logRecipeAction(
-                recipe,
-                "sequence_shell_failed",
-                mapOf("requestId" to requestId, "status" to result.status, "message" to message.take(500))
-            )
-            markResourceInstallFailed(recipe, runId, message)
-            toastIfNotResourceRecipe(recipe, message.take(120))
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
 
-        diagnostics.logRecipeAction(
-            recipe,
-            "sequence_shell_ok",
-            mapOf("requestId" to requestId, "status" to result.status, "stepIndex" to stepIndex.toString())
-        )
-        if (currentState?.hasActiveX11Handoff(stepIndex) == true &&
-            (result.accepted || result.status == KiteRunReport.STATUS_RUNNING || report?.status == KiteRunReport.STATUS_RUNNING)
-        ) {
-            val updated = CardRunStore.update(
-                recipe = recipe,
-                status = RecipeRunStatus.Running,
-                instanceId = currentState.instanceId,
-                surface = CardRunSurface.X11,
-                currentStepIndex = stepIndex,
-                runId = runId,
-                pid = pid,
-                rootPid = rootPid,
-                processGroupId = processGroupId,
-                systemSessionId = systemSessionId,
-                lastMeaningfulOutput = lastOutput ?: "X11 桌面运行中",
-                shellReportText = shellReport,
-                x11Display = currentState.x11Display,
-                x11SocketPath = currentState.x11SocketPath
-            )
-            runtimeStates[recipe.id] = updated
-            diagnostics.logRecipeAction(
-                recipe,
-                "sequence_shell_x11_handoff_preserved",
-                mapOf(
-                    "requestId" to requestId,
-                    "stepIndex" to stepIndex.toString(),
-                    "instanceId" to currentState.instanceId,
-                    "display" to currentState.x11Display.orEmpty()
-                )
-            )
-            resourceInstallWizardSurface?.tick()
-            return
-        }
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Running,
-            surface = CardRunSurface.Report,
-            currentStepIndex = stepIndex,
-            runId = runId,
-            pid = pid,
-            rootPid = rootPid,
-            processGroupId = processGroupId,
-            systemSessionId = systemSessionId,
-            lastMeaningfulOutput = lastOutput,
-            shellReportText = shellReport
-        )
-        executeRecipeStep(recipe, stepIndex + 1, runId, pid, lastOutput)
-    }
 
-    private fun executeX11RecipeStep(
-        recipe: KiteRecipe,
-        step: KiteRecipeStep,
-        stepIndex: Int,
-        previousRunId: String?,
-        previousPid: String?
-    ) {
-        val instanceId = ensureRunInstanceId(recipe)
-        val command = step.cmd.orEmpty().ifBlank { step.text.orEmpty() }
-        if (command.isBlank()) {
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Failed,
-                instanceId = instanceId,
-                surface = CardRunSurface.Report,
-                currentStepIndex = stepIndex,
-                runId = previousRunId,
-                pid = previousPid,
-                lastError = "x11_missing_command"
-            )
-            markResourceInstallFailed(recipe, previousRunId, "x11_missing_command")
-            toastIfNotResourceRecipe(recipe, "X11 步骤缺少命令")
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
-        val binding = CardRunStore.get(instanceId)?.x11Display?.let { KiteX11SurfacePlan.binding(it) }
-            ?: KiteX11SurfacePlan.allocate(
-                instanceId = instanceId,
-                occupiedDisplays = CardRunStore.snapshot()
-                    .filterNot { it.instanceId == instanceId }
-                    .mapNotNull { it.x11Display }
-                    .toSet()
-            )
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Running,
-            instanceId = instanceId,
-            surface = CardRunSurface.Report,
-            currentStepIndex = stepIndex,
-            runId = previousRunId,
-            pid = previousPid,
-            lastMeaningfulOutput = "${x11TaskTitle(recipe)} native X11 准备中",
-            x11Display = binding.display,
-            x11SocketPath = binding.socketPath,
-            clearNextActionUrl = true
-        )
-        if (shouldOpenStepSurface(recipe, step)) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = instanceId
-            showCardRunLoadingSurface(recipe, "正在准备 X11")
-        }
-        thread(name = "KiteX11Start-${recipe.id.take(32)}", isDaemon = true) {
-            val x11Start = KiteX11SurfaceServer.ensureStarted(applicationContext, binding)
-            runOnUiThread {
-                if (x11Start.isFailure) {
-                    val message = x11Start.exceptionOrNull()?.message ?: "native X11 启动失败"
-                    setRuntimeState(
-                        recipe,
-                        RecipeRunStatus.Failed,
-                        instanceId = instanceId,
-                        surface = CardRunSurface.Report,
-                        currentStepIndex = stepIndex,
-                        runId = previousRunId,
-                        pid = previousPid,
-                        lastError = message,
-                        x11Display = binding.display,
-                        x11SocketPath = binding.socketPath
-                    )
-                    markResourceInstallFailed(recipe, previousRunId, message)
-                    toastIfNotResourceRecipe(recipe, message.take(120))
-                    showRunSurfaceOrConsole(recipe)
-                    return@runOnUiThread
-                }
-                launchX11RecipeStep(
-                    recipe = recipe,
-                    step = step,
-                    stepIndex = stepIndex,
-                    instanceId = instanceId,
-                    command = command,
-                    binding = binding,
-                    previousRunId = previousRunId,
-                    previousPid = previousPid
-                )
-            }
-        }
-    }
 
-    private fun launchX11RecipeStep(
-        recipe: KiteRecipe,
-        step: KiteRecipeStep,
-        stepIndex: Int,
-        instanceId: String,
-        command: String,
-        binding: com.kite.app.run.KiteX11SurfaceBinding,
-        previousRunId: String?,
-        previousPid: String?
-    ) {
-        val openSurface = shouldOpenStepSurface(recipe, step)
-        val waitForUserSignal = openSurface && shouldRenderInCardRun(recipe)
-        val title = x11TaskTitle(recipe)
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Running,
-            instanceId = instanceId,
-            surface = CardRunSurface.X11,
-            currentStepIndex = stepIndex,
-            runId = previousRunId,
-            pid = previousPid,
-            lastMeaningfulOutput = "$title native X11 启动中",
-            x11Display = binding.display,
-            x11SocketPath = binding.socketPath,
-            clearNextActionUrl = true
-        )
-        if (openSurface) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = instanceId
-            showCardRunSurface(recipe)
-        }
-        val x11Step = step.copy(
-            type = KiteRecipe.STEP_SHELL,
-            cmd = command,
-            runMode = step.runMode ?: KiteRecipe.RUN_MODE_DETACHED
-        )
-        val stepRecipe = recipe.copy(
-            execution = KiteExecution.steps(listOf(x11Step)),
-            actions = linkedMapOf(
-                KiteRecipe.ACTION_START to KiteRecipeAction(
-                    id = KiteRecipe.ACTION_START,
-                    steps = listOf(x11Step),
-                    expected = step.expected ?: recipe.expected
-                )
-            ),
-            expected = step.expected ?: recipe.expected
-        )
-        bridgeClient.runRecipe(
-            stepRecipe,
-            extraEnv = KiteBrowserProxyInstaller.environment(
-                context = applicationContext,
-                recipeId = recipe.id,
-                instanceId = instanceId,
-                source = "x11_step"
-            ) + binding.environment(),
-            onProgress = { progress ->
-                runOnUiThread {
-                    handleX11Progress(recipe, stepIndex, binding, progress)
-                }
-            }
-        ) { result ->
-            runOnUiThread {
-                handleX11Result(recipe, stepIndex, instanceId, binding, result, waitForUserSignal)
-            }
-        }
-    }
-
-    private fun handleX11Progress(
-        recipe: KiteRecipe,
-        stepIndex: Int,
-        binding: com.kite.app.run.KiteX11SurfaceBinding,
-        progress: BridgeProgress
-    ) {
-        if (progress.recipeId != recipe.id) return
-        val state = runtimeStates[recipe.id] ?: CardRunStore.currentForRecipe(recipe.id) ?: return
-        if (state.currentStepIndex != stepIndex || state.surface != CardRunSurface.X11) return
-        val updated = CardRunStore.update(
-            recipe = recipe,
-            status = RecipeRunStatus.Running,
-            instanceId = state.instanceId,
-            surface = CardRunSurface.X11,
-            currentStepIndex = stepIndex,
-            runId = progress.runId,
-            pid = progress.pid,
-            rootPid = progress.rootPid,
-            processGroupId = progress.processGroupId,
-            systemSessionId = progress.systemSessionId,
-            lastMeaningfulOutput = progress.lastMeaningfulOutput.ifBlank { "${x11TaskTitle(recipe)} native X11 运行中" },
-            x11Display = binding.display,
-            x11SocketPath = binding.socketPath
-        )
-        runtimeStates[recipe.id] = updated
-    }
-
-    private fun handleX11Result(
-        recipe: KiteRecipe,
-        stepIndex: Int,
-        instanceId: String,
-        binding: com.kite.app.run.KiteX11SurfaceBinding,
-        result: BridgeResult,
-        waitForUserSignal: Boolean
-    ) {
-        val report = result.runReport
-        val runId = report?.runId ?: result.requestId
-        val lastOutput = report?.lastMeaningfulOutput() ?: result.message.take(500)
-        val status = when {
-            result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE -> RecipeRunStatus.BridgeUnavailable
-            result.accepted -> RecipeRunStatus.Running
-            else -> RecipeRunStatus.Failed
-        }
-        setRuntimeState(
-            recipe,
-            status,
-            instanceId = instanceId,
-            surface = if (status == RecipeRunStatus.Failed || status == RecipeRunStatus.BridgeUnavailable) CardRunSurface.Report else CardRunSurface.X11,
-            currentStepIndex = stepIndex,
-            runId = runId,
-            pid = report?.pid,
-            rootPid = report?.rootPid,
-            processGroupId = report?.processGroupId,
-            systemSessionId = report?.systemSessionId,
-            lastMeaningfulOutput = if (status == RecipeRunStatus.Running) {
-                val pid = report?.pid ?: report?.rootPid ?: report?.processGroupId ?: report?.systemSessionId
-                "${x11TaskTitle(recipe)} native X11 运行中${pid?.let { " pid=$it" }.orEmpty()}"
-            } else null,
-            lastError = if (status == RecipeRunStatus.Running) null else lastOutput.ifBlank { result.status },
-            x11Display = binding.display.takeIf { status == RecipeRunStatus.Running },
-            x11SocketPath = binding.socketPath.takeIf { status == RecipeRunStatus.Running }
-        )
-        if (status != RecipeRunStatus.Running) {
-            markResourceInstallFailed(recipe, runId, lastOutput.ifBlank { result.status })
-            toastIfNotResourceRecipe(recipe, lastOutput.take(120).ifBlank { "X11 启动失败" })
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
-        if (stepIndex < recipe.steps.lastIndex && !waitForUserSignal) {
-            executeRecipeStep(recipe, stepIndex + 1, runId, report?.pid, lastOutput)
-        } else {
-            showRunSurfaceOrConsole(recipe)
-        }
-    }
-
-    private fun executeTerminalRecipeStep(
-        recipe: KiteRecipe,
-        step: KiteRecipeStep,
-        stepIndex: Int
-    ) {
-        val text = step.text.orEmpty().ifBlank { step.cmd.orEmpty() }
-        val appContext = applicationContext
-        val instanceId = ensureRunInstanceId(recipe)
-        if (!resourceRunSurfaceSuppressed(recipe)) {
-            focusedRunInstanceId = instanceId
-        }
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Running,
-            instanceId = instanceId,
-            surface = CardRunSurface.Terminal,
-            currentStepIndex = stepIndex,
-            lastMeaningfulOutput = "正在创建终端",
-            clearNextActionUrl = true
-        )
-        val openSurface = shouldOpenStepSurface(recipe, step)
-        if (openSurface) {
-            showCardRunSurface(recipe)
-        }
-        diagnostics.logRecipeAction(
-            recipe,
-            "terminal_step_session_prepare",
-            mapOf("instanceId" to instanceId, "stepIndex" to stepIndex.toString())
-        )
-
-        thread(name = "KiteTerminalStep-${recipe.id.take(32)}", isDaemon = true) {
-            val recordResult = runCatching {
-                val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
-                val record = KFWorkspaceManager.createShellSession(
-                    context = appContext,
-                    spaceId = space.id,
-                    title = cardTerminalTitle(recipe, stepIndex),
-                    sourceLabel = recipe.name
-                )
-                TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
-                record
-            }
-            runOnUiThread {
-                val stillPreparing = CardRunStore.get(instanceId)?.let { current ->
-                    current.status == RecipeRunStatus.Running &&
-                        current.surface == CardRunSurface.Terminal &&
-                        current.currentStepIndex == stepIndex &&
-                        current.terminalSessionId.isNullOrBlank()
-                } == true
-                if (!stillPreparing) {
-                    diagnostics.logRecipeAction(
-                        recipe,
-                        "terminal_step_session_discarded",
-                        mapOf("instanceId" to instanceId, "stepIndex" to stepIndex.toString())
-                    )
-                    return@runOnUiThread
-                }
-
-                val record = recordResult.getOrElse { error ->
-                    val message = "创建终端失败：${error.message ?: error.javaClass.simpleName}"
-                    setRuntimeState(
-                        recipe,
-                        RecipeRunStatus.Failed,
-                        instanceId = instanceId,
-                        surface = CardRunSurface.Report,
-                        currentStepIndex = stepIndex,
-                        lastError = message
-                    )
-                    markResourceInstallFailed(recipe, null, message)
-                    toastIfNotResourceRecipe(recipe, message.take(120))
-                    if (!openSurface || (currentScreen == AppDestination.CardRun && focusedRunInstanceId == instanceId)) {
-                        showRunSurfaceOrConsole(recipe)
-                    }
-                    return@runOnUiThread
-                }
-
-                TerminalSessionStore.refresh(appContext, force = true)
-                pendingTerminalFlow = PendingTerminalFlow(
-                    recipeId = recipe.id,
-                    instanceId = instanceId,
-                    sessionId = record.id,
-                    nextStepIndex = stepIndex + 1
-                )
-                setRuntimeState(
-                    recipe,
-                    RecipeRunStatus.WaitingTerminal,
-                    instanceId = instanceId,
-                    surface = CardRunSurface.Terminal,
-                    currentStepIndex = stepIndex,
-                    runId = record.id,
-                    terminalSessionId = record.id,
-                    lastMeaningfulOutput = "等待终端完成：${record.title}",
-                    clearNextActionUrl = true
-                )
-                diagnostics.logRecipeAction(
-                    recipe,
-                    "terminal_step_started",
-                    mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
-                )
-                TerminalRuntimeHost.setLaunchEnvironmentOverrides(
-                    appContext = appContext,
-                    sessionId = record.id,
-                    overrides = KiteBrowserProxyInstaller.environment(
-                        context = appContext,
-                        recipeId = recipe.id,
-                        instanceId = instanceId,
-                        source = "terminal_step"
-                    ).withTerminalOwner(record.id, instanceId)
-                )
-                if (openSurface) {
-                    if (currentScreen == AppDestination.CardRun && focusedRunInstanceId == instanceId) {
-                        showCardRunSurface(recipe)
-                    }
-                } else {
-                    diagnostics.logRecipeAction(
-                        recipe,
-                        "terminal_surface_suppressed",
-                        mapOf("sessionId" to record.id, "stepIndex" to stepIndex.toString())
-                    )
-                    if (!renderResourceInstallWizardFor(recipe) && !resourceRunSurfaceSuppressed(recipe)) {
-                        showConsoleUnlessEditingRecipe(recipe)
-                    }
-                    TerminalRuntimeHost.switchToSession(appContext, record.id)
-                }
-                if (text.isNotBlank()) {
-                    root.postDelayed(
-                        {
-                            TerminalRuntimeHost.sendCommand(
-                                appContext = appContext,
-                                command = if (text.endsWith("\n")) text else "$text\n",
-                                sessionId = record.id
-                            )
-                        },
-                        TERMINAL_STEP_COMMAND_DELAY_MS
-                    )
-                }
-            }
-        }
-    }
-
-    private fun cardTerminalTitle(recipe: KiteRecipe, stepIndex: Int): String {
-        val recipeName = recipe.name.trim().ifBlank { "Kite 卡片" }
-        val terminalOrder = recipe.steps
-            .take(stepIndex + 1)
-            .count { it.type == KiteRecipe.STEP_TERMINAL }
-            .coerceAtLeast(1)
-        val suffix = if (recipe.steps.count { it.type == KiteRecipe.STEP_TERMINAL } > 1) {
-            "终端 $terminalOrder"
-        } else {
-            "终端"
-        }
-        return "$recipeName · $suffix"
-    }
 
     private fun Map<String, String>.withTerminalOwner(
         sessionId: String,
@@ -12350,11 +10840,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ?: fallbackState?.takeIf { it.recipeId == recipe.id }
             ?: CardRunStore.currentForRecipe(recipe.id)
             ?: return
-        if (recipeUsesProcessRunOrchestrator(recipe)) {
-            stopRecipeWithOrchestrator(recipe, previousState, navigateToConsole)
-            return
-        }
-        legacyStopRecipeByCardInstanceId(recipe, previousState, navigateToConsole)
+        stopRecipeWithOrchestrator(recipe, previousState, navigateToConsole)
     }
 
     private fun stopRecipeWithOrchestrator(
@@ -12394,730 +10880,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun legacyStopRecipeByCardInstanceId(
-        recipe: KiteRecipe,
-        previousState: RecipeRuntimeState,
-        navigateToConsole: Boolean
-    ) {
-        activeRunInstanceIds[recipe.id] = previousState.instanceId
-        runtimeStates[recipe.id] = previousState
-        diagnostics.logBridgeEvent(
-            "stop_card_instance_resolved",
-            recipe,
-            mapOf(
-                "cardInstanceId" to previousState.cardInstanceId,
-                "runId" to previousState.runId.orEmpty(),
-                "terminalSessionId" to previousState.terminalSessionId.orEmpty()
-            )
-        )
-        val terminalSessionId = previousState.terminalSessionId?.takeIf { it.isNotBlank() }
-        if (terminalSessionId == null &&
-            previousState.runId.isNullOrBlank() &&
-            previousState.pid.isNullOrBlank() &&
-            previousState.status == RecipeRunStatus.Opened
-        ) {
-            diagnostics.logBridgeEvent(
-                "stop_opened_web_local",
-                recipe,
-                mapOf("url" to previousState.nextActionUrl.orEmpty())
-            )
-            webView.stopLoading()
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Stopped,
-                instanceId = previousState.instanceId,
-                surface = CardRunSurface.Summary,
-                currentStepIndex = previousState.currentStepIndex,
-                lastMeaningfulOutput = "网页实例已关闭",
-                clearRunBinding = true,
-                clearNextActionUrl = true
-            )
-            closeCardRunInstanceForStop(recipe, previousState, "stop_opened_web")
-            if (navigateToConsole) showConsole()
-            return
-        }
-        if (terminalSessionId != null) {
-            pendingTerminalFlow = pendingTerminalFlow?.takeUnless {
-                it.recipeId == recipe.id && (it.sessionId == terminalSessionId || it.instanceId == previousState.instanceId)
-            }
-            diagnostics.logBridgeEvent(
-                "stop_terminal_session",
-                recipe,
-                mapOf("sessionId" to terminalSessionId, "runId" to previousState.runId.orEmpty())
-            )
-            TerminalRuntimeHost.sendCommand(applicationContext, "\u0003", terminalSessionId)
-            root.postDelayed(
-                { TerminalRuntimeHost.endSession(applicationContext, terminalSessionId) },
-                TERMINAL_STOP_GRACE_MS
-            )
-            if (previousState.hasProcessBindingForStop()) {
-                setRuntimeState(
-                    recipe,
-                    RecipeRunStatus.Stopping,
-                    instanceId = previousState.instanceId,
-                    runId = previousState.runId,
-                    terminalSessionId = terminalSessionId,
-                    pid = previousState.pid,
-                    rootPid = previousState.rootPid,
-                    processGroupId = previousState.processGroupId,
-                    systemSessionId = previousState.systemSessionId,
-                    lastMeaningfulOutput = previousState.lastMeaningfulOutput,
-                    nextActionUrl = previousState.nextActionUrl
-                )
-                if (navigateToConsole) showConsole()
-                val callback: (BridgeResult) -> Unit = { result ->
-                    runOnUiThread { handleStopResultV2(recipe, previousState, result, navigateToConsole = navigateToConsole) }
-                }
-                diagnostics.logBridgeEvent(
-                    "stop_terminal_process_request_sent",
-                    recipe,
-                    mapOf(
-                        "sessionId" to terminalSessionId,
-                        "runId" to previousState.runId.orEmpty(),
-                        "pid" to previousState.pid.orEmpty(),
-                        "rootPid" to previousState.rootPid.orEmpty(),
-                        "processGroupId" to previousState.processGroupId.orEmpty()
-                    )
-                )
-                bridgeClient.stopProcessBinding(
-                    recipe = recipe,
-                    runId = previousState.runId.orEmpty().ifBlank { previousState.instanceId },
-                    pid = previousState.pid,
-                    rootPid = previousState.rootPid,
-                    processGroupId = previousState.processGroupId,
-                    systemSessionId = previousState.systemSessionId,
-                    cardInstanceId = previousState.cardInstanceId,
-                    callback = callback
-                )
-                closeCardRunInstanceForStop(recipe, previousState, "stop_terminal_and_process_request_sent")
-                return
-            }
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Stopped,
-                instanceId = previousState.instanceId,
-                surface = CardRunSurface.Summary,
-                currentStepIndex = previousState.currentStepIndex,
-                lastMeaningfulOutput = "终端已发送中断并关闭",
-                clearRunBinding = true,
-                clearTerminalSession = true
-            )
-            closeCardRunInstanceForStop(recipe, previousState, "stop_terminal_session")
-            if (navigateToConsole) showConsole()
-            return
-        }
 
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Stopping,
-            instanceId = previousState.instanceId,
-            runId = previousState.runId,
-            pid = previousState.pid,
-            rootPid = previousState.rootPid,
-            processGroupId = previousState.processGroupId,
-            systemSessionId = previousState.systemSessionId,
-            lastMeaningfulOutput = previousState.lastMeaningfulOutput,
-            nextActionUrl = previousState.nextActionUrl
-        )
-        if (navigateToConsole) showConsole()
-        val callback: (BridgeResult) -> Unit = { result ->
-            runOnUiThread { handleStopResultV2(recipe, previousState, result, navigateToConsole = navigateToConsole) }
-        }
-        diagnostics.logBridgeEvent(
-            "stop_request_sent",
-            recipe,
-            mapOf(
-                "runId" to previousState.runId.orEmpty(),
-                "pid" to previousState.pid.orEmpty(),
-                "strategy" to if (!previousState.runId.isNullOrBlank()) "stop-run" else "stop-recipe"
-            )
-        )
-        if (!previousState.runId.isNullOrBlank()) {
-            bridgeClient.stopRun(
-                recipe = recipe,
-                runId = previousState.runId,
-                pid = previousState.pid,
-                rootPid = previousState.rootPid,
-                processGroupId = previousState.processGroupId,
-                systemSessionId = previousState.systemSessionId,
-                cardInstanceId = previousState.cardInstanceId,
-                callback = callback
-            )
-        } else {
-            diagnostics.logBridgeEvent(
-                "stop_missing_run_id_fallback",
-                recipe,
-                mapOf("recipeId" to recipe.id, "message" to "missing runId, fallback to stop-recipe")
-            )
-            bridgeClient.stopProcessBinding(
-                recipe = recipe,
-                runId = previousState.instanceId,
-                pid = previousState.pid,
-                rootPid = previousState.rootPid,
-                processGroupId = previousState.processGroupId,
-                systemSessionId = previousState.systemSessionId,
-                cardInstanceId = previousState.cardInstanceId,
-                callback = callback
-            )
-        }
-        closeCardRunInstanceForStop(recipe, previousState, "stop_request_sent")
-    }
 
-    private fun RecipeRuntimeState.hasProcessBindingForStop(): Boolean =
-        !pid.isNullOrBlank() ||
-            !rootPid.isNullOrBlank() ||
-            !processGroupId.isNullOrBlank() ||
-            !systemSessionId.isNullOrBlank()
 
-    private fun retryStopRequestAfterStableBridge(
-        recipe: KiteRecipe,
-        previousState: RecipeRuntimeState,
-        navigateToConsole: Boolean
-    ) {
-        diagnostics.logBridgeEvent("stop_timeout_bridge_stable_retry", recipe, mapOf("runId" to previousState.runId.orEmpty()))
-        val callback: (BridgeResult) -> Unit = { retryResult ->
-            runOnUiThread {
-                handleStopResultV2(
-                    recipe,
-                    previousState,
-                    retryResult,
-                    retriedAfterStableBridge = true,
-                    navigateToConsole = navigateToConsole
-                )
-            }
-        }
-        if (!previousState.runId.isNullOrBlank()) {
-            bridgeClient.stopRun(
-                recipe = recipe,
-                runId = previousState.runId,
-                pid = previousState.pid,
-                rootPid = previousState.rootPid,
-                processGroupId = previousState.processGroupId,
-                systemSessionId = previousState.systemSessionId,
-                cardInstanceId = previousState.cardInstanceId,
-                callback = callback
-            )
-        } else {
-            bridgeClient.stopProcessBinding(
-                recipe = recipe,
-                runId = previousState.instanceId,
-                pid = previousState.pid,
-                rootPid = previousState.rootPid,
-                processGroupId = previousState.processGroupId,
-                systemSessionId = previousState.systemSessionId,
-                cardInstanceId = previousState.cardInstanceId,
-                callback = callback
-            )
-        }
-    }
 
-    private fun handleStopResultV2(
-        recipe: KiteRecipe,
-        previousState: RecipeRuntimeState,
-        result: BridgeResult,
-        retriedAfterStableBridge: Boolean = false,
-        navigateToConsole: Boolean = true
-    ) {
-        activeRunInstanceIds[recipe.id] = previousState.instanceId
-        val report = result.runReport
-        if (report != null) diagnostics.writeRunReport(report)
-        diagnostics.logBridgeEvent(
-            "stop_response_parsed",
-            recipe,
-            mapOf(
-                "requestId" to result.requestId.orEmpty(),
-                "runId" to (report?.runId ?: previousState.runId).orEmpty(),
-                "status" to result.status,
-                "ok" to result.ok.toString(),
-                "errorType" to result.errorType.name,
-                "message" to result.message.take(500)
-            )
-        )
-        val stopRemaining = stopRemainingProcesses(result)
-        if (stopRemaining.isNotEmpty()) {
-            diagnostics.logBridgeEvent(
-                "stop_residue_detected",
-                recipe,
-                mapOf("remaining" to stopRemaining.joinToString(","))
-            )
-        }
-        if (stopRemaining.isEmpty() && stopLooksLikeManualKill(result)) {
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Stopped,
-                instanceId = previousState.instanceId,
-                surface = CardRunSurface.Summary,
-                lastMeaningfulOutput = "已停止",
-                clearRunBinding = true,
-                clearTerminalSession = true,
-                clearNextActionUrl = true
-            )
-            diagnostics.logBridgeEvent("stop_killed_output_suppressed", recipe, mapOf("runId" to previousState.runId.orEmpty()))
-            closeCardRunInstanceForStop(recipe, previousState, "stop_killed_output_suppressed")
-            if (navigateToConsole) showConsole()
-            return
-        }
-        if (stopRemaining.isEmpty() && (result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Stopped,
-                instanceId = previousState.instanceId,
-                surface = CardRunSurface.Summary,
-                lastMeaningfulOutput = if (stopResidueMarkerSeen(result)) {
-                    "已停止，未发现进程残留"
-                } else {
-                    result.runReport?.lastMeaningfulOutput() ?: "已停止"
-                },
-                clearRunBinding = true,
-                clearTerminalSession = true,
-                clearNextActionUrl = true
-            )
-            diagnostics.logBridgeEvent("stop_success", recipe, mapOf("runId" to previousState.runId.orEmpty()))
-            closeCardRunInstanceForStop(recipe, previousState, "stop_success")
-            if (navigateToConsole) showConsole()
-            return
-        }
 
-        if (result.errorType == BridgeErrorType.Timeout && !retriedAfterStableBridge) {
-            diagnostics.logBridgeEvent("stop_timeout", recipe, mapOf("runId" to previousState.runId.orEmpty()))
-            bridgeClient.checkStatus { status ->
-                runOnUiThread {
-                    if (status.ok || status.accepted) {
-                        retryStopRequestAfterStableBridge(recipe, previousState, navigateToConsole)
-                    } else {
-                        diagnostics.logBridgeEvent("stop_connection_error", recipe, mapOf("message" to status.message.take(500)))
-                        setRuntimeState(
-                            recipe,
-                            RecipeRunStatus.BridgeUnavailable,
-                            instanceId = previousState.instanceId,
-                            runId = previousState.runId,
-                            pid = previousState.pid,
-                            rootPid = previousState.rootPid,
-                            processGroupId = previousState.processGroupId,
-                            systemSessionId = previousState.systemSessionId,
-                            lastError = "Bridge 连接失败"
-                        )
-                        if (navigateToConsole) showConsole()
-                    }
-                }
-            }
-            return
-        }
 
-        val errorMessage = when (result.errorType) {
-            BridgeErrorType.Timeout -> {
-                diagnostics.logBridgeEvent("stop_timeout", recipe, mapOf("runId" to previousState.runId.orEmpty()))
-                "停止超时，Bridge 未及时响应"
-            }
-            BridgeErrorType.ConnectionError -> {
-                diagnostics.logBridgeEvent("stop_connection_error", recipe, mapOf("message" to result.message.take(500)))
-                "Bridge 连接失败"
-            }
-            BridgeErrorType.UnsupportedEndpoint -> {
-                diagnostics.logBridgeEvent("stop_unsupported_endpoint", recipe, mapOf("message" to result.message.take(500)))
-                "停止接口暂不可用"
-            }
-            BridgeErrorType.ParseError -> {
-                diagnostics.logBridgeEvent("stop_parse_error", recipe, mapOf("raw" to result.rawBody.take(1000)))
-                "停止响应解析失败"
-            }
-            BridgeErrorType.BridgeFailed, BridgeErrorType.None -> {
-                diagnostics.logBridgeEvent("stop_bridge_failed", recipe, mapOf("message" to result.message.take(500)))
-                if (stopRemaining.isNotEmpty()) {
-                    "停止后仍有进程残留：${stopRemaining.joinToString(",")}"
-                } else {
-                    result.runReport?.lastMeaningfulOutput() ?: result.message.ifBlank { "Bridge 返回停止失败" }
-                }
-            }
-        }
-        diagnostics.logLifecycleEvent(
-            recipe,
-            "stop_failed",
-            previousState.runId,
-            previousState.pid,
-            previousState.status.name,
-            previousState.lastMeaningfulOutput,
-            errorMessage
-        )
-        runtimeStates[recipe.id] = CardRunStore.update(
-            recipe = recipe,
-            status = previousState.status,
-            instanceId = previousState.instanceId,
-            currentStepIndex = previousState.currentStepIndex,
-            runId = previousState.runId,
-            terminalSessionId = previousState.terminalSessionId,
-            pid = previousState.pid,
-            rootPid = previousState.rootPid,
-            processGroupId = previousState.processGroupId,
-            systemSessionId = previousState.systemSessionId,
-            lastMeaningfulOutput = previousState.lastMeaningfulOutput,
-            lastError = errorMessage,
-            nextActionUrl = previousState.nextActionUrl
-        )
-        Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show()
-        if (navigateToConsole) showConsole()
-    }
 
-    private fun stopRemainingProcesses(result: BridgeResult): List<String> =
-        stopObservationText(result)
-            .lineSequence()
-            .map { it.trim() }
-            .filter { it.startsWith("__kite_stop_remaining:") }
-            .lastOrNull()
-            ?.substringAfter(':')
-            ?.split(',')
-            .orEmpty()
-            .map { it.trim() }
-            .filter { it.matches(Regex("\\d+")) }
-            .distinct()
 
-    private fun stopResidueMarkerSeen(result: BridgeResult): Boolean =
-        stopObservationText(result)
-            .lineSequence()
-            .map { it.trim() }
-            .any { it.startsWith("__kite_stop_remaining:") }
 
-    private fun stopLooksLikeManualKill(result: BridgeResult): Boolean =
-        MANUAL_STOP_KILLED_REGEX.containsMatchIn(stopObservationText(result))
 
-    private fun stopObservationText(result: BridgeResult): String = buildString {
-        result.runReport?.steps.orEmpty().forEach { step ->
-            appendLine(step.lastMeaningfulOutput)
-            appendLine(step.stdoutTail)
-            appendLine(step.stderrTail)
-        }
-        appendLine(result.message)
-        appendLine(result.rawBody)
-    }
 
-    private fun bridgeFailureArrivedAfterManualStop(recipe: KiteRecipe, result: BridgeResult): RecipeRuntimeState? {
-        val currentState = runtimeStateFor(recipe)
-        if (currentState.status != RecipeRunStatus.Stopping && currentState.status != RecipeRunStatus.Stopped) return null
-        val report = result.runReport
-        val failed = result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE ||
-            report?.hasMismatch() == true ||
-            report?.ok == false ||
-            report?.status == KiteRunReport.STATUS_FAILED ||
-            (!result.ok && !result.accepted)
-        if (!failed || !stopLooksLikeManualKill(result)) return null
-        return currentState
-    }
 
-    private fun handleStopResult(recipe: KiteRecipe, previousState: RecipeRuntimeState, result: BridgeResult) {
-        val report = result.runReport
-        if (report != null) diagnostics.writeRunReport(report)
-        if ((result.ok || result.accepted) && result.status == KiteRunReport.STATUS_STOPPED) {
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Stopped,
-                surface = CardRunSurface.Summary,
-                lastMeaningfulOutput = result.runReport?.lastMeaningfulOutput() ?: "已停止",
-                clearRunBinding = true,
-                clearTerminalSession = true,
-                clearNextActionUrl = true
-            )
-            closeCardRunInstanceForStop(recipe, previousState, "stop_success")
-            showConsole()
-            return
-        }
 
-        diagnostics.logLifecycleEvent(
-            recipe,
-            "stop_unavailable",
-            previousState.runId,
-            previousState.pid,
-            previousState.status.name,
-            previousState.lastMeaningfulOutput,
-            result.message
-        )
-        runtimeStates[recipe.id] = CardRunStore.update(
-            recipe = recipe,
-            status = previousState.status,
-            currentStepIndex = previousState.currentStepIndex,
-            runId = previousState.runId,
-            terminalSessionId = previousState.terminalSessionId,
-            pid = previousState.pid,
-            lastMeaningfulOutput = previousState.lastMeaningfulOutput,
-            lastError = "停止接口暂不可用",
-            nextActionUrl = previousState.nextActionUrl
-        )
-        Toast.makeText(this, "停止接口暂不可用", Toast.LENGTH_SHORT).show()
-        showConsole()
-    }
 
-    private fun handleBridgeResult(recipe: KiteRecipe, result: BridgeResult) {
-        val report = result.runReport
-        if (report != null) diagnostics.writeRunReport(report)
-        val requestId = (report?.requestId ?: result.requestId).orEmpty()
-        val runId = report?.runId ?: result.requestId
-        val lastOutput = report?.lastMeaningfulOutput()
-        val shellReport = shellReportText(report, recipe)
-        val pid = report?.pid ?: extractPid(lastOutput) ?: extractPid(result.message)
-        val rootPid = report?.rootPid ?: pid
-        val processGroupId = report?.processGroupId
-        val systemSessionId = report?.systemSessionId
 
-        bridgeFailureArrivedAfterManualStop(recipe, result)?.let { stoppedState ->
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Stopped,
-                instanceId = stoppedState.instanceId,
-                surface = CardRunSurface.Summary,
-                lastMeaningfulOutput = "已停止",
-                clearRunBinding = true,
-                clearTerminalSession = true,
-                clearNextActionUrl = true
-            )
-            diagnostics.logRecipeAction(
-                recipe,
-                "bridge_killed_output_suppressed_after_stop",
-                mapOf("requestId" to requestId, "runId" to runId.orEmpty())
-            )
-            closeCardRunInstanceForStop(recipe, stoppedState, "bridge_killed_output_suppressed_after_stop")
-            showConsole()
-            return
-        }
 
-        if (result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE) {
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.BridgeUnavailable,
-                runId = runId,
-                pid = pid,
-                rootPid = rootPid,
-                processGroupId = processGroupId,
-                systemSessionId = systemSessionId,
-                shellReportText = shellReport,
-                lastError = result.message
-            )
-            diagnostics.logRecipeAction(
-                recipe,
-                "bridge_unavailable",
-                mapOf("requestId" to requestId, "message" to result.message.take(500))
-            )
-            markResourceInstallFailed(recipe, runId, result.message.ifBlank { "桥接不可用，未执行命令" })
-            toastIfNotResourceRecipe(recipe, "桥接不可用，未执行命令")
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
 
-        val nextUrl = report?.openWebUrlIfPresent() ?: result.nextActionUrl
-        if (!nextUrl.isNullOrBlank()) {
-            diagnostics.logRecipeAction(
-                recipe,
-                "next_action_detected",
-                mapOf(
-                    "requestId" to requestId,
-                    "runId" to runId.orEmpty(),
-                    "pid" to pid.orEmpty(),
-                    "status" to (report?.status ?: result.status),
-                    "ok" to (report?.ok ?: result.ok).toString(),
-                    "url" to nextUrl,
-                    "hasMismatch" to (report?.hasMismatch() == true).toString()
-                )
-            )
-            if (report?.hasMismatch() == true) {
-                diagnostics.logRecipeAction(recipe, "bridge_result_mismatch_warning", mapOf("requestId" to requestId, "url" to nextUrl))
-            }
-            val successStatus = successfulStatus(report, lastOutput)
-            setRuntimeState(
-                recipe,
-                if (successStatus == RecipeRunStatus.AlreadyRunning) RecipeRunStatus.AlreadyRunning else RecipeRunStatus.Running,
-                runId = runId,
-                pid = pid,
-                rootPid = rootPid,
-                processGroupId = processGroupId,
-                systemSessionId = systemSessionId,
-                lastMeaningfulOutput = lastOutput,
-                shellReportText = shellReport,
-                nextActionUrl = nextUrl
-            )
-            waitForWebReady(recipe, nextUrl, successStatus, runId, pid, lastOutput)
-            return
-        }
-
-        if (report?.hasMismatch() == true) {
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Failed,
-                runId = runId,
-                pid = pid,
-                rootPid = rootPid,
-                processGroupId = processGroupId,
-                systemSessionId = systemSessionId,
-                lastMeaningfulOutput = lastOutput,
-                shellReportText = shellReport,
-                lastError = "result_mismatch"
-            )
-            diagnostics.logRecipeAction(recipe, "bridge_result_mismatch", mapOf("requestId" to requestId))
-            markResourceInstallFailed(recipe, runId, "result_mismatch")
-            toastIfNotResourceRecipe(recipe, "执行结果不匹配，已记录运行报告")
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
-
-        if (report != null && (!report.ok || report.status == KiteRunReport.STATUS_FAILED)) {
-            setRuntimeState(
-                recipe,
-                RecipeRunStatus.Failed,
-                runId = runId,
-                pid = pid,
-                rootPid = rootPid,
-                processGroupId = processGroupId,
-                systemSessionId = systemSessionId,
-                lastMeaningfulOutput = lastOutput,
-                shellReportText = shellReport,
-                lastError = result.message
-            )
-            diagnostics.logRecipeAction(recipe, "bridge_failed", mapOf("requestId" to requestId, "message" to result.message.take(500)))
-            markResourceInstallFailed(recipe, runId, result.message.ifBlank { "执行失败" })
-            toastIfNotResourceRecipe(recipe, "执行失败，已记录运行报告")
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
-
-        if (result.ok || result.accepted) {
-            markResourceRunSuccess(recipe, runId, lastOutput)
-            setRuntimeState(
-                recipe,
-                successfulBridgeStatus(recipe, report, lastOutput),
-                runId = runId,
-                pid = pid,
-                rootPid = rootPid,
-                processGroupId = processGroupId,
-                systemSessionId = systemSessionId,
-                lastMeaningfulOutput = lastOutput,
-                shellReportText = shellReport
-            )
-            showRunSurfaceOrConsole(recipe)
-            return
-        }
-
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.BridgeUnavailable,
-            runId = runId,
-            pid = pid,
-            rootPid = rootPid,
-            processGroupId = processGroupId,
-            systemSessionId = systemSessionId,
-            lastError = result.message
-        )
-        markResourceInstallFailed(recipe, runId, result.message.ifBlank { "桥接不可用，未执行命令" })
-        toastIfNotResourceRecipe(recipe, "桥接不可用，未执行命令")
-        showRunSurfaceOrConsole(recipe)
-    }
-
-    private fun waitForWebReady(
-        recipe: KiteRecipe,
-        url: String,
-        finalStatus: RecipeRunStatus,
-        runId: String?,
-        pid: String?,
-        lastOutput: String?
-    ) {
-        val diagnosticUrl = BrowserHandoffPolicy.redactedUrlForDiagnostics(url)
-        if (!shouldProbeWebReady(url)) {
-            diagnostics.logBridgeEvent("open_web_after_ready", recipe, mapOf("url" to diagnosticUrl, "mode" to "probe_skipped"))
-            setRuntimeState(recipe, finalStatus, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, nextActionUrl = url)
-            openWeb(url, "bridge_next_action", recipe)
-            return
-        }
-
-        diagnostics.logBridgeEvent("web_ready_probe_start", recipe, mapOf("url" to diagnosticUrl, "runId" to runId.orEmpty()))
-        thread(name = "KiteWebReadyProbe", isDaemon = true) {
-            val deadline = System.currentTimeMillis() + WEB_READY_TIMEOUT_MS
-            var attempt = 0
-            var ready = false
-            var lastError = ""
-            while (System.currentTimeMillis() < deadline && !ready) {
-                attempt += 1
-                val result = runCatching {
-                    val connection = URL(url).openConnection() as HttpURLConnection
-                    connection.connectTimeout = WEB_READY_CONNECT_TIMEOUT_MS
-                    connection.readTimeout = WEB_READY_READ_TIMEOUT_MS
-                    connection.requestMethod = "GET"
-                    connection.instanceFollowRedirects = false
-                    val code = connection.responseCode
-                    connection.disconnect()
-                    code
-                }
-                ready = result.isSuccess
-                lastError = result.exceptionOrNull()?.message.orEmpty()
-                if (!ready) Thread.sleep(WEB_READY_INTERVAL_MS)
-            }
-            runOnUiThread {
-                if (ready) {
-                    diagnostics.logBridgeEvent("web_ready_probe_success", recipe, mapOf("url" to diagnosticUrl, "attempts" to attempt.toString()))
-                    diagnostics.logBridgeEvent("open_web_after_ready", recipe, mapOf("url" to diagnosticUrl, "runId" to runId.orEmpty()))
-                    setRuntimeState(recipe, finalStatus, runId = runId, pid = pid, lastMeaningfulOutput = lastOutput, nextActionUrl = url)
-                    openWeb(url, "bridge_next_action_ready", recipe)
-                } else {
-                    diagnostics.logBridgeEvent(
-                        "web_ready_probe_timeout",
-                        recipe,
-                        mapOf("url" to diagnosticUrl, "attempts" to attempt.toString(), "lastError" to lastError.take(500))
-                    )
-                    val message = "\u670d\u52a1\u672a\u54cd\u5e94\uff0c\u8bf7\u786e\u8ba4\u542f\u52a8\u65e5\u5fd7"
-                    setRuntimeState(
-                        recipe,
-                        RecipeRunStatus.Failed,
-                        runId = runId,
-                        pid = pid,
-                        lastMeaningfulOutput = lastOutput,
-                        lastError = message,
-                        nextActionUrl = url
-                    )
-                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-                    showConsole()
-                }
-            }
-        }
-    }
-
-    private fun shouldProbeWebReady(url: String): Boolean =
-        runCatching {
-            val parsed = URL(url)
-            parsed.protocol.equals("http", ignoreCase = true) &&
-                (parsed.host == "127.0.0.1" || parsed.host.equals("localhost", ignoreCase = true))
-        }.getOrDefault(false)
-
-    private fun successfulStatus(report: KiteRunReport?, output: String?): RecipeRunStatus =
-        if (report?.status == KiteRunReport.STATUS_ALREADY_RUNNING || output.orEmpty().contains("already_running", true)) {
-            RecipeRunStatus.AlreadyRunning
-        } else if (report?.status == KiteRunReport.STATUS_RUNNING || report?.status == KiteRunReport.STATUS_ACCEPTED) {
-            RecipeRunStatus.Running
-        } else {
-            RecipeRunStatus.Opened
-        }
-
-    private fun isFiniteResourceOperation(recipe: KiteRecipe): Boolean =
-        recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE &&
-            resourceOperationForRecipe(recipe) != null
-
-    private fun finishedRecipeStatus(recipe: KiteRecipe, pid: String?): RecipeRunStatus =
-        if (isFiniteResourceOperation(recipe) || pid.isNullOrBlank()) {
-            RecipeRunStatus.Completed
-        } else {
-            RecipeRunStatus.Running
-        }
-
-    private fun successfulBridgeStatus(
-        recipe: KiteRecipe,
-        report: KiteRunReport?,
-        output: String?
-    ): RecipeRunStatus =
-        if (isFiniteResourceOperation(recipe)) {
-            RecipeRunStatus.Completed
-        } else {
-            successfulStatus(report, output)
-        }
-
-    private fun extractPid(text: String?): String? {
-        val value = text ?: return null
-        val match = Regex("""pid\s*[:=]\s*(\d+)|pid\s+(\d+)""", RegexOption.IGNORE_CASE).find(value) ?: return null
-        return match.groupValues.drop(1).firstOrNull { it.isNotBlank() }
-    }
 
     private fun runtimeStateFor(recipe: KiteRecipe): RecipeRuntimeState =
         activeRunInstanceIds[recipe.id]
@@ -15183,15 +12962,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val ACTION_STOP_CARD_RUN = "stop_card_run"
         private const val RESOURCE_OWNER_PROBE_ID = "kite.owner.telemetry.probe"
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
-        private const val WEB_READY_TIMEOUT_MS = 8000L
-        private const val WEB_READY_INTERVAL_MS = 700L
-        private const val WEB_READY_CONNECT_TIMEOUT_MS = 700
-        private const val WEB_READY_READ_TIMEOUT_MS = 700
-        private const val TERMINAL_STEP_COMMAND_DELAY_MS = 650L
         private const val TERMINAL_STOP_GRACE_MS = 350L
         private const val CARD_RUN_REPORT_REFRESH_INTERVAL_MS = 33L
         private val ANSI_ESCAPE_REGEX = Regex("""\u001B\[[0-9;?]*[ -/]*[@-~]""")
-        private val MANUAL_STOP_KILLED_REGEX = Regex("""\bKilled\b""", RegexOption.IGNORE_CASE)
         private const val RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS = 1_200L
         private const val RESOURCE_INSTALL_STALE_GRACE_MS = 5_000L
         private const val RESOURCE_PREPARING_STALE_GRACE_MS = 30_000L
@@ -15208,11 +12981,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val STATE_WORKBENCH_URL = "kite_workbench_url"
         private const val STATE_RECIPE_DRAFT = "kite_recipe_draft"
         private const val RECIPE_DRAFT_RESTORE_WINDOW_MS = 6L * 60L * 60L * 1000L
-        private val terminalFlowFinishedStatuses = setOf(
-            ManagedTerminalStatus.EXITED,
-            ManagedTerminalStatus.FAILED,
-            ManagedTerminalStatus.STOPPED
-        )
         private var activeResourceInstallWizard: ResourceInstallWizardContext? = null
     }
 }

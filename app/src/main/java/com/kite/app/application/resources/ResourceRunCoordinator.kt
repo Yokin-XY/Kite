@@ -36,6 +36,8 @@ internal sealed interface ResourceRunLaunchResult {
 }
 
 internal interface ResourceRunGateway {
+    fun recipe(resourceId: String, operation: String): KiteRecipe?
+    fun isBundled(resourceId: String): Boolean
     fun beginRun(request: ResourceRunLaunchRequest): CardRunState
     fun prepare(request: ResourceRunLaunchRequest, callback: (Result<Unit>) -> Unit)
     fun failRunPreparation(request: ResourceRunLaunchRequest, instanceId: String, message: String)
@@ -75,6 +77,11 @@ internal class ResourceRunCoordinator(
     init {
         lifecycleHub.register(this)
     }
+
+    fun recipe(resourceId: String, operation: String): KiteRecipe? =
+        gateway.recipe(resourceId, operation)
+
+    fun isBundled(resourceId: String): Boolean = gateway.isBundled(resourceId)
 
     fun start(request: ResourceRunLaunchRequest): ResourceRunLaunchResult {
         if (request.resourceId.isBlank()) return ResourceRunLaunchResult.Rejected("missing_resource_id")

@@ -250,3 +250,23 @@
 理由：旧链在 Activity 的 shell 回调末尾调用 `markResourceRunSuccess/markResourceInstallFailed`。页面停止收集、运行窗口销毁或 Activity 被重建时，命令可以完成而注册机与队列不更新。把结算放入进程协调器后，执行、CardRun 事实和资源登记形成一条不依赖页面可见性的纵向业务链。
 
 影响：运行事实仍先写 `CardRunStore`，资源协调器只消费提交后的事件并写资源 Store；`RunLifecycleEventHub` 不得缓存或复制状态。manifest 到有限配方的编译属于 Platform Gateway，安装计划推进属于 Application Coordinator。Activity、Fragment 和资源 Screen 不得再调用 Bridge、ToolchainPackInstaller 或自行宣布资源完成。
+
+## ADR-S025 T006 完成后只保留一套运行编排引擎
+
+状态：accepted
+
+决策：所有可执行配方统一进入进程级 `RunOrchestrator` 与 `AndroidRecipeExecutor`。资源运行额外由 `ResourceRunCoordinator` 结算，但不拥有第二套步骤执行器。T006 验收通过后直接删除 Activity 内 legacy 开始、步骤分派、Bridge 结果解释、停止解释和资源结算代码，不保留永远返回 true 的迁移开关或隐藏兼容分支。
+
+理由：旧代码即使已经没有产品入口，仍会复制状态规则、资源命令和停止语义，机器检查也会继续保护错误的旧实现。后续维护者可能误接回 legacy 分支，重新造成页面可见性决定执行、迟到回调覆盖事实和同一实例双执行链。
+
+影响：`MainActivity` 只接收动作、提交编排请求和绑定可见 Effect。网页与 Android action 不再保留直达旁路；shell、terminal、Web、X11 和 Android action 都经过同一执行合同。静态护栏必须检查新所有者并禁止旧方法名回流。
+
+## ADR-S026 配方终端必须使用独立内嵌会话生命周期
+
+状态：accepted
+
+决策：配方 terminal 步骤使用 `createEmbeddedShellSession`，不写入普通终端会话列表。结束 active embedded session 时清空当前绑定并终止目标，不选择或启动任何 managed terminal fallback；命令投递在 holder 挂接尚未完成时必须从 staged embedded record 恢复，并复用幂等 attach/wait 与输入队列。
+
+理由：把卡片终端作为普通会话持久化会留下 `REGISTERED` 记录。用户完成卡片步骤时，控制器关闭目标后会把历史记录当 fallback 重新启动，造成页面已完成而另一个 `proot/bash` 仍存活。直接改为 embedded 后，若定向写入只查持久化列表，又会在启动稍慢时丢失首条命令。
+
+影响：卡片终端的事实仍由 `CardRunStore.terminalSessionId` 持有，普通终端列表不再出现卡片执行残影。页面离开不结束会话；只有用户完成步骤、停止运行或执行终态才闭合 embedded 资源。真机验收必须同时检查 CardRun 状态、命令只执行一次、目标进程归零和 Kite 宿主存活。

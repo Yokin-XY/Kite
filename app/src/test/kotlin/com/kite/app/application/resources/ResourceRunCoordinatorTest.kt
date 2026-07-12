@@ -177,6 +177,11 @@ private class FakeResourceRunGateway : ResourceRunGateway {
     val plannedInstalls = mutableMapOf<String, ResourceRunLaunchRequest>()
     private var generation = 100L
 
+    override fun recipe(resourceId: String, operation: String): KiteRecipe? =
+        plannedInstalls[resourceId]?.recipe
+
+    override fun isBundled(resourceId: String): Boolean = false
+
     override fun beginRun(request: ResourceRunLaunchRequest): CardRunState {
         startedRequests += request
         generation += 1

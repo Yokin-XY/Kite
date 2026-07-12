@@ -293,10 +293,10 @@ Controller 提供 UiState 和 Action，Activity 只负责导航到资源 Destina
 
 验收标准：
 
-- [ ] shell、terminal、Web、X11 等步骤通过统一执行接口进入。
-- [ ] 开始、继续、停止、取消、失败和残留进程确认不依赖页面是否可见。
-- [ ] 同一 `instanceId` 不重复创建执行链，停止结果由执行层确认后落状态。
-- [ ] 执行层不引用 Activity、Fragment、View、Toast 或页面导航。
+- [x] shell、terminal、Web、X11 等步骤通过统一执行接口进入。
+- [x] 开始、继续、停止、取消、失败和残留进程确认不依赖页面是否可见。
+- [x] 同一 `instanceId` 不重复创建执行链，停止结果由执行层确认后落状态。
+- [x] 执行层不引用 Activity、Fragment、View、Toast 或页面导航。
 
 依赖：T005。
 

@@ -334,8 +334,7 @@ internal class AndroidRecipeExecutor(
         thread(name = "KiteTerminalStep-${request.instanceId.take(24)}", isDaemon = true) {
             runCatching {
                 val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
-                KFWorkspaceManager.createShellSession(
-                    context = appContext,
+                KFWorkspaceManager.createEmbeddedShellSession(
                     spaceId = space.id,
                     title = terminalTitle(request.recipe, request.stepIndex),
                     sourceLabel = request.recipe.name

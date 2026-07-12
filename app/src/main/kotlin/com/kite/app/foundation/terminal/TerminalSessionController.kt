@@ -792,6 +792,18 @@ class TerminalSessionController(
             return sessionHolders[resolvedTargetId]
         }
 
+        embeddedSessionRecords[resolvedTargetId]?.let { embedded ->
+            switchToRecord(
+                record = embedded,
+                note = "",
+                notifyManagedSessionsChanged = false,
+                showNote = false,
+                updateWorkspaceCurrentSession = false,
+                managed = false
+            )
+            return sessionHolders[resolvedTargetId]
+        }
+
         val record = withContext(Dispatchers.IO) {
             KFWorkspaceManager.getTerminalSession(appContext, resolvedTargetId)
         }
@@ -1399,7 +1411,8 @@ class TerminalSessionController(
     private suspend fun endSessionInternal(targetSessionId: String) {
         try {
             val space = ensureSpaceRecord()
-            val targetRecord = sessionHolders[targetSessionId]?.record ?: withContext(Dispatchers.IO) {
+            val targetHolder = sessionHolders[targetSessionId]
+            val targetRecord = targetHolder?.record ?: withContext(Dispatchers.IO) {
                 KFWorkspaceManager.getTerminalSession(appContext, targetSessionId)
             }
 
@@ -1413,7 +1426,14 @@ class TerminalSessionController(
                 return
             }
 
-            val fallback = if (activeSessionId == targetSessionId) {
+            val targetManaged = targetHolder?.managed
+                ?: !embeddedSessionRecords.containsKey(targetSessionId)
+            val fallback = if (
+                TerminalSessionEndPolicy.shouldSelectManagedFallback(
+                    targetIsActive = activeSessionId == targetSessionId,
+                    targetIsManaged = targetManaged
+                )
+            ) {
                 withContext(Dispatchers.IO) {
                     KFWorkspaceManager.listTerminalSessions(appContext, space.id)
                         .firstOrNull { it.id != targetSessionId && !it.isArchivedRecord() }
@@ -1442,6 +1462,8 @@ class TerminalSessionController(
             } else {
                 stopDetachedSessionRecord(targetRecord, "用户结束终端会话。")
             }
+            embeddedSessionRecords.remove(targetSessionId)
+            launchEnvOverrides.remove(targetSessionId)
             uiCallbacks.onManagedSessionsChanged()
             uiCallbacks.showSessionNote("${targetRecord.title} 已结束，记录已保留。")
         } catch (error: Exception) {

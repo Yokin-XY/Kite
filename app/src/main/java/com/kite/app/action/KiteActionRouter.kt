@@ -2,7 +2,6 @@ package com.kite.app.action
 
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeAction
-import com.kite.app.recipe.KiteRecipeStep
 
 class KiteActionRouter {
     fun route(recipe: KiteRecipe, actionName: String): KiteActionRoute {
@@ -18,16 +17,8 @@ class KiteActionRouter {
             return KiteActionRoute.RunRecipe(actionRecipe, actionName, action)
         }
 
-        val openUrl = firstOpenWebUrl(action.steps)
-        if (!openUrl.isNullOrBlank()) {
-            return KiteActionRoute.OpenWeb(actionRecipe, actionName, openUrl)
-        }
-
         return KiteActionRoute.Unsupported(actionRecipe, actionName, "empty_action")
     }
-
-    private fun firstOpenWebUrl(steps: List<KiteRecipeStep>): String? =
-        steps.firstOrNull { it.type == KiteRecipe.STEP_OPEN_WEB && !it.url.isNullOrBlank() }?.url
 }
 
 sealed class KiteActionRoute {
@@ -38,19 +29,6 @@ sealed class KiteActionRoute {
         override val recipe: KiteRecipe,
         override val actionName: String,
         val action: KiteRecipeAction
-    ) : KiteActionRoute()
-
-    data class OpenWeb(
-        override val recipe: KiteRecipe,
-        override val actionName: String,
-        val url: String
-    ) : KiteActionRoute()
-
-    data class NativeAction(
-        override val recipe: KiteRecipe,
-        override val actionName: String,
-        val step: KiteRecipeStep,
-        val nextUrl: String?
     ) : KiteActionRoute()
 
     data class StopRecipe(

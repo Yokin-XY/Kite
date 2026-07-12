@@ -177,9 +177,9 @@ object KFWorkspaceManager {
     }
 
     fun createEmbeddedShellSession(
-        context: Context,
         spaceId: String,
-        title: String
+        title: String,
+        sourceLabel: String? = null
     ): ManagedTerminalRecord {
         val now = System.currentTimeMillis()
         val safeTitle = title.trim().ifBlank { "终端" }
@@ -189,6 +189,7 @@ object KFWorkspaceManager {
             title = safeTitle,
             kind = ManagedTerminalKind.SHELL,
             createdAt = now,
+            sourceLabel = sourceLabel?.trim()?.takeIf { it.isNotBlank() },
             status = ManagedTerminalStatus.REGISTERED
         )
     }

@@ -7,7 +7,7 @@
 ```text
 方向：第二阶段业务架构迁移
 状态：in_progress
-当前任务：T006 运行编排与执行引擎，正在盘点执行车道并建立纯合同
+当前任务：T006 运行编排与执行引擎，已完成最终收口与真机验收
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -871,3 +871,18 @@ T006 资源运行生命周期迁移结果：
 资源运行生命周期迁移状态：completed，待独立提交。
 
 下一步：删除 Activity 中已无产品入口的 legacyStartRecipe、executeRecipeStep、旧 shell/terminal/X11/Android 分派、旧资源成功失败结算和 legacy stop；随后收紧机器护栏并做 T006 最终真机回归。
+
+T006 最终收口结果：
+
+- `MainActivity` 已删除 `legacyStartRecipe`、`executeRecipeStep`、旧 shell/terminal/X11/Android 分派、旧 Bridge 结果解释、`legacyStopRecipeByCardInstanceId`、旧资源成功失败结算和终端页面观察器；开始、继续、停止、取消与资源结算不再存在第二套页面执行引擎。
+- 资源安装/卸载配方只由 `AndroidResourceRecipeFactory` 从 manifest 编译；Activity 仅向 `ResourceRunCoordinator` 请求配方并提交运行，不再复制清单命令、legacy fallback 或资源登记逻辑。
+- `KiteActionRoute` 删除无法由当前路由生成的 `OpenWeb/NativeAction` 直达旁路；网页和 Android action 与 shell、terminal、X11 一样，只能作为配方步骤进入 `RunOrchestrator`。
+- 配方终端改用不写入普通终端列表的 embedded session。终止 embedded 会话时禁止唤醒普通终端 fallback；定向命令在 holder 尚未挂接时从 staged embedded record 恢复并沿已有 attach/wait 队列投递，首条命令不再丢失。
+- 机器护栏已从检查旧 Activity 字符串升级为检查 `RunOrchestrator`、`StopCoordinator`、`AndroidRecipeExecutor`、`ResourceRunCoordinator` 与 embedded terminal 合同，并明确禁止 legacy 执行/停止解释器回流。
+- 全量 `:app:testDebugUnitTest :app:assembleDebug` 通过；架构与运行车道静态检查通过。债务快照为 `lines=13012, functions=569, fields=112, hosts=4, resourceDelegates=0, resourceFunctions=36, screenRefs=0, inheritedActivities=1, runtimeStateRefs=51`，相对资源迁移节点减少 2232 行、49 个函数和 2 个字段。
+- OnePlus 8T `3f8bbaad` 冷启动正常。OpenClaw 终端首条命令只执行一次；点击“继续”后 CardRun 为 `Completed`、目标 `proot/bash` 归零、Kite 宿主 PID 保持存活。产品停止入口得到 `Stopped`，摘要为“终端已发送中断并关闭”，绑定清空且无进程残留。
+- 同机 OpenCode 在 Kite 退到后台后仍完成获取，回前台卡片为“已获取”，命令链接存在；卸载 CardRun 为 `Completed`，详情立即恢复“获取”，命令链接消失。全链 logcat 无 `AndroidRuntime`。
+
+T006 状态：completed，待本节点独立提交。
+
+下一步：提交 T006，进入 T007；先盘点 `CardRunActivity` 继承、terminal/report/web 显示面绑定、页面离开与任务停止的真实边界，再建立独立轻量 `RunSurfaceHost` 合同。

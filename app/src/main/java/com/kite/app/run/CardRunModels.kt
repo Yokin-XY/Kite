@@ -156,10 +156,3 @@ data class CardRunHistoryStep(
     val detail: String,
     val reportText: String = ""
 )
-
-data class PendingTerminalFlow(
-    val recipeId: String,
-    val instanceId: String,
-    val sessionId: String,
-    val nextStepIndex: Int
-)

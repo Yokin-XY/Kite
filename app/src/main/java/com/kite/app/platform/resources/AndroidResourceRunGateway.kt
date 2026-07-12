@@ -25,6 +25,12 @@ internal class AndroidResourceRunGateway(
 ) : ResourceRunGateway {
     private val appContext = context.applicationContext
 
+    override fun recipe(resourceId: String, operation: String) =
+        recipeFactory.recipe(resourceId, operation)
+
+    override fun isBundled(resourceId: String): Boolean =
+        recipeFactory.isBundled(resourceId)
+
     override fun beginRun(request: ResourceRunLaunchRequest): CardRunState {
         val instanceId = request.preferredInstanceId
             ?.takeIf { it.isNotBlank() }
