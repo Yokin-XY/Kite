@@ -15,7 +15,7 @@ import org.robolectric.RobolectricTestRunner
 /**
  * T6.0:P2 前置安全网 —— 锁死 MainActivity 的 Screen 路由契约。
  *
- * 这套测试是后续 T6-T9(拆 God Activity、引入 ScreenRouter、抽 Fragment)的防线:
+ * 这套测试是拆分应用壳、AppNavigator 和 Feature 页面时的行为防线:
  * 任何路由行为变化(navigate 目标 Screen、back 回退映射、默认 Screen、state 恢复)
  * 都会被立刻发现,防止重构改坏用户可见的页面流转。
  *

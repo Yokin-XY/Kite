@@ -161,6 +161,10 @@ import com.kite.app.run.PendingTerminalFlow
 import com.kite.app.run.KiteCardRunUiProjector
 import com.kite.app.run.KiteRunPrimaryAction
 import com.kite.app.run.KiteRunUiTone
+import com.kite.app.shell.AppDestination
+import com.kite.app.shell.AppNavigator
+import com.kite.app.shell.NavigationBackAction
+import com.kite.app.shell.RestorePolicy
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
@@ -262,12 +266,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private val actionRouter = KiteActionRouter()
     private val recipeActionCoordinator = KiteRecipeActionCoordinator(actionRouter)
     /**
-     * Screen 路由收口(T6)。过渡期把 navigate 委托回老的 show* 方法;
-     * 后续各 Screen 逐个 Fragment 化时,在此替换为 routeToFragment。
+     * AppDestination 路由收口(T6)。过渡期把 navigate 委托回老的 show* 方法;
+     * 后续各 AppDestination 逐个 Fragment 化时,在此替换为 routeToFragment。
      */
-    private val screenRouter: ScreenRouter by lazy {
-        ScreenRouter(
-            legacySink = ScreenRouter.LegacyScreenSink { screen -> dispatchLegacyScreen(screen) }
+    private val appNavigator: AppNavigator by lazy {
+        AppNavigator(
+            destinationSink = AppNavigator.DestinationSink { screen -> dispatchLegacyDestination(screen) }
         )
     }
     private val navigationBackCallback = object : OnBackPressedCallback(true) {
@@ -276,32 +280,28 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
     private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
-    private var currentScreen: Screen = Screen.Console
+    private var currentScreen: AppDestination = AppDestination.Console
     private var pendingRawJsonRecipeId: String? = null
     private var pendingResourceDetailInitialItem: ResourceItem? = null
     private var pendingResourceDetailRequestId: Long = 0L
     private var pendingResourceDetailRequestKey: String? = null
 
-    /**
-     * 仅用于单元测试:暴露当前 Screen 的枚举名(字符串),供 Robolectric 路由测试断言。
-     * 用字符串而非 Screen 类型,避免把 private nested enum 改成 internal。
-     * 生产代码不应调用。
-     */
+    /** 仅用于 Robolectric 路由合同断言。 */
     @androidx.annotation.VisibleForTesting
     internal fun currentScreenNameForTest(): String = currentScreen.name
 
     @androidx.annotation.VisibleForTesting
     internal fun enterScreenForTest(screenName: String) {
-        val screen = Screen.valueOf(screenName)
+        val screen = AppDestination.valueOf(screenName)
         enterScreen(screen)
     }
 
     @androidx.annotation.VisibleForTesting
     internal fun activityDisplaySurfacesReleasedForTest(): Boolean = activityDisplaySurfacesReleased
 
-    private fun enterScreen(screen: Screen, onBack: (() -> Unit)? = null) {
+    private fun enterScreen(screen: AppDestination, onBack: (() -> Unit)? = null) {
         currentScreen = screen
-        screenRouter.enter(screen, onBack)
+        appNavigator.enter(screen, onBack)
     }
 
     private var currentRecipes: List<KiteRecipe> = emptyList()
@@ -1104,8 +1104,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             return
         }
         when (currentScreen) {
-            Screen.Console -> resumeConsoleSurface()
-            Screen.Settings -> showSettings()
+            AppDestination.Console -> resumeConsoleSurface()
+            AppDestination.Settings -> showSettings()
             else -> Unit
         }
         rootHost.post { StartupTraceStore.markReady(applicationContext) }
@@ -1161,11 +1161,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun handleAppNavigationBack() {
         if (handleWebViewBackSignal()) return
-        when (val action = screenRouter.resolveBack(this is CardRunActivity)) {
+        when (val action = appNavigator.resolveBack(this is CardRunActivity)) {
             NavigationBackAction.System -> dispatchSystemBack()
             NavigationBackAction.CardRunTask -> handleCardRunBackSignal()
-            NavigationBackAction.Contextual -> screenRouter.invokeContextualBack()
-            is NavigationBackAction.Navigate -> screenRouter.navigate(action.screen)
+            NavigationBackAction.Contextual -> appNavigator.invokeContextualBack()
+            is NavigationBackAction.Navigate -> appNavigator.navigate(action.destination)
         }
     }
 
@@ -1180,7 +1180,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun handleWebViewBackSignal(): Boolean {
         if (!::webView.isInitialized) return false
-        if (currentScreen != Screen.Workbench && currentScreen != Screen.CardRun) return false
+        if (currentScreen != AppDestination.Workbench && currentScreen != AppDestination.CardRun) return false
         if (webView.parent == null || !webView.canGoBack()) return false
         webView.goBack()
         return true
@@ -1519,7 +1519,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 CardRunStore.runs.collect { runs ->
                     val reportBinding = cardRunReportBinding
-                    if (reportBinding != null && currentScreen == Screen.CardRun) {
+                    if (reportBinding != null && currentScreen == AppDestination.CardRun) {
                         val state = runs.firstOrNull { it.instanceId == reportBinding.instanceId }
                         val recipe = state?.let { recipeForRunState(it) }
                         if (state != null && recipe != null) {
@@ -1528,7 +1528,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                         }
                     }
                     rebindVisibleCardRunSurfaceFromStore(runs)
-                    if (currentScreen == Screen.Console && consoleCardBindings.isNotEmpty()) {
+                    if (currentScreen == AppDestination.Console && consoleCardBindings.isNotEmpty()) {
                         currentRecipes.forEach { recipe ->
                             val state = CardRunStore.currentForRecipe(recipe.id)
                                 ?: runtimeStates[recipe.id]
@@ -1546,7 +1546,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun rebindVisibleCardRunSurfaceFromStore(runs: List<RecipeRuntimeState>) {
-        if (currentScreen != Screen.CardRun) return
+        if (currentScreen != AppDestination.CardRun) return
         val instanceId = focusedRunInstanceId?.takeIf { it.isNotBlank() } ?: return
         val state = runs.firstOrNull { it.instanceId == instanceId } ?: return
         val recipe = recipeForRunState(state) ?: return
@@ -1591,20 +1591,20 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         // 避免稍后进入资源页时继续显示状态变化前的按钮文字。
         invalidateResourceRuntimeStateCache()
         when (currentScreen) {
-            Screen.Resources,
-            Screen.ResourceSearch -> {
+            AppDestination.Resources,
+            AppDestination.ResourceSearch -> {
                 if (convergeVisibleResourceState(reason, preferredResourceIds, revision).isEmpty()) {
                     requestVisibleResourceItemStatePatch(reason, preferredResourceIds)
                 }
             }
-            Screen.CardRun -> requestVisibleResourceInstallWizardRefresh(reason)
-            Screen.ResourceDetail -> {
+            AppDestination.CardRun -> requestVisibleResourceInstallWizardRefresh(reason)
+            AppDestination.ResourceDetail -> {
                 if (convergeVisibleResourceState(reason, preferredResourceIds, revision).isEmpty()) {
                     requestVisibleResourceDetailStatePatch(reason)
                 }
             }
-            Screen.ResourceMore -> Unit
-            Screen.ResourceManage -> {
+            AppDestination.ResourceMore -> Unit
+            AppDestination.ResourceManage -> {
                 if (convergeVisibleResourceState(reason, preferredResourceIds, revision).isEmpty()) {
                     requestVisibleResourceItemStatePatch(reason, preferredResourceIds)
                 }
@@ -1657,11 +1657,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun requestResourceRunStateUiRefresh() {
         if (this is CardRunActivity || !::root.isInitialized) return
         when (currentScreen) {
-            Screen.Resources,
-            Screen.ResourceSearch,
-            Screen.ResourceDetail,
-            Screen.ResourceMore,
-            Screen.ResourceManage -> Unit
+            AppDestination.Resources,
+            AppDestination.ResourceSearch,
+            AppDestination.ResourceDetail,
+            AppDestination.ResourceMore,
+            AppDestination.ResourceManage -> Unit
             else -> return
         }
         if (resourceRunUiRefreshPosted) return
@@ -1669,14 +1669,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         root.post {
             resourceRunUiRefreshPosted = false
             when (currentScreen) {
-                Screen.Resources,
-                Screen.ResourceSearch,
-                Screen.ResourceDetail -> {
+                AppDestination.Resources,
+                AppDestination.ResourceSearch,
+                AppDestination.ResourceDetail -> {
                     resourceUiRevision += 1
                     convergeVisibleResourceState("resource_open_run_state", revision = resourceUiRevision)
                 }
-                Screen.ResourceMore -> invalidateResourceRuntimeStateCache()
-                Screen.ResourceManage -> {
+                AppDestination.ResourceMore -> invalidateResourceRuntimeStateCache()
+                AppDestination.ResourceManage -> {
                     resourceUiRevision += 1
                     convergeVisibleResourceState("resource_open_run_state", revision = resourceUiRevision)
                     requestResourceManageRefresh(forceCatalogRefresh = false, reason = "resource_open_run_state")
@@ -1689,11 +1689,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun rebindVisibleResourceStateOnResume() {
         if (this is CardRunActivity || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
         when (currentScreen) {
-            Screen.Resources,
-            Screen.ResourceSearch,
-            Screen.ResourceDetail,
-            Screen.ResourceMore,
-            Screen.ResourceManage -> syncVisibleResourceState("resume")
+            AppDestination.Resources,
+            AppDestination.ResourceSearch,
+            AppDestination.ResourceDetail,
+            AppDestination.ResourceMore,
+            AppDestination.ResourceManage -> syncVisibleResourceState("resume")
             else -> Unit
         }
     }
@@ -1749,7 +1749,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         firstRunAllFilesSettingsOpened = false
         dropZoneStatus = dropZoneManager.prepareDropZone()
         maybeStartFirstRunRuntimeGate()
-        if (currentScreen == Screen.Console) showConsole()
+        if (currentScreen == AppDestination.Console) showConsole()
     }
 
     private fun currentFirstRunPermissionState(): FirstRunPermissionState {
@@ -1837,7 +1837,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 if (isFinishing || isDestroyed || !permissionReady || resourcesSettled) return@runOnUiThread
                 setUbuntuRuntimeState(runtimeDeployPendingState())
                 ensureKfRuntimeBootstrap()
-                if (currentScreen == Screen.Resources) {
+                if (currentScreen == AppDestination.Resources) {
                     requestResourceSectionsRefresh(forceCatalogRefresh = true)
                 }
             }
@@ -2080,7 +2080,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         renderUbuntuRuntimePanelState()
         updateRuntimeGateOverlay()
         maybeAutoShowUbuntuRuntimePanel(state)
-        if (::root.isInitialized && currentScreen == Screen.Console && shouldRefreshConsoleForRuntimeState(previous, state)) {
+        if (::root.isInitialized && currentScreen == AppDestination.Console && shouldRefreshConsoleForRuntimeState(previous, state)) {
             showConsole()
         }
     }
@@ -2279,16 +2279,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun restoreScreenFromBundle(savedInstanceState: Bundle?): Boolean {
         if (savedInstanceState == null || !shouldRestoreLastScreen()) return false
         val screen = savedInstanceState.getString(STATE_CURRENT_SCREEN)
-            ?.let { value -> runCatching { Screen.valueOf(value) }.getOrNull() }
+            ?.let { value -> runCatching { AppDestination.valueOf(value) }.getOrNull() }
             ?: return false
-        return when (val policy = screenRouter.destination(screen).restorePolicy) {
+        return when (val policy = appNavigator.contract(screen).restorePolicy) {
             RestorePolicy.None -> false
             RestorePolicy.Direct -> {
-                screenRouter.navigate(screen)
+                appNavigator.navigate(screen)
                 true
             }
             is RestorePolicy.AsParent -> {
-                screenRouter.navigate(policy.screen)
+                appNavigator.navigate(policy.destination)
                 true
             }
             RestorePolicy.RecipeDraft -> {
@@ -2341,10 +2341,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun snapshotRecipeFormDraft(): RecipeFormDraft? {
-        if (currentScreen == Screen.RecipeMore) {
+        if (currentScreen == AppDestination.RecipeMore) {
             return recipeMoreDraft?.withLaunchState()
         }
-        if (currentScreen != Screen.CreateConfig || !::nameInput.isInitialized) return null
+        if (currentScreen != AppDestination.CreateConfig || !::nameInput.isInitialized) return null
         return RecipeFormDraft(
             editingRecipeId = editingRecipe?.id.orEmpty(),
             selectedType = selectedType,
@@ -2393,7 +2393,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             )
             dropZoneStatus = dropZoneManager.prepareDropZone()
             Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_SHORT).show()
-            if (currentScreen == Screen.Console) showConsole()
+            if (currentScreen == AppDestination.Console) showConsole()
         } else if (requestCode == REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS) {
             runtimePermissionRequestInFlight = false
             dropZoneStatus = dropZoneManager.prepareDropZone()
@@ -2413,7 +2413,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             } else {
                 resumePendingRuntimePermissionBootstrap()
             }
-            if (currentScreen == Screen.Console) showConsole()
+            if (currentScreen == AppDestination.Console) showConsole()
         } else if (requestCode == REQUEST_FIRST_RUN_PERMISSION_ONBOARDING) {
             firstRunPermissionRequestInFlight = false
             dropZoneStatus = dropZoneManager.prepareDropZone()
@@ -2424,7 +2424,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             } else {
                 Toast.makeText(this, "通知未开启，可在设置中再次授权", Toast.LENGTH_SHORT).show()
             }
-            if (currentScreen == Screen.Settings) showSettings()
+            if (currentScreen == AppDestination.Settings) showSettings()
         }
     }
 
@@ -2448,7 +2448,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             return
         }
         isDropZoneRefreshing = true
-        if (currentScreen == Screen.Console && showToast) showConsole()
+        if (currentScreen == AppDestination.Console && showToast) showConsole()
         if (showToast) {
             Toast.makeText(this, "正在刷新 Kite 投放区", Toast.LENGTH_SHORT).show()
         }
@@ -2483,7 +2483,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showConsole() {
-        enterScreen(Screen.Console)
+        enterScreen(AppDestination.Console)
         dropZoneStatus = dropZoneManager.prepareDropZone()
         currentRecipes = recipeLoader.loadAllRecipes()
         refreshRecipeRuntimeStates(currentRecipes)
@@ -2543,7 +2543,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             requestRuntimePanelSummaryRefresh(force = true)
         }
         pruneRunManagementPendingProcessStops()
-        enterScreen(Screen.Processes)
+        enterScreen(AppDestination.Processes)
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         val taskSnapshot = TaskManagerStore.snapshot.value
@@ -2585,12 +2585,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showTerminal() {
         val currentTerminalFragment = supportFragmentManager.findFragmentByTag(TERMINAL_FRAGMENT_TAG) as? TerminalFragment
-        if (currentScreen == Screen.Terminal && currentTerminalFragment?.isAdded == true) {
+        if (currentScreen == AppDestination.Terminal && currentTerminalFragment?.isAdded == true) {
             applyKiteTerminalTheme()
             terminalBottomNavigation?.visibility = if (isTerminalDetailMode) View.GONE else View.VISIBLE
             return
         }
-        enterScreen(Screen.Terminal)
+        enterScreen(AppDestination.Terminal)
         isTerminalDetailMode = false
         applyKiteTerminalTheme()
         root.setBackgroundColor(tokens.pageBackground)
@@ -2688,21 +2688,21 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     /**
-     * 过渡期:ScreenRouter 的老路径分发。把 Screen 枚举映射到老的 show* 方法。
-     * T6b 起逐个 Screen 改走 Fragment 时,这些分支会被 routeToFragment 取代。
-     * 仅无参、可在路由层触发的 Screen 在此分发;带参 Screen(如 ResourceDetail 需 resourceId)
+     * 过渡期:AppNavigator 的老路径分发。把 AppDestination 枚举映射到老的 show* 方法。
+     * T6b 起逐个 AppDestination 改走 Fragment 时,这些分支会被 routeToFragment 取代。
+     * 仅无参、可在路由层触发的 AppDestination 在此分发;带参 AppDestination(如 ResourceDetail 需 resourceId)
      * 仍由各自的 show*(args) 直接调用,不经过此无参入口。
      */
-    private fun dispatchLegacyScreen(screen: Screen) {
+    private fun dispatchLegacyDestination(screen: AppDestination) {
         when (screen) {
-            Screen.Console -> showConsole()
-            Screen.Terminal -> showTerminal()
-            Screen.Settings -> showSettings()
-            Screen.ThemeSettings -> showThemeSettings()
-            Screen.Resources -> showResources()
-            Screen.ResourceManage -> showResourceManage()
-            Screen.Processes -> showKiteProcessOverview()
-            // 带参数或条件复杂的 Screen 保留各自入口。
+            AppDestination.Console -> showConsole()
+            AppDestination.Terminal -> showTerminal()
+            AppDestination.Settings -> showSettings()
+            AppDestination.ThemeSettings -> showThemeSettings()
+            AppDestination.Resources -> showResources()
+            AppDestination.ResourceManage -> showResourceManage()
+            AppDestination.Processes -> showKiteProcessOverview()
+            // 带参数或条件复杂的 AppDestination 保留各自入口。
             else -> Unit
         }
     }
@@ -2726,7 +2726,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showSettings() {
-        enterScreen(Screen.Settings)
+        enterScreen(AppDestination.Settings)
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         root.addView(topBar("设置", ::requestNavigationBack))
@@ -2880,7 +2880,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
 
     private fun showThemeSettings() {
-        enterScreen(Screen.ThemeSettings)
+        enterScreen(AppDestination.ThemeSettings)
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         root.addView(topBar("主题", ::requestNavigationBack))
@@ -2913,7 +2913,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showResources() {
         // T7:走 Fragment 路径。
         currentResourceDetailId = null
-        enterScreen(Screen.Resources)
+        enterScreen(AppDestination.Resources)
         ensureBundledToolBootstrapIfNeeded("show_resources")
         clearRootForScreen()
         root.visibility = View.GONE
@@ -2973,7 +2973,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showResourceSearch(initialQuery: String = currentResourceSearchQuery) {
         // T7:走 Fragment 路径。
-        enterScreen(Screen.ResourceSearch)
+        enterScreen(AppDestination.ResourceSearch)
         currentResourceDetailId = null
         currentResourceSearchQuery = initialQuery.trim()
         resourceSearchRenderKey = ""
@@ -3098,7 +3098,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 resources.searchResourceItems(cleanQuery)
             }
             runOnUiThread {
-                if (requestId != resourceSearchRequestSerial || currentScreen != Screen.ResourceSearch) return@runOnUiThread
+                if (requestId != resourceSearchRequestSerial || currentScreen != AppDestination.ResourceSearch) return@runOnUiThread
                 result.onSuccess { items ->
                     renderResourceSearchResults(host, query.trim(), items)
                 }.onFailure { error ->
@@ -3171,7 +3171,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         thread(name = "KiteResourceSections-$requestId-${requestKey.take(24)}", isDaemon = true) {
             val result = runCatching { buildResourceSectionsPayload(query, forceCatalogRefresh, tabId) }
             runOnUiThread {
-                if (requestId != resourceSectionsRequestSerial || currentScreen != Screen.Resources) {
+                if (requestId != resourceSectionsRequestSerial || currentScreen != AppDestination.Resources) {
                     if (resourceSectionsInFlightKey == requestKey) resourceSectionsInFlightKey = null
                     return@runOnUiThread
                 }
@@ -3300,7 +3300,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         startIndex: Int = 0
     ) {
         if (renderSerial != resourceSectionsRenderSerial) return
-        if (currentScreen != Screen.Resources) {
+        if (currentScreen != AppDestination.Resources) {
             resourceSectionsDirty = true
             return
         }
@@ -3460,18 +3460,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     ) {
         if (this is CardRunActivity || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
         val screen = currentScreen
-        if (screen != Screen.Resources && screen != Screen.ResourceSearch && screen != Screen.ResourceManage) return
+        if (screen != AppDestination.Resources && screen != AppDestination.ResourceSearch && screen != AppDestination.ResourceManage) return
         val visibleIds = visibleResourceItemBindingIds()
         val resourceIds = (visibleIds + preferredResourceIds)
             .map { KiteResourceInstallRecipes.safeId(it) }
             .filter { it.isNotBlank() }
             .toSet()
         if (resourceIds.isEmpty()) {
-            if (screen == Screen.Resources && resourceSectionHost?.childCount == 0) {
+            if (screen == AppDestination.Resources && resourceSectionHost?.childCount == 0) {
                 requestResourceSectionsRefresh(forceCatalogRefresh = false)
-            } else if (screen == Screen.ResourceSearch && resourceSearchContentHost?.childCount == 0) {
+            } else if (screen == AppDestination.ResourceSearch && resourceSearchContentHost?.childCount == 0) {
                 requestResourceSearchRefresh()
-            } else if (screen == Screen.ResourceManage && resourceManageContentHost?.childCount == 0) {
+            } else if (screen == AppDestination.ResourceManage && resourceManageContentHost?.childCount == 0) {
                 requestResourceManageRefresh(forceCatalogRefresh = false, reason = reason)
             }
             return
@@ -3486,9 +3486,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             runOnUiThread {
                 if (requestId != resourceItemPatchRequestSerial) return@runOnUiThread
                 if (
-                    currentScreen != Screen.Resources &&
-                    currentScreen != Screen.ResourceSearch &&
-                    currentScreen != Screen.ResourceManage
+                    currentScreen != AppDestination.Resources &&
+                    currentScreen != AppDestination.ResourceSearch &&
+                    currentScreen != AppDestination.ResourceManage
                 ) return@runOnUiThread
                 applyVisibleResourceItemStatePatch(itemsById)
             }
@@ -3563,7 +3563,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         purgeResourceItemBindings()
         val visibleIds = visibleResourceItemBindingIds()
         val detailItem = resourceDetailBinding
-            ?.takeIf { currentScreen == Screen.ResourceDetail && it.contentHost === resourceDetailContentHost }
+            ?.takeIf { currentScreen == AppDestination.ResourceDetail && it.contentHost === resourceDetailContentHost }
             ?.item
         val targetIds = resourceStatePatchTargetIds(
             visibleResourceIds = visibleIds,
@@ -3606,7 +3606,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                                 !binding.stateTextView.text.toString().endsWith(expected.stateLabel))
                     }
                 val detailMismatch = resourceDetailBinding
-                    ?.takeIf { currentScreen == Screen.ResourceDetail && it.resourceId == resourceId }
+                    ?.takeIf { currentScreen == AppDestination.ResourceDetail && it.resourceId == resourceId }
                     ?.let { binding ->
                         val splitExpected = resourceHasSplitActions(expected)
                         binding.actionBinding.primaryButton.text?.toString() != expected.actionLabel ||
@@ -3648,11 +3648,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             runOnUiThread {
                 resourceCatalogBackgroundRefreshInFlight = false
                 when (currentScreen) {
-                    Screen.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
-                    Screen.ResourceSearch -> requestResourceSearchRefresh()
-                    Screen.CardRun -> requestVisibleResourceInstallWizardRefresh("catalog:$reason")
-                    Screen.ResourceMore -> Unit
-                    Screen.ResourceManage -> requestResourceManageRefresh(forceCatalogRefresh = false, reason = "catalog:$reason")
+                    AppDestination.Resources -> requestResourceSectionsRefresh(forceCatalogRefresh = false)
+                    AppDestination.ResourceSearch -> requestResourceSearchRefresh()
+                    AppDestination.CardRun -> requestVisibleResourceInstallWizardRefresh("catalog:$reason")
+                    AppDestination.ResourceMore -> Unit
+                    AppDestination.ResourceManage -> requestResourceManageRefresh(forceCatalogRefresh = false, reason = "catalog:$reason")
                     else -> Unit
                 }
             }
@@ -3689,7 +3689,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showResourceManage() {
         // T7:走 Fragment 路径(ResourceManageFragment 壳 + 复用 Activity 渲染)。
-        enterScreen(Screen.ResourceManage)
+        enterScreen(AppDestination.ResourceManage)
         resourceManageBinding = null
         clearRootForScreen()
         root.visibility = View.GONE
@@ -3733,7 +3733,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 )
             }.getOrNull()
             runOnUiThread {
-                if (requestId != resourceManageRequestSerial || currentScreen != Screen.ResourceManage) return@runOnUiThread
+                if (requestId != resourceManageRequestSerial || currentScreen != AppDestination.ResourceManage) return@runOnUiThread
                 if (payload == null) {
                     resourceManageContentHost?.let { host ->
                         resourceManageBinding = null
@@ -4406,7 +4406,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         items: List<ResourceItem>,
         startIndex: Int = 0
     ) {
-        if (currentScreen != Screen.Resources && currentScreen != Screen.ResourceSearch) {
+        if (currentScreen != AppDestination.Resources && currentScreen != AppDestination.ResourceSearch) {
             resourceSectionsDirty = true
             return
         }
@@ -4464,7 +4464,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         items: List<ResourceItem>,
         startIndex: Int = 0
     ) {
-        if (currentScreen != Screen.Resources) {
+        if (currentScreen != AppDestination.Resources) {
             resourceSectionsDirty = true
             return
         }
@@ -4847,7 +4847,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showResourceDetail(resourceId: String, initialItem: ResourceItem? = null) {
         val requestKey = KiteResourceRequestPolicy.resourceDetailKey(resourceId)
-        if (currentScreen == Screen.ResourceDetail && currentResourceDetailId == resourceId) {
+        if (currentScreen == AppDestination.ResourceDetail && currentResourceDetailId == resourceId) {
             val binding = resourceDetailBinding
             val contentHost = resourceDetailContentHost
             if (binding != null && contentHost != null && binding.contentHost === contentHost) {
@@ -4860,11 +4860,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 return
             }
         }
-        if (resourceDetailInFlightKey == requestKey && currentScreen == Screen.ResourceDetail) return
+        if (resourceDetailInFlightKey == requestKey && currentScreen == AppDestination.ResourceDetail) return
         val requestId = ++resourceDetailRequestSerial
         resourceDetailInFlightKey = requestKey
         currentResourceDetailId = resourceId
-        enterScreen(Screen.ResourceDetail)
+        enterScreen(AppDestination.ResourceDetail)
         // T7:走 Fragment 路径。把渲染(含异步线程)交给 renderResourceDetailInto。
         clearRootForScreen()
         root.visibility = View.GONE
@@ -4906,7 +4906,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             runOnUiThread {
                 if (
                     requestId != resourceDetailRequestSerial ||
-                    currentScreen != Screen.ResourceDetail ||
+                    currentScreen != AppDestination.ResourceDetail ||
                     currentResourceDetailId != resourceId
                 ) {
                     if (resourceDetailInFlightKey == requestKey) resourceDetailInFlightKey = null
@@ -4938,7 +4938,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun refreshVisibleResourceDetail(resourceId: String) {
         val contentHost = resourceDetailContentHost
-        if (contentHost == null || currentScreen != Screen.ResourceDetail || currentResourceDetailId != resourceId) {
+        if (contentHost == null || currentScreen != AppDestination.ResourceDetail || currentResourceDetailId != resourceId) {
             showResourceDetail(resourceId)
             return
         }
@@ -4952,7 +4952,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             runOnUiThread {
                 if (
                     requestId != resourceDetailRequestSerial ||
-                    currentScreen != Screen.ResourceDetail ||
+                    currentScreen != AppDestination.ResourceDetail ||
                     currentResourceDetailId != resourceId ||
                     resourceDetailContentHost !== contentHost
                 ) {
@@ -4988,7 +4988,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val binding = resourceDetailBinding ?: return
         val resourceId = currentResourceDetailId ?: return
         if (
-            currentScreen != Screen.ResourceDetail ||
+            currentScreen != AppDestination.ResourceDetail ||
             binding.resourceId != resourceId ||
             binding.contentHost !== resourceDetailContentHost
         ) return
@@ -5000,7 +5000,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             runOnUiThread {
                 if (
                     requestId != resourceDetailRequestSerial ||
-                    currentScreen != Screen.ResourceDetail ||
+                    currentScreen != AppDestination.ResourceDetail ||
                     currentResourceDetailId != resourceId ||
                     resourceDetailBinding !== binding ||
                     binding.contentHost !== resourceDetailContentHost
@@ -5135,7 +5135,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun patchVisibleResourceDetailState(item: ResourceItem, revision: Long = 0L): Boolean {
         val binding = resourceDetailBinding ?: return false
         if (
-            currentScreen != Screen.ResourceDetail ||
+            currentScreen != AppDestination.ResourceDetail ||
             currentResourceDetailId != item.id ||
             binding.resourceId != item.id ||
             binding.contentHost !== resourceDetailContentHost
@@ -5389,7 +5389,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showResourceRawJson(item: ResourceItem) {
         val latestItem = cachedResourceCatalog?.firstOrNull { it.id == item.id } ?: item
         currentResourceDetailId = latestItem.id
-        enterScreen(Screen.ResourceRawJson) { showResourceDetail(latestItem.id, latestItem) }
+        enterScreen(AppDestination.ResourceRawJson) { showResourceDetail(latestItem.id, latestItem) }
         clearRootForScreen()
         root.addView(topBar("原始 JSON", ::requestNavigationBack))
         root.addView(ScrollView(this).apply {
@@ -5820,7 +5820,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 currentResourceInstallTargetId = null
                 resourceInstallWizardPlanIds = emptyList()
                 activeResourceInstallWizard = null
-                if (this is CardRunActivity && currentScreen == Screen.CardRun) {
+                if (this is CardRunActivity && currentScreen == AppDestination.CardRun) {
                     closeCardRunTask()
                 } else {
                     settleVisibleResourceMutation("cancel_failed_install")
@@ -5886,11 +5886,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun resourceStatusToastSuppressed(): Boolean =
         resourceInstallWizardSurfaceActive() ||
-            currentScreen == Screen.Resources ||
-            currentScreen == Screen.ResourceSearch ||
-            currentScreen == Screen.ResourceDetail ||
-            currentScreen == Screen.ResourceMore ||
-            currentScreen == Screen.ResourceManage
+            currentScreen == AppDestination.Resources ||
+            currentScreen == AppDestination.ResourceSearch ||
+            currentScreen == AppDestination.ResourceDetail ||
+            currentScreen == AppDestination.ResourceMore ||
+            currentScreen == AppDestination.ResourceManage
 
     private fun clearResourceInstallTask(
         targetResourceId: String?,
@@ -6161,7 +6161,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             currentStepIndex = 0,
             lastMeaningfulOutput = "等待获取确认"
         )
-        if (this !is CardRunActivity && currentScreen != Screen.CardRun) {
+        if (this !is CardRunActivity && currentScreen != AppDestination.CardRun) {
             startActivity(
                 CardRunIntents.resourceInstallWizardIntent(
                     context = this,
@@ -6249,7 +6249,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         reason: String
     ): Boolean {
         val binding = resourceInstallWizardBinding ?: return false
-        if (currentScreen != Screen.CardRun) return false
+        if (currentScreen != AppDestination.CardRun) return false
         if (binding.targetResourceId != targetId || binding.planResourceIds != planIds) return false
         if (focusedRunRecipeId != recipeId || focusedRunInstanceId != instanceId) return false
         if (activeResourceInstallWizard?.selectedSurface != CardRunSurface.InstallWizard) return false
@@ -6552,7 +6552,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 if (this is CardRunActivity) {
                     closeCardRunTask()
                 } else {
-                    screenRouter.navigate(Screen.Resources)
+                    appNavigator.navigate(AppDestination.Resources)
                 }
             }
         }
@@ -6962,13 +6962,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun requestVisibleResourceInstallWizardRefresh(reason: String) {
-        if (!resourceInstallWizardSurfaceActive() || currentScreen != Screen.CardRun) return
+        if (!resourceInstallWizardSurfaceActive() || currentScreen != AppDestination.CardRun) return
         if (resourceInstallWizardRefreshPosted) return
         resourceInstallWizardRefreshPosted = true
         root.post {
             resourceInstallWizardRefreshPosted = false
             val binding = resourceInstallWizardBinding ?: return@post
-            if (!resourceInstallWizardSurfaceActive() || currentScreen != Screen.CardRun) return@post
+            if (!resourceInstallWizardSurfaceActive() || currentScreen != AppDestination.CardRun) return@post
             val requestId = ++resourceInstallWizardRefreshSerial
             val targetId = binding.targetResourceId
             val planIds = binding.planResourceIds
@@ -7011,7 +7011,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         path: String
     ) {
         if (requestId != resourceInstallWizardRefreshSerial) return
-        if (resourceInstallWizardBinding !== binding || currentScreen != Screen.CardRun) return
+        if (resourceInstallWizardBinding !== binding || currentScreen != AppDestination.CardRun) return
         applyResourceInstallWizardUiState(binding, uiState)
         diagnostics.logRecipeEvent(
             "install_wizard_local_refresh",
@@ -7179,7 +7179,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun updateVisibleResourceInstallWizardElapsed(): Boolean {
         val binding = resourceInstallWizardBinding ?: return false
-        if (currentScreen != Screen.CardRun || !resourceInstallWizardSurfaceActive()) return false
+        if (currentScreen != AppDestination.CardRun || !resourceInstallWizardSurfaceActive()) return false
         var keepTicking = false
         binding.planResourceIds.forEachIndexed { index, resourceId ->
             val rowBinding = binding.rowBindings[resourceId]
@@ -7237,7 +7237,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun resourceInstallWizardSurfaceActive(): Boolean =
-        currentScreen == Screen.CardRun &&
+        currentScreen == AppDestination.CardRun &&
             activeResourceInstallWizard?.let { context ->
                 focusedRunRecipeId == context.wizardRecipeId ||
                     focusedRunInstanceId == context.wizardInstanceId
@@ -7270,7 +7270,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun renderResourceInstallWizardFor(recipe: KiteRecipe): Boolean {
         if (!resourceInstallWizardShouldHost(recipe)) return false
         val context = activeResourceInstallWizard ?: return false
-        if (resourceInstallWizardBinding != null && currentScreen == Screen.CardRun) {
+        if (resourceInstallWizardBinding != null && currentScreen == AppDestination.CardRun) {
             requestVisibleResourceInstallWizardRefresh("hosted:${recipe.id}")
         } else {
             showCardRunSurface(resourceInstallWizardRecipeFor(context))
@@ -7335,7 +7335,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showResourceMoreActions(item: ResourceItem) {
         currentResourceDetailId = item.id
-        enterScreen(Screen.ResourceMore) { showResourceDetail(item.id) }
+        enterScreen(AppDestination.ResourceMore) { showResourceDetail(item.id) }
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         root.addView(topBar("资源管理", ::requestNavigationBack))
@@ -8197,23 +8197,23 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         if (this is CardRunActivity || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
         invalidateResourceRuntimeStateCache()
         when (currentScreen) {
-            Screen.Resources -> {
+            AppDestination.Resources -> {
                 if (resourceSectionHost != null) {
                     requestVisibleResourceItemStatePatch("visible_refresh")
                 } else {
                     showResources()
                 }
             }
-            Screen.ResourceSearch -> {
+            AppDestination.ResourceSearch -> {
                 if (resourceSearchContentHost != null) {
                     requestVisibleResourceItemStatePatch("visible_refresh")
                 } else {
                     showResourceSearch()
                 }
             }
-            Screen.ResourceDetail -> requestVisibleResourceDetailStatePatch("visible_refresh")
-            Screen.ResourceMore -> invalidateResourceRuntimeStateCache()
-            Screen.ResourceManage -> {
+            AppDestination.ResourceDetail -> requestVisibleResourceDetailStatePatch("visible_refresh")
+            AppDestination.ResourceMore -> invalidateResourceRuntimeStateCache()
+            AppDestination.ResourceManage -> {
                 if (resourceManageContentHost != null) {
                     requestResourceManageRefresh(forceCatalogRefresh = false, reason = "visible_refresh")
                 } else {
@@ -8227,11 +8227,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun settleVisibleResourceMutation(reason: String) {
         if (this is CardRunActivity || !::root.isInitialized) return
         when (currentScreen) {
-            Screen.Resources,
-            Screen.ResourceSearch,
-            Screen.ResourceDetail,
-            Screen.ResourceMore,
-            Screen.ResourceManage -> refreshResourceScreenIfVisible()
+            AppDestination.Resources,
+            AppDestination.ResourceSearch,
+            AppDestination.ResourceDetail,
+            AppDestination.ResourceMore,
+            AppDestination.ResourceManage -> refreshResourceScreenIfVisible()
             else -> {
                 invalidateResourceRuntimeStateCache()
                 resourceCatalogDirty = true
@@ -8298,7 +8298,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                         resourceInstallStore.clearPlan()
                         closeResourceInstallWizardInstance(resourceId, removeRunState = true)
                         showResourceDiscreteToast("残留已卸载，获取任务已取消")
-                        if (this is CardRunActivity && currentScreen == Screen.CardRun) {
+                        if (this is CardRunActivity && currentScreen == AppDestination.CardRun) {
                             closeCardRunTask()
                         } else {
                             refreshResourceScreenIfVisible()
@@ -9151,7 +9151,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val surfaceSignature = cardRunSurfaceSignature(recipe, state, actionRecipe, surfaceState)
         applyCardRunSystemBarsForSurface(state.surface)
         if (refreshVisibleCardRunSurfaceInsteadOfRebuild(surfaceSignature, state, surfaceState)) return
-        enterScreen(Screen.CardRun)
+        enterScreen(AppDestination.CardRun)
         root.setBackgroundColor(Color.rgb(246, 247, 249))
         clearRootForScreen()
         cardRunSurfaceSignature = surfaceSignature
@@ -9262,7 +9262,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         state: RecipeRuntimeState,
         surfaceState: RecipeRuntimeState
     ): Boolean {
-        if (currentScreen != Screen.CardRun || cardRunSurfaceSignature != surfaceSignature) return false
+        if (currentScreen != AppDestination.CardRun || cardRunSurfaceSignature != surfaceSignature) return false
         when (state.surface) {
             CardRunSurface.InstallWizard -> requestVisibleResourceInstallWizardRefresh("same_card_surface")
             CardRunSurface.Report -> updateVisibleCardRunReport(surfaceState)
@@ -9272,7 +9272,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showCardRunLoadingSurface(recipe: KiteRecipe, message: String) {
-        enterScreen(Screen.CardRun)
+        enterScreen(AppDestination.CardRun)
         root.setBackgroundColor(Color.rgb(246, 247, 249))
         clearRootForScreen()
         val state = runtimeStateFor(recipe)
@@ -11192,7 +11192,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun updateVisibleCardRunReport(state: RecipeRuntimeState) {
         val binding = cardRunReportBinding ?: return
-        if (binding.instanceId != state.instanceId || currentScreen != Screen.CardRun) return
+        if (binding.instanceId != state.instanceId || currentScreen != AppDestination.CardRun) return
         pendingCardRunReportState = state
         scheduleVisibleCardRunReportRefresh()
     }
@@ -11224,7 +11224,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun renderVisibleCardRunReport(state: RecipeRuntimeState) {
         val binding = cardRunReportBinding ?: return
-        if (binding.instanceId != state.instanceId || currentScreen != Screen.CardRun) return
+        if (binding.instanceId != state.instanceId || currentScreen != AppDestination.CardRun) return
         cardRunReportLastRefreshAt = System.currentTimeMillis()
         val outputText = liveCardRunOutputText(cardRunOutputText(state))
         binding.outputTextView?.let { textView ->
@@ -11245,7 +11245,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun updateVisibleCardRunReportElapsed(): Boolean {
         val binding = cardRunReportBinding ?: return false
-        if (currentScreen != Screen.CardRun) return false
+        if (currentScreen != AppDestination.CardRun) return false
         val state = CardRunStore.get(binding.instanceId) ?: return false
         binding.elapsedTextView?.text = formatRunDuration(state)
         binding.footerTextView?.text = reportFooterLabel(state)
@@ -12140,7 +12140,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     "card_run_blank_terminal_opened",
                     mapOf("rootInstanceId" to rootInstanceId, "instanceId" to instanceId, "sessionId" to record.id)
                 )
-                if (currentScreen == Screen.CardRun && focusedRunInstanceId == instanceId) {
+                if (currentScreen == AppDestination.CardRun && focusedRunInstanceId == instanceId) {
                     showCardRunSurface(recipe)
                 }
             }
@@ -13698,7 +13698,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         TerminalSessionStore.end(applicationContext, terminal.id)
         Toast.makeText(this, "正在结束终端", Toast.LENGTH_SHORT).show()
         requestRuntimePanelSummaryRefresh(force = true)
-        root.postDelayed({ if (currentScreen == Screen.Processes) showKiteProcessOverview(forceRefresh = false) }, 260L)
+        root.postDelayed({ if (currentScreen == AppDestination.Processes) showKiteProcessOverview(forceRefresh = false) }, 260L)
     }
 
     private fun openRunManagementSurface(group: RunManagementGroup, item: CardRunWindowItem) {
@@ -13736,7 +13736,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         markRunManagementProcessStopAsUserStop(process, pid)
         TaskManagerStore.endProcess(applicationContext, process, pid)
         Toast.makeText(this, "正在结束进程 PID $pid，稍后刷新", Toast.LENGTH_SHORT).show()
-        if (currentScreen == Screen.Processes) showKiteProcessOverview(forceRefresh = false)
+        if (currentScreen == AppDestination.Processes) showKiteProcessOverview(forceRefresh = false)
         scheduleRunManagementLazyRefresh(force = true)
     }
 
@@ -13783,10 +13783,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         requestRuntimePanelSummaryRefresh(force = force)
         listOf(260L, 900L, 1800L).forEach { delayMs ->
             root.postDelayed({
-                if (currentScreen != Screen.Processes || isFinishing || isDestroyed) return@postDelayed
+                if (currentScreen != AppDestination.Processes || isFinishing || isDestroyed) return@postDelayed
                 requestRuntimePanelSummaryRefresh(force = false)
                 root.postDelayed({
-                    if (currentScreen == Screen.Processes && !isFinishing && !isDestroyed) {
+                    if (currentScreen == AppDestination.Processes && !isFinishing && !isDestroyed) {
                         showKiteProcessOverview(forceRefresh = false)
                     }
                 }, 180L)
@@ -14306,7 +14306,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun updateVisibleConsoleCard(recipe: KiteRecipe, state: RecipeRuntimeState) {
         val binding = consoleCardBindings[recipe.id] ?: return
-        if (currentScreen != Screen.Console) return
+        if (currentScreen != AppDestination.Console) return
         val ubuntuBlocked = isUbuntuActionBlocked(recipe)
         applyRecipeStatusBadge(binding.statusHost, state)
         binding.cueHost.removeAllViews()
@@ -14585,12 +14585,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun resourceSurfaceHasInlineRuntimeStatus(): Boolean {
         if (resourceInstallWizardSurfaceActive()) return true
         return when (currentScreen) {
-            Screen.Resources,
-            Screen.ResourceSearch,
-            Screen.ResourceDetail,
-            Screen.ResourceMore,
-            Screen.ResourceManage -> true
-            Screen.CardRun -> focusedRunRecipe()?.let { recipe ->
+            AppDestination.Resources,
+            AppDestination.ResourceSearch,
+            AppDestination.ResourceDetail,
+            AppDestination.ResourceMore,
+            AppDestination.ResourceManage -> true
+            AppDestination.CardRun -> focusedRunRecipe()?.let { recipe ->
                 recipeUsesResourceInlineStatus(recipe)
             } == true
             else -> false
@@ -14612,7 +14612,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             requestVisibleResourceInstallWizardRefresh(reason)
         }
         requestVisibleResourceItemStatePatch(reason, listOfNotNull(resourceId))
-        if (currentScreen == Screen.ResourceDetail && resourceId == currentResourceDetailId) {
+        if (currentScreen == AppDestination.ResourceDetail && resourceId == currentResourceDetailId) {
             requestVisibleResourceDetailStatePatch(reason)
         }
     }
@@ -15043,7 +15043,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         this is CardRunActivity && focusedRunRecipeId == recipe.id
 
     private fun shouldStayOnRunSurface(): Boolean =
-        currentScreen == Screen.CardRun ||
+        currentScreen == AppDestination.CardRun ||
             this is CardRunActivity
 
     private fun showRunSurfaceOrConsole(recipe: KiteRecipe) {
@@ -15056,7 +15056,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             focusedRunRecipeId = recipe.id
             focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
             showCardRunSurface(recipe)
-        } else if (currentScreen == Screen.CreateConfig || currentScreen == Screen.RecipeMore) {
+        } else if (currentScreen == AppDestination.CreateConfig || currentScreen == AppDestination.RecipeMore) {
             focusedRunRecipeId = recipe.id
             focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
         } else {
@@ -15065,7 +15065,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showConsoleUnlessEditingRecipe(recipe: KiteRecipe) {
-        if (currentScreen == Screen.CreateConfig || currentScreen == Screen.RecipeMore) {
+        if (currentScreen == AppDestination.CreateConfig || currentScreen == AppDestination.RecipeMore) {
             focusedRunRecipeId = recipe.id
             focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
         } else {
@@ -15086,7 +15086,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             KiteRecipe.SURFACE_MODE_SILENT -> false
             else -> {
                 val mayAutoOpenSurface = this is CardRunActivity ||
-                    currentScreen == Screen.CardRun ||
+                    currentScreen == AppDestination.CardRun ||
                     recipe.launch.openInstance
                 mayAutoOpenSurface && (
                     step.type == KiteRecipe.STEP_OPEN_WEB ||
@@ -15751,7 +15751,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     )
                     markResourceInstallFailed(recipe, null, message)
                     toastIfNotResourceRecipe(recipe, message.take(120))
-                    if (!openSurface || (currentScreen == Screen.CardRun && focusedRunInstanceId == instanceId)) {
+                    if (!openSurface || (currentScreen == AppDestination.CardRun && focusedRunInstanceId == instanceId)) {
                         showRunSurfaceOrConsole(recipe)
                     }
                     return@runOnUiThread
@@ -15791,7 +15791,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     ).withTerminalOwner(record.id, instanceId)
                 )
                 if (openSurface) {
-                    if (currentScreen == Screen.CardRun && focusedRunInstanceId == instanceId) {
+                    if (currentScreen == AppDestination.CardRun && focusedRunInstanceId == instanceId) {
                         showCardRunSurface(recipe)
                     }
                 } else {
@@ -16758,7 +16758,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         state: RecipeRuntimeState,
         status: RecipeRunStatus
     ) {
-        if (this is CardRunActivity || currentScreen != Screen.Console) return
+        if (this is CardRunActivity || currentScreen != AppDestination.Console) return
         if (consoleCardBindings.containsKey(recipe.id)) {
             updateVisibleConsoleCard(recipe, state)
             return
@@ -16774,7 +16774,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         if (now - lastConsoleRuntimeRefreshAt < 600L) return
         lastConsoleRuntimeRefreshAt = now
         root.post {
-            if (currentScreen == Screen.Console) showConsole()
+            if (currentScreen == AppDestination.Console) showConsole()
         }
     }
 
@@ -16783,7 +16783,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showRecipeEditor(recipe: KiteRecipe) = showRecipeForm(recipe)
 
     private fun showRecipeForm(recipe: KiteRecipe?, draft: RecipeFormDraft? = null) {
-        enterScreen(Screen.CreateConfig, ::handleRecipeFormBack)
+        enterScreen(AppDestination.CreateConfig, ::handleRecipeFormBack)
         editingRecipe = recipe
         formSteps.clear()
         formSteps.addAll(draft?.steps?.map { it.copy() } ?: recipe?.steps?.map { RecipeStepDraft.fromStep(it) } ?: emptyList())
@@ -18588,10 +18588,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     /**
      * T6b:把 root 隐藏,把 RecipeRawJsonFragment 加到 rootHost 容器。
-     * 这是 P2 第一个走 Fragment 的 Screen,验证整套机制。
+     * 这是 P2 第一个走 Fragment 的 AppDestination,验证整套机制。
      */
     private fun routeToRecipeRawJsonFragment() {
-        enterScreen(Screen.RecipeDetail, ::exitRecipeRawJson)
+        enterScreen(AppDestination.RecipeDetail, ::exitRecipeRawJson)
         clearRootForScreen()
         root.visibility = View.GONE
         val recipeId = pendingRawJsonRecipeId ?: return
@@ -18741,7 +18741,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showRecipeRunHistoryDetail(recipe: KiteRecipe, entry: CardRunHistoryEntry) {
         val latestRecipe = latestRecipeForRawJson(recipe)
         showRunHistoryDetail(
-            screen = Screen.RecipeDetail,
+            screen = AppDestination.RecipeDetail,
             title = "运行详情",
             backAction = { showRecipeEditor(latestRecipe) },
             recipe = latestRecipe,
@@ -18752,7 +18752,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showResourceRunHistoryDetail(item: ResourceItem, recipe: KiteRecipe, entry: CardRunHistoryEntry) {
         showRunHistoryDetail(
-            screen = Screen.ResourceMore,
+            screen = AppDestination.ResourceMore,
             title = "获取日志",
             backAction = { showResourceMoreActions(item) },
             recipe = recipe,
@@ -18762,7 +18762,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showRunHistoryDetail(
-        screen: Screen,
+        screen: AppDestination,
         title: String,
         backAction: () -> Unit,
         recipe: KiteRecipe,
@@ -18853,7 +18853,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showRecipeRunHistoryStepReport(recipe: KiteRecipe, entry: CardRunHistoryEntry, step: CardRunHistoryStep) {
         showRunHistoryStepReport(
-            screen = Screen.RecipeDetail,
+            screen = AppDestination.RecipeDetail,
             backAction = { showRecipeRunHistoryDetail(recipe, entry) },
             step = step
         )
@@ -18866,14 +18866,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         step: CardRunHistoryStep
     ) {
         showRunHistoryStepReport(
-            screen = Screen.ResourceMore,
+            screen = AppDestination.ResourceMore,
             backAction = { showResourceRunHistoryDetail(item, recipe, entry) },
             step = step
         )
     }
 
     private fun showRunHistoryStepReport(
-        screen: Screen,
+        screen: AppDestination,
         backAction: () -> Unit,
         step: CardRunHistoryStep
     ) {
@@ -19509,7 +19509,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showWorkbench(url: String, source: String, recipe: KiteRecipe?) {
         lastWorkbenchUrl = url
-        enterScreen(Screen.Workbench)
+        enterScreen(AppDestination.Workbench)
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         val parent = webView.parent
@@ -19554,7 +19554,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val draft = snapshotRecipeFormDraft() ?: recipeMoreDraft ?: return
         recipeMoreDraft = draft.withLaunchState()
         val activeRecipe = editingRecipe
-        enterScreen(Screen.RecipeMore, ::returnToRecipeFormFromMore)
+        enterScreen(AppDestination.RecipeMore, ::returnToRecipeFormFromMore)
         clearRootForScreen()
         root.setBackgroundColor(tokens.pageBackground)
         root.addView(topBar("更多配置", ::requestNavigationBack))
@@ -19972,10 +19972,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             Color.blue(tokens.surfaceElevated)
         ))
         elevation = dp(6).toFloat()
-        addView(navItem("▦", "配置", currentScreen == Screen.Console) { screenRouter.navigate(Screen.Console) })
-        addView(navItem(">_", "终端", currentScreen == Screen.Terminal) { screenRouter.navigate(Screen.Terminal) })
-        addView(navItem("≡", "资源", currentScreen == Screen.Resources || currentScreen == Screen.ResourceManage || currentScreen == Screen.ResourceDetail || currentScreen == Screen.ResourceMore || currentScreen == Screen.ResourceRawJson) { screenRouter.navigate(Screen.Resources) })
-        addView(navItem("⚙", "设置", currentScreen == Screen.Settings || currentScreen == Screen.ThemeSettings) { screenRouter.navigate(Screen.Settings) })
+        addView(navItem("▦", "配置", currentScreen == AppDestination.Console) { appNavigator.navigate(AppDestination.Console) })
+        addView(navItem(">_", "终端", currentScreen == AppDestination.Terminal) { appNavigator.navigate(AppDestination.Terminal) })
+        addView(navItem("≡", "资源", currentScreen == AppDestination.Resources || currentScreen == AppDestination.ResourceManage || currentScreen == AppDestination.ResourceDetail || currentScreen == AppDestination.ResourceMore || currentScreen == AppDestination.ResourceRawJson) { appNavigator.navigate(AppDestination.Resources) })
+        addView(navItem("⚙", "设置", currentScreen == AppDestination.Settings || currentScreen == AppDestination.ThemeSettings) { appNavigator.navigate(AppDestination.Settings) })
     }
 
     private fun navItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit): View = LinearLayout(this).apply {
@@ -20966,25 +20966,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     visible = false
                 )
         }
-    }
-
-    internal enum class Screen {
-        Console,
-        Terminal,
-        Workbench,
-        CardRun,
-        RecipeDetail,
-        CreateConfig,
-        RecipeMore,
-        Resources,
-        ResourceSearch,
-        ResourceManage,
-        ResourceDetail,
-        ResourceMore,
-        ResourceRawJson,
-        Processes,
-        Settings,
-        ThemeSettings
     }
 
     override fun setTerminalDetailMode(enabled: Boolean) {

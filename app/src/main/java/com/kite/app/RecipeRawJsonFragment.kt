@@ -16,7 +16,7 @@ import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.UiKit
 
 /**
- * T6b 样板:把 Screen.RecipeDetail 中的"原始 JSON"只读页抽成 Fragment。
+ * 渐进迁移样板：把 RecipeDetail 中的“原始 JSON”只读页抽成 Fragment。
  *
  * 设计原则(抽屉式,ADR-003):本 Fragment 自包含,不复刻 MainActivity 的命令式 UI 工具链
  * (topBar/tokens/dp 等),而是用最朴素的方式自己渲染 —— 这样它真正独立,

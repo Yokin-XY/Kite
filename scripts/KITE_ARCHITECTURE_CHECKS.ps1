@@ -33,7 +33,7 @@ function Imported-Types {
 
 $baselinePath = Join-Path $Root 'docs/stabilization/architecture-baseline.json'
 $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
-$screenRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/ScreenRouter.kt'
+$screenRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/AppNavigator.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
     (Join-Path $Root 'app/src/main/kotlin/com/kite/app')
@@ -41,7 +41,7 @@ $sourceRoots = @(
 
 Assert-Architecture (Test-Path $baselinePath) 'Architecture baseline is missing.'
 Assert-Architecture (Test-Path $mainPath) 'MainActivity source is missing.'
-Assert-Architecture (Test-Path $screenRouterPath) 'ScreenRouter source is missing.'
+Assert-Architecture (Test-Path $screenRouterPath) 'AppNavigator source is missing.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json

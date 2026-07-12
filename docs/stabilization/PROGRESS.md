@@ -570,3 +570,17 @@ T001 验证：
 T001 状态：completed。
 
 下一步：提交 T001，执行 T002 三问，只迁移应用壳合同和组合根。
+
+### T002 三问
+
+- 目标是什么：让导航、系统 Intent 分类和长期依赖装配脱离具体 `MainActivity` 类型，保持现有业务和视觉不变。
+- 完成标准是什么：对应 `PLAYBOOK.md` T002 四项；导航类型独立、Intent 先分类、长期依赖由组合根创建，并通过真机返回与回跳冒烟。
+- 依赖是否满足：T001 已完成并提交为 `c3b636f`，依赖满足。
+
+当前证据：
+
+- `ScreenRouter` 对 `MainActivity.Screen` 有 46 次引用，导航合同无法脱离具体 Activity 编译。
+- `MainActivity.onCreate` 直接创建 diagnostics、配方/投放区加载器、bridge、浏览器会话、资源 Store 等长期对象。
+- `onCreate` 与 `onNewIntent` 分别按认证、自动化、运行窗口顺序手写同一套分发优先级。
+
+执行顺序：先迁移 `AppDestination`/`AppNavigator` 并跑导航回归；再建立 Intent 分类和组合根，避免同时改变三条入口。
