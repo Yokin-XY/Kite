@@ -66,6 +66,12 @@ class MainActivityScreenRoutingTest {
         method.invoke(activity, signal)
     }
 
+    private fun settleResourceMutation(activity: MainActivity, reason: String) {
+        val method = MainActivity::class.java.getDeclaredMethod("settleVisibleResourceMutation", String::class.java)
+        method.isAccessible = true
+        method.invoke(activity, reason)
+    }
+
     private fun setResourceCatalogDirty(activity: MainActivity, dirty: Boolean) {
         val field = MainActivity::class.java.getDeclaredField("resourceCatalogDirty")
         field.isAccessible = true
@@ -178,6 +184,18 @@ class MainActivityScreenRoutingTest {
             }
             assertEquals(screenName, activity.currentScreenNameForTest())
         }
+    }
+
+    @Test
+    fun `后台资源完成不得把非资源页面导航到资源首页`() {
+        val activity = createActivity()
+        invokeShow(activity, "showSettings")
+        setResourceCatalogDirty(activity, false)
+
+        settleResourceMutation(activity, "background_install_completed")
+
+        assertEquals("Settings", activity.currentScreenNameForTest())
+        assertTrue(resourceCatalogDirty(activity))
     }
 
     // ------------------------------------------------------------------

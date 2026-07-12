@@ -246,3 +246,17 @@ D2 结论：页面只提交动作意图，协调器只生成轻量计划；运�
 - 静态护栏禁止安装向导恢复平行状态文字决策树。
 
 下一步：把资源详情、资源首页和安装向导的可见绑定统一消费相同 Resource UiState，并审计整页刷新残留。
+
+### D3 后台资源状态不得越权导航
+
+- 审计发现 `settleVisibleResourceMutation` 在非资源页面会调用 `showResources()`，后台安装或卸载完成可能强制改变用户当前页面。
+- 现在只有可见资源页面执行局部校准；设置、终端、编辑页等其他页面只失效缓存并标记 `resourceCatalogDirty`。
+- 新增 Robolectric 回归：设置页收到后台资源完成后仍停留设置页，同时资源缓存变脏。
+- 静态护栏禁止该入口重新调用 `showResources()`。
+
+验证：
+
+- `MainActivityScreenRoutingTest` 与步骤投影测试：`BUILD SUCCESSFUL`。
+- `scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：通过。
+
+下一步：让剩余资源完成/失败回调携带资源 ID，只 patch 对应可见卡片、详情或向导行。

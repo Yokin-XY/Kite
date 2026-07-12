@@ -8212,7 +8212,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             Screen.ResourceDetail,
             Screen.ResourceMore,
             Screen.ResourceManage -> refreshResourceScreenIfVisible()
-            else -> showResources()
+            else -> {
+                invalidateResourceRuntimeStateCache()
+                resourceCatalogDirty = true
+            }
         }
         diagnostics.logRecipeEvent(
             "resource_visible_mutation_settled",

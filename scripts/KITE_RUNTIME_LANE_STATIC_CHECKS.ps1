@@ -394,6 +394,9 @@ Assert-True ($resourceManageFlow -match 'requestResourceManageRefresh') 'showRes
 $installWizardRowState = Function-Body $main 'resourceInstallWizardRowState'
 Assert-True ($installWizardRowState -match 'KiteResourceInstallStepUiProjector\.project') 'install wizard rows must consume the shared step projection.'
 Assert-True ($installWizardRowState -notmatch 'statusLabel\s*=\s*when') 'install wizard rows must not keep a parallel status-label decision tree.'
+$settleResourceMutation = Function-Body $main 'settleVisibleResourceMutation'
+Assert-True ($settleResourceMutation -notmatch '\bshowResources\s*\(') 'background resource mutations must not navigate users away from the current screen.'
+Assert-True ($settleResourceMutation -match 'resourceCatalogDirty\s*=\s*true') 'background resource mutations must mark hidden resource surfaces dirty.'
 
 $consoleRefresh = Function-Body $main 'maybeRefreshConsoleAfterRuntimeState'
 Assert-True ($consoleRefresh -match 'updateVisibleConsoleCard') 'console runtime refresh should update a visible card first.'
