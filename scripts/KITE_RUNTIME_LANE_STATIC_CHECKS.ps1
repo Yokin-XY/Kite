@@ -34,6 +34,8 @@ $appIntentRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/App
 $kiteAppGraphPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/KiteAppGraph.kt'
 $resourceFeatureContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceFeatureContract.kt'
 $resourceFeatureControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceFeatureController.kt'
+$resourceManageFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceManageFragment.kt'
+$resourceManageScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceManageScreen.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -117,6 +119,8 @@ $appIntentRouter = Read-Utf8 $appIntentRouterPath
 $kiteAppGraph = Read-Utf8 $kiteAppGraphPath
 $resourceFeatureContract = Read-Utf8 $resourceFeatureContractPath
 $resourceFeatureController = Read-Utf8 $resourceFeatureControllerPath
+$resourceManageFragment = Read-Utf8 $resourceManageFragmentPath
+$resourceManageScreen = Read-Utf8 $resourceManageScreenPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -414,13 +418,10 @@ Assert-True ($main -notmatch 'private fun runManagementOwnershipRows|private fun
 Assert-True ($main -match 'private fun RunManagementGroup\.runManagementProcessPreview' -and $main -match '\u4e3b\u8fdb\u7a0b PID' -and $main -match '\u5b50\u8fdb\u7a0b') 'run management process preview should summarize PID/count instead of repeating the command line.'
 
 $showManage = Function-Body $main 'showResourceManage'
-# T7:资源管理走 Fragment,渲染逻辑迁到 renderResourceManageInto(override fun,非 private),
-# 单独提取其函数体。
-$renderManagePattern = "(?s)override fun renderResourceManageInto\b.*?(?=\n    private fun |\n    private data class |\n    private enum class |\n    companion object|\n    override fun |\z)"
-$renderManage = [regex]::Match($main, $renderManagePattern).Value
-$resourceManageFlow = $showManage + "`n" + $renderManage
-Assert-True ($resourceManageFlow -notmatch 'resourceCatalog\(forceRefresh = true\)|planSnapshot\(\)|registrySnapshot\(') 'showResourceManage must not synchronously build catalog or DB snapshots.'
-Assert-True ($resourceManageFlow -match 'requestResourceManageRefresh') 'showResourceManage should request a background payload.'
+Assert-True ($showManage -match 'showResourceFeatureFragment' -and $showManage -match 'ResourceManageFragment') 'showResourceManage must route to the owning resource feature.'
+Assert-True ($main -notmatch 'ResourceManageHost|renderResourceManageInto|requestResourceManageRefresh') 'resource management must not delegate rendering or refresh back to MainActivity.'
+Assert-True ($resourceManageFragment -match 'ResourceFeatureFragment' -and $resourceManageFragment -match 'observeResourceState') 'resource management must observe the shared resource feature state.'
+Assert-True ($resourceManageScreen -notmatch 'resourceCatalog\(|planSnapshot\(|registrySnapshot\(|KiteResourceInstallStore') 'resource management screen must only project supplied UI state.'
 
 $installWizardRowState = Function-Body $main 'resourceInstallWizardRowState'
 Assert-True ($installWizardRowState -match 'KiteResourceInstallStepUiProjector\.project') 'install wizard rows must consume the shared step projection.'

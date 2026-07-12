@@ -13,6 +13,11 @@ internal sealed interface ResourceFeatureRequest {
     data class OpenDetail(val resourceId: String) : ResourceFeatureRequest
     data class OpenMore(val resourceId: String) : ResourceFeatureRequest
     data class OpenRawJson(val resourceId: String) : ResourceFeatureRequest
+    data class OpenInstallPlan(val targetResourceId: String) : ResourceFeatureRequest
+    data class CancelInstallPlan(
+        val targetResourceId: String,
+        val resourceIds: List<String>
+    ) : ResourceFeatureRequest
     data class SubmitAction(val request: KiteResourceActionRequest) : ResourceFeatureRequest
 }
 
@@ -24,6 +29,7 @@ internal object ResourceFeatureResultContract {
     private const val KEY_RESOURCE_ID = "resource_id"
     private const val KEY_INTENT = "intent"
     private const val KEY_SOURCE = "source"
+    private const val KEY_RESOURCE_IDS = "resource_ids"
 
     fun send(fragment: Fragment, request: ResourceFeatureRequest) {
         fragment.parentFragmentManager.setFragmentResult(REQUEST_KEY, encode(request))
@@ -36,6 +42,16 @@ internal object ResourceFeatureResultContract {
         KIND_DETAIL -> bundle.resourceId()?.let(ResourceFeatureRequest::OpenDetail)
         KIND_MORE -> bundle.resourceId()?.let(ResourceFeatureRequest::OpenMore)
         KIND_RAW_JSON -> bundle.resourceId()?.let(ResourceFeatureRequest::OpenRawJson)
+        KIND_OPEN_PLAN -> bundle.resourceId()?.let(ResourceFeatureRequest::OpenInstallPlan)
+        KIND_CANCEL_PLAN -> bundle.resourceId()?.let { targetResourceId ->
+            ResourceFeatureRequest.CancelInstallPlan(
+                targetResourceId = targetResourceId,
+                resourceIds = bundle.getStringArrayList(KEY_RESOURCE_IDS).orEmpty()
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+                    .distinct()
+            )
+        }
         KIND_ACTION -> parseAction(bundle)
         else -> null
     }
@@ -51,6 +67,11 @@ internal object ResourceFeatureResultContract {
             is ResourceFeatureRequest.OpenDetail -> putResource(KIND_DETAIL, request.resourceId)
             is ResourceFeatureRequest.OpenMore -> putResource(KIND_MORE, request.resourceId)
             is ResourceFeatureRequest.OpenRawJson -> putResource(KIND_RAW_JSON, request.resourceId)
+            is ResourceFeatureRequest.OpenInstallPlan -> putResource(KIND_OPEN_PLAN, request.targetResourceId)
+            is ResourceFeatureRequest.CancelInstallPlan -> {
+                putResource(KIND_CANCEL_PLAN, request.targetResourceId)
+                putStringArrayList(KEY_RESOURCE_IDS, ArrayList(request.resourceIds))
+            }
             is ResourceFeatureRequest.SubmitAction -> {
                 putString(KEY_KIND, KIND_ACTION)
                 putString(KEY_RESOURCE_ID, request.request.resourceId)
@@ -87,5 +108,7 @@ internal object ResourceFeatureResultContract {
     private const val KIND_DETAIL = "detail"
     private const val KIND_MORE = "more"
     private const val KIND_RAW_JSON = "raw_json"
+    private const val KIND_OPEN_PLAN = "open_plan"
+    private const val KIND_CANCEL_PLAN = "cancel_plan"
     private const val KIND_ACTION = "action"
 }

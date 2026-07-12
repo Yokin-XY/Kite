@@ -1,8 +1,11 @@
 package com.kite.app
 
 import android.os.Bundle
+import android.os.Looper
 import android.view.ViewGroup
 import android.webkit.WebView
+import com.kite.app.feature.resources.ResourceFeatureRequest
+import com.kite.app.feature.resources.ResourceFeatureResultContract
 import com.kite.app.resources.KiteResourceInstallSignal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -11,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 
 /**
  * T6.0:P2 前置安全网 —— 锁死 MainActivity 的 Screen 路由契约。
@@ -89,12 +93,6 @@ class MainActivityScreenRoutingTest {
         activity.enterScreenForTest(screenName)
     }
 
-    private fun resourceItemPatchRequestSerial(activity: MainActivity): Long {
-        val field = MainActivity::class.java.getDeclaredField("resourceItemPatchRequestSerial")
-        field.isAccessible = true
-        return field.getLong(activity)
-    }
-
     private fun replaceWebView(activity: MainActivity, webView: WebView) {
         val field = MainActivity::class.java.getDeclaredField("webView")
         field.isAccessible = true
@@ -157,15 +155,13 @@ class MainActivityScreenRoutingTest {
     }
 
     @Test
-    fun `资源状态信号只为仍由 Activity 托管的列表请求补丁`() {
+    fun `资源状态信号只标脏 Activity 缓存不再操作 Feature 控件`() {
         val screens = listOf("Resources", "ResourceSearch", "ResourceDetail", "ResourceMore", "ResourceManage")
 
         screens.forEachIndexed { index, screenName ->
             val activity = createActivity()
             setCurrentScreen(activity, screenName)
             setResourceCatalogDirty(activity, false)
-            val patchSerialBefore = resourceItemPatchRequestSerial(activity)
-
             invokeResourceSignal(
                 activity,
                 KiteResourceInstallSignal(
@@ -175,16 +171,32 @@ class MainActivityScreenRoutingTest {
                 )
             )
 
-            if (screenName == "ResourceManage") {
-                assertTrue(
-                    "$screenName must request a visible item patch",
-                    resourceItemPatchRequestSerial(activity) > patchSerialBefore
-                )
-            } else {
-                assertTrue("$screenName must retain a dirty catalog until it can rebind", resourceCatalogDirty(activity))
-            }
+            assertTrue("$screenName must retain a dirty catalog until it can rebind", resourceCatalogDirty(activity))
             assertEquals(screenName, activity.currentScreenNameForTest())
         }
+    }
+
+    @Test
+    fun `资源管理进入详情后返回资源管理`() {
+        val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        invokeShow(activity, "showResourceManage")
+        activity.supportFragmentManager.executePendingTransactions()
+        val manageFragment = activity.supportFragmentManager
+            .findFragmentByTag("kite-resource-manage")
+            ?: error("资源管理 Fragment 未挂载")
+
+        ResourceFeatureResultContract.send(
+            manageFragment,
+            ResourceFeatureRequest.OpenDetail("kite.codex.cli")
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        activity.supportFragmentManager.executePendingTransactions()
+        assertEquals("ResourceDetail", activity.currentScreenNameForTest())
+
+        activity.onBackPressedDispatcher.onBackPressed()
+        shadowOf(Looper.getMainLooper()).idle()
+        activity.supportFragmentManager.executePendingTransactions()
+        assertEquals("ResourceManage", activity.currentScreenNameForTest())
     }
 
     @Test

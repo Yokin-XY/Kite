@@ -162,7 +162,7 @@ internal class AppNavigator(
             DestinationContract(
                 AppDestination.ResourceDetail,
                 DestinationKind.Child,
-                BackPolicy.Parent(AppDestination.Resources)
+                BackPolicy.Contextual(AppDestination.Resources)
             ),
             DestinationContract(
                 AppDestination.ResourceMore,

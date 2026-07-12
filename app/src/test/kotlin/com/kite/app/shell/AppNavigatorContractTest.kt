@@ -25,7 +25,6 @@ class AppNavigatorContractTest {
             AppDestination.Resources to AppDestination.Console,
             AppDestination.ResourceSearch to AppDestination.Resources,
             AppDestination.ResourceManage to AppDestination.Resources,
-            AppDestination.ResourceDetail to AppDestination.Resources,
             AppDestination.Processes to AppDestination.Console,
             AppDestination.Settings to AppDestination.Console,
             AppDestination.ThemeSettings to AppDestination.Settings
@@ -62,6 +61,7 @@ class AppNavigatorContractTest {
             AppDestination.CreateConfig to AppDestination.Console,
             AppDestination.RecipeDetail to AppDestination.Console,
             AppDestination.RecipeMore to AppDestination.Console,
+            AppDestination.ResourceDetail to AppDestination.Resources,
             AppDestination.ResourceMore to AppDestination.Resources,
             AppDestination.ResourceRawJson to AppDestination.Resources
         )
