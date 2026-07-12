@@ -177,6 +177,7 @@ import com.kite.app.feature.runsurface.RunSurfaceContent
 import com.kite.app.feature.runsurface.RunTerminalSurfaceBinding
 import com.kite.app.feature.runsurface.RunWebSurfaceBinding
 import com.kite.app.feature.runsurface.RunX11SurfaceBinding
+import com.kite.app.feature.runsurface.CardRunSpecialRecipes
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.runtime.TerminalSessionItem
 import com.kite.app.foundation.runtime.TerminalSessionStore
@@ -1331,25 +1332,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun temporaryBrowserRecipe(recipeId: String, url: String, title: String = "临时网页"): KiteRecipe =
-        KiteRecipe(
-            id = recipeId,
-            name = title,
-            description = "由 Ubuntu 浏览器请求临时打开",
-            type = KiteRecipe.TYPE_OPEN_URL,
-            category = "temporary",
-            defaultUrl = url,
-            shortcut = false,
-            execution = KiteExecution.steps(
-                listOf(KiteRecipeStep(id = "open_$recipeId", type = KiteRecipe.STEP_OPEN_WEB, url = url))
-            ),
-            actions = linkedMapOf(
-                KiteRecipe.ACTION_START to KiteRecipeAction(
-                    id = KiteRecipe.ACTION_START,
-                    steps = listOf(KiteRecipeStep(id = "open_$recipeId", type = KiteRecipe.STEP_OPEN_WEB, url = url))
-                )
-            ),
-            runtimeSource = "temporary"
-        )
+        CardRunSpecialRecipes.temporaryBrowser(recipeId, url, title)
 
     private fun temporaryDesktopRecipe(recipeId: String, command: String, title: String = "临时桌面"): KiteRecipe =
         KiteRecipe(
@@ -3996,20 +3979,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             state.status != RecipeRunStatus.BridgeUnavailable
 
     private fun resourceInstallWizardRecipe(targetResourceId: String, targetName: String): KiteRecipe =
-        KiteRecipe(
-            id = "resource-install-wizard-${KiteResourceInstallRecipes.safeId(targetResourceId)}",
-            name = "$targetName 获取向导",
-            description = "管理资源执行队列",
-            type = KiteRecipe.TYPE_TEMPLATE,
-            category = "resource",
-            defaultUrl = "",
-            shortcut = false,
-            icon = KiteRecipeIcon(name = KiteRecipeIcon.ICON_TOOLS),
-            launch = KiteLaunchConfig(openInstance = true),
-            execution = KiteExecution.steps(emptyList()),
-            actions = emptyMap(),
-            runtimeSource = RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE
-        )
+        CardRunSpecialRecipes.installWizard(targetResourceId, targetName)
 
     private fun resourceInstallWizardInstanceId(targetResourceId: String): String =
         "resource-install-wizard-${KiteResourceInstallRecipes.safeId(targetResourceId)}-${UUID.randomUUID().toString().replace("-", "")}"
@@ -11940,7 +11910,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val RESOURCE_UV = "kite.uv"
         private const val RESOURCE_ICON_FIT_FULL_BLEED = "fullBleed"
         private const val RESOURCE_OPEN_RUNTIME_SOURCE = "resource_open"
-        private const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE = "resource_install_wizard"
+        private const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE =
+            CardRunSpecialRecipes.RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE
         private const val EXTRA_AUTOMATION_RUNTIME_ID = "runtime_id"
         private const val EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES = "probe_target_live_tracees"
         private const val EXTRA_AUTOMATION_OWNER_ID = "owner_id"

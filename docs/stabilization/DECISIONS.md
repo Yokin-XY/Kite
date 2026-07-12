@@ -310,3 +310,13 @@
 理由：X11 画面离开前台并不表示用户要求停止桌面程序。若 View 的 detach/destroy 顺带结束 server 或运行实例，系统返回、旋转和 Activity 重建都会改变后台事实，重新造成显示生命周期与执行生命周期耦合。
 
 影响：轻量 `CardRunActivity` 可以安全替换 X11 可见面而不影响运行。沉浸式系统栏属于 Activity 壳层效果，DISPLAY 分配与进程清理由运行编排器和 X11 Platform 适配器负责。
+
+## ADR-S031 运行窗口启动解析不得包含执行副作用
+
+状态：accepted
+
+决策：`CardRunLaunchResolver` 只把外部输入解析为确定的 recipe、instance、autoStart 和可选安装向导上下文。目录读取和特殊配方由注入的提供者完成；解析阶段不得调用 RunOrchestrator、写 CardRunStore、启动 Activity 或创建显示面。
+
+理由：旧 `handleCardRunLaunchIntent` 同时解析 Intent、加载目录、创建特殊配方、启动实例、注册路由和绘制页面。任何恢复或重复 Intent 都可能在“还没确认目标”时产生执行副作用，且独立 Activity 只能复制整条私有链。先固定无副作用的解析边界，才能让启动幂等、错误可解释并对壳层做纯测试。
+
+影响：解析成功后由 Activity 壳显式登记 recipe，再根据 target 的 autoStart 决定是否提交 `RunOrchestrator.start`。解析失败只能展示错误并退出，不得用默认 recipe 或当前页面状态猜测目标。

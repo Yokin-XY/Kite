@@ -976,3 +976,14 @@ T007 Web 浮动栏刷新修复：
 - 全量目标单测、Debug APK、架构检查和运行车道检查通过。OnePlus 8T 正式 `/open-web` 入口展开浮动栏后，当前 WebView、刷新按钮和 `https://example.com` 地址栏同时存在，logcat 无崩溃。
 
 Web 刷新逻辑修复状态：completed，待独立提交。
+
+T007 轻量运行壳启动合同结果：
+
+- 新增 `CardRunLaunchRequest/Target/Resolution` 与纯 `CardRunLaunchResolver`；它只解析 recipe/instance/autoStart/来源和安装计划，不启动任务、不写 Store、不创建 View。
+- 解析顺序固定为配方目录、进程已登记配方、特殊配方；特殊工厂返回不同 recipeId 时明确拒绝，避免错误实例被静默绑定。
+- 临时网页与资源获取向导配方集中到 `CardRunSpecialRecipes`，MainActivity 已删除两份重复构造代码，新旧壳将使用同一配方合同。
+- 纯单测覆盖字段规范化、重复计划 ID 去重、已登记配方恢复、特殊配方身份门禁，以及临时 Web/安装向导合同；目标单测与 Debug Kotlin 编译通过。
+
+轻量运行壳启动合同状态：completed，待独立提交。
+
+下一步：建立共享浏览器 handoff 适配器和轻量运行 chrome；随后让独立 CardRunActivity 组合 resolver、CardRunStore、RunOrchestrator 与 RunSurfaceHost。
