@@ -1093,3 +1093,13 @@ T008 运行管理页面所有权迁移结果：
 - Screen/Result Contract 目标单测、Feature/Application 目标单测、Debug Kotlin 编译、架构检查和运行车道静态检查通过。
 
 下一步：把运行时状态弹层、首次权限门和准入动作按事实边界迁出主壳；内存压力与回收继续委托既有 runtime policy，不并入页面动作。
+
+T008 runtime-status 合同与平台 Gateway 结果：
+
+- 新增 Android 无关的 `RuntimeBootstrapSnapshot/Gateway`，结构化表达权限、rootfs、基础部署与 readiness 探测，不把标题、Dialog 或页面字段放入 Application 层。
+- `AndroidRuntimeBootstrapGateway` 合并既有 `BootstrapCoordinator`、`AssetExtractor.rootfsProgress` 和 `RuntimeBootstrapProgress`，并在 IO 调度器执行基础镜像、默认容器和内置资源 readiness 探测。
+- 新增纯 `RuntimeStatusProjector`，统一决定状态标题、阻塞语义、进度、权限动作、失败重试和状态胶囊标签；首次授权只作为显式投影输入，不与 Android 权限请求耦合。
+- `RuntimeStatusFeatureController` 合并 bootstrap 与 runtime-management 两份稳定 Gateway，运行数量不再由弹层自行读取三个 Store；重试只提交 Bootstrap Gateway，不提前显示成功。
+- 10 个投影/Controller 目标测试和 Debug Kotlin 编译通过；静态守卫锁定 Application、Feature、Platform 依赖方向和 IO 探测边界。
+
+下一步：建立 `RuntimeStatusChrome` 接管运行状态 Dialog、准入 Overlay 和局部 View binding；主壳只处理权限/设置页/进程页 Shell effect。

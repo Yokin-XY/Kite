@@ -370,3 +370,13 @@
 理由：旧页面把展开、刷新和事实校准都实现为再次调用 `showKiteProcessOverview()`，每次清空根容器并重新读取多个 Store。这样即使只有一个 PID 状态改变，也会造成滚动丢失、整页抖动和按钮反馈延迟。局部绑定能够让状态拥有者信号直接落到对应行，同时保持事实与显示状态边界清晰。
 
 影响：运行管理 Screen 不得依赖 `CardRunStore`、`TerminalSessionStore` 或 `TaskManagerStore`，Fragment 不得加入固定间隔轮询。统一 Gateway 负责合并事实，Projector 决定 UiState，Coordinator 只维护短期动作事务。主壳只接收返回和打开独立运行窗口的 Effect，不保留运行管理字段、Dialog 或绘制函数。
+
+## ADR-S037 运行准备状态与运行列表事实分离后再组合
+
+状态：accepted
+
+决策：权限、rootfs、Bootstrap 与 readiness 属于 `RuntimeBootstrapGateway`；卡片、终端和 PID 属于 `RuntimeManagementGateway`。`RuntimeStatusFeatureController` 只在显示层之前组合两份稳定快照，生成运行状态弹层需要的一份 UiState。首次授权是一次性 onboarding 输入，不写入任一运行事实源。
+
+理由：旧弹层直接读取三个运行 Store，同时把权限检查、文件探测和 Bootstrap 进度存入 Activity 字段。这样弹层刷新会做重型探测，权限恢复会重建运行数量，且首次授权的临时阶段可能覆盖真实部署失败。两类事实分别拥有后，页面仍可显示统一状态，但不会制造一个包办所有运行事实的新 Store。
+
+影响：readiness 探测必须在 Platform Gateway 的 IO 调度器执行；Projector 和 Controller 不得引用 Android View、具体 Store 或 Foundation 单例。重试通过 Gateway 请求 Bootstrap，权限和系统设置页通过 Shell effect 执行。T010 可以迁移 onboarding 流程，但不能改变 runtime-status 的事实合同。

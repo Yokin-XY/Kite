@@ -78,6 +78,11 @@ $runtimeManagementControllerPath = Join-Path $Root 'app/src/main/java/com/kite/a
 $runtimeManagementProjectorPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementProjector.kt'
 $runtimeManagementFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementFragment.kt'
 $runtimeManagementScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementScreen.kt'
+$runtimeBootstrapSnapshotPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimebootstrap/RuntimeBootstrapSnapshot.kt'
+$runtimeBootstrapGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimebootstrap/RuntimeBootstrapGateway.kt'
+$androidRuntimeBootstrapGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runtimebootstrap/AndroidRuntimeBootstrapGateway.kt'
+$runtimeStatusProjectorPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimebootstrap/RuntimeStatusProjector.kt'
+$runtimeStatusControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimebootstrap/RuntimeStatusFeatureController.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -205,6 +210,11 @@ $runtimeManagementController = Read-Utf8 $runtimeManagementControllerPath
 $runtimeManagementProjector = Read-Utf8 $runtimeManagementProjectorPath
 $runtimeManagementFragment = Read-Utf8 $runtimeManagementFragmentPath
 $runtimeManagementScreen = Read-Utf8 $runtimeManagementScreenPath
+$runtimeBootstrapSnapshot = Read-Utf8 $runtimeBootstrapSnapshotPath
+$runtimeBootstrapGateway = Read-Utf8 $runtimeBootstrapGatewayPath
+$androidRuntimeBootstrapGateway = Read-Utf8 $androidRuntimeBootstrapGatewayPath
+$runtimeStatusProjector = Read-Utf8 $runtimeStatusProjectorPath
+$runtimeStatusController = Read-Utf8 $runtimeStatusControllerPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -373,6 +383,12 @@ Assert-True ($runtimeManagementScreen -match 'runBindings' -and $runtimeManageme
 Assert-True ($runtimeManagementCoordinator -match 'Requested' -and $runtimeManagementCoordinator -match 'AwaitingConfirmation' -and $runtimeManagementCoordinator -match 'Failed' -and $runtimeManagementCoordinator -notmatch 'CardRunStore|TerminalSessionStore|TaskManagerStore') 'runtime management actions must use a confirmed transaction without writing owner facts directly.'
 $runtimeManagementProcessDialog = Member-Function-Body $runtimeManagementScreen 'showProcessDialog'
 Assert-True ($runtimeManagementProcessDialog -match 'process\.stopAction' -and $runtimeManagementProcessDialog -match 'onAction\(action\)') 'runtime management process details must submit the projected owner-aware action.'
+Assert-True ($runtimeBootstrapSnapshot -notmatch '(?m)^import\s+(android\.|androidx\.)' -and $runtimeBootstrapGateway -notmatch '(?m)^import\s+(android\.|androidx\.)') 'runtime bootstrap application contracts must remain Android-independent.'
+Assert-True ($runtimeStatusProjector -notmatch 'Activity|Fragment|View|Dialog|CardRunStore|TerminalSessionStore|TaskManagerStore|WorkSurfaceRuntimeBridge') 'runtime status projection must remain pure and store-free.'
+Assert-True ($runtimeStatusController -match 'bootstrapGateway\.snapshots' -and $runtimeStatusController -match 'managementGateway\.snapshots' -and $runtimeStatusController -notmatch 'CardRunStore|TerminalSessionStore|TaskManagerStore|BootstrapCoordinator') 'runtime status controller must combine stable gateways rather than concrete stores.'
+Assert-True ($androidRuntimeBootstrapGateway -match 'scope\.launch\(Dispatchers\.IO\)' -and $androidRuntimeBootstrapGateway -match 'WorkSurfaceRuntimeBridge\.isBaseImageReady' -and $androidRuntimeBootstrapGateway -match 'ToolchainPackInstaller\.bootstrapResourcesSettled') 'runtime readiness probes must run in the Android platform gateway off the UI thread.'
+Assert-True ($androidRuntimeBootstrapGateway -match 'BootstrapCoordinator\.snapshot' -and $androidRuntimeBootstrapGateway -match 'AssetExtractor\.rootfsProgress' -and $androidRuntimeBootstrapGateway -match 'RuntimeBootstrapProgress\.snapshot') 'runtime bootstrap gateway must compose existing bootstrap fact owners.'
+Assert-True ($kiteAppGraph -match 'val runtimeBootstrapGateway: RuntimeBootstrapGateway by lazy' -and $kiteAppGraph -match 'AndroidRuntimeBootstrapGateway\(appContext\)') 'runtime bootstrap gateway must be a process composition-root dependency.'
 $setRuntimeState = Function-Body $main 'setRuntimeState'
 Assert-True ($setRuntimeState -match 'shouldIgnoreRuntimeStateAfterUserStop' -and $main -match 'runtime_state_ignored_after_user_stop') 'CardRun state updates must ignore stale runtime callbacks after a user stop.'
 Assert-True ($main -match 'current\.status != RecipeRunStatus\.Stopping && current\.status != RecipeRunStatus\.Stopped' -and $main -match 'status == RecipeRunStatus\.BridgeUnavailable') 'stale callback guard must protect Stopping/Stopped instances from late runtime result writes.'
