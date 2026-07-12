@@ -162,6 +162,10 @@ import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapGateway
 import com.kite.app.application.runtimebootstrap.RuntimePermissionKind
+import com.kite.app.application.onboarding.FirstRunOnboardingCoordinator
+import com.kite.app.application.onboarding.FirstRunOnboardingEffect
+import com.kite.app.application.onboarding.FirstRunOnboardingFacts
+import com.kite.app.application.onboarding.FirstRunOnboardingTransition
 import com.kite.app.feature.home.HomeFeatureRequest
 import com.kite.app.feature.home.HomeFeatureResultContract
 import com.kite.app.feature.home.HomeFragment
@@ -276,10 +280,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var isTerminalDetailMode = false
     private var pendingRuntimePermissionBootstrap = false
     private var runtimePermissionRequestInFlight = false
-    private var firstRunPermissionOnboardingInFlight = false
-    private var firstRunPermissionRequestInFlight = false
-    private var firstRunRuntimePermissionsRequested = false
-    private var firstRunAllFilesSettingsOpened = false
+    private lateinit var firstRunOnboardingCoordinator: FirstRunOnboardingCoordinator
     private lateinit var runtimeBootstrapGateway: RuntimeBootstrapGateway
     private lateinit var runtimeStatusController: RuntimeStatusFeatureController
     private lateinit var runtimeStatusChrome: RuntimeStatusChrome
@@ -326,6 +327,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         runExecutionEffectBus = appGraph.runExecutionEffectBus
         resourceRunCoordinator = appGraph.resourceRunCoordinator
         runtimeBootstrapGateway = appGraph.runtimeBootstrapGateway
+        firstRunOnboardingCoordinator = appGraph.firstRunOnboardingCoordinator
         runtimeStatusController = RuntimeStatusFeatureController(
             bootstrapGateway = runtimeBootstrapGateway,
             managementGateway = appGraph.runtimeManagementGateway,
@@ -760,6 +762,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     override fun onPause() {
+        firstRunOnboardingCoordinator.onHostPaused()
         super.onPause()
     }
 
@@ -1047,78 +1050,66 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ?: currentRecipes.firstOrNull { it.id == state.recipeId }
 
     private fun maybeStartFirstRunPermissionOnboarding(): Boolean {
-        if (appSettings.getBoolean(KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE, false)) return false
-        appSettings.edit().putBoolean(KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE, true).apply()
-        firstRunPermissionOnboardingInFlight = true
-        firstRunRuntimePermissionsRequested = false
-        firstRunAllFilesSettingsOpened = false
-        updateFirstRunPermissionOnboardingProjection(currentFirstRunPermissionState())
-        runtimeStatusChrome.showPanel(auto = true)
-        continueFirstRunPermissionOnboarding()
-        return true
+        val transition = firstRunOnboardingCoordinator.startOrRecover(currentFirstRunOnboardingFacts())
+        applyFirstRunOnboardingTransition(transition)
+        if (transition.state.active) runtimeStatusChrome.showPanel(auto = true)
+        return transition.state.active
     }
 
     private fun continueFirstRunPermissionOnboarding() {
-        if (!firstRunPermissionOnboardingInFlight || firstRunPermissionRequestInFlight) return
-        val state = currentFirstRunPermissionState()
-        updateFirstRunPermissionOnboardingProjection(state)
-        when {
-            state.runtimePermissionsToRequest.isNotEmpty() && !firstRunRuntimePermissionsRequested -> {
-                firstRunRuntimePermissionsRequested = true
-                firstRunPermissionRequestInFlight = true
-                requestPermissions(
-                    state.runtimePermissionsToRequest.toTypedArray(),
-                    REQUEST_FIRST_RUN_PERMISSION_ONBOARDING
-                )
-            }
-            state.needsAllFilesAccess && !firstRunAllFilesSettingsOpened -> {
-                firstRunAllFilesSettingsOpened = true
-                openAllFilesAccessSettings()
-            }
-            else -> completeFirstRunPermissionOnboarding()
-        }
+        applyFirstRunOnboardingTransition(
+            firstRunOnboardingCoordinator.continueNow(currentFirstRunOnboardingFacts())
+        )
     }
 
     private fun resumePendingFirstRunPermissionOnboarding() {
-        if (!firstRunPermissionOnboardingInFlight || firstRunPermissionRequestInFlight) return
-        continueFirstRunPermissionOnboarding()
+        applyFirstRunOnboardingTransition(
+            firstRunOnboardingCoordinator.onHostResumed(currentFirstRunOnboardingFacts())
+        )
     }
 
-    private fun completeFirstRunPermissionOnboarding() {
-        if (!firstRunPermissionOnboardingInFlight) return
-        firstRunPermissionOnboardingInFlight = false
-        firstRunPermissionRequestInFlight = false
-        firstRunRuntimePermissionsRequested = false
-        firstRunAllFilesSettingsOpened = false
-        runtimeStatusController.clearOnboarding()
-        dropZoneStatus = dropZoneManager.prepareDropZone()
-        runtimeStatusController.ensureReady()
-        if (currentScreen == AppDestination.Console) showConsole()
-    }
-
-    private fun currentFirstRunPermissionState(): FirstRunPermissionState {
+    private fun currentFirstRunOnboardingFacts(): FirstRunOnboardingFacts {
         val permissionSnapshot = runtimeBootstrapGateway.currentSnapshot().permissions
-        val runtimePermissions = permissionSnapshot.missing.mapNotNull(::runtimePermissionString).toMutableList()
+        val missing = permissionSnapshot.missing.toMutableSet()
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            runtimePermissions += Manifest.permission.POST_NOTIFICATIONS
+            missing += RuntimePermissionKind.Notifications
         }
-        return FirstRunPermissionState(
-            runtimePermissionsToRequest = runtimePermissions.distinct(),
+        return FirstRunOnboardingFacts(
+            missingRuntimePermissions = missing,
             needsAllFilesAccess = permissionSnapshot.needsAllFilesAccess
         )
     }
 
-    private fun updateFirstRunPermissionOnboardingProjection(state: FirstRunPermissionState) {
+    private fun applyFirstRunOnboardingTransition(transition: FirstRunOnboardingTransition) {
         runtimeStatusController.updateOnboarding(
             RuntimePermissionOnboardingUiInput(
-                active = firstRunPermissionOnboardingInFlight,
-                missingPermissions = state.runtimePermissionsToRequest.mapNotNull(::runtimePermissionKind).toSet(),
-                needsAllFilesAccess = state.needsAllFilesAccess
+                active = transition.state.active,
+                missingPermissions = transition.state.missingRuntimePermissions,
+                needsAllFilesAccess = transition.state.needsAllFilesAccess
             )
         )
+        when (val effect = transition.effect) {
+            is FirstRunOnboardingEffect.RequestRuntimePermissions -> {
+                val permissions = effect.permissions.mapNotNull(::runtimePermissionString)
+                if (permissions.isEmpty()) {
+                    applyFirstRunOnboardingTransition(
+                        firstRunOnboardingCoordinator.onRuntimePermissionResult(
+                            currentFirstRunOnboardingFacts()
+                        )
+                    )
+                } else {
+                    requestPermissions(
+                        permissions.toTypedArray(),
+                        REQUEST_FIRST_RUN_PERMISSION_ONBOARDING
+                    )
+                }
+            }
+            FirstRunOnboardingEffect.OpenAllFilesSettings -> openAllFilesAccessSettings()
+            null -> if (!transition.state.active) runtimeStatusController.ensureReady()
+        }
     }
 
 
@@ -1451,9 +1442,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             }
             if (currentScreen == AppDestination.Console) showConsole()
         } else if (requestCode == REQUEST_FIRST_RUN_PERMISSION_ONBOARDING) {
-            firstRunPermissionRequestInFlight = false
             dropZoneStatus = dropZoneManager.prepareDropZone()
-            continueFirstRunPermissionOnboarding()
+            applyFirstRunOnboardingTransition(
+                firstRunOnboardingCoordinator.onRuntimePermissionResult(currentFirstRunOnboardingFacts())
+            )
         } else if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
             if (notificationsEnabled()) {
                 Toast.makeText(this, "通知已开启", Toast.LENGTH_SHORT).show()
@@ -6856,11 +6848,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val border: Int
     )
 
-    private data class FirstRunPermissionState(
-        val runtimePermissionsToRequest: List<String>,
-        val needsAllFilesAccess: Boolean
-    )
-
     override fun setTerminalDetailMode(enabled: Boolean) {
         isTerminalDetailMode = enabled
         terminalBottomNavigation?.visibility = if (enabled) View.GONE else View.VISIBLE
@@ -6926,7 +6913,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val REQUEST_FIRST_RUN_PERMISSION_ONBOARDING = 805
         private const val KEY_HIDE_MAIN_TASK_FROM_RECENTS = "hide_main_task_from_recents"
         private const val KEY_RESTORE_LAST_SCREEN = "restore_last_screen"
-        private const val KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE = "first_run_permission_onboarding_done"
         private const val KEY_BROWSER_RUNTIME_MODE = "browser_runtime_mode"
         private const val STATE_CURRENT_SCREEN = "kite_current_screen"
         private const val STATE_WORKBENCH_URL = "kite_workbench_url"

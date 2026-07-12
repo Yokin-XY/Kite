@@ -14,6 +14,7 @@ import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementDispatchResult
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapGateway
+import com.kite.app.application.onboarding.FirstRunOnboardingCoordinator
 import com.kite.app.browser.BrowserAuthSessionStore
 import com.kite.app.browser.BrowserLoopbackCallbackBridge
 import com.kite.app.browser.automation.BrowserAutomationSessionStore
@@ -36,6 +37,7 @@ import com.kite.app.platform.runs.AndroidRecipeExecutor
 import com.kite.app.platform.runs.AndroidRunStateGateway
 import com.kite.app.platform.runtimemanagement.AndroidRuntimeManagementGateway
 import com.kite.app.platform.runtimebootstrap.AndroidRuntimeBootstrapGateway
+import com.kite.app.platform.onboarding.AndroidFirstRunOnboardingStore
 import com.kite.app.run.CardRunStore
 
 /**
@@ -88,6 +90,9 @@ internal class KiteAppGraph private constructor(context: Context) {
     }
     val runtimeBootstrapGateway: RuntimeBootstrapGateway by lazy {
         AndroidRuntimeBootstrapGateway(appContext)
+    }
+    val firstRunOnboardingCoordinator: FirstRunOnboardingCoordinator by lazy {
+        FirstRunOnboardingCoordinator(AndroidFirstRunOnboardingStore(appContext))
     }
     val runExecutionEffectBus: RunExecutionEffectBus by lazy { RunExecutionEffectBus() }
     val runLifecycleEventHub: RunLifecycleEventHub by lazy { RunLifecycleEventHub() }

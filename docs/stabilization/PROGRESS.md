@@ -1185,3 +1185,23 @@ T009 最终验收：
 T009 状态：completed。关键提交为 `10008f6`、`9d272ee`、`94efb65`。
 
 下一步：进入 T010，审计设置页、主题重建、首次权限 onboarding、系统设置返回和 rootfs 准备的真实所有权，先固定一次性步骤与可重入步骤的合同。
+
+## T010 设置、主题与首次启动
+
+### 三问自检
+
+目标是什么？把设置显示状态、一次性首次权限引导和可重复的运行环境准备拆成三条职责明确的链；系统权限窗口和设置页只作为 Shell effect 执行，任何一步都不能靠 Activity 临时字段猜测进度。
+
+完成标准是什么？设置由独立 Feature 投影；首次引导可跨 Activity/进程重建恢复；权限拒绝后保留可再次授权的运行状态；主题变化只重绑可见 UI；首次安装和已有用户升级均通过 OnePlus 8T 验收。
+
+依赖是否满足？T008 已把权限/readiness 事实收口到 `RuntimeBootstrapGateway`，T009 已完成浏览器显示边界。T010 只迁移设置和首次引导，不改变 bootstrap、CardRun 或认证事实合同。
+
+### 首次权限引导持久化结果
+
+- 审计确认旧逻辑在引导刚开始时就写入 `first_run_permission_onboarding_done=true`；用户拒绝权限、停在系统设置或进程被回收后，下一次启动会误判已完成并永久跳过未走完步骤。
+- 新增 Android 无关的 `FirstRunOnboardingCoordinator`，阶段只表示一次性动作是否已尝试；权限缺失和运行环境 readiness 仍由 `RuntimeBootstrapGateway` 保存事实，不复制进 onboarding Store。
+- 每次权限请求或全部文件设置跳转前先同步持久化等待阶段。Activity 重建复用进程级协调器，不重复弹系统窗口；进程重建从持久化阶段继续，权限拒绝后由既有 runtime-status 动作提供稍后授权入口。
+- `AndroidFirstRunOnboardingStore` 兼容正式版旧完成标记；已有用户升级不会重新弹首次引导，新安装只有所有一次性步骤走完后才写完成。
+- 目标单测覆盖首次只请求一次、拒绝、系统设置返回、两种进程重建和旧标记迁移；Debug Kotlin 编译及 9 项目标测试通过。
+
+下一步：建立设置 Feature 的 `State/Action/Effect` 合同，让设置项、主题选择和系统设置返回从主壳绘制函数迁出，同时保持当前页面视觉不变。

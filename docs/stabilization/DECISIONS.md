@@ -410,3 +410,13 @@
 理由：旧实现把解析、session 状态、运行事实和 Activity 跳转写在主壳同一方法中，进程重建后容易依赖尚未恢复的页面字段。认证 session 本来已持久化，CardRun 也有进程级事实，因此回跳交付不应依赖发起页面仍存在。固定副作用顺序还能避免“浏览器已返回、session 已消费，但运行实例没有收到”的半完成状态。
 
 影响：MainActivity 只解释协调器结果并执行目标 Activity 跳转，不得直接调用 `markReturned/markDelivered/markFailed`。CLI loopback 的 callback 转发和过期同步也通过同一协调器校准。协议解析保持通用，禁止按 Codex、Claude、Google 等提供方增加页面特判或改写 code/state/error。
+
+## ADR-S041 首次引导只持久化步骤，不复制权限与运行事实
+
+状态：accepted
+
+决策：首次权限引导由进程级 `FirstRunOnboardingCoordinator` 管理，并在发出权限请求或系统设置跳转前持久化等待阶段。协调器只记录一次性步骤的执行位置；当前缺失权限继续由 Android 权限事实提供，rootfs、Bootstrap 和 readiness 继续由 `RuntimeBootstrapGateway` 提供。完成标记只能在一次性步骤结束后写入。
+
+理由：旧实现用四个 Activity 布尔字段追踪请求，同时在第一步开始前就宣布引导完成。进程回收会丢失字段却保留错误完成标记，导致新启动无法区分“已完成”“被拒绝”和“停在系统设置”。若把权限状态一并持久化，又会产生第二份容易过期的事实。
+
+影响：Activity 只把当前权限快照交给协调器，并执行 `RequestRuntimePermissions` 或 `OpenAllFilesSettings` effect。Activity 重建不得重复系统窗口，进程重建按等待阶段确定恢复点；拒绝不会伪装成授权成功，后续授权继续走 runtime-status 的同一权限事实和动作。旧 `first_run_permission_onboarding_done` 仅作为已有用户兼容输入。
