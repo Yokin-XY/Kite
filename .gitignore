@@ -15,6 +15,8 @@ local.properties
 # 以抗上下文压缩、支持 PR 审查。其他 docs 仍按本地笔记处理。
 !/docs/refactor/
 !/docs/refactor/**
+!/docs/stabilization/
+!/docs/stabilization/**
 !/docs/browser-login/
 !/docs/browser-login/**
 !/docs/browser-automation/
