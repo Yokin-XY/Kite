@@ -968,3 +968,11 @@ T007 X11 可见绑定结果：
 X11 可见绑定状态：completed，待独立提交。
 
 下一步：抽取轻量运行壳的启动解析、浏览器 handoff Gateway 与运行窗口 chrome，然后切断 `CardRunActivity : MainActivity` 继承。
+
+T007 Web 浮动栏刷新修复：
+
+- WebView 所有权迁入 `RunWebSurfaceBinding` 后，旧浮动栏刷新仍调用 MainActivity 的共享 WebView；按钮可见但会刷新错误对象。
+- `RunSurfaceBinding/RunSurfaceHost` 新增窄 `reload()` 显示能力，只有当前 Web 绑定响应；浮动栏不再越过 Host 访问具体 WebView。
+- 全量目标单测、Debug APK、架构检查和运行车道检查通过。OnePlus 8T 正式 `/open-web` 入口展开浮动栏后，当前 WebView、刷新按钮和 `https://example.com` 地址栏同时存在，logcat 无崩溃。
+
+Web 刷新逻辑修复状态：completed，待独立提交。

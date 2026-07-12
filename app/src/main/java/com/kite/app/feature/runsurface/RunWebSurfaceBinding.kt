@@ -94,6 +94,12 @@ internal class RunWebSurfaceBinding(
         return true
     }
 
+    override fun reload(): Boolean {
+        val current = webView ?: return false
+        current.reload()
+        return true
+    }
+
     override fun dispose() {
         if (disposed) return
         disposed = true

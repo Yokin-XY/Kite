@@ -5896,7 +5896,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 elevation = dp(5).toFloat()
                 setPadding(dp(2), 0, dp(2), 0)
                 addView(cardRunCapsuleIconAction("↻") {
-                    webView.reload()
+                    runSurfaceHost?.reload()
                 }, LinearLayout.LayoutParams(dp(30), dp(30)).apply {
                     setMargins(0, 0, dp(5), 0)
                 })
