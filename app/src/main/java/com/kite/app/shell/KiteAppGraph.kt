@@ -15,6 +15,8 @@ import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementDispatchResult
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapGateway
 import com.kite.app.application.onboarding.FirstRunOnboardingCoordinator
+import com.kite.app.application.settings.SettingsDropZoneSnapshot
+import com.kite.app.application.settings.SettingsGateway
 import com.kite.app.browser.BrowserAuthSessionStore
 import com.kite.app.browser.BrowserLoopbackCallbackBridge
 import com.kite.app.browser.automation.BrowserAutomationSessionStore
@@ -38,6 +40,7 @@ import com.kite.app.platform.runs.AndroidRunStateGateway
 import com.kite.app.platform.runtimemanagement.AndroidRuntimeManagementGateway
 import com.kite.app.platform.runtimebootstrap.AndroidRuntimeBootstrapGateway
 import com.kite.app.platform.onboarding.AndroidFirstRunOnboardingStore
+import com.kite.app.platform.settings.AndroidSettingsGateway
 import com.kite.app.run.CardRunStore
 
 /**
@@ -93,6 +96,16 @@ internal class KiteAppGraph private constructor(context: Context) {
     }
     val firstRunOnboardingCoordinator: FirstRunOnboardingCoordinator by lazy {
         FirstRunOnboardingCoordinator(AndroidFirstRunOnboardingStore(appContext))
+    }
+    val settingsGateway: SettingsGateway by lazy {
+        AndroidSettingsGateway(
+            context = appContext,
+            readDropZone = {
+                createDropZoneManager().prepareDropZone().let { status ->
+                    SettingsDropZoneSnapshot(status.available, status.message)
+                }
+            }
+        )
     }
     val runExecutionEffectBus: RunExecutionEffectBus by lazy { RunExecutionEffectBus() }
     val runLifecycleEventHub: RunLifecycleEventHub by lazy { RunLifecycleEventHub() }

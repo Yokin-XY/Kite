@@ -1205,3 +1205,15 @@ T009 状态：completed。关键提交为 `10008f6`、`9d272ee`、`94efb65`。
 - 目标单测覆盖首次只请求一次、拒绝、系统设置返回、两种进程重建和旧标记迁移；Debug Kotlin 编译及 9 项目标测试通过。
 
 下一步：建立设置 Feature 的 `State/Action/Effect` 合同，让设置项、主题选择和系统设置返回从主壳绘制函数迁出，同时保持当前页面视觉不变。
+
+T010 设置 Feature 与主题边界结果：
+
+- 新增 `SettingsGateway` 作为主题、浏览器模式、现场恢复和最近任务可见性的唯一持久化入口；通知开关与投放区是显式刷新得到的系统快照，不写成应用偏好事实。
+- `AndroidSettingsGateway` 只在 `refresh()` 的 IO 段检查投放区；设置绘制和开关绑定不再执行文件准备、系统服务探测或 `SharedPreferences` 读取。
+- 新增 `SettingsFragment/Screen` 与 `ThemeSettingsFragment/Screen`。设置页保持同一 View 结构并局部更新副标题和开关；主题页只在颜色身份变化时重绑自身，不再调用主壳函数整页重建。
+- MainActivity 不再持有 `themeStore/appSettings`，不再绘制设置行、模式弹窗、颜色选项和主题预览；只处理返回、系统通知、投放区、最近任务可见性与主题 Shell effect。
+- 主题变更只更新语义 token、终端主题、运行状态 Chrome、根背景和底部导航，不调用 Bootstrap、运行编排或后台服务。CardRun、终端进程与浏览器认证事实不受影响。
+- 审计修复设置页投放区刷新成功后无条件 `showConsole()` 的旧错误：现在只校准当前可见设置页，用户不会被突然送回首页。
+- 设置 Gateway、Projector、Controller、Result Contract、局部绑定和主题必要重绑目标测试通过；既有 Main 路由合同继续通过。主壳债务降至 `lines=6652, functions=341, fields=65`。
+
+下一步：补充设置/首次引导架构守卫，执行全量单测与 Debug 构建，再在 OnePlus 8T 分别验证已有用户升级、主题切换、系统通知/文件设置返回和全新安装引导。

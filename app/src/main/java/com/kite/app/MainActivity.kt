@@ -2,14 +2,12 @@ package com.kite.app
 
 import android.animation.ValueAnimator
 import android.app.ActivityManager
-import android.app.Dialog
 import android.app.NotificationManager
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -20,7 +18,6 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.text.InputType
@@ -42,12 +39,10 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -166,6 +161,7 @@ import com.kite.app.application.onboarding.FirstRunOnboardingCoordinator
 import com.kite.app.application.onboarding.FirstRunOnboardingEffect
 import com.kite.app.application.onboarding.FirstRunOnboardingFacts
 import com.kite.app.application.onboarding.FirstRunOnboardingTransition
+import com.kite.app.application.settings.SettingsGateway
 import com.kite.app.feature.home.HomeFeatureRequest
 import com.kite.app.feature.home.HomeFeatureResultContract
 import com.kite.app.feature.home.HomeFragment
@@ -180,6 +176,10 @@ import com.kite.app.feature.runtimebootstrap.RuntimeStatusFeatureEffect
 import com.kite.app.feature.runtimebootstrap.RuntimeStatusUiState
 import com.kite.app.feature.web.WebWorkbenchFragment
 import com.kite.app.feature.web.WebWorkbenchTarget
+import com.kite.app.feature.settings.SettingsFeatureRequest
+import com.kite.app.feature.settings.SettingsFeatureResultContract
+import com.kite.app.feature.settings.SettingsFragment
+import com.kite.app.feature.settings.ThemeSettingsFragment
 import com.kite.app.feature.recipeeditor.RecipeEditorDraft
 import com.kite.app.feature.recipeeditor.RecipeEditorFragment
 import com.kite.app.feature.recipeeditor.RecipeEditorRequest
@@ -226,8 +226,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var runOrchestrator: RunOrchestrator
     private lateinit var runExecutionEffectBus: RunExecutionEffectBus
     private lateinit var resourceRunCoordinator: ResourceRunCoordinator
-    private lateinit var themeStore: SharedPreferences
-    private lateinit var appSettings: SharedPreferences
+    private lateinit var settingsGateway: SettingsGateway
     private lateinit var rootHost: FrameLayout
     private lateinit var root: LinearLayout
 
@@ -320,8 +319,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         recipeFeatureGateway = appGraph.recipeFeatureGateway
         diagnostics = appGraph.diagnostics
         diagnostics.writeCapabilityReport()
-        themeStore = getSharedPreferences("kite_theme", MODE_PRIVATE)
-        appSettings = getSharedPreferences("kite_app_settings", MODE_PRIVATE)
+        settingsGateway = appGraph.settingsGateway
         CardRunStore.initialize(applicationContext)
         runOrchestrator = appGraph.runOrchestrator
         runExecutionEffectBus = appGraph.runExecutionEffectBus
@@ -333,7 +331,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             managementGateway = appGraph.runtimeManagementGateway,
             scope = lifecycleScope
         )
-        themeConfig = loadThemeConfig()
+        themeConfig = settingsGateway.currentSnapshot().let { snapshot ->
+            ThemeConfig(snapshot.themeColor, snapshot.backgroundColor)
+        }
         tokens = KiteTheme.resolve(themeConfig)
         applyKiteTerminalTheme()
         recipeLoader = appGraph.createRecipeLoader()
@@ -394,6 +394,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         registerHomeFeatureResults()
         registerRecipeEditorResults()
         registerRuntimeManagementResults()
+        registerSettingsFeatureResults()
         StartupTraceStore.markStage(this, "main.observers_and_intent")
         observeRuntimeStatus()
         observeRunExecutionEffects()
@@ -755,7 +756,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         browserAuthRedirectCoordinator.reconcile()
         when (currentScreen) {
             AppDestination.Console -> resumeConsoleSurface()
-            AppDestination.Settings -> showSettings()
             else -> Unit
         }
         rootHost.post { StartupTraceStore.markReady(applicationContext) }
@@ -1144,13 +1144,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun notificationSettingsSubtitle(): String =
-        if (notificationsEnabled()) {
-            "已开启，后台运行和容器服务会显示系统通知。"
-        } else {
-            "未开启，点击后进入系统通知授权。"
-        }
-
     private fun requestNotificationAccess() {
         if (notificationsEnabled()) {
             openAppNotificationSettings()
@@ -1306,22 +1299,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
 
-    private fun loadThemeConfig(): ThemeConfig =
-        ThemeConfig(
-            themeColor = themeStore.getInt("theme_color", KiteTheme.defaultThemeColor),
-            backgroundColor = themeStore.getInt("background_color", KiteTheme.defaultBackgroundColor)
-        )
-
-    private fun saveThemeConfig(config: ThemeConfig) {
+    private fun applyThemeConfig(config: ThemeConfig) {
+        if (themeConfig == config) return
         themeConfig = config
         tokens = KiteTheme.resolve(config)
         applyKiteTerminalTheme()
         invalidateResourceUiCache()
-        themeStore.edit()
-            .putInt("theme_color", config.themeColor)
-            .putInt("background_color", config.backgroundColor)
-            .apply()
-        if (::root.isInitialized) root.setBackgroundColor(tokens.pageBackground)
+        if (::root.isInitialized) {
+            root.setBackgroundColor(tokens.pageBackground)
+            rootHost.setBackgroundColor(tokens.pageBackground)
+            rebindBottomNavigationTheme()
+        }
         if (::runtimeStatusChrome.isInitialized) {
             runtimeStatusChrome.dispose()
             runtimeStatusChrome = createRuntimeStatusChrome()
@@ -1330,13 +1318,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun shouldHideMainTaskFromRecents(): Boolean =
-        appSettings.getBoolean(KEY_HIDE_MAIN_TASK_FROM_RECENTS, false)
+        settingsGateway.currentSnapshot().hideMainTaskFromRecents
 
     private fun shouldRestoreLastScreen(): Boolean =
-        appSettings.getBoolean(KEY_RESTORE_LAST_SCREEN, true)
+        settingsGateway.currentSnapshot().restoreLastScreen
 
     private fun applyRecentTaskVisibilitySetting() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || !::appSettings.isInitialized) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || !::settingsGateway.isInitialized) {
             return
         }
         val hideFromRecents = shouldHideMainTaskFromRecents()
@@ -1422,6 +1410,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             dropZoneStatus = dropZoneManager.prepareDropZone()
             Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_SHORT).show()
             if (currentScreen == AppDestination.Console) showConsole()
+            (supportFragmentManager.findFragmentByTag(TAG_SETTINGS_FRAGMENT) as? SettingsFragment)
+                ?.refresh()
         } else if (requestCode == REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS) {
             runtimePermissionRequestInFlight = false
             dropZoneStatus = dropZoneManager.prepareDropZone()
@@ -1452,7 +1442,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             } else {
                 Toast.makeText(this, "通知未开启，可在设置中再次授权", Toast.LENGTH_SHORT).show()
             }
-            if (currentScreen == AppDestination.Settings) showSettings()
+            (supportFragmentManager.findFragmentByTag(TAG_SETTINGS_FRAGMENT) as? SettingsFragment)
+                ?.refresh()
         }
     }
 
@@ -1475,7 +1466,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     refreshRecipeRuntimeStates(currentRecipes)
                     isDropZoneRefreshing = false
                     Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_SHORT).show()
-                    showConsole()
+                    when (currentScreen) {
+                        AppDestination.Console -> showConsole()
+                        AppDestination.Settings ->
+                            (supportFragmentManager.findFragmentByTag(TAG_SETTINGS_FRAGMENT) as? SettingsFragment)
+                                ?.refresh()
+                        else -> Unit
+                    }
                 }
                 .onFailure { error ->
                     isDropZoneRefreshing = false
@@ -1719,187 +1716,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showSettings() {
         enterScreen(AppDestination.Settings)
-        root.setBackgroundColor(tokens.pageBackground)
-        clearRootForScreen()
-        root.addView(topBar("设置", ::requestNavigationBack))
-        root.addView(ScrollView(this).apply {
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(22), dp(8), dp(22), dp(96))
-                addView(settingsRow("主题", "主题色、背景色和卡片色彩") { showThemeSettings() })
-                addView(settingsRow("浏览器模式", browserRuntimeMode().title) { showBrowserRuntimeModeDialog() }.apply {
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    ).apply { setMargins(0, dp(12), 0, 0) }
-                })
-                addView(settingsSwitchRow(
-                    title = "回前台保持现场",
-                    subtitle = "切出去复制内容再回来时，保留正在编辑的配置和当前页面。",
-                    checked = shouldRestoreLastScreen()
-                ) { checked ->
-                    appSettings.edit().putBoolean(KEY_RESTORE_LAST_SCREEN, checked).apply()
-                })
-                addView(settingsSwitchRow(
-                    title = "后台隐藏",
-                    subtitle = "开启后主应用从最近任务中隐藏；关闭后可从最近任务回到上一步。",
-                    checked = shouldHideMainTaskFromRecents()
-                ) { checked ->
-                    appSettings.edit().putBoolean(KEY_HIDE_MAIN_TASK_FROM_RECENTS, checked).apply()
-                    applyRecentTaskVisibilitySetting()
-                })
-                addView(settingsSwitchRow(
-                    title = "系统通知",
-                    subtitle = notificationSettingsSubtitle(),
-                    checked = notificationsEnabled()
-                ) { checked ->
-                    handleNotificationSettingToggle(checked)
-                })
-                addView(settingsRow("投放区", dropZoneStatus.message) {
-                    if (dropZoneStatus.available) refreshDropZoneRecipes() else requestDropZoneAccess()
-                }.apply {
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    ).apply { setMargins(0, dp(12), 0, 0) }
-                })
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(bottomNavigation())
+        showFeatureFragment(SettingsFragment(), TAG_SETTINGS_FRAGMENT)
     }
 
     private fun browserRuntimeMode(): BrowserRuntimeMode =
-        BrowserRuntimeMode.fromStorageKey(appSettings.getString(KEY_BROWSER_RUNTIME_MODE, null))
-
-    private fun saveBrowserRuntimeMode(mode: BrowserRuntimeMode) {
-        appSettings.edit().putString(KEY_BROWSER_RUNTIME_MODE, mode.storageKey).apply()
-    }
-
-    private fun showBrowserRuntimeModeDialog() {
-        val dialog = Dialog(this)
-        val currentMode = browserRuntimeMode()
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(18), dp(18), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
-            addView(TextView(context).apply {
-                text = "浏览器模式"
-                textSize = 18f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-            })
-            addView(TextView(context).apply {
-                text = "选择网页运行面；账号授权仍遵守系统浏览器回跳边界。"
-                textSize = 12.5f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(6), 0, dp(12))
-            })
-            BrowserRuntimeMode.values().forEach { mode ->
-                addView(browserRuntimeModeChoiceRow(mode, mode == currentMode) {
-                    saveBrowserRuntimeMode(mode)
-                    dialog.dismiss()
-                    Toast.makeText(context, "已切换为：${mode.title}", Toast.LENGTH_SHORT).show()
-                    showSettings()
-                })
-            }
-            addView(TextView(context).apply {
-                text = "关闭"
-                gravity = Gravity.CENTER
-                textSize = 14f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textSecondary)
-                background = roundedBox(tokens.surface, tokens.border, dp(14).toFloat())
-                setPadding(0, dp(11), 0, dp(11))
-                setOnClickListener { dialog.dismiss() }
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { setMargins(0, dp(12), 0, 0) }
-            })
-        }
-        dialog.setContentView(content)
-        dialog.show()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setGravity(Gravity.CENTER)
-        dialog.window?.setLayout(
-            (resources.displayMetrics.widthPixels * 0.9f).toInt(),
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-    }
-
-    private fun browserRuntimeModeChoiceRow(
-        mode: BrowserRuntimeMode,
-        selected: Boolean,
-        onClick: () -> Unit
-    ): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(12), dp(12), dp(12))
-            background = roundedBox(
-                if (selected) tokens.primarySubtle else tokens.surface,
-                if (selected) tokens.primaryStrong else tokens.border,
-                dp(16).toFloat()
-            )
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, dp(8), 0, 0) }
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(context).apply {
-                    text = mode.title
-                    textSize = 15f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                })
-                addView(TextView(context).apply {
-                    text = mode.summary
-                    textSize = 12f
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, dp(4), dp(10), 0)
-                })
-            })
-            addView(TextView(context).apply {
-                text = if (selected) "✓" else ""
-                textSize = 18f
-                gravity = Gravity.CENTER
-                setTextColor(tokens.primaryStrong)
-                layoutParams = LinearLayout.LayoutParams(dp(28), dp(40))
-            })
-            setOnClickListener { onClick() }
-        }
+        settingsGateway.currentSnapshot().browserRuntimeMode
 
     private fun showThemeSettings() {
         enterScreen(AppDestination.ThemeSettings)
-        root.setBackgroundColor(tokens.pageBackground)
-        clearRootForScreen()
-        root.addView(topBar("主题", ::requestNavigationBack))
-        root.addView(ScrollView(this).apply {
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(22), dp(8), dp(22), dp(96))
-                addView(sectionTitle("主题色"))
-                addView(colorPresetRow(
-                    KiteTheme.themeColorChoices.map { it.label to it.color },
-                    themeConfig.themeColor
-                ) { color ->
-                    saveThemeConfig(themeConfig.copy(themeColor = color))
-                    showThemeSettings()
-                })
-                addView(sectionTitle("背景色").apply { setPadding(0, dp(24), 0, dp(16)) })
-                addView(colorPresetRow(
-                    KiteTheme.backgroundColorChoices.map { it.label to it.color },
-                    themeConfig.backgroundColor
-                ) { color ->
-                    saveThemeConfig(themeConfig.copy(backgroundColor = color))
-                    showThemeSettings()
-                })
-                addView(themePreviewCard())
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(bottomNavigation())
+        showFeatureFragment(ThemeSettingsFragment(), TAG_THEME_SETTINGS_FRAGMENT)
     }
 
     private fun showResources() {
@@ -1995,6 +1820,26 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                             )
                         )
                     }
+                }
+                null -> Unit
+            }
+        }
+    }
+
+    private fun registerSettingsFeatureResults() {
+        supportFragmentManager.setFragmentResultListener(
+            SettingsFeatureResultContract.REQUEST_KEY,
+            this
+        ) { _, bundle ->
+            when (val request = SettingsFeatureResultContract.parse(bundle)) {
+                SettingsFeatureRequest.Back -> requestNavigationBack()
+                SettingsFeatureRequest.OpenTheme -> showThemeSettings()
+                is SettingsFeatureRequest.ApplyTheme -> applyThemeConfig(request.theme)
+                SettingsFeatureRequest.ApplyRecentTaskVisibility -> applyRecentTaskVisibilitySetting()
+                is SettingsFeatureRequest.RequestNotificationState ->
+                    handleNotificationSettingToggle(request.enabled)
+                is SettingsFeatureRequest.OpenDropZone -> {
+                    if (request.available) refreshDropZoneRecipes() else requestDropZoneAccess()
                 }
                 null -> Unit
             }
@@ -4469,159 +4314,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
 
-    private fun settingsRow(title: String, subtitle: String, onClick: () -> Unit): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(18), dp(16), dp(16), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
-            elevation = dp(1).toFloat()
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(context).apply {
-                    text = title
-                    textSize = 16f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                })
-                addView(TextView(context).apply {
-                    text = subtitle
-                    textSize = 12.5f
-                    setTextColor(tokens.textSecondary)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(4), 0, 0)
-                })
-            })
-            addView(TextView(context).apply {
-                text = "›"
-                textSize = 24f
-                gravity = Gravity.CENTER
-                setTextColor(tokens.textTertiary)
-                layoutParams = LinearLayout.LayoutParams(dp(28), dp(42))
-            })
-            setOnClickListener { onClick() }
-        }
-
-    private fun settingsSwitchRow(title: String, subtitle: String, checked: Boolean, onChanged: (Boolean) -> Unit): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(18), dp(14), dp(16), dp(14))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
-            elevation = dp(1).toFloat()
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, dp(12), 0, 0) }
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(context).apply {
-                    text = title
-                    textSize = 16f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                })
-                addView(TextView(context).apply {
-                    text = subtitle
-                    textSize = 12.5f
-                    setTextColor(tokens.textSecondary)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(4), dp(8), 0)
-                })
-            })
-            val switch = Switch(context).apply {
-                isChecked = checked
-                setOnCheckedChangeListener { _, value -> onChanged(value) }
-            }
-            addView(switch)
-            setOnClickListener { switch.isChecked = !switch.isChecked }
-        }
-
-    private fun colorPresetRow(
-        options: List<Pair<String, Int>>,
-        selectedColor: Int,
-        onSelect: (Int) -> Unit
-    ): View = HorizontalScrollView(this).apply {
-        isHorizontalScrollBarEnabled = false
-        addView(row {
-            options.forEach { (label, color) ->
-                addView(colorPresetChip(label, color, color == selectedColor) { onSelect(color) })
-            }
-        })
-    }
-
-    private fun colorPresetChip(label: String, color: Int, selected: Boolean, onClick: () -> Unit): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), 0, dp(12), 0)
-            background = roundedBox(
-                if (selected) tokens.primarySubtle else tokens.surface,
-                if (selected) tokens.primaryStrong else tokens.border,
-                dp(18).toFloat(),
-                dp(if (selected) 2 else 1)
-            )
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)).apply {
-                setMargins(0, 0, dp(10), 0)
-            }
-            addView(View(context).apply {
-                background = roundedBox(color, color, dp(9).toFloat())
-                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply {
-                    setMargins(0, 0, dp(8), 0)
-                }
-            })
-            addView(TextView(context).apply {
-                text = label
-                textSize = 12.5f
-                typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                setTextColor(if (selected) tokens.primaryText else tokens.textSecondary)
-            })
-            setOnClickListener { onClick() }
-        }
-
-    private fun themePreviewCard(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(18), dp(18), dp(18), dp(18))
-        background = roundedBox(tokens.cardBackground, tokens.border, dp(24).toFloat())
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(0, dp(26), 0, 0)
-        }
-        addView(row {
-            addView(iconTile("terminal", tokens.primaryStrong, tokens.primarySoft))
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(12), 0, 0, 0)
-                addView(TextView(context).apply {
-                    text = "主题预览"
-                    textSize = 16f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                })
-                addView(TextView(context).apply {
-                    text = "按钮、卡片和辅助信息会跟随这里的颜色。"
-                    textSize = 12f
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, dp(3), 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        })
-        addView(TextView(context).apply {
-            text = "启动 / 打开"
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(tokens.buttonText)
-            background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(14).toFloat())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
-                setMargins(0, dp(16), 0, 0)
-            }
-        })
-    }
-
     private fun isUbuntuActionBlocked(recipe: KiteRecipe): Boolean =
         runtimeStatusState.blocksUbuntuActions && recipe.hasUbuntuStep()
 
@@ -6183,6 +5875,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun bottomNavigation(): View = row {
+        tag = TAG_BOTTOM_NAVIGATION_VIEW
         setPadding(dp(14), dp(3), dp(14), dp(4))
         setBackgroundColor(Color.argb(
             238,
@@ -6195,6 +5888,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         addView(navItem(">_", "终端", currentScreen == AppDestination.Terminal) { appNavigator.navigate(AppDestination.Terminal) })
         addView(navItem("≡", "资源", currentScreen == AppDestination.Resources || currentScreen == AppDestination.ResourceManage || currentScreen == AppDestination.ResourceDetail || currentScreen == AppDestination.ResourceMore || currentScreen == AppDestination.ResourceRawJson) { appNavigator.navigate(AppDestination.Resources) })
         addView(navItem("⚙", "设置", currentScreen == AppDestination.Settings || currentScreen == AppDestination.ThemeSettings) { appNavigator.navigate(AppDestination.Settings) })
+    }
+
+    private fun rebindBottomNavigationTheme() {
+        val index = (0 until root.childCount).firstOrNull { childIndex ->
+            root.getChildAt(childIndex).tag == TAG_BOTTOM_NAVIGATION_VIEW
+        } ?: return
+        val replacement = bottomNavigation()
+        root.removeViewAt(index)
+        root.addView(replacement, index)
+        if (currentScreen == AppDestination.Terminal) terminalBottomNavigation = replacement
     }
 
     private fun navItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit): View = LinearLayout(this).apply {
@@ -6873,6 +6576,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val TAG_RESOURCE_DETAIL_FRAGMENT = "kite-resource-detail"
         private const val TAG_RUNTIME_MANAGEMENT_FRAGMENT = "kite-runtime-management"
         private const val TAG_WEB_WORKBENCH_FRAGMENT = "kite-web-workbench"
+        private const val TAG_SETTINGS_FRAGMENT = "kite-settings"
+        private const val TAG_THEME_SETTINGS_FRAGMENT = "kite-theme-settings"
+        private const val TAG_BOTTOM_NAVIGATION_VIEW = "kite-bottom-navigation"
         private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
@@ -6911,9 +6617,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS = 803
         private const val REQUEST_NOTIFICATION_PERMISSION = 804
         private const val REQUEST_FIRST_RUN_PERMISSION_ONBOARDING = 805
-        private const val KEY_HIDE_MAIN_TASK_FROM_RECENTS = "hide_main_task_from_recents"
-        private const val KEY_RESTORE_LAST_SCREEN = "restore_last_screen"
-        private const val KEY_BROWSER_RUNTIME_MODE = "browser_runtime_mode"
         private const val STATE_CURRENT_SCREEN = "kite_current_screen"
         private const val STATE_WORKBENCH_URL = "kite_workbench_url"
         private const val STATE_RECIPE_DRAFT = "kite_recipe_draft"

@@ -23,9 +23,11 @@ import com.kite.app.foundation.runtime.RuntimePressureResponder
 import com.kite.app.ui.terminal.TerminalUiPreferences
 import com.kite.app.shell.KiteAppGraph
 import com.kite.app.feature.web.WebWorkbenchDependenciesOwner
+import com.kite.app.application.settings.SettingsFeatureDependenciesOwner
+import com.kite.app.application.settings.SettingsGateway
 
 class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner,
-    RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner {
+    RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner, SettingsFeatureDependenciesOwner {
 
     override val resourceFeatureGateway: ResourceFeatureGateway
         get() = KiteAppGraph.from(this).resourceFeatureGateway
@@ -44,6 +46,9 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
 
     override val webWorkbenchAutomationSessions
         get() = KiteAppGraph.from(this).browserAutomationSessions
+
+    override val settingsFeatureGateway: SettingsGateway
+        get() = KiteAppGraph.from(this).settingsGateway
 
     override fun launchWebWorkbenchHandoff(
         request: com.kite.app.browser.BrowserHandoffRequest,

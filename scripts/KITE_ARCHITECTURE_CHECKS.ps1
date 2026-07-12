@@ -45,6 +45,11 @@ $androidRuntimeManagementGatewayPath = Join-Path $Root 'app/src/main/java/com/ki
 $installSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/RunInstallWizardSurfaceBinding.kt'
 $legacyFeatureInstallBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunInstallWizardSurfaceBinding.kt'
 $screenRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/AppNavigator.kt'
+$settingsGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/settings/SettingsGateway.kt'
+$settingsControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/settings/SettingsFeatureController.kt'
+$settingsFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/settings/SettingsFragment.kt'
+$androidSettingsGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/settings/AndroidSettingsGateway.kt'
+$onboardingCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/onboarding/FirstRunOnboardingCoordinator.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
     (Join-Path $Root 'app/src/main/kotlin/com/kite/app')
@@ -64,6 +69,11 @@ Assert-Architecture (Test-Path $androidRuntimeManagementGatewayPath) 'Android ru
 Assert-Architecture (Test-Path $installSurfaceBindingPath) 'Run install-wizard shell adapter is missing.'
 Assert-Architecture (-not (Test-Path $legacyFeatureInstallBindingPath)) 'Run install-wizard adapter must not live inside the run-surface feature.'
 Assert-Architecture (Test-Path $screenRouterPath) 'AppNavigator source is missing.'
+Assert-Architecture (Test-Path $settingsGatewayPath) 'Settings gateway contract is missing.'
+Assert-Architecture (Test-Path $settingsControllerPath) 'Settings feature controller is missing.'
+Assert-Architecture (Test-Path $settingsFragmentPath) 'Settings feature fragment is missing.'
+Assert-Architecture (Test-Path $androidSettingsGatewayPath) 'Android settings gateway is missing.'
+Assert-Architecture (Test-Path $onboardingCoordinatorPath) 'First-run onboarding coordinator is missing.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -78,6 +88,11 @@ if ($failures.Count -eq 0) {
     $runtimeManagementProjector = [System.IO.File]::ReadAllText($runtimeManagementProjectorPath, [System.Text.Encoding]::UTF8)
     $androidRuntimeManagementGateway = [System.IO.File]::ReadAllText($androidRuntimeManagementGatewayPath, [System.Text.Encoding]::UTF8)
     $screenRouter = [System.IO.File]::ReadAllText($screenRouterPath, [System.Text.Encoding]::UTF8)
+    $settingsGateway = [System.IO.File]::ReadAllText($settingsGatewayPath, [System.Text.Encoding]::UTF8)
+    $settingsController = [System.IO.File]::ReadAllText($settingsControllerPath, [System.Text.Encoding]::UTF8)
+    $settingsFragment = [System.IO.File]::ReadAllText($settingsFragmentPath, [System.Text.Encoding]::UTF8)
+    $androidSettingsGateway = [System.IO.File]::ReadAllText($androidSettingsGatewayPath, [System.Text.Encoding]::UTF8)
+    $onboardingCoordinator = [System.IO.File]::ReadAllText($onboardingCoordinatorPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
             Where-Object { Test-Path $_ } |
@@ -189,6 +204,37 @@ if ($failures.Count -eq 0) {
         $runtimeManagementProjector -match 'RuntimeManagementMutation' -and
         $runtimeManagementProjector -notmatch 'TaskManagerStore|TerminalSessionStore|CardRunStore|android\.|androidx\.|Context|View'
     ) 'Runtime-management projection must stay pure and must not read stores or Android UI directly.'
+    Assert-Architecture (
+        $main -match 'showFeatureFragment\(SettingsFragment\(\),\s*TAG_SETTINGS_FRAGMENT\)' -and
+        $main -match 'showFeatureFragment\(ThemeSettingsFragment\(\),\s*TAG_THEME_SETTINGS_FRAGMENT\)' -and
+        $main -notmatch 'getSharedPreferences\("kite_(?:theme|app_settings)' -and
+        $main -notmatch 'fun\s+(?:settingsRow|settingsSwitchRow|colorPresetRow|themePreviewCard)\s*\('
+    ) 'MainActivity must route to the settings feature instead of owning settings persistence or drawing.'
+    Assert-Architecture (
+        $settingsGateway -match 'val\s+snapshots:\s*StateFlow<SettingsSnapshot>' -and
+        $settingsGateway -match 'suspend\s+fun\s+refresh\(\):\s*SettingsSnapshot' -and
+        $settingsGateway -notmatch 'android\.|androidx\.'
+    ) 'Settings application contract must expose one Android-free snapshot owner.'
+    Assert-Architecture (
+        $settingsController -match 'SettingsCommand\.SetThemeColor' -and
+        $settingsController -match 'SettingsFeatureEffect\.RecentTaskVisibilityChanged' -and
+        $settingsController -notmatch 'SharedPreferences|NotificationManager|KiteDropZoneManager|android\.|androidx\.'
+    ) 'Settings feature controller must submit data commands and shell effects without platform access.'
+    Assert-Architecture (
+        $settingsFragment -match 'SettingsFeatureResultContract\.send' -and
+        $settingsFragment -notmatch 'getSharedPreferences|NotificationManager|KiteDropZoneManager|MainActivity'
+    ) 'Settings fragment must project state and return effects without delegating ownership to MainActivity.'
+    Assert-Architecture (
+        $androidSettingsGateway -match 'withContext\(Dispatchers\.IO\)' -and
+        $androidSettingsGateway -match 'SettingsCommand\.SetBrowserRuntimeMode' -and
+        $androidSettingsGateway -notmatch 'android\.view\.|android\.widget\.|Activity'
+    ) 'Android settings gateway must keep system probes off the UI thread and must not own views.'
+    Assert-Architecture (
+        $onboardingCoordinator -match 'AwaitingRuntimePermissionResult' -and
+        $onboardingCoordinator -match 'AwaitingAllFilesReturn' -and
+        $onboardingCoordinator -match 'store\.writePhase\(FirstRunOnboardingPhase\.' -and
+        $onboardingCoordinator -notmatch '(?m)^\s*import\s+(?:android\.|androidx\.|.*RuntimeBootstrapGateway|.*SharedPreferences)'
+    ) 'First-run onboarding must persist action phases without copying Android or runtime-readiness facts.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)

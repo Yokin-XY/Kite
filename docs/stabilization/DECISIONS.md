@@ -420,3 +420,13 @@
 理由：旧实现用四个 Activity 布尔字段追踪请求，同时在第一步开始前就宣布引导完成。进程回收会丢失字段却保留错误完成标记，导致新启动无法区分“已完成”“被拒绝”和“停在系统设置”。若把权限状态一并持久化，又会产生第二份容易过期的事实。
 
 影响：Activity 只把当前权限快照交给协调器，并执行 `RequestRuntimePermissions` 或 `OpenAllFilesSettings` effect。Activity 重建不得重复系统窗口，进程重建按等待阶段确定恢复点；拒绝不会伪装成授权成功，后续授权继续走 runtime-status 的同一权限事实和动作。旧 `first_run_permission_onboarding_done` 仅作为已有用户兼容输入。
+
+## ADR-S042 设置事实由 Gateway 持有，主题变化只重绑显示环境
+
+状态：accepted
+
+决策：主题颜色、浏览器模式、现场恢复和最近任务可见性统一由 `SettingsGateway` 读写并发布快照；通知授权和投放区可用性作为 Platform 刷新得到的系统事实附加投影。`SettingsFragment/Screen` 拥有设置与主题页面，MainActivity 只执行导航、权限窗口、系统设置页、最近任务和全局主题环境 effect。
+
+理由：旧设置页在 Activity 中同时读取两份 SharedPreferences、查询通知、准备投放区、重建页面和修改 Chrome。主题每点一次颜色都会再次导航并重画整页，投放区刷新甚至会把设置页无条件切回首页。页面、持久化和系统副作用混合后，任何系统返回都只能靠重新调用 `showSettings()` 校准。
+
+影响：设置页面不得直接读 SharedPreferences、探测文件或调用 Activity Host；普通快照变化只局部绑定开关和副标题。主题变化允许重绑当前主题页、RuntimeStatusChrome、底部导航和终端颜色，但不得触发 Bootstrap、重启 CardRun、销毁 Web 显示或重新启动服务。投放区完成只刷新当前可见页面，不改变导航目的地。
