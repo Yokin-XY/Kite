@@ -958,3 +958,13 @@ T007 Web 显示面迁移结果：
 Web 显示面迁移状态：completed，待独立提交。
 
 下一步：让 `CardRunActivity` 脱离 `MainActivity` 继承，建立只装配指定 instance、RunSurfaceHost 和运行控制动作的轻量 Android 壳；X11 与安装向导显示绑定随后按同一合同接入。
+
+T007 X11 可见绑定结果：
+
+- 新增 `RunX11SurfaceBinding`，由显示面自己创建 `LorieView`、展示 DISPLAY/socket 错误和释放 View；`MainActivity` 删除旧 `cardRunX11SurfaceBody`。
+- X11 server 与进程仍由既有执行层拥有，绑定的 `dispose()` 只移除可见 View，不调用停止或重新分配 DISPLAY。
+- 目标单测、Debug Kotlin 编译、架构检查和运行车道静态检查通过；债务快照为 `lines=12008, functions=532, fields=108, inheritedActivities=1`。
+
+X11 可见绑定状态：completed，待独立提交。
+
+下一步：抽取轻量运行壳的启动解析、浏览器 handoff Gateway 与运行窗口 chrome，然后切断 `CardRunActivity : MainActivity` 继承。

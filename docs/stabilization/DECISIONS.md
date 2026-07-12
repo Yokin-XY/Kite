@@ -300,3 +300,13 @@
 理由：MainActivity 的共享 WebView 同时承担工作台和运行窗口时，一个页面的导航、返回、销毁或自动化 session 会影响另一个页面。把 WebView 交给运行显示面后，页面历史与可见资源有明确所有者，同时认证桥仍由既有进程能力负责，不会因拆 UI 形成第二套 token 或 loopback 状态。
 
 影响：WebView 历史返回优先于运行窗口退出；显示面 dispose 可以停止加载和销毁该 WebView，但不得停止 CardRun。外部浏览器回跳仍按 `recipeId + instanceId` 更新 `CardRunStore` 并恢复对应显示面，MainActivity 不得重新引入 CardRun 专用 Web 构建方法或共享 WebView 绑定。
+
+## ADR-S030 X11 可见绑定不得拥有 X11 进程
+
+状态：accepted
+
+决策：`RunX11SurfaceBinding` 只根据运行事实中的 DISPLAY/socket 创建并持有可见 `LorieView`。X11 server 启动、命令执行、停止和残留确认继续属于执行层；显示绑定销毁只能移除 View。
+
+理由：X11 画面离开前台并不表示用户要求停止桌面程序。若 View 的 detach/destroy 顺带结束 server 或运行实例，系统返回、旋转和 Activity 重建都会改变后台事实，重新造成显示生命周期与执行生命周期耦合。
+
+影响：轻量 `CardRunActivity` 可以安全替换 X11 可见面而不影响运行。沉浸式系统栏属于 Activity 壳层效果，DISPLAY 分配与进程清理由运行编排器和 X11 Platform 适配器负责。

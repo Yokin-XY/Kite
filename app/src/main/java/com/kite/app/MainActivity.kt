@@ -176,6 +176,7 @@ import com.kite.app.feature.runsurface.StaticRunSurfaceBinding
 import com.kite.app.feature.runsurface.RunSurfaceContent
 import com.kite.app.feature.runsurface.RunTerminalSurfaceBinding
 import com.kite.app.feature.runsurface.RunWebSurfaceBinding
+import com.kite.app.feature.runsurface.RunX11SurfaceBinding
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.runtime.TerminalSessionItem
 import com.kite.app.foundation.runtime.TerminalSessionStore
@@ -5499,7 +5500,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         host.render(uiState) { projected ->
             createLegacyRunSurfaceBinding(
                 rootState = state,
-                recipe = recipe,
                 actionRecipe = actionRecipe,
                 actionState = surfaceState,
                 wizardChildRun = wizardChildRun,
@@ -5511,7 +5511,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun createLegacyRunSurfaceBinding(
         rootState: RecipeRuntimeState,
-        recipe: KiteRecipe,
         actionRecipe: KiteRecipe,
         actionState: RecipeRuntimeState,
         wizardChildRun: Pair<KiteRecipe, RecipeRuntimeState>?,
@@ -5559,8 +5558,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 onManualUrl = { rawUrl -> openCardRunManualWebUrl(actionRecipe, actionState, rawUrl) }
             ).also { it.render(projected) }
         }
+        if (projected.content is RunSurfaceContent.X11) {
+            return RunX11SurfaceBinding(
+                context = this,
+                tokens = tokens
+            ).also { it.render(projected) }
+        }
         val view = when {
-            rootState.surface == CardRunSurface.X11 -> cardRunX11SurfaceBody(recipe, actionState)
             rootState.surface == CardRunSurface.InstallWizard -> createResourceInstallWizardFeatureSurface()
             wizardChildRun != null -> cardRunPlaceholderPanel(actionRecipe.name, projected.statusLabel)
             else -> cardRunPlaceholderPanel("运行窗口", projected.statusLabel)
@@ -6662,43 +6666,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(12).toFloat(), 0)
             isClickable = true
             setOnClickListener { onClick() }
-        }
-
-    private fun x11TaskTitle(recipe: KiteRecipe): String = recipe.name.ifBlank { "X11" }
-
-    private fun cardRunX11SurfaceBody(recipe: KiteRecipe, state: RecipeRuntimeState): View =
-        FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
-            val display = state.x11Display?.takeIf { it.isNotBlank() }
-            if (display == null) {
-                addView(
-                    cardRunPlaceholderPanel(x11TaskTitle(recipe), "DISPLAY=待分配"),
-                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        setMargins(dp(16), dp(16), dp(16), 0)
-                    }
-                )
-                return@apply
-            }
-            val binding = KiteX11SurfacePlan.binding(display)
-            runCatching {
-                KiteX11SurfaceServer.surfaceView(this@MainActivity, binding)
-            }.onSuccess { surface ->
-                addView(surface, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            }.onFailure { error ->
-                addView(
-                    cardRunPlaceholderPanel(
-                        x11TaskTitle(recipe),
-                        listOf(
-                            "DISPLAY=${binding.display}",
-                            "socket=${binding.socketPath}",
-                            "native X11 启动失败：${error.message.orEmpty()}"
-                        ).joinToString("\n")
-                    ),
-                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        setMargins(dp(16), dp(16), dp(16), 0)
-                    }
-                )
-            }
         }
 
     private fun reportToolButton(icon: String, label: String, onClick: () -> Unit): View =
