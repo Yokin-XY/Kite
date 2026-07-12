@@ -60,6 +60,8 @@ $androidRunStateGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/pl
 $resourceRunCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceRunCoordinator.kt'
 $androidResourceRecipeFactoryPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceRecipeFactory.kt'
 $androidResourceRunGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceRunGateway.kt'
+$runSurfaceContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceContract.kt'
+$runSurfaceControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceController.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -169,6 +171,8 @@ $androidRunStateGateway = Read-Utf8 $androidRunStateGatewayPath
 $resourceRunCoordinator = Read-Utf8 $resourceRunCoordinatorPath
 $androidResourceRecipeFactory = Read-Utf8 $androidResourceRecipeFactoryPath
 $androidResourceRunGateway = Read-Utf8 $androidResourceRunGatewayPath
+$runSurfaceContract = Read-Utf8 $runSurfaceContractPath
+$runSurfaceController = Read-Utf8 $runSurfaceControllerPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -267,6 +271,9 @@ Assert-True ($main -notmatch 'legacyStartRecipe|executeRecipeStep|runUbuntuStepW
 Assert-True ($kiteAppGraph -match 'val runOrchestrator: RunOrchestrator by lazy' -and $kiteAppGraph -match 'AndroidRecipeExecutor\(appContext, bridgeClient, diagnostics\)') 'Run orchestration and execution adapter must be process composition-root dependencies.'
 Assert-True ($startResourceRun -match 'resourceRunCoordinator\.start' -and $startResourceRun -notmatch 'thread\(|startRecipe\(|ToolchainPackInstaller\.|setRuntimeState\(') 'Resource run intake must delegate preparation and execution to the process coordinator without page-owned execution.'
 Assert-True ($main -notmatch 'resourceManifestRecipeSteps|resourceManifestActionCommand|legacyResourceInstallStep|legacyResourceUninstallStep|markResourceRunSuccess|markResourceInstallFailed') 'MainActivity must not compile resource recipes or settle resource registry facts.'
+Assert-True ($runSurfaceContract -match 'sealed interface RunSurfaceContent' -and $runSurfaceContract -match 'val structureKey: String') 'Run surface feature must project explicit content and a stable structural binding key.'
+Assert-True ($runSurfaceController -match 'recipe\.id != current\.recipeId \|\| state\.instanceId != current\.instanceId' -and $runSurfaceController -match '(?s)fun detach\(\).*target = null') 'Run surface controller must reject cross-instance state and detach without stopping runtime work.'
+Assert-True ($runSurfaceController -notmatch 'Activity|Fragment|View|CardRunStore|TerminalRuntimeHost|WebView') 'Run surface controller must remain independent from Android surfaces and concrete runtime stores.'
 
 $handleProgress = Member-Function-Body $androidRecipeExecutor 'handleShellProgress'
 Assert-True ($handleProgress -match 'RecipeExecutionEvent\.Progress' -and $handleProgress -notmatch 'Activity|View|showCardRunSurface|showConsole|renderResourceInstallWizardFor') 'Shell progress must stay in the UI-agnostic execution adapter.'

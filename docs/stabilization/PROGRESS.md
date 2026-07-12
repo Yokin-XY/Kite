@@ -7,7 +7,7 @@
 ```text
 方向：第二阶段业务架构迁移
 状态：in_progress
-当前任务：T006 运行编排与执行引擎，已完成最终收口与真机验收
+当前任务：T007 运行窗口与显示面，正在盘点继承边界与显示面所有权
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -883,6 +883,40 @@ T006 最终收口结果：
 - OnePlus 8T `3f8bbaad` 冷启动正常。OpenClaw 终端首条命令只执行一次；点击“继续”后 CardRun 为 `Completed`、目标 `proot/bash` 归零、Kite 宿主 PID 保持存活。产品停止入口得到 `Stopped`，摘要为“终端已发送中断并关闭”，绑定清空且无进程残留。
 - 同机 OpenCode 在 Kite 退到后台后仍完成获取，回前台卡片为“已获取”，命令链接存在；卸载 CardRun 为 `Completed`，详情立即恢复“获取”，命令链接消失。全链 logcat 无 `AndroidRuntime`。
 
-T006 状态：completed，待本节点独立提交。
+T006 状态：completed，提交 `f3df16b`。
 
 下一步：提交 T006，进入 T007；先盘点 `CardRunActivity` 继承、terminal/report/web 显示面绑定、页面离开与任务停止的真实边界，再建立独立轻量 `RunSurfaceHost` 合同。
+
+## T007 运行窗口与显示面
+
+### 三问自检
+
+目标是什么？按 `PLAYBOOK.md` 的 T007，让 `CardRunActivity` 成为不继承 `MainActivity` 的独立轻量外壳，由 `RunSurfaceHost` 组合 terminal、report、web 显示面；显示面只绑定指定 run instance，不拥有底层任务生命周期。
+
+完成标准是什么？`CardRunActivity` 不再继承 `MainActivity`；terminal、report、web 各自拥有显示生命周期和局部更新入口；页面离开只解绑显示面，只有用户停止才停止任务；外部浏览器回跳、终端恢复和报告更新仍回到正确实例。
+
+依赖是否满足？T006 已通过全量测试、架构护栏和 OnePlus 真机验收，并提交为 `f3df16b`；运行开始、步骤推进、停止与资源结算均已脱离页面所有权，T007 可以只迁移显示面和壳层职责。
+
+首段只读审计：盘点 `CardRunActivity` 的继承所得能力、启动 Intent、`showCardRunSurface` 及 terminal/report/web 绑定入口，列出必须移入独立 host 的最小依赖和禁止带入的 MainActivity 业务职责，再建立合同与测试。
+
+### 显示面所有权审计
+
+```text
+现状：CardRunActivity 只有一行继承声明，因此每个运行窗口都会执行 MainActivity 的完整启动链。
+真正需要：recipe + instanceId、CardRunStore 快照、RunOrchestrator 的继续/停止命令、terminal/report/web/X11 的可见绑定。
+不应继承：资源目录与搜索、首页编辑器、设置、DropZone、本地服务器、资源预热、首次权限向导、运行管理和完整浏览器自动化控制台。
+状态拥有者：CardRunStore；显示面不得复制运行事实。
+结构更新：surface/session/display 变化才重建结构；报告文本和 elapsed 等普通变化只局部绑定。
+生命周期：attach/detach 只改变可见绑定；complete/stop 才能触发执行资源闭合。
+外部回跳：按 recipeId + instanceId 回到同一目标，再从 Store 恢复，不依赖旧 Activity 字段。
+```
+
+T007 合同层结果：
+
+- 新增纯 `RunSurfaceTarget`、`RunSurfaceContent`、`RunSurfaceUiState`、`RunSurfaceProjector` 与 `RunSurfaceController`；Feature 不引用 Activity、Fragment、View、Platform 或导航。
+- Report、Terminal、Web、X11 与 InstallWizard 都投影为携带同一 instance 身份的结构化内容；`structureKey` 只包含实例与结构句柄，报告流文本变化不会要求重建页面。
+- Controller 只接受当前 `recipeId + instanceId` 的状态更新，其他实例的迟到快照不能覆盖显示面。
+- `detach()` 只清除显示绑定，不调用停止；只有显式 `stop()` 或 `completeCurrentStep()` 才提交动作 Gateway。
+- 纯单测覆盖报告局部更新键稳定、终端会话绑定、跨实例迟到状态门禁，以及页面离开不停止任务；目标单测和架构检查通过。
+
+下一步：提交合同层；随后建立 Android `RunSurfaceGateway` 和轻量 `CardRunActivity` 启动壳，先迁移 Report 显示面与返回/停止/继续，再迁移 Terminal、Web、X11 和安装向导。
