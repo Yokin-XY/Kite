@@ -32,7 +32,7 @@ class AppNavigatorContractTest {
 
         expected.forEach { (destination, parent) ->
             navigator.enter(destination)
-            assertEquals(NavigationBackAction.Navigate(parent), navigator.resolveBack(isCardRunTask = false))
+            assertEquals(NavigationBackAction.Navigate(parent), navigator.resolveBack())
         }
     }
 
@@ -42,7 +42,7 @@ class AppNavigatorContractTest {
         var invoked = false
         navigator.enter(AppDestination.ResourceMore) { invoked = true }
 
-        assertEquals(NavigationBackAction.Contextual, navigator.resolveBack(isCardRunTask = false))
+        assertEquals(NavigationBackAction.Contextual, navigator.resolveBack())
         assertTrue(navigator.invokeContextualBack())
         assertTrue(invoked)
 
@@ -50,7 +50,7 @@ class AppNavigatorContractTest {
         assertFalse(navigator.invokeContextualBack())
         assertEquals(
             NavigationBackAction.Navigate(AppDestination.Console),
-            navigator.resolveBack(isCardRunTask = false)
+            navigator.resolveBack()
         )
     }
 
@@ -70,23 +70,16 @@ class AppNavigatorContractTest {
             navigator.enter(destination)
             assertEquals(
                 NavigationBackAction.Navigate(fallback),
-                navigator.resolveBack(isCardRunTask = false)
+                navigator.resolveBack()
             )
         }
     }
 
     @Test
-    fun `主根页交给系统而 CardRun 任务交给运行窗口合同`() {
+    fun `主根页返回交给系统`() {
         val navigator = navigator()
         navigator.enter(AppDestination.Console)
-        assertEquals(NavigationBackAction.System, navigator.resolveBack(isCardRunTask = false))
-
-        navigator.enter(AppDestination.CardRun)
-        assertEquals(NavigationBackAction.CardRunTask, navigator.resolveBack(isCardRunTask = true))
-        assertEquals(
-            NavigationBackAction.Navigate(AppDestination.Console),
-            navigator.resolveBack(isCardRunTask = false)
-        )
+        assertEquals(NavigationBackAction.System, navigator.resolveBack())
     }
 
     @Test

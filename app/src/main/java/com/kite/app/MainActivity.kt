@@ -36,12 +36,8 @@ import android.text.TextUtils
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewConfiguration
-import android.view.WindowInsets
-import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
@@ -70,7 +66,6 @@ import com.kite.app.action.KiteResourceActionCoordinator
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.action.KiteResourceActionRequest
 import com.kite.app.action.KiteResourceActionSource
-import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.application.runs.RunCommandResult
 import com.kite.app.application.runs.RunExecutionEffect
 import com.kite.app.application.runs.RunExecutionEffectBus
@@ -116,8 +111,6 @@ import com.kite.app.recipe.KiteRecipeAction
 import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
-import com.kite.app.recipe.KiteRunReport
-import com.kite.app.recipe.KiteStepReport
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallPlanCompiler
 import com.kite.app.resources.KiteResourceInstallSignal
@@ -168,15 +161,6 @@ import com.kite.app.foundation.runtime.RuntimeHealthStore
 import com.kite.app.foundation.runtime.RuntimeReclaimer
 import com.kite.app.foundation.runtime.TaskManagerProcessItem
 import com.kite.app.foundation.runtime.TaskManagerSnapshot
-import com.kite.app.feature.runsurface.RunSurfaceBinding
-import com.kite.app.feature.runsurface.RunSurfaceHost
-import com.kite.app.feature.runsurface.RunSurfaceProjector
-import com.kite.app.feature.runsurface.RunSurfaceUiState
-import com.kite.app.feature.runsurface.StaticRunSurfaceBinding
-import com.kite.app.feature.runsurface.RunSurfaceContent
-import com.kite.app.feature.runsurface.RunTerminalSurfaceBinding
-import com.kite.app.feature.runsurface.RunWebSurfaceBinding
-import com.kite.app.feature.runsurface.RunX11SurfaceBinding
 import com.kite.app.feature.runsurface.CardRunSpecialRecipes
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.runtime.TerminalSessionItem
@@ -190,8 +174,6 @@ import com.kite.app.feature.resources.ResourceFeatureRequest
 import com.kite.app.feature.resources.ResourceFeatureResultContract
 import com.kite.app.feature.resources.ResourceDetailFragment
 import com.kite.app.feature.resources.ResourceManageFragment
-import com.kite.app.feature.resources.ResourceInstallWizardRunRequest
-import com.kite.app.feature.resources.ResourceInstallWizardSurface
 import com.kite.app.feature.resources.ResourceSearchFragment
 import com.kite.app.feature.resources.ResourcesFragment
 import com.kite.app.application.resources.ResourceFeatureGateway
@@ -263,7 +245,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private val runtimeStates = mutableMapOf<String, RecipeRuntimeState>()
     private val activeRunInstanceIds = mutableMapOf<String, String>()
-    private val cardRunWindowHiddenSurfaces = mutableMapOf<String, MutableSet<String>>()
     private val actionRouter = KiteActionRouter()
     private val recipeActionCoordinator = KiteRecipeActionCoordinator(actionRouter)
     /**
@@ -296,9 +277,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     @androidx.annotation.VisibleForTesting
     internal fun activityDisplaySurfacesReleasedForTest(): Boolean = activityDisplaySurfacesReleased
 
-    /** T007 迁移哨兵；独立 CardRunActivity 验收后删除所有调用方。 */
-    private fun isLegacyCardRunShell(): Boolean = false
-
     private fun enterScreen(screen: AppDestination, onBack: (() -> Unit)? = null) {
         currentScreen = screen
         appNavigator.enter(screen, onBack)
@@ -323,12 +301,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var firstRunAllFilesSettingsOpened = false
     private var ubuntuRuntimeState = UbuntuRuntimeUiState.checking()
     private var localServerStarted = false
-    private var consumedCardRunLaunchKey: String? = null
     private var focusedRunRecipeId: String? = null
     private var focusedRunInstanceId: String? = null
-    private var registeredBrowserInstanceId: String? = null
-    private var registeredDesktopInstanceId: String? = null
-    private var registeredCardRunCloserInstanceId: String? = null
     private var currentResourceDetailId: String? = null
     private var latestBootstrapSnapshot = BootstrapCoordinator.snapshot.value
     private var latestRootfsProgress = AssetExtractor.rootfsProgress.value
@@ -374,10 +348,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var resourceOpenRunSignature = ""
     private var resourceOpenRunStatusByResourceId: Map<String, RecipeRunStatus> = emptyMap()
     private var resourceRunUiRefreshPosted = false
-    private var cardRunSurfaceSignature = ""
-    private var runSurfaceHost: RunSurfaceHost? = null
-    private var resourceInstallWizardSurface: ResourceInstallWizardSurface? = null
-    private var foregroundLiveTickScheduled = false
     private var consoleSystemStatusPillView: TextView? = null
     private var consoleRuntimeBannerHost: LinearLayout? = null
 
@@ -489,7 +459,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             intent,
             ::handleBrowserAuthRedirect,
             ::handleRuntimeAutomationIntent,
-            ::handleCardRunLaunchIntent
+            ::forwardCardRunIntent
         )
         if (!handledLaunchIntent && !restoreScreenFromBundle(savedInstanceState) && !restoreRecipeDraftFromSettings()) {
             showConsole()
@@ -513,7 +483,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             intent,
             ::handleBrowserAuthRedirect,
             ::handleRuntimeAutomationIntent,
-            ::handleCardRunLaunchIntent
+            ::forwardCardRunIntent
         )
     }
 
@@ -598,20 +568,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 "hasError" to (!redirect.error.isNullOrBlank()).toString()
             )
         )
-        if (isLegacyCardRunShell()) {
-            title = recipe.name
-            showCardRunSurface(recipe)
-        } else {
-            startActivity(
-                CardRunIntents.launchIntent(
-                    context = this,
-                    recipeId = recipe.id,
-                    instanceId = instanceId,
-                    launchSource = CardRunIntents.SOURCE_BROWSER_PROXY,
-                    autoStart = false
-                )
+        startActivity(
+            CardRunIntents.launchIntent(
+                context = this,
+                recipeId = recipe.id,
+                instanceId = instanceId,
+                launchSource = CardRunIntents.SOURCE_BROWSER_PROXY,
+                autoStart = false
             )
-        }
+        )
     }
 
     private fun expireBrowserAuthSessionsOnResume() {
@@ -1066,10 +1031,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         rebindVisibleResourceStateOnResume()
         ensureBundledToolBootstrapIfNeeded("resume")
         expireBrowserAuthSessionsOnResume()
-        if (isLegacyCardRunShell() && rebindFocusedCardRunSurface("resume")) {
-            rootHost.post { StartupTraceStore.markReady(applicationContext) }
-            return
-        }
         when (currentScreen) {
             AppDestination.Console -> resumeConsoleSurface()
             AppDestination.Settings -> showSettings()
@@ -1079,7 +1040,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     override fun onPause() {
-        restoreCardRunSystemBarsIfNeeded()
         super.onPause()
     }
 
@@ -1093,11 +1053,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     override fun onDestroy() {
-        restoreCardRunSystemBarsIfNeeded()
-        releaseResourceInstallWizardSurfaceIfActivityDestroyed()
-        CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
-        CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
-        CardRunTaskCloser.unregister(registeredCardRunCloserInstanceId)
         releaseActivityDisplaySurfaces()
         if (localServerStarted) {
             localServer.stop()
@@ -1108,10 +1063,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun releaseActivityDisplaySurfaces() {
         if (activityDisplaySurfacesReleased) return
         activityDisplaySurfacesReleased = true
-        runSurfaceHost?.dispose()
-        runSurfaceHost = null
-        resourceInstallWizardSurface?.dispose()
-        resourceInstallWizardSurface = null
         if (::browserAutomationController.isInitialized) {
             browserAutomationController.closeActiveSession()
         }
@@ -1130,9 +1081,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun handleAppNavigationBack() {
         if (handleWebViewBackSignal()) return
-        when (val action = appNavigator.resolveBack(isLegacyCardRunShell())) {
+        when (val action = appNavigator.resolveBack()) {
             NavigationBackAction.System -> dispatchSystemBack()
-            NavigationBackAction.CardRunTask -> handleCardRunBackSignal()
             NavigationBackAction.Contextual -> appNavigator.invokeContextualBack()
             is NavigationBackAction.Navigate -> appNavigator.navigate(action.destination)
         }
@@ -1148,9 +1098,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun handleWebViewBackSignal(): Boolean {
-        if (currentScreen == AppDestination.CardRun && runSurfaceHost?.handleBack() == true) return true
         if (!::webView.isInitialized) return false
-        if (currentScreen != AppDestination.Workbench && currentScreen != AppDestination.CardRun) return false
+        if (currentScreen != AppDestination.Workbench) return false
         if (webView.parent == null || !webView.canGoBack()) return false
         webView.goBack()
         return true
@@ -1160,185 +1109,25 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         super.onPostResume()
     }
 
-    private fun handleCardRunLaunchIntent(sourceIntent: Intent?): Boolean {
-        val recipeId = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_RECIPE_ID).orEmpty()
-        if (recipeId.isBlank()) return false
-
-        val instanceId = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID)
-            ?.takeIf { it.isNotBlank() }
-            ?: recipeId
-        val autoStart = sourceIntent?.getBooleanExtra(CardRunIntents.EXTRA_AUTO_START, true) ?: true
-        val launchSource = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_LAUNCH_SOURCE).orEmpty()
-        val launchKey = "$recipeId:$instanceId:$autoStart:$launchSource"
-        val existingLaunchState = CardRunStore.get(instanceId)
-        if (
-            consumedCardRunLaunchKey == launchKey &&
-            !shouldRestartConsumedCardRunLaunch(autoStart, existingLaunchState)
-        ) {
-            if (isLegacyCardRunShell()) {
-                rebindCardRunLaunchSurface(sourceIntent, recipeId, instanceId, "duplicate_launch")
-            }
-            return true
-        }
-        consumedCardRunLaunchKey = launchKey
-
-        val isResourceInstallWizardLaunch = launchSource == CardRunIntents.SOURCE_RESOURCE_INSTALL ||
-            recipeId.startsWith("resource-install-wizard-")
-        if (isResourceInstallWizardLaunch) {
-            if (showResourceInstallWizardFromIntent(sourceIntent, recipeId, instanceId)) {
-                return true
-            }
-            showResourceDiscreteToast("获取向导缺少队列信息")
-            if (isLegacyCardRunShell()) finish()
-            return true
-        }
-
-        val recipes = recipeLoader.loadAllRecipes()
-        currentRecipes = recipes
-        val recipe = resolveCardRunLaunchRecipe(sourceIntent, recipeId)
-        if (recipe == null) {
-            Toast.makeText(this, "未找到卡片：$recipeId", Toast.LENGTH_SHORT).show()
-            diagnostics.logRecipeEvent("card_run_launch_missing_recipe", null, mapOf("recipeId" to recipeId))
-            return true
-        }
-        CardRunStore.registerRecipe(recipe)
-
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = instanceId
-        title = recipe.name
-        applyCardTaskDescription(recipe)
-        val state = CardRunStore.get(instanceId) ?: CardRunStore.start(recipe, instanceId)
-        activeRunInstanceIds[recipe.id] = state.instanceId
-        runtimeStates[recipe.id] = state
-        registerCardRunBrowserHandler(recipe, instanceId)
-        registerCardRunDesktopHandler(recipe, instanceId)
-        registerCardRunTaskCloser(instanceId)
-        diagnostics.logRecipeAction(
-            recipe,
-            "card_run_task_launch",
-            mapOf(
-                "instanceId" to instanceId,
-                "source" to launchSource,
-                "autoStart" to autoStart.toString()
-            )
-        )
-
-        if (autoStart) {
-            startRecipe(recipe, state, instanceId)
-        } else if (isLegacyCardRunShell()) {
-            showCardRunSurface(recipe)
-        } else {
-            showConsole()
-        }
-        return true
-    }
-
-    private fun shouldRestartConsumedCardRunLaunch(autoStart: Boolean, state: RecipeRuntimeState?): Boolean {
-        if (!autoStart) return false
-        return state == null ||
-            state.status == RecipeRunStatus.Stopped ||
-            state.status == RecipeRunStatus.Completed ||
-            state.status == RecipeRunStatus.Failed ||
-            state.status == RecipeRunStatus.BridgeUnavailable ||
-            state.status == RecipeRunStatus.Unknown
-    }
-
-    private fun resolveCardRunLaunchRecipe(sourceIntent: Intent?, recipeId: String): KiteRecipe? {
-        val recipes = currentRecipes.takeIf { it.isNotEmpty() } ?: recipeLoader.loadAllRecipes().also {
-            currentRecipes = it
-        }
-        return recipes.firstOrNull { it.id == recipeId }
-            ?: CardRunStore.registeredRecipe(recipeId)
-            ?: temporaryRecipeFromIntent(sourceIntent, recipeId)
-            ?: resourceOpenRecipeFromLaunchRecipeId(recipeId)
-    }
-
-    private fun resourceOpenRecipeFromLaunchRecipeId(recipeId: String): KiteRecipe? {
-        val resourceId = resourceIdForOpenRunRecipeId(recipeId) ?: return null
+    private fun forwardCardRunIntent(sourceIntent: Intent?): Boolean {
+        val source = sourceIntent ?: return false
+        val recipeId = source.getStringExtra(CardRunIntents.EXTRA_RECIPE_ID)?.takeIf { it.isNotBlank() }
+            ?: return false
+        val forwarded = Intent(source)
+            .setClass(this, CardRunActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
         return runCatching {
-            resourceCatalog(forceRefresh = false)
-                .firstOrNull { it.id == resourceId }
-                ?.let { resourceOpenRecipe(it) }
-        }.getOrNull()
-    }
-
-    private fun rebindFocusedCardRunSurface(reason: String): Boolean {
-        val recipeId = focusedRunRecipeId
-            ?.takeIf { it.isNotBlank() }
-            ?: intent?.getStringExtra(CardRunIntents.EXTRA_RECIPE_ID)?.takeIf { it.isNotBlank() }
-            ?: return false
-        val instanceId = focusedRunInstanceId
-            ?.takeIf { it.isNotBlank() }
-            ?: intent?.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID)?.takeIf { it.isNotBlank() }
-            ?: recipeId
-        return rebindCardRunLaunchSurface(intent, recipeId, instanceId, reason)
-    }
-
-    private fun rebindCardRunLaunchSurface(
-        sourceIntent: Intent?,
-        recipeId: String,
-        instanceId: String,
-        reason: String
-    ): Boolean {
-        val recipe = resolveCardRunLaunchRecipe(sourceIntent, recipeId) ?: return false
-        CardRunStore.registerRecipe(recipe)
-        val state = CardRunStore.get(instanceId) ?: CardRunStore.currentForRecipe(recipe.id)
-        val resolvedInstanceId = state?.instanceId ?: instanceId
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = resolvedInstanceId
-        activeRunInstanceIds[recipe.id] = resolvedInstanceId
-        state?.let { runtimeStates[recipe.id] = it }
-        title = recipe.name
-        applyCardTaskDescription(recipe)
-        registerCardRunBrowserHandler(recipe, resolvedInstanceId)
-        registerCardRunDesktopHandler(recipe, resolvedInstanceId)
-        registerCardRunTaskCloser(resolvedInstanceId)
-        diagnostics.logRecipeAction(
-            recipe,
-            "card_run_task_rebound",
-            mapOf("instanceId" to resolvedInstanceId, "reason" to reason)
-        )
-        showCardRunSurface(recipe)
-        return true
-    }
-
-    private fun showResourceInstallWizardFromIntent(
-        sourceIntent: Intent?,
-        recipeId: String,
-        instanceId: String
-    ): Boolean {
-        val targetId = sourceIntent
-            ?.getStringExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_TARGET_ID)
-            ?.takeIf { it.isNotBlank() }
-            ?: activeResourceInstallWizard?.targetResourceId
-            ?: currentResourceInstallTargetId
-            ?: return false
-        val planIds = sourceIntent
-            ?.getStringArrayListExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_PLAN_IDS)
-            ?.filter { it.isNotBlank() }
-            .orEmpty()
-            .ifEmpty { activeResourceInstallWizard?.planResourceIds.orEmpty() }
-            .ifEmpty { resourceInstallWizardPlanIds }
-            .ifEmpty { resourceInstallStore.planResourceIds() }
-            .ifEmpty { resourceInstallStore.pendingPlanResourceIds() }
-        if (planIds.isEmpty()) return false
-        showResourceInstallWizardSurface(
-            targetResourceId = targetId,
-            planResourceIds = planIds,
-            recipeId = recipeId,
-            instanceId = instanceId
-        )
-        return true
-    }
-
-    private fun temporaryRecipeFromIntent(sourceIntent: Intent?, recipeId: String): KiteRecipe? {
-        val url = sourceIntent?.getStringExtra(CardRunIntents.EXTRA_TEMP_URL)
-            ?.takeIf { it.isNotBlank() }
-            ?: return null
-        val title = sourceIntent.getStringExtra(CardRunIntents.EXTRA_TEMP_TITLE)
-            ?.takeIf { it.isNotBlank() }
-            ?: "临时网页"
-        return temporaryBrowserRecipe(recipeId, url, title)
+            startActivity(forwarded)
+            true
+        }.getOrElse { error ->
+            diagnostics.logRecipeEvent(
+                "card_run_forward_failed",
+                null,
+                mapOf("recipeId" to recipeId, "error" to error.message.orEmpty().take(500))
+            )
+            Toast.makeText(this, "运行窗口打开失败：${error.message}", Toast.LENGTH_SHORT).show()
+            true
+        }
     }
 
     private fun temporaryBrowserRecipe(recipeId: String, url: String, title: String = "临时网页"): KiteRecipe =
@@ -1483,47 +1272,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             )
         )
         if (!shouldOpenStepSurface(recipe, step)) return
-        if (shouldRenderInCardRun(recipe)) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = state.instanceId
-            showCardRunSurface(recipe)
-        } else {
-            openWeb(effect.url, "recipe_orchestrator", recipe)
-        }
+        openWeb(effect.url, "recipe_orchestrator", recipe)
     }
 
     private fun observeCardRunStoreSignals() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 CardRunStore.runs.collect { runs ->
-                    rebindVisibleCardRunSurfaceFromStore(runs)
                     consumeResourceOpenRunSignals(runs)
                     renderRuntimePanelCounts()
-                    resourceInstallWizardSurface?.tick()
                 }
             }
         }
-    }
-
-    private fun rebindVisibleCardRunSurfaceFromStore(runs: List<RecipeRuntimeState>) {
-        if (currentScreen != AppDestination.CardRun) return
-        val instanceId = focusedRunInstanceId?.takeIf { it.isNotBlank() } ?: return
-        val state = runs.firstOrNull { it.instanceId == instanceId } ?: return
-        val recipe = recipeForRunState(state) ?: return
-        val wizardChildRun = resourceInstallWizardSelectedRun(recipe, state.surface)
-        val actionRecipe = wizardChildRun?.first ?: recipe
-        val surfaceState = wizardChildRun?.second ?: state
-        val surfaceSignature = cardRunSurfaceSignature(recipe, state, actionRecipe, surfaceState)
-        if (surfaceSignature == cardRunSurfaceSignature) {
-            runtimeStates[state.recipeId] = state
-            showCardRunSurface(recipe)
-            return
-        }
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = state.instanceId
-        activeRunInstanceIds[recipe.id] = state.instanceId
-        runtimeStates[recipe.id] = state
-        showCardRunSurface(recipe)
     }
 
     private fun observeResourceInstallSignals() {
@@ -1548,7 +1308,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         when (currentScreen) {
             AppDestination.Resources,
             AppDestination.ResourceSearch -> Unit
-            AppDestination.CardRun -> Unit
             AppDestination.ResourceDetail -> Unit
             AppDestination.ResourceMore -> Unit
             AppDestination.ResourceManage -> Unit
@@ -1590,7 +1349,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             .joinToString("|")
 
     private fun requestResourceRunStateUiRefresh() {
-        if (isLegacyCardRunShell() || !::root.isInitialized) return
+        if (!::root.isInitialized) return
         when (currentScreen) {
             AppDestination.Resources,
             AppDestination.ResourceSearch,
@@ -1615,7 +1374,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun rebindVisibleResourceStateOnResume() {
-        if (isLegacyCardRunShell() || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
+        if (!::root.isInitialized || !::resourceInstallStore.isInitialized) return
         when (currentScreen) {
             AppDestination.Resources,
             AppDestination.ResourceSearch,
@@ -1631,7 +1390,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ?: currentRecipes.firstOrNull { it.id == state.recipeId }
 
     private fun maybeStartFirstRunPermissionOnboarding(): Boolean {
-        if (isLegacyCardRunShell()) return false
         if (appSettings.getBoolean(KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE, false)) return false
         appSettings.edit().putBoolean(KEY_FIRST_RUN_PERMISSION_ONBOARDING_DONE, true).apply()
         firstRunPermissionOnboardingInFlight = true
@@ -1725,7 +1483,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }.distinct().ifEmpty { listOf("当前所需权限") }
 
     private fun maybeStartFirstRunRuntimeGate() {
-        if (isLegacyCardRunShell() || firstRunRuntimeGateShown) return
+        if (firstRunRuntimeGateShown) return
         firstRunRuntimeGateShown = true
         thread(name = "KiteFirstRunRuntimeGate", isDaemon = true) {
             val permissionState = currentRuntimePermissionState()
@@ -1754,7 +1512,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun ensureBundledToolBootstrapIfNeeded(reason: String) {
-        if (isLegacyCardRunShell() || bootstrapResourceGateInFlight) return
+        if (bootstrapResourceGateInFlight) return
         bootstrapResourceGateInFlight = true
         thread(name = "KiteBundledToolBootstrapGate-${reason.take(24)}", isDaemon = true) {
             val permissionReady = currentRuntimePermissionState().ready
@@ -2186,7 +1944,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         appSettings.getBoolean(KEY_RESTORE_LAST_SCREEN, true)
 
     private fun applyRecentTaskVisibilitySetting() {
-        if (isLegacyCardRunShell() || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || !::appSettings.isInitialized) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || !::appSettings.isInitialized) {
             return
         }
         val hideFromRecents = shouldHideMainTaskFromRecents()
@@ -2360,11 +2118,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showConsole() {
         enterScreen(AppDestination.Console)
-        val focusedRecipe = focusedRunRecipe()
-        if (isLegacyCardRunShell() && focusedRecipe != null) {
-            showCardRunSurface(focusedRecipe)
-            return
-        }
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         root.addView(consoleShellHeader())
@@ -2525,11 +2278,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun clearRootForScreen(detachTerminal: Boolean = true) {
         terminalBottomNavigation = null
-        cardRunSurfaceSignature = ""
-        runSurfaceHost?.dispose()
-        runSurfaceHost = null
-        resourceInstallWizardSurface?.dispose()
-        resourceInstallWizardSurface = null
         consoleSystemStatusPillView = null
         consoleRuntimeBannerHost = null
         val transaction = supportFragmentManager.beginTransaction()
@@ -3115,7 +2863,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 when (currentScreen) {
                     AppDestination.Resources -> Unit
                     AppDestination.ResourceSearch -> Unit
-                    AppDestination.CardRun -> Unit
                     AppDestination.ResourceMore -> Unit
                     AppDestination.ResourceManage -> Unit
                     else -> Unit
@@ -3530,11 +3277,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 currentResourceInstallTargetId = null
                 resourceInstallWizardPlanIds = emptyList()
                 activeResourceInstallWizard = null
-                if (isLegacyCardRunShell() && currentScreen == AppDestination.CardRun) {
-                    closeCardRunTask()
-                } else {
-                    settleVisibleResourceMutation("cancel_failed_install")
-                }
+                settleVisibleResourceMutation("cancel_failed_install")
             } else {
                 settleVisibleResourceMutation("uninstall_without_recipe")
             }
@@ -3595,8 +3338,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun resourceStatusToastSuppressed(): Boolean =
-        resourceInstallWizardSurfaceActive() ||
-            currentScreen == AppDestination.Resources ||
+        currentScreen == AppDestination.Resources ||
             currentScreen == AppDestination.ResourceSearch ||
             currentScreen == AppDestination.ResourceDetail ||
             currentScreen == AppDestination.ResourceMore ||
@@ -3636,11 +3378,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         invalidateResourceRuntimeStateCache()
         closeResourceInstallWizardInstance(targetId, removeRunState = true)
         if (closeWizard) {
-            if (isLegacyCardRunShell()) {
-                closeCardRunTask()
-            } else {
-                showResources()
-            }
+            showResources()
         } else {
             refreshResourceScreenIfVisible()
         }
@@ -3663,8 +3401,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         currentResourceInstallTargetId = null
         resourceInstallWizardPlanIds = emptyList()
         activeResourceInstallWizard = null
-        resourceInstallWizardSurface?.dispose()
-        resourceInstallWizardSurface = null
         if (removeRunState && wizardRecipeIds.isNotEmpty()) {
             wizardRecipeIds.forEach { recipeId ->
                 runtimeStates.remove(recipeId)
@@ -3673,21 +3409,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             }
             CardRunStore.removeRunStatesForRecipes(wizardRecipeIds, removeOpenHistory = true)
         }
-    }
-
-    private fun releaseResourceInstallWizardSurfaceIfActivityDestroyed() {
-        if (!isLegacyCardRunShell() || isChangingConfigurations) return
-        if (!::resourceInstallStore.isInitialized) return
-        val context = activeResourceInstallWizard ?: return
-        if (focusedRunInstanceId != context.wizardInstanceId && focusedRunRecipeId != context.wizardRecipeId) return
-        val targetId = context.targetResourceId
-        val planIds = context.planResourceIds.ifEmpty { resourceInstallStore.planResourceIds() }
-        val resourceIds = resolveResourceInstallTaskIds(targetId, planIds)
-        if (resourceIds.isEmpty()) {
-            closeResourceInstallWizardInstance(targetId, removeRunState = true)
-            return
-        }
-        closeResourceInstallWizardInstance(targetId, removeRunState = true)
     }
 
     private fun resolveResourceInstallTaskIds(targetId: String, planResourceIds: List<String>): List<String> =
@@ -3838,15 +3559,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         )
         CardRunStore.registerRecipe(wizardRecipe)
         activeRunInstanceIds[wizardRecipe.id] = wizardInstanceId
-        if (
-            refreshVisibleResourceInstallWizardInsteadOfRebuild(
-                targetId = targetId,
-                planIds = planIds,
-                recipeId = wizardRecipe.id,
-                instanceId = wizardInstanceId,
-                reason = "show_wizard"
-            )
-        ) return
         runtimeStates[wizardRecipe.id] = CardRunStore.update(
             wizardRecipe,
             RecipeRunStatus.Opened,
@@ -3857,105 +3569,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             currentStepIndex = 0,
             lastMeaningfulOutput = "等待获取确认"
         )
-        if (!isLegacyCardRunShell() && currentScreen != AppDestination.CardRun) {
-            startActivity(
-                CardRunIntents.resourceInstallWizardIntent(
-                    context = this,
-                    recipeId = wizardRecipe.id,
-                    instanceId = wizardInstanceId,
-                    targetResourceId = targetId,
-                    planResourceIds = planIds
-                )
-            )
-            return
-        }
-        showResourceInstallWizardSurface(
-            targetResourceId = targetId,
-            planResourceIds = planIds,
-            recipeId = wizardRecipe.id,
-            instanceId = wizardInstanceId
-        )
-    }
-
-    private fun showResourceInstallWizardSurface(
-        targetResourceId: String,
-        planResourceIds: List<String>,
-        recipeId: String = "resource-install-wizard-${KiteResourceInstallRecipes.safeId(targetResourceId)}",
-        instanceId: String = resourceInstallWizardInstanceId(targetResourceId)
-    ) {
-        val targetId = targetResourceId.takeIf { it.isNotBlank() } ?: return
-        val planIds = planResourceIds.filter { it.isNotBlank() }
-        if (planIds.isEmpty()) return
-        currentResourceInstallTargetId = targetId
-        resourceInstallWizardPlanIds = planIds
-        val catalog = resourceCatalog(forceRefresh = false).associateBy { it.id }
-        val target = catalog[targetId]
-        val wizardRecipe = resourceInstallWizardRecipe(targetId, target?.name ?: targetId).copy(id = recipeId)
-        val wizardInstanceId = instanceId.takeIf { it.isNotBlank() } ?: resourceInstallWizardInstanceId(targetId)
-        activeResourceInstallWizard = ResourceInstallWizardContext(
-            targetResourceId = targetId,
-            planResourceIds = planIds,
-            wizardRecipeId = wizardRecipe.id,
-            wizardInstanceId = wizardInstanceId
-        )
-        CardRunStore.registerRecipe(wizardRecipe)
-        activeRunInstanceIds[wizardRecipe.id] = wizardInstanceId
-        focusedRunRecipeId = wizardRecipe.id
-        focusedRunInstanceId = wizardInstanceId
-        if (
-            refreshVisibleResourceInstallWizardInsteadOfRebuild(
-                targetId = targetId,
-                planIds = planIds,
+        startActivity(
+            CardRunIntents.resourceInstallWizardIntent(
+                context = this,
                 recipeId = wizardRecipe.id,
                 instanceId = wizardInstanceId,
-                reason = "show_wizard_surface"
+                targetResourceId = targetId,
+                planResourceIds = planIds
             )
-        ) return
-        if (CardRunStore.get(wizardInstanceId) == null) {
-            CardRunStore.start(
-                recipe = wizardRecipe,
-                instanceId = wizardInstanceId,
-                ownerKind = RecipeRuntimeState.OWNER_KIND_INSTALL_WIZARD,
-                stepId = targetId
-            )
-        }
-        runtimeStates[wizardRecipe.id] = CardRunStore.update(
-            wizardRecipe,
-            RecipeRunStatus.Opened,
-            instanceId = wizardInstanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_INSTALL_WIZARD,
-            stepId = targetId,
-            surface = CardRunSurface.InstallWizard,
-            currentStepIndex = 0,
-            lastMeaningfulOutput = "等待获取确认"
         )
-        title = wizardRecipe.name
-        if (isLegacyCardRunShell()) {
-            applyCardTaskDescription(wizardRecipe)
-            registerCardRunTaskCloser(wizardInstanceId)
-        }
-        showCardRunSurface(wizardRecipe)
-    }
-
-    private fun refreshVisibleResourceInstallWizardInsteadOfRebuild(
-        targetId: String,
-        planIds: List<String>,
-        recipeId: String,
-        instanceId: String,
-        reason: String
-    ): Boolean {
-        val surface = resourceInstallWizardSurface ?: return false
-        if (currentScreen != AppDestination.CardRun) return false
-        if (!surface.matches(targetId, planIds)) return false
-        if (focusedRunRecipeId != recipeId || focusedRunInstanceId != instanceId) return false
-        if (activeResourceInstallWizard?.selectedSurface != CardRunSurface.InstallWizard) return false
-        surface.reconcile()
-        diagnostics.logRecipeEvent(
-            "install_wizard_feature_reconcile",
-            null,
-            mapOf("reason" to reason, "target" to targetId)
-        )
-        return true
+        return
     }
 
     private fun existingResourceInstallWizardInstanceId(targetResourceId: String, recipeId: String): String? {
@@ -3996,92 +3619,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun resourceRunInstanceId(resourceId: String, recipe: KiteRecipe): String =
         "resource-run-${KiteResourceInstallRecipes.safeId(resourceId)}-${KiteResourceInstallRecipes.safeId(recipe.id)}-${UUID.randomUUID().toString().replace("-", "")}"
-    private fun submitInstallPlanAction(intent: KiteInstallPlanActionIntent) {
-        when (intent) {
-            KiteInstallPlanActionIntent.StartNext -> startNextResourceInstallFromPlan()
-            KiteInstallPlanActionIntent.Finish -> {
-                currentResourceInstallTargetId = null
-                resourceInstallWizardPlanIds = emptyList()
-                activeResourceInstallWizard = null
-                if (isLegacyCardRunShell()) {
-                    closeCardRunTask()
-                } else {
-                    appNavigator.navigate(AppDestination.Resources)
-                }
-            }
-        }
-    }
-    private fun showResourceWizardUninstallConfirm(item: ResourceItem) {
-        val dialog = Dialog(this)
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(20), dp(20), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(20).toFloat())
-            addView(TextView(context).apply {
-                text = "卸载异常资源？"
-                textSize = 17f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(tokens.textPrimary)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            })
-            addView(TextView(context).apply {
-                text = "将只执行 ${item.name} 的卸载动作，把它恢复为未获取状态。完成后仍留在当前获取向导里，不会自动重新获取。"
-                textSize = 13f
-                setTextColor(tokens.textSecondary)
-                gravity = Gravity.CENTER
-                setPadding(0, dp(12), 0, 0)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            })
-            addView(row {
-                setPadding(0, dp(20), 0, 0)
-                addView(TextView(context).apply {
-                    text = "取消"
-                    textSize = 14f
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setTextColor(tokens.textPrimary)
-                    background = roundedBox(tokens.surface, tokens.border, dp(13).toFloat())
-                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                        setMargins(0, 0, dp(8), 0)
-                    }
-                    setOnClickListener { dialog.dismiss() }
-                })
-                addView(TextView(context).apply {
-                    text = "卸载"
-                    textSize = 14f
-                    typeface = Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setTextColor(tokens.danger)
-                    background = roundedBox(tintBackground(tokens.danger), tintBackgroundBorder(tokens.danger), dp(13).toFloat())
-                    layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                        setMargins(dp(8), 0, 0, 0)
-                    }
-                    setOnClickListener {
-                        dialog.dismiss()
-                        runResourceWizardUninstall(item)
-                    }
-                })
-            })
-        }
-        dialog.setContentView(content)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.show()
-    }
-
-    private fun runResourceWizardUninstall(item: ResourceItem) {
-        val recipe = resourceUninstallRecipe(item)
-        if (recipe == null) {
-            resourceInstallStore.clear(item.id)
-            resourceInstallStore.resumePlanFrom(item.id)
-            invalidateResourceRuntimeStateCache()
-            showResourceDiscreteToast("${item.name} 已恢复为未获取")
-            refreshResourceScreenIfVisible()
-            return
-        }
-        startResourceUninstall(item, recipe, ResourceUninstallContinuation.ResumeInstallWizard)
-    }
     private fun resourceRunStateForOperation(resourceId: String, operation: String): RecipeRuntimeState? =
         CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, operation))
 
@@ -4098,139 +3635,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun resourceRunIsActive(resourceId: String): Boolean {
         val state = resourceInstallRecipeState(resourceId) ?: return false
         return state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened
-    }
-
-    private fun resourceInstallWizardSurfaceActive(): Boolean =
-        currentScreen == AppDestination.CardRun &&
-            activeResourceInstallWizard?.let { context ->
-                focusedRunRecipeId == context.wizardRecipeId ||
-                    focusedRunInstanceId == context.wizardInstanceId
-            } == true
-
-    private fun resourceInstallWizardRecipeFor(context: ResourceInstallWizardContext): KiteRecipe {
-        CardRunStore.registeredRecipe(context.wizardRecipeId)?.let { return it }
-        val targetName = resourceCatalogForUiRender("install_wizard_recipe")
-            .firstOrNull { it.id == context.targetResourceId }
-            ?.name
-            ?: context.targetResourceId
-        return resourceInstallWizardRecipe(context.targetResourceId, targetName).also {
-            CardRunStore.registerRecipe(it)
-        }
-    }
-
-    private fun resourceInstallWizardOwnsRecipe(recipe: KiteRecipe): Boolean {
-        if (recipe.runtimeSource != KiteResourceInstallRecipes.RUNTIME_SOURCE) return false
-        val context = activeResourceInstallWizard ?: return false
-        val resourceId = resourceIdForRecipe(recipe) ?: return false
-        return resourceId in context.planResourceIds
-    }
-
-    private fun resourceInstallWizardShouldHost(recipe: KiteRecipe): Boolean =
-        resourceInstallWizardSurfaceActive() && resourceInstallWizardOwnsRecipe(recipe)
-
-    private fun resourceRunSurfaceSuppressed(recipe: KiteRecipe): Boolean =
-        resourceInstallWizardShouldHost(recipe) || recipe.id in suppressedResourceRunSurfaceRecipeIds
-
-    private fun renderResourceInstallWizardFor(recipe: KiteRecipe): Boolean {
-        if (!resourceInstallWizardShouldHost(recipe)) return false
-        val context = activeResourceInstallWizard ?: return false
-        if (resourceInstallWizardSurface != null && currentScreen == AppDestination.CardRun) {
-            resourceInstallWizardSurface?.reconcile()
-        } else {
-            showCardRunSurface(resourceInstallWizardRecipeFor(context))
-        }
-        return true
-    }
-
-    private fun createResourceInstallWizardFeatureSurface(): View {
-        val context = activeResourceInstallWizard
-        val targetId = context?.targetResourceId ?: currentResourceInstallTargetId.orEmpty()
-        val planIds = context?.planResourceIds.orEmpty()
-            .ifEmpty { resourceInstallWizardPlanIds }
-            .ifEmpty { resourceInstallStore.planResourceIds() }
-            .ifEmpty { resourceInstallStore.pendingPlanResourceIds() }
-        resourceInstallWizardPlanIds = planIds
-        resourceInstallWizardSurface?.dispose()
-        return ResourceInstallWizardSurface(
-            context = this,
-            gateway = resourceFeatureGateway,
-            targetResourceId = targetId,
-            planResourceIds = planIds,
-            onPlanAction = ::submitInstallPlanAction,
-            onOpenRun = ::openResourceInstallRunSurface,
-            onUninstallFailedResource = { resourceId ->
-                resourceInstallWizardItem(resourceId)?.let(::showResourceWizardUninstallConfirm)
-                    ?: showResourceDiscreteToast("资源信息正在准备")
-            },
-            onReportUnavailable = { showResourceDiscreteToast("报告正在准备") },
-            onLiveTickRequired = ::scheduleForegroundLiveTickIfNeeded
-        ).also { resourceInstallWizardSurface = it }.root
-    }
-
-    private fun resourceInstallWizardItem(resourceId: String): ResourceItem? =
-        cachedResourceCatalog
-            ?.firstOrNull { it.id == resourceId }
-            ?.let(::projectResourceItemRuntime)
-            ?: resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId }
-
-    private fun resourceInstallWizardSelectedRun(
-        recipe: KiteRecipe,
-        surface: CardRunSurface
-    ): Pair<KiteRecipe, RecipeRuntimeState>? {
-        if (recipe.runtimeSource != RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE) return null
-        if (surface == CardRunSurface.InstallWizard) return null
-        val context = activeResourceInstallWizard ?: return null
-        val resourceId = context.selectedResourceId ?: return null
-        val item = resourceCatalogForUiRender("install_wizard_selected_run").firstOrNull { it.id == resourceId } ?: return null
-        val childRecipe = resourceRunRecipeForOperation(item, context.selectedOperation) ?: return null
-        CardRunStore.registerRecipe(childRecipe)
-        val childState = context.selectedInstanceId
-            ?.let(CardRunStore::get)
-            ?.takeIf { it.recipeId == childRecipe.id }
-            ?: CardRunStore.currentForRecipe(childRecipe.id)
-            ?: runtimeStates[childRecipe.id]
-            ?: return null
-        return childRecipe to childState
-    }
-
-    private fun openResourceInstallRunSurface(request: ResourceInstallWizardRunRequest) {
-        val item = resourceInstallWizardItem(request.resourceId)
-            ?: return showResourceDiscreteToast("资源信息正在准备")
-        val recipe = resourceRunRecipeForOperation(item, request.operation)
-            ?: return showResourceDiscreteToast("这个资源没有可打开的运行记录")
-        CardRunStore.registerRecipe(recipe)
-        val selectedRun = CardRunStore.get(request.instanceId)
-            ?.takeIf { it.recipeId == recipe.id }
-            ?: return showResourceDiscreteToast("运行记录已经变化，请重试")
-        val selectedState = CardRunStore.selectSurface(selectedRun.instanceId, request.surface)
-            ?: return showResourceDiscreteToast("运行记录暂时不可打开")
-        runtimeStates[recipe.id] = selectedState
-        activeRunInstanceIds[recipe.id] = selectedRun.instanceId
-        val context = activeResourceInstallWizard
-        if (context == null || focusedRunRecipe()?.runtimeSource != RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = selectedRun.instanceId
-            showCardRunSurface(recipe)
-            return
-        }
-        val wizardRecipe = resourceInstallWizardRecipeFor(context)
-        activeResourceInstallWizard = context.copy(
-            selectedResourceId = item.id,
-            selectedOperation = request.operation,
-            selectedInstanceId = selectedRun.instanceId,
-            selectedSurface = request.surface
-        )
-        focusedRunRecipeId = wizardRecipe.id
-        focusedRunInstanceId = context.wizardInstanceId
-        activeRunInstanceIds[wizardRecipe.id] = context.wizardInstanceId
-        runtimeStates[wizardRecipe.id] = CardRunStore.update(
-            recipe = wizardRecipe,
-            status = RecipeRunStatus.Opened,
-            instanceId = context.wizardInstanceId,
-            surface = request.surface,
-            lastMeaningfulOutput = "查看 ${item.name}"
-        )
-        showCardRunSurface(wizardRecipe)
     }
 
     private fun showResourceMoreActions(item: ResourceItem) {
@@ -4429,7 +3833,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                         )
                     )
                 } else {
-                    showCardRunSurface(recipe)
+                    openCardRunTask(recipe)
                 }
                 showResourceDiscreteToast("${item.name} 已在运行，正在打开原实例")
                 return
@@ -4703,8 +4107,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             item = item,
             recipe = recipe,
             stageBundledResource = resourceRunCoordinator.isBundled(item.id),
-            openRunTask = !resourceInstallWizardSurfaceActive(),
-            returnToInstallWizard = resourceInstallWizardSurfaceActive()
+            openRunTask = true,
+            returnToInstallWizard = false
         )
     }
 
@@ -4765,7 +4169,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             focusedRunInstanceId = state.instanceId
         }
         when {
-            isLegacyCardRunShell() && openRunTask && !returnToInstallWizard -> showCardRunSurface(recipe)
             returnToInstallWizard -> showResourceInstallWizard()
             !openRunTask -> refreshResourceScreenIfVisible()
             else -> startActivity(
@@ -4788,7 +4191,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun refreshResourceScreenIfVisible() {
-        if (isLegacyCardRunShell() || !::root.isInitialized || !::resourceInstallStore.isInitialized) return
+        if (!::root.isInitialized || !::resourceInstallStore.isInitialized) return
         invalidateResourceRuntimeStateCache()
         when (currentScreen) {
             AppDestination.Resources -> Unit
@@ -4801,7 +4204,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun settleVisibleResourceMutation(reason: String) {
-        if (isLegacyCardRunShell() || !::root.isInitialized) return
+        if (!::root.isInitialized) return
         when (currentScreen) {
             AppDestination.Resources,
             AppDestination.ResourceSearch,
@@ -5443,758 +4846,40 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    /**
-     * CardRun surface 的唯一渲染入口(T9 收口证明)。
-     *
-     * 过渡期 Shell 入口：只投影当前实例并装配 RunSurfaceHost。
-     * Report 与 Terminal 已由各自绑定拥有显示生命周期；Web、X11 与安装向导按 T007
-     * 继续迁移，全部完成后 CardRunActivity 将脱离 MainActivity。
-     */
-    private fun showCardRunSurface(recipe: KiteRecipe) {
+    /** 主壳只打开既有运行实例；显示面装配全部属于 CardRunActivity。 */
+    private fun openCardRunTask(recipe: KiteRecipe) {
         val state = focusedRunInstanceId
             ?.let { CardRunStore.get(it) }
-            ?: runtimeStateFor(recipe)
-        val wizardChildRun = resourceInstallWizardSelectedRun(recipe, state.surface)
-        val actionRecipe = wizardChildRun?.first ?: recipe
-        val surfaceState = wizardChildRun?.second ?: state
-        val surfaceSignature = cardRunSurfaceSignature(recipe, state, actionRecipe, surfaceState)
-        applyCardRunSystemBarsForSurface(state.surface)
-        if (refreshVisibleCardRunSurfaceInsteadOfRebuild(surfaceSignature, state, surfaceState)) return
-        enterScreen(AppDestination.CardRun)
-        root.setBackgroundColor(Color.rgb(246, 247, 249))
-        clearRootForScreen()
-        cardRunSurfaceSignature = surfaceSignature
-        val host = RunSurfaceHost(
-            context = this,
-            tokens = tokens,
-            onCompleteCurrentStep = {
-                val latest = CardRunStore.get(surfaceState.instanceId) ?: surfaceState
-                if (canCompleteCurrentCardStep(actionRecipe, latest)) {
-                    completeCurrentCardStep(actionRecipe, latest)
-                }
-            }
-        ).also { runSurfaceHost = it }
-        host.root.setBackgroundColor(tokens.pageBackground)
-        root.addView(host.root, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        val uiState = RunSurfaceProjector.project(actionRecipe, surfaceState).copy(structureKey = surfaceSignature)
-        host.render(uiState) { projected ->
-            createLegacyRunSurfaceBinding(
-                rootState = state,
-                actionRecipe = actionRecipe,
-                actionState = surfaceState,
-                wizardChildRun = wizardChildRun,
-                projected = projected
-            )
-        }
-        addCardRunFloatingCapsule(host.root, recipe, state, actionRecipe, surfaceState)
-    }
-
-    private fun createLegacyRunSurfaceBinding(
-        rootState: RecipeRuntimeState,
-        actionRecipe: KiteRecipe,
-        actionState: RecipeRuntimeState,
-        wizardChildRun: Pair<KiteRecipe, RecipeRuntimeState>?,
-        projected: RunSurfaceUiState
-    ): RunSurfaceBinding {
-        if (projected.content is RunSurfaceContent.Terminal) {
-            applyKiteTerminalTheme()
-            return RunTerminalSurfaceBinding(
+            ?: CardRunStore.currentForRecipe(recipe.id)
+            ?: return
+        val launchIntent = if (state.surface == CardRunSurface.InstallWizard) {
+            val targetId = state.stepId
+                ?.takeIf { it.isNotBlank() }
+                ?: activeResourceInstallWizard?.targetResourceId
+                ?: currentResourceInstallTargetId
+                ?: return
+            val planIds = activeResourceInstallWizard?.planResourceIds.orEmpty()
+                .ifEmpty { resourceInstallWizardPlanIds }
+                .ifEmpty { resourceInstallStore.planResourceIds() }
+                .ifEmpty { resourceInstallStore.pendingPlanResourceIds() }
+            if (planIds.isEmpty()) return
+            CardRunIntents.resourceInstallWizardIntent(
                 context = this,
-                fragmentManager = supportFragmentManager,
-                instanceId = projected.target.instanceId,
-                tokens = tokens
-            ).also { it.render(projected) }
-        }
-        if (projected.content is RunSurfaceContent.Web) {
-            val target = projected.content.url?.trim().orEmpty()
-            if (target.isNotBlank()) {
-                val displayTarget = redactUrlCredentials(target)
-                diagnostics.logOpenWebAttempt(actionRecipe, displayTarget, "card_run_surface")
-                diagnostics.writeWebAppStatus(
-                    url = displayTarget,
-                    title = actionRecipe.name,
-                    state = "opening",
-                    recipeId = actionRecipe.id,
-                    recipeName = actionRecipe.name,
-                    openSource = "card_run_surface"
-                )
-            }
-            return RunWebSurfaceBinding(
-                activity = this,
-                tokens = tokens,
-                diagnostics = diagnostics,
-                automationSessions = browserAutomationSessions,
-                automationEnabled = { browserRuntimeMode() == BrowserRuntimeMode.AutomationBrowser },
-                onAutomationEvent = ::handleBrowserAutomationEvent,
-                onLaunchHandoff = { request, decision, force ->
-                    launchBrowserHandoff(
-                        request = request,
-                        decision = decision,
-                        force = force,
-                        rerenderFocusedSurface = false
-                    )
-                },
-                onOpenExternal = { url -> openCustomTabOrSystemBrowser(Uri.parse(url)) },
-                onManualUrl = { rawUrl -> openCardRunManualWebUrl(actionRecipe, actionState, rawUrl) }
-            ).also { it.render(projected) }
-        }
-        if (projected.content is RunSurfaceContent.X11) {
-            return RunX11SurfaceBinding(
+                recipeId = recipe.id,
+                instanceId = state.instanceId,
+                targetResourceId = targetId,
+                planResourceIds = planIds
+            )
+        } else {
+            CardRunIntents.launchIntent(
                 context = this,
-                tokens = tokens
-            ).also { it.render(projected) }
-        }
-        val view = when {
-            rootState.surface == CardRunSurface.InstallWizard -> createResourceInstallWizardFeatureSurface()
-            wizardChildRun != null -> cardRunPlaceholderPanel(actionRecipe.name, projected.statusLabel)
-            else -> cardRunPlaceholderPanel("运行窗口", projected.statusLabel)
-        }
-        return StaticRunSurfaceBinding(view).also { it.render(projected) }
-    }
-
-    private fun applyCardRunSystemBarsForSurface(surface: CardRunSurface) {
-        if (!isLegacyCardRunShell()) return
-        val immersive = surface == CardRunSurface.X11
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.setDecorFitsSystemWindows(!immersive)
-            window.insetsController?.let { controller ->
-                if (immersive) {
-                    controller.hide(WindowInsets.Type.systemBars())
-                    controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                } else {
-                    controller.show(WindowInsets.Type.systemBars())
-                }
-            }
-        } else {
-            window.decorView.systemUiVisibility = if (immersive) {
-                View.SYSTEM_UI_FLAG_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            } else {
-                0
-            }
-        }
-    }
-
-    private fun restoreCardRunSystemBarsIfNeeded() {
-        if (!isLegacyCardRunShell()) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.setDecorFitsSystemWindows(true)
-            window.insetsController?.show(WindowInsets.Type.systemBars())
-        } else {
-            window.decorView.systemUiVisibility = 0
-        }
-    }
-
-    private fun cardRunSurfaceSignature(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        actionRecipe: KiteRecipe,
-        surfaceState: RecipeRuntimeState
-    ): String =
-        listOf(
-            recipe.id,
-            state.instanceId,
-            state.surface.name,
-            actionRecipe.id,
-            surfaceState.instanceId,
-            surfaceState.surface.name,
-            surfaceState.terminalSessionId.orEmpty(),
-            surfaceState.nextActionUrl.orEmpty(),
-            surfaceState.x11Display.orEmpty(),
-            surfaceState.x11SocketPath.orEmpty(),
-            activeResourceInstallWizard?.selectedResourceId.orEmpty(),
-            activeResourceInstallWizard?.selectedOperation.orEmpty(),
-            activeResourceInstallWizard?.selectedInstanceId.orEmpty(),
-            activeResourceInstallWizard?.selectedSurface?.name.orEmpty()
-        ).joinToString("|")
-
-    private fun refreshVisibleCardRunSurfaceInsteadOfRebuild(
-        surfaceSignature: String,
-        state: RecipeRuntimeState,
-        surfaceState: RecipeRuntimeState
-    ): Boolean {
-        if (currentScreen != AppDestination.CardRun || cardRunSurfaceSignature != surfaceSignature) return false
-        when (state.surface) {
-            CardRunSurface.InstallWizard -> resourceInstallWizardSurface?.reconcile()
-            CardRunSurface.Report,
-            CardRunSurface.Summary -> {
-                val reportRecipe = CardRunStore.registeredRecipe(surfaceState.recipeId) ?: return false
-                val projected = RunSurfaceProjector.project(reportRecipe, surfaceState)
-                    .copy(structureKey = surfaceSignature)
-                runSurfaceHost?.render(projected) { StaticRunSurfaceBinding(View(this)) }
-            }
-            else -> Unit
-        }
-        return true
-    }
-
-    private fun refreshVisibleRunSurface(state: RecipeRuntimeState) {
-        if (currentScreen != AppDestination.CardRun || focusedRunInstanceId != state.instanceId) return
-        val recipe = recipeForRunState(state) ?: return
-        showCardRunSurface(recipe)
-    }
-
-    private fun showCardRunLoadingSurface(recipe: KiteRecipe, message: String) {
-        enterScreen(AppDestination.CardRun)
-        root.setBackgroundColor(Color.rgb(246, 247, 249))
-        clearRootForScreen()
-        val state = runtimeStateFor(recipe)
-        val surfaceHost = FrameLayout(this).apply {
-            setBackgroundColor(tokens.pageBackground)
-        }
-        root.addView(surfaceHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        surfaceHost.addView(cardRunLoadingBody(message), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        addCardRunFloatingCapsule(surfaceHost, recipe, state, recipe, state)
-    }
-
-    private fun cardRunLoadingBody(message: String): View =
-        FrameLayout(this).apply {
-            setBackgroundColor(tokens.pageBackground)
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(dp(24), dp(28), dp(24), dp(28))
-                addView(ProgressBar(context).apply {
-                    isIndeterminate = true
-                    layoutParams = LinearLayout.LayoutParams(dp(42), dp(42))
-                })
-                addView(TextView(context).apply {
-                    text = message
-                    textSize = 14f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setPadding(0, dp(18), 0, 0)
-                })
-                addView(TextView(context).apply {
-                    text = "正在连接运行环境，请稍候"
-                    textSize = 12f
-                    setTextColor(tokens.textSecondary)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setPadding(0, dp(8), 0, 0)
-                })
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-        }
-
-    private fun cardRunTopBar(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        actionRecipe: KiteRecipe = recipe,
-        actionState: RecipeRuntimeState = state
-    ): View = FrameLayout(this).apply {
-        val canCompleteCurrentStep = canCompleteCurrentCardStep(actionRecipe, actionState)
-        val sideControlSize = dp(44)
-        setPadding(dp(16), dp(12), dp(16), dp(8))
-        val leftControl = if (canCompleteCurrentStep) {
-            cardRunDoneButton { completeCurrentCardStep(actionRecipe, actionState) }
-        } else {
-            View(context)
-        }
-        addView(leftControl, FrameLayout.LayoutParams(sideControlSize, sideControlSize, Gravity.LEFT or Gravity.CENTER_VERTICAL))
-        addView(TextView(context).apply {
-            text = cardRunSurfaceTitle(state)
-            textSize = 20f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(tokens.textPrimary)
-        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, sideControlSize, Gravity.CENTER))
-        val rightChrome = cardRunControlPill(recipe, state)
-        addView(
-            rightChrome,
-            FrameLayout.LayoutParams(
-                sideControlSize,
-                sideControlSize,
-                Gravity.RIGHT or Gravity.CENTER_VERTICAL
-            )
-        )
-    }
-
-    private fun addCardRunFloatingCapsule(
-        host: FrameLayout,
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        actionRecipe: KiteRecipe,
-        actionState: RecipeRuntimeState
-    ) {
-        var toggleFloatingCapsule: (() -> Unit)? = null
-        val capsule = cardRunFloatingCapsule(recipe, state, actionRecipe, actionState) { toggle ->
-            toggleFloatingCapsule = toggle
-        }
-        host.addView(
-            capsule,
-            FrameLayout.LayoutParams(0, dp(40), Gravity.TOP or Gravity.RIGHT).apply {
-                setMargins(0, dp(12), dp(12), 0)
-            }
-        )
-        capsule.bringToFront()
-        val handle = cardRunSideFloatingHandle {
-            toggleFloatingCapsule?.invoke()
-        }
-        host.addView(
-            handle,
-            FrameLayout.LayoutParams(dp(20), dp(64), Gravity.RIGHT or Gravity.CENTER_VERTICAL).apply {
-                setMargins(0, 0, dp(4), 0)
-            }
-        )
-        handle.bringToFront()
-    }
-
-    private fun cardRunFloatingCapsule(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        actionRecipe: KiteRecipe,
-        actionState: RecipeRuntimeState,
-        onToggleReady: ((() -> Unit) -> Unit)? = null
-    ): View {
-        val isWebChrome = actionState.surface == CardRunSurface.Web
-        val collapsedWidth = 0
-        val collapsedHeight = dp(36)
-        val actionCapsuleLength = dp(60)
-        val windowCapsuleLength = dp(40)
-        val capsuleControlHeight = dp(36)
-        val webSearchCapsuleHeight = dp(42)
-        val expandedHeight = if (isWebChrome) webSearchCapsuleHeight else dp(40)
-        val collapsedTopMargin = dp(12)
-        val canComplete = canCompleteCurrentCardStep(actionRecipe, actionState)
-        val currentWebUrl = (actionState.nextActionUrl
-            ?.takeIf { it.isNotBlank() }
-            ?: lastWorkbenchUrl?.takeIf { it.isNotBlank() })
-            ?.let { redactUrlCredentials(it) }
-            .orEmpty()
-        val actions = mutableListOf<Pair<String, () -> Unit>>()
-        if (!isWebChrome && canComplete) {
-            actions += "继续" to { completeCurrentCardStep(actionRecipe, actionState) }
-        }
-
-        val maxAvailableWidth = (resources.displayMetrics.widthPixels - dp(24)).coerceAtLeast(collapsedWidth)
-        val webExpandedWidth = maxAvailableWidth.coerceAtLeast(minOf(dp(260), maxAvailableWidth))
-        val capsuleGapWidth = dp(12)
-        val expandedWidth = if (isWebChrome) {
-            webExpandedWidth
-        } else if (actions.isNotEmpty()) {
-            (actionCapsuleLength * actions.size) + windowCapsuleLength + (capsuleGapWidth * actions.size)
-        } else {
-            windowCapsuleLength
-        }
-        val shell = FrameLayout(this).apply {
-            setBackgroundColor(Color.TRANSPARENT)
-            elevation = 0f
-            alpha = 0f
-            clipChildren = false
-            clipToPadding = false
-        }
-
-        val actionsRow = row {
-            gravity = Gravity.CENTER_VERTICAL
-        }.apply {
-            alpha = 0f
-            translationX = dp(14).toFloat()
-        }
-
-        var expanded = false
-        var touchedByUser = false
-        fun setExpanded(open: Boolean) {
-            if (expanded == open) return
-            expanded = open
-            val startWidth = shell.layoutParams?.width?.takeIf { it > 0 } ?: collapsedWidth
-            val startHeight = shell.layoutParams?.height?.takeIf { it > 0 } ?: collapsedHeight
-            val targetWidth = if (open) expandedWidth else collapsedWidth
-            val targetHeight = if (open) expandedHeight else collapsedHeight
-            ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = 220L
-                interpolator = PathInterpolator(0.22f, 1f, 0.36f, 1f)
-                addUpdateListener { animator ->
-                    val progress = animator.animatedValue as Float
-                    val easedAlpha = if (open) progress else 1f - progress
-                    val currentWidth = (startWidth + (targetWidth - startWidth) * progress).roundToInt()
-                    val currentHeight = (startHeight + (targetHeight - startHeight) * progress).roundToInt()
-                    shell.layoutParams = shell.layoutParams.apply {
-                        width = currentWidth
-                        height = currentHeight
-                        if (this is FrameLayout.LayoutParams && isWebChrome) {
-                            topMargin = collapsedTopMargin - ((currentHeight - collapsedHeight) / 2)
-                        }
-                    }
-                    actionsRow.alpha = easedAlpha
-                    actionsRow.translationX = (if (open) 1f - progress else progress) * dp(14)
-                    shell.alpha = easedAlpha
-                }
-            }.start()
-        }
-        onToggleReady?.invoke {
-            touchedByUser = true
-            setExpanded(!expanded)
-        }
-
-        val rightControls = row {
-            gravity = Gravity.CENTER
-            background = roundedBox(Color.argb(142, 255, 255, 255), Color.argb(44, 123, 137, 156), dp(18).toFloat(), dp(1))
-            elevation = dp(5).toFloat()
-            setPadding(dp(3), 0, dp(3), 0)
-            addView(
-                cardRunCapsuleMark { showCardRunMenu(recipe, state) },
-                LinearLayout.LayoutParams(dp(29), ViewGroup.LayoutParams.MATCH_PARENT)
+                recipeId = recipe.id,
+                instanceId = state.instanceId,
+                launchSource = CardRunIntents.SOURCE_CARD,
+                autoStart = false
             )
         }
-        val content = row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, 0)
-            if (isWebChrome || actions.isNotEmpty()) {
-                addView(actionsRow, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                    setMargins(0, 0, capsuleGapWidth, 0)
-                })
-            }
-            addView(
-                rightControls,
-                LinearLayout.LayoutParams(windowCapsuleLength, capsuleControlHeight)
-            )
-        }
-        if (isWebChrome) {
-            if (canComplete) {
-                actionsRow.addView(cardRunCapsuleAction("继续") {
-                    completeCurrentCardStep(actionRecipe, actionState)
-                }, LinearLayout.LayoutParams(actionCapsuleLength, capsuleControlHeight).apply {
-                    setMargins(0, 0, capsuleGapWidth, 0)
-                })
-            }
-            val addressChrome = cardRunWebAddressCapsule(currentWebUrl) { input ->
-                openCardRunManualWebUrl(actionRecipe, actionState, input.text?.toString().orEmpty())
-            }
-            val addressLayoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply {
-                setMargins(0, 0, dp(2), 0)
-            }
-            val searchGroup = row {
-                gravity = Gravity.CENTER_VERTICAL
-                background = roundedBox(Color.argb(142, 255, 255, 255), Color.argb(44, 123, 137, 156), dp(18).toFloat(), dp(1))
-                elevation = dp(5).toFloat()
-                setPadding(dp(2), 0, dp(2), 0)
-                addView(cardRunCapsuleIconAction("↻") {
-                    runSurfaceHost?.reload()
-                }, LinearLayout.LayoutParams(dp(30), dp(30)).apply {
-                    setMargins(0, 0, dp(5), 0)
-                })
-                addView(addressChrome.first, addressLayoutParams)
-            }
-            actionsRow.addView(searchGroup, LinearLayout.LayoutParams(0, webSearchCapsuleHeight, 1f))
-        } else {
-            actions.forEach { (label, handler) ->
-                actionsRow.addView(cardRunCapsuleAction(label) {
-                    handler()
-                    setExpanded(false)
-                }, LinearLayout.LayoutParams(actionCapsuleLength, capsuleControlHeight))
-            }
-        }
-        shell.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        if (canComplete) {
-            shell.postDelayed({
-                if (shell.isAttachedToWindow && !touchedByUser) setExpanded(true)
-            }, 500L)
-        }
-        return shell
-    }
-
-    private fun cardRunSideFloatingHandle(onClick: () -> Unit): View =
-        object : View(this) {
-            private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.argb(164, 255, 255, 255)
-                style = Paint.Style.FILL
-            }
-            private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.argb(56, 123, 137, 156)
-                style = Paint.Style.STROKE
-                strokeWidth = 1f * resources.displayMetrics.density
-            }
-            private val rect = RectF()
-            private var dragVisualProgress = 0f
-            private var dragVisualAnimator: ValueAnimator? = null
-
-            fun animateDragVisual(active: Boolean) {
-                val start = dragVisualProgress
-                val end = if (active) 1f else 0f
-                animate()
-                    .scaleX(if (active) 1.22f else 1f)
-                    .scaleY(if (active) 1.08f else 1f)
-                    .setDuration(130L)
-                    .setInterpolator(PathInterpolator(0.22f, 1f, 0.36f, 1f))
-                    .start()
-                dragVisualAnimator?.cancel()
-                if (start == end) {
-                    postInvalidateOnAnimation()
-                    return
-                }
-                dragVisualAnimator = ValueAnimator.ofFloat(start, end).apply {
-                    duration = 130L
-                    interpolator = PathInterpolator(0.22f, 1f, 0.36f, 1f)
-                    addUpdateListener { animator ->
-                        dragVisualProgress = animator.animatedValue as Float
-                        postInvalidateOnAnimation()
-                    }
-                    start()
-                }
-            }
-
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                val cx = width / 2f
-                val cy = height / 2f
-                val visualWidth = dp(4) + ((dp(14) - dp(4)) * dragVisualProgress)
-                val visualHeight = dp(54) + ((dp(4)) * dragVisualProgress)
-                val radius = visualWidth / 2f
-                rect.set(
-                    cx - visualWidth / 2f,
-                    cy - visualHeight / 2f,
-                    cx + visualWidth / 2f,
-                    cy + visualHeight / 2f
-                )
-                canvas.drawRoundRect(rect, radius, radius, fillPaint)
-                canvas.drawRoundRect(rect, radius, radius, strokePaint)
-            }
-        }.apply handle@{
-            setBackgroundColor(Color.TRANSPARENT)
-            elevation = dp(7).toFloat()
-            isClickable = true
-            var pressed = false
-            var dragging = false
-            var moved = false
-            var downRawY = 0f
-            var downTop = 0
-            var dragStarter: Runnable? = null
-            val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
-            fun enterDragMode(view: View) {
-                if (dragging || !pressed || !view.isAttachedToWindow) return
-                dragging = true
-                (view.parent as? ViewGroup)?.requestDisallowInterceptTouchEvent(true)
-                view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                this@handle.animateDragVisual(true)
-            }
-            setOnTouchListener { view, event ->
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        pressed = true
-                        dragging = false
-                        moved = false
-                        downRawY = event.rawY
-                        downTop = view.top
-                        val starter = Runnable { enterDragMode(view) }
-                        dragStarter = starter
-                        view.postDelayed(starter, longPressTimeout)
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dy = event.rawY - downRawY
-                        if (kotlin.math.abs(dy) > dp(4)) moved = true
-                        if (!dragging && event.eventTime - event.downTime >= longPressTimeout) {
-                            enterDragMode(view)
-                        }
-                        if (dragging) {
-                            val parent = view.parent as? ViewGroup
-                            val params = view.layoutParams as? FrameLayout.LayoutParams
-                            if (parent != null && params != null && parent.height > view.height) {
-                                val minTop = dp(12)
-                                val maxTop = parent.height - view.height - dp(12)
-                                params.gravity = Gravity.RIGHT or Gravity.TOP
-                                params.topMargin = (downTop + dy.roundToInt()).coerceIn(minTop, maxTop)
-                                params.rightMargin = dp(4)
-                                view.layoutParams = params
-                            }
-                        }
-                        true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        pressed = false
-                        dragStarter?.let { view.removeCallbacks(it) }
-                        val wasDragging = dragging
-                        dragging = false
-                        this@handle.animateDragVisual(false)
-                        if (!wasDragging && !moved) {
-                            view.performClick()
-                            onClick()
-                        }
-                        true
-                    }
-                    MotionEvent.ACTION_CANCEL -> {
-                        pressed = false
-                        dragging = false
-                        dragStarter?.let { view.removeCallbacks(it) }
-                        this@handle.animateDragVisual(false)
-                        true
-                    }
-                    else -> false
-                }
-            }
-        }
-
-    private fun cardRunCapsuleAction(label: String, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(tokens.textPrimary)
-            background = roundedBox(
-                Color.argb(132, 255, 255, 255),
-                Color.argb(36, 123, 137, 156),
-                dp(16).toFloat(),
-                dp(1)
-            )
-            elevation = dp(5).toFloat()
-            setOnClickListener { onClick() }
-        }
-
-    private fun cardRunCapsuleIconAction(label: String, onClick: () -> Unit): View =
-        TextView(this).apply {
-            text = label
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(tokens.textPrimary)
-            background = roundedBox(Color.argb(132, 255, 255, 255), Color.argb(44, 123, 137, 156), dp(18).toFloat())
-            setOnClickListener { onClick() }
-        }
-
-    private fun cardRunWebAddressCapsule(currentUrl: String, onSubmit: (EditText) -> Unit): Pair<FrameLayout, EditText> {
-        lateinit var input: EditText
-        val root = FrameLayout(this).apply {
-            background = roundedBox(Color.argb(178, 255, 255, 255), Color.argb(44, 123, 137, 156), dp(18).toFloat())
-            input = EditText(context).apply {
-                hint = "输入网址"
-                textSize = 13f
-                setSingleLine(true)
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-                imeOptions = EditorInfo.IME_ACTION_GO
-                setTextColor(tokens.textPrimary)
-                setHintTextColor(Color.rgb(132, 143, 160))
-                background = ColorDrawable(Color.TRANSPARENT)
-                includeFontPadding = false
-                setPadding(dp(11), 0, dp(6), 0)
-                if (currentUrl.isNotBlank()) setText(currentUrl)
-                setSelectAllOnFocus(true)
-            }
-            val submit = {
-                onSubmit(input)
-            }
-            input.setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    submit()
-                    true
-                } else {
-                    false
-                }
-            }
-            addView(input, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                setMargins(0, 0, dp(34), 0)
-            })
-            addView(cardRunWebSearchButton { submit() }, FrameLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.RIGHT))
-        }
-        return root to input
-    }
-
-    private fun cardRunWebSearchButton(onClick: () -> Unit): View =
-        object : View(this) {
-            private val searchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.rgb(20, 24, 33)
-                style = Paint.Style.STROKE
-                strokeWidth = 2.7f * resources.displayMetrics.density
-                strokeCap = Paint.Cap.ROUND
-            }
-
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                val size = width.coerceAtMost(height).toFloat()
-                val radius = size * 0.16f
-                val cx = width * 0.45f
-                val cy = height * 0.45f
-                canvas.drawCircle(cx, cy, radius, searchPaint)
-                canvas.drawLine(
-                    cx + radius * 0.72f,
-                    cy + radius * 0.72f,
-                    cx + radius * 1.65f,
-                    cy + radius * 1.65f,
-                    searchPaint
-                )
-            }
-        }.apply {
-            isClickable = true
-            setOnClickListener { onClick() }
-        }
-
-    private fun cardRunCapsuleMark(onClick: () -> Unit): View =
-        object : View(this) {
-            private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.rgb(24, 29, 38)
-                style = Paint.Style.STROKE
-                strokeWidth = 1.9f * resources.displayMetrics.density
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
-            }
-            private val rect = RectF()
-
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                val size = width.coerceAtMost(height).toFloat()
-                val cx = width / 2f
-                val cy = height / 2f
-                val r = size * 0.22f
-                rect.set(cx - r, cy - r, cx + r, cy + r)
-                canvas.drawRoundRect(rect, r * 0.55f, r * 0.55f, strokePaint)
-                canvas.drawLine(cx - r * 0.55f, cy, cx + r * 0.55f, cy, strokePaint)
-            }
-        }.apply {
-            alpha = 0.86f
-            isClickable = true
-            setOnClickListener { onClick() }
-        }
-
-    private fun cardRunSurfaceTitle(state: RecipeRuntimeState): String =
-        when (state.surface) {
-            CardRunSurface.Report, CardRunSurface.Summary -> "SH 报告"
-            CardRunSurface.Terminal -> "终端"
-            CardRunSurface.Web -> "网页"
-            CardRunSurface.X11 -> "X11"
-            CardRunSurface.InstallWizard -> "获取向导"
-        }
-
-    private fun cardRunResultIsland(recipe: KiteRecipe, state: RecipeRuntimeState): View? {
-        if (recipe.runtimeSource != KiteResourceInstallRecipes.RUNTIME_SOURCE) return null
-        val operation = resourceOperationForRecipe(recipe) ?: KiteResourceInstallRecipes.OP_INSTALL
-        val isUninstall = operation == KiteResourceInstallRecipes.OP_UNINSTALL
-        val isSuccess = state.status == RecipeRunStatus.Completed
-        val isFailure = state.status == RecipeRunStatus.Failed || state.status == RecipeRunStatus.BridgeUnavailable
-        if (!isSuccess && !isFailure) return null
-
-        val label = when {
-            isSuccess && isUninstall -> "清理完成"
-            isSuccess -> "获取完成"
-            isUninstall -> "清理失败"
-            else -> "获取失败"
-        }
-        val toneColor = if (isFailure) tokens.danger else tokens.primaryStrong
-        return TextView(this).apply {
-            text = label
-            textSize = 12.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setPadding(dp(16), 0, dp(16), 0)
-            minWidth = dp(if (isFailure) 118 else 92)
-            setTextColor(toneColor)
-            background = roundedBox(
-                Color.argb(232, 255, 255, 255),
-                if (isFailure) tokens.danger else tokens.primarySoft,
-                dp(17).toFloat()
-            )
-            elevation = dp(4).toFloat()
-            if (isSuccess) setOnClickListener { closeCardRunTask() }
-        }
+        startActivity(launchIntent)
     }
 
     private fun handleBrowserAutomationEvent(event: BrowserAutomationEvent) {
@@ -6226,7 +4911,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             shellReportText = browserAutomationReport(event)
         )
         runtimeStates[recipe.id] = updated
-        refreshVisibleRunSurface(updated)
     }
 
     private fun handleBrowserAutomationActionRequest(action: BrowserAutomationAction): BrowserAutomationActionResult {
@@ -6421,15 +5105,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         request: BrowserHandoffRequest,
         decision: BrowserHandoffDecision,
         force: Boolean = false,
-        rerenderFocusedSurface: Boolean = true
+        @Suppress("UNUSED_PARAMETER") rerenderFocusedSurface: Boolean = true
     ): Boolean {
         val result = browserHandoffCoordinator.launch(request, decision, force)
         result.targetUpdate?.let { update ->
             activeRunInstanceIds[update.recipe.id] = update.state.instanceId
             runtimeStates[update.recipe.id] = update.state
-            if (rerenderFocusedSurface && isLegacyCardRunShell() && focusedRunInstanceId == update.state.instanceId) {
-                showCardRunSurface(update.recipe)
-            }
         }
         if (result is BrowserHandoffLaunchResult.Failed) {
             Toast.makeText(this, "无法打开安全浏览器", Toast.LENGTH_LONG).show()
@@ -6449,131 +5130,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 .build()
                 .launchUrl(this, uri)
         }.isSuccess || openSystemBrowserForHandoff(uri)
-
-    private fun openCardRunManualWebUrl(recipe: KiteRecipe, state: RecipeRuntimeState, rawUrl: String) {
-        val url = normalizeManualCardRunUrl(rawUrl)
-        if (url.isBlank()) {
-            Toast.makeText(this, "请输入网页地址", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val rootState = cardRunWindowRootState(state)
-        val instanceId = state.instanceId.takeIf { it.isNotBlank() && !it.startsWith("idle_") }
-            ?: ensureCardRunWindowInstance(recipe, rootState)
-        val status = cardRunManualSurfaceStatus(CardRunStore.get(instanceId) ?: state)
-        activeRunInstanceIds[recipe.id] = rootState.instanceId
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = instanceId
-        cardRunWindowHiddenSurfaces[rootState.instanceId]?.remove(cardRunWindowItemKey(instanceId, CardRunSurface.Web))
-        val updated = CardRunStore.update(
-            recipe = recipe,
-            status = status,
-            instanceId = instanceId,
-            surface = CardRunSurface.Web,
-            lastMeaningfulOutput = "手动打开网页",
-            nextActionUrl = url
-        )
-        runtimeStates[recipe.id] = updated
-        diagnostics.logRecipeAction(
-            recipe,
-            "card_run_manual_web_open",
-            mapOf("instanceId" to instanceId, "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(url))
-        )
-        showCardRunSurface(recipe)
-    }
-
-    private fun normalizeManualCardRunUrl(rawUrl: String): String {
-        val value = rawUrl.trim()
-        if (value.isBlank()) return ""
-        val lower = value.lowercase()
-        if (lower.startsWith("http://") || lower.startsWith("https://")) return value
-        if (value.all { it.isDigit() }) return "http://127.0.0.1:$value"
-        if (lower.startsWith("localhost") || lower.startsWith("127.0.0.1")) return "http://$value"
-        if ("://" in value) return value
-        return "https://$value"
-    }
-
-    private fun cardRunDoneButton(onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = "完成"
-            textSize = 15.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(tokens.textPrimary)
-            background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(12).toFloat(), 0)
-            setOnClickListener { onClick() }
-        }
-
-    private fun handleCardRunBackSignal() {
-        closeCardRunTask()
-    }
-
-    private fun canCompleteCurrentCardStep(recipe: KiteRecipe, state: RecipeRuntimeState): Boolean {
-        val step = recipe.steps.getOrNull(state.currentStepIndex) ?: return false
-        return when (step.type) {
-            KiteRecipe.STEP_SHELL -> state.surface == CardRunSurface.Report &&
-                state.currentStepIndex < recipe.steps.lastIndex &&
-                !state.shellReportText.isNullOrBlank() &&
-                (state.status == RecipeRunStatus.Running || state.status == RecipeRunStatus.AlreadyRunning)
-            KiteRecipe.STEP_TERMINAL -> state.status == RecipeRunStatus.WaitingTerminal && !state.terminalSessionId.isNullOrBlank()
-            KiteRecipe.STEP_OPEN_WEB -> state.surface == CardRunSurface.Web && !state.nextActionUrl.isNullOrBlank()
-            KiteRecipe.STEP_X11 -> state.surface == CardRunSurface.X11 && !state.x11Display.isNullOrBlank()
-            else -> false
-        }
-    }
-
-    private fun completeCurrentCardStep(recipe: KiteRecipe, state: RecipeRuntimeState) {
-        val step = recipe.steps.getOrNull(state.currentStepIndex) ?: return
-        val output = when (step.type) {
-            KiteRecipe.STEP_TERMINAL -> "终端已由用户标记完成"
-            KiteRecipe.STEP_OPEN_WEB -> "网页已由用户标记完成"
-            KiteRecipe.STEP_X11 -> "X11 GUI 已由用户标记完成"
-            KiteRecipe.STEP_SHELL -> "SH 报告已由用户确认继续"
-            else -> "步骤已由用户标记完成"
-        }
-        diagnostics.logRecipeAction(
-            recipe,
-            "orchestrated_step_completed_by_user",
-            mapOf(
-                "type" to step.type,
-                "instanceId" to state.instanceId,
-                "stepIndex" to state.currentStepIndex.toString(),
-            )
-        )
-        runOrchestrator.completeCurrentStep(state.instanceId, output)
-    }
-
-    private fun cardRunControlPill(recipe: KiteRecipe, state: RecipeRuntimeState): View = row {
-        gravity = Gravity.CENTER
-        addView(
-            cardRunMoreButton { showCardRunMenu(recipe, state) },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        )
-    }
-
-    private fun cardRunMoreButton(onClick: () -> Unit): View =
-        object : View(this) {
-            private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = tokens.textPrimary
-                style = Paint.Style.FILL
-            }
-
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                val density = resources.displayMetrics.density
-                val radius = 1.85f * density
-                val spacing = 6.2f * density
-                val centerX = width / 2f
-                val centerY = height / 2f
-                canvas.drawCircle(centerX - spacing, centerY, radius, dotPaint)
-                canvas.drawCircle(centerX, centerY, radius, dotPaint)
-                canvas.drawCircle(centerX + spacing, centerY, radius, dotPaint)
-            }
-        }.apply {
-            background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(12).toFloat(), 0)
-            isClickable = true
-            setOnClickListener { onClick() }
-        }
 
     private fun reportToolButton(icon: String, label: String, onClick: () -> Unit): View =
         row {
@@ -6600,19 +5156,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val clipboard = getSystemService(ClipboardManager::class.java)
         clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
         Toast.makeText(this, toast, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun scheduleForegroundLiveTickIfNeeded() {
-        if (!::root.isInitialized || foregroundLiveTickScheduled) return
-        foregroundLiveTickScheduled = true
-        root.postDelayed({
-            foregroundLiveTickScheduled = false
-            val keepReportTick = runSurfaceHost?.tick() == true
-            val keepWizardTick = resourceInstallWizardSurface?.tick() == true
-            if (keepReportTick || keepWizardTick) {
-                scheduleForegroundLiveTickIfNeeded()
-            }
-        }, 1000L)
     }
 
     private fun formatCardRunElapsed(state: RecipeRuntimeState): String {
@@ -6693,484 +5236,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun shellReportText(report: KiteRunReport?, recipe: KiteRecipe): String? {
-        val shellSteps = report?.steps?.filter { it.type == KiteRecipe.STEP_SHELL }.orEmpty()
-        if (shellSteps.isEmpty()) return null
-        val recipeStepsById = recipe.steps.associateBy { it.id }
-        return shellSteps.joinToString("\n\n") { stepReport ->
-            val recipeStep = recipeStepsById[stepReport.stepId]
-            shellStepReportText(stepReport, recipeStep)
-        }
-    }
-
-    private fun shellStepReportText(report: KiteStepReport, step: KiteRecipeStep?): String {
-        val lines = mutableListOf<String>()
-        step?.cmd?.takeIf { it.isNotBlank() }?.let { lines += "命令：$it" }
-        lines += "结果：${shellReportStatusLabel(report)}"
-        report.exitCode?.let { lines += "退出码：$it（0 表示命令成功结束）" }
-        report.lastMeaningfulOutput.trim().takeIf { it.isNotBlank() }?.let { lines += "有效输出：$it" }
-        val rawOutput = report.stdoutTail.trim()
-        if (rawOutput.isNotBlank() && rawOutput != report.lastMeaningfulOutput.trim()) {
-            lines += "原始输出：\n$rawOutput"
-        }
-        report.stderrTail.trim().takeIf { it.isNotBlank() && it != rawOutput }?.let { lines += "错误输出：$it" }
-        report.matchResult?.takeIf { it.enabled }?.let { match ->
-            lines += "匹配：${if (match.matched) "通过" else "未通过"}（${match.text}）"
-        }
-        if (rawOutput.isBlank() && report.lastMeaningfulOutput.isBlank()) {
-            lines += "输出：命令没有打印内容。"
-        }
-        return lines.joinToString("\n")
-    }
-
-    private fun shellReportStatusLabel(report: KiteStepReport): String =
-        when {
-            report.status == KiteRunReport.STATUS_FINISHED && report.exitCode == 0 -> "成功"
-            report.status == KiteRunReport.STATUS_RUNNING -> "已启动"
-            report.status == KiteRunReport.STATUS_STOPPED -> "已停止"
-            report.status == KiteRunReport.STATUS_FAILED -> "失败"
-            else -> report.status
-        }
-
-    private fun String.normalizeShellStreamForDisplay(): String =
-        replace(ANSI_ESCAPE_REGEX, "")
-            .replace('\r', '\n')
-            .lineSequence()
-            .joinToString("\n") { it.trimEnd() }
-            .trimEnd()
-
-    private fun String.withoutKiteProcessMarkers(): String =
-        lineSequence()
-            .filterNot { line ->
-                val trimmed = line.trim()
-                trimmed.startsWith("__kite_root_pid:") ||
-                    trimmed.startsWith("__kite_process_group_id:") ||
-                    trimmed.startsWith("__kite_system_session_id:")
-            }
-            .joinToString("\n")
-            .trim()
-
-    private fun showCardRunMenu(recipe: KiteRecipe, state: RecipeRuntimeState) {
-        showCardRunWindowOverview(recipe, state)
-    }
-
-    private fun showCardRunWindowOverview(recipe: KiteRecipe, state: RecipeRuntimeState) {
-        val dialog = Dialog(this)
-        val rootState = cardRunWindowRootState(state)
-        val windowItems = cardRunWindowOverviewItems(recipe, state)
-        val pageFill = Color.rgb(246, 248, 252)
-        val content = FrameLayout(this).apply {
-            setBackgroundColor(pageFill)
-            alpha = 0f
-            scaleX = 0.96f
-            scaleY = 0.96f
-        }
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(28), dp(44), dp(28), dp(112))
-                addView(row {
-                    gravity = Gravity.CENTER_VERTICAL
-                    addView(TextView(context).apply {
-                        text = "实例窗口"
-                        textSize = 21f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(Color.rgb(20, 24, 33))
-                        includeFontPadding = false
-                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                })
-                addView(TextView(context).apply {
-                    text = "管理当前实例中的前端窗口"
-                    textSize = 12f
-                    typeface = Typeface.DEFAULT_BOLD
-                    includeFontPadding = false
-                    setTextColor(Color.rgb(128, 139, 157))
-                    setPadding(0, dp(8), 0, 0)
-                })
-                addView(cardRunWindowGrid(recipe, state, windowItems, dialog), LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    setMargins(0, dp(24), 0, 0)
-                })
-            }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-        content.addView(scroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        content.addView(
-            cardRunWindowOverviewDock(recipe, rootState, dialog),
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(92), Gravity.BOTTOM)
-        )
-        dialog.setContentView(content)
-        dialog.setOnShowListener {
-            content.animate()
-                .alpha(1f)
-                .scaleX(1f)
-                .scaleY(1f)
-                .setDuration(190L)
-                .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
-                .start()
-        }
-        dialog.show()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.decorView?.setPadding(0, 0, 0, 0)
-        dialog.window?.setGravity(Gravity.CENTER)
-        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-    }
-
-    private fun cardRunWindowGrid(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        items: List<CardRunWindowItem>,
-        dialog: Dialog
-    ): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val cardHeight = cardRunWindowCardHeightPx()
-            if (items.isEmpty()) {
-                addView(cardRunWindowEmptyState(), LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    dp(180)
-                ))
-                return@apply
-            }
-            items.chunked(2).forEachIndexed { rowIndex, rowItems ->
-                addView(row {
-                    gravity = Gravity.TOP
-                    rowItems.forEachIndexed { index, item ->
-                        val card = cardRunWindowCard(recipe, state, item, dialog)
-                        addView(card, LinearLayout.LayoutParams(0, cardHeight, 1f).apply {
-                            setMargins(
-                                if (index == 0) 0 else dp(7),
-                                0,
-                                if (index == 0) dp(7) else 0,
-                                0
-                            )
-                        })
-                    }
-                    if (rowItems.size == 1) {
-                        addView(View(context), LinearLayout.LayoutParams(0, cardHeight, 1f).apply {
-                            setMargins(dp(7), 0, 0, 0)
-                        })
-                    }
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    setMargins(0, if (rowIndex == 0) 0 else dp(16), 0, 0)
-                })
-            }
-        }
-
-    private fun cardRunWindowCardHeightPx(): Int {
-        val availableWidth = resources.displayMetrics.widthPixels - dp(56) - dp(14)
-        val cardWidth = (availableWidth / 2f).coerceAtLeast(dp(132).toFloat())
-        return (cardWidth * 1.34f).roundToInt().coerceIn(dp(210), dp(242))
-    }
-
-    private fun cardRunWindowCard(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        item: CardRunWindowItem,
-        dialog: Dialog
-    ): View =
-        LinearLayout(this).apply {
-            val selected = cardRunWindowItemSelected(state, item)
-            orientation = LinearLayout.VERTICAL
-            background = roundedBox(
-                Color.WHITE,
-                if (selected) Color.rgb(51, 127, 245) else Color.rgb(224, 229, 237),
-                dp(22).toFloat(),
-                if (selected) dp(3) else dp(1)
-            )
-            elevation = dp(if (selected) 7 else 3).toFloat()
-            addView(row {
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(12), dp(9), dp(12), dp(7))
-                addView(ImageView(context).apply {
-                    setImageResource(cardRunWindowTypeIconRes(item.kind))
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    adjustViewBounds = false
-                }, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
-                    setMargins(0, 0, dp(7), 0)
-                })
-                addView(TextView(context).apply {
-                    text = item.title
-                    textSize = 13.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    includeFontPadding = false
-                    setTextColor(Color.rgb(27, 31, 42))
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                addView(TextView(context).apply {
-                    text = "×"
-                    textSize = 21f
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setTextColor(Color.rgb(108, 118, 134))
-                    setOnClickListener { clicked ->
-                        cardRunWindowPress(clicked) {
-                            hideCardRunWindowItem(recipe, state, item, dialog)
-                        }
-                    }
-                }, LinearLayout.LayoutParams(dp(28), dp(28)))
-            })
-            addView(FrameLayout(context).apply {
-                addView(ImageView(context).apply {
-                    setImageResource(cardRunWindowPreviewRes(item.kind))
-                    scaleType = ImageView.ScaleType.FIT_XY
-                    adjustViewBounds = false
-                }, FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                ))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-                setMargins(dp(10), 0, dp(10), dp(10))
-            })
-            addView(TextView(context).apply {
-                text = item.caption
-                textSize = 10.5f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(Color.rgb(132, 142, 158))
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(dp(10), 0, dp(10), dp(9))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            setOnClickListener { clicked ->
-                cardRunWindowPress(clicked) {
-                    dialog.dismiss()
-                    selectCardRunWindowItem(recipe, item)
-                }
-            }
-            translationY = dp(12).toFloat()
-            alpha = 0f
-            postDelayed({
-                animate()
-                    .alpha(1f)
-                    .translationY(0f)
-                    .setDuration(180L)
-                    .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
-                    .start()
-            }, item.staggerMs)
-        }
-
-    private fun cardRunWindowEmptyState(): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(dp(18), dp(18), dp(18), dp(18))
-            background = roundedBox(Color.WHITE, Color.rgb(224, 229, 237), dp(22).toFloat(), dp(1))
-            addView(TextView(context).apply {
-                text = "暂无打开窗口"
-                textSize = 15f
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-                setTextColor(Color.rgb(42, 49, 64))
-                gravity = Gravity.CENTER
-            })
-            addView(TextView(context).apply {
-                text = "点底部 + 新建或恢复窗口"
-                textSize = 12f
-                includeFontPadding = false
-                setTextColor(Color.rgb(128, 139, 157))
-                gravity = Gravity.CENTER
-                setPadding(0, dp(9), 0, 0)
-            })
-        }
-
-    private fun cardRunWindowOverviewDock(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        dialog: Dialog
-    ): View =
-        LinearLayout(this).apply {
-            gravity = Gravity.CENTER
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(22), dp(10), dp(22), dp(12))
-            background = roundedTopBox(Color.argb(238, 255, 255, 255), Color.rgb(229, 234, 242), dp(1).toFloat())
-            addView(cardRunWindowDockButton("trash", "关闭") {
-                closeCardRunWindowInstance(recipe, state, dialog)
-            }, LinearLayout.LayoutParams(0, dp(76), 1f))
-            addView(cardRunWindowDockButton("plus", "新建") {
-                showCardRunWindowCreateBubble(recipe, state, dialog)
-            }, LinearLayout.LayoutParams(0, dp(76), 1f))
-            addView(cardRunWindowDockButton("back", "返回") {
-                dialog.dismiss()
-            }, LinearLayout.LayoutParams(0, dp(76), 1f))
-        }
-
-    private fun cardRunWindowDockButton(kind: String, label: String, action: () -> Unit): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            contentDescription = label
-            addView(ImageView(context).apply {
-                setImageResource(cardRunWindowDockIconRes(kind))
-                scaleType = ImageView.ScaleType.FIT_CENTER
-                adjustViewBounds = false
-            }, LinearLayout.LayoutParams(if (kind == "plus") dp(54) else dp(50), if (kind == "plus") dp(54) else dp(50)))
-            setOnClickListener { clicked ->
-                cardRunWindowPress(clicked, action)
-            }
-        }
-
-    private fun closeCardRunWindowInstance(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        dialog: Dialog
-    ) {
-        val rootState = cardRunWindowRootState(CardRunStore.get(state.instanceId) ?: state)
-        val latestRootState = CardRunStore.get(rootState.instanceId) ?: rootState
-        dialog.dismiss()
-        activeRunInstanceIds[recipe.id] = latestRootState.instanceId
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = latestRootState.instanceId
-        if (
-            latestRootState.status == RecipeRunStatus.Stopped ||
-            latestRootState.status == RecipeRunStatus.Completed ||
-            latestRootState.status == RecipeRunStatus.Failed ||
-            latestRootState.status == RecipeRunStatus.BridgeUnavailable
-        ) {
-            closeCardRunTask()
-            return
-        }
-        submitRecipeAction(
-            KiteRecipeActionRequest(
-                recipe = recipe,
-                intent = KiteRecipeActionIntent.Stop,
-                source = KiteRecipeActionSource.RunSurface,
-                instanceId = latestRootState.instanceId
-            )
-        )
-    }
-
-    private fun showCardRunWindowCreateBubble(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        overviewDialog: Dialog
-    ) {
-        val bubble = Dialog(this)
-        val overlay = FrameLayout(this).apply {
-            setBackgroundColor(Color.TRANSPARENT)
-            isClickable = true
-            setOnClickListener { bubble.dismiss() }
-            addView(row {
-                gravity = Gravity.CENTER
-                addView(cardRunWindowCreateBubbleButton("terminal") {
-                    handleCardRunWindowCreateChoice(recipe, state, CardRunSurface.Terminal, overviewDialog, bubble)
-                }, LinearLayout.LayoutParams(dp(62), dp(62)).apply {
-                    setMargins(0, 0, dp(16), 0)
-                })
-                addView(cardRunWindowCreateBubbleButton("web") {
-                    handleCardRunWindowCreateChoice(recipe, state, CardRunSurface.Web, overviewDialog, bubble)
-                }, LinearLayout.LayoutParams(dp(62), dp(62)))
-            }.apply {
-                isClickable = true
-                setOnClickListener { }
-                alpha = 0f
-                scaleX = 0.72f
-                scaleY = 0.72f
-                translationY = dp(22).toFloat()
-                post {
-                    animate()
-                        .alpha(1f)
-                        .scaleX(1f)
-                        .scaleY(1f)
-                        .translationY(0f)
-                        .setDuration(180L)
-                        .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
-                        .start()
-                }
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
-                setMargins(0, 0, 0, dp(112))
-            })
-        }
-        bubble.setContentView(overlay)
-        bubble.show()
-        bubble.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        bubble.window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-        bubble.window?.setDimAmount(0f)
-        bubble.window?.decorView?.setPadding(0, 0, 0, 0)
-        bubble.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-    }
-
-    private fun cardRunWindowCreateBubbleButton(kind: String, action: () -> Unit): View =
-        FrameLayout(this).apply {
-            val isTerminal = kind == "terminal"
-            contentDescription = if (isTerminal) "新建终端" else "新建网页"
-            background = roundedBox(
-                if (isTerminal) Color.rgb(34, 184, 98) else Color.rgb(59, 130, 246),
-                Color.TRANSPARENT,
-                dp(31).toFloat(),
-                0
-            )
-            elevation = dp(6).toFloat()
-            addView(cardRunWindowCreateBubbleGlyph(kind), FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER))
-            setOnClickListener { clicked ->
-                cardRunWindowPress(clicked, action)
-            }
-        }
-
-    private fun cardRunWindowCreateBubbleGlyph(kind: String): View =
-        object : View(this) {
-            private val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
-            }
-
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                val w = width.toFloat()
-                val h = height.toFloat()
-                glyphPaint.style = Paint.Style.STROKE
-                glyphPaint.strokeWidth = 2.5f * resources.displayMetrics.density
-                if (kind == "terminal") {
-                    canvas.drawLine(w * 0.24f, h * 0.34f, w * 0.43f, h * 0.50f, glyphPaint)
-                    canvas.drawLine(w * 0.24f, h * 0.66f, w * 0.43f, h * 0.50f, glyphPaint)
-                    canvas.drawLine(w * 0.56f, h * 0.68f, w * 0.78f, h * 0.68f, glyphPaint)
-                } else {
-                    canvas.drawRoundRect(
-                        RectF(w * 0.18f, h * 0.24f, w * 0.82f, h * 0.64f),
-                        dp(3).toFloat(),
-                        dp(3).toFloat(),
-                        glyphPaint
-                    )
-                    canvas.drawLine(w * 0.50f, h * 0.64f, w * 0.50f, h * 0.78f, glyphPaint)
-                    canvas.drawLine(w * 0.34f, h * 0.80f, w * 0.66f, h * 0.80f, glyphPaint)
-                }
-            }
-        }
-
-    private fun handleCardRunWindowCreateChoice(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        surface: CardRunSurface,
-        overviewDialog: Dialog,
-        bubble: Dialog
-    ) {
-        val latest = CardRunStore.get(state.instanceId) ?: state
-        bubble.dismiss()
-        when (surface) {
-            CardRunSurface.Terminal -> openCardRunBlankTerminal(recipe, latest, overviewDialog)
-            CardRunSurface.Web -> openCardRunBlankWebSurface(recipe, latest, overviewDialog)
-            else -> Toast.makeText(this, "暂不支持新建这个窗口", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun cardRunWindowOverviewItems(recipe: KiteRecipe, state: RecipeRuntimeState): List<CardRunWindowItem> {
-        val rootState = cardRunWindowRootState(state)
-        val allItems = cardRunWindowAllItems(recipe, state)
-        val hidden = cardRunWindowHiddenSurfaces[rootState.instanceId] ?: return allItems
-        val availableKeys = allItems.map { it.key }.toSet()
-        hidden.retainAll(availableKeys)
-        if (hidden.isEmpty()) {
-            cardRunWindowHiddenSurfaces.remove(rootState.instanceId)
-            return allItems
-        }
-        return allItems.filterNot { it.key in hidden }
-    }
+    private data class CardRunWindowItem(
+        val key: String,
+        val instanceId: String,
+        val surface: CardRunSurface,
+        val title: String,
+        val caption: String
+    )
 
     private fun cardRunWindowAllItems(recipe: KiteRecipe, state: RecipeRuntimeState): List<CardRunWindowItem> {
         val rootState = cardRunWindowRootState(state)
@@ -7178,7 +5250,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         fun addItem(
             owner: RecipeRuntimeState,
             surface: CardRunSurface,
-            kind: String,
             title: String,
             caption: String
         ) {
@@ -7186,223 +5257,52 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 key = cardRunWindowItemKey(owner.instanceId, surface),
                 instanceId = owner.instanceId,
                 surface = surface,
-                kind = kind,
                 title = title,
-                caption = caption,
-                staggerMs = 40L + (items.size * 40L)
+                caption = caption
             )
         }
         if (cardRunReportSurfaceAvailable(recipe, rootState)) {
-            addItem(rootState, CardRunSurface.Report, "report", "SH 报告", "执行输出")
+            addItem(rootState, CardRunSurface.Report, "SH 报告", "执行输出")
         }
         if (!rootState.terminalSessionId.isNullOrBlank()) {
-            addItem(rootState, CardRunSurface.Terminal, "terminal", "终端", "终端窗口")
+            addItem(rootState, CardRunSurface.Terminal, "终端", "终端窗口")
         }
         if (!rootState.nextActionUrl.isNullOrBlank() || rootState.surface == CardRunSurface.Web) {
             addItem(
                 rootState,
                 CardRunSurface.Web,
-                "web",
                 cardRunWindowWebTitle(rootState.nextActionUrl),
                 cardRunWindowWebCaption(rootState.nextActionUrl)
             )
         }
         rootState.x11Display?.takeIf { it.isNotBlank() }?.let { display ->
-            addItem(rootState, CardRunSurface.X11, "x11", "X11", "DISPLAY=$display")
+            addItem(rootState, CardRunSurface.X11, "X11", "DISPLAY=$display")
         }
         CardRunStore.childrenOf(rootState.instanceId)
             .sortedBy { it.createdAt }
             .forEach { child ->
                 if (!child.terminalSessionId.isNullOrBlank()) {
-                    addItem(child, CardRunSurface.Terminal, "terminal", "终端", "终端窗口")
+                    addItem(child, CardRunSurface.Terminal, "终端", "终端窗口")
                 } else if (!child.nextActionUrl.isNullOrBlank() || child.surface == CardRunSurface.Web) {
                     addItem(
                         child,
                         CardRunSurface.Web,
-                        "web",
                         cardRunWindowWebTitle(child.nextActionUrl),
                         cardRunWindowWebCaption(child.nextActionUrl)
                     )
                 } else if (!child.x11Display.isNullOrBlank()) {
-                    addItem(child, CardRunSurface.X11, "x11", "X11", "DISPLAY=${child.x11Display}")
+                    addItem(child, CardRunSurface.X11, "X11", "DISPLAY=${child.x11Display}")
                 }
             }
         if (items.isEmpty() && rootState.instanceId.isNotBlank()) {
             addItem(
                 rootState,
                 rootState.surface,
-                cardRunWindowKindForSurface(rootState.surface),
-                cardRunSurfaceTitle(rootState),
+                runManagementSurfaceTitle(rootState.surface),
                 rootState.status.label
             )
         }
         return items
-    }
-
-    private fun cardRunWindowSelectedItem(
-        state: RecipeRuntimeState,
-        items: List<CardRunWindowItem>
-    ): CardRunWindowItem? =
-        items.firstOrNull { cardRunWindowItemSelected(state, it) }
-            ?: items.firstOrNull()
-
-    private fun hideCardRunWindowItem(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        item: CardRunWindowItem,
-        dialog: Dialog
-    ) {
-        val latest = CardRunStore.get(state.instanceId) ?: state
-        val rootState = cardRunWindowRootState(latest)
-        val allItems = cardRunWindowAllItems(recipe, latest)
-        if (allItems.none { it.key == item.key }) {
-            Toast.makeText(this, "窗口已不存在", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val hidden = cardRunWindowHiddenSurfaces.getOrPut(rootState.instanceId) { mutableSetOf() }
-        hidden += item.key
-        val nextItem = allItems.firstOrNull { it.key != item.key && it.key !in hidden }
-        val shouldSwitchSurface = cardRunWindowItemSelected(latest, item)
-        if (shouldSwitchSurface) {
-            nextItem?.let { selectCardRunWindowItem(recipe, it, render = false) }
-        }
-        dialog.dismiss()
-        showCardRunSurface(recipe)
-        showCardRunWindowOverview(recipe, CardRunStore.get(focusedRunInstanceId.orEmpty()) ?: rootState)
-    }
-
-    private fun openCardRunBlankWebSurface(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        overviewDialog: Dialog
-    ) {
-        val rootInstanceId = ensureCardRunWindowInstance(recipe, cardRunWindowRootState(state))
-        val instanceId = newCardRunChildInstanceId(rootInstanceId, CardRunSurface.Web)
-        CardRunStore.start(
-            recipe = recipe,
-            instanceId = instanceId,
-            parentInstanceId = rootInstanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_WEB,
-            stepId = "manual_web"
-        )
-        val updated = CardRunStore.update(
-            recipe = recipe,
-            status = RecipeRunStatus.Opened,
-            instanceId = instanceId,
-            surface = CardRunSurface.Web,
-            lastMeaningfulOutput = "等待输入网页地址",
-            clearNextActionUrl = true
-        )
-        activeRunInstanceIds[recipe.id] = rootInstanceId
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = instanceId
-        runtimeStates[recipe.id] = updated
-        cardRunWindowHiddenSurfaces[rootInstanceId]?.remove(cardRunWindowItemKey(instanceId, CardRunSurface.Web))
-        overviewDialog.dismiss()
-        showCardRunSurface(recipe)
-    }
-
-    private fun openCardRunBlankTerminal(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        overviewDialog: Dialog
-    ) {
-        val rootState = cardRunWindowRootState(state)
-        val rootInstanceId = ensureCardRunWindowInstance(recipe, rootState)
-        val instanceId = newCardRunChildInstanceId(rootInstanceId, CardRunSurface.Terminal)
-        CardRunStore.start(
-            recipe = recipe,
-            instanceId = instanceId,
-            parentInstanceId = rootInstanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_TERMINAL,
-            stepId = "manual_terminal"
-        )
-        val preparing = CardRunStore.update(
-            recipe = recipe,
-            status = RecipeRunStatus.Starting,
-            instanceId = instanceId,
-            surface = CardRunSurface.Terminal,
-            lastMeaningfulOutput = "正在创建空白终端"
-        )
-        activeRunInstanceIds[recipe.id] = rootInstanceId
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = instanceId
-        runtimeStates[recipe.id] = preparing
-        cardRunWindowHiddenSurfaces[rootInstanceId]?.remove(cardRunWindowItemKey(instanceId, CardRunSurface.Terminal))
-        overviewDialog.dismiss()
-        showCardRunSurface(recipe)
-
-        val appContext = applicationContext
-        thread(name = "KiteCardRunBlankTerminal-${recipe.id.take(28)}", isDaemon = true) {
-            val recordResult = runCatching {
-                val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
-                val record = KFWorkspaceManager.createShellSession(
-                    context = appContext,
-                    spaceId = space.id,
-                    title = "${recipe.name.trim().ifBlank { "Kite" }} · 终端",
-                    sourceLabel = recipe.name
-                )
-                TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
-                val environment = runCatching {
-                    KiteBrowserProxyInstaller.environment(
-                        context = appContext,
-                        recipeId = recipe.id,
-                        instanceId = rootInstanceId,
-                        source = "card_run_blank_terminal"
-                    )
-                }.getOrDefault(emptyMap())
-                record to environment.withTerminalOwner(record.id, instanceId)
-            }
-            runOnUiThread {
-                val current = CardRunStore.get(instanceId)
-                if (current == null || current.terminalSessionId?.isNotBlank() == true) return@runOnUiThread
-                val (record, environment) = recordResult.getOrElse { error ->
-                    val message = "创建终端失败：${error.message ?: error.javaClass.simpleName}"
-                    val failed = CardRunStore.update(
-                        recipe = recipe,
-                        status = RecipeRunStatus.Failed,
-                        instanceId = instanceId,
-                        surface = CardRunSurface.Report,
-                        lastError = message
-                    )
-                    runtimeStates[recipe.id] = failed
-                    Toast.makeText(this, message.take(120), Toast.LENGTH_SHORT).show()
-                    showCardRunSurface(recipe)
-                    return@runOnUiThread
-                }
-                TerminalSessionStore.refresh(appContext, force = true)
-                if (environment.isNotEmpty()) {
-                    TerminalRuntimeHost.setLaunchEnvironmentOverrides(appContext, record.id, environment)
-                }
-                val updated = CardRunStore.update(
-                    recipe = recipe,
-                    status = cardRunManualSurfaceStatus(current),
-                    instanceId = instanceId,
-                    surface = CardRunSurface.Terminal,
-                    runId = record.id,
-                    terminalSessionId = record.id,
-                    lastMeaningfulOutput = "已打开空白终端：${record.title}"
-                )
-                runtimeStates[recipe.id] = updated
-                diagnostics.logRecipeAction(
-                    recipe,
-                    "card_run_blank_terminal_opened",
-                    mapOf("rootInstanceId" to rootInstanceId, "instanceId" to instanceId, "sessionId" to record.id)
-                )
-                if (currentScreen == AppDestination.CardRun && focusedRunInstanceId == instanceId) {
-                    showCardRunSurface(recipe)
-                }
-            }
-        }
-    }
-
-    private fun ensureCardRunWindowInstance(recipe: KiteRecipe, state: RecipeRuntimeState): String {
-        val stateId = state.instanceId.takeIf { it.isNotBlank() && !it.startsWith("idle_") }
-        val instanceId = stateId
-            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
-            ?: ensureRunInstanceId(recipe)
-        activeRunInstanceIds[recipe.id] = instanceId
-        return instanceId
     }
 
     private fun cardRunWindowRootState(state: RecipeRuntimeState): RecipeRuntimeState =
@@ -7411,15 +5311,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ?.let { CardRunStore.get(it) }
             ?: state
 
-    private fun newCardRunChildInstanceId(parentInstanceId: String, surface: CardRunSurface): String =
-        "${parentInstanceId}_${surface.name.lowercase()}_${System.currentTimeMillis()}"
-
     private fun cardRunWindowItemKey(instanceId: String, surface: CardRunSurface): String =
         "$instanceId:${surface.name}"
-
-    private fun cardRunWindowItemSelected(state: RecipeRuntimeState, item: CardRunWindowItem): Boolean =
-        state.instanceId == item.instanceId &&
-            cardRunWindowSurfaceSelected(state.surface, item.surface)
 
     private fun cardRunWindowWebTitle(url: String?): String {
         val host = normalizedWebHost(url).orEmpty()
@@ -7440,106 +5333,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ?.removePrefix("www.")
             ?.takeIf { it.isNotBlank() }
 
-    private fun cardRunManualSurfaceStatus(state: RecipeRuntimeState): RecipeRunStatus =
-        when (state.status) {
-            RecipeRunStatus.Starting,
-            RecipeRunStatus.Running,
-            RecipeRunStatus.WaitingTerminal,
-            RecipeRunStatus.AlreadyRunning -> state.status
-            else -> RecipeRunStatus.Opened
-        }
-
-    private fun cardRunWindowSurfaceSelected(current: CardRunSurface, candidate: CardRunSurface): Boolean =
-        current == candidate || (current == CardRunSurface.Summary && candidate == CardRunSurface.Report)
-
-    private fun cardRunWindowKindForSurface(surface: CardRunSurface): String =
+    private fun runManagementSurfaceTitle(surface: CardRunSurface): String =
         when (surface) {
-            CardRunSurface.Web -> "web"
-            CardRunSurface.Terminal -> "terminal"
-            CardRunSurface.X11 -> "x11"
-            else -> "report"
+            CardRunSurface.Web -> "网页"
+            CardRunSurface.Terminal -> "终端"
+            CardRunSurface.X11 -> "X11"
+            CardRunSurface.InstallWizard -> "获取向导"
+            CardRunSurface.Report,
+            CardRunSurface.Summary -> "运行报告"
         }
-
-    private fun cardRunWindowTypeIconRes(kind: String): Int =
-        when (kind) {
-            "web" -> R.drawable.card_run_window_icon_web
-            "terminal" -> R.drawable.card_run_window_icon_terminal
-            "x11" -> R.drawable.card_run_window_icon_terminal
-            "report" -> R.drawable.card_run_window_icon_shell
-            else -> R.drawable.card_run_window_icon_shell
-        }
-
-    private fun cardRunWindowPreviewRes(kind: String): Int =
-        when (kind) {
-            "web" -> R.drawable.card_run_window_preview_web
-            "terminal" -> R.drawable.card_run_window_preview_terminal
-            "report" -> R.drawable.card_run_window_preview_shell
-            else -> R.drawable.card_run_window_preview_shell
-        }
-
-    private fun cardRunWindowDockIconRes(kind: String): Int =
-        when (kind) {
-            "trash" -> R.drawable.card_run_window_dock_trash
-            "plus" -> R.drawable.card_run_window_dock_add
-            else -> R.drawable.card_run_window_dock_back
-        }
-
-    private fun cardRunWindowPress(view: View, action: () -> Unit) {
-        view.animate()
-            .scaleX(0.95f)
-            .scaleY(0.95f)
-            .setDuration(70L)
-            .withEndAction {
-                view.animate()
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(110L)
-                    .withEndAction(action)
-                    .start()
-            }
-            .start()
-    }
-
-    private data class CardRunWindowItem(
-        val key: String,
-        val instanceId: String,
-        val surface: CardRunSurface,
-        val kind: String,
-        val title: String,
-        val caption: String,
-        val staggerMs: Long
-    )
-
-    private fun cardRunSurfaceMenuActions(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        dialog: Dialog
-    ): List<CardRunMenuAction> = buildList {
-        if (cardRunReportSurfaceAvailable(recipe, state)) {
-            add(CardRunMenuAction("SH", "SH 报告") {
-                dialog.dismiss()
-                selectCardRunSurface(recipe, CardRunSurface.Report)
-            })
-        }
-        if (!state.terminalSessionId.isNullOrBlank()) {
-            add(CardRunMenuAction(">_", "终端") {
-                dialog.dismiss()
-                selectCardRunSurface(recipe, CardRunSurface.Terminal)
-            })
-        }
-        state.nextActionUrl?.takeIf { it.isNotBlank() }?.let { url ->
-            add(CardRunMenuAction("◎", cardRunWebSurfaceLabel(url)) {
-                dialog.dismiss()
-                selectCardRunSurface(recipe, CardRunSurface.Web)
-            })
-        }
-        state.x11Display?.takeIf { it.isNotBlank() }?.let { display ->
-            add(CardRunMenuAction("X11", "X11 $display") {
-                dialog.dismiss()
-                selectCardRunSurface(recipe, CardRunSurface.X11)
-            })
-        }
-    }
 
     private fun cardRunReportSurfaceAvailable(recipe: KiteRecipe, state: RecipeRuntimeState): Boolean {
         val hasShellStep = recipe.steps.any { step ->
@@ -7550,258 +5352,25 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             (state.surface == CardRunSurface.Report && (!state.lastMeaningfulOutput.isNullOrBlank() || !state.lastError.isNullOrBlank()))
     }
 
-    private fun cardRunWebSurfaceLabel(url: String): String =
-        runCatching {
-            val parsed = Uri.parse(url)
-            val host = parsed.host.orEmpty()
-            val port = parsed.port.takeIf { it > 0 }?.let { " $it" }.orEmpty()
-            when {
-                host.equals("127.0.0.1", ignoreCase = true) || host.equals("localhost", ignoreCase = true) -> "本地$port"
-                host.isNotBlank() -> host.removePrefix("www.").take(14)
-                else -> "网页"
-            }
-        }.getOrDefault("网页")
-
-    private data class CardRunMenuAction(
-        val icon: String,
-        val label: String,
-        val onClick: () -> Unit
-    )
-
-    private fun cardRunMenuHeader(recipe: KiteRecipe, primaryText: Int, secondaryText: Int): View =
-        row {
-            setPadding(dp(18), dp(14), dp(18), dp(12))
-            addView(TextView(context).apply {
-                text = iconGlyph(recipe.icon.name)
-                textSize = 15f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-                background = roundedBox(accentFor(recipe), accentFor(recipe), dp(18).toFloat())
-                layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply {
-                    setMargins(0, 0, dp(12), 0)
-                }
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(TextView(context).apply {
-                    text = recipe.name.ifBlank { "Kite 卡片" }
-                    textSize = 14.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(primaryText)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(TextView(context).apply {
-                    text = "Kite 卡片实例"
-                    textSize = 11.5f
-                    setTextColor(secondaryText)
-                    setPadding(0, dp(2), 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(TextView(context).apply {
-                text = "›"
-                textSize = 22f
-                gravity = Gravity.CENTER
-                setTextColor(secondaryText)
-                layoutParams = LinearLayout.LayoutParams(dp(24), dp(36))
-            })
-        }
-
-    private fun cardRunMenuSectionTitle(title: String, textColor: Int): TextView =
-        TextView(this).apply {
-            text = title
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(textColor)
-            setPadding(dp(22), dp(18), dp(22), dp(8))
-        }
-
-    private fun cardRunMenuActionRow(
-        actions: List<CardRunMenuAction>,
-        tileFill: Int,
-        primaryText: Int,
-        secondaryText: Int
-    ): View = row {
-        gravity = Gravity.TOP
-        setPadding(dp(16), dp(10), dp(16), dp(10))
-        actions.forEach { action ->
-            addView(cardRunMenuActionButton(action, tileFill, primaryText, secondaryText), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        }
-        repeat((4 - actions.size).coerceAtLeast(0)) {
-            addView(View(context), LinearLayout.LayoutParams(0, dp(1), 1f))
-        }
-    }
-
-    private fun cardRunMenuActionButton(
-        action: CardRunMenuAction,
-        tileFill: Int,
-        primaryText: Int,
-        secondaryText: Int
-    ): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(4), 0, dp(4), 0)
-            addView(TextView(context).apply {
-                text = action.icon
-                textSize = if (action.icon.length <= 2) 18f else 14f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(primaryText)
-                background = roundedBox(tileFill, tileFill, dp(11).toFloat())
-                layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
-            })
-            addView(TextView(context).apply {
-                text = action.label
-                textSize = 10.5f
-                gravity = Gravity.CENTER
-                setTextColor(secondaryText)
-                maxLines = 2
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(5), 0, 0)
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            setOnClickListener { action.onClick() }
-        }
-
-    private fun cardRunMenuDivider(color: Int): View =
-        View(this).apply {
-            setBackgroundColor(color)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
-        }
-
-    private fun cardRunMenuCancel(dialog: Dialog, textColor: Int): View =
-        TextView(this).apply {
-            text = "取消"
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setTextColor(textColor)
-            setPadding(0, dp(13), 0, dp(13))
-            setOnClickListener { dialog.dismiss() }
-        }
-
-    private fun selectCardRunSurface(recipe: KiteRecipe, surface: CardRunSurface) {
-        val instanceId = focusedRunInstanceId
-            ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
-            ?: CardRunStore.start(recipe).also { focusedRunInstanceId = it.instanceId }.instanceId
-        CardRunStore.selectSurface(instanceId, surface)?.let { state ->
-            runtimeStates[recipe.id] = state
-        }
-        showCardRunSurface(recipe)
-    }
-
-    private fun selectCardRunWindowItem(recipe: KiteRecipe, item: CardRunWindowItem, render: Boolean = true) {
+    private fun selectCardRunWindowItem(recipe: KiteRecipe, item: CardRunWindowItem) {
         val target = CardRunStore.get(item.instanceId) ?: return
         val root = cardRunWindowRootState(target)
-        cardRunWindowHiddenSurfaces[root.instanceId]?.remove(item.key)
         activeRunInstanceIds[recipe.id] = root.instanceId
         focusedRunRecipeId = recipe.id
         focusedRunInstanceId = item.instanceId
         CardRunStore.selectSurface(item.instanceId, item.surface)?.let { state ->
             runtimeStates[recipe.id] = state
         }
-        if (render) showCardRunSurface(recipe)
-    }
-
-    private fun cardRunPlaceholderPanel(title: String, detail: String): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(15), dp(16), dp(15))
-            background = roundedBox(tokens.surfaceElevated, tokens.border, dp(18).toFloat())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(0, dp(12), 0, 0)
-            }
-            addView(TextView(context).apply {
-                text = title
-                textSize = 15f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-            })
-            addView(TextView(context).apply {
-                text = detail
-                textSize = 12.5f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(10), 0, 0)
-            })
-        }
-
-    private fun menuRow(label: String, onClick: () -> Unit): View =
-        TextView(this).apply {
-            text = label
-            textSize = 14f
-            gravity = Gravity.CENTER_VERTICAL
-            setTextColor(tokens.textPrimary)
-            setPadding(dp(12), 0, dp(12), 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
-            setOnClickListener { onClick() }
-        }
-
-    private fun closeCardRunTask() {
-        if (!isLegacyCardRunShell()) {
-            if (!currentResourceInstallTargetId.isNullOrBlank()) {
-                showResourceInstallWizard()
-                return
-            }
-            val resourceId = focusedRunRecipe()?.let { resourceIdForRecipe(it) }
-            if (!resourceId.isNullOrBlank()) {
-                showResourceDetail(resourceId)
-            } else {
-                showConsole()
-            }
-            return
-        }
-        val focusedRecipe = focusedRunRecipe()
-        if (
-            activeResourceInstallWizard != null &&
-            focusedRecipe?.runtimeSource == RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE
-        ) {
-            val focusedState = focusedRunInstanceId?.let { CardRunStore.get(it) }
-            if (focusedState?.surface != CardRunSurface.InstallWizard) {
-                activeResourceInstallWizard = activeResourceInstallWizard?.copy(
-                    selectedResourceId = null,
-                    selectedSurface = CardRunSurface.InstallWizard
-                )
-                runtimeStates[focusedRecipe.id] = CardRunStore.update(
-                    recipe = focusedRecipe,
-                    status = RecipeRunStatus.Opened,
-                    instanceId = focusedState?.instanceId ?: focusedRunInstanceId,
-                    surface = CardRunSurface.InstallWizard,
-                    lastMeaningfulOutput = "返回获取向导"
-                )
-                showResourceInstallWizard(activeResourceInstallWizard?.targetResourceId)
-                return
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                finishAndRemoveTask()
-            } else {
-                finish()
-            }
-            return
-        }
-        if (
-            activeResourceInstallWizard != null &&
-            focusedRecipe?.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE
-        ) {
-            showResourceInstallWizard(activeResourceInstallWizard?.targetResourceId)
-            return
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            finishAndRemoveTask()
-        } else {
-            finish()
-        }
-    }
-
-    private fun registerCardRunTaskCloser(instanceId: String) {
-        if (!isLegacyCardRunShell() || instanceId.isBlank()) return
-        if (registeredCardRunCloserInstanceId == instanceId) return
-        CardRunTaskCloser.unregister(registeredCardRunCloserInstanceId)
-        registeredCardRunCloserInstanceId = instanceId
-        CardRunTaskCloser.register(instanceId) {
-            runOnUiThread { closeCardRunTask() }
-        }
+        val targetRecipe = recipeForRunState(target) ?: recipe
+        startActivity(
+            CardRunIntents.launchIntent(
+                context = this,
+                recipeId = targetRecipe.id,
+                instanceId = target.instanceId,
+                launchSource = CardRunIntents.SOURCE_CARD,
+                autoStart = false
+            )
+        )
     }
 
     private fun closeCardRunInstanceForStop(recipe: KiteRecipe, previousState: RecipeRuntimeState, reason: String) {
@@ -7813,12 +5382,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             recipe.id
         ).firstOrNull { !it.isNullOrBlank() } ?: return
 
-        val closedLiveInstance = if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) {
-            closeCardRunTask()
-            true
-        } else {
-            CardRunTaskCloser.close(instanceId)
-        }
+        val closedLiveInstance = CardRunTaskCloser.close(instanceId)
         val closedTask = finishCardRunTaskByInstanceId(instanceId)
         diagnostics.logRecipeAction(
             recipe,
@@ -9458,16 +7022,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             resourceIdForRecipe(recipe) != null
 
     private fun resourceSurfaceHasInlineRuntimeStatus(): Boolean {
-        if (resourceInstallWizardSurfaceActive()) return true
         return when (currentScreen) {
             AppDestination.Resources,
             AppDestination.ResourceSearch,
             AppDestination.ResourceDetail,
             AppDestination.ResourceMore,
             AppDestination.ResourceManage -> true
-            AppDestination.CardRun -> focusedRunRecipe()?.let { recipe ->
-                recipeUsesResourceInlineStatus(recipe)
-            } == true
             else -> false
         }
     }
@@ -9481,13 +7041,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             !state.canRetry
 
     private fun requestResourceRuntimeInlineRefresh(
-        recipe: KiteRecipe,
+        @Suppress("UNUSED_PARAMETER") recipe: KiteRecipe,
         @Suppress("UNUSED_PARAMETER") reason: String
     ) {
         invalidateResourceRuntimeStateCache()
-        if (resourceInstallWizardShouldHost(recipe)) {
-            resourceInstallWizardSurface?.reconcile()
-        }
     }
 
     private fun cardInfoSlot(recipe: KiteRecipe, runtimeState: RecipeRuntimeState, accentName: String): View =
@@ -9588,7 +7145,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun shouldOpenCardRunTaskFromHome(recipe: KiteRecipe): Boolean =
-        !isLegacyCardRunShell() && recipe.launch.openInstance
+        recipe.launch.openInstance
 
     private fun handleRecipeAction(recipe: KiteRecipe) = handleRecipeActionWithRouter(recipe)
 
@@ -9647,24 +7204,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 "steps" to recipe.steps.joinToString(" -> ") { it.type }
             )
         )
-        val firstStep = recipe.steps.firstOrNull()
-        val deferInitialSurfaceUntilTerminalReady =
-            firstStep?.type == KiteRecipe.STEP_TERMINAL && (isLegacyCardRunShell() || !openConsoleOnStart)
         if (!renderOnStart) {
             if (!keepCurrentFocus) {
                 focusedRunRecipeId = recipe.id
                 focusedRunInstanceId = instanceId
             }
-        } else if (openConsoleOnStart && !isLegacyCardRunShell()) {
+        } else if (openConsoleOnStart) {
             showConsole()
         } else {
             focusedRunRecipeId = recipe.id
             focusedRunInstanceId = instanceId
-            if (!deferInitialSurfaceUntilTerminalReady) {
-                showCardRunSurface(recipe)
-            } else {
-                showCardRunLoadingSurface(recipe, "正在准备终端")
-            }
+            openCardRunTask(recipe)
         }
     }
 
@@ -9672,22 +7222,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
 
 
-    private fun shouldRenderInCardRun(recipe: KiteRecipe): Boolean =
-        isLegacyCardRunShell() && focusedRunRecipeId == recipe.id
-
-    private fun shouldStayOnRunSurface(): Boolean =
-        currentScreen == AppDestination.CardRun ||
-            isLegacyCardRunShell()
-
     private fun showRunSurfaceOrConsole(recipe: KiteRecipe) {
-        if (renderResourceInstallWizardFor(recipe)) {
-            Unit
-        } else if (resourceRunSurfaceSuppressed(recipe)) {
+        if (resourceRunSurfaceSuppressed(recipe)) {
             invalidateResourceRuntimeStateCache()
-        } else if (shouldStayOnRunSurface()) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
-            showCardRunSurface(recipe)
         } else if (currentScreen == AppDestination.CreateConfig || currentScreen == AppDestination.RecipeMore) {
             focusedRunRecipeId = recipe.id
             focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
@@ -9695,6 +7232,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             showConsole()
         }
     }
+
+    private fun resourceRunSurfaceSuppressed(recipe: KiteRecipe): Boolean =
+        recipe.id in suppressedResourceRunSurfaceRecipeIds
 
 
 
@@ -9704,9 +7244,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             KiteRecipe.SURFACE_MODE_PANEL -> true
             KiteRecipe.SURFACE_MODE_SILENT -> false
             else -> {
-                val mayAutoOpenSurface = isLegacyCardRunShell() ||
-                    currentScreen == AppDestination.CardRun ||
-                    recipe.launch.openInstance
+                val mayAutoOpenSurface = recipe.launch.openInstance
                 mayAutoOpenSurface && (
                     step.type == KiteRecipe.STEP_OPEN_WEB ||
                         step.type == KiteRecipe.STEP_TERMINAL ||
@@ -9728,18 +7266,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
 
 
-
-    private fun Map<String, String>.withTerminalOwner(
-        sessionId: String,
-        cardInstanceId: String
-    ): Map<String, String> {
-        val terminalId = sessionId.trim().takeIf { it.isNotBlank() } ?: return this
-        val unitId = cardInstanceId.trim().takeIf { it.isNotBlank() } ?: terminalId
-        return this + mapOf(
-            "KF_RUNTIME_ID" to "terminal:$terminalId",
-            "KF_UNIT_ID" to "card:$unitId"
-        )
-    }
 
     private fun stopRecipe(
         recipe: KiteRecipe,
@@ -9906,8 +7432,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         if (status == RecipeRunStatus.Stopped) {
             clearActiveRunInstance(recipe, state.instanceId)
         }
-        refreshVisibleRunSurface(state)
-        resourceInstallWizardSurface?.tick()
         diagnostics.logLifecycleEvent(
             recipe,
             status.lifecycleEvent,
@@ -9973,7 +7497,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         if (activeRunInstanceIds[recipe.id] == instanceId) {
             activeRunInstanceIds.remove(recipe.id)
         }
-        if (focusedRunInstanceId == instanceId && !isLegacyCardRunShell()) {
+        if (focusedRunInstanceId == instanceId) {
             focusedRunInstanceId = null
         }
     }
@@ -10470,6 +7994,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
+    private fun String.normalizeShellStreamForDisplay(): String =
+        replace(ANSI_ESCAPE_REGEX, "")
+            .replace('\r', '\n')
+            .lineSequence()
+            .joinToString("\n") { it.trimEnd() }
+            .trimEnd()
+
     private fun historicalShellOutputText(step: CardRunHistoryStep): String {
         val report = step.reportText.trim()
         val output = extractShellOutput(report).ifBlank { report }
@@ -10641,30 +8172,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             }
         }
 
-    private fun registerCardRunBrowserHandler(recipe: KiteRecipe, instanceId: String) {
-        if (!isLegacyCardRunShell() || instanceId.isBlank()) return
-        if (registeredBrowserInstanceId != instanceId) {
-            CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
-            registeredBrowserInstanceId = instanceId
-        }
-        CardRunBrowserRouter.register(instanceId) { request ->
-            runOnUiThread { openBrowserRequestInCardRun(recipe, instanceId, request) }
-            true
-        }
-    }
-
-    private fun registerCardRunDesktopHandler(recipe: KiteRecipe, instanceId: String) {
-        if (!isLegacyCardRunShell() || instanceId.isBlank()) return
-        if (registeredDesktopInstanceId != instanceId) {
-            CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
-            registeredDesktopInstanceId = instanceId
-        }
-        CardRunDesktopRouter.register(instanceId) { request ->
-            runOnUiThread { focusDesktopRequestInCardRun(recipe, instanceId, request) }
-            true
-        }
-    }
-
     private fun handleBrowserOpenRequest(request: KiteBrowserOpenRequest) {
         val normalized = request.copy(url = request.url.trim())
         if (normalized.url.isBlank()) return
@@ -10685,9 +8192,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(normalized.url)
                 )
             )
-            if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) {
-                showCardRunSurface(recipe)
-            }
             return
         }
 
@@ -10811,8 +8315,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                         autoStart = false
                     )
                 )
-            } else if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) {
-                showCardRunLoadingSurface(recipe, "正在准备 X11 桌面")
             }
         }
         val x11Start = KiteX11SurfaceServer.ensureStarted(applicationContext, binding)
@@ -10830,10 +8332,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 x11Display = binding.display,
                 x11SocketPath = binding.socketPath
             )
-            runOnUiThread {
-                runtimeStates[recipe.id] = failedState
-                if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) showRunSurfaceOrConsole(recipe)
-            }
+            runOnUiThread { runtimeStates[recipe.id] = failedState }
             diagnostics.logRecipeAction(
                 recipe,
                 "desktop_request_x11_failed",
@@ -10863,9 +8362,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         runOnUiThread {
             activeRunInstanceIds[recipe.id] = instanceId
             runtimeStates[recipe.id] = state
-            if (isLegacyCardRunShell() && focusedRunInstanceId == instanceId) {
-                showCardRunSurface(recipe)
-            }
         }
         diagnostics.logRecipeAction(
             recipe,
@@ -10893,7 +8389,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             "desktop_request_opened_in_instance",
             mapOf("instanceId" to instanceId, "source" to request.source, "command" to request.command.take(500))
         )
-        showCardRunSurface(recipe)
+        openCardRunTask(recipe)
     }
 
     private fun openTemporaryBrowserRequest(request: KiteBrowserOpenRequest) {
@@ -10974,7 +8470,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url)
             )
         )
-        showCardRunSurface(recipe)
+        openCardRunTask(recipe)
     }
 
     private fun updateBrowserRequestState(
@@ -11040,20 +8536,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         clearRootForScreen()
         val parent = webView.parent
         if (parent is ViewGroup) parent.removeView(webView)
-        if (isLegacyCardRunShell() && recipe != null) {
-            val state = focusedRunInstanceId
-                ?.let { CardRunStore.get(it) }
-                ?: runtimeStateFor(recipe)
-            val surfaceHost = FrameLayout(this).apply {
-                setBackgroundColor(tokens.pageBackground)
-            }
-            root.addView(surfaceHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-            surfaceHost.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            addCardRunFloatingCapsule(surfaceHost, recipe, state, recipe, state)
-        } else {
-            root.addView(topBar("Kite 工作台", ::requestNavigationBack))
-            root.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        }
+        root.addView(topBar("Kite 工作台", ::requestNavigationBack))
+        root.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         webShell.open(url, recipeId = recipe?.id, recipeName = recipe?.name, openSource = source)
     }
 

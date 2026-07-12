@@ -326,6 +326,15 @@ class MainActivityScreenRoutingTest {
     }
 
     @Test
+    fun `旧 CardRun 保存状态恢复到主首页`() {
+        val bundle = Bundle().apply { putString("kite_current_screen", "CardRun") }
+
+        val activity = createActivity(bundle)
+
+        assertEquals("Console", activity.currentScreenNameForTest())
+    }
+
+    @Test
     fun `Activity 销毁只释放显示面`() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).create().start().resume()
         val activity = controller.get()

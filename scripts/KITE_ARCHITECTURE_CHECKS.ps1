@@ -119,6 +119,16 @@ if ($failures.Count -eq 0) {
         $cardRun -match 'CardRunStore\.runs\.collect'
     ) 'CardRunActivity must compose launch resolution, shared run facts, and RunSurfaceHost.'
     Assert-Architecture (
+        $main -notmatch 'isLegacyCardRunShell|RunSurfaceHost|RunWebSurfaceBinding|RunTerminalSurfaceBinding|RunX11SurfaceBinding|ResourceInstallWizardSurface'
+    ) 'MainActivity must not retain the legacy CardRun or install-wizard display shell.'
+    Assert-Architecture (
+        $main -match 'private fun openCardRunTask\(' -and
+        $main -notmatch 'showCardRunSurface'
+    ) 'MainActivity must launch the independent run task instead of rendering a card-run surface.'
+    Assert-Architecture (
+        $screenRouter -notmatch 'AppDestination\.CardRun|DestinationKind\.RunSurface|NavigationBackAction\.CardRunTask'
+    ) 'Main application navigation must not own the independent CardRun task.'
+    Assert-Architecture (
         $runSurfaceHost -match 'fun\s+render\s*\(' -and
         $runSurfaceHost -match 'fun\s+reconcile\s*\(' -and
         $runSurfaceHost -match 'fun\s+dispose\s*\('

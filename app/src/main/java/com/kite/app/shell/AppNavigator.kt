@@ -4,7 +4,6 @@ internal enum class AppDestination {
     Console,
     Terminal,
     Workbench,
-    CardRun,
     RecipeDetail,
     CreateConfig,
     RecipeMore,
@@ -23,7 +22,6 @@ internal enum class DestinationKind {
     Root,
     Child,
     Editor,
-    RunSurface
 }
 
 internal sealed interface BackPolicy {
@@ -49,7 +47,6 @@ internal data class DestinationContract(
 
 internal sealed interface NavigationBackAction {
     data object System : NavigationBackAction
-    data object CardRunTask : NavigationBackAction
     data object Contextual : NavigationBackAction
     data class Navigate(val destination: AppDestination) : NavigationBackAction
 }
@@ -78,9 +75,8 @@ internal class AppNavigator(
     fun contract(destination: AppDestination = currentDestination): DestinationContract =
         contracts.getValue(destination)
 
-    fun resolveBack(isCardRunTask: Boolean): NavigationBackAction {
-        if (isCardRunTask) return NavigationBackAction.CardRunTask
-        return when (val policy = contract().backPolicy) {
+    fun resolveBack(): NavigationBackAction =
+        when (val policy = contract().backPolicy) {
             BackPolicy.System -> NavigationBackAction.System
             is BackPolicy.Parent -> NavigationBackAction.Navigate(policy.destination)
             is BackPolicy.Contextual -> if (contextualBackAction != null) {
@@ -89,7 +85,6 @@ internal class AppNavigator(
                 NavigationBackAction.Navigate(policy.fallback)
             }
         }
-    }
 
     fun invokeContextualBack(): Boolean {
         val action = contextualBackAction ?: return false
@@ -119,11 +114,6 @@ internal class AppNavigator(
                 DestinationKind.Child,
                 BackPolicy.Parent(AppDestination.Console),
                 RestorePolicy.WorkbenchUrl
-            ),
-            DestinationContract(
-                AppDestination.CardRun,
-                DestinationKind.RunSurface,
-                BackPolicy.Parent(AppDestination.Console)
             ),
             DestinationContract(
                 AppDestination.RecipeDetail,

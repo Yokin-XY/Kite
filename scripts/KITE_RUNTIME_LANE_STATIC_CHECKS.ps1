@@ -5,6 +5,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
+$cardRunActivityPath = Join-Path $Root 'app/src/main/java/com/kite/app/CardRunActivity.kt'
 $storePath = Join-Path $Root 'app/src/main/java/com/kite/app/resources/KiteResourceInstallStore.kt'
 $bridgeClientPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteBridgeClient.kt'
 $browserProxyPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteBrowserProxy.kt'
@@ -67,6 +68,7 @@ $runReportScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/r
 $runTerminalSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunTerminalSurfaceBinding.kt'
 $runWebSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunWebSurfaceBinding.kt'
 $runX11SurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunX11SurfaceBinding.kt'
+$runInstallWizardSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/RunInstallWizardSurfaceBinding.kt'
 $browserHandoffCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/browser/BrowserHandoffCoordinator.kt'
 $androidBrowserHandoffGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserHandoffGateway.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
@@ -114,6 +116,7 @@ function Member-Function-Body {
 }
 
 $main = Read-Utf8 $mainPath
+$cardRunActivity = Read-Utf8 $cardRunActivityPath
 $store = Read-Utf8 $storePath
 $bridgeClient = Read-Utf8 $bridgeClientPath
 $browserProxy = Read-Utf8 $browserProxyPath
@@ -185,6 +188,7 @@ $runReportScreen = Read-Utf8 $runReportScreenPath
 $runTerminalSurfaceBinding = Read-Utf8 $runTerminalSurfaceBindingPath
 $runWebSurfaceBinding = Read-Utf8 $runWebSurfaceBindingPath
 $runX11SurfaceBinding = Read-Utf8 $runX11SurfaceBindingPath
+$runInstallWizardSurfaceBinding = Read-Utf8 $runInstallWizardSurfaceBindingPath
 $browserHandoffCoordinator = Read-Utf8 $browserHandoffCoordinatorPath
 $androidBrowserHandoffGateway = Read-Utf8 $androidBrowserHandoffGatewayPath
 
@@ -259,16 +263,16 @@ Assert-True ($runSurfaceHost -match 'private var binding: RunSurfaceBinding' -an
 Assert-True ($main -notmatch 'cardRunReportBinding|updateVisibleCardRunReport|renderVisibleCardRunReport') 'MainActivity must not retain the legacy report binding or render loop.'
 Assert-True ($runTerminalSurfaceBinding -match 'TerminalFragment\.detailOnly' -and $runTerminalSurfaceBinding -match '\.detach\(fragment\)' -and $runTerminalSurfaceBinding -notmatch 'stop\(|RunOrchestrator|TerminalSessionController') 'terminal surface binding must own Fragment attach/detach without stopping the shell session.'
 Assert-True ($main -notmatch 'showCardRunTerminalFragment|cardRunTerminalContainerId|CARD_RUN_TERMINAL_FRAGMENT_TAG') 'MainActivity must not retain the legacy CardRun terminal Fragment binding.'
-Assert-True ($main -match '(?s)private fun handleCardRunBackSignal\(\)\s*\{\s*closeCardRunTask\(\)\s*\}' -and $main -match '(?s)private fun closeCardRunTask\b.*?finishAndRemoveTask\(\).*?(?=\n    private fun )') 'CardRun back must detach the task window instead of completing or stopping the run.'
+Assert-True ($cardRunActivity -match '(?s)override fun handleOnBackPressed\(\)\s*\{\s*if \(surfaceHost\?\.handleBack\(\) == true\) return\s*closeTaskWindow\(\)\s*\}' -and $cardRunActivity -match '(?s)private fun closeTaskWindow\(\).*finishAndRemoveTask\(\)') 'CardRun back must detach the task window instead of completing or stopping the run.'
 Assert-True ($runWebSurfaceBinding -match 'WebView\(activity\)' -and $runWebSurfaceBinding -match 'KiteWebShell\(' -and $runWebSurfaceBinding -match 'override fun handleBack\(\)' -and $runWebSurfaceBinding -match 'override fun reload\(\)' -and $runWebSurfaceBinding -match 'current\.destroy\(\)') 'Web surface binding must own WebView creation, history/reload, and display disposal.'
-Assert-True ($main -match 'runSurfaceHost\?\.reload\(\)' -and $main -notmatch 'webView\.reload\(\)') 'CardRun Web chrome must reload the bound surface instead of MainActivity shared WebView.'
+Assert-True ($cardRunActivity -match 'onReload = \{ host\.reload\(\) \}' -and $main -notmatch 'runSurfaceHost|RunWebSurfaceBinding') 'CardRun Web chrome must reload the bound surface instead of MainActivity shared WebView.'
 Assert-True ($main -notmatch 'showCardRunWebView|cardRunBrowserAuthWaitingBody|cardRunExternalBrowserBody|cardRunWebAddressInputBody') 'MainActivity must not retain the legacy CardRun Web display builders.'
 Assert-True ($runX11SurfaceBinding -match 'KiteX11SurfaceServer\.surfaceView' -and $runX11SurfaceBinding -match 'override fun dispose\(\)' -and $runX11SurfaceBinding -notmatch 'RunOrchestrator|stop\(') 'X11 surface binding must own only the visible LorieView lifecycle.'
 Assert-True ($main -notmatch 'cardRunX11SurfaceBody|x11TaskTitle') 'MainActivity must not retain the legacy CardRun X11 display builder.'
 Assert-True ($main -match 'browserHandoffCoordinator\.launch' -and $main -notmatch 'browserAuthSessions\.createPending\(request, decision\)|browserLoopbackCallbackBridge\.prepare\(session\)') 'MainActivity must delegate browser handoff sequencing to BrowserHandoffCoordinator.'
 Assert-True ($browserHandoffCoordinator -match '(?s)createPending\(request, decision\).*updateWaiting\(session, request\).*prepareCallback\(session\).*openExternal\(request\.url\)' -and $browserHandoffCoordinator -notmatch 'import android\.|import androidx\.') 'Browser handoff coordinator must preserve side-effect order without Android UI dependencies.'
 Assert-True ($androidBrowserHandoffGateway -match 'CardRunStore\.update' -and $androidBrowserHandoffGateway -match 'loopbackBridge\.prepare' -and $androidBrowserHandoffGateway -match 'sessions\.markFailed') 'Android browser handoff gateway must own Store, loopback, and session adapters.'
-Assert-True ($main -match 'resourceInstallWizardSurface\?\.tick' -and $resourceInstallWizardScreen -match 'fun tick\(') 'install wizard must keep elapsed binding inside its feature screen.'
+Assert-True ($runInstallWizardSurfaceBinding -match 'override fun tick\(now: Long\): Boolean = surface\.tick\(now\)' -and $resourceInstallWizardScreen -match 'fun tick\(' -and $main -notmatch 'ResourceInstallWizardSurface|resourceInstallWizardSurface') 'install wizard must keep elapsed binding inside its feature screen.'
 Assert-True ($main -match '(?s)private fun showConsole\b.*HomeFragment' -and $main -notmatch 'consoleCardBindings|consolePageBodyHost|private fun recipeGrid|updateVisibleConsoleCard') 'Home card views, bindings, and page state must remain owned by HomeFragment and HomeScreen.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'
 Assert-True ($main -match 'observeRuntimePanelSummarySignals') 'runtime panel summary counts must observe existing store snapshots.'
@@ -336,14 +340,12 @@ Assert-True ($resourceSecondaryIntent -match 'KiteResourceActionIntent\.CancelIn
 Assert-True ($resourceSecondaryRequest -match 'KiteResourceActionRequest' -and $resourceSecondaryRequest -match 'item\.secondaryIntent') 'resource detail secondary actions must submit through the shared action intake.'
 Assert-True ($resourceSecondaryRequest -notmatch '\bhandleResource(?:Install|Uninstall|OpenStop|Cancel|Failed)') 'resource detail buttons must not bypass the shared action intake.'
 
-$installPlanAction = Function-Body $main 'submitInstallPlanAction'
 $runManagementStop = Function-Body $main 'stopRunManagementCard'
-$cardRunWindowClose = Function-Body $main 'closeCardRunWindowInstance'
 Assert-True ($resourceInstallWizardPresentation -match 'KiteInstallPlanActionCoordinator\.plan' -and $resourceInstallWizardScreen -match 'onPlanAction\(intent\)') 'install wizard primary action must submit a coordinated plan intent.'
 Assert-True ($resourceInstallWizardScreen -notmatch '\bstartNextResourceInstallFromPlan\s*\(' -and $resourceInstallWizardScreen -notmatch '\bshowResources\s*\(') 'install wizard button binding must not execute or navigate directly.'
-Assert-True ($installPlanAction -match 'KiteInstallPlanActionIntent\.StartNext' -and $installPlanAction -match 'startNextResourceInstallFromPlan') 'shell must remain the install-plan execution owner.'
+Assert-True ($cardRunActivity -match 'resourceRunCoordinator\.startNextPlannedInstall\(target\?\.instanceId\)' -and $resourceRunCoordinator -match 'fun startNextPlannedInstall\(parentInstanceId: String\?\)') 'install-plan execution must delegate from the run shell to ResourceRunCoordinator.'
 Assert-True ($runManagementStop -match 'submitRecipeAction' -and $runManagementStop -match 'instanceId = group\.run\.instanceId') 'run management stop must submit the selected card instance.'
-Assert-True ($cardRunWindowClose -match 'submitRecipeAction' -and $cardRunWindowClose -match 'instanceId = latestRootState\.instanceId') 'card run window close must submit the selected root instance.'
+Assert-True ($cardRunActivity -match 'onClose = ::closeTaskWindow' -and $cardRunActivity -match '(?s)private fun stopCurrentRun\(\).*runOrchestrator\.stop\(instanceId\)') 'CardRun close must only detach the window while explicit stop submits the selected instance.'
 
 $showRunManagement = Function-Body $main 'showKiteProcessOverview'
 Assert-True ($showRunManagement -match 'runManagementHeader') 'run management page should use the run-management header.'
@@ -404,11 +406,8 @@ Assert-True ($bridgeClient -match 'runtimeOwnerId\(recipe, cardInstanceId\)') 'd
 Assert-True ($bridgeClient -match 'KiteResourceInstallRecipes\.RUNTIME_SOURCE') 'resource shell launches must get resource ownership ids.'
 Assert-True ($bridgeClient -match 'val runEnv = directRuntimeEnv\(recipe, runId, extraEnv\)') 'direct recipe execution must compute identity env once per run.'
 Assert-True ($bridgeClient -match 'executeDirectShellStep\(context, recipe, runId, requestId, step, runEnv, onProgress\)') 'all direct shell steps must receive the owner-aware runtime env.'
-Assert-True ($main -match 'private fun Map<String, String>\.withTerminalOwner') 'terminal card runs must have one helper for PRoot owner env injection.'
-Assert-True ($main.Contains('"KF_RUNTIME_ID" to "terminal:$terminalId"') -and $main.Contains('"KF_UNIT_ID" to "card:$unitId"')) 'terminal launch env must inject terminal owner id and card unit id.'
-$blankTerminal = Function-Body $main 'openCardRunBlankTerminal'
 $terminalStep = Member-Function-Body $androidRecipeExecutor 'executeTerminal'
-Assert-True ($blankTerminal -match 'withTerminalOwner\(record\.id, instanceId\)') 'blank card terminals must launch with terminal owner env.'
+Assert-True ($main -notmatch 'openCardRunBlankTerminal|withTerminalOwner') 'MainActivity must not recreate the removed blank CardRun terminal path.'
 Assert-True ($terminalStep.Contains('"KF_RUNTIME_ID" to "terminal:${record.id}"') -and $terminalStep.Contains('"KF_UNIT_ID" to "card:${request.instanceId}"')) 'terminal recipe steps must launch with terminal owner env.'
 Assert-True ($terminalStep -match 'createEmbeddedShellSession' -and $terminalStep -notmatch 'createShellSession') 'recipe terminal steps must use non-persistent embedded sessions.'
 Assert-True ($terminalSessionController -match 'TerminalSessionEndPolicy\.shouldSelectManagedFallback' -and $terminalSessionController -match 'embeddedSessionRecords\.remove\(targetSessionId\)') 'ending an embedded terminal must not wake an unrelated managed fallback session.'
@@ -568,10 +567,11 @@ $runManagementStatusColors = Function-Body $main 'runManagementStatusColors'
 Assert-True ($homeFeatureViewSupport -match 'item\.projection\.primaryAction' -and $homeFeatureViewSupport -match 'item\.projection\.badgeLabel') 'Home card action and badge must consume the shared projected UI state.'
 Assert-True ($runManagementStatusColors -match 'KiteCardRunUiProjector\.project') 'run management status colors must consume shared card-run UI state.'
 $releaseActivitySurfaces = Function-Body $main 'releaseActivityDisplaySurfaces'
-$releaseInstallWizardSurface = Function-Body $main 'releaseResourceInstallWizardSurfaceIfActivityDestroyed'
+$cardRunOnDestroy = Member-Function-Body $cardRunActivity 'onDestroy'
 Assert-True ($releaseActivitySurfaces -match 'webView\.destroy\(\)' -and $releaseActivitySurfaces -match 'browserAutomationController\.closeActiveSession\(\)') 'Activity destroy must release its WebView and automation display session.'
 Assert-True ($releaseActivitySurfaces -notmatch 'stopRecipe|CardRunStore|TerminalRuntimeHost\.release|clearPlan') 'display-surface release must not stop runs, terminals, or install plans.'
-Assert-True ($releaseInstallWizardSurface -notmatch 'stopResourceInstallRunsForCancel|clearPlan|markFailed') 'Activity destroy must not treat the install wizard surface as a stopped or failed install task.'
+Assert-True ($cardRunOnDestroy -match 'surfaceController\.detach\(\)' -and $cardRunOnDestroy -match 'surfaceHost\?\.dispose\(\)') 'CardRunActivity destroy must detach and dispose only its visible surface.'
+Assert-True ($cardRunOnDestroy -notmatch 'stopCurrentRun|stopRecipe|CardRunStore\.(stop|remove)|clearPlan|markFailed') 'CardRunActivity destroy must not treat a closed run surface as a stopped or failed task.'
 $terminalDestroyView = Member-Function-Body $terminalFragment 'onDestroyView'
 Assert-True ($terminalDestroyView -match 'TerminalRuntimeHost\.detachUi\(this\)') 'Terminal view destroy must detach the UI from the process-level session host.'
 Assert-True ($terminalDestroyView -notmatch 'TerminalRuntimeHost\.release|TerminalRuntimeHost\.endSession|stopCurrentSession') 'Terminal view destroy must not stop or release the terminal session.'
