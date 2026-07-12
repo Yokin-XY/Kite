@@ -37,6 +37,9 @@ internal class AndroidResourceFeatureGateway(
         },
         CardRunStore.runs.drop(1).map {
             ResourceFeatureChange(reason = "card_run_state")
+        },
+        ToolchainPackInstaller.state.drop(1).map {
+            ResourceFeatureChange(reason = "toolchain_state", catalogInvalidated = true)
         }
     )
 

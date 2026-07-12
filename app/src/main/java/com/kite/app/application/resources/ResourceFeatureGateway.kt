@@ -17,7 +17,8 @@ data class ResourceFeatureDescriptor(
 
 data class ResourceFeatureChange(
     val reason: String,
-    val affectedResourceIds: Set<String> = emptySet()
+    val affectedResourceIds: Set<String> = emptySet(),
+    val catalogInvalidated: Boolean = false
 )
 
 interface ResourceFeatureGateway {

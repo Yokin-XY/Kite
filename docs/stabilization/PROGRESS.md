@@ -649,3 +649,17 @@ T004 基础接线：
 - `ResourceFeatureControllerTest`、Debug Kotlin 编译和架构依赖检查通过；MainActivity 债务指标未增长。
 
 下一步：迁移资源目录 Fragment 的视图、绑定、滚动与分类状态，接入轻量变化流并删除 `ResourcesHost`。
+
+T004 资源目录结果：
+
+- `ResourcesFragment` 已迁入 `feature.resources`，直接拥有 `ResourceCatalogScreen`；分类、滚动位置、结构签名、渐进分批绑定和局部按钮绑定不再位于 Activity。
+- 目录点击通过 Fragment Result 发出搜索、管理、详情和动作 Effect；Shell 只提供 Feature 容器、全局底栏和 Effect 落点，不再把 View 反向渲染进 Fragment。
+- 安装、运行和工具链事实通过 Gateway 变化流进入 Controller；普通事实变化复用原行和按钮，只有目录结构或分类变化才重建分节。
+- 删除 `ResourcesHost`、旧目录页缓存、请求序号、整页刷新、滚动导航动画、海报/分类/货架 View 工厂及失联模型，共从 `MainActivity` 清理约 670 行净代码。
+- Robolectric 验证同一目录结构下“获取 -> 打开”复用原按钮，动作受理立即显示“准备中”；全量 284 项 Debug 单测通过，Debug APK 和运行车道静态检查通过。
+- OnePlus 8T `3f8bbaad` 冷启动为 1773ms；资源目录、海报、分类、资源状态、搜索入口和 Shell 底栏均可见，搜索 Effect 与返回链可达；清空启动日志后二次进入未出现掉帧、崩溃或 ANR。
+- 架构债务从 `21133 / 854 / 171 / 8 / 4 / 64` 降为 `20457 / 829 / 159 / 7 / 3 / 55`（行 / 函数 / 字段 / Host / 资源渲染委托 / 资源函数）。
+
+资源目录状态：completed，待独立提交。
+
+下一步：迁移资源搜索页，复用同一 Controller、展示投影、图标仓库和行绑定，删除 `ResourceSearchHost` 及 Activity 搜索请求/渲染状态。

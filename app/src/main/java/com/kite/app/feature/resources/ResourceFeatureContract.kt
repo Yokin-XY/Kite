@@ -6,6 +6,7 @@ import com.kite.app.action.KiteResourceActionSource
 import com.kite.app.application.resources.ResourceFeatureDescriptor
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.resources.KiteResourceInstallStepUiProjection
+import com.kite.app.resources.KiteResourceHomeLayout
 import com.kite.app.resources.KiteResourceUiProjection
 
 internal enum class ResourceCatalogPhase {
@@ -56,6 +57,7 @@ internal data class ResourcePlanUiState(
 internal data class ResourceFeatureUiState(
     val phase: ResourceCatalogPhase = ResourceCatalogPhase.Idle,
     val items: List<ResourceItemUiState> = emptyList(),
+    val homeLayout: KiteResourceHomeLayout? = null,
     val plan: ResourcePlanUiState = ResourcePlanUiState(),
     val revision: Long = 0L,
     val errorMessage: String? = null

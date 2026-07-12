@@ -84,6 +84,7 @@ internal class ResourceFeatureController(
         mutableState.value = ResourceFeatureUiState(
             phase = phase,
             items = itemStates,
+            homeLayout = gateway.homeLayout(),
             plan = projectPlan(plan, itemStates),
             revision = mutableState.value.revision + 1L,
             errorMessage = errorMessage

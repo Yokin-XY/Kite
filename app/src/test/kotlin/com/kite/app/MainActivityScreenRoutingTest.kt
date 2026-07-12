@@ -157,7 +157,7 @@ class MainActivityScreenRoutingTest {
     }
 
     @Test
-    fun `资源状态信号在每个资源显示面都必须先标脏缓存`() {
+    fun `资源状态信号只为仍由 Activity 托管的列表请求补丁`() {
         val screens = listOf("Resources", "ResourceSearch", "ResourceDetail", "ResourceMore", "ResourceManage")
 
         screens.forEachIndexed { index, screenName ->
@@ -175,7 +175,7 @@ class MainActivityScreenRoutingTest {
                 )
             )
 
-            if (screenName in listOf("Resources", "ResourceSearch", "ResourceManage")) {
+            if (screenName in listOf("ResourceSearch", "ResourceManage")) {
                 assertTrue(
                     "$screenName must request a visible item patch",
                     resourceItemPatchRequestSerial(activity) > patchSerialBefore
