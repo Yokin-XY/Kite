@@ -68,6 +68,9 @@ import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.contracts.SpaceRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.application.surface.SurfaceChromeMode
+import com.kite.app.application.surface.SurfaceEffect
+import com.kite.app.feature.terminal.TerminalSurfaceResultContract
 import com.termux.terminal.TerminalColors
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TextStyle
@@ -207,9 +210,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private val detailBackCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
             if (isDetailOnlyMode()) {
-                isEnabled = false
-                requireActivity().onBackPressedDispatcher.onBackPressed()
-                isEnabled = true
+                sendSurfaceEffect(SurfaceEffect.RequestBack)
                 return
             }
             showListPage()
@@ -362,7 +363,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 visibility = View.INVISIBLE
                 setOnClickListener(null)
             } else {
-                setOnClickListener { requireActivity().onBackPressedDispatcher.onBackPressed() }
+                setOnClickListener { sendSurfaceEffect(SurfaceEffect.RequestBack) }
             }
         }
         setupTerminalComposer()
@@ -1906,16 +1907,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         }
     }
 
-    fun openSessionFromExternal(sessionId: String) {
-        detailOnlyInitialSessionOpened = true
-        if (isDetailOnlyMode()) {
-            terminalController.openEmbeddedSession(sessionId)
-        } else {
-            terminalController.switchToSession(sessionId)
-        }
-        showDetailPage()
-    }
-
     private fun showListPage() {
         if (isDetailOnlyMode()) {
             openRequestedSessionDetail()
@@ -1927,7 +1918,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         hideSoftKeyboard(terminalView)
         listPage?.visibility = View.VISIBLE
         detailPage.visibility = View.GONE
-        (activity as? TerminalChromeHost)?.setTerminalDetailMode(false)
+        sendSurfaceEffect(SurfaceEffect.SetChromeMode(SurfaceChromeMode.Standard))
         stopRepeatingKey()
         lastManagedSessionsRenderSignature = ""
         renderManagedSessions()
@@ -1940,7 +1931,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         listPage?.visibility = View.GONE
         detailPage.visibility = View.VISIBLE
         terminalDetailHeader.visibility = if (isDetailOnlyMode()) View.GONE else View.VISIBLE
-        (activity as? TerminalChromeHost)?.setTerminalDetailMode(true)
+        sendSurfaceEffect(SurfaceEffect.SetChromeMode(SurfaceChromeMode.Immersive))
         terminalView.post {
             focusComposerInput(showKeyboard = false)
             keepLatestTerminalOutputVisible(forceImmediate = true)
@@ -2055,7 +2046,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     override fun onDestroyView() {
-        (activity as? TerminalChromeHost)?.setTerminalDetailMode(false)
+        sendSurfaceEffect(SurfaceEffect.SetChromeMode(SurfaceChromeMode.Standard))
         // 这里只是 UI 脱离当前终端，不是关闭终端会话。
         TerminalRuntimeHost.detachUi(this)
         terminalView.removeCallbacks(terminalViewRefreshRunnable)
@@ -2066,6 +2057,10 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         stopRepeatingKey()
         terminalView.setTerminalCursorBlinkerState(false, false)
         super.onDestroyView()
+    }
+
+    private fun sendSurfaceEffect(effect: SurfaceEffect) {
+        TerminalSurfaceResultContract.send(this, effect)
     }
 
     override fun onScale(scale: Float): Float {

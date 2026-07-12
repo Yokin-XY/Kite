@@ -430,3 +430,13 @@
 理由：旧设置页在 Activity 中同时读取两份 SharedPreferences、查询通知、准备投放区、重建页面和修改 Chrome。主题每点一次颜色都会再次导航并重画整页，投放区刷新甚至会把设置页无条件切回首页。页面、持久化和系统副作用混合后，任何系统返回都只能靠重新调用 `showSettings()` 校准。
 
 影响：设置页面不得直接读 SharedPreferences、探测文件或调用 Activity Host；普通快照变化只局部绑定开关和副标题。主题变化允许重绑当前主题页、RuntimeStatusChrome、底部导航和终端颜色，但不得触发 Bootstrap、重启 CardRun、销毁 Web 显示或重新启动服务。投放区完成只刷新当前可见页面，不改变导航目的地。
+
+## ADR-S043 终端沉浸与返回是 Surface Effect，不是 Activity Host API
+
+状态：accepted
+
+决策：终端列表/详情切换只发送通用 `SurfaceEffect`：标准壳、沉浸壳或请求返回。MainActivity 与 CardRunActivity 各自解释同一 effect；终端 Fragment 不得识别宿主类型、持有底部导航或调用 `TerminalChromeHost`。终端 View 销毁仍只 detach UI，不结束 `TerminalRuntimeHost` 会话。
+
+理由：同一 TerminalFragment 同时用于主应用终端页和独立 CardRun。旧 Host 接口迫使两个 Activity 实现终端专属方法，Main 还需要三个字段保存 Feature 的详情状态；CardRun 的实现则故意忽略沉浸请求。数据 effect 能保留两种壳的不同策略，同时把终端状态留在 Feature 内。
+
+影响：详情返回通过 Shell back 解释，Main 只在当前 Destination 为终端时更改底栏，防止销毁或迟到结果影响其他页面；CardRun 始终保留继续、停止和关闭控制。不得恢复 `TerminalChromeHost`、`activity as?` 终端强转或 `openTerminalSession` 兼容入口。

@@ -72,11 +72,11 @@ import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.UiKit
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
-import com.kite.app.ui.terminal.TerminalChromeHost
+import com.kite.app.shell.TerminalSurfaceShellBinding
 import kotlinx.coroutines.launch
 
 /** 只托管一个运行实例及其可见显示面，不拥有首页、资源目录或底层任务生命周期。 */
-class CardRunActivity : AppCompatActivity(), TerminalChromeHost {
+class CardRunActivity : AppCompatActivity() {
     private lateinit var graph: KiteAppGraph
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var runOrchestrator: RunOrchestrator
@@ -137,6 +137,7 @@ class CardRunActivity : AppCompatActivity(), TerminalChromeHost {
                 runOrchestrator.stop(instanceId)
             }
         })
+        registerTerminalSurfaceResults()
         observeRunFacts()
         handleLaunchIntent(intent)
         root.post { StartupTraceStore.markReady(applicationContext) }
@@ -173,18 +174,10 @@ class CardRunActivity : AppCompatActivity(), TerminalChromeHost {
         super.onDestroy()
     }
 
-    override fun setTerminalDetailMode(enabled: Boolean) {
-        // 独立运行壳没有主应用底栏；终端详情不能吞掉继续、停止和关闭入口。
-        chrome?.setChromeVisible(true)
-    }
-
-    override fun openTerminalSession(sessionId: String) {
-        val state = CardRunStore.snapshot().firstOrNull { it.terminalSessionId == sessionId } ?: return
-        val recipe = resolveRecipeById(state.recipeId) ?: return
-        currentTarget = currentTarget?.copy(recipe = recipe, instanceId = state.instanceId)
-        surfaceController.attach(recipe, state)
-        registerInstanceRoutes(recipe, state.instanceId)
-        renderState(state)
+    private fun registerTerminalSurfaceResults() {
+        TerminalSurfaceShellBinding.register(supportFragmentManager, this,
+            onChromeMode = { chrome?.setChromeVisible(true) },
+            onBack = { onBackPressedDispatcher.onBackPressed() })
     }
 
     private fun handleLaunchIntent(sourceIntent: Intent?) {

@@ -1230,3 +1230,23 @@ T010 最终验收：
 T010 状态：completed。关键提交为 `3318411`、`76062af`。
 
 下一步：进入 T011，先审计终端 Fragment、TerminalChromeHost、主壳快捷面板和终端会话恢复的真实边界，迁移前固定显示生命周期与扩展动作合同。
+
+## T011 终端边界与应用壳清理
+
+### 三问自检
+
+目标是什么？让终端 Feature 只拥有列表、详情、TerminalView 和快捷动作显示；会话继续归 `TerminalRuntimeHost/TerminalSessionStore`，沉浸与返回只提交数据 effect，Main 与 CardRun 各自决定壳层表现。
+
+完成标准是什么？终端不再识别或强转 Activity Host；主壳不保存终端详情模式和底栏引用；页面离开只 detach UI，不终止会话；所有剩余 Fragment 反向 Activity Host 都完成迁移或有明确台账。
+
+依赖是否满足？T004 已固定导航返回，T007 已让 CardRun 独立，T008-T010 已迁移运行状态、Web 与设置。终端现有会话 Store、输入背压、快捷动作注册表和 View 刷新合并策略保持不变。
+
+### 通用 Surface Effect 迁移结果
+
+- 新增 Android 无关的 `SurfaceEffect`，只表达 `SetChromeMode(Standard/Immersive)` 与 `RequestBack`；终端 Result Contract 不包含 MainActivity、CardRunActivity 或页面回调对象。
+- `TerminalFragment` 进入详情、回列表、详情返回和 View 销毁均发送数据 effect，不再强转 `TerminalChromeHost`。`TerminalChromeHost.kt` 已删除。
+- MainActivity 按当前 Destination 解释 effect：详情只隐藏带标签的底部导航，离开终端后的迟到 effect 被忽略；CardRunActivity 始终保留独立运行控制 Chrome，并解释 back 为关闭/返回当前任务。
+- 删除 Main 的 `terminalContainerId`、`terminalBottomNavigation`、`isTerminalDetailMode` 和两个 Host 实现；终端容器使用统一 Feature content id。死的 `openSessionFromExternal/openTerminalSession` 兼容入口一并移除。
+- 会话 attach/detach、预输入、快捷动作注册表、输出 33ms 合并刷新和 5 秒会话校准均未改动；目标编译、Main 路由、快捷动作注册表和 Surface Contract 测试通过。
+
+下一步：迁移最后一个明确的 Fragment 反向 Host `RecipeRawJsonFragment`，随后按职责清单审计 Main 中残留的旧绘制、死字段和兼容入口。

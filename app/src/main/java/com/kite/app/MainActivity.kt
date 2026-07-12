@@ -162,6 +162,7 @@ import com.kite.app.application.onboarding.FirstRunOnboardingEffect
 import com.kite.app.application.onboarding.FirstRunOnboardingFacts
 import com.kite.app.application.onboarding.FirstRunOnboardingTransition
 import com.kite.app.application.settings.SettingsGateway
+import com.kite.app.application.surface.SurfaceChromeMode
 import com.kite.app.feature.home.HomeFeatureRequest
 import com.kite.app.feature.home.HomeFeatureResultContract
 import com.kite.app.feature.home.HomeFragment
@@ -185,8 +186,8 @@ import com.kite.app.feature.recipeeditor.RecipeEditorFragment
 import com.kite.app.feature.recipeeditor.RecipeEditorRequest
 import com.kite.app.feature.recipeeditor.RecipeEditorResultContract
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
-import com.kite.app.ui.terminal.TerminalChromeHost
 import com.kite.app.ui.terminal.TerminalFragment
+import com.kite.app.shell.TerminalSurfaceShellBinding
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.core.content.FileProvider
@@ -207,7 +208,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
-open class MainActivity : AppCompatActivity(), TerminalChromeHost,
+open class MainActivity : AppCompatActivity(),
     RecipeRawJsonFragment.RecipeProvider,
     RecipeRawJsonFragment.RecipeRawJsonHost,
     RecipeRawJsonFragment.UiKitProvider {
@@ -274,9 +275,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var isDropZoneRefreshing = false
     private var themeConfig = ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
     private var tokens = KiteTheme.resolve(themeConfig)
-    private val terminalContainerId = View.generateViewId()
-    private var terminalBottomNavigation: View? = null
-    private var isTerminalDetailMode = false
     private var pendingRuntimePermissionBootstrap = false
     private var runtimePermissionRequestInFlight = false
     private lateinit var firstRunOnboardingCoordinator: FirstRunOnboardingCoordinator
@@ -395,6 +393,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         registerRecipeEditorResults()
         registerRuntimeManagementResults()
         registerSettingsFeatureResults()
+        registerTerminalSurfaceResults()
         StartupTraceStore.markStage(this, "main.observers_and_intent")
         observeRuntimeStatus()
         observeRunExecutionEffects()
@@ -1582,29 +1581,25 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val currentTerminalFragment = supportFragmentManager.findFragmentByTag(TERMINAL_FRAGMENT_TAG) as? TerminalFragment
         if (currentScreen == AppDestination.Terminal && currentTerminalFragment?.isAdded == true) {
             applyKiteTerminalTheme()
-            terminalBottomNavigation?.visibility = if (isTerminalDetailMode) View.GONE else View.VISIBLE
             return
         }
         enterScreen(AppDestination.Terminal)
-        isTerminalDetailMode = false
         applyKiteTerminalTheme()
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen(detachTerminal = false)
         val container = FrameLayout(this).apply {
-            id = terminalContainerId
+            id = R.id.kite_feature_content
             setBackgroundColor(tokens.pageBackground)
         }
         root.addView(container, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        terminalBottomNavigation = bottomNavigation().also { nav ->
-            root.addView(nav)
-        }
+        root.addView(bottomNavigation())
 
         val fragment = currentTerminalFragment ?: TerminalFragment()
         supportFragmentManager.beginTransaction().apply {
             when {
                 fragment.isDetached -> attach(fragment)
                 fragment.isAdded -> show(fragment)
-                else -> add(terminalContainerId, fragment, TERMINAL_FRAGMENT_TAG)
+                else -> add(R.id.kite_feature_content, fragment, TERMINAL_FRAGMENT_TAG)
             }
         }.commitNowAllowingStateLoss()
     }
@@ -1620,7 +1615,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun clearRootForScreen(detachTerminal: Boolean = true) {
-        terminalBottomNavigation = null
         consoleSystemStatusPillView = null
         consoleRuntimeBannerHost = null
         val transaction = supportFragmentManager.beginTransaction()
@@ -1844,6 +1838,22 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 null -> Unit
             }
         }
+    }
+
+    private fun registerTerminalSurfaceResults() {
+        TerminalSurfaceShellBinding.register(supportFragmentManager, this,
+            onChromeMode = { mode ->
+                if (currentScreen == AppDestination.Terminal) setMainSurfaceChromeMode(mode)
+            },
+            onBack = {
+                if (currentScreen == AppDestination.Terminal) onBackPressedDispatcher.onBackPressed()
+            })
+    }
+
+    private fun setMainSurfaceChromeMode(mode: SurfaceChromeMode) {
+        val navigation = (0 until root.childCount).map(root::getChildAt)
+            .firstOrNull { it.tag == TAG_BOTTOM_NAVIGATION_VIEW } ?: return
+        navigation.visibility = if (mode == SurfaceChromeMode.Immersive) View.GONE else View.VISIBLE
     }
 
     private fun registerRecipeEditorResults() {
@@ -5897,7 +5907,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val replacement = bottomNavigation()
         root.removeViewAt(index)
         root.addView(replacement, index)
-        if (currentScreen == AppDestination.Terminal) terminalBottomNavigation = replacement
     }
 
     private fun navItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit): View = LinearLayout(this).apply {
@@ -6550,17 +6559,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val background: Int,
         val border: Int
     )
-
-    override fun setTerminalDetailMode(enabled: Boolean) {
-        isTerminalDetailMode = enabled
-        terminalBottomNavigation?.visibility = if (enabled) View.GONE else View.VISIBLE
-    }
-
-    override fun openTerminalSession(sessionId: String) {
-        showTerminal()
-        (supportFragmentManager.findFragmentByTag(TERMINAL_FRAGMENT_TAG) as? TerminalFragment)
-            ?.openSessionFromExternal(sessionId)
-    }
 
     private fun String.requiresServiceCommand(): Boolean =
         this == KiteRecipe.TYPE_COMMAND_WEB || this == KiteRecipe.TYPE_SCRIPT_WEB || this == KiteRecipe.TYPE_START_SERVICE

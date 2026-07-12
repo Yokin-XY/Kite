@@ -50,6 +50,10 @@ $settingsControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/featur
 $settingsFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/settings/SettingsFragment.kt'
 $androidSettingsGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/settings/AndroidSettingsGateway.kt'
 $onboardingCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/onboarding/FirstRunOnboardingCoordinator.kt'
+$surfaceEffectPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/surface/SurfaceEffect.kt'
+$terminalSurfaceContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/terminal/TerminalSurfaceResultContract.kt'
+$terminalFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalFragment.kt'
+$legacyTerminalChromeHostPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalChromeHost.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
     (Join-Path $Root 'app/src/main/kotlin/com/kite/app')
@@ -74,6 +78,10 @@ Assert-Architecture (Test-Path $settingsControllerPath) 'Settings feature contro
 Assert-Architecture (Test-Path $settingsFragmentPath) 'Settings feature fragment is missing.'
 Assert-Architecture (Test-Path $androidSettingsGatewayPath) 'Android settings gateway is missing.'
 Assert-Architecture (Test-Path $onboardingCoordinatorPath) 'First-run onboarding coordinator is missing.'
+Assert-Architecture (Test-Path $surfaceEffectPath) 'Generic surface effect contract is missing.'
+Assert-Architecture (Test-Path $terminalSurfaceContractPath) 'Terminal surface result contract is missing.'
+Assert-Architecture (Test-Path $terminalFragmentPath) 'Terminal fragment is missing.'
+Assert-Architecture (-not (Test-Path $legacyTerminalChromeHostPath)) 'TerminalChromeHost must not return.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -93,6 +101,9 @@ if ($failures.Count -eq 0) {
     $settingsFragment = [System.IO.File]::ReadAllText($settingsFragmentPath, [System.Text.Encoding]::UTF8)
     $androidSettingsGateway = [System.IO.File]::ReadAllText($androidSettingsGatewayPath, [System.Text.Encoding]::UTF8)
     $onboardingCoordinator = [System.IO.File]::ReadAllText($onboardingCoordinatorPath, [System.Text.Encoding]::UTF8)
+    $surfaceEffect = [System.IO.File]::ReadAllText($surfaceEffectPath, [System.Text.Encoding]::UTF8)
+    $terminalSurfaceContract = [System.IO.File]::ReadAllText($terminalSurfaceContractPath, [System.Text.Encoding]::UTF8)
+    $terminalFragment = [System.IO.File]::ReadAllText($terminalFragmentPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
             Where-Object { Test-Path $_ } |
@@ -144,7 +155,7 @@ if ($failures.Count -eq 0) {
     }
 
     Assert-Architecture (
-        $cardRun -match 'class\s+CardRunActivity\s*:\s*AppCompatActivity\(\),\s*TerminalChromeHost'
+        $cardRun -match 'class\s+CardRunActivity\s*:\s*AppCompatActivity\(\)'
     ) 'CardRunActivity must remain an independent AppCompatActivity shell.'
     Assert-Architecture (
         $cardRun -notmatch 'class\s+CardRunActivity\s*:\s*MainActivity'
@@ -235,6 +246,24 @@ if ($failures.Count -eq 0) {
         $onboardingCoordinator -match 'store\.writePhase\(FirstRunOnboardingPhase\.' -and
         $onboardingCoordinator -notmatch '(?m)^\s*import\s+(?:android\.|androidx\.|.*RuntimeBootstrapGateway|.*SharedPreferences)'
     ) 'First-run onboarding must persist action phases without copying Android or runtime-readiness facts.'
+    Assert-Architecture (
+        $surfaceEffect -match 'enum\s+class\s+SurfaceChromeMode' -and
+        $surfaceEffect -match 'sealed\s+interface\s+SurfaceEffect' -and
+        $surfaceEffect -notmatch 'android\.|androidx\.'
+    ) 'Surface display effects must remain Android-free data contracts.'
+    Assert-Architecture (
+        $terminalSurfaceContract -match 'SurfaceEffect\.SetChromeMode' -and
+        $terminalSurfaceContract -match 'SurfaceEffect\.RequestBack' -and
+        $terminalSurfaceContract -notmatch '(?m)^\s*import\s+.*(?:MainActivity|CardRunActivity|TerminalChromeHost)'
+    ) 'Terminal surface contract must emit generic chrome/back effects without naming a shell.'
+    Assert-Architecture (
+        $terminalFragment -match 'TerminalSurfaceResultContract\.send' -and
+        $terminalFragment -notmatch 'TerminalChromeHost|activity\s+as\?|MainActivity|CardRunActivity|setTerminalDetailMode'
+    ) 'Terminal Fragment must not cast back to an Activity host.'
+    Assert-Architecture (
+        $main -notmatch 'TerminalChromeHost|terminalBottomNavigation|isTerminalDetailMode|terminalContainerId|openTerminalSession' -and
+        $cardRun -notmatch 'TerminalChromeHost|openTerminalSession'
+    ) 'Application shells must interpret terminal surface effects without terminal-specific host interfaces or fields.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
