@@ -350,3 +350,13 @@
 理由：运行窗口已经是独立 Android task，若主导航仍保留 CardRun Destination，返回键、恢复状态和页面历史会形成第二套所有权；旧显示代码也容易借这个入口重新接回主壳。运行管理可以展示同一 Store 的摘要，但“查看运行”必须打开事实所指向的独立任务，而不是复制显示状态。
 
 影响：历史保存值 `CardRun` 视为未知 Destination 并回到控制台；关闭独立任务后由 Android 恢复原主壳位置。静态护栏同时禁止 `AppDestination.CardRun`、`DestinationKind.RunSurface`、`NavigationBackAction.CardRunTask` 和 `showCardRunSurface` 回流。
+
+## ADR-S035 运行管理动作必须等待事实确认
+
+状态：accepted
+
+决策：运行管理的停止运行、结束终端、结束 PID 和停止后台运行项均作为确认事务执行。协调器先发布 `Requested`，状态拥有者接受后发布 `AwaitingConfirmation`；只有统一运行快照证明目标已停止或消失，事务才结束。拒绝、异常或超时必须保留 `Failed` 与可重试语义。
+
+理由：旧页面在异步终止前直接把 CardRun 写成 `Stopped`，再用固定延迟刷新等待进程列表追上。终止失败、快照稍慢或用户结束的是子进程时，页面事实都会与真实进程分叉。页面也无法凭一次按钮回调证明 Ubuntu 内 PID、终端 owner 或整条 CardRun 已闭合。
+
+影响：页面不得调用 `setRuntimeState(...Stopped)` 宣布进程结束，也不得以 `260/900/1800ms` 整页轮询作为主同步机制。CardRun 继续由 `RunOrchestrator` 写状态，终端和 PID 继续由各自 Store 处理；`RuntimeManagementCoordinator` 只保存短期动作事务并消费统一快照，不成为第四个运行事实源。

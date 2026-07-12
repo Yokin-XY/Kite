@@ -35,6 +35,7 @@ internal sealed interface RuntimeManagementActionTarget {
 internal data class RuntimeManagementActionUiState(
     val label: String,
     val target: RuntimeManagementActionTarget,
+    val mutationKey: String,
     val enabled: Boolean = true,
     val danger: Boolean = false,
     val mutationPhase: RuntimeManagementMutationPhase? = null
@@ -98,4 +99,21 @@ internal data class RuntimeManagementUiState(
 ) {
     val isEmpty: Boolean
         get() = runs.isEmpty() && otherProcessSections.all { it.processes.isEmpty() }
+}
+
+internal sealed interface RuntimeManagementFeatureAction {
+    data class Refresh(val force: Boolean = false) : RuntimeManagementFeatureAction
+    data class Submit(val action: RuntimeManagementActionUiState) : RuntimeManagementFeatureAction
+    data class DismissFailure(val mutationKey: String) : RuntimeManagementFeatureAction
+}
+
+internal sealed interface RuntimeManagementFeatureEffect {
+    data class OpenSurface(
+        val recipeId: String,
+        val instanceId: String,
+        val surface: CardRunSurface
+    ) : RuntimeManagementFeatureEffect
+
+    data class ViewBackgroundRuntimeLog(val runtimeId: String) : RuntimeManagementFeatureEffect
+    data class ActionRejected(val reason: String) : RuntimeManagementFeatureEffect
 }

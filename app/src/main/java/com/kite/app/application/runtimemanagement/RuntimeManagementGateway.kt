@@ -9,8 +9,29 @@ interface RuntimeManagementGateway {
     fun currentSnapshot(): RuntimeManagementSnapshot
 
     fun refresh(force: Boolean = false)
+
+    suspend fun endTerminal(sessionId: String): RuntimeManagementDispatchResult
+
+    suspend fun endProcess(processId: String, pid: Int): RuntimeManagementDispatchResult
+
+    suspend fun stopBackgroundRuntime(runtimeId: String): RuntimeManagementDispatchResult
+
+    suspend fun restartBackgroundRuntime(runtimeId: String): RuntimeManagementDispatchResult
 }
 
 interface RuntimeManagementDependenciesOwner {
     val runtimeManagementGateway: RuntimeManagementGateway
+
+    val runtimeManagementCoordinator: RuntimeManagementCoordinator
+}
+
+data class RuntimeManagementDispatchResult(
+    val accepted: Boolean,
+    val message: String = ""
+) {
+    companion object {
+        fun accepted(message: String = "accepted") = RuntimeManagementDispatchResult(true, message)
+
+        fun rejected(message: String) = RuntimeManagementDispatchResult(false, message)
+    }
 }

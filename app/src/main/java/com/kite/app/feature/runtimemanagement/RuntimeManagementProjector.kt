@@ -182,6 +182,7 @@ internal object RuntimeManagementProjector {
                 else -> "结束进程"
             },
             target = target,
+            mutationKey = mutationKey(),
             enabled = !pending,
             danger = true,
             mutationPhase = mutation?.phase
@@ -196,6 +197,7 @@ internal object RuntimeManagementProjector {
         return RuntimeManagementActionUiState(
             label = if (pending) "停止中" else "停止",
             target = RuntimeManagementActionTarget.StopRun(instanceId),
+            mutationKey = mutationKey(),
             enabled = !pending,
             danger = true,
             mutationPhase = mutation?.phase
@@ -233,7 +235,8 @@ internal object RuntimeManagementProjector {
         caption = caption,
         openAction = RuntimeManagementActionUiState(
             label = "打开",
-            target = RuntimeManagementActionTarget.OpenSurface(recipeId, instanceId, targetSurface)
+            target = RuntimeManagementActionTarget.OpenSurface(recipeId, instanceId, targetSurface),
+            mutationKey = "surface:$instanceId:${targetSurface.name}"
         )
     )
 

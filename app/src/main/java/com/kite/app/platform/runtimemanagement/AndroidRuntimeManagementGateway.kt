@@ -4,6 +4,7 @@ import android.content.Context
 import com.kite.app.application.runtimemanagement.RuntimeManagedOwnerKind
 import com.kite.app.application.runtimemanagement.RuntimeManagedProcess
 import com.kite.app.application.runtimemanagement.RuntimeManagedTerminal
+import com.kite.app.application.runtimemanagement.RuntimeManagementDispatchResult
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementSnapshot
 import com.kite.app.foundation.runtime.RuntimeHealthSnapshot
@@ -53,6 +54,35 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
     override fun refresh(force: Boolean) {
         TerminalSessionStore.refresh(appContext, force = force)
         TaskManagerStore.refresh(appContext, force = force)
+    }
+
+    override suspend fun endTerminal(sessionId: String): RuntimeManagementDispatchResult {
+        val id = sessionId.trim().takeIf(String::isNotBlank)
+            ?: return RuntimeManagementDispatchResult.rejected("terminal_id_missing")
+        TerminalSessionStore.end(appContext, id)
+        return RuntimeManagementDispatchResult.accepted("terminal_end_requested")
+    }
+
+    override suspend fun endProcess(processId: String, pid: Int): RuntimeManagementDispatchResult {
+        if (pid <= 1) return RuntimeManagementDispatchResult.rejected("invalid_pid")
+        val item = TaskManagerStore.getProcess(processId)
+            ?: TaskManagerStore.snapshot.value.processes.firstOrNull { it.pid == pid }
+        TaskManagerStore.endProcess(appContext, item, pid)
+        return RuntimeManagementDispatchResult.accepted("process_end_requested")
+    }
+
+    override suspend fun stopBackgroundRuntime(runtimeId: String): RuntimeManagementDispatchResult {
+        val id = runtimeId.trim().takeIf(String::isNotBlank)
+            ?: return RuntimeManagementDispatchResult.rejected("runtime_id_missing")
+        TaskManagerStore.stopRuntime(appContext, id)
+        return RuntimeManagementDispatchResult.accepted("runtime_stop_requested")
+    }
+
+    override suspend fun restartBackgroundRuntime(runtimeId: String): RuntimeManagementDispatchResult {
+        val id = runtimeId.trim().takeIf(String::isNotBlank)
+            ?: return RuntimeManagementDispatchResult.rejected("runtime_id_missing")
+        TaskManagerStore.restartRuntime(appContext, id)
+        return RuntimeManagementDispatchResult.accepted("runtime_restart_requested")
     }
 
     companion object {

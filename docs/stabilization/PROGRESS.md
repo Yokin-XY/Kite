@@ -1073,3 +1073,13 @@ T008 Android Gateway 与停止目标修复结果：
 - 6 个相关目标测试覆盖 owner root、普通子 PID、后台/未归属 root、Platform owner 映射和系统进程识别；Kotlin 编译、架构检查、运行车道检查和差异检查通过。
 
 下一步：建立 `RuntimeManagementCoordinator`。刷新、停止运行、结束终端、结束 PID 与后台运行项动作统一由协调器提交；动作必须维持请求中/待确认/失败状态，禁止页面提前宣布已停止。
+
+T008 确认型动作协调结果：
+
+- 新增 Application 层 `RuntimeManagementCoordinator`，统一接受停止运行、结束终端、结束 PID、停止/重启后台运行项；动作按 `Requested -> AwaitingConfirmation -> confirmed/Failed` 推进。
+- 协调器不写运行事实：停止 CardRun 仍进入 `RunOrchestrator`，终端进入 `TerminalSessionStore`，PID 与后台项进入 `TaskManagerStore`；它只用下一份统一快照确认 `Stopped`、终端不再 live、PID 消失或后台项状态成立。
+- 默认确认期限为 15 秒。超时保留 `Failed` 和解释，拒绝不会静默恢复按钮；同一 mutation key 的重复提交幂等忽略，失败可显式清除后重试。
+- 新增纯 `RuntimeManagementFeatureController`，把 UiState 数据动作映射为协调器 Command；打开运行显示面与查看日志只产生 Shell Effect，不越过模块直接导航或执行。
+- 7 个新增测试覆盖运行停止确认、子 PID 不篡改 CardRun、PID 消失确认、超时失败、拒绝/重试、重复提交，以及打开显示面不提交执行动作；目标测试与 Kotlin 编译通过。
+
+下一步：建立 `RuntimeManagementFragment/Screen`，消费 Gateway 与 Coordinator 的 StateFlow；展开、状态变化和动作反馈只更新对应卡片/行，删除 `showKiteProcessOverview()` 的固定延迟整页重建路径。

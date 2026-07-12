@@ -13,6 +13,7 @@ import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.recipes.RecipeFeatureDependenciesOwner
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementDependenciesOwner
+import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
@@ -33,6 +34,9 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
 
     override val runtimeManagementGateway: RuntimeManagementGateway
         get() = KiteAppGraph.from(this).runtimeManagementGateway
+
+    override val runtimeManagementCoordinator: RuntimeManagementCoordinator
+        get() = KiteAppGraph.from(this).runtimeManagementCoordinator
 
     companion object {
         const val CHANNEL_SHELL = "kfshell_service"

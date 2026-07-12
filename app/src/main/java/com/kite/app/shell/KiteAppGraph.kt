@@ -10,6 +10,8 @@ import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
+import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
+import com.kite.app.application.runtimemanagement.RuntimeManagementDispatchResult
 import com.kite.app.browser.BrowserAuthSessionStore
 import com.kite.app.browser.BrowserLoopbackCallbackBridge
 import com.kite.app.browser.automation.BrowserAutomationSessionStore
@@ -70,6 +72,19 @@ internal class KiteAppGraph private constructor(context: Context) {
             executor = AndroidRecipeExecutor(appContext, bridgeClient, diagnostics),
             effectSink = runExecutionEffectBus,
             lifecycleSink = runLifecycleEventHub
+        )
+    }
+    val runtimeManagementCoordinator: RuntimeManagementCoordinator by lazy {
+        RuntimeManagementCoordinator(
+            gateway = runtimeManagementGateway,
+            stopRun = { instanceId ->
+                when (val result = runOrchestrator.stop(instanceId)) {
+                    is com.kite.app.application.runs.RunCommandResult.Accepted ->
+                        RuntimeManagementDispatchResult.accepted("run_stop_requested")
+                    is com.kite.app.application.runs.RunCommandResult.Ignored ->
+                        RuntimeManagementDispatchResult.rejected(result.reason)
+                }
+            }
         )
     }
     private val resourceRecipeFactory: AndroidResourceRecipeFactory by lazy {

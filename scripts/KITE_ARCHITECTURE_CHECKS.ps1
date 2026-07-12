@@ -37,7 +37,9 @@ $cardRunPath = Join-Path $Root 'app/src/main/java/com/kite/app/CardRunActivity.k
 $runSurfaceHostPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceHost.kt'
 $runtimeManagementSnapshotPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementSnapshot.kt'
 $runtimeManagementGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementGateway.kt'
+$runtimeManagementCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementCoordinator.kt'
 $runtimeManagementContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementFeatureContract.kt'
+$runtimeManagementControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementFeatureController.kt'
 $runtimeManagementProjectorPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementProjector.kt'
 $androidRuntimeManagementGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runtimemanagement/AndroidRuntimeManagementGateway.kt'
 $installSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/RunInstallWizardSurfaceBinding.kt'
@@ -54,7 +56,9 @@ Assert-Architecture (Test-Path $cardRunPath) 'CardRunActivity source is missing.
 Assert-Architecture (Test-Path $runSurfaceHostPath) 'RunSurfaceHost source is missing.'
 Assert-Architecture (Test-Path $runtimeManagementSnapshotPath) 'Runtime-management snapshot contract is missing.'
 Assert-Architecture (Test-Path $runtimeManagementGatewayPath) 'Runtime-management gateway contract is missing.'
+Assert-Architecture (Test-Path $runtimeManagementCoordinatorPath) 'Runtime-management coordinator is missing.'
 Assert-Architecture (Test-Path $runtimeManagementContractPath) 'Runtime-management feature contract is missing.'
+Assert-Architecture (Test-Path $runtimeManagementControllerPath) 'Runtime-management feature controller is missing.'
 Assert-Architecture (Test-Path $runtimeManagementProjectorPath) 'Runtime-management projector is missing.'
 Assert-Architecture (Test-Path $androidRuntimeManagementGatewayPath) 'Android runtime-management gateway is missing.'
 Assert-Architecture (Test-Path $installSurfaceBindingPath) 'Run install-wizard shell adapter is missing.'
@@ -68,7 +72,9 @@ if ($failures.Count -eq 0) {
     $runSurfaceHost = [System.IO.File]::ReadAllText($runSurfaceHostPath, [System.Text.Encoding]::UTF8)
     $runtimeManagementSnapshot = [System.IO.File]::ReadAllText($runtimeManagementSnapshotPath, [System.Text.Encoding]::UTF8)
     $runtimeManagementGateway = [System.IO.File]::ReadAllText($runtimeManagementGatewayPath, [System.Text.Encoding]::UTF8)
+    $runtimeManagementCoordinator = [System.IO.File]::ReadAllText($runtimeManagementCoordinatorPath, [System.Text.Encoding]::UTF8)
     $runtimeManagementContract = [System.IO.File]::ReadAllText($runtimeManagementContractPath, [System.Text.Encoding]::UTF8)
+    $runtimeManagementController = [System.IO.File]::ReadAllText($runtimeManagementControllerPath, [System.Text.Encoding]::UTF8)
     $runtimeManagementProjector = [System.IO.File]::ReadAllText($runtimeManagementProjectorPath, [System.Text.Encoding]::UTF8)
     $androidRuntimeManagementGateway = [System.IO.File]::ReadAllText($androidRuntimeManagementGatewayPath, [System.Text.Encoding]::UTF8)
     $screenRouter = [System.IO.File]::ReadAllText($screenRouterPath, [System.Text.Encoding]::UTF8)
@@ -161,6 +167,18 @@ if ($failures.Count -eq 0) {
         $androidRuntimeManagementGateway -match 'combine\(\s*CardRunStore\.runs,\s*TerminalSessionStore\.snapshot,\s*TaskManagerStore\.snapshot,\s*RuntimeHealthStore\.snapshot' -and
         $androidRuntimeManagementGateway -match 'TaskManagerAction\.END_PROCESS in availableActions'
     ) 'Android runtime-management gateway must combine the existing fact owners and preserve process action capabilities.'
+    Assert-Architecture (
+        $runtimeManagementCoordinator -match 'Requested' -and
+        $runtimeManagementCoordinator -match 'AwaitingConfirmation' -and
+        $runtimeManagementCoordinator -match 'Failed' -and
+        $runtimeManagementCoordinator -match 'fun\s+reconcile\(snapshot:\s*RuntimeManagementSnapshot' -and
+        $runtimeManagementCoordinator -notmatch 'CardRunStore|TaskManagerStore|TerminalSessionStore|android\.|androidx\.|Context|View'
+    ) 'Runtime-management actions must wait for shared-fact confirmation in a UI-agnostic coordinator.'
+    Assert-Architecture (
+        $runtimeManagementController -match 'RuntimeManagementFeatureEffect\.OpenSurface' -and
+        $runtimeManagementController -match 'RuntimeManagementCommand\.EndProcess' -and
+        $runtimeManagementController -notmatch 'CardRunStore|TaskManagerStore|TerminalSessionStore|android\.|androidx\.|\bContext\b|\bView\b'
+    ) 'Runtime-management Feature controller must map data actions to coordinator commands or shell effects.'
     Assert-Architecture (
         $runtimeManagementContract -match 'sealed interface RuntimeManagementActionTarget' -and
         $runtimeManagementContract -match 'AwaitingConfirmation' -and
