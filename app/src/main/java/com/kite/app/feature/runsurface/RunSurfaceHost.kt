@@ -13,6 +13,8 @@ internal interface RunSurfaceBinding {
 
     fun tick(now: Long): Boolean = false
 
+    fun handleBack(): Boolean = false
+
     fun dispose() = Unit
 }
 
@@ -100,6 +102,8 @@ internal class RunSurfaceHost(
     }
 
     fun tick(now: Long = System.currentTimeMillis()): Boolean = binding?.tick(now) == true
+
+    fun handleBack(): Boolean = binding?.handleBack() == true
 
     fun dispose() {
         binding?.dispose()

@@ -290,3 +290,13 @@
 理由：返回属于导航意图，不是运行控制意图。旧实现会在终端等待时把返回解释为完成，并在关闭窗口时根据运行绑定自动停止；用户只是离开页面，后台 shell 或安装队列却被改变，既违反常规交互，也让显示生命周期拥有了执行生命周期。
 
 影响：Terminal Fragment detach、Report Screen dispose、WebView unbind 和 CardRunActivity finish 都不得写运行事实。首页或运行记录重新打开时必须从 `CardRunStore` 恢复同一 instance 与 surface；显式运行控制继续进入 `RunOrchestrator`，不得再按页面类型增加关闭即停止的特判。
+
+## ADR-S029 Web 运行显示面独占可见浏览器实例
+
+状态：accepted
+
+决策：每个 Web 类型的运行窗口由 `RunWebSurfaceBinding` 独立创建并销毁自己的 `WebView`、`KiteWebShell` 与自动化显示会话。普通网页加载、OAuth/CLI loopback 和仅外部浏览器地址都先经过全局唯一的 `BrowserHandoffPolicy`；显示绑定只调用既有认证和外部浏览器 Gateway，不保存认证事实、不重写回调协议。
+
+理由：MainActivity 的共享 WebView 同时承担工作台和运行窗口时，一个页面的导航、返回、销毁或自动化 session 会影响另一个页面。把 WebView 交给运行显示面后，页面历史与可见资源有明确所有者，同时认证桥仍由既有进程能力负责，不会因拆 UI 形成第二套 token 或 loopback 状态。
+
+影响：WebView 历史返回优先于运行窗口退出；显示面 dispose 可以停止加载和销毁该 WebView，但不得停止 CardRun。外部浏览器回跳仍按 `recipeId + instanceId` 更新 `CardRunStore` 并恢复对应显示面，MainActivity 不得重新引入 CardRun 专用 Web 构建方法或共享 WebView 绑定。

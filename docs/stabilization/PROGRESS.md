@@ -946,3 +946,15 @@ T007 终端显示面与返回语义结果：
 终端显示面迁移状态：completed，待独立提交。
 
 下一步：迁移 Web 显示绑定和浏览器回跳可见恢复，让共享 WebView、认证等待页和外部浏览器打开都通过同一实例合同；完成后再抽出独立 CardRunActivity 壳。
+
+T007 Web 显示面迁移结果：
+
+- 新增 `RunWebSurfaceBinding`，每个 Web 运行显示面独立拥有 `WebView`、`KiteWebShell` 与自动化控制器；MainActivity 不再保存 CardRun WebView、认证等待页、外部浏览器提示页或空地址输入页。
+- Web 普通页面、OAuth/CLI loopback 认证和仅外部浏览器地址继续复用同一 `BrowserHandoffPolicy` 与认证 Gateway；显示绑定只决定承载方式，不创建第二套认证会话或回调协议。
+- `RunSurfaceHost.handleBack()` 将系统返回先交给当前显示面；WebView 有历史时只后退页面，没有历史时才退出运行窗口。销毁显示面只关闭自动化显示会话并销毁本地 WebView，不停止 CardRun 或底层任务。
+- 正式产品入口验证不是直启 Activity：OnePlus 8T 通过本地服务 `/open-web` 创建临时网页实例，直接绑定 `https://example.com`；进入 IANA 页面后第一次返回恢复 Example Domain 且仍停留在同一 CardRunActivity，第二次返回才回主壳。
+- 全链无 `AndroidRuntime` 崩溃；目标单测、Debug Kotlin 编译、架构检查和运行车道静态检查通过。债务快照为 `lines=12039, functions=534, fields=108, inheritedActivities=1`。
+
+Web 显示面迁移状态：completed，待独立提交。
+
+下一步：让 `CardRunActivity` 脱离 `MainActivity` 继承，建立只装配指定 instance、RunSurfaceHost 和运行控制动作的轻量 Android 壳；X11 与安装向导显示绑定随后按同一合同接入。

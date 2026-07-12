@@ -175,6 +175,7 @@ import com.kite.app.feature.runsurface.RunSurfaceUiState
 import com.kite.app.feature.runsurface.StaticRunSurfaceBinding
 import com.kite.app.feature.runsurface.RunSurfaceContent
 import com.kite.app.feature.runsurface.RunTerminalSurfaceBinding
+import com.kite.app.feature.runsurface.RunWebSurfaceBinding
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.runtime.TerminalSessionItem
 import com.kite.app.foundation.runtime.TerminalSessionStore
@@ -1095,6 +1096,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun releaseActivityDisplaySurfaces() {
         if (activityDisplaySurfacesReleased) return
         activityDisplaySurfacesReleased = true
+        runSurfaceHost?.dispose()
+        runSurfaceHost = null
         resourceInstallWizardSurface?.dispose()
         resourceInstallWizardSurface = null
         if (::browserAutomationController.isInitialized) {
@@ -1133,6 +1136,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun handleWebViewBackSignal(): Boolean {
+        if (currentScreen == AppDestination.CardRun && runSurfaceHost?.handleBack() == true) return true
         if (!::webView.isInitialized) return false
         if (currentScreen != AppDestination.Workbench && currentScreen != AppDestination.CardRun) return false
         if (webView.parent == null || !webView.canGoBack()) return false
@@ -5522,12 +5526,40 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 tokens = tokens
             ).also { it.render(projected) }
         }
-        val webUrl = actionState.nextActionUrl?.takeIf { it.isNotBlank() }
-        val view = when {
-            rootState.surface == CardRunSurface.Web && webUrl != null -> FrameLayout(this).also {
-                showCardRunWebView(it, actionRecipe, actionState, webUrl)
+        if (projected.content is RunSurfaceContent.Web) {
+            val target = projected.content.url?.trim().orEmpty()
+            if (target.isNotBlank()) {
+                val displayTarget = redactUrlCredentials(target)
+                diagnostics.logOpenWebAttempt(actionRecipe, displayTarget, "card_run_surface")
+                diagnostics.writeWebAppStatus(
+                    url = displayTarget,
+                    title = actionRecipe.name,
+                    state = "opening",
+                    recipeId = actionRecipe.id,
+                    recipeName = actionRecipe.name,
+                    openSource = "card_run_surface"
+                )
             }
-            rootState.surface == CardRunSurface.Web -> cardRunWebAddressInputBody(actionRecipe, actionState)
+            return RunWebSurfaceBinding(
+                activity = this,
+                tokens = tokens,
+                diagnostics = diagnostics,
+                automationSessions = browserAutomationSessions,
+                automationEnabled = { browserRuntimeMode() == BrowserRuntimeMode.AutomationBrowser },
+                onAutomationEvent = ::handleBrowserAutomationEvent,
+                onLaunchHandoff = { request, decision, force ->
+                    launchBrowserHandoff(
+                        request = request,
+                        decision = decision,
+                        force = force,
+                        rerenderFocusedSurface = false
+                    )
+                },
+                onOpenExternal = { url -> openCustomTabOrSystemBrowser(Uri.parse(url)) },
+                onManualUrl = { rawUrl -> openCardRunManualWebUrl(actionRecipe, actionState, rawUrl) }
+            ).also { it.render(projected) }
+        }
+        val view = when {
             rootState.surface == CardRunSurface.X11 -> cardRunX11SurfaceBody(recipe, actionState)
             rootState.surface == CardRunSurface.InstallWizard -> createResourceInstallWizardFeatureSurface()
             wizardChildRun != null -> cardRunPlaceholderPanel(actionRecipe.name, projected.statusLabel)
@@ -6082,6 +6114,35 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         return root to input
     }
 
+    private fun cardRunWebSearchButton(onClick: () -> Unit): View =
+        object : View(this) {
+            private val searchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(20, 24, 33)
+                style = Paint.Style.STROKE
+                strokeWidth = 2.7f * resources.displayMetrics.density
+                strokeCap = Paint.Cap.ROUND
+            }
+
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val size = width.coerceAtMost(height).toFloat()
+                val radius = size * 0.16f
+                val cx = width * 0.45f
+                val cy = height * 0.45f
+                canvas.drawCircle(cx, cy, radius, searchPaint)
+                canvas.drawLine(
+                    cx + radius * 0.72f,
+                    cy + radius * 0.72f,
+                    cx + radius * 1.65f,
+                    cy + radius * 1.65f,
+                    searchPaint
+                )
+            }
+        }.apply {
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+
     private fun cardRunCapsuleMark(onClick: () -> Unit): View =
         object : View(this) {
             private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -6150,78 +6211,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             elevation = dp(4).toFloat()
             if (isSuccess) setOnClickListener { closeCardRunTask() }
         }
-    }
-
-    private fun showCardRunWebView(
-        parentHost: FrameLayout,
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        url: String
-    ) {
-        val target = url.trim().ifBlank { DEFAULT_LOCAL_URL }
-        val displayTarget = redactUrlCredentials(target)
-        diagnostics.logOpenWebAttempt(recipe, displayTarget, "card_run_surface")
-        diagnostics.writeWebAppStatus(
-            url = displayTarget,
-            title = recipe.name,
-            state = "opening",
-            recipeId = recipe.id,
-            recipeName = recipe.name,
-            openSource = "card_run_surface"
-        )
-        val decision = BrowserHandoffPolicy.classify(target, "card_run_surface")
-        when (decision) {
-            is BrowserHandoffDecision.StartAuthHandoff,
-            is BrowserHandoffDecision.StartCliCallbackHandoff -> {
-                parentHost.addView(
-                    cardRunBrowserAuthWaitingBody(recipe, state, target, decision),
-                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                )
-                launchBrowserHandoff(
-                    request = BrowserHandoffRequest(
-                        url = target,
-                        recipeId = recipe.id,
-                        recipeName = recipe.name,
-                        instanceId = state.instanceId,
-                        source = "card_run_surface"
-                    ),
-                    decision = decision,
-                    rerenderFocusedSurface = false
-                )
-                return
-            }
-            BrowserHandoffDecision.OpenExternalBrowser -> {
-                val opened = openCustomTabOrSystemBrowser(Uri.parse(target))
-                parentHost.addView(
-                    cardRunExternalBrowserBody(recipe, target, opened),
-                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                )
-                diagnostics.logRecipeEvent(
-                    if (opened) "browser_external_opened" else "browser_external_open_failed",
-                    recipe,
-                    mapOf(
-                        "instanceId" to state.instanceId,
-                        "source" to "card_run_surface",
-                        "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(target)
-                    )
-                )
-                return
-            }
-            is BrowserHandoffDecision.ShowUnsupportedFallback,
-            BrowserHandoffDecision.StayInWebView -> Unit
-        }
-        val parent = webView.parent
-        if (parent is ViewGroup) parent.removeView(webView)
-        parentHost.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        val automationEnabled = browserRuntimeMode() == BrowserRuntimeMode.AutomationBrowser
-        webShell.loadInWebView(
-            target,
-            recipeId = recipe.id,
-            recipeName = recipe.name,
-            instanceId = state.instanceId,
-            openSource = "card_run_surface",
-            automationEnabled = automationEnabled
-        )
     }
 
     private fun handleBrowserAutomationEvent(event: BrowserAutomationEvent) {
@@ -6438,132 +6427,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }.take(4000)
     }
 
-    private fun cardRunBrowserAuthWaitingBody(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        url: String,
-        decision: BrowserHandoffDecision
-    ): View =
-        FrameLayout(this).apply {
-            setBackgroundColor(tokens.pageBackground)
-            val isLoopback = decision is BrowserHandoffDecision.StartCliCallbackHandoff
-            val titleText = if (isLoopback) "正在等待浏览器回调" else "正在等待浏览器登录返回"
-            val bodyText = if (isLoopback) {
-                "登录页已用安全浏览器打开。回调会通过 Android 本机 loopback 原样交给登录发起方，由发起方校验并保存登录状态。"
-            } else {
-                "登录页已用安全浏览器打开。返回后 Kite 会校验 state，并把结果交回当前运行实例。"
-            }
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(dp(24), dp(28), dp(24), dp(28))
-                addView(ProgressBar(context).apply {
-                    isIndeterminate = true
-                    layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
-                })
-                addView(TextView(context).apply {
-                    text = titleText
-                    textSize = 18f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setPadding(0, dp(18), 0, 0)
-                })
-                addView(TextView(context).apply {
-                    text = bodyText
-                    textSize = 13f
-                    setTextColor(tokens.textSecondary)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setPadding(0, dp(10), 0, 0)
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                addView(row {
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(20), 0, 0)
-                    addView(cardRunCapsuleAction("重新打开") {
-                        launchBrowserHandoff(
-                            request = BrowserHandoffRequest(
-                                url = url,
-                                recipeId = recipe.id,
-                                recipeName = recipe.name,
-                                instanceId = state.instanceId,
-                                source = "card_run_surface"
-                            ),
-                            decision = decision,
-                            force = true,
-                            rerenderFocusedSurface = false
-                        )
-                    }, LinearLayout.LayoutParams(dp(112), dp(36)))
-                    addView(cardRunCapsuleAction("复制地址") {
-                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        clipboard?.setPrimaryClip(ClipData.newPlainText("Kite login URL", url))
-                        Toast.makeText(this@MainActivity, "已复制登录地址", Toast.LENGTH_SHORT).show()
-                    }, LinearLayout.LayoutParams(dp(112), dp(36)).apply {
-                        setMargins(dp(10), 0, 0, 0)
-                    })
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-        }
-
-    private fun cardRunExternalBrowserBody(
-        recipe: KiteRecipe,
-        url: String,
-        opened: Boolean
-    ): View =
-        FrameLayout(this).apply {
-            setBackgroundColor(tokens.pageBackground)
-            val titleText = if (opened) "已在系统浏览器打开" else "无法打开系统浏览器"
-            val bodyText = if (opened) {
-                "登录页使用系统浏览器承载。这个授权地址没有配置回到 Kite 的 redirect，完成后请按网页或工具提示继续。"
-            } else {
-                "Kite 没能启动系统浏览器。可以复制地址后手动打开。"
-            }
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(dp(24), dp(28), dp(24), dp(28))
-                addView(TextView(context).apply {
-                    text = titleText
-                    textSize = 18f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(if (opened) tokens.textPrimary else tokens.danger)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                addView(TextView(context).apply {
-                    text = bodyText
-                    textSize = 13f
-                    setTextColor(tokens.textSecondary)
-                    gravity = Gravity.CENTER
-                    includeFontPadding = false
-                    setPadding(0, dp(10), 0, 0)
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                addView(row {
-                    gravity = Gravity.CENTER
-                    setPadding(0, dp(20), 0, 0)
-                    addView(cardRunCapsuleAction("重新打开") {
-                        val reopened = openCustomTabOrSystemBrowser(Uri.parse(url))
-                        diagnostics.logRecipeEvent(
-                            if (reopened) "browser_external_reopened" else "browser_external_reopen_failed",
-                            recipe,
-                            mapOf(
-                                "source" to "card_run_surface",
-                                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(url)
-                            )
-                        )
-                    }, LinearLayout.LayoutParams(dp(112), dp(36)))
-                    addView(cardRunCapsuleAction("复制地址") {
-                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        clipboard?.setPrimaryClip(ClipData.newPlainText("Kite external URL", url))
-                        Toast.makeText(this@MainActivity, "已复制地址", Toast.LENGTH_SHORT).show()
-                    }, LinearLayout.LayoutParams(dp(112), dp(36)).apply {
-                        setMargins(dp(10), 0, 0, 0)
-                    })
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
-        }
-
     private fun launchBrowserHandoff(
         request: BrowserHandoffRequest,
         decision: BrowserHandoffDecision
@@ -6675,87 +6538,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             showCardRunSurface(recipe)
         }
     }
-
-    private fun cardRunWebAddressInputBody(recipe: KiteRecipe, state: RecipeRuntimeState): View =
-        FrameLayout(this).apply {
-            setBackgroundColor(Color.WHITE)
-            val input = EditText(context).apply {
-                hint = "输入网址或本地端口"
-                textSize = 15f
-                setSingleLine(true)
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-                imeOptions = EditorInfo.IME_ACTION_GO
-                setTextColor(tokens.textPrimary)
-                setHintTextColor(Color.rgb(150, 160, 176))
-                background = ColorDrawable(Color.TRANSPARENT)
-                setPadding(dp(18), 0, dp(8), 0)
-            }
-            val submit = {
-                openCardRunManualWebUrl(recipe, state, input.text?.toString().orEmpty())
-            }
-            input.setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    submit()
-                    true
-                } else {
-                    false
-                }
-            }
-            addView(TextView(context).apply {
-                text = "Kite"
-                textSize = 33f
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-                setTextColor(Color.rgb(20, 28, 42))
-                gravity = Gravity.CENTER
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
-                setMargins(dp(24), 0, dp(24), dp(108))
-            })
-            addView(FrameLayout(context).apply {
-                background = roundedBox(Color.WHITE, Color.rgb(198, 205, 216), dp(26).toFloat(), dp(1))
-                elevation = dp(1).toFloat()
-                addView(input, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                    setMargins(0, 0, dp(54), 0)
-                })
-                addView(cardRunWebSearchButton { submit() }, FrameLayout.LayoutParams(dp(52), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.RIGHT))
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54), Gravity.CENTER).apply {
-                setMargins(dp(24), 0, dp(24), 0)
-            })
-            input.post {
-                input.requestFocus()
-                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
-            }
-        }
-
-    private fun cardRunWebSearchButton(onClick: () -> Unit): View =
-        object : View(this) {
-            private val searchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.rgb(20, 24, 33)
-                style = Paint.Style.STROKE
-                strokeWidth = 2.7f * resources.displayMetrics.density
-                strokeCap = Paint.Cap.ROUND
-            }
-
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                val size = width.coerceAtMost(height).toFloat()
-                val radius = size * 0.16f
-                val cx = width * 0.45f
-                val cy = height * 0.45f
-                canvas.drawCircle(cx, cy, radius, searchPaint)
-                canvas.drawLine(
-                    cx + radius * 0.72f,
-                    cy + radius * 0.72f,
-                    cx + radius * 1.65f,
-                    cy + radius * 1.65f,
-                    searchPaint
-                )
-            }
-        }.apply {
-            isClickable = true
-            setOnClickListener { onClick() }
-        }
 
     private fun openCardRunManualWebUrl(recipe: KiteRecipe, state: RecipeRuntimeState, rawUrl: String) {
         val url = normalizeManualCardRunUrl(rawUrl)
@@ -10123,12 +9905,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         )
         when (val result = runOrchestrator.stop(previousState.instanceId)) {
             is RunCommandResult.Accepted -> {
-                if (
-                    previousState.status == RecipeRunStatus.Opened &&
-                    !previousState.hasRunBinding()
-                ) {
-                    webView.stopLoading()
-                }
                 closeCardRunInstanceForStop(recipe, previousState, "stop_orchestrator_accepted")
                 if (navigateToConsole) showConsole()
             }
