@@ -1,0 +1,133 @@
+package com.kite.app.feature.home
+
+import android.app.Activity
+import android.view.ContextThemeWrapper
+import androidx.test.core.app.ApplicationProvider
+import com.kite.app.R
+import com.kite.app.recipe.KiteCardGroup
+import com.kite.app.recipe.KiteExecution
+import com.kite.app.recipe.KiteLaunchConfig
+import com.kite.app.recipe.KiteRecipe
+import com.kite.app.recipe.KiteRecipeStep
+import com.kite.app.run.CardRunState
+import com.kite.app.run.CardRunStatus
+import com.kite.app.run.KiteCardRunUiProjector
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+
+@RunWith(RobolectricTestRunner::class)
+class HomeScreenTest {
+    @Test
+    fun runFactChangeRebindsExistingActionView() {
+        val clicked = mutableListOf<String>()
+        val screen = screen(onPrimary = clicked::add)
+        attach(screen)
+        screen.render(state(CardRunStatus.Unknown))
+        val initial = screen.actionViewForTest("tool")!!
+
+        initial.performClick()
+        assertEquals(listOf("tool"), clicked)
+
+        screen.render(state(CardRunStatus.Running))
+        val rebound = screen.actionViewForTest("tool")!!
+
+        assertSame(initial, rebound)
+        assertEquals("停止", rebound.text.toString())
+    }
+
+    @Test
+    fun acceptedActionImmediatelyLocksCurrentCard() {
+        val screen = screen()
+        attach(screen)
+        screen.render(state(CardRunStatus.Unknown))
+
+        screen.acknowledge("tool")
+
+        val action = screen.actionViewForTest("tool")!!
+        assertEquals("启动中", action.text.toString())
+        assertTrue(!action.isEnabled)
+    }
+
+    @Test
+    fun customGroupProjectsOnlyOwnedRecipes() {
+        val group = KiteCardGroup("ai", "AI")
+        val tool = recipe("tool", groupId = "ai")
+        val web = recipe("web")
+        val screen = screen()
+        attach(screen)
+        screen.render(
+            HomeFeatureUiState(
+                phase = HomeCatalogPhase.Ready,
+                groups = listOf(group),
+                items = listOf(item(tool), item(web))
+            )
+        )
+
+        screen.selectGroup("ai")
+
+        assertEquals(listOf("tool"), screen.visibleRecipeIdsForTest())
+    }
+
+    private fun screen(onPrimary: (String) -> Unit = {}): HomeScreen = HomeScreen(
+        context = ContextThemeWrapper(
+            ApplicationProvider.getApplicationContext(),
+            R.style.Theme_Kite
+        ),
+        initialPageId = HOME_PAGE_ALL,
+        initialScrollY = 0,
+        onOpenEditor = {},
+        onPrimaryAction = onPrimary,
+        onCreateGroup = {},
+        onExternalRefresh = {},
+        onRetry = {}
+    )
+
+    private fun attach(screen: HomeScreen) {
+        Robolectric.buildActivity(Activity::class.java)
+            .setup()
+            .get()
+            .setContentView(screen.root)
+    }
+
+    private fun state(status: CardRunStatus): HomeFeatureUiState =
+        HomeFeatureUiState(
+            phase = HomeCatalogPhase.Ready,
+            items = listOf(item(recipe("tool"), status))
+        )
+
+    private fun item(
+        recipe: KiteRecipe,
+        status: CardRunStatus = CardRunStatus.Unknown
+    ): HomeRecipeItemUiState {
+        val run = CardRunState(
+            instanceId = "run-" + recipe.id,
+            recipeId = recipe.id,
+            status = status
+        )
+        return HomeRecipeItemUiState(
+            recipe = recipe,
+            run = run,
+            projection = KiteCardRunUiProjector.project(status),
+            runtimeBlocked = false
+        )
+    }
+
+    private fun recipe(id: String, groupId: String = ""): KiteRecipe = KiteRecipe(
+        id = id,
+        name = id.replaceFirstChar(Char::uppercase),
+        description = "Test recipe",
+        type = KiteRecipe.TYPE_START_SERVICE,
+        groupId = groupId,
+        defaultUrl = "",
+        shortcut = false,
+        launch = KiteLaunchConfig(openInstance = true),
+        execution = KiteExecution.steps(
+            listOf(KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "echo ok"))
+        )
+    )
+}

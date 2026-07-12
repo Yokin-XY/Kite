@@ -748,3 +748,18 @@ T005 合同层结果：
 - 全量 300 项 Debug 单测（1 项既有跳过）、Debug APK 构建与运行车道静态检查通过；`MainActivity` 债务基线未增长。
 
 下一步：提交 T005 合同层；随后迁移首页卡片、分组、滚动与运行局部绑定，删除 Activity 内对应状态和渲染链。
+
+T005 首页迁移结果：
+
+- `HomeFragment` 与 `HomeScreen` 已拥有全部/已打开/已停止/自定义分组、滚动、下拉导入、卡片结构、运行状态、计时与即时动作承诺。
+- 首页只消费 `RecipeFeatureGateway` 与 `HomeFeatureController`；卡片主动作通过 Fragment Result 把标准 `KiteRecipeActionRequest` 交给 Shell，页面不执行步骤、不创建或停止运行实例。
+- 配方目录/分组变化才重建分页或网格；`CardRunStore` 变化经 Gateway 重投影后只重绑当前可见卡片的徽章、步骤、按钮和计时。
+- 运行环境状态变化只更新 Shell 的状态胶囊、提示条和 Home 的阻塞投影，不再调用 `showConsole()` 重建首页。
+- 删除 Activity 内首页分页、网格、卡片 Binding、状态徽章、计时器、运行刷新节流和旧数据类，机器债务从 `17820 / 733 / 141` 降为 `17277 / 696 / 139`（行 / 函数 / 字段）。
+- Robolectric 覆盖原按钮复用、动作即时锁定、自定义分组、外部导入和回前台复用同一 Home Fragment/View；全量 Debug 单测与 Debug APK 构建通过。
+- OnePlus 8T `3f8bbaad` 冷启动 1525ms；分页空态、卡片编辑往返、后台热恢复 139ms 均正常。
+- 真机动作链确认“启动 -> CardRun -> 首页停止/运行计时 -> 停止 -> 首页启动/上次刚刚”自动同步；logcat 无崩溃、ANR 或掉帧。
+
+首页迁移状态：completed，待独立提交。
+
+下一步：迁移配方编辑器；先建立草稿状态与校验合同，再按表单、图标、步骤、分组、保存/删除和未保存返回顺序转移所有权。

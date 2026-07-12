@@ -3,6 +3,7 @@ package com.kite.app.feature.home
 import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.action.KiteRecipeActionSource
 import com.kite.app.application.recipes.RecipeFeatureChange
+import com.kite.app.application.recipes.RecipeExternalRefreshResult
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteExecution
@@ -104,6 +105,38 @@ class HomeFeatureControllerTest {
         assertEquals(HomeCatalogPhase.Failed, controller.state.value.phase)
         assertEquals("recipes_failed", controller.state.value.errorMessage)
         assertEquals(listOf("tool"), controller.state.value.items.map { it.recipeId })
+
+        controller.dispatch(HomeFeatureAction.ReconcileRuns)
+
+        assertEquals(HomeCatalogPhase.Failed, controller.state.value.phase)
+        assertEquals("recipes_failed", controller.state.value.errorMessage)
+    }
+
+    @Test
+    fun createGroupProjectsSharedGroupFacts() = runTest {
+        val gateway = FakeGateway()
+        val controller = HomeFeatureController(gateway, initiallyBlocksUbuntuActions = false)
+        controller.dispatch(HomeFeatureAction.Refresh())
+
+        val effect = controller.dispatch(HomeFeatureAction.CreateGroup("AI 工具"))
+
+        assertTrue(effect is HomeFeatureEffect.GroupCreated)
+        assertEquals(listOf("AI 工具"), controller.state.value.groups.map(KiteCardGroup::name))
+        assertEquals(1, gateway.loadCount)
+    }
+
+    @Test
+    fun externalRefreshLoadsNewCatalogAndReturnsResult() = runTest {
+        val gateway = FakeGateway()
+        val controller = HomeFeatureController(gateway, initiallyBlocksUbuntuActions = false)
+        controller.dispatch(HomeFeatureAction.Refresh())
+        gateway.recipesAfterExternalRefresh = listOf(webRecipe())
+
+        val effect = controller.dispatch(HomeFeatureAction.RefreshExternalRecipes)
+
+        assertEquals(HomeFeatureEffect.ExternalRefreshCompleted("已刷新"), effect)
+        assertEquals(listOf("web"), controller.state.value.items.map { it.recipeId })
+        assertEquals(2, gateway.loadCount)
     }
 
     private class FakeGateway : RecipeFeatureGateway {
@@ -113,6 +146,7 @@ class HomeFeatureControllerTest {
         val runs = linkedMapOf<String, CardRunState>()
         var loadFailure: Throwable? = null
         var loadCount = 0
+        var recipesAfterExternalRefresh: List<KiteRecipe>? = null
 
         override suspend fun loadRecipes(forceRefresh: Boolean): List<KiteRecipe> {
             loadCount += 1
@@ -128,7 +162,13 @@ class HomeFeatureControllerTest {
 
         override suspend fun deleteRecipe(recipeId: String): Boolean = false
 
-        override suspend fun createGroup(name: String): KiteCardGroup = KiteCardGroup("group", name)
+        override suspend fun createGroup(name: String): KiteCardGroup =
+            KiteCardGroup("group", name).also { groups = groups + it }
+
+        override suspend fun refreshExternalRecipes(): RecipeExternalRefreshResult {
+            recipesAfterExternalRefresh?.let { recipes = it }
+            return RecipeExternalRefreshResult("已刷新", 0, 0, 0)
+        }
     }
 
     private companion object {

@@ -12,6 +12,13 @@ data class RecipeFeatureChange(
     val catalogInvalidated: Boolean = false
 )
 
+data class RecipeExternalRefreshResult(
+    val message: String,
+    val imported: Int,
+    val skipped: Int,
+    val invalid: Int
+)
+
 interface RecipeFeatureGateway {
     val changes: Flow<RecipeFeatureChange>
 
@@ -26,6 +33,8 @@ interface RecipeFeatureGateway {
     suspend fun deleteRecipe(recipeId: String): Boolean
 
     suspend fun createGroup(name: String): KiteCardGroup
+
+    suspend fun refreshExternalRecipes(): RecipeExternalRefreshResult
 }
 
 interface RecipeFeatureDependenciesOwner {

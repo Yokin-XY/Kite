@@ -42,6 +42,9 @@ $resourceInstallWizardScreenPath = Join-Path $Root 'app/src/main/java/com/kite/a
 $recipeFeatureGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/recipes/RecipeFeatureGateway.kt'
 $homeFeatureContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeFeatureContract.kt'
 $homeFeatureControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeFeatureController.kt'
+$homeFeatureFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeFragment.kt'
+$homeScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeScreen.kt'
+$homeFeatureViewSupportPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/home/HomeFeatureViewSupport.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -133,6 +136,9 @@ $resourceInstallWizardScreen = Read-Utf8 $resourceInstallWizardScreenPath
 $recipeFeatureGateway = Read-Utf8 $recipeFeatureGatewayPath
 $homeFeatureContract = Read-Utf8 $homeFeatureContractPath
 $homeFeatureController = Read-Utf8 $homeFeatureControllerPath
+$homeFeatureFragment = Read-Utf8 $homeFeatureFragmentPath
+$homeScreen = Read-Utf8 $homeScreenPath
+$homeFeatureViewSupport = Read-Utf8 $homeFeatureViewSupportPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -162,13 +168,16 @@ Assert-True ($homeFeatureContract -match 'HomeFeatureUiState' -and $homeFeatureC
 Assert-True ($homeFeatureController -match 'KiteCardRunUiProjector\.project' -and $homeFeatureController -match 'KiteRecipeActionRequest') 'Home feature must reuse the shared run projector and recipe action request.'
 Assert-True ($homeFeatureController -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|run\.CardRunStore))') 'Home feature controller must remain independent from Android views, navigation, and concrete run stores.'
 Assert-True ($homeFeatureController -notmatch '\.(startRecipe|stopRecipe|executeRecipe|saveUserRecipe|deleteRecipe)\s*\(') 'Home feature controller must not execute recipes or mutate recipe facts.'
+Assert-True ($homeFeatureFragment -match '(?s)repeatOnLifecycle\(Lifecycle\.State\.STARTED\).*HomeFeatureAction\.ReconcileRuns') 'Home feature must reconcile run-owner facts whenever it returns to the foreground.'
+Assert-True ($homeScreen -match 'structureSignature' -and $homeScreen -match 'factory\.bind' -and $homeScreen -match 'fun acknowledge\(') 'Home screen must separate structural rebuilds from local run-state binding and immediate action acknowledgement.'
+Assert-True ($homeScreen -notmatch 'CardRunStore|KiteRecipeLoader|MainActivity') 'Home screen must only project supplied state and must not read stores, files, or the shell.'
 Assert-True ($kiteAppGraph -match 'val recipeLoader: KiteRecipeLoader by lazy' -and $kiteAppGraph -match 'val cardGroupStore: KiteCardGroupStore by lazy' -and $kiteAppGraph -match 'val recipeFeatureGateway: RecipeFeatureGateway by lazy') 'Recipe loader, group store, and gateway must be process composition-root dependencies.'
 Assert-True ($kiteAppGraph -match 'fun createRecipeLoader\(\): KiteRecipeLoader = recipeLoader' -and $main -notmatch 'KiteCardGroupStore\(applicationContext\)') 'Shell callers must reuse process-owned recipe and group facts instead of constructing parallel stores.'
 Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'
 Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
 Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'
 Assert-True ($main -match 'resourceInstallWizardSurface\?\.tick' -and $resourceInstallWizardScreen -match 'fun tick\(') 'install wizard must keep elapsed binding inside its feature screen.'
-Assert-True ($main -match 'updateVisibleConsoleCard') 'console card runtime changes should have local binding.'
+Assert-True ($main -match '(?s)private fun showConsole\b.*HomeFragment' -and $main -notmatch 'consoleCardBindings|consolePageBodyHost|private fun recipeGrid|updateVisibleConsoleCard') 'Home card views, bindings, and page state must remain owned by HomeFragment and HomeScreen.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'
 Assert-True ($main -match 'observeRuntimePanelSummarySignals') 'runtime panel summary counts must observe existing store snapshots.'
 Assert-True ($main -match 'handleRuntimeAutomationIntent') 'Kite MainActivity must expose the runtime automation diagnostic entry on the real launcher path.'
@@ -455,11 +464,8 @@ $resourceIncrementalFacts = Function-Body $main 'resourceRuntimeFactsFromStore'
 $resourceCatalogFacts = Function-Body $main 'resourceCatalog'
 Assert-True ($resourceIncrementalFacts -match 'KiteResourceRuntimeFactsProjector\.project') 'incremental resource binding must consume shared runtime facts.'
 Assert-True ($resourceCatalogFacts -match 'KiteResourceRuntimeFactsProjector\.project') 'full resource catalog must consume shared runtime facts.'
-$recipePowerButton = Function-Body $main 'recipePowerButton'
-$recipeStatusPresentation = Function-Body $main 'recipeStatusPresentation'
 $runManagementStatusColors = Function-Body $main 'runManagementStatusColors'
-Assert-True ($recipePowerButton -match 'KiteCardRunUiProjector\.project') 'console card primary action must consume shared card-run UI state.'
-Assert-True ($recipeStatusPresentation -match 'KiteCardRunUiProjector\.project') 'console card badge must consume shared card-run UI state.'
+Assert-True ($homeFeatureViewSupport -match 'item\.projection\.primaryAction' -and $homeFeatureViewSupport -match 'item\.projection\.badgeLabel') 'Home card action and badge must consume the shared projected UI state.'
 Assert-True ($runManagementStatusColors -match 'KiteCardRunUiProjector\.project') 'run management status colors must consume shared card-run UI state.'
 $releaseActivitySurfaces = Function-Body $main 'releaseActivityDisplaySurfaces'
 $releaseInstallWizardSurface = Function-Body $main 'releaseResourceInstallWizardSurfaceIfActivityDestroyed'
@@ -487,15 +493,12 @@ Assert-True ($startupMarkReady -match '\.commit\(\)') 'First-frame ready must re
 $mainOnResume = Member-Function-Body $main 'onResume'
 $resumeConsoleSurface = Function-Body $main 'resumeConsoleSurface'
 Assert-True ($mainOnResume -match 'AppDestination\.Console -> resumeConsoleSurface\(\)') 'Activity resume must calibrate an existing Console surface instead of rebuilding it unconditionally.'
-Assert-True ($resumeConsoleSurface -match 'latestRecipes == currentRecipes' -and $resumeConsoleSurface -match 'updateVisibleConsoleCard') 'Console resume must reuse only an unchanged structure and locally rebind card state.'
+Assert-True ($resumeConsoleSurface -match 'findFragmentByTag\(TAG_HOME_FRAGMENT\)' -and $resumeConsoleSurface -match 'refreshConsoleRuntimeChrome\(\)' -and $resumeConsoleSurface -notmatch 'loadAllRecipes|prepareDropZone') 'Console resume must reuse HomeFragment and reconcile local chrome without synchronous catalog scans.'
 Assert-True ($resourceInstallRecipes -match 'WORKSPACE_SHARED_CACHE_ROOT' -and $resourceInstallRecipes -match '\$WORKSPACE_SHARED_CACHE_ROOT/\$packId') 'Bundled resources must resolve one shared toolchain-pack cache.'
 Assert-True ($resourceInstallRecipes -match 'fun resourceCachePath' -and $resourceInstallRecipes -notmatch 'localPackPath\([^\)]*\)\.substringBeforeLast') 'Resource-private cache cleanup must not be derived from the shared pack path.'
 Assert-True ($toolchainPackInstaller -match 'mirrorPackIntoSharedResourceCache' -and $toolchainPackInstaller -match 'cleanupLegacyResourcePackCopies') 'Toolchain staging must publish one shared pack and migrate legacy per-resource copies.'
 $extractRuntimePack = Function-Body $toolchainPackInstaller 'extractRuntimePack'
 Assert-True ($extractRuntimePack -match 'bundledPackDirectoryIsComplete' -and $extractRuntimePack -match '\$PACK_ID\.pending') 'Bundled pack extraction must reuse a complete pack and publish replacements through a pending directory.'
-
-$consoleRefresh = Function-Body $main 'maybeRefreshConsoleAfterRuntimeState'
-Assert-True ($consoleRefresh -match 'updateVisibleConsoleCard') 'console runtime refresh should update a visible card first.'
 
 Assert-True ($store -match 'data class KiteResourceInstallSignal') 'install store must expose KiteResourceInstallSignal.'
 Assert-True ($store -match 'val signals: StateFlow<KiteResourceInstallSignal>') 'install store must expose signals StateFlow.'

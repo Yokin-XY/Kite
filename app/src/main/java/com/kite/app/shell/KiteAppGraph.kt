@@ -44,7 +44,7 @@ internal class KiteAppGraph private constructor(context: Context) {
         )
     }
     val recipeFeatureGateway: RecipeFeatureGateway by lazy {
-        AndroidRecipeFeatureGateway.create(recipeLoader, cardGroupStore)
+        AndroidRecipeFeatureGateway.create(recipeLoader, cardGroupStore, createDropZoneManager())
     }
 
     fun createRecipeLoader(): KiteRecipeLoader = recipeLoader

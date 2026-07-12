@@ -165,7 +165,6 @@ import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.web.KiteWebShell
-import com.google.android.material.tabs.TabLayout
 import com.kite.app.R
 import com.kite.app.foundation.bootstrap.BootstrapCoordinator
 import com.kite.app.foundation.bootstrap.BootstrapSnapshot
@@ -199,6 +198,10 @@ import com.kite.app.feature.resources.ResourceInstallWizardSurface
 import com.kite.app.feature.resources.ResourceSearchFragment
 import com.kite.app.feature.resources.ResourcesFragment
 import com.kite.app.application.resources.ResourceFeatureGateway
+import com.kite.app.application.recipes.RecipeFeatureGateway
+import com.kite.app.feature.home.HomeFeatureRequest
+import com.kite.app.feature.home.HomeFeatureResultContract
+import com.kite.app.feature.home.HomeFragment
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
 import com.kite.app.ui.terminal.TerminalChromeHost
 import com.kite.app.ui.terminal.TerminalFragment
@@ -208,7 +211,6 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -243,6 +245,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var resourceInstallStore: KiteResourceInstallStore
     private lateinit var resourceManifestLoader: KiteResourceManifestLoader
     private lateinit var resourceFeatureGateway: ResourceFeatureGateway
+    private lateinit var recipeFeatureGateway: RecipeFeatureGateway
     private lateinit var themeStore: SharedPreferences
     private lateinit var appSettings: SharedPreferences
     private lateinit var rootHost: FrameLayout
@@ -305,9 +308,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private var currentRecipes: List<KiteRecipe> = emptyList()
-    private var consolePageId: String = CONSOLE_PAGE_ALL
-    private var consolePageTabsView: TabLayout? = null
-    private var consolePageBodyHost: FrameLayout? = null
     private var selectedType = KiteRecipe.TYPE_OPEN_URL
     private var selectedIconName = KiteRecipeIcon.defaultNameForType(KiteRecipe.TYPE_OPEN_URL)
     private var selectedIconType = KiteRecipeIcon.TYPE_BUILTIN
@@ -395,7 +395,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var resourceOpenRunSignature = ""
     private var resourceOpenRunStatusByResourceId: Map<String, RecipeRunStatus> = emptyMap()
     private var resourceRunUiRefreshPosted = false
-    private var lastConsoleRuntimeRefreshAt = 0L
     private var cardRunSurfaceSignature = ""
     private var cardRunReportBinding: CardRunReportBinding? = null
     private var cardRunReportRefreshScheduled = false
@@ -403,7 +402,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var pendingCardRunReportState: RecipeRuntimeState? = null
     private var resourceInstallWizardSurface: ResourceInstallWizardSurface? = null
     private var foregroundLiveTickScheduled = false
-    private val consoleCardBindings = mutableMapOf<String, RecipeCardBinding>()
+    private var consoleSystemStatusPillView: TextView? = null
+    private var consoleRuntimeBannerHost: LinearLayout? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         StartupTraceStore.markStage(this, "main.super_on_create")
@@ -412,6 +412,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         StartupTraceStore.markStage(this, "main.diagnostics_and_settings")
         val appGraph = KiteAppGraph.from(applicationContext)
         resourceFeatureGateway = appGraph.resourceFeatureGateway
+        recipeFeatureGateway = appGraph.recipeFeatureGateway
         diagnostics = appGraph.diagnostics
         diagnostics.writeCapabilityReport()
         themeStore = getSharedPreferences("kite_theme", MODE_PRIVATE)
@@ -489,6 +490,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         ))
         setContentView(rootHost)
         registerResourceFeatureResults()
+        registerHomeFeatureResults()
         StartupTraceStore.markStage(this, "main.observers_and_intent")
         updateRuntimeGateOverlay()
         observeUbuntuBootstrapState()
@@ -1511,15 +1513,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                         }
                     }
                     rebindVisibleCardRunSurfaceFromStore(runs)
-                    if (currentScreen == AppDestination.Console && consoleCardBindings.isNotEmpty()) {
-                        currentRecipes.forEach { recipe ->
-                            val state = CardRunStore.currentForRecipe(recipe.id)
-                                ?: runtimeStates[recipe.id]
-                                ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown")
-                            runtimeStates[recipe.id] = state
-                            updateVisibleConsoleCard(recipe, state)
-                        }
-                    }
                     consumeResourceOpenRunSignals(runs)
                     renderRuntimePanelCounts()
                     resourceInstallWizardSurface?.tick()
@@ -2025,7 +2018,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         updateRuntimeGateOverlay()
         maybeAutoShowUbuntuRuntimePanel(state)
         if (::root.isInitialized && currentScreen == AppDestination.Console && shouldRefreshConsoleForRuntimeState(previous, state)) {
-            showConsole()
+            refreshConsoleRuntimeChrome()
         }
     }
 
@@ -2428,43 +2421,57 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showConsole() {
         enterScreen(AppDestination.Console)
-        dropZoneStatus = dropZoneManager.prepareDropZone()
-        currentRecipes = recipeLoader.loadAllRecipes()
-        refreshRecipeRuntimeStates(currentRecipes)
         val focusedRecipe = focusedRunRecipe()
         if (this is CardRunActivity && focusedRecipe != null) {
             showCardRunSurface(focusedRecipe)
             return
         }
-        if (consolePages().none { it.id == consolePageId }) consolePageId = CONSOLE_PAGE_ALL
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
-        root.addView(consoleHeader())
-        ubuntuRuntimeBanner()?.let { root.addView(it) }
-        val pageHost = FrameLayout(this).also { consolePageBodyHost = it }
-        renderConsolePageBody(pageHost)
-        root.addView(pageHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(consoleShellHeader())
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            consoleRuntimeBannerHost = this
+            ubuntuRuntimeBanner()?.let(::addView)
+        })
+        val content = FrameLayout(this).apply {
+            id = R.id.kite_feature_content
+            setBackgroundColor(tokens.pageBackground)
+        }
+        root.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomNavigation())
+        val existing = supportFragmentManager.findFragmentByTag(TAG_HOME_FRAGMENT) as? HomeFragment
+        val fragment = existing ?: HomeFragment.newInstance(ubuntuRuntimeState.blocksUbuntuActions)
+        fragment.updateRuntimeBlocked(ubuntuRuntimeState.blocksUbuntuActions)
+        supportFragmentManager.beginTransaction().apply {
+            if (fragment.isDetached) {
+                attach(fragment)
+            } else if (!fragment.isAdded) {
+                add(R.id.kite_feature_content, fragment, TAG_HOME_FRAGMENT)
+            } else {
+                replace(R.id.kite_feature_content, fragment, TAG_HOME_FRAGMENT)
+            }
+        }.commitAllowingStateLoss()
     }
 
     private fun resumeConsoleSurface() {
-        val existingSurface = consolePageBodyHost
-        val latestDropZoneStatus = dropZoneManager.prepareDropZone()
-        val latestRecipes = recipeLoader.loadAllRecipes()
-        val canReuse = existingSurface?.parent != null &&
-            root.visibility == View.VISIBLE &&
-            latestDropZoneStatus == dropZoneStatus &&
-            latestRecipes == currentRecipes
-        dropZoneStatus = latestDropZoneStatus
-        if (!canReuse) {
+        val fragment = supportFragmentManager.findFragmentByTag(TAG_HOME_FRAGMENT) as? HomeFragment
+        if (fragment == null || fragment.isDetached || fragment.view?.parent == null || root.visibility != View.VISIBLE) {
             showConsole()
             return
         }
-        currentRecipes = latestRecipes
-        refreshRecipeRuntimeStates(currentRecipes)
-        currentRecipes.forEach { recipe ->
-            runtimeStates[recipe.id]?.let { state -> updateVisibleConsoleCard(recipe, state) }
+        fragment.updateRuntimeBlocked(ubuntuRuntimeState.blocksUbuntuActions)
+        refreshConsoleRuntimeChrome()
+    }
+
+    private fun refreshConsoleRuntimeChrome() {
+        consoleSystemStatusPillView?.let { bindSystemStatusPill(it, ubuntuRuntimeState) }
+        consoleRuntimeBannerHost?.apply {
+            removeAllViews()
+            ubuntuRuntimeBanner()?.let(::addView)
         }
+        (supportFragmentManager.findFragmentByTag(TAG_HOME_FRAGMENT) as? HomeFragment)
+            ?.updateRuntimeBlocked(ubuntuRuntimeState.blocksUbuntuActions)
     }
 
     private fun refreshRecipeRuntimeStates(recipes: List<KiteRecipe> = currentRecipes) {
@@ -2583,9 +2590,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         cardRunReportBinding = null
         resourceInstallWizardSurface?.dispose()
         resourceInstallWizardSurface = null
-        consoleCardBindings.clear()
-        consolePageTabsView = null
-        consolePageBodyHost = null
+        consoleSystemStatusPillView = null
+        consoleRuntimeBannerHost = null
         groupSelectionDetailView = null
         val transaction = supportFragmentManager.beginTransaction()
         var changed = false
@@ -2602,6 +2608,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         if (detachTerminal) {
             detachFragment(TERMINAL_FRAGMENT_TAG)
         }
+        detachFragment(TAG_HOME_FRAGMENT)
         detachFragment(CARD_RUN_TERMINAL_FRAGMENT_TAG)
         // T6b/T7:切走时移除 Fragment(RecipeRawJson、ResourceManage)并恢复 root 可见性
         supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT)?.let { fragment ->
@@ -2882,6 +2889,46 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         supportFragmentManager.beginTransaction()
             .replace(R.id.kite_feature_content, fragment, tag)
             .commitAllowingStateLoss()
+    }
+
+    private fun registerHomeFeatureResults() {
+        supportFragmentManager.setFragmentResultListener(
+            HomeFeatureResultContract.REQUEST_KEY,
+            this
+        ) { _, bundle ->
+            when (val request = HomeFeatureResultContract.parse(bundle)) {
+                is HomeFeatureRequest.OpenEditor -> lifecycleScope.launch {
+                    val recipes = recipeFeatureGateway.loadRecipes(forceRefresh = false)
+                    currentRecipes = recipes
+                    val recipe = recipes.firstOrNull { it.id == request.recipeId }
+                    if (recipe == null) {
+                        Toast.makeText(this@MainActivity, "卡片目录正在更新，请稍后重试", Toast.LENGTH_SHORT).show()
+                    } else {
+                        showRecipeEditor(recipe)
+                    }
+                }
+                is HomeFeatureRequest.SubmitAction -> lifecycleScope.launch {
+                    val recipes = recipeFeatureGateway.loadRecipes(forceRefresh = false)
+                    currentRecipes = recipes
+                    val recipe = recipes.firstOrNull { it.id == request.recipeId }
+                        ?: CardRunStore.registeredRecipe(request.recipeId)
+                    if (recipe == null) {
+                        Toast.makeText(this@MainActivity, "卡片目录正在更新，请稍后重试", Toast.LENGTH_SHORT).show()
+                    } else {
+                        submitRecipeAction(
+                            KiteRecipeActionRequest(
+                                recipe = recipe,
+                                intent = request.intent,
+                                source = request.source,
+                                openTaskOnStart = request.openTaskOnStart,
+                                instanceId = request.instanceId
+                            )
+                        )
+                    }
+                }
+                null -> Unit
+            }
+        }
     }
 
     private fun registerResourceFeatureResults() {
@@ -5652,7 +5699,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         return ResourceRequirementResolution(requirement = requirement, resource = providers.firstOrNull())
     }
 
-    private fun consoleHeader(): View = LinearLayout(this).apply {
+    private fun consoleShellHeader(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(18), dp(10), dp(18), dp(10))
         addView(row {
@@ -5680,62 +5727,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 }
             })
         })
-
-        addView(consolePageTabs())
-    }
-
-    private fun consolePageTabs(): View = row {
-        setPadding(0, dp(12), 0, 0)
-        val pages = consolePages()
-        val selectedId = consolePageId.takeIf { selected -> pages.any { it.id == selected } } ?: CONSOLE_PAGE_ALL
-        consolePageId = selectedId
-        addView(TabLayout(context).apply {
-            consolePageTabsView = this
-            contentDescription = "配置分页"
-            tabMode = TabLayout.MODE_SCROLLABLE
-            tabGravity = TabLayout.GRAVITY_START
-            isFocusable = false
-            isFocusableInTouchMode = false
-            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-            setBackgroundColor(Color.TRANSPARENT)
-            setSelectedTabIndicatorColor(tokens.primaryStrong)
-            setTabTextColors(tokens.textSecondary, tokens.primaryStrong)
-            pages.forEach { page ->
-                addTab(newTab().setText(page.label).setTag(page.id), page.id == selectedId)
-            }
-            addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
-                override fun onTabSelected(tab: TabLayout.Tab) {
-                    selectConsolePage(tab.tag as? String ?: CONSOLE_PAGE_ALL)
-                }
-
-                override fun onTabUnselected(tab: TabLayout.Tab) = Unit
-                override fun onTabReselected(tab: TabLayout.Tab) = Unit
-            })
-        }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        addView(TextView(context).apply {
-            text = "+"
-            textSize = 23f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
-            background = roundedBox(tokens.surface, tokens.border, dp(18).toFloat())
-            setOnClickListener { showAddConsolePageDialog() }
-        }, LinearLayout.LayoutParams(dp(42), dp(38)).apply {
-            setMargins(dp(8), dp(5), 0, 0)
-        })
-    }
-
-    private fun consolePages(): List<ConsolePage> {
-        val opened = currentRecipes.count { isConsoleOpenedRecipe(it) }
-        val stopped = currentRecipes.count { isConsoleStoppedRecipe(it) }
-        val base = listOf(
-            ConsolePage(CONSOLE_PAGE_ALL, "▦  全部 ${currentRecipes.size}"),
-            ConsolePage(CONSOLE_PAGE_OPENED, "▶  已打开 $opened"),
-            ConsolePage(CONSOLE_PAGE_STOPPED, "■  已停止 $stopped")
-        )
-        return base + cardGroupStore.groups().map { group ->
-            ConsolePage(consoleGroupPageId(group.id), group.name)
-        }
     }
 
     private fun systemTitleButton(): View = row {
@@ -5748,7 +5739,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             includeFontPadding = false
             setTextColor(tokens.textPrimary)
         })
-        val statusPill = systemStatusPill()
+        val statusPill = systemStatusPill().also { consoleSystemStatusPillView = it }
         addView(statusPill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
             setMargins(dp(10), dp(2), 0, 0)
         })
@@ -5757,133 +5748,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         statusPill.setOnClickListener { openPanel() }
     }
 
-    private fun consolePageBody(): View {
-        val recipes = recipesForConsolePage()
-        return if (recipes.isEmpty() && consolePageId != CONSOLE_PAGE_ALL) {
-            emptyConsolePage(consolePages().firstOrNull { it.id == consolePageId }?.label.orEmpty())
-        } else {
-            recipeGrid(recipes)
-        }.withConsolePageSwipe()
-    }
-
-    private fun recipesForConsolePage(): List<KiteRecipe> =
-        when (consolePageId) {
-            CONSOLE_PAGE_ALL -> currentRecipes
-            CONSOLE_PAGE_OPENED -> currentRecipes.filter { isConsoleOpenedRecipe(it) }
-            CONSOLE_PAGE_STOPPED -> currentRecipes.filter { isConsoleStoppedRecipe(it) }
-            else -> consoleGroupId(consolePageId)
-                ?.let { groupId -> currentRecipes.filter { recipe -> recipeInGroup(recipe, groupId) } }
-                ?: currentRecipes
-        }
-
-    private fun isConsoleOpenedRecipe(recipe: KiteRecipe): Boolean =
-        when (runtimeStateFor(recipe).status) {
-            RecipeRunStatus.Starting,
-            RecipeRunStatus.Running,
-            RecipeRunStatus.WaitingTerminal,
-            RecipeRunStatus.AlreadyRunning,
-            RecipeRunStatus.Opened,
-            RecipeRunStatus.Stopping -> true
-            else -> false
-        }
-
-    private fun isConsoleStoppedRecipe(recipe: KiteRecipe): Boolean =
-        when (runtimeStateFor(recipe).status) {
-            RecipeRunStatus.Stopped,
-            RecipeRunStatus.Completed,
-            RecipeRunStatus.Failed,
-            RecipeRunStatus.BridgeUnavailable -> true
-            else -> false
-        }
-
-    private fun renderConsolePageBody() {
-        renderConsolePageBody(consolePageBodyHost ?: return)
-    }
-
-    private fun renderConsolePageBody(host: FrameLayout) {
-        consoleCardBindings.clear()
-        host.removeAllViews()
-        host.addView(consolePageBody(), FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-    }
-
-    private fun View.withConsolePageSwipe(): View {
-        val page = this
-        return object : FrameLayout(this@MainActivity) {
-            private var downX = 0f
-            private var downY = 0f
-
-            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        downX = event.x
-                        downY = event.y
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        val dx = event.x - downX
-                        val dy = event.y - downY
-                        if (kotlin.math.abs(dx) > dp(54) && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.4f) {
-                            selectConsolePageOffset(if (dx < 0) 1 else -1)
-                            return true
-                        }
-                    }
-                }
-                return super.dispatchTouchEvent(event)
-            }
-        }.apply {
-            addView(page, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
-        }
-    }
-
-    private fun selectConsolePageOffset(offset: Int) {
-        val pages = consolePages()
-        val index = pages.indexOfFirst { it.id == consolePageId }
-        val next = (index.takeIf { it >= 0 } ?: 0) + offset
-        pages.getOrNull(next)?.let { selectConsolePage(it.id) }
-    }
-
-    private fun selectConsolePage(pageId: String) {
-        if (consolePageId == pageId) return
-        consolePageId = pageId
-        consolePageTabsView?.let { tabs ->
-            for (index in 0 until tabs.tabCount) {
-                val tab = tabs.getTabAt(index) ?: continue
-                if (tab.tag == pageId && tabs.selectedTabPosition != index) {
-                    tabs.selectTab(tab)
-                    break
-                }
-            }
-        }
-        renderConsolePageBody()
-    }
-
-    private fun emptyConsolePage(label: String): View =
-        FrameLayout(this).apply {
-            addView(TextView(context).apply {
-                text = label.removePrefix("▶  ").removePrefix("■  ").ifBlank { "分页" }
-                textSize = 13f
-                gravity = Gravity.CENTER
-                setTextColor(tokens.textTertiary)
-                background = roundedBox(tokens.surface, tokens.border, dp(22).toFloat())
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(88), Gravity.TOP).apply {
-                setMargins(dp(18), dp(16), dp(18), 0)
-            })
-        }
-
-    private fun showAddConsolePageDialog() {
-        showCardGroupDialog(selectedGroupId = consoleGroupId(consolePageId).orEmpty()) { group ->
-            consolePageId = consoleGroupPageId(group.id)
-            showConsole()
-        }
-    }
-
     private fun systemStatusPill(): TextView = TextView(this).apply {
-        val state = ubuntuRuntimeState
+        bindSystemStatusPill(this, ubuntuRuntimeState)
+    }
+
+    private fun bindSystemStatusPill(view: TextView, state: UbuntuRuntimeUiState) {
+        view.apply {
         text = systemStatusLabel(state)
         textSize = 10.5f
         typeface = Typeface.DEFAULT_BOLD
@@ -5899,6 +5769,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         setTextColor(color)
         setPadding(dp(8), 0, dp(8), 0)
         background = roundedBox(tintBackground(color), tintBackgroundBorder(color), dp(13).toFloat())
+        }
     }
 
     private fun systemStatusLabel(state: UbuntuRuntimeUiState): String = when {
@@ -11068,349 +10939,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         })
     }
 
-    private fun recipeGrid(recipes: List<KiteRecipe> = currentRecipes): View {
-        val swipeRefresh = SwipeRefreshLayout(this).apply {
-            setColorSchemeColors(tokens.primaryStrong)
-            setProgressBackgroundColorSchemeColor(tokens.surfaceElevated)
-            isRefreshing = isDropZoneRefreshing
-            setOnRefreshListener {
-                refreshRecipeRuntimeStates(currentRecipes)
-                refreshDropZoneRecipes(showToast = false)
-            }
-        }
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-        }
-        val grid = GridLayout(this).apply {
-            columnCount = 2
-            setPadding(dp(10), dp(8), dp(10), dp(92))
-            clipToPadding = false
-        }
-        val cardWidth = ((resources.displayMetrics.widthPixels - dp(36)) / 2).coerceAtLeast(dp(132))
-        recipes.forEach { recipe ->
-            grid.addView(recipeCard(recipe), GridLayout.LayoutParams().apply {
-                width = cardWidth
-                height = dp(130)
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED)
-                setMargins(dp(4), dp(4), dp(4), dp(8))
-            })
-        }
-        scroll.addView(grid)
-        swipeRefresh.addView(scroll, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        return swipeRefresh
-    }
-
-    private fun recipeCard(recipe: KiteRecipe): View = FrameLayout(this).apply {
-        val runtimeState = runtimeStateFor(recipe)
-        val ubuntuBlocked = isUbuntuActionBlocked(recipe)
-        background = roundedBox(tokens.cardBackground, tokens.border, dp(24).toFloat())
-        elevation = dp(1).toFloat()
-        isClickable = true
-        setOnClickListener { showRecipeEditor(recipe) }
-
-        addView(recipeIconTile(recipe, dp(38), 18f).apply {
-            layoutParams = FrameLayout.LayoutParams(dp(38), dp(38), Gravity.START or Gravity.TOP).apply {
-                setMargins(dp(13), dp(13), 0, 0)
-            }
-        })
-        val statusHost = FrameLayout(context)
-        applyRecipeStatusBadge(statusHost, runtimeState)
-        addView(statusHost, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26), Gravity.END or Gravity.TOP).apply {
-            setMargins(0, dp(14), dp(13), 0)
-        })
-        addView(recipeCardName(recipe.name), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
-            setMargins(dp(15), dp(58), dp(92), 0)
-        })
-        addView(recipeCardCategory(recipe), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
-            setMargins(dp(15), dp(78), dp(15), 0)
-        })
-        val cueHost = FrameLayout(context)
-        cueHost.addView(recipeStepCue(recipe, runtimeState), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        addView(cueHost, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.BOTTOM).apply {
-            setMargins(dp(15), 0, dp(96), dp(20))
-        })
-        val actionHost = FrameLayout(context)
-        actionHost.addView(recipeActionArea(recipe, runtimeState, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        addView(actionHost, FrameLayout.LayoutParams(dp(82), dp(50), Gravity.END or Gravity.BOTTOM).apply {
-            setMargins(0, 0, dp(11), dp(8))
-        })
-        consoleCardBindings[recipe.id] = RecipeCardBinding(
-            recipeId = recipe.id,
-            statusHost = statusHost,
-            cueHost = cueHost,
-            actionHost = actionHost
-        )
-    }
-
-    private fun updateVisibleConsoleCard(recipe: KiteRecipe, state: RecipeRuntimeState) {
-        val binding = consoleCardBindings[recipe.id] ?: return
-        if (currentScreen != AppDestination.Console) return
-        val ubuntuBlocked = isUbuntuActionBlocked(recipe)
-        applyRecipeStatusBadge(binding.statusHost, state)
-        binding.cueHost.removeAllViews()
-        binding.cueHost.addView(recipeStepCue(recipe, state), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        binding.actionHost.removeAllViews()
-        binding.actionHost.addView(recipeActionArea(recipe, state, ubuntuBlocked), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    }
-
-    private fun recipeActionArea(recipe: KiteRecipe, state: RecipeRuntimeState, ubuntuBlocked: Boolean): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            addView(recipePowerButton(recipe, state, ubuntuBlocked), LinearLayout.LayoutParams(dp(66), dp(31)).apply {
-                setMargins(0, 0, 0, dp(4))
-            })
-            addView(recipeActionSubline(state), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(13)))
-        }
-
-    private fun recipePowerButton(recipe: KiteRecipe, state: RecipeRuntimeState, ubuntuBlocked: Boolean): TextView =
-        TextView(this).apply {
-            val projection = KiteCardRunUiProjector.project(state.status, ubuntuBlocked)
-            text = projection.primaryActionLabel
-            textSize = 12.5f
-            includeFontPadding = false
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            alpha = if (projection.primaryActionEnabled) 1f else 0.62f
-            val fill = when (projection.primaryAction) {
-                KiteRunPrimaryAction.Retry -> tokens.danger
-                KiteRunPrimaryAction.Stop -> tokens.warning
-                else -> tokens.primaryStrong
-            }
-            background = roundedBox(fill, fill, dp(16).toFloat())
-            isEnabled = projection.primaryActionEnabled
-            if (projection.primaryActionEnabled) setOnClickListener {
-                handleRecipeActionWithRouter(recipe)
-            }
-        }
-
-    private fun recipeActionSubline(state: RecipeRuntimeState): TextView =
-        TextView(this).apply {
-            textSize = 9.5f
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(recipeActionSublineColor(state))
-            fun refresh() {
-                text = recipeActionSublineText(state)
-                if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
-                    postDelayed({
-                        if (isAttachedToWindow) refresh()
-                    }, 1000L)
-                }
-            }
-            refresh()
-        }
-
-    private fun recipeActionSublineColor(state: RecipeRuntimeState): Int =
-        when (state.status) {
-            RecipeRunStatus.Failed,
-            RecipeRunStatus.BridgeUnavailable -> tokens.danger
-            else -> tokens.textSecondary
-        }
-
-    private fun recipeActionSublineText(state: RecipeRuntimeState): String =
-        when {
-            state.status == RecipeRunStatus.Unknown -> ""
-            state.status == RecipeRunStatus.Failed ||
-                state.status == RecipeRunStatus.BridgeUnavailable -> "已停止 · ${formatCardRunElapsed(state)}"
-            state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened -> "运行 · ${formatCardRunElapsed(state)}"
-            else -> "上次 · ${formatLastRunTime(state.updatedAt)}"
-        }
-
-    private fun recipeCardName(text: String): TextView = TextView(this).apply {
-        val title = compactRecipeCardTitle(text)
-        this.text = title.text
-        textSize = title.textSizeSp
-        includeFontPadding = false
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(tokens.textPrimary)
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.MIDDLE
-    }
-
-    private fun compactRecipeCardTitle(raw: String): RecipeCardTitleText {
-        val title = raw.trim().ifBlank { "未命名卡片" }
-        val bytes = utf8ByteCount(title)
-        val overflow = (bytes - RECIPE_CARD_TITLE_SHRINK_AFTER_BYTES).coerceAtLeast(0)
-        val range = (RECIPE_CARD_TITLE_MAX_BYTES - RECIPE_CARD_TITLE_SHRINK_AFTER_BYTES).coerceAtLeast(1)
-        val progress = (overflow.toFloat() / range.toFloat()).coerceIn(0f, 1f)
-        val textSize = RECIPE_CARD_TITLE_MAX_TEXT_SP -
-            ((RECIPE_CARD_TITLE_MAX_TEXT_SP - RECIPE_CARD_TITLE_MIN_TEXT_SP) * progress)
-        return RecipeCardTitleText(
-            text = middleEllipsizeByUtf8Bytes(title, RECIPE_CARD_TITLE_MAX_BYTES),
-            textSizeSp = textSize
-        )
-    }
-
-    private fun middleEllipsizeByUtf8Bytes(text: String, maxBytes: Int): String {
-        if (utf8ByteCount(text) <= maxBytes) return text
-        val budget = (maxBytes - utf8ByteCount(RECIPE_CARD_TITLE_ELLIPSIS)).coerceAtLeast(0)
-        if (budget <= 0) return RECIPE_CARD_TITLE_ELLIPSIS
-        val prefixBudget = (budget * 3) / 5
-        val suffixBudget = budget - prefixBudget
-        return takeUtf8Prefix(text, prefixBudget) +
-            RECIPE_CARD_TITLE_ELLIPSIS +
-            takeUtf8Suffix(text, suffixBudget)
-    }
-
-    private fun takeUtf8Prefix(text: String, maxBytes: Int): String {
-        val builder = StringBuilder()
-        var index = 0
-        var bytes = 0
-        while (index < text.length) {
-            val codePoint = text.codePointAt(index)
-            val nextBytes = utf8ByteCount(codePoint)
-            if (bytes + nextBytes > maxBytes) break
-            builder.appendCodePoint(codePoint)
-            bytes += nextBytes
-            index += Character.charCount(codePoint)
-        }
-        return builder.toString()
-    }
-
-    private fun takeUtf8Suffix(text: String, maxBytes: Int): String {
-        val codePoints = mutableListOf<Int>()
-        var index = text.length
-        var bytes = 0
-        while (index > 0) {
-            val codePoint = text.codePointBefore(index)
-            val nextBytes = utf8ByteCount(codePoint)
-            if (bytes + nextBytes > maxBytes) break
-            codePoints.add(codePoint)
-            bytes += nextBytes
-            index -= Character.charCount(codePoint)
-        }
-        val builder = StringBuilder()
-        for (position in codePoints.indices.reversed()) {
-            builder.appendCodePoint(codePoints[position])
-        }
-        return builder.toString()
-    }
-
-    private fun utf8ByteCount(text: String): Int {
-        var index = 0
-        var bytes = 0
-        while (index < text.length) {
-            val codePoint = text.codePointAt(index)
-            bytes += utf8ByteCount(codePoint)
-            index += Character.charCount(codePoint)
-        }
-        return bytes
-    }
-
-    private fun utf8ByteCount(codePoint: Int): Int =
-        when {
-            codePoint <= 0x7F -> 1
-            codePoint <= 0x7FF -> 2
-            codePoint <= 0xFFFF -> 3
-            else -> 4
-        }
-
-    private fun recipeCardCategory(recipe: KiteRecipe): TextView = TextView(this).apply {
-        text = recipeCategoryLabel(recipe)
-        textSize = 9.8f
-        includeFontPadding = false
-        setTextColor(tokens.textTertiary)
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-    }
-
-    private fun recipeStepCue(recipe: KiteRecipe, state: RecipeRuntimeState): TextView = TextView(this).apply {
-        text = recipeStepCueText(recipe, state)
-        textSize = 10.4f
-        includeFontPadding = false
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(recipeStepCueColor(state))
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-    }
-
-    private fun applyRecipeStatusBadge(host: FrameLayout, state: RecipeRuntimeState) {
-        host.removeAllViews()
-        recipeStatusBadge(state)?.let { badge ->
-            host.addView(badge, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)))
-        }
-    }
-
-    private fun recipeStatusBadge(state: RecipeRuntimeState): View? {
-        val badge = recipeStatusPresentation(state) ?: return null
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(dp(8), 0, dp(9), 0)
-            background = roundedBox(badge.background, Color.TRANSPARENT, dp(13).toFloat(), 0)
-            addView(View(context).apply {
-                background = roundedBox(badge.color, Color.TRANSPARENT, dp(4).toFloat(), 0)
-                layoutParams = LinearLayout.LayoutParams(dp(6), dp(6)).apply {
-                    setMargins(0, 0, dp(5), 0)
-                }
-            })
-            addView(TextView(context).apply {
-                text = badge.label
-                textSize = 10.5f
-                includeFontPadding = false
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(badge.color)
-                maxLines = 1
-            })
-        }
-    }
-
-    private fun recipeStatusPresentation(state: RecipeRuntimeState): RecipeStatusBadge? {
-        val projection = KiteCardRunUiProjector.project(state.status)
-        val label = projection.badgeLabel ?: return null
-        val colors = cardRunUiToneColors(projection.tone)
-        return RecipeStatusBadge(label, colors.text, colors.background)
-    }
-
-    private fun recipeCategoryLabel(recipe: KiteRecipe): String =
-        recipeGroupLabel(recipe).ifBlank { "未分组" }
-
-    private fun recipeStepCueText(recipe: KiteRecipe, state: RecipeRuntimeState): String {
-        val steps = recipe.steps
-        if (steps.isEmpty()) return "无步骤"
-        val isLive = state.status == RecipeRunStatus.Starting ||
-            state.status == RecipeRunStatus.Stopping ||
-            state.status == RecipeRunStatus.Running ||
-            state.status == RecipeRunStatus.WaitingTerminal ||
-            state.status == RecipeRunStatus.AlreadyRunning ||
-            state.status == RecipeRunStatus.Opened
-        val isProblem = state.status == RecipeRunStatus.Failed ||
-            state.status == RecipeRunStatus.BridgeUnavailable
-        val total = (state.stepCount.takeIf { it > 0 } ?: steps.size).coerceAtLeast(1)
-        return if (isLive || isProblem) {
-            val index = state.currentStepIndex.coerceIn(0, total - 1)
-            "${recipeStepKind(steps.getOrNull(index) ?: steps.firstOrNull())} · ${index + 1}/$total"
-        } else {
-            val firstKind = recipeStepKind(steps.firstOrNull())
-            if (total == 1) firstKind else "$firstKind · ${total}项"
-        }
-    }
-
-    private fun recipeStepCueColor(state: RecipeRuntimeState): Int =
-        when {
-            state.status == RecipeRunStatus.Failed ||
-                state.status == RecipeRunStatus.BridgeUnavailable -> tokens.danger
-            state.status == RecipeRunStatus.Starting ||
-                state.status == RecipeRunStatus.Stopping ||
-                state.status == RecipeRunStatus.Running ||
-                state.status == RecipeRunStatus.WaitingTerminal ||
-                state.status == RecipeRunStatus.AlreadyRunning ||
-                state.status == RecipeRunStatus.Opened -> tokens.success
-            else -> tokens.textSecondary
-        }
-
-    private fun recipeStepKind(step: KiteRecipeStep?): String = when (step?.type) {
-        KiteRecipe.STEP_SHELL -> "命令"
-        KiteRecipe.STEP_TERMINAL -> "终端"
-        KiteRecipe.STEP_OPEN_WEB -> "网页"
-        KiteRecipe.STEP_ANDROID_ACTION -> "本机"
-        else -> "卡片"
-    }
-
     private fun isUbuntuActionBlocked(recipe: KiteRecipe): Boolean =
         ubuntuRuntimeState.blocksUbuntuActions && recipe.hasUbuntuStep()
 
@@ -13526,7 +13054,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             state.lastMeaningfulOutput,
             state.lastError
         )
-        maybeRefreshConsoleAfterRuntimeState(recipe, state, status)
     }
 
     private fun shouldIgnoreRuntimeStateAfterUserStop(
@@ -13585,31 +13112,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
         if (focusedRunInstanceId == instanceId && this !is CardRunActivity) {
             focusedRunInstanceId = null
-        }
-    }
-
-    private fun maybeRefreshConsoleAfterRuntimeState(
-        recipe: KiteRecipe,
-        state: RecipeRuntimeState,
-        status: RecipeRunStatus
-    ) {
-        if (this is CardRunActivity || currentScreen != AppDestination.Console) return
-        if (consoleCardBindings.containsKey(recipe.id)) {
-            updateVisibleConsoleCard(recipe, state)
-            return
-        }
-        val important = status == RecipeRunStatus.Completed ||
-            status == RecipeRunStatus.Failed ||
-            status == RecipeRunStatus.BridgeUnavailable ||
-            status == RecipeRunStatus.Stopped ||
-            status == RecipeRunStatus.Opened ||
-            status == RecipeRunStatus.WaitingTerminal
-        if (!important) return
-        val now = System.currentTimeMillis()
-        if (now - lastConsoleRuntimeRefreshAt < 600L) return
-        lastConsoleRuntimeRefreshAt = now
-        root.post {
-            if (currentScreen == AppDestination.Console) showConsole()
         }
     }
 
@@ -13899,20 +13401,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun cardGroupName(groupId: String): String? =
         groupId.takeIf { it.isNotBlank() }
             ?.let { id -> cardGroupStore.groups().firstOrNull { it.id == id }?.name }
-
-    private fun recipeInGroup(recipe: KiteRecipe, groupId: String): Boolean {
-        if (recipe.groupId == groupId) return true
-        val groupName = cardGroupName(groupId) ?: return false
-        return recipe.groupId.isBlank() && KiteRecipe.normalizeCategory(recipe.category) == groupName
-    }
-
-    private fun consoleGroupPageId(groupId: String): String =
-        "$CONSOLE_PAGE_GROUP_PREFIX$groupId"
-
-    private fun consoleGroupId(pageId: String): String? =
-        pageId.takeIf { it.startsWith(CONSOLE_PAGE_GROUP_PREFIX) }
-            ?.removePrefix(CONSOLE_PAGE_GROUP_PREFIX)
-            ?.takeIf { it.isNotBlank() }
 
     private fun recipeEditorRunActions(recipe: KiteRecipe): View =
         LinearLayout(this).apply {
@@ -17584,18 +17072,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val elapsedTextView: TextView?,
         val statusBadgeTextView: TextView?
     )
-    private data class RecipeCardBinding(
-        val recipeId: String,
-        val statusHost: FrameLayout,
-        val cueHost: FrameLayout,
-        val actionHost: FrameLayout
-    )
-
-    private data class ConsolePage(
-        val id: String,
-        val label: String
-    )
-
     private data class ResourcePreviewCard(
         val title: String,
         val subtitle: String,
@@ -17636,17 +17112,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val text: Int,
         val background: Int,
         val border: Int
-    )
-
-    private data class RecipeStatusBadge(
-        val label: String,
-        val color: Int,
-        val background: Int
-    )
-
-    private data class RecipeCardTitleText(
-        val text: String,
-        val textSizeSp: Float
     )
 
     private data class RuntimePermissionState(
@@ -17717,12 +17182,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val TAG_RESOURCE_MANAGE_FRAGMENT = "kite-resource-manage"
         private const val TAG_RESOURCE_SEARCH_FRAGMENT = "kite-resource-search"
         private const val TAG_RESOURCES_FRAGMENT = "kite-resources"
+        private const val TAG_HOME_FRAGMENT = "kite-home"
         private const val TAG_RESOURCE_DETAIL_FRAGMENT = "kite-resource-detail"
         private const val TERMINAL_FRAGMENT_INITIAL_SESSION_ARG = "initial_session_id"
-        private const val CONSOLE_PAGE_ALL = "all"
-        private const val CONSOLE_PAGE_OPENED = "opened"
-        private const val CONSOLE_PAGE_STOPPED = "stopped"
-        private const val CONSOLE_PAGE_GROUP_PREFIX = "group:"
         private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
@@ -17779,11 +17241,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val STATE_WORKBENCH_URL = "kite_workbench_url"
         private const val STATE_RECIPE_DRAFT = "kite_recipe_draft"
         private const val RECIPE_DRAFT_RESTORE_WINDOW_MS = 6L * 60L * 60L * 1000L
-        private const val RECIPE_CARD_TITLE_MAX_TEXT_SP = 13.2f
-        private const val RECIPE_CARD_TITLE_MIN_TEXT_SP = 10.0f
-        private const val RECIPE_CARD_TITLE_SHRINK_AFTER_BYTES = 12
-        private const val RECIPE_CARD_TITLE_MAX_BYTES = 20
-        private const val RECIPE_CARD_TITLE_ELLIPSIS = "…"
         private val terminalFlowFinishedStatuses = setOf(
             ManagedTerminalStatus.EXITED,
             ManagedTerminalStatus.FAILED,

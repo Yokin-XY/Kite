@@ -1,7 +1,9 @@
 package com.kite.app.platform.recipes
 
 import com.kite.app.application.recipes.RecipeFeatureChange
+import com.kite.app.application.recipes.RecipeExternalRefreshResult
 import com.kite.app.application.recipes.RecipeFeatureGateway
+import com.kite.app.dropzone.KiteDropZoneManager
 import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteCardGroupStore
 import com.kite.app.recipe.KiteRecipe
@@ -20,7 +22,8 @@ import kotlinx.coroutines.withContext
 
 internal class AndroidRecipeFeatureGateway(
     private val recipeLoader: KiteRecipeLoader,
-    private val groupStore: KiteCardGroupStore
+    private val groupStore: KiteCardGroupStore,
+    private val dropZoneManager: KiteDropZoneManager
 ) : RecipeFeatureGateway {
     private val mutationChanges = MutableSharedFlow<RecipeFeatureChange>(extraBufferCapacity = 8)
 
@@ -78,10 +81,31 @@ internal class AndroidRecipeFeatureGateway(
             )
         }
 
+    override suspend fun refreshExternalRecipes(): RecipeExternalRefreshResult =
+        withContext(Dispatchers.IO) { dropZoneManager.scanAndImport() }
+            .let { result ->
+                RecipeExternalRefreshResult(
+                    message = result.message,
+                    imported = result.imported,
+                    skipped = result.skipped,
+                    invalid = result.invalid
+                )
+            }
+            .also {
+                mutationChanges.tryEmit(
+                    RecipeFeatureChange(reason = "external_recipes_refreshed", catalogInvalidated = true)
+                )
+            }
+
     companion object {
         fun create(
             recipeLoader: KiteRecipeLoader,
-            groupStore: KiteCardGroupStore
-        ): AndroidRecipeFeatureGateway = AndroidRecipeFeatureGateway(recipeLoader, groupStore)
+            groupStore: KiteCardGroupStore,
+            dropZoneManager: KiteDropZoneManager
+        ): AndroidRecipeFeatureGateway = AndroidRecipeFeatureGateway(
+            recipeLoader,
+            groupStore,
+            dropZoneManager
+        )
     }
 }

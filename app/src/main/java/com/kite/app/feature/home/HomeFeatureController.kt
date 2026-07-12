@@ -32,7 +32,11 @@ internal class HomeFeatureController(
                     null
                 }
                 HomeFeatureAction.ReconcileRuns -> {
-                    publish(currentRecipes(), HomeCatalogPhase.Ready, null)
+                    publish(
+                        currentRecipes(),
+                        mutableState.value.phase,
+                        mutableState.value.errorMessage
+                    )
                     null
                 }
                 is HomeFeatureAction.SetRuntimeBlocked -> {
@@ -43,6 +47,8 @@ internal class HomeFeatureController(
                     null
                 }
                 is HomeFeatureAction.Primary -> requestPrimary(action.recipeId)
+                is HomeFeatureAction.CreateGroup -> createGroup(action.name)
+                HomeFeatureAction.RefreshExternalRecipes -> refreshExternalRecipes()
             }
         }
 
@@ -105,6 +111,49 @@ internal class HomeFeatureController(
                 source = KiteRecipeActionSource.ConsoleCard,
                 openTaskOnStart = item.recipe.launch.openInstance
             )
+        )
+    }
+
+    private suspend fun createGroup(rawName: String): HomeFeatureEffect {
+        val name = rawName.trim()
+        if (name.isBlank()) return HomeFeatureEffect.ActionUnavailable("group", "group_name_blank")
+        return runCatching { gateway.createGroup(name) }
+            .fold(
+                onSuccess = { group ->
+                    publish(currentRecipes(), mutableState.value.phase, null)
+                    HomeFeatureEffect.GroupCreated(group)
+                },
+                onFailure = { error ->
+                    HomeFeatureEffect.ActionUnavailable(
+                        "group",
+                        error.message ?: error.javaClass.simpleName
+                    )
+                }
+            )
+    }
+
+    private suspend fun refreshExternalRecipes(): HomeFeatureEffect {
+        mutableState.value = mutableState.value.copy(phase = HomeCatalogPhase.Loading, errorMessage = null)
+        return runCatching {
+            val result = gateway.refreshExternalRecipes()
+            val recipes = gateway.loadRecipes(forceRefresh = true)
+            result to recipes
+        }.fold(
+            onSuccess = { (result, recipes) ->
+                publish(recipes, HomeCatalogPhase.Ready, null)
+                HomeFeatureEffect.ExternalRefreshCompleted(result.message)
+            },
+            onFailure = { error ->
+                mutableState.value = mutableState.value.copy(
+                    phase = HomeCatalogPhase.Failed,
+                    revision = mutableState.value.revision + 1L,
+                    errorMessage = error.message ?: error.javaClass.simpleName
+                )
+                HomeFeatureEffect.ActionUnavailable(
+                    "external_recipes",
+                    error.message ?: error.javaClass.simpleName
+                )
+            }
         )
     }
 

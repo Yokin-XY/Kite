@@ -39,9 +39,13 @@ internal sealed interface HomeFeatureAction {
     data object ReconcileRuns : HomeFeatureAction
     data class SetRuntimeBlocked(val blocked: Boolean) : HomeFeatureAction
     data class Primary(val recipeId: String) : HomeFeatureAction
+    data class CreateGroup(val name: String) : HomeFeatureAction
+    data object RefreshExternalRecipes : HomeFeatureAction
 }
 
 internal sealed interface HomeFeatureEffect {
     data class ActionRequested(val request: KiteRecipeActionRequest) : HomeFeatureEffect
-    data class ActionUnavailable(val recipeId: String, val reason: String) : HomeFeatureEffect
+    data class ActionUnavailable(val targetId: String, val reason: String) : HomeFeatureEffect
+    data class GroupCreated(val group: KiteCardGroup) : HomeFeatureEffect
+    data class ExternalRefreshCompleted(val message: String) : HomeFeatureEffect
 }

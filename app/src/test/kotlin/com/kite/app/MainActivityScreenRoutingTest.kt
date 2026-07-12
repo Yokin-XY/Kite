@@ -327,13 +327,15 @@ class MainActivityScreenRoutingTest {
     fun `Console 回前台复用现有显示面`() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).create().start().resume()
         val activity = controller.get()
-        val field = MainActivity::class.java.getDeclaredField("consolePageBodyHost").apply {
-            isAccessible = true
-        }
-        val before = field.get(activity)
+        activity.supportFragmentManager.executePendingTransactions()
+        val beforeFragment = activity.supportFragmentManager.findFragmentByTag("kite-home")
+        val beforeView = beforeFragment?.view
 
         controller.pause().resume()
+        activity.supportFragmentManager.executePendingTransactions()
 
-        assertSame(before, field.get(activity))
+        val afterFragment = activity.supportFragmentManager.findFragmentByTag("kite-home")
+        assertSame(beforeFragment, afterFragment)
+        assertSame(beforeView, afterFragment?.view)
     }
 }
