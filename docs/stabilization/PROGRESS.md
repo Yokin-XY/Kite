@@ -260,3 +260,17 @@ D2 结论：页面只提交动作意图，协调器只生成轻量计划；运�
 - `scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：通过。
 
 下一步：让剩余资源完成/失败回调携带资源 ID，只 patch 对应可见卡片、详情或向导行。
+
+### D3 资源运行事实统一
+
+- 完整资源目录与可见卡片增量 patch 原先分别计算计划失败、计划忙碌、登记状态和 Node 本地基线。
+- 新增 `KiteResourceRuntimeFactsProjector`，统一生成 installed、preparing、installing、uninstalling、failed 和 extraBusy。
+- 全量目录与增量绑定已共同消费该投影器，Node 本地基线作为明确输入，不再拥有平行计划判断。
+- 删除 Activity 内两套重复的计划状态判断。
+
+验证：
+
+- `KiteResourceRuntimeFactsProjectorTest` 覆盖待执行忙碌、依赖步骤失败传导和本地基线合并。
+- 资源投影、向导步骤投影和 MainActivity 路由测试：`BUILD SUCCESSFUL`。
+
+下一步：审计首页卡片与进程管理的运行状态投影，消除页面各自判断 Starting/Running/Stopping 的分叉。

@@ -397,6 +397,10 @@ Assert-True ($installWizardRowState -notmatch 'statusLabel\s*=\s*when') 'install
 $settleResourceMutation = Function-Body $main 'settleVisibleResourceMutation'
 Assert-True ($settleResourceMutation -notmatch '\bshowResources\s*\(') 'background resource mutations must not navigate users away from the current screen.'
 Assert-True ($settleResourceMutation -match 'resourceCatalogDirty\s*=\s*true') 'background resource mutations must mark hidden resource surfaces dirty.'
+$resourceIncrementalFacts = Function-Body $main 'resourceRuntimeFactsFromStore'
+$resourceCatalogFacts = Function-Body $main 'resourceCatalog'
+Assert-True ($resourceIncrementalFacts -match 'KiteResourceRuntimeFactsProjector\.project') 'incremental resource binding must consume shared runtime facts.'
+Assert-True ($resourceCatalogFacts -match 'KiteResourceRuntimeFactsProjector\.project') 'full resource catalog must consume shared runtime facts.'
 
 $consoleRefresh = Function-Body $main 'maybeRefreshConsoleAfterRuntimeState'
 Assert-True ($consoleRefresh -match 'updateVisibleConsoleCard') 'console runtime refresh should update a visible card first.'

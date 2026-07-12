@@ -145,6 +145,8 @@ import com.kite.app.resources.KiteResourceShellAction
 import com.kite.app.resources.KiteResourceUiProjector
 import com.kite.app.resources.KiteResourceInstallStepUiProjector
 import com.kite.app.resources.KiteResourceStepTone
+import com.kite.app.resources.KiteResourceRuntimeFacts
+import com.kite.app.resources.KiteResourceRuntimeFactsProjector
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunBrowserRouter
 import com.kite.app.run.CardRunDesktopRouter
@@ -3471,40 +3473,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         binding.actionButton?.let { bindResourceActionButton(it, item, binding.compactAction) }
     }
 
-    private fun resourceRuntimeFactsFromStore(item: ResourceItem): ResourceRuntimeFacts {
+    private fun resourceRuntimeFactsFromStore(item: ResourceItem): KiteResourceRuntimeFacts {
         val resourceId = KiteResourceInstallRecipes.safeId(item.id)
         val entry = resourceInstallStore.registryEntry(resourceId)
         val plan = resourceInstallStore.planSnapshot()
-        val inPlan = resourceId.isNotBlank() &&
-            (resourceId == plan.targetResourceId || resourceId in plan.resourceIds)
-        val planStatus = plan.stepStatus(resourceId)
-        val planFailed = inPlan && (
-            planStatus == KiteResourceInstallStore.PLAN_STEP_FAILED ||
-                planStatus == KiteResourceInstallStore.PLAN_STEP_BLOCKED ||
-                (resourceId == plan.targetResourceId && plan.resourceIds.any { id ->
-                    val status = plan.stepStatus(id)
-                    status == KiteResourceInstallStore.PLAN_STEP_FAILED ||
-                        status == KiteResourceInstallStore.PLAN_STEP_BLOCKED
-                })
-            )
-        val planBusy = inPlan && !planFailed && when {
-            planStatus == KiteResourceInstallStore.PLAN_STEP_RUNNING -> true
-            planStatus == KiteResourceInstallStore.PLAN_STEP_DONE -> false
-            planStatus.isNotBlank() -> true
-            resourceId == plan.targetResourceId ->
-                plan.pendingResourceIds.isNotEmpty() || plan.runningResourceIds.isNotEmpty()
-            else -> false
-        }
-        val failed = entry?.failed == true || planFailed
-        return ResourceRuntimeFacts(
-            installed = entry?.installed == true ||
-                (item.id == RESOURCE_NODE_RUNTIME && item.runtimeFacts.installed && entry == null),
-            preparing = entry?.preparing == true,
-            installing = entry?.installing == true || planBusy,
-            uninstalling = entry?.uninstalling == true,
-            failed = failed,
-            failedOperation = entry?.operation.orEmpty()
-                .ifBlank { if (failed) KiteResourceInstallStore.OP_INSTALL else "" },
+        return KiteResourceRuntimeFactsProjector.project(
+            resourceId = resourceId,
+            registryEntry = entry,
+            plan = plan,
+            baselineInstalled = item.id == RESOURCE_NODE_RUNTIME && item.runtimeFacts.installed && entry == null,
             idleStateLabel = item.runtimeFacts.idleStateLabel,
             extraBusy = item.runtimeFacts.extraBusy
         )
@@ -8438,64 +8415,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             registrySnapshot[resourceId]?.failed == true
         fun busy(resourceId: String): Boolean =
             registrySnapshot[resourceId]?.busy == true
-        fun installing(resourceId: String): Boolean =
-            registrySnapshot[resourceId]?.installing == true
-        fun uninstalling(resourceId: String): Boolean =
-            registrySnapshot[resourceId]?.uninstalling == true
-        fun failedOperation(resourceId: String): String =
-            registrySnapshot[resourceId]?.operation.orEmpty()
-        fun planStepStatus(resourceId: String): String =
-            planSnapshot.stepStatus(KiteResourceInstallRecipes.safeId(resourceId))
-        fun planContainsResource(resourceId: String): Boolean {
-            val cleanId = KiteResourceInstallRecipes.safeId(resourceId)
-            return cleanId.isNotBlank() &&
-                (cleanId == planSnapshot.targetResourceId || cleanId in planSnapshot.resourceIds)
-        }
-        fun installPlanFailed(resourceId: String): Boolean {
-            if (!planContainsResource(resourceId)) return false
-            val status = planStepStatus(resourceId)
-            if (
-                status == KiteResourceInstallStore.PLAN_STEP_FAILED ||
-                status == KiteResourceInstallStore.PLAN_STEP_BLOCKED
-            ) return true
-            val cleanId = KiteResourceInstallRecipes.safeId(resourceId)
-            return cleanId == planSnapshot.targetResourceId &&
-                planSnapshot.resourceIds.any { id ->
-                    val stepStatus = planStepStatus(id)
-                    stepStatus == KiteResourceInstallStore.PLAN_STEP_FAILED ||
-                        stepStatus == KiteResourceInstallStore.PLAN_STEP_BLOCKED
-                }
-        }
-        fun installPlanBusy(resourceId: String): Boolean {
-            if (!planContainsResource(resourceId) || installPlanFailed(resourceId)) return false
-            val status = planStepStatus(resourceId)
-            if (status == KiteResourceInstallStore.PLAN_STEP_RUNNING) return true
-            if (status == KiteResourceInstallStore.PLAN_STEP_DONE) return false
-            if (status.isNotBlank()) return true
-            val cleanId = KiteResourceInstallRecipes.safeId(resourceId)
-            return cleanId == planSnapshot.targetResourceId &&
-                (planSnapshot.pendingResourceIds.isNotEmpty() || planSnapshot.runningResourceIds.isNotEmpty())
-        }
-        fun runtimeFactsForResource(resourceId: String, idleLabel: String = "未获取"): ResourceRuntimeFacts {
-            val recordedInstalled = recordedInstalled(resourceId)
-            val planBusy = installPlanBusy(resourceId)
-            val installing = installing(resourceId) || planBusy
-            val uninstalling = uninstalling(resourceId)
-            val failed = installFailed(resourceId) || installPlanFailed(resourceId)
-            val failedOperation = failedOperation(resourceId)
-                .ifBlank { if (failed) KiteResourceInstallStore.OP_INSTALL else "" }
-            return ResourceRuntimeFacts(
-                installed = recordedInstalled,
-                preparing = registrySnapshot[resourceId]?.preparing == true,
-                installing = installing,
-                uninstalling = uninstalling,
-                failed = failed,
-                failedOperation = failedOperation,
-                idleStateLabel = idleLabel,
-                extraBusy = busy(resourceId) || planBusy
+        fun runtimeFactsForResource(resourceId: String, idleLabel: String = "未获取"): KiteResourceRuntimeFacts =
+            KiteResourceRuntimeFactsProjector.project(
+                resourceId = resourceId,
+                registryEntry = registrySnapshot[resourceId],
+                plan = planSnapshot,
+                idleStateLabel = idleLabel
             )
-        }
-        fun labelsForFacts(resourceId: String, facts: ResourceRuntimeFacts): ResourceRuntimeLabels {
+        fun labelsForFacts(resourceId: String, facts: KiteResourceRuntimeFacts): ResourceRuntimeLabels {
             val openRunStatus = if (facts.installed && !facts.installing && !facts.uninstalling && !facts.failed) {
                 CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, "open"))?.status
             } else {
@@ -8552,27 +8479,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             registrySnapshot = resourceInstallStore.registrySnapshot(managedResourceIds)
         }
         val toolchainRunning = toolchain.phase == ToolchainInstallPhase.RUNNING
-        fun runtimeFactsForManifest(manifest: KiteResourceManifest): ResourceRuntimeFacts {
+        fun runtimeFactsForManifest(manifest: KiteResourceManifest): KiteResourceRuntimeFacts {
             if (manifest.id != RESOURCE_NODE_RUNTIME) {
                 return runtimeFactsForResource(manifest.id, resourceIdleLabelForManifest(manifest))
             }
             val recordedInstalled = recordedInstalled(RESOURCE_NODE_RUNTIME)
             val nodeInstalled = recordedInstalled || nodeWorkspaceInstalled
-            val planBusy = installPlanBusy(RESOURCE_NODE_RUNTIME)
-            val installing = toolchainRunning || installing(RESOURCE_NODE_RUNTIME) || planBusy
-            val uninstalling = uninstalling(RESOURCE_NODE_RUNTIME)
-            val failed = installFailed(RESOURCE_NODE_RUNTIME) || installPlanFailed(RESOURCE_NODE_RUNTIME)
-            val failedOperation = failedOperation(RESOURCE_NODE_RUNTIME)
-                .ifBlank { if (failed) KiteResourceInstallStore.OP_INSTALL else "" }
-            return ResourceRuntimeFacts(
-                installed = nodeInstalled,
-                preparing = registrySnapshot[RESOURCE_NODE_RUNTIME]?.preparing == true,
-                installing = installing,
-                uninstalling = uninstalling,
-                failed = failed,
-                failedOperation = failedOperation,
+            return KiteResourceRuntimeFactsProjector.project(
+                resourceId = RESOURCE_NODE_RUNTIME,
+                registryEntry = registrySnapshot[RESOURCE_NODE_RUNTIME],
+                plan = planSnapshot,
+                baselineInstalled = nodeInstalled,
                 idleStateLabel = "本地包",
-                extraBusy = busy(RESOURCE_NODE_RUNTIME) || toolchainRunning || planBusy
+                extraBusy = toolchainRunning
             )
         }
         val catalog = visibleManifests.map { manifest ->
@@ -8622,7 +8541,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun resourceItemFromManifest(
         manifest: KiteResourceManifest,
         labels: ResourceRuntimeLabels,
-        runtimeFacts: ResourceRuntimeFacts
+        runtimeFacts: KiteResourceRuntimeFacts
     ): ResourceItem {
         val sourceLabel = resourceSourceLabel(manifest.sourceType)
             .ifBlank { manifest.sourceType.ifBlank { "本地定义" } }
@@ -20717,7 +20636,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val actionLabel: String,
         val actionEnabled: Boolean = true,
         val secondaryActionLabel: String? = null,
-        val runtimeFacts: ResourceRuntimeFacts,
+        val runtimeFacts: KiteResourceRuntimeFacts,
         val includes: List<String>,
         val notes: List<String>,
         val steps: List<ResourceStep>,
@@ -20762,17 +20681,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val action: String,
         val actionEnabled: Boolean,
         val secondaryAction: String? = null
-    )
-
-    private data class ResourceRuntimeFacts(
-        val installed: Boolean,
-        val preparing: Boolean,
-        val installing: Boolean,
-        val uninstalling: Boolean,
-        val failed: Boolean,
-        val failedOperation: String,
-        val idleStateLabel: String,
-        val extraBusy: Boolean = false
     )
 
     private data class ResourceItemBinding(
