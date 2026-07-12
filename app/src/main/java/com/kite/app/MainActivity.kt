@@ -195,6 +195,7 @@ import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.feature.resources.ResourceFeatureRequest
 import com.kite.app.feature.resources.ResourceFeatureResultContract
+import com.kite.app.feature.resources.ResourceDetailFragment
 import com.kite.app.feature.resources.ResourceSearchFragment
 import com.kite.app.feature.resources.ResourcesFragment
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
@@ -228,8 +229,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     RecipeRawJsonFragment.RecipeProvider,
     RecipeRawJsonFragment.RecipeRawJsonHost,
     RecipeRawJsonFragment.UiKitProvider,
-    ResourceManageFragment.ResourceManageHost,
-    ResourceDetailFragment.ResourceDetailHost {
+    ResourceManageFragment.ResourceManageHost {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
@@ -284,9 +284,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
     private var currentScreen: AppDestination = AppDestination.Console
     private var pendingRawJsonRecipeId: String? = null
-    private var pendingResourceDetailInitialItem: ResourceItem? = null
-    private var pendingResourceDetailRequestId: Long = 0L
-    private var pendingResourceDetailRequestKey: String? = null
 
     /** 仅用于 Robolectric 路由合同断言。 */
     @androidx.annotation.VisibleForTesting
@@ -352,7 +349,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var registeredDesktopInstanceId: String? = null
     private var registeredCardRunCloserInstanceId: String? = null
     private var currentResourceDetailId: String? = null
-    private var resourceDetailRequestSerial = 0L
     private var latestBootstrapSnapshot = BootstrapCoordinator.snapshot.value
     private var latestRootfsProgress = AssetExtractor.rootfsProgress.value
     private var latestRuntimeBootstrapProgress = RuntimeBootstrapProgress.snapshot.value
@@ -382,9 +378,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var lastWorkbenchUrl: String? = null
     private val resourceItemBindings = mutableMapOf<String, MutableList<ResourceItemBinding>>()
     private var resourceItemPatchRequestSerial = 0L
-    private var resourceDetailInFlightKey: String? = null
-    private var resourceDetailContentHost: FrameLayout? = null
-    private var resourceDetailBinding: ResourceDetailBinding? = null
     private var resourceManageContentHost: LinearLayout? = null
     private var resourceManageBinding: ResourceManageBinding? = null
     private var resourceManageRequestSerial = 0L
@@ -1592,11 +1585,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 }
             }
             AppDestination.CardRun -> requestVisibleResourceInstallWizardRefresh(reason)
-            AppDestination.ResourceDetail -> {
-                if (convergeVisibleResourceState(reason, preferredResourceIds, revision).isEmpty()) {
-                    requestVisibleResourceDetailStatePatch(reason)
-                }
-            }
+            AppDestination.ResourceDetail -> Unit
             AppDestination.ResourceMore -> Unit
             AppDestination.ResourceManage -> {
                 if (convergeVisibleResourceState(reason, preferredResourceIds, revision).isEmpty()) {
@@ -2629,7 +2618,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         cardRunSurfaceSignature = ""
         cardRunReportBinding = null
         resourceInstallWizardBinding = null
-        resourceDetailContentHost = null
         consoleCardBindings.clear()
         consolePageTabsView = null
         consolePageBodyHost = null
@@ -3012,8 +3000,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun clearResourcePageCache() {
         resourceItemBindings.clear()
-        resourceDetailContentHost = null
-        resourceDetailBinding = null
         resourceManageContentHost = null
         resourceManageBinding = null
     }
@@ -3109,7 +3095,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun bindResourceItemState(binding: ResourceItemBinding, item: ResourceItem, revision: Long = 0L) {
         binding.item = item
         if (revision > 0L) binding.appliedRevision = revision
-        binding.root.setOnClickListener { showResourceDetail(item.id, item) }
+        binding.root.setOnClickListener { showResourceDetail(item.id) }
         binding.stateTextView?.text = "${item.version} · ${item.sizeLabel} · ${item.stateLabel}"
         binding.actionButton?.let { bindResourceActionButton(it, item, binding.compactAction) }
     }
@@ -3160,13 +3146,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     ): Map<String, ResourceItem> {
         purgeResourceItemBindings()
         val visibleIds = visibleResourceItemBindingIds()
-        val detailItem = resourceDetailBinding
-            ?.takeIf { currentScreen == AppDestination.ResourceDetail && it.contentHost === resourceDetailContentHost }
-            ?.item
         val targetIds = resourceStatePatchTargetIds(
             visibleResourceIds = visibleIds,
             preferredResourceIds = preferredResourceIds,
-            detailResourceId = detailItem?.id
+            detailResourceId = null
         )
         if (targetIds.isEmpty()) return emptyMap()
         val projected = targetIds.mapNotNull { resourceId ->
@@ -3174,12 +3157,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 .orEmpty()
                 .firstOrNull { it.root.isAttachedToWindow }
                 ?.item
-                ?: detailItem?.takeIf { it.id == resourceId }
             base?.let { resourceId to projectResourceItemRuntime(it) }
         }.toMap()
         if (projected.isEmpty()) return emptyMap()
         applyVisibleResourceItemStatePatch(projected, revision)
-        projected.values.forEach { item -> patchVisibleResourceDetailState(item, revision) }
         scheduleResourceStateConvergenceCheck(reason, projected, revision)
         return projected
     }
@@ -3203,20 +3184,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                             (binding.stateTextView != null &&
                                 !binding.stateTextView.text.toString().endsWith(expected.stateLabel))
                     }
-                val detailMismatch = resourceDetailBinding
-                    ?.takeIf { currentScreen == AppDestination.ResourceDetail && it.resourceId == resourceId }
-                    ?.let { binding ->
-                        val splitExpected = resourceHasSplitActions(expected)
-                        binding.actionBinding.primaryButton.text?.toString() != expected.actionLabel ||
-                            binding.actionBinding.secondaryButton.visibility == View.VISIBLE != splitExpected ||
-                            (splitExpected &&
-                                binding.actionBinding.secondaryButton.text?.toString() != resourceSecondaryActionLabel(expected))
-                    } == true
-                listMismatch || detailMismatch
+                listMismatch
             }
             if (mismatched.isEmpty()) return@postDelayed
             applyVisibleResourceItemStatePatch(mismatched, revision)
-            mismatched.values.forEach { item -> patchVisibleResourceDetailState(item, revision) }
             diagnostics.logRecipeEvent(
                 "resource_state_convergence_deadline_missed",
                 null,
@@ -3614,7 +3585,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         return row {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, dp(7), 0, dp(7))
-            setOnClickListener { showResourceDetail(item.id, item) }
+            setOnClickListener { showResourceDetail(item.id) }
             addView(resourceIcon(item))
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -3825,633 +3796,19 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun resourceDetailActionArea(item: ResourceItem): ResourceDetailActionBinding {
-        val primaryButton = TextView(this)
-        val secondaryButton = TextView(this)
-        val root = row {
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply {
-                setMargins(0, dp(24), 0, 0)
-            }
-            addView(primaryButton)
-            addView(secondaryButton)
-        }
-        return ResourceDetailActionBinding(
-            root = root,
-            primaryButton = primaryButton,
-            secondaryButton = secondaryButton
-        ).also { bindResourceDetailActionArea(it, item) }
-    }
-
-    private fun bindResourceDetailActionArea(binding: ResourceDetailActionBinding, item: ResourceItem) {
-        val splitActions = resourceHasSplitActions(item)
-        binding.primaryButton.layoutParams = LinearLayout.LayoutParams(
-            0,
-            dp(46),
-            if (splitActions) 0.7f else 1f
-        )
-        bindResourceActionButton(binding.primaryButton, item, compact = false)
-        binding.secondaryButton.layoutParams = LinearLayout.LayoutParams(0, dp(46), 0.3f).apply {
-            setMargins(dp(10), 0, 0, 0)
-        }
-        if (splitActions) {
-            binding.secondaryButton.visibility = View.VISIBLE
-            bindResourceSecondaryActionButton(binding.secondaryButton, item)
-        } else {
-            binding.secondaryButton.visibility = View.GONE
-            binding.secondaryButton.setOnClickListener(null)
-        }
-    }
-
-    private fun resourceHasSplitActions(item: ResourceItem): Boolean =
-        item.secondaryActionLabel != null
-
-    private fun resourceHasFailedInstallActions(item: ResourceItem): Boolean =
-        item.actionLabel == "重新获取" &&
-            resourceInstallStore.isFailed(item.id) &&
-            resourceInstallStore.failedOperation(item.id) != KiteResourceInstallStore.OP_UNINSTALL
-
-    private fun resourceSecondaryActionButton(item: ResourceItem): TextView =
-        TextView(this).apply { bindResourceSecondaryActionButton(this, item) }
-
-    private fun bindResourceSecondaryActionButton(button: TextView, item: ResourceItem) {
-        val isCancel = item.actionLabel == "获取中" || resourceHasFailedInstallActions(item)
-        val isRunningOpen = item.actionLabel == "运行中"
-        button.apply {
-            text = resourceSecondaryActionLabel(item)
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(tokens.danger)
-            alpha = if (item.actionEnabled) 1f else 0.58f
-            isEnabled = item.actionEnabled
-            background = roundedBox(tintBackground(tokens.danger), tintBackgroundBorder(tokens.danger), dp(15).toFloat(), 0)
-            setOnClickListener(null)
-            if (item.actionEnabled) {
-                setOnClickListener {
-                    if (item.actionLabel == "获取中") {
-                        submitResourceAction(item, KiteResourceActionIntent.CancelInstall, KiteResourceActionSource.Detail)
-                    } else if (isRunningOpen) {
-                        submitResourceAction(item, KiteResourceActionIntent.Stop, KiteResourceActionSource.Detail)
-                    } else if (isCancel) {
-                        submitResourceAction(item, KiteResourceActionIntent.CancelFailedInstall, KiteResourceActionSource.Detail)
-                    } else {
-                        submitResourceAction(item, KiteResourceActionIntent.Uninstall, KiteResourceActionSource.Detail)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun resourceSecondaryActionLabel(item: ResourceItem): String =
-        item.secondaryActionLabel ?: "卸载"
-
-    private fun showResourceDetail(resourceId: String, initialItem: ResourceItem? = null) {
-        val requestKey = KiteResourceRequestPolicy.resourceDetailKey(resourceId)
-        if (currentScreen == AppDestination.ResourceDetail && currentResourceDetailId == resourceId) {
-            val binding = resourceDetailBinding
-            val contentHost = resourceDetailContentHost
-            if (binding != null && contentHost != null && binding.contentHost === contentHost) {
-                val latestItem = initialItem ?: cachedResourceCatalog?.firstOrNull { it.id == resourceId }
-                if (latestItem != null && binding.renderKey == buildResourceDetailRenderKey(latestItem)) {
-                    patchResourceDetailState(binding, latestItem)
-                } else {
-                    requestVisibleResourceDetailStatePatch("same_detail")
-                }
-                return
-            }
-        }
-        if (resourceDetailInFlightKey == requestKey && currentScreen == AppDestination.ResourceDetail) return
-        val requestId = ++resourceDetailRequestSerial
-        resourceDetailInFlightKey = requestKey
+    private fun showResourceDetail(resourceId: String) {
         currentResourceDetailId = resourceId
         enterScreen(AppDestination.ResourceDetail)
-        // T7:走 Fragment 路径。把渲染(含异步线程)交给 renderResourceDetailInto。
-        clearRootForScreen()
-        root.visibility = View.GONE
-        val fragment = ResourceDetailFragment.newInstance(resourceId)
-        supportFragmentManager.beginTransaction()
-            .replace(rootHost.id, fragment, TAG_RESOURCE_DETAIL_FRAGMENT)
-            .commitAllowingStateLoss()
-        // initialItem 通过成员传递给 renderResourceDetailInto
-        pendingResourceDetailInitialItem = initialItem
-        pendingResourceDetailRequestId = requestId
-        pendingResourceDetailRequestKey = requestKey
-    }
-
-    /** ResourceDetailFragment.ResourceDetailHost 实现:渲染资源详情(含异步加载线程)。 */
-    override fun renderResourceDetailInto(container: ViewGroup, resourceId: String) {
-        rootHost.setBackgroundColor(tokens.pageBackground)
-        container.setBackgroundColor(tokens.pageBackground)
-        val requestId = pendingResourceDetailRequestId
-        val requestKey = pendingResourceDetailRequestKey ?: KiteResourceRequestPolicy.resourceDetailKey(resourceId)
-        val initialItem = pendingResourceDetailInitialItem
-        pendingResourceDetailInitialItem = null
-        val contentHost = FrameLayout(this)
-        resourceDetailContentHost = contentHost
-        container.addView(contentHost, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        container.addView(bottomNavigation())
-        val seedItem = initialItem ?: cachedResourceCatalog?.firstOrNull { it.id == resourceId }
-        val seedRenderKey = seedItem?.let { buildResourceDetailRenderKey(it) }
-        if (seedItem != null) {
-            renderResourceDetailContent(contentHost, seedItem)
-            cacheResourceDetailPayload(seedItem)
-            requestResourceDetailMedia(seedItem)
-        } else {
-            renderResourceDetailPending(contentHost, resourceId)
-        }
-        thread(name = "KiteResourceDetail-$requestId-${requestKey.take(24)}", isDaemon = true) {
-            val result = runCatching {
-                resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId }
-            }
-            runOnUiThread {
-                if (
-                    requestId != resourceDetailRequestSerial ||
-                    currentScreen != AppDestination.ResourceDetail ||
-                    currentResourceDetailId != resourceId
-                ) {
-                    if (resourceDetailInFlightKey == requestKey) resourceDetailInFlightKey = null
-                    return@runOnUiThread
-                }
-                if (resourceDetailInFlightKey == requestKey) resourceDetailInFlightKey = null
-                val item = result.getOrNull()
-                when {
-                    item != null -> {
-                        val renderKey = buildResourceDetailRenderKey(item)
-                        if (seedItem == null && renderKey != seedRenderKey) {
-                            renderResourceDetailContent(contentHost, item)
-                        } else {
-                            patchVisibleResourceDetailState(item)
-                        }
-                        cacheResourceDetailPayload(item)
-                        requestResourceDetailMedia(item)
-                    }
-                    result.isFailure -> {
-                        if (seedItem == null) renderResourceDetailError(contentHost, resourceId, result.exceptionOrNull())
-                    }
-                    else -> {
-                        if (seedItem == null) renderResourceDetailMissing(contentHost, resourceId)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun refreshVisibleResourceDetail(resourceId: String) {
-        val contentHost = resourceDetailContentHost
-        if (contentHost == null || currentScreen != AppDestination.ResourceDetail || currentResourceDetailId != resourceId) {
-            showResourceDetail(resourceId)
-            return
-        }
-        val requestKey = KiteResourceRequestPolicy.resourceDetailKey(resourceId)
-        val requestId = ++resourceDetailRequestSerial
-        resourceDetailInFlightKey = requestKey
-        thread(name = "KiteResourceDetailRefresh-$requestId-${requestKey.take(24)}", isDaemon = true) {
-            val result = runCatching {
-                resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId }
-            }
-            runOnUiThread {
-                if (
-                    requestId != resourceDetailRequestSerial ||
-                    currentScreen != AppDestination.ResourceDetail ||
-                    currentResourceDetailId != resourceId ||
-                    resourceDetailContentHost !== contentHost
-                ) {
-                    if (resourceDetailInFlightKey == requestKey) resourceDetailInFlightKey = null
-                    return@runOnUiThread
-                }
-                if (resourceDetailInFlightKey == requestKey) resourceDetailInFlightKey = null
-                val item = result.getOrNull()
-                when {
-                    item != null -> {
-                        val binding = resourceDetailBinding
-                        if (
-                            binding != null &&
-                            binding.contentHost === contentHost &&
-                            binding.resourceId == item.id &&
-                            binding.renderKey == buildResourceDetailRenderKey(item)
-                        ) {
-                            patchResourceDetailState(binding, item)
-                        } else {
-                            renderResourceDetailContent(contentHost, item)
-                        }
-                        cacheResourceDetailPayload(item)
-                        requestResourceDetailMedia(item)
-                    }
-                    result.isFailure -> renderResourceDetailError(contentHost, resourceId, result.exceptionOrNull())
-                    else -> renderResourceDetailMissing(contentHost, resourceId)
-                }
-            }
-        }
-    }
-
-    private fun requestVisibleResourceDetailStatePatch(reason: String) {
-        val binding = resourceDetailBinding ?: return
-        val resourceId = currentResourceDetailId ?: return
-        if (
-            currentScreen != AppDestination.ResourceDetail ||
-            binding.resourceId != resourceId ||
-            binding.contentHost !== resourceDetailContentHost
-        ) return
-        val requestId = ++resourceDetailRequestSerial
-        thread(name = "KiteResourceDetailStatePatch-$requestId-${reason.take(24)}", isDaemon = true) {
-            val item = runCatching {
-                resourceCatalog(forceRefresh = false).firstOrNull { it.id == resourceId }
-            }.getOrNull()
-            runOnUiThread {
-                if (
-                    requestId != resourceDetailRequestSerial ||
-                    currentScreen != AppDestination.ResourceDetail ||
-                    currentResourceDetailId != resourceId ||
-                    resourceDetailBinding !== binding ||
-                    binding.contentHost !== resourceDetailContentHost
-                ) return@runOnUiThread
-                item?.let { latest ->
-                    if (binding.renderKey == buildResourceDetailRenderKey(latest)) {
-                        patchResourceDetailState(binding, latest)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun cacheResourceDetailPayload(item: ResourceItem) {
-        resourceInstallStore.putPageCache(
-            cacheKey = KiteResourceRequestPolicy.resourceDetailKey(item.id),
-            payloadJson = JSONObject()
-                .put("resourceId", item.id)
-                .put("name", item.name)
-                .put("version", item.version)
-                .put("state", item.stateLabel)
-                .put("updatedAt", System.currentTimeMillis())
-                .toString(),
-            maxAgeMs = KiteResourceRequestPolicy.DETAIL_PAGE_CACHE_MS
+        showResourceFeatureFragment(
+            ResourceDetailFragment.newInstance(resourceId),
+            TAG_RESOURCE_DETAIL_FRAGMENT
         )
     }
 
-    private fun buildResourceDetailRenderKey(item: ResourceItem): String =
-        buildString {
-            append(item.id)
-            append(':')
-            append(item.version)
-            append(':')
-            append(item.badge)
-            append(':')
-            append(item.media)
-            append(':')
-            append(item.previewCards)
-            append(':')
-            append(item.requirementRows)
-        }
-
-    private fun requestResourceDetailMedia(item: ResourceItem) {
-        val requestKey = KiteResourceRequestPolicy.resourceMediaKey(item.id)
-        resourceInstallStore.clearExpiredPageCache()
-        if (resourceInstallStore.pageCache(requestKey) != null) return
-        thread(name = "KiteResourceMedia-${item.id}", isDaemon = true) {
-            resourceInstallStore.putPageCache(
-                cacheKey = requestKey,
-                payloadJson = JSONObject()
-                    .put("resourceId", item.id)
-                    .put("mediaReady", true)
-                    .put("updatedAt", System.currentTimeMillis())
-                    .toString(),
-                maxAgeMs = KiteResourceRequestPolicy.MEDIA_CACHE_MS
-            )
-        }
-    }
-
-    private fun renderResourceDetailContent(contentHost: FrameLayout, item: ResourceItem) {
-        val actionBinding = resourceDetailActionArea(item)
-        val actionHost = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(actionBinding.root)
-        }
-        resourceDetailBinding = ResourceDetailBinding(
-            resourceId = item.id,
-            item = item,
-            contentHost = contentHost,
-            actionHost = actionHost,
-            actionBinding = actionBinding,
-            renderKey = buildResourceDetailRenderKey(item)
-        )
-        contentHost.removeAllViews()
-        contentHost.addView(ScrollView(this).apply {
-            isFillViewport = true
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(22), dp(8), dp(22), dp(34))
-                addView(resourceDetailChrome(item))
-                addView(resourceDetailHeader(item))
-                addView(actionHost)
-                addView(resourceDetailVisualBlock(item))
-                addView(resourceInfoBlock("简介", item.longDescription))
-                resourceRecommendationBlock(item)?.let { addView(it) }
-                addView(resourceExecutionPreviewBlock(item))
-                addView(resourceRequirementsBlock(item))
-            })
-        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    }
-
-    private fun renderResourceDetailPending(contentHost: FrameLayout, resourceId: String) {
-        resourceDetailBinding = null
-        contentHost.removeAllViews()
-        contentHost.addView(ScrollView(this).apply {
-            isFillViewport = true
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(22), dp(8), dp(22), dp(34))
-                addView(resourceDetailLoadingChrome(null))
-                addView(resourceDetailPlaceholderHeader(resourceId))
-            })
-        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    }
-
-    private fun renderResourceDetailMissing(contentHost: FrameLayout, resourceId: String) {
-        resourceDetailBinding = null
-        contentHost.removeAllViews()
-        contentHost.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(8), dp(22), dp(34))
-            addView(resourceDetailLoadingChrome(null))
-            addView(resourceRequestStateBlock("资源暂不可用", resourceId, loading = false))
-        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    }
-
-    private fun renderResourceDetailError(contentHost: FrameLayout, resourceId: String, error: Throwable?) {
-        resourceDetailBinding = null
-        contentHost.removeAllViews()
-        contentHost.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(8), dp(22), dp(34))
-            addView(resourceDetailLoadingChrome(null))
-            addView(resourceRequestStateBlock(
-                "资源请求失败",
-                error?.message ?: error?.javaClass?.simpleName ?: resourceId,
-                loading = false
-            ))
-        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    }
-
-    private fun patchVisibleResourceDetailState(item: ResourceItem, revision: Long = 0L): Boolean {
-        val binding = resourceDetailBinding ?: return false
-        if (
-            currentScreen != AppDestination.ResourceDetail ||
-            currentResourceDetailId != item.id ||
-            binding.resourceId != item.id ||
-            binding.contentHost !== resourceDetailContentHost
-        ) return false
-        patchResourceDetailState(binding, item, revision)
-        return true
-    }
-
-    private fun patchResourceDetailState(binding: ResourceDetailBinding, item: ResourceItem, revision: Long = 0L) {
-        binding.item = item
-        if (revision > 0L) binding.appliedRevision = revision
-        bindResourceDetailActionArea(binding.actionBinding, item)
-        binding.renderKey = buildResourceDetailRenderKey(item)
-    }
-
-    private fun resourceDetailChrome(item: ResourceItem): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(8))
-            addView(iconButton("‹", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { requestNavigationBack() })
-            addView(View(context), LinearLayout.LayoutParams(0, dp(32), 1f))
-            addView(iconButton("•••", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) {
-                showResourceMoreActions(item)
-            })
-        }
-
-    private fun resourceDetailLoadingChrome(initialItem: ResourceItem?): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(8))
-            addView(iconButton("‹", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { requestNavigationBack() })
-            addView(View(context), LinearLayout.LayoutParams(0, dp(32), 1f))
-            if (initialItem != null) {
-                addView(iconButton("•••", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) {
-                    showResourceMoreActions(initialItem)
-                })
-            } else {
-                addView(TextView(context).apply {
-                    text = ""
-                    layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
-                })
-            }
-        }
-
-    private fun resourceDetailPlaceholderHeader(resourceId: String): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, 0)
-            addView(resourceIcon("…", "teal").apply {
-                elevation = dp(3).toFloat()
-                layoutParams = LinearLayout.LayoutParams(dp(78), dp(78))
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    setMargins(dp(16), 0, 0, 0)
-                }
-                addView(TextView(context).apply {
-                    text = resourceId
-                    textSize = 20f
-                    typeface = Typeface.DEFAULT_BOLD
-                    includeFontPadding = false
-                    setTextColor(tokens.textPrimary)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(TextView(context).apply {
-                    text = "资源详情"
-                    textSize = 13f
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, dp(7), 0, 0)
-                })
-            })
-        }
-
-    private fun resourceDetailHeader(item: ResourceItem): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, 0)
-            addView(resourceIcon(item).apply {
-                elevation = dp(3).toFloat()
-                layoutParams = LinearLayout.LayoutParams(dp(78), dp(78))
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    setMargins(dp(16), 0, 0, 0)
-                }
-                addView(TextView(context).apply {
-                    text = item.name
-                    textSize = 24f
-                    typeface = Typeface.DEFAULT_BOLD
-                    includeFontPadding = false
-                    setTextColor(tokens.textPrimary)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(TextView(context).apply {
-                    text = item.description
-                    textSize = 14f
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, dp(6), 0, 0)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(row {
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(0, dp(7), 0, 0)
-                    val tone = KiteTheme.accent(item.badge.accent, tokens)
-                    addView(TextView(context).apply {
-                        text = item.badge.iconText
-                        textSize = 11f
-                        gravity = Gravity.CENTER
-                        includeFontPadding = false
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(tokens.buttonText)
-                        background = roundedBox(tone.strong, tone.strong, dp(8).toFloat())
-                        layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
-                    })
-                    addView(TextView(context).apply {
-                        text = item.badge.label
-                        textSize = 12.5f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(tone.strong)
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                            .apply { setMargins(dp(7), 0, 0, 0) }
-                    })
-                })
-                addView(TextView(context).apply {
-                    text = "${item.version} · ${item.sizeLabel} · ${item.category}"
-                    textSize = 12.5f
-                    setTextColor(tokens.textTertiary)
-                    setPadding(0, dp(7), 0, 0)
-                })
-            })
-        }
-
-    private fun resourceInfoBlock(title: String, body: String): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(24), 0, 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            addView(TextView(context).apply {
-                text = title
-                textSize = 20f
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-                setTextColor(tokens.textPrimary)
-            })
-            addView(TextView(context).apply {
-                text = body
-                textSize = 14.5f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(13), 0, 0)
-                setLineSpacing(dp(5).toFloat(), 1.0f)
-            })
-        }
-
-    private fun resourceBulletBlock(title: String, items: List<String>): View =
-        resourceInfoBlock(title, items.joinToString("\n") { "· $it" })
-
-    private fun resourceRecommendationBlock(item: ResourceItem): View? {
-        val catalogById = cachedResourceCatalog.orEmpty().associateBy { it.id }
-        val recommendations = resourceRecommendationsFor(item)
-            .mapNotNull { recommendation ->
-                val target = catalogById[recommendation.resourceId]
-                if (target == null || target.id == item.id) null else recommendation to target
-            }
-        if (recommendations.isEmpty()) return null
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(20), 0, 0)
-            addView(TextView(context).apply {
-                text = "推荐"
-                textSize = 18f
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-                setTextColor(tokens.textPrimary)
-            })
-            addView(HorizontalScrollView(context).apply {
-                isHorizontalScrollBarEnabled = false
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    .apply { setMargins(0, dp(10), 0, 0) }
-                addView(row {
-                    recommendations.forEachIndexed { index, pair ->
-                        val (recommendation, target) = pair
-                        addView(resourceRecommendationCard(target, recommendation).apply {
-                            layoutParams = LinearLayout.LayoutParams(dp(72), dp(82)).apply {
-                                setMargins(0, 0, if (index == recommendations.lastIndex) 0 else dp(12), 0)
-                            }
-                        })
-                    }
-                })
-            })
-        }
-    }
-
-    private fun resourceRecommendationCard(item: ResourceItem, recommendation: ResourceRecommendation): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            contentDescription = "${item.name}，${recommendation.label}"
-            setOnClickListener { showResourceDetail(item.id, item) }
-            addView(resourceIcon(item))
-            addView(TextView(context).apply {
-                text = item.name
-                textSize = 10.5f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(tokens.textSecondary)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(5), 0, 0)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            })
-        }
-
-    private fun resourceRecommendationsFor(item: ResourceItem): List<ResourceRecommendation> {
-        return item.recommendations
-    }
-
-    private fun resourceExecutionPreviewBlock(item: ResourceItem): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(24), 0, 0)
-            addView(TextView(context).apply {
-                text = "来源"
-                textSize = 20f
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-                setTextColor(tokens.textPrimary)
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), dp(12), dp(14), dp(14))
-                background = roundedBox(tokens.cardBackground, tokens.border, dp(17).toFloat())
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    .apply { setMargins(0, dp(14), 0, 0) }
-                addView(resourceSourceSummaryRow(item))
-                addView(divider().apply {
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                        setMargins(0, dp(12), 0, dp(12))
-                    }
-                })
-                addView(navigationRow("查看原始 JSON") { showResourceRawJson(item) }.apply {
-                    setPadding(0, 0, 0, 0)
-                })
-            })
-        }
-
-    private fun showResourceRawJson(item: ResourceItem) {
+   private fun showResourceRawJson(item: ResourceItem) {
         val latestItem = cachedResourceCatalog?.firstOrNull { it.id == item.id } ?: item
         currentResourceDetailId = latestItem.id
-        enterScreen(AppDestination.ResourceRawJson) { showResourceDetail(latestItem.id, latestItem) }
+        enterScreen(AppDestination.ResourceRawJson) { showResourceDetail(latestItem.id) }
         clearRootForScreen()
         root.addView(topBar("原始 JSON", ::requestNavigationBack))
         root.addView(ScrollView(this).apply {
@@ -4465,61 +3822,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
-    private fun resourceSourceSummaryRow(item: ResourceItem): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            val tone = KiteTheme.accent(item.accent, tokens)
-            addView(TextView(context).apply {
-                text = "源"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-                gravity = Gravity.CENTER
-                setTextColor(tone.strong)
-                background = roundedBox(tone.soft, Color.TRANSPARENT, dp(10).toFloat(), 0)
-                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    setMargins(dp(12), 0, 0, 0)
-                }
-                addView(TextView(context).apply {
-                    text = resourceSourceTitle(item)
-                    textSize = 14f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(TextView(context).apply {
-                    text = resourceSourceSubtitle(item)
-                    textSize = 11.5f
-                    setTextColor(tokens.textTertiary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(4), 0, 0)
-                })
-            })
-        }
-
-    private fun resourceSourceTitle(item: ResourceItem): String =
-        when {
-            item.sourceLabel.contains("内置") || item.sizeLabel.contains("内置") -> "内置资源包"
-            item.sourceLabel.equals("apt", ignoreCase = true) -> "Ubuntu apt"
-            item.sourceLabel.contains("官方") -> "官方来源"
-            item.sourceLabel.contains("网络") || item.sizeLabel.contains("网络") -> "网络下载"
-            else -> item.sourceLabel.ifBlank { "本地定义" }
-        }
-
-    private fun resourceSourceSubtitle(item: ResourceItem): String =
-        listOf(item.sourceLabel, item.version, item.sizeLabel)
-            .filter { it.isNotBlank() }
-            .distinct()
-            .joinToString(" · ")
-
-    private fun resourceRawJsonForUi(item: ResourceItem): String =
+   private fun resourceRawJsonForUi(item: ResourceItem): String =
         item.rawJson.ifBlank {
             JSONObject()
                 .put("id", item.id)
@@ -4539,148 +3842,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 .toString(2)
         }
 
-    private fun resourceDetailVisualBlock(item: ResourceItem): View =
-        if (item.media != null) {
-            resourceImageBanner(item)
-        } else {
-            resourcePreviewStrip(item)
-        }
-
-    private fun resourceImageBanner(item: ResourceItem): View =
-        FrameLayout(this).apply {
-            val tone = KiteTheme.accent(item.accent, tokens)
-            background = roundedBox(tokens.surface, tone.border, dp(22).toFloat())
-            clipToOutline = true
-            elevation = dp(2).toFloat()
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(228)).apply {
-                setMargins(0, dp(20), 0, 0)
-            }
-            addView(ImageView(context).apply {
-                contentDescription = item.media?.contentDescription ?: "${item.name} 视觉预览"
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                item.media?.asset?.let { asset ->
-                    requestResourceIconBitmap(asset, maxOf(resources.displayMetrics.widthPixels, dp(228))) { bitmap ->
-                        if (parent != null) setImageBitmap(bitmap)
-                    }?.let { setImageBitmap(it) }
-                }
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        }
-
-    private fun resourcePreviewStrip(item: ResourceItem): View =
-        HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                .apply { setMargins(0, dp(20), 0, 0) }
-            addView(row {
-                item.previewCards.forEachIndexed { index, preview ->
-                    addView(resourcePreviewCard(preview).apply {
-                        layoutParams = LinearLayout.LayoutParams(dp(176), dp(136)).apply {
-                            setMargins(0, 0, if (index == item.previewCards.lastIndex) 0 else dp(12), 0)
-                        }
-                    })
-                }
-            })
-        }
-
-    private fun resourcePreviewCard(preview: ResourcePreviewCard): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(13), dp(12), dp(13), dp(10))
-            val tone = KiteTheme.accent(preview.accent, tokens)
-            background = roundedBox(tokens.cardBackground, tone.border, dp(16).toFloat())
-            addView(TextView(context).apply {
-                text = preview.title
-                textSize = 13.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tone.strong)
-            })
-            addView(TextView(context).apply {
-                text = preview.subtitle
-                textSize = 11f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(4), 0, 0)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(dp(9), dp(9), dp(9), dp(9))
-                background = roundedBox(tokens.surface, tokens.border, dp(13).toFloat())
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-                    setMargins(0, dp(10), 0, 0)
-                }
-                addView(resourceIcon(
-                    preview.symbol,
-                    preview.accent,
-                    preview.iconAsset,
-                    preview.iconFit,
-                    size = dp(42),
-                    padding = dp(6),
-                    radius = dp(12).toFloat(),
-                    textSize = 15f
-                ))
-            })
-        }
-
-    private fun resourceRequirementsBlock(item: ResourceItem): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(26), 0, 0)
-            addView(TextView(context).apply {
-                text = "依赖与要求"
-                textSize = 20f
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-                setTextColor(tokens.textPrimary)
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(16), dp(8), dp(16), dp(8))
-                background = roundedBox(tokens.cardBackground, tokens.border, dp(17).toFloat())
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    .apply { setMargins(0, dp(14), 0, 0) }
-                val rows = (item.requirementRows.ifEmpty { resourceDefaultRequirementRows(item) } +
-                    ResourceRequirementRow("状态", item.stateLabel))
-                rows.forEachIndexed { index, row ->
-                    addView(resourceRequirementRow(row.label, row.value))
-                    if (index != rows.lastIndex) addView(divider().apply {
-                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                            setMargins(0, dp(1), 0, dp(1))
-                        }
-                    })
-                }
-            })
-        }
-
-    private fun resourceDefaultRequirementRows(item: ResourceItem): List<ResourceRequirementRow> =
-        listOf(
-            ResourceRequirementRow("获取来源", item.sourceLabel),
-            ResourceRequirementRow("占用空间", item.sizeLabel),
-            ResourceRequirementRow("资源类型", item.category)
-        ).filter { it.value.isNotBlank() }
-
-    private fun resourceRequirementRow(label: String, value: String): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(9), 0, dp(9))
-            addView(TextView(context).apply {
-                text = label
-                textSize = 13.5f
-                setTextColor(tokens.textSecondary)
-                layoutParams = LinearLayout.LayoutParams(dp(96), ViewGroup.LayoutParams.WRAP_CONTENT)
-            })
-            addView(TextView(context).apply {
-                text = value
-                textSize = 13.5f
-                setTextColor(tokens.textPrimary)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-        }
-
-    private fun handleResourceAction(item: ResourceItem) {
+   private fun handleResourceAction(item: ResourceItem) {
         val intent = KiteResourceActionCoordinator.primaryIntent(
             actionLabel = item.actionLabel,
             reopenInstall = resourceActionShouldReopenInstallWizard(item)
@@ -7260,7 +6422,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         when (currentScreen) {
             AppDestination.Resources -> Unit
             AppDestination.ResourceSearch -> Unit
-            AppDestination.ResourceDetail -> requestVisibleResourceDetailStatePatch("visible_refresh")
+            AppDestination.ResourceDetail -> Unit
             AppDestination.ResourceMore -> invalidateResourceRuntimeStateCache()
             AppDestination.ResourceManage -> {
                 if (resourceManageContentHost != null) {
@@ -13661,9 +12823,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             requestVisibleResourceInstallWizardRefresh(reason)
         }
         requestVisibleResourceItemStatePatch(reason, listOfNotNull(resourceId))
-        if (currentScreen == AppDestination.ResourceDetail && resourceId == currentResourceDetailId) {
-            requestVisibleResourceDetailStatePatch(reason)
-        }
     }
 
     private fun cardInfoSlot(recipe: KiteRecipe, runtimeState: RecipeRuntimeState, accentName: String): View =
@@ -19763,22 +18922,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val actionButton: TextView?,
         val compactAction: Boolean,
         var appliedRevision: Long = 0L
-    )
-
-    private data class ResourceDetailBinding(
-        val resourceId: String,
-        var item: ResourceItem,
-        val contentHost: FrameLayout,
-        val actionHost: LinearLayout,
-        val actionBinding: ResourceDetailActionBinding,
-        var renderKey: String,
-        var appliedRevision: Long = 0L
-    )
-
-    private data class ResourceDetailActionBinding(
-        val root: LinearLayout,
-        val primaryButton: TextView,
-        val secondaryButton: TextView
     )
 
     private data class ResourceManageBinding(

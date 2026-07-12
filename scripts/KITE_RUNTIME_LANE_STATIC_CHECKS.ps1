@@ -195,10 +195,12 @@ Assert-True ($editorRecipeActions -match 'KiteRecipeActionIntent\.Open' -and $ed
 Assert-True ($editorRecipeActions -notmatch '\bstopRecipe\s*\(' -and $editorRecipeActions -notmatch '\bopenRecipeRunInstance\s*\(') 'editor action buttons must not bypass the shared action intake.'
 
 $resourcePrimaryAction = Function-Body $main 'handleResourceAction'
-$resourceSecondaryActions = Function-Body $main 'bindResourceSecondaryActionButton'
+$resourceSecondaryIntent = Function-Body $resourceFeatureController 'secondaryIntent'
+$resourceSecondaryRequest = Function-Body $resourceFeatureController 'requestSecondary'
 Assert-True ($resourcePrimaryAction -match 'KiteResourceActionCoordinator\.primaryIntent' -and $resourcePrimaryAction -match 'submitResourceAction') 'resource primary actions must resolve and submit through the shared action intake.'
-Assert-True ($resourceSecondaryActions -match 'KiteResourceActionIntent\.CancelInstall' -and $resourceSecondaryActions -match 'KiteResourceActionIntent\.Stop' -and $resourceSecondaryActions -match 'KiteResourceActionIntent\.Uninstall') 'resource detail secondary actions must submit explicit shared intents.'
-Assert-True ($resourceSecondaryActions -notmatch '\bhandleResource(?:Install|Uninstall|OpenStop|Cancel|Failed)') 'resource detail buttons must not bypass the shared action intake.'
+Assert-True ($resourceSecondaryIntent -match 'KiteResourceActionIntent\.CancelInstall' -and $resourceSecondaryIntent -match 'KiteResourceActionIntent\.Stop' -and $resourceSecondaryIntent -match 'KiteResourceActionIntent\.Uninstall') 'resource detail secondary actions must resolve explicit shared intents.'
+Assert-True ($resourceSecondaryRequest -match 'KiteResourceActionRequest' -and $resourceSecondaryRequest -match 'item\.secondaryIntent') 'resource detail secondary actions must submit through the shared action intake.'
+Assert-True ($resourceSecondaryRequest -notmatch '\bhandleResource(?:Install|Uninstall|OpenStop|Cancel|Failed)') 'resource detail buttons must not bypass the shared action intake.'
 
 $installPlanAction = Function-Body $main 'configureResourceInstallWizardPrimaryAction'
 $runManagementStop = Function-Body $main 'stopRunManagementCard'

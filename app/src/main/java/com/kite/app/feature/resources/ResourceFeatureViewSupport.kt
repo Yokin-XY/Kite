@@ -249,12 +249,31 @@ internal class ResourceFeatureViewFactory(
         padding: Int,
         radius: Float,
         textSize: Float
+    ): View = icon(
+        textValue = item.presentation().iconText,
+        accent = item.presentation().accent,
+        assetPath = item.presentation().iconAsset,
+        iconFit = item.presentation().iconFit,
+        size = size,
+        padding = padding,
+        radius = radius,
+        textSize = textSize
+    )
+
+    fun icon(
+        textValue: String,
+        accent: String,
+        assetPath: String,
+        iconFit: String,
+        size: Int,
+        padding: Int,
+        radius: Float,
+        textSize: Float
     ): View {
-        val presentation = item.presentation()
-        val tone = KiteTheme.accent(presentation.accent, tokens)
-        if (presentation.iconAsset.isBlank()) {
+        val tone = KiteTheme.accent(accent, tokens)
+        if (assetPath.isBlank()) {
             return TextView(context).apply {
-                text = presentation.iconText
+                text = textValue
                 this.textSize = textSize
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
@@ -263,13 +282,13 @@ internal class ResourceFeatureViewFactory(
                 layoutParams = LinearLayout.LayoutParams(size, size)
             }
         }
-        val fullBleed = presentation.iconFit.equals("fullBleed", ignoreCase = true)
+        val fullBleed = iconFit.equals("fullBleed", ignoreCase = true)
         return FrameLayout(context).apply {
             background = roundedBox(tokens.surface, tone.border, radius)
             clipToOutline = true
             layoutParams = LinearLayout.LayoutParams(size, size)
             val placeholder = TextView(context).apply {
-                text = presentation.iconText
+                text = textValue
                 this.textSize = textSize
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
@@ -279,7 +298,7 @@ internal class ResourceFeatureViewFactory(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
-            ResourceFeatureBitmapRepository.load(context, presentation.iconAsset, size) { bitmap ->
+            ResourceFeatureBitmapRepository.load(context, assetPath, size) { bitmap ->
                 if (parent == null) return@load
                 removeAllViews()
                 if (fullBleed) background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, radius)
@@ -291,6 +310,39 @@ internal class ResourceFeatureViewFactory(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 ))
+            }
+        }
+    }
+
+    fun mediaBanner(
+        item: ResourceItemUiState,
+        assetPath: String,
+        contentDescriptionText: String
+    ): View {
+        val presentation = item.presentation()
+        val tone = KiteTheme.accent(presentation.accent, tokens)
+        return FrameLayout(context).apply {
+            background = roundedBox(tokens.surface, tone.border, dp(22).toFloat())
+            clipToOutline = true
+            elevation = dp(2).toFloat()
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(228)
+            ).apply { setMargins(0, dp(20), 0, 0) }
+            val image = ImageView(context).apply {
+                contentDescription = contentDescriptionText.ifBlank { "${presentation.name} 视觉预览" }
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            addView(image, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            ))
+            ResourceFeatureBitmapRepository.load(
+                context,
+                assetPath,
+                maxOf(context.resources.displayMetrics.widthPixels, dp(228))
+            ) { bitmap ->
+                if (image.parent != null) image.setImageBitmap(bitmap)
             }
         }
     }

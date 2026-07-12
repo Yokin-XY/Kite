@@ -677,3 +677,18 @@ T004 资源搜索结果：
 资源搜索状态：completed，待独立提交。
 
 下一步：迁移资源详情页；把详情内容、媒体、操作区、推荐与局部状态绑定移入 Feature，并删除 `ResourceDetailHost`。
+
+T004 资源详情结果：
+
+- `ResourceDetailFragment` 与 `ResourceDetailScreen` 直接拥有详情结构、媒体、推荐、来源、执行预览、依赖要求、滚动位置和动作绑定。
+- manifest 描述变化才按静态签名重建内容；安装、运行、失败和次动作变化只重绑原按钮与状态行，不再由 Activity 开线程、轮询目录或重建详情页。
+- 返回、更多、原始 JSON、推荐资源和主次动作都通过 Feature Result 上交 Shell；页面不直接调用 Activity 导航或执行函数。
+- 删除 `ResourceDetailHost`、Activity 详情请求序号、页面缓存、媒体缓存、渲染绑定及全部详情 View 工厂，`MainActivity` 净减少 857 行。
+- Robolectric 验证“获取 -> 打开”复用原按钮、停止动作立即进入“停止中”，以及返回、更多、原始 JSON 事件完整上交。
+- 全量 Debug 单测、Debug APK 构建、架构检查与运行车道静态检查通过；旧静态检查已改为验证 Controller 中的稳定次动作意图和共享动作请求。
+- OnePlus 8T `3f8bbaad` 覆盖安装与 1714ms 冷启动通过；Codex CLI 详情、更多操作返回详情、详情返回目录均正常，截图无重叠，日志未见崩溃、ANR 或掉帧告警。
+- 架构债务进一步降为 `19287 / 775 / 148 / 5 / 1 / 42`（行 / 函数 / 字段 / Host / 资源渲染委托 / 资源函数）。
+
+资源详情状态：completed，待独立提交。
+
+下一步：迁移资源管理页；让队列、已安装列表和局部状态绑定归 Feature，删除最后一个资源渲染 Host。
