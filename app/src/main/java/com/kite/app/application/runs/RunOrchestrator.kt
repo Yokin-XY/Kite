@@ -79,17 +79,37 @@ internal class RunOrchestrator(
             if (completionFlights.putIfAbsent(instanceId, flight) != null) {
                 return RunCommandResult.Ignored("completion_in_flight")
             }
-            Completion(
-                RecipeStepCompletionRequest(
-                    recipe = recipe,
-                    instanceId = instanceId,
-                    generation = state.createdAt,
-                    stepIndex = state.currentStepIndex,
-                    step = step,
-                    state = state,
-                    output = output
+            val request = RecipeStepCompletionRequest(
+                recipe = recipe,
+                instanceId = instanceId,
+                generation = state.createdAt,
+                stepIndex = state.currentStepIndex,
+                step = step,
+                state = state,
+                output = output
+            )
+            executionFlights.remove(instanceId)
+            stateGateway.update(
+                recipe,
+                instanceId,
+                RunStateMutation(
+                    status = CardRunStatus.Running,
+                    surface = if (
+                        step.type == KiteRecipe.STEP_TERMINAL ||
+                        step.type == KiteRecipe.STEP_OPEN_WEB
+                    ) {
+                        CardRunSurface.Report
+                    } else {
+                        state.surface
+                    },
+                    currentStepIndex = state.currentStepIndex,
+                    lastMeaningfulOutput = "正在完成当前步骤",
+                    clearRunBinding = step.type == KiteRecipe.STEP_TERMINAL && state.hasOnlyTerminalRunBinding(),
+                    clearTerminalSession = step.type == KiteRecipe.STEP_TERMINAL,
+                    clearNextActionUrl = step.type == KiteRecipe.STEP_OPEN_WEB
                 )
             )
+            Completion(request)
         }
         executor.completeWaitingStep(completion.request) { result ->
             handleCompletionResult(completion.request, result)
@@ -108,6 +128,14 @@ internal class RunOrchestrator(
                 is StopPlan.CompleteLocally -> {
                     clearFlights(instanceId)
                     stateGateway.update(recipe, instanceId, stoppedMutation(plan.summary))
+                    effectSink.emit(
+                        RunExecutionEffect.StopResolved(
+                            instanceId = instanceId,
+                            recipeId = recipe.id,
+                            stopped = true,
+                            message = plan.summary
+                        )
+                    )
                     return RunCommandResult.Accepted(instanceId)
                 }
                 is StopPlan.Execute -> {
@@ -242,8 +270,17 @@ internal class RunOrchestrator(
                         state.instanceId,
                         RunStateMutation(
                             status = CardRunStatus.Failed,
-                            surface = CardRunSurface.Report,
+                            surface = request.state.surface,
                             currentStepIndex = request.stepIndex,
+                            runId = request.state.runId,
+                            terminalSessionId = request.state.terminalSessionId,
+                            pid = request.state.pid,
+                            rootPid = request.state.rootPid,
+                            processGroupId = request.state.processGroupId,
+                            systemSessionId = request.state.systemSessionId,
+                            nextActionUrl = request.state.nextActionUrl,
+                            x11Display = request.state.x11Display,
+                            x11SocketPath = request.state.x11SocketPath,
                             lastError = result.message
                         )
                     )
@@ -291,6 +328,14 @@ internal class RunOrchestrator(
             when (val resolution = stopCoordinator.resolve(previousState, result)) {
                 is StopResolution.Stopped -> {
                     stateGateway.update(recipe, previousState.instanceId, stoppedMutation(resolution.summary))
+                    effectSink.emit(
+                        RunExecutionEffect.StopResolved(
+                            instanceId = previousState.instanceId,
+                            recipeId = recipe.id,
+                            stopped = true,
+                            message = resolution.summary
+                        )
+                    )
                 }
                 is StopResolution.Restore -> {
                     stateGateway.update(
@@ -311,6 +356,14 @@ internal class RunOrchestrator(
                             nextActionUrl = previousState.nextActionUrl,
                             x11Display = previousState.x11Display,
                             x11SocketPath = previousState.x11SocketPath
+                        )
+                    )
+                    effectSink.emit(
+                        RunExecutionEffect.StopResolved(
+                            instanceId = previousState.instanceId,
+                            recipeId = recipe.id,
+                            stopped = false,
+                            message = resolution.error
                         )
                     )
                 }
@@ -380,6 +433,14 @@ internal class RunOrchestrator(
                 status == CardRunStatus.Opened ||
                 status == CardRunStatus.Running ||
                 status == CardRunStatus.AlreadyRunning
+
+        private fun CardRunState.hasOnlyTerminalRunBinding(): Boolean =
+            !terminalSessionId.isNullOrBlank() &&
+                (runId.isNullOrBlank() || runId == terminalSessionId) &&
+                pid.isNullOrBlank() &&
+                rootPid.isNullOrBlank() &&
+                processGroupId.isNullOrBlank() &&
+                systemSessionId.isNullOrBlank()
 
         private fun finishedStatus(state: CardRunState): CardRunStatus =
             if (listOf(

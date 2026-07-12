@@ -113,6 +113,13 @@ internal sealed interface RunExecutionEffect {
         val url: String,
         val surfaceMode: String
     ) : RunExecutionEffect
+
+    data class StopResolved(
+        override val instanceId: String,
+        override val recipeId: String,
+        val stopped: Boolean,
+        val message: String
+    ) : RunExecutionEffect
 }
 
 internal fun interface RunExecutionEffectSink {
@@ -143,13 +150,24 @@ internal data class RecipeStopRequest(
     val processGroupId: String? = null,
     val systemSessionId: String? = null,
     val interruptTerminal: Boolean = false
-)
+) {
+    fun bridgeRunId(): String? = runId
+        ?.takeIf { it.isNotBlank() && (terminalSessionId.isNullOrBlank() || it != terminalSessionId) }
+
+    fun hasBridgeProcessBinding(): Boolean =
+        bridgeRunId() != null ||
+            !pid.isNullOrBlank() ||
+            !rootPid.isNullOrBlank() ||
+            !processGroupId.isNullOrBlank() ||
+            !systemSessionId.isNullOrBlank()
+}
 
 internal data class StopExecutionResult(
     val outcome: StopExecutionOutcome,
     val message: String = "",
     val remainingProcessIds: List<String> = emptyList(),
-    val manualKillObserved: Boolean = false
+    val manualKillObserved: Boolean = false,
+    val residueMarkerObserved: Boolean = false
 )
 
 /**

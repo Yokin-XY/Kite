@@ -1474,9 +1474,30 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 runExecutionEffectBus.effects.collect { effect ->
                     when (effect) {
                         is RunExecutionEffect.OpenWeb -> handleRunOpenWebEffect(effect)
+                        is RunExecutionEffect.StopResolved -> handleRunStopResolvedEffect(effect)
                     }
                 }
             }
+        }
+    }
+
+    private fun handleRunStopResolvedEffect(effect: RunExecutionEffect.StopResolved) {
+        val state = CardRunStore.get(effect.instanceId) ?: return
+        if (state.recipeId != effect.recipeId) return
+        val recipe = recipeForRunState(state) ?: return
+        activeRunInstanceIds[recipe.id] = state.instanceId
+        diagnostics.logRecipeAction(
+            recipe,
+            "run_stop_resolved",
+            mapOf(
+                "instanceId" to state.instanceId,
+                "stopped" to effect.stopped.toString(),
+                "status" to state.status.name,
+                "message" to effect.message.take(500)
+            )
+        )
+        if (!effect.stopped && effect.message.isNotBlank()) {
+            Toast.makeText(this, effect.message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -12371,6 +12392,55 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ?: fallbackState?.takeIf { it.recipeId == recipe.id }
             ?: CardRunStore.currentForRecipe(recipe.id)
             ?: return
+        if (recipeUsesProcessRunOrchestrator(recipe)) {
+            stopRecipeWithOrchestrator(recipe, previousState, navigateToConsole)
+            return
+        }
+        legacyStopRecipeByCardInstanceId(recipe, previousState, navigateToConsole)
+    }
+
+    private fun stopRecipeWithOrchestrator(
+        recipe: KiteRecipe,
+        previousState: RecipeRuntimeState,
+        navigateToConsole: Boolean
+    ) {
+        activeRunInstanceIds[recipe.id] = previousState.instanceId
+        diagnostics.logBridgeEvent(
+            "stop_orchestrator_request",
+            recipe,
+            mapOf(
+                "cardInstanceId" to previousState.cardInstanceId,
+                "runId" to previousState.runId.orEmpty(),
+                "terminalSessionId" to previousState.terminalSessionId.orEmpty()
+            )
+        )
+        when (val result = runOrchestrator.stop(previousState.instanceId)) {
+            is RunCommandResult.Accepted -> {
+                if (
+                    previousState.status == RecipeRunStatus.Opened &&
+                    !previousState.hasRunBinding()
+                ) {
+                    webView.stopLoading()
+                }
+                closeCardRunInstanceForStop(recipe, previousState, "stop_orchestrator_accepted")
+                if (navigateToConsole) showConsole()
+            }
+            is RunCommandResult.Ignored -> diagnostics.logBridgeEvent(
+                "stop_orchestrator_ignored",
+                recipe,
+                mapOf(
+                    "cardInstanceId" to previousState.cardInstanceId,
+                    "reason" to result.reason
+                )
+            )
+        }
+    }
+
+    private fun legacyStopRecipeByCardInstanceId(
+        recipe: KiteRecipe,
+        previousState: RecipeRuntimeState,
+        navigateToConsole: Boolean
+    ) {
         activeRunInstanceIds[recipe.id] = previousState.instanceId
         runtimeStates[recipe.id] = previousState
         diagnostics.logBridgeEvent(

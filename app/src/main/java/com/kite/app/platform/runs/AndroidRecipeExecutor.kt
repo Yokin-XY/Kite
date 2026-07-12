@@ -138,14 +138,7 @@ internal class AndroidRecipeExecutor(
                 TimeUnit.MILLISECONDS
             )
         }
-        val hasProcessBinding = listOf(
-            request.runId,
-            request.pid,
-            request.rootPid,
-            request.processGroupId,
-            request.systemSessionId
-        ).any { !it.isNullOrBlank() }
-        if (!hasProcessBinding) {
+        if (!request.hasBridgeProcessBinding()) {
             callback(StopExecutionResult(StopExecutionOutcome.Confirmed, "终端已发送中断并关闭"))
             return
         }
@@ -660,10 +653,11 @@ internal class AndroidRecipeExecutor(
                 callback(result.toStopExecutionResult())
             }
         }
-        if (!request.runId.isNullOrBlank()) {
+        val bridgeRunId = request.bridgeRunId()
+        if (bridgeRunId != null) {
             bridgeClient.stopRun(
                 recipe = request.recipe,
-                runId = request.runId,
+                runId = bridgeRunId,
                 pid = request.pid,
                 rootPid = request.rootPid,
                 processGroupId = request.processGroupId,
@@ -687,7 +681,9 @@ internal class AndroidRecipeExecutor(
 
     private fun BridgeResult.toStopExecutionResult(): StopExecutionResult {
         val observation = stopObservationText()
-        val remaining = observation.lineSequence()
+        val observationLines = observation.lineSequence().map(String::trim).toList()
+        val residueMarkerObserved = observationLines.any { it.startsWith("__kite_stop_remaining:") }
+        val remaining = observationLines
             .map(String::trim)
             .filter { it.startsWith("__kite_stop_remaining:") }
             .lastOrNull()
@@ -706,7 +702,8 @@ internal class AndroidRecipeExecutor(
             },
             message = runReport?.lastMeaningfulOutput() ?: message,
             remainingProcessIds = remaining,
-            manualKillObserved = MANUAL_STOP_KILLED_REGEX.containsMatchIn(observation)
+            manualKillObserved = MANUAL_STOP_KILLED_REGEX.containsMatchIn(observation),
+            residueMarkerObserved = residueMarkerObserved
         )
     }
 

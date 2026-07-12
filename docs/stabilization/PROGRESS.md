@@ -839,3 +839,19 @@ T006 开始与步骤推进迁移结果：
 开始与步骤推进迁移状态：completed，待独立提交。
 
 下一步：迁移普通配方停止、取消、失败和残留进程确认；让 `StopCoordinator` 成为唯一停止结果解释器，再迁移资源安装运行的事实回写。
+
+T006 停止与取消迁移结果：
+
+- 普通卡片、资源打开实例和自动化停止入口已统一提交到进程级 `RunOrchestrator.stop(instanceId)`；Activity 只负责即时页面反馈和任务窗口关闭，不再直接调用 Bridge、终端或写停止事实。
+- 资源安装/卸载运行仍明确留在 `legacyStopRecipeByCardInstanceId`，直到资源登记、失败回滚和卸载续接的事实回写迁走；兼容边界由机器护栏锁定，不能扩散到普通运行。
+- `StopResolved` 一次性 Effect 只负责把成功/失败提示交给当前前台 Shell；`Stopped/Running/lastError` 等可恢复事实仍只写 `CardRunStore`。
+- 等待步骤完成改为先撤销旧 execution flight、清除终端/Web 显示绑定，再关闭执行资源；终端结束事件即使在关闭过程中迟到，也不能重复分派下一步或让页面按旧 session 重建 shell。
+- 停止合同区分终端会话 ID 与 Bridge 运行 ID：当 `runId == terminalSessionId` 且没有 PID/进程组/系统会话时，只结束终端，不向 Bridge 误发 `stop-run`。
+- Bridge 强杀可能因目标进程被杀而返回非零，但只要同一次停止响应提供明确的 `__kite_stop_remaining:` 空审计，`StopCoordinator` 仍确认停止；非空 PID 列表始终恢复原状态并显示残留错误。
+- 单测新增完成竞态、终端会话 ID 归类、无绑定启动取消、强杀非零但空残留确认和 Stop Effect 覆盖；全量 Debug 单测、Debug APK、架构与运行车道检查通过。
+- OnePlus 8T `3f8bbaad` 终端停止验证：目标 session `shell-space-main-1783865366865` 的 PID `8138` 退出、残留 0，Kite 宿主 PID 保持不变，首页恢复“启动”。
+- OnePlus 临时 Bridge 卡验证：`sleep 300` 的 PRoot/bash/sleep 链 `11017/11020/11024` 全部退出，Kite PID `10377` 保持不变；Store 最终为 `Stopped`，所有 run/PID/PGID/SID 绑定清空，摘要为“已停止，未发现进程残留”。临时卡已从共享目录删除，首页恢复仅 OpenClaw 一张卡。
+
+停止与取消迁移状态：completed，待独立提交。
+
+下一步：迁移资源安装运行的成功、失败、回滚、取消和登记回写，让资源运行也进入同一编排器；完成后删除 Activity 内旧步骤执行与停止链。

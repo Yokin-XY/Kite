@@ -22,32 +22,24 @@ internal class StopCoordinator {
         if (state.status == CardRunStatus.Stopped) return StopPlan.Ignore("already_stopped")
 
         val terminalSessionId = state.terminalSessionId?.takeIf { it.isNotBlank() }
-        val hasProcessBinding = listOf(
-            state.runId,
-            state.pid,
-            state.rootPid,
-            state.processGroupId,
-            state.systemSessionId
-        ).any { !it.isNullOrBlank() }
-        if (terminalSessionId == null && !hasProcessBinding && state.status == CardRunStatus.Opened) {
+        val request = RecipeStopRequest(
+            recipe = recipe,
+            instanceId = state.instanceId,
+            runId = state.runId,
+            terminalSessionId = terminalSessionId,
+            pid = state.pid,
+            rootPid = state.rootPid,
+            processGroupId = state.processGroupId,
+            systemSessionId = state.systemSessionId,
+            interruptTerminal = terminalSessionId != null
+        )
+        if (terminalSessionId == null && !request.hasBridgeProcessBinding() && state.status == CardRunStatus.Opened) {
             return StopPlan.CompleteLocally("网页实例已关闭")
         }
-        if (terminalSessionId == null && !hasProcessBinding && !state.isInterruptible()) {
+        if (terminalSessionId == null && !request.hasBridgeProcessBinding() && !state.isInterruptible()) {
             return StopPlan.Ignore("not_running")
         }
-        return StopPlan.Execute(
-            RecipeStopRequest(
-                recipe = recipe,
-                instanceId = state.instanceId,
-                runId = state.runId,
-                terminalSessionId = terminalSessionId,
-                pid = state.pid,
-                rootPid = state.rootPid,
-                processGroupId = state.processGroupId,
-                systemSessionId = state.systemSessionId,
-                interruptTerminal = terminalSessionId != null
-            )
-        )
+        return StopPlan.Execute(request)
     }
 
     fun resolve(previousState: CardRunState, result: StopExecutionResult): StopResolution {
@@ -60,6 +52,9 @@ internal class StopCoordinator {
                 previousState.status,
                 "停止后仍有进程残留：${remaining.joinToString(",")}"
             )
+        }
+        if (result.residueMarkerObserved) {
+            return StopResolution.Stopped("已停止，未发现进程残留")
         }
         if (result.outcome == StopExecutionOutcome.Confirmed || result.manualKillObserved) {
             return StopResolution.Stopped(result.message.ifBlank { "已停止" })

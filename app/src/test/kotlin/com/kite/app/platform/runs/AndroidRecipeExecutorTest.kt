@@ -2,6 +2,9 @@ package com.kite.app.platform.runs
 
 import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeStepExecutionRequest
+import com.kite.app.application.runs.RecipeStopRequest
+import com.kite.app.application.runs.StopExecutionOutcome
+import com.kite.app.application.runs.StopExecutionResult
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.recipe.KiteExecution
@@ -83,16 +86,24 @@ class AndroidRecipeExecutorTest {
         assertEquals(false, failed.bridgeUnavailable)
     }
 
+    @Test
+    fun `尚未获得进程绑定的启动任务可以确定取消`() {
+        val recipe = recipe(KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "sleep 10"))
+        var result: StopExecutionResult? = null
+
+        executor.stop(
+            RecipeStopRequest(
+                recipe = recipe,
+                instanceId = "preparing-instance"
+            )
+        ) { result = it }
+
+        assertEquals(StopExecutionOutcome.Confirmed, result?.outcome)
+        assertEquals("终端已发送中断并关闭", result?.message)
+    }
+
     private fun request(step: KiteRecipeStep): RecipeStepExecutionRequest {
-        val recipe = KiteRecipe(
-            id = "executor-test",
-            name = "Executor Test",
-            description = "",
-            type = KiteRecipe.TYPE_START_SERVICE,
-            defaultUrl = "",
-            shortcut = false,
-            execution = KiteExecution.steps(listOf(step))
-        )
+        val recipe = recipe(step)
         val state = CardRunState(
             instanceId = "executor-instance",
             recipeId = recipe.id,
@@ -111,4 +122,14 @@ class AndroidRecipeExecutorTest {
             previousState = state
         )
     }
+
+    private fun recipe(step: KiteRecipeStep): KiteRecipe = KiteRecipe(
+            id = "executor-test",
+            name = "Executor Test",
+            description = "",
+            type = KiteRecipe.TYPE_START_SERVICE,
+            defaultUrl = "",
+            shortcut = false,
+            execution = KiteExecution.steps(listOf(step))
+        )
 }

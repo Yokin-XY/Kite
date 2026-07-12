@@ -98,6 +98,37 @@ class RunOrchestratorTest {
     }
 
     @Test
+    fun `完成等待步骤时先撤销旧执行回调再分派下一步`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor(emitExecutionWhileCompleting = true)
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val recipe = recipe("completion-race", KiteRecipe.STEP_TERMINAL, KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "completion-race-instance"))
+        val terminalRequest = executor.executeRequests.single()
+        executor.emit(
+            RecipeExecutionEvent.AwaitingUser(
+                instanceId = terminalRequest.instanceId,
+                generation = terminalRequest.generation,
+                stepIndex = terminalRequest.stepIndex,
+                mutation = RunStateMutation(
+                    status = CardRunStatus.WaitingTerminal,
+                    surface = CardRunSurface.Terminal,
+                    currentStepIndex = 0,
+                    runId = "terminal-race",
+                    terminalSessionId = "terminal-race"
+                )
+            )
+        )
+
+        orchestrator.completeCurrentStep("completion-race-instance", "终端完成")
+
+        assertEquals(2, executor.executeRequests.size)
+        assertEquals(1, executor.executeRequests.last().stepIndex)
+        assertEquals(null, gateway.state("completion-race-instance")?.terminalSessionId)
+        assertEquals(null, gateway.state("completion-race-instance")?.runId)
+    }
+
+    @Test
     fun `停止确认后迟到的步骤结果不能覆盖停止事实`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
@@ -132,7 +163,8 @@ class RunOrchestratorTest {
     fun `停止后存在残留进程时恢复原状态并给出确定错误`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
-        val orchestrator = RunOrchestrator(gateway, executor)
+        val effects = mutableListOf<RunExecutionEffect>()
+        val orchestrator = RunOrchestrator(gateway, executor, effectSink = effects::add)
         val recipe = recipe("residue", KiteRecipe.STEP_SHELL)
         orchestrator.start(RunStartRequest(recipe, "residue-instance"))
         val request = executor.executeRequests.single()
@@ -162,12 +194,60 @@ class RunOrchestratorTest {
         assertEquals(CardRunStatus.Running, state?.status)
         assertEquals("停止后仍有进程残留：100", state?.lastError)
         assertEquals("run-1", state?.runId)
+        assertEquals(
+            RunExecutionEffect.StopResolved(
+                instanceId = "residue-instance",
+                recipeId = recipe.id,
+                stopped = false,
+                message = "停止后仍有进程残留：100"
+            ),
+            effects.single()
+        )
+    }
+
+    @Test
+    fun `Bridge 强杀返回失败但残留审计为空时仍确认停止`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val recipe = recipe("force-kill", KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "force-kill-instance"))
+        val request = executor.executeRequests.single()
+        executor.emit(
+            RecipeExecutionEvent.Progress(
+                instanceId = request.instanceId,
+                generation = request.generation,
+                stepIndex = request.stepIndex,
+                mutation = RunStateMutation(
+                    status = CardRunStatus.Running,
+                    currentStepIndex = request.stepIndex,
+                    runId = "force-run",
+                    pid = "9570"
+                )
+            )
+        )
+
+        orchestrator.stop("force-kill-instance")
+        executor.emitStop(
+            StopExecutionResult(
+                outcome = StopExecutionOutcome.Failed,
+                message = "__kite_stop_mode:force-kill\n__kite_stop_remaining:",
+                residueMarkerObserved = true
+            )
+        )
+
+        val state = gateway.state("force-kill-instance")
+        assertEquals(CardRunStatus.Stopped, state?.status)
+        assertEquals("已停止，未发现进程残留", state?.lastMeaningfulOutput)
+        assertEquals(null, state?.runId)
+        assertEquals(null, state?.pid)
     }
 
     @Test
     fun `无运行绑定的网页实例本地闭合不调用执行核心`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
+        val effects = mutableListOf<RunExecutionEffect>()
         val recipe = recipe("web-local", KiteRecipe.STEP_OPEN_WEB)
         gateway.register(recipe)
         gateway.seed(
@@ -183,7 +263,7 @@ class RunOrchestratorTest {
                 updatedAt = 10L
             )
         )
-        val orchestrator = RunOrchestrator(gateway, executor)
+        val orchestrator = RunOrchestrator(gateway, executor, effectSink = effects::add)
 
         val result = orchestrator.stop("web-instance")
 
@@ -191,6 +271,45 @@ class RunOrchestratorTest {
         assertTrue(executor.stopRequests.isEmpty())
         assertEquals(CardRunStatus.Stopped, gateway.state("web-instance")?.status)
         assertEquals(null, gateway.state("web-instance")?.nextActionUrl)
+        assertEquals(
+            RunExecutionEffect.StopResolved(
+                instanceId = "web-instance",
+                recipeId = recipe.id,
+                stopped = true,
+                message = "网页实例已关闭"
+            ),
+            effects.single()
+        )
+    }
+
+    @Test
+    fun `终端自己的会话标识不能被当作 Bridge 运行绑定`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val recipe = recipe("terminal-stop", KiteRecipe.STEP_TERMINAL)
+        gateway.register(recipe)
+        gateway.seed(
+            CardRunState(
+                instanceId = "terminal-stop-instance",
+                recipeId = recipe.id,
+                recipeName = recipe.name,
+                status = CardRunStatus.WaitingTerminal,
+                surface = CardRunSurface.Terminal,
+                currentStepIndex = 0,
+                runId = "terminal-session",
+                terminalSessionId = "terminal-session",
+                createdAt = 20L,
+                updatedAt = 20L
+            )
+        )
+        val orchestrator = RunOrchestrator(gateway, executor)
+
+        orchestrator.stop("terminal-stop-instance")
+
+        val request = executor.stopRequests.single()
+        assertEquals(null, request.bridgeRunId())
+        assertEquals(false, request.hasBridgeProcessBinding())
+        assertEquals(true, request.interruptTerminal)
     }
 
     private fun recipe(id: String, vararg types: String): KiteRecipe = KiteRecipe(
@@ -215,7 +334,8 @@ class RunOrchestratorTest {
 }
 
 private class FakeRecipeExecutor(
-    private val autoComplete: Boolean = false
+    private val autoComplete: Boolean = false,
+    private val emitExecutionWhileCompleting: Boolean = false
 ) : RecipeExecutor {
     val executeRequests = mutableListOf<RecipeStepExecutionRequest>()
     val stopRequests = mutableListOf<RecipeStopRequest>()
@@ -249,6 +369,22 @@ private class FakeRecipeExecutor(
         request: RecipeStepCompletionRequest,
         callback: (RecipeStepCompletionResult) -> Unit
     ) {
+        if (emitExecutionWhileCompleting) {
+            executionCallbacks.last().invoke(
+                RecipeExecutionEvent.Completed(
+                    instanceId = request.instanceId,
+                    generation = request.generation,
+                    stepIndex = request.stepIndex,
+                    mutation = RunStateMutation(
+                        status = CardRunStatus.Running,
+                        surface = CardRunSurface.Terminal,
+                        currentStepIndex = request.stepIndex,
+                        terminalSessionId = "late-terminal",
+                        lastMeaningfulOutput = "迟到的终端结束"
+                    )
+                )
+            )
+        }
         callback(RecipeStepCompletionResult.Ready(request.output))
     }
 
