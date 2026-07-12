@@ -5,9 +5,9 @@
 ## 当前恢复指针
 
 ```text
-方向：D4 生命周期和资源预算收口
-状态：in_progress
-当前任务：审计页面、运行实例、显示面和底层进程的释放与回收边界
+方向：五方向完成后的稳定化优化
+状态：completed
+当前任务：共享工具链缓存已完成全量与真机验收，等待后续新目标
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -482,3 +482,43 @@ D5 状态：completed。
 - 相对最初 1734ms 单次基线，当前三次平均减少约 180ms；无崩溃、ANR 或输入超时。
 
 下一步：执行最终全量测试、构建、静态检查和 APK 审计，并区分 APK 分发体积与安装后 rootfs/工具链占用。
+
+### 工具链共享缓存
+
+- OnePlus 当前内部数据约 3,078,095KB；其中 `.kf/cache/resources` 约 1,040,587KB。
+- 根因是每个 bundled 资源都把同一份约 91MB `ai-dev-pack` 复制到自己的缓存目录。
+- `localPackPath` 改为统一 `/workspace/.kf/cache/shared/ai-dev-pack`；资源自己的缓存由独立 `resourceCachePath` 表达，卸载不会误删共享包。
+- 安装器使用 pending 目录发布共享包，清单版本和声明文件完整时直接复用。
+- 共享包就绪后清理旧资源目录中的重复 `ai-dev-pack`，新用户只保留一份，旧用户在下一次 bundled 资源操作时迁移。
+
+下一步：目标单测、构建后在 OnePlus 8T 触发一个快速 bundled 资源操作，核对共享路径和实际回收空间。
+
+首次真机结果：
+
+- `.kf/cache` 从约 1,040,587KB 降到 226,551KB，旧 `resources/*/ai-dev-pack` 目录归零，已回收约 795MB。
+- 共享包可用，Node 安装脚本 `SUMMARY PASS=67 WARN=8 FAIL=0`，Node 二进制存在，应用无崩溃。
+- 发现升级遗留的展开 `.tar` 仍在内部 pack，与新 `.tgz` 同时复制，额外占约 134MB。
+- 补充按 manifest 清理未声明 package 文件；共享包完整性检查同时拒绝多余文件，确保升级用户也收敛到一份精确内容。
+
+下一步：再次执行 Node staging，确认共享缓存约 91MB 且 `.tar` 遗留消失。
+
+第二次真机结果：
+
+- `.kf/cache` 为 89,439KB，共享 `ai-dev-pack` 为 89,407KB；内部 runtime pack 同为 89,407KB。
+- 共享 packages 只保留 manifest 声明的五个文件，旧 `.tar` 与所有资源私有 pack 均消失。
+- 应用内部数据从约 3,078,095KB 降到 2,061,377KB，合计回收约 993MB。
+- Node 安装仍为 `SUMMARY PASS=67 WARN=8 FAIL=0`，应用 PID 存活且无崩溃。
+- 内部 pack 增加完整性复用；需要更新时先写 pending 目录、校验完整后再替换，避免每次资源操作重复复制 89MB。
+
+下一步：验证第二次 staging 复用耗时，再完成最终全量验收和提交。
+
+最终验证：
+
+- 第三次 Node 资源动作中，内部包和共享包的 Node 归档 mtime 分别保持 `1783835299`、`1783835292`，确认完整包直接复用，没有重复复制约 89MB。
+- 持久日志记录 Node、Python、uv、Git、curl 和工具环境均使用 `/workspace/.kf/cache/shared/ai-dev-pack`，`reclaimedLegacyBytes=0`。
+- 第三次工具链结果仍为 `SUMMARY PASS=67 WARN=8 FAIL=0`；应用 PID 保持 `11940`，未发生崩溃或 ANR。
+- `.kf/cache` 保持 89,439KB，内部包与共享包均为 89,407KB，没有重新生成资源私有副本。
+- 全量 Debug 单测、Debug APK 构建、运行车道静态检查、`git diff --check` 和 APK 体积审计全部通过。
+- Debug APK 为 241,594,058 bytes，压缩 assets 为 183,990,598 bytes，满足 243,269,632 bytes 预算。
+
+共享工具链缓存状态：completed。

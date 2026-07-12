@@ -21,6 +21,7 @@ data class KiteResourceInstallSpec(
 object KiteResourceInstallRecipes {
     const val RUNTIME_SOURCE = "resource"
     const val WORKSPACE_RESOURCE_ROOT = "/workspace/.kf/cache/resources"
+    const val WORKSPACE_SHARED_CACHE_ROOT = "/workspace/.kf/cache/shared"
     const val WORKSPACE_SOFTWARE_ROOT = "/workspace/.kf/software"
     const val WORKSPACE_BIN_ROOT = "/workspace/.kf/bin"
     const val OP_INSTALL = "install"
@@ -28,8 +29,12 @@ object KiteResourceInstallRecipes {
     private const val TOOL_ENV_BIN_COMMANDS =
         "pnpm pnpx wget jq rg fd zip unzip zstd file tar gzip gunzip xz unxz bzip2 bunzip2 ps pgrep pkill pidof top free ip ss netstat ping dig nslookup host update-ca-certificates less tree rsync patch sed awk grep find xargs sort uniq head tail cut tr wc tee env which whoami id uname date sleep timeout kill sha256sum sha1sum md5sum base64 chmod chown chgrp ln readlink realpath mkdir rmdir rm cp mv touch du df stat systemctl service"
 
+    @Suppress("UNUSED_PARAMETER")
     fun localPackPath(resourceId: String, packId: String = "ai-dev-pack"): String =
-        "$WORKSPACE_RESOURCE_ROOT/${safeId(resourceId)}/$packId"
+        "$WORKSPACE_SHARED_CACHE_ROOT/$packId"
+
+    fun resourceCachePath(resourceId: String): String =
+        "$WORKSPACE_RESOURCE_ROOT/${safeId(resourceId)}"
 
     fun softwarePath(resourceId: String): String =
         "$WORKSPACE_SOFTWARE_ROOT/${safeId(resourceId)}"
@@ -716,7 +721,7 @@ PY
             rm -rf ${softwarePath("kite.uv")}
             echo "KITE_RESOURCE_STEP remove-bin uv uvx"
             rm -f $WORKSPACE_BIN_ROOT/uv $WORKSPACE_BIN_ROOT/uvx
-            rm -rf ${localPackPath("kite.uv").substringBeforeLast("/")}
+            rm -rf ${resourceCachePath("kite.uv")}
             echo "uv resource removed"
         """.trimIndent()
 
@@ -729,7 +734,7 @@ PY
             rm -rf /workspace/.kf/toolchains/node-v26.4.0
             echo "KITE_RESOURCE_STEP remove-bin node npm npx"
             rm -f $WORKSPACE_BIN_ROOT/node $WORKSPACE_BIN_ROOT/npm $WORKSPACE_BIN_ROOT/npx
-            rm -rf ${localPackPath("kite.nodejs").substringBeforeLast("/")}
+            rm -rf ${resourceCachePath("kite.nodejs")}
             echo "Node.js resource removed"
         """.trimIndent()
 
@@ -744,7 +749,7 @@ PY
             for command_name in $TOOL_ENV_BIN_COMMANDS; do
               rm -f "$WORKSPACE_BIN_ROOT/${'$'}command_name"
             done
-            rm -rf ${localPackPath("kite.tool.env").substringBeforeLast("/")}
+            rm -rf ${resourceCachePath("kite.tool.env")}
             echo "KF tool environment resource removed"
         """.trimIndent()
 
@@ -762,7 +767,7 @@ PY
             done
             echo "KITE_RESOURCE_STEP remove-software ${'$'}resource_root"
             rm -rf "${'$'}resource_root"
-            rm -rf ${localPackPath("kite.hermes.core").substringBeforeLast("/")}
+            rm -rf ${resourceCachePath("kite.hermes.core")}
             echo "Hermes Core resource removed"
             exit 0
         """.trimIndent()

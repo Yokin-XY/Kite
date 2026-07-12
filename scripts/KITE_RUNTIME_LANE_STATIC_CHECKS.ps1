@@ -27,6 +27,8 @@ $terminalSessionControllerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/a
 $terminalFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalFragment.kt'
 $terminalPanelActionRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalPanelActionRegistry.kt'
 $startupTraceStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/bootstrap/StartupTraceStore.kt'
+$toolchainPackInstallerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/toolchain/ToolchainPackInstaller.kt'
+$resourceInstallRecipesPath = Join-Path $Root 'app/src/main/java/com/kite/app/resources/KiteResourceInstallRecipes.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -103,6 +105,8 @@ $terminalSessionController = Read-Utf8 $terminalSessionControllerPath
 $terminalFragment = Read-Utf8 $terminalFragmentPath
 $terminalPanelActionRegistry = Read-Utf8 $terminalPanelActionRegistryPath
 $startupTraceStore = Read-Utf8 $startupTraceStorePath
+$toolchainPackInstaller = Read-Utf8 $toolchainPackInstallerPath
+$resourceInstallRecipes = Read-Utf8 $resourceInstallRecipesPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -436,6 +440,11 @@ $mainOnResume = Member-Function-Body $main 'onResume'
 $resumeConsoleSurface = Function-Body $main 'resumeConsoleSurface'
 Assert-True ($mainOnResume -match 'Screen\.Console -> resumeConsoleSurface\(\)') 'Activity resume must calibrate an existing Console surface instead of rebuilding it unconditionally.'
 Assert-True ($resumeConsoleSurface -match 'latestRecipes == currentRecipes' -and $resumeConsoleSurface -match 'updateVisibleConsoleCard') 'Console resume must reuse only an unchanged structure and locally rebind card state.'
+Assert-True ($resourceInstallRecipes -match 'WORKSPACE_SHARED_CACHE_ROOT' -and $resourceInstallRecipes -match '\$WORKSPACE_SHARED_CACHE_ROOT/\$packId') 'Bundled resources must resolve one shared toolchain-pack cache.'
+Assert-True ($resourceInstallRecipes -match 'fun resourceCachePath' -and $resourceInstallRecipes -notmatch 'localPackPath\([^\)]*\)\.substringBeforeLast') 'Resource-private cache cleanup must not be derived from the shared pack path.'
+Assert-True ($toolchainPackInstaller -match 'mirrorPackIntoSharedResourceCache' -and $toolchainPackInstaller -match 'cleanupLegacyResourcePackCopies') 'Toolchain staging must publish one shared pack and migrate legacy per-resource copies.'
+$extractRuntimePack = Function-Body $toolchainPackInstaller 'extractRuntimePack'
+Assert-True ($extractRuntimePack -match 'bundledPackDirectoryIsComplete' -and $extractRuntimePack -match '\$PACK_ID\.pending') 'Bundled pack extraction must reuse a complete pack and publish replacements through a pending directory.'
 
 $consoleRefresh = Function-Body $main 'maybeRefreshConsoleAfterRuntimeState'
 Assert-True ($consoleRefresh -match 'updateVisibleConsoleCard') 'console runtime refresh should update a visible card first.'
