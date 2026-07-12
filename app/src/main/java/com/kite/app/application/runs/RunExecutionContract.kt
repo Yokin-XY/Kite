@@ -89,7 +89,8 @@ internal sealed interface RecipeExecutionEvent {
         override val instanceId: String,
         override val generation: Long,
         override val stepIndex: Int,
-        val mutation: RunStateMutation
+        val mutation: RunStateMutation,
+        val effect: RunExecutionEffect? = null
     ) : RecipeExecutionEvent
 
     data class Failed(
@@ -100,6 +101,22 @@ internal sealed interface RecipeExecutionEvent {
         val bridgeUnavailable: Boolean = false,
         val mutation: RunStateMutation? = null
     ) : RecipeExecutionEvent
+}
+
+internal sealed interface RunExecutionEffect {
+    val instanceId: String
+    val recipeId: String
+
+    data class OpenWeb(
+        override val instanceId: String,
+        override val recipeId: String,
+        val url: String,
+        val surfaceMode: String
+    ) : RunExecutionEffect
+}
+
+internal fun interface RunExecutionEffectSink {
+    fun emit(effect: RunExecutionEffect)
 }
 
 internal sealed interface RecipeStepCompletionResult {

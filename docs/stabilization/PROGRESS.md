@@ -825,3 +825,17 @@ T006 合同层结果：
 - 新增 6 项纯单测，覆盖五类步骤统一分派、重复启动、跨编排器终端续跑、停止后迟到结果、残留进程和本地网页闭合；全量单测、Debug 构建及运行车道静态检查通过。
 
 下一步：把进程级编排器装配到 `KiteAppGraph`，提取真实步骤执行适配器；先迁移开始和步骤推进，再迁移停止，不在同一改动中切换全部入口。
+
+T006 开始与步骤推进迁移结果：
+
+- `KiteAppGraph` 进程级装配唯一 `RunOrchestrator`、`AndroidRunStateGateway`、`AndroidRecipeExecutor` 与一次性 Effect 总线；Activity 只接收动作计划、绑定可见显示面，不再决定普通配方步骤如何执行。
+- shell、terminal、Web、X11 和 Android action 已通过同一 `RecipeExecutor` 端口分派；执行结果只以携带 `instanceId + createdAt + stepIndex` 的结构化事件回写，跨编排器恢复与迟到结果均经过当前事实校验。
+- 普通首页/编辑器配方已切到新开始链；资源安装运行暂留兼容入口，原因是资源登记成功、失败回滚和卸载续接仍由旧资源生命周期回调拥有，不能在事实回写尚未迁移时硬切。
+- Terminal 步骤先创建、暂存并打开进程级会话，再投递命令；显示面是否已挂载不再决定命令是否执行。等待用户确认期间执行 flight 保留，确认完成后无论是否还有下一步都结束终端会话。
+- Web 可见步骤将 URL 先写入 `CardRunStore` 再发送一次性打开 Effect；页面错过 Effect 时仍可从运行事实恢复，不把导航事件当作持久事实。
+- Robolectric 覆盖可见 Web 等待与 Effect、静默 Web 自动完成、未知步骤结构化失败；编排测试补齐旧等待回调不得覆盖新步骤。全量 Debug 单测、Debug APK、架构与运行车道检查通过。
+- OnePlus 8T `3f8bbaad` 冷启动 1581ms；OpenClaw 首次启动的终端命令只出现一次，状态进入 `WaitingTerminal`。点击“继续”后摘要立即变为“已完成”，对应 `proot` 与 `bash --login` 子进程均从进程表消失，logcat 无 `AndroidRuntime` 崩溃。
+
+开始与步骤推进迁移状态：completed，待独立提交。
+
+下一步：迁移普通配方停止、取消、失败和残留进程确认；让 `StopCoordinator` 成为唯一停止结果解释器，再迁移资源安装运行的事实回写。

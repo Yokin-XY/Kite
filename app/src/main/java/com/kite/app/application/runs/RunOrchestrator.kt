@@ -11,7 +11,8 @@ import com.kite.app.run.CardRunSurface
 internal class RunOrchestrator(
     private val stateGateway: RunStateGateway,
     private val executor: RecipeExecutor,
-    private val stopCoordinator: StopCoordinator = StopCoordinator()
+    private val stopCoordinator: StopCoordinator = StopCoordinator(),
+    private val effectSink: RunExecutionEffectSink = RunExecutionEffectSink { }
 ) {
     private data class Flight(val generation: Long, val stepIndex: Int)
 
@@ -25,6 +26,9 @@ internal class RunOrchestrator(
             val existing = stateGateway.state(request.instanceId)
             if (existing != null && existing.recipeId != request.recipe.id) {
                 return RunCommandResult.Ignored("instance_recipe_conflict")
+            }
+            if (existing != null && existing.status.endsExecutionGeneration()) {
+                clearFlights(existing.instanceId)
             }
             if (existing != null && existing.status.preventsDuplicateStart()) {
                 return RunCommandResult.Ignored("instance_already_active")
@@ -188,8 +192,8 @@ internal class RunOrchestrator(
                     null
                 }
                 is RecipeExecutionEvent.AwaitingUser -> {
-                    executionFlights.remove(state.instanceId)
                     stateGateway.update(recipe, state.instanceId, event.mutation)
+                    event.effect?.let(effectSink::emit)
                     null
                 }
                 is RecipeExecutionEvent.Failed -> {
@@ -227,6 +231,7 @@ internal class RunOrchestrator(
     ) {
         val nextDispatch = synchronized(lock) {
             completionFlights.remove(request.instanceId)
+            executionFlights.remove(request.instanceId)
             val state = stateGateway.state(request.instanceId) ?: return
             if (state.createdAt != request.generation || state.status.stopsExecution()) return
             val recipe = stateGateway.recipe(state.recipeId) ?: return
@@ -317,7 +322,11 @@ internal class RunOrchestrator(
         val expected = executionFlights[event.instanceId] ?: return null
         if (expected.generation != event.generation || expected.stepIndex != event.stepIndex) return null
         val state = stateGateway.state(event.instanceId) ?: return null
-        if (state.createdAt != event.generation || state.status.stopsExecution()) return null
+        if (
+            state.createdAt != event.generation ||
+            state.currentStepIndex != event.stepIndex ||
+            state.status.stopsExecution()
+        ) return null
         return state
     }
 
@@ -350,12 +359,18 @@ internal class RunOrchestrator(
         }
 
         private fun CardRunStatus.preventsDuplicateStart(): Boolean =
-            this == CardRunStatus.Starting ||
-                this == CardRunStatus.Running ||
+            this == CardRunStatus.Running ||
                 this == CardRunStatus.WaitingTerminal ||
                 this == CardRunStatus.AlreadyRunning ||
                 this == CardRunStatus.Opened ||
                 this == CardRunStatus.Stopping
+
+        private fun CardRunStatus.endsExecutionGeneration(): Boolean =
+            this == CardRunStatus.Stopped ||
+                this == CardRunStatus.Completed ||
+                this == CardRunStatus.Failed ||
+                this == CardRunStatus.BridgeUnavailable ||
+                this == CardRunStatus.Unknown
 
         private fun CardRunStatus.stopsExecution(): Boolean =
             this == CardRunStatus.Stopping || this == CardRunStatus.Stopped

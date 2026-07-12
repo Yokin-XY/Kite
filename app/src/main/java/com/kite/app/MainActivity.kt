@@ -71,6 +71,11 @@ import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.action.KiteResourceActionRequest
 import com.kite.app.action.KiteResourceActionSource
 import com.kite.app.action.KiteInstallPlanActionIntent
+import com.kite.app.application.runs.RunCommandResult
+import com.kite.app.application.runs.RunExecutionEffect
+import com.kite.app.application.runs.RunExecutionEffectBus
+import com.kite.app.application.runs.RunOrchestrator
+import com.kite.app.application.runs.RunStartRequest
 import com.kite.app.browser.BrowserAuthRedirect
 import com.kite.app.browser.BrowserAuthRedirectParser
 import com.kite.app.browser.BrowserAuthSession
@@ -235,6 +240,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private lateinit var resourceManifestLoader: KiteResourceManifestLoader
     private lateinit var resourceFeatureGateway: ResourceFeatureGateway
     private lateinit var recipeFeatureGateway: RecipeFeatureGateway
+    private lateinit var runOrchestrator: RunOrchestrator
+    private lateinit var runExecutionEffectBus: RunExecutionEffectBus
     private lateinit var themeStore: SharedPreferences
     private lateinit var appSettings: SharedPreferences
     private lateinit var rootHost: FrameLayout
@@ -378,6 +385,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         themeStore = getSharedPreferences("kite_theme", MODE_PRIVATE)
         appSettings = getSharedPreferences("kite_app_settings", MODE_PRIVATE)
         CardRunStore.initialize(applicationContext)
+        runOrchestrator = appGraph.runOrchestrator
+        runExecutionEffectBus = appGraph.runExecutionEffectBus
         themeConfig = loadThemeConfig()
         tokens = KiteTheme.resolve(themeConfig)
         applyKiteTerminalTheme()
@@ -458,6 +467,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         observeRootfsExtractionProgress()
         observeRuntimeBootstrapProgress()
         observeTerminalFlowSignals()
+        observeRunExecutionEffects()
         observeCardRunStoreSignals()
         observeRuntimePanelSummarySignals()
         observeResourceInstallSignals()
@@ -1455,6 +1465,47 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     )
                 }
             }
+        }
+    }
+
+    private fun observeRunExecutionEffects() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                runExecutionEffectBus.effects.collect { effect ->
+                    when (effect) {
+                        is RunExecutionEffect.OpenWeb -> handleRunOpenWebEffect(effect)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handleRunOpenWebEffect(effect: RunExecutionEffect.OpenWeb) {
+        val state = CardRunStore.get(effect.instanceId) ?: return
+        if (state.recipeId != effect.recipeId || state.nextActionUrl != effect.url) return
+        val recipe = findRecipeById(effect.recipeId)
+            ?: CardRunStore.registeredRecipe(effect.recipeId)
+            ?: return
+        val step = recipe.steps.getOrNull(state.currentStepIndex) ?: return
+        activeRunInstanceIds[recipe.id] = state.instanceId
+        runtimeStates[recipe.id] = state
+        diagnostics.logRecipeAction(
+            recipe,
+            "run_open_web_effect",
+            mapOf(
+                "instanceId" to state.instanceId,
+                "stepIndex" to state.currentStepIndex.toString(),
+                "surfaceMode" to effect.surfaceMode,
+                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(effect.url)
+            )
+        )
+        if (!shouldOpenStepSurface(recipe, step)) return
+        if (shouldRenderInCardRun(recipe)) {
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = state.instanceId
+            showCardRunSurface(recipe)
+        } else {
+            openWeb(effect.url, "recipe_orchestrator", recipe)
         }
     }
 
@@ -7203,6 +7254,26 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun completeCurrentCardStep(recipe: KiteRecipe, state: RecipeRuntimeState) {
         val step = recipe.steps.getOrNull(state.currentStepIndex)
+        if (step != null && recipeUsesProcessRunOrchestrator(recipe)) {
+            val output = when (step.type) {
+                KiteRecipe.STEP_TERMINAL -> "终端已由用户标记完成"
+                KiteRecipe.STEP_OPEN_WEB -> "网页已由用户标记完成"
+                KiteRecipe.STEP_X11 -> "X11 GUI 已由用户标记完成"
+                KiteRecipe.STEP_SHELL -> "SH 报告已由用户确认继续"
+                else -> "步骤已由用户标记完成"
+            }
+            diagnostics.logRecipeAction(
+                recipe,
+                "orchestrated_step_completed_by_user",
+                mapOf(
+                    "type" to step.type,
+                    "instanceId" to state.instanceId,
+                    "stepIndex" to state.currentStepIndex.toString()
+                )
+            )
+            runOrchestrator.completeCurrentStep(state.instanceId, output)
+            return
+        }
         val pending = if (step?.type == KiteRecipe.STEP_TERMINAL) {
             pendingTerminalFlow?.takeIf {
                 it.recipeId == recipe.id &&
@@ -11101,6 +11172,96 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun handleRecipeAction(recipe: KiteRecipe) = handleRecipeActionWithRouter(recipe)
 
     private fun startRecipe(
+        recipe: KiteRecipe,
+        previousState: RecipeRuntimeState,
+        preferredInstanceId: String? = null,
+        openConsoleOnStart: Boolean = true,
+        renderOnStart: Boolean = true,
+        keepCurrentFocus: Boolean = false
+    ) {
+        if (recipeUsesProcessRunOrchestrator(recipe)) {
+            startRecipeWithOrchestrator(
+                recipe = recipe,
+                previousState = previousState,
+                preferredInstanceId = preferredInstanceId,
+                openConsoleOnStart = openConsoleOnStart,
+                renderOnStart = renderOnStart,
+                keepCurrentFocus = keepCurrentFocus
+            )
+            return
+        }
+        legacyStartRecipe(
+            recipe = recipe,
+            previousState = previousState,
+            preferredInstanceId = preferredInstanceId,
+            openConsoleOnStart = openConsoleOnStart,
+            renderOnStart = renderOnStart,
+            keepCurrentFocus = keepCurrentFocus
+        )
+    }
+
+    private fun recipeUsesProcessRunOrchestrator(recipe: KiteRecipe): Boolean =
+        recipe.runtimeSource != KiteResourceInstallRecipes.RUNTIME_SOURCE
+
+    private fun startRecipeWithOrchestrator(
+        recipe: KiteRecipe,
+        previousState: RecipeRuntimeState,
+        preferredInstanceId: String?,
+        openConsoleOnStart: Boolean,
+        renderOnStart: Boolean,
+        keepCurrentFocus: Boolean
+    ) {
+        val instanceId = preferredInstanceId ?: activeRunInstanceIds[recipe.id] ?: recipe.id
+        activeRunInstanceIds[recipe.id] = instanceId
+        if (!keepCurrentFocus) {
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = instanceId
+        }
+        val result = runOrchestrator.start(
+            RunStartRequest(
+                recipe = recipe,
+                instanceId = instanceId,
+                parentInstanceId = previousState.parentInstanceId,
+                ownerKind = previousState.ownerKind,
+                stepId = previousState.stepId
+            )
+        )
+        val state = CardRunStore.get(instanceId) ?: previousState
+        runtimeStates[recipe.id] = state
+        diagnostics.logRecipeAction(
+            recipe,
+            "run_orchestrator_start",
+            mapOf(
+                "instanceId" to instanceId,
+                "result" to when (result) {
+                    is RunCommandResult.Accepted -> "accepted"
+                    is RunCommandResult.Ignored -> "ignored:${result.reason}"
+                },
+                "steps" to recipe.steps.joinToString(" -> ") { it.type }
+            )
+        )
+        val firstStep = recipe.steps.firstOrNull()
+        val deferInitialSurfaceUntilTerminalReady =
+            firstStep?.type == KiteRecipe.STEP_TERMINAL && (this is CardRunActivity || !openConsoleOnStart)
+        if (!renderOnStart) {
+            if (!keepCurrentFocus) {
+                focusedRunRecipeId = recipe.id
+                focusedRunInstanceId = instanceId
+            }
+        } else if (openConsoleOnStart && this !is CardRunActivity) {
+            showConsole()
+        } else {
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = instanceId
+            if (!deferInitialSurfaceUntilTerminalReady) {
+                showCardRunSurface(recipe)
+            } else {
+                showCardRunLoadingSurface(recipe, "正在准备终端")
+            }
+        }
+    }
+
+    private fun legacyStartRecipe(
         recipe: KiteRecipe,
         previousState: RecipeRuntimeState,
         preferredInstanceId: String? = null,

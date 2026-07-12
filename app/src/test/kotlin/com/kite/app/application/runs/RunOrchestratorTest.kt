@@ -79,6 +79,22 @@ class RunOrchestratorTest {
         assertEquals(listOf(KiteRecipe.STEP_SHELL), resumedExecutor.executeRequests.map { it.step.type })
         assertEquals(CardRunStatus.Completed, gateway.state("resume-instance")?.status)
         assertEquals(null, gateway.state("resume-instance")?.terminalSessionId)
+
+        firstExecutor.emit(
+            RecipeExecutionEvent.Completed(
+                instanceId = request.instanceId,
+                generation = request.generation,
+                stepIndex = request.stepIndex,
+                mutation = RunStateMutation(
+                    status = CardRunStatus.Running,
+                    currentStepIndex = request.stepIndex,
+                    terminalSessionId = "terminal-1",
+                    lastMeaningfulOutput = "迟到的终端完成"
+                )
+            )
+        )
+        assertEquals(CardRunStatus.Completed, gateway.state("resume-instance")?.status)
+        assertEquals(null, gateway.state("resume-instance")?.terminalSessionId)
     }
 
     @Test
