@@ -663,3 +663,17 @@ T004 资源目录结果：
 资源目录状态：completed，待独立提交。
 
 下一步：迁移资源搜索页，复用同一 Controller、展示投影、图标仓库和行绑定，删除 `ResourceSearchHost` 及 Activity 搜索请求/渲染状态。
+
+T004 资源搜索结果：
+
+- 新增 `ResourceFeatureFragment`，统一资源页面的 Controller、Gateway 变化流、刷新和主/次动作 Effect 生命周期；具体页面仍独立拥有 View 与页面状态。
+- `ResourceSearchFragment` 与 `ResourceSearchScreen` 直接拥有查询、输入法、滚动位置、过滤结果、渐进绑定和动作承诺状态。
+- 搜索只过滤 Controller 已加载的内存目录；安装/运行事实变化只重绑当前结果按钮，不再启动 Activity 搜索线程或重读目录。
+- Shell 继续拥有 Feature 容器，但搜索 Destination 不挂载全局底栏，避免软键盘弹出后挤占结果空间；顶部返回立即回到资源目录。
+- 删除 `ResourceSearchHost`、Activity 搜索字段、请求序号、搜索算法、空态、列表分批渲染与刷新分支。
+- Robolectric 验证查询过滤、清空恢复、原按钮局部重绑和返回 Effect；OnePlus 8T 实测 `Codex` 过滤得到 Codex CLI/VS Code，输入法与顶部返回正常，未见掉帧、崩溃或 ANR。
+- 架构债务进一步降为 `20144 / 817 / 155 / 6 / 2 / 52`（行 / 函数 / 字段 / Host / 资源渲染委托 / 资源函数）。
+
+资源搜索状态：completed，待独立提交。
+
+下一步：迁移资源详情页；把详情内容、媒体、操作区、推荐与局部状态绑定移入 Feature，并删除 `ResourceDetailHost`。

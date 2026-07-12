@@ -175,7 +175,7 @@ class MainActivityScreenRoutingTest {
                 )
             )
 
-            if (screenName in listOf("ResourceSearch", "ResourceManage")) {
+            if (screenName == "ResourceManage") {
                 assertTrue(
                     "$screenName must request a visible item patch",
                     resourceItemPatchRequestSerial(activity) > patchSerialBefore
