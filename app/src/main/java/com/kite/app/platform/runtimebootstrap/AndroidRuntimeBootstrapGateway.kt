@@ -36,6 +36,8 @@ internal class AndroidRuntimeBootstrapGateway(context: Context) : RuntimeBootstr
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val probe = MutableStateFlow(RuntimeReadinessProbe())
+    @Volatile
+    private var ensureReadyInFlight = false
 
     override val snapshots: StateFlow<RuntimeBootstrapSnapshot> = combine(
         BootstrapCoordinator.snapshot,
@@ -64,28 +66,46 @@ internal class AndroidRuntimeBootstrapGateway(context: Context) : RuntimeBootstr
 
     override fun refresh() {
         scope.launch(Dispatchers.IO) {
-            val baseReady = runCatching {
-                WorkSurfaceRuntimeBridge.isBaseImageReady(appContext)
-            }.getOrDefault(false)
-            val containerReady = baseReady && runCatching {
-                WorkSurfaceRuntimeBridge.isDefaultContainerReady(appContext)
-            }.getOrDefault(false)
-            val resourcesSettled = containerReady && runCatching {
-                ToolchainPackInstaller.bootstrapResourcesSettled(appContext)
-            }.getOrDefault(false)
-            probe.value = RuntimeReadinessProbe(
-                completed = true,
-                baseImageReady = baseReady,
-                defaultContainerReady = containerReady,
-                bootstrapResourcesSettled = resourcesSettled,
-                refreshedAt = System.currentTimeMillis()
-            )
+            probe.value = probeReadiness()
         }
     }
 
-    override fun startBootstrap() {
-        BootstrapCoordinator.ensureStarted(appContext)
-        refresh()
+    override fun ensureReady() {
+        if (ensureReadyInFlight) return
+        ensureReadyInFlight = true
+        scope.launch(Dispatchers.IO) {
+            try {
+                val readiness = probeReadiness()
+                probe.value = readiness
+                if (
+                    permissionSnapshot().ready &&
+                    !(readiness.baseImageReady && readiness.defaultContainerReady && readiness.bootstrapResourcesSettled)
+                ) {
+                    BootstrapCoordinator.ensureStarted(appContext)
+                }
+            } finally {
+                ensureReadyInFlight = false
+            }
+        }
+    }
+
+    private fun probeReadiness(): RuntimeReadinessProbe {
+        val baseReady = runCatching {
+            WorkSurfaceRuntimeBridge.isBaseImageReady(appContext)
+        }.getOrDefault(false)
+        val containerReady = baseReady && runCatching {
+            WorkSurfaceRuntimeBridge.isDefaultContainerReady(appContext)
+        }.getOrDefault(false)
+        val resourcesSettled = containerReady && runCatching {
+            ToolchainPackInstaller.bootstrapResourcesSettled(appContext)
+        }.getOrDefault(false)
+        return RuntimeReadinessProbe(
+            completed = true,
+            baseImageReady = baseReady,
+            defaultContainerReady = containerReady,
+            bootstrapResourcesSettled = resourcesSettled,
+            refreshedAt = System.currentTimeMillis()
+        )
     }
 
     private fun permissionSnapshot(): RuntimePermissionSnapshot {

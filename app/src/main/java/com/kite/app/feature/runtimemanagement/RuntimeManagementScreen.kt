@@ -36,6 +36,7 @@ internal class RuntimeManagementScreen(
     private val terminalCount = summaryValue("终端")
     private val processCount = summaryValue("进程")
     private val runBindings = linkedMapOf<String, RunBinding>()
+    private val terminalBindings = linkedMapOf<String, TerminalBinding>()
     private val processBindings = linkedMapOf<String, ProcessBinding>()
     private val expandedRunIds = mutableSetOf<String>()
     private var latestState = RuntimeManagementUiState()
@@ -67,6 +68,9 @@ internal class RuntimeManagementScreen(
             return
         }
         state.runs.forEach { run -> runBindings[run.instanceId]?.let { bindRun(it, run) } }
+        state.standaloneTerminals.forEach { terminal ->
+            terminalBindings[terminal.key]?.let { bindTerminal(it, terminal) }
+        }
         val processes = state.allProcesses().associateBy(RuntimeManagementProcessUiState::key)
         processBindings.forEach { (key, binding) -> processes[key]?.let { bindProcess(binding, it) } }
     }
@@ -77,6 +81,7 @@ internal class RuntimeManagementScreen(
         disposed = true
         restoredScrollY = scroll.scrollY
         runBindings.clear()
+        terminalBindings.clear()
         processBindings.clear()
         contentHost.removeAllViews()
     }
@@ -88,6 +93,7 @@ internal class RuntimeManagementScreen(
     private fun rebuildBody(state: RuntimeManagementUiState) {
         bodyRebuildCount += 1
         runBindings.clear()
+        terminalBindings.clear()
         processBindings.clear()
         contentHost.removeAllViews()
         if (state.isEmpty) {
@@ -105,10 +111,68 @@ internal class RuntimeManagementScreen(
             runBindings[run.instanceId] = binding
             contentHost.addView(binding.root)
         }
+        if (state.standaloneTerminals.isNotEmpty()) {
+            contentHost.addView(sectionTitle("独立终端 · ${state.standaloneTerminals.size}"))
+            state.standaloneTerminals.forEach { terminal ->
+                val binding = createTerminalRow(terminal)
+                terminalBindings[terminal.key] = binding
+                contentHost.addView(binding.root)
+            }
+        }
         state.otherProcessSections.forEach { section ->
             contentHost.addView(sectionTitle("${section.title} · ${section.processes.size}"))
             section.processes.forEach { process -> contentHost.addView(createProcessRow(process).root) }
         }
+    }
+
+    private fun createTerminalRow(terminal: RuntimeManagementTerminalUiState): TerminalBinding {
+        val title = TextView(context)
+        val subtitle = TextView(context)
+        val action = TextView(context)
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(12), dp(12))
+            background = rounded(tokens.cardBackground, tokens.border, 8)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 0, 0, dp(8)) }
+            addView(TextView(context).apply {
+                text = ">_"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(tokens.primaryStrong)
+                background = rounded(tokens.primarySubtle, Color.TRANSPARENT, 8)
+            }, LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(0, 0, dp(12), 0) })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(title.apply {
+                    textSize = 14f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(tokens.textPrimary)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                })
+                addView(subtitle.apply {
+                    textSize = 11.5f
+                    setTextColor(tokens.textSecondary)
+                    setPadding(0, dp(3), 0, 0)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(action, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)))
+        }
+        return TerminalBinding(root, title, subtitle, action, terminal).also { bindTerminal(it, terminal) }
+    }
+
+    private fun bindTerminal(binding: TerminalBinding, terminal: RuntimeManagementTerminalUiState) {
+        binding.item = terminal
+        binding.title.text = terminal.title
+        binding.subtitle.text = terminal.subtitle
+        bindAction(binding.action, terminal.endAction)
     }
 
     private fun createRunCard(run: RuntimeManagementRunUiState): RunBinding {
@@ -456,6 +520,9 @@ internal class RuntimeManagementScreen(
             run.childProcesses.forEach { append("|child:").append(it.key) }
             append(';')
         }
+        standaloneTerminals.forEach { terminal ->
+            append("terminal:").append(terminal.key).append(';')
+        }
         otherProcessSections.forEach { section ->
             append("section:").append(section.key)
             section.processes.forEach { append('|').append(it.key) }
@@ -512,6 +579,14 @@ internal class RuntimeManagementScreen(
         val subtitle: TextView,
         val action: TextView,
         var item: RuntimeManagementProcessUiState
+    )
+
+    private data class TerminalBinding(
+        val root: LinearLayout,
+        val title: TextView,
+        val subtitle: TextView,
+        val action: TextView,
+        var item: RuntimeManagementTerminalUiState
     )
 
     private data class StatusColors(val text: Int, val background: Int, val border: Int)

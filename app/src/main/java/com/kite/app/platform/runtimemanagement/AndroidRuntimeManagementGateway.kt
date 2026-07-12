@@ -44,6 +44,10 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
         initialValue = currentSnapshot()
     )
 
+    init {
+        refresh(force = false)
+    }
+
     override fun currentSnapshot(): RuntimeManagementSnapshot = mapSnapshot(
         runs = CardRunStore.runs.value,
         terminals = TerminalSessionStore.snapshot.value,

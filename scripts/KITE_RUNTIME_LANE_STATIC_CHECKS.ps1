@@ -83,6 +83,7 @@ $runtimeBootstrapGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/a
 $androidRuntimeBootstrapGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runtimebootstrap/AndroidRuntimeBootstrapGateway.kt'
 $runtimeStatusProjectorPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimebootstrap/RuntimeStatusProjector.kt'
 $runtimeStatusControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimebootstrap/RuntimeStatusFeatureController.kt'
+$runtimeStatusChromePath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimebootstrap/RuntimeStatusChrome.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -215,6 +216,7 @@ $runtimeBootstrapGateway = Read-Utf8 $runtimeBootstrapGatewayPath
 $androidRuntimeBootstrapGateway = Read-Utf8 $androidRuntimeBootstrapGatewayPath
 $runtimeStatusProjector = Read-Utf8 $runtimeStatusProjectorPath
 $runtimeStatusController = Read-Utf8 $runtimeStatusControllerPath
+$runtimeStatusChrome = Read-Utf8 $runtimeStatusChromePath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -299,7 +301,7 @@ Assert-True ($androidBrowserHandoffGateway -match 'CardRunStore\.update' -and $a
 Assert-True ($runInstallWizardSurfaceBinding -match 'override fun tick\(now: Long\): Boolean = surface\.tick\(now\)' -and $resourceInstallWizardScreen -match 'fun tick\(' -and $main -notmatch 'ResourceInstallWizardSurface|resourceInstallWizardSurface') 'install wizard must keep elapsed binding inside its feature screen.'
 Assert-True ($main -match '(?s)private fun showConsole\b.*HomeFragment' -and $main -notmatch 'consoleCardBindings|consolePageBodyHost|private fun recipeGrid|updateVisibleConsoleCard') 'Home card views, bindings, and page state must remain owned by HomeFragment and HomeScreen.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'
-Assert-True ($main -match 'observeRuntimePanelSummarySignals') 'runtime panel summary counts must observe existing store snapshots.'
+Assert-True ($main -match 'observeRuntimeStatus' -and $main -match 'RuntimeStatusFeatureController') 'runtime status chrome must observe the shared projected feature state.'
 Assert-True ($main -match 'handleRuntimeAutomationIntent') 'Kite MainActivity must expose the runtime automation diagnostic entry on the real launcher path.'
 Assert-True ($main -match 'RuntimeAutomationActions\.dumpDiagnostics\(applicationContext\)') 'Kite runtime diagnostics must reuse the shared RuntimeAutomationActions dump path.'
 Assert-True ($main -match 'RuntimeAutomationActions\.rotateProotTelemetry\(applicationContext\)') 'Kite runtime automation must expose telemetry rotation on the real launcher path.'
@@ -332,22 +334,15 @@ Assert-True ($runSurfaceController -notmatch 'Activity|Fragment|View|CardRunStor
 $handleProgress = Member-Function-Body $androidRecipeExecutor 'handleShellProgress'
 Assert-True ($handleProgress -match 'RecipeExecutionEvent\.Progress' -and $handleProgress -notmatch 'Activity|View|showCardRunSurface|showConsole|renderResourceInstallWizardFor') 'Shell progress must stay in the UI-agnostic execution adapter.'
 
-$runtimePanelObserver = Function-Body $main 'observeRuntimePanelSummarySignals'
-Assert-True ($runtimePanelObserver -match 'TerminalSessionStore\.snapshot\.collect') 'runtime panel terminal count must reuse TerminalSessionStore snapshot.'
-Assert-True ($runtimePanelObserver -match 'TaskManagerStore\.snapshot\.collect') 'runtime panel process count must reuse TaskManagerStore snapshot.'
-Assert-True ($runtimePanelObserver -notmatch 'showCardRunSurface|showConsole|showKiteProcessOverview|refreshResourceScreenIfVisible') 'runtime panel count observer must not trigger whole-surface refreshes.'
-
-$runtimePanelSummary = Function-Body $main 'runtimePanelSummary'
-Assert-True ($runtimePanelSummary -match 'CardRunStore\.runs\.value') 'runtime panel card count must reuse CardRunStore.'
-Assert-True ($runtimePanelSummary -match 'TerminalSessionStore\.snapshot\.value\.liveSessions\.size') 'runtime panel terminal count must reuse live terminal snapshot.'
-Assert-True ($runtimePanelSummary -match 'taskSnapshot\.processes\.size') 'runtime panel process count must use the task-manager snapshot passed to the render frame.'
-
-$runtimePanelCounts = Function-Body $main 'renderRuntimePanelCounts'
-Assert-True ($runtimePanelCounts -match 'runtimePanelCardCountView\?\.text') 'runtime panel counts should update existing value views.'
-Assert-True ($runtimePanelCounts -notmatch 'showCardRunSurface|showConsole|showKiteProcessOverview|RuntimeHealthStore\.refresh|TaskManagerStore\.refresh|TerminalSessionStore\.refresh') 'runtime panel count rendering must stay a cheap text bind.'
-
-$showRuntimePanel = Function-Body $main 'showUbuntuRuntimePanel'
-Assert-True ($showRuntimePanel -match 'requestRuntimePanelSummaryRefresh') 'opening runtime panel should request throttled summary refresh.'
+$runtimeStatusObserver = Function-Body $main 'observeRuntimeStatus'
+Assert-True ($runtimeStatusObserver -match 'runtimeStatusController\.state\.collect' -and $runtimeStatusObserver -notmatch 'CardRunStore|TerminalSessionStore|TaskManagerStore') 'runtime status chrome must observe one projected state instead of concrete stores.'
+Assert-True ($runtimeStatusController -match 'management\.toStatusCounts\(\)' -and $runtimeStatusController -match 'runningCards' -and $runtimeStatusController -match 'runningTerminals' -and $runtimeStatusController -match 'runningProcesses') 'runtime status counts must derive from the shared runtime-management snapshot.'
+$runtimeStatusPanelBind = Member-Function-Body $runtimeStatusChrome 'bindPanel'
+Assert-True ($runtimeStatusPanelBind -match 'binding\.cardCount\.text' -and $runtimeStatusPanelBind -match 'binding\.terminalCount\.text' -and $runtimeStatusPanelBind -match 'binding\.processCount\.text') 'runtime status panel must bind count changes into existing value views.'
+Assert-True ($runtimeStatusPanelBind -notmatch 'removeAllViews|CardRunStore|TerminalSessionStore|TaskManagerStore') 'runtime status count binding must remain local and store-free.'
+$showRuntimeStatusPanel = Member-Function-Body $runtimeStatusChrome 'showPanel'
+Assert-True ($showRuntimeStatusPanel -match 'onRefresh\(\)' -and $showRuntimeStatusPanel -match 'bindPanel' -and $showRuntimeStatusPanel -notmatch 'TaskManagerStore|TerminalSessionStore') 'opening runtime status panel must refresh through the feature callback and reuse existing bindings.'
+Assert-True ($main -notmatch 'runtimePanelCardCountView|runtimePanelTerminalCountView|runtimePanelProcessCountView|runtimeGateOverlay|showUbuntuRuntimePanel|renderUbuntuRuntimePanelState') 'MainActivity must not retain runtime status Dialog or gate View ownership.'
 
 $consoleRecipeAction = Function-Body $main 'handleRecipeActionWithRouter'
 $editorRecipeRun = Function-Body $recipeEditorController 'requestRun'
@@ -379,13 +374,17 @@ Assert-True ($runtimeManagementFragment -match 'gateway\.snapshots\.collect' -an
 Assert-True ($runtimeManagementFragment -notmatch '260L, 900L, 1800L|showKiteProcessOverview|TaskManagerStore|CardRunStore|TerminalSessionStore') 'runtime management fragment must not poll, rebuild the Activity page, or read concrete stores.'
 $runtimeManagementRender = Member-Function-Body $runtimeManagementScreen 'render'
 Assert-True ($runtimeManagementRender -match 'structureSignature' -and $runtimeManagementRender -match 'bindRun' -and $runtimeManagementRender -match 'bindProcess' -and $runtimeManagementRender -notmatch 'removeAllViews') 'runtime management steady-state rendering must bind existing rows without rebuilding the page.'
-Assert-True ($runtimeManagementScreen -match 'runBindings' -and $runtimeManagementScreen -match 'processBindings' -and $runtimeManagementScreen -notmatch 'CardRunStore|TerminalSessionStore|TaskManagerStore|refreshResourceScreenIfVisible') 'runtime management screen must own local bindings while remaining store-free.'
+Assert-True ($runtimeManagementScreen -match 'runBindings' -and $runtimeManagementScreen -match 'terminalBindings' -and $runtimeManagementScreen -match 'processBindings' -and $runtimeManagementScreen -notmatch 'CardRunStore|TerminalSessionStore|TaskManagerStore|refreshResourceScreenIfVisible') 'runtime management screen must own local bindings while remaining store-free.'
+Assert-True ($runtimeManagementProjector -match 'standaloneTerminals' -and $runtimeManagementProjector -match 'RuntimeManagementActionTarget\.EndTerminal') 'live terminals without CardRun bindings must remain traceable and endable.'
+Assert-True ($runtimeManagementProjector -match 'BackgroundRuntime to "\u540e\u53f0\u670d\u52a1"' -and $runtimeManagementProjector -match 'Resource to "\u8d44\u6e90\u4efb\u52a1"' -and $runtimeManagementProjector -match 'Terminal to "\u7ec8\u7aef\u8fdb\u7a0b"') 'background runtime, resource, and terminal processes must keep explicit ownership sections.'
 Assert-True ($runtimeManagementCoordinator -match 'Requested' -and $runtimeManagementCoordinator -match 'AwaitingConfirmation' -and $runtimeManagementCoordinator -match 'Failed' -and $runtimeManagementCoordinator -notmatch 'CardRunStore|TerminalSessionStore|TaskManagerStore') 'runtime management actions must use a confirmed transaction without writing owner facts directly.'
 $runtimeManagementProcessDialog = Member-Function-Body $runtimeManagementScreen 'showProcessDialog'
 Assert-True ($runtimeManagementProcessDialog -match 'process\.stopAction' -and $runtimeManagementProcessDialog -match 'onAction\(action\)') 'runtime management process details must submit the projected owner-aware action.'
 Assert-True ($runtimeBootstrapSnapshot -notmatch '(?m)^import\s+(android\.|androidx\.)' -and $runtimeBootstrapGateway -notmatch '(?m)^import\s+(android\.|androidx\.)') 'runtime bootstrap application contracts must remain Android-independent.'
 Assert-True ($runtimeStatusProjector -notmatch 'Activity|Fragment|View|Dialog|CardRunStore|TerminalSessionStore|TaskManagerStore|WorkSurfaceRuntimeBridge') 'runtime status projection must remain pure and store-free.'
 Assert-True ($runtimeStatusController -match 'bootstrapGateway\.snapshots' -and $runtimeStatusController -match 'managementGateway\.snapshots' -and $runtimeStatusController -notmatch 'CardRunStore|TerminalSessionStore|TaskManagerStore|BootstrapCoordinator') 'runtime status controller must combine stable gateways rather than concrete stores.'
+$runtimeStatusRefresh = Member-Function-Body $runtimeStatusController 'refresh'
+Assert-True ($runtimeStatusRefresh -match 'bootstrapGateway\.refresh\(\)' -and $runtimeStatusRefresh -match 'managementGateway\.refresh\(force = true\)') 'runtime status refresh must calibrate bootstrap and management facts together.'
 Assert-True ($androidRuntimeBootstrapGateway -match 'scope\.launch\(Dispatchers\.IO\)' -and $androidRuntimeBootstrapGateway -match 'WorkSurfaceRuntimeBridge\.isBaseImageReady' -and $androidRuntimeBootstrapGateway -match 'ToolchainPackInstaller\.bootstrapResourcesSettled') 'runtime readiness probes must run in the Android platform gateway off the UI thread.'
 Assert-True ($androidRuntimeBootstrapGateway -match 'BootstrapCoordinator\.snapshot' -and $androidRuntimeBootstrapGateway -match 'AssetExtractor\.rootfsProgress' -and $androidRuntimeBootstrapGateway -match 'RuntimeBootstrapProgress\.snapshot') 'runtime bootstrap gateway must compose existing bootstrap fact owners.'
 Assert-True ($kiteAppGraph -match 'val runtimeBootstrapGateway: RuntimeBootstrapGateway by lazy' -and $kiteAppGraph -match 'AndroidRuntimeBootstrapGateway\(appContext\)') 'runtime bootstrap gateway must be a process composition-root dependency.'

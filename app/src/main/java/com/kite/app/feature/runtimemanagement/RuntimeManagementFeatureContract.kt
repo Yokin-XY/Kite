@@ -84,6 +84,14 @@ internal data class RuntimeManagementRunUiState(
     val stopAction: RuntimeManagementActionUiState?
 )
 
+internal data class RuntimeManagementTerminalUiState(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val processCount: Int,
+    val endAction: RuntimeManagementActionUiState?
+)
+
 internal data class RuntimeManagementProcessSectionUiState(
     val key: String,
     val title: String,
@@ -93,11 +101,12 @@ internal data class RuntimeManagementProcessSectionUiState(
 internal data class RuntimeManagementUiState(
     val summary: RuntimeManagementSummaryUiState = RuntimeManagementSummaryUiState(),
     val runs: List<RuntimeManagementRunUiState> = emptyList(),
+    val standaloneTerminals: List<RuntimeManagementTerminalUiState> = emptyList(),
     val otherProcessSections: List<RuntimeManagementProcessSectionUiState> = emptyList(),
     val refreshedAt: Long = 0L
 ) {
     val isEmpty: Boolean
-        get() = runs.isEmpty() && otherProcessSections.all { it.processes.isEmpty() }
+        get() = runs.isEmpty() && standaloneTerminals.isEmpty() && otherProcessSections.all { it.processes.isEmpty() }
 }
 
 internal sealed interface RuntimeManagementFeatureAction {

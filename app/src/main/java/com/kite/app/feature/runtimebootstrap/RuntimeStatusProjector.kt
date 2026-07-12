@@ -37,6 +37,7 @@ internal object RuntimeStatusProjector {
             ).joinToString("\n"),
             blocksUbuntuActions = true,
             isProblem = false,
+            permissionOnboarding = true,
             primaryAction = when {
                 onboarding.missingPermissions.isNotEmpty() -> RuntimeStatusAction.RequestRuntimePermissions
                 onboarding.needsAllFilesAccess -> RuntimeStatusAction.OpenAllFilesSettings

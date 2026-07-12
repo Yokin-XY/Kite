@@ -9,5 +9,5 @@ interface RuntimeBootstrapGateway {
 
     fun refresh()
 
-    fun startBootstrap()
+    fun ensureReady()
 }

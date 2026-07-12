@@ -31,6 +31,7 @@ internal data class RuntimeStatusUiState(
     val progressText: String = "",
     val showProgress: Boolean = false,
     val autoOpenPanel: Boolean = false,
+    val permissionOnboarding: Boolean = false,
     val primaryAction: RuntimeStatusAction = RuntimeStatusAction.OpenProcessManagement,
     val primaryActionLabel: String = "查看进程",
     val counts: RuntimeStatusCounts = RuntimeStatusCounts(),
@@ -41,7 +42,7 @@ internal data class RuntimeStatusUiState(
             primaryAction == RuntimeStatusAction.OpenAllFilesSettings
 
     val firstRunPermissionOnboarding: Boolean
-        get() = title == RuntimeStatusProjector.FIRST_RUN_PERMISSION_TITLE
+        get() = permissionOnboarding
 
     val shouldShowGate: Boolean
         get() = visible && (blocksUbuntuActions || requiresPermission || firstRunPermissionOnboarding || isProblem)

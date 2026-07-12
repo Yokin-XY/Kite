@@ -63,7 +63,7 @@ class RuntimeStatusFeatureControllerTest {
         val effect = controller.submitPrimaryAction()
 
         assertNull(effect)
-        assertEquals(1, bootstrap.startCount)
+        assertEquals(1, bootstrap.ensureReadyCount)
     }
 
     @Test
@@ -84,22 +84,45 @@ class RuntimeStatusFeatureControllerTest {
         )
     }
 
+    @Test
+    fun refreshCalibratesBootstrapAndManagementGatewaysTogether() {
+        val dispatcher = StandardTestDispatcher()
+        val scope = TestScope(dispatcher)
+        val bootstrap = FakeBootstrapGateway(RuntimeBootstrapSnapshot())
+        val management = FakeManagementGateway(RuntimeManagementSnapshot())
+        val controller = RuntimeStatusFeatureController(bootstrap, management, scope)
+
+        controller.refresh()
+
+        assertEquals(1, bootstrap.refreshCount)
+        assertEquals(1, management.refreshCount)
+        assertEquals(true, management.lastRefreshForce)
+    }
+
     private class FakeBootstrapGateway(initial: RuntimeBootstrapSnapshot) : RuntimeBootstrapGateway {
         override val snapshots = MutableStateFlow(initial)
-        var startCount = 0
+        var ensureReadyCount = 0
+        var refreshCount = 0
 
         override fun currentSnapshot(): RuntimeBootstrapSnapshot = snapshots.value
-        override fun refresh() = Unit
-        override fun startBootstrap() {
-            startCount += 1
+        override fun refresh() {
+            refreshCount += 1
+        }
+        override fun ensureReady() {
+            ensureReadyCount += 1
         }
     }
 
     private class FakeManagementGateway(initial: RuntimeManagementSnapshot) : RuntimeManagementGateway {
         override val snapshots = MutableStateFlow(initial)
+        var refreshCount = 0
+        var lastRefreshForce = false
 
         override fun currentSnapshot(): RuntimeManagementSnapshot = snapshots.value
-        override fun refresh(force: Boolean) = Unit
+        override fun refresh(force: Boolean) {
+            refreshCount += 1
+            lastRefreshForce = force
+        }
         override suspend fun endTerminal(sessionId: String): RuntimeManagementDispatchResult =
             RuntimeManagementDispatchResult.accepted()
         override suspend fun endProcess(processId: String, pid: Int): RuntimeManagementDispatchResult =

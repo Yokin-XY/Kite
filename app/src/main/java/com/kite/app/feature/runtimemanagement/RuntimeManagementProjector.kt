@@ -24,6 +24,10 @@ internal object RuntimeManagementProjector {
         val childrenByParent = snapshot.runs
             .filter { !it.parentInstanceId.isNullOrBlank() }
             .groupBy { it.parentInstanceId.orEmpty() }
+        val assignedTerminalIds = snapshot.runs
+            .mapNotNull(CardRunState::terminalSessionId)
+            .filter(String::isNotBlank)
+            .toSet()
 
         val runs = roots.map { run ->
             val processes = assignments[run.instanceId].orEmpty()
@@ -57,17 +61,14 @@ internal object RuntimeManagementProjector {
 
         val otherProcesses = snapshot.processes.filterNot { it.id in assignedProcessIds }
         val sections = listOf(
+            RuntimeManagedOwnerKind.BackgroundRuntime to "后台服务",
+            RuntimeManagedOwnerKind.Resource to "资源任务",
+            RuntimeManagedOwnerKind.Terminal to "终端进程",
             RuntimeManagedOwnerKind.System to "系统",
             RuntimeManagedOwnerKind.Unattributed to "其他"
         ).mapNotNull { (kind, label) ->
             val items = otherProcesses
-                .filter { process ->
-                    if (kind == RuntimeManagedOwnerKind.Unattributed) {
-                        process.ownerKind != RuntimeManagedOwnerKind.System
-                    } else {
-                        process.ownerKind == kind
-                    }
-                }
+                .filter { process -> process.ownerKind == kind }
                 .sortedBy(RuntimeManagedProcess::pid)
                 .map { process ->
                     process.toUiState(
@@ -90,8 +91,44 @@ internal object RuntimeManagementProjector {
                 runningProcesses = maxOf(snapshot.processes.size, snapshot.observedProcessCount).coerceAtLeast(0)
             ),
             runs = runs,
+            standaloneTerminals = snapshot.terminals
+                .filter { terminal -> terminal.isLive && terminal.id !in assignedTerminalIds }
+                .sortedBy(RuntimeManagedTerminal::title)
+                .map { terminal -> terminal.toStandaloneUiState(mutations[terminal.mutationKey()]) },
             otherProcessSections = sections,
             refreshedAt = snapshot.refreshedAt
+        )
+    }
+
+    private fun RuntimeManagedTerminal.toStandaloneUiState(
+        mutation: RuntimeManagementMutation?
+    ): RuntimeManagementTerminalUiState {
+        val pending = mutation?.phase == RuntimeManagementMutationPhase.Requested ||
+            mutation?.phase == RuntimeManagementMutationPhase.AwaitingConfirmation
+        return RuntimeManagementTerminalUiState(
+            key = id,
+            title = title.ifBlank { "终端" },
+            subtitle = buildList {
+                add(
+                    when (mutation?.phase) {
+                        RuntimeManagementMutationPhase.Requested -> "请求中"
+                        RuntimeManagementMutationPhase.AwaitingConfirmation -> "待确认"
+                        RuntimeManagementMutationPhase.Failed -> "失败"
+                        null -> statusLabel
+                    }
+                )
+                if (processCount > 0) add("进程 $processCount")
+                (observedPid ?: rootPid)?.takeIf { it > 0 }?.let { add("PID $it") }
+            }.filter(String::isNotBlank).joinToString(" · "),
+            processCount = processCount,
+            endAction = RuntimeManagementActionUiState(
+                label = if (pending) "结束中" else "结束终端",
+                target = RuntimeManagementActionTarget.EndTerminal(id),
+                mutationKey = mutationKey(),
+                enabled = !pending,
+                danger = true,
+                mutationPhase = mutation?.phase
+            )
         )
     }
 
@@ -308,4 +345,6 @@ internal object RuntimeManagementProjector {
     private fun CardRunState.mutationKey(): String = "run:$instanceId"
 
     private fun RuntimeManagedProcess.mutationKey(): String = "process:$id"
+
+    private fun RuntimeManagedTerminal.mutationKey(): String = "terminal:$id"
 }

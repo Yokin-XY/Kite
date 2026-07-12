@@ -21,7 +21,7 @@ internal sealed interface RuntimeStatusFeatureEffect {
 /** Runtime chrome state owner. It combines process facts with bootstrap facts and emits Shell effects. */
 internal class RuntimeStatusFeatureController(
     private val bootstrapGateway: RuntimeBootstrapGateway,
-    managementGateway: RuntimeManagementGateway,
+    private val managementGateway: RuntimeManagementGateway,
     scope: CoroutineScope
 ) {
     private val onboarding = MutableStateFlow(RuntimePermissionOnboardingUiInput())
@@ -44,6 +44,11 @@ internal class RuntimeStatusFeatureController(
 
     fun refresh() {
         bootstrapGateway.refresh()
+        managementGateway.refresh(force = true)
+    }
+
+    fun ensureReady() {
+        bootstrapGateway.ensureReady()
     }
 
     fun updateOnboarding(input: RuntimePermissionOnboardingUiInput) {
@@ -63,7 +68,7 @@ internal class RuntimeStatusFeatureController(
             RuntimeStatusAction.RequestRuntimePermissions -> RuntimeStatusFeatureEffect.RequestRuntimePermissions
             RuntimeStatusAction.OpenAllFilesSettings -> RuntimeStatusFeatureEffect.OpenAllFilesSettings
             RuntimeStatusAction.RetryDeployment -> {
-                bootstrapGateway.startBootstrap()
+                bootstrapGateway.ensureReady()
                 null
             }
             RuntimeStatusAction.OpenProcessManagement -> RuntimeStatusFeatureEffect.OpenProcessManagement

@@ -149,6 +149,48 @@ class RuntimeManagementProjectorTest {
         )
     }
 
+    @Test
+    fun `live terminal without card binding remains traceable and endable`() {
+        val state = RuntimeManagementProjector.project(
+            RuntimeManagementSnapshot(
+                terminals = listOf(
+                    RuntimeManagedTerminal(
+                        id = "terminal-orphan",
+                        title = "独立终端",
+                        statusLabel = "运行中",
+                        processCount = 1,
+                        rootPid = 77,
+                        isLive = true
+                    )
+                )
+            )
+        )
+
+        assertFalse(state.isEmpty)
+        val terminal = state.standaloneTerminals.single()
+        assertEquals("独立终端", terminal.title)
+        assertTrue(terminal.subtitle.contains("PID 77"))
+        assertTrue(terminal.endAction?.target is RuntimeManagementActionTarget.EndTerminal)
+    }
+
+    @Test
+    fun `background resource and terminal processes keep explicit sections`() {
+        val state = RuntimeManagementProjector.project(
+            RuntimeManagementSnapshot(
+                processes = listOf(
+                    process("runtime", 21, ownerKind = RuntimeManagedOwnerKind.BackgroundRuntime),
+                    process("resource", 22, ownerKind = RuntimeManagedOwnerKind.Resource),
+                    process("terminal", 23, ownerKind = RuntimeManagedOwnerKind.Terminal)
+                )
+            )
+        )
+
+        assertEquals(
+            listOf("后台服务", "资源任务", "终端进程"),
+            state.otherProcessSections.map { it.title }
+        )
+    }
+
     private fun runState(
         instanceId: String = "card-1",
         recipeId: String = "recipe-1",

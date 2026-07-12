@@ -38,8 +38,6 @@ import android.text.style.RelativeSizeSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
-import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebView
@@ -146,18 +144,11 @@ import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.web.KiteWebShell
 import com.kite.app.R
-import com.kite.app.foundation.bootstrap.BootstrapCoordinator
-import com.kite.app.foundation.bootstrap.BootstrapSnapshot
-import com.kite.app.foundation.bootstrap.BootstrapStage
 import com.kite.app.foundation.bootstrap.StartupTraceStore
-import com.kite.app.foundation.runtime.AssetExtractor
 import com.kite.app.foundation.runtime.ExternalExchangeManager
 import com.kite.app.foundation.runtime.RuntimeAutomationActions
-import com.kite.app.foundation.runtime.RuntimeBootstrapProgress
-import com.kite.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
 import com.kite.app.foundation.runtime.RuntimeHealthStore
 import com.kite.app.foundation.runtime.RuntimeReclaimer
-import com.kite.app.foundation.runtime.TaskManagerSnapshot
 import com.kite.app.feature.runsurface.CardRunSpecialRecipes
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.runtime.TerminalSessionStore
@@ -165,7 +156,6 @@ import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.toolchain.ToolchainInstallPhase
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.feature.resources.ResourceFeatureRequest
 import com.kite.app.feature.resources.ResourceFeatureResultContract
 import com.kite.app.feature.resources.ResourceDetailFragment
@@ -180,12 +170,20 @@ import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceRunLaunchRequest
 import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.recipes.RecipeFeatureGateway
+import com.kite.app.application.runtimebootstrap.RuntimeBootstrapGateway
+import com.kite.app.application.runtimebootstrap.RuntimePermissionKind
 import com.kite.app.feature.home.HomeFeatureRequest
 import com.kite.app.feature.home.HomeFeatureResultContract
 import com.kite.app.feature.home.HomeFragment
 import com.kite.app.feature.runtimemanagement.RuntimeManagementFragment
 import com.kite.app.feature.runtimemanagement.RuntimeManagementRequest
 import com.kite.app.feature.runtimemanagement.RuntimeManagementResultContract
+import com.kite.app.feature.runtimebootstrap.RuntimePermissionOnboardingUiInput
+import com.kite.app.feature.runtimebootstrap.RuntimeStatusChrome
+import com.kite.app.feature.runtimebootstrap.RuntimeStatusAction
+import com.kite.app.feature.runtimebootstrap.RuntimeStatusFeatureController
+import com.kite.app.feature.runtimebootstrap.RuntimeStatusFeatureEffect
+import com.kite.app.feature.runtimebootstrap.RuntimeStatusUiState
 import com.kite.app.feature.recipeeditor.RecipeEditorDraft
 import com.kite.app.feature.recipeeditor.RecipeEditorFragment
 import com.kite.app.feature.recipeeditor.RecipeEditorRequest
@@ -279,6 +277,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun enterScreen(screen: AppDestination, onBack: (() -> Unit)? = null) {
         currentScreen = screen
         appNavigator.enter(screen, onBack)
+        if (::runtimeStatusChrome.isInitialized) {
+            runtimeStatusChrome.render(runtimeStatusState, shouldSuppressTransientRuntimeChrome(runtimeStatusState))
+        }
     }
 
     private var currentRecipes: List<KiteRecipe> = emptyList()
@@ -289,41 +290,20 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private val terminalContainerId = View.generateViewId()
     private var terminalBottomNavigation: View? = null
     private var isTerminalDetailMode = false
-    private var kfRuntimeBootstrapRequested = false
     private var pendingRuntimePermissionBootstrap = false
     private var runtimePermissionRequestInFlight = false
-    private var firstRunRuntimeGateShown = false
-    private var bootstrapResourceGateInFlight = false
     private var firstRunPermissionOnboardingInFlight = false
     private var firstRunPermissionRequestInFlight = false
     private var firstRunRuntimePermissionsRequested = false
     private var firstRunAllFilesSettingsOpened = false
-    private var ubuntuRuntimeState = UbuntuRuntimeUiState.checking()
+    private lateinit var runtimeBootstrapGateway: RuntimeBootstrapGateway
+    private lateinit var runtimeStatusController: RuntimeStatusFeatureController
+    private lateinit var runtimeStatusChrome: RuntimeStatusChrome
+    private var runtimeStatusState = RuntimeStatusUiState.checking()
     private var localServerStarted = false
     private var focusedRunRecipeId: String? = null
     private var focusedRunInstanceId: String? = null
     private var currentResourceDetailId: String? = null
-    private var latestBootstrapSnapshot = BootstrapCoordinator.snapshot.value
-    private var latestRootfsProgress = AssetExtractor.rootfsProgress.value
-    private var latestRuntimeBootstrapProgress = RuntimeBootstrapProgress.snapshot.value
-    private var ubuntuRuntimeDialog: Dialog? = null
-    private var runtimePanelTitleView: TextView? = null
-    private var runtimePanelDetailView: TextView? = null
-    private var runtimePanelProgressBar: ProgressBar? = null
-    private var runtimePanelProgressTextView: TextView? = null
-    private var runtimePanelActionButton: TextView? = null
-    private var runtimePanelActionRow: LinearLayout? = null
-    private var runtimePanelActionChevronView: TextView? = null
-    private var runtimePanelCardCountView: TextView? = null
-    private var runtimePanelTerminalCountView: TextView? = null
-    private var runtimePanelProcessCountView: TextView? = null
-    private var runtimeGateOverlay: FrameLayout? = null
-    private var runtimeGateTitleView: TextView? = null
-    private var runtimeGateDetailView: TextView? = null
-    private var runtimeGateProgressBar: ProgressBar? = null
-    private var runtimeGateProgressTextView: TextView? = null
-    private var runtimeGateActionButton: TextView? = null
-    private var autoOpenedRootfsRunAt = 0L
     private var lastWorkbenchUrl: String? = null
     private var currentResourceInstallTargetId: String? = null
     private var resourceInstallWizardPlanIds: List<String> = emptyList()
@@ -361,6 +341,12 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         runOrchestrator = appGraph.runOrchestrator
         runExecutionEffectBus = appGraph.runExecutionEffectBus
         resourceRunCoordinator = appGraph.resourceRunCoordinator
+        runtimeBootstrapGateway = appGraph.runtimeBootstrapGateway
+        runtimeStatusController = RuntimeStatusFeatureController(
+            bootstrapGateway = runtimeBootstrapGateway,
+            managementGateway = appGraph.runtimeManagementGateway,
+            scope = lifecycleScope
+        )
         themeConfig = loadThemeConfig()
         tokens = KiteTheme.resolve(themeConfig)
         applyKiteTerminalTheme()
@@ -436,18 +422,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
         setContentView(rootHost)
+        runtimeStatusChrome = createRuntimeStatusChrome()
         registerResourceFeatureResults()
         registerHomeFeatureResults()
         registerRecipeEditorResults()
         registerRuntimeManagementResults()
         StartupTraceStore.markStage(this, "main.observers_and_intent")
-        updateRuntimeGateOverlay()
-        observeUbuntuBootstrapState()
-        observeRootfsExtractionProgress()
-        observeRuntimeBootstrapProgress()
+        observeRuntimeStatus()
         observeRunExecutionEffects()
         observeCardRunStoreSignals()
-        observeRuntimePanelSummarySignals()
         observeResourceInstallSignals()
         applyRecentTaskVisibilitySetting()
         val handledLaunchIntent = AppIntentRouter.dispatch(
@@ -459,10 +442,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         if (!handledLaunchIntent && !restoreScreenFromBundle(savedInstanceState) && !restoreRecipeDraftFromSettings()) {
             showConsole()
         }
-        refreshUbuntuRuntimeState()
+        runtimeStatusController.refresh()
         StartupTraceStore.markStage(this, "main.permissions_and_runtime_gate")
         if (!maybeStartFirstRunPermissionOnboarding()) {
-            maybeStartFirstRunRuntimeGate()
+            runtimeStatusController.ensureReady()
         }
         if (!dropZoneStatus.available) {
             Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_LONG).show()
@@ -1024,7 +1007,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         resumePendingRuntimePermissionBootstrap()
         StartupTraceStore.markStage(this, "main.resume_runtime_and_visible_state")
         rebindVisibleResourceStateOnResume()
-        ensureBundledToolBootstrapIfNeeded("resume")
+        runtimeStatusController.ensureReady()
         expireBrowserAuthSessionsOnResume()
         when (currentScreen) {
             AppDestination.Console -> resumeConsoleSurface()
@@ -1048,6 +1031,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     override fun onDestroy() {
+        if (::runtimeStatusChrome.isInitialized) runtimeStatusChrome.dispose()
         releaseActivityDisplaySurfaces()
         if (localServerStarted) {
             localServer.stop()
@@ -1163,55 +1147,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun opaqueColor(color: Int): Int =
         Color.rgb(Color.red(color), Color.green(color), Color.blue(color))
 
-    private fun observeUbuntuBootstrapState() {
+    private fun observeRuntimeStatus() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                BootstrapCoordinator.snapshot.collect { snapshot ->
-                    latestBootstrapSnapshot = snapshot
-                    setUbuntuRuntimeState(buildUbuntuRuntimeUiState() ?: return@collect)
-                }
+                runtimeStatusController.state.collect(::setRuntimeStatusState)
             }
         }
     }
 
-    private fun observeRootfsExtractionProgress() {
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                AssetExtractor.rootfsProgress.collect { progress ->
-                    latestRootfsProgress = progress
-                    setUbuntuRuntimeState(buildUbuntuRuntimeUiState() ?: return@collect)
-                }
-            }
-        }
-    }
-
-    private fun observeRuntimeBootstrapProgress() {
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                RuntimeBootstrapProgress.snapshot.collect { progress ->
-                    latestRuntimeBootstrapProgress = progress
-                    setUbuntuRuntimeState(buildUbuntuRuntimeUiState() ?: return@collect)
-                }
-            }
-        }
-    }
-
-    private fun observeRuntimePanelSummarySignals() {
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                TerminalSessionStore.snapshot.collect {
-                    renderRuntimePanelCounts()
-                }
-            }
-        }
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                TaskManagerStore.snapshot.collect {
-                    renderRuntimePanelCounts()
-                }
-            }
-        }
-    }
 
 
     private fun observeRunExecutionEffects() {
@@ -1275,7 +1218,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 CardRunStore.runs.collect { runs ->
                     consumeResourceOpenRunSignals(runs)
-                    renderRuntimePanelCounts()
                 }
             }
         }
@@ -1390,8 +1332,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         firstRunPermissionOnboardingInFlight = true
         firstRunRuntimePermissionsRequested = false
         firstRunAllFilesSettingsOpened = false
-        setUbuntuRuntimeState(buildFirstRunPermissionOnboardingUiState())
-        showUbuntuRuntimePanel(auto = true)
+        updateFirstRunPermissionOnboardingProjection(currentFirstRunPermissionState())
+        runtimeStatusChrome.showPanel(auto = true)
         continueFirstRunPermissionOnboarding()
         return true
     }
@@ -1399,7 +1341,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun continueFirstRunPermissionOnboarding() {
         if (!firstRunPermissionOnboardingInFlight || firstRunPermissionRequestInFlight) return
         val state = currentFirstRunPermissionState()
-        setUbuntuRuntimeState(buildFirstRunPermissionOnboardingUiState(state))
+        updateFirstRunPermissionOnboardingProjection(state)
         when {
             state.runtimePermissionsToRequest.isNotEmpty() && !firstRunRuntimePermissionsRequested -> {
                 firstRunRuntimePermissionsRequested = true
@@ -1428,14 +1370,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         firstRunPermissionRequestInFlight = false
         firstRunRuntimePermissionsRequested = false
         firstRunAllFilesSettingsOpened = false
+        runtimeStatusController.clearOnboarding()
         dropZoneStatus = dropZoneManager.prepareDropZone()
-        maybeStartFirstRunRuntimeGate()
+        runtimeStatusController.ensureReady()
         if (currentScreen == AppDestination.Console) showConsole()
     }
 
     private fun currentFirstRunPermissionState(): FirstRunPermissionState {
-        val runtimePermissions = mutableListOf<String>()
-        runtimePermissions += currentRuntimePermissionState().missingPermissions
+        val permissionSnapshot = runtimeBootstrapGateway.currentSnapshot().permissions
+        val runtimePermissions = permissionSnapshot.missing.mapNotNull(::runtimePermissionString).toMutableList()
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -1444,164 +1387,34 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
         return FirstRunPermissionState(
             runtimePermissionsToRequest = runtimePermissions.distinct(),
-            needsAllFilesAccess = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-                !Environment.isExternalStorageManager()
+            needsAllFilesAccess = permissionSnapshot.needsAllFilesAccess
         )
     }
 
-    private fun buildFirstRunPermissionOnboardingUiState(
-        state: FirstRunPermissionState = currentFirstRunPermissionState()
-    ): UbuntuRuntimeUiState {
-        val labels = state.labels()
-        return UbuntuRuntimeUiState(
-            title = "首次授权",
-            detail = listOf(
-                "Kite 会先集中申请一次系统能力：${labels.joinToString("、")}。",
-                "如果你暂时拒绝，Kite 不会反复打扰；之后 Ubuntu 解压、通知、桌面图标会在各自入口继续提示。",
-                "完成授权后会继续检查 Ubuntu 基础环境。"
-            ).joinToString("\n"),
-            blocksUbuntuActions = true,
-            isProblem = false,
-            canRetry = true,
-            firstRunPermissionOnboarding = true,
-            permissionActionLabel = "开始授权"
+    private fun updateFirstRunPermissionOnboardingProjection(state: FirstRunPermissionState) {
+        runtimeStatusController.updateOnboarding(
+            RuntimePermissionOnboardingUiInput(
+                active = firstRunPermissionOnboardingInFlight,
+                missingPermissions = state.runtimePermissionsToRequest.mapNotNull(::runtimePermissionKind).toSet(),
+                needsAllFilesAccess = state.needsAllFilesAccess
+            )
         )
     }
 
-    private fun FirstRunPermissionState.labels(): List<String> =
-        buildList {
-            if (needsAllFilesAccess) add("全部文件访问")
-            runtimePermissionsToRequest
-                .map(::runtimePermissionLabel)
-                .filter { it.isNotBlank() }
-                .forEach { add(it) }
-        }.distinct().ifEmpty { listOf("当前所需权限") }
-
-    private fun maybeStartFirstRunRuntimeGate() {
-        if (firstRunRuntimeGateShown) return
-        firstRunRuntimeGateShown = true
-        thread(name = "KiteFirstRunRuntimeGate", isDaemon = true) {
-            val permissionState = currentRuntimePermissionState()
-            if (!permissionState.ready) {
-                runOnUiThread {
-                    if (isFinishing || isDestroyed) return@runOnUiThread
-                    setUbuntuRuntimeState(buildRuntimePermissionUiState(baseImageReady = false) ?: return@runOnUiThread)
-                }
-                return@thread
-            }
-            val runtimeReady = runCatching {
-                WorkSurfaceRuntimeBridge.isDefaultContainerReady(applicationContext)
-            }.getOrDefault(false)
-            val bootstrapResourcesSettled = runtimeReady &&
-                ToolchainPackInstaller.bootstrapResourcesSettled(applicationContext)
-            if (runtimeReady && bootstrapResourcesSettled) {
-                runOnUiThread { setUbuntuRuntimeState(UbuntuRuntimeUiState.hidden()) }
-                return@thread
-            }
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                setUbuntuRuntimeState(runtimeDeployPendingState())
-                ensureKfRuntimeBootstrap()
-            }
-        }
-    }
-
-    private fun ensureBundledToolBootstrapIfNeeded(reason: String) {
-        if (bootstrapResourceGateInFlight) return
-        bootstrapResourceGateInFlight = true
-        thread(name = "KiteBundledToolBootstrapGate-${reason.take(24)}", isDaemon = true) {
-            val permissionReady = currentRuntimePermissionState().ready
-            val resourcesSettled = permissionReady &&
-                ToolchainPackInstaller.bootstrapResourcesSettled(applicationContext)
-            runOnUiThread {
-                bootstrapResourceGateInFlight = false
-                if (isFinishing || isDestroyed || !permissionReady || resourcesSettled) return@runOnUiThread
-                setUbuntuRuntimeState(runtimeDeployPendingState())
-                ensureKfRuntimeBootstrap()
-            }
-        }
-    }
-
-    private fun currentRuntimePermissionState(): RuntimePermissionState {
-        val missing = mutableListOf<String>()
-        fun addIfMissing(permission: String) {
-            if (checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-                missing += permission
-            }
-        }
-
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            addIfMissing(Manifest.permission.READ_EXTERNAL_STORAGE)
-            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
-                addIfMissing(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
-        }
-
-        val needsAllFilesAccess = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-            !Environment.isExternalStorageManager()
-        return RuntimePermissionState(
-            missingPermissions = missing.distinct(),
-            needsAllFilesAccess = needsAllFilesAccess
-        )
-    }
-
-    private fun buildRuntimePermissionUiState(baseImageReady: Boolean): UbuntuRuntimeUiState? {
-        if (baseImageReady) return null
-        val permissionState = currentRuntimePermissionState()
-        if (permissionState.ready) return null
-        val labels = permissionState.missingLabels()
-        val actionLabel = when {
-            permissionState.missingPermissions.isNotEmpty() -> "弹出权限请求"
-            permissionState.needsAllFilesAccess -> "打开文件访问设置"
-            else -> "继续部署"
-        }
-        return UbuntuRuntimeUiState(
-            title = "需要完成首次授权",
-            detail = listOf(
-                "首次部署 Ubuntu 前需要先完成文件访问授权，否则共享投放区、导入目录和部分系统准备步骤可能被系统拦截。",
-                "未完成：${labels.joinToString("、")}",
-                "点击下方按钮后，请按系统提示完成授权；返回 Kite 后会自动继续解压 Ubuntu。"
-            ).joinToString("\n"),
-            blocksUbuntuActions = true,
-            isProblem = false,
-            canRetry = true,
-            requiresPermission = true,
-            permissionActionLabel = actionLabel
-        )
-    }
-
-    private fun RuntimePermissionState.missingLabels(): List<String> =
-        buildList {
-            if (needsAllFilesAccess) add("全部文件访问")
-            missingPermissions
-                .map(::runtimePermissionLabel)
-                .filter { it.isNotBlank() }
-                .forEach { add(it) }
-        }.distinct().ifEmpty { listOf("文件访问") }
-
-    private fun runtimePermissionLabel(permission: String): String =
-        when (permission) {
-            Manifest.permission.READ_EXTERNAL_STORAGE -> "文件读取"
-            Manifest.permission.WRITE_EXTERNAL_STORAGE -> "文件写入"
-            Manifest.permission.POST_NOTIFICATIONS -> "系统通知"
-            else -> permission.substringAfterLast('.')
-        }
 
     private fun requestFirstRunRuntimePermissions(startBootstrapAfterGrant: Boolean) {
         if (startBootstrapAfterGrant) {
             pendingRuntimePermissionBootstrap = true
         }
-        val uiState = buildRuntimePermissionUiState(baseImageReady = false)
-        if (uiState != null) {
-            setUbuntuRuntimeState(uiState)
-        }
-        val permissionState = currentRuntimePermissionState()
+        val permissionState = runtimeBootstrapGateway.currentSnapshot().permissions
+        runtimeStatusController.refresh()
+        val runtimePermissions = permissionState.missing.mapNotNull(::runtimePermissionString)
         when {
-            permissionState.missingPermissions.isNotEmpty() -> {
+            runtimePermissions.isNotEmpty() -> {
                 if (!runtimePermissionRequestInFlight) {
                     runtimePermissionRequestInFlight = true
                     requestPermissions(
-                        permissionState.missingPermissions.toTypedArray(),
+                        runtimePermissions.toTypedArray(),
                         REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS
                     )
                 }
@@ -1686,78 +1499,52 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun resumePendingRuntimePermissionBootstrap() {
         if (!pendingRuntimePermissionBootstrap || runtimePermissionRequestInFlight) return
-        val uiState = buildRuntimePermissionUiState(baseImageReady = false)
-        if (uiState != null) {
-            setUbuntuRuntimeState(uiState)
+        val permissionState = runtimeBootstrapGateway.currentSnapshot().permissions
+        runtimeStatusController.refresh()
+        if (!permissionState.ready) {
             return
         }
         pendingRuntimePermissionBootstrap = false
-        kfRuntimeBootstrapRequested = false
-        setUbuntuRuntimeState(runtimeDeployPendingState())
-        ensureKfRuntimeBootstrap()
+        runtimeStatusController.ensureReady()
     }
 
-    private fun runtimeDeployPendingState(): UbuntuRuntimeUiState =
-        UbuntuRuntimeUiState(
-            title = "正在准备 Ubuntu 部署",
-            detail = "权限已经就绪，正在启动系统镜像解压和基础环境初始化。",
-            blocksUbuntuActions = true,
-            isProblem = false,
-            showProgress = true,
-            progressText = "等待解压进度"
-        )
+    private fun runtimePermissionString(kind: RuntimePermissionKind): String? = when (kind) {
+        RuntimePermissionKind.FileRead -> Manifest.permission.READ_EXTERNAL_STORAGE
+        RuntimePermissionKind.FileWrite -> Manifest.permission.WRITE_EXTERNAL_STORAGE
+        RuntimePermissionKind.Notifications -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.POST_NOTIFICATIONS
+        } else null
+    }
 
-    private fun refreshUbuntuRuntimeState() {
-        thread(name = "KiteUbuntuRuntimeCheck", isDaemon = true) {
-            val state = runCatching {
-                val baseReady = WorkSurfaceRuntimeBridge.isBaseImageReady(applicationContext)
-                buildRuntimePermissionUiState(baseImageReady = baseReady) ?: if (baseReady) {
-                    if (WorkSurfaceRuntimeBridge.isDefaultContainerReady(applicationContext)) {
-                        if (ToolchainPackInstaller.bootstrapResourcesSettled(applicationContext)) {
-                            UbuntuRuntimeUiState.hidden()
-                        } else {
-                            runtimeDeployPendingState()
-                        }
-                    } else {
-                        UbuntuRuntimeUiState(
-                            title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u672a\u90e8\u7f72",
-                            detail = "系统镜像已经解压完成，正在准备 PRoot、工作区和内置工具安装路径。",
-                            blocksUbuntuActions = true,
-                            isProblem = false,
-                            showProgress = true,
-                            progressText = "等待首次部署"
-                        )
-                    }
-                } else {
-                    UbuntuRuntimeUiState(
-                        title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u672a\u90e8\u7f72",
-                        detail = "\u9996\u6b21\u542f\u52a8 Ubuntu \u5361\u7247\u6216\u7ec8\u7aef\u65f6\u4f1a\u5148\u89e3\u538b\u7cfb\u7edf\u955c\u50cf\u3002",
-                        blocksUbuntuActions = true,
-                        isProblem = false,
-                        showProgress = true,
-                        progressText = "等待首次部署"
-                    )
+    private fun runtimePermissionKind(permission: String): RuntimePermissionKind? = when (permission) {
+        Manifest.permission.READ_EXTERNAL_STORAGE -> RuntimePermissionKind.FileRead
+        Manifest.permission.WRITE_EXTERNAL_STORAGE -> RuntimePermissionKind.FileWrite
+        Manifest.permission.POST_NOTIFICATIONS -> RuntimePermissionKind.Notifications
+        else -> null
+    }
+
+    private fun runtimePermissionLabels(
+        missing: Set<RuntimePermissionKind>,
+        needsAllFilesAccess: Boolean
+    ): List<String> = buildList {
+        if (needsAllFilesAccess) add("全部文件访问")
+        missing.forEach { kind ->
+            add(
+                when (kind) {
+                    RuntimePermissionKind.FileRead -> "文件读取"
+                    RuntimePermissionKind.FileWrite -> "文件写入"
+                    RuntimePermissionKind.Notifications -> "系统通知"
                 }
-            }.getOrElse { error ->
-                UbuntuRuntimeUiState(
-                    title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u542f\u52a8\u6821\u9a8c\u672a\u901a\u8fc7",
-                    detail = "系统镜像可能已经存在，但最小 shell 没有成功启动。\n${error.message ?: error.javaClass.simpleName}",
-                    blocksUbuntuActions = true,
-                    isProblem = true,
-                    canRetry = true
-                )
-            }
-            runOnUiThread { setUbuntuRuntimeState(state) }
+            )
         }
-    }
+    }.ifEmpty { listOf("文件访问") }
 
-    private fun setUbuntuRuntimeState(state: UbuntuRuntimeUiState) {
-        val previous = ubuntuRuntimeState
-        if (ubuntuRuntimeState == state) return
-        ubuntuRuntimeState = state
-        renderUbuntuRuntimePanelState()
-        updateRuntimeGateOverlay()
-        maybeAutoShowUbuntuRuntimePanel(state)
+
+    private fun setRuntimeStatusState(state: RuntimeStatusUiState) {
+        val previous = runtimeStatusState
+        if (runtimeStatusState == state) return
+        runtimeStatusState = state
+        runtimeStatusChrome.render(state, shouldSuppressTransientRuntimeChrome(state))
         (supportFragmentManager.findFragmentByTag(TAG_RECIPE_EDITOR_FRAGMENT) as? RecipeEditorFragment)
             ?.updateRuntimeBlocked(state.blocksUbuntuActions)
         if (::root.isInitialized && currentScreen == AppDestination.Console && shouldRefreshConsoleForRuntimeState(previous, state)) {
@@ -1765,13 +1552,39 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun shouldRefreshConsoleForRuntimeState(previous: UbuntuRuntimeUiState, next: UbuntuRuntimeUiState): Boolean {
+    private fun createRuntimeStatusChrome(): RuntimeStatusChrome = RuntimeStatusChrome(
+        activity = this,
+        rootHost = rootHost,
+        tokens = tokens,
+        onRefresh = runtimeStatusController::refresh,
+        onPrimaryAction = ::handleRuntimeStatusPrimaryAction
+    )
+
+    private fun handleRuntimeStatusPrimaryAction() {
+        when (runtimeStatusController.submitPrimaryAction()) {
+            RuntimeStatusFeatureEffect.ContinueFirstRunPermissionOnboarding ->
+                continueFirstRunPermissionOnboarding()
+            RuntimeStatusFeatureEffect.RequestRuntimePermissions ->
+                requestFirstRunRuntimePermissions(startBootstrapAfterGrant = true)
+            RuntimeStatusFeatureEffect.OpenAllFilesSettings -> {
+                pendingRuntimePermissionBootstrap = true
+                openAllFilesAccessSettings()
+            }
+            RuntimeStatusFeatureEffect.OpenProcessManagement -> {
+                runtimeStatusChrome.dismissPanel()
+                showKiteProcessOverview()
+            }
+            null -> runtimeStatusChrome.dismissPanel()
+        }
+    }
+
+    private fun shouldRefreshConsoleForRuntimeState(previous: RuntimeStatusUiState, next: RuntimeStatusUiState): Boolean {
         if (previous.visible != next.visible) return true
         if (previous.title != next.title) return true
         if (previous.isProblem != next.isProblem) return true
         if (previous.blocksUbuntuActions != next.blocksUbuntuActions) return true
         if (previous.requiresPermission != next.requiresPermission) return true
-        if (previous.canRetry != next.canRetry) return true
+        if (previous.primaryAction != next.primaryAction) return true
         if (previous.showProgress != next.showProgress) return true
         val previousPercent = previous.progressPercent
         val nextPercent = next.progressPercent
@@ -1781,138 +1594,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         return previous.progressText.isBlank() != next.progressText.isBlank()
     }
 
-    private fun buildUbuntuRuntimeUiState(): UbuntuRuntimeUiState? {
-        if (ubuntuRuntimeState.requiresPermission && !currentRuntimePermissionState().ready) {
-            buildRuntimePermissionUiState(baseImageReady = false)?.let { return it }
-        }
-        latestRootfsProgress.toUbuntuRuntimeUiState()?.let { return it }
-        latestRuntimeBootstrapProgress.toUbuntuRuntimeUiState()?.let { return it }
-        return latestBootstrapSnapshot.toUbuntuRuntimeUiState()
-    }
-
-    private fun RuntimeBootstrapProgressSnapshot.toUbuntuRuntimeUiState(): UbuntuRuntimeUiState? {
-        if (!active) {
-            if (percent == 100 && latestBootstrapSnapshot.stage == BootstrapStage.READY) {
-                return UbuntuRuntimeUiState.hidden()
-            }
-            return null
-        }
-        return UbuntuRuntimeUiState(
-            title = title.ifBlank { "正在部署 Ubuntu" },
-            detail = detail.ifBlank { "正在执行当前初始化步骤。" },
-            blocksUbuntuActions = true,
-            isProblem = false,
-            progressPercent = percent,
-            progressText = percent?.let { "总进度 $it%" }.orEmpty(),
-            showProgress = percent != null
-        )
-    }
-
-    private fun AssetExtractor.RootfsExtractionProgress.toUbuntuRuntimeUiState(): UbuntuRuntimeUiState? {
-        val progressLabel = progressLabel()
-        return when (phase) {
-            AssetExtractor.RootfsExtractionPhase.PREPARING,
-            AssetExtractor.RootfsExtractionPhase.EXTRACTING,
-            AssetExtractor.RootfsExtractionPhase.VERIFYING -> UbuntuRuntimeUiState(
-                title = when (phase) {
-                    AssetExtractor.RootfsExtractionPhase.VERIFYING -> "正在校验 Ubuntu 系统镜像"
-                    else -> "正在解压 Ubuntu 系统镜像"
-                },
-                detail = message.ifBlank {
-                    if (entriesExtracted > 0) "已处理 $entriesExtracted 个文件，完成后会自动继续启动。" else "正在准备系统镜像，完成后会自动继续启动。"
-                },
-                blocksUbuntuActions = true,
-                isProblem = false,
-                progressPercent = percent?.let { 5 + (it * 45 / 100) },
-                progressText = progressLabel,
-                showProgress = true,
-                autoOpenPanel = phase != AssetExtractor.RootfsExtractionPhase.VERIFYING
-            )
-
-            AssetExtractor.RootfsExtractionPhase.FAILED -> UbuntuRuntimeUiState(
-                title = "Ubuntu 部署失败",
-                detail = listOfNotNull(
-                    errorMessage?.takeIf { it.isNotBlank() },
-                    "未完成的 rootfs 不会被当作成功使用，下次启动会清理后重新解压。"
-                ).joinToString("\n"),
-                blocksUbuntuActions = false,
-                isProblem = true,
-                progressPercent = percent,
-                progressText = progressLabel,
-                showProgress = progressLabel.isNotBlank(),
-                canRetry = true
-            )
-
-            AssetExtractor.RootfsExtractionPhase.READY -> {
-                if (latestRuntimeBootstrapProgress.active) return null
-                when (latestBootstrapSnapshot.stage) {
-                    BootstrapStage.ROOTFS_EXTRACTING,
-                    BootstrapStage.BASE_BOOTSTRAP -> {
-                        UbuntuRuntimeUiState(
-                            title = "正在初始化基础环境",
-                            detail = "系统镜像已经解压完成，正在准备 PRoot、工作区和内置工具安装路径。",
-                            blocksUbuntuActions = true,
-                            isProblem = false,
-                            progressPercent = 55,
-                            progressText = "总进度 55%",
-                            showProgress = true
-                        )
-                    }
-                    BootstrapStage.IDLE,
-                    BootstrapStage.READY -> UbuntuRuntimeUiState.hidden()
-                    else -> null
-                }
-            }
-
-            AssetExtractor.RootfsExtractionPhase.IDLE -> null
-        }
-    }
-
-    private fun AssetExtractor.RootfsExtractionProgress.progressLabel(): String =
-        when {
-            percent != null -> "rootfs 解压 $percent% · 已处理 $entriesExtracted 个文件"
-            entriesExtracted > 0 -> "已处理 $entriesExtracted 个文件"
-            bytesRead > 0L -> "已读取 ${formatBytes(bytesRead)}"
-            else -> ""
-        }
-
-    private fun BootstrapSnapshot.toUbuntuRuntimeUiState(): UbuntuRuntimeUiState? =
-        when (stage) {
-            BootstrapStage.IDLE -> null
-            BootstrapStage.READY -> UbuntuRuntimeUiState.hidden()
-            BootstrapStage.FAILED -> UbuntuRuntimeUiState(
-                title = "\u0055\u0062\u0075\u006e\u0074\u0075 \u90e8\u7f72\u5931\u8d25",
-                detail = lastError ?: "\u521d\u59cb\u5316\u8fc7\u7a0b\u4e2d\u51fa\u73b0\u672a\u77e5\u9519\u8bef\u3002",
-                blocksUbuntuActions = false,
-                isProblem = true
-            )
-            BootstrapStage.SERVICE_REQUESTED,
-            BootstrapStage.ROOTFS_EXTRACTING,
-            BootstrapStage.BASE_BOOTSTRAP,
-            BootstrapStage.SPACE_READY -> UbuntuRuntimeUiState(
-                title = when (stage) {
-                    BootstrapStage.SERVICE_REQUESTED -> "\u6b63\u5728\u5524\u8d77 Ubuntu \u8fd0\u884c\u73af\u5883"
-                    BootstrapStage.ROOTFS_EXTRACTING -> "\u6b63\u5728\u89e3\u538b\u7cfb\u7edf\u955c\u50cf"
-                    BootstrapStage.BASE_BOOTSTRAP -> "\u6b63\u5728\u521d\u59cb\u5316\u57fa\u7840\u73af\u5883"
-                    BootstrapStage.SPACE_READY -> "\u6b63\u5728\u51c6\u5907\u5de5\u4f5c\u533a"
-                    else -> "\u6b63\u5728\u90e8\u7f72 Ubuntu"
-                },
-                detail = "\u90e8\u7f72\u671f\u95f4 Ubuntu \u5361\u7247\u6682\u65f6\u9501\u5b9a\uff0c\u5b8c\u6210\u540e\u4f1a\u81ea\u52a8\u6062\u590d\u3002",
-                blocksUbuntuActions = true,
-                isProblem = false,
-                showProgress = stage == BootstrapStage.ROOTFS_EXTRACTING,
-                progressText = if (stage == BootstrapStage.ROOTFS_EXTRACTING) "正在等待解压进度" else ""
-            )
-        }
-
-    private fun formatBytes(bytes: Long): String {
-        if (bytes < 1024L) return "${bytes}B"
-        val kb = bytes / 1024.0
-        if (kb < 1024.0) return String.format("%.1fKB", kb)
-        val mb = kb / 1024.0
-        if (mb < 1024.0) return String.format("%.1fMB", mb)
-        return String.format("%.1fGB", mb / 1024.0)
-    }
 
     private fun loadThemeConfig(): ThemeConfig =
         ThemeConfig(
@@ -1930,6 +1611,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             .putInt("background_color", config.backgroundColor)
             .apply()
         if (::root.isInitialized) root.setBackgroundColor(tokens.pageBackground)
+        if (::runtimeStatusChrome.isInitialized) {
+            runtimeStatusChrome.dispose()
+            runtimeStatusChrome = createRuntimeStatusChrome()
+            runtimeStatusChrome.render(runtimeStatusState, shouldSuppressTransientRuntimeChrome(runtimeStatusState))
+        }
     }
 
     private fun shouldHideMainTaskFromRecents(): Boolean =
@@ -2028,16 +1714,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         } else if (requestCode == REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS) {
             runtimePermissionRequestInFlight = false
             dropZoneStatus = dropZoneManager.prepareDropZone()
-            val permissionState = currentRuntimePermissionState()
-            val permissionUiState = buildRuntimePermissionUiState(baseImageReady = false)
-            if (permissionUiState != null) {
-                setUbuntuRuntimeState(permissionUiState)
-                if (permissionState.missingPermissions.isEmpty() && permissionState.needsAllFilesAccess) {
+            val permissionState = runtimeBootstrapGateway.currentSnapshot().permissions
+            runtimeStatusController.refresh()
+            if (!permissionState.ready) {
+                if (permissionState.missing.isEmpty() && permissionState.needsAllFilesAccess) {
                     openAllFilesAccessSettings()
                 } else {
                     Toast.makeText(
                         this,
-                        "仍缺少：${permissionState.missingLabels().joinToString("、")}",
+                        "仍缺少：${runtimePermissionLabels(permissionState.missing, permissionState.needsAllFilesAccess).joinToString("、")}",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -2119,7 +1804,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         root.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             consoleRuntimeBannerHost = this
-            ubuntuRuntimeBanner()?.let(::addView)
+            runtimeStatusChrome.createInlineBanner(runtimeStatusState)?.let(::addView)
         })
         val content = FrameLayout(this).apply {
             id = R.id.kite_feature_content
@@ -2128,8 +1813,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         root.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         root.addView(bottomNavigation())
         val existing = supportFragmentManager.findFragmentByTag(TAG_HOME_FRAGMENT) as? HomeFragment
-        val fragment = existing ?: HomeFragment.newInstance(ubuntuRuntimeState.blocksUbuntuActions)
-        fragment.updateRuntimeBlocked(ubuntuRuntimeState.blocksUbuntuActions)
+        val fragment = existing ?: HomeFragment.newInstance(runtimeStatusState.blocksUbuntuActions)
+        fragment.updateRuntimeBlocked(runtimeStatusState.blocksUbuntuActions)
         supportFragmentManager.beginTransaction().apply {
             if (fragment.isDetached) {
                 attach(fragment)
@@ -2147,18 +1832,18 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             showConsole()
             return
         }
-        fragment.updateRuntimeBlocked(ubuntuRuntimeState.blocksUbuntuActions)
+        fragment.updateRuntimeBlocked(runtimeStatusState.blocksUbuntuActions)
         refreshConsoleRuntimeChrome()
     }
 
     private fun refreshConsoleRuntimeChrome() {
-        consoleSystemStatusPillView?.let { bindSystemStatusPill(it, ubuntuRuntimeState) }
+        consoleSystemStatusPillView?.let { runtimeStatusChrome.bindStatusPill(it, runtimeStatusState) }
         consoleRuntimeBannerHost?.apply {
             removeAllViews()
-            ubuntuRuntimeBanner()?.let(::addView)
+            runtimeStatusChrome.createInlineBanner(runtimeStatusState)?.let(::addView)
         }
         (supportFragmentManager.findFragmentByTag(TAG_HOME_FRAGMENT) as? HomeFragment)
-            ?.updateRuntimeBlocked(ubuntuRuntimeState.blocksUbuntuActions)
+            ?.updateRuntimeBlocked(runtimeStatusState.blocksUbuntuActions)
     }
 
     private fun refreshRecipeRuntimeStates(recipes: List<KiteRecipe> = currentRecipes) {
@@ -2216,22 +1901,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun ensureKfRuntimeBootstrap() {
-        if (kfRuntimeBootstrapRequested) {
+        val permissionState = runtimeBootstrapGateway.currentSnapshot().permissions
+        if (!permissionState.ready) {
+            runtimeStatusChrome.showPanel(auto = true)
+            requestFirstRunRuntimePermissions(startBootstrapAfterGrant = true)
             return
         }
-        val baseReady = runCatching { WorkSurfaceRuntimeBridge.isBaseImageReady(applicationContext) }
-            .getOrDefault(false)
-        if (!baseReady) {
-            val permissionUiState = buildRuntimePermissionUiState(baseImageReady = false)
-            if (permissionUiState != null) {
-                setUbuntuRuntimeState(permissionUiState)
-                showUbuntuRuntimePanel(auto = true)
-                requestFirstRunRuntimePermissions(startBootstrapAfterGrant = true)
-                return
-            }
-        }
-        kfRuntimeBootstrapRequested = true
-        BootstrapCoordinator.ensureStarted(applicationContext)
+        runtimeStatusController.ensureReady()
     }
 
     private fun clearRootForScreen(detachTerminal: Boolean = true) {
@@ -2513,7 +2189,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showResources() {
         currentResourceDetailId = null
         enterScreen(AppDestination.Resources)
-        ensureBundledToolBootstrapIfNeeded("show_resources")
+        runtimeStatusController.ensureReady()
         showFeatureFragment(ResourcesFragment(), TAG_RESOURCES_FRAGMENT)
     }
 
@@ -4744,42 +4420,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         addView(statusPill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
             setMargins(dp(10), dp(2), 0, 0)
         })
-        val openPanel = { showUbuntuRuntimePanel(auto = false, anchor = statusPill) }
+        val openPanel = { runtimeStatusChrome.showPanel(auto = false, anchor = statusPill) }
         setOnClickListener { openPanel() }
         statusPill.setOnClickListener { openPanel() }
     }
 
     private fun systemStatusPill(): TextView = TextView(this).apply {
-        bindSystemStatusPill(this, ubuntuRuntimeState)
-    }
-
-    private fun bindSystemStatusPill(view: TextView, state: UbuntuRuntimeUiState) {
-        view.apply {
-        text = systemStatusLabel(state)
-        textSize = 10.5f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        includeFontPadding = false
-        val color = when {
-            state.isProblem -> tokens.danger
-            state.requiresPermission -> tokens.primaryStrong
-            state.blocksUbuntuActions -> tokens.primaryStrong
-            state.visible -> tokens.textSecondary
-            else -> tokens.success
-        }
-        setTextColor(color)
-        setPadding(dp(8), 0, dp(8), 0)
-        background = roundedBox(tintBackground(color), tintBackgroundBorder(color), dp(13).toFloat())
-        }
-    }
-
-    private fun systemStatusLabel(state: UbuntuRuntimeUiState): String = when {
-        state.isProblem -> "异常"
-        state.requiresPermission -> "待授权"
-        state.showProgress && state.progressPercent != null -> "解压 ${state.progressPercent}%"
-        state.blocksUbuntuActions -> "部署中"
-        state.visible -> "未部署"
-        else -> "就绪"
+        runtimeStatusChrome.bindStatusPill(this, runtimeStatusState)
     }
 
     private fun dropZoneControlRow(): View = row {
@@ -4806,34 +4453,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     setMargins(dp(8), 0, 0, 0)
                 }
             })
-        }
-    }
-
-    private fun ubuntuRuntimeBanner(): View? {
-        val state = ubuntuRuntimeState
-        if (!state.visible) return null
-        val border = if (state.isProblem) tokens.danger else tokens.border
-        val titleColor = if (state.isProblem) tokens.danger else tokens.textPrimary
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = roundedBox(tokens.surfaceElevated, border, dp(16).toFloat())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                .apply { setMargins(dp(18), 0, dp(18), dp(10)) }
-            addView(TextView(context).apply {
-                text = state.title
-                textSize = 13.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(titleColor)
-            })
-            addView(TextView(context).apply {
-                text = state.detail
-                textSize = 12f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(4), 0, 0)
-            })
-            addView(runtimeProgressView(state, compact = true))
-            setOnClickListener { showUbuntuRuntimePanel(auto = false) }
         }
     }
 
@@ -5271,515 +4890,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }.getOrDefault(false)
     }
 
-    private fun updateRuntimeGateOverlay() {
-        if (!::rootHost.isInitialized) return
-        val state = ubuntuRuntimeState
-        if (!shouldShowRuntimeGate(state) || shouldSuppressTransientRuntimeChrome(state)) {
-            runtimeGateOverlay?.visibility = View.GONE
-            return
-        }
-        val overlay = runtimeGateOverlay ?: createRuntimeGateOverlay().also { view ->
-            runtimeGateOverlay = view
-            rootHost.addView(view, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
-        }
-        overlay.visibility = View.VISIBLE
-        overlay.bringToFront()
-        overlay.setBackgroundColor(colorWithAlpha(tokens.pageBackground, 238))
-        runtimeGateTitleView?.apply {
-            text = state.title.ifBlank { "正在准备 Ubuntu" }
-            setTextColor(if (state.isProblem) tokens.danger else tokens.textPrimary)
-        }
-        runtimeGateDetailView?.apply {
-            text = state.detail
-            visibility = if (state.detail.isBlank()) View.GONE else View.VISIBLE
-        }
-        runtimeGateProgressBar?.apply {
-            visibility = if (state.showProgress && !state.isProblem) View.VISIBLE else View.GONE
-            isIndeterminate = state.progressPercent == null
-            progress = state.progressPercent ?: 0
-            progressDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
-            indeterminateDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
-        }
-        runtimeGateProgressTextView?.apply {
-            text = state.progressText.ifBlank {
-                if (state.showProgress && !state.isProblem) "正在执行首次准备" else ""
-            }
-            visibility = if (text.isBlank()) View.GONE else View.VISIBLE
-        }
-        runtimeGateActionButton?.apply {
-            val actionVisible = runtimePanelUsesPrimaryAction(state)
-            visibility = if (actionVisible) View.VISIBLE else View.GONE
-            text = when {
-                state.firstRunPermissionOnboarding -> state.permissionActionLabel.ifBlank { "开始授权" }
-                state.requiresPermission -> state.permissionActionLabel.ifBlank { "打开授权 / 继续" }
-                state.canRetry -> "重新检查 / 继续部署"
-                else -> ""
-            }
-            setOnClickListener { handleRuntimePanelAction() }
-        }
-    }
-
-    private fun shouldShowRuntimeGate(state: UbuntuRuntimeUiState): Boolean =
-        state.visible && (
-            state.blocksUbuntuActions ||
-                state.requiresPermission ||
-                state.firstRunPermissionOnboarding ||
-                state.isProblem
-            )
-
-    private fun createRuntimeGateOverlay(): FrameLayout {
-        val overlay = FrameLayout(this).apply {
-            isClickable = true
-            isFocusable = true
-            visibility = View.GONE
-        }
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(22), dp(22), dp(20))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
-            elevation = dp(10).toFloat()
-            addView(TextView(context).apply {
-                runtimeGateTitleView = this
-                textSize = 20f
-                typeface = Typeface.DEFAULT_BOLD
-                includeFontPadding = false
-            })
-            addView(TextView(context).apply {
-                runtimeGateDetailView = this
-                textSize = 13f
-                setTextColor(tokens.textSecondary)
-                setLineSpacing(dp(3).toFloat(), 1f)
-                setPadding(0, dp(12), 0, 0)
-            })
-            addView(ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
-                runtimeGateProgressBar = this
-                max = 100
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(7)).apply {
-                    setMargins(0, dp(18), 0, 0)
-                }
-            })
-            addView(TextView(context).apply {
-                runtimeGateProgressTextView = this
-                textSize = 12f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(8), 0, 0)
-            })
-            addView(TextView(context).apply {
-                runtimeGateActionButton = this
-                textSize = 14f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(tokens.buttonText)
-                background = roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(16).toFloat())
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
-                    setMargins(0, dp(18), 0, 0)
-                }
-            })
-        }
-        overlay.addView(card, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.CENTER
-        ).apply {
-            setMargins(dp(24), 0, dp(24), 0)
-        })
-        return overlay
-    }
-
-    private fun runtimeProgressView(state: UbuntuRuntimeUiState, compact: Boolean): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = if (state.showProgress) View.VISIBLE else View.GONE
-            setPadding(0, dp(if (compact) 8 else 14), 0, 0)
-            addView(ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
-                max = 100
-                progress = state.progressPercent ?: 0
-                isIndeterminate = state.progressPercent == null
-                progressDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
-                indeterminateDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(if (compact) 5 else 7))
-            })
-            if (state.progressText.isNotBlank()) {
-                addView(TextView(context).apply {
-                    text = state.progressText
-                    textSize = if (compact) 10.5f else 12f
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, dp(5), 0, 0)
-                })
-            }
-        }
-
-    private fun runtimePanelMetric(
-        iconText: String,
-        label: String,
-        accent: Int,
-        bindValue: (TextView) -> Unit
-    ): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            addView(TextView(context).apply {
-                text = iconText
-                textSize = 18f
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(accent)
-                background = roundedBox(tintBackground(accent), Color.TRANSPARENT, dp(13).toFloat(), 0)
-                layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
-                    setMargins(0, 0, dp(12), 0)
-                }
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(context).apply {
-                    text = label
-                    textSize = 12f
-                    setTextColor(tokens.textSecondary)
-                })
-                addView(TextView(context).apply {
-                    bindValue(this)
-                    textSize = 22f
-                    typeface = Typeface.DEFAULT_BOLD
-                    includeFontPadding = false
-                    setTextColor(tokens.textPrimary)
-                    setPadding(0, dp(2), 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        }
-
-    private fun runtimePanelSummary(
-        taskSnapshot: TaskManagerSnapshot = TaskManagerStore.snapshot.value
-    ): RuntimePanelSummary {
-        val health = RuntimeHealthStore.snapshot.value
-        val processCount = listOf(
-            taskSnapshot.processes.size,
-            health.prootTelemetry.processLiveTable.liveTraceeCount,
-            health.processResourceSnapshot.processCount,
-            health.processSnapshotMergedProcessCount,
-            health.roots.sumOf { it.processCount }
-        ).maxOrNull() ?: 0
-        return RuntimePanelSummary(
-            runningCards = CardRunStore.runs.value.count { it.countsAsRuntimePanelCard() },
-            runningTerminals = TerminalSessionStore.snapshot.value.liveSessions.size,
-            runningProcesses = processCount.coerceAtLeast(0)
-        )
-    }
-
-    private fun requestRuntimePanelSummaryRefresh(force: Boolean = false) {
-        val appContext = applicationContext
-        TerminalSessionStore.refresh(appContext, force = force)
-        TaskManagerStore.refresh(appContext, force = force)
-    }
-
-    private fun renderRuntimePanelCounts(summary: RuntimePanelSummary = runtimePanelSummary()) {
-        runtimePanelCardCountView?.text = summary.runningCards.toString()
-        runtimePanelTerminalCountView?.text = summary.runningTerminals.toString()
-        runtimePanelProcessCountView?.text = summary.runningProcesses.toString()
-    }
-
-    private fun runtimePanelUsesPrimaryAction(state: UbuntuRuntimeUiState): Boolean =
-        state.firstRunPermissionOnboarding ||
-            state.requiresPermission ||
-            state.canRetry ||
-            (state.visible && !state.blocksUbuntuActions)
-
-    private fun RecipeRuntimeState.countsAsRuntimePanelCard(): Boolean =
-        parentInstanceId.isNullOrBlank() && when (status) {
-            RecipeRunStatus.Starting,
-            RecipeRunStatus.Running,
-            RecipeRunStatus.WaitingTerminal,
-            RecipeRunStatus.AlreadyRunning,
-            RecipeRunStatus.Opened,
-            RecipeRunStatus.Stopping -> true
-            else -> false
-        }
-
-
-
-
-
-
-
-    private fun maybeAutoShowUbuntuRuntimePanel(state: UbuntuRuntimeUiState) {
-        if (shouldShowRuntimeGate(state)) return
-        if (shouldSuppressTransientRuntimeChrome(state)) return
-        val startedAt = latestRootfsProgress.startedAt
-        if (!state.autoOpenPanel || startedAt <= 0L || autoOpenedRootfsRunAt == startedAt) return
-        autoOpenedRootfsRunAt = startedAt
-        showUbuntuRuntimePanel(auto = true)
-    }
-
-    private fun runtimePanelAnchorPoint(
-        anchor: View?,
-        panelLeft: Int,
-        panelWidth: Int,
-        fallbackBottomY: Int
-    ): Pair<Int, Int> {
-        val fallback = (panelLeft + panelWidth / 2) to fallbackBottomY
-        if (anchor == null || anchor.width <= 0 || !anchor.isAttachedToWindow) {
-            return fallback
-        }
-        val location = IntArray(2)
-        return runCatching {
-            anchor.getLocationOnScreen(location)
-            val visibleFrame = android.graphics.Rect()
-            window.decorView.getWindowVisibleDisplayFrame(visibleFrame)
-            (location[0] + anchor.width / 2) to (location[1] + anchor.height - visibleFrame.top)
-        }.getOrDefault(fallback)
-    }
-
-    private fun showUbuntuRuntimePanel(auto: Boolean, anchor: View? = null) {
-        if (auto && shouldShowRuntimeGate(ubuntuRuntimeState)) return
-        if (auto && shouldSuppressTransientRuntimeChrome(ubuntuRuntimeState)) return
-        val existing = ubuntuRuntimeDialog
-        if (existing?.isShowing == true) {
-            requestRuntimePanelSummaryRefresh(force = !auto)
-            renderUbuntuRuntimePanelState()
-            return
-        }
-        requestRuntimePanelSummaryRefresh(force = !auto)
-
-        val screenWidth = resources.displayMetrics.widthPixels
-        val panelWidth = (screenWidth - dp(36)).coerceAtMost(dp(560))
-        val panelLeft = ((screenWidth - panelWidth) / 2).coerceAtLeast(dp(8))
-        val pointerSize = dp(22)
-        val pointerMinLeft = dp(24)
-        val pointerMaxLeft = (panelWidth - dp(24) - pointerSize).coerceAtLeast(pointerMinLeft)
-        val (anchorCenterX, anchorBottomY) = runtimePanelAnchorPoint(
-            anchor,
-            panelLeft,
-            panelWidth,
-            fallbackBottomY = if (auto) dp(56) else dp(58)
-        )
-        val pointerLeft = (anchorCenterX - panelLeft - pointerSize / 2).coerceIn(pointerMinLeft, pointerMaxLeft)
-        val panelTop = (anchorBottomY + dp(3)).coerceAtLeast(dp(6))
-
-        val dialog = Dialog(this)
-        ubuntuRuntimeDialog = dialog
-
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(18), dp(18), 0)
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
-            elevation = dp(8).toFloat()
-        }
-
-        content.addView(row {
-            gravity = Gravity.CENTER_VERTICAL
-            addView(View(context).apply {
-                background = roundedBox(tokens.success, Color.TRANSPARENT, dp(5).toFloat(), 0)
-                layoutParams = LinearLayout.LayoutParams(dp(10), dp(10)).apply {
-                    setMargins(0, 0, dp(10), 0)
-                }
-            })
-            addView(TextView(context).apply {
-                text = "运行状态"
-                textSize = 15.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-        })
-
-        content.addView(TextView(this).apply {
-            runtimePanelTitleView = this
-            textSize = 13.5f
-            typeface = Typeface.DEFAULT
-            setTextColor(tokens.textPrimary)
-            setPadding(0, dp(14), 0, 0)
-        })
-        content.addView(TextView(this).apply {
-            runtimePanelDetailView = this
-            textSize = 12f
-            setTextColor(tokens.textSecondary)
-            setLineSpacing(dp(2).toFloat(), 1f)
-            setPadding(0, dp(5), 0, 0)
-        })
-        content.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(18), 0, dp(16))
-            addView(runtimePanelMetric("▣", "卡片", tokens.primaryStrong) { runtimePanelCardCountView = it })
-            addView(runtimePanelMetric(">_", "终端", Color.rgb(0, 150, 136)) { runtimePanelTerminalCountView = it })
-            addView(runtimePanelMetric("⌁", "进程", tokens.warning) { runtimePanelProcessCountView = it })
-        })
-        content.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            runtimePanelProgressBar = this
-            max = 100
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(7)).apply {
-                setMargins(0, 0, 0, 0)
-            }
-        })
-        content.addView(TextView(this).apply {
-            runtimePanelProgressTextView = this
-            textSize = 12f
-            setTextColor(tokens.textSecondary)
-            setPadding(0, dp(7), 0, 0)
-        })
-
-        content.addView(divider().apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                setMargins(-dp(18), dp(18), -dp(18), 0)
-            }
-        })
-        val actionRow = row {
-            runtimePanelActionRow = this
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), 0, dp(8), 0)
-            setOnClickListener { handleRuntimePanelAction() }
-            addView(TextView(context).apply {
-                runtimePanelActionButton = this
-                textSize = 13f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER_VERTICAL
-                setTextColor(tokens.textPrimary)
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-            })
-            addView(TextView(context).apply {
-                runtimePanelActionChevronView = this
-                text = "›"
-                textSize = 30f
-                includeFontPadding = false
-                gravity = Gravity.CENTER
-                setTextColor(tokens.textSecondary)
-                layoutParams = LinearLayout.LayoutParams(dp(28), ViewGroup.LayoutParams.MATCH_PARENT)
-            })
-        }
-        content.addView(actionRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)))
-
-        val popover = FrameLayout(this).apply {
-            clipChildren = false
-            clipToPadding = false
-            alpha = 0f
-            scaleX = 0.92f
-            scaleY = 0.92f
-            pivotX = pointerLeft + pointerSize / 2f
-            pivotY = dp(13).toFloat()
-            val pointer = View(context).apply {
-                rotation = 45f
-                background = roundedBox(tokens.cardBackground, Color.TRANSPARENT, dp(2).toFloat(), 0)
-            }
-            val pointerParams = FrameLayout.LayoutParams(pointerSize, pointerSize, Gravity.TOP or Gravity.START).apply {
-                leftMargin = pointerLeft
-                topMargin = dp(2)
-            }
-            addView(pointer, pointerParams)
-            val contentParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = dp(11)
-            }
-            addView(content, contentParams)
-        }
-
-        dialog.setContentView(popover)
-        dialog.setOnDismissListener {
-            if (ubuntuRuntimeDialog == dialog) {
-                ubuntuRuntimeDialog = null
-                runtimePanelTitleView = null
-                runtimePanelDetailView = null
-                runtimePanelProgressBar = null
-                runtimePanelProgressTextView = null
-                runtimePanelActionButton = null
-                runtimePanelActionRow = null
-                runtimePanelActionChevronView = null
-                runtimePanelCardCountView = null
-                runtimePanelTerminalCountView = null
-                runtimePanelProcessCountView = null
-            }
-        }
-        dialog.show()
-        dialog.window?.apply {
-            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            setDimAmount(0f)
-            setGravity(Gravity.TOP or Gravity.START)
-            attributes = attributes.apply {
-                x = panelLeft
-                y = panelTop
-                dimAmount = 0f
-            }
-            setLayout(panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        popover.animate()
-            .alpha(1f)
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(180L)
-            .setInterpolator(PathInterpolator(0.16f, 1f, 0.3f, 1f))
-            .start()
-        renderUbuntuRuntimePanelState()
-    }
-
-    private fun renderUbuntuRuntimePanelState() {
-        val dialog = ubuntuRuntimeDialog
-        if (dialog?.isShowing != true) return
-        val state = ubuntuRuntimeState
-        val summary = runtimePanelSummary()
-        runtimePanelTitleView?.apply {
-            text = if (state.visible) state.title else "Ubuntu 环境可用"
-            setTextColor(if (state.isProblem) tokens.danger else tokens.textPrimary)
-        }
-        runtimePanelDetailView?.apply {
-            val detailText = if (state.visible) state.detail else ""
-            text = detailText
-            visibility = if (detailText.isBlank()) View.GONE else View.VISIBLE
-        }
-        renderRuntimePanelCounts(summary)
-        runtimePanelProgressBar?.apply {
-            visibility = if (state.showProgress) View.VISIBLE else View.GONE
-            isIndeterminate = state.progressPercent == null
-            progress = state.progressPercent ?: 0
-            progressDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
-            indeterminateDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
-        }
-        runtimePanelProgressTextView?.apply {
-            text = state.progressText
-            visibility = if (state.showProgress && state.progressText.isNotBlank()) View.VISIBLE else View.GONE
-        }
-        val primaryAction = runtimePanelUsesPrimaryAction(state)
-        runtimePanelActionRow?.apply {
-            background = if (primaryAction) {
-                roundedBox(tokens.primaryStrong, tokens.primaryStrong, dp(14).toFloat())
-            } else {
-                null
-            }
-        }
-        runtimePanelActionButton?.apply {
-            text = when {
-                state.firstRunPermissionOnboarding -> state.permissionActionLabel.ifBlank { "开始授权" }
-                state.requiresPermission -> state.permissionActionLabel.ifBlank { "打开授权 / 继续" }
-                state.canRetry || (state.visible && !state.blocksUbuntuActions) -> "重新检查 / 继续部署"
-                else -> "查看进程"
-            }
-            setTextColor(if (primaryAction) tokens.buttonText else tokens.textPrimary)
-        }
-        runtimePanelActionChevronView?.apply {
-            visibility = if (primaryAction) View.GONE else View.VISIBLE
-            setTextColor(tokens.textSecondary)
-        }
-    }
-
-    private fun handleRuntimePanelAction() {
-        val state = ubuntuRuntimeState
-        if (state.firstRunPermissionOnboarding) {
-            continueFirstRunPermissionOnboarding()
-        } else if (state.requiresPermission) {
-            requestFirstRunRuntimePermissions(startBootstrapAfterGrant = true)
-        } else if (state.canRetry || (state.visible && !state.blocksUbuntuActions)) {
-            ubuntuRuntimeDialog?.dismiss()
-            kfRuntimeBootstrapRequested = false
-            ensureKfRuntimeBootstrap()
-        } else {
-            ubuntuRuntimeDialog?.dismiss()
-            showKiteProcessOverview()
-        }
-    }
 
     private fun settingsRow(title: String, subtitle: String, onClick: () -> Unit): View =
         LinearLayout(this).apply {
@@ -5935,7 +5045,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun isUbuntuActionBlocked(recipe: KiteRecipe): Boolean =
-        ubuntuRuntimeState.blocksUbuntuActions && recipe.hasUbuntuStep()
+        runtimeStatusState.blocksUbuntuActions && recipe.hasUbuntuStep()
 
     private fun recipeUsesResourceInlineStatus(recipe: KiteRecipe): Boolean =
         recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE ||
@@ -5954,13 +5064,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private fun shouldSuppressTransientRuntimeChrome(state: UbuntuRuntimeUiState = ubuntuRuntimeState): Boolean =
+    private fun shouldSuppressTransientRuntimeChrome(state: RuntimeStatusUiState = runtimeStatusState): Boolean =
         resourceSurfaceHasInlineRuntimeStatus() &&
             state.blocksUbuntuActions &&
             !state.requiresPermission &&
             !state.firstRunPermissionOnboarding &&
             !state.isProblem &&
-            !state.canRetry
+            state.primaryAction != RuntimeStatusAction.RetryDeployment
 
     private fun requestResourceRuntimeInlineRefresh(
         @Suppress("UNUSED_PARAMETER") recipe: KiteRecipe,
@@ -6023,8 +5133,8 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 if (shouldSuppressTransientRuntimeChrome()) {
                     requestResourceRuntimeInlineRefresh(recipe, "ubuntu_runtime_blocked")
                 } else {
-                    showUbuntuRuntimePanel(auto = true)
-                    Toast.makeText(this, ubuntuRuntimeState.title, Toast.LENGTH_SHORT).show()
+                    runtimeStatusChrome.showPanel(auto = true)
+                    Toast.makeText(this, runtimeStatusState.title, Toast.LENGTH_SHORT).show()
                 }
             }
             KiteRecipeActionPlan.OpenRun -> openRecipeRunInstance(recipe)
@@ -6466,10 +5576,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             RecipeEditorFragment.newInstance(
                 recipeId = normalizedRecipeId.takeIf(String::isNotBlank),
                 restoredDraftRaw = restoredDraftRaw,
-                runtimeBlocked = ubuntuRuntimeState.blocksUbuntuActions
+                runtimeBlocked = runtimeStatusState.blocksUbuntuActions
             )
         }
-        fragment.updateRuntimeBlocked(ubuntuRuntimeState.blocksUbuntuActions)
+        fragment.updateRuntimeBlocked(runtimeStatusState.blocksUbuntuActions)
         supportFragmentManager.beginTransaction().apply {
             if (fragment.isDetached) {
                 attach(fragment)
@@ -8146,64 +7256,16 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val weight: Float
     )
 
-    private data class RuntimePanelSummary(
-        val runningCards: Int,
-        val runningTerminals: Int,
-        val runningProcesses: Int
-    )
-
     private data class SemanticColors(
         val text: Int,
         val background: Int,
         val border: Int
     )
 
-    private data class RuntimePermissionState(
-        val missingPermissions: List<String>,
-        val needsAllFilesAccess: Boolean
-    ) {
-        val ready: Boolean = missingPermissions.isEmpty() && !needsAllFilesAccess
-    }
-
     private data class FirstRunPermissionState(
         val runtimePermissionsToRequest: List<String>,
         val needsAllFilesAccess: Boolean
     )
-
-    private data class UbuntuRuntimeUiState(
-        val title: String,
-        val detail: String,
-        val blocksUbuntuActions: Boolean,
-        val isProblem: Boolean,
-        val visible: Boolean = true,
-        val progressPercent: Int? = null,
-        val progressText: String = "",
-        val showProgress: Boolean = false,
-        val canRetry: Boolean = false,
-        val autoOpenPanel: Boolean = false,
-        val requiresPermission: Boolean = false,
-        val firstRunPermissionOnboarding: Boolean = false,
-        val permissionActionLabel: String = ""
-    ) {
-        companion object {
-            fun checking(): UbuntuRuntimeUiState =
-                UbuntuRuntimeUiState(
-                    title = "正在检查 Ubuntu",
-                    detail = "正在确认系统镜像、权限和基础运行环境。",
-                    blocksUbuntuActions = true,
-                    isProblem = false
-                )
-
-            fun hidden(): UbuntuRuntimeUiState =
-                UbuntuRuntimeUiState(
-                    title = "",
-                    detail = "",
-                    blocksUbuntuActions = false,
-                    isProblem = false,
-                    visible = false
-                )
-        }
-    }
 
     override fun setTerminalDetailMode(enabled: Boolean) {
         isTerminalDetailMode = enabled
