@@ -18,6 +18,7 @@ $runtimeReclaimerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/founda
 $runtimeWorkloadRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeWorkloadRegistry.kt'
 $runtimeAutomationActionsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeAutomationActions.kt'
 $runtimeMemoryLifecycleRuleTriggerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeMemoryLifecycleRuleTrigger.kt'
+$runtimePressureResponderPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimePressureResponder.kt'
 $backgroundRuntimeRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/service/BackgroundRuntimeRegistry.kt'
 $taskManagerStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/TaskManagerStore.kt'
 $containerProcessStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ContainerProcessStore.kt'
@@ -92,6 +93,7 @@ $runtimeReclaimer = Read-Utf8 $runtimeReclaimerPath
 $runtimeWorkloadRegistry = Read-Utf8 $runtimeWorkloadRegistryPath
 $runtimeAutomationActions = Read-Utf8 $runtimeAutomationActionsPath
 $runtimeMemoryLifecycleRuleTrigger = Read-Utf8 $runtimeMemoryLifecycleRuleTriggerPath
+$runtimePressureResponder = Read-Utf8 $runtimePressureResponderPath
 $backgroundRuntimeRegistry = Read-Utf8 $backgroundRuntimeRegistryPath
 $taskManagerStore = Read-Utf8 $taskManagerStorePath
 $containerProcessStore = Read-Utf8 $containerProcessStorePath
@@ -412,6 +414,15 @@ $releaseInstallWizardSurface = Function-Body $main 'releaseResourceInstallWizard
 Assert-True ($releaseActivitySurfaces -match 'webView\.destroy\(\)' -and $releaseActivitySurfaces -match 'browserAutomationController\.closeActiveSession\(\)') 'Activity destroy must release its WebView and automation display session.'
 Assert-True ($releaseActivitySurfaces -notmatch 'stopRecipe|CardRunStore|TerminalRuntimeHost\.release|clearPlan') 'display-surface release must not stop runs, terminals, or install plans.'
 Assert-True ($releaseInstallWizardSurface -notmatch 'stopResourceInstallRunsForCancel|clearPlan|markFailed') 'Activity destroy must not treat the install wizard surface as a stopped or failed install task.'
+$terminalDestroyView = Member-Function-Body $terminalFragment 'onDestroyView'
+Assert-True ($terminalDestroyView -match 'TerminalRuntimeHost\.detachUi\(this\)') 'Terminal view destroy must detach the UI from the process-level session host.'
+Assert-True ($terminalDestroyView -notmatch 'TerminalRuntimeHost\.release|TerminalRuntimeHost\.endSession|stopCurrentSession') 'Terminal view destroy must not stop or release the terminal session.'
+Assert-True ($runtimeReclaimer -match 'RuntimeRootOwnerKind\.CARD,\s*RuntimeRootOwnerKind\.RESOURCE,\s*RuntimeRootOwnerKind\.TERMINAL\s*->\s*false') 'Cards, resources, and terminal owners must remain excluded from generic automatic reclaim.'
+$lowMemoryResponse = Member-Function-Body $runtimePressureResponder 'onLowMemory'
+$pressureHandler = Function-Body $runtimePressureResponder 'handlePressure'
+Assert-True ($lowMemoryResponse -match 'RuntimeLifecycleSignalStore\.onLowMemory\(\)' -and $lowMemoryResponse -notmatch '\bonTrimMemory\s*\(') 'Low-memory handling must preserve its own lifecycle fact instead of rewriting it as a regular trim event.'
+Assert-True ($pressureHandler -match 'RuntimeFrameCoordinator\.refreshTaskManager|RuntimeFrameCoordinator\.refreshProcessSnapshot') 'Memory pressure must enter the existing runtime snapshot refresh chain.'
+Assert-True ($pressureHandler -notmatch 'destroyProcess|terminateForRuntimeReclaimer|stopRecipe|endSession') 'Memory callbacks must not directly terminate runs, processes, or terminal sessions.'
 
 $consoleRefresh = Function-Body $main 'maybeRefreshConsoleAfterRuntimeState'
 Assert-True ($consoleRefresh -match 'updateVisibleConsoleCard') 'console runtime refresh should update a visible card first.'
