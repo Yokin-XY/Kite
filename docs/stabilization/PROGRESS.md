@@ -5,9 +5,9 @@
 ## 当前恢复指针
 
 ```text
-方向：D2 动作编排统一
+方向：D3 状态投影和局部更新统一
 状态：in_progress
-当前任务：审计首页、编辑页、运行面和资源页的动作入口及分叉
+当前任务：审计首页、资源、向导和进程管理的事实来源、投影器与局部绑定
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -18,8 +18,8 @@
 | --- | --- | --- |
 | P0 公共行为安全网 | done | 静态检查、动作路由测试、全量单测和 Debug 构建通过 |
 | D1 导航与返回 | done | Destination、返回优先级、恢复策略和主要真机路径均已验收 |
-| D2 动作编排 | in_progress | 当前审计动作入口、命令语义和重复执行边界 |
-| D3 状态投影 | pending | D2 验收后自动进入 |
+| D2 动作编排 | done | 卡片、资源、向导和明确实例动作均经过统一入口 |
+| D3 状态投影 | in_progress | 当前审计事实来源、投影和局部绑定分叉 |
 | D4 生命周期和资源预算 | pending | D3 验收后自动进入 |
 | D5 功能模块与扩展点 | pending | D4 验收后自动进入 |
 
@@ -205,3 +205,30 @@ D1 结论：导航合同和必要接入已完成；后续 D2-D5 只能消费 `Sc
 - 静态检查锁定向导按钮无直接执行/导航，以及运行窗口和进程管理停止携带目标实例。
 
 下一步：运行 D2 全量单测和构建，真机验证首页卡片、编辑页、资源页和运行管理动作入口。
+
+### D2 最终验收
+
+提交：
+
+- `f05f8c6 [D2] continue stabilization in one session`
+- `480df61 [D2] unify recipe action intake`
+- `86c90e8 [D2] unify resource action intake`
+- `af6b4f9 [D2] coordinate install plan and instance actions`
+
+证据：
+
+- `KiteRecipeActionCoordinatorTest`、`KiteResourceActionCoordinatorTest`、`KiteInstallPlanActionCoordinatorTest` 和既有动作路由测试通过。
+- `scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：通过。
+- `:app:testDebugUnitTest :app:assembleDebug`：`BUILD SUCCESSFUL`，44 秒。
+- OnePlus 8T：首页单次启动只创建一个 CardRunActivity；关闭运行窗口停止同一实例并回首页，首页显示一个已停止实例。
+- 最终 logcat 未发现崩溃、ANR 或输入超时。
+
+D2 结论：页面只提交动作意图，协调器只生成轻量计划；运行事实与重活继续归 Store、编排器和执行核心。
+
+## D3 当前节点三问
+
+- 目标是什么：统一首页、资源、安装向导和进程管理的状态投影与局部更新。
+- 完成标准是什么：引用 `PLAYBOOK.md` 的 D3 五项验收，必须有状态一致性和可见局部更新证据。
+- 依赖是否满足：P0、D1、D2 已完成；动作入口现在可稳定发出状态变化，依赖满足。
+
+下一步：先以资源卡片与安装向导为样板，核对 Store 事实、`KiteResourceUiProjector` 和各页面本地判断的重复部分。
