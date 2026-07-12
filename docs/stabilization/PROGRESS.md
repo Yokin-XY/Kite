@@ -5,9 +5,9 @@
 ## 当前恢复指针
 
 ```text
-方向：D3 状态投影和局部更新统一
+方向：D4 生命周期和资源预算收口
 状态：in_progress
-当前任务：审计首页、资源、向导和进程管理的事实来源、投影器与局部绑定
+当前任务：审计页面、运行实例、显示面和底层进程的释放与回收边界
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -19,8 +19,8 @@
 | P0 公共行为安全网 | done | 静态检查、动作路由测试、全量单测和 Debug 构建通过 |
 | D1 导航与返回 | done | Destination、返回优先级、恢复策略和主要真机路径均已验收 |
 | D2 动作编排 | done | 卡片、资源、向导和明确实例动作均经过统一入口 |
-| D3 状态投影 | in_progress | 当前审计事实来源、投影和局部绑定分叉 |
-| D4 生命周期和资源预算 | pending | D3 验收后自动进入 |
+| D3 状态投影 | done | 资源事实、向导步骤和 CardRun 显示语义已统一，后台更新不再越权导航 |
+| D4 生命周期和资源预算 | in_progress | 当前审计销毁、租约、内存压力和回收边界 |
 | D5 功能模块与扩展点 | pending | D4 验收后自动进入 |
 
 ## P0 公共安全网记录
@@ -288,3 +288,28 @@ D2 结论：页面只提交动作意图，协调器只生成轻量计划；运�
 - 卡片、资源事实和 MainActivity 路由定向测试：`BUILD SUCCESSFUL`。
 
 下一步：D3 全量单测与构建，OnePlus 8T 验证首页、资源页、向导和运行管理状态一致性。
+
+### D3 最终验收
+
+提交：
+
+- `51f263a [D3] centralize install step projection`
+- `7e4b56c [D3] keep background resource updates local`
+- `d474063 [D3] share resource runtime facts`
+- `693b620 [D3] share card run presentation`
+
+证据：
+
+- 资源运行事实、资源卡片、向导步骤、首页卡片与运行管理均由纯投影器解释状态。
+- 非资源页面收到后台资源完成只记脏，不再强制导航。
+- `:app:testDebugUnitTest :app:assembleDebug`：`BUILD SUCCESSFUL`，36 秒。
+- OnePlus 8T：首页显示 OpenClaw“启动”；资源页显示确定的“获取/打开”；运行管理为运行卡片 0、进程 0。
+- logcat 未发现崩溃、ANR 或输入超时。
+
+## D4 当前节点三问
+
+- 目标是什么：明确页面、显示面、运行实例和底层进程的生命周期边界，并统一资源预算。
+- 完成标准是什么：引用 `PLAYBOOK.md` 的 D4 五项验收，不以简单释放所有对象作为优化。
+- 依赖是否满足：D1-D3 已完成，导航、动作和状态事实边界已稳定，依赖满足。
+
+下一步：从 `onStop/onDestroy/onTrimMemory`、终端 attach/detach、WebView 和 RuntimeReclaimer 开始建立生命周期矩阵。
