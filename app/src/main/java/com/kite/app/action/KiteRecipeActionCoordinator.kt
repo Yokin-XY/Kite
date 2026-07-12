@@ -14,13 +14,15 @@ internal enum class KiteRecipeActionIntent {
 internal enum class KiteRecipeActionSource(val logValue: String) {
     ConsoleCard("console_card"),
     Editor("editor"),
-    RunSurface("run_surface")
+    RunSurface("run_surface"),
+    RunManagement("run_management")
 }
 
 internal data class KiteRecipeActionRequest(
     val recipe: KiteRecipe,
     val intent: KiteRecipeActionIntent,
     val source: KiteRecipeActionSource,
+    val instanceId: String? = null,
     val openTaskOnStart: Boolean = false
 )
 

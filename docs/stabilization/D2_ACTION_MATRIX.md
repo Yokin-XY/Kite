@@ -34,7 +34,7 @@
 | 停止 | 运行中 | ResourceAction Intake | done |
 | 卸载 | 已安装、失败残留 | ResourceAction Intake | done |
 | 取消 | 获取中、失败残留 | ResourceAction Intake | done |
-| 继续计划/完成 | 安装计划中 | InstallPlan Action Intake | pending |
+| 继续计划/完成 | 安装计划中 | InstallPlan Action Intake | done |
 
 ## 自动化证据
 
@@ -42,3 +42,4 @@
 - `KiteActionRouterTest`：命名动作、停止兜底、缺失与空动作。
 - `KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：首页和编辑页不得绕过共享动作入口。
 - `KiteResourceActionCoordinatorTest`：资源投影标签与恢复安装向导统一为稳定意图。
+- `KiteInstallPlanActionCoordinatorTest`：运行、卸载、失败、待获取和完成五类向导动作。

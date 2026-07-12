@@ -76,6 +76,8 @@ import com.kite.app.action.KiteResourceActionCoordinator
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.action.KiteResourceActionRequest
 import com.kite.app.action.KiteResourceActionSource
+import com.kite.app.action.KiteInstallPlanActionCoordinator
+import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.browser.BrowserAuthRedirect
 import com.kite.app.browser.BrowserAuthRedirectParser
 import com.kite.app.browser.BrowserAuthSession
@@ -6503,37 +6505,32 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         hasPending: Boolean,
         hasFailure: Boolean
     ) {
-        when {
-            hasUninstallingStep -> configureResourceInstallWizardActionButton(
-                button = button,
-                label = "卸载中",
-                enabled = false
-            ) {}
-            hasFailure -> configureResourceInstallWizardActionButton(
-                button = button,
-                label = "发现异常请手动处理",
-                enabled = false
-            ) {}
-            else -> configureResourceInstallWizardActionButton(
-                button = button,
-                label = when {
-                    hasRunningStep -> "获取中"
-                    hasPending -> "开始获取"
-                    else -> "完成"
-                },
-                enabled = !hasRunningStep
-            ) {
-                if (hasPending) {
-                    startNextResourceInstallFromPlan()
+        val plan = KiteInstallPlanActionCoordinator.plan(
+            hasRunningStep = hasRunningStep,
+            hasUninstallingStep = hasUninstallingStep,
+            hasPending = hasPending,
+            hasFailure = hasFailure
+        )
+        configureResourceInstallWizardActionButton(
+            button = button,
+            label = plan.label,
+            enabled = plan.enabled
+        ) {
+            plan.intent?.let(::submitInstallPlanAction)
+        }
+    }
+
+    private fun submitInstallPlanAction(intent: KiteInstallPlanActionIntent) {
+        when (intent) {
+            KiteInstallPlanActionIntent.StartNext -> startNextResourceInstallFromPlan()
+            KiteInstallPlanActionIntent.Finish -> {
+                currentResourceInstallTargetId = null
+                resourceInstallWizardPlanIds = emptyList()
+                activeResourceInstallWizard = null
+                if (this is CardRunActivity) {
+                    closeCardRunTask()
                 } else {
-                    currentResourceInstallTargetId = null
-                    resourceInstallWizardPlanIds = emptyList()
-                    activeResourceInstallWizard = null
-                    if (this@MainActivity is CardRunActivity) {
-                        closeCardRunTask()
-                    } else {
-                        showResources()
-                    }
+                    screenRouter.navigate(Screen.Resources)
                 }
             }
         }
@@ -11831,7 +11828,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             closeCardRunTask()
             return
         }
-        stopRecipe(recipe, latestRootState)
+        submitRecipeAction(
+            KiteRecipeActionRequest(
+                recipe = recipe,
+                intent = KiteRecipeActionIntent.Stop,
+                source = KiteRecipeActionSource.RunSurface,
+                instanceId = latestRootState.instanceId
+            )
+        )
     }
 
     private fun showCardRunWindowCreateBubble(
@@ -12583,7 +12587,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                 ?: CardRunStore.currentForRecipe(recipe.id)
         }
         if (focusedRecipe != null && focusedState != null && shouldStopRunWhenClosingInstance(focusedState)) {
-            stopRecipe(focusedRecipe, focusedState)
+            submitRecipeAction(
+                KiteRecipeActionRequest(
+                    recipe = focusedRecipe,
+                    intent = KiteRecipeActionIntent.Stop,
+                    source = KiteRecipeActionSource.RunSurface,
+                    instanceId = focusedState.instanceId
+                )
+            )
             return
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -13717,7 +13728,14 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             Toast.makeText(this, "卡片信息不可用，无法停止", Toast.LENGTH_SHORT).show()
             return
         }
-        stopRecipe(recipe, group.run)
+        submitRecipeAction(
+            KiteRecipeActionRequest(
+                recipe = recipe,
+                intent = KiteRecipeActionIntent.Stop,
+                source = KiteRecipeActionSource.RunManagement,
+                instanceId = group.run.instanceId
+            )
+        )
         root.postDelayed({ if (!isFinishing && !isDestroyed) showKiteProcessOverview(forceRefresh = true) }, 260L)
     }
 
@@ -14690,7 +14708,15 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         afterDispatch: () -> Unit = {}
     ) {
         val recipe = request.recipe
-        val state = runtimeStateFor(recipe)
+        val state = request.instanceId
+            ?.let { instanceId -> CardRunStore.get(instanceId) }
+            ?: runtimeStateFor(recipe)
+        request.instanceId?.takeIf { it.isNotBlank() }?.let { instanceId ->
+            activeRunInstanceIds[recipe.id] = instanceId
+            focusedRunRecipeId = recipe.id
+            focusedRunInstanceId = instanceId
+            runtimeStates[recipe.id] = state
+        }
         diagnostics.logRecipeAction(
             recipe,
             "action_submit",

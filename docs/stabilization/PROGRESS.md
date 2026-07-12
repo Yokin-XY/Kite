@@ -191,3 +191,17 @@ D1 结论：导航合同和必要接入已完成；后续 D2-D5 只能消费 `Sc
 - `KiteResourceActionCoordinatorTest`、`KiteRecipeActionCoordinatorTest`、`MainActivityScreenRoutingTest`：`BUILD SUCCESSFUL`。
 
 下一步：收口安装向导的开始获取、完成和异常处理动作。
+
+### D2 安装计划与实例动作
+
+- 新增 `KiteInstallPlanActionCoordinator`，把向导主按钮归一化为禁用、StartNext 或 Finish 计划。
+- 向导按钮绑定不再直接启动下一项、清理上下文或导航；全部交给 `submitInstallPlanAction`。
+- `KiteRecipeActionRequest` 增加可选 `instanceId`，统一入口先绑定目标实例，再分发 Open/Stop。
+- 运行窗口关闭、CardRun 关闭返回和进程管理停止均提交明确实例，不再直接调用 `stopRecipe`。
+
+验证：
+
+- 三组动作协调器定向测试：`BUILD SUCCESSFUL`。
+- 静态检查锁定向导按钮无直接执行/导航，以及运行窗口和进程管理停止携带目标实例。
+
+下一步：运行 D2 全量单测和构建，真机验证首页卡片、编辑页、资源页和运行管理动作入口。

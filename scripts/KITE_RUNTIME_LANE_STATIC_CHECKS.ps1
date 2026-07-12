@@ -169,6 +169,14 @@ Assert-True ($resourcePrimaryAction -match 'KiteResourceActionCoordinator\.prima
 Assert-True ($resourceSecondaryActions -match 'KiteResourceActionIntent\.CancelInstall' -and $resourceSecondaryActions -match 'KiteResourceActionIntent\.Stop' -and $resourceSecondaryActions -match 'KiteResourceActionIntent\.Uninstall') 'resource detail secondary actions must submit explicit shared intents.'
 Assert-True ($resourceSecondaryActions -notmatch '\bhandleResource(?:Install|Uninstall|OpenStop|Cancel|Failed)') 'resource detail buttons must not bypass the shared action intake.'
 
+$installPlanAction = Function-Body $main 'configureResourceInstallWizardPrimaryAction'
+$runManagementStop = Function-Body $main 'stopRunManagementCard'
+$cardRunWindowClose = Function-Body $main 'closeCardRunWindowInstance'
+Assert-True ($installPlanAction -match 'KiteInstallPlanActionCoordinator\.plan' -and $installPlanAction -match 'submitInstallPlanAction') 'install wizard primary action must submit a coordinated plan intent.'
+Assert-True ($installPlanAction -notmatch '\bstartNextResourceInstallFromPlan\s*\(' -and $installPlanAction -notmatch '\bshowResources\s*\(') 'install wizard button binding must not execute or navigate directly.'
+Assert-True ($runManagementStop -match 'submitRecipeAction' -and $runManagementStop -match 'instanceId = group\.run\.instanceId') 'run management stop must submit the selected card instance.'
+Assert-True ($cardRunWindowClose -match 'submitRecipeAction' -and $cardRunWindowClose -match 'instanceId = latestRootState\.instanceId') 'card run window close must submit the selected root instance.'
+
 $showRunManagement = Function-Body $main 'showKiteProcessOverview'
 Assert-True ($showRunManagement -match 'runManagementHeader') 'run management page should use the run-management header.'
 Assert-True ($showRunManagement -notmatch 'kiteProcessSummaryBlock') 'run management page must not render the old three-count summary card.'
