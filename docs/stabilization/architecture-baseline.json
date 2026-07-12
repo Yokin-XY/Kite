@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-12",
+  "capturedCommit": "416e2d9",
+  "mainActivity": {
+    "physicalLines": 21144,
+    "memberFunctions": 854,
+    "privateFields": 171,
+    "hostInterfaces": 8,
+    "resourceRenderDelegates": 4,
+    "resourceFunctions": 64,
+    "runtimeStatesReferences": 64
+  },
+  "legacyBoundaryDebt": {
+    "screenRouterMainActivityScreenReferences": 46,
+    "activitiesInheritingMainActivity": 1
+  },
+  "targetPackages": [
+    "com.kite.app.shell",
+    "com.kite.app.feature",
+    "com.kite.app.application",
+    "com.kite.app.domain",
+    "com.kite.app.platform"
+  ],
+  "rule": "Every numeric legacy debt value is a non-increasing ratchet; architecture completion is decided by ownership contracts, not counts."
+}

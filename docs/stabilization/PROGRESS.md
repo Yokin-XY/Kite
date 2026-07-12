@@ -6,8 +6,8 @@
 
 ```text
 方向：第二阶段业务架构迁移
-状态：planned
-当前任务：T001 架构基线与依赖护栏，尚未开始业务代码修改
+状态：in_progress
+当前任务：T002 应用外壳与组合根，等待 T001 提交后启动
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -541,3 +541,32 @@ ADR-S012、ADR-S013。
 
 下一步：只启动 T001，先建立六条业务链目的矩阵、依赖护栏和 MainActivity 迁移台账，
 不直接开始资源页面搬迁。
+
+### T001 三问
+
+- 目标是什么：建立第二阶段真实架构基线、六条业务目的矩阵和依赖护栏；不迁移页面。
+- 完成标准是什么：对应 `PLAYBOOK.md` T001 四项验收，必须有自动检查、全量测试和构建证据。
+- 依赖是否满足：D1-D5 均已完成并提交；第二阶段方案提交为 `416e2d9`，依赖满足。
+
+已完成盘点：
+
+- `MainActivity` 物理行数 21,144，成员函数 854，私有字段 171，实现 8 个 Host/Provider 接口。
+- 资源反向渲染委托 4 个，Activity 内资源职责函数 64 个。
+- `ScreenRouter` 引用 `MainActivity.Screen` 46 次；1 个 Activity 继承完整 `MainActivity`。
+- `runtimeStates` 在 Activity 内仍有 64 处引用，是首页/运行投影迁移需要消除的平行缓存债务。
+- 六条业务链目的、事实源、动作、生命周期、失败语义和当前债务已写入 `ARCHITECTURE_BASELINE.md`。
+
+下一步：实现目标包依赖规则和历史债务防回涨脚本，并接入现有静态检查入口。
+
+T001 验证：
+
+- `ARCHITECTURE_BASELINE.md` 已覆盖首页、资源、运行、终端、Web、设置六条业务链的目的、事实、动作、生命周期、失败语义和当前债务。
+- `architecture-baseline.json` 保存九项机器债务基线；`KITE_ARCHITECTURE_CHECKS.ps1` 要求这些值只能下降。
+- 新目标包依赖规则已覆盖 Shell、Feature、Application、Domain、Platform；Feature 跨模块直连和反向 Activity Host 委托被禁止。
+- 反向探针让 Domain 引用 `android.view.View` 后，检查按预期失败；删除探针后恢复通过。
+- 架构检查已接入 `KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`。
+- 全量 Debug 单测和 Debug 构建通过；运行车道与架构检查通过；APK 体积审计保持 241,594,058 bytes。
+
+T001 状态：completed。
+
+下一步：提交 T001，执行 T002 三问，只迁移应用壳合同和组合根。

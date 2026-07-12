@@ -476,4 +476,5 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 
+& (Join-Path $PSScriptRoot 'KITE_ARCHITECTURE_CHECKS.ps1') -Root $Root
 Write-Host 'Kite runtime lane static checks passed.' -ForegroundColor Green
