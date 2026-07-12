@@ -36,13 +36,13 @@ internal abstract class ResourceFeatureFragment : Fragment() {
                         )
                     }
                 }
-            }
-        }
-        if (controller.state.value.phase == ResourceCatalogPhase.Idle) {
-            refreshResources(force = false)
-        } else {
-            viewLifecycleOwner.lifecycleScope.launch {
-                controller.dispatch(ResourceFeatureAction.ReconcileFacts)
+                controller.dispatch(
+                    if (controller.state.value.phase == ResourceCatalogPhase.Idle) {
+                        ResourceFeatureAction.Refresh(forceCatalogRefresh = false)
+                    } else {
+                        ResourceFeatureAction.ReconcileFacts
+                    }
+                )
             }
         }
     }

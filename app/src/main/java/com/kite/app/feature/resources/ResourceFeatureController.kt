@@ -115,6 +115,12 @@ internal class ResourceFeatureController(
             openRunStatus = openRunStatus,
             extraBusy = facts.extraBusy
         )
+        val operation = when {
+            facts.uninstalling -> KiteResourceInstallStore.OP_UNINSTALL
+            facts.failed && facts.failedOperation == KiteResourceInstallStore.OP_UNINSTALL ->
+                KiteResourceInstallStore.OP_UNINSTALL
+            else -> KiteResourceInstallStore.OP_INSTALL
+        }
         val inPlan = descriptor.id == plan.targetResourceId || descriptor.id in plan.resourceIds
         return ResourceItemUiState(
             descriptor = descriptor,
@@ -125,6 +131,8 @@ internal class ResourceFeatureController(
                 reopenInstall = inPlan
             ),
             secondaryIntent = secondaryIntent(projection.secondaryActionLabel, facts),
+            operation = operation,
+            operationRun = gateway.operationRunSnapshot(descriptor.id, operation),
             registrySummary = registryEntry?.summary.orEmpty(),
             registryUpdatedAt = registryEntry?.updatedAt ?: 0L
         )
@@ -138,6 +146,8 @@ internal class ResourceFeatureController(
         return ResourcePlanUiState(
             targetResourceId = plan.targetResourceId,
             resourceIds = plan.resourceIds,
+            runningResourceIds = plan.runningResourceIds,
+            pendingResourceIds = plan.pendingResourceIds,
             steps = plan.resourceIds.map { resourceId ->
                 val item = byId[resourceId]
                 val failedOperation = when (item?.phase) {
@@ -159,7 +169,9 @@ internal class ResourceFeatureController(
                             ResourceItemPhase.Stopping
                         ),
                         isActive = resourceId == plan.targetResourceId || resourceId in plan.resourceIds
-                    )
+                    ),
+                    operation = item?.operation.orEmpty(),
+                    run = item?.operationRun
                 )
             }
         )

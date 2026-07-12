@@ -5,6 +5,7 @@ import com.kite.app.action.KiteResourceActionRequest
 import com.kite.app.action.KiteResourceActionSource
 import com.kite.app.application.resources.ResourceFeatureDescriptor
 import com.kite.app.application.resources.ResourceFeatureGateway
+import com.kite.app.application.resources.ResourceFeatureRunSnapshot
 import com.kite.app.resources.KiteResourceInstallStepUiProjection
 import com.kite.app.resources.KiteResourceHomeLayout
 import com.kite.app.resources.KiteResourceUiProjection
@@ -36,6 +37,8 @@ internal data class ResourceItemUiState(
     val projection: KiteResourceUiProjection,
     val primaryIntent: KiteResourceActionIntent,
     val secondaryIntent: KiteResourceActionIntent?,
+    val operation: String = "",
+    val operationRun: ResourceFeatureRunSnapshot? = null,
     val registrySummary: String = "",
     val registryUpdatedAt: Long = 0L
 ) {
@@ -45,12 +48,16 @@ internal data class ResourceItemUiState(
 
 internal data class ResourcePlanStepUiState(
     val resourceId: String,
-    val projection: KiteResourceInstallStepUiProjection
+    val projection: KiteResourceInstallStepUiProjection,
+    val operation: String = "",
+    val run: ResourceFeatureRunSnapshot? = null
 )
 
 internal data class ResourcePlanUiState(
     val targetResourceId: String = "",
     val resourceIds: List<String> = emptyList(),
+    val runningResourceIds: List<String> = emptyList(),
+    val pendingResourceIds: List<String> = emptyList(),
     val steps: List<ResourcePlanStepUiState> = emptyList()
 )
 

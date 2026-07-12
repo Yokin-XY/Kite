@@ -258,11 +258,11 @@ Controller 提供 UiState 和 Action，Activity 只负责导航到资源 Destina
 
 验收标准：
 
-- [ ] 四个资源 Fragment 不再声明或调用 Activity 渲染 Host。
-- [ ] 资源相关缓存、绑定、请求序号和局部刷新离开 `MainActivity`。
-- [ ] 首页与资源各页面仍读取同一安装和运行事实。
-- [ ] 每迁移一个页面都有独立提交、Robolectric 回归和 OnePlus 8T 可见路径验证。
-- [ ] 返回位置、滚动位置、安装进度和失败重试不回归。
+- [x] 四个资源 Fragment 不再声明或调用 Activity 渲染 Host。
+- [x] 资源相关缓存、绑定、请求序号和局部刷新离开 `MainActivity`。
+- [x] 首页与资源各页面仍读取同一安装和运行事实。
+- [x] 每迁移一个页面都有独立提交、Robolectric 回归和 OnePlus 8T 可见路径验证。
+- [x] 返回位置、滚动位置、安装进度和失败重试不回归。
 
 依赖：T003。
 

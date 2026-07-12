@@ -5,11 +5,13 @@ import com.kite.app.action.KiteResourceActionSource
 import com.kite.app.application.resources.ResourceFeatureDescriptor
 import com.kite.app.application.resources.ResourceFeatureChange
 import com.kite.app.application.resources.ResourceFeatureGateway
+import com.kite.app.application.resources.ResourceFeatureRunSnapshot
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceRegistryEntry
 import com.kite.app.run.CardRunStatus
+import com.kite.app.run.CardRunSurface
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -164,6 +166,36 @@ class ResourceFeatureControllerTest {
     }
 
     @Test
+    fun `安装步骤携带当前操作的确定运行实例`() = runTest {
+        val run = ResourceFeatureRunSnapshot(
+            instanceId = "install-instance",
+            operation = KiteResourceInstallStore.OP_INSTALL,
+            status = CardRunStatus.Running,
+            surface = CardRunSurface.Terminal,
+            startedAt = 10L,
+            updatedAt = 20L
+        )
+        val gateway = FakeGateway().apply {
+            plan = KiteResourcePlanSnapshot(
+                targetResourceId = "tool",
+                resourceIds = listOf("tool"),
+                runningResourceIds = listOf("tool"),
+                stepStatusByResourceId = mapOf("tool" to KiteResourceInstallStore.PLAN_STEP_RUNNING)
+            )
+            operationRuns["tool" to KiteResourceInstallStore.OP_INSTALL] = run
+        }
+        val controller = ResourceFeatureController(gateway)
+
+        controller.dispatch(ResourceFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        val step = controller.state.value.plan.steps.single()
+        assertEquals(KiteResourceInstallStore.OP_INSTALL, item.operation)
+        assertEquals(run, item.operationRun)
+        assertEquals(run, step.run)
+    }
+
+    @Test
     fun `目录失败保留已有投影并暴露确定错误`() = runTest {
         val gateway = FakeGateway()
         val controller = ResourceFeatureController(gateway)
@@ -183,6 +215,7 @@ class ResourceFeatureControllerTest {
         val registry = linkedMapOf<String, KiteResourceRegistryEntry>()
         var plan = KiteResourcePlanSnapshot()
         val runStatuses = linkedMapOf<String, CardRunStatus>()
+        val operationRuns = linkedMapOf<Pair<String, String>, ResourceFeatureRunSnapshot>()
         var loadFailure: Throwable? = null
         var loadCount: Int = 0
 
@@ -198,6 +231,11 @@ class ResourceFeatureControllerTest {
         override fun planSnapshot(): KiteResourcePlanSnapshot = plan
 
         override fun openRunStatus(resourceId: String): CardRunStatus? = runStatuses[resourceId]
+
+        override fun operationRunSnapshot(
+            resourceId: String,
+            operation: String
+        ): ResourceFeatureRunSnapshot? = operationRuns[resourceId to operation]
 
         override fun homeLayout() = null
     }

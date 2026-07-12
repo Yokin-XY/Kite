@@ -34,8 +34,11 @@ $appIntentRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/App
 $kiteAppGraphPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/KiteAppGraph.kt'
 $resourceFeatureContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceFeatureContract.kt'
 $resourceFeatureControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceFeatureController.kt'
+$resourceFeatureFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceFeatureFragment.kt'
 $resourceManageFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceManageFragment.kt'
 $resourceManageScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceManageScreen.kt'
+$resourceInstallWizardPresentationPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceInstallWizardPresentation.kt'
+$resourceInstallWizardScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceInstallWizardScreen.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -119,8 +122,11 @@ $appIntentRouter = Read-Utf8 $appIntentRouterPath
 $kiteAppGraph = Read-Utf8 $kiteAppGraphPath
 $resourceFeatureContract = Read-Utf8 $resourceFeatureContractPath
 $resourceFeatureController = Read-Utf8 $resourceFeatureControllerPath
+$resourceFeatureFragment = Read-Utf8 $resourceFeatureFragmentPath
 $resourceManageFragment = Read-Utf8 $resourceManageFragmentPath
 $resourceManageScreen = Read-Utf8 $resourceManageScreenPath
+$resourceInstallWizardPresentation = Read-Utf8 $resourceInstallWizardPresentationPath
+$resourceInstallWizardScreen = Read-Utf8 $resourceInstallWizardScreenPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -144,10 +150,11 @@ Assert-True ($resourceFeatureController -match 'KiteResourceRuntimeFactsProjecto
 Assert-True ($resourceFeatureController -match 'KiteResourceActionCoordinator\.primaryIntent' -and $resourceFeatureController -match 'KiteResourceActionRequest') 'Resource feature actions must reuse the stable resource action contract.'
 Assert-True ($resourceFeatureController -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.))') 'Resource feature controller must remain independent from Android views and navigation.'
 Assert-True ($resourceFeatureController -notmatch '\.(markInstalling|markPreparing|markUninstalling|markInstalled|markFailed|beginPlan|clearPlan)\s*\(') 'Resource feature controller must not write installation facts owned by KiteResourceInstallStore.'
+Assert-True ($resourceFeatureFragment -match '(?s)repeatOnLifecycle\(Lifecycle\.State\.STARTED\).*ResourceFeatureAction\.ReconcileFacts') 'resource features must reconcile owner facts whenever their view returns to the foreground.'
 Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'
 Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
 Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'
-Assert-True ($main -match 'updateVisibleResourceInstallWizardElapsed') 'install wizard must have local elapsed binding.'
+Assert-True ($main -match 'resourceInstallWizardSurface\?\.tick' -and $resourceInstallWizardScreen -match 'fun tick\(') 'install wizard must keep elapsed binding inside its feature screen.'
 Assert-True ($main -match 'updateVisibleConsoleCard') 'console card runtime changes should have local binding.'
 Assert-True ($main -match 'resourceCatalogForUiRender') 'UI resource render should use cached catalog helper.'
 Assert-True ($main -match 'observeRuntimePanelSummarySignals') 'runtime panel summary counts must observe existing store snapshots.'
@@ -206,11 +213,12 @@ Assert-True ($resourceSecondaryIntent -match 'KiteResourceActionIntent\.CancelIn
 Assert-True ($resourceSecondaryRequest -match 'KiteResourceActionRequest' -and $resourceSecondaryRequest -match 'item\.secondaryIntent') 'resource detail secondary actions must submit through the shared action intake.'
 Assert-True ($resourceSecondaryRequest -notmatch '\bhandleResource(?:Install|Uninstall|OpenStop|Cancel|Failed)') 'resource detail buttons must not bypass the shared action intake.'
 
-$installPlanAction = Function-Body $main 'configureResourceInstallWizardPrimaryAction'
+$installPlanAction = Function-Body $main 'submitInstallPlanAction'
 $runManagementStop = Function-Body $main 'stopRunManagementCard'
 $cardRunWindowClose = Function-Body $main 'closeCardRunWindowInstance'
-Assert-True ($installPlanAction -match 'KiteInstallPlanActionCoordinator\.plan' -and $installPlanAction -match 'submitInstallPlanAction') 'install wizard primary action must submit a coordinated plan intent.'
-Assert-True ($installPlanAction -notmatch '\bstartNextResourceInstallFromPlan\s*\(' -and $installPlanAction -notmatch '\bshowResources\s*\(') 'install wizard button binding must not execute or navigate directly.'
+Assert-True ($resourceInstallWizardPresentation -match 'KiteInstallPlanActionCoordinator\.plan' -and $resourceInstallWizardScreen -match 'onPlanAction\(intent\)') 'install wizard primary action must submit a coordinated plan intent.'
+Assert-True ($resourceInstallWizardScreen -notmatch '\bstartNextResourceInstallFromPlan\s*\(' -and $resourceInstallWizardScreen -notmatch '\bshowResources\s*\(') 'install wizard button binding must not execute or navigate directly.'
+Assert-True ($installPlanAction -match 'KiteInstallPlanActionIntent\.StartNext' -and $installPlanAction -match 'startNextResourceInstallFromPlan') 'shell must remain the install-plan execution owner.'
 Assert-True ($runManagementStop -match 'submitRecipeAction' -and $runManagementStop -match 'instanceId = group\.run\.instanceId') 'run management stop must submit the selected card instance.'
 Assert-True ($cardRunWindowClose -match 'submitRecipeAction' -and $cardRunWindowClose -match 'instanceId = latestRootState\.instanceId') 'card run window close must submit the selected root instance.'
 
@@ -423,9 +431,10 @@ Assert-True ($main -notmatch 'ResourceManageHost|renderResourceManageInto|reques
 Assert-True ($resourceManageFragment -match 'ResourceFeatureFragment' -and $resourceManageFragment -match 'observeResourceState') 'resource management must observe the shared resource feature state.'
 Assert-True ($resourceManageScreen -notmatch 'resourceCatalog\(|planSnapshot\(|registrySnapshot\(|KiteResourceInstallStore') 'resource management screen must only project supplied UI state.'
 
-$installWizardRowState = Function-Body $main 'resourceInstallWizardRowState'
-Assert-True ($installWizardRowState -match 'KiteResourceInstallStepUiProjector\.project') 'install wizard rows must consume the shared step projection.'
-Assert-True ($installWizardRowState -notmatch 'statusLabel\s*=\s*when') 'install wizard rows must not keep a parallel status-label decision tree.'
+Assert-True ($resourceInstallWizardPresentation -match 'KiteResourceInstallStepUiProjector\.project') 'install wizard rows must consume the shared step projection.'
+Assert-True ($resourceInstallWizardScreen -match 'row\.projection\.statusLabel' -and $resourceInstallWizardScreen -notmatch 'statusLabel\s*=\s*when') 'install wizard rows must render the shared projection without a parallel status-label decision tree.'
+Assert-True ($resourceInstallWizardScreen -notmatch 'CardRunStore|KiteResourceInstallStore|MainActivity') 'install wizard screen must not read runtime stores or the shell directly.'
+Assert-True ($main -notmatch 'ResourceInstallWizardBinding|ResourceInstallWizardUiState|requestVisibleResourceInstallWizardRefresh|resourceInstallWizardContent') 'MainActivity must not retain the legacy install-wizard render and refresh chain.'
 $settleResourceMutation = Function-Body $main 'settleVisibleResourceMutation'
 Assert-True ($settleResourceMutation -notmatch '\bshowResources\s*\(') 'background resource mutations must not navigate users away from the current screen.'
 Assert-True ($settleResourceMutation -match 'resourceCatalogDirty\s*=\s*true') 'background resource mutations must mark hidden resource surfaces dirty.'

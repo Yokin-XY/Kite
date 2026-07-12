@@ -3,6 +3,7 @@ package com.kite.app.platform.resources
 import com.kite.app.application.resources.ResourceFeatureDescriptor
 import com.kite.app.application.resources.ResourceFeatureChange
 import com.kite.app.application.resources.ResourceFeatureGateway
+import com.kite.app.application.resources.ResourceFeatureRunSnapshot
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.resources.KiteResourceHomeLayout
 import com.kite.app.resources.KiteResourceInstallRecipes
@@ -69,6 +70,23 @@ internal class AndroidResourceFeatureGateway(
         CardRunStore.currentForRecipe(
             KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_OPEN)
         )?.status
+
+    override fun operationRunSnapshot(
+        resourceId: String,
+        operation: String
+    ): ResourceFeatureRunSnapshot? =
+        CardRunStore.currentForRecipe(
+            KiteResourceInstallRecipes.recipeId(resourceId, operation)
+        )?.let { run ->
+            ResourceFeatureRunSnapshot(
+                instanceId = run.instanceId,
+                operation = operation,
+                status = run.status,
+                surface = run.surface,
+                startedAt = run.createdAt,
+                updatedAt = run.updatedAt
+            )
+        }
 
     override fun homeLayout(): KiteResourceHomeLayout? = manifestLoader.requestHomeLayout()
 

@@ -1,0 +1,406 @@
+package com.kite.app.feature.resources
+
+import android.content.Context
+import android.graphics.Color
+import android.graphics.Typeface
+import android.text.TextUtils
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import com.kite.app.action.KiteInstallPlanActionIntent
+import com.kite.app.resources.KiteResourceStepTone
+import com.kite.app.run.CardRunSurface
+
+/** CardRun 内安装向导的真实视图所有者，只消费 ResourceFeatureUiState。 */
+internal class ResourceInstallWizardScreen(
+    context: Context,
+    private val requestedTargetResourceId: String,
+    private val seedResourceIds: List<String>,
+    private val onPlanAction: (KiteInstallPlanActionIntent) -> Unit,
+    private val onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
+    private val onUninstallFailedResource: (String) -> Unit,
+    private val onReportUnavailable: (String) -> Unit,
+    private val onRetry: () -> Unit,
+    private val onLiveTickRequired: () -> Unit
+) {
+    private val factory = ResourceFeatureViewFactory(
+        context = context,
+        tokens = ResourceFeatureTheme.tokens(context),
+        onOpenDetail = {},
+        onPrimaryAction = {}
+    )
+    private val contentHost = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(factory.dp(22), factory.dp(16), factory.dp(22), factory.dp(34))
+    }
+    private val rowBindings = linkedMapOf<String, RowBinding>()
+    private var headerBinding: HeaderBinding? = null
+    private var primaryButton: TextView? = null
+    private var structureSignature = ""
+    private var currentState: ResourceInstallWizardViewState? = null
+    private var pendingPlanAction: KiteInstallPlanActionIntent? = null
+
+    val root: View = ScrollView(context).apply {
+        isFillViewport = true
+        contentDescription = "资源获取向导"
+        setBackgroundColor(factory.tokens.pageBackground)
+        addView(contentHost)
+    }
+
+    fun render(state: ResourceFeatureUiState) {
+        if (state.items.isEmpty() && state.phase in setOf(ResourceCatalogPhase.Idle, ResourceCatalogPhase.Loading)) {
+            renderStateBlock("正在读取执行队列", "资源状态会在后台校准，当前安装任务不会因此停止。")
+            return
+        }
+        if (state.items.isEmpty() && state.phase == ResourceCatalogPhase.Failed) {
+            renderStateBlock(
+                title = "执行队列读取失败",
+                detail = state.errorMessage.orEmpty().ifBlank { "请重试读取资源状态。" },
+                retry = onRetry
+            )
+            return
+        }
+        val next = ResourceInstallWizardPresenter.project(
+            state = state,
+            requestedTargetResourceId = requestedTargetResourceId,
+            seedResourceIds = seedResourceIds
+        )
+        ensureStructure(next)
+        currentState = next
+        bind(next, System.currentTimeMillis())
+        if (next.rows.any { it.run?.isLiveForWizard() == true }) onLiveTickRequired()
+    }
+
+    fun tick(now: Long = System.currentTimeMillis()): Boolean {
+        val state = currentState ?: return false
+        state.rows.forEach { row ->
+            rowBindings[row.resourceId]?.subtitle?.text = row.subtitle(now)
+        }
+        return state.rows.any { it.run?.isLiveForWizard() == true }
+    }
+
+    fun dispose() {
+        currentState = null
+        rowBindings.clear()
+        headerBinding = null
+        primaryButton = null
+    }
+
+    private fun ensureStructure(state: ResourceInstallWizardViewState) {
+        val signature = listOf(
+            state.targetResourceId,
+            state.title,
+            state.rows.joinToString("|") { "${it.resourceId}:${it.name}:${it.sourceLabel}" }
+        ).joinToString("#")
+        if (signature == structureSignature) return
+        structureSignature = signature
+        rowBindings.clear()
+        contentHost.removeAllViews()
+        val title = TextView(root.context)
+        val detail = TextView(root.context)
+        val progress = TextView(root.context)
+        contentHost.addView(header(title, detail, progress))
+        headerBinding = HeaderBinding(title, detail, progress)
+        primaryButton = actionButton().also(contentHost::addView)
+        contentHost.addView(factory.sectionTitle("执行队列").apply {
+            setPadding(0, factory.dp(24), 0, factory.dp(12))
+        })
+        state.rows.forEach { row ->
+            val binding = row(row)
+            rowBindings[row.resourceId] = binding
+            contentHost.addView(binding.root)
+        }
+    }
+
+    private fun bind(state: ResourceInstallWizardViewState, now: Long) {
+        headerBinding?.apply {
+            title.text = state.title
+            detail.text = state.detail
+            progress.text = if (state.totalCount > 0) {
+                "${state.completedCount}/${state.totalCount}"
+            } else {
+                "--"
+            }
+        }
+        bindPrimaryAction(state)
+        state.rows.forEach { row -> rowBindings[row.resourceId]?.let { bindRow(it, row, now) } }
+    }
+
+    private fun bindPrimaryAction(state: ResourceInstallWizardViewState) {
+        val button = primaryButton ?: return
+        pendingPlanAction?.let { pending ->
+            if (state.primaryIntent != pending || !state.primaryEnabled) pendingPlanAction = null
+        }
+        val pending = pendingPlanAction
+        button.apply {
+            text = if (pending == KiteInstallPlanActionIntent.StartNext) "准备中" else state.primaryLabel
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            val enabled = state.primaryEnabled && pending == null
+            setTextColor(if (enabled) factory.tokens.buttonText else factory.tokens.textSecondary)
+            background = factory.roundedBox(
+                if (enabled) factory.tokens.primaryStrong else factory.tokens.surface,
+                Color.TRANSPARENT,
+                factory.dp(18).toFloat()
+            )
+            alpha = if (enabled) 1f else 0.72f
+            isEnabled = enabled
+            isClickable = enabled
+            setOnClickListener(if (enabled) View.OnClickListener {
+                state.primaryIntent?.let { intent ->
+                    pendingPlanAction = intent
+                    if (intent == KiteInstallPlanActionIntent.StartNext) {
+                        text = "准备中"
+                        isEnabled = false
+                        isClickable = false
+                        alpha = 0.72f
+                    }
+                    onPlanAction(intent)
+                }
+            } else null)
+        }
+    }
+
+    private fun bindRow(binding: RowBinding, row: ResourceInstallWizardRowViewState, now: Long) {
+        val tone = toneColor(row.projection.tone)
+        binding.root.apply {
+            contentDescription = "${row.name}，${row.projection.statusLabel}"
+            background = factory.roundedBox(
+                factory.tokens.cardBackground,
+                if (row.isActive) factory.tokens.primarySoft else factory.tokens.border,
+                factory.dp(16).toFloat()
+            )
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                val run = row.run
+                if (run == null) {
+                    onReportUnavailable(row.resourceId)
+                } else {
+                    onOpenRun(row.runRequest(CardRunSurface.Report))
+                }
+            }
+        }
+        binding.number.apply {
+            text = (row.index + 1).toString()
+            setTextColor(tone)
+            background = factory.roundedBox(colorWithAlpha(tone, 0.11f), Color.TRANSPARENT, factory.dp(12).toFloat())
+        }
+        binding.subtitle.text = row.subtitle(now)
+        binding.status.apply {
+            text = row.projection.statusLabel
+            setTextColor(tone)
+            background = factory.roundedBox(colorWithAlpha(tone, 0.11f), Color.TRANSPARENT, factory.dp(11).toFloat())
+            isClickable = row.projection.failed && !row.projection.uninstalling
+            setOnClickListener(if (isClickable) View.OnClickListener {
+                onUninstallFailedResource(row.resourceId)
+            } else null)
+        }
+        bindSecondaryAction(binding, row)
+    }
+
+    private fun bindSecondaryAction(binding: RowBinding, row: ResourceInstallWizardRowViewState) {
+        val surface = row.run?.surface
+        val key = "${row.operation}|${row.run?.instanceId.orEmpty()}|${surface?.name.orEmpty()}"
+        if (binding.secondaryKey == key) return
+        binding.secondaryKey = key
+        binding.secondaryHost.removeAllViews()
+        val label = when (surface) {
+            CardRunSurface.Terminal -> "打开终端"
+            CardRunSurface.Web -> "打开网页"
+            else -> null
+        }
+        if (label == null || row.run == null) {
+            binding.secondaryHost.visibility = View.GONE
+            return
+        }
+        binding.secondaryHost.addView(inlineButton(label) {
+            onOpenRun(row.runRequest(requireNotNull(surface)))
+        })
+        binding.secondaryHost.visibility = View.VISIBLE
+    }
+
+    private fun ResourceInstallWizardRowViewState.runRequest(surface: CardRunSurface): ResourceInstallWizardRunRequest {
+        val snapshot = requireNotNull(run)
+        return ResourceInstallWizardRunRequest(
+            resourceId = resourceId,
+            operation = operation,
+            instanceId = snapshot.instanceId,
+            surface = surface
+        )
+    }
+
+    private fun header(title: TextView, detail: TextView, progress: TextView): View =
+        LinearLayout(root.context).apply {
+            orientation = LinearLayout.VERTICAL
+            minimumHeight = factory.dp(136)
+            setPadding(factory.dp(18), factory.dp(18), factory.dp(18), factory.dp(18))
+            background = factory.roundedBox(
+                factory.tokens.cardBackground,
+                factory.tokens.border,
+                factory.dp(18).toFloat()
+            )
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(factory.icon("↓", "teal", "", "", factory.dp(54), factory.dp(8), factory.dp(14).toFloat(), 15f).apply {
+                    layoutParams = LinearLayout.LayoutParams(factory.dp(54), factory.dp(54)).apply {
+                        setMargins(0, 0, factory.dp(14), 0)
+                    }
+                })
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(title.apply {
+                        textSize = 20f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(factory.tokens.textPrimary)
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                    })
+                    addView(detail.apply {
+                        textSize = 12.5f
+                        setTextColor(factory.tokens.textSecondary)
+                        setPadding(0, factory.dp(6), 0, 0)
+                        maxLines = 2
+                        ellipsize = TextUtils.TruncateAt.END
+                    })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            })
+            addView(progress.apply {
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(factory.tokens.primaryStrong)
+                setPadding(0, factory.dp(14), 0, 0)
+            })
+        }
+
+    private fun actionButton(): TextView = TextView(root.context).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, factory.dp(52)).apply {
+            setMargins(0, factory.dp(16), 0, 0)
+        }
+    }
+
+    private fun row(state: ResourceInstallWizardRowViewState): RowBinding {
+        val number = TextView(root.context)
+        val subtitle = TextView(root.context)
+        val status = TextView(root.context)
+        val secondaryHost = LinearLayout(root.context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(factory.dp(46), factory.dp(10), 0, 0)
+            visibility = View.GONE
+        }
+        val rootView = LinearLayout(root.context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(factory.dp(14), factory.dp(13), factory.dp(14), factory.dp(13))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(0, 0, 0, factory.dp(10)) }
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(number.apply {
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                }, LinearLayout.LayoutParams(factory.dp(34), factory.dp(34)).apply {
+                    setMargins(0, 0, factory.dp(12), 0)
+                })
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(context).apply {
+                        text = state.name
+                        textSize = 15f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(factory.tokens.textPrimary)
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                    })
+                    addView(subtitle.apply {
+                        textSize = 11.5f
+                        setTextColor(factory.tokens.textSecondary)
+                        setPadding(0, factory.dp(4), 0, 0)
+                    })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(status.apply {
+                    textSize = 12.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    setPadding(factory.dp(12), 0, factory.dp(12), 0)
+                    minWidth = factory.dp(58)
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, factory.dp(26)).apply {
+                    setMargins(factory.dp(12), 0, 0, 0)
+                })
+            })
+            addView(secondaryHost)
+        }
+        return RowBinding(rootView, number, subtitle, status, secondaryHost)
+    }
+
+    private fun inlineButton(label: String, onClick: () -> Unit): View = TextView(root.context).apply {
+        text = label
+        textSize = 12f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        setTextColor(factory.tokens.primaryStrong)
+        background = factory.roundedBox(
+            factory.tokens.primarySubtle,
+            factory.tokens.primarySoft,
+            factory.dp(13).toFloat()
+        )
+        setPadding(factory.dp(10), 0, factory.dp(10), 0)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, factory.dp(28)).apply {
+            setMargins(0, 0, factory.dp(8), 0)
+        }
+        setOnClickListener { onClick() }
+    }
+
+    private fun renderStateBlock(title: String, detail: String, retry: (() -> Unit)? = null) {
+        val signature = "state:$title:$detail:${retry != null}"
+        if (signature == structureSignature) return
+        structureSignature = signature
+        currentState = null
+        rowBindings.clear()
+        headerBinding = null
+        primaryButton = null
+        contentHost.removeAllViews()
+        contentHost.addView(factory.stateBlock(title, detail, loading = retry == null, retry = retry))
+    }
+
+    private fun toneColor(tone: KiteResourceStepTone): Int = when (tone) {
+        KiteResourceStepTone.Primary -> factory.tokens.primaryStrong
+        KiteResourceStepTone.Success -> factory.tokens.success
+        KiteResourceStepTone.Danger -> factory.tokens.danger
+        KiteResourceStepTone.Neutral -> factory.tokens.textSecondary
+    }
+
+    private fun colorWithAlpha(color: Int, alpha: Float): Int = Color.argb(
+        (255 * alpha.coerceIn(0f, 1f)).toInt(),
+        Color.red(color),
+        Color.green(color),
+        Color.blue(color)
+    )
+
+    private data class HeaderBinding(
+        val title: TextView,
+        val detail: TextView,
+        val progress: TextView
+    )
+
+    private data class RowBinding(
+        val root: LinearLayout,
+        val number: TextView,
+        val subtitle: TextView,
+        val status: TextView,
+        val secondaryHost: LinearLayout,
+        var secondaryKey: String = ""
+    )
+}

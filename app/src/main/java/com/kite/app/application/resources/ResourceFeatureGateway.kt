@@ -4,6 +4,7 @@ import com.kite.app.resources.KiteResourceHomeLayout
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRegistryEntry
+import com.kite.app.run.CardRunSurface
 import com.kite.app.run.CardRunStatus
 import kotlinx.coroutines.flow.Flow
 
@@ -21,6 +22,15 @@ data class ResourceFeatureChange(
     val catalogInvalidated: Boolean = false
 )
 
+data class ResourceFeatureRunSnapshot(
+    val instanceId: String,
+    val operation: String,
+    val status: CardRunStatus,
+    val surface: CardRunSurface,
+    val startedAt: Long,
+    val updatedAt: Long
+)
+
 interface ResourceFeatureGateway {
     val changes: Flow<ResourceFeatureChange>
 
@@ -31,6 +41,8 @@ interface ResourceFeatureGateway {
     fun planSnapshot(): KiteResourcePlanSnapshot
 
     fun openRunStatus(resourceId: String): CardRunStatus?
+
+    fun operationRunSnapshot(resourceId: String, operation: String): ResourceFeatureRunSnapshot?
 
     fun homeLayout(): KiteResourceHomeLayout?
 }

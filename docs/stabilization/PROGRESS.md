@@ -708,3 +708,19 @@ T004 资源管理结果：
 资源管理状态：completed，待独立提交。
 
 下一步：迁移资源安装向导；保留既有执行核心和 CardRun 生命周期，只转移向导 UiState、步骤绑定和计划动作所有权。
+
+T004 资源安装向导结果：
+
+- `ResourceInstallWizardScreen` 与 `ResourceInstallWizardSurface` 已拥有向导标题、进度、计划按钮、步骤行、动态时长和局部重绑；CardRun 只挂载 Feature Surface，不再渲染向导 View。
+- Application Gateway 新增中立的安装/卸载运行快照，Controller 将明确 `instanceId`、operation、status、surface 和时间投影到同一资源 UiState；报告、终端和网页打开请求不再重新猜测“最新运行”。
+- 删除 Activity 内 `ResourceInstallWizardBinding`、行 Binding、UiState、请求序号、post/thread 刷新链和全部向导 View 工厂；安装执行、计划推进、失败卸载和 CardRun 生命周期仍由原 Shell/Store 拥有。
+- 点击“开始获取”立即锁定为“准备中”；Store 与 CardRun 后续只重绑标题、按钮、步骤和时长，不重建 CardRun 页面。
+- 真机发现资源首页在后台错过安装完成信号后仍保留“准备中”；`ResourceFeatureFragment` 现于每次进入 `STARTED` 时重新校准事实，非重放信号只用于实时加速，不再承担恢复正确性的责任。
+- Robolectric 覆盖计划动作即时承诺、原步骤 View 复用、失败卸载、完成队列保留和指定实例的报告/终端打开；全量 Debug 单测、Debug APK、架构与运行车道检查通过。
+- OnePlus 8T `3f8bbaad` 实测 OpenCode“获取 -> 准备中 -> 向导 -> 获取中计时 -> 完成 -> 报告 -> 返回向导 -> 完成 -> 首页打开”全链；第二轮完成返回后 250ms 即显示“打开”，未再出现旧“准备中”，日志无崩溃、ANR 或掉帧告警。
+- 测试结束后已卸载 OpenCode，设备恢复测试前状态；覆盖安装后的独立冷启动为 1660ms。
+- 架构债务进一步降为 `17820 / 733 / 141 / 4 / 0 / 36`（行 / 函数 / 字段 / Host / 资源渲染委托 / 资源函数）。
+
+T004 状态：completed。目录、搜索、详情、管理和安装向导均已迁移并分段提交。
+
+下一步：进入 T005；先建立首页卡片与配方编辑目的矩阵，盘点 Loader/Store、草稿、分组、图标、步骤编辑和运行动作的真实所有权。
