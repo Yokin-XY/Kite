@@ -360,3 +360,13 @@
 理由：旧页面在异步终止前直接把 CardRun 写成 `Stopped`，再用固定延迟刷新等待进程列表追上。终止失败、快照稍慢或用户结束的是子进程时，页面事实都会与真实进程分叉。页面也无法凭一次按钮回调证明 Ubuntu 内 PID、终端 owner 或整条 CardRun 已闭合。
 
 影响：页面不得调用 `setRuntimeState(...Stopped)` 宣布进程结束，也不得以 `260/900/1800ms` 整页轮询作为主同步机制。CardRun 继续由 `RunOrchestrator` 写状态，终端和 PID 继续由各自 Store 处理；`RuntimeManagementCoordinator` 只保存短期动作事务并消费统一快照，不成为第四个运行事实源。
+
+## ADR-S036 运行管理页面按事实拓扑维护局部绑定
+
+状态：accepted
+
+决策：`RuntimeManagementScreen` 只把卡片、显示面和进程的 key 集合作为结构签名。签名不变时复用已有 View binding 并更新可见字段；签名变化时才重建列表。卡片展开和滚动位置是显示状态，由 Fragment/Screen 在重建时恢复，不写入 Store，也不触发 Activity 重新导航。
+
+理由：旧页面把展开、刷新和事实校准都实现为再次调用 `showKiteProcessOverview()`，每次清空根容器并重新读取多个 Store。这样即使只有一个 PID 状态改变，也会造成滚动丢失、整页抖动和按钮反馈延迟。局部绑定能够让状态拥有者信号直接落到对应行，同时保持事实与显示状态边界清晰。
+
+影响：运行管理 Screen 不得依赖 `CardRunStore`、`TerminalSessionStore` 或 `TaskManagerStore`，Fragment 不得加入固定间隔轮询。统一 Gateway 负责合并事实，Projector 决定 UiState，Coordinator 只维护短期动作事务。主壳只接收返回和打开独立运行窗口的 Effect，不保留运行管理字段、Dialog 或绘制函数。

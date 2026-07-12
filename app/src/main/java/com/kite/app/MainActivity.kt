@@ -136,8 +136,6 @@ import com.kite.app.run.CardRunStatus as RecipeRunStatus
 import com.kite.app.run.CardRunStore
 import com.kite.app.run.KiteX11SurfacePlan
 import com.kite.app.run.KiteX11SurfaceServer
-import com.kite.app.run.KiteCardRunUiProjector
-import com.kite.app.run.KiteRunUiTone
 import com.kite.app.shell.AppDestination
 import com.kite.app.shell.AppIntentRouter
 import com.kite.app.shell.AppNavigator
@@ -159,11 +157,9 @@ import com.kite.app.foundation.runtime.RuntimeBootstrapProgress
 import com.kite.app.foundation.runtime.RuntimeBootstrapProgressSnapshot
 import com.kite.app.foundation.runtime.RuntimeHealthStore
 import com.kite.app.foundation.runtime.RuntimeReclaimer
-import com.kite.app.foundation.runtime.TaskManagerProcessItem
 import com.kite.app.foundation.runtime.TaskManagerSnapshot
 import com.kite.app.feature.runsurface.CardRunSpecialRecipes
 import com.kite.app.foundation.runtime.TaskManagerStore
-import com.kite.app.foundation.runtime.TerminalSessionItem
 import com.kite.app.foundation.runtime.TerminalSessionStore
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.toolchain.ToolchainInstallPhase
@@ -187,6 +183,9 @@ import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.feature.home.HomeFeatureRequest
 import com.kite.app.feature.home.HomeFeatureResultContract
 import com.kite.app.feature.home.HomeFragment
+import com.kite.app.feature.runtimemanagement.RuntimeManagementFragment
+import com.kite.app.feature.runtimemanagement.RuntimeManagementRequest
+import com.kite.app.feature.runtimemanagement.RuntimeManagementResultContract
 import com.kite.app.feature.recipeeditor.RecipeEditorDraft
 import com.kite.app.feature.recipeeditor.RecipeEditorFragment
 import com.kite.app.feature.recipeeditor.RecipeEditorRequest
@@ -324,11 +323,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private var runtimeGateProgressBar: ProgressBar? = null
     private var runtimeGateProgressTextView: TextView? = null
     private var runtimeGateActionButton: TextView? = null
-    private val runManagementExpandedIds = mutableSetOf<String>()
-    private val runManagementExpandedTerminalIds = mutableSetOf<String>()
-    private val runManagementExpandedProcessIds = mutableSetOf<String>()
-    private val runManagementExpandedChildProcessIds = mutableSetOf<String>()
-    private val runManagementPendingProcessStopIds = mutableSetOf<Int>()
     private var autoOpenedRootfsRunAt = 0L
     private var lastWorkbenchUrl: String? = null
     private var currentResourceInstallTargetId: String? = null
@@ -445,6 +439,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         registerResourceFeatureResults()
         registerHomeFeatureResults()
         registerRecipeEditorResults()
+        registerRuntimeManagementResults()
         StartupTraceStore.markStage(this, "main.observers_and_intent")
         updateRuntimeGateOverlay()
         observeUbuntuBootstrapState()
@@ -2182,48 +2177,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showKiteProcessOverview(forceRefresh: Boolean = true) {
-        if (forceRefresh) {
-            requestRuntimePanelSummaryRefresh(force = true)
-        }
-        pruneRunManagementPendingProcessStops()
         enterScreen(AppDestination.Processes)
-        root.setBackgroundColor(tokens.pageBackground)
-        clearRootForScreen()
-        val taskSnapshot = TaskManagerStore.snapshot.value
-        val terminalItems = TerminalSessionStore.snapshot.value.sessions
-        val runs = CardRunStore.runs.value
-        val summary = runtimePanelSummary(taskSnapshot = taskSnapshot)
-        root.addView(runManagementHeader(summary))
-        root.addView(ScrollView(this).apply {
-            isFillViewport = true
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(18), dp(8), dp(18), dp(28))
-                val groups = buildRunManagementGroups(
-                    runs = runs,
-                    terminalItems = terminalItems,
-                    processItems = taskSnapshot.processes
-                )
-                val otherProcessSections = runManagementOtherProcessSections(groups, taskSnapshot.processes)
-                if (groups.isEmpty() && otherProcessSections.isEmpty()) {
-                    addView(TextView(context).apply {
-                        text = "当前没有运行中的卡片或进程"
-                        textSize = 13.5f
-                        gravity = Gravity.CENTER
-                        setTextColor(tokens.textSecondary)
-                        setPadding(0, dp(46), 0, dp(20))
-                    })
-                } else {
-                    groups.forEach { group ->
-                        addView(runManagementCard(group))
-                    }
-                    otherProcessSections.forEach { (title, processes) ->
-                        addView(runManagementProcessSection(title, processes))
-                    }
-                }
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(bottomNavigation())
+        showFeatureFragment(
+            fragment = RuntimeManagementFragment.newInstance(forceRefresh),
+            tag = TAG_RUNTIME_MANAGEMENT_FRAGMENT
+        )
     }
 
     private fun showTerminal() {
@@ -2315,6 +2273,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             changed = true
         }
         supportFragmentManager.findFragmentByTag(TAG_RESOURCE_DETAIL_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RUNTIME_MANAGEMENT_FRAGMENT)?.let { fragment ->
             transaction.remove(fragment)
             changed = true
         }
@@ -2552,10 +2514,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         currentResourceDetailId = null
         enterScreen(AppDestination.Resources)
         ensureBundledToolBootstrapIfNeeded("show_resources")
-        showResourceFeatureFragment(ResourcesFragment(), TAG_RESOURCES_FRAGMENT)
+        showFeatureFragment(ResourcesFragment(), TAG_RESOURCES_FRAGMENT)
     }
 
-    private fun showResourceFeatureFragment(
+    private fun showFeatureFragment(
         fragment: Fragment,
         tag: String,
         showBottomNavigation: Boolean = true
@@ -2609,6 +2571,35 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                                 source = request.source,
                                 openTaskOnStart = request.openTaskOnStart,
                                 instanceId = request.instanceId
+                            )
+                        )
+                    }
+                }
+                null -> Unit
+            }
+        }
+    }
+
+    private fun registerRuntimeManagementResults() {
+        supportFragmentManager.setFragmentResultListener(
+            RuntimeManagementResultContract.REQUEST_KEY,
+            this
+        ) { _, bundle ->
+            when (val request = RuntimeManagementResultContract.parse(bundle)) {
+                RuntimeManagementRequest.Back -> requestNavigationBack()
+                is RuntimeManagementRequest.OpenSurface -> {
+                    val state = CardRunStore.get(request.instanceId)
+                    if (state == null || state.recipeId != request.recipeId) {
+                        Toast.makeText(this, "运行窗口不可用", Toast.LENGTH_SHORT).show()
+                    } else {
+                        CardRunStore.selectSurface(request.instanceId, request.surface)
+                        startActivity(
+                            CardRunIntents.launchIntent(
+                                context = this,
+                                recipeId = request.recipeId,
+                                instanceId = request.instanceId,
+                                launchSource = CardRunIntents.SOURCE_CARD,
+                                autoStart = false
                             )
                         )
                     }
@@ -2742,7 +2733,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showResourceSearch(initialQuery: String = "") {
         enterScreen(AppDestination.ResourceSearch)
         currentResourceDetailId = null
-        showResourceFeatureFragment(
+        showFeatureFragment(
             ResourceSearchFragment.newInstance(initialQuery.trim()),
             TAG_RESOURCE_SEARCH_FRAGMENT,
             showBottomNavigation = false
@@ -2886,7 +2877,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showResourceManage() {
         enterScreen(AppDestination.ResourceManage)
-        showResourceFeatureFragment(ResourceManageFragment(), TAG_RESOURCE_MANAGE_FRAGMENT)
+        showFeatureFragment(ResourceManageFragment(), TAG_RESOURCE_MANAGE_FRAGMENT)
     }
 
     private fun resourceManageActionButton(label: String, danger: Boolean = false, onClick: () -> Unit): TextView =
@@ -3040,7 +3031,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showResourceDetail(resourceId: String, onBack: (() -> Unit)? = null) {
         currentResourceDetailId = resourceId
         enterScreen(AppDestination.ResourceDetail, onBack)
-        showResourceFeatureFragment(
+        showFeatureFragment(
             ResourceDetailFragment.newInstance(resourceId),
             TAG_RESOURCE_DETAIL_FRAGMENT
         )
@@ -5236,142 +5227,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
     }
 
-    private data class CardRunWindowItem(
-        val key: String,
-        val instanceId: String,
-        val surface: CardRunSurface,
-        val title: String,
-        val caption: String
-    )
-
-    private fun cardRunWindowAllItems(recipe: KiteRecipe, state: RecipeRuntimeState): List<CardRunWindowItem> {
-        val rootState = cardRunWindowRootState(state)
-        val items = mutableListOf<CardRunWindowItem>()
-        fun addItem(
-            owner: RecipeRuntimeState,
-            surface: CardRunSurface,
-            title: String,
-            caption: String
-        ) {
-            items += CardRunWindowItem(
-                key = cardRunWindowItemKey(owner.instanceId, surface),
-                instanceId = owner.instanceId,
-                surface = surface,
-                title = title,
-                caption = caption
-            )
-        }
-        if (cardRunReportSurfaceAvailable(recipe, rootState)) {
-            addItem(rootState, CardRunSurface.Report, "SH 报告", "执行输出")
-        }
-        if (!rootState.terminalSessionId.isNullOrBlank()) {
-            addItem(rootState, CardRunSurface.Terminal, "终端", "终端窗口")
-        }
-        if (!rootState.nextActionUrl.isNullOrBlank() || rootState.surface == CardRunSurface.Web) {
-            addItem(
-                rootState,
-                CardRunSurface.Web,
-                cardRunWindowWebTitle(rootState.nextActionUrl),
-                cardRunWindowWebCaption(rootState.nextActionUrl)
-            )
-        }
-        rootState.x11Display?.takeIf { it.isNotBlank() }?.let { display ->
-            addItem(rootState, CardRunSurface.X11, "X11", "DISPLAY=$display")
-        }
-        CardRunStore.childrenOf(rootState.instanceId)
-            .sortedBy { it.createdAt }
-            .forEach { child ->
-                if (!child.terminalSessionId.isNullOrBlank()) {
-                    addItem(child, CardRunSurface.Terminal, "终端", "终端窗口")
-                } else if (!child.nextActionUrl.isNullOrBlank() || child.surface == CardRunSurface.Web) {
-                    addItem(
-                        child,
-                        CardRunSurface.Web,
-                        cardRunWindowWebTitle(child.nextActionUrl),
-                        cardRunWindowWebCaption(child.nextActionUrl)
-                    )
-                } else if (!child.x11Display.isNullOrBlank()) {
-                    addItem(child, CardRunSurface.X11, "X11", "DISPLAY=${child.x11Display}")
-                }
-            }
-        if (items.isEmpty() && rootState.instanceId.isNotBlank()) {
-            addItem(
-                rootState,
-                rootState.surface,
-                runManagementSurfaceTitle(rootState.surface),
-                rootState.status.label
-            )
-        }
-        return items
-    }
-
-    private fun cardRunWindowRootState(state: RecipeRuntimeState): RecipeRuntimeState =
-        state.parentInstanceId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { CardRunStore.get(it) }
-            ?: state
-
-    private fun cardRunWindowItemKey(instanceId: String, surface: CardRunSurface): String =
-        "$instanceId:${surface.name}"
-
-    private fun cardRunWindowWebTitle(url: String?): String {
-        val host = normalizedWebHost(url).orEmpty()
-        return when {
-            host.endsWith("baidu.com") -> "百度"
-            host.isNotBlank() -> host.substringBeforeLast('.').replaceFirstChar { it.uppercase() }
-            else -> "Web"
-        }
-    }
-
-    private fun cardRunWindowWebCaption(url: String?): String =
-        normalizedWebHost(url) ?: "等待输入网址"
-
-    private fun normalizedWebHost(url: String?): String? =
-        url
-            ?.takeIf { it.isNotBlank() }
-            ?.let { runCatching { Uri.parse(it).host }.getOrNull() }
-            ?.removePrefix("www.")
-            ?.takeIf { it.isNotBlank() }
-
-    private fun runManagementSurfaceTitle(surface: CardRunSurface): String =
-        when (surface) {
-            CardRunSurface.Web -> "网页"
-            CardRunSurface.Terminal -> "终端"
-            CardRunSurface.X11 -> "X11"
-            CardRunSurface.InstallWizard -> "获取向导"
-            CardRunSurface.Report,
-            CardRunSurface.Summary -> "运行报告"
-        }
-
-    private fun cardRunReportSurfaceAvailable(recipe: KiteRecipe, state: RecipeRuntimeState): Boolean {
-        val hasShellStep = recipe.steps.any { step ->
-            step.type == KiteRecipe.STEP_SHELL || step.type == KiteRecipe.STEP_ANDROID_ACTION
-        }
-        return !state.shellReportText.isNullOrBlank() ||
-            (hasShellStep && (state.hasRunBinding() || state.isBusy() || !state.lastMeaningfulOutput.isNullOrBlank() || !state.lastError.isNullOrBlank())) ||
-            (state.surface == CardRunSurface.Report && (!state.lastMeaningfulOutput.isNullOrBlank() || !state.lastError.isNullOrBlank()))
-    }
-
-    private fun selectCardRunWindowItem(recipe: KiteRecipe, item: CardRunWindowItem) {
-        val target = CardRunStore.get(item.instanceId) ?: return
-        val root = cardRunWindowRootState(target)
-        activeRunInstanceIds[recipe.id] = root.instanceId
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = item.instanceId
-        CardRunStore.selectSurface(item.instanceId, item.surface)?.let { state ->
-            runtimeStates[recipe.id] = state
-        }
-        val targetRecipe = recipeForRunState(target) ?: recipe
-        startActivity(
-            CardRunIntents.launchIntent(
-                context = this,
-                recipeId = targetRecipe.id,
-                instanceId = target.instanceId,
-                launchSource = CardRunIntents.SOURCE_CARD,
-                autoStart = false
-            )
-        )
-    }
 
     private fun closeCardRunInstanceForStop(recipe: KiteRecipe, previousState: RecipeRuntimeState, reason: String) {
         val instanceId = listOf(
@@ -5643,944 +5498,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             else -> false
         }
 
-    private fun runManagementHeader(summary: RuntimePanelSummary): View =
-        row {
-            setPadding(dp(16), dp(12), dp(16), dp(8))
-            gravity = Gravity.CENTER_VERTICAL
-            addView(iconButton("‹", dp(42), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { requestNavigationBack() })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(context).apply {
-                    text = "运行管理"
-                    textSize = 20f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    includeFontPadding = false
-                })
-                addView(TextView(context).apply {
-                    text = "按卡片整理系统与其他进程"
-                    textSize = 12.5f
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, dp(5), 0, 0)
-                })
-                addView(TextView(context).apply {
-                    text = "运行卡片 ${summary.runningCards} · 进程 ${summary.runningProcesses}"
-                    textSize = 11.5f
-                    setTextColor(tokens.textTertiary)
-                    setPadding(0, dp(4), 0, 0)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-            })
-            addView(iconButton("↻", dp(42), Color.TRANSPARENT, tokens.textPrimary, dp(16)) {
-                Toast.makeText(this@MainActivity, "正在刷新运行管理", Toast.LENGTH_SHORT).show()
-                scheduleRunManagementLazyRefresh(force = true)
-            })
-        }
 
-    private fun buildRunManagementGroups(
-        runs: List<RecipeRuntimeState> = CardRunStore.runs.value,
-        terminalItems: List<TerminalSessionItem> = TerminalSessionStore.snapshot.value.sessions,
-        processItems: List<TaskManagerProcessItem> = TaskManagerStore.snapshot.value.processes
-    ): List<RunManagementGroup> {
-        return runs
-            .filter { it.countsAsRunManagementCard() }
-            .sortedByDescending { it.updatedAt }
-            .map { run ->
-                val terminal = run.terminalSessionId
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { sessionId -> terminalItems.firstOrNull { it.id == sessionId } }
-                val boundPids = run.boundProcessIds()
-                val ownerId = run.runtimeOwnerIdForRunManagement()
-                val unitId = run.runtimeUnitIdForRunManagement()
-                val runProcesses = processItems
-                    .filter { item -> item.belongsToRun(run, boundPids, ownerId, unitId) }
-                    .sortedWith(compareBy<TaskManagerProcessItem> { it.parentPid }.thenBy { it.pid })
-                val mainProcess = runProcesses.firstOrNull { it.isMainProcessForRun(boundPids) }
-                    ?: runProcesses.firstOrNull()
-                val childProcesses = runProcesses.filterNot { it.id == mainProcess?.id }
-                RunManagementGroup(
-                    run = run,
-                    recipe = recipeForRunState(run),
-                    terminal = terminal,
-                    mainProcess = mainProcess,
-                    childProcesses = childProcesses,
-                    processCount = listOf(
-                        terminal?.processCount ?: 0,
-                        runProcesses.size,
-                        if (boundPids.isEmpty()) 0 else 1
-                    ).maxOrNull()?.coerceAtLeast(0) ?: 0
-                )
-            }
-    }
 
-    private fun runManagementOtherProcessSections(
-        groups: List<RunManagementGroup>,
-        processItems: List<TaskManagerProcessItem> = TaskManagerStore.snapshot.value.processes
-    ): List<Pair<String, List<TaskManagerProcessItem>>> {
-        val cardProcessIds = groups
-            .flatMap { group -> listOfNotNull(group.mainProcess) + group.childProcesses }
-            .mapTo(mutableSetOf()) { it.id }
-        val processes = processItems
-            .filterNot { it.id in cardProcessIds }
-            .sortedWith(compareBy<TaskManagerProcessItem> { it.isRunManagementSystemProcess() }.thenBy { it.pid })
-        val systemProcesses = processes.filter { it.isRunManagementSystemProcess() }
-        val otherProcesses = processes.filterNot { it.isRunManagementSystemProcess() }
-        return listOf(
-            "系统" to systemProcesses,
-            "其他" to otherProcesses
-        ).filter { it.second.isNotEmpty() }
-    }
 
-    private fun TaskManagerProcessItem.isRunManagementSystemProcess(): Boolean {
-        val text = listOf(
-            title,
-            sourceLabel,
-            runtimeOwnerKindLabel.orEmpty(),
-            runtimeUnitId.orEmpty(),
-            command,
-            commandLine
-        ).joinToString(" ").lowercase()
-        return runtimeOwnerKindLabel == "后台运行项" ||
-            sourceLabel.startsWith("后台") ||
-            "容器骨架" in text ||
-            "容量工作器" in text ||
-            "supervisord" in text ||
-            "/runtime/bin/proot" in text ||
-            "link2symlink" in text ||
-            "/workspace/.kf/system/" in text ||
-            "locale-check" in text ||
-            "mkdir -p /run/" in text
-    }
 
-    private fun RecipeRuntimeState.countsAsRunManagementCard(): Boolean =
-        countsAsRuntimePanelCard() ||
-            (hasRunBinding() && (status == RecipeRunStatus.Failed || status == RecipeRunStatus.BridgeUnavailable))
 
-    private fun RecipeRuntimeState.boundProcessIds(): Set<Int> =
-        listOf(rootPid, pid)
-            .mapNotNull { it?.trim()?.toIntOrNull()?.takeIf { value -> value > 0 } }
-            .toSet()
-
-    private fun RecipeRuntimeState.runtimeOwnerIdForRunManagement(): String =
-        when (ownerKind) {
-            RecipeRuntimeState.OWNER_KIND_RESOURCE -> "resource:${runManagementSafeOwnerId(resourceIdForRunManagement() ?: cardInstanceId)}"
-            RecipeRuntimeState.OWNER_KIND_TERMINAL -> "terminal:${terminalSessionId ?: runId ?: cardInstanceId}"
-            else -> "card:${runManagementSafeOwnerId(cardInstanceId)}"
-        }
-
-    private fun RecipeRuntimeState.runtimeUnitIdForRunManagement(): String =
-        "card:${cardInstanceId.trim().ifBlank { instanceId }}"
-
-    private fun RecipeRuntimeState.resourceIdForRunManagement(): String? {
-        if (recipeId.startsWith("resource-")) {
-            return recipeId
-                .removePrefix("resource-")
-                .removeSuffix("-${KiteResourceInstallRecipes.OP_INSTALL}")
-                .removeSuffix("-${KiteResourceInstallRecipes.OP_UNINSTALL}")
-                .takeIf { it.isNotBlank() }
-        }
-        return stepId?.takeIf { it.isNotBlank() }
-    }
-
-    private fun runManagementSafeOwnerId(value: String): String =
-        value.replace(Regex("[^a-zA-Z0-9_.-]"), "_").ifBlank { "recipe" }
-
-    private fun TaskManagerProcessItem.belongsToRun(
-        run: RecipeRuntimeState,
-        boundPids: Set<Int>,
-        ownerId: String,
-        unitId: String
-    ): Boolean {
-        if (runtimeOwnerId == ownerId) return true
-        if (runtimeUnitId == unitId) return true
-        val terminalId = run.terminalSessionId?.takeIf { it.isNotBlank() }
-        if (terminalId != null && linkedTerminalSessionId == terminalId) return true
-        if (boundPids.isEmpty()) return false
-        return pid in boundPids ||
-            parentPid in boundPids ||
-            runtimeRootPid in boundPids
-    }
-
-    private fun TaskManagerProcessItem.isMainProcessForRun(boundPids: Set<Int>): Boolean =
-        boundPids.isNotEmpty() && (pid in boundPids || runtimeRootPid in boundPids)
-
-    private fun runManagementCard(group: RunManagementGroup): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(13), dp(14), dp(13))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(16).toFloat())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(0, 0, 0, dp(10))
-            }
-            val run = group.run
-            val expanded = runManagementExpandedIds.contains(run.instanceId)
-            isClickable = true
-            setOnClickListener { toggleRunManagementCard(run.instanceId) }
-            addView(row {
-                gravity = Gravity.CENTER_VERTICAL
-                addView(runManagementIcon(run), LinearLayout.LayoutParams(dp(34), dp(34)).apply {
-                    setMargins(0, 0, dp(12), 0)
-                })
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    addView(TextView(context).apply {
-                        text = run.recipeName.ifBlank { run.recipeId.ifBlank { "Kite 卡片" } }
-                        textSize = 15f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(tokens.textPrimary)
-                        maxLines = 1
-                        ellipsize = TextUtils.TruncateAt.END
-                    })
-                    addView(TextView(context).apply {
-                        text = group.runManagementCardSubtitle()
-                        textSize = 11.5f
-                        setTextColor(tokens.textSecondary)
-                        setPadding(0, dp(4), 0, 0)
-                        maxLines = 1
-                        ellipsize = TextUtils.TruncateAt.END
-                    })
-                })
-                addView(runManagementStatusPill(run.status))
-                addView(runManagementChevron(expanded))
-            })
-            if (expanded) {
-                addView(runManagementDetails(group))
-            }
-        }
-
-    private fun toggleRunManagementCard(instanceId: String) {
-        if (runManagementExpandedIds.contains(instanceId)) {
-            runManagementExpandedIds.remove(instanceId)
-        } else {
-            runManagementExpandedIds.add(instanceId)
-        }
-        showKiteProcessOverview(forceRefresh = false)
-    }
-
-    private fun RunManagementGroup.runManagementCardSubtitle(): String =
-        "${run.ownerKind.runManagementSourceLabel()} · ${formatLastRunTime(run.createdAt)} 启动"
-
-    private fun String.runManagementSourceLabel(): String = when (this) {
-        RecipeRuntimeState.OWNER_KIND_RESOURCE -> "资源"
-        RecipeRuntimeState.OWNER_KIND_INSTALL_WIZARD -> "安装"
-        RecipeRuntimeState.OWNER_KIND_TERMINAL -> "终端"
-        RecipeRuntimeState.OWNER_KIND_WEB -> "网页"
-        else -> "首页"
-    }
-
-    private fun runManagementIcon(run: RecipeRuntimeState): TextView =
-        TextView(this).apply {
-            text = when (run.ownerKind) {
-                RecipeRuntimeState.OWNER_KIND_RESOURCE -> "≡"
-                RecipeRuntimeState.OWNER_KIND_TERMINAL -> ">_"
-                RecipeRuntimeState.OWNER_KIND_WEB -> "↗"
-                else -> "▦"
-            }
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
-            background = roundedBox(tokens.primarySubtle, Color.TRANSPARENT, dp(12).toFloat(), 0)
-        }
-
-    private fun runManagementStatusPill(status: RecipeRunStatus): TextView {
-        val colors = runManagementStatusColors(status)
-        return TextView(this).apply {
-            text = status.label
-            textSize = 12.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(colors.text)
-            background = roundedBox(colors.background, colors.border, dp(11).toFloat(), 0)
-            minWidth = dp(58)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
-                setMargins(dp(10), 0, 0, 0)
-            }
-            setPadding(dp(12), 0, dp(12), 0)
-        }
-    }
-
-    private fun runManagementChevron(expanded: Boolean): TextView =
-        TextView(this).apply {
-            text = if (expanded) "⌃" else "›"
-            textSize = 18f
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(tokens.textTertiary)
-            layoutParams = LinearLayout.LayoutParams(dp(24), dp(26)).apply {
-                setMargins(dp(6), 0, 0, 0)
-            }
-        }
-
-    private fun runManagementStatusColors(status: RecipeRunStatus): SemanticColors =
-        cardRunUiToneColors(KiteCardRunUiProjector.project(status).tone)
-
-    private fun cardRunUiToneColors(tone: KiteRunUiTone): SemanticColors = when (tone) {
-        KiteRunUiTone.Info -> SemanticColors(tokens.info, tokens.infoSoft, tokens.infoBorder)
-        KiteRunUiTone.Success -> SemanticColors(tokens.success, tokens.successSoft, tokens.successBorder)
-        KiteRunUiTone.Warning -> SemanticColors(tokens.warning, tokens.warningSoft, tokens.warningBorder)
-        KiteRunUiTone.Danger -> SemanticColors(tokens.danger, tokens.dangerSoft, tokens.dangerBorder)
-        KiteRunUiTone.Neutral -> SemanticColors(tokens.textSecondary, tokens.surface, tokens.border)
-    }
-
-    private fun runManagementDetails(group: RunManagementGroup): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(46), dp(10), 0, 0)
-            val surfaceItems = runManagementSurfaceItems(group)
-            surfaceItems
-                .filter { it.surface == CardRunSurface.Report }
-                .forEach { item ->
-                    addView(runManagementSurfaceRow(
-                        icon = "SH",
-                        title = item.title,
-                        subtitle = item.caption,
-                        onClick = { openRunManagementSurface(group, item) }
-                    ))
-                }
-            surfaceItems
-                .filter { it.surface == CardRunSurface.Terminal }
-                .forEach { item ->
-                    val expanded = runManagementExpandedTerminalIds.contains(item.key)
-                    val terminal = runManagementTerminalForItem(item)
-                    addView(runManagementSurfaceRow(
-                        icon = ">_",
-                        title = item.title,
-                        subtitle = runManagementTerminalSubtitle(item, terminal),
-                        expanded = expanded,
-                        onClick = { toggleRunManagementTerminal(item.key) }
-                    ))
-                    if (expanded) {
-                        addView(runManagementDetailRow(
-                            title = terminal?.title ?: item.title,
-                            subtitle = terminal?.runManagementSubtitle() ?: item.caption,
-                            actions = listOfNotNull(
-                                RunManagementAction("打开") { openRunManagementSurface(group, item) },
-                                terminal?.let { RunManagementAction("结束", danger = true) { endRunManagementTerminal(it) } }
-                            )
-                        ))
-                    }
-                }
-            surfaceItems
-                .filter { it.surface == CardRunSurface.Web }
-                .forEach { item ->
-                    addView(runManagementSurfaceRow(
-                        icon = "↗",
-                        title = item.title,
-                        subtitle = item.caption,
-                        onClick = { openRunManagementSurface(group, item) }
-                    ))
-                }
-            surfaceItems
-                .filter { it.surface == CardRunSurface.X11 }
-                .forEach { item ->
-                    addView(runManagementSurfaceRow(
-                        icon = "X11",
-                        title = item.title,
-                        subtitle = item.caption,
-                        onClick = { openRunManagementSurface(group, item) }
-                    ))
-                }
-            if (group.hasProcessBinding()) {
-                val processExpanded = runManagementExpandedProcessIds.contains(group.run.instanceId)
-                addView(runManagementSurfaceRow(
-                    icon = "PID",
-                    title = "进程",
-                    subtitle = group.runManagementProcessPreview(),
-                    expanded = processExpanded,
-                    onClick = { toggleRunManagementProcess(group.run.instanceId) }
-                ))
-                if (processExpanded) {
-                    addView(runManagementProcessDetails(group))
-                }
-            }
-        }
-
-    private fun runManagementSurfaceItems(group: RunManagementGroup): List<CardRunWindowItem> =
-        group.recipe
-            ?.let { recipe -> cardRunWindowAllItems(recipe, group.run) }
-            .orEmpty()
-            .filter { item ->
-                item.surface == CardRunSurface.Report ||
-                    item.surface == CardRunSurface.Terminal ||
-                    item.surface == CardRunSurface.Web ||
-                    item.surface == CardRunSurface.X11
-            }
-
-    private fun runManagementSurfaceRow(
-        icon: String,
-        title: String,
-        subtitle: String,
-        expanded: Boolean? = null,
-        onClick: () -> Unit
-    ): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(7), 0, dp(7))
-            isClickable = true
-            setOnClickListener { onClick() }
-            addView(TextView(context).apply {
-                text = icon
-                textSize = if (icon.length <= 2) 11.5f else 10f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(tokens.primaryStrong)
-                background = roundedBox(tokens.primarySubtle, Color.TRANSPARENT, dp(9).toFloat(), 0)
-                layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply {
-                    setMargins(0, 0, dp(10), 0)
-                }
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(context).apply {
-                    text = title
-                    textSize = 13.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(TextView(context).apply {
-                    text = subtitle
-                    textSize = 11.5f
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, dp(3), 0, 0)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(TextView(context).apply {
-                text = when (expanded) {
-                    true -> "⌃"
-                    false -> "›"
-                    null -> "›"
-                }
-                textSize = 16f
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(tokens.textTertiary)
-                layoutParams = LinearLayout.LayoutParams(dp(20), dp(28)).apply {
-                    setMargins(dp(6), 0, 0, 0)
-                }
-            })
-        }
-
-    private fun runManagementTerminalForItem(item: CardRunWindowItem): TerminalSessionItem? {
-        val sessionId = CardRunStore.get(item.instanceId)
-            ?.terminalSessionId
-            ?.takeIf { it.isNotBlank() }
-            ?: groupTerminalFallbackSessionId(item)
-        return sessionId?.let { id ->
-            TerminalSessionStore.snapshot.value.sessions.firstOrNull { it.id == id }
-        }
-    }
-
-    private fun groupTerminalFallbackSessionId(item: CardRunWindowItem): String? =
-        if (item.surface == CardRunSurface.Terminal) item.instanceId.takeIf { it.isNotBlank() } else null
-
-    private fun runManagementTerminalSubtitle(item: CardRunWindowItem, terminal: TerminalSessionItem?): String =
-        terminal?.let { "${it.statusLabel} · ${it.title}".trimForRunManagement(48) } ?: item.caption
-
-    private fun toggleRunManagementTerminal(key: String) {
-        if (runManagementExpandedTerminalIds.contains(key)) {
-            runManagementExpandedTerminalIds.remove(key)
-        } else {
-            runManagementExpandedTerminalIds.add(key)
-        }
-        showKiteProcessOverview(forceRefresh = false)
-    }
-
-    private fun toggleRunManagementProcess(instanceId: String) {
-        if (runManagementExpandedProcessIds.contains(instanceId)) {
-            runManagementExpandedProcessIds.remove(instanceId)
-        } else {
-            runManagementExpandedProcessIds.add(instanceId)
-        }
-        showKiteProcessOverview(forceRefresh = false)
-    }
-
-    private fun RunManagementGroup.hasProcessBinding(): Boolean =
-        mainProcess != null || childProcesses.isNotEmpty() || run.boundProcessIds().isNotEmpty()
-
-    private fun RunManagementGroup.runManagementProcessPreview(): String =
-        buildList {
-            val mainPid = mainProcess?.pid?.takeIf { it > 0 } ?: run.boundProcessIds().firstOrNull()
-            mainPid?.let { add("主进程 PID $it") }
-            if (childProcesses.isNotEmpty()) add("子进程 ${childProcesses.size}")
-        }.joinToString(" · ").ifBlank { "已绑定" }
-
-    private fun runManagementProcessDetails(group: RunManagementGroup): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(38), dp(3), 0, dp(2))
-            val mainProcess = group.mainProcess
-            val fallbackPid = group.run.boundProcessIds().firstOrNull()
-            if (mainProcess != null || fallbackPid != null) {
-                addView(runManagementDetailRow(
-                    title = runManagementProcessTitle(mainProcess, fallbackPid),
-                    subtitle = mainProcess?.runManagementProcessSubtitle() ?: "卡片运行链路绑定",
-                    actions = listOfNotNull(
-                        (mainProcess?.pid ?: fallbackPid)?.takeIf { it > 0 }?.let { pid ->
-                            RunManagementAction("结束进程", danger = true) {
-                                showRunManagementProcessDialog(mainProcess, pid)
-                            }
-                        }
-                    ),
-                    onClick = { showRunManagementProcessDialog(mainProcess, fallbackPid) }
-                ))
-            }
-            if (group.childProcesses.isNotEmpty()) {
-                val childExpanded = runManagementExpandedChildProcessIds.contains(group.run.instanceId)
-                addView(runManagementChildToggle(group.childProcesses.size, childExpanded) {
-                    if (childExpanded) {
-                        runManagementExpandedChildProcessIds.remove(group.run.instanceId)
-                    } else {
-                        runManagementExpandedChildProcessIds.add(group.run.instanceId)
-                    }
-                    showKiteProcessOverview(forceRefresh = false)
-                })
-                if (childExpanded) {
-                    group.childProcesses.forEach { process ->
-                        addView(runManagementDetailRow(
-                            title = runManagementProcessTitle(process, process.pid),
-                            subtitle = process.runManagementProcessSubtitle(),
-                            actions = listOf(
-                                RunManagementAction("结束进程", danger = true) {
-                                    showRunManagementProcessDialog(process, process.pid)
-                                }
-                            ),
-                            onClick = { showRunManagementProcessDialog(process, process.pid) }
-                        ))
-                    }
-                }
-            }
-        }
-
-    private fun runManagementProcessSection(title: String, processes: List<TaskManagerProcessItem>): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(8), 0, dp(2))
-            addView(runManagementSectionTitle("$title · ${processes.size}"))
-            processes.forEach { process ->
-                addView(runManagementSurfaceRow(
-                    icon = "PID",
-                    title = runManagementProcessTitle(process, process.pid),
-                    subtitle = process.runManagementProcessSubtitle(),
-                    onClick = { showRunManagementProcessDialog(process, process.pid) }
-                ))
-            }
-        }
-
-    private fun runManagementSectionTitle(title: String): TextView =
-        TextView(this).apply {
-            text = title
-            textSize = 12.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(tokens.textPrimary)
-            setPadding(0, dp(13), 0, dp(7))
-        }
-
-    private fun runManagementDetailRow(
-        title: String,
-        subtitle: String,
-        actions: List<RunManagementAction>,
-        onClick: (() -> Unit)? = null
-    ): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(7), 0, dp(7))
-            onClick?.let { click ->
-                isClickable = true
-                setOnClickListener { click() }
-            }
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(context).apply {
-                    text = title
-                    textSize = 13f
-                    setTextColor(tokens.textPrimary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(TextView(context).apply {
-                    text = subtitle
-                    textSize = 11.5f
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, dp(4), 0, 0)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            actions.forEach { action ->
-                addView(runManagementActionButton(action).apply {
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(30)).apply {
-                        setMargins(dp(8), 0, 0, 0)
-                    }
-                })
-            }
-        }
-
-    private fun runManagementActionButton(action: RunManagementAction): TextView =
-        TextView(this).apply {
-            text = action.label
-            textSize = 11.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            val textColor = if (action.danger) tokens.warning else tokens.textPrimary
-            setTextColor(textColor)
-            background = roundedBox(
-                if (action.danger) tokens.warningSoft else tokens.surface,
-                if (action.danger) tokens.warningBorder else tokens.border,
-                dp(12).toFloat(),
-                0
-            )
-            setPadding(dp(10), 0, dp(10), 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(30))
-            setOnClickListener { action.onClick() }
-        }
-
-    private fun runManagementChildToggle(count: Int, expanded: Boolean, onClick: () -> Unit): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(9), 0, dp(5))
-            addView(TextView(context).apply {
-                text = "子进程 $count"
-                textSize = 12.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            })
-            addView(TextView(context).apply {
-                text = if (expanded) "收起" else "展开 >"
-                textSize = 11.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textSecondary)
-            })
-            setOnClickListener { onClick() }
-        }
-
-    private fun TerminalSessionItem.runManagementSubtitle(): String =
-        buildList {
-            add(statusLabel)
-            (observedPid ?: rootPid)?.takeIf { it > 0 }?.let { add("PID $it") }
-            if (processCount > 0) add("进程 $processCount")
-        }.joinToString(" · ")
-
-    private fun runManagementProcessTitle(process: TaskManagerProcessItem?, fallbackPid: Int?): String {
-        val pid = process?.pid?.takeIf { it > 0 } ?: fallbackPid
-        return listOfNotNull(
-            pid?.let { "PID $it" },
-            process?.runManagementProcessName()?.takeIf { it.isNotBlank() }
-        ).joinToString(" · ").ifBlank { "主进程" }
-    }
-
-    private fun TaskManagerProcessItem.runManagementProcessSubtitle(): String =
-        listOf(
-            runManagementProcessOwnerLabel(),
-            if (pid in runManagementPendingProcessStopIds) "结束中" else stateLabel
-        )
-            .filter { it.isNotBlank() }
-            .joinToString(" · ")
-
-    private fun TaskManagerProcessItem.runManagementProcessName(): String {
-        val text = runManagementIdentityText()
-        return when {
-            "supervisord" in text -> "容器守护进程"
-            "/runtime/bin/proot" in text || "link2symlink" in text -> "PRoot 容器入口"
-            "/workspace/.kf/system/bin/kf-runner" in text -> "Kite 命令启动器"
-            "locale-check" in text -> "语言环境检查"
-            "mkdir -p /run/" in text -> "运行目录准备"
-            else -> title.ifBlank { command.ifBlank { commandLine.substringBefore(' ') } }
-                .trimForRunManagement(36)
-                .ifBlank { "进程" }
-        }
-    }
-
-    private fun TaskManagerProcessItem.runManagementProcessPurpose(): String {
-        val text = runManagementIdentityText()
-        return when {
-            "supervisord" in text -> "维护 Ubuntu 容器里的后台服务"
-            "/runtime/bin/proot" in text || "link2symlink" in text -> "启动并隔离 Ubuntu 文件系统"
-            "/workspace/.kf/system/bin/kf-runner" in text -> "执行卡片命令前的统一入口"
-            "locale-check" in text -> "检查 Ubuntu 语言环境"
-            "mkdir -p /run/" in text -> "准备 Ubuntu 运行目录"
-            else -> "卡片或用户启动的普通进程"
-        }
-    }
-
-    private fun TaskManagerProcessItem.runManagementProcessOwnerLabel(): String =
-        when {
-            runtimeUnitId?.startsWith("card:") == true || runtimeOwnerId?.startsWith("card:") == true -> "卡片"
-            runtimeOwnerId?.startsWith("resource:") == true -> "资源"
-            runtimeOwnerId?.startsWith("terminal:") == true || runtimeOwnerKindLabel == "终端" -> "卡片终端"
-            isRunManagementSystemProcess() -> "系统"
-            runtimeOwnerKindLabel.isNullOrBlank() ||
-                runtimeOwnerKindLabel == "未归属运行根" ||
-                sourceLabel == "未归属运行根" -> "未关联卡片"
-            else -> runtimeOwnerKindLabel
-        }
-
-    private fun TaskManagerProcessItem.runManagementIdentityText(): String =
-        listOf(title, sourceLabel, runtimeOwnerKindLabel.orEmpty(), runtimeUnitId.orEmpty(), command, commandLine)
-            .joinToString(" ")
-            .lowercase()
-
-    private fun String.trimForRunManagement(maxLength: Int = 72): String {
-        val compact = trim().replace(Regex("\\s+"), " ")
-        return if (compact.length <= maxLength) compact else compact.take(maxLength - 1) + "…"
-    }
-
-    private fun showRunManagementProcessDialog(process: TaskManagerProcessItem?, fallbackPid: Int? = null) {
-        val pid = process?.pid?.takeIf { it > 0 } ?: fallbackPid?.takeIf { it > 0 }
-        if (pid == null) {
-            Toast.makeText(this, "进程 PID 不可用", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val dialog = Dialog(this)
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(18), dp(20), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(20).toFloat())
-            addView(TextView(context).apply {
-                text = "进程详情"
-                textSize = 17f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-            })
-            addView(TextView(context).apply {
-                text = runManagementProcessDialogText(process, pid)
-                textSize = 12.5f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(12), 0, dp(4))
-                setLineSpacing(dp(2).toFloat(), 1f)
-                maxHeight = dp(280)
-                movementMethod = ScrollingMovementMethod.getInstance()
-                isVerticalScrollBarEnabled = true
-            })
-            addView(row {
-                setPadding(0, dp(16), 0, 0)
-                addView(runManagementDialogButton("取消") { dialog.dismiss() }, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                    setMargins(0, 0, dp(8), 0)
-                })
-                addView(runManagementDialogButton("结束进程", danger = true) {
-                    showRunManagementProcessConfirmDialog(process, pid, dialog)
-                }, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                    setMargins(dp(8), 0, 0, 0)
-                })
-            })
-        }
-        dialog.setContentView(content)
-        dialog.show()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.9f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
-    }
-
-    private fun showRunManagementProcessConfirmDialog(
-        process: TaskManagerProcessItem?,
-        pid: Int,
-        detailDialog: Dialog
-    ) {
-        val dialog = Dialog(this)
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(18), dp(20), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(20).toFloat())
-            addView(TextView(context).apply {
-                text = "确认结束进程？"
-                textSize = 17f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(tokens.textPrimary)
-            })
-            addView(TextView(context).apply {
-                text = "将直接强制结束 PID $pid。进程退出前不会再等待温和停止。"
-                textSize = 13f
-                gravity = Gravity.CENTER
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(12), 0, dp(4))
-            })
-            addView(row {
-                setPadding(0, dp(16), 0, 0)
-                addView(runManagementDialogButton("取消") { dialog.dismiss() }, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                    setMargins(0, 0, dp(8), 0)
-                })
-                addView(runManagementDialogButton("结束进程", danger = true) {
-                    dialog.dismiss()
-                    detailDialog.dismiss()
-                    stopRunManagementProcess(process, pid)
-                }, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                    setMargins(dp(8), 0, 0, 0)
-                })
-            })
-        }
-        dialog.setContentView(content)
-        dialog.show()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.86f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
-    }
-
-    private fun runManagementProcessDialogText(process: TaskManagerProcessItem?, pid: Int): String =
-        buildList {
-            add("PID: $pid")
-            process?.let { item ->
-                add("名称: ${item.runManagementProcessName()}")
-                item.parentPid.takeIf { it > 0 }?.let { add("PPID: $it") }
-                add("状态: ${if (item.pid in runManagementPendingProcessStopIds) "结束中" else item.stateLabel}")
-                add("归属: ${item.runManagementProcessOwnerLabel()}")
-                add("用途: ${item.runManagementProcessPurpose()}")
-                item.commandLine.takeIf { it.isNotBlank() }?.let { add("完整命令:\n${it.trim()}") }
-            }
-        }.joinToString("\n")
-
-    private fun runManagementDialogButton(
-        label: String,
-        danger: Boolean = false,
-        onClick: () -> Unit
-    ): TextView =
-        TextView(this).apply {
-            text = label
-            textSize = 14f
-            typeface = if (danger) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(if (danger) tokens.danger else tokens.textPrimary)
-            background = roundedBox(
-                if (danger) tokens.warningSoft else tokens.surface,
-                if (danger) tokens.warningBorder else tokens.border,
-                dp(13).toFloat()
-            )
-            setOnClickListener { onClick() }
-        }
-
-    private fun stopRunManagementCard(group: RunManagementGroup) {
-        val recipe = group.recipe
-        if (recipe == null) {
-            Toast.makeText(this, "卡片信息不可用，无法停止", Toast.LENGTH_SHORT).show()
-            return
-        }
-        submitRecipeAction(
-            KiteRecipeActionRequest(
-                recipe = recipe,
-                intent = KiteRecipeActionIntent.Stop,
-                source = KiteRecipeActionSource.RunManagement,
-                instanceId = group.run.instanceId
-            )
-        )
-        root.postDelayed({ if (!isFinishing && !isDestroyed) showKiteProcessOverview(forceRefresh = true) }, 260L)
-    }
-
-    private fun endRunManagementTerminal(terminal: TerminalSessionItem) {
-        TerminalSessionStore.end(applicationContext, terminal.id)
-        Toast.makeText(this, "正在结束终端", Toast.LENGTH_SHORT).show()
-        requestRuntimePanelSummaryRefresh(force = true)
-        root.postDelayed({ if (currentScreen == AppDestination.Processes) showKiteProcessOverview(forceRefresh = false) }, 260L)
-    }
-
-    private fun openRunManagementSurface(group: RunManagementGroup, item: CardRunWindowItem) {
-        val recipe = group.recipe
-        if (recipe == null || CardRunStore.get(item.instanceId) == null) {
-            Toast.makeText(this, "运行窗口不可用", Toast.LENGTH_SHORT).show()
-            return
-        }
-        selectCardRunWindowItem(recipe, item)
-    }
-
-    private fun openRunManagementWeb(group: RunManagementGroup, url: String) {
-        openWeb(url, "run_management", group.recipe)
-    }
-
-    private fun closeRunManagementWebSurface(group: RunManagementGroup) {
-        val recipe = group.recipe
-        if (recipe == null) {
-            Toast.makeText(this, "卡片信息不可用，无法关闭显示", Toast.LENGTH_SHORT).show()
-            return
-        }
-        setRuntimeState(
-            recipe,
-            group.run.status,
-            instanceId = group.run.instanceId,
-            surface = CardRunSurface.Summary,
-            clearNextActionUrl = true
-        )
-        Toast.makeText(this, "已关闭网页显示", Toast.LENGTH_SHORT).show()
-        showKiteProcessOverview(forceRefresh = false)
-    }
-
-    private fun stopRunManagementProcess(process: TaskManagerProcessItem?, pid: Int) {
-        runManagementPendingProcessStopIds.add(pid)
-        markRunManagementProcessStopAsUserStop(process, pid)
-        TaskManagerStore.endProcess(applicationContext, process, pid)
-        Toast.makeText(this, "正在结束进程 PID $pid，稍后刷新", Toast.LENGTH_SHORT).show()
-        if (currentScreen == AppDestination.Processes) showKiteProcessOverview(forceRefresh = false)
-        scheduleRunManagementLazyRefresh(force = true)
-    }
-
-    private fun markRunManagementProcessStopAsUserStop(process: TaskManagerProcessItem?, pid: Int) {
-        val run = runManagementRunForProcess(process, pid) ?: return
-        val recipe = recipeForRunState(run) ?: return
-        setRuntimeState(
-            recipe,
-            RecipeRunStatus.Stopped,
-            instanceId = run.instanceId,
-            surface = CardRunSurface.Summary,
-            currentStepIndex = run.currentStepIndex,
-            lastMeaningfulOutput = "已手动结束进程 PID $pid",
-            clearRunBinding = true,
-            clearTerminalSession = true,
-            clearNextActionUrl = true
-        )
-    }
-
-    private fun runManagementRunForProcess(process: TaskManagerProcessItem?, pid: Int): RecipeRuntimeState? {
-        val unitCardId = process?.runtimeUnitId
-            ?.takeIf { it.startsWith("card:") }
-            ?.substringAfter(':')
-            ?.takeIf { it.isNotBlank() }
-        val ownerCardId = process?.runtimeOwnerId
-            ?.takeIf { it.startsWith("card:") }
-            ?.substringAfter(':')
-            ?.takeIf { it.isNotBlank() }
-        val ownerTerminalId = process?.runtimeOwnerId
-            ?.takeIf { it.startsWith("terminal:") }
-            ?.substringAfter(':')
-            ?.takeIf { it.isNotBlank() }
-        return listOfNotNull(unitCardId, ownerCardId)
-            .firstNotNullOfOrNull(CardRunStore::get)
-            ?: ownerTerminalId?.let { terminalId ->
-                CardRunStore.runs.value.firstOrNull { it.terminalSessionId == terminalId }
-            }
-            ?: CardRunStore.runs.value.firstOrNull { run ->
-                pid in run.boundProcessIds()
-            }
-    }
-
-    private fun scheduleRunManagementLazyRefresh(force: Boolean = false) {
-        requestRuntimePanelSummaryRefresh(force = force)
-        listOf(260L, 900L, 1800L).forEach { delayMs ->
-            root.postDelayed({
-                if (currentScreen != AppDestination.Processes || isFinishing || isDestroyed) return@postDelayed
-                requestRuntimePanelSummaryRefresh(force = false)
-                root.postDelayed({
-                    if (currentScreen == AppDestination.Processes && !isFinishing && !isDestroyed) {
-                        showKiteProcessOverview(forceRefresh = false)
-                    }
-                }, 180L)
-            }, delayMs)
-        }
-    }
-
-    private fun pruneRunManagementPendingProcessStops() {
-        if (runManagementPendingProcessStopIds.isEmpty()) return
-        val livePids = TaskManagerStore.snapshot.value.processes.mapTo(mutableSetOf()) { it.pid }
-        runManagementPendingProcessStopIds.removeAll(runManagementPendingProcessStopIds.filter { it !in livePids }.toSet())
-    }
 
     private fun maybeAutoShowUbuntuRuntimePanel(state: UbuntuRuntimeUiState) {
         if (shouldShowRuntimeGate(state)) return
@@ -9230,21 +8152,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val runningProcesses: Int
     )
 
-    private data class RunManagementGroup(
-        val run: RecipeRuntimeState,
-        val recipe: KiteRecipe?,
-        val terminal: TerminalSessionItem?,
-        val mainProcess: TaskManagerProcessItem?,
-        val childProcesses: List<TaskManagerProcessItem>,
-        val processCount: Int
-    )
-
-    private data class RunManagementAction(
-        val label: String,
-        val danger: Boolean = false,
-        val onClick: () -> Unit
-    )
-
     private data class SemanticColors(
         val text: Int,
         val background: Int,
@@ -9321,6 +8228,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         private const val TAG_RESOURCES_FRAGMENT = "kite-resources"
         private const val TAG_HOME_FRAGMENT = "kite-home"
         private const val TAG_RESOURCE_DETAIL_FRAGMENT = "kite-resource-detail"
+        private const val TAG_RUNTIME_MANAGEMENT_FRAGMENT = "kite-runtime-management"
         private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
         private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
         private const val RESOURCE_HERMES_CORE = "kite.hermes.core"

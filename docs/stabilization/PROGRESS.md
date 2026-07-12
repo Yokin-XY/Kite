@@ -1083,3 +1083,13 @@ T008 确认型动作协调结果：
 - 7 个新增测试覆盖运行停止确认、子 PID 不篡改 CardRun、PID 消失确认、超时失败、拒绝/重试、重复提交，以及打开显示面不提交执行动作；目标测试与 Kotlin 编译通过。
 
 下一步：建立 `RuntimeManagementFragment/Screen`，消费 Gateway 与 Coordinator 的 StateFlow；展开、状态变化和动作反馈只更新对应卡片/行，删除 `showKiteProcessOverview()` 的固定延迟整页重建路径。
+
+T008 运行管理页面所有权迁移结果：
+
+- 新增 `RuntimeManagementFragment/Screen` 与窄 Result Contract；主壳只负责导航和按 `recipeId + instanceId + surface` 打开独立运行窗口，不再绘制运行管理内容。
+- Screen 以结构签名管理卡片和进程绑定：事实结构不变时只更新现有标题、状态和按钮；只有卡片、显示面或进程拓扑变化时才重建列表。展开状态和滚动位置属于可见页面，不写入运行事实。
+- Fragment 同时消费统一快照和确认事务流；操作完成依赖状态拥有者信号，超时只等待当前事务的最早 deadline，不再使用 `260/900/1800ms` 固定延迟整页刷新。
+- 删除 `MainActivity` 中旧运行管理的展开字段、进程弹窗、进程归属推导、CardRun 显示面列表、提前写 `Stopped` 和延迟刷新链。主壳降至 `8306` 行、`385` 个成员函数、`95` 个私有字段。
+- Screen/Result Contract 目标单测、Feature/Application 目标单测、Debug Kotlin 编译、架构检查和运行车道静态检查通过。
+
+下一步：把运行时状态弹层、首次权限门和准入动作按事实边界迁出主壳；内存压力与回收继续委托既有 runtime policy，不并入页面动作。

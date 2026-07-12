@@ -51,8 +51,6 @@ internal class RuntimeManagementFeatureController(
                 instanceId = target.instanceId,
                 surface = target.surface
             )
-            is RuntimeManagementActionTarget.ViewBackgroundRuntimeLog ->
-                RuntimeManagementFeatureEffect.ViewBackgroundRuntimeLog(target.runtimeId)
             is RuntimeManagementActionTarget.StopRun -> submitCommand(
                 RuntimeManagementCommand.StopRun(target.instanceId, action.mutationKey)
             )

@@ -29,7 +29,6 @@ internal sealed interface RuntimeManagementActionTarget {
     data class EndProcess(val processId: String, val pid: Int) : RuntimeManagementActionTarget
     data class StopBackgroundRuntime(val runtimeId: String) : RuntimeManagementActionTarget
     data class RestartBackgroundRuntime(val runtimeId: String) : RuntimeManagementActionTarget
-    data class ViewBackgroundRuntimeLog(val runtimeId: String) : RuntimeManagementActionTarget
 }
 
 internal data class RuntimeManagementActionUiState(
@@ -114,6 +113,5 @@ internal sealed interface RuntimeManagementFeatureEffect {
         val surface: CardRunSurface
     ) : RuntimeManagementFeatureEffect
 
-    data class ViewBackgroundRuntimeLog(val runtimeId: String) : RuntimeManagementFeatureEffect
     data class ActionRejected(val reason: String) : RuntimeManagementFeatureEffect
 }
