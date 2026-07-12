@@ -151,17 +151,17 @@ Action
 
 ## 当前机器债务基线
 
-| 指标 | 基线 | 收敛任务 |
-| --- | ---: | --- |
-| `MainActivity` 物理行数 | 21,144 | T002-T011 |
-| `MainActivity` 成员函数 | 854 | T002-T011 |
-| `MainActivity` 私有字段 | 171 | T002-T011 |
-| Activity 实现的 Host/Provider 接口 | 8 | T004/T005/T011 |
-| 资源反向渲染委托 | 4 | T004 |
-| Activity 内资源职责函数 | 64 | T003/T004 |
-| `ScreenRouter` 对 `MainActivity.Screen` 引用 | 46 | T002 |
-| 继承 `MainActivity` 的 Activity | 1 | T007 |
-| `runtimeStates` 引用 | 64 | T005/T006 |
+| 指标 | T001 起始值 | 当前上限 | 收敛任务 |
+| --- | ---: | ---: | --- |
+| `MainActivity` 物理行数 | 21,144 | 21,133 | T002-T011 |
+| `MainActivity` 成员函数 | 854 | 854 | T002-T011 |
+| `MainActivity` 私有字段 | 171 | 171 | T002-T011 |
+| Activity 实现的 Host/Provider 接口 | 8 | 8 | T004/T005/T011 |
+| 资源反向渲染委托 | 4 | 4 | T004 |
+| Activity 内资源职责函数 | 64 | 64 | T003/T004 |
+| 导航合同对 `MainActivity.Screen` 引用 | 46 | 0 | T002 |
+| 继承 `MainActivity` 的 Activity | 1 | 1 | T007 |
+| `runtimeStates` 引用 | 64 | 64 | T005/T006 |
 
 这些数字是防回涨护栏，不是架构完成定义。某项职责完成的判断仍然是：状态、动作、页面和
 生命周期所有权已经转移，旧入口被删除，业务路径验证通过。

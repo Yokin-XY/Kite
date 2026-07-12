@@ -29,6 +29,9 @@ $terminalPanelActionRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kite
 $startupTraceStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/bootstrap/StartupTraceStore.kt'
 $toolchainPackInstallerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/toolchain/ToolchainPackInstaller.kt'
 $resourceInstallRecipesPath = Join-Path $Root 'app/src/main/java/com/kite/app/resources/KiteResourceInstallRecipes.kt'
+$appNavigatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/AppNavigator.kt'
+$appIntentRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/AppIntentRouter.kt'
+$kiteAppGraphPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/KiteAppGraph.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -107,6 +110,9 @@ $terminalPanelActionRegistry = Read-Utf8 $terminalPanelActionRegistryPath
 $startupTraceStore = Read-Utf8 $startupTraceStorePath
 $toolchainPackInstaller = Read-Utf8 $toolchainPackInstallerPath
 $resourceInstallRecipes = Read-Utf8 $resourceInstallRecipesPath
+$appNavigator = Read-Utf8 $appNavigatorPath
+$appIntentRouter = Read-Utf8 $appIntentRouterPath
+$kiteAppGraph = Read-Utf8 $kiteAppGraphPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -117,6 +123,14 @@ Assert-True ($main -notmatch 'currentScreen\s*=\s*AppDestination\.') 'destinatio
 Assert-True ($main -notmatch 'override fun onBackPressed\s*\(') 'MainActivity back handling must stay on OnBackPressedDispatcher.'
 Assert-True ($main -match 'onBackPressedDispatcher\.addCallback\(this, navigationBackCallback\)') 'MainActivity must register the shared navigation back callback.'
 Assert-True ($main -match '(?s)private fun handleAppNavigationBack\b.*appNavigator\.resolveBack') 'MainActivity back handling must resolve through AppNavigator.'
+Assert-True ($appNavigator -notmatch 'MainActivity' -and $appNavigator -match 'enum class AppDestination') 'Navigation contracts must remain independent from concrete Activity types.'
+$mainOnCreate = Member-Function-Body $main 'onCreate'
+$mainOnNewIntent = Member-Function-Body $main 'onNewIntent'
+Assert-True ($mainOnCreate -match 'AppIntentRouter\.dispatch' -and $mainOnNewIntent -match 'AppIntentRouter\.dispatch') 'Initial and reused Activity intents must share AppIntentRouter dispatch.'
+Assert-True ($mainOnCreate -match 'KiteAppGraph\.from\(applicationContext\)') 'MainActivity must obtain long-lived dependencies from the process composition root.'
+Assert-True ($mainOnCreate -notmatch 'KiteDiagnostics\(' -and $mainOnCreate -notmatch 'BrowserAuthSessionStore\(' -and $mainOnCreate -notmatch 'KiteResourceInstallStore\(') 'MainActivity must not recreate process dependencies directly.'
+Assert-True ($appIntentRouter -match 'BrowserAuthRedirectParser\.parse' -and $appIntentRouter -match 'EXTRA_RUNTIME_ACTION' -and $appIntentRouter -match 'CardRunIntents\.EXTRA_RECIPE_ID') 'AppIntentRouter must preserve browser, automation, then card-run classification.'
+Assert-True ($kiteAppGraph -match 'context\.applicationContext' -and $kiteAppGraph -notmatch 'android\.app\.Activity|android\.view\.View') 'KiteAppGraph must retain only application context and non-View dependencies.'
 Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'
 Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
 Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "capturedAt": "2026-07-12",
-  "capturedCommit": "416e2d9",
+  "capturedCommit": "d9bbee0",
   "mainActivity": {
-    "physicalLines": 21144,
+    "physicalLines": 21133,
     "memberFunctions": 854,
     "privateFields": 171,
     "hostInterfaces": 8,
@@ -12,7 +12,7 @@
     "runtimeStatesReferences": 64
   },
   "legacyBoundaryDebt": {
-    "screenRouterMainActivityScreenReferences": 46,
+    "screenRouterMainActivityScreenReferences": 0,
     "activitiesInheritingMainActivity": 1
   },
   "targetPackages": [

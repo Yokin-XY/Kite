@@ -7,7 +7,7 @@
 ```text
 方向：第二阶段业务架构迁移
 状态：in_progress
-当前任务：T002 应用外壳与组合根，等待 T001 提交后启动
+当前任务：T003 资源模块状态与控制边界，等待 T002 收口提交后启动
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -584,3 +584,17 @@ T001 状态：completed。
 - `onCreate` 与 `onNewIntent` 分别按认证、自动化、运行窗口顺序手写同一套分发优先级。
 
 执行顺序：先迁移 `AppDestination`/`AppNavigator` 并跑导航回归；再建立 Intent 分类和组合根，避免同时改变三条入口。
+
+T002 结果：
+
+- `AppDestination`、返回与恢复策略迁入 `shell/AppNavigator`，导航合同对 `MainActivity.Screen` 的引用由 46 降到 0。
+- `AppIntentRouter` 统一首次启动和 `onNewIntent` 的优先级：官方认证回跳 -> 自动化动作 -> CardRun。
+- `KiteAppGraph` 使用 application context 统一提供 diagnostics、bridge、认证/自动化会话、资源 Store 和 ManifestLoader；页面可变的 RecipeLoader、DropZoneManager 仍按使用方创建。
+- 架构护栏曾阻止在 `MainActivity` 新增三个测试/分发函数，最终改为 Router 外部分发，成员函数保持 854，没有通过放宽基线绕过。
+- 导航、Intent 和组合根目标测试、全量 Debug 单测、Debug 构建、静态检查与 APK 体积审计通过。
+- OnePlus 8T 冷启动 1769ms；自动化与认证 Intent 均复用 PID `16748`，认证回跳命中认证分支，没有误进 CardRun。
+- OnePlus 8T 设置页进入与系统返回回到首页通过，未发现崩溃或 ANR。
+
+T002 状态：completed。
+
+下一步：提交 T002 收口与机器基线，再执行 T003 三问，先建立资源 Feature 状态合同，不直接搬 UI。
