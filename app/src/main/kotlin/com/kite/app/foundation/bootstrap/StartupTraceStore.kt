@@ -60,7 +60,7 @@ object StartupTraceStore {
             .putString("current_stage", stage)
             .putLong("current_stage_at_ms", now)
             .putString("current_timeline", nextTimeline)
-            .commit()
+            .apply()
     }
 
     fun markReady(context: Context) {

@@ -26,6 +26,7 @@ $prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundatio
 $terminalSessionControllerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/terminal/TerminalSessionController.kt'
 $terminalFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalFragment.kt'
 $terminalPanelActionRegistryPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalPanelActionRegistry.kt'
+$startupTraceStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/bootstrap/StartupTraceStore.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -101,6 +102,7 @@ $prootPoolPlan = Read-Utf8 $prootPoolPlanPath
 $terminalSessionController = Read-Utf8 $terminalSessionControllerPath
 $terminalFragment = Read-Utf8 $terminalFragmentPath
 $terminalPanelActionRegistry = Read-Utf8 $terminalPanelActionRegistryPath
+$startupTraceStore = Read-Utf8 $startupTraceStorePath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -426,6 +428,10 @@ $buildTerminalPanel = Function-Body $terminalFragment 'buildTerminalPanelPage'
 Assert-True ($renderTerminalPanel -match 'TerminalPanelActionRegistry\.snapshot\(\)') 'Terminal panel pages must come from the action registry.'
 Assert-True ($buildTerminalPanel -match 'action\.handler\.execute\(terminalPanelActionHost, anchor\)') 'Terminal panel tiles must execute registered actions through the terminal host contract.'
 Assert-True ($terminalPanelActionRegistry -match 'fun register\(' -and $terminalPanelActionRegistry -match 'fun unregister\(') 'Terminal panel registry must expose stable extension operations.'
+$startupMarkStage = Member-Function-Body $startupTraceStore 'markStage'
+$startupMarkReady = Member-Function-Body $startupTraceStore 'markReady'
+Assert-True ($startupMarkStage -match '\.apply\(\)' -and $startupMarkStage -notmatch '\.commit\(\)') 'Routine startup stage tracing must not synchronously flush SharedPreferences on the startup thread.'
+Assert-True ($startupMarkReady -match '\.commit\(\)') 'First-frame ready must remain synchronously durable across process restarts.'
 
 $consoleRefresh = Function-Body $main 'maybeRefreshConsoleAfterRuntimeState'
 Assert-True ($consoleRefresh -match 'updateVisibleConsoleCard') 'console runtime refresh should update a visible card first.'

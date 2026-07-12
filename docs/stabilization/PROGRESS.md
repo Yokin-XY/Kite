@@ -444,3 +444,22 @@ D5 状态：completed。
 - 目标单测、Debug 构建和运行车道静态检查通过；未出现 `FATAL EXCEPTION`、ANR 或新的未捕获 `Broken pipe`。
 
 下一步：恢复启动耗时优化，优先减少不必要的主线程同步持久化和重复页面重建。
+
+### 启动阶段持久化降阻塞
+
+- OnePlus 当前时间线从 `application.process_created` 到 `main.first_frame_ready` 为 1578ms。
+- 普通 `markStage` 每次都在启动线程调用 `SharedPreferences.commit()`；Application 与 MainActivity 首帧前会重复同步刷盘二十余次。
+- 普通阶段改为 `apply()`：进程内状态立即可读，磁盘异步落盘。
+- `beginAttempt`、`markReady` 和失败记录继续同步 `commit()`，保证跨进程诊断边界不变。
+- 增加即时可见性测试和静态护栏。
+
+下一步：全量测试并在 OnePlus 8T 连续冷启动采样，比较首帧时间线与 ActivityManager TotalTime。
+
+验证：
+
+- OnePlus 8T 三次冷启动 `TotalTime`：1659、1659、1571ms，平均 1629.7ms。
+- 三次进程创建到 `main.first_frame_ready`：1453、1574、1412ms，平均 1479.7ms。
+- 相对改动前同机 1734ms / 1578ms 基线，两个口径均约减少 100ms。
+- 启动诊断单测、Debug 构建和静态护栏通过；无崩溃、ANR 或输入超时。
+
+下一步：审计 `onResume` 对 Console/Settings 的整页重建，只在显示面缺失时重建，已存在页面改为局部校准。

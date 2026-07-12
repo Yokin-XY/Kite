@@ -68,6 +68,17 @@ class StartupTraceStoreTest {
     }
 
     @Test
+    fun stageIsVisibleImmediatelyWhileDiskWriteRemainsAsynchronous() {
+        StartupTraceStore.prepareProcess(context)
+
+        StartupTraceStore.markStage(context, "main.resources_and_server")
+
+        val prefs = context.getSharedPreferences("kite_startup_trace", Context.MODE_PRIVATE)
+        assertEquals("main.resources_and_server", prefs.getString("current_stage", null))
+        assertTrue(prefs.getString("current_timeline", "").orEmpty().contains("main.resources_and_server"))
+    }
+
+    @Test
     fun legacyIncompleteFailureIsClearedDuringUpgrade() {
         context.getSharedPreferences("kite_startup_trace", Context.MODE_PRIVATE)
             .edit()
