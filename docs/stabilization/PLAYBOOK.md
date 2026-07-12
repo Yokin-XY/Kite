@@ -129,3 +129,285 @@ P0 是五个方向共享的安全网，不是一个方向任务。
 - 只显式暂存当前阶段文件，不使用 `git add .`。
 - 不提交构建物、设备日志、截图、附件或用户已有未提交改动。
 - 未经用户再次确认，不推送 GitHub、不发布版本。
+
+## 第二阶段：业务架构迁移
+
+### 为什么进入第二阶段
+
+D1-D5 已经建立导航、动作、状态投影和生命周期合同，但它们主要解决“行为先统一”。
+现有代码仍有以下结构事实：
+
+- `MainActivity` 仍约两万行，同时持有页面、动作、缓存、运行面和系统回调职责。
+- `ResourcesFragment`、`ResourceSearchFragment`、`ResourceManageFragment`、
+  `ResourceDetailFragment` 仍通过 Host 接口把真实渲染委托回 Activity。
+- `ScreenRouter` 的公共合同依赖 `MainActivity.Screen`，导航模型仍属于具体页面壳。
+- `CardRunActivity` 继承完整 `MainActivity`，单个运行窗口同时获得整套主应用职责。
+- 资源相关渲染、动作和安装流程仍有数十个函数留在 Activity 内。
+
+因此，D5 只能视为模块化样板完成，不能视为整个应用已经完成职责迁移。
+
+### Kite 目标架构
+
+采用“模块化单体 + 单向状态流 + 平台适配器”，先在现有 `:app` 内建立可靠包边界，
+不立即进行多 Gradle 模块拆分，也不引入新的大型框架。
+
+```text
+App Shell
+  MainActivity / CardRunActivity / AppNavigator / AppIntentRouter / AppGraph
+        |
+        v
+Feature
+  home / resources / run / terminal / web / settings
+        |
+        v
+Application + Domain
+  动作编排 / 业务规则 / 状态投影 / Store 合同
+        |
+        v
+Platform
+  PRoot / bridge / browser / file / toolchain / Android service
+```
+
+统一业务路径：
+
+```text
+用户或外部 Intent
+-> Feature 提交 Action
+-> Controller / UseCase 编排
+-> 状态拥有者写入事实
+-> Projector 生成 UiState
+-> Screen 局部渲染
+-> 导航、系统浏览器、权限窗口等一次性行为通过 Effect 交给 App Shell
+```
+
+依赖只能向下；Feature 之间不得直接操作彼此页面，只能使用稳定合同或向 App Shell 发 Effect。
+页面不能复制长期事实，Controller 不能取代现有 Store，Platform 不能反向引用 Activity 或 View。
+
+### 每个迁移任务的固定执行法
+
+每个业务模块开始前都先建立“目的验收矩阵”：
+
+1. 用户为什么进入这个模块，预期完成什么。
+2. 哪个 Store 或服务拥有真实状态。
+3. 点击后应立即显示什么承诺状态。
+4. 后台如何确认成功、失败、继续等待和超时。
+5. 页面离开、进后台、Activity 重建和内存压力分别如何处理。
+6. 返回目标、外部窗口和运行显示面如何交接。
+7. 哪些工作不得发生在绘制和绑定阶段。
+
+发现现有逻辑不符合目的时：先用独立修复提交恢复业务合同，再用独立迁移提交转移职责。
+禁止在机械搬迁中悄悄改变产品行为。
+
+### T001 [P0] 架构基线与依赖护栏
+
+问题证据：当前安全网能检查部分运行车道，但没有阻止新页面继续把渲染、动作和状态塞回
+`MainActivity`，也没有约束 Feature、Domain、Platform 的依赖方向。
+
+解法：记录现有业务入口、状态拥有者、显示面和生命周期矩阵；增加职责和依赖方向检查，
+先锁住新增耦合，不要求一次清除全部历史债务。
+
+验收标准：
+
+- [ ] 首页、资源、运行、终端、Web、设置六条业务链都有目的验收矩阵。
+- [ ] 建立允许依赖和禁止依赖清单，并由自动检查覆盖新增代码。
+- [ ] 建立 `MainActivity` 职责清单和迁移台账，能追踪字段、函数和 Host 接口归属。
+- [ ] 现有全量单测、Debug 构建和静态检查通过。
+
+依赖：D1-D5 已完成。
+
+### T002 [P1] 应用外壳与组合根
+
+问题证据：导航合同依赖 `MainActivity.Screen`；Activity 自己创建大量 Store、桥接器、加载器和
+Controller；系统 Intent、权限结果和页面渲染混在同一类中。
+
+解法：建立独立 `AppDestination`、`AppNavigator`、`AppIntentRouter` 和轻量 `AppGraph`。
+Activity 只装配依赖、托管根容器、转交 Android 生命周期与系统结果。
+
+验收标准：
+
+- [ ] 导航模型不再引用 `MainActivity` 类型。
+- [ ] 外部 Intent 先被分类为应用动作或 Effect，再交给目标 Feature。
+- [ ] 进程级依赖由组合根创建，页面不再各自重复创建长期对象。
+- [ ] 不改变现有页面视觉、返回结果和浏览器认证协议。
+
+依赖：T001。
+
+### T003 [P1] 资源模块状态与控制边界
+
+问题证据：资源事实已有 Store 和 Projector，但目录、详情、搜索、管理、安装向导仍共享 Activity
+字段、缓存和请求序号，页面所有权不完整。
+
+解法：建立 `ResourceFeatureContract`、Feature Controller/ViewModel 和依赖接口。继续复用
+`KiteResourceInstallStore`、Registry、ManifestLoader 和现有 Projector，不复制资源事实。
+
+验收标准：
+
+- [ ] 资源目录、详情、搜索、管理和安装向导使用同一 Feature 状态合同。
+- [ ] 加载、安装、卸载、取消、失败和待确认都有确定状态转换。
+- [ ] Controller 不持有 View，不直接导航，不重新定义安装事实。
+- [ ] 状态和动作合同测试通过。
+
+依赖：T002。
+
+### T004 [P2] 资源页面所有权迁移
+
+问题证据：四个资源 Fragment 仍通过 Host 回调让 Activity 完成全部真实渲染。
+
+解法：按“目录 -> 搜索 -> 详情 -> 管理 -> 安装向导”顺序迁移。Fragment/Screen 持有视图绑定，
+Controller 提供 UiState 和 Action，Activity 只负责导航到资源 Destination。
+
+验收标准：
+
+- [ ] 四个资源 Fragment 不再声明或调用 Activity 渲染 Host。
+- [ ] 资源相关缓存、绑定、请求序号和局部刷新离开 `MainActivity`。
+- [ ] 首页与资源各页面仍读取同一安装和运行事实。
+- [ ] 每迁移一个页面都有独立提交、Robolectric 回归和 OnePlus 8T 可见路径验证。
+- [ ] 返回位置、滚动位置、安装进度和失败重试不回归。
+
+依赖：T003。
+
+### T005 [P2] 首页卡片与配方编辑模块
+
+问题证据：首页卡片渲染、卡片分组、配方表单、图标处理、步骤编辑和运行入口都位于
+`MainActivity`，配置编辑与运行行为互相牵连。
+
+解法：分为 `home` 与 `recipe-editor` 两个 Feature。首页只投影卡片和提交动作；编辑器拥有草稿、
+校验和保存；真实配方仍由现有 Loader/Store 持有。
+
+验收标准：
+
+- [ ] 首页不负责执行配方步骤，编辑器不直接管理运行实例。
+- [ ] 草稿、未保存返回、图标和步骤编辑状态归编辑模块所有。
+- [ ] 同一卡片从首页和编辑页启动时产生相同动作计划。
+- [ ] 首页结构变化与运行状态变化分开，普通状态变化不重建整个首页。
+
+依赖：T002、T004。
+
+### T006 [P2] 运行编排与执行引擎
+
+问题证据：配方开始、步骤执行、进度处理、停止和残留进程判断仍大量依赖 Activity 方法，
+执行核心与当前显示页面耦合。
+
+解法：建立与 Android View 无关的 `RunOrchestrator`、`RecipeExecutor` 和停止协调器。继续让
+`CardRunStore` 持有运行事实，Shell/Feature 只消费事件和 Effect。
+
+验收标准：
+
+- [ ] shell、terminal、Web、X11 等步骤通过统一执行接口进入。
+- [ ] 开始、继续、停止、取消、失败和残留进程确认不依赖页面是否可见。
+- [ ] 同一 `instanceId` 不重复创建执行链，停止结果由执行层确认后落状态。
+- [ ] 执行层不引用 Activity、Fragment、View、Toast 或页面导航。
+
+依赖：T005。
+
+### T007 [P2] 运行窗口与显示面
+
+问题证据：`CardRunActivity` 继承完整 `MainActivity`；终端、报告和 Web 显示面的创建、切换、
+隐藏和恢复仍由主 Activity 统一维护大量字段。
+
+解法：让 `CardRunActivity` 成为独立轻量外壳，由 `RunSurfaceHost` 组合 terminal、report、web
+显示面；显示面只绑定指定 run instance，不拥有底层任务生命周期。
+
+验收标准：
+
+- [ ] `CardRunActivity` 不再继承 `MainActivity`。
+- [ ] terminal、report、web 各自拥有显示生命周期和局部更新入口。
+- [ ] 页面离开只解绑显示面，用户停止才停止任务。
+- [ ] 外部浏览器回跳、终端恢复和报告更新仍回到正确实例。
+
+依赖：T006。
+
+### T008 [P2] 运行管理与运行时面板
+
+问题证据：进程列表事实已经统一，但运行管理页面、运行时准入面板、权限门和部分停止确认仍
+由 Activity 绘制和协调。
+
+解法：建立 `runtime-management` Feature，消费 `TaskManagerStore`、运行快照和生命周期策略，
+页面只提交刷新、打开、停止和回收意图。
+
+验收标准：
+
+- [ ] 卡片、终端、服务和 PID 的归属在一个 UiState 中可追踪。
+- [ ] 停止中、已停止、失败和待确认按钮语义确定。
+- [ ] 内存压力不由页面直接杀进程，继续经过现有策略链。
+- [ ] 运行管理不通过整页重建等待后台状态追上。
+
+依赖：T006、T007。
+
+### T009 [P2] Web、浏览器与认证边界
+
+问题证据：普通 WebView、系统浏览器认证桥、浏览器自动化和卡片 Web 显示面在 Activity 中
+存在多组入口，认证协议正确性容易被页面迁移误伤。
+
+解法：以 `web` Feature 管显示，以 browser platform adapter 管系统浏览器、loopback 和自动化。
+强认证仍走官方系统浏览器；回跳作为 Effect/Intent 交给目标 run instance。
+
+验收标准：
+
+- [ ] 普通 Web 显示、系统认证和自动化会话职责分开。
+- [ ] OAuth/loopback 参数原样桥接，不制造 Codex 或 Claude 专属特判。
+- [ ] 首次安装、覆盖安装、进程重建后的回跳都能路由到正确实例。
+- [ ] WebView 销毁、后台任务和认证会话具有不同生命周期。
+
+依赖：T002、T007。
+
+### T010 [P2] 设置、主题与首次启动
+
+问题证据：设置绘制、主题保存、通知权限、文件权限、rootfs 准备和首次启动引导混在 Activity
+生命周期中，恢复时容易重复弹层或重建页面。
+
+解法：设置 Feature 管理显示状态；Onboarding Coordinator 管一次性步骤；Android 权限和设置页
+跳转通过 Shell Effect 执行。
+
+验收标准：
+
+- [ ] 设置状态、首次启动进度和运行时准备状态不互相覆盖。
+- [ ] 权限拒绝、返回、稍后继续和进程重建均有确定恢复点。
+- [ ] 主题变更只重绑必要页面，不重启后台任务。
+- [ ] 首次安装和已有用户升级路径分别通过真机验证。
+
+依赖：T002。
+
+### T011 [P3] 终端边界与应用壳清理
+
+问题证据：终端已经拥有 Fragment 和动作注册表，但仍通过 `TerminalChromeHost` 控制 Activity
+底栏；迁移完成后 Shell 中还会残留旧字段、Host 接口和兼容入口。
+
+解法：终端通过通用 Surface Effect 请求沉浸/返回；按迁移台账删除旧委托、死字段和重复路径。
+
+验收标准：
+
+- [ ] 终端 Feature 不依赖具体 Activity 类型。
+- [ ] `MainActivity` 只保留外壳、导航、系统回调和模块装配。
+- [ ] 不再存在 Feature Fragment 反向请求 Activity 渲染页面。
+- [ ] `MainActivity` 行数只作为防回涨指标，最终验收以职责清单清空为准。
+
+依赖：T004-T010。
+
+### T012 [P3] 依赖封口与发布验收
+
+问题证据：包边界完成前直接拆 Gradle 模块会把循环依赖固化；架构迁移也可能引入启动、内存、
+APK 体积和页面恢复回归。
+
+解法：先消除反向依赖，再评估稳定合同是否值得拆成 `core`/`feature` Gradle 模块；执行完整
+性能、生命周期、安装升级和业务链验收。
+
+验收标准：
+
+- [ ] 自动检查阻止 Feature 反向依赖 Shell、Platform 依赖 UI、跨 Feature 直接调用页面。
+- [ ] 首页卡片、资源安装、运行窗口、终端、Web 登录、进程管理和设置关键链全部通过。
+- [ ] 冷启动、热返回、内存压力、APK 体积不劣于第二阶段基线。
+- [ ] OnePlus 8T 完成卸载重装、覆盖安装和长时间后台恢复验证。
+- [ ] 每个模块有明确所有者、入口、状态源、动作合同和生命周期合同。
+
+依赖：T001-T011。
+
+### 第二阶段红线
+
+1. 不以移动文件或减少行数冒充职责迁移。
+2. 不进行 Compose、Navigation Component、Hilt 或多 Gradle 模块的同步大换血。
+3. 不新增平行 Store，不让 ViewModel 保存第二份安装或运行事实。
+4. 不在重构提交里夹带业务语义变化；逻辑修复必须独立提交和验证。
+5. 不扩张 X11 和完整浏览器能力，只保持现有能力可用。
+6. 不让 Activity/Fragment 销毁等同于任务停止。
+7. 每完成一个任务才进入下一个任务，不把 T003-T011 合成一次大迁移。
