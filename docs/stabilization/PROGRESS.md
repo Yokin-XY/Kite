@@ -107,3 +107,16 @@
 - `git diff --check`：通过，仅有既存换行符提示。
 
 下一步：补 Web 历史和终端详情优先消费的自动化证据，再做全量构建与 OnePlus 8T 验收。
+
+### 显示面优先消费证据
+
+- 新增 WebView back 跟踪测试：工作台存在网页历史时只调用 `goBack()`，Screen 保持 Workbench。
+- 终端详情回调与顶部按钮加入静态合同护栏，分别锁定“详情回列表”和“提交统一 dispatcher”。
+- 曾尝试用 Robolectric 挂载完整 `TerminalFragment`；断言通过，但会启动真实终端运行时并留下临时文件占用，因此撤销该重型测试，改由 OnePlus 8T 完成行为验收。
+
+验证：
+
+- `MainActivityScreenRoutingTest`：`BUILD SUCCESSFUL`。
+- `scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：通过。
+
+下一步：运行全量单测和 Debug 构建，随后在 OnePlus 8T 验收返回矩阵。

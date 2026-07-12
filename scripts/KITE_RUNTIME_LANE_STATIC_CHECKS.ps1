@@ -24,6 +24,7 @@ $containerProcessStorePath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/f
 $taskManagerFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/tasks/TaskManagerFragment.kt'
 $prootPoolPlanPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeProotPoolPlanDryRun.kt'
 $terminalSessionControllerPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/terminal/TerminalSessionController.kt'
+$terminalFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalFragment.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -97,6 +98,7 @@ $containerProcessStore = Read-Utf8 $containerProcessStorePath
 $taskManagerFragment = Read-Utf8 $taskManagerFragmentPath
 $prootPoolPlan = Read-Utf8 $prootPoolPlanPath
 $terminalSessionController = Read-Utf8 $terminalSessionControllerPath
+$terminalFragment = Read-Utf8 $terminalFragmentPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -107,6 +109,8 @@ Assert-True ($main -notmatch 'currentScreen\s*=\s*Screen\.') 'screen changes mus
 Assert-True ($main -notmatch 'override fun onBackPressed\s*\(') 'MainActivity back handling must stay on OnBackPressedDispatcher.'
 Assert-True ($main -match 'onBackPressedDispatcher\.addCallback\(this, navigationBackCallback\)') 'MainActivity must register the shared navigation back callback.'
 Assert-True ($main -match '(?s)private fun handleAppNavigationBack\b.*screenRouter\.resolveBack') 'MainActivity back handling must resolve through ScreenRouter.'
+Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'
+Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
 Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'
 Assert-True ($main -match 'updateVisibleResourceInstallWizardElapsed') 'install wizard must have local elapsed binding.'
 Assert-True ($main -match 'updateVisibleConsoleCard') 'console card runtime changes should have local binding.'

@@ -46,8 +46,8 @@
 | D1-A06 | 恢复白名单保持现有边界 | `ScreenRouterContractTest` |
 | D1-A07 | 路由入口委托现有渲染路径 | `ScreenRouterContractTest` |
 | D1-A08 | MainActivity 顶部返回与系统 back 使用同一入口 | `MainActivityScreenRoutingTest` + 静态护栏 |
-| D1-A09 | Web 历史优先于页面返回 | 待接入测试 |
-| D1-A10 | 终端详情优先回列表 | 待接入测试 |
+| D1-A09 | Web 历史优先于页面返回 | `MainActivityScreenRoutingTest` |
+| D1-A10 | 终端详情优先回列表 | 静态合同护栏 + OnePlus 8T 验收 |
 
 ## OnePlus 8T 验收
 

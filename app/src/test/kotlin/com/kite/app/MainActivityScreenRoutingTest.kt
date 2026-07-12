@@ -1,6 +1,8 @@
 package com.kite.app
 
 import android.os.Bundle
+import android.view.ViewGroup
+import android.webkit.WebView
 import com.kite.app.resources.KiteResourceInstallSignal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -25,6 +27,16 @@ import org.robolectric.RobolectricTestRunner
  */
 @RunWith(RobolectricTestRunner::class)
 class MainActivityScreenRoutingTest {
+
+    private class BackTrackingWebView(activity: MainActivity) : WebView(activity) {
+        var goBackCalls: Int = 0
+
+        override fun canGoBack(): Boolean = true
+
+        override fun goBack() {
+            goBackCalls += 1
+        }
+    }
 
     private fun createActivity(savedInstanceState: Bundle? = null): MainActivity =
         Robolectric.buildActivity(MainActivity::class.java)
@@ -74,6 +86,13 @@ class MainActivityScreenRoutingTest {
         val field = MainActivity::class.java.getDeclaredField("resourceItemPatchRequestSerial")
         field.isAccessible = true
         return field.getLong(activity)
+    }
+
+    private fun replaceWebView(activity: MainActivity, webView: WebView) {
+        val field = MainActivity::class.java.getDeclaredField("webView")
+        field.isAccessible = true
+        field.set(activity, webView)
+        activity.addContentView(webView, ViewGroup.LayoutParams(1, 1))
     }
 
     // ------------------------------------------------------------------
@@ -216,6 +235,19 @@ class MainActivityScreenRoutingTest {
         activity.onBackPressedDispatcher.onBackPressed()
 
         assertEquals("Console", activity.currentScreenNameForTest())
+    }
+
+    @Test
+    fun `Workbench 有网页历史时 back 应只回退网页`() {
+        val activity = createResumedActivity()
+        val webView = BackTrackingWebView(activity)
+        replaceWebView(activity, webView)
+        setCurrentScreen(activity, "Workbench")
+
+        activity.onBackPressedDispatcher.onBackPressed()
+
+        assertEquals(1, webView.goBackCalls)
+        assertEquals("Workbench", activity.currentScreenNameForTest())
     }
 
     // ------------------------------------------------------------------
