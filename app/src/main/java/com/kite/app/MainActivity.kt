@@ -63,6 +63,7 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.browser.customtabs.CustomTabsIntent
 import com.kite.app.action.KiteActionRoute
 import com.kite.app.action.KiteActionRouter
@@ -249,6 +250,11 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             legacySink = ScreenRouter.LegacyScreenSink { screen -> dispatchLegacyScreen(screen) }
         )
     }
+    private val navigationBackCallback = object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            handleAppNavigationBack()
+        }
+    }
     private val cardGroupStore by lazy { KiteCardGroupStore(applicationContext) }
     private var currentScreen: Screen = Screen.Console
     private var pendingRawJsonRecipeId: String? = null
@@ -263,6 +269,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
      */
     @androidx.annotation.VisibleForTesting
     internal fun currentScreenNameForTest(): String = currentScreen.name
+
+    @androidx.annotation.VisibleForTesting
+    internal fun enterScreenForTest(screenName: String) {
+        val screen = Screen.valueOf(screenName)
+        enterScreen(screen)
+    }
+
+    private fun enterScreen(screen: Screen, onBack: (() -> Unit)? = null) {
+        currentScreen = screen
+        screenRouter.enter(screen, onBack)
+    }
 
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var consolePageId: String = CONSOLE_PAGE_ALL
@@ -396,6 +413,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     override fun onCreate(savedInstanceState: Bundle?) {
         StartupTraceStore.markStage(this, "main.super_on_create")
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, navigationBackCallback)
         StartupTraceStore.markStage(this, "main.diagnostics_and_settings")
         diagnostics = KiteDiagnostics(this)
         diagnostics.writeCapabilityReport()
@@ -1098,35 +1116,26 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         super.onDestroy()
     }
 
-    @Deprecated("Use OnBackPressedDispatcher in a future AndroidX Activity migration.")
-    override fun onBackPressed() {
+    private fun requestNavigationBack() {
+        onBackPressedDispatcher.onBackPressed()
+    }
+
+    private fun handleAppNavigationBack() {
         if (handleWebViewBackSignal()) return
-        if (this is CardRunActivity) {
-            handleCardRunBackSignal()
-            return
+        when (val action = screenRouter.resolveBack(this is CardRunActivity)) {
+            NavigationBackAction.System -> dispatchSystemBack()
+            NavigationBackAction.CardRunTask -> handleCardRunBackSignal()
+            NavigationBackAction.Contextual -> screenRouter.invokeContextualBack()
+            is NavigationBackAction.Navigate -> screenRouter.navigate(action.screen)
         }
-        when (currentScreen) {
-            Screen.CreateConfig -> handleRecipeFormBack()
-            Screen.RecipeDetail -> {
-                // T6b:RecipeDetail 走 Fragment,系统 back 时移除 Fragment 回编辑器
-                if (supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT) != null) {
-                    onExitRecipeRawJson()
-                } else {
-                    showConsole()
-                }
-            }
-            Screen.RecipeMore -> returnToRecipeFormFromMore()
-            Screen.ThemeSettings -> showSettings()
-            Screen.ResourceManage -> showResources()
-            Screen.ResourceSearch -> showResources()
-            Screen.ResourceMore -> currentResourceDetailId?.let { showResourceDetail(it) } ?: showResources()
-            Screen.ResourceRawJson -> currentResourceDetailId?.let { showResourceDetail(it) } ?: showResources()
-            Screen.ResourceDetail -> showResources()
-            Screen.Resources -> showConsole()
-            Screen.Settings -> showConsole()
-            Screen.Processes -> showConsole()
-            Screen.Terminal -> if (isTerminalDetailMode) super.onBackPressed() else showConsole()
-            else -> if (currentScreen != Screen.Console) showConsole() else super.onBackPressed()
+    }
+
+    private fun dispatchSystemBack() {
+        navigationBackCallback.isEnabled = false
+        try {
+            onBackPressedDispatcher.onBackPressed()
+        } finally {
+            navigationBackCallback.isEnabled = true
         }
     }
 
@@ -2233,8 +2242,17 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val screen = savedInstanceState.getString(STATE_CURRENT_SCREEN)
             ?.let { value -> runCatching { Screen.valueOf(value) }.getOrNull() }
             ?: return false
-        return when (screen) {
-            Screen.CreateConfig -> {
+        return when (val policy = screenRouter.destination(screen).restorePolicy) {
+            RestorePolicy.None -> false
+            RestorePolicy.Direct -> {
+                screenRouter.navigate(screen)
+                true
+            }
+            is RestorePolicy.AsParent -> {
+                screenRouter.navigate(policy.screen)
+                true
+            }
+            RestorePolicy.RecipeDraft -> {
                 val draft = savedInstanceState.getString(STATE_RECIPE_DRAFT)
                     ?.let { RecipeFormDraft.fromJson(it) }
                 if (draft == null) {
@@ -2244,35 +2262,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     true
                 }
             }
-            Screen.Terminal -> {
-                showTerminal()
-                true
-            }
-            Screen.Settings -> {
-                showSettings()
-                true
-            }
-            Screen.ThemeSettings -> {
-                showThemeSettings()
-                true
-            }
-            Screen.Resources -> {
-                showResources()
-                true
-            }
-            Screen.ResourceSearch -> {
-                showResources()
-                true
-            }
-            Screen.ResourceManage -> {
-                showResourceManage()
-                true
-            }
-            Screen.ResourceMore -> {
-                showResources()
-                true
-            }
-            Screen.Workbench -> {
+            RestorePolicy.WorkbenchUrl -> {
                 val url = savedInstanceState.getString(STATE_WORKBENCH_URL).orEmpty()
                 if (url.isBlank()) {
                     false
@@ -2281,7 +2271,6 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
                     true
                 }
             }
-            else -> false
         }
     }
 
@@ -2455,7 +2444,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showConsole() {
-        currentScreen = Screen.Console
+        enterScreen(Screen.Console)
         dropZoneStatus = dropZoneManager.prepareDropZone()
         currentRecipes = recipeLoader.loadAllRecipes()
         refreshRecipeRuntimeStates(currentRecipes)
@@ -2495,7 +2484,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             requestRuntimePanelSummaryRefresh(force = true)
         }
         pruneRunManagementPendingProcessStops()
-        currentScreen = Screen.Processes
+        enterScreen(Screen.Processes)
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         val taskSnapshot = TaskManagerStore.snapshot.value
@@ -2542,7 +2531,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             terminalBottomNavigation?.visibility = if (isTerminalDetailMode) View.GONE else View.VISIBLE
             return
         }
-        currentScreen = Screen.Terminal
+        enterScreen(Screen.Terminal)
         isTerminalDetailMode = false
         applyKiteTerminalTheme()
         root.setBackgroundColor(tokens.pageBackground)
@@ -2648,10 +2637,13 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun dispatchLegacyScreen(screen: Screen) {
         when (screen) {
             Screen.Console -> showConsole()
+            Screen.Terminal -> showTerminal()
             Screen.Settings -> showSettings()
             Screen.ThemeSettings -> showThemeSettings()
             Screen.Resources -> showResources()
-            // 带 arg 或条件复杂的 Screen 暂不在无参路由分发,保留各自入口
+            Screen.ResourceManage -> showResourceManage()
+            Screen.Processes -> showKiteProcessOverview()
+            // 带参数或条件复杂的 Screen 保留各自入口。
             else -> Unit
         }
     }
@@ -2675,10 +2667,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showSettings() {
-        currentScreen = Screen.Settings
+        enterScreen(Screen.Settings)
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
-        root.addView(topBar("设置") { showConsole() })
+        root.addView(topBar("设置", ::requestNavigationBack))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -2829,10 +2821,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         }
 
     private fun showThemeSettings() {
-        currentScreen = Screen.ThemeSettings
+        enterScreen(Screen.ThemeSettings)
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
-        root.addView(topBar("主题") { showSettings() })
+        root.addView(topBar("主题", ::requestNavigationBack))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -2862,7 +2854,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showResources() {
         // T7:走 Fragment 路径。
         currentResourceDetailId = null
-        currentScreen = Screen.Resources
+        enterScreen(Screen.Resources)
         ensureBundledToolBootstrapIfNeeded("show_resources")
         clearRootForScreen()
         root.visibility = View.GONE
@@ -2922,7 +2914,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showResourceSearch(initialQuery: String = currentResourceSearchQuery) {
         // T7:走 Fragment 路径。
-        currentScreen = Screen.ResourceSearch
+        enterScreen(Screen.ResourceSearch)
         currentResourceDetailId = null
         currentResourceSearchQuery = initialQuery.trim()
         resourceSearchRenderKey = ""
@@ -2961,7 +2953,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun resourceSearchTopBar(searchInput: EditText): View = row {
         setPadding(dp(16), dp(12), dp(16), dp(8))
         gravity = Gravity.CENTER_VERTICAL
-        addView(iconButton("‹", dp(44), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { showResources() })
+        addView(iconButton("‹", dp(44), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { requestNavigationBack() })
         addView(FrameLayout(context).apply {
             background = roundedBox(tokens.surfaceElevated, tokens.border, dp(22).toFloat())
             layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply {
@@ -3663,7 +3655,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showResourceManage() {
         // T7:走 Fragment 路径(ResourceManageFragment 壳 + 复用 Activity 渲染)。
-        currentScreen = Screen.ResourceManage
+        enterScreen(Screen.ResourceManage)
         resourceManageBinding = null
         clearRootForScreen()
         root.visibility = View.GONE
@@ -3677,14 +3669,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     override fun renderResourceManageInto(container: ViewGroup) {
         rootHost.setBackgroundColor(tokens.pageBackground)
         container.setBackgroundColor(tokens.pageBackground)
-        container.addView(topBar("资源管理") {
-            // 退出 Fragment 回资源首页
-            supportFragmentManager.findFragmentByTag(TAG_RESOURCE_MANAGE_FRAGMENT)?.let { f ->
-                supportFragmentManager.beginTransaction().remove(f).commitAllowingStateLoss()
-            }
-            root.visibility = View.VISIBLE
-            showResources()
-        })
+        container.addView(topBar("资源管理", ::requestNavigationBack))
         container.addView(ScrollView(this).apply {
             val host = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -4845,7 +4830,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val requestId = ++resourceDetailRequestSerial
         resourceDetailInFlightKey = requestKey
         currentResourceDetailId = resourceId
-        currentScreen = Screen.ResourceDetail
+        enterScreen(Screen.ResourceDetail)
         // T7:走 Fragment 路径。把渲染(含异步线程)交给 renderResourceDetailInto。
         clearRootForScreen()
         root.visibility = View.GONE
@@ -5136,7 +5121,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         row {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, dp(8))
-            addView(iconButton("‹", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { showResources() })
+            addView(iconButton("‹", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { requestNavigationBack() })
             addView(View(context), LinearLayout.LayoutParams(0, dp(32), 1f))
             addView(iconButton("•••", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) {
                 showResourceMoreActions(item)
@@ -5147,7 +5132,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         row {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, dp(8))
-            addView(iconButton("‹", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { showResources() })
+            addView(iconButton("‹", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) { requestNavigationBack() })
             addView(View(context), LinearLayout.LayoutParams(0, dp(32), 1f))
             if (initialItem != null) {
                 addView(iconButton("•••", dp(32), Color.TRANSPARENT, tokens.textPrimary, dp(14)) {
@@ -5370,9 +5355,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showResourceRawJson(item: ResourceItem) {
         val latestItem = cachedResourceCatalog?.firstOrNull { it.id == item.id } ?: item
         currentResourceDetailId = latestItem.id
-        currentScreen = Screen.ResourceRawJson
+        enterScreen(Screen.ResourceRawJson) { showResourceDetail(latestItem.id, latestItem) }
         clearRootForScreen()
-        root.addView(topBar("原始 JSON") { showResourceDetail(latestItem.id, latestItem) })
+        root.addView(topBar("原始 JSON", ::requestNavigationBack))
         root.addView(ScrollView(this).apply {
             addView(TextView(context).apply {
                 text = resourceRawJsonForUi(latestItem)
@@ -7318,10 +7303,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showResourceMoreActions(item: ResourceItem) {
         currentResourceDetailId = item.id
-        currentScreen = Screen.ResourceMore
+        enterScreen(Screen.ResourceMore) { showResourceDetail(item.id) }
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
-        root.addView(topBar("资源管理") { showResourceDetail(item.id) })
+        root.addView(topBar("资源管理", ::requestNavigationBack))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -9189,7 +9174,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val surfaceSignature = cardRunSurfaceSignature(recipe, state, actionRecipe, surfaceState)
         applyCardRunSystemBarsForSurface(state.surface)
         if (refreshVisibleCardRunSurfaceInsteadOfRebuild(surfaceSignature, state, surfaceState)) return
-        currentScreen = Screen.CardRun
+        enterScreen(Screen.CardRun)
         root.setBackgroundColor(Color.rgb(246, 247, 249))
         clearRootForScreen()
         cardRunSurfaceSignature = surfaceSignature
@@ -9310,7 +9295,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     private fun showCardRunLoadingSurface(recipe: KiteRecipe, message: String) {
-        currentScreen = Screen.CardRun
+        enterScreen(Screen.CardRun)
         root.setBackgroundColor(Color.rgb(246, 247, 249))
         clearRootForScreen()
         val state = runtimeStateFor(recipe)
@@ -12889,7 +12874,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         row {
             setPadding(dp(16), dp(12), dp(16), dp(8))
             gravity = Gravity.CENTER_VERTICAL
-            addView(iconButton("‹", dp(42), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { showConsole() })
+            addView(iconButton("‹", dp(42), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { requestNavigationBack() })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -16784,7 +16769,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun showRecipeEditor(recipe: KiteRecipe) = showRecipeForm(recipe)
 
     private fun showRecipeForm(recipe: KiteRecipe?, draft: RecipeFormDraft? = null) {
-        currentScreen = Screen.CreateConfig
+        enterScreen(Screen.CreateConfig, ::handleRecipeFormBack)
         editingRecipe = recipe
         formSteps.clear()
         formSteps.addAll(draft?.steps?.map { it.copy() } ?: recipe?.steps?.map { RecipeStepDraft.fromStep(it) } ?: emptyList())
@@ -18625,7 +18610,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
      * 这是 P2 第一个走 Fragment 的 Screen,验证整套机制。
      */
     private fun routeToRecipeRawJsonFragment() {
-        currentScreen = Screen.RecipeDetail
+        enterScreen(Screen.RecipeDetail, ::exitRecipeRawJson)
         clearRootForScreen()
         root.visibility = View.GONE
         val recipeId = pendingRawJsonRecipeId ?: return
@@ -18636,7 +18621,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     }
 
     /** 退出 RecipeRawJson Fragment:恢复 root,回到编辑器。 */
-    override fun onExitRecipeRawJson() {
+    private fun exitRecipeRawJson() {
         supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT)?.let { fragment ->
             supportFragmentManager.beginTransaction().remove(fragment).commitAllowingStateLoss()
         }
@@ -18644,6 +18629,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         // 回到编辑器:用最近一次记录的 recipe
         val recipe = pendingRawJsonRecipeId?.let { id -> latestRecipeById(id) }
         if (recipe != null) showRecipeEditor(recipe) else showConsole()
+    }
+
+    override fun onRecipeRawJsonBackRequested() {
+        requestNavigationBack()
     }
 
     /** RecipeRawJsonFragment.RecipeProvider 实现:按 id 加载最新 recipe。 */
@@ -18799,9 +18788,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         entry: CardRunHistoryEntry,
         onStepReport: (CardRunHistoryStep) -> Unit
     ) {
-        currentScreen = screen
+        enterScreen(screen, backAction)
         clearRootForScreen()
-        root.addView(topBar(title, backAction))
+        root.addView(topBar(title, ::requestNavigationBack))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -18907,9 +18896,9 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         backAction: () -> Unit,
         step: CardRunHistoryStep
     ) {
-        currentScreen = screen
+        enterScreen(screen, backAction)
         clearRootForScreen()
-        root.addView(topBar("历史 SH 报告", backAction))
+        root.addView(topBar("历史 SH 报告", ::requestNavigationBack))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -19539,7 +19528,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
 
     private fun showWorkbench(url: String, source: String, recipe: KiteRecipe?) {
         lastWorkbenchUrl = url
-        currentScreen = Screen.Workbench
+        enterScreen(Screen.Workbench)
         root.setBackgroundColor(tokens.pageBackground)
         clearRootForScreen()
         val parent = webView.parent
@@ -19555,7 +19544,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             surfaceHost.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             addCardRunFloatingCapsule(surfaceHost, recipe, state, recipe, state)
         } else {
-            root.addView(topBar("Kite 工作台") { showConsole() })
+            root.addView(topBar("Kite 工作台", ::requestNavigationBack))
             root.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         webShell.open(url, recipeId = recipe?.id, recipeName = recipe?.name, openSource = source)
@@ -19564,7 +19553,7 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
     private fun createTopBar(title: String, saveAction: Boolean = false): View = row {
         setPadding(dp(18), dp(14), dp(18), dp(10))
         gravity = Gravity.CENTER_VERTICAL
-        addView(iconButton("‹", dp(44), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { handleRecipeFormBack() })
+        addView(iconButton("‹", dp(44), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { requestNavigationBack() })
         addView(TextView(context).apply {
             text = title
             textSize = 15f
@@ -19584,10 +19573,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
         val draft = snapshotRecipeFormDraft() ?: recipeMoreDraft ?: return
         recipeMoreDraft = draft.withLaunchState()
         val activeRecipe = editingRecipe
-        currentScreen = Screen.RecipeMore
+        enterScreen(Screen.RecipeMore, ::returnToRecipeFormFromMore)
         clearRootForScreen()
         root.setBackgroundColor(tokens.pageBackground)
-        root.addView(topBar("更多配置") { returnToRecipeFormFromMore() })
+        root.addView(topBar("更多配置", ::requestNavigationBack))
         root.addView(ScrollView(this).apply {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -20002,10 +19991,10 @@ open class MainActivity : AppCompatActivity(), TerminalChromeHost,
             Color.blue(tokens.surfaceElevated)
         ))
         elevation = dp(6).toFloat()
-        addView(navItem("▦", "配置", currentScreen == Screen.Console) { showConsole() })
-        addView(navItem(">_", "终端", currentScreen == Screen.Terminal) { showTerminal() })
-        addView(navItem("≡", "资源", currentScreen == Screen.Resources || currentScreen == Screen.ResourceManage || currentScreen == Screen.ResourceDetail || currentScreen == Screen.ResourceMore || currentScreen == Screen.ResourceRawJson) { showResources() })
-        addView(navItem("⚙", "设置", currentScreen == Screen.Settings || currentScreen == Screen.ThemeSettings) { showSettings() })
+        addView(navItem("▦", "配置", currentScreen == Screen.Console) { screenRouter.navigate(Screen.Console) })
+        addView(navItem(">_", "终端", currentScreen == Screen.Terminal) { screenRouter.navigate(Screen.Terminal) })
+        addView(navItem("≡", "资源", currentScreen == Screen.Resources || currentScreen == Screen.ResourceManage || currentScreen == Screen.ResourceDetail || currentScreen == Screen.ResourceMore || currentScreen == Screen.ResourceRawJson) { screenRouter.navigate(Screen.Resources) })
+        addView(navItem("⚙", "设置", currentScreen == Screen.Settings || currentScreen == Screen.ThemeSettings) { screenRouter.navigate(Screen.Settings) })
     }
 
     private fun navItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit): View = LinearLayout(this).apply {

@@ -7,7 +7,7 @@
 ```text
 方向：D1 导航与返回规则统一
 状态：in_progress
-当前任务：Destination + BackPolicy 合同已建立，准备接入 Activity 返回入口
+当前任务：统一系统 back、顶部返回、Screen 登记和恢复入口
 代码分支：main
 代码策略：会话分支，Git 单主线，阶段性本地提交
 ```
@@ -72,6 +72,14 @@
 
 ## D1 执行记录
 
+### 当前节点三问
+
+- 目标是什么：让 `MainActivity` 的系统 back、顶部返回、Screen 登记和状态恢复统一经过 D1 导航合同。
+- 完成标准是什么：父页面、上下文、系统、CardRun 和恢复边界有自动化证据；全量单测、Debug 构建和 OnePlus 8T 验收通过。
+- 依赖是否满足：P0 公共安全网已完成，`Destination + BackPolicy + RestorePolicy` 合同及纯测试已提交，依赖满足。
+
+边界：不改页面视觉，不修改资源或运行状态事实，不调整浏览器认证协议，不改变任务生命周期。
+
 ### 导航合同与矩阵
 
 - 17 个 `currentScreen` 写入点已盘点，共覆盖 16 个 Screen。
@@ -81,3 +89,21 @@
 - 新增 7 条纯合同测试，目标完整性、父子关系、上下文、恢复和委托全部通过。
 
 下一步：把 MainActivity 的系统 back、顶部返回、Screen 登记和状态恢复接入同一合同。
+
+### Activity 与显示面返回入口接入
+
+- `MainActivity` 已改用生命周期感知的 `OnBackPressedDispatcher`，统一解析 Web、CardRun、上下文、父页面和系统返回。
+- 17 个 Screen 写入点全部经过 `enterScreen`，顶部返回和底部主导航不再各自维护返回目标。
+- Recipe 原始 JSON、资源更多/原始 JSON、历史详情和编辑草稿保留上下文返回动作。
+- 终端详情顶部返回改为提交统一 back 请求，由 Fragment 自己的回调优先消费。
+- 状态恢复由 `RestorePolicy` 驱动，保留原有白名单和缺少参数时不恢复的边界。
+- `MainActivityScreenRoutingTest` 新增资源搜索、资源详情、进程管理和恢复边界覆盖。
+- 静态检查禁止直接写 `currentScreen = Screen.*` 和恢复旧 `onBackPressed()` 分支。
+
+验证：
+
+- `ScreenRouterContractTest + MainActivityScreenRoutingTest`：`BUILD SUCCESSFUL`。
+- `scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：通过。
+- `git diff --check`：通过，仅有既存换行符提示。
+
+下一步：补 Web 历史和终端详情优先消费的自动化证据，再做全量构建与 OnePlus 8T 验收。

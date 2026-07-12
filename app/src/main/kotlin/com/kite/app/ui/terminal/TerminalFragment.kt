@@ -341,7 +341,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 visibility = View.INVISIBLE
                 setOnClickListener(null)
             } else {
-                setOnClickListener { showListPage() }
+                setOnClickListener { requireActivity().onBackPressedDispatcher.onBackPressed() }
             }
         }
         setupTerminalComposer()

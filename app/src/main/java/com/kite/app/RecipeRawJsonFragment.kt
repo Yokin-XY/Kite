@@ -68,7 +68,7 @@ class RecipeRawJsonFragment : Fragment() {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#0F1115"))
             // 顶栏:复用 UiKit.topBar
-            addView(ui.topBar(ctx, "原始 JSON") { host?.onExitRecipeRawJson() })
+            addView(ui.topBar(ctx, "原始 JSON") { host?.onRecipeRawJsonBackRequested() })
             // JSON 文本
             addView(ScrollView(ctx).apply {
                 addView(TextView(ctx).apply {
@@ -88,8 +88,8 @@ class RecipeRawJsonFragment : Fragment() {
     }
 
     interface RecipeRawJsonHost {
-        /** 用户点了返回,由宿主决定回退到哪个 Screen(通常编辑器)。 */
-        fun onExitRecipeRawJson()
+        /** 顶栏只提交返回请求，实际目标由统一导航合同决定。 */
+        fun onRecipeRawJsonBackRequested()
     }
 
     companion object {

@@ -31,6 +31,13 @@ class MainActivityScreenRoutingTest {
             .create(savedInstanceState)
             .get()
 
+    private fun createResumedActivity(): MainActivity =
+        Robolectric.buildActivity(MainActivity::class.java)
+            .create()
+            .start()
+            .resume()
+            .get()
+
     /** 反射调用 private 无参 show* 方法。 */
     private fun invokeShow(activity: MainActivity, methodName: String) {
         val method = MainActivity::class.java.getDeclaredMethod(methodName)
@@ -60,10 +67,7 @@ class MainActivityScreenRoutingTest {
     }
 
     private fun setCurrentScreen(activity: MainActivity, screenName: String) {
-        val field = MainActivity::class.java.getDeclaredField("currentScreen")
-        field.isAccessible = true
-        val screen = field.type.enumConstants.first { (it as Enum<*>).name == screenName }
-        field.set(activity, screen)
+        activity.enterScreenForTest(screenName)
     }
 
     private fun resourceItemPatchRequestSerial(activity: MainActivity): Long {
@@ -164,24 +168,54 @@ class MainActivityScreenRoutingTest {
 
     @Test
     fun `从 Settings 按 back 应回到 Console`() {
-        val activity = createActivity()
+        val activity = createResumedActivity()
         invokeShow(activity, "showSettings")
         assertEquals("Settings", activity.currentScreenNameForTest())
 
-        activity.onBackPressed()
+        activity.onBackPressedDispatcher.onBackPressed()
 
         assertEquals("Console", activity.currentScreenNameForTest())
     }
 
     @Test
     fun `从 ThemeSettings 按 back 应回到 Settings`() {
-        val activity = createActivity()
+        val activity = createResumedActivity()
         invokeShow(activity, "showThemeSettings")
         assertEquals("ThemeSettings", activity.currentScreenNameForTest())
 
-        activity.onBackPressed()
+        activity.onBackPressedDispatcher.onBackPressed()
 
         assertEquals("Settings", activity.currentScreenNameForTest())
+    }
+
+    @Test
+    fun `从 ResourceSearch 按 back 应回到 Resources`() {
+        val activity = createResumedActivity()
+        setCurrentScreen(activity, "ResourceSearch")
+
+        activity.onBackPressedDispatcher.onBackPressed()
+
+        assertEquals("Resources", activity.currentScreenNameForTest())
+    }
+
+    @Test
+    fun `从 ResourceDetail 按 back 应回到 Resources`() {
+        val activity = createResumedActivity()
+        setCurrentScreen(activity, "ResourceDetail")
+
+        activity.onBackPressedDispatcher.onBackPressed()
+
+        assertEquals("Resources", activity.currentScreenNameForTest())
+    }
+
+    @Test
+    fun `从 Processes 按 back 应回到 Console`() {
+        val activity = createResumedActivity()
+        setCurrentScreen(activity, "Processes")
+
+        activity.onBackPressedDispatcher.onBackPressed()
+
+        assertEquals("Console", activity.currentScreenNameForTest())
     }
 
     // ------------------------------------------------------------------
@@ -196,5 +230,23 @@ class MainActivityScreenRoutingTest {
         val activity = createActivity(bundle)
 
         assertEquals("Settings", activity.currentScreenNameForTest())
+    }
+
+    @Test
+    fun `ResourceSearch 恢复时应校准到 Resources`() {
+        val bundle = Bundle().apply { putString("kite_current_screen", "ResourceSearch") }
+
+        val activity = createActivity(bundle)
+
+        assertEquals("Resources", activity.currentScreenNameForTest())
+    }
+
+    @Test
+    fun `缺少资源上下文时不恢复 ResourceDetail`() {
+        val bundle = Bundle().apply { putString("kite_current_screen", "ResourceDetail") }
+
+        val activity = createActivity(bundle)
+
+        assertEquals("Console", activity.currentScreenNameForTest())
     }
 }
