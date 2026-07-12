@@ -210,3 +210,13 @@
 理由：首页进入编辑器后处于 detached，保存信号可能发生在首页停止收集期间。无重放瞬时信号会导致配置已经写入共享目录，而首页仍投影旧集合。给页面增加延时刷新、轮询或本地复制目录都会再次形成平行事实。
 
 影响：实时信号负责低延迟，缓存快照负责同一进程内恢复，冷启动仍从 Loader 加载真实目录。资源模板等仍需直接写共享目录的入口必须调用 Gateway 失效合同；状态拥有者必须在发信号前完成事实更新，页面不得用二次点击或整页定时刷新补偿漏信号。
+
+## ADR-S021 运行编排以实例代次和结构化事件为边界
+
+状态：accepted
+
+决策：`RunOrchestrator` 只通过 `RunStateGateway` 读写运行事实，只通过 `RecipeExecutor` 分派所有步骤和停止请求。每次执行以 `instanceId + createdAt` 作为实例代次；同一代次同一步骤只允许一个在途执行，回调必须携带代次和步骤索引，迟到或旧代次事件一律丢弃。
+
+理由：旧链同时依靠 Activity 字段、当前页面、`runId` 和步骤索引判断回调归属。页面重建、手工继续或停止后，旧回调仍可能把状态写回运行中；终端续跑还依赖 `pendingTerminalFlow` 页面字段，无法从 `CardRunStore` 独立恢复。
+
+影响：`CardRunStore` 继续是运行事实唯一拥有者，执行适配器只返回 `Progress/Completed/AwaitingUser/Failed` 等结构化事件。页面不参与步骤推进；等待步骤的下一步由当前运行事实推导。Bridge、终端、Web、X11 和 Android 能力只能位于 Platform 适配器，Application 编排层不得引用 Android/View/Shell。

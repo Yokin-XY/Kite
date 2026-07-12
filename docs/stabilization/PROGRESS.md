@@ -7,7 +7,7 @@
 ```text
 方向：第二阶段业务架构迁移
 状态：in_progress
-当前任务：T005 首页卡片与配方编辑模块，正在建立共享合同并迁移首页
+当前任务：T006 运行编排与执行引擎，正在盘点执行车道并建立纯合同
 代码分支：main
 代码策略：单会话连续推进 D1-D5，Git 单主线，阶段性本地提交
 ```
@@ -788,3 +788,40 @@ T005 配方编辑器迁移结果：
 T005 状态：completed。首页与配方编辑已经成为两个独立 Feature，旧 Activity 所有权已删除。
 
 下一步：进入 T006；先盘点开始、步骤推进、停止和结果回写的真实执行入口，再建立与 View 无关的运行编排合同。
+
+## T006 运行编排与执行引擎
+
+### 三问自检
+
+目标是什么？按 `PLAYBOOK.md` 的 T006，将配方开始、步骤分派、继续、停止和结果解释从页面所有权迁到与 Android View 无关的运行编排层；`CardRunStore` 继续是运行事实唯一拥有者。
+
+完成标准是什么？shell、terminal、Web、X11 与 Android action 通过统一执行接口；开始、继续、停止、取消、失败及残留确认不依赖页面可见性；同一 `instanceId` 不产生重复执行链；执行层不引用 Activity、Fragment、View、Toast 或导航。
+
+依赖是否满足？T005 已完成并提交为 `d0f8bfb`；首页和编辑器只提交动作计划，不再直接执行步骤，T006 可以开始。
+
+### 动作运行车道审计
+
+```text
+现象：运行事实已经集中，但执行链仍由 MainActivity 维持，页面销毁或不可见会影响终端续跑和结果处理。
+用户动作：开始、继续、完成当前步骤、停止、取消。
+参与模块：KiteRecipeActionCoordinator、MainActivity、CardRunStore、KiteBridgeClient、TerminalRuntimeHost、Web/X11 适配器。
+主车道：Orchestrator（步骤顺序与结果推进）。
+次车道：Run Instance、Runtime Prep、Runtime Surface、Execution Core。
+状态拥有者：CardRunStore。
+必须保留的伙伴机制：编排器写运行事实，执行适配器回传结构化事件，Shell 只消费 Effect 并绑定可见显示面。
+断裂点：startRecipe、executeRecipeStep、pendingTerminalFlow、stopRecipeByCardInstanceId、handleStopResultV2 和各步骤结果解释仍在 MainActivity。
+禁止层：不让 View 直接执行 PRoot/终端，不把运行事实复制到 Feature，不让执行核心调用页面导航或 Toast。
+所需证据：纯编排单测、架构静态护栏、全量单测/构建，以及 OnePlus 8T 开始/继续/停止真机链。
+```
+
+首个迁移段：先建立 `RunOrchestrator`、`RecipeExecutor` 与 `StopCoordinator` 的无 Android 合同，用测试锁定步骤分派、实例幂等、终端等待恢复、停止策略和迟到结果门禁；随后再逐段替换 Activity 入口。
+
+T006 合同层结果：
+
+- 新增 `RunStateGateway`、`RecipeExecutor`、结构化 `RecipeExecutionEvent` 和停止结果合同；Application 层不引用 Android、View、Shell、Bridge 或具体 Platform。
+- `RunOrchestrator` 以 `instanceId + createdAt` 锁定执行代次，同一实例同一步骤只保留一个 flight；迟到回调、停止后回调和旧代次回调不能覆盖当前事实。
+- `StopCoordinator` 将本地网页闭合、终端/进程停止、确认成功、人工 kill、超时和残留进程解释收成纯规则；只有确认无残留才落 `Stopped`。
+- `AndroidRunStateGateway` 只适配现有 `CardRunStore`，没有建立第二份运行状态。
+- 新增 6 项纯单测，覆盖五类步骤统一分派、重复启动、跨编排器终端续跑、停止后迟到结果、残留进程和本地网页闭合；全量单测、Debug 构建及运行车道静态检查通过。
+
+下一步：把进程级编排器装配到 `KiteAppGraph`，提取真实步骤执行适配器；先迁移开始和步骤推进，再迁移停止，不在同一改动中切换全部入口。

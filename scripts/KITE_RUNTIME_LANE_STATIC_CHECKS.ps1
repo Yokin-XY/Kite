@@ -50,6 +50,10 @@ $recipeEditorControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/fe
 $recipeEditorFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeEditorFragment.kt'
 $recipeEditorScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeEditorScreen.kt'
 $androidRecipeFeatureGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/recipes/AndroidRecipeFeatureGateway.kt'
+$runExecutionContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunExecutionContract.kt'
+$runOrchestratorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunOrchestrator.kt'
+$stopCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/StopCoordinator.kt'
+$androidRunStateGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRunStateGateway.kt'
 # T11 拆分后的 model 文件(Store 检查需合并 Models)
 $prootTelemetryModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/ProotTelemetryModels.kt'
 $runtimeHealthModelsPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/foundation/runtime/RuntimeHealthModels.kt'
@@ -149,6 +153,10 @@ $recipeEditorController = Read-Utf8 $recipeEditorControllerPath
 $recipeEditorFragment = Read-Utf8 $recipeEditorFragmentPath
 $recipeEditorScreen = Read-Utf8 $recipeEditorScreenPath
 $androidRecipeFeatureGateway = Read-Utf8 $androidRecipeFeatureGatewayPath
+$runExecutionContract = Read-Utf8 $runExecutionContractPath
+$runOrchestrator = Read-Utf8 $runOrchestratorPath
+$stopCoordinator = Read-Utf8 $stopCoordinatorPath
+$androidRunStateGateway = Read-Utf8 $androidRunStateGatewayPath
 
 Assert-True ($main -notmatch 'maybeRenderShellProgress') 'shell progress must not route through maybeRenderShellProgress.'
 Assert-True ($main -notmatch 'SHELL_PROGRESS_RENDER_INTERVAL_MS') 'shell progress render throttle must not imply whole-surface redraw.'
@@ -194,6 +202,13 @@ Assert-True ($recipeEditorController -notmatch '(?m)^import\s+(android\.|android
 Assert-True ($recipeEditorController -notmatch '\.(startRecipe|stopRecipe|executeRecipe|saveUserRecipe|deleteUserRecipe)\s*\(') 'Recipe editor controller must not bypass gateway or execute recipe steps.'
 Assert-True ($kiteAppGraph -match 'val recipeLoader: KiteRecipeLoader by lazy' -and $kiteAppGraph -match 'val cardGroupStore: KiteCardGroupStore by lazy' -and $kiteAppGraph -match 'val recipeFeatureGateway: RecipeFeatureGateway by lazy') 'Recipe loader, group store, and gateway must be process composition-root dependencies.'
 Assert-True ($kiteAppGraph -match 'fun createRecipeLoader\(\): KiteRecipeLoader = recipeLoader' -and $main -notmatch 'KiteCardGroupStore\(applicationContext\)') 'Shell callers must reuse process-owned recipe and group facts instead of constructing parallel stores.'
+Assert-True ($runExecutionContract -match 'interface RunStateGateway' -and $runExecutionContract -match 'interface RecipeExecutor' -and $runExecutionContract -match 'RecipeExecutionEvent') 'Run application contract must expose one state owner port, one executor port, and structured execution events.'
+Assert-True ($runOrchestrator -match 'class RunOrchestrator' -and $runOrchestrator -match 'executionFlights' -and $runOrchestrator -match 'validStateFor') 'Run orchestrator must enforce one execution flight per instance generation and reject stale events.'
+Assert-True ($stopCoordinator -match 'class StopCoordinator' -and $stopCoordinator -match 'remainingProcessIds' -and $stopCoordinator -match 'StopResolution') 'Stop coordinator must resolve confirmed stop and process residue before writing final state.'
+$runApplicationLayer = $runExecutionContract + "`n" + $runOrchestrator + "`n" + $stopCoordinator
+Assert-True ($runApplicationLayer -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|bridge\.|platform\.))') 'Run application layer must remain independent from Android, concrete bridge/platform adapters, and page navigation.'
+Assert-True ($runOrchestrator -notmatch 'Toast|startActivity|showConsole|showCardRunSurface|WebView|TerminalRuntimeHost|KiteBridgeClient') 'Run orchestrator must not perform page or execution-core work directly.'
+Assert-True ($androidRunStateGateway -match 'CardRunStore\.(registerRecipe|registeredRecipe|get|currentForRecipe|start|update)') 'Android run-state adapter must keep CardRunStore as the single run-fact owner.'
 Assert-True ($terminalFragment -match '(?s)detailBackCallback.*showListPage\(\)') 'terminal detail back callback must return to the terminal list first.'
 Assert-True ($terminalFragment -match '(?s)btnBackToSessions.*?onBackPressedDispatcher\.onBackPressed\(\)') 'terminal detail header must submit through the shared back dispatcher.'
 Assert-True ($main -match 'updateVisibleCardRunReport') 'report page must have local output binding.'
