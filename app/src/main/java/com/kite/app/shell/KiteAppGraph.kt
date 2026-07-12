@@ -9,6 +9,7 @@ import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunOrchestrator
+import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.browser.BrowserAuthSessionStore
 import com.kite.app.browser.BrowserLoopbackCallbackBridge
 import com.kite.app.browser.automation.BrowserAutomationSessionStore
@@ -27,6 +28,7 @@ import com.kite.app.platform.resources.AndroidResourceRunGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
 import com.kite.app.platform.runs.AndroidRecipeExecutor
 import com.kite.app.platform.runs.AndroidRunStateGateway
+import com.kite.app.platform.runtimemanagement.AndroidRuntimeManagementGateway
 
 /**
  * Kite 进程级组合根。这里只装配已有能力，不承载页面状态或业务流程。
@@ -56,6 +58,9 @@ internal class KiteAppGraph private constructor(context: Context) {
     }
     val recipeFeatureGateway: RecipeFeatureGateway by lazy {
         AndroidRecipeFeatureGateway.create(appContext, recipeLoader, cardGroupStore, createDropZoneManager())
+    }
+    val runtimeManagementGateway: RuntimeManagementGateway by lazy {
+        AndroidRuntimeManagementGateway(appContext)
     }
     val runExecutionEffectBus: RunExecutionEffectBus by lazy { RunExecutionEffectBus() }
     val runLifecycleEventHub: RunLifecycleEventHub by lazy { RunLifecycleEventHub() }

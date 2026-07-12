@@ -155,7 +155,7 @@ object TaskManagerStore {
     }
 
     fun endProcess(context: Context, item: TaskManagerProcessItem?, pid: Int) {
-        val ownerId = item?.prootOwnerStopId()
+        val ownerId = item?.let(TaskManagerProcessStopTargetResolver::ownerId)
         if (ownerId == null) {
             endProcess(context, pid)
             return
@@ -182,15 +182,6 @@ object TaskManagerStore {
     fun getProcess(processId: String): TaskManagerProcessItem? {
         return _snapshot.value.processes.firstOrNull { it.id == processId }
     }
-
-    private fun TaskManagerProcessItem.prootOwnerStopId(): String? =
-        runtimeOwnerId
-            ?.takeIf { id.startsWith("root-") }
-            ?.takeIf { ownerId ->
-                ownerId.startsWith("card:") ||
-                    ownerId.startsWith("resource:") ||
-                    ownerId.startsWith("terminal:")
-            }
 
     @Synchronized
     private fun clearPendingRefresh() {
@@ -525,5 +516,16 @@ object TaskManagerStore {
         }
         actions += TaskManagerAction.REFRESH
         return actions
+    }
+}
+
+internal object TaskManagerProcessStopTargetResolver {
+    fun ownerId(item: TaskManagerProcessItem): String? {
+        if (!item.id.startsWith("root-")) return null
+        return item.runtimeOwnerId?.takeIf { ownerId ->
+            ownerId.startsWith("card:") ||
+                ownerId.startsWith("resource:") ||
+                ownerId.startsWith("terminal:")
+        }
     }
 }

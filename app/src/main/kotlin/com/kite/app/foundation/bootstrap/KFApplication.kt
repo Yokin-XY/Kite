@@ -12,6 +12,8 @@ import com.kite.app.application.resources.ResourceFeatureDependenciesOwner
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.recipes.RecipeFeatureDependenciesOwner
 import com.kite.app.application.recipes.RecipeFeatureGateway
+import com.kite.app.application.runtimemanagement.RuntimeManagementDependenciesOwner
+import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kite.app.foundation.runtime.HostSelfAdbBridgeWorker
@@ -20,13 +22,17 @@ import com.kite.app.foundation.runtime.RuntimePressureResponder
 import com.kite.app.ui.terminal.TerminalUiPreferences
 import com.kite.app.shell.KiteAppGraph
 
-class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner {
+class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner,
+    RuntimeManagementDependenciesOwner {
 
     override val resourceFeatureGateway: ResourceFeatureGateway
         get() = KiteAppGraph.from(this).resourceFeatureGateway
 
     override val recipeFeatureGateway: RecipeFeatureGateway
         get() = KiteAppGraph.from(this).recipeFeatureGateway
+
+    override val runtimeManagementGateway: RuntimeManagementGateway
+        get() = KiteAppGraph.from(this).runtimeManagementGateway
 
     companion object {
         const val CHANNEL_SHELL = "kfshell_service"

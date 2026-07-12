@@ -36,8 +36,10 @@ $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
 $cardRunPath = Join-Path $Root 'app/src/main/java/com/kite/app/CardRunActivity.kt'
 $runSurfaceHostPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceHost.kt'
 $runtimeManagementSnapshotPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementSnapshot.kt'
+$runtimeManagementGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementGateway.kt'
 $runtimeManagementContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementFeatureContract.kt'
 $runtimeManagementProjectorPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementProjector.kt'
+$androidRuntimeManagementGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runtimemanagement/AndroidRuntimeManagementGateway.kt'
 $installSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/RunInstallWizardSurfaceBinding.kt'
 $legacyFeatureInstallBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunInstallWizardSurfaceBinding.kt'
 $screenRouterPath = Join-Path $Root 'app/src/main/java/com/kite/app/shell/AppNavigator.kt'
@@ -51,8 +53,10 @@ Assert-Architecture (Test-Path $mainPath) 'MainActivity source is missing.'
 Assert-Architecture (Test-Path $cardRunPath) 'CardRunActivity source is missing.'
 Assert-Architecture (Test-Path $runSurfaceHostPath) 'RunSurfaceHost source is missing.'
 Assert-Architecture (Test-Path $runtimeManagementSnapshotPath) 'Runtime-management snapshot contract is missing.'
+Assert-Architecture (Test-Path $runtimeManagementGatewayPath) 'Runtime-management gateway contract is missing.'
 Assert-Architecture (Test-Path $runtimeManagementContractPath) 'Runtime-management feature contract is missing.'
 Assert-Architecture (Test-Path $runtimeManagementProjectorPath) 'Runtime-management projector is missing.'
+Assert-Architecture (Test-Path $androidRuntimeManagementGatewayPath) 'Android runtime-management gateway is missing.'
 Assert-Architecture (Test-Path $installSurfaceBindingPath) 'Run install-wizard shell adapter is missing.'
 Assert-Architecture (-not (Test-Path $legacyFeatureInstallBindingPath)) 'Run install-wizard adapter must not live inside the run-surface feature.'
 Assert-Architecture (Test-Path $screenRouterPath) 'AppNavigator source is missing.'
@@ -63,8 +67,10 @@ if ($failures.Count -eq 0) {
     $cardRun = [System.IO.File]::ReadAllText($cardRunPath, [System.Text.Encoding]::UTF8)
     $runSurfaceHost = [System.IO.File]::ReadAllText($runSurfaceHostPath, [System.Text.Encoding]::UTF8)
     $runtimeManagementSnapshot = [System.IO.File]::ReadAllText($runtimeManagementSnapshotPath, [System.Text.Encoding]::UTF8)
+    $runtimeManagementGateway = [System.IO.File]::ReadAllText($runtimeManagementGatewayPath, [System.Text.Encoding]::UTF8)
     $runtimeManagementContract = [System.IO.File]::ReadAllText($runtimeManagementContractPath, [System.Text.Encoding]::UTF8)
     $runtimeManagementProjector = [System.IO.File]::ReadAllText($runtimeManagementProjectorPath, [System.Text.Encoding]::UTF8)
+    $androidRuntimeManagementGateway = [System.IO.File]::ReadAllText($androidRuntimeManagementGatewayPath, [System.Text.Encoding]::UTF8)
     $screenRouter = [System.IO.File]::ReadAllText($screenRouterPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
@@ -147,6 +153,14 @@ if ($failures.Count -eq 0) {
         $runtimeManagementSnapshot -match 'val\s+terminals:\s*List<RuntimeManagedTerminal>' -and
         $runtimeManagementSnapshot -match 'val\s+processes:\s*List<RuntimeManagedProcess>'
     ) 'Runtime management must consume one structured run, terminal, and process snapshot.'
+    Assert-Architecture (
+        $runtimeManagementGateway -match 'val\s+snapshots:\s*StateFlow<RuntimeManagementSnapshot>' -and
+        $runtimeManagementGateway -match 'fun\s+refresh\(force:\s*Boolean'
+    ) 'Runtime-management Feature must receive snapshots and refresh through one Application gateway.'
+    Assert-Architecture (
+        $androidRuntimeManagementGateway -match 'combine\(\s*CardRunStore\.runs,\s*TerminalSessionStore\.snapshot,\s*TaskManagerStore\.snapshot,\s*RuntimeHealthStore\.snapshot' -and
+        $androidRuntimeManagementGateway -match 'TaskManagerAction\.END_PROCESS in availableActions'
+    ) 'Android runtime-management gateway must combine the existing fact owners and preserve process action capabilities.'
     Assert-Architecture (
         $runtimeManagementContract -match 'sealed interface RuntimeManagementActionTarget' -and
         $runtimeManagementContract -match 'AwaitingConfirmation' -and

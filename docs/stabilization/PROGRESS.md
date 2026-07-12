@@ -1063,3 +1063,13 @@ T008 统一快照与投影合同结果：
 - 5 个纯单测覆盖完整归属、子实例折叠、待确认动作、Stopping 语义和系统/未归属分区；目标测试、Kotlin 编译、架构检查和差异检查通过。
 
 下一步：实现 Android `RuntimeManagementGateway`，把三个现有 Store 映射到统一快照，并先修复拥有者级进程停止目标解析；随后接确认型动作协调器。
+
+T008 Android Gateway 与停止目标修复结果：
+
+- 新增 `RuntimeManagementGateway`，由进程级 `KiteAppGraph` 组合并经 `KFApplication` 提供给 Feature；公开的是稳定快照合同，Android 实现保持 internal。
+- `AndroidRuntimeManagementGateway` 用一个 `combine` 合并 `CardRunStore.runs`、`TerminalSessionStore.snapshot`、`TaskManagerStore.snapshot` 与 `RuntimeHealthStore.snapshot`，统一生成卡片、终端、PID 和观测进程总数；刷新仍复用两个 Store 已有的单飞/限频机制。
+- owner 类型、系统进程识别、进程用途和可执行能力在 Platform 映射一次；Feature 不再依赖中文 owner label、命令字符串或 `TaskManagerAction`。普通 PID 只有真实包含 `END_PROCESS` 能力时才开放结束动作。
+- 修复 `TaskManagerStore` 的 owner-stop 目标解析：Task item 的 `id` 必须是 `root-*`，其 `runtimeOwnerId` 才允许为 `card:/resource:/terminal:`；旧实现错误地要求同一个字段同时满足两类前缀，导致 owner-stop 永远不可达。
+- 6 个相关目标测试覆盖 owner root、普通子 PID、后台/未归属 root、Platform owner 映射和系统进程识别；Kotlin 编译、架构检查、运行车道检查和差异检查通过。
+
+下一步：建立 `RuntimeManagementCoordinator`。刷新、停止运行、结束终端、结束 PID 与后台运行项动作统一由协调器提交；动作必须维持请求中/待确认/失败状态，禁止页面提前宣布已停止。

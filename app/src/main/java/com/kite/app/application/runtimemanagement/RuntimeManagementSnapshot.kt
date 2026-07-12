@@ -3,7 +3,7 @@ package com.kite.app.application.runtimemanagement
 import com.kite.app.run.CardRunState
 
 /** 运行管理消费的稳定事实快照，不包含 View、导航或页面展开状态。 */
-internal data class RuntimeManagementSnapshot(
+data class RuntimeManagementSnapshot(
     val runs: List<CardRunState> = emptyList(),
     val terminals: List<RuntimeManagedTerminal> = emptyList(),
     val processes: List<RuntimeManagedProcess> = emptyList(),
@@ -11,7 +11,7 @@ internal data class RuntimeManagementSnapshot(
     val refreshedAt: Long = 0L
 )
 
-internal data class RuntimeManagedTerminal(
+data class RuntimeManagedTerminal(
     val id: String,
     val title: String,
     val statusLabel: String,
@@ -21,7 +21,7 @@ internal data class RuntimeManagedTerminal(
     val isLive: Boolean = false
 )
 
-internal enum class RuntimeManagedOwnerKind {
+enum class RuntimeManagedOwnerKind {
     Card,
     Resource,
     Terminal,
@@ -30,7 +30,7 @@ internal enum class RuntimeManagedOwnerKind {
     Unattributed
 }
 
-internal data class RuntimeManagedProcess(
+data class RuntimeManagedProcess(
     val id: String,
     val pid: Int,
     val parentPid: Int = 0,
