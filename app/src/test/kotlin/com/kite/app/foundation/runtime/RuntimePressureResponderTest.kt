@@ -1,21 +1,14 @@
 package com.kite.app.foundation.runtime
 
 import android.content.ComponentCallbacks2
-import android.content.Context
-import androidx.test.core.app.ApplicationProvider
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 
-@RunWith(RobolectricTestRunner::class)
 class RuntimePressureResponderTest {
-    private val context by lazy { ApplicationProvider.getApplicationContext<Context>() }
-
     @Before
     fun setUp() {
         RuntimePressureResponder.resetForTests()
@@ -59,10 +52,10 @@ class RuntimePressureResponderTest {
     }
 
     @Test
-    fun onLowMemory_preservesLowMemorySignalWithForegroundActivity() {
+    fun lowMemorySignal_preservesLowMemoryStateWithForegroundActivity() {
         RuntimeLifecycleSignalStore.onActivityStarted("MainActivity", "main")
 
-        RuntimePressureResponder.onLowMemory(context)
+        RuntimeLifecycleSignalStore.onLowMemory()
 
         val signal = RuntimeLifecycleSignalStore.snapshot.value
         assertEquals(RuntimeAppVisibilityState.LOW_MEMORY, signal.visibilityState)
