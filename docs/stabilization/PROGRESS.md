@@ -6,8 +6,8 @@
 
 ```text
 方向：D1 导航与返回规则统一
-状态：in_progress
-当前任务：统一系统 back、顶部返回、Screen 登记和恢复入口
+状态：done
+当前任务：D1 已完成，等待其他会话按母板领取后续方向
 代码分支：main
 代码策略：会话分支，Git 单主线，阶段性本地提交
 ```
@@ -17,7 +17,7 @@
 | 方向 | 状态 | 当前结论 |
 | --- | --- | --- |
 | P0 公共行为安全网 | done | 静态检查、动作路由测试、全量单测和 Debug 构建通过 |
-| D1 导航与返回 | in_progress | 本会话专属，正在建立统一目标与返回合同 |
+| D1 导航与返回 | done | Destination、返回优先级、恢复策略和主要真机路径均已验收 |
 | D2 动作编排 | pending | 由其他会话领取 |
 | D3 状态投影 | pending | 由其他会话领取 |
 | D4 生命周期和资源预算 | pending | 由其他会话领取 |
@@ -120,3 +120,30 @@
 - `scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：通过。
 
 下一步：运行全量单测和 Debug 构建，随后在 OnePlus 8T 验收返回矩阵。
+
+### D1 最终验收
+
+提交：
+
+- `2656f82 [D1] align stabilization work by direction`
+- `99fdc6d [D1] define navigation destination contracts`
+- `3731c02 [D1] unify activity and surface back dispatch`
+- `60e85a0 [D1] verify surface back priority`
+
+自动化证据：
+
+- `scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1`：通过。
+- `:app:testDebugUnitTest`：`BUILD SUCCESSFUL`，28 秒。
+- `:app:assembleDebug`：`BUILD SUCCESSFUL`，16 秒。
+- 源码复核：所有 Screen 写入均经过 `enterScreen`；页面顶部返回均提交统一 back 请求，编辑弹窗的关闭动作除外。
+
+OnePlus 8T `3f8bbaad` 证据：
+
+- APK 覆盖安装成功；MainActivity 冷启动成功，进程持续存活。
+- 设置 -> 主题：系统 back 回设置；设置顶部返回回首页。
+- 资源 -> 搜索：系统 back 在键盘关闭后回资源页；顶部返回直接回资源页。
+- 首页 -> 运行管理：系统 back 回首页。
+- 终端列表 -> 新终端详情：第一次系统 back 回终端列表，第二次回首页。
+- 最终 logcat 未匹配到崩溃、ANR 或输入超时。
+
+D1 结论：导航合同和必要接入已完成；后续 D2-D5 只能消费 `ScreenRouter`、`enterScreen` 和统一 back 请求，不得恢复页面自行维护返回目标。
