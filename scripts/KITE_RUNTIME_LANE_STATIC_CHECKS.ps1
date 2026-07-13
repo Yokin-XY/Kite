@@ -53,10 +53,12 @@ $recipeEditorScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/featur
 $androidRecipeFeatureGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/recipes/AndroidRecipeFeatureGateway.kt'
 $runExecutionContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunExecutionContract.kt'
 $runOrchestratorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunOrchestrator.kt'
+$recipeActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RecipeActionWorkflow.kt'
 $runExecutionEffectBusPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunExecutionEffectBus.kt'
 $runLifecycleEventHubPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunLifecycleEventHub.kt'
 $stopCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/StopCoordinator.kt'
 $androidRecipeExecutorPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeExecutor.kt'
+$androidRecipeActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeActionGateway.kt'
 $androidRunStateGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRunStateGateway.kt'
 $resourceRunCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceRunCoordinator.kt'
 $resourceActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceActionWorkflow.kt'
@@ -193,10 +195,12 @@ $recipeEditorScreen = Read-Utf8 $recipeEditorScreenPath
 $androidRecipeFeatureGateway = Read-Utf8 $androidRecipeFeatureGatewayPath
 $runExecutionContract = Read-Utf8 $runExecutionContractPath
 $runOrchestrator = Read-Utf8 $runOrchestratorPath
+$recipeActionWorkflow = Read-Utf8 $recipeActionWorkflowPath
 $runExecutionEffectBus = Read-Utf8 $runExecutionEffectBusPath
 $runLifecycleEventHub = Read-Utf8 $runLifecycleEventHubPath
 $stopCoordinator = Read-Utf8 $stopCoordinatorPath
 $androidRecipeExecutor = Read-Utf8 $androidRecipeExecutorPath
+$androidRecipeActionGateway = Read-Utf8 $androidRecipeActionGatewayPath
 $androidRunStateGateway = Read-Utf8 $androidRunStateGatewayPath
 $resourceRunCoordinator = Read-Utf8 $resourceRunCoordinatorPath
 $resourceActionWorkflow = Read-Utf8 $resourceActionWorkflowPath
@@ -347,6 +351,9 @@ Assert-True ($startRecipe -match 'startRecipeWithOrchestrator' -and $startRecipe
 Assert-True ($startRecipeWithOrchestrator -match 'runOrchestrator\.start' -and $startRecipeWithOrchestrator -match 'ownerKind = previousState\.ownerKind' -and $startRecipeWithOrchestrator -match 'stepId = previousState\.stepId') 'RunOrchestrator start must preserve the existing CardRun owner identity.'
 Assert-True ($main -notmatch 'legacyStartRecipe|executeRecipeStep|runUbuntuStepWhenReady|handleSequenceShellResult') 'MainActivity must not retain a second recipe execution engine.'
 Assert-True ($kiteAppGraph -match 'val runOrchestrator: RunOrchestrator by lazy' -and $kiteAppGraph -match 'AndroidRecipeExecutor\(appContext, bridgeClient, diagnostics\)') 'Run orchestration and execution adapter must be process composition-root dependencies.'
+Assert-True ($recipeActionWorkflow -match 'planner\.plan' -and $recipeActionWorkflow -match 'gateway\.start' -and $recipeActionWorkflow -match 'gateway\.stop') 'Recipe actions must be planned and handed to one application workflow.'
+Assert-True ($androidRecipeActionGateway -match 'orchestrator\.start' -and $androidRecipeActionGateway -match 'orchestrator\.stop' -and $androidRecipeActionGateway -notmatch '(?m)^import\s+(android\.app\.Activity|android\.view\.|android\.widget\.|androidx\.fragment\.|com\.kite\.app\.feature)') 'Recipe action runtime access must stay in the platform adapter without page ownership.'
+Assert-True ($main -match 'recipeActionWorkflowCoordinator\.dispatch' -and $main -match 'applyRecipeActionEffects' -and $main -notmatch 'recipeActionCoordinator|executeRecipeActionRoute|KiteRecipeActionPlan') 'MainActivity must only interpret recipe action effects.'
 Assert-True ($androidResourceActionGateway -match 'runCoordinator\.start' -and $main -notmatch 'fun\s+startResourceRun\s*\(|ToolchainPackInstaller\.|resourceManifestLoader') 'Resource run intake must delegate preparation and execution to the process coordinator without page-owned execution.'
 Assert-True ($main -notmatch 'resourceManifestRecipeSteps|resourceManifestActionCommand|legacyResourceInstallStep|legacyResourceUninstallStep|markResourceRunSuccess|markResourceInstallFailed') 'MainActivity must not compile resource recipes or settle resource registry facts.'
 Assert-True ($runSurfaceContract -match 'sealed interface RunSurfaceContent' -and $runSurfaceContract -match 'val structureKey: String') 'Run surface feature must project explicit content and a stable structural binding key.'
@@ -410,11 +417,9 @@ Assert-True ($runtimeStatusRefresh -match 'bootstrapGateway\.refresh\(\)' -and $
 Assert-True ($androidRuntimeBootstrapGateway -match 'scope\.launch\(Dispatchers\.IO\)' -and $androidRuntimeBootstrapGateway -match 'WorkSurfaceRuntimeBridge\.isBaseImageReady' -and $androidRuntimeBootstrapGateway -match 'ToolchainPackInstaller\.bootstrapResourcesSettled') 'runtime readiness probes must run in the Android platform gateway off the UI thread.'
 Assert-True ($androidRuntimeBootstrapGateway -match 'BootstrapCoordinator\.snapshot' -and $androidRuntimeBootstrapGateway -match 'AssetExtractor\.rootfsProgress' -and $androidRuntimeBootstrapGateway -match 'RuntimeBootstrapProgress\.snapshot') 'runtime bootstrap gateway must compose existing bootstrap fact owners.'
 Assert-True ($kiteAppGraph -match 'val runtimeBootstrapGateway: RuntimeBootstrapGateway by lazy' -and $kiteAppGraph -match 'AndroidRuntimeBootstrapGateway\(appContext\)') 'runtime bootstrap gateway must be a process composition-root dependency.'
-$setRuntimeState = Function-Body $main 'setRuntimeState'
-Assert-True ($setRuntimeState -match 'shouldIgnoreRuntimeStateAfterUserStop' -and $main -match 'runtime_state_ignored_after_user_stop') 'CardRun state updates must ignore stale runtime callbacks after a user stop.'
-Assert-True ($main -match 'current\.status != RecipeRunStatus\.Stopping && current\.status != RecipeRunStatus\.Stopped' -and $main -match 'status == RecipeRunStatus\.BridgeUnavailable') 'stale callback guard must protect Stopping/Stopped instances from late runtime result writes.'
-Assert-True ($setRuntimeState -match 'clearFocusedRunInstance\(state\.instanceId\)' -and $main -match 'private fun clearFocusedRunInstance' -and $main -notmatch 'activeRunInstanceIds|runtimeStates') 'stopped card runs must clear shell focus without retaining a second run-state index.'
-Assert-True ($main -match 'CardRunStore\.currentForRecipe\(recipe\.id\)\?\.instanceId') 'stale callback guard must still find stopped instances after the active index is cleared.'
+$handleRunStopResolved = Function-Body $main 'handleRunStopResolvedEffect'
+Assert-True ($handleRunStopResolved -match 'focusedRunInstanceId == state\.instanceId' -and $handleRunStopResolved -match 'focusedRunInstanceId = null') 'resolved stops must clear only the matching shell display focus.'
+Assert-True ($main -notmatch 'fun\s+setRuntimeState\s*\(|shouldIgnoreRuntimeStateAfterUserStop|activeRunInstanceIds|runtimeStates') 'MainActivity must not retain a parallel runtime-state writer or stale-callback interpreter.'
 Assert-True ($taskManagerStore -match '(?s)fun endProcess\(context: Context, pid: Int\).*ContainerProcessStore\.terminate\(context\.applicationContext, pid, force = true\)') 'task manager pid-only manual end-process must keep force termination fallback.'
 Assert-True ($taskManagerStore -match 'fun endProcess\(context: Context, item: TaskManagerProcessItem' -and $taskManagerStore -match 'ProotOwnerProcessTerminator\.terminate\(appContext, ownerId\)' -and $taskManagerStore -match 'TaskManagerProcessStopTargetResolver::ownerId' -and $taskManagerStore -match 'internal object TaskManagerProcessStopTargetResolver' -and $taskManagerStore -match 'item\.id\.startsWith\("root-"\)' -and $taskManagerStore -match 'ownerId\.startsWith\("card:"\)' -and $taskManagerStore -match 'ownerId\.startsWith\("resource:"\)' -and $taskManagerStore -match 'ownerId\.startsWith\("terminal:"\)' -and $taskManagerStore -notmatch 'missedOwner') 'task manager manual end-process must reserve owner stop for root rows; concrete process rows must stay pid-only.'
 Assert-True ($androidRuntimeManagementGateway -match 'TaskManagerStore\.endProcess\(appContext, item, pid\)') 'runtime management manual process stop must pass owner facts through the Android gateway.'
@@ -537,13 +542,8 @@ Assert-True ($cardRunStore -match 'status = CardRunStatus\.Failed' -and $cardRun
 Assert-True ($cardRunStore -match 'normalizedHistoryAfterProcessRestore' -and $cardRunStore -match 'error = error\.ifBlank \{ PROCESS_RESTORE_ABORTED_MESSAGE \}') 'process-restore history must preserve an abnormal-exit error.'
 Assert-True ($cardRunStore -match 'shouldIgnoreStoppedRuntimeWrite' -and $cardRunStore -match 'this\.status != CardRunStatus\.Stopped' -and $cardRunStore -match 'CardRunStatus\.Running') 'CardRunStore must reject stale runtime writes that try to revive a stopped card.'
 
-$stopRecipe = Function-Body $main 'stopRecipe'
 $stopRecipeByCardInstanceId = Function-Body $main 'stopRecipeByCardInstanceId'
 $stopRecipeWithOrchestrator = Function-Body $main 'stopRecipeWithOrchestrator'
-Assert-True (
-    $stopRecipe -match 'stopRecipeByCardInstanceId\s*\(' -and
-    $stopRecipe -match 'previousState\.cardInstanceId'
-) 'stopRecipe must delegate to the cardInstanceId stop entry.'
 Assert-True ($stopRecipeByCardInstanceId -match 'CardRunStore\.get\(cardInstanceId\)') 'stop(cardInstanceId) must resolve the latest CardRunStore state.'
 Assert-True ($stopRecipeByCardInstanceId -match 'stopRecipeWithOrchestrator' -and $stopRecipeByCardInstanceId -notmatch 'legacyStopRecipeByCardInstanceId|recipeUsesProcessRunOrchestrator') 'All stop intake must submit through the process orchestrator.'
 Assert-True ($stopRecipeWithOrchestrator -match 'runOrchestrator\.stop\(previousState\.instanceId\)' -and $stopRecipeWithOrchestrator -notmatch 'activeRunInstanceIds|runtimeStates') 'Migrated stop must use the resolved CardRun instance and submit through RunOrchestrator without a shell-owned run index.'

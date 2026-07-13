@@ -66,6 +66,8 @@ $resourceActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/ap
 $androidResourceActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceActionGateway.kt'
 $cardRunSpecialRecipesPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/CardRunSpecialRecipes.kt'
 $legacyCardRunSpecialRecipesPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/CardRunSpecialRecipes.kt'
+$recipeActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RecipeActionWorkflow.kt'
+$androidRecipeActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeActionGateway.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
     (Join-Path $Root 'app/src/main/kotlin/com/kite/app')
@@ -106,6 +108,8 @@ Assert-Architecture (Test-Path $resourceActionWorkflowPath) 'Resource action app
 Assert-Architecture (Test-Path $androidResourceActionGatewayPath) 'Android resource action adapter is missing.'
 Assert-Architecture (Test-Path $cardRunSpecialRecipesPath) 'Application special-run recipe factory is missing.'
 Assert-Architecture (-not (Test-Path $legacyCardRunSpecialRecipesPath)) 'Special-run recipe factory must not live inside a Feature.'
+Assert-Architecture (Test-Path $recipeActionWorkflowPath) 'Recipe action application workflow is missing.'
+Assert-Architecture (Test-Path $androidRecipeActionGatewayPath) 'Android recipe action adapter is missing.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -138,6 +142,8 @@ if ($failures.Count -eq 0) {
     $resourceActionWorkflow = [System.IO.File]::ReadAllText($resourceActionWorkflowPath, [System.Text.Encoding]::UTF8)
     $androidResourceActionGateway = [System.IO.File]::ReadAllText($androidResourceActionGatewayPath, [System.Text.Encoding]::UTF8)
     $cardRunSpecialRecipes = [System.IO.File]::ReadAllText($cardRunSpecialRecipesPath, [System.Text.Encoding]::UTF8)
+    $recipeActionWorkflow = [System.IO.File]::ReadAllText($recipeActionWorkflowPath, [System.Text.Encoding]::UTF8)
+    $androidRecipeActionGateway = [System.IO.File]::ReadAllText($androidRecipeActionGatewayPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
             Where-Object { Test-Path $_ } |
@@ -349,6 +355,21 @@ if ($failures.Count -eq 0) {
         $main -match 'ResourceActionEffect\.OpenInstallWizard' -and
         $main -notmatch 'resourceCatalogDirty|resourceCatalog\(|resourceRuntimeFactsFromStore|observeResourceInstallSignals|showResourceInstallWizard'
     ) 'MainActivity must dispatch resource intent and interpret route effects without owning resource facts.'
+    Assert-Architecture (
+        $recipeActionWorkflow -match 'interface\s+RecipeActionGateway' -and
+        $recipeActionWorkflow -match 'planner\.plan' -and
+        $recipeActionWorkflow -notmatch 'android\.|androidx\.|CardRunStore|MainActivity|CardRunActivity'
+    ) 'Recipe action workflow must remain an Android-free application contract.'
+    Assert-Architecture (
+        $androidRecipeActionGateway -match 'orchestrator\.start' -and
+        $androidRecipeActionGateway -match 'orchestrator\.stop' -and
+        $androidRecipeActionGateway -notmatch 'MainActivity|CardRunActivity|android\.view|android\.widget|com\.kite\.app\.feature'
+    ) 'Recipe action adapter must own Store and orchestrator access without UI dependencies.'
+    Assert-Architecture (
+        $main -match 'recipeActionWorkflowCoordinator\.dispatch' -and
+        $main -match 'RecipeActionEffect\.OpenRun' -and
+        $main -notmatch 'recipeActionCoordinator|executeRecipeActionRoute|KiteRecipeActionPlan'
+    ) 'MainActivity must interpret recipe action effects instead of planning or executing recipe actions.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)

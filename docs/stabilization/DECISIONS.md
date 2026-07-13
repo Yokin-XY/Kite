@@ -480,3 +480,13 @@
 理由：两个 Activity Map 在启动、停止、浏览器回跳、桌面请求和后台 Effect 中分别补写，任何漏写都会让页面动作落到过期实例。它们既没有独立持久化语义，也没有比 Store 更多的真实信息，只是第二事实源。显示焦点可以随 Activity 销毁而丢失，运行事实不能。
 
 影响：运行停止只清除匹配的 Shell 焦点，不删除或复制 Store 事实。编辑器删除、投放区刷新、浏览器回跳和桌面请求不得再维护 Activity 运行索引。架构守卫锁定 Main 中 `runtimeStates/activeRunInstanceIds` 为零；多实例选择继续由显式实例和 Store 当前代次决定。
+
+## ADR-S048 配方动作计划与运行副作用属于 Application 工作流
+
+状态：accepted
+
+决策：首页和编辑器提交的 `KiteRecipeActionRequest` 统一进入 `RecipeActionWorkflowCoordinator`。已有 `KiteRecipeActionCoordinator` 继续只决定轻量计划；`AndroidRecipeActionGateway` 负责解析唯一 CardRun 事实、调用 `RunOrchestrator.start/stop`、记录诊断和落失败状态。MainActivity 只解释准备运行时、聚焦、打开/关闭独立运行窗口、回首页和离散消息 Effect。
+
+理由：旧 Main 虽复用了纯 Planner 和 RunOrchestrator，却仍自己解释每一种 Plan、选择实例、写失败事实和决定页面落点。首页与编辑器共享同一请求合同后，副作用继续留在 Activity 会让新入口再次复制分支。工作流收口既不改变执行引擎，也让动作合同可以纯单测。
+
+影响：MainActivity 不得出现 `KiteRecipeActionPlan`、`executeRecipeActionRoute` 或具体 Planner；Platform Gateway 不得依赖 Activity、View 或 Feature。现有首页启动时回 Console、编辑器启动时打开独立运行窗口、显式独立任务自动启动和停止后回 Console 的行为保持。迟到执行回调由 RunOrchestrator 代次与 CardRunStore 停止写保护处理，不再保留 Activity 级 stale callback 解释器。

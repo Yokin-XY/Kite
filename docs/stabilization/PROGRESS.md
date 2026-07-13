@@ -1307,3 +1307,12 @@ T011 运行事实副本清理结果：
 - 通用动作协调器、RunOrchestrator 与 Main 路由目标测试通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `3135 / 146 / 41 / 10 / 0`，其中 `runtimeStates` 引用已归零。
 
 下一步：迁出 Main 中通用配方动作计划的副作用解释，使 Application 工作流负责实例解析和 RunOrchestrator 调用，Shell 只执行打开运行窗口、导航、运行时准入和离散消息 Effect。
+
+T011 通用配方动作工作流结果：
+
+- 新增 `RecipeActionWorkflowCoordinator/RecipeActionGateway` 与 `AndroidRecipeActionGateway`。首页和编辑器请求继续复用原 `KiteRecipeActionCoordinator` 计划，但实例解析、RunOrchestrator 启停、失败事实和诊断已迁出 Main。
+- Main 只解释 `EnsureRuntime/FocusRun/OpenRun/CloseRunTask/ShowConsole/Message`；现有首页、编辑器、独立任务和停止后的页面落点保持原行为。
+- 删除 Main 中 `KiteRecipeActionPlan` 解释、`executeRecipeActionRoute`、运行实例解析和失联的 `setRuntimeState/shouldIgnoreRuntimeStateAfterUserStop/stopRecipe` 兼容层。停止回调只清除匹配的 Shell 焦点；真正迟到回调保护继续由 RunOrchestrator 代次和 CardRunStore 停止写保护承担。
+- 新工作流 5 类行为单测、原动作 Planner、RunOrchestrator、首页/编辑器 Controller 和 Main 路由回归通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `2949 / 140 / 40 / 10 / 0`，零调用私有函数为 0。
+
+下一步：审计并迁出 Main 的自动化/本地服务器入站适配和 X11 桌面请求处理；保留 Shell Intent 分发，但将资源探针、网页请求、APK 安装和桌面运行事实交给 Platform Gateway。

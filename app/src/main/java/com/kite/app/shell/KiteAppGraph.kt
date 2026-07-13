@@ -1,6 +1,8 @@
 package com.kite.app.shell
 
 import android.content.Context
+import com.kite.app.action.KiteActionRouter
+import com.kite.app.action.KiteRecipeActionCoordinator
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
@@ -12,6 +14,7 @@ import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunHistoryGateway
 import com.kite.app.application.runs.RunOrchestrator
+import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementDispatchResult
@@ -39,6 +42,7 @@ import com.kite.app.platform.resources.AndroidResourceRunGateway
 import com.kite.app.platform.resources.AndroidResourceActionGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
 import com.kite.app.platform.runs.AndroidRecipeExecutor
+import com.kite.app.platform.runs.AndroidRecipeActionGateway
 import com.kite.app.platform.runs.AndroidRunHistoryGateway
 import com.kite.app.platform.runs.AndroidRunStateGateway
 import com.kite.app.platform.runtimemanagement.AndroidRuntimeManagementGateway
@@ -120,6 +124,12 @@ internal class KiteAppGraph private constructor(context: Context) {
             executor = AndroidRecipeExecutor(appContext, bridgeClient, diagnostics),
             effectSink = runExecutionEffectBus,
             lifecycleSink = runLifecycleEventHub
+        )
+    }
+    val recipeActionWorkflowCoordinator: RecipeActionWorkflowCoordinator by lazy {
+        RecipeActionWorkflowCoordinator(
+            planner = KiteRecipeActionCoordinator(KiteActionRouter()),
+            gateway = AndroidRecipeActionGateway(runOrchestrator, diagnostics)
         )
     }
     val runtimeManagementCoordinator: RuntimeManagementCoordinator by lazy {
