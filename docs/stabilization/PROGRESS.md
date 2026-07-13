@@ -1348,5 +1348,9 @@ T011 浏览器与 APK 入站适配结果：
 - 真机资源探针过程中发现 `KiteTaskContractInitializer` 的工具链回调反复创建 SQLite-backed `KiteResourceInstallStore`，logcat 连续报告 `SQLiteConnection object ... leaked`。改为复用 `KiteAppGraph.resourceInstallStore` 后，同样的冷启动、探针启停和回收路径不再出现数据库泄漏告警。
 - 后台压力验收发现 `UI_HIDDEN=20` 被整数比较误判为高于 `RUNNING_CRITICAL=15`，占用冷却窗口并吞掉真实压力。现将 UI_HIDDEN 归为 `visibility_only`；目标单测、架构/运行车道守卫通过。
 - OnePlus 8T 覆盖安装后冷启动 `1201ms`；切后台后依次注入 UI_HIDDEN、RUNNING_LOW、RUNNING_CRITICAL，日志分别为 visibility-only、PROCESS_SNAPSHOT、PROCESS_SNAPSHOT。热返回 `117ms`，前后 PID 均为 `10830`，无 SQLite 泄漏、FATAL 或 ANR。
+- 清数据后的首次部署发现后台已完成而首页仍停在“部署中”：`AndroidRuntimeBootstrapGateway` 只在启动前探测一次 readiness。现改为消费 `BootstrapCoordinator` 的 READY/FAILED 终态信号后在 IO 线程复核，不增加页面轮询或整页刷新。
+- 修复后再次清数据冷启动，`TotalTime=1385ms`；未点击“重新检查”，首页约 45 秒自动显示“就绪”。进程全程存活，稳定后 PSS 约 135MB，未发现 SQLite 泄漏、FATAL、ANR 或 OOM。
+- 配置、资源、设置、普通 Web 和终端页面真机可见；本地 `/open-web` 在 27ms 内接收并打开 `CardRunActivity`，新建终端得到 `root@localhost`。30 秒后台返回保持同一 PID 和终端现场，热恢复 227ms。
+- 同 APK 覆盖安装后直接投影“就绪”，未重放首次部署。三次后续冷启动为 1539/1577/1610ms，平均 1575ms；稳定后 PSS 约 160MB，无崩溃或数据库泄漏。
 
-下一步：审计 Main 的自动化测试 Intent 入口和剩余 Console/Shell 绘制职责；自动化业务动作改为调用现有工作流，测试入口本身保留为 Shell 系统回调。
+下一步：执行 T012 最终全量测试、架构/运行车道/APK 体积守卫，更新模块所有权台账和发布验收结论。

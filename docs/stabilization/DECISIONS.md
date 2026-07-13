@@ -540,3 +540,13 @@
 理由：Android trim 常量的整数不能直接当成连续压力等级。`UI_HIDDEN=20` 只是界面不可见，却大于 `RUNNING_CRITICAL=15`；旧比较会让用户刚切后台时吞掉紧随其后的真实低内存信号。
 
 影响：页面离开仍由 `RuntimeLifecycleSignalStore` 记录，但不会冒充内存告警。真机注入验证必须看到 UI_HIDDEN 为 `visibility_only`，随后 LOW 和 CRITICAL 都被处理，且后台任务与宿主 PID保持存活。
+
+## ADR-S054 运行环境终态信号必须触发 readiness 校准
+
+状态：accepted
+
+决策：`AndroidRuntimeBootstrapGateway` 订阅 `BootstrapCoordinator.snapshot` 的阶段变化；当状态拥有者进入 `READY` 或 `FAILED` 时，立即在 IO 调度器重新检查基础镜像、默认容器和内置资源事实，并把结果写回同一网关快照。页面不得通过轮询、整页刷新或二次点击承担完成校准。
+
+理由：首次部署开始前的 readiness 探测会正确得到“未完成”，但 rootfs、容器和工具链在后台完成后，旧网关没有再次读取最终事实。三个进度流虽然已结束，页面仍会停在“部署中”，直到用户点击“重新检查”。`BootstrapCoordinator` 已经拥有准确终态信号，应由平台适配器在该边界复核真实文件和资源登记，而不是让页面猜测。
+
+影响：首次安装可在后台完成后自动从部署态变成“就绪”；失败终态同样会重新投影可恢复的部分事实。复核只在终态变化时执行，不增加定时扫描，也不改变 Bootstrap、页面和 Store 的所有权。

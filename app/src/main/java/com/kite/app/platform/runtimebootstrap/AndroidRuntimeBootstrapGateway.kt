@@ -28,6 +28,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -54,6 +57,15 @@ internal class AndroidRuntimeBootstrapGateway(context: Context) : RuntimeBootstr
 
     init {
         refresh()
+        scope.launch(Dispatchers.IO) {
+            BootstrapCoordinator.snapshot
+                .map { it.stage }
+                .distinctUntilChanged()
+                .filter(::shouldRefreshReadiness)
+                .collect {
+                    probe.value = probeReadiness()
+                }
+        }
     }
 
     override fun currentSnapshot(): RuntimeBootstrapSnapshot = mapSnapshot(
@@ -137,6 +149,9 @@ internal class AndroidRuntimeBootstrapGateway(context: Context) : RuntimeBootstr
             val bootstrapResourcesSettled: Boolean = false,
             val refreshedAt: Long = 0L
         )
+
+        internal fun shouldRefreshReadiness(stage: BootstrapStage): Boolean =
+            stage == BootstrapStage.READY || stage == BootstrapStage.FAILED
 
         internal fun mapSnapshot(
             bootstrap: BootstrapSnapshot,
