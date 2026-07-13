@@ -48,6 +48,8 @@ import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartRequest
 import com.kite.app.application.runs.RecipeActionEffect
 import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
+import com.kite.app.application.runs.DesktopOpenCoordinator
+import com.kite.app.application.runs.DesktopOpenRequest
 import com.kite.app.browser.BrowserHandoffDecision
 import com.kite.app.browser.BrowserHandoffPolicy
 import com.kite.app.browser.BrowserHandoffRequest
@@ -72,10 +74,6 @@ import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.DropZoneStatus
 import com.kite.app.dropzone.KiteDropZoneManager
 import com.kite.app.recipe.KiteRecipe
-import com.kite.app.recipe.KiteExecution
-import com.kite.app.recipe.KiteLaunchConfig
-import com.kite.app.recipe.KiteRecipeAction
-import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
@@ -86,8 +84,6 @@ import com.kite.app.run.CardRunDesktopRouter
 import com.kite.app.run.CardRunSurface
 import com.kite.app.run.CardRunStatus as RecipeRunStatus
 import com.kite.app.run.CardRunStore
-import com.kite.app.run.KiteX11SurfacePlan
-import com.kite.app.run.KiteX11SurfaceServer
 import com.kite.app.shell.AppDestination
 import com.kite.app.shell.AppIntentRouter
 import com.kite.app.shell.AppNavigator
@@ -171,7 +167,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import java.io.File
 import java.net.URL
-import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -197,6 +192,7 @@ open class MainActivity : AppCompatActivity() {
     private lateinit var resourceRunCoordinator: ResourceRunCoordinator
     private lateinit var resourceActionWorkflowCoordinator: ResourceActionWorkflowCoordinator
     private lateinit var recipeActionWorkflowCoordinator: RecipeActionWorkflowCoordinator
+    private lateinit var desktopOpenCoordinator: DesktopOpenCoordinator
     private lateinit var settingsGateway: SettingsGateway
     private lateinit var rootHost: FrameLayout
     private lateinit var root: LinearLayout
@@ -272,6 +268,7 @@ open class MainActivity : AppCompatActivity() {
         resourceRunCoordinator = appGraph.resourceRunCoordinator
         resourceActionWorkflowCoordinator = appGraph.resourceActionWorkflowCoordinator
         recipeActionWorkflowCoordinator = appGraph.recipeActionWorkflowCoordinator
+        desktopOpenCoordinator = appGraph.desktopOpenCoordinator
         runtimeBootstrapGateway = appGraph.runtimeBootstrapGateway
         firstRunOnboardingCoordinator = appGraph.firstRunOnboardingCoordinator
         runtimeStatusController = RuntimeStatusFeatureController(
@@ -771,27 +768,6 @@ open class MainActivity : AppCompatActivity() {
 
     private fun temporaryBrowserRecipe(recipeId: String, url: String, title: String = "临时网页"): KiteRecipe =
         CardRunSpecialRecipes.temporaryBrowser(recipeId, url, title)
-
-    private fun temporaryDesktopRecipe(recipeId: String, command: String, title: String = "临时桌面"): KiteRecipe =
-        KiteRecipe(
-            id = recipeId,
-            name = title,
-            description = "由 Ubuntu 桌面请求临时打开",
-            type = KiteRecipe.TYPE_START_SERVICE,
-            category = "temporary",
-            defaultUrl = "",
-            shortcut = false,
-            execution = KiteExecution.steps(
-                listOf(KiteRecipeStep(id = "desktop_$recipeId", type = KiteRecipe.STEP_X11, cmd = command))
-            ),
-            actions = linkedMapOf(
-                KiteRecipe.ACTION_START to KiteRecipeAction(
-                    id = KiteRecipe.ACTION_START,
-                    steps = listOf(KiteRecipeStep(id = "desktop_$recipeId", type = KiteRecipe.STEP_X11, cmd = command))
-                )
-            ),
-            runtimeSource = "temporary"
-        )
 
     private fun observeRuntimeStatus() {
         lifecycleScope.launch {
@@ -2478,15 +2454,45 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun handleDesktopOpenRequest(request: KiteDesktopOpenRequest): KiteDesktopOpenResponse {
-        val normalized = request.copy(command = request.command.trim())
-        if (normalized.command.isBlank()) {
-            return KiteDesktopOpenResponse(false, normalized.recipeId, normalized.instanceId, "", "", "missing_command")
+        val result = desktopOpenCoordinator.open(
+            DesktopOpenRequest(
+                command = request.command,
+                title = request.title,
+                recipeId = request.recipeId,
+                instanceId = request.instanceId,
+                source = request.source
+            )
+        )
+        if (result.openRunTask && result.recipeId != null && result.instanceId != null) {
+            runOnUiThread {
+                startActivity(
+                    CardRunIntents.launchIntent(
+                        context = this,
+                        recipeId = result.recipeId,
+                        instanceId = result.instanceId,
+                        launchSource = CardRunIntents.SOURCE_CARD,
+                        autoStart = false
+                    )
+                )
+            }
         }
-        val accepted = acceptDesktopOpenRequest(normalized)
-        if (accepted.accepted) {
-            accepted.instanceId?.let { CardRunDesktopRouter.dispatch(normalized.copy(recipeId = accepted.recipeId, instanceId = it)) }
+        if (result.accepted && result.instanceId != null) {
+            CardRunDesktopRouter.dispatch(
+                request.copy(
+                    command = request.command.trim(),
+                    recipeId = result.recipeId,
+                    instanceId = result.instanceId
+                )
+            )
         }
-        return accepted
+        return KiteDesktopOpenResponse(
+            accepted = result.accepted,
+            recipeId = result.recipeId,
+            instanceId = result.instanceId,
+            display = result.display,
+            socketPath = result.socketPath,
+            error = result.error
+        )
     }
 
     private fun handleInstallApkRequest(request: KiteInstallApkRequest): KiteInstallApkResponse {
@@ -2534,111 +2540,6 @@ open class MainActivity : AppCompatActivity() {
             .onFailure { error ->
                 Toast.makeText(this, "无法打开安装器：${error.message.orEmpty()}", Toast.LENGTH_SHORT).show()
             }
-    }
-
-    private fun acceptDesktopOpenRequest(request: KiteDesktopOpenRequest): KiteDesktopOpenResponse {
-        val existingState = request.instanceId?.takeIf { it.isNotBlank() }?.let { CardRunStore.get(it) }
-        val recipeId = request.recipeId?.takeIf { it.isNotBlank() }
-            ?: existingState?.recipeId
-            ?: "temp_desktop_${UUID.randomUUID().toString().replace("-", "")}"
-        val recipe = CardRunStore.registeredRecipe(recipeId)
-            ?: currentRecipes.firstOrNull { it.id == recipeId }
-            ?: runCatching { recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId } }.getOrNull()
-            ?: temporaryDesktopRecipe(recipeId, request.command, request.title?.takeIf { it.isNotBlank() } ?: "临时桌面")
-        val instanceId = request.instanceId?.takeIf { it.isNotBlank() } ?: CardRunIntents.newInstanceId(recipe.id)
-        val binding = existingState?.x11Display?.let { KiteX11SurfacePlan.binding(it) }
-            ?: KiteX11SurfacePlan.allocate(
-                instanceId = instanceId,
-                occupiedDisplays = CardRunStore.snapshot()
-                    .filterNot { it.instanceId == instanceId }
-                    .mapNotNull { it.x11Display }
-                    .toSet()
-            )
-        CardRunStore.registerRecipe(recipe)
-        CardRunStore.start(
-            recipe = recipe,
-            instanceId = instanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_X11,
-            stepId = "desktop_request"
-        )
-        CardRunStore.update(
-            recipe = recipe,
-            status = RecipeRunStatus.Running,
-            instanceId = instanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_X11,
-            stepId = "desktop_request",
-            surface = CardRunSurface.Report,
-            currentStepIndex = 0,
-            lastMeaningfulOutput = "正在准备 X11 桌面：${request.command.take(120)}",
-            x11Display = binding.display,
-            x11SocketPath = binding.socketPath,
-            clearNextActionUrl = true
-        )
-        runOnUiThread {
-            if (request.instanceId.isNullOrBlank()) {
-                startActivity(
-                    CardRunIntents.launchIntent(
-                        context = this,
-                        recipeId = recipe.id,
-                        instanceId = instanceId,
-                        launchSource = CardRunIntents.SOURCE_CARD,
-                        autoStart = false
-                    )
-                )
-            }
-        }
-        val x11Start = KiteX11SurfaceServer.ensureStarted(applicationContext, binding)
-        if (x11Start.isFailure) {
-            val message = x11Start.exceptionOrNull()?.message ?: "native X11 启动失败"
-            CardRunStore.update(
-                recipe = recipe,
-                status = RecipeRunStatus.Failed,
-                instanceId = instanceId,
-                ownerKind = RecipeRuntimeState.OWNER_KIND_X11,
-                stepId = "desktop_request",
-                surface = CardRunSurface.Report,
-                currentStepIndex = 0,
-                lastError = message,
-                x11Display = binding.display,
-                x11SocketPath = binding.socketPath
-            )
-            diagnostics.logRecipeAction(
-                recipe,
-                "desktop_request_x11_failed",
-                mapOf(
-                    "instanceId" to instanceId,
-                    "source" to request.source,
-                    "display" to binding.display,
-                    "error" to message
-                )
-            )
-            return KiteDesktopOpenResponse(false, recipe.id, instanceId, "", "", message)
-        }
-
-        CardRunStore.update(
-            recipe = recipe,
-            status = RecipeRunStatus.Running,
-            instanceId = instanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_X11,
-            stepId = "desktop_request",
-            surface = CardRunSurface.X11,
-            currentStepIndex = 0,
-            lastMeaningfulOutput = "Ubuntu 请求桌面：${request.command.take(120)}",
-            x11Display = binding.display,
-            x11SocketPath = binding.socketPath,
-            clearNextActionUrl = true
-        )
-        diagnostics.logRecipeAction(
-            recipe,
-            "desktop_request_accepted",
-            mapOf(
-                "instanceId" to instanceId,
-                "source" to request.source,
-                "display" to binding.display,
-                "command" to request.command.take(500)
-            )
-        )
-        return KiteDesktopOpenResponse(true, recipe.id, instanceId, binding.display, binding.socketPath)
     }
 
     private fun openTemporaryBrowserRequest(request: KiteBrowserOpenRequest) {

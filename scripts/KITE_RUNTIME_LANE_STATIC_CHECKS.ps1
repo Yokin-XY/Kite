@@ -59,6 +59,8 @@ $runLifecycleEventHubPath = Join-Path $Root 'app/src/main/java/com/kite/app/appl
 $stopCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/StopCoordinator.kt'
 $androidRecipeExecutorPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeExecutor.kt'
 $androidRecipeActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeActionGateway.kt'
+$desktopOpenWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/DesktopOpenWorkflow.kt'
+$androidDesktopOpenGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidDesktopOpenGateway.kt'
 $androidRunStateGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRunStateGateway.kt'
 $resourceRunCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceRunCoordinator.kt'
 $resourceActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceActionWorkflow.kt'
@@ -201,6 +203,8 @@ $runLifecycleEventHub = Read-Utf8 $runLifecycleEventHubPath
 $stopCoordinator = Read-Utf8 $stopCoordinatorPath
 $androidRecipeExecutor = Read-Utf8 $androidRecipeExecutorPath
 $androidRecipeActionGateway = Read-Utf8 $androidRecipeActionGatewayPath
+$desktopOpenWorkflow = Read-Utf8 $desktopOpenWorkflowPath
+$androidDesktopOpenGateway = Read-Utf8 $androidDesktopOpenGatewayPath
 $androidRunStateGateway = Read-Utf8 $androidRunStateGatewayPath
 $resourceRunCoordinator = Read-Utf8 $resourceRunCoordinatorPath
 $resourceActionWorkflow = Read-Utf8 $resourceActionWorkflowPath
@@ -312,6 +316,9 @@ Assert-True ($cardRunActivity -match 'onReload = \{ host\.reload\(\) \}' -and $m
 Assert-True ($main -notmatch 'showCardRunWebView|cardRunBrowserAuthWaitingBody|cardRunExternalBrowserBody|cardRunWebAddressInputBody') 'MainActivity must not retain the legacy CardRun Web display builders.'
 Assert-True ($runX11SurfaceBinding -match 'KiteX11SurfaceServer\.surfaceView' -and $runX11SurfaceBinding -match 'override fun dispose\(\)' -and $runX11SurfaceBinding -notmatch 'RunOrchestrator|stop\(') 'X11 surface binding must own only the visible LorieView lifecycle.'
 Assert-True ($main -notmatch 'cardRunX11SurfaceBody|x11TaskTitle') 'MainActivity must not retain the legacy CardRun X11 display builder.'
+Assert-True ($desktopOpenWorkflow -match 'DesktopOpenResult' -and $desktopOpenWorkflow -notmatch 'CardRunStore|KiteX11Surface|Activity|View') 'Desktop-open application workflow must remain independent from X11 and UI implementations.'
+Assert-True ($androidDesktopOpenGateway -match 'KiteX11SurfacePlan\.allocate' -and $androidDesktopOpenGateway -match 'KiteX11SurfaceServer\.ensureStarted' -and $androidDesktopOpenGateway -match 'CardRunStore\.update') 'Desktop-open platform adapter must prepare X11 and publish the run fact before returning.'
+Assert-True ($main -match 'desktopOpenCoordinator\.open' -and $main -notmatch 'acceptDesktopOpenRequest|temporaryDesktopRecipe|KiteX11SurfacePlan|KiteX11SurfaceServer') 'MainActivity must only map desktop-open results to the existing run task and router.'
 Assert-True ($main -match 'browserHandoffCoordinator\.launch' -and $main -notmatch 'browserAuthSessions\.createPending\(request, decision\)|browserLoopbackCallbackBridge\.prepare\(session\)') 'MainActivity must delegate browser handoff sequencing to BrowserHandoffCoordinator.'
 Assert-True ($browserHandoffCoordinator -match '(?s)createPending\(request, decision\).*updateWaiting\(session, request\).*prepareCallback\(session\).*openExternal\(request\.url\)' -and $browserHandoffCoordinator -notmatch 'import android\.|import androidx\.') 'Browser handoff coordinator must preserve side-effect order without Android UI dependencies.'
 Assert-True ($androidBrowserHandoffGateway -match 'CardRunStore\.update' -and $androidBrowserHandoffGateway -match 'loopbackBridge\.prepare' -and $androidBrowserHandoffGateway -match 'sessions\.markFailed') 'Android browser handoff gateway must own Store, loopback, and session adapters.'

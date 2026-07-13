@@ -1316,3 +1316,12 @@ T011 通用配方动作工作流结果：
 - 新工作流 5 类行为单测、原动作 Planner、RunOrchestrator、首页/编辑器 Controller 和 Main 路由回归通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `2949 / 140 / 40 / 10 / 0`，零调用私有函数为 0。
 
 下一步：审计并迁出 Main 的自动化/本地服务器入站适配和 X11 桌面请求处理；保留 Shell Intent 分发，但将资源探针、网页请求、APK 安装和桌面运行事实交给 Platform Gateway。
+
+T011 桌面入站适配迁移结果：
+
+- 新增 `DesktopOpenCoordinator/DesktopOpenGateway` 与 `AndroidDesktopOpenGateway`。命令校验、配方解析、实例分配、X11 display/socket、CardRun 事实、原生 X11 启动和诊断全部迁出 Main。
+- 临时桌面配方进入 Application `CardRunSpecialRecipes`；Main 只映射 `KiteDesktopOpenResponse`、打开需要的新运行窗口并向既有 `CardRunDesktopRouter` 投递成功请求。
+- 保持失败可见性：新临时桌面若 X11 启动失败，Gateway 写入失败报告，Shell 仍打开对应 CardRun；指定已有实例的请求不创建第二个任务窗口。
+- 桌面协调器、X11 分配、CardRun 解析和 Main 路由测试通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `2850 / 138 / 41 / 10 / 0`，零调用私有函数为 0。
+
+下一步：迁出本地服务器的浏览器运行事实写入与 APK 路径解析；Shell 继续拥有 Web 显示导航和 Android 安装器启动 Effect。

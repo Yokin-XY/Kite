@@ -15,6 +15,7 @@ import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunHistoryGateway
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
+import com.kite.app.application.runs.DesktopOpenCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementDispatchResult
@@ -43,6 +44,7 @@ import com.kite.app.platform.resources.AndroidResourceActionGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
 import com.kite.app.platform.runs.AndroidRecipeExecutor
 import com.kite.app.platform.runs.AndroidRecipeActionGateway
+import com.kite.app.platform.runs.AndroidDesktopOpenGateway
 import com.kite.app.platform.runs.AndroidRunHistoryGateway
 import com.kite.app.platform.runs.AndroidRunStateGateway
 import com.kite.app.platform.runtimemanagement.AndroidRuntimeManagementGateway
@@ -130,6 +132,11 @@ internal class KiteAppGraph private constructor(context: Context) {
         RecipeActionWorkflowCoordinator(
             planner = KiteRecipeActionCoordinator(KiteActionRouter()),
             gateway = AndroidRecipeActionGateway(runOrchestrator, diagnostics)
+        )
+    }
+    val desktopOpenCoordinator: DesktopOpenCoordinator by lazy {
+        DesktopOpenCoordinator(
+            AndroidDesktopOpenGateway(appContext, diagnostics, ::resolveRecipe)
         )
     }
     val runtimeManagementCoordinator: RuntimeManagementCoordinator by lazy {

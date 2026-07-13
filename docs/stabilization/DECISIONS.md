@@ -490,3 +490,13 @@
 理由：旧 Main 虽复用了纯 Planner 和 RunOrchestrator，却仍自己解释每一种 Plan、选择实例、写失败事实和决定页面落点。首页与编辑器共享同一请求合同后，副作用继续留在 Activity 会让新入口再次复制分支。工作流收口既不改变执行引擎，也让动作合同可以纯单测。
 
 影响：MainActivity 不得出现 `KiteRecipeActionPlan`、`executeRecipeActionRoute` 或具体 Planner；Platform Gateway 不得依赖 Activity、View 或 Feature。现有首页启动时回 Console、编辑器启动时打开独立运行窗口、显式独立任务自动启动和停止后回 Console 的行为保持。迟到执行回调由 RunOrchestrator 代次与 CardRunStore 停止写保护处理，不再保留 Activity 级 stale callback 解释器。
+
+## ADR-S049 本地桌面请求由 Platform 准备 X11，Shell 只打开运行窗口
+
+状态：accepted
+
+决策：本地服务器的桌面请求先进入 Android 无关的 `DesktopOpenCoordinator` 做输入归一化，再由 `AndroidDesktopOpenGateway` 解析配方、分配 X11 display/socket、写入 CardRun 事实并启动既有 `KiteX11SurfaceServer`。MainActivity 只把结果映射回本地服务器响应、投递既有 `CardRunDesktopRouter`，并在需要时打开独立运行 Activity。
+
+理由：桌面请求的业务和运行事实原先全部写在 Main，包括临时配方、实例分配、X11 资源选择、失败投影和诊断；它并不是 Activity 显示职责。迁移只改变所有权，不改变 X11 内核、显示控件、命令协议或现有运行窗口。
+
+影响：X11 启动失败时仍保留失败 CardRun 并为新临时请求打开报告窗口；已有 instance 请求不重复新建窗口。MainActivity 不得恢复 `acceptDesktopOpenRequest`、`temporaryDesktopRecipe`、`KiteX11SurfacePlan` 或 `KiteX11SurfaceServer` 调用。Platform Gateway 不得创建 View 或依赖 Activity/Feature。

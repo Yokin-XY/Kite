@@ -33,6 +33,22 @@ internal object CardRunSpecialRecipes {
             runtimeSource = "temporary"
         )
 
+    fun temporaryDesktop(recipeId: String, command: String, title: String = "临时桌面"): KiteRecipe =
+        KiteRecipe(
+            id = recipeId,
+            name = title,
+            description = "由 Ubuntu 桌面请求临时打开",
+            type = KiteRecipe.TYPE_START_SERVICE,
+            category = "temporary",
+            defaultUrl = "",
+            shortcut = false,
+            launch = KiteLaunchConfig(openInstance = true),
+            execution = KiteExecution.steps(
+                listOf(KiteRecipeStep(id = "desktop_$recipeId", type = KiteRecipe.STEP_X11, cmd = command))
+            ),
+            runtimeSource = "temporary_desktop"
+        )
+
     fun installWizard(targetResourceId: String, targetName: String, recipeId: String? = null): KiteRecipe =
         KiteRecipe(
             id = recipeId?.takeIf { it.isNotBlank() }

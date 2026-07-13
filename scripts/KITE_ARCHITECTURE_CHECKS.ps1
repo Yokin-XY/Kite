@@ -68,6 +68,8 @@ $cardRunSpecialRecipesPath = Join-Path $Root 'app/src/main/java/com/kite/app/app
 $legacyCardRunSpecialRecipesPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/CardRunSpecialRecipes.kt'
 $recipeActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RecipeActionWorkflow.kt'
 $androidRecipeActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeActionGateway.kt'
+$desktopOpenWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/DesktopOpenWorkflow.kt'
+$androidDesktopOpenGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidDesktopOpenGateway.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
     (Join-Path $Root 'app/src/main/kotlin/com/kite/app')
@@ -110,6 +112,8 @@ Assert-Architecture (Test-Path $cardRunSpecialRecipesPath) 'Application special-
 Assert-Architecture (-not (Test-Path $legacyCardRunSpecialRecipesPath)) 'Special-run recipe factory must not live inside a Feature.'
 Assert-Architecture (Test-Path $recipeActionWorkflowPath) 'Recipe action application workflow is missing.'
 Assert-Architecture (Test-Path $androidRecipeActionGatewayPath) 'Android recipe action adapter is missing.'
+Assert-Architecture (Test-Path $desktopOpenWorkflowPath) 'Desktop-open application workflow is missing.'
+Assert-Architecture (Test-Path $androidDesktopOpenGatewayPath) 'Android desktop-open adapter is missing.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -144,6 +148,8 @@ if ($failures.Count -eq 0) {
     $cardRunSpecialRecipes = [System.IO.File]::ReadAllText($cardRunSpecialRecipesPath, [System.Text.Encoding]::UTF8)
     $recipeActionWorkflow = [System.IO.File]::ReadAllText($recipeActionWorkflowPath, [System.Text.Encoding]::UTF8)
     $androidRecipeActionGateway = [System.IO.File]::ReadAllText($androidRecipeActionGatewayPath, [System.Text.Encoding]::UTF8)
+    $desktopOpenWorkflow = [System.IO.File]::ReadAllText($desktopOpenWorkflowPath, [System.Text.Encoding]::UTF8)
+    $androidDesktopOpenGateway = [System.IO.File]::ReadAllText($androidDesktopOpenGatewayPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
             Where-Object { Test-Path $_ } |
@@ -370,6 +376,19 @@ if ($failures.Count -eq 0) {
         $main -match 'RecipeActionEffect\.OpenRun' -and
         $main -notmatch 'recipeActionCoordinator|executeRecipeActionRoute|KiteRecipeActionPlan'
     ) 'MainActivity must interpret recipe action effects instead of planning or executing recipe actions.'
+    Assert-Architecture (
+        $desktopOpenWorkflow -match 'class\s+DesktopOpenCoordinator' -and
+        $desktopOpenWorkflow -notmatch 'android\.|androidx\.|CardRunStore|KiteX11Surface|MainActivity|CardRunActivity'
+    ) 'Desktop-open workflow must remain an Android-free request/result contract.'
+    Assert-Architecture (
+        $androidDesktopOpenGateway -match 'KiteX11SurfaceServer\.ensureStarted' -and
+        $androidDesktopOpenGateway -match 'CardRunStore\.update' -and
+        $androidDesktopOpenGateway -notmatch 'MainActivity|CardRunActivity|android\.view|android\.widget|com\.kite\.app\.feature'
+    ) 'Desktop-open adapter must own X11 and run facts without UI dependencies.'
+    Assert-Architecture (
+        $main -match 'desktopOpenCoordinator\.open' -and
+        $main -notmatch 'acceptDesktopOpenRequest|temporaryDesktopRecipe|KiteX11SurfacePlan|KiteX11SurfaceServer'
+    ) 'MainActivity must map desktop results to Shell effects without owning X11 preparation.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
