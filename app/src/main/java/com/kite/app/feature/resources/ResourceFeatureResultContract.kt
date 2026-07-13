@@ -13,6 +13,12 @@ internal sealed interface ResourceFeatureRequest {
     data class OpenDetail(val resourceId: String) : ResourceFeatureRequest
     data class OpenMore(val resourceId: String) : ResourceFeatureRequest
     data class OpenRawJson(val resourceId: String) : ResourceFeatureRequest
+    data class CreateHomeCard(val resourceId: String) : ResourceFeatureRequest
+    data class OpenRunHistory(
+        val resourceId: String,
+        val recipeId: String,
+        val historyId: String
+    ) : ResourceFeatureRequest
     data class OpenInstallPlan(val targetResourceId: String) : ResourceFeatureRequest
     data class CancelInstallPlan(
         val targetResourceId: String,
@@ -30,6 +36,8 @@ internal object ResourceFeatureResultContract {
     private const val KEY_INTENT = "intent"
     private const val KEY_SOURCE = "source"
     private const val KEY_RESOURCE_IDS = "resource_ids"
+    private const val KEY_RECIPE_ID = "recipe_id"
+    private const val KEY_HISTORY_ID = "history_id"
 
     fun send(fragment: Fragment, request: ResourceFeatureRequest) {
         fragment.parentFragmentManager.setFragmentResult(REQUEST_KEY, encode(request))
@@ -42,6 +50,8 @@ internal object ResourceFeatureResultContract {
         KIND_DETAIL -> bundle.resourceId()?.let(ResourceFeatureRequest::OpenDetail)
         KIND_MORE -> bundle.resourceId()?.let(ResourceFeatureRequest::OpenMore)
         KIND_RAW_JSON -> bundle.resourceId()?.let(ResourceFeatureRequest::OpenRawJson)
+        KIND_CREATE_HOME_CARD -> bundle.resourceId()?.let(ResourceFeatureRequest::CreateHomeCard)
+        KIND_RUN_HISTORY -> parseRunHistory(bundle)
         KIND_OPEN_PLAN -> bundle.resourceId()?.let(ResourceFeatureRequest::OpenInstallPlan)
         KIND_CANCEL_PLAN -> bundle.resourceId()?.let { targetResourceId ->
             ResourceFeatureRequest.CancelInstallPlan(
@@ -67,6 +77,12 @@ internal object ResourceFeatureResultContract {
             is ResourceFeatureRequest.OpenDetail -> putResource(KIND_DETAIL, request.resourceId)
             is ResourceFeatureRequest.OpenMore -> putResource(KIND_MORE, request.resourceId)
             is ResourceFeatureRequest.OpenRawJson -> putResource(KIND_RAW_JSON, request.resourceId)
+            is ResourceFeatureRequest.CreateHomeCard -> putResource(KIND_CREATE_HOME_CARD, request.resourceId)
+            is ResourceFeatureRequest.OpenRunHistory -> {
+                putResource(KIND_RUN_HISTORY, request.resourceId)
+                putString(KEY_RECIPE_ID, request.recipeId)
+                putString(KEY_HISTORY_ID, request.historyId)
+            }
             is ResourceFeatureRequest.OpenInstallPlan -> putResource(KIND_OPEN_PLAN, request.targetResourceId)
             is ResourceFeatureRequest.CancelInstallPlan -> {
                 putResource(KIND_CANCEL_PLAN, request.targetResourceId)
@@ -102,12 +118,21 @@ internal object ResourceFeatureResultContract {
         )
     }
 
+    private fun parseRunHistory(bundle: Bundle): ResourceFeatureRequest? {
+        val resourceId = bundle.resourceId() ?: return null
+        val recipeId = bundle.getString(KEY_RECIPE_ID)?.trim()?.takeIf(String::isNotBlank) ?: return null
+        val historyId = bundle.getString(KEY_HISTORY_ID)?.trim()?.takeIf(String::isNotBlank) ?: return null
+        return ResourceFeatureRequest.OpenRunHistory(resourceId, recipeId, historyId)
+    }
+
     private const val KIND_BACK = "back"
     private const val KIND_MANAGE = "manage"
     private const val KIND_SEARCH = "search"
     private const val KIND_DETAIL = "detail"
     private const val KIND_MORE = "more"
     private const val KIND_RAW_JSON = "raw_json"
+    private const val KIND_CREATE_HOME_CARD = "create_home_card"
+    private const val KIND_RUN_HISTORY = "run_history"
     private const val KIND_OPEN_PLAN = "open_plan"
     private const val KIND_CANCEL_PLAN = "cancel_plan"
     private const val KIND_ACTION = "action"

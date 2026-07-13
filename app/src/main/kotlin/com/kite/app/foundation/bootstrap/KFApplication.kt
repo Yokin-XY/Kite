@@ -25,9 +25,12 @@ import com.kite.app.shell.KiteAppGraph
 import com.kite.app.feature.web.WebWorkbenchDependenciesOwner
 import com.kite.app.application.settings.SettingsFeatureDependenciesOwner
 import com.kite.app.application.settings.SettingsGateway
+import com.kite.app.application.runs.RunHistoryDependenciesOwner
+import com.kite.app.application.runs.RunHistoryGateway
 
 class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner,
-    RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner, SettingsFeatureDependenciesOwner {
+    RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner, SettingsFeatureDependenciesOwner,
+    RunHistoryDependenciesOwner {
 
     override val resourceFeatureGateway: ResourceFeatureGateway
         get() = KiteAppGraph.from(this).resourceFeatureGateway
@@ -49,6 +52,9 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
 
     override val settingsFeatureGateway: SettingsGateway
         get() = KiteAppGraph.from(this).settingsGateway
+
+    override val runHistoryGateway: RunHistoryGateway
+        get() = KiteAppGraph.from(this).runHistoryGateway
 
     override fun launchWebWorkbenchHandoff(
         request: com.kite.app.browser.BrowserHandoffRequest,

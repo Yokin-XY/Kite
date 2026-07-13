@@ -56,6 +56,12 @@ $terminalFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/ter
 $legacyTerminalChromeHostPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalChromeHost.kt'
 $recipeRawJsonFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeRawJsonFragment.kt'
 $legacyRecipeRawJsonFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/RecipeRawJsonFragment.kt'
+$runHistoryGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunHistoryGateway.kt'
+$androidRunHistoryGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRunHistoryGateway.kt'
+$runHistoryFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runhistory/RunHistoryFragment.kt'
+$runHistoryScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runhistory/RunHistoryScreen.kt'
+$resourceMoreFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceMoreFragment.kt'
+$resourceRawJsonFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceRawJsonFragment.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
     (Join-Path $Root 'app/src/main/kotlin/com/kite/app')
@@ -86,6 +92,12 @@ Assert-Architecture (Test-Path $terminalFragmentPath) 'Terminal fragment is miss
 Assert-Architecture (-not (Test-Path $legacyTerminalChromeHostPath)) 'TerminalChromeHost must not return.'
 Assert-Architecture (Test-Path $recipeRawJsonFragmentPath) 'Recipe raw-JSON feature fragment is missing.'
 Assert-Architecture (-not (Test-Path $legacyRecipeRawJsonFragmentPath)) 'Legacy Activity-hosted raw-JSON fragment must not return.'
+Assert-Architecture (Test-Path $runHistoryGatewayPath) 'Run-history application gateway is missing.'
+Assert-Architecture (Test-Path $androidRunHistoryGatewayPath) 'Android run-history adapter is missing.'
+Assert-Architecture (Test-Path $runHistoryFragmentPath) 'Run-history feature fragment is missing.'
+Assert-Architecture (Test-Path $runHistoryScreenPath) 'Run-history feature screen is missing.'
+Assert-Architecture (Test-Path $resourceMoreFragmentPath) 'Resource-more feature fragment is missing.'
+Assert-Architecture (Test-Path $resourceRawJsonFragmentPath) 'Resource raw-JSON feature fragment is missing.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -109,6 +121,12 @@ if ($failures.Count -eq 0) {
     $terminalSurfaceContract = [System.IO.File]::ReadAllText($terminalSurfaceContractPath, [System.Text.Encoding]::UTF8)
     $terminalFragment = [System.IO.File]::ReadAllText($terminalFragmentPath, [System.Text.Encoding]::UTF8)
     $recipeRawJsonFragment = [System.IO.File]::ReadAllText($recipeRawJsonFragmentPath, [System.Text.Encoding]::UTF8)
+    $runHistoryGateway = [System.IO.File]::ReadAllText($runHistoryGatewayPath, [System.Text.Encoding]::UTF8)
+    $androidRunHistoryGateway = [System.IO.File]::ReadAllText($androidRunHistoryGatewayPath, [System.Text.Encoding]::UTF8)
+    $runHistoryFragment = [System.IO.File]::ReadAllText($runHistoryFragmentPath, [System.Text.Encoding]::UTF8)
+    $runHistoryScreen = [System.IO.File]::ReadAllText($runHistoryScreenPath, [System.Text.Encoding]::UTF8)
+    $resourceMoreFragment = [System.IO.File]::ReadAllText($resourceMoreFragmentPath, [System.Text.Encoding]::UTF8)
+    $resourceRawJsonFragment = [System.IO.File]::ReadAllText($resourceRawJsonFragmentPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
             Where-Object { Test-Path $_ } |
@@ -274,6 +292,34 @@ if ($failures.Count -eq 0) {
         $recipeRawJsonFragment -match 'RecipeEditorResultContract\.send' -and
         $recipeRawJsonFragment -notmatch 'activity\s+as\?|MainActivity|RecipeProvider|RecipeRawJsonHost|UiKitProvider'
     ) 'Recipe raw-JSON fragment must load through the feature gateway and return through a result contract.'
+    Assert-Architecture (
+        $runHistoryGateway -match 'interface\s+RunHistoryGateway' -and
+        $runHistoryGateway -notmatch 'android\.|androidx\.|CardRunStore'
+    ) 'Run-history application contract must remain Android-free and independent from the concrete store.'
+    Assert-Architecture (
+        $androidRunHistoryGateway -match 'CardRunStore\.historyForRecipe' -and
+        $androidRunHistoryGateway -notmatch 'android\.view|android\.widget|MainActivity|CardRunActivity'
+    ) 'Run-history store access must stay in the platform adapter without page dependencies.'
+    Assert-Architecture (
+        $runHistoryFragment -match 'RunHistoryDependenciesOwner' -and
+        $runHistoryFragment -match 'RunHistoryResultContract\.sendBack' -and
+        $runHistoryFragment -notmatch 'CardRunStore|MainActivity|activity\s+as\?'
+    ) 'Run-history Feature must use the application gateway and return data effects to the shell.'
+    Assert-Architecture (
+        $runHistoryScreen -notmatch 'CardRunStore|MainActivity|Fragment' -and
+        $main -notmatch 'fun\s+(?:recentRunHistoryPanel|runHistoryDetailHeader|readonlyShellReportCard|runHistoryStepRow|showRunHistoryDetail)\s*\('
+    ) 'Run-history rendering must stay in its Feature instead of MainActivity.'
+    Assert-Architecture (
+        $resourceMoreFragment -match 'ResourceMoreScreen' -and
+        $resourceMoreFragment -notmatch 'CardRunStore|MainActivity' -and
+        $resourceRawJsonFragment -match 'ResourceRawJsonScreen' -and
+        $resourceRawJsonFragment -notmatch 'KiteResourceManifestLoader|MainActivity'
+    ) 'Resource supplemental pages must own their views and consume existing gateways.'
+    Assert-Architecture (
+        $main -match 'ResourceMoreFragment\.newInstance' -and
+        $main -match 'ResourceRawJsonFragment\.newInstance' -and
+        $main -notmatch 'fun\s+(?:resourceMoreHeader|resourceInstallHistoryPanel|resourceRawJsonForUi)\s*\('
+    ) 'MainActivity must route resource supplemental pages without drawing their content.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)

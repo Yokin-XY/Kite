@@ -450,3 +450,13 @@
 理由：旧 Raw JSON Fragment 虽已拆成文件，却同时强转三套 MainActivity 接口，数据、主题和返回仍由 God Activity 提供；还要隐藏整个 rootHost 才能显示。这只是文件拆分，不是职责转移。统一 Gateway 和 Result 后，页面可独立测试，Shell 也无需保存 Feature 临时状态。
 
 影响：旧根包 `RecipeRawJsonFragment`、`pendingRawJsonRecipeId`、root 隐藏路由和三套 Host 接口删除。架构守卫对全部 Feature 包禁止 Activity 强转；后续模块不能以新 Host 接口恢复同类反向依赖。
+
+## ADR-S045 运行历史和资源补充页是 Feature，不是 Shell 手绘页面
+
+状态：accepted
+
+决策：运行历史通过 Android 无关的 `RunHistoryGateway` 读取既有 `CardRunStore` 快照，由 `RunHistoryFragment/Screen` 独占列表、详情、历史 SH 报告和内部返回状态。资源“更多”和原始 JSON 分别由 `ResourceMoreFragment/Screen`、`ResourceRawJsonFragment/Screen` 拥有；Shell 只路由目标 ID、解释返回和落地创建首页卡片等一次性动作。
+
+理由：这些页面虽然入口来自编辑器和资源详情，但 MainActivity 仍保存了约千行历史格式化、报告复制、资源图标缓存和 View 构建。页面状态变化只能重建根容器，资源日志还直接读取具体 Store。这属于活跃业务显示职责留在应用壳，不是单纯死代码。
+
+影响：Feature 不直接读取 `CardRunStore` 或 `KiteResourceManifestLoader`；Platform 适配器只暴露只读历史快照。指定日志的初始定位只消费一次，用户退回历史列表后，后台 Store 更新不得再次强制打开原详情。MainActivity 不得恢复历史、资源更多或资源 JSON 的 View 工厂。

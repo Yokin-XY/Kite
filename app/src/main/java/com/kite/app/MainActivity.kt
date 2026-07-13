@@ -9,29 +9,18 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
-import android.graphics.Paint
-import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.text.InputType
 import android.text.method.ScrollingMovementMethod
-import android.text.SpannableStringBuilder
-import android.text.Spanned
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Looper
 import android.provider.Settings
 import android.text.TextUtils
-import android.text.style.ForegroundColorSpan
-import android.text.style.RelativeSizeSpan
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -39,7 +28,6 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -111,8 +99,6 @@ import com.kite.app.resources.KiteResourceRuntimeFactsProjector
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunBrowserRouter
 import com.kite.app.run.CardRunDesktopRouter
-import com.kite.app.run.CardRunHistoryEntry
-import com.kite.app.run.CardRunHistoryStep
 import com.kite.app.run.CardRunSurface
 import com.kite.app.run.CardRunStatus as RecipeRunStatus
 import com.kite.app.run.CardRunStore
@@ -143,6 +129,8 @@ import com.kite.app.feature.resources.ResourceFeatureRequest
 import com.kite.app.feature.resources.ResourceFeatureResultContract
 import com.kite.app.feature.resources.ResourceDetailFragment
 import com.kite.app.feature.resources.ResourceManageFragment
+import com.kite.app.feature.resources.ResourceMoreFragment
+import com.kite.app.feature.resources.ResourceRawJsonFragment
 import com.kite.app.feature.resources.ResourceSearchFragment
 import com.kite.app.feature.resources.ResourcesFragment
 import com.kite.app.application.resources.ResourceFeatureGateway
@@ -186,6 +174,8 @@ import com.kite.app.feature.recipeeditor.RecipeEditorFragment
 import com.kite.app.feature.recipeeditor.RecipeEditorRequest
 import com.kite.app.feature.recipeeditor.RecipeEditorResultContract
 import com.kite.app.feature.recipeeditor.RecipeRawJsonFragment
+import com.kite.app.feature.runhistory.RunHistoryFragment
+import com.kite.app.feature.runhistory.RunHistoryResultContract
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
 import com.kite.app.ui.terminal.TerminalFragment
 import com.kite.app.shell.TerminalSurfaceShellBinding
@@ -197,7 +187,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import java.io.File
 import java.net.URL
-import java.util.Calendar
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -291,11 +280,6 @@ open class MainActivity : AppCompatActivity() {
     private var cachedResourceCatalog: List<ResourceItem>? = null
     private var cachedResourceCatalogUpdatedAt = 0L
     private var resourceCatalogDirty = true
-    private val resourceIconBitmapLock = Any()
-    private val resourceIconBitmapCache = mutableMapOf<String, Bitmap>()
-    private val resourceIconBitmapInFlight = mutableSetOf<String>()
-    private val resourceIconBitmapWaiters = mutableMapOf<String, MutableList<(Bitmap) -> Unit>>()
-    private val recipeIconBitmapCache = mutableMapOf<String, Bitmap>()
     private var resourceCatalogBackgroundRefreshInFlight = false
     private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     private var resourceOpenRunSignature = ""
@@ -391,6 +375,7 @@ open class MainActivity : AppCompatActivity() {
         registerRuntimeManagementResults()
         registerSettingsFeatureResults()
         registerTerminalSurfaceResults()
+        registerRunHistoryResults()
         StartupTraceStore.markStage(this, "main.observers_and_intent")
         observeRuntimeStatus()
         observeRunExecutionEffects()
@@ -1624,6 +1609,18 @@ open class MainActivity : AppCompatActivity() {
             transaction.remove(fragment)
             changed = true
         }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCE_MORE_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RESOURCE_RAW_JSON_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
+        supportFragmentManager.findFragmentByTag(TAG_RUN_HISTORY_FRAGMENT)?.let { fragment ->
+            transaction.remove(fragment)
+            changed = true
+        }
         supportFragmentManager.findFragmentByTag(TAG_RUNTIME_MANAGEMENT_FRAGMENT)?.let { fragment ->
             transaction.remove(fragment)
             changed = true
@@ -1819,6 +1816,15 @@ open class MainActivity : AppCompatActivity() {
             })
     }
 
+    private fun registerRunHistoryResults() {
+        supportFragmentManager.setFragmentResultListener(
+            RunHistoryResultContract.REQUEST_KEY,
+            this
+        ) { _, bundle ->
+            if (RunHistoryResultContract.isBack(bundle)) requestNavigationBack()
+        }
+    }
+
     private fun setMainSurfaceChromeMode(mode: SurfaceChromeMode) {
         val navigation = (0 until root.childCount).map(root::getChildAt)
             .firstOrNull { it.tag == TAG_BOTTOM_NAVIGATION_VIEW } ?: return
@@ -1919,12 +1925,21 @@ open class MainActivity : AppCompatActivity() {
                         onBack = if (returnToManage) ::showResourceManage else null
                     )
                 }
-                is ResourceFeatureRequest.OpenMore -> resourceCatalog(forceRefresh = false)
+                is ResourceFeatureRequest.OpenMore -> showResourceMore(request.resourceId)
+                is ResourceFeatureRequest.OpenRawJson -> showResourceRawJson(request.resourceId)
+                is ResourceFeatureRequest.CreateHomeCard -> resourceCatalog(forceRefresh = false)
                     .firstOrNull { it.id == request.resourceId }
-                    ?.let(::showResourceMoreActions)
-                is ResourceFeatureRequest.OpenRawJson -> resourceCatalog(forceRefresh = false)
-                    .firstOrNull { it.id == request.resourceId }
-                    ?.let(::showResourceRawJson)
+                    ?.let(::addResourceHomeCard)
+                    ?: showResourceDiscreteToast("资源目录正在更新，请稍后重试")
+                is ResourceFeatureRequest.OpenRunHistory -> showRunHistory(
+                    recipeId = request.recipeId,
+                    screen = AppDestination.ResourceMore,
+                    backAction = { showResourceMore(request.resourceId) },
+                    listTitle = "最近获取日志",
+                    emptyTitle = "还没有获取日志",
+                    emptyDetail = "资源获取或失败后，这里会保留对应资源自己的步骤和 SH 报告。",
+                    initialHistoryId = request.historyId
+                )
                 is ResourceFeatureRequest.OpenInstallPlan ->
                     showResourceInstallWizard(request.targetResourceId)
                 is ResourceFeatureRequest.CancelInstallPlan ->
@@ -1953,6 +1968,20 @@ open class MainActivity : AppCompatActivity() {
         showFeatureFragment(
             ResourceSearchFragment.newInstance(initialQuery.trim()),
             TAG_RESOURCE_SEARCH_FRAGMENT,
+            showBottomNavigation = false
+        )
+    }
+
+    private fun showResourceMore(resourceId: String) {
+        enterScreen(AppDestination.ResourceMore) { showResourceDetail(resourceId) }
+        showFeatureFragment(ResourceMoreFragment.newInstance(resourceId), TAG_RESOURCE_MORE_FRAGMENT)
+    }
+
+    private fun showResourceRawJson(resourceId: String) {
+        enterScreen(AppDestination.ResourceRawJson) { showResourceDetail(resourceId) }
+        showFeatureFragment(
+            ResourceRawJsonFragment.newInstance(resourceId),
+            TAG_RESOURCE_RAW_JSON_FRAGMENT,
             showBottomNavigation = false
         )
     }
@@ -2058,138 +2087,6 @@ open class MainActivity : AppCompatActivity() {
         showFeatureFragment(ResourceManageFragment(), TAG_RESOURCE_MANAGE_FRAGMENT)
     }
 
-    private fun resourceIcon(item: ResourceItem): View =
-        resourceIcon(item.iconText, item.accent, item.iconAsset, item.iconFit)
-
-    private fun resourceIcon(textValue: String, accent: String, assetPath: String = "", iconFit: String = ""): View {
-        return resourceIcon(textValue, accent, assetPath, iconFit, size = dp(56), padding = dp(7), radius = dp(14).toFloat(), textSize = 15f)
-    }
-
-    private fun resourceIcon(
-        textValue: String,
-        accent: String,
-        assetPath: String,
-        iconFit: String,
-        size: Int,
-        padding: Int,
-        radius: Float,
-        textSize: Float
-    ): View {
-        if (assetPath.isBlank()) return resourceTextIcon(textValue, accent, size, radius, textSize)
-        val isFullBleed = iconFit.equals(RESOURCE_ICON_FIT_FULL_BLEED, ignoreCase = true)
-        val tone = KiteTheme.accent(accent, tokens)
-        return FrameLayout(this).apply {
-            fun applyIconBackground(hasBitmap: Boolean) {
-                background = if (isFullBleed && hasBitmap) {
-                    roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, radius)
-                } else {
-                    roundedBox(tokens.surface, tone.border, radius)
-                }
-            }
-            fun showBitmap(bitmap: Bitmap) {
-                applyIconBackground(hasBitmap = true)
-                removeAllViews()
-                addView(ImageView(context).apply {
-                    scaleType = if (isFullBleed) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_INSIDE
-                    if (!isFullBleed) setPadding(padding, padding, padding, padding)
-                    setImageBitmap(bitmap)
-                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            }
-            applyIconBackground(hasBitmap = false)
-            clipToOutline = true
-            layoutParams = LinearLayout.LayoutParams(size, size)
-            val cachedBitmap = requestResourceIconBitmap(assetPath, size) { bitmap ->
-                if (parent != null) showBitmap(bitmap)
-            }
-            if (cachedBitmap != null) {
-                showBitmap(cachedBitmap)
-            } else {
-                addView(TextView(context).apply {
-                    text = textValue
-                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, textSize)
-                    typeface = Typeface.DEFAULT_BOLD
-                    gravity = Gravity.CENTER
-                    setTextColor(tone.strong)
-                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            }
-        }
-    }
-
-    private fun resourceTextIcon(textValue: String, accent: String, size: Int, radius: Float, textSizeValue: Float): View =
-        TextView(this).apply {
-            text = textValue
-            textSize = textSizeValue
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            val tone = KiteTheme.accent(accent, tokens)
-            setTextColor(tone.strong)
-            background = roundedBox(tokens.surface, tone.border, radius)
-            layoutParams = LinearLayout.LayoutParams(size, size)
-        }
-
-    private fun requestResourceIconBitmap(
-        assetPath: String,
-        maxDimensionPx: Int = 0,
-        onLoaded: (Bitmap) -> Unit
-    ): Bitmap? {
-        val normalized = normalizedResourceAssetPath(assetPath) ?: return null
-        val boundedMaxDimension = maxDimensionPx.coerceAtLeast(0)
-        val cacheKey = resourceIconBitmapCacheKey(normalized, boundedMaxDimension)
-        synchronized(resourceIconBitmapLock) {
-            resourceIconBitmapCache[cacheKey]?.let { return it }
-            resourceIconBitmapWaiters.getOrPut(cacheKey) { mutableListOf() }.add(onLoaded)
-            if (!resourceIconBitmapInFlight.add(cacheKey)) return null
-        }
-        thread(name = "KiteResourceImage-${cacheKey.hashCode()}", isDaemon = true) {
-            val bitmap = decodeResourceIconBitmap(normalized, boundedMaxDimension)
-            val waiters = synchronized(resourceIconBitmapLock) {
-                if (bitmap != null) resourceIconBitmapCache[cacheKey] = bitmap
-                resourceIconBitmapInFlight.remove(cacheKey)
-                resourceIconBitmapWaiters.remove(cacheKey).orEmpty()
-            }
-            if (bitmap != null && waiters.isNotEmpty()) {
-                root.post { waiters.forEach { waiter -> waiter(bitmap) } }
-            }
-        }
-        return null
-    }
-
-    private fun normalizedResourceAssetPath(assetPath: String): String? {
-        val normalized = assetPath.trim().trimStart('/')
-        if (normalized.isBlank() || normalized.contains("..")) return null
-        return normalized
-    }
-
-    private fun resourceIconBitmapCacheKey(normalizedAssetPath: String, maxDimensionPx: Int): String =
-        if (maxDimensionPx > 0) "$normalizedAssetPath@$maxDimensionPx" else normalizedAssetPath
-
-    private fun decodeResourceIconBitmap(normalizedAssetPath: String, maxDimensionPx: Int): Bitmap? =
-        runCatching {
-            if (maxDimensionPx <= 0) {
-                assets.open(normalizedAssetPath).use { stream -> BitmapFactory.decodeStream(stream) }
-            } else {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                assets.open(normalizedAssetPath).use { stream -> BitmapFactory.decodeStream(stream, null, bounds) }
-                val options = BitmapFactory.Options().apply {
-                    inSampleSize = bitmapSampleSize(bounds.outWidth, bounds.outHeight, maxDimensionPx)
-                }
-                assets.open(normalizedAssetPath).use { stream -> BitmapFactory.decodeStream(stream, null, options) }
-            }
-        }.getOrNull()
-
-    private fun bitmapSampleSize(width: Int, height: Int, maxDimensionPx: Int): Int {
-        if (width <= 0 || height <= 0 || maxDimensionPx <= 0) return 1
-        var sampleSize = 1
-        var sampledWidth = width
-        var sampledHeight = height
-        while (sampledWidth / 2 >= maxDimensionPx && sampledHeight / 2 >= maxDimensionPx) {
-            sampleSize *= 2
-            sampledWidth /= 2
-            sampledHeight /= 2
-        }
-        return sampleSize.coerceAtLeast(1)
-    }
-
     private fun showResourceDetail(resourceId: String, onBack: (() -> Unit)? = null) {
         currentResourceDetailId = resourceId
         enterScreen(AppDestination.ResourceDetail, onBack)
@@ -2198,52 +2095,6 @@ open class MainActivity : AppCompatActivity() {
             TAG_RESOURCE_DETAIL_FRAGMENT
         )
     }
-
-   private fun showResourceRawJson(item: ResourceItem) {
-        val latestItem = cachedResourceCatalog?.firstOrNull { it.id == item.id } ?: item
-        currentResourceDetailId = latestItem.id
-        enterScreen(AppDestination.ResourceRawJson) { showResourceDetail(latestItem.id) }
-        clearRootForScreen()
-        root.addView(topBar("原始 JSON", ::requestNavigationBack))
-        root.addView(ScrollView(this).apply {
-            addView(TextView(context).apply {
-                text = resourceRawJsonForUi(latestItem)
-                textSize = 14f
-                setTextColor(tokens.textPrimary)
-                setPadding(dp(24), dp(20), dp(24), dp(28))
-                typeface = Typeface.MONOSPACE
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-    }
-
-   private fun resourceRawJsonForUi(item: ResourceItem): String =
-        item.rawJson.ifBlank {
-            JSONObject()
-                .put("id", item.id)
-                .put("name", item.name)
-                .put("version", item.version)
-                .put("source", item.sourceLabel)
-                .put("category", item.category)
-                .put("steps", JSONArray().apply {
-                    item.steps.forEach { step ->
-                        put(JSONObject()
-                            .put("type", step.type)
-                            .put("title", step.title)
-                            .put("preview", step.preview)
-                        )
-                    }
-                })
-                .toString(2)
-        }
-
-   private fun handleResourceAction(item: ResourceItem) {
-        val intent = KiteResourceActionCoordinator.primaryIntent(
-            actionLabel = item.actionLabel,
-            reopenInstall = resourceActionShouldReopenInstallWizard(item)
-        )
-        submitResourceAction(item, intent, KiteResourceActionSource.Card)
-    }
-
     private fun submitResourceAction(
         item: ResourceItem,
         intent: KiteResourceActionIntent,
@@ -2273,19 +2124,6 @@ open class MainActivity : AppCompatActivity() {
             KiteResourceActionIntent.BusyStatus -> showResourceDiscreteToast("${item.name} 正在卸载")
             KiteResourceActionIntent.Unsupported -> showResourceDiscreteToast("正在处理 ${item.name}")
         }
-    }
-
-    private fun resourceActionShouldReopenInstallWizard(item: ResourceItem): Boolean {
-        val resourceId = KiteResourceInstallRecipes.safeId(item.id)
-        val planSnapshot = resourceInstallStore.planSnapshot()
-        if (
-            planSnapshot.resourceIds.isNotEmpty() &&
-            (resourceId in planSnapshot.resourceIds || resourceId == planSnapshot.targetResourceId)
-        ) return true
-        return activeResourceInstallWizard?.let { context ->
-            resourceId == KiteResourceInstallRecipes.safeId(context.targetResourceId) ||
-                resourceId in context.planResourceIds.map { KiteResourceInstallRecipes.safeId(it) }
-        } == true
     }
 
     private fun reopenResourceInstallWizard(item: ResourceItem) {
@@ -2782,146 +2620,6 @@ open class MainActivity : AppCompatActivity() {
         val state = resourceInstallRecipeState(resourceId) ?: return false
         return state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened
     }
-
-    private fun showResourceMoreActions(item: ResourceItem) {
-        currentResourceDetailId = item.id
-        enterScreen(AppDestination.ResourceMore) { showResourceDetail(item.id) }
-        root.setBackgroundColor(tokens.pageBackground)
-        clearRootForScreen()
-        root.addView(topBar("资源管理", ::requestNavigationBack))
-        root.addView(ScrollView(this).apply {
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(22), dp(18), dp(22), dp(34))
-                addView(resourceMoreHeader(item))
-                addView(resourceCreateHomeCardRow(item))
-                addView(resourceInstallHistoryPanel(item))
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-    }
-
-    private fun resourceMoreHeader(item: ResourceItem): View =
-        row {
-            gravity = Gravity.CENTER_VERTICAL
-            addView(resourceIcon(item).apply {
-                layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
-                    setMargins(0, 0, dp(12), 0)
-                }
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(context).apply {
-                    text = item.name
-                    textSize = 18f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(TextView(context).apply {
-                    text = item.description
-                    textSize = 12.5f
-                    setTextColor(tokens.textSecondary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(4), 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        }
-
-    private fun resourceCreateHomeCardRow(item: ResourceItem): View {
-        val canCreate = resourceHomeCardTemplate(item) != null
-        return row {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), 0, dp(16), 0)
-            alpha = if (canCreate) 1f else 0.56f
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(68)).apply {
-                setMargins(0, dp(22), 0, 0)
-            }
-            addView(TextView(context).apply {
-                text = "+"
-                textSize = 21f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(tokens.primaryStrong)
-                background = roundedBox(tokens.primarySubtle, tokens.primarySoft, dp(14).toFloat())
-                layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
-                    setMargins(0, 0, dp(14), 0)
-                }
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(context).apply {
-                    text = "创建首页卡片"
-                    textSize = 15f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                })
-                addView(TextView(context).apply {
-                    text = if (canCreate) "把这个资源的打开卡片固定到首页" else "这个资源还没有可创建的首页模板"
-                    textSize = 12f
-                    setTextColor(tokens.textSecondary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(4), 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(TextView(context).apply {
-                text = "›"
-                textSize = 24f
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(tokens.textTertiary)
-                layoutParams = LinearLayout.LayoutParams(dp(24), dp(42))
-            })
-            if (canCreate) setOnClickListener { addResourceHomeCard(item) }
-        }
-    }
-
-    private fun resourceInstallHistoryPanel(item: ResourceItem): View =
-        LinearLayout(this).apply {
-            val recipe = resourceInstallRecipe(item)
-            val history = recipe?.let { CardRunStore.historyForRecipe(it.id) }.orEmpty()
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(18), 0, dp(4))
-            addView(TextView(context).apply {
-                text = "最近获取日志"
-                textSize = 13.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-                setPadding(0, 0, 0, dp(10))
-            })
-            if (recipe == null || history.isEmpty()) {
-                addView(resourceRunHistoryEmptyBlock())
-            } else {
-                history.forEachIndexed { index, entry ->
-                    addView(runHistoryPreviewRow(recipe, entry, index + 1) {
-                        showResourceRunHistoryDetail(item, recipe, entry)
-                    })
-                }
-            }
-        }
-
-    private fun resourceRunHistoryEmptyBlock(): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
-            addView(TextView(context).apply {
-                text = "还没有获取日志"
-                textSize = 14.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-            })
-            addView(TextView(context).apply {
-                text = "资源获取或失败后，这里会保留对应资源自己的步骤和 SH 报告。"
-                textSize = 12f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(8), 0, 0)
-            })
-        }
 
     private fun resourceIsInstalled(item: ResourceItem): Boolean =
         item.runtimeFacts.installed && !item.runtimeFacts.uninstalling
@@ -4013,70 +3711,6 @@ open class MainActivity : AppCompatActivity() {
                 .launchUrl(this, uri)
         }.isSuccess || openSystemBrowserForHandoff(uri)
 
-    private fun reportToolButton(icon: String, label: String, onClick: () -> Unit): View =
-        row {
-            gravity = Gravity.CENTER
-            setPadding(dp(7), 0, dp(7), 0)
-            addView(TextView(context).apply {
-                text = icon
-                textSize = 16f
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(Color.rgb(124, 133, 149))
-            })
-            addView(TextView(context).apply {
-                text = label
-                textSize = 13f
-                gravity = Gravity.CENTER
-                setTextColor(Color.rgb(124, 133, 149))
-                setPadding(dp(5), 0, 0, 0)
-            })
-            setOnClickListener { onClick() }
-        }
-
-    private fun copyTextToClipboard(label: String, text: String, toast: String) {
-        val clipboard = getSystemService(ClipboardManager::class.java)
-        clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
-        Toast.makeText(this, toast, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun extractShellOutput(report: String): String {
-        val markers = listOf("原始输出：", "有效输出：", "错误输出：", "输出：")
-        markers.forEach { marker ->
-            val index = report.indexOf(marker)
-            if (index >= 0) {
-                return report.substring(index + marker.length).trim()
-            }
-        }
-        return report.lineSequence()
-            .filterNot { line ->
-                line.startsWith("命令：") ||
-                    line.startsWith("结果：") ||
-                    line.startsWith("退出码：") ||
-                    line.startsWith("匹配：")
-            }
-            .joinToString("\n")
-            .trim()
-    }
-
-    private fun lineNumberedOutput(text: String): CharSequence {
-        val lines = text.ifBlank { "暂无输出。" }.lineSequence().toList().ifEmpty { listOf("暂无输出。") }
-        val width = lines.size.toString().length.coerceAtLeast(2)
-        return SpannableStringBuilder().apply {
-            lines.forEachIndexed { index, line ->
-                val numberStart = length
-                append((index + 1).toString().padStart(width, ' '))
-                val numberEnd = length
-                setSpan(ForegroundColorSpan(Color.rgb(152, 162, 179)), numberStart, numberEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                setSpan(RelativeSizeSpan(0.92f), numberStart, numberEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                append("  ")
-                append(line)
-                if (index != lines.lastIndex) append('\n')
-            }
-        }
-    }
-
-
     private fun closeCardRunInstanceForStop(recipe: KiteRecipe, previousState: RecipeRuntimeState, reason: String) {
         val instanceId = listOf(
             previousState.instanceId,
@@ -4653,513 +4287,40 @@ open class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun latestRecipeForRawJson(recipe: KiteRecipe): KiteRecipe {
-        val recipes = runCatching { recipeLoader.loadAllRecipes() }.getOrNull().orEmpty()
-        if (recipes.isNotEmpty()) currentRecipes = recipes
-        return recipes.firstOrNull { recipe.id.isNotBlank() && it.id == recipe.id }
-            ?: recipes.firstOrNull {
-                recipe.id.isBlank() &&
-                    it.name == recipe.name &&
-                    it.description == recipe.description &&
-                    it.steps.map { step -> step.type to (step.cmd ?: step.text ?: step.url).orEmpty() } ==
-                    recipe.steps.map { step -> step.type to (step.cmd ?: step.text ?: step.url).orEmpty() }
-            }
-            ?: recipe
-    }
-
     private fun showRecipeRunHistory(recipe: KiteRecipe) {
-        enterScreen(AppDestination.RecipeMore) { showRecipeEditor(recipe) }
-        root.setBackgroundColor(tokens.pageBackground)
-        clearRootForScreen()
-        root.addView(topBar("运行历史", ::requestNavigationBack))
-        root.addView(ScrollView(this).apply {
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(24), dp(8), dp(24), dp(40))
-                addView(recentRunHistoryPanel(recipe))
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-    }
-
-    private fun recentRunHistoryPanel(recipe: KiteRecipe): View =
-        LinearLayout(this).apply {
-            val history = CardRunStore.historyForRecipe(recipe.id)
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(18), 0, dp(4))
-            addView(TextView(context).apply {
-                text = "最近运行"
-                textSize = 13.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-                setPadding(0, 0, 0, dp(10))
-            })
-            if (history.isEmpty()) {
-                addView(runHistoryEmptyBlock(compact = true))
-            } else {
-                history.forEachIndexed { index, entry ->
-                    addView(runHistoryPreviewRow(recipe, entry, index + 1))
-                }
-            }
-        }
-
-    private fun runHistoryEmptyBlock(compact: Boolean = false): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), if (compact) dp(12) else dp(16), dp(16), if (compact) dp(12) else dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
-            addView(TextView(context).apply {
-                text = "还没有运行记录"
-                textSize = 14.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-            })
-            addView(TextView(context).apply {
-                text = "启动一次卡片后，这里会出现本次流程的时间、步骤和自动执行内容。"
-                textSize = 12f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(8), 0, 0)
-            })
-        }
-
-    private fun runHistoryPreviewRow(
-        recipe: KiteRecipe,
-        entry: CardRunHistoryEntry,
-        ordinal: Int,
-        onClick: () -> Unit = { showRecipeRunHistoryDetail(recipe, entry) }
-    ): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(11), dp(12), dp(11))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(16).toFloat())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(0, 0, 0, dp(8))
-            }
-            setOnClickListener { onClick() }
-            addView(TextView(context).apply {
-                text = ordinal.toString()
-                textSize = 10.5f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(Color.WHITE)
-                background = roundedBox(runHistoryStatusColor(entry), Color.TRANSPARENT, dp(11).toFloat())
-                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply {
-                    setMargins(0, 0, dp(11), 0)
-                }
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(context).apply {
-                    text = "${entry.status.label} · ${runHistoryDuration(entry)} · ${runHistoryProgress(entry)}"
-                    textSize = 12.2f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                })
-                addView(TextView(context).apply {
-                    text = runHistoryTimeline(entry)
-                    textSize = 10.5f
-                    setTextColor(tokens.textSecondary)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(3), 0, 0)
-                })
-            })
-            addView(TextView(context).apply {
-                text = "›"
-                textSize = 24f
-                setTextColor(tokens.textTertiary)
-                gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(dp(22), ViewGroup.LayoutParams.WRAP_CONTENT)
-            })
-        }
-
-    private fun showRecipeRunHistoryDetail(recipe: KiteRecipe, entry: CardRunHistoryEntry) {
-        val latestRecipe = latestRecipeForRawJson(recipe)
-        showRunHistoryDetail(
-            screen = AppDestination.RecipeDetail,
-            title = "运行详情",
-            backAction = { showRecipeEditor(latestRecipe) },
-            recipe = latestRecipe,
-            entry = entry,
-            onStepReport = { step -> showRecipeRunHistoryStepReport(recipe, entry, step) }
+        showRunHistory(
+            recipeId = recipe.id,
+            screen = AppDestination.RecipeMore,
+            backAction = { showRecipeEditor(recipe) },
+            listTitle = "运行历史",
+            emptyTitle = "还没有运行记录",
+            emptyDetail = "启动一次卡片后，这里会出现本次流程的时间、步骤和自动执行内容。"
         )
     }
 
-    private fun showResourceRunHistoryDetail(item: ResourceItem, recipe: KiteRecipe, entry: CardRunHistoryEntry) {
-        showRunHistoryDetail(
-            screen = AppDestination.ResourceMore,
-            title = "获取日志",
-            backAction = { showResourceMoreActions(item) },
-            recipe = recipe,
-            entry = entry,
-            onStepReport = { step -> showResourceRunHistoryStepReport(item, recipe, entry, step) }
-        )
-    }
-
-    private fun showRunHistoryDetail(
-        screen: AppDestination,
-        title: String,
-        backAction: () -> Unit,
-        recipe: KiteRecipe,
-        entry: CardRunHistoryEntry,
-        onStepReport: (CardRunHistoryStep) -> Unit
-    ) {
-        enterScreen(screen, backAction)
-        clearRootForScreen()
-        root.addView(topBar(title, ::requestNavigationBack))
-        root.addView(ScrollView(this).apply {
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(24), dp(18), dp(24), dp(28))
-                addView(runHistoryDetailHeader(entry))
-                addView(TextView(context).apply {
-                    text = "流程快照"
-                    textSize = 13.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    setPadding(0, dp(20), 0, dp(10))
-                })
-                if (entry.steps.isEmpty()) {
-                    addView(runHistoryEmptyBlock(compact = true))
-                } else {
-                    entry.steps.forEach { step ->
-                        addView(runHistoryStepRow(recipe, entry, step) { onStepReport(step) })
-                    }
-                }
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-    }
-
-    private fun runHistoryDetailHeader(entry: CardRunHistoryEntry): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(0, 0, 0, dp(12))
-            }
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(TextView(context).apply {
-                    text = "本次运行"
-                    textSize = 14.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                })
-                addView(TextView(context).apply {
-                    text = entry.status.label
-                    textSize = 10.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    includeFontPadding = false
-                    gravity = Gravity.CENTER
-                    setTextColor(runHistoryStatusColor(entry))
-                    background = roundedBox(tintBackground(runHistoryStatusColor(entry)), Color.TRANSPARENT, dp(10).toFloat())
-                    setPadding(dp(9), dp(5), dp(9), dp(5))
-                })
-            })
-            addView(TextView(context).apply {
-                text = "${runHistoryTimeline(entry)} · ${runHistoryDuration(entry)} · ${runHistoryProgress(entry)}"
-                textSize = 11.5f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(7), 0, 0)
-            })
-            val message = entry.error.ifBlank { entry.summary }
-            if (message.isNotBlank()) {
-                addView(TextView(context).apply {
-                    text = message.take(160)
-                    textSize = 11.2f
-                    setTextColor(if (entry.error.isNotBlank()) tokens.danger else tokens.textSecondary)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(8), 0, 0)
-                })
-            }
-            if (entry.steps.isNotEmpty()) {
-                addView(TextView(context).apply {
-                    text = "步骤快照来自本次运行，不会随当前卡片编排修改而改变。"
-                    textSize = 10.5f
-                    setTextColor(tokens.textTertiary)
-                    setPadding(0, dp(9), 0, 0)
-                })
-            }
-        }
-
-    private fun showRecipeRunHistoryStepReport(recipe: KiteRecipe, entry: CardRunHistoryEntry, step: CardRunHistoryStep) {
-        showRunHistoryStepReport(
-            screen = AppDestination.RecipeDetail,
-            backAction = { showRecipeRunHistoryDetail(recipe, entry) },
-            step = step
-        )
-    }
-
-    private fun showResourceRunHistoryStepReport(
-        item: ResourceItem,
-        recipe: KiteRecipe,
-        entry: CardRunHistoryEntry,
-        step: CardRunHistoryStep
-    ) {
-        showRunHistoryStepReport(
-            screen = AppDestination.ResourceMore,
-            backAction = { showResourceRunHistoryDetail(item, recipe, entry) },
-            step = step
-        )
-    }
-
-    private fun showRunHistoryStepReport(
+    private fun showRunHistory(
+        recipeId: String,
         screen: AppDestination,
         backAction: () -> Unit,
-        step: CardRunHistoryStep
+        listTitle: String,
+        emptyTitle: String,
+        emptyDetail: String,
+        initialHistoryId: String? = null
     ) {
         enterScreen(screen, backAction)
-        clearRootForScreen()
-        root.addView(topBar("历史 SH 报告", ::requestNavigationBack))
-        root.addView(ScrollView(this).apply {
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(24), dp(18), dp(24), dp(28))
-                addView(TextView(context).apply {
-                    text = "步骤 ${step.index + 1} · ${step.label}"
-                    textSize = 13f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                })
-                addView(TextView(context).apply {
-                    text = runHistoryStepDetail(step)
-                    textSize = 11.2f
-                    setTextColor(tokens.textSecondary)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(5), 0, dp(12))
-                })
-                addView(readonlyShellReportCard(step))
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-    }
-
-    private fun readonlyShellReportCard(step: CardRunHistoryStep): View {
-        val outputText = historicalShellOutputText(step)
-        val reportBorder = Color.rgb(232, 235, 240)
-        val reportText = Color.rgb(17, 24, 39)
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(15), dp(16), dp(16))
-            background = roundedBox(Color.WHITE, reportBorder, dp(20).toFloat())
-            elevation = dp(1).toFloat()
-            addView(row {
-                gravity = Gravity.CENTER_VERTICAL
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
-                addView(TextView(context).apply {
-                    text = "只读 SH 报告"
-                    textSize = 18f
-                    typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    includeFontPadding = false
-                    setTextColor(reportText)
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                })
-                addView(reportToolButton("⧉", "复制") {
-                    copyTextToClipboard("Kite 历史 SH 报告", outputText, "已复制 SH 报告")
-                })
-            })
-            addView(TextView(context).apply {
-                text = lineNumberedOutput(outputText)
-                minimumHeight = dp(220)
-                textSize = 13f
-                typeface = Typeface.MONOSPACE
-                setTextColor(reportText)
-                setLineSpacing(dp(3).toFloat(), 1.0f)
-                includeFontPadding = true
-                setPadding(dp(14), dp(14), dp(14), dp(14))
-                background = roundedBox(Color.rgb(248, 250, 252), Color.TRANSPARENT, dp(16).toFloat(), 0)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    setMargins(0, dp(12), 0, 0)
-                }
-            })
-        }
-    }
-
-    private fun String.normalizeShellStreamForDisplay(): String =
-        replace(ANSI_ESCAPE_REGEX, "")
-            .replace('\r', '\n')
-            .lineSequence()
-            .joinToString("\n") { it.trimEnd() }
-            .trimEnd()
-
-    private fun historicalShellOutputText(step: CardRunHistoryStep): String {
-        val report = step.reportText.trim()
-        val output = extractShellOutput(report).ifBlank { report }
-        val command = step.detail.ifBlank {
-            report.lineSequence()
-                .firstOrNull { it.startsWith("命令：") }
-                ?.removePrefix("命令：")
-                ?.trim()
-                .orEmpty()
-        }
-        return buildString {
-            if (command.isNotBlank()) append(command).append("\n\n")
-            append(output.ifBlank { "没有可用的 SH 报告快照。" }.normalizeShellStreamForDisplay())
-        }.trim()
-    }
-
-    private fun runHistoryStepRow(
-        recipe: KiteRecipe,
-        entry: CardRunHistoryEntry,
-        step: CardRunHistoryStep,
-        onReportClick: () -> Unit = { showRecipeRunHistoryStepReport(recipe, entry, step) }
-    ): View =
-        LinearLayout(this).apply {
-            val canOpenReport = step.type == KiteRecipe.STEP_SHELL && step.reportText.isNotBlank()
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.TOP
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(16).toFloat())
-            isClickable = canOpenReport
-            if (canOpenReport) setOnClickListener { onReportClick() }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(0, 0, 0, dp(8))
-            }
-            addView(TextView(context).apply {
-                text = "${step.index + 1}"
-                textSize = 10f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(Color.WHITE)
-                background = roundedBox(runHistoryStepColor(entry, step.index), Color.TRANSPARENT, dp(9).toFloat())
-                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply {
-                    setMargins(0, dp(1), dp(9), 0)
-                }
-            })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(context).apply {
-                    text = "${step.label} · ${runHistoryStepState(entry, step.index)}"
-                    textSize = 11.8f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.textPrimary)
-                })
-                addView(TextView(context).apply {
-                    text = runHistoryStepDetail(step)
-                    textSize = 10.8f
-                    setTextColor(tokens.textSecondary)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(0, dp(3), 0, 0)
-                })
-            })
-            if (canOpenReport) {
-                addView(TextView(context).apply {
-                    text = "报告 ›"
-                    textSize = 11.2f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(tokens.primaryStrong)
-                    includeFontPadding = false
-                    setPadding(dp(10), dp(3), 0, 0)
-                })
-            }
-        }
-
-    private fun runHistoryProgress(entry: CardRunHistoryEntry): String {
-        val total = entry.stepCount.takeIf { it > 0 } ?: entry.steps.size
-        if (total <= 0) return "无步骤"
-        val done = when {
-            entry.status == RecipeRunStatus.Completed -> total
-            entry.currentStepIndex < 0 -> 0
-            entry.isClosed() -> (entry.currentStepIndex + 1).coerceIn(0, total)
-            else -> entry.currentStepIndex.coerceIn(0, total - 1) + 1
-        }
-        return "步骤 $done/$total"
-    }
-
-    private fun runHistoryDuration(entry: CardRunHistoryEntry): String {
-        val endAt = entry.endedAt ?: if (entry.isClosed()) entry.updatedAt else System.currentTimeMillis()
-        val seconds = ((endAt - entry.startedAt).coerceAtLeast(0L) / 1000L).coerceAtLeast(0L)
-        return when {
-            seconds < 60L * 60L -> String.format("%02d:%02d", seconds / 60L, seconds % 60L)
-            seconds < 24L * 60L * 60L -> "${seconds / (60L * 60L)}小时"
-            else -> "${seconds / (24L * 60L * 60L)}天"
-        }
-    }
-
-    private fun runHistoryTimeline(entry: CardRunHistoryEntry): String {
-        val start = formatRunHistoryClock(entry.startedAt)
-        val endAt = entry.endedAt ?: entry.updatedAt.takeIf { entry.isClosed() }
-        val end = endAt?.let { "结束 ${formatRunHistoryClock(it)}" } ?: "进行中"
-        return "开始 $start · $end"
-    }
-
-    private fun formatRunHistoryClock(timestamp: Long): String {
-        val nowCalendar = Calendar.getInstance()
-        val thenCalendar = Calendar.getInstance().apply { timeInMillis = timestamp }
-        val sameDay = nowCalendar.get(Calendar.YEAR) == thenCalendar.get(Calendar.YEAR) &&
-            nowCalendar.get(Calendar.DAY_OF_YEAR) == thenCalendar.get(Calendar.DAY_OF_YEAR)
-        val time = String.format(
-            "%02d:%02d",
-            thenCalendar.get(Calendar.HOUR_OF_DAY),
-            thenCalendar.get(Calendar.MINUTE)
+        showFeatureFragment(
+            RunHistoryFragment.newInstance(
+                recipeId = recipeId,
+                theme = themeConfig,
+                listTitle = listTitle,
+                emptyTitle = emptyTitle,
+                emptyDetail = emptyDetail,
+                initialHistoryId = initialHistoryId
+            ),
+            TAG_RUN_HISTORY_FRAGMENT,
+            showBottomNavigation = false
         )
-        return if (sameDay) {
-            time
-        } else {
-            "${thenCalendar.get(Calendar.MONTH) + 1}月${thenCalendar.get(Calendar.DAY_OF_MONTH)}日 $time"
-        }
     }
-
-    private fun runHistoryStatusColor(entry: CardRunHistoryEntry): Int =
-        when (entry.status) {
-            RecipeRunStatus.Failed,
-            RecipeRunStatus.BridgeUnavailable -> tokens.danger
-            RecipeRunStatus.Completed -> tokens.success
-            RecipeRunStatus.Stopped -> tokens.info
-            RecipeRunStatus.Starting,
-            RecipeRunStatus.Running,
-            RecipeRunStatus.WaitingTerminal,
-            RecipeRunStatus.AlreadyRunning,
-            RecipeRunStatus.Opened -> tokens.primaryStrong
-            else -> tokens.textSecondary
-        }
-
-    private fun runHistoryStepColor(entry: CardRunHistoryEntry, index: Int): Int =
-        when (runHistoryStepState(entry, index)) {
-            "失败" -> tokens.danger
-            "已完成" -> tokens.success
-            "已停止" -> tokens.info
-            "未执行" -> tokens.textTertiary
-            else -> tokens.primaryStrong
-        }
-
-    private fun runHistoryStepState(entry: CardRunHistoryEntry, index: Int): String =
-        when {
-            entry.status == RecipeRunStatus.Completed && index < entry.stepCount -> "已完成"
-            index < entry.currentStepIndex -> "已完成"
-            index > entry.currentStepIndex && entry.currentStepIndex >= 0 -> "未执行"
-            entry.currentStepIndex < 0 -> if (entry.isClosed()) "未执行" else entry.status.label
-            entry.status == RecipeRunStatus.Failed ||
-                entry.status == RecipeRunStatus.BridgeUnavailable -> "失败"
-            entry.status == RecipeRunStatus.Stopped -> "已停止"
-            entry.status == RecipeRunStatus.WaitingTerminal -> "等待终端"
-            entry.status == RecipeRunStatus.Opened -> "已打开"
-            entry.status == RecipeRunStatus.Running ||
-                entry.status == RecipeRunStatus.AlreadyRunning ||
-                entry.status == RecipeRunStatus.Starting -> entry.status.label
-            else -> entry.status.label
-        }
-
-    private fun runHistoryStepDetail(step: CardRunHistoryStep): String =
-        step.detail.ifBlank {
-            when (step.type) {
-                KiteRecipe.STEP_TERMINAL -> "打开交互终端"
-                KiteRecipe.STEP_OPEN_WEB -> "未记录网址"
-                KiteRecipe.STEP_SHELL -> "未记录命令"
-                else -> "无自动内容"
-            }
-        }
 
     private fun handleBrowserOpenRequest(request: KiteBrowserOpenRequest) {
         val normalized = request.copy(url = request.url.trim())
@@ -5467,21 +4628,6 @@ open class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun topBar(title: String, onBack: () -> Unit): View = row {
-        setPadding(dp(18), dp(14), dp(18), dp(10))
-        gravity = Gravity.CENTER_VERTICAL
-        addView(iconButton("‹", dp(44), Color.TRANSPARENT, tokens.textPrimary, dp(16)) { onBack() })
-        addView(TextView(context).apply {
-            text = title
-            textSize = 22f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(tokens.textPrimary)
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        addView(View(context), LinearLayout.LayoutParams(dp(44), dp(44)))
-    }
-
     private fun bottomNavigation(): View = row {
         tag = TAG_BOTTOM_NAVIGATION_VIEW
         setPadding(dp(14), dp(3), dp(14), dp(4))
@@ -5599,8 +4745,6 @@ open class MainActivity : AppCompatActivity() {
             cornerRadius = radius
             setStroke(strokeWidth, stroke)
         }
-
-    private fun tintBackground(color: Int): Int = KiteTheme.tint(color, 0.88f)
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
@@ -5724,6 +4868,9 @@ open class MainActivity : AppCompatActivity() {
         private const val TAG_RESOURCES_FRAGMENT = "kite-resources"
         private const val TAG_HOME_FRAGMENT = "kite-home"
         private const val TAG_RESOURCE_DETAIL_FRAGMENT = "kite-resource-detail"
+        private const val TAG_RESOURCE_MORE_FRAGMENT = "kite-resource-more"
+        private const val TAG_RESOURCE_RAW_JSON_FRAGMENT = "kite-resource-raw-json"
+        private const val TAG_RUN_HISTORY_FRAGMENT = "kite-run-history"
         private const val TAG_RUNTIME_MANAGEMENT_FRAGMENT = "kite-runtime-management"
         private const val TAG_WEB_WORKBENCH_FRAGMENT = "kite-web-workbench"
         private const val TAG_SETTINGS_FRAGMENT = "kite-settings"

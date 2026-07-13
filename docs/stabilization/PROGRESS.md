@@ -1269,3 +1269,13 @@ T011 死兼容代码清理结果：
 - 首轮删除后继续按调用图清理级联失联的卡片视觉、图标摘要、URL 摘要与资源装饰类型；零调用私有函数扫描最终为 0，Kotlin 编译和架构守卫再次通过。MainActivity 当前为 `5802 / 276 / 61 / 29`（行 / 函数 / 字段 / runtimeStates 引用）。
 
 下一步：把剩余活跃成员按 Shell 必需、系统适配、业务动作编排和业务显示四类归档；优先迁出仍由 Main 持有的业务临时状态与显示职责，再更新职责守卫。
+
+T011 活跃业务显示迁移结果：
+
+- 新增 `RunHistoryGateway` 与 `AndroidRunHistoryGateway`，运行历史 Feature 只读取既有 `CardRunStore` 历史事实；列表、详情、步骤报告、复制和内部返回均由 `RunHistoryFragment/Screen` 拥有。
+- 资源“更多”和原始 JSON 迁入 `ResourceMoreFragment/Screen`、`ResourceRawJsonFragment/Screen`；资源图标、描述、首页卡片入口和获取日志不再由 Activity 绘制或维护位图缓存。
+- MainActivity 只保留目标 ID 路由、返回策略、通用历史 Fragment 装配和创建首页卡片落点；旧历史格式化、SH 报告、资源补充页 View 工厂与级联缓存已删除。
+- 修复初始历史定位被后台变更重复应用的问题：指定记录只在首次载入时定位，用户退回列表后刷新保持列表。
+- 定向 Controller、Screen、Result Contract 与 Main 路由测试通过；架构和运行车道守卫均通过。MainActivity 当前为 `4949 / 237 / 56 / 28 / 29`（行 / 函数 / 字段 / 资源职责函数 / runtimeStates 引用）。
+
+下一步：审计剩余资源动作临时状态和运行动作投影，把业务编排迁到 Application/Platform 边界；Shell 仅解释 Effect 和启动系统界面。

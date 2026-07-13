@@ -9,6 +9,7 @@ import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunLifecycleEventHub
+import com.kite.app.application.runs.RunHistoryGateway
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
@@ -36,6 +37,7 @@ import com.kite.app.platform.resources.AndroidResourceRecipeFactory
 import com.kite.app.platform.resources.AndroidResourceRunGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
 import com.kite.app.platform.runs.AndroidRecipeExecutor
+import com.kite.app.platform.runs.AndroidRunHistoryGateway
 import com.kite.app.platform.runs.AndroidRunStateGateway
 import com.kite.app.platform.runtimemanagement.AndroidRuntimeManagementGateway
 import com.kite.app.platform.runtimebootstrap.AndroidRuntimeBootstrapGateway
@@ -108,6 +110,7 @@ internal class KiteAppGraph private constructor(context: Context) {
         )
     }
     val runExecutionEffectBus: RunExecutionEffectBus by lazy { RunExecutionEffectBus() }
+    val runHistoryGateway: RunHistoryGateway by lazy { AndroidRunHistoryGateway() }
     val runLifecycleEventHub: RunLifecycleEventHub by lazy { RunLifecycleEventHub() }
     val runOrchestrator: RunOrchestrator by lazy {
         RunOrchestrator(
