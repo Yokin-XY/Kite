@@ -1298,3 +1298,12 @@ T011 资源动作工作流迁移结果：
 - 定向资源工作流、资源 Controller、运行解析和 Main 路由测试通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `3186 / 147 / 44 / 10 / 19`（行 / 函数 / 私有字段 / 资源职责函数 / runtimeStates 引用），零调用私有函数为 0。
 
 下一步：继续按 Shell 必需、系统适配、业务编排、业务显示四类审计剩余 147 个函数；优先迁出自动化测试入口、通用运行动作编排和仍由 Main 手绘的 Console 壳内容，再进行 T011 全量与真机封口。
+
+T011 运行事实副本清理结果：
+
+- 删除 MainActivity 的 `runtimeStates` 与 `activeRunInstanceIds`。启动、停止、编辑器删除、资源探针、浏览器 handoff、网页请求和 X11 桌面请求不再补写 Activity Map。
+- 运行实例解析统一为显式实例、匹配 recipe 的可见焦点、`CardRunStore.currentForRecipe()` 和默认实例；`focusedRunInstanceId` 只表示 Shell 显示选择，不承担运行事实。
+- 停止完成只清除匹配焦点；CardRunStore 继续独占运行状态、实例代次和持久化。没有新增扫描、轮询、整页刷新或第二 Store。
+- 通用动作协调器、RunOrchestrator 与 Main 路由目标测试通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `3135 / 146 / 41 / 10 / 0`，其中 `runtimeStates` 引用已归零。
+
+下一步：迁出 Main 中通用配方动作计划的副作用解释，使 Application 工作流负责实例解析和 RunOrchestrator 调用，Shell 只执行打开运行窗口、导航、运行时准入和离散消息 Effect。

@@ -470,3 +470,13 @@
 理由：旧 MainActivity 同时保存资源目录缓存、过期状态猜测、打开运行签名、安装计划临时字段和向导 CardRun 注册。资源 Feature 已经直接订阅 Store/Gateway 信号后，这套 Activity 缓存既没有显示消费者，又会制造第二份事实和失真的静态测试。向导运行事实如果仍由 Shell 注册，也只是把页面拆出去了，业务所有权并没有迁移。
 
 影响：资源状态变化由 Feature 直接消费 `ResourceFeatureGateway.changes` 并局部校准；MainActivity 不得恢复 `resourceCatalog`、`resourceCatalogDirty`、资源 Store 观察器或 `showResourceInstallWizard`。向导 Effect 必须携带已注册的 `recipeId + instanceId + targetResourceId + planResourceIds`。计划成员触发恢复或取消时，以 Store 的真实 `targetResourceId` 为目标，不得把依赖项误当作整条计划目标。`CardRunSpecialRecipes` 属于 Application 数据工厂，不再放在 Feature 包中。
+
+## ADR-S047 MainActivity 不保存运行事实副本，只保存可见焦点
+
+状态：accepted
+
+决策：`CardRunStore` 是运行实例、状态和当前实例的唯一事实源。MainActivity 删除按 recipe 保存的 `runtimeStates` 与 `activeRunInstanceIds`；需要解析动作目标时按“显式 instanceId、当前聚焦且 recipe 匹配的实例、Store 当前实例、recipe 默认实例”选择。Shell 只允许保存 `focusedRunInstanceId` 这种可丢失的显示焦点。
+
+理由：两个 Activity Map 在启动、停止、浏览器回跳、桌面请求和后台 Effect 中分别补写，任何漏写都会让页面动作落到过期实例。它们既没有独立持久化语义，也没有比 Store 更多的真实信息，只是第二事实源。显示焦点可以随 Activity 销毁而丢失，运行事实不能。
+
+影响：运行停止只清除匹配的 Shell 焦点，不删除或复制 Store 事实。编辑器删除、投放区刷新、浏览器回跳和桌面请求不得再维护 Activity 运行索引。架构守卫锁定 Main 中 `runtimeStates/activeRunInstanceIds` 为零；多实例选择继续由显式实例和 Store 当前代次决定。

@@ -203,8 +203,6 @@ open class MainActivity : AppCompatActivity() {
     private lateinit var rootHost: FrameLayout
     private lateinit var root: LinearLayout
 
-    private val runtimeStates = mutableMapOf<String, RecipeRuntimeState>()
-    private val activeRunInstanceIds = mutableMapOf<String, String>()
     private val actionRouter = KiteActionRouter()
     private val recipeActionCoordinator = KiteRecipeActionCoordinator(actionRouter)
     /**
@@ -254,7 +252,6 @@ open class MainActivity : AppCompatActivity() {
     private lateinit var runtimeStatusChrome: RuntimeStatusChrome
     private var runtimeStatusState = RuntimeStatusUiState.checking()
     private var localServerStarted = false
-    private var focusedRunRecipeId: String? = null
     private var focusedRunInstanceId: String? = null
     private var currentResourceDetailId: String? = null
     private var lastWorkbenchUrl: String? = null
@@ -561,7 +558,6 @@ open class MainActivity : AppCompatActivity() {
                 mapOf("recipeId" to recipeId, "instanceId" to instanceId)
             )
         val state = CardRunStore.get(instanceId)
-            ?: runtimeStates[recipe.id]?.takeIf { it.instanceId == instanceId || it.cardInstanceId == instanceId }
             ?: return diagnostics.logRecipeEvent(
                 "kite_runtime_automation_stop_missing_state",
                 recipe,
@@ -587,14 +583,12 @@ open class MainActivity : AppCompatActivity() {
             ?.takeIf { it.isNotBlank() }
             ?: "resource-owner-probe-$resourceId"
         CardRunStore.registerRecipe(recipe)
-        activeRunInstanceIds[recipe.id] = instanceId
         val state = CardRunStore.start(
             recipe = recipe,
             instanceId = instanceId,
             ownerKind = RecipeRuntimeState.OWNER_KIND_RESOURCE,
             stepId = resourceId
         )
-        runtimeStates[recipe.id] = state
         diagnostics.logRecipeEvent(
             "kite_runtime_automation_start_resource_owner_probe",
             recipe,
@@ -829,7 +823,6 @@ open class MainActivity : AppCompatActivity() {
         val state = CardRunStore.get(effect.instanceId) ?: return
         if (state.recipeId != effect.recipeId) return
         val recipe = recipeForRunState(state) ?: return
-        activeRunInstanceIds[recipe.id] = state.instanceId
         diagnostics.logRecipeAction(
             recipe,
             "run_stop_resolved",
@@ -852,8 +845,6 @@ open class MainActivity : AppCompatActivity() {
             ?: CardRunStore.registeredRecipe(effect.recipeId)
             ?: return
         val step = recipe.steps.getOrNull(state.currentStepIndex) ?: return
-        activeRunInstanceIds[recipe.id] = state.instanceId
-        runtimeStates[recipe.id] = state
         diagnostics.logRecipeAction(
             recipe,
             "run_open_web_effect",
@@ -1278,7 +1269,6 @@ open class MainActivity : AppCompatActivity() {
             runCatching { recipeFeatureGateway.refreshExternalRecipes() }
                 .onSuccess { result ->
                     currentRecipes = recipeFeatureGateway.loadRecipes(forceRefresh = false)
-                    refreshRecipeRuntimeStates(currentRecipes)
                     isDropZoneRefreshing = false
                     Toast.makeText(this@MainActivity, result.message, Toast.LENGTH_SHORT).show()
                     when (currentScreen) {
@@ -1368,14 +1358,6 @@ open class MainActivity : AppCompatActivity() {
         }
         (supportFragmentManager.findFragmentByTag(TAG_HOME_FRAGMENT) as? HomeFragment)
             ?.updateRuntimeBlocked(runtimeStatusState.blocksUbuntuActions)
-    }
-
-    private fun refreshRecipeRuntimeStates(recipes: List<KiteRecipe> = currentRecipes) {
-        recipes.forEach { recipe ->
-            runtimeStates[recipe.id] = CardRunStore.currentForRecipe(recipe.id)
-                ?: runtimeStates[recipe.id]
-                    ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown")
-        }
     }
 
     private fun showKiteProcessOverview(forceRefresh: Boolean = true) {
@@ -1720,7 +1702,6 @@ open class MainActivity : AppCompatActivity() {
                     if (request.removedCardInstanceIds.isNotEmpty()) {
                         bridgeClient.cleanCardRunPidDirs(request.removedCardInstanceIds)
                     }
-                    runtimeStates.remove(request.recipeId)
                     removeRecipeEditorFeature()
                     showConsole()
                 }
@@ -2059,10 +2040,6 @@ open class MainActivity : AppCompatActivity() {
         @Suppress("UNUSED_PARAMETER") rerenderFocusedSurface: Boolean = true
     ): Boolean {
         val result = browserHandoffCoordinator.launch(request, decision, force)
-        result.targetUpdate?.let { update ->
-            activeRunInstanceIds[update.recipe.id] = update.state.instanceId
-            runtimeStates[update.recipe.id] = update.state
-        }
         if (result is BrowserHandoffLaunchResult.Failed) {
             Toast.makeText(this, "无法打开安全浏览器", Toast.LENGTH_LONG).show()
         }
@@ -2085,7 +2062,6 @@ open class MainActivity : AppCompatActivity() {
     private fun closeCardRunInstanceForStop(recipe: KiteRecipe, previousState: RecipeRuntimeState, reason: String) {
         val instanceId = listOf(
             previousState.instanceId,
-            activeRunInstanceIds[recipe.id],
             focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id },
             CardRunStore.currentForRecipe(recipe.id)?.instanceId,
             recipe.id
@@ -2157,10 +2133,7 @@ open class MainActivity : AppCompatActivity() {
             ?.let { instanceId -> CardRunStore.get(instanceId) }
             ?: runtimeStateFor(recipe)
         request.instanceId?.takeIf { it.isNotBlank() }?.let { instanceId ->
-            activeRunInstanceIds[recipe.id] = instanceId
-            focusedRunRecipeId = recipe.id
             focusedRunInstanceId = instanceId
-            runtimeStates[recipe.id] = state
         }
         diagnostics.logRecipeAction(
             recipe,
@@ -2245,10 +2218,11 @@ open class MainActivity : AppCompatActivity() {
         renderOnStart: Boolean,
         keepCurrentFocus: Boolean
     ) {
-        val instanceId = preferredInstanceId ?: activeRunInstanceIds[recipe.id] ?: recipe.id
-        activeRunInstanceIds[recipe.id] = instanceId
+        val instanceId = preferredInstanceId
+            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
+            ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
+            ?: recipe.id
         if (!keepCurrentFocus) {
-            focusedRunRecipeId = recipe.id
             focusedRunInstanceId = instanceId
         }
         val result = runOrchestrator.start(
@@ -2260,8 +2234,6 @@ open class MainActivity : AppCompatActivity() {
                 stepId = previousState.stepId
             )
         )
-        val state = CardRunStore.get(instanceId) ?: previousState
-        runtimeStates[recipe.id] = state
         diagnostics.logRecipeAction(
             recipe,
             "run_orchestrator_start",
@@ -2276,13 +2248,11 @@ open class MainActivity : AppCompatActivity() {
         )
         if (!renderOnStart) {
             if (!keepCurrentFocus) {
-                focusedRunRecipeId = recipe.id
                 focusedRunInstanceId = instanceId
             }
         } else if (openConsoleOnStart) {
             showConsole()
         } else {
-            focusedRunRecipeId = recipe.id
             focusedRunInstanceId = instanceId
             openCardRunTask(recipe)
         }
@@ -2352,7 +2322,6 @@ open class MainActivity : AppCompatActivity() {
         previousState: RecipeRuntimeState,
         navigateToConsole: Boolean
     ) {
-        activeRunInstanceIds[recipe.id] = previousState.instanceId
         diagnostics.logBridgeEvent(
             "stop_orchestrator_request",
             recipe,
@@ -2397,16 +2366,11 @@ open class MainActivity : AppCompatActivity() {
 
 
     private fun runtimeStateFor(recipe: KiteRecipe): RecipeRuntimeState =
-        activeRunInstanceIds[recipe.id]
+        focusedRunInstanceId
             ?.let { CardRunStore.get(it) }
-            ?.also {
-                runtimeStates[recipe.id] = it
-            }
-            ?: CardRunStore.currentForRecipe(recipe.id)?.also {
-            runtimeStates[recipe.id] = it
-        } ?: runtimeStates[recipe.id] ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown").also {
-            runtimeStates[recipe.id] = it
-        }
+            ?.takeIf { it.recipeId == recipe.id }
+            ?: CardRunStore.currentForRecipe(recipe.id)
+            ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown")
 
     private fun setRuntimeState(
         recipe: KiteRecipe,
@@ -2451,7 +2415,8 @@ open class MainActivity : AppCompatActivity() {
         val state = CardRunStore.update(
             recipe = recipe,
             status = status,
-            instanceId = instanceId ?: activeRunInstanceIds[recipe.id],
+            instanceId = instanceId
+                ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id },
             surface = surface,
             currentStepIndex = currentStepIndex,
             runId = runId,
@@ -2470,9 +2435,8 @@ open class MainActivity : AppCompatActivity() {
             clearTerminalSession = clearTerminalSession,
             clearNextActionUrl = clearNextActionUrl
         )
-        runtimeStates[recipe.id] = state
         if (status == RecipeRunStatus.Stopped) {
-            clearActiveRunInstance(recipe, state.instanceId)
+            clearFocusedRunInstance(state.instanceId)
         }
         diagnostics.logLifecycleEvent(
             recipe,
@@ -2502,7 +2466,7 @@ open class MainActivity : AppCompatActivity() {
     ): Boolean {
         if (status == RecipeRunStatus.Stopping || status == RecipeRunStatus.Stopped) return false
         val targetInstanceId = instanceId
-            ?: activeRunInstanceIds[recipe.id]
+            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
             ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
             ?: return false
         val current = CardRunStore.get(targetInstanceId) ?: return false
@@ -2535,10 +2499,7 @@ open class MainActivity : AppCompatActivity() {
         return true
     }
 
-    private fun clearActiveRunInstance(recipe: KiteRecipe, instanceId: String) {
-        if (activeRunInstanceIds[recipe.id] == instanceId) {
-            activeRunInstanceIds.remove(recipe.id)
-        }
+    private fun clearFocusedRunInstance(instanceId: String) {
         if (focusedRunInstanceId == instanceId) {
             focusedRunInstanceId = null
         }
@@ -2602,11 +2563,9 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun openRecipeRunInstance(recipe: KiteRecipe) {
-        val instanceId = activeRunInstanceIds[recipe.id]
-            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
+        val instanceId = focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
             ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
             ?: recipe.id
-        activeRunInstanceIds[recipe.id] = instanceId
         startActivity(
             CardRunIntents.launchIntent(
                 context = this,
@@ -2788,7 +2747,7 @@ open class MainActivity : AppCompatActivity() {
             ownerKind = RecipeRuntimeState.OWNER_KIND_X11,
             stepId = "desktop_request"
         )
-        val preparingState = CardRunStore.update(
+        CardRunStore.update(
             recipe = recipe,
             status = RecipeRunStatus.Running,
             instanceId = instanceId,
@@ -2802,8 +2761,6 @@ open class MainActivity : AppCompatActivity() {
             clearNextActionUrl = true
         )
         runOnUiThread {
-            activeRunInstanceIds[recipe.id] = instanceId
-            runtimeStates[recipe.id] = preparingState
             if (request.instanceId.isNullOrBlank()) {
                 startActivity(
                     CardRunIntents.launchIntent(
@@ -2819,7 +2776,7 @@ open class MainActivity : AppCompatActivity() {
         val x11Start = KiteX11SurfaceServer.ensureStarted(applicationContext, binding)
         if (x11Start.isFailure) {
             val message = x11Start.exceptionOrNull()?.message ?: "native X11 启动失败"
-            val failedState = CardRunStore.update(
+            CardRunStore.update(
                 recipe = recipe,
                 status = RecipeRunStatus.Failed,
                 instanceId = instanceId,
@@ -2831,7 +2788,6 @@ open class MainActivity : AppCompatActivity() {
                 x11Display = binding.display,
                 x11SocketPath = binding.socketPath
             )
-            runOnUiThread { runtimeStates[recipe.id] = failedState }
             diagnostics.logRecipeAction(
                 recipe,
                 "desktop_request_x11_failed",
@@ -2845,7 +2801,7 @@ open class MainActivity : AppCompatActivity() {
             return KiteDesktopOpenResponse(false, recipe.id, instanceId, "", "", message)
         }
 
-        val state = CardRunStore.update(
+        CardRunStore.update(
             recipe = recipe,
             status = RecipeRunStatus.Running,
             instanceId = instanceId,
@@ -2858,10 +2814,6 @@ open class MainActivity : AppCompatActivity() {
             x11SocketPath = binding.socketPath,
             clearNextActionUrl = true
         )
-        runOnUiThread {
-            activeRunInstanceIds[recipe.id] = instanceId
-            runtimeStates[recipe.id] = state
-        }
         diagnostics.logRecipeAction(
             recipe,
             "desktop_request_accepted",
@@ -2920,7 +2872,6 @@ open class MainActivity : AppCompatActivity() {
             RecipeRunStatus.WaitingTerminal -> existing.status
             else -> RecipeRunStatus.Opened
         }
-        activeRunInstanceIds[recipe.id] = instanceId
         return CardRunStore.update(
             recipe = recipe,
             status = status,
@@ -2932,9 +2883,7 @@ open class MainActivity : AppCompatActivity() {
             pid = existing?.pid,
             lastMeaningfulOutput = "Ubuntu 请求打开网页",
             nextActionUrl = request.url
-        ).also { state ->
-            runtimeStates[recipe.id] = state
-        }
+        )
     }
 
     private fun findRecipeById(recipeId: String): KiteRecipe? {
