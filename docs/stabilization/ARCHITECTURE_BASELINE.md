@@ -63,7 +63,7 @@ Action
 | 显示 | Home Feature 只投影卡片、分组、处理中和运行状态 |
 | 生命周期 | 离开首页只解绑显示；Activity 重建从配方与 Run Store 恢复；不得停止任务 |
 | 失败目的 | 启动失败留在目标卡片，显示原因与重试；不得整页刷新后丢失失败态 |
-| 当前主要债务 | `currentRecipes`、`runtimeStates`、页面缓存、配方编辑和执行入口共同位于 `MainActivity` |
+| T001 起始债务 | `currentRecipes`、`runtimeStates`、页面缓存、配方编辑和执行入口共同位于 `MainActivity` |
 
 ### 2. 资源目录与安装
 
@@ -77,7 +77,7 @@ Action
 | 投影 | `KiteResourceUiProjector`、`KiteResourceInstallStepUiProjector`、`KiteResourceRuntimeFactsProjector` |
 | 生命周期 | 页面不可见只记脏；安装在后台继续；返回时先投影已有状态再校准 |
 | 失败目的 | 准确区分下载、安装、注册、链接、网络和超时；只有所有条件成立才登记成功 |
-| 当前主要债务 | 四个 Fragment 反向委托 Activity 渲染；目录、详情、安装向导共享 Activity 缓存和请求序号 |
+| T001 起始债务 | 四个 Fragment 反向委托 Activity 渲染；目录、详情、安装向导共享 Activity 缓存和请求序号 |
 
 ### 3. 运行实例与动作执行
 
@@ -90,7 +90,7 @@ Action
 | 显示 | Run Feature 将同一实例投影到 terminal、report、web 或进程管理 |
 | 生命周期 | 页面销毁不停止实例；用户停止才触发停止；内存回收经过现有策略链 |
 | 失败目的 | 保留失败步骤、退出码、输出和残留进程观察；停止中不能提前宣布已停止 |
-| 当前主要债务 | shell/terminal/Web/X11 步骤执行、进度和停止判断仍是 Activity 方法并直接决定页面 |
+| T001 起始债务 | shell/terminal/Web/X11 步骤执行、进度和停止判断仍是 Activity 方法并直接决定页面 |
 
 ### 4. 终端
 
@@ -102,7 +102,7 @@ Action
 | 显示 | `TerminalFragment` 拥有终端视图和快捷面板，Run Surface 只绑定指定 sessionId |
 | 生命周期 | View 销毁只 detach UI；会话继续存活；明确结束才回收 PTY/进程 |
 | 失败目的 | 区分记录可恢复、PTY 已退出、输入未就绪和进程不存在 |
-| 当前主要债务 | 仍通过 `TerminalChromeHost` 操作 Activity 底栏；运行窗口终端装配仍在 `MainActivity` |
+| T001 起始债务 | 仍通过 `TerminalChromeHost` 操作 Activity 底栏；运行窗口终端装配仍在 `MainActivity` |
 
 ### 5. Web、浏览器与认证
 
@@ -115,7 +115,7 @@ Action
 | 外部交互 | 系统浏览器、Custom Tab 和回跳 Intent 是 Shell Effect；OAuth 参数原样桥接 |
 | 生命周期 | WebView 可回收、后台任务可继续、认证会话可等待回跳，三者不得绑定成同一寿命 |
 | 失败目的 | 区分地区/网络、浏览器拒绝、回调未转发、会话过期和目标实例丢失 |
-| 当前主要债务 | 普通 Web、认证桥、自动化和 CardRun Web 的入口及恢复逻辑集中在 Activity |
+| T001 起始债务 | 普通 Web、认证桥、自动化和 CardRun Web 的入口及恢复逻辑集中在 Activity |
 
 ### 6. 设置、权限与首次启动
 
@@ -128,7 +128,24 @@ Action
 | 显示 | 设置页面和首次启动引导分别投影，不能复用一个临时字段互相覆盖 |
 | 生命周期 | 权限弹层返回、进后台和进程重建都有恢复点；主题变化不停止后台任务 |
 | 失败目的 | 明确缺少哪项权限或准备步骤，允许重试；诊断页只在真实启动失败时出现 |
-| 当前主要债务 | SharedPreferences、权限回调、首次引导、运行时 gate 和设置渲染共同位于 Activity |
+| T001 起始债务 | SharedPreferences、权限回调、首次引导、运行时 gate 和设置渲染共同位于 Activity |
+
+## T012 模块所有权封口
+
+当前保持 `:app` 模块化单体；包边界和应用合同已经稳定，但继续拆成多个 Gradle 模块不会改善运行行为，反而会把仍需逐步收敛的旧 `foundation`/根包依赖固化。独立终端渲染继续使用既有 `:terminal-view-local`，其余模块先由架构守卫维护依赖方向。
+
+| 模块 | 所有者与入口 | 状态事实源 | 动作合同 | 生命周期合同 |
+| --- | --- | --- | --- | --- |
+| 首页 | `HomeFragment`、`HomeFeatureController` | `RecipeFeatureGateway` 投影配方、分组和 `CardRunStore` | `RecipeActionWorkflowCoordinator` | 页面销毁只解绑；运行实例继续存在，返回时从同一事实源投影 |
+| 资源 | `ResourceFeatureFragment`、`ResourceFeatureController` | `ResourceFeatureGateway` 投影 Registry、`KiteResourceInstallStore` 和运行事实 | `ResourceActionWorkflowCoordinator` | 安装在后台继续；可见页面消费 owner 信号并局部校准 |
+| 配方编辑 | `RecipeEditorFragment`、`RecipeEditorController` | `RecipeFeatureGateway` 持久化配方、草稿、分组和运行快照 | `RecipeActionWorkflowCoordinator` | 草稿显式保存/丢弃；离开编辑页不改变运行实例 |
+| 运行应用层 | `RecipeActionWorkflowCoordinator`、`RunOrchestrator` | `CardRunStore` 是唯一运行事实；执行器提供进程结果 | 工作流解释计划并启停，Shell 只执行导航 Effect | Activity 销毁不停止；用户停止和 owner 确认后才结算 |
+| 运行显示与历史 | `CardRunActivity`、`RunSurfaceHost`、`RunHistoryFragment` | 指定实例的 `CardRunStore` 快照 | `RunSurfaceActionGateway` 提交继续或停止 | attach/detach 只改变显示绑定；Report、Terminal、Web 各自管理可回收显示资源 |
+| 终端 | `TerminalFragment`、终端快捷动作注册表 | `TerminalSessionStore`、`TerminalRuntimeHost` | 创建、输入、切换、结束走终端能力入口；Chrome 只发 `SurfaceEffect` | View 销毁只 detach，PTY/会话继续；明确结束才回收 |
+| 运行环境与进程管理 | `RuntimeManagementFragment`、运行状态 Chrome | `RuntimeBootstrapGateway`、`RuntimeManagementGateway` 聚合既有 owner | `RuntimeManagementCoordinator` 发送需确认的停止/重启命令 | UI 隐藏不冒充内存压力；页面离开不终止后台运行 |
+| Web 与认证 | `CardRunActivity` 的 Web binding、`BrowserOpenCoordinator` | `CardRunStore`、`BrowserAuthSessionStore` 和 loopback bridge | 普通网页进入 Run Surface；OAuth 通过 Shell 外部浏览器 Effect 与回跳桥 | WebView 可回收、运行可继续、认证可等待回跳，三种寿命彼此独立 |
+| 设置与首次引导 | `SettingsFragment`、`ThemeSettingsFragment`、`FirstRunOnboardingCoordinator` | 设置 Gateway、系统权限事实、`RuntimeBootstrapGateway` | 偏好由 Controller 写入；权限和系统页通过 Shell Effect | 系统页返回后局部校准；主题变化不重启任务；首次引导可中断恢复 |
+| 应用壳与平台适配 | `MainActivity`、`CardRunActivity`、`KiteAppGraph` 与 `platform/*` Gateway | 不持有业务事实，只装配既有 Store/Gateway | 分类系统 Intent、解释 Feature Effect、启动 Android 窗口 | Activity 只管理显示和系统回调；进程级依赖由 Application 组合根持有 |
 
 ## MainActivity 迁移台账
 
@@ -149,19 +166,19 @@ Action
 | 平台请求 | browser/desktop/APK installer/local server 回调 | Platform Port + Shell Effect | T002/T009 | Platform 不反向调用页面 |
 | 终端 Chrome | `TerminalChromeHost` | Terminal Surface Effect | T011 | 终端不依赖具体 Activity |
 
-## 当前机器债务基线
+## 机器债务棘轮
 
-| 指标 | T001 起始值 | 当前上限 | 收敛任务 |
+| 指标 | T001 起始值 | T012 封口值 | 收敛任务 |
 | --- | ---: | ---: | --- |
-| `MainActivity` 物理行数 | 21,144 | 21,133 | T002-T011 |
-| `MainActivity` 成员函数 | 854 | 854 | T002-T011 |
-| `MainActivity` 私有字段 | 171 | 171 | T002-T011 |
-| Activity 实现的 Host/Provider 接口 | 8 | 8 | T004/T005/T011 |
-| 资源反向渲染委托 | 4 | 4 | T004 |
-| Activity 内资源职责函数 | 64 | 64 | T003/T004 |
+| `MainActivity` 物理行数 | 21,144 | 2,578 | T002-T011 |
+| `MainActivity` 成员函数 | 854 | 127 | T002-T011 |
+| `MainActivity` 私有字段 | 171 | 41 | T002-T011 |
+| Activity 实现的 Host/Provider 接口 | 8 | 0 | T004/T005/T011 |
+| 资源反向渲染委托 | 4 | 0 | T004 |
+| Activity 内资源职责函数 | 64 | 10 | T003/T004/T011 |
 | 导航合同对 `MainActivity.Screen` 引用 | 46 | 0 | T002 |
-| 继承 `MainActivity` 的 Activity | 1 | 1 | T007 |
-| `runtimeStates` 引用 | 64 | 64 | T005/T006 |
+| 继承 `MainActivity` 的 Activity | 1 | 0 | T007 |
+| `runtimeStates` 引用 | 64 | 0 | T005/T006/T011 |
 
 这些数字是防回涨护栏，不是架构完成定义。某项职责完成的判断仍然是：状态、动作、页面和
 生命周期所有权已经转移，旧入口被删除，业务路径验证通过。

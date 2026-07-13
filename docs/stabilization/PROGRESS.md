@@ -1354,3 +1354,16 @@ T011 浏览器与 APK 入站适配结果：
 - 同 APK 覆盖安装后直接投影“就绪”，未重放首次部署。三次后续冷启动为 1539/1577/1610ms，平均 1575ms；稳定后 PSS 约 160MB，无崩溃或数据库泄漏。
 
 下一步：执行 T012 最终全量测试、架构/运行车道/APK 体积守卫，更新模块所有权台账和发布验收结论。
+
+### 2026-07-13 T012 最终发布验收
+
+- 全量 `:app:testDebugUnitTest :app:assembleDebug` 通过：447 项测试、0 失败、1 项既有跳过。架构守卫和运行车道守卫通过，Feature 反向依赖 Shell、Platform 依赖 UI、跨 Feature 页面调用以及旧 Activity 事实副本均由机器检查阻止。
+- 机器棘轮封口为 `MainActivity lines=2578, functions=127, fields=41, hosts=0, resourceDelegates=0, resourceFunctions=10, runtimeStateRefs=0`；`CardRunActivity` 不继承 Main，导航合同不引用旧 `MainActivity.Screen`。
+- `ARCHITECTURE_BASELINE.md` 已把 T001 历史债务与 T012 当前事实分开，并登记首页、资源、编辑器、运行应用层、运行显示、终端、运行管理、Web/认证、设置/引导和应用壳的平台所有者、入口、事实源、动作及生命周期合同。
+- 当前继续采用 `:app` 模块化单体并保留独立 `:terminal-view-local`。包级合同和静态守卫已经提供隔离；此时拆出更多 Gradle 模块不会改善用户行为，反而会固化仍需逐步收敛的旧根包依赖。
+- OnePlus 8T 清数据冷启动 1385ms，首次 rootfs/工具链完成后无需二次点击，约 45 秒自动变为“就绪”；覆盖安装后直接恢复“就绪”，未重放首次部署。配置、资源、设置、运行窗口、普通 Web、终端和进程 owner 启停链均有真机证据。
+- 普通 localhost `/open-web` 接收耗时 27ms；真实终端得到 `root@localhost`。热返回 227ms；三次冷启动 1539/1577/1610ms，平均 1575ms；稳定 PSS 约 135-160MB。
+- UI_HIDDEN、RUNNING_LOW、RUNNING_CRITICAL 依次验证可见性和压力策略；214 秒连续后台驻留并注入压力后 PID 仍为 `19945`，暖恢复 207ms 且首页直接显示“就绪”。再结合强杀重建和 APK 覆盖验证显示面与进程生命周期分离。全程未见 SQLite 泄漏、FATAL、ANR 或 OOM。
+- Debug APK 为 241,594,117 bytes，压缩 assets 183,990,598 bytes，低于 243,269,632 bytes 门禁；SHA-256 为 `8b0a1c7c96f9787bba5874986cb089ed633a7dcf114934c9094b1fef9fbb7c45`。
+
+T012 状态：completed。T001-T012 主线稳定化计划全部完成；后续性能和体积优化应以新的独立目标推进，不再继续扩大本轮架构迁移。
