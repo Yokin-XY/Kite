@@ -510,3 +510,13 @@
 理由：浏览器运行事实、临时配方和 APK 文件解析原本与 Activity 跳转混在三个 Main 方法中。前者属于运行路由/Store，后者属于 Platform 文件边界；只有启动可见窗口和系统 Intent 才是 Shell 职责。分离后不会为修路径或状态同步重进 Main，也不会把 WebView/安装器副作用下沉。
 
 影响：既有 `CardRunBrowserRouter` 优先级、指定实例 URL 更新、临时网页失败时回退工作台、`/exchange` 与 `/sdcard`/`/storage` 支持范围和响应错误码保持。Gateway 禁止创建 WebView、Activity 或安装 Intent；Main 不得恢复 `updateBrowserRequestState`、`openTemporaryBrowserRequest` 或 `resolveInstallApkFile`。
+
+## ADR-S051 自动化入口复用正式 Application 工作流
+
+状态：accepted
+
+决策：ADB 自动化的卡片停止、资源直接安装和资源 owner 探针不得在 `MainActivity` 中保留第二套运行编排。停止复用 `RecipeActionWorkflowCoordinator`，资源安装复用 `ResourceActionWorkflowCoordinator`，owner 探针通过 `RuntimeOwnerProbeCoordinator + AndroidRuntimeOwnerProbeGateway` 进入正式 `RunOrchestrator`。探针配方由 Application 层的 `CardRunSpecialRecipes` 统一创建。
+
+理由：自动化入口虽然只用于验收，但它实际会创建和停止正式运行实例。若 Shell 自行调用 Orchestrator、构造配方或写 Store，真机验证通过的将是旁路而不是产品合同，并且迁移完成后仍会迫使应用壳持有执行职责。
+
+影响：`MainActivity` 不再持有 `RunOrchestrator`、`ResourceRunCoordinator`，也不再定义 `startRecipeWithOrchestrator`、`stopRecipeWithOrchestrator` 或资源探针配方。自动化与用户点击共享同一状态拥有者、执行入口和迟到回调保护；静态守卫必须验证该合同，不得恢复只为测试存在的 Shell 特判。

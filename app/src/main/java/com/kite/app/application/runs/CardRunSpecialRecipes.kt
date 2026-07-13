@@ -7,6 +7,7 @@ import com.kite.app.recipe.KiteRecipeAction
 import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.resources.KiteResourceInstallSpec
 
 /** 无页面依赖的特殊运行配方工厂，供 Shell 和 Platform 共同创建可恢复运行。 */
 internal object CardRunSpecialRecipes {
@@ -65,4 +66,26 @@ internal object CardRunSpecialRecipes {
             actions = emptyMap(),
             runtimeSource = RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE
         )
+
+    fun resourceOwnerProbe(resourceId: String): KiteRecipe {
+        val step = KiteRecipeStep(
+            id = "resource_owner_probe_$resourceId",
+            type = KiteRecipe.STEP_SHELL,
+            cmd = "bash -lc 'echo KITE_RESOURCE_OWNER_PROBE_START; sleep 600'",
+            surfaceMode = KiteRecipe.SURFACE_MODE_SILENT,
+            workdir = "/workspace",
+            timeoutMs = 900_000L
+        )
+        return KiteResourceInstallRecipes.toRecipe(
+            KiteResourceInstallSpec(
+                id = resourceId,
+                name = "Resource owner probe",
+                description = "Debug resource owner telemetry probe",
+                category = "resource",
+                operation = KiteResourceInstallRecipes.OP_INSTALL,
+                actionLabel = "Probe",
+                steps = listOf(step)
+            )
+        )
+    }
 }

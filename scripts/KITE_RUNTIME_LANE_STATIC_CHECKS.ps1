@@ -61,6 +61,8 @@ $androidRecipeExecutorPath = Join-Path $Root 'app/src/main/java/com/kite/app/pla
 $androidRecipeActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeActionGateway.kt'
 $desktopOpenWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/DesktopOpenWorkflow.kt'
 $androidDesktopOpenGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidDesktopOpenGateway.kt'
+$runtimeOwnerProbeWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RuntimeOwnerProbeWorkflow.kt'
+$androidRuntimeOwnerProbeGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRuntimeOwnerProbeGateway.kt'
 $androidRunStateGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRunStateGateway.kt'
 $resourceRunCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceRunCoordinator.kt'
 $resourceActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceActionWorkflow.kt'
@@ -209,6 +211,8 @@ $androidRecipeExecutor = Read-Utf8 $androidRecipeExecutorPath
 $androidRecipeActionGateway = Read-Utf8 $androidRecipeActionGatewayPath
 $desktopOpenWorkflow = Read-Utf8 $desktopOpenWorkflowPath
 $androidDesktopOpenGateway = Read-Utf8 $androidDesktopOpenGatewayPath
+$runtimeOwnerProbeWorkflow = Read-Utf8 $runtimeOwnerProbeWorkflowPath
+$androidRuntimeOwnerProbeGateway = Read-Utf8 $androidRuntimeOwnerProbeGatewayPath
 $androidRunStateGateway = Read-Utf8 $androidRunStateGatewayPath
 $resourceRunCoordinator = Read-Utf8 $resourceRunCoordinatorPath
 $resourceActionWorkflow = Read-Utf8 $resourceActionWorkflowPath
@@ -351,6 +355,7 @@ Assert-True ($resourceFeatureController -match 'gateway\.loadCatalog' -and $reso
 Assert-True ($main -match 'observeRuntimeStatus' -and $main -match 'RuntimeStatusFeatureController') 'runtime status chrome must observe the shared projected feature state.'
 Assert-True ($main -match 'handleRuntimeAutomationIntent') 'Kite MainActivity must expose the runtime automation diagnostic entry on the real launcher path.'
 Assert-True ($main -match 'RuntimeAutomationActions\.dumpDiagnostics\(applicationContext\)') 'Kite runtime diagnostics must reuse the shared RuntimeAutomationActions dump path.'
+Assert-True ($main -match '(?s)private fun clearRuntimeAutomationExtras\b.*removeExtra\(EXTRA_AUTOMATION_RUNTIME_ID\).*removeExtra\(CardRunIntents\.EXTRA_RECIPE_ID\).*removeExtra\(CardRunIntents\.EXTRA_INSTANCE_ID\)') 'Consumed runtime automation intents must not retain ids that can be replayed as a product card route after process restore.'
 Assert-True ($main -match 'RuntimeAutomationActions\.rotateProotTelemetry\(applicationContext\)') 'Kite runtime automation must expose telemetry rotation on the real launcher path.'
 Assert-True ($main -match 'RuntimeAutomationActions\.prepareProotLiveTraceeProbe' -and $main -match 'RuntimeAutomationActions\.injectProotLiveTraceeProbe') 'Kite runtime automation must expose live-tracee probe actions on the real launcher path.'
 Assert-True ($main -match 'private fun readProbeTargetLiveTracees' -and $main -match 'EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES = "probe_target_live_tracees"') 'Kite live-tracee probe automation must accept an explicit target tracee count.'
@@ -360,21 +365,18 @@ Assert-True ($main -match '(?s)private fun reclaimOwnerRuntimeFromAutomation\b.*
 Assert-True ($main -match '(?s)private fun String\.isAutomationRuntimeOwnerId\(\).*startsWith\("card:"\).*startsWith\("resource:"\).*startsWith\("terminal:"\)') 'Kite owner reclaim automation must stay bounded to card/resource/terminal owner ids.'
 Assert-True ($runtimeAutomationActions -match '(?s)fun dumpDiagnostics\b.*RuntimeHealthStore\.refresh\(\s*context = appContext,\s*reason = "adb-dump-diagnostics"') 'ADB dump diagnostics must refresh RuntimeHealth before exporting owner/process facts.'
 Assert-True ($main -match 'ACTION_STOP_CARD_RUN = "stop_card_run"') 'Kite runtime automation must expose a gated card stop action for real-path owner stop validation.'
-Assert-True ($main -match '(?s)private fun stopCardRunFromAutomation\b.*stopRecipeByCardInstanceId\(recipe, state\.cardInstanceId, state\)') 'Kite card stop automation must reuse the product card-instance stop path.'
+Assert-True ($main -match '(?s)private fun stopCardRunFromAutomation\b.*submitRecipeAction\(.*KiteRecipeActionIntent\.Stop.*KiteRecipeActionSource\.Automation.*instanceId = state\.instanceId') 'Kite card stop automation must reuse the shared recipe action workflow.'
 Assert-True ($main -match 'ACTION_START_RESOURCE_OWNER_PROBE = "start_resource_owner_probe"') 'Kite runtime automation must expose a gated resource owner probe for real-device validation.'
-Assert-True ($main -match '(?s)private fun startResourceOwnerProbeFromAutomation\b.*ownerKind = RecipeRuntimeState\.OWNER_KIND_RESOURCE.*startRecipe\(\s*recipe = recipe,\s*previousState = state') 'resource owner probe must create a resource CardRun state before using the product start path.'
-Assert-True ($main -match '(?s)private fun resourceOwnerProbeRecipe\b.*KiteResourceInstallRecipes\.toRecipe\(\s*KiteResourceInstallSpec') 'resource owner probe must use the existing resource install recipe shape.'
-
-$startRecipe = Function-Body $main 'startRecipe'
-$startRecipeWithOrchestrator = Function-Body $main 'startRecipeWithOrchestrator'
-Assert-True ($startRecipe -match 'startRecipeWithOrchestrator' -and $startRecipe -notmatch 'legacyStartRecipe|recipeUsesProcessRunOrchestrator') 'All recipe start intake must submit through the process orchestrator.'
-Assert-True ($startRecipeWithOrchestrator -match 'runOrchestrator\.start' -and $startRecipeWithOrchestrator -match 'ownerKind = previousState\.ownerKind' -and $startRecipeWithOrchestrator -match 'stepId = previousState\.stepId') 'RunOrchestrator start must preserve the existing CardRun owner identity.'
+Assert-True ($main -match '(?s)private fun startResourceOwnerProbeFromAutomation\b.*runtimeOwnerProbeCoordinator\.start\(\s*RuntimeOwnerProbeRequest') 'resource owner probe automation must delegate to its application coordinator.'
+Assert-True ($runtimeOwnerProbeWorkflow -match 'class RuntimeOwnerProbeCoordinator' -and $runtimeOwnerProbeWorkflow -match 'gateway\.start' -and $runtimeOwnerProbeWorkflow -notmatch '(?m)^import\s+(android\.|androidx\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|platform\.))') 'resource owner probe workflow must remain independent from Android pages and platform adapters.'
+Assert-True ($androidRuntimeOwnerProbeGateway -match 'CardRunSpecialRecipes\.resourceOwnerProbe' -and $androidRuntimeOwnerProbeGateway -match 'orchestrator\.start' -and $androidRuntimeOwnerProbeGateway -match 'OWNER_KIND_RESOURCE') 'resource owner probe adapter must use the shared recipe shape and RunOrchestrator owner path.'
+Assert-True ($main -notmatch 'runOrchestrator\.(start|stop)|fun\s+(startRecipeWithOrchestrator|stopRecipeWithOrchestrator|resourceOwnerProbeRecipe)\s*\(') 'MainActivity must not retain direct run orchestration or probe construction.'
 Assert-True ($main -notmatch 'legacyStartRecipe|executeRecipeStep|runUbuntuStepWhenReady|handleSequenceShellResult') 'MainActivity must not retain a second recipe execution engine.'
 Assert-True ($kiteAppGraph -match 'val runOrchestrator: RunOrchestrator by lazy' -and $kiteAppGraph -match 'AndroidRecipeExecutor\(appContext, bridgeClient, diagnostics\)') 'Run orchestration and execution adapter must be process composition-root dependencies.'
 Assert-True ($recipeActionWorkflow -match 'planner\.plan' -and $recipeActionWorkflow -match 'gateway\.start' -and $recipeActionWorkflow -match 'gateway\.stop') 'Recipe actions must be planned and handed to one application workflow.'
 Assert-True ($androidRecipeActionGateway -match 'orchestrator\.start' -and $androidRecipeActionGateway -match 'orchestrator\.stop' -and $androidRecipeActionGateway -notmatch '(?m)^import\s+(android\.app\.Activity|android\.view\.|android\.widget\.|androidx\.fragment\.|com\.kite\.app\.feature)') 'Recipe action runtime access must stay in the platform adapter without page ownership.'
 Assert-True ($main -match 'recipeActionWorkflowCoordinator\.dispatch' -and $main -match 'applyRecipeActionEffects' -and $main -notmatch 'recipeActionCoordinator|executeRecipeActionRoute|KiteRecipeActionPlan') 'MainActivity must only interpret recipe action effects.'
-Assert-True ($androidResourceActionGateway -match 'runCoordinator\.start' -and $main -notmatch 'fun\s+startResourceRun\s*\(|ToolchainPackInstaller\.|resourceManifestLoader') 'Resource run intake must delegate preparation and execution to the process coordinator without page-owned execution.'
+Assert-True ($androidResourceActionGateway -match 'runCoordinator\.start' -and $main -match 'resourceActionWorkflowCoordinator\.installDirect' -and $main -notmatch 'fun\s+startResourceRun\s*\(|resourceRunCoordinator|ToolchainPackInstaller\.|resourceManifestLoader') 'Resource run intake must delegate preparation and execution to the process coordinator without page-owned execution.'
 Assert-True ($main -notmatch 'resourceManifestRecipeSteps|resourceManifestActionCommand|legacyResourceInstallStep|legacyResourceUninstallStep|markResourceRunSuccess|markResourceInstallFailed') 'MainActivity must not compile resource recipes or settle resource registry facts.'
 Assert-True ($runSurfaceContract -match 'sealed interface RunSurfaceContent' -and $runSurfaceContract -match 'val structureKey: String') 'Run surface feature must project explicit content and a stable structural binding key.'
 Assert-True ($runSurfaceController -match 'recipe\.id != current\.recipeId \|\| state\.instanceId != current\.instanceId' -and $runSurfaceController -match '(?s)fun detach\(\).*target = null') 'Run surface controller must reject cross-instance state and detach without stopping runtime work.'
@@ -562,12 +564,8 @@ Assert-True ($cardRunStore -match 'status = CardRunStatus\.Failed' -and $cardRun
 Assert-True ($cardRunStore -match 'normalizedHistoryAfterProcessRestore' -and $cardRunStore -match 'error = error\.ifBlank \{ PROCESS_RESTORE_ABORTED_MESSAGE \}') 'process-restore history must preserve an abnormal-exit error.'
 Assert-True ($cardRunStore -match 'shouldIgnoreStoppedRuntimeWrite' -and $cardRunStore -match 'this\.status != CardRunStatus\.Stopped' -and $cardRunStore -match 'CardRunStatus\.Running') 'CardRunStore must reject stale runtime writes that try to revive a stopped card.'
 
-$stopRecipeByCardInstanceId = Function-Body $main 'stopRecipeByCardInstanceId'
-$stopRecipeWithOrchestrator = Function-Body $main 'stopRecipeWithOrchestrator'
-Assert-True ($stopRecipeByCardInstanceId -match 'CardRunStore\.get\(cardInstanceId\)') 'stop(cardInstanceId) must resolve the latest CardRunStore state.'
-Assert-True ($stopRecipeByCardInstanceId -match 'stopRecipeWithOrchestrator' -and $stopRecipeByCardInstanceId -notmatch 'legacyStopRecipeByCardInstanceId|recipeUsesProcessRunOrchestrator') 'All stop intake must submit through the process orchestrator.'
-Assert-True ($stopRecipeWithOrchestrator -match 'runOrchestrator\.stop\(previousState\.instanceId\)' -and $stopRecipeWithOrchestrator -notmatch 'activeRunInstanceIds|runtimeStates') 'Migrated stop must use the resolved CardRun instance and submit through RunOrchestrator without a shell-owned run index.'
-Assert-True ($stopRecipeWithOrchestrator -notmatch 'bridgeClient\.|TerminalRuntimeHost\.|setRuntimeState\(') 'Migrated stop intake must not bypass the orchestrator to mutate facts or execution resources.'
+Assert-True ($androidRecipeActionGateway -match '(?s)override fun resolveState\b.*CardRunStore::get' -and $androidRecipeActionGateway -match 'orchestrator\.stop\(state\.instanceId\)') 'Shared recipe stop must resolve the latest CardRunStore state and submit its instance through RunOrchestrator.'
+Assert-True ($main -notmatch 'fun\s+(stopRecipeByCardInstanceId|stopRecipeWithOrchestrator)\s*\(') 'MainActivity must not retain a second stop intake.'
 Assert-True ($main -match 'is RunExecutionEffect\.StopResolved -> handleRunStopResolvedEffect\(effect\)') 'Stop resolution must return to the visible shell through the shared execution Effect contract.'
 Assert-True ($stopCoordinator -match 'RecipeStopRequest' -and $stopCoordinator -match 'terminalSessionId == null' -and $stopCoordinator -match 'hasBridgeProcessBinding') 'StopCoordinator must distinguish terminal-only state from retained process bindings.'
 Assert-True ($androidRecipeExecutor -match 'bridgeClient\.stopProcessBinding' -and $androidRecipeExecutor -match 'cardInstanceId = request\.instanceId') 'Execution adapter must stop retained process bindings with card ownership identity.'

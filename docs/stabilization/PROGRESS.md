@@ -1333,4 +1333,14 @@ T011 浏览器与 APK 入站适配结果：
 - 删除 Main 的临时浏览器配方/状态写入、APK 路径解析和相应事实分支；临时运行窗口启动失败仍回退现有工作台。
 - 浏览器/APK 协调器、CardRun 浏览器路由、运行目标解析和 Main 路由测试通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `2780 / 135 / 43 / 10 / 0`，零调用私有函数为 0。
 
+### 2026-07-13 T011 自动化运行入口收口
+
+- 卡片停止自动化改为提交 `KiteRecipeActionSource.Automation`，与首页、编辑器和运行窗口共用 `RecipeActionWorkflowCoordinator`；Shell 不再直接停止 Orchestrator。
+- 资源直接安装自动化进入 `ResourceActionWorkflowCoordinator.installDirect`；资源 owner 探针由独立 Application 协调器归一化身份，再由 Platform 适配器复用正式 `RunOrchestrator` 和 `CardRunSpecialRecipes`。
+- 删除 MainActivity 的直接运行启停、资源探针配方、资源运行协调器字段、无写入的显示抑制集合及两个迁移后死方法。当前架构债为 `2578 / 127 / 41 / 10 / 0`（行 / 函数 / 私有字段 / 资源职责函数 / runtimeStates 引用）。
+- 自动化 Intent 消费完成后同时清除 runtime、recipe、instance 和 resource 标识，避免 Activity/进程重建时把验收入口残留误路由成普通卡片运行。
+- 定向工作流、RunOrchestrator 和 Main 路由单测通过；Kotlin 编译、架构守卫和运行车道守卫通过。Robolectric 仍只出现 Windows 临时目录清理告警，Gradle 结果为成功。
+- 全量 `testDebugUnitTest + assembleDebug` 通过。Debug APK 为 241,594,117 bytes；覆盖安装到 OnePlus 8T 后冷启动 `TotalTime=1222ms`，首屏、进程和导航壳正常，无 FATAL/ANR。
+- 真机资源 owner 探针通过新工作流启动，运行压力事实出现 `resource:kite.owner.telemetry.probe`、owner container=1、tracee=2；自动化停止复用正式配方动作后约 0.5 秒落为 Stopped，owner container/tracee 均归零，结果为“已停止，未发现进程残留”。T011 完成。
+
 下一步：审计 Main 的自动化测试 Intent 入口和剩余 Console/Shell 绘制职责；自动化业务动作改为调用现有工作流，测试入口本身保留为 Shell 系统回调。

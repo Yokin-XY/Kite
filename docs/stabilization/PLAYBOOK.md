@@ -377,10 +377,10 @@ Controller 提供 UiState 和 Action，Activity 只负责导航到资源 Destina
 
 验收标准：
 
-- [ ] 终端 Feature 不依赖具体 Activity 类型。
-- [ ] `MainActivity` 只保留外壳、导航、系统回调和模块装配。
-- [ ] 不再存在 Feature Fragment 反向请求 Activity 渲染页面。
-- [ ] `MainActivity` 行数只作为防回涨指标，最终验收以职责清单清空为准。
+- [x] 终端 Feature 不依赖具体 Activity 类型。
+- [x] `MainActivity` 只保留外壳、导航、系统回调和模块装配。
+- [x] 不再存在 Feature Fragment 反向请求 Activity 渲染页面。
+- [x] `MainActivity` 行数只作为防回涨指标，最终验收以职责清单清空为准。
 
 依赖：T004-T010。
 

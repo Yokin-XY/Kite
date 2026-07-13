@@ -12,6 +12,7 @@ import com.kite.app.application.runs.RunCommandResult
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartRequest
 import com.kite.app.bridge.KiteBridgeClient
+import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.recipe.KiteExecution
@@ -46,7 +47,8 @@ internal class AndroidResourceActionGateway(
     private val runOrchestrator: RunOrchestrator,
     private val recipeLoader: KiteRecipeLoader,
     private val recipeFeatureGateway: RecipeFeatureGateway,
-    private val bridgeClient: KiteBridgeClient
+    private val bridgeClient: KiteBridgeClient,
+    private val diagnostics: KiteDiagnostics
 ) : ResourceActionGateway {
     private val appContext = context.applicationContext
 
@@ -201,6 +203,26 @@ internal class AndroidResourceActionGateway(
                 onFailure = { message("添加失败：${it.message ?: it.javaClass.simpleName}") }
             )
         }
+
+    override suspend fun installDirect(resourceId: String): List<ResourceActionEffect> {
+        val targetId = KiteResourceInstallRecipes.safeId(resourceId)
+        val recipe = runCoordinator.recipe(targetId, KiteResourceInstallRecipes.OP_INSTALL)
+            ?: return message("资源获取入口不存在")
+        diagnostics.logRecipeEvent(
+            "kite_runtime_automation_resource_install_start",
+            recipe,
+            mapOf("resourceId" to targetId)
+        )
+        runCoordinator.start(
+            ResourceRunLaunchRequest(
+                resourceId = targetId,
+                recipe = recipe,
+                operation = KiteResourceInstallRecipes.OP_INSTALL,
+                stageBundledResource = runCoordinator.isBundled(targetId)
+            )
+        )
+        return emptyList()
+    }
 
     private fun acceptInstallPlan(
         target: ResourceTarget,

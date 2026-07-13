@@ -37,19 +37,19 @@ import androidx.activity.OnBackPressedCallback
 import androidx.browser.customtabs.CustomTabsIntent
 import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.action.KiteRecipeActionRequest
+import com.kite.app.action.KiteRecipeActionSource
 import com.kite.app.action.KiteResourceActionCoordinator
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.action.KiteResourceActionRequest
 import com.kite.app.action.KiteResourceActionSource
-import com.kite.app.application.runs.RunCommandResult
 import com.kite.app.application.runs.RunExecutionEffect
 import com.kite.app.application.runs.RunExecutionEffectBus
-import com.kite.app.application.runs.RunOrchestrator
-import com.kite.app.application.runs.RunStartRequest
 import com.kite.app.application.runs.RecipeActionEffect
 import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
 import com.kite.app.application.runs.DesktopOpenCoordinator
 import com.kite.app.application.runs.DesktopOpenRequest
+import com.kite.app.application.runs.RuntimeOwnerProbeCoordinator
+import com.kite.app.application.runs.RuntimeOwnerProbeRequest
 import com.kite.app.application.browser.BrowserOpenCoordinator
 import com.kite.app.application.browser.BrowserOpenRequest as BrowserOpenWorkflowRequest
 import com.kite.app.application.browser.BrowserOpenResult
@@ -81,7 +81,6 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
-import com.kite.app.resources.KiteResourceInstallSpec
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunDesktopRouter
 import com.kite.app.run.CardRunSurface
@@ -118,10 +117,6 @@ import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserHandoffLaunchResult
 import com.kite.app.application.browser.BrowserAuthRedirectCoordinator
 import com.kite.app.application.browser.BrowserAuthRedirectResult
-import com.kite.app.application.resources.ResourceRunContinuation
-import com.kite.app.application.resources.ResourceRunCoordinator
-import com.kite.app.application.resources.ResourceRunLaunchRequest
-import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.resources.ResourceActionEffect
 import com.kite.app.application.resources.ResourceActionWorkflowCoordinator
 import com.kite.app.application.recipes.RecipeFeatureGateway
@@ -189,12 +184,11 @@ open class MainActivity : AppCompatActivity() {
     private lateinit var localServer: KiteLocalServer
     private lateinit var resourceFeatureGateway: ResourceFeatureGateway
     private lateinit var recipeFeatureGateway: RecipeFeatureGateway
-    private lateinit var runOrchestrator: RunOrchestrator
     private lateinit var runExecutionEffectBus: RunExecutionEffectBus
-    private lateinit var resourceRunCoordinator: ResourceRunCoordinator
     private lateinit var resourceActionWorkflowCoordinator: ResourceActionWorkflowCoordinator
     private lateinit var recipeActionWorkflowCoordinator: RecipeActionWorkflowCoordinator
     private lateinit var desktopOpenCoordinator: DesktopOpenCoordinator
+    private lateinit var runtimeOwnerProbeCoordinator: RuntimeOwnerProbeCoordinator
     private lateinit var browserOpenCoordinator: BrowserOpenCoordinator
     private lateinit var installApkCoordinator: InstallApkCoordinator
     private lateinit var settingsGateway: SettingsGateway
@@ -251,7 +245,6 @@ open class MainActivity : AppCompatActivity() {
     private var focusedRunInstanceId: String? = null
     private var currentResourceDetailId: String? = null
     private var lastWorkbenchUrl: String? = null
-    private val suppressedResourceRunSurfaceRecipeIds = mutableSetOf<String>()
     private var consoleSystemStatusPillView: TextView? = null
     private var consoleRuntimeBannerHost: LinearLayout? = null
 
@@ -267,12 +260,11 @@ open class MainActivity : AppCompatActivity() {
         diagnostics.writeCapabilityReport()
         settingsGateway = appGraph.settingsGateway
         CardRunStore.initialize(applicationContext)
-        runOrchestrator = appGraph.runOrchestrator
         runExecutionEffectBus = appGraph.runExecutionEffectBus
-        resourceRunCoordinator = appGraph.resourceRunCoordinator
         resourceActionWorkflowCoordinator = appGraph.resourceActionWorkflowCoordinator
         recipeActionWorkflowCoordinator = appGraph.recipeActionWorkflowCoordinator
         desktopOpenCoordinator = appGraph.desktopOpenCoordinator
+        runtimeOwnerProbeCoordinator = appGraph.runtimeOwnerProbeCoordinator
         browserOpenCoordinator = appGraph.browserOpenCoordinator
         installApkCoordinator = appGraph.installApkCoordinator
         runtimeBootstrapGateway = appGraph.runtimeBootstrapGateway
@@ -458,6 +450,9 @@ open class MainActivity : AppCompatActivity() {
         intent.removeExtra(AppIntentRouter.EXTRA_RUNTIME_ACTION)
         intent.removeExtra(EXTRA_AUTOMATION_PROBE_TARGET_LIVE_TRACEES)
         intent.removeExtra(EXTRA_AUTOMATION_OWNER_ID)
+        intent.removeExtra(EXTRA_AUTOMATION_RUNTIME_ID)
+        intent.removeExtra(CardRunIntents.EXTRA_RECIPE_ID)
+        intent.removeExtra(CardRunIntents.EXTRA_INSTANCE_ID)
         intent.removeExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_TARGET_ID)
         setIntent(intent)
     }
@@ -568,39 +563,27 @@ open class MainActivity : AppCompatActivity() {
             recipe,
             mapOf("recipeId" to recipeId, "instanceId" to instanceId, "status" to state.status.name)
         )
-        stopRecipeByCardInstanceId(recipe, state.cardInstanceId, state)
+        submitRecipeAction(
+            KiteRecipeActionRequest(
+                recipe = recipe,
+                intent = KiteRecipeActionIntent.Stop,
+                source = KiteRecipeActionSource.Automation,
+                instanceId = state.instanceId
+            )
+        )
     }
 
     private fun startResourceOwnerProbeFromAutomation(sourceIntent: Intent?) {
         val resourceId = sourceIntent
             ?.getStringExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_TARGET_ID)
-            ?.takeIf { it.isNotBlank() }
-            ?.let { KiteResourceInstallRecipes.safeId(it) }
-            ?: RESOURCE_OWNER_PROBE_ID
-        val recipe = resourceOwnerProbeRecipe(resourceId)
+            .orEmpty()
         val instanceId = sourceIntent
             ?.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID)
-            ?.takeIf { it.isNotBlank() }
-            ?: "resource-owner-probe-$resourceId"
-        CardRunStore.registerRecipe(recipe)
-        val state = CardRunStore.start(
-            recipe = recipe,
-            instanceId = instanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_RESOURCE,
-            stepId = resourceId
-        )
-        diagnostics.logRecipeEvent(
-            "kite_runtime_automation_start_resource_owner_probe",
-            recipe,
-            mapOf("resourceId" to resourceId, "instanceId" to instanceId)
-        )
-        startRecipe(
-            recipe = recipe,
-            previousState = state,
-            preferredInstanceId = instanceId,
-            openConsoleOnStart = false,
-            renderOnStart = false,
-            keepCurrentFocus = true
+        runtimeOwnerProbeCoordinator.start(
+            RuntimeOwnerProbeRequest(
+                resourceId = resourceId,
+                instanceId = instanceId
+            )
         )
     }
 
@@ -642,47 +625,11 @@ open class MainActivity : AppCompatActivity() {
                 null,
                 emptyMap()
             )
-        val recipe = resourceRunCoordinator.recipe(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
-            ?: return diagnostics.logRecipeEvent(
-                "kite_runtime_automation_resource_install_missing_recipe",
-                null,
-                mapOf("resourceId" to resourceId)
+        lifecycleScope.launch {
+            applyResourceActionEffects(
+                resourceActionWorkflowCoordinator.installDirect(resourceId)
             )
-        diagnostics.logRecipeEvent(
-            "kite_runtime_automation_resource_install_start",
-            recipe,
-            mapOf("resourceId" to resourceId)
-        )
-        resourceRunCoordinator.start(
-            ResourceRunLaunchRequest(
-                resourceId = resourceId,
-                recipe = recipe,
-                operation = KiteResourceInstallRecipes.OP_INSTALL,
-                stageBundledResource = resourceRunCoordinator.isBundled(resourceId)
-            )
-        )
-    }
-
-    private fun resourceOwnerProbeRecipe(resourceId: String): KiteRecipe {
-        val step = KiteRecipeStep(
-            id = "resource_owner_probe_$resourceId",
-            type = KiteRecipe.STEP_SHELL,
-            cmd = "bash -lc 'echo KITE_RESOURCE_OWNER_PROBE_START; sleep 600'",
-            surfaceMode = KiteRecipe.SURFACE_MODE_SILENT,
-            workdir = "/workspace",
-            timeoutMs = 900_000L
-        )
-        return KiteResourceInstallRecipes.toRecipe(
-            KiteResourceInstallSpec(
-                id = resourceId,
-                name = "Resource owner probe",
-                description = "Debug resource owner telemetry probe",
-                category = "resource",
-                operation = KiteResourceInstallRecipes.OP_INSTALL,
-                actionLabel = "Probe",
-                steps = listOf(step)
-            )
-        )
+        }
     }
 
     override fun onResume() {
@@ -1914,23 +1861,6 @@ open class MainActivity : AppCompatActivity() {
         runtimeStatusChrome.bindStatusPill(this, runtimeStatusState)
     }
 
-    /** 主壳只打开既有运行实例；显示面装配全部属于 CardRunActivity。 */
-    private fun openCardRunTask(recipe: KiteRecipe) {
-        val state = focusedRunInstanceId
-            ?.let { CardRunStore.get(it) }
-            ?: CardRunStore.currentForRecipe(recipe.id)
-            ?: return
-        startActivity(
-            CardRunIntents.launchIntent(
-                context = this,
-                recipeId = recipe.id,
-                instanceId = state.instanceId,
-                launchSource = CardRunIntents.SOURCE_CARD,
-                autoStart = false
-            )
-        )
-    }
-
     private fun handleBrowserAutomationActionRequest(action: BrowserAutomationAction): BrowserAutomationActionResult {
         if (browserRuntimeMode() != BrowserRuntimeMode.AutomationBrowser) {
             return BrowserAutomationActionScript.rejectedResult(
@@ -2148,83 +2078,11 @@ open class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startRecipe(
-        recipe: KiteRecipe,
-        previousState: RecipeRuntimeState,
-        preferredInstanceId: String? = null,
-        openConsoleOnStart: Boolean = true,
-        renderOnStart: Boolean = true,
-        keepCurrentFocus: Boolean = false
-    ) {
-        startRecipeWithOrchestrator(
-            recipe = recipe,
-            previousState = previousState,
-            preferredInstanceId = preferredInstanceId,
-            openConsoleOnStart = openConsoleOnStart,
-            renderOnStart = renderOnStart,
-            keepCurrentFocus = keepCurrentFocus
-        )
-    }
 
-    private fun startRecipeWithOrchestrator(
-        recipe: KiteRecipe,
-        previousState: RecipeRuntimeState,
-        preferredInstanceId: String?,
-        openConsoleOnStart: Boolean,
-        renderOnStart: Boolean,
-        keepCurrentFocus: Boolean
-    ) {
-        val instanceId = preferredInstanceId
-            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
-            ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
-            ?: recipe.id
-        if (!keepCurrentFocus) {
-            focusedRunInstanceId = instanceId
-        }
-        val result = runOrchestrator.start(
-            RunStartRequest(
-                recipe = recipe,
-                instanceId = instanceId,
-                parentInstanceId = previousState.parentInstanceId,
-                ownerKind = previousState.ownerKind,
-                stepId = previousState.stepId
-            )
-        )
-        diagnostics.logRecipeAction(
-            recipe,
-            "run_orchestrator_start",
-            mapOf(
-                "instanceId" to instanceId,
-                "result" to when (result) {
-                    is RunCommandResult.Accepted -> "accepted"
-                    is RunCommandResult.Ignored -> "ignored:${result.reason}"
-                },
-                "steps" to recipe.steps.joinToString(" -> ") { it.type }
-            )
-        )
-        if (!renderOnStart) {
-            if (!keepCurrentFocus) {
-                focusedRunInstanceId = instanceId
-            }
-        } else if (openConsoleOnStart) {
-            showConsole()
-        } else {
-            focusedRunInstanceId = instanceId
-            openCardRunTask(recipe)
-        }
-    }
-
-
-
-
-
-    private fun resourceRunSurfaceSuppressed(recipe: KiteRecipe): Boolean =
-        recipe.id in suppressedResourceRunSurfaceRecipeIds
 
 
 
     private fun shouldOpenStepSurface(recipe: KiteRecipe, step: KiteRecipeStep): Boolean {
-        if (resourceRunSurfaceSuppressed(recipe)) return false
         return when (KiteRecipe.normalizeSurfaceMode(step.surfaceMode)) {
             KiteRecipe.SURFACE_MODE_PANEL -> true
             KiteRecipe.SURFACE_MODE_SILENT -> false
@@ -2251,49 +2109,6 @@ open class MainActivity : AppCompatActivity() {
 
 
 
-
-    private fun stopRecipeByCardInstanceId(
-        recipe: KiteRecipe,
-        cardInstanceId: String,
-        fallbackState: RecipeRuntimeState? = null,
-        navigateToConsole: Boolean = true
-    ) {
-        val previousState = CardRunStore.get(cardInstanceId)
-            ?: fallbackState?.takeIf { it.recipeId == recipe.id }
-            ?: CardRunStore.currentForRecipe(recipe.id)
-            ?: return
-        stopRecipeWithOrchestrator(recipe, previousState, navigateToConsole)
-    }
-
-    private fun stopRecipeWithOrchestrator(
-        recipe: KiteRecipe,
-        previousState: RecipeRuntimeState,
-        navigateToConsole: Boolean
-    ) {
-        diagnostics.logBridgeEvent(
-            "stop_orchestrator_request",
-            recipe,
-            mapOf(
-                "cardInstanceId" to previousState.cardInstanceId,
-                "runId" to previousState.runId.orEmpty(),
-                "terminalSessionId" to previousState.terminalSessionId.orEmpty()
-            )
-        )
-        when (val result = runOrchestrator.stop(previousState.instanceId)) {
-            is RunCommandResult.Accepted -> {
-                closeCardRunInstanceForStop(recipe, previousState, "stop_orchestrator_accepted")
-                if (navigateToConsole) showConsole()
-            }
-            is RunCommandResult.Ignored -> diagnostics.logBridgeEvent(
-                "stop_orchestrator_ignored",
-                recipe,
-                mapOf(
-                    "cardInstanceId" to previousState.cardInstanceId,
-                    "reason" to result.reason
-                )
-            )
-        }
-    }
 
 
 
@@ -2673,22 +2488,6 @@ open class MainActivity : AppCompatActivity() {
         }.getOrDefault(value)
     }
 
-    private fun primaryAction(text: String, accent: String, disabled: Boolean = false, onClick: () -> Unit): View =
-        TextView(this).apply {
-            this.text = text
-            textSize = 11.5f
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(tokens.buttonText)
-            alpha = if (disabled) 0.62f else 1f
-            val fill = KiteTheme.accent(accent, tokens).strong
-            background = roundedBox(fill, fill, dp(12).toFloat())
-            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { setMargins(0, 0, dp(6), 0) }
-            isEnabled = !disabled
-            if (!disabled) setOnClickListener { onClick() }
-        }
-
     private fun roundedBox(fill: Int, stroke: Int, radius: Float, strokeWidth: Int = dp(1)): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
@@ -2731,7 +2530,6 @@ open class MainActivity : AppCompatActivity() {
         private const val ACTION_START_RESOURCE_INSTALL = "start_resource_install"
         private const val ACTION_START_RESOURCE_OPEN = "start_resource_open"
         private const val ACTION_STOP_CARD_RUN = "stop_card_run"
-        private const val RESOURCE_OWNER_PROBE_ID = "kite.owner.telemetry.probe"
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
         private const val TERMINAL_STOP_GRACE_MS = 350L
         private val ANSI_ESCAPE_REGEX = Regex("""\u001B\[[0-9;?]*[ -/]*[@-~]""")

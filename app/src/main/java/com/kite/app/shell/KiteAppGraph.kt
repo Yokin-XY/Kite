@@ -18,6 +18,7 @@ import com.kite.app.application.runs.RunHistoryGateway
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
 import com.kite.app.application.runs.DesktopOpenCoordinator
+import com.kite.app.application.runs.RuntimeOwnerProbeCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementDispatchResult
@@ -49,6 +50,7 @@ import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
 import com.kite.app.platform.runs.AndroidRecipeExecutor
 import com.kite.app.platform.runs.AndroidRecipeActionGateway
 import com.kite.app.platform.runs.AndroidDesktopOpenGateway
+import com.kite.app.platform.runs.AndroidRuntimeOwnerProbeGateway
 import com.kite.app.platform.runs.AndroidRunHistoryGateway
 import com.kite.app.platform.runs.AndroidRunStateGateway
 import com.kite.app.platform.runtimemanagement.AndroidRuntimeManagementGateway
@@ -149,6 +151,11 @@ internal class KiteAppGraph private constructor(context: Context) {
             AndroidDesktopOpenGateway(appContext, diagnostics, ::resolveRecipe)
         )
     }
+    val runtimeOwnerProbeCoordinator: RuntimeOwnerProbeCoordinator by lazy {
+        RuntimeOwnerProbeCoordinator(
+            AndroidRuntimeOwnerProbeGateway(runOrchestrator, diagnostics)
+        )
+    }
     val runtimeManagementCoordinator: RuntimeManagementCoordinator by lazy {
         RuntimeManagementCoordinator(
             gateway = runtimeManagementGateway,
@@ -188,7 +195,8 @@ internal class KiteAppGraph private constructor(context: Context) {
                 runOrchestrator = runOrchestrator,
                 recipeLoader = recipeLoader,
                 recipeFeatureGateway = recipeFeatureGateway,
-                bridgeClient = bridgeClient
+                bridgeClient = bridgeClient,
+                diagnostics = diagnostics
             )
         )
     }

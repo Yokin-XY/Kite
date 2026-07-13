@@ -30,8 +30,9 @@ class ResourceActionWorkflowCoordinatorTest {
 
         coordinator.cancelPlan("target", listOf("base", "target"))
         coordinator.createHomeCard("target")
+        coordinator.installDirect("target")
 
-        assertEquals(listOf("cancel_plan:target:base,target", "home:target"), gateway.calls)
+        assertEquals(listOf("cancel_plan:target:base,target", "home:target", "direct:target"), gateway.calls)
     }
 
     private class FakeGateway : ResourceActionGateway {
@@ -47,5 +48,6 @@ class ResourceActionWorkflowCoordinatorTest {
         override suspend fun cancelPlan(targetResourceId: String, planResourceIds: List<String>) =
             record("cancel_plan:$targetResourceId:${planResourceIds.joinToString(",")}")
         override suspend fun createHomeCard(resourceId: String) = record("home:$resourceId")
+        override suspend fun installDirect(resourceId: String) = record("direct:$resourceId")
     }
 }

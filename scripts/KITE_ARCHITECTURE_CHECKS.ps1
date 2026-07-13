@@ -70,6 +70,8 @@ $recipeActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/appl
 $androidRecipeActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeActionGateway.kt'
 $desktopOpenWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/DesktopOpenWorkflow.kt'
 $androidDesktopOpenGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidDesktopOpenGateway.kt'
+$runtimeOwnerProbeWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RuntimeOwnerProbeWorkflow.kt'
+$androidRuntimeOwnerProbeGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRuntimeOwnerProbeGateway.kt'
 $browserOpenWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/browser/BrowserOpenWorkflow.kt'
 $androidBrowserOpenGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserOpenGateway.kt'
 $installApkWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/packages/InstallApkWorkflow.kt'
@@ -118,6 +120,8 @@ Assert-Architecture (Test-Path $recipeActionWorkflowPath) 'Recipe action applica
 Assert-Architecture (Test-Path $androidRecipeActionGatewayPath) 'Android recipe action adapter is missing.'
 Assert-Architecture (Test-Path $desktopOpenWorkflowPath) 'Desktop-open application workflow is missing.'
 Assert-Architecture (Test-Path $androidDesktopOpenGatewayPath) 'Android desktop-open adapter is missing.'
+Assert-Architecture (Test-Path $runtimeOwnerProbeWorkflowPath) 'Runtime owner-probe application workflow is missing.'
+Assert-Architecture (Test-Path $androidRuntimeOwnerProbeGatewayPath) 'Android runtime owner-probe adapter is missing.'
 Assert-Architecture (Test-Path $browserOpenWorkflowPath) 'Browser-open application workflow is missing.'
 Assert-Architecture (Test-Path $androidBrowserOpenGatewayPath) 'Android browser-open adapter is missing.'
 Assert-Architecture (Test-Path $installApkWorkflowPath) 'Install-APK application workflow is missing.'
@@ -158,6 +162,8 @@ if ($failures.Count -eq 0) {
     $androidRecipeActionGateway = [System.IO.File]::ReadAllText($androidRecipeActionGatewayPath, [System.Text.Encoding]::UTF8)
     $desktopOpenWorkflow = [System.IO.File]::ReadAllText($desktopOpenWorkflowPath, [System.Text.Encoding]::UTF8)
     $androidDesktopOpenGateway = [System.IO.File]::ReadAllText($androidDesktopOpenGatewayPath, [System.Text.Encoding]::UTF8)
+    $runtimeOwnerProbeWorkflow = [System.IO.File]::ReadAllText($runtimeOwnerProbeWorkflowPath, [System.Text.Encoding]::UTF8)
+    $androidRuntimeOwnerProbeGateway = [System.IO.File]::ReadAllText($androidRuntimeOwnerProbeGatewayPath, [System.Text.Encoding]::UTF8)
     $browserOpenWorkflow = [System.IO.File]::ReadAllText($browserOpenWorkflowPath, [System.Text.Encoding]::UTF8)
     $androidBrowserOpenGateway = [System.IO.File]::ReadAllText($androidBrowserOpenGatewayPath, [System.Text.Encoding]::UTF8)
     $installApkWorkflow = [System.IO.File]::ReadAllText($installApkWorkflowPath, [System.Text.Encoding]::UTF8)
@@ -227,7 +233,7 @@ if ($failures.Count -eq 0) {
         $main -notmatch 'isLegacyCardRunShell|RunSurfaceHost|RunWebSurfaceBinding|RunTerminalSurfaceBinding|RunX11SurfaceBinding|ResourceInstallWizardSurface'
     ) 'MainActivity must not retain the legacy CardRun or install-wizard display shell.'
     Assert-Architecture (
-        $main -match 'private fun openCardRunTask\(' -and
+        $main -match 'CardRunIntents\.launchIntent\(' -and
         $main -notmatch 'showCardRunSurface'
     ) 'MainActivity must launch the independent run task instead of rendering a card-run surface.'
     Assert-Architecture (
@@ -386,8 +392,21 @@ if ($failures.Count -eq 0) {
     Assert-Architecture (
         $main -match 'recipeActionWorkflowCoordinator\.dispatch' -and
         $main -match 'RecipeActionEffect\.OpenRun' -and
-        $main -notmatch 'recipeActionCoordinator|executeRecipeActionRoute|KiteRecipeActionPlan'
+        $main -notmatch 'recipeActionCoordinator|executeRecipeActionRoute|KiteRecipeActionPlan|runOrchestrator\.(start|stop)'
     ) 'MainActivity must interpret recipe action effects instead of planning or executing recipe actions.'
+    Assert-Architecture (
+        $runtimeOwnerProbeWorkflow -match 'class\s+RuntimeOwnerProbeCoordinator' -and
+        $runtimeOwnerProbeWorkflow -notmatch 'android\.|androidx\.|CardRunStore|MainActivity|CardRunActivity|com\.kite\.app\.platform'
+    ) 'Runtime owner-probe workflow must remain an Android-free application contract.'
+    Assert-Architecture (
+        $androidRuntimeOwnerProbeGateway -match 'CardRunSpecialRecipes\.resourceOwnerProbe' -and
+        $androidRuntimeOwnerProbeGateway -match 'orchestrator\.start' -and
+        $androidRuntimeOwnerProbeGateway -notmatch 'MainActivity|CardRunActivity|android\.view|android\.widget|com\.kite\.app\.feature'
+    ) 'Runtime owner-probe adapter must own run orchestration without UI dependencies.'
+    Assert-Architecture (
+        $main -match 'runtimeOwnerProbeCoordinator\.start' -and
+        $main -notmatch 'resourceOwnerProbeRecipe|OWNER_KIND_RESOURCE|resourceRunCoordinator'
+    ) 'MainActivity must only submit runtime owner-probe requests.'
     Assert-Architecture (
         $desktopOpenWorkflow -match 'class\s+DesktopOpenCoordinator' -and
         $desktopOpenWorkflow -notmatch 'android\.|androidx\.|CardRunStore|KiteX11Surface|MainActivity|CardRunActivity'

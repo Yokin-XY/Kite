@@ -30,6 +30,7 @@ internal interface ResourceActionGateway {
     suspend fun cancelFailedInstall(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelPlan(targetResourceId: String, planResourceIds: List<String>): List<ResourceActionEffect>
     suspend fun createHomeCard(resourceId: String): List<ResourceActionEffect>
+    suspend fun installDirect(resourceId: String): List<ResourceActionEffect>
 }
 
 /**
@@ -59,4 +60,7 @@ internal class ResourceActionWorkflowCoordinator(
 
     suspend fun createHomeCard(resourceId: String): List<ResourceActionEffect> =
         gateway.createHomeCard(resourceId)
+
+    suspend fun installDirect(resourceId: String): List<ResourceActionEffect> =
+        gateway.installDirect(resourceId)
 }

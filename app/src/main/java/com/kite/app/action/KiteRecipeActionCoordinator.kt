@@ -15,7 +15,8 @@ internal enum class KiteRecipeActionSource(val logValue: String) {
     ConsoleCard("console_card"),
     Editor("editor"),
     RunSurface("run_surface"),
-    RunManagement("run_management")
+    RunManagement("run_management"),
+    Automation("automation")
 }
 
 internal data class KiteRecipeActionRequest(
