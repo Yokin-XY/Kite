@@ -460,3 +460,13 @@
 理由：这些页面虽然入口来自编辑器和资源详情，但 MainActivity 仍保存了约千行历史格式化、报告复制、资源图标缓存和 View 构建。页面状态变化只能重建根容器，资源日志还直接读取具体 Store。这属于活跃业务显示职责留在应用壳，不是单纯死代码。
 
 影响：Feature 不直接读取 `CardRunStore` 或 `KiteResourceManifestLoader`；Platform 适配器只暴露只读历史快照。指定日志的初始定位只消费一次，用户退回历史列表后，后台 Store 更新不得再次强制打开原详情。MainActivity 不得恢复历史、资源更多或资源 JSON 的 View 工厂。
+
+## ADR-S046 资源动作由 Application 工作流收口，Shell 只解释路由 Effect
+
+状态：accepted
+
+决策：资源获取、恢复向导、打开、停止、卸载、取消和创建首页卡片统一提交给 `ResourceActionWorkflowCoordinator`。`AndroidResourceActionGateway` 复用既有 `KiteResourceInstallStore`、`CardRunStore`、`ResourceRunCoordinator` 与 `RunOrchestrator` 写入事实，并返回打开运行窗口、打开安装向导或离散消息三类 Effect；MainActivity 只启动目标 Activity 或显示结果。
+
+理由：旧 MainActivity 同时保存资源目录缓存、过期状态猜测、打开运行签名、安装计划临时字段和向导 CardRun 注册。资源 Feature 已经直接订阅 Store/Gateway 信号后，这套 Activity 缓存既没有显示消费者，又会制造第二份事实和失真的静态测试。向导运行事实如果仍由 Shell 注册，也只是把页面拆出去了，业务所有权并没有迁移。
+
+影响：资源状态变化由 Feature 直接消费 `ResourceFeatureGateway.changes` 并局部校准；MainActivity 不得恢复 `resourceCatalog`、`resourceCatalogDirty`、资源 Store 观察器或 `showResourceInstallWizard`。向导 Effect 必须携带已注册的 `recipeId + instanceId + targetResourceId + planResourceIds`。计划成员触发恢复或取消时，以 Store 的真实 `targetResourceId` 为目标，不得把依赖项误当作整条计划目标。`CardRunSpecialRecipes` 属于 Application 数据工厂，不再放在 Feature 包中。

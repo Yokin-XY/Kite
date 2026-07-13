@@ -6,6 +6,7 @@ import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserAuthRedirectCoordinator
 import com.kite.app.application.resources.ResourceRunCoordinator
+import com.kite.app.application.resources.ResourceActionWorkflowCoordinator
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunLifecycleEventHub
@@ -35,6 +36,7 @@ import com.kite.app.platform.browser.AndroidExternalBrowserLauncher
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.platform.resources.AndroidResourceRecipeFactory
 import com.kite.app.platform.resources.AndroidResourceRunGateway
+import com.kite.app.platform.resources.AndroidResourceActionGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
 import com.kite.app.platform.runs.AndroidRecipeExecutor
 import com.kite.app.platform.runs.AndroidRunHistoryGateway
@@ -147,6 +149,20 @@ internal class KiteAppGraph private constructor(context: Context) {
             ),
             runOrchestrator = runOrchestrator,
             lifecycleHub = runLifecycleEventHub
+        )
+    }
+    val resourceActionWorkflowCoordinator: ResourceActionWorkflowCoordinator by lazy {
+        ResourceActionWorkflowCoordinator(
+            AndroidResourceActionGateway(
+                context = appContext,
+                installStore = resourceInstallStore,
+                manifestLoader = resourceManifestLoader,
+                runCoordinator = resourceRunCoordinator,
+                runOrchestrator = runOrchestrator,
+                recipeLoader = recipeLoader,
+                recipeFeatureGateway = recipeFeatureGateway,
+                bridgeClient = bridgeClient
+            )
         )
     }
 

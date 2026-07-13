@@ -82,20 +82,7 @@ import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
-import com.kite.app.resources.KiteResourceInstallPlanCompiler
-import com.kite.app.resources.KiteResourceInstallSignal
 import com.kite.app.resources.KiteResourceInstallSpec
-import com.kite.app.resources.KiteResourceInstallStore
-import com.kite.app.resources.KiteResourceDisplayRowSpec
-import com.kite.app.resources.KiteResourceManifest
-import com.kite.app.resources.KiteResourceManifestLoader
-import com.kite.app.resources.KiteResourcePreviewSpec
-import com.kite.app.resources.KiteResourceRequestPolicy
-import com.kite.app.resources.KiteResourceRegistryEntry
-import com.kite.app.resources.KiteResourceShellAction
-import com.kite.app.resources.KiteResourceUiProjector
-import com.kite.app.resources.KiteResourceRuntimeFacts
-import com.kite.app.resources.KiteResourceRuntimeFactsProjector
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunBrowserRouter
 import com.kite.app.run.CardRunDesktopRouter
@@ -118,12 +105,10 @@ import com.kite.app.foundation.runtime.ExternalExchangeManager
 import com.kite.app.foundation.runtime.RuntimeAutomationActions
 import com.kite.app.foundation.runtime.RuntimeHealthStore
 import com.kite.app.foundation.runtime.RuntimeReclaimer
-import com.kite.app.feature.runsurface.CardRunSpecialRecipes
+import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.runtime.TerminalSessionStore
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
-import com.kite.app.foundation.toolchain.ToolchainInstallPhase
-import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.feature.resources.ResourceFeatureRequest
 import com.kite.app.feature.resources.ResourceFeatureResultContract
@@ -142,6 +127,8 @@ import com.kite.app.application.resources.ResourceRunContinuation
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceRunLaunchRequest
 import com.kite.app.application.resources.ResourceRunLaunchResult
+import com.kite.app.application.resources.ResourceActionEffect
+import com.kite.app.application.resources.ResourceActionWorkflowCoordinator
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapGateway
 import com.kite.app.application.runtimebootstrap.RuntimePermissionKind
@@ -191,7 +178,6 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.concurrent.thread
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -207,13 +193,12 @@ open class MainActivity : AppCompatActivity() {
     private lateinit var browserHandoffCoordinator: BrowserHandoffCoordinator
     private lateinit var browserAutomationSessions: BrowserAutomationSessionStore
     private lateinit var localServer: KiteLocalServer
-    private lateinit var resourceInstallStore: KiteResourceInstallStore
-    private lateinit var resourceManifestLoader: KiteResourceManifestLoader
     private lateinit var resourceFeatureGateway: ResourceFeatureGateway
     private lateinit var recipeFeatureGateway: RecipeFeatureGateway
     private lateinit var runOrchestrator: RunOrchestrator
     private lateinit var runExecutionEffectBus: RunExecutionEffectBus
     private lateinit var resourceRunCoordinator: ResourceRunCoordinator
+    private lateinit var resourceActionWorkflowCoordinator: ResourceActionWorkflowCoordinator
     private lateinit var settingsGateway: SettingsGateway
     private lateinit var rootHost: FrameLayout
     private lateinit var root: LinearLayout
@@ -273,17 +258,7 @@ open class MainActivity : AppCompatActivity() {
     private var focusedRunInstanceId: String? = null
     private var currentResourceDetailId: String? = null
     private var lastWorkbenchUrl: String? = null
-    private var currentResourceInstallTargetId: String? = null
-    private var resourceInstallWizardPlanIds: List<String> = emptyList()
-    private var resourceInstallPlanRequestSerial = 0L
     private val suppressedResourceRunSurfaceRecipeIds = mutableSetOf<String>()
-    private var cachedResourceCatalog: List<ResourceItem>? = null
-    private var cachedResourceCatalogUpdatedAt = 0L
-    private var resourceCatalogDirty = true
-    private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
-    private var resourceOpenRunSignature = ""
-    private var resourceOpenRunStatusByResourceId: Map<String, RecipeRunStatus> = emptyMap()
-    private var resourceRunUiRefreshPosted = false
     private var consoleSystemStatusPillView: TextView? = null
     private var consoleRuntimeBannerHost: LinearLayout? = null
 
@@ -302,6 +277,7 @@ open class MainActivity : AppCompatActivity() {
         runOrchestrator = appGraph.runOrchestrator
         runExecutionEffectBus = appGraph.runExecutionEffectBus
         resourceRunCoordinator = appGraph.resourceRunCoordinator
+        resourceActionWorkflowCoordinator = appGraph.resourceActionWorkflowCoordinator
         runtimeBootstrapGateway = appGraph.runtimeBootstrapGateway
         firstRunOnboardingCoordinator = appGraph.firstRunOnboardingCoordinator
         runtimeStatusController = RuntimeStatusFeatureController(
@@ -326,9 +302,6 @@ open class MainActivity : AppCompatActivity() {
         StartupTraceStore.markStage(this, "main.webview_create")
         browserAutomationSessions = appGraph.browserAutomationSessions
         StartupTraceStore.markStage(this, "main.resources_and_server")
-        resourceInstallStore = appGraph.resourceInstallStore
-        resourceManifestLoader = appGraph.resourceManifestLoader
-        prewarmResourceCatalog()
         localServer = KiteLocalServer(
             context = applicationContext,
             diagnostics = diagnostics,
@@ -378,8 +351,6 @@ open class MainActivity : AppCompatActivity() {
         StartupTraceStore.markStage(this, "main.observers_and_intent")
         observeRuntimeStatus()
         observeRunExecutionEffects()
-        observeCardRunStoreSignals()
-        observeResourceInstallSignals()
         applyRecentTaskVisibilitySetting()
         val handledLaunchIntent = AppIntentRouter.dispatch(
             intent,
@@ -649,25 +620,22 @@ open class MainActivity : AppCompatActivity() {
                 null,
                 emptyMap()
             )
-        invalidateResourceCatalogCache()
-        val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }
-            ?: return diagnostics.logRecipeEvent(
-                "kite_runtime_automation_resource_open_missing_resource",
-                null,
-                mapOf("resourceId" to resourceId)
-            )
-        val recipe = resourceOpenRecipe(item)
-            ?: return diagnostics.logRecipeEvent(
-                "kite_runtime_automation_resource_open_missing_recipe",
-                null,
-                mapOf("resourceId" to resourceId)
-            )
         diagnostics.logRecipeEvent(
             "kite_runtime_automation_resource_open_start",
-            recipe,
+            null,
             mapOf("resourceId" to resourceId)
         )
-        startResourceOpen(item, recipe)
+        lifecycleScope.launch {
+            applyResourceActionEffects(
+                resourceActionWorkflowCoordinator.dispatch(
+                    KiteResourceActionRequest(
+                        resourceId,
+                        KiteResourceActionIntent.Open,
+                        KiteResourceActionSource.Automation
+                    )
+                )
+            )
+        }
     }
 
     private fun startResourceInstallFromAutomation(sourceIntent: Intent?) {
@@ -680,14 +648,7 @@ open class MainActivity : AppCompatActivity() {
                 null,
                 emptyMap()
             )
-        invalidateResourceCatalogCache()
-        val item = resourceCatalog(forceRefresh = true).firstOrNull { it.id == resourceId }
-            ?: return diagnostics.logRecipeEvent(
-                "kite_runtime_automation_resource_install_missing_resource",
-                null,
-                mapOf("resourceId" to resourceId)
-            )
-        val recipe = resourceInstallRecipe(item)
+        val recipe = resourceRunCoordinator.recipe(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
             ?: return diagnostics.logRecipeEvent(
                 "kite_runtime_automation_resource_install_missing_recipe",
                 null,
@@ -698,8 +659,14 @@ open class MainActivity : AppCompatActivity() {
             recipe,
             mapOf("resourceId" to resourceId)
         )
-        cacheResourceExecutionManifest(item.id)
-        startResourceInstall(item, recipe)
+        resourceRunCoordinator.start(
+            ResourceRunLaunchRequest(
+                resourceId = resourceId,
+                recipe = recipe,
+                operation = KiteResourceInstallRecipes.OP_INSTALL,
+                stageBundledResource = resourceRunCoordinator.isBundled(resourceId)
+            )
+        )
     }
 
     private fun resourceOwnerProbeRecipe(resourceId: String): KiteRecipe {
@@ -731,7 +698,6 @@ open class MainActivity : AppCompatActivity() {
         resumePendingFirstRunPermissionOnboarding()
         resumePendingRuntimePermissionBootstrap()
         StartupTraceStore.markStage(this, "main.resume_runtime_and_visible_state")
-        rebindVisibleResourceStateOnResume()
         runtimeStatusController.ensureReady()
         browserAuthRedirectCoordinator.reconcile()
         when (currentScreen) {
@@ -900,115 +866,6 @@ open class MainActivity : AppCompatActivity() {
         )
         if (!shouldOpenStepSurface(recipe, step)) return
         openWeb(effect.url, "recipe_orchestrator", recipe)
-    }
-
-    private fun observeCardRunStoreSignals() {
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                CardRunStore.runs.collect { runs ->
-                    consumeResourceOpenRunSignals(runs)
-                }
-            }
-        }
-    }
-
-    private fun observeResourceInstallSignals() {
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                resourceInstallStore.signals.collect { signal ->
-                    if (signal.revision <= 0L) return@collect
-                    consumeResourceInstallSignal(signal)
-                }
-            }
-        }
-    }
-
-    private fun consumeResourceInstallSignal(signal: KiteResourceInstallSignal) {
-        syncVisibleResourceState(signal.reason)
-    }
-
-    private fun syncVisibleResourceState(@Suppress("UNUSED_PARAMETER") reason: String) {
-        // 每个 Activity 都有自己的资源缓存。即使当前不在资源页，也要先标脏，
-        // 避免稍后进入资源页时继续显示状态变化前的按钮文字。
-        invalidateResourceRuntimeStateCache()
-        when (currentScreen) {
-            AppDestination.Resources,
-            AppDestination.ResourceSearch -> Unit
-            AppDestination.ResourceDetail -> Unit
-            AppDestination.ResourceMore -> Unit
-            AppDestination.ResourceManage -> Unit
-            else -> Unit
-        }
-    }
-
-    private fun consumeResourceOpenRunSignals(runs: List<RecipeRuntimeState>) {
-        val signature = buildResourceOpenRunSignature(runs)
-        if (signature == resourceOpenRunSignature) return
-        val nextStatuses = runs
-            .asSequence()
-            .mapNotNull { state ->
-                resourceIdForOpenRunRecipeId(state.recipeId)?.let { resourceId -> resourceId to state }
-            }
-            .groupBy({ it.first }, { it.second })
-            .mapValues { (_, states) -> states.maxByOrNull { it.updatedAt }?.status }
-            .mapNotNull { (resourceId, status) -> status?.let { resourceId to it } }
-            .toMap()
-        resourceOpenRunStatusByResourceId = nextStatuses
-        resourceOpenRunSignature = signature
-        invalidateResourceRuntimeStateCache()
-        syncVisibleResourceState("resource_open_run_state")
-    }
-
-    private fun buildResourceOpenRunSignature(runs: List<RecipeRuntimeState>): String =
-        runs
-            .asSequence()
-            .mapNotNull { state ->
-                val resourceId = resourceIdForOpenRunRecipeId(state.recipeId) ?: return@mapNotNull null
-                resourceId to state
-            }
-            .groupBy({ it.first }, { it.second })
-            .mapValues { (_, states) -> states.maxByOrNull { it.updatedAt } }
-            .toSortedMap()
-            .mapNotNull { (resourceId, state) ->
-                state?.let { "$resourceId:${it.instanceId}:${it.status.name}" }
-            }
-            .joinToString("|")
-
-    private fun requestResourceRunStateUiRefresh() {
-        if (!::root.isInitialized) return
-        when (currentScreen) {
-            AppDestination.Resources,
-            AppDestination.ResourceSearch,
-            AppDestination.ResourceDetail,
-            AppDestination.ResourceMore,
-            AppDestination.ResourceManage -> Unit
-            else -> return
-        }
-        if (resourceRunUiRefreshPosted) return
-        resourceRunUiRefreshPosted = true
-        root.post {
-            resourceRunUiRefreshPosted = false
-            when (currentScreen) {
-                AppDestination.Resources,
-                AppDestination.ResourceSearch,
-                AppDestination.ResourceDetail -> Unit
-                AppDestination.ResourceMore -> invalidateResourceRuntimeStateCache()
-                AppDestination.ResourceManage -> Unit
-                else -> Unit
-            }
-        }
-    }
-
-    private fun rebindVisibleResourceStateOnResume() {
-        if (!::root.isInitialized || !::resourceInstallStore.isInitialized) return
-        when (currentScreen) {
-            AppDestination.Resources,
-            AppDestination.ResourceSearch,
-            AppDestination.ResourceDetail,
-            AppDestination.ResourceMore,
-            AppDestination.ResourceManage -> syncVisibleResourceState("resume")
-            else -> Unit
-        }
     }
 
     private fun recipeForRunState(state: RecipeRuntimeState): KiteRecipe? =
@@ -1263,7 +1120,6 @@ open class MainActivity : AppCompatActivity() {
         themeConfig = config
         tokens = KiteTheme.resolve(config)
         applyKiteTerminalTheme()
-        invalidateResourceUiCache()
         if (::root.isInitialized) {
             root.setBackgroundColor(tokens.pageBackground)
             rootHost.setBackgroundColor(tokens.pageBackground)
@@ -1926,10 +1782,11 @@ open class MainActivity : AppCompatActivity() {
                 }
                 is ResourceFeatureRequest.OpenMore -> showResourceMore(request.resourceId)
                 is ResourceFeatureRequest.OpenRawJson -> showResourceRawJson(request.resourceId)
-                is ResourceFeatureRequest.CreateHomeCard -> resourceCatalog(forceRefresh = false)
-                    .firstOrNull { it.id == request.resourceId }
-                    ?.let(::addResourceHomeCard)
-                    ?: showResourceDiscreteToast("资源目录正在更新，请稍后重试")
+                is ResourceFeatureRequest.CreateHomeCard -> lifecycleScope.launch {
+                    applyResourceActionEffects(
+                        resourceActionWorkflowCoordinator.createHomeCard(request.resourceId)
+                    )
+                }
                 is ResourceFeatureRequest.OpenRunHistory -> showRunHistory(
                     recipeId = request.recipeId,
                     screen = AppDestination.ResourceMore,
@@ -1939,25 +1796,64 @@ open class MainActivity : AppCompatActivity() {
                     emptyDetail = "资源获取或失败后，这里会保留对应资源自己的步骤和 SH 报告。",
                     initialHistoryId = request.historyId
                 )
-                is ResourceFeatureRequest.OpenInstallPlan ->
-                    showResourceInstallWizard(request.targetResourceId)
-                is ResourceFeatureRequest.CancelInstallPlan ->
-                    cancelResourceInstallTask(
-                        targetResourceId = request.targetResourceId,
-                        planResourceIds = request.resourceIds,
-                        closeWizard = false
+                is ResourceFeatureRequest.OpenInstallPlan -> lifecycleScope.launch {
+                    applyResourceActionEffects(
+                        resourceActionWorkflowCoordinator.dispatch(
+                            KiteResourceActionRequest(
+                                resourceId = request.targetResourceId,
+                                intent = KiteResourceActionIntent.ReopenInstall,
+                                source = KiteResourceActionSource.Wizard
+                            )
+                        )
                     )
-                is ResourceFeatureRequest.SubmitAction -> {
-                    val item = resourceCatalog(forceRefresh = false)
-                        .firstOrNull { it.id == request.request.resourceId }
-                    if (item == null) {
-                        showResourceDiscreteToast("资源目录正在更新，请稍后重试")
-                    } else {
-                        submitResourceAction(item, request.request.intent, request.request.source)
-                    }
+                }
+                is ResourceFeatureRequest.CancelInstallPlan -> lifecycleScope.launch {
+                    applyResourceActionEffects(
+                        resourceActionWorkflowCoordinator.cancelPlan(
+                            request.targetResourceId,
+                            request.resourceIds
+                        )
+                    )
+                }
+                is ResourceFeatureRequest.SubmitAction -> lifecycleScope.launch {
+                    applyResourceActionEffects(
+                        resourceActionWorkflowCoordinator.dispatch(request.request)
+                    )
                 }
                 null -> Unit
             }
+        }
+    }
+
+    private fun applyResourceActionEffects(effects: List<ResourceActionEffect>) {
+        effects.forEach { effect ->
+            when (effect) {
+                is ResourceActionEffect.OpenRun -> startActivity(
+                    CardRunIntents.launchIntent(
+                        context = this,
+                        recipeId = effect.recipeId,
+                        instanceId = effect.instanceId,
+                        launchSource = CardRunIntents.SOURCE_CARD,
+                        autoStart = effect.autoStart
+                    )
+                )
+                is ResourceActionEffect.OpenInstallWizard -> startActivity(
+                    CardRunIntents.resourceInstallWizardIntent(
+                        context = this,
+                        recipeId = effect.recipeId,
+                        instanceId = effect.instanceId,
+                        targetResourceId = effect.targetResourceId,
+                        planResourceIds = effect.planResourceIds
+                    )
+                )
+                is ResourceActionEffect.Message -> showResourceDiscreteToast(effect.text)
+            }
+        }
+    }
+
+    private fun showResourceDiscreteToast(message: String, length: Int = Toast.LENGTH_SHORT) {
+        if (currentScreen !in RESOURCE_STATUS_SCREENS) {
+            Toast.makeText(this, message, length).show()
         }
     }
 
@@ -1992,43 +1888,6 @@ open class MainActivity : AppCompatActivity() {
         nav.alpha = 1f
     }
 
-    private fun invalidateResourceCatalogCache() {
-        resourceCatalogDirty = true
-        cachedResourceCatalog = null
-        cachedResourceCatalogUpdatedAt = 0L
-        cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
-        resourceManifestLoader.invalidate()
-    }
-
-    private fun invalidateResourceRuntimeStateCache() {
-        resourceCatalogDirty = true
-        cachedResourceCatalogUpdatedAt = 0L
-    }
-
-    private fun invalidateResourceUiCache() {
-        invalidateResourceRuntimeStateCache()
-    }
-
-   private fun resourceRuntimeFactsFromStore(item: ResourceItem): KiteResourceRuntimeFacts {
-        val resourceId = KiteResourceInstallRecipes.safeId(item.id)
-        val entry = resourceInstallStore.registryEntry(resourceId)
-        val plan = resourceInstallStore.planSnapshot()
-        return KiteResourceRuntimeFactsProjector.project(
-            resourceId = resourceId,
-            registryEntry = entry,
-            plan = plan,
-            baselineInstalled = item.id == RESOURCE_NODE_RUNTIME && item.runtimeFacts.installed && entry == null,
-            idleStateLabel = item.runtimeFacts.idleStateLabel,
-            extraBusy = item.runtimeFacts.extraBusy
-        )
-    }
-
-    private fun prewarmResourceCatalog() {
-        thread(name = "KiteResourceCatalogPrewarm", isDaemon = true) {
-            runCatching { resourceCatalog(forceRefresh = false) }
-        }
-    }
-
     private fun showResourceManage() {
         enterScreen(AppDestination.ResourceManage)
         showFeatureFragment(ResourceManageFragment(), TAG_RESOURCE_MANAGE_FRAGMENT)
@@ -2042,1357 +1901,6 @@ open class MainActivity : AppCompatActivity() {
             TAG_RESOURCE_DETAIL_FRAGMENT
         )
     }
-    private fun submitResourceAction(
-        item: ResourceItem,
-        intent: KiteResourceActionIntent,
-        source: KiteResourceActionSource
-    ) {
-        val request = KiteResourceActionRequest(item.id, intent, source)
-        diagnostics.logBridgeEvent(
-            "resource_action_submit",
-            null,
-            mapOf("resourceId" to request.resourceId, "intent" to intent.name, "source" to source.logValue)
-        )
-        when (request.intent) {
-            KiteResourceActionIntent.Install -> handleResourceInstallAction(item)
-            KiteResourceActionIntent.ReopenInstall -> reopenResourceInstallWizard(item)
-            KiteResourceActionIntent.Open -> {
-                val recipe = resourceOpenRecipe(item)
-                if (recipe == null) {
-                    showResourceDiscreteToast("${item.name} 的打开动作稍后接入")
-                } else {
-                    startResourceOpen(item, recipe)
-                }
-            }
-            KiteResourceActionIntent.Stop -> handleResourceOpenStopAction(item)
-            KiteResourceActionIntent.Uninstall -> handleResourceUninstallAction(item)
-            KiteResourceActionIntent.CancelInstall -> handleResourceCancelInstallTask(item)
-            KiteResourceActionIntent.CancelFailedInstall -> handleResourceFailedInstallCancel(item)
-            KiteResourceActionIntent.BusyStatus -> showResourceDiscreteToast("${item.name} 正在卸载")
-            KiteResourceActionIntent.Unsupported -> showResourceDiscreteToast("正在处理 ${item.name}")
-        }
-    }
-
-    private fun reopenResourceInstallWizard(item: ResourceItem) {
-        val planSnapshot = resourceInstallStore.planSnapshot()
-        val resourceId = KiteResourceInstallRecipes.safeId(item.id)
-        val targetId = when {
-            planSnapshot.resourceIds.isNotEmpty() &&
-                (resourceId in planSnapshot.resourceIds || resourceId == planSnapshot.targetResourceId) ->
-                planSnapshot.targetResourceId
-            activeResourceInstallWizard?.targetResourceId?.isNotBlank() == true ->
-                activeResourceInstallWizard!!.targetResourceId
-            currentResourceInstallTargetId?.isNotBlank() == true ->
-                currentResourceInstallTargetId.orEmpty()
-            item.actionLabel == "获取中" -> item.id
-            else -> ""
-        }
-        val planIds = planSnapshot.resourceIds
-            .ifEmpty { resourceInstallWizardPlanIds }
-            .ifEmpty { resourceInstallStore.planResourceIds() }
-            .ifEmpty { if (item.actionLabel == "获取中") listOf(item.id) else emptyList() }
-        if (targetId.isBlank() || planIds.isEmpty()) {
-            showResourceDiscreteToast("${item.name} 正在处理，获取向导暂不可恢复")
-            return
-        }
-        currentResourceInstallTargetId = targetId
-        resourceInstallWizardPlanIds = planIds
-        showResourceInstallWizard(targetId)
-    }
-
-    private fun handleResourceInstallAction(item: ResourceItem) {
-        if (
-            resourceInstallStore.isFailed(item.id) &&
-            resourceInstallStore.failedOperation(item.id) != KiteResourceInstallStore.OP_UNINSTALL
-        ) {
-            handleResourceReinstallAction(item)
-            return
-        }
-        resourceInstallStore.markPreparing(item.id)
-        invalidateResourceRuntimeStateCache()
-        val requestId = ++resourceInstallPlanRequestSerial
-        thread(name = "KiteResourceInstallPlan-$requestId-${item.id}", isDaemon = true) {
-            val result = runCatching { buildResourceInstallPlan(item) }
-            runOnUiThread {
-                if (requestId != resourceInstallPlanRequestSerial) {
-                    if (resourceInstallStore.isPreparing(item.id)) resourceInstallStore.clear(item.id)
-                    return@runOnUiThread
-                }
-                result.onSuccess { plan ->
-                    handleResourceInstallPlanReady(item, plan)
-                }.onFailure { error ->
-                    resourceInstallStore.markFailed(
-                        item.id,
-                        KiteResourceInstallStore.OP_INSTALL,
-                        null,
-                        error.message ?: error.javaClass.simpleName
-                    )
-                    invalidateResourceRuntimeStateCache()
-                    showResourceDiscreteToast("执行队列准备失败：${error.message ?: error.javaClass.simpleName}")
-                }
-            }
-        }
-    }
-
-    private fun handleResourceReinstallAction(item: ResourceItem) {
-        clearResourceInstallRunState(item.id)
-        handleResourceUninstallAction(item, ResourceUninstallContinuation.Reinstall)
-    }
-
-    private fun handleResourceInstallPlanReady(item: ResourceItem, plan: ResourceInstallPlan) {
-        if (plan.missing.isNotEmpty()) {
-            resourceInstallStore.clear(item.id)
-            invalidateResourceRuntimeStateCache()
-            val missingNames = plan.missing
-                .map { it.resource?.name ?: it.requirement }
-                .distinct()
-                .joinToString("、")
-            showResourceDiscreteToast("缺少可获取的基础层：$missingNames")
-            return
-        }
-        if (plan.steps.isEmpty()) {
-            resourceInstallStore.clear(item.id)
-            invalidateResourceRuntimeStateCache()
-            showResourceDiscreteToast("${item.name} 已经就绪")
-            return
-        }
-        val planIds = plan.steps
-            .map { it.id }
-            .filter { it.isNotBlank() }
-            .distinct()
-        resetResourceInstallPlanTransientState(planIds)
-        resourceInstallStore.beginPlan(item.id, planIds)
-        currentResourceInstallTargetId = item.id
-        resourceInstallWizardPlanIds = planIds
-        showResourceInstallWizard(item.id)
-    }
-
-    private fun clearResourceInstallRunState(resourceId: String) {
-        val recipeId = KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
-        runtimeStates.remove(recipeId)
-        activeRunInstanceIds.remove(recipeId)
-        suppressedResourceRunSurfaceRecipeIds.remove(recipeId)
-        CardRunStore.removeRunStatesForRecipes(listOf(recipeId), removeOpenHistory = true)
-    }
-
-    private fun resetResourceInstallPlanTransientState(resourceIds: List<String>) {
-        val recipeIds = resourceIds
-            .filter { it.isNotBlank() }
-            .distinct()
-            .map { resourceId ->
-                if (
-                    resourceInstallStore.status(resourceId) != null &&
-                    resourceInstallStore.status(resourceId) != KiteResourceInstallStore.STATUS_PREPARING &&
-                    !resourceInstallStore.isInstalled(resourceId)
-                ) {
-                    resourceInstallStore.clear(resourceId)
-                }
-                KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
-            }
-        recipeIds.forEach { recipeId ->
-            runtimeStates.remove(recipeId)
-            activeRunInstanceIds.remove(recipeId)
-            suppressedResourceRunSurfaceRecipeIds.remove(recipeId)
-        }
-        if (recipeIds.isNotEmpty()) {
-            CardRunStore.removeRunStatesForRecipes(recipeIds, removeOpenHistory = true)
-        }
-    }
-
-    private fun handleResourceUninstallAction(
-        item: ResourceItem,
-        continuation: ResourceUninstallContinuation = ResourceUninstallContinuation.None
-    ) {
-        val recipe = resourceUninstallRecipe(item)
-        if (recipe == null) {
-            resourceInstallStore.clear(item.id)
-            invalidateResourceRuntimeStateCache()
-            showResourceDiscreteToast("已移除 ${item.name} 的获取记录")
-            if (continuation == ResourceUninstallContinuation.Reinstall) {
-                submitResourceAction(item, KiteResourceActionIntent.Install, KiteResourceActionSource.Continuation)
-            } else if (continuation == ResourceUninstallContinuation.CancelFailedInstall) {
-                resourceInstallStore.clearPlan()
-                currentResourceInstallTargetId = null
-                resourceInstallWizardPlanIds = emptyList()
-                activeResourceInstallWizard = null
-                settleVisibleResourceMutation("cancel_failed_install")
-            } else {
-                settleVisibleResourceMutation("uninstall_without_recipe")
-            }
-        } else {
-            startResourceUninstall(item, recipe, continuation)
-        }
-    }
-
-    private fun handleResourceFailedInstallCancel(item: ResourceItem) {
-        handleResourceUninstallAction(item, ResourceUninstallContinuation.CancelFailedInstall)
-    }
-
-    private fun handleResourceCancelInstallTask(item: ResourceItem) {
-        val planIds = resourceInstallStore.planResourceIds()
-            .takeIf { item.id in it }
-            .orEmpty()
-            .ifEmpty { listOf(item.id) }
-        cancelResourceInstallTask(
-            targetResourceId = item.id,
-            planResourceIds = planIds,
-            closeWizard = false
-        )
-    }
-
-    private fun cancelResourceInstallTask(
-        targetResourceId: String?,
-        planResourceIds: List<String>,
-        closeWizard: Boolean
-    ) {
-        val targetId = targetResourceId.orEmpty()
-        val resourceIds = resolveResourceInstallTaskIds(targetId, planResourceIds)
-        val unfinishedIds = resourceIds
-            .filterNot { resourceInstallStore.isInstalled(it) }
-            .distinct()
-        stopResourceInstallRunsForCancel(unfinishedIds)
-        if (unfinishedIds.isEmpty()) {
-            clearResourceInstallTask(
-                targetResourceId = targetId,
-                planResourceIds = resourceIds,
-                closeWizard = closeWizard
-            )
-            showResourceDiscreteToast("获取任务已取消")
-            return
-        }
-        root.postDelayed({
-            runResourceCancelCleanup(
-                targetResourceId = targetId,
-                planResourceIds = resourceIds,
-                cleanupResourceIds = unfinishedIds,
-                closeWizard = closeWizard
-            )
-        }, TERMINAL_STOP_GRACE_MS + 450L)
-    }
-
-    private fun showResourceDiscreteToast(message: String, length: Int = Toast.LENGTH_SHORT) {
-        if (resourceStatusToastSuppressed()) return
-        Toast.makeText(this, message, length).show()
-    }
-
-    private fun resourceStatusToastSuppressed(): Boolean =
-        currentScreen == AppDestination.Resources ||
-            currentScreen == AppDestination.ResourceSearch ||
-            currentScreen == AppDestination.ResourceDetail ||
-            currentScreen == AppDestination.ResourceMore ||
-            currentScreen == AppDestination.ResourceManage
-
-    private fun clearResourceInstallTask(
-        targetResourceId: String?,
-        planResourceIds: List<String>,
-        closeWizard: Boolean
-    ) {
-        val targetId = targetResourceId.orEmpty()
-        val resourceIds = resolveResourceInstallTaskIds(targetId, planResourceIds)
-        resourceIds.forEach { resourceId ->
-            if (
-                resourceInstallStore.status(resourceId) != null &&
-                !resourceInstallStore.isInstalled(resourceId) &&
-                !resourceInstallStore.isFailed(resourceId)
-            ) {
-                resourceInstallStore.clear(resourceId)
-            }
-        }
-        resourceInstallStore.clearPlan()
-        val recipeIds = resourceIds.flatMap { resourceId ->
-            listOf(
-                KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL),
-                KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_UNINSTALL)
-            )
-        } + listOfNotNull(
-            targetId.takeIf { it.isNotBlank() }?.let { resourceInstallWizardRecipe(it, it).id }
-        )
-        recipeIds.distinct().forEach { recipeId ->
-            runtimeStates.remove(recipeId)
-            activeRunInstanceIds.remove(recipeId)
-            suppressedResourceRunSurfaceRecipeIds.remove(recipeId)
-        }
-        CardRunStore.removeRunStatesForRecipes(recipeIds, removeOpenHistory = true)
-        invalidateResourceRuntimeStateCache()
-        closeResourceInstallWizardInstance(targetId, removeRunState = true)
-        if (closeWizard) {
-            showResources()
-        } else {
-            refreshResourceScreenIfVisible()
-        }
-    }
-
-    private fun closeResourceInstallWizardInstance(
-        targetResourceId: String? = null,
-        removeRunState: Boolean = false
-    ) {
-        val targetId = targetResourceId.orEmpty()
-        val context = activeResourceInstallWizard
-        val matchesCurrent = targetId.isBlank() ||
-            currentResourceInstallTargetId == targetId ||
-            context?.targetResourceId == targetId
-        if (!matchesCurrent) return
-        val wizardRecipeIds = listOfNotNull(
-            context?.wizardRecipeId,
-            targetId.takeIf { it.isNotBlank() }?.let { resourceInstallWizardRecipe(it, it).id }
-        ).distinct()
-        currentResourceInstallTargetId = null
-        resourceInstallWizardPlanIds = emptyList()
-        activeResourceInstallWizard = null
-        if (removeRunState && wizardRecipeIds.isNotEmpty()) {
-            wizardRecipeIds.forEach { recipeId ->
-                runtimeStates.remove(recipeId)
-                activeRunInstanceIds.remove(recipeId)
-                suppressedResourceRunSurfaceRecipeIds.remove(recipeId)
-            }
-            CardRunStore.removeRunStatesForRecipes(wizardRecipeIds, removeOpenHistory = true)
-        }
-    }
-
-    private fun resolveResourceInstallTaskIds(targetId: String, planResourceIds: List<String>): List<String> =
-        planResourceIds
-            .filter { it.isNotBlank() }
-            .ifEmpty { resourceInstallStore.planResourceIds() }
-            .ifEmpty { listOfNotNull(targetId.takeIf { it.isNotBlank() }) }
-            .distinct()
-
-    private fun stopResourceInstallRunsForCancel(
-        resourceIds: List<String>
-    ) {
-        val childRunsByRecipeId = activeResourceInstallWizard
-            ?.wizardInstanceId
-            ?.let { CardRunStore.childrenOf(it) }
-            .orEmpty()
-            .associateBy { it.recipeId }
-        resourceIds.forEach { resourceId ->
-            listOf(KiteResourceInstallRecipes.OP_INSTALL, KiteResourceInstallRecipes.OP_UNINSTALL).forEach operationLoop@ { operation ->
-                val recipeId = KiteResourceInstallRecipes.recipeId(resourceId, operation)
-                val recipe = CardRunStore.registeredRecipe(recipeId) ?: return@operationLoop
-                val state = childRunsByRecipeId[recipe.id]
-                    ?: resourceRunStateForOperation(resourceId, operation)
-                    ?: return@operationLoop
-                if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened || state.hasRunBinding()) {
-                    stopResourceRecipeForCancel(recipe, state)
-                }
-            }
-        }
-    }
-
-    private fun stopResourceRecipeForCancel(recipe: KiteRecipe, state: RecipeRuntimeState) {
-        runtimeStates[recipe.id] = CardRunStore.update(
-            recipe = recipe,
-            status = RecipeRunStatus.Stopping,
-            instanceId = state.instanceId,
-            runId = state.runId,
-            terminalSessionId = state.terminalSessionId,
-            pid = state.pid,
-            lastMeaningfulOutput = "正在取消获取任务"
-        )
-        state.terminalSessionId?.takeIf { it.isNotBlank() }?.let { sessionId ->
-            TerminalRuntimeHost.sendCommand(applicationContext, "\u0003", sessionId)
-            root.postDelayed(
-                { TerminalRuntimeHost.endSession(applicationContext, sessionId) },
-                TERMINAL_STOP_GRACE_MS
-            )
-            return
-        }
-        val callback: (BridgeResult) -> Unit = { result ->
-            diagnostics.logBridgeEvent(
-                "resource_cancel_stop_result",
-                recipe,
-                mapOf(
-                    "runId" to state.runId.orEmpty(),
-                    "status" to result.status,
-                    "ok" to result.ok.toString(),
-                    "accepted" to result.accepted.toString(),
-                    "message" to result.message.take(300)
-                )
-            )
-        }
-        if (!state.runId.isNullOrBlank()) {
-            bridgeClient.stopRun(
-                recipe = recipe,
-                runId = state.runId,
-                pid = state.pid,
-                rootPid = state.rootPid,
-                processGroupId = state.processGroupId,
-                systemSessionId = state.systemSessionId,
-                cardInstanceId = state.cardInstanceId,
-                callback = callback
-            )
-        } else {
-            bridgeClient.stopRecipe(recipe, callback)
-        }
-    }
-
-    private fun runResourceCancelCleanup(
-        targetResourceId: String,
-        planResourceIds: List<String>,
-        cleanupResourceIds: List<String>,
-        closeWizard: Boolean
-    ) {
-        val recipe = resourceCancelCleanupRecipe(cleanupResourceIds)
-        bridgeClient.runRecipe(recipe) { result ->
-            runOnUiThread {
-                clearResourceInstallTask(
-                    targetResourceId = targetResourceId,
-                    planResourceIds = planResourceIds,
-                    closeWizard = closeWizard
-                )
-                val message = if (result.ok || result.accepted) {
-                    "获取任务已取消，临时内容已清理"
-                } else {
-                    "获取任务已取消，部分残留稍后再清理"
-                }
-                showResourceDiscreteToast(message)
-            }
-        }
-    }
-
-    private fun resourceCancelCleanupRecipe(resourceIds: List<String>): KiteRecipe {
-        val cleanIds = resourceIds.map { KiteResourceInstallRecipes.safeId(it) }.distinct()
-        val step = KiteRecipeStep(
-            id = "cancel_cleanup",
-            type = KiteRecipe.STEP_SHELL,
-            cmd = KiteResourceInstallRecipes.cancelCleanupCommand(cleanIds),
-            surfaceMode = KiteRecipe.SURFACE_MODE_SILENT,
-            workdir = "/workspace",
-            timeoutMs = 120_000L
-        )
-        return KiteRecipe(
-            id = "resource-cancel-cleanup-${UUID.randomUUID()}",
-            name = "资源取消清理",
-            description = cleanIds.joinToString("、"),
-            type = KiteRecipe.TYPE_START_SERVICE,
-            category = "resource",
-            defaultUrl = "",
-            shortcut = false,
-            icon = KiteRecipeIcon(name = KiteRecipeIcon.ICON_TOOLS),
-            launch = KiteLaunchConfig(openInstance = false),
-            execution = KiteExecution.steps(listOf(step)),
-            actions = emptyMap(),
-            runtimeSource = RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE
-        )
-    }
-
-    private fun showResourceInstallWizard(targetResourceId: String? = currentResourceInstallTargetId) {
-        val targetId = targetResourceId?.takeIf { it.isNotBlank() } ?: return showResources()
-        val pendingIds = resourceInstallStore.pendingPlanResourceIds()
-        val planIds = resourceInstallWizardPlanIds
-            .ifEmpty { resourceInstallStore.planResourceIds() }
-            .ifEmpty { pendingIds }
-        if (planIds.isEmpty()) return showResources()
-        val catalog = resourceCatalog(forceRefresh = false).associateBy { it.id }
-        val target = catalog[targetId]
-        val wizardRecipe = resourceInstallWizardRecipe(targetId, target?.name ?: targetId)
-        val wizardInstanceId = existingResourceInstallWizardInstanceId(targetId, wizardRecipe.id)
-            ?: resourceInstallWizardInstanceId(targetId)
-        currentResourceInstallTargetId = targetId
-        resourceInstallWizardPlanIds = planIds
-        activeResourceInstallWizard = ResourceInstallWizardContext(
-            targetResourceId = targetId,
-            planResourceIds = planIds,
-            wizardRecipeId = wizardRecipe.id,
-            wizardInstanceId = wizardInstanceId
-        )
-        CardRunStore.registerRecipe(wizardRecipe)
-        activeRunInstanceIds[wizardRecipe.id] = wizardInstanceId
-        runtimeStates[wizardRecipe.id] = CardRunStore.update(
-            wizardRecipe,
-            RecipeRunStatus.Opened,
-            instanceId = wizardInstanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_INSTALL_WIZARD,
-            stepId = targetId,
-            surface = CardRunSurface.InstallWizard,
-            currentStepIndex = 0,
-            lastMeaningfulOutput = "等待获取确认"
-        )
-        startActivity(
-            CardRunIntents.resourceInstallWizardIntent(
-                context = this,
-                recipeId = wizardRecipe.id,
-                instanceId = wizardInstanceId,
-                targetResourceId = targetId,
-                planResourceIds = planIds
-            )
-        )
-        return
-    }
-
-    private fun existingResourceInstallWizardInstanceId(targetResourceId: String, recipeId: String): String? {
-        val targetId = KiteResourceInstallRecipes.safeId(targetResourceId)
-        activeResourceInstallWizard
-            ?.takeIf { context ->
-                KiteResourceInstallRecipes.safeId(context.targetResourceId) == targetId &&
-                    context.wizardRecipeId == recipeId &&
-                    context.wizardInstanceId.isNotBlank()
-            }
-            ?.wizardInstanceId
-            ?.let { return it }
-        return CardRunStore.currentForRecipe(recipeId)
-            ?.takeIf { resourceInstallWizardRunIsReusable(it, targetId, recipeId) }
-            ?.instanceId
-    }
-
-    private fun resourceInstallWizardRunIsReusable(
-        state: RecipeRuntimeState,
-        targetResourceId: String,
-        recipeId: String
-    ): Boolean =
-        state.recipeId == recipeId &&
-            state.ownerKind == RecipeRuntimeState.OWNER_KIND_INSTALL_WIZARD &&
-            (state.stepId.isNullOrBlank() || KiteResourceInstallRecipes.safeId(state.stepId.orEmpty()) == targetResourceId) &&
-            state.status != RecipeRunStatus.Unknown &&
-            state.status != RecipeRunStatus.Stopped &&
-            state.status != RecipeRunStatus.Completed &&
-            state.status != RecipeRunStatus.Failed &&
-            state.status != RecipeRunStatus.Stopping &&
-            state.status != RecipeRunStatus.BridgeUnavailable
-
-    private fun resourceInstallWizardRecipe(targetResourceId: String, targetName: String): KiteRecipe =
-        CardRunSpecialRecipes.installWizard(targetResourceId, targetName)
-
-    private fun resourceInstallWizardInstanceId(targetResourceId: String): String =
-        "resource-install-wizard-${KiteResourceInstallRecipes.safeId(targetResourceId)}-${UUID.randomUUID().toString().replace("-", "")}"
-
-    private fun resourceRunInstanceId(resourceId: String, recipe: KiteRecipe): String =
-        "resource-run-${KiteResourceInstallRecipes.safeId(resourceId)}-${KiteResourceInstallRecipes.safeId(recipe.id)}-${UUID.randomUUID().toString().replace("-", "")}"
-    private fun resourceRunStateForOperation(resourceId: String, operation: String): RecipeRuntimeState? =
-        CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, operation))
-
-    private fun resourceIsInstalled(item: ResourceItem): Boolean =
-        item.runtimeFacts.installed && !item.runtimeFacts.uninstalling
-
-    private fun resourceOpenRecipe(item: ResourceItem): KiteRecipe? =
-        resourceOpenRecipeJson(item)?.let { temporaryResourceRecipe(item, "open", it) }
-
-    private fun temporaryResourceRecipe(item: ResourceItem, action: String, template: JSONObject): KiteRecipe {
-        val json = JSONObject(template.toString())
-        val base = json.optJSONObject("base") ?: JSONObject().also { json.put("base", it) }
-        val runtimeId = KiteResourceInstallRecipes.recipeId(item.id, action)
-        base.put("id", runtimeId)
-        if (base.optString("name").isBlank()) base.put("name", item.name)
-        if (base.optString("description").isBlank()) base.put("description", item.description)
-        return KiteRecipe.fromJson(json, runtimeSource = KiteRecipe.SOURCE_USER)
-            .copy(id = runtimeId, runtimeSource = RESOURCE_OPEN_RUNTIME_SOURCE)
-    }
-
-    private fun startResourceOpen(item: ResourceItem, recipe: KiteRecipe) {
-        CardRunStore.registerRecipe(recipe)
-        CardRunStore.currentForRecipe(recipe.id)
-            ?.let { existing ->
-                if (existing.status == RecipeRunStatus.Stopping) {
-                    invalidateResourceRuntimeStateCache()
-                    requestResourceRunStateUiRefresh()
-                    showResourceDiscreteToast("${item.name} 正在停止，请稍后再启动")
-                    return
-                }
-                if (!resourceOpenRunIsReusable(existing)) return@let
-                focusedRunRecipeId = recipe.id
-                focusedRunInstanceId = existing.instanceId
-                activeRunInstanceIds[recipe.id] = existing.instanceId
-                runtimeStates[recipe.id] = existing
-                invalidateResourceRuntimeStateCache()
-                requestResourceRunStateUiRefresh()
-                if (shouldOpenCardRunTaskFromHome(recipe)) {
-                    startActivity(
-                        CardRunIntents.launchIntent(
-                            context = this,
-                            recipeId = recipe.id,
-                            instanceId = existing.instanceId,
-                            launchSource = CardRunIntents.SOURCE_CARD,
-                            autoStart = false
-                        )
-                    )
-                } else {
-                    openCardRunTask(recipe)
-                }
-                showResourceDiscreteToast("${item.name} 已在运行，正在打开原实例")
-                return
-            }
-        val instanceId = activeRunInstanceIds[recipe.id]
-            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
-            ?: recipe.id
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = instanceId
-        activeRunInstanceIds[recipe.id] = instanceId
-        val state = CardRunStore.start(
-            recipe = recipe,
-            instanceId = instanceId,
-            ownerKind = RecipeRuntimeState.OWNER_KIND_RESOURCE,
-            stepId = item.id
-        )
-        runtimeStates[recipe.id] = state
-        invalidateResourceRuntimeStateCache()
-        requestResourceRunStateUiRefresh()
-        if (shouldOpenCardRunTaskFromHome(recipe)) {
-            startActivity(
-                CardRunIntents.launchIntent(
-                    context = this,
-                    recipeId = recipe.id,
-                    instanceId = instanceId,
-                    launchSource = CardRunIntents.SOURCE_CARD,
-                    autoStart = true
-                )
-            )
-        } else {
-            startRecipe(
-                recipe,
-                state,
-                preferredInstanceId = instanceId,
-                openConsoleOnStart = recipe.launch.openInstance,
-                renderOnStart = recipe.launch.openInstance
-            )
-        }
-        showResourceDiscreteToast("正在打开 ${item.name}")
-    }
-
-    private fun handleResourceOpenStopAction(item: ResourceItem) {
-        val recipe = resourceOpenRecipe(item)
-        if (recipe == null) {
-            showResourceDiscreteToast("${item.name} 的运行入口不存在")
-            return
-        }
-        CardRunStore.registerRecipe(recipe)
-        val state = CardRunStore.currentForRecipe(recipe.id)?.takeIf { resourceOpenRunIsReusable(it) }
-        if (state == null) {
-            invalidateResourceRuntimeStateCache()
-            showResourceDiscreteToast("${item.name} 没有运行中的实例")
-            return
-        }
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = state.instanceId
-        activeRunInstanceIds[recipe.id] = state.instanceId
-        runtimeStates[recipe.id] = state
-        stopRecipe(recipe, state, navigateToConsole = false)
-        invalidateResourceRuntimeStateCache()
-        showResourceDiscreteToast("正在中止 ${item.name}")
-    }
-
-    private fun resourceOpenRunIsReusable(state: RecipeRuntimeState): Boolean =
-        state.status == RecipeRunStatus.Starting ||
-            state.status == RecipeRunStatus.WaitingTerminal ||
-            state.status == RecipeRunStatus.Running ||
-            state.status == RecipeRunStatus.AlreadyRunning ||
-            state.status == RecipeRunStatus.Opened
-
-    private fun resourceOpenRunIsReusable(resourceId: String): Boolean =
-        CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, "open"))
-            ?.let { resourceOpenRunIsReusable(it) } == true
-
-    private fun addResourceHomeCard(item: ResourceItem) {
-        val template = resourceHomeCardTemplate(item)
-        if (template == null) {
-            showResourceDiscreteToast("${item.name} 暂无首页卡片模板")
-            return
-        }
-        runCatching {
-            recipeLoader.addSharedRecipeTemplate(template, "${KiteResourceInstallRecipes.safeId(item.id)}-home")
-            currentRecipes = recipeLoader.loadAllRecipes()
-            refreshRecipeRuntimeStates(currentRecipes)
-            recipeFeatureGateway.invalidateCatalog("resource_home_card_added")
-        }.onSuccess {
-            showResourceDiscreteToast("已添加 ${item.name} 到首页")
-        }.onFailure {
-            showResourceDiscreteToast("添加失败：${it.message ?: it.javaClass.simpleName}")
-        }
-    }
-
-    private fun resourceOpenRecipeJson(item: ResourceItem): JSONObject? =
-        resourceManifestLoader.requestOpenRecipeTemplate(item.id)
-            ?.let { hydrateResourceRecipeTemplate(item, it) }
-
-    private fun resourceHomeCardTemplate(item: ResourceItem): JSONObject? =
-        (
-            resourceManifestLoader.requestFirstHomeCardRecipeTemplate(item.id)
-                ?: resourceManifestLoader.requestOpenRecipeTemplate(item.id)
-            )?.let { hydrateResourceRecipeTemplate(item, it) }
-
-    private fun hydrateResourceRecipeTemplate(item: ResourceItem, template: JSONObject): JSONObject {
-        val json = JSONObject(template.toString())
-        val base = json.optJSONObject("base") ?: JSONObject().also { json.put("base", it) }
-        if (base.optString("name").isBlank()) base.put("name", item.name)
-        if (base.optString("description").isBlank()) base.put("description", item.description)
-        if (item.iconAsset.isNotBlank()) {
-            base.put(
-                "icon",
-                JSONObject()
-                    .put("type", KiteRecipeIcon.TYPE_IMAGE)
-                    .put("name", item.iconText.ifBlank { "resource" })
-                    .put("source", item.iconAsset)
-            )
-        }
-        val card = json.optJSONObject("card") ?: JSONObject().also { json.put("card", it) }
-        if (card.optString("accent").isBlank() || card.optString("accent").equals("primary", ignoreCase = true)) {
-            card.put("accent", item.accent.ifBlank { "primary" })
-        }
-        return json
-    }
-
-
-
-
-    private fun resourceInstallRecipe(item: ResourceItem): KiteRecipe? =
-        resourceRunCoordinator.recipe(item.id, KiteResourceInstallRecipes.OP_INSTALL)
-
-
-    private fun resourceUninstallRecipe(item: ResourceItem): KiteRecipe? =
-        resourceRunCoordinator.recipe(item.id, KiteResourceInstallRecipes.OP_UNINSTALL)
-
-
-
-    private fun buildResourceInstallPlan(target: ResourceItem): ResourceInstallPlan {
-        val catalogList = resourceCatalog(forceRefresh = true)
-        val catalog = catalogList.associateBy { it.id }
-        val registeredResourceIds = catalogList
-            .filter { resourceIsInstalled(it) }
-            .mapTo(linkedSetOf()) { it.id }
-        val registeredCapabilities = registeredResourceIds
-            .flatMap { resourceId -> resourceManifestLoader.requestManifest(resourceId)?.provides.orEmpty() }
-            .toSet()
-        val serverPlan = resourceManifestLoader.requestInstallPlan(
-            resourceId = target.id,
-            registeredResourceIds = registeredResourceIds,
-            registeredCapabilities = registeredCapabilities
-        )
-        if (serverPlan != null) {
-            resourceInstallStore.putPageCache(
-                cacheKey = KiteResourceRequestPolicy.installPlanKey(target.id),
-                payloadJson = serverPlan.rawJson.toString(),
-                maxAgeMs = KiteResourceRequestPolicy.INSTALL_PLAN_CACHE_MS
-            )
-            val steps = serverPlan.resourceIds
-                .mapNotNull { resourceId -> catalog[resourceId] }
-                .filter { !resourceIsInstalled(it) || it.id == target.id }
-            val unknownResources = serverPlan.resourceIds
-                .filter { resourceId -> resourceId !in catalog }
-                .map { resourceId -> ResourceRequirementResolution(resourceId, null) }
-            val missing = (serverPlan.missing.map { item ->
-                ResourceRequirementResolution(item.requirement, null)
-            } + unknownResources).distinctBy { it.resource?.id ?: it.requirement }
-            return ResourceInstallPlan(steps = steps, missing = missing)
-        }
-        return buildResourceInstallPlanFromRelations(target, catalog)
-    }
-
-    private fun buildResourceInstallPlanFromRelations(
-        target: ResourceItem,
-        catalog: Map<String, ResourceItem>
-    ): ResourceInstallPlan {
-        val ordered = linkedMapOf<String, ResourceItem>()
-        val missing = mutableListOf<ResourceRequirementResolution>()
-        val visiting = mutableSetOf<String>()
-
-        fun visit(item: ResourceItem) {
-            if (!visiting.add(item.id)) return
-            val relations = resourceManifestLoader.requestRelationTargets(item.id)
-            (relations.base + relations.defaults).forEach { requirement ->
-                val providers = requirement.providerIds.mapNotNull { catalog[it] }
-                if (providers.any { resourceIsInstalled(it) }) return@forEach
-                val provider = providers.firstOrNull()
-                if (provider == null) {
-                    missing.add(ResourceRequirementResolution(requirement.requirement, null))
-                } else {
-                    visit(provider)
-                }
-            }
-            visiting.remove(item.id)
-            if (!resourceIsInstalled(item) || item.id == target.id) {
-                ordered[item.id] = item
-            }
-        }
-
-        visit(target)
-        return ResourceInstallPlan(steps = ordered.values.toList(), missing = missing)
-    }
-
-    private fun cacheResourceExecutionManifest(resourceId: String) {
-        val manifestJson = resourceManifestLoader.requestExecutionManifestJson(resourceId) ?: return
-        resourceInstallStore.putPageCache(
-            cacheKey = KiteResourceRequestPolicy.executionManifestKey(resourceId),
-            payloadJson = manifestJson.toString(),
-            maxAgeMs = KiteResourceRequestPolicy.EXECUTION_MANIFEST_CACHE_MS
-        )
-    }
-
-
-    private fun startResourceInstall(item: ResourceItem, recipe: KiteRecipe) {
-        invalidateResourceRuntimeStateCache()
-        startResourceRun(
-            item = item,
-            recipe = recipe,
-            stageBundledResource = resourceRunCoordinator.isBundled(item.id),
-            openRunTask = true,
-            returnToInstallWizard = false
-        )
-    }
-
-    private fun startResourceUninstall(
-        item: ResourceItem,
-        recipe: KiteRecipe,
-        continuation: ResourceUninstallContinuation = ResourceUninstallContinuation.None
-    ) {
-        invalidateResourceRuntimeStateCache()
-        startResourceRun(
-            item = item,
-            recipe = recipe,
-            stageBundledResource = false,
-            openRunTask = false,
-            continuation = continuation
-        )
-    }
-
-    private fun startResourceRun(
-        item: ResourceItem,
-        recipe: KiteRecipe,
-        stageBundledResource: Boolean,
-        openRunTask: Boolean = true,
-        returnToInstallWizard: Boolean = false,
-        continuation: ResourceUninstallContinuation = ResourceUninstallContinuation.None
-    ) {
-        val parentInstanceId = activeResourceInstallWizard
-            ?.wizardInstanceId
-            ?.takeIf { returnToInstallWizard }
-        val instanceId = resourceRunInstanceId(item.id, recipe)
-        if (openRunTask && !returnToInstallWizard) {
-            suppressedResourceRunSurfaceRecipeIds.remove(recipe.id)
-        } else {
-            suppressedResourceRunSurfaceRecipeIds.add(recipe.id)
-        }
-        val result = resourceRunCoordinator.start(
-            ResourceRunLaunchRequest(
-                resourceId = item.id,
-                recipe = recipe,
-                operation = resourceOperationForRecipe(recipe) ?: KiteResourceInstallRecipes.OP_INSTALL,
-                stageBundledResource = stageBundledResource,
-                parentInstanceId = parentInstanceId,
-                preferredInstanceId = instanceId,
-                continuation = continuation.toResourceRunContinuation()
-            )
-        )
-        val state = when (result) {
-            is ResourceRunLaunchResult.Accepted -> result.state
-            is ResourceRunLaunchResult.Rejected -> {
-                showResourceDiscreteToast("资源运行未启动：${result.reason}")
-                return
-            }
-        }
-        activeRunInstanceIds[recipe.id] = state.instanceId
-        runtimeStates[recipe.id] = state
-        if (openRunTask && !returnToInstallWizard) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = state.instanceId
-        }
-        when {
-            returnToInstallWizard -> showResourceInstallWizard()
-            !openRunTask -> refreshResourceScreenIfVisible()
-            else -> startActivity(
-                CardRunIntents.launchIntent(
-                    context = this,
-                    recipeId = recipe.id,
-                    instanceId = state.instanceId,
-                    launchSource = CardRunIntents.SOURCE_CARD,
-                    autoStart = false
-                )
-            )
-        }
-    }
-
-    private fun ResourceUninstallContinuation.toResourceRunContinuation(): ResourceRunContinuation = when (this) {
-        ResourceUninstallContinuation.None -> ResourceRunContinuation.None
-        ResourceUninstallContinuation.Reinstall -> ResourceRunContinuation.Reinstall
-        ResourceUninstallContinuation.CancelFailedInstall -> ResourceRunContinuation.CancelFailedInstall
-        ResourceUninstallContinuation.ResumeInstallWizard -> ResourceRunContinuation.ResumeInstallWizard
-    }
-
-    private fun refreshResourceScreenIfVisible() {
-        if (!::root.isInitialized || !::resourceInstallStore.isInitialized) return
-        invalidateResourceRuntimeStateCache()
-        when (currentScreen) {
-            AppDestination.Resources -> Unit
-            AppDestination.ResourceSearch -> Unit
-            AppDestination.ResourceDetail -> Unit
-            AppDestination.ResourceMore -> invalidateResourceRuntimeStateCache()
-            AppDestination.ResourceManage -> Unit
-            else -> Unit
-        }
-    }
-
-    private fun settleVisibleResourceMutation(reason: String) {
-        if (!::root.isInitialized) return
-        when (currentScreen) {
-            AppDestination.Resources,
-            AppDestination.ResourceSearch,
-            AppDestination.ResourceDetail,
-            AppDestination.ResourceMore,
-            AppDestination.ResourceManage -> refreshResourceScreenIfVisible()
-            else -> {
-                invalidateResourceRuntimeStateCache()
-                resourceCatalogDirty = true
-            }
-        }
-        diagnostics.logRecipeEvent(
-            "resource_visible_mutation_settled",
-            null,
-            mapOf("reason" to reason, "screen" to currentScreen.name)
-        )
-    }
-
-
-    private fun resourceIdForOpenRunRecipeId(recipeId: String): String? =
-        recipeId
-            .takeIf { it.startsWith("resource-") && it.endsWith("-open") }
-            ?.removePrefix("resource-")
-            ?.removeSuffix("-open")
-            ?.takeIf { it.isNotBlank() }
-
-    private fun resourceOperationForRecipe(recipe: KiteRecipe): String? {
-        if (recipe.runtimeSource != KiteResourceInstallRecipes.RUNTIME_SOURCE) return null
-        return when {
-            recipe.id.endsWith("-${KiteResourceInstallRecipes.OP_UNINSTALL}") -> KiteResourceInstallRecipes.OP_UNINSTALL
-            recipe.id.endsWith("-${KiteResourceInstallRecipes.OP_INSTALL}") -> KiteResourceInstallRecipes.OP_INSTALL
-            else -> null
-        }
-    }
-
-
-
-
-
-    private fun normalizeStaleResourceState(
-        resourceId: String,
-        registryEntry: KiteResourceRegistryEntry? = resourceInstallStore.registryEntry(resourceId)
-    ): Boolean {
-        val operation = when {
-            registryEntry?.preparing == true -> KiteResourceInstallStore.OP_INSTALL
-            registryEntry?.installing == true -> KiteResourceInstallStore.OP_INSTALL
-            registryEntry?.uninstalling == true -> KiteResourceInstallStore.OP_UNINSTALL
-            else -> return false
-        }
-        if (operation == KiteResourceInstallStore.OP_INSTALL && registryEntry.bootstrapInstallStillRunning()) {
-            return false
-        }
-        if (registryEntry.preparing && registryEntry.preparingMutationIsFresh()) {
-            return false
-        }
-        val planStepStatus = resourceInstallStore.planStepStatus(resourceId)
-        if (
-            operation == KiteResourceInstallStore.OP_INSTALL &&
-            planStepStatus.isNotBlank() &&
-            planStepStatus != KiteResourceInstallStore.PLAN_STEP_RUNNING
-        ) {
-            resourceInstallStore.clear(resourceId)
-            return true
-        }
-        val recipeId = KiteResourceInstallRecipes.recipeId(resourceId, operation)
-        val run = CardRunStore.currentForRecipe(recipeId)
-        val stillRunning = run?.isBusy() == true || run?.isActive() == true
-        if (!stillRunning) {
-            if (registryEntry.installMutationIsFresh()) {
-                return false
-            }
-            val reason = if (operation == KiteResourceInstallStore.OP_UNINSTALL) {
-                "卸载流程异常中断"
-            } else {
-                "获取流程异常中断"
-            }
-            resourceInstallStore.markFailed(resourceId, operation, run?.runId, reason)
-            if (
-                operation == KiteResourceInstallStore.OP_INSTALL &&
-                planStepStatus == KiteResourceInstallStore.PLAN_STEP_RUNNING
-            ) {
-                resourceInstallStore.failPlanAt(resourceId)
-            }
-            return true
-        }
-        return false
-    }
-
-    private fun KiteResourceRegistryEntry?.bootstrapInstallStillRunning(): Boolean =
-        this?.runId?.startsWith(ToolchainPackInstaller.BOOTSTRAP_RESOURCE_RUN_PREFIX) == true &&
-            ToolchainPackInstaller.state.value.phase == ToolchainInstallPhase.RUNNING
-
-    private fun KiteResourceRegistryEntry?.installMutationIsFresh(): Boolean {
-        val updatedAt = this?.updatedAt ?: return false
-        return updatedAt > 0L && System.currentTimeMillis() - updatedAt < RESOURCE_INSTALL_STALE_GRACE_MS
-    }
-
-    private fun KiteResourceRegistryEntry?.preparingMutationIsFresh(): Boolean {
-        val updatedAt = this?.updatedAt ?: return false
-        return updatedAt > 0L && System.currentTimeMillis() - updatedAt < RESOURCE_PREPARING_STALE_GRACE_MS
-    }
-
-    private fun resourceCatalog(forceRefresh: Boolean = false): List<ResourceItem> {
-        val now = System.currentTimeMillis()
-        val onMainThread = Looper.myLooper() == Looper.getMainLooper()
-        cachedResourceCatalog?.let { cached ->
-            val canReuseCleanCatalog = !resourceCatalogDirty &&
-                (!forceRefresh || (onMainThread && now - cachedResourceCatalogUpdatedAt < RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS))
-            if (canReuseCleanCatalog) return cached
-        }
-        val visibleManifests = resourceCatalogManifestsForUi()
-        val managedResourceIds = visibleManifests.map { it.id }
-        if (managedResourceIds.isEmpty()) {
-            cachedResourceCatalog = emptyList()
-            cachedResourceCatalogUpdatedAt = now
-            resourceCatalogDirty = false
-            return emptyList()
-        }
-        val allowWorkspaceProbe = !onMainThread
-        if (allowWorkspaceProbe) {
-            ToolchainPackInstaller.refreshState(applicationContext)
-        }
-        var registrySnapshot = resourceInstallStore.registrySnapshot(managedResourceIds)
-        val normalizedAny = managedResourceIds.any { normalizeStaleResourceState(it, registrySnapshot[it]) }
-        if (normalizedAny) {
-            registrySnapshot = resourceInstallStore.registrySnapshot(managedResourceIds)
-        }
-        val planSnapshot = resourceInstallStore.planSnapshot()
-        fun recordedInstalled(resourceId: String): Boolean =
-            registrySnapshot[resourceId]?.installed == true
-        fun installFailed(resourceId: String): Boolean =
-            registrySnapshot[resourceId]?.failed == true
-        fun busy(resourceId: String): Boolean =
-            registrySnapshot[resourceId]?.busy == true
-        fun runtimeFactsForResource(resourceId: String, idleLabel: String = "未获取"): KiteResourceRuntimeFacts =
-            KiteResourceRuntimeFactsProjector.project(
-                resourceId = resourceId,
-                registryEntry = registrySnapshot[resourceId],
-                plan = planSnapshot,
-                idleStateLabel = idleLabel
-            )
-        fun labelsForFacts(resourceId: String, facts: KiteResourceRuntimeFacts): ResourceRuntimeLabels {
-            val openRunStatus = if (facts.installed && !facts.installing && !facts.uninstalling && !facts.failed) {
-                CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, "open"))?.status
-            } else {
-                null
-            }
-            val projection = KiteResourceUiProjector.project(
-                installed = facts.installed,
-                preparing = facts.preparing,
-                installing = facts.installing,
-                uninstalling = facts.uninstalling,
-                failed = facts.failed,
-                failedOperation = facts.failedOperation,
-                idleStateLabel = facts.idleStateLabel,
-                openRunStatus = openRunStatus,
-                extraBusy = facts.extraBusy
-            )
-            return ResourceRuntimeLabels(
-                state = projection.stateLabel,
-                action = projection.actionLabel,
-                actionEnabled = projection.actionEnabled,
-                secondaryAction = projection.secondaryActionLabel
-            )
-        }
-        val toolchain = ToolchainPackInstaller.state.value
-        val workspaceSnapshot = toolchainWorkspaceSnapshot(allowProbe = allowWorkspaceProbe)
-        val nodeWorkspaceInstalled = workspaceSnapshot.nodeInstalled
-        fun restoreInstalledIfWorkspacePresent(
-            resourceId: String,
-            workspaceInstalled: Boolean,
-            version: String,
-            summary: String
-        ): Boolean {
-            if (
-                !allowWorkspaceProbe ||
-                resourceId !in managedResourceIds ||
-                !workspaceInstalled ||
-                recordedInstalled(resourceId) ||
-                busy(resourceId) ||
-                installFailed(resourceId)
-            ) {
-                return false
-            }
-            resourceInstallStore.markInstalled(resourceId, version, null, summary)
-            return true
-        }
-        val nodeManifest = visibleManifests.firstOrNull { it.id == RESOURCE_NODE_RUNTIME }
-        val workspaceStateNormalized = restoreInstalledIfWorkspacePresent(
-            resourceId = RESOURCE_NODE_RUNTIME,
-            workspaceInstalled = nodeWorkspaceInstalled,
-            version = nodeManifest?.version?.ifBlank { "26.4.0" } ?: "26.4.0",
-            summary = "Node.js workspace files verified"
-        )
-        if (workspaceStateNormalized) {
-            registrySnapshot = resourceInstallStore.registrySnapshot(managedResourceIds)
-        }
-        val toolchainRunning = toolchain.phase == ToolchainInstallPhase.RUNNING
-        fun runtimeFactsForManifest(manifest: KiteResourceManifest): KiteResourceRuntimeFacts {
-            if (manifest.id != RESOURCE_NODE_RUNTIME) {
-                return runtimeFactsForResource(manifest.id, resourceIdleLabelForManifest(manifest))
-            }
-            val recordedInstalled = recordedInstalled(RESOURCE_NODE_RUNTIME)
-            val nodeInstalled = recordedInstalled || nodeWorkspaceInstalled
-            return KiteResourceRuntimeFactsProjector.project(
-                resourceId = RESOURCE_NODE_RUNTIME,
-                registryEntry = registrySnapshot[RESOURCE_NODE_RUNTIME],
-                plan = planSnapshot,
-                baselineInstalled = nodeInstalled,
-                idleStateLabel = "本地包",
-                extraBusy = toolchainRunning
-            )
-        }
-        val catalog = visibleManifests.map { manifest ->
-            val facts = runtimeFactsForManifest(manifest)
-            val labels = labelsForFacts(manifest.id, facts)
-            resourceItemFromManifest(
-                manifest = manifest,
-                labels = labels,
-                runtimeFacts = facts
-            )
-        }
-        cachedResourceCatalog = catalog
-        cachedResourceCatalogUpdatedAt = now
-        resourceCatalogDirty = false
-        return catalog
-    }
-    private fun toolchainWorkspaceSnapshot(allowProbe: Boolean): ToolchainWorkspaceSnapshot {
-        val now = System.currentTimeMillis()
-        val cached = cachedToolchainWorkspaceSnapshot
-        if (!allowProbe || now - cached.checkedAt < TOOLCHAIN_WORKSPACE_PROBE_TTL_MS) {
-            return cached
-        }
-        return ToolchainWorkspaceSnapshot(
-            nodeInstalled = ToolchainPackInstaller.isNodeRuntimeInstalled(applicationContext),
-            toolchainInstalled = ToolchainPackInstaller.isToolchainPackInstalled(applicationContext),
-            checkedAt = now
-        ).also {
-            cachedToolchainWorkspaceSnapshot = it
-        }
-    }
-
-    private fun resourceCatalogManifestsForUi(): List<KiteResourceManifest> {
-        val manifests = resourceManifestLoader.manifests().values
-            .filter { it.sections.isNotEmpty() }
-        if (manifests.isEmpty()) return emptyList()
-        val byId = manifests.associateBy { it.id }
-        val homeOrder = resourceManifestLoader.requestHomeLayout()
-            ?.sections
-            .orEmpty()
-            .flatMap { it.items }
-        return (homeOrder + manifests.map { it.id })
-            .distinct()
-            .mapNotNull { byId[it] }
-    }
-
-    // One manifest record plus live registry labels becomes the shared UI projection for every resource template.
-    private fun resourceItemFromManifest(
-        manifest: KiteResourceManifest,
-        labels: ResourceRuntimeLabels,
-        runtimeFacts: KiteResourceRuntimeFacts
-    ): ResourceItem {
-        val sourceLabel = resourceSourceLabel(manifest.sourceType)
-            .ifBlank { manifest.sourceType.ifBlank { "本地定义" } }
-        return ResourceItem(
-            id = manifest.id,
-            name = manifest.name.ifBlank { manifest.id },
-            description = manifest.description.ifBlank { sourceLabel },
-            longDescription = manifest.displayLongDescription.ifBlank {
-                manifest.description.ifBlank { manifest.id }
-            },
-            section = resourceSectionLabel(manifest.sections.firstOrNull()).ifBlank { "更多资源" },
-            category = manifest.displayCategory.ifBlank { resourceCategoryForManifest(manifest) },
-            iconText = manifest.iconText.ifBlank { resourceFallbackIconText(manifest) },
-            iconAsset = manifest.iconAsset,
-            iconFit = manifest.iconFit,
-            accent = manifest.displayAccent.ifBlank { resourceAccentForManifest(manifest) },
-            version = manifest.version.ifBlank { "latest" },
-            sizeLabel = manifest.displaySizeLabel.ifBlank { resourceSizeLabelForManifest(manifest) },
-            sourceLabel = sourceLabel,
-            stateLabel = labels.state,
-            actionLabel = labels.action,
-            actionEnabled = labels.actionEnabled,
-            secondaryActionLabel = labels.secondaryAction,
-            runtimeFacts = runtimeFacts,
-            includes = resourceIncludesForManifest(manifest),
-            notes = resourceNotesForManifest(manifest),
-            steps = resourceStepsForManifest(manifest),
-            badge = resourceBadgeForManifest(manifest),
-            media = resourceMediaForManifest(manifest),
-            previewCards = resourcePreviewCardsForManifest(manifest),
-            requirementRows = resourceRequirementRowsForManifest(manifest),
-            recommendations = manifest.displayRecommendations.map { ResourceRecommendation(it.resourceId, it.label) },
-            rawJson = runCatching { manifest.rawJson.toString(2) }.getOrElse { manifest.rawJson.toString() }
-        )
-    }
-
-    private fun resourceBadgeForManifest(manifest: KiteResourceManifest): ResourceBadge {
-        val badge = manifest.displayBadge
-        val accent = badge?.accent?.ifBlank { manifest.displayAccent } ?: manifest.displayAccent
-        return ResourceBadge(
-            label = badge?.label?.ifBlank { "Kite 官方资源" } ?: "Kite 官方资源",
-            iconText = badge?.iconText?.ifBlank { "✓" } ?: "✓",
-            accent = accent.ifBlank { resourceAccentForManifest(manifest) }
-        )
-    }
-
-    private fun resourceMediaForManifest(manifest: KiteResourceManifest): ResourceMedia? =
-        manifest.displayMedia?.let { media ->
-            ResourceMedia(
-                type = media.type,
-                asset = media.asset,
-                contentDescription = media.contentDescription.ifBlank { "${manifest.name} 视觉预览" }
-            )
-        }
-
-    private fun resourcePreviewCardsForManifest(manifest: KiteResourceManifest): List<ResourcePreviewCard> {
-        val previews = manifest.displayPreviewCards.map { it.toResourcePreviewCard(manifest) }
-        if (previews.isNotEmpty()) return previews
-        val accent = manifest.displayAccent.ifBlank { resourceAccentForManifest(manifest) }
-        val iconText = manifest.iconText.ifBlank { resourceFallbackIconText(manifest) }
-        return listOf(
-            ResourcePreviewCard("工作台", "管理模型、对话和提示词", iconText, accent, manifest.iconAsset, manifest.iconFit),
-            ResourcePreviewCard("资源卡片", "一键部署，快速启动", iconText, accent, manifest.iconAsset, manifest.iconFit),
-            ResourcePreviewCard("启动访问", "配置完成后直接打开", "✓", accent)
-        )
-    }
-
-    private fun KiteResourcePreviewSpec.toResourcePreviewCard(manifest: KiteResourceManifest): ResourcePreviewCard {
-        val accent = this.accent.ifBlank { manifest.displayAccent.ifBlank { resourceAccentForManifest(manifest) } }
-        return ResourcePreviewCard(
-            title = title,
-            subtitle = subtitle,
-            symbol = symbol.ifBlank { manifest.iconText.ifBlank { resourceFallbackIconText(manifest) } },
-            accent = accent,
-            iconAsset = iconAsset.ifBlank { manifest.iconAsset },
-            iconFit = iconFit.ifBlank { manifest.iconFit }
-        )
-    }
-
-    private fun resourceRequirementRowsForManifest(manifest: KiteResourceManifest): List<ResourceRequirementRow> =
-        manifest.displayRequirementRows.map { it.toResourceRequirementRow() }
-
-    private fun KiteResourceDisplayRowSpec.toResourceRequirementRow(): ResourceRequirementRow =
-        ResourceRequirementRow(label = label, value = value)
-
-    private fun resourceIdleLabelForManifest(manifest: KiteResourceManifest): String =
-        if (manifest.sourceType == "bundled") "本地包" else "未获取"
-
-    private fun resourceCategoryForManifest(manifest: KiteResourceManifest): String {
-        val tags = manifest.tags.map { it.lowercase() }.toSet()
-        val provides = manifest.provides.map { it.lowercase() }
-        return when {
-            "ai" in tags || "agent" in tags || "coding-agent" in tags ||
-                provides.any { it.startsWith("agent.") } -> "AI"
-            provides.any { it.startsWith("runtime.node") || it == "tool.npm" || it == "tool.npx" } -> "JavaScript"
-            provides.any {
-                it.startsWith("runtime.python") ||
-                    it == "tool.pip" ||
-                    it == "tool.venv" ||
-                    it == "tool.uv" ||
-                    it == "tool.uvx"
-            } -> "Python"
-            else -> "系统工具"
-        }
-    }
-
-    private fun resourceAccentForManifest(manifest: KiteResourceManifest): String =
-        when (resourceCategoryForManifest(manifest)) {
-            "AI" -> "teal"
-            "JavaScript" -> "green"
-            "Python" -> "blue"
-            else -> "orange"
-        }
-
-    private fun resourceSizeLabelForManifest(manifest: KiteResourceManifest): String =
-        when (manifest.sourceType) {
-            "bundled" -> "内置包"
-            "apt", "npm", "official_script", "git", "command" -> "网络包"
-            else -> ""
-        }
-
-    private fun resourceFallbackIconText(manifest: KiteResourceManifest): String {
-        val name = manifest.name.ifBlank { manifest.id.substringAfterLast('.') }.trim()
-        return name.take(2).ifBlank { "R" }
-    }
-
-    private fun resourceIncludesForManifest(manifest: KiteResourceManifest): List<String> =
-        mergeResourceStrings(
-            manifest.provides,
-            manifest.installActions.flatMap { it.managedCommands } + manifest.homeCards.map { it.label }
-        )
-
-    private fun resourceNotesForManifest(manifest: KiteResourceManifest): List<String> =
-        mergeResourceStrings(
-            resourceRelationNotes(manifest),
-            when (manifest.sourceType) {
-                "bundled" -> listOf("来源：内置资源包")
-                "apt" -> listOf("来源：Ubuntu apt")
-                "npm" -> listOf("来源：npm")
-                "official_script" -> listOf("来源：官方安装脚本")
-                "git" -> listOf("来源：Git 仓库")
-                else -> emptyList()
-            }
-        )
-
-    private fun resourceStepsForManifest(manifest: KiteResourceManifest): List<ResourceStep> {
-        val installSteps = manifest.installActions.mapIndexed { index, action ->
-            ResourceStep(
-                type = action.type,
-                title = resourceInstallActionTitle(manifest, index),
-                preview = resourceActionPreview(action)
-            )
-        }
-        if (installSteps.isNotEmpty()) return installSteps
-        return listOf(
-            ResourceStep(
-                type = "open",
-                title = "打开资源",
-                preview = manifest.openRecipe?.optJSONObject("base")?.optString("name").orEmpty()
-                    .ifBlank { manifest.name }
-            )
-        )
-    }
-
-    private fun resourceInstallActionTitle(manifest: KiteResourceManifest, index: Int): String {
-        if (index > 0) return "执行获取步骤 ${index + 1}"
-        return when (manifest.sourceType) {
-            "bundled" -> "安装内置资源"
-            "apt" -> "安装 apt 包"
-            "npm" -> "安装 npm 包"
-            "official_script" -> "执行官方安装器"
-            "git" -> "获取源码"
-            else -> "执行获取步骤"
-        }
-    }
-
-    private fun resourceActionPreview(action: KiteResourceShellAction): String =
-        KiteResourceInstallPlanCompiler.preview(action)
-
-    private fun resourceSectionLabel(section: String?): String =
-        when (section) {
-            "foundation" -> "基础环境"
-            "ai-vendor" -> "厂商工具"
-            "ai-community" -> "独立工具"
-            "featured" -> "精选推荐"
-            "quick" -> "快速开始"
-            "more" -> "更多资源"
-            "search-only" -> "仅搜索"
-            else -> ""
-        }
-
-    private fun resourceSourceLabel(type: String): String =
-        when (type) {
-            "bundled" -> "内置"
-            "apt" -> "apt"
-            "official_script" -> "官方脚本"
-            "npm" -> "npm"
-            "git" -> "GitHub"
-            "command" -> "网络"
-            else -> ""
-        }
-
-    private fun resourceRelationNotes(manifest: KiteResourceManifest): List<String> =
-        buildList {
-            if (manifest.baseRequirements.isNotEmpty()) add("基础层：${manifest.baseRequirements.joinToString("、")}")
-            if (manifest.defaultRequirements.isNotEmpty()) add("默认层：${manifest.defaultRequirements.joinToString("、")}")
-            if (manifest.extensions.isNotEmpty()) add("扩展层：${manifest.extensions.joinToString("、")}")
-        }
-
-    private fun mergeResourceStrings(primary: List<String>, extra: List<String>): List<String> =
-        (primary + extra).map { it.trim() }.filter { it.isNotBlank() }.distinct()
-
     private fun consoleShellHeader(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(18), dp(10), dp(18), dp(10))
@@ -3452,25 +1960,7 @@ open class MainActivity : AppCompatActivity() {
             ?.let { CardRunStore.get(it) }
             ?: CardRunStore.currentForRecipe(recipe.id)
             ?: return
-        val launchIntent = if (state.surface == CardRunSurface.InstallWizard) {
-            val targetId = state.stepId
-                ?.takeIf { it.isNotBlank() }
-                ?: activeResourceInstallWizard?.targetResourceId
-                ?: currentResourceInstallTargetId
-                ?: return
-            val planIds = activeResourceInstallWizard?.planResourceIds.orEmpty()
-                .ifEmpty { resourceInstallWizardPlanIds }
-                .ifEmpty { resourceInstallStore.planResourceIds() }
-                .ifEmpty { resourceInstallStore.pendingPlanResourceIds() }
-            if (planIds.isEmpty()) return
-            CardRunIntents.resourceInstallWizardIntent(
-                context = this,
-                recipeId = recipe.id,
-                instanceId = state.instanceId,
-                targetResourceId = targetId,
-                planResourceIds = planIds
-            )
-        } else {
+        startActivity(
             CardRunIntents.launchIntent(
                 context = this,
                 recipeId = recipe.id,
@@ -3478,8 +1968,7 @@ open class MainActivity : AppCompatActivity() {
                 launchSource = CardRunIntents.SOURCE_CARD,
                 autoStart = false
             )
-        }
-        startActivity(launchIntent)
+        )
     }
 
     private fun handleBrowserAutomationActionRequest(action: BrowserAutomationAction): BrowserAutomationActionResult {
@@ -3659,13 +2148,6 @@ open class MainActivity : AppCompatActivity() {
             !state.isProblem &&
             state.primaryAction != RuntimeStatusAction.RetryDeployment
 
-    private fun requestResourceRuntimeInlineRefresh(
-        @Suppress("UNUSED_PARAMETER") recipe: KiteRecipe,
-        @Suppress("UNUSED_PARAMETER") reason: String
-    ) {
-        invalidateResourceRuntimeStateCache()
-    }
-
     private fun submitRecipeAction(
         request: KiteRecipeActionRequest,
         afterDispatch: () -> Unit = {}
@@ -3693,9 +2175,7 @@ open class MainActivity : AppCompatActivity() {
             is KiteRecipeActionPlan.Ignored -> Unit
             KiteRecipeActionPlan.RuntimeRequired -> {
                 ensureKfRuntimeBootstrap()
-                if (shouldSuppressTransientRuntimeChrome()) {
-                    requestResourceRuntimeInlineRefresh(recipe, "ubuntu_runtime_blocked")
-                } else {
+                if (!shouldSuppressTransientRuntimeChrome()) {
                     runtimeStatusChrome.showPanel(auto = true)
                     Toast.makeText(this, runtimeStatusState.title, Toast.LENGTH_SHORT).show()
                 }
@@ -3738,9 +2218,6 @@ open class MainActivity : AppCompatActivity() {
             }
         }
     }
-
-    private fun shouldOpenCardRunTaskFromHome(recipe: KiteRecipe): Boolean =
-        recipe.launch.openInstance
 
     private fun startRecipe(
         recipe: KiteRecipe,
@@ -3994,9 +2471,6 @@ open class MainActivity : AppCompatActivity() {
             clearNextActionUrl = clearNextActionUrl
         )
         runtimeStates[recipe.id] = state
-        if (recipe.runtimeSource == RESOURCE_OPEN_RUNTIME_SOURCE) {
-            invalidateResourceCatalogCache()
-        }
         if (status == RecipeRunStatus.Stopped) {
             clearActiveRunInstance(recipe, state.instanceId)
         }
@@ -4630,114 +3104,6 @@ open class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private data class ResourceItem(
-        val id: String,
-        val name: String,
-        val description: String,
-        val longDescription: String,
-        val section: String,
-        val category: String,
-        val iconText: String,
-        val iconAsset: String = "",
-        val iconFit: String = "",
-        val accent: String,
-        val version: String,
-        val sizeLabel: String,
-        val sourceLabel: String,
-        val stateLabel: String,
-        val actionLabel: String,
-        val actionEnabled: Boolean = true,
-        val secondaryActionLabel: String? = null,
-        val runtimeFacts: KiteResourceRuntimeFacts,
-        val includes: List<String>,
-        val notes: List<String>,
-        val steps: List<ResourceStep>,
-        val badge: ResourceBadge,
-        val media: ResourceMedia?,
-        val previewCards: List<ResourcePreviewCard>,
-        val requirementRows: List<ResourceRequirementRow>,
-        val recommendations: List<ResourceRecommendation> = emptyList(),
-        val rawJson: String = ""
-    )
-
-    private data class ResourceStep(
-        val type: String,
-        val title: String,
-        val preview: String
-    )
-
-    private data class ResourceRecommendation(
-        val resourceId: String,
-        val label: String
-    )
-
-    private data class ResourceBadge(
-        val label: String,
-        val iconText: String,
-        val accent: String
-    )
-
-    private data class ResourceMedia(
-        val type: String,
-        val asset: String,
-        val contentDescription: String
-    )
-
-    private data class ResourceRequirementRow(
-        val label: String,
-        val value: String
-    )
-
-    private data class ResourceRuntimeLabels(
-        val state: String,
-        val action: String,
-        val actionEnabled: Boolean,
-        val secondaryAction: String? = null
-    )
-
-    private data class ResourceRequirementResolution(
-        val requirement: String,
-        val resource: ResourceItem?
-    )
-
-    private data class ResourceInstallPlan(
-        val steps: List<ResourceItem>,
-        val missing: List<ResourceRequirementResolution>
-    )
-
-    private enum class ResourceUninstallContinuation {
-        None,
-        Reinstall,
-        CancelFailedInstall,
-        ResumeInstallWizard
-    }
-
-    private data class ToolchainWorkspaceSnapshot(
-        val nodeInstalled: Boolean = false,
-        val toolchainInstalled: Boolean = false,
-        val checkedAt: Long = 0L
-    )
-
-    private data class ResourceInstallWizardContext(
-        val targetResourceId: String,
-        val planResourceIds: List<String>,
-        val wizardRecipeId: String,
-        val wizardInstanceId: String,
-        val selectedResourceId: String? = null,
-        val selectedOperation: String = KiteResourceInstallRecipes.OP_INSTALL,
-        val selectedInstanceId: String? = null,
-        val selectedSurface: CardRunSurface = CardRunSurface.InstallWizard
-    )
-
-    private data class ResourcePreviewCard(
-        val title: String,
-        val subtitle: String,
-        val symbol: String,
-        val accent: String,
-        val iconAsset: String = "",
-        val iconFit: String = ""
-    )
-
     companion object {
         private const val TERMINAL_FRAGMENT_TAG = "kite-terminal"
         private const val TAG_RECIPE_RAW_JSON_FRAGMENT = "kite-recipe-raw-json"
@@ -4755,16 +3121,6 @@ open class MainActivity : AppCompatActivity() {
         private const val TAG_SETTINGS_FRAGMENT = "kite-settings"
         private const val TAG_THEME_SETTINGS_FRAGMENT = "kite-theme-settings"
         private const val TAG_BOTTOM_NAVIGATION_VIEW = "kite-bottom-navigation"
-        private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
-        private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
-        private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
-        private const val RESOURCE_HERMES_WEBUI = "kite.hermes.webui"
-        private const val RESOURCE_GIT = "kite.git"
-        private const val RESOURCE_CURL = "kite.curl"
-        private const val RESOURCE_PYTHON = "kite.python"
-        private const val RESOURCE_UV = "kite.uv"
-        private const val RESOURCE_ICON_FIT_FULL_BLEED = "fullBleed"
-        private const val RESOURCE_OPEN_RUNTIME_SOURCE = "resource_open"
         private const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE =
             CardRunSpecialRecipes.RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE
         private const val EXTRA_AUTOMATION_RUNTIME_ID = "runtime_id"
@@ -4785,10 +3141,6 @@ open class MainActivity : AppCompatActivity() {
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
         private const val TERMINAL_STOP_GRACE_MS = 350L
         private val ANSI_ESCAPE_REGEX = Regex("""\u001B\[[0-9;?]*[ -/]*[@-~]""")
-        private const val RESOURCE_CATALOG_FORCE_REFRESH_GRACE_MS = 1_200L
-        private const val RESOURCE_INSTALL_STALE_GRACE_MS = 5_000L
-        private const val RESOURCE_PREPARING_STALE_GRACE_MS = 30_000L
-        private const val TOOLCHAIN_WORKSPACE_PROBE_TTL_MS = 5_000L
         private const val REQUEST_DROPZONE_STORAGE = 801
         private const val REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS = 803
         private const val REQUEST_NOTIFICATION_PERMISSION = 804
@@ -4797,7 +3149,13 @@ open class MainActivity : AppCompatActivity() {
         private const val STATE_WORKBENCH_URL = "kite_workbench_url"
         private const val STATE_RECIPE_DRAFT = "kite_recipe_draft"
         private const val RECIPE_DRAFT_RESTORE_WINDOW_MS = 6L * 60L * 60L * 1000L
-        private var activeResourceInstallWizard: ResourceInstallWizardContext? = null
+        private val RESOURCE_STATUS_SCREENS = setOf(
+            AppDestination.Resources,
+            AppDestination.ResourceSearch,
+            AppDestination.ResourceDetail,
+            AppDestination.ResourceMore,
+            AppDestination.ResourceManage
+        )
     }
 }
 

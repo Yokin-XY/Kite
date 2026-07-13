@@ -1,4 +1,4 @@
-package com.kite.app.feature.runsurface
+package com.kite.app.application.runs
 
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
@@ -8,6 +8,7 @@ import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
 
+/** 无页面依赖的特殊运行配方工厂，供 Shell 和 Platform 共同创建可恢复运行。 */
 internal object CardRunSpecialRecipes {
     const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE = "resource_install_wizard"
 

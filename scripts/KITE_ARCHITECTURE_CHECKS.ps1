@@ -62,6 +62,10 @@ $runHistoryFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/featur
 $runHistoryScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runhistory/RunHistoryScreen.kt'
 $resourceMoreFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceMoreFragment.kt'
 $resourceRawJsonFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/resources/ResourceRawJsonFragment.kt'
+$resourceActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceActionWorkflow.kt'
+$androidResourceActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceActionGateway.kt'
+$cardRunSpecialRecipesPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/CardRunSpecialRecipes.kt'
+$legacyCardRunSpecialRecipesPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/CardRunSpecialRecipes.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
     (Join-Path $Root 'app/src/main/kotlin/com/kite/app')
@@ -98,6 +102,10 @@ Assert-Architecture (Test-Path $runHistoryFragmentPath) 'Run-history feature fra
 Assert-Architecture (Test-Path $runHistoryScreenPath) 'Run-history feature screen is missing.'
 Assert-Architecture (Test-Path $resourceMoreFragmentPath) 'Resource-more feature fragment is missing.'
 Assert-Architecture (Test-Path $resourceRawJsonFragmentPath) 'Resource raw-JSON feature fragment is missing.'
+Assert-Architecture (Test-Path $resourceActionWorkflowPath) 'Resource action application workflow is missing.'
+Assert-Architecture (Test-Path $androidResourceActionGatewayPath) 'Android resource action adapter is missing.'
+Assert-Architecture (Test-Path $cardRunSpecialRecipesPath) 'Application special-run recipe factory is missing.'
+Assert-Architecture (-not (Test-Path $legacyCardRunSpecialRecipesPath)) 'Special-run recipe factory must not live inside a Feature.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -127,6 +135,9 @@ if ($failures.Count -eq 0) {
     $runHistoryScreen = [System.IO.File]::ReadAllText($runHistoryScreenPath, [System.Text.Encoding]::UTF8)
     $resourceMoreFragment = [System.IO.File]::ReadAllText($resourceMoreFragmentPath, [System.Text.Encoding]::UTF8)
     $resourceRawJsonFragment = [System.IO.File]::ReadAllText($resourceRawJsonFragmentPath, [System.Text.Encoding]::UTF8)
+    $resourceActionWorkflow = [System.IO.File]::ReadAllText($resourceActionWorkflowPath, [System.Text.Encoding]::UTF8)
+    $androidResourceActionGateway = [System.IO.File]::ReadAllText($androidResourceActionGatewayPath, [System.Text.Encoding]::UTF8)
+    $cardRunSpecialRecipes = [System.IO.File]::ReadAllText($cardRunSpecialRecipesPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
             Where-Object { Test-Path $_ } |
@@ -320,6 +331,24 @@ if ($failures.Count -eq 0) {
         $main -match 'ResourceRawJsonFragment\.newInstance' -and
         $main -notmatch 'fun\s+(?:resourceMoreHeader|resourceInstallHistoryPanel|resourceRawJsonForUi)\s*\('
     ) 'MainActivity must route resource supplemental pages without drawing their content.'
+    Assert-Architecture (
+        $resourceActionWorkflow -match 'interface\s+ResourceActionGateway' -and
+        $resourceActionWorkflow -notmatch 'android\.|androidx\.|CardRunStore|KiteResourceInstallStore'
+    ) 'Resource action workflow must remain an Android-free application contract.'
+    Assert-Architecture (
+        $androidResourceActionGateway -match 'class\s+AndroidResourceActionGateway' -and
+        $androidResourceActionGateway -match 'installWizardEffect' -and
+        $androidResourceActionGateway -notmatch 'MainActivity|CardRunActivity|android\.view|android\.widget|com\.kite\.app\.feature'
+    ) 'Resource action adapter must own Store orchestration without depending on UI or a Feature.'
+    Assert-Architecture (
+        $cardRunSpecialRecipes -match 'object\s+CardRunSpecialRecipes' -and
+        $cardRunSpecialRecipes -notmatch 'android\.|androidx\.|com\.kite\.app\.feature|com\.kite\.app\.platform'
+    ) 'Special-run recipes must remain reusable application data factories.'
+    Assert-Architecture (
+        $main -match 'resourceActionWorkflowCoordinator\.dispatch' -and
+        $main -match 'ResourceActionEffect\.OpenInstallWizard' -and
+        $main -notmatch 'resourceCatalogDirty|resourceCatalog\(|resourceRuntimeFactsFromStore|observeResourceInstallSignals|showResourceInstallWizard'
+    ) 'MainActivity must dispatch resource intent and interpret route effects without owning resource facts.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)

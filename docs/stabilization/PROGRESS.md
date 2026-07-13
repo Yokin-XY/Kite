@@ -1287,3 +1287,14 @@ T011 资源旧引擎清理结果：
 - Kotlin 编译、架构守卫和运行车道守卫通过；MainActivity 当前为 `4829 / 232 / 55`（行 / 函数 / 私有字段）。
 
 下一步：在干净调用图上建立资源动作工作流合同，迁移获取计划、打开/停止、卸载、取消和首页卡片创建。
+
+T011 资源动作工作流迁移结果：
+
+- 新增 Android 无关的 `ResourceActionWorkflowCoordinator/ResourceActionGateway`；资源 Feature 的稳定意图统一经过一条工作流，MainActivity 只解释 `OpenRun/OpenInstallWizard/Message` Effect。
+- `AndroidResourceActionGateway` 复用安装 Store、运行 Store、资源运行协调器和通用 RunOrchestrator，拥有获取计划、向导运行注册、打开/停止、卸载、取消清理和首页卡片写入；没有新增 Store、页面状态或刷新轮询。
+- 删除 Main 中资源目录缓存、过期状态归一化、Store 观察器、打开运行签名、资源 DTO/Manifest 投影和向导临时字段。资源页面直接消费 Gateway 信号并局部 `ReconcileFacts`，不再依赖 Activity 标脏缓存。
+- 修复计划依赖项触发“恢复向导/取消”时误用依赖项作为目标的问题；现在以 Store 的真实 `targetResourceId` 路由。取消清理超时不再无条件宣称清理成功。
+- `CardRunSpecialRecipes` 从 Feature 迁至 Application 运行层，Platform 不再反向依赖 Feature。失真的 Activity 缓存反射测试和字符串守卫已改为工作流、Gateway、Feature 信号消费和依赖方向守卫。
+- 定向资源工作流、资源 Controller、运行解析和 Main 路由测试通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `3186 / 147 / 44 / 10 / 19`（行 / 函数 / 私有字段 / 资源职责函数 / runtimeStates 引用），零调用私有函数为 0。
+
+下一步：继续按 Shell 必需、系统适配、业务编排、业务显示四类审计剩余 147 个函数；优先迁出自动化测试入口、通用运行动作编排和仍由 Main 手绘的 Console 壳内容，再进行 T011 全量与真机封口。

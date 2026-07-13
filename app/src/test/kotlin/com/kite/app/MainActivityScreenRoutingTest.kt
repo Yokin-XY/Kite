@@ -5,7 +5,6 @@ import android.os.Looper
 import com.kite.app.feature.web.WebWorkbenchFragment
 import com.kite.app.feature.resources.ResourceFeatureRequest
 import com.kite.app.feature.resources.ResourceFeatureResultContract
-import com.kite.app.resources.KiteResourceInstallSignal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -50,33 +49,6 @@ class MainActivityScreenRoutingTest {
         val method = MainActivity::class.java.getDeclaredMethod(methodName)
         method.isAccessible = true
         method.invoke(activity)
-    }
-
-    private fun invokeResourceSignal(activity: MainActivity, signal: KiteResourceInstallSignal) {
-        val method = MainActivity::class.java.getDeclaredMethod(
-            "consumeResourceInstallSignal",
-            KiteResourceInstallSignal::class.java
-        )
-        method.isAccessible = true
-        method.invoke(activity, signal)
-    }
-
-    private fun settleResourceMutation(activity: MainActivity, reason: String) {
-        val method = MainActivity::class.java.getDeclaredMethod("settleVisibleResourceMutation", String::class.java)
-        method.isAccessible = true
-        method.invoke(activity, reason)
-    }
-
-    private fun setResourceCatalogDirty(activity: MainActivity, dirty: Boolean) {
-        val field = MainActivity::class.java.getDeclaredField("resourceCatalogDirty")
-        field.isAccessible = true
-        field.setBoolean(activity, dirty)
-    }
-
-    private fun resourceCatalogDirty(activity: MainActivity): Boolean {
-        val field = MainActivity::class.java.getDeclaredField("resourceCatalogDirty")
-        field.isAccessible = true
-        return field.getBoolean(activity)
     }
 
     private fun setCurrentScreen(activity: MainActivity, screenName: String) {
@@ -131,46 +103,6 @@ class MainActivityScreenRoutingTest {
     }
 
     @Test
-    fun `资源完成信号在非资源页面也必须标脏缓存`() {
-        val activity = createActivity()
-        setResourceCatalogDirty(activity, false)
-
-        invokeResourceSignal(
-            activity,
-            KiteResourceInstallSignal(
-                revision = 1L,
-                reason = "markInstalled",
-                resourceId = "kite.hermes.core"
-            )
-        )
-
-        assertTrue(resourceCatalogDirty(activity))
-        assertEquals("Console", activity.currentScreenNameForTest())
-    }
-
-    @Test
-    fun `资源状态信号只标脏 Activity 缓存不再操作 Feature 控件`() {
-        val screens = listOf("Resources", "ResourceSearch", "ResourceDetail", "ResourceMore", "ResourceManage")
-
-        screens.forEachIndexed { index, screenName ->
-            val activity = createActivity()
-            setCurrentScreen(activity, screenName)
-            setResourceCatalogDirty(activity, false)
-            invokeResourceSignal(
-                activity,
-                KiteResourceInstallSignal(
-                    revision = index + 1L,
-                    reason = "state-transition-$screenName",
-                    resourceId = "kite.hermes.core"
-                )
-            )
-
-            assertTrue("$screenName must retain a dirty catalog until it can rebind", resourceCatalogDirty(activity))
-            assertEquals(screenName, activity.currentScreenNameForTest())
-        }
-    }
-
-    @Test
     fun `资源管理进入详情后返回资源管理`() {
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         invokeShow(activity, "showResourceManage")
@@ -191,18 +123,6 @@ class MainActivityScreenRoutingTest {
         shadowOf(Looper.getMainLooper()).idle()
         activity.supportFragmentManager.executePendingTransactions()
         assertEquals("ResourceManage", activity.currentScreenNameForTest())
-    }
-
-    @Test
-    fun `后台资源完成不得把非资源页面导航到资源首页`() {
-        val activity = createActivity()
-        invokeShow(activity, "showSettings")
-        setResourceCatalogDirty(activity, false)
-
-        settleResourceMutation(activity, "background_install_completed")
-
-        assertEquals("Settings", activity.currentScreenNameForTest())
-        assertTrue(resourceCatalogDirty(activity))
     }
 
     // ------------------------------------------------------------------

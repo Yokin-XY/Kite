@@ -42,7 +42,7 @@ import com.kite.app.feature.runsurface.CardRunLaunchResolution
 import com.kite.app.feature.runsurface.CardRunLaunchResolver
 import com.kite.app.feature.runsurface.CardRunLaunchTarget
 import com.kite.app.feature.runsurface.CardRunMissingStatePolicy
-import com.kite.app.feature.runsurface.CardRunSpecialRecipes
+import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.feature.runsurface.RunActivityChrome
 import com.kite.app.feature.runsurface.RunSurfaceActionGateway
 import com.kite.app.feature.runsurface.RunSurfaceBinding

@@ -59,8 +59,10 @@ $stopCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/applicati
 $androidRecipeExecutorPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeExecutor.kt'
 $androidRunStateGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRunStateGateway.kt'
 $resourceRunCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceRunCoordinator.kt'
+$resourceActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceActionWorkflow.kt'
 $androidResourceRecipeFactoryPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceRecipeFactory.kt'
 $androidResourceRunGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceRunGateway.kt'
+$androidResourceActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceActionGateway.kt'
 $runSurfaceContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceContract.kt'
 $runSurfaceControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceController.kt'
 $runSurfaceHostPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceHost.kt'
@@ -197,8 +199,10 @@ $stopCoordinator = Read-Utf8 $stopCoordinatorPath
 $androidRecipeExecutor = Read-Utf8 $androidRecipeExecutorPath
 $androidRunStateGateway = Read-Utf8 $androidRunStateGatewayPath
 $resourceRunCoordinator = Read-Utf8 $resourceRunCoordinatorPath
+$resourceActionWorkflow = Read-Utf8 $resourceActionWorkflowPath
 $androidResourceRecipeFactory = Read-Utf8 $androidResourceRecipeFactoryPath
 $androidResourceRunGateway = Read-Utf8 $androidResourceRunGatewayPath
+$androidResourceActionGateway = Read-Utf8 $androidResourceActionGatewayPath
 $runSurfaceContract = Read-Utf8 $runSurfaceContractPath
 $runSurfaceController = Read-Utf8 $runSurfaceControllerPath
 $runSurfaceHost = Read-Utf8 $runSurfaceHostPath
@@ -260,9 +264,8 @@ Assert-True ($homeFeatureFragment -match '(?s)repeatOnLifecycle\(Lifecycle\.Stat
 Assert-True ($homeFeatureFragment -match 'change\.catalogInvalidated' -and $homeFeatureFragment -match 'HomeFeatureAction\.Refresh') 'Home feature must reconcile catalog facts when a recipe mutation is replayed.'
 Assert-True ($androidRecipeFeatureGateway -match 'MutableSharedFlow<RecipeFeatureChange>\(\s*replay = 1' -and $androidRecipeFeatureGateway -match '@Volatile\s+private var cachedRecipes') 'Recipe mutations must be replayable and backed by one process catalog snapshot.'
 Assert-True ($androidRecipeFeatureGateway -match '(?s)cachedRecipes = catalog\s+mutationChanges\.tryEmit' -and $androidRecipeFeatureGateway -match '(?s)cachedRecipes = withContext.*removeClosedRunStatesForRecipes|(?s)removeClosedRunStatesForRecipes.*cachedRecipes = withContext') 'Recipe save and delete must update the catalog snapshot before publishing mutation signals.'
-$addResourceHomeCard = Function-Body $main 'addResourceHomeCard'
 $refreshDropZoneRecipes = Function-Body $main 'refreshDropZoneRecipes'
-Assert-True ($addResourceHomeCard -match 'recipeFeatureGateway\.invalidateCatalog\("resource_home_card_added"\)') 'Resource home-card writes must invalidate the shared recipe catalog snapshot.'
+Assert-True ($androidResourceActionGateway -match 'override suspend fun createHomeCard' -and $androidResourceActionGateway -match 'recipeFeatureGateway\.invalidateCatalog\("resource_home_card_added"\)') 'Resource home-card writes must invalidate the shared recipe catalog snapshot.'
 Assert-True ($refreshDropZoneRecipes -match 'recipeFeatureGateway\.refreshExternalRecipes\(\)' -and $refreshDropZoneRecipes -notmatch 'dropZoneManager\.scanAndImport\(\)') 'Shell drop-zone refresh must use the shared recipe gateway instead of bypassing its catalog state.'
 Assert-True ($homeScreen -match 'structureSignature' -and $homeScreen -match 'factory\.bind' -and $homeScreen -match 'fun acknowledge\(') 'Home screen must separate structural rebuilds from local run-state binding and immediate action acknowledgement.'
 Assert-True ($homeScreen -notmatch 'CardRunStore|KiteRecipeLoader|MainActivity') 'Home screen must only project supplied state and must not read stores, files, or the shell.'
@@ -340,12 +343,11 @@ Assert-True ($main -match '(?s)private fun resourceOwnerProbeRecipe\b.*KiteResou
 
 $startRecipe = Function-Body $main 'startRecipe'
 $startRecipeWithOrchestrator = Function-Body $main 'startRecipeWithOrchestrator'
-$startResourceRun = Function-Body $main 'startResourceRun'
 Assert-True ($startRecipe -match 'startRecipeWithOrchestrator' -and $startRecipe -notmatch 'legacyStartRecipe|recipeUsesProcessRunOrchestrator') 'All recipe start intake must submit through the process orchestrator.'
 Assert-True ($startRecipeWithOrchestrator -match 'runOrchestrator\.start' -and $startRecipeWithOrchestrator -match 'ownerKind = previousState\.ownerKind' -and $startRecipeWithOrchestrator -match 'stepId = previousState\.stepId') 'RunOrchestrator start must preserve the existing CardRun owner identity.'
 Assert-True ($main -notmatch 'legacyStartRecipe|executeRecipeStep|runUbuntuStepWhenReady|handleSequenceShellResult') 'MainActivity must not retain a second recipe execution engine.'
 Assert-True ($kiteAppGraph -match 'val runOrchestrator: RunOrchestrator by lazy' -and $kiteAppGraph -match 'AndroidRecipeExecutor\(appContext, bridgeClient, diagnostics\)') 'Run orchestration and execution adapter must be process composition-root dependencies.'
-Assert-True ($startResourceRun -match 'resourceRunCoordinator\.start' -and $startResourceRun -notmatch 'thread\(|startRecipe\(|ToolchainPackInstaller\.|setRuntimeState\(') 'Resource run intake must delegate preparation and execution to the process coordinator without page-owned execution.'
+Assert-True ($androidResourceActionGateway -match 'runCoordinator\.start' -and $main -notmatch 'fun\s+startResourceRun\s*\(|ToolchainPackInstaller\.|resourceManifestLoader') 'Resource run intake must delegate preparation and execution to the process coordinator without page-owned execution.'
 Assert-True ($main -notmatch 'resourceManifestRecipeSteps|resourceManifestActionCommand|legacyResourceInstallStep|legacyResourceUninstallStep|markResourceRunSuccess|markResourceInstallFailed') 'MainActivity must not compile resource recipes or settle resource registry facts.'
 Assert-True ($runSurfaceContract -match 'sealed interface RunSurfaceContent' -and $runSurfaceContract -match 'val structureKey: String') 'Run surface feature must project explicit content and a stable structural binding key.'
 Assert-True ($runSurfaceController -match 'recipe\.id != current\.recipeId \|\| state\.instanceId != current\.instanceId' -and $runSurfaceController -match '(?s)fun detach\(\).*target = null') 'Run surface controller must reject cross-instance state and detach without stopping runtime work.'
@@ -578,13 +580,11 @@ Assert-True ($resourceInstallWizardPresentation -match 'KiteResourceInstallStepU
 Assert-True ($resourceInstallWizardScreen -match 'row\.projection\.statusLabel' -and $resourceInstallWizardScreen -notmatch 'statusLabel\s*=\s*when') 'install wizard rows must render the shared projection without a parallel status-label decision tree.'
 Assert-True ($resourceInstallWizardScreen -notmatch 'CardRunStore|KiteResourceInstallStore|MainActivity') 'install wizard screen must not read runtime stores or the shell directly.'
 Assert-True ($main -notmatch 'ResourceInstallWizardBinding|ResourceInstallWizardUiState|requestVisibleResourceInstallWizardRefresh|resourceInstallWizardContent') 'MainActivity must not retain the legacy install-wizard render and refresh chain.'
-$settleResourceMutation = Function-Body $main 'settleVisibleResourceMutation'
-Assert-True ($settleResourceMutation -notmatch '\bshowResources\s*\(') 'background resource mutations must not navigate users away from the current screen.'
-Assert-True ($settleResourceMutation -match 'resourceCatalogDirty\s*=\s*true') 'background resource mutations must mark hidden resource surfaces dirty.'
-$resourceIncrementalFacts = Function-Body $main 'resourceRuntimeFactsFromStore'
-$resourceCatalogFacts = Function-Body $main 'resourceCatalog'
-Assert-True ($resourceIncrementalFacts -match 'KiteResourceRuntimeFactsProjector\.project') 'incremental resource binding must consume shared runtime facts.'
-Assert-True ($resourceCatalogFacts -match 'KiteResourceRuntimeFactsProjector\.project') 'full resource catalog must consume shared runtime facts.'
+Assert-True ($resourceFeatureFragment -match 'gateway\.changes\.collect' -and $resourceFeatureFragment -match 'ResourceFeatureAction\.ReconcileFacts') 'resource feature must reconcile owner signals directly instead of relying on an Activity cache.'
+Assert-True ($resourceFeatureController -match 'gateway\.registrySnapshot' -and $resourceFeatureController -match 'KiteResourceRuntimeFactsProjector\.project') 'resource feature projection must consume shared runtime facts from its gateway.'
+Assert-True ($resourceActionWorkflow -match 'interface\s+ResourceActionGateway' -and $resourceActionWorkflow -notmatch 'android\.|androidx\.|CardRunStore|KiteResourceInstallStore') 'resource action workflow must remain an Android-free application contract.'
+Assert-True ($androidResourceActionGateway -match 'installWizardEffect' -and $androidResourceActionGateway -match 'CardRunStore\.update' -and $androidResourceActionGateway -notmatch 'MainActivity|android\.view|android\.widget') 'resource action adapter must own install-wizard run facts without depending on a page.'
+Assert-True ($main -match 'resourceActionWorkflowCoordinator\.dispatch' -and $main -match 'ResourceActionEffect\.OpenInstallWizard' -and $main -notmatch 'resourceCatalogDirty|resourceCatalog\(|resourceRuntimeFactsFromStore|observeResourceInstallSignals|showResourceInstallWizard') 'MainActivity must only dispatch resource intents and interpret route effects.'
 Assert-True ($homeFeatureViewSupport -match 'item\.projection\.primaryAction' -and $homeFeatureViewSupport -match 'item\.projection\.badgeLabel') 'Home card action and badge must consume the shared projected UI state.'
 Assert-True ($runtimeManagementProjector -match 'KiteCardRunUiProjector\.project' -and $runtimeManagementScreen -match 'statusColors\(run\.statusTone\)') 'run management status colors must consume shared projected card-run UI state.'
 $cardRunOnDestroy = Member-Function-Body $cardRunActivity 'onDestroy'

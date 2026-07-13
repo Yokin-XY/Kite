@@ -16,7 +16,8 @@ internal enum class KiteResourceActionSource(val logValue: String) {
     Card("resource_card"),
     Detail("resource_detail"),
     Wizard("install_wizard"),
-    Continuation("continuation")
+    Continuation("continuation"),
+    Automation("automation")
 }
 
 internal data class KiteResourceActionRequest(
