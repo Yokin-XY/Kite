@@ -280,7 +280,6 @@ open class MainActivity : AppCompatActivity() {
     private var cachedResourceCatalog: List<ResourceItem>? = null
     private var cachedResourceCatalogUpdatedAt = 0L
     private var resourceCatalogDirty = true
-    private var resourceCatalogBackgroundRefreshInFlight = false
     private var cachedToolchainWorkspaceSnapshot = ToolchainWorkspaceSnapshot()
     private var resourceOpenRunSignature = ""
     private var resourceOpenRunStatusByResourceId: Map<String, RecipeRunStatus> = emptyMap()
@@ -2024,58 +2023,6 @@ open class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun projectResourceItemRuntime(item: ResourceItem): ResourceItem {
-        val facts = resourceRuntimeFactsFromStore(item)
-        val openRunStatus = CardRunStore
-            .currentForRecipe(KiteResourceInstallRecipes.recipeId(item.id, "open"))
-            ?.status
-        val projection = KiteResourceUiProjector.project(
-            installed = facts.installed,
-            preparing = facts.preparing,
-            installing = facts.installing,
-            uninstalling = facts.uninstalling,
-            failed = facts.failed,
-            failedOperation = facts.failedOperation,
-            idleStateLabel = facts.idleStateLabel,
-            openRunStatus = openRunStatus,
-            extraBusy = facts.extraBusy
-        )
-        return item.copy(
-            stateLabel = projection.stateLabel,
-            actionLabel = projection.actionLabel,
-            actionEnabled = projection.actionEnabled,
-            secondaryActionLabel = projection.secondaryActionLabel,
-            runtimeFacts = facts
-        )
-    }
-
-   private fun resourceCatalogForUiRender(reason: String): List<ResourceItem> {
-        cachedResourceCatalog?.let { cached ->
-            if (resourceCatalogDirty) requestResourceCatalogBackgroundRefresh(reason)
-            return cached.map { item -> projectResourceItemRuntime(item) }
-        }
-        requestResourceCatalogBackgroundRefresh(reason)
-        return emptyList()
-    }
-
-    private fun requestResourceCatalogBackgroundRefresh(@Suppress("UNUSED_PARAMETER") reason: String) {
-        if (resourceCatalogBackgroundRefreshInFlight) return
-        resourceCatalogBackgroundRefreshInFlight = true
-        thread(name = "KiteResourceCatalogUiRefresh", isDaemon = true) {
-            runCatching { resourceCatalog(forceRefresh = false) }
-            runOnUiThread {
-                resourceCatalogBackgroundRefreshInFlight = false
-                when (currentScreen) {
-                    AppDestination.Resources -> Unit
-                    AppDestination.ResourceSearch -> Unit
-                    AppDestination.ResourceMore -> Unit
-                    AppDestination.ResourceManage -> Unit
-                    else -> Unit
-                }
-            }
-        }
-    }
-
     private fun prewarmResourceCatalog() {
         thread(name = "KiteResourceCatalogPrewarm", isDaemon = true) {
             runCatching { resourceCatalog(forceRefresh = false) }
@@ -2613,14 +2560,6 @@ open class MainActivity : AppCompatActivity() {
     private fun resourceRunStateForOperation(resourceId: String, operation: String): RecipeRuntimeState? =
         CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, operation))
 
-    private fun resourceInstallRecipeState(resourceId: String): RecipeRuntimeState? =
-        resourceRunStateForOperation(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
-
-    private fun resourceRunIsActive(resourceId: String): Boolean {
-        val state = resourceInstallRecipeState(resourceId) ?: return false
-        return state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened
-    }
-
     private fun resourceIsInstalled(item: ResourceItem): Boolean =
         item.runtimeFacts.installed && !item.runtimeFacts.uninstalling
 
@@ -2865,63 +2804,6 @@ open class MainActivity : AppCompatActivity() {
 
         visit(target)
         return ResourceInstallPlan(steps = ordered.values.toList(), missing = missing)
-    }
-
-    private fun startNextResourceInstallFromPlan() {
-        val planSnapshot = resourceInstallStore.planSnapshot()
-        val runningId = planSnapshot.runningResourceIds.firstOrNull()
-        if (runningId != null) {
-            if (resourceRunIsActive(runningId)) {
-                showResourceInstallWizard()
-                return
-            }
-            val registryEntry = resourceInstallStore.registryEntry(runningId)
-            if (registryEntry.bootstrapInstallStillRunning() || registryEntry.installMutationIsFresh()) {
-                showResourceInstallWizard()
-                return
-            }
-            resourceInstallStore.markFailed(
-                runningId,
-                KiteResourceInstallStore.OP_INSTALL,
-                null,
-                "获取流程异常中断"
-            )
-            resourceInstallStore.failPlanAt(runningId)
-            invalidateResourceRuntimeStateCache()
-            showResourceInstallWizard()
-            return
-        }
-        val pendingIds = planSnapshot.pendingResourceIds
-        if (pendingIds.isEmpty()) return
-        val catalog = resourceCatalog(forceRefresh = false)
-        val next = pendingIds
-            .mapNotNull { id -> catalog.firstOrNull { it.id == id } }
-            .firstOrNull()
-        if (next == null) {
-            resourceInstallStore.clearPlan()
-            showResourceDiscreteToast("执行队列缺少资源定义")
-            showResourceInstallWizard()
-            return
-        }
-        if (resourceIsInstalled(next)) {
-            resourceInstallStore.advancePlanAfter(next.id)
-            showResourceInstallWizard()
-            startNextResourceInstallFromPlan()
-            return
-        }
-        cacheResourceExecutionManifest(next.id)
-        val recipe = resourceInstallRecipe(next)
-        if (recipe == null) {
-            resourceInstallStore.clearPlan()
-            showResourceDiscreteToast("${next.name} 的获取脚本尚未接入")
-            showResourceInstallWizard()
-            return
-        }
-        if (!resourceInstallStore.markPlanStepRunning(next.id)) {
-            showResourceInstallWizard()
-            return
-        }
-        startResourceInstall(next, recipe)
     }
 
     private fun cacheResourceExecutionManifest(resourceId: String) {
@@ -4855,9 +4737,6 @@ open class MainActivity : AppCompatActivity() {
         val iconAsset: String = "",
         val iconFit: String = ""
     )
-
-    private fun String.requiresServiceCommand(): Boolean =
-        this == KiteRecipe.TYPE_COMMAND_WEB || this == KiteRecipe.TYPE_SCRIPT_WEB || this == KiteRecipe.TYPE_START_SERVICE
 
     companion object {
         private const val TERMINAL_FRAGMENT_TAG = "kite-terminal"

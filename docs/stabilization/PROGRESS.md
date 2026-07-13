@@ -1279,3 +1279,11 @@ T011 活跃业务显示迁移结果：
 - 定向 Controller、Screen、Result Contract 与 Main 路由测试通过；架构和运行车道守卫均通过。MainActivity 当前为 `4949 / 237 / 56 / 28 / 29`（行 / 函数 / 字段 / 资源职责函数 / runtimeStates 引用）。
 
 下一步：审计剩余资源动作临时状态和运行动作投影，把业务编排迁到 Application/Platform 边界；Shell 仅解释 Effect 和启动系统界面。
+
+T011 资源旧引擎清理结果：
+
+- 删除已经被 `ResourceFeatureGateway` 取代的 Activity UI 目录缓存刷新链，以及已经被 `ResourceRunCoordinator + CardRunActivity` 取代的 Main 下一安装项递归引擎。
+- 静态守卫不再寻找旧 `resourceCatalogForUiRender` 字符串，改为验证 `ResourceFeatureController` 只通过 Gateway 加载目录，且不在投影路径引用文件、ManifestLoader 或 CardRunStore。
+- Kotlin 编译、架构守卫和运行车道守卫通过；MainActivity 当前为 `4829 / 232 / 55`（行 / 函数 / 私有字段）。
+
+下一步：在干净调用图上建立资源动作工作流合同，迁移获取计划、打开/停止、卸载、取消和首页卡片创建。
