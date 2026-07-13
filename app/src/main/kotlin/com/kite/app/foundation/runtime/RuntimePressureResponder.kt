@@ -103,6 +103,13 @@ object RuntimePressureResponder {
         lastHandleAt: Long,
         lastHandledLevel: Int
     ): RuntimePressureResponsePlan {
+        if (level == ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            return RuntimePressureResponsePlan(
+                RuntimePressureRefreshAction.NONE,
+                execute = false,
+                reason = "visibility_only"
+            )
+        }
         val action = when {
             level >= profile.trimTaskRefreshMinLevel -> RuntimePressureRefreshAction.TASK_MANAGER
             level >= profile.trimProcessRefreshMinLevel -> RuntimePressureRefreshAction.PROCESS_SNAPSHOT

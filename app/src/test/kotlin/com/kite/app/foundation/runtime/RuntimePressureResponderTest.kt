@@ -52,6 +52,21 @@ class RuntimePressureResponderTest {
     }
 
     @Test
+    fun planResponse_doesNotTreatUiHiddenAsMemoryPressure() {
+        val plan = RuntimePressureResponder.planResponse(
+            profile = RuntimeResidentProfile.BALANCED,
+            level = ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN,
+            now = 2_000L,
+            lastHandleAt = 0L,
+            lastHandledLevel = Int.MIN_VALUE
+        )
+
+        assertFalse(plan.execute)
+        assertEquals(RuntimePressureRefreshAction.NONE, plan.action)
+        assertEquals("visibility_only", plan.reason)
+    }
+
+    @Test
     fun lowMemorySignal_preservesLowMemoryStateWithForegroundActivity() {
         RuntimeLifecycleSignalStore.onActivityStarted("MainActivity", "main")
 

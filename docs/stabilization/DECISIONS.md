@@ -520,3 +520,23 @@
 理由：自动化入口虽然只用于验收，但它实际会创建和停止正式运行实例。若 Shell 自行调用 Orchestrator、构造配方或写 Store，真机验证通过的将是旁路而不是产品合同，并且迁移完成后仍会迫使应用壳持有执行职责。
 
 影响：`MainActivity` 不再持有 `RunOrchestrator`、`ResourceRunCoordinator`，也不再定义 `startRecipeWithOrchestrator`、`stopRecipeWithOrchestrator` 或资源探针配方。自动化与用户点击共享同一状态拥有者、执行入口和迟到回调保护；静态守卫必须验证该合同，不得恢复只为测试存在的 Shell 特判。
+
+## ADR-S052 依赖反转回调复用进程级状态拥有者
+
+状态：accepted
+
+决策：`ToolchainResourcePort` 的实现通过 `KiteAppGraph` 取得唯一的 `resourceInstallStore`，每次状态查询或写入不得临时创建 `KiteResourceInstallStore`。ContentProvider 只负责安装依赖反转合同，不拥有另一套资源状态或数据库生命周期。
+
+理由：工具链安装会连续回调查询、安装中、成功或失败。旧实现每次回调都新建 Store，同时创建 Registry、Snapshot 和 PageCache 三个 SQLite Helper；对象被回收时真机连续报告数据库连接泄漏，并且同一事实出现多个进程内拥有者。
+
+影响：资源事实与 Flow 信号继续由组合根中的同一 Store 发出；工具链回调和页面消费不会分叉。架构守卫禁止恢复 `KiteResourceInstallStore(context.applicationContext)` 形式的逐事件构造。
+
+## ADR-S053 UI 隐藏不是内存压力等级
+
+状态：accepted
+
+决策：`TRIM_MEMORY_UI_HIDDEN` 只写入应用可见性事实，不触发进程/任务刷新，也不占用内存压力的 2.5 秒合并窗口。`RUNNING_LOW`、`RUNNING_CRITICAL` 和其他真实压力信号继续进入既有策略链，更高级压力可以越过冷却。
+
+理由：Android trim 常量的整数不能直接当成连续压力等级。`UI_HIDDEN=20` 只是界面不可见，却大于 `RUNNING_CRITICAL=15`；旧比较会让用户刚切后台时吞掉紧随其后的真实低内存信号。
+
+影响：页面离开仍由 `RuntimeLifecycleSignalStore` 记录，但不会冒充内存告警。真机注入验证必须看到 UI_HIDDEN 为 `visibility_only`，随后 LOW 和 CRITICAL 都被处理，且后台任务与宿主 PID保持存活。

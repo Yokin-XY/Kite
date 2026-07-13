@@ -33,6 +33,7 @@ function Imported-Types {
 
 $baselinePath = Join-Path $Root 'docs/stabilization/architecture-baseline.json'
 $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
+$taskContractInitializerPath = Join-Path $Root 'app/src/main/java/com/kite/app/KiteTaskContractInitializer.kt'
 $cardRunPath = Join-Path $Root 'app/src/main/java/com/kite/app/CardRunActivity.kt'
 $runSurfaceHostPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceHost.kt'
 $runtimeManagementSnapshotPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementSnapshot.kt'
@@ -83,6 +84,7 @@ $sourceRoots = @(
 
 Assert-Architecture (Test-Path $baselinePath) 'Architecture baseline is missing.'
 Assert-Architecture (Test-Path $mainPath) 'MainActivity source is missing.'
+Assert-Architecture (Test-Path $taskContractInitializerPath) 'Task contract initializer is missing.'
 Assert-Architecture (Test-Path $cardRunPath) 'CardRunActivity source is missing.'
 Assert-Architecture (Test-Path $runSurfaceHostPath) 'RunSurfaceHost source is missing.'
 Assert-Architecture (Test-Path $runtimeManagementSnapshotPath) 'Runtime-management snapshot contract is missing.'
@@ -130,6 +132,7 @@ Assert-Architecture (Test-Path $androidInstallApkGatewayPath) 'Android install-A
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
     $main = [System.IO.File]::ReadAllText($mainPath, [System.Text.Encoding]::UTF8)
+    $taskContractInitializer = [System.IO.File]::ReadAllText($taskContractInitializerPath, [System.Text.Encoding]::UTF8)
     $cardRun = [System.IO.File]::ReadAllText($cardRunPath, [System.Text.Encoding]::UTF8)
     $runSurfaceHost = [System.IO.File]::ReadAllText($runSurfaceHostPath, [System.Text.Encoding]::UTF8)
     $runtimeManagementSnapshot = [System.IO.File]::ReadAllText($runtimeManagementSnapshotPath, [System.Text.Encoding]::UTF8)
@@ -407,6 +410,10 @@ if ($failures.Count -eq 0) {
         $main -match 'runtimeOwnerProbeCoordinator\.start' -and
         $main -notmatch 'resourceOwnerProbeRecipe|OWNER_KIND_RESOURCE|resourceRunCoordinator'
     ) 'MainActivity must only submit runtime owner-probe requests.'
+    Assert-Architecture (
+        $taskContractInitializer -match 'KiteAppGraph\.from\(context\.applicationContext\)\.resourceInstallStore' -and
+        $taskContractInitializer -notmatch 'KiteResourceInstallStore\(context\.applicationContext\)'
+    ) 'Toolchain callbacks must reuse the process resource store instead of creating SQLite-backed stores per event.'
     Assert-Architecture (
         $desktopOpenWorkflow -match 'class\s+DesktopOpenCoordinator' -and
         $desktopOpenWorkflow -notmatch 'android\.|androidx\.|CardRunStore|KiteX11Surface|MainActivity|CardRunActivity'

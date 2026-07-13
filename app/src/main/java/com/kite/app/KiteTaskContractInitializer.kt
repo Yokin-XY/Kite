@@ -8,6 +8,7 @@ import com.kite.app.foundation.terminal.BrowserEnvironmentProviderHost
 import com.kite.app.foundation.toolchain.ToolchainResourcePort
 import com.kite.app.foundation.toolchain.ToolchainResourcePortHost
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.shell.KiteAppGraph
 
 /**
  * 业务层对 foundation 层依赖反转契约的实现与注入。
@@ -33,11 +34,11 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
         })
         ToolchainResourcePortHost.install(object : ToolchainResourcePort {
             override fun statusOf(context: android.content.Context, resourceId: String): String =
-                KiteResourceInstallStore(context.applicationContext)
+                KiteAppGraph.from(context.applicationContext).resourceInstallStore
                     .registryEntry(resourceId)?.status.orEmpty()
 
             override fun markInstalling(context: android.content.Context, resourceId: String, runId: String?) {
-                KiteResourceInstallStore(context.applicationContext).markInstalling(resourceId, runId)
+                KiteAppGraph.from(context.applicationContext).resourceInstallStore.markInstalling(resourceId, runId)
             }
 
             override fun markInstalled(
@@ -47,7 +48,7 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
                 runId: String?,
                 summary: String?
             ) {
-                KiteResourceInstallStore(context.applicationContext)
+                KiteAppGraph.from(context.applicationContext).resourceInstallStore
                     .markInstalled(resourceId, version ?: "", runId, summary)
             }
 
@@ -57,7 +58,7 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
                 runId: String?,
                 reason: String?
             ) {
-                KiteResourceInstallStore(context.applicationContext)
+                KiteAppGraph.from(context.applicationContext).resourceInstallStore
                     .markFailed(resourceId, KiteResourceInstallStore.OP_INSTALL, runId, reason)
             }
         })

@@ -1343,4 +1343,10 @@ T011 浏览器与 APK 入站适配结果：
 - 全量 `testDebugUnitTest + assembleDebug` 通过。Debug APK 为 241,594,117 bytes；覆盖安装到 OnePlus 8T 后冷启动 `TotalTime=1222ms`，首屏、进程和导航壳正常，无 FATAL/ANR。
 - 真机资源 owner 探针通过新工作流启动，运行压力事实出现 `resource:kite.owner.telemetry.probe`、owner container=1、tracee=2；自动化停止复用正式配方动作后约 0.5 秒落为 Stopped，owner container/tracee 均归零，结果为“已停止，未发现进程残留”。T011 完成。
 
+### 2026-07-13 T012 生命周期与状态拥有者审计
+
+- 真机资源探针过程中发现 `KiteTaskContractInitializer` 的工具链回调反复创建 SQLite-backed `KiteResourceInstallStore`，logcat 连续报告 `SQLiteConnection object ... leaked`。改为复用 `KiteAppGraph.resourceInstallStore` 后，同样的冷启动、探针启停和回收路径不再出现数据库泄漏告警。
+- 后台压力验收发现 `UI_HIDDEN=20` 被整数比较误判为高于 `RUNNING_CRITICAL=15`，占用冷却窗口并吞掉真实压力。现将 UI_HIDDEN 归为 `visibility_only`；目标单测、架构/运行车道守卫通过。
+- OnePlus 8T 覆盖安装后冷启动 `1201ms`；切后台后依次注入 UI_HIDDEN、RUNNING_LOW、RUNNING_CRITICAL，日志分别为 visibility-only、PROCESS_SNAPSHOT、PROCESS_SNAPSHOT。热返回 `117ms`，前后 PID 均为 `10830`，无 SQLite 泄漏、FATAL 或 ANR。
+
 下一步：审计 Main 的自动化测试 Intent 入口和剩余 Console/Shell 绘制职责；自动化业务动作改为调用现有工作流，测试入口本身保留为 Shell 系统回调。
