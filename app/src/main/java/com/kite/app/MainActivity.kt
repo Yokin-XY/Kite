@@ -852,17 +852,6 @@ open class MainActivity : AppCompatActivity() {
             runtimeSource = "temporary"
         )
 
-    @Suppress("DEPRECATION")
-    private fun applyCardTaskDescription(recipe: KiteRecipe) {
-        setTaskDescription(
-            ActivityManager.TaskDescription(
-                recipe.name.ifBlank { "Kite 卡片" },
-                CardShortcutManager.iconBitmap(this, recipe),
-                opaqueColor(tokens.primaryStrong)
-            )
-        )
-    }
-
     private fun opaqueColor(color: Int): Int =
         Color.rgb(Color.red(color), Color.green(color), Color.blue(color))
 
@@ -1216,13 +1205,6 @@ open class MainActivity : AppCompatActivity() {
         } else null
     }
 
-    private fun runtimePermissionKind(permission: String): RuntimePermissionKind? = when (permission) {
-        Manifest.permission.READ_EXTERNAL_STORAGE -> RuntimePermissionKind.FileRead
-        Manifest.permission.WRITE_EXTERNAL_STORAGE -> RuntimePermissionKind.FileWrite
-        Manifest.permission.POST_NOTIFICATIONS -> RuntimePermissionKind.Notifications
-        else -> null
-    }
-
     private fun runtimePermissionLabels(
         missing: Set<RuntimePermissionKind>,
         needsAllFilesAccess: Boolean
@@ -1557,13 +1539,6 @@ open class MainActivity : AppCompatActivity() {
                 ?: runtimeStates[recipe.id]
                     ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown")
         }
-    }
-
-    private fun focusedRunRecipe(): KiteRecipe? {
-        val recipeId = focusedRunRecipeId?.takeIf { it.isNotBlank() } ?: return null
-        return currentRecipes.firstOrNull { it.id == recipeId }
-            ?: CardRunStore.registeredRecipe(recipeId)
-            ?: recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
     }
 
     private fun showKiteProcessOverview(forceRefresh: Boolean = true) {
@@ -1985,38 +1960,6 @@ open class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun resourceRequestStateBlock(title: String, detail: String, loading: Boolean = false): View =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(18), dp(34), dp(18), dp(30))
-            if (loading) {
-                addView(ProgressBar(context).apply {
-                    isIndeterminate = true
-                    layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
-                })
-            }
-            addView(TextView(context).apply {
-                text = title
-                textSize = 15f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setPadding(0, dp(14), 0, 0)
-            })
-            addView(TextView(context).apply {
-                text = detail
-                textSize = 12f
-                setTextColor(tokens.textSecondary)
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                maxLines = 2
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, dp(7), 0, 0)
-            })
-        }
-
     private fun showBottomNavigationImmediately(nav: View) {
         nav.animate().cancel()
         nav.visibility = View.VISIBLE
@@ -2107,13 +2050,6 @@ open class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun refreshResourceMoreActionsFromCache() {
-        val resourceId = currentResourceDetailId ?: return
-        cachedResourceCatalog
-            ?.firstOrNull { it.id == resourceId }
-            ?.let { showResourceMoreActions(it) }
-    }
-
     private fun prewarmResourceCatalog() {
         thread(name = "KiteResourceCatalogPrewarm", isDaemon = true) {
             runCatching { resourceCatalog(forceRefresh = false) }
@@ -2124,22 +2060,6 @@ open class MainActivity : AppCompatActivity() {
         enterScreen(AppDestination.ResourceManage)
         showFeatureFragment(ResourceManageFragment(), TAG_RESOURCE_MANAGE_FRAGMENT)
     }
-
-    private fun resourceManageActionButton(label: String, danger: Boolean = false, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            text = label
-            textSize = 12.5f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(if (danger) tokens.danger else tokens.primaryStrong)
-            background = roundedBox(
-                if (danger) tintBackground(tokens.danger) else tokens.primarySubtle,
-                if (danger) tintBackgroundBorder(tokens.danger) else tokens.primarySoft,
-                dp(14).toFloat()
-            )
-            setOnClickListener { onClick() }
-        }
 
     private fun resourceIcon(item: ResourceItem): View =
         resourceIcon(item.iconText, item.accent, item.iconAsset, item.iconFit)
@@ -2858,13 +2778,6 @@ open class MainActivity : AppCompatActivity() {
     private fun resourceRunStateForOperation(resourceId: String, operation: String): RecipeRuntimeState? =
         CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, operation))
 
-    private fun resourceRunRecipeForOperation(item: ResourceItem, operation: String): KiteRecipe? =
-        if (operation == KiteResourceInstallRecipes.OP_UNINSTALL) {
-            resourceUninstallRecipe(item)
-        } else {
-            resourceInstallRecipe(item)
-        }
-
     private fun resourceInstallRecipeState(resourceId: String): RecipeRuntimeState? =
         resourceRunStateForOperation(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
 
@@ -3018,14 +2931,6 @@ open class MainActivity : AppCompatActivity() {
 
     private fun resourceItemIsInstalled(item: ResourceItem?): Boolean =
         item?.runtimeFacts?.let { facts -> facts.installed && !facts.uninstalling } == true
-
-    private fun resourcePlanStepIsInstalled(
-        resourceId: String,
-        catalogById: Map<String, ResourceItem>,
-        registryEntry: KiteResourceRegistryEntry?
-    ): Boolean =
-        registryEntry?.failed != true &&
-            (registryEntry?.installed == true || resourceItemIsInstalled(catalogById[resourceId]))
 
     private fun resourceOpenRecipe(item: ResourceItem): KiteRecipe? =
         resourceOpenRecipeJson(item)?.let { temporaryResourceRecipe(item, "open", it) }
@@ -3926,15 +3831,6 @@ open class MainActivity : AppCompatActivity() {
     private fun mergeResourceStrings(primary: List<String>, extra: List<String>): List<String> =
         (primary + extra).map { it.trim() }.filter { it.isNotBlank() }.distinct()
 
-    private fun missingBaseRequirements(item: ResourceItem): List<ResourceRequirementResolution> {
-        val baseTargets = resourceManifestLoader.requestRelationTargets(item.id).base
-        if (baseTargets.isEmpty()) return emptyList()
-        val catalog = resourceCatalog(forceRefresh = true)
-        return baseTargets
-            .mapNotNull { target -> unresolvedBaseRequirement(target.requirement, target.providerIds, catalog) }
-            .distinctBy { it.resource?.id ?: it.requirement }
-    }
-
     private fun unresolvedBaseRequirement(
         requirement: String,
         providerIds: List<String>,
@@ -3996,33 +3892,6 @@ open class MainActivity : AppCompatActivity() {
 
     private fun systemStatusPill(): TextView = TextView(this).apply {
         runtimeStatusChrome.bindStatusPill(this, runtimeStatusState)
-    }
-
-    private fun dropZoneControlRow(): View = row {
-        setPadding(0, dp(12), 0, 0)
-        addView(TextView(context).apply {
-            text = if (dropZoneStatus.available) {
-                "卡片目录：${dropZoneStatus.recipesPath}"
-            } else {
-                dropZoneStatus.message
-            }
-            textSize = 12f
-            setTextColor(if (dropZoneStatus.available) tokens.textSecondary else tokens.danger)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        addView(dropZoneButton(if (isDropZoneRefreshing) "刷新中..." else "刷新卡片") { refreshDropZoneRecipes() }.apply {
-            isEnabled = !isDropZoneRefreshing
-            alpha = if (isDropZoneRefreshing) 0.62f else 1f
-        })
-        if (!dropZoneStatus.available) {
-            addView(dropZoneButton("授权") { requestDropZoneAccess() }.apply {
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply {
-                    setMargins(dp(8), 0, 0, 0)
-                }
-            })
-        }
     }
 
     /** 主壳只打开既有运行实例；显示面装配全部属于 CardRunActivity。 */
@@ -4199,48 +4068,6 @@ open class MainActivity : AppCompatActivity() {
         Toast.makeText(this, toast, Toast.LENGTH_SHORT).show()
     }
 
-    private fun formatCardRunElapsed(state: RecipeRuntimeState): String {
-        val endAt = if (state.isBusy() || state.isActive() || state.status == RecipeRunStatus.Opened) {
-            System.currentTimeMillis()
-        } else {
-            state.updatedAt
-        }
-        val seconds = ((endAt - state.createdAt).coerceAtLeast(0L) / 1000L).coerceAtLeast(0L)
-        return when {
-            seconds < 60L * 60L -> String.format("%02d:%02d", seconds / 60L, seconds % 60L)
-            seconds < 24L * 60L * 60L -> "${seconds / (60L * 60L)}小时"
-            else -> "${seconds / (24L * 60L * 60L)}天"
-        }
-    }
-
-    private fun formatLastRunTime(timestamp: Long): String {
-        val now = System.currentTimeMillis()
-        val ageMs = (now - timestamp).coerceAtLeast(0L)
-        val minuteMs = 60_000L
-        val relativeCutoffMs = 30L * minuteMs
-        if (ageMs < minuteMs) return "刚刚"
-        if (ageMs < relativeCutoffMs) return "${ageMs / minuteMs}分钟前"
-
-        val nowCalendar = Calendar.getInstance()
-        val thenCalendar = Calendar.getInstance().apply { timeInMillis = timestamp }
-        val sameDay = nowCalendar.get(Calendar.YEAR) == thenCalendar.get(Calendar.YEAR) &&
-            nowCalendar.get(Calendar.DAY_OF_YEAR) == thenCalendar.get(Calendar.DAY_OF_YEAR)
-        if (sameDay) {
-            return String.format(
-                "%02d:%02d",
-                thenCalendar.get(Calendar.HOUR_OF_DAY),
-                thenCalendar.get(Calendar.MINUTE)
-            )
-        }
-
-        val yesterdayCalendar = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
-        val isYesterday = yesterdayCalendar.get(Calendar.YEAR) == thenCalendar.get(Calendar.YEAR) &&
-            yesterdayCalendar.get(Calendar.DAY_OF_YEAR) == thenCalendar.get(Calendar.DAY_OF_YEAR)
-        if (isYesterday) return "昨天"
-
-        return "${thenCalendar.get(Calendar.MONTH) + 1}月${thenCalendar.get(Calendar.DAY_OF_MONTH)}日"
-    }
-
     private fun extractShellOutput(report: String): String {
         val markers = listOf("原始输出：", "有效输出：", "错误输出：", "输出：")
         markers.forEach { marker ->
@@ -4325,12 +4152,6 @@ open class MainActivity : AppCompatActivity() {
     private fun isUbuntuActionBlocked(recipe: KiteRecipe): Boolean =
         runtimeStatusState.blocksUbuntuActions && recipe.hasUbuntuStep()
 
-    private fun recipeUsesResourceInlineStatus(recipe: KiteRecipe): Boolean =
-        recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE ||
-            recipe.runtimeSource == RESOURCE_OPEN_RUNTIME_SOURCE ||
-            recipe.runtimeSource == RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE ||
-            resourceIdForRecipe(recipe) != null
-
     private fun resourceSurfaceHasInlineRuntimeStatus(): Boolean {
         return when (currentScreen) {
             AppDestination.Resources,
@@ -4356,19 +4177,6 @@ open class MainActivity : AppCompatActivity() {
     ) {
         invalidateResourceRuntimeStateCache()
     }
-
-    private fun cardInfoSlot(recipe: KiteRecipe, runtimeState: RecipeRuntimeState, accentName: String): View =
-        LinearLayout(this).apply {
-            val isProblem = runtimeState.status == RecipeRunStatus.Failed || runtimeState.status == RecipeRunStatus.BridgeUnavailable
-            val tone = KiteTheme.accent(accentName, tokens)
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), 0, dp(8), 0)
-            background = roundedBox(if (isProblem) tokens.dangerSoft else tone.soft, if (isProblem) tokens.dangerBorder else tone.border, dp(12).toFloat())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
-                .apply { setMargins(0, dp(8), 0, dp(6)) }
-            addView(cardSummaryText(recipe, runtimeState, isProblem))
-        }
 
     private fun handleRecipeActionWithRouter(recipe: KiteRecipe) {
         submitRecipeAction(
@@ -4457,8 +4265,6 @@ open class MainActivity : AppCompatActivity() {
     private fun shouldOpenCardRunTaskFromHome(recipe: KiteRecipe): Boolean =
         recipe.launch.openInstance
 
-    private fun handleRecipeAction(recipe: KiteRecipe) = handleRecipeActionWithRouter(recipe)
-
     private fun startRecipe(
         recipe: KiteRecipe,
         previousState: RecipeRuntimeState,
@@ -4531,17 +4337,6 @@ open class MainActivity : AppCompatActivity() {
 
 
 
-
-    private fun showRunSurfaceOrConsole(recipe: KiteRecipe) {
-        if (resourceRunSurfaceSuppressed(recipe)) {
-            invalidateResourceRuntimeStateCache()
-        } else if (currentScreen == AppDestination.CreateConfig || currentScreen == AppDestination.RecipeMore) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = activeRunInstanceIds[recipe.id] ?: focusedRunInstanceId
-        } else {
-            showConsole()
-        }
-    }
 
     private fun resourceRunSurfaceSuppressed(recipe: KiteRecipe): Boolean =
         recipe.id in suppressedResourceRunSurfaceRecipeIds
@@ -4658,20 +4453,6 @@ open class MainActivity : AppCompatActivity() {
         } ?: runtimeStates[recipe.id] ?: RecipeRuntimeState.fromRecipeStatus(recipe.id, "unknown").also {
             runtimeStates[recipe.id] = it
         }
-
-    private fun ensureRunInstanceId(recipe: KiteRecipe): String {
-        val existing = activeRunInstanceIds[recipe.id]
-            ?: focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id }
-            ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
-        if (!existing.isNullOrBlank()) {
-            activeRunInstanceIds[recipe.id] = existing
-            return existing
-        }
-        val state = CardRunStore.start(recipe)
-        activeRunInstanceIds[recipe.id] = state.instanceId
-        runtimeStates[recipe.id] = state
-        return state.instanceId
-    }
 
     private fun setRuntimeState(
         recipe: KiteRecipe,
@@ -5497,13 +5278,6 @@ open class MainActivity : AppCompatActivity() {
         return KiteInstallApkResponse(true, normalizedPath, apkFile.absolutePath)
     }
 
-    private fun installApkPathFromStep(step: KiteRecipeStep): String =
-        step.params?.optString("path")?.takeIf { it.isNotBlank() }
-            ?: step.params?.optString("apk")?.takeIf { it.isNotBlank() }
-            ?: step.cmd?.takeIf { it.isNotBlank() }
-            ?: step.text?.takeIf { it.isNotBlank() }
-            ?: ""
-
     private fun resolveInstallApkFile(path: String): File? {
         val rawPath = if (path.startsWith("file://", ignoreCase = true)) {
             Uri.parse(path).path.orEmpty()
@@ -5646,22 +5420,6 @@ open class MainActivity : AppCompatActivity() {
         return KiteDesktopOpenResponse(true, recipe.id, instanceId, binding.display, binding.socketPath)
     }
 
-    private fun focusDesktopRequestInCardRun(
-        recipe: KiteRecipe,
-        instanceId: String,
-        request: KiteDesktopOpenRequest
-    ) {
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = instanceId
-        title = recipe.name
-        diagnostics.logRecipeAction(
-            recipe,
-            "desktop_request_opened_in_instance",
-            mapOf("instanceId" to instanceId, "source" to request.source, "command" to request.command.take(500))
-        )
-        openCardRunTask(recipe)
-    }
-
     private fun openTemporaryBrowserRequest(request: KiteBrowserOpenRequest) {
         val intent = CardRunIntents.temporaryWebIntent(
             context = this,
@@ -5693,54 +5451,6 @@ open class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "打开临时网页失败：${error.message}", Toast.LENGTH_SHORT).show()
             openWeb(request.url, request.source, recipe)
         }
-    }
-
-    private fun openBrowserRequestInCardRun(
-        recipe: KiteRecipe,
-        instanceId: String,
-        request: KiteBrowserOpenRequest
-    ) {
-        val decision = BrowserHandoffPolicy.classify(request.url, request.source)
-        if (decision is BrowserHandoffDecision.StartCliCallbackHandoff) {
-            focusedRunRecipeId = recipe.id
-            focusedRunInstanceId = instanceId
-            title = recipe.name
-            launchBrowserHandoff(
-                request = BrowserHandoffRequest(
-                    url = request.url,
-                    recipeId = recipe.id,
-                    recipeName = recipe.name,
-                    instanceId = instanceId,
-                    source = request.source
-                ),
-                decision = decision,
-                rerenderFocusedSurface = false
-            )
-            diagnostics.logRecipeAction(
-                recipe,
-                "browser_cli_loopback_handoff_opened_in_instance",
-                mapOf(
-                    "instanceId" to instanceId,
-                    "source" to request.source,
-                    "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url)
-                )
-            )
-            return
-        }
-        val state = updateBrowserRequestState(recipe, instanceId, request)
-        focusedRunRecipeId = recipe.id
-        focusedRunInstanceId = state.instanceId
-        title = recipe.name
-        diagnostics.logRecipeAction(
-            recipe,
-            "browser_request_opened_in_instance",
-            mapOf(
-                "instanceId" to instanceId,
-                "source" to request.source,
-                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url)
-            )
-        )
-        openCardRunTask(recipe)
     }
 
     private fun updateBrowserRequestState(
@@ -5832,14 +5542,6 @@ open class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         addView(View(context), LinearLayout.LayoutParams(dp(44), dp(44)))
-    }
-
-    private fun sectionTitle(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 13.5f
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(tokens.textPrimary)
-        setPadding(0, 0, 0, dp(12))
     }
 
     private fun bottomNavigation(): View = row {
@@ -5935,29 +5637,6 @@ open class MainActivity : AppCompatActivity() {
         layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
     }
 
-    private fun recipeIconTile(recipe: KiteRecipe, size: Int, fallbackTextSize: Float): View {
-        val bitmap = if (recipe.icon.type == KiteRecipeIcon.TYPE_IMAGE && recipe.icon.source.isNotBlank()) {
-            decodeRecipeIconSource(recipe.icon.source)
-        } else {
-            null
-        }
-        if (bitmap == null) {
-            return iconTile(recipe.icon.name, accentFor(recipe), tintBackground(accentFor(recipe))).apply {
-                textSize = fallbackTextSize
-                layoutParams = LinearLayout.LayoutParams(size, size)
-            }
-        }
-        return FrameLayout(this).apply {
-            background = roundedBox(tokens.surface, tintBackgroundBorder(accentFor(recipe)), dp(14).toFloat())
-            clipToOutline = true
-            layoutParams = LinearLayout.LayoutParams(size, size)
-            addView(ImageView(context).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                setImageBitmap(bitmap)
-            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        }
-    }
-
     private fun iconGlyph(iconName: String): String = when (iconName) {
         "terminal" -> ">_"
         "web" -> "◎"
@@ -5971,11 +5650,6 @@ open class MainActivity : AppCompatActivity() {
         "server" -> "▷"
         "more" -> "…"
         else -> "◎"
-    }
-
-    private fun displayIconGlyph(iconName: String): String = when (iconName) {
-        "terminal", "code", "server" -> "▣"
-        else -> iconGlyph(iconName)
     }
 
     private fun statusColors(status: RecipeRunStatus): SemanticColors = when (status) {
@@ -5992,37 +5666,6 @@ open class MainActivity : AppCompatActivity() {
         RecipeRunStatus.Stopped -> SemanticColors(tokens.textSecondary, tokens.surface, tokens.border)
     }
 
-    private fun stateTag(state: RecipeRuntimeState): TextView = TextView(this).apply {
-        val colors = statusColors(state.status)
-        text = state.status.label
-        textSize = 9.5f
-        includeFontPadding = false
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(colors.text)
-        setPadding(dp(6), dp(3), dp(6), dp(3))
-        background = roundedBox(colors.background, colors.border, dp(14).toFloat())
-    }
-
-    private fun cardTitleCompact(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 14.5f
-        includeFontPadding = false
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(tokens.textPrimary)
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-    }
-
-    private fun cardMetaLine(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 10.5f
-        includeFontPadding = false
-        setTextColor(tokens.textTertiary)
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        setPadding(0, dp(4), 0, 0)
-    }
-
     private fun cardSummaryText(recipe: KiteRecipe, state: RecipeRuntimeState, isProblem: Boolean): TextView =
         TextView(this).apply {
             text = cardSummary(recipe, state, isProblem)
@@ -6033,20 +5676,6 @@ open class MainActivity : AppCompatActivity() {
             ellipsize = TextUtils.TruncateAt.END
             setLineSpacing(0f, 1.08f)
         }
-
-    private fun cardKindLine(recipe: KiteRecipe): String {
-        val firstStep = recipe.steps.firstOrNull()
-        val kind = when (firstStep?.type) {
-            KiteRecipe.STEP_SHELL -> "SH"
-            KiteRecipe.STEP_TERMINAL -> "终端"
-            KiteRecipe.STEP_OPEN_WEB -> "网页"
-            KiteRecipe.STEP_X11 -> "X11"
-            KiteRecipe.STEP_ANDROID_ACTION -> "本机"
-            else -> if (recipe.defaultUrl.isNotBlank()) "网页" else "卡片"
-        }
-        val count = recipe.steps.size.takeIf { it > 0 }?.let { "${it} 步" } ?: "单步"
-        return "$kind · $count"
-    }
 
     private fun cardSummary(recipe: KiteRecipe, state: RecipeRuntimeState, isProblem: Boolean): String {
         val feedback = state.feedbackSummary()
@@ -6114,61 +5743,6 @@ open class MainActivity : AppCompatActivity() {
         }.getOrDefault(value)
     }
 
-    private fun cardTitle(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 15f
-        includeFontPadding = false
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(tokens.textPrimary)
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        setPadding(0, dp(8), 0, 0)
-    }
-
-    private fun cardDescription(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 11.5f
-        includeFontPadding = false
-        setTextColor(tokens.textSecondary)
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        setPadding(0, dp(5), 0, 0)
-    }
-
-    private fun failureSummary(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 10.5f
-        includeFontPadding = false
-        setTextColor(tokens.danger)
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        setPadding(0, 0, 0, dp(5))
-    }
-
-    private fun runtimeFeedback(text: String, isError: Boolean): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 10.5f
-        includeFontPadding = false
-        setTextColor(if (isError) tokens.danger else tokens.textSecondary)
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        setPadding(0, 0, 0, 0)
-    }
-
-    private fun urlPill(url: String, accent: String): TextView = TextView(this).apply {
-        val tone = KiteTheme.accent(accent, tokens)
-        text = url
-        textSize = 10f
-        includeFontPadding = false
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        setTextColor(tone.strong)
-        setPadding(dp(7), dp(4), dp(7), dp(4))
-        background = roundedBox(tone.soft, tone.border, dp(10).toFloat())
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            .apply { setMargins(0, 0, 0, 0) }
-    }
-
     private fun primaryAction(text: String, accent: String, disabled: Boolean = false, onClick: () -> Unit): View =
         TextView(this).apply {
             this.text = text
@@ -6184,20 +5758,6 @@ open class MainActivity : AppCompatActivity() {
             isEnabled = !disabled
             if (!disabled) setOnClickListener { onClick() }
         }
-
-    private fun editAction(onClick: () -> Unit): View = TextView(this).apply {
-        text = "…"
-        textSize = 20f
-        includeFontPadding = false
-        gravity = Gravity.CENTER
-        setTextColor(tokens.textPrimary)
-        typeface = Typeface.DEFAULT_BOLD
-        background = roundedBox(tokens.surface, tokens.border, dp(13).toFloat())
-        layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).apply {
-            setMargins(dp(8), 0, 0, 0)
-        }
-        setOnClickListener { onClick() }
-    }
 
     private fun dropZoneButton(text: String, onClick: () -> Unit): TextView = TextView(this).apply {
         this.text = text
@@ -6218,12 +5778,6 @@ open class MainActivity : AppCompatActivity() {
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
     }
 
-    private fun formDivider(): View = divider().apply {
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-            setMargins(0, dp(8), 0, dp(34))
-        }
-    }
-
     private fun roundedBox(fill: Int, stroke: Int, radius: Float, strokeWidth: Int = dp(1)): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
@@ -6231,52 +5785,14 @@ open class MainActivity : AppCompatActivity() {
             setStroke(strokeWidth, stroke)
         }
 
-    private fun roundedTopBox(fill: Int, stroke: Int, radius: Float, strokeWidth: Int = dp(1)): GradientDrawable =
-        GradientDrawable().apply {
-            setColor(fill)
-            cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
-            setStroke(strokeWidth, stroke)
-        }
-
-    private fun dashedRoundedBox(fill: Int, stroke: Int, radius: Float): GradientDrawable =
-        GradientDrawable().apply {
-            setColor(fill)
-            cornerRadius = radius
-            setStroke(dp(1), stroke, dp(7).toFloat(), dp(5).toFloat())
-        }
-
     private fun tintBackground(color: Int): Int = KiteTheme.tint(color, 0.88f)
 
     private fun tintBackgroundBorder(color: Int): Int = KiteTheme.tint(color, 0.72f)
-
-    private fun colorWithAlpha(color: Int, alpha: Int): Int =
-        Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
 
     private fun displayAccentName(recipe: KiteRecipe): String =
         recipe.card.accent.ifBlank { "primary" }
 
     private fun accentFor(recipe: KiteRecipe): Int = KiteTheme.accent(displayAccentName(recipe), tokens).strong
-
-    private fun primaryLabelForAction(state: RecipeRuntimeState): String = when (state.status) {
-        RecipeRunStatus.Starting -> "\u542f\u52a8\u4e2d"
-        RecipeRunStatus.WaitingTerminal -> "等待终端"
-        RecipeRunStatus.Stopping -> "\u505c\u6b62\u4e2d"
-        RecipeRunStatus.Running, RecipeRunStatus.AlreadyRunning -> "\u505c\u6b62"
-        RecipeRunStatus.Opened, RecipeRunStatus.Completed, RecipeRunStatus.Failed, RecipeRunStatus.BridgeUnavailable,
-        RecipeRunStatus.Unknown, RecipeRunStatus.Stopped -> "\u542f\u52a8"
-    }
-
-    private fun primaryLabel(recipe: KiteRecipe, state: RecipeRuntimeState): String = when (state.status) {
-        RecipeRunStatus.Starting -> "启动中"
-        RecipeRunStatus.WaitingTerminal -> "等待终端"
-        RecipeRunStatus.Stopping -> "停止中"
-        RecipeRunStatus.Running, RecipeRunStatus.AlreadyRunning, RecipeRunStatus.Opened -> "停止"
-        RecipeRunStatus.Completed -> "重跑"
-        RecipeRunStatus.Failed, RecipeRunStatus.BridgeUnavailable -> "重试"
-        RecipeRunStatus.Unknown, RecipeRunStatus.Stopped -> {
-            if (recipe.type == KiteRecipe.TYPE_OPEN_URL || recipe.type == KiteRecipe.TYPE_TEMPLATE) "打开" else "启动"
-        }
-    }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
