@@ -8,6 +8,7 @@ import com.kite.app.action.KiteRecipeActionSource
 
 internal sealed interface RecipeEditorRequest {
     data object Close : RecipeEditorRequest
+    data object CloseRawJson : RecipeEditorRequest
     data class OpenRawJson(val recipeId: String) : RecipeEditorRequest
     data class OpenRunHistory(val recipeId: String) : RecipeEditorRequest
     data class RequestShortcut(val recipeId: String) : RecipeEditorRequest
@@ -35,6 +36,7 @@ internal object RecipeEditorResultContract {
     private const val KEY_INSTANCE_ID = "instance_id"
     private const val KEY_REMOVED_INSTANCE_IDS = "removed_instance_ids"
     private const val KIND_CLOSE = "close"
+    private const val KIND_CLOSE_RAW_JSON = "close_raw_json"
     private const val KIND_RAW_JSON = "raw_json"
     private const val KIND_HISTORY = "history"
     private const val KIND_SHORTCUT = "shortcut"
@@ -56,6 +58,7 @@ internal object RecipeEditorResultContract {
 
     fun parse(bundle: Bundle): RecipeEditorRequest? = when (bundle.getString(KEY_KIND)) {
         KIND_CLOSE -> RecipeEditorRequest.Close
+        KIND_CLOSE_RAW_JSON -> RecipeEditorRequest.CloseRawJson
         KIND_RAW_JSON -> bundle.recipeId()?.let(RecipeEditorRequest::OpenRawJson)
         KIND_HISTORY -> bundle.recipeId()?.let(RecipeEditorRequest::OpenRunHistory)
         KIND_SHORTCUT -> bundle.recipeId()?.let(RecipeEditorRequest::RequestShortcut)
@@ -75,6 +78,7 @@ internal object RecipeEditorResultContract {
     private fun encode(request: RecipeEditorRequest): Bundle = Bundle().apply {
         when (request) {
             RecipeEditorRequest.Close -> putString(KEY_KIND, KIND_CLOSE)
+            RecipeEditorRequest.CloseRawJson -> putString(KEY_KIND, KIND_CLOSE_RAW_JSON)
             is RecipeEditorRequest.OpenRawJson -> putRecipe(KIND_RAW_JSON, request.recipeId)
             is RecipeEditorRequest.OpenRunHistory -> putRecipe(KIND_HISTORY, request.recipeId)
             is RecipeEditorRequest.RequestShortcut -> putRecipe(KIND_SHORTCUT, request.recipeId)

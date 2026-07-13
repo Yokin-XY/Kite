@@ -1250,3 +1250,13 @@ T010 状态：completed。关键提交为 `3318411`、`76062af`。
 - 会话 attach/detach、预输入、快捷动作注册表、输出 33ms 合并刷新和 5 秒会话校准均未改动；目标编译、Main 路由、快捷动作注册表和 Surface Contract 测试通过。
 
 下一步：迁移最后一个明确的 Fragment 反向 Host `RecipeRawJsonFragment`，随后按职责清单审计 Main 中残留的旧绘制、死字段和兼容入口。
+
+T011 原始 JSON 反向 Host 清理结果：
+
+- 原根包 `RecipeRawJsonFragment` 及其 `RecipeProvider/RecipeRawJsonHost/UiKitProvider` 三套 Activity 接口已删除；MainActivity 现在不实现任何 Fragment Host 接口。
+- 新 `feature/recipeeditor/RecipeRawJsonFragment` 通过 `RecipeFeatureDependenciesOwner` 获取统一 Gateway，在 lifecycle scope 中读取最新目录；不再同步调用 Main 的 loader 或复制配方事实。
+- 主题颜色作为显示环境参数进入，Screen 独立渲染加载、JSON 和缺失状态；返回复用 `RecipeEditorResultContract.CloseRawJson`，由 Shell 的统一导航处理。
+- Raw JSON 改用标准 Feature content 容器，不再替换 `rootHost`、隐藏整棵 Main root 或依赖 `pendingRawJsonRecipeId` 恢复；旧 route/exit/provider/UiKit 委托全部删除。
+- 目标 Screen、Result、编辑器与 Main 路由测试通过；架构守卫升级为所有 Feature 源禁止 `activity as?` 强转，并锁定旧根包 Fragment 不得回流。
+
+下一步：以“Main 只保留外壳、导航、系统回调和模块装配”为清单，扫描剩余字段和函数的调用者；优先删除已迁移模块的死兼容代码，再识别仍需迁出的活跃业务绘制。

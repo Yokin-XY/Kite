@@ -185,6 +185,7 @@ import com.kite.app.feature.recipeeditor.RecipeEditorDraft
 import com.kite.app.feature.recipeeditor.RecipeEditorFragment
 import com.kite.app.feature.recipeeditor.RecipeEditorRequest
 import com.kite.app.feature.recipeeditor.RecipeEditorResultContract
+import com.kite.app.feature.recipeeditor.RecipeRawJsonFragment
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
 import com.kite.app.ui.terminal.TerminalFragment
 import com.kite.app.shell.TerminalSurfaceShellBinding
@@ -208,10 +209,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
-open class MainActivity : AppCompatActivity(),
-    RecipeRawJsonFragment.RecipeProvider,
-    RecipeRawJsonFragment.RecipeRawJsonHost,
-    RecipeRawJsonFragment.UiKitProvider {
+open class MainActivity : AppCompatActivity() {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
     private lateinit var dropZoneManager: KiteDropZoneManager
@@ -250,7 +248,6 @@ open class MainActivity : AppCompatActivity(),
         }
     }
     private var currentScreen: AppDestination = AppDestination.Console
-    private var pendingRawJsonRecipeId: String? = null
 
     /** 仅用于 Robolectric 路由合同断言。 */
     @androidx.annotation.VisibleForTesting
@@ -1866,6 +1863,7 @@ open class MainActivity : AppCompatActivity(),
                     removeRecipeEditorFeature()
                     showConsole()
                 }
+                RecipeEditorRequest.CloseRawJson -> requestNavigationBack()
                 is RecipeEditorRequest.OpenRawJson -> lifecycleScope.launch {
                     resolveEditorRecipe(request.recipeId)?.let(::showRecipeRawJson)
                         ?: Toast.makeText(
@@ -4928,52 +4926,12 @@ open class MainActivity : AppCompatActivity(),
     }
 
     private fun showRecipeRawJson(recipe: KiteRecipe) {
-        // T6b:走 Fragment 路径(RecipeRawJsonFragment)。先记录目标 recipe 供 Fragment 按 id 加载,
-        // 再通过 routeToRecipeRawJsonFragment 切换到 Fragment。
-        pendingRawJsonRecipeId = recipe.id.ifBlank { recipe.name }
-        routeToRecipeRawJsonFragment()
-    }
-
-    /**
-     * T6b:把 root 隐藏,把 RecipeRawJsonFragment 加到 rootHost 容器。
-     * 这是 P2 第一个走 Fragment 的 AppDestination,验证整套机制。
-     */
-    private fun routeToRecipeRawJsonFragment() {
-        enterScreen(AppDestination.RecipeDetail, ::exitRecipeRawJson)
-        clearRootForScreen()
-        root.visibility = View.GONE
-        val recipeId = pendingRawJsonRecipeId ?: return
-        val fragment = RecipeRawJsonFragment.newInstance(recipeId)
-        supportFragmentManager.beginTransaction()
-            .replace(rootHost.id, fragment, TAG_RECIPE_RAW_JSON_FRAGMENT)
-            .commitAllowingStateLoss()
-    }
-
-    /** 退出 RecipeRawJson Fragment:恢复 root,回到编辑器。 */
-    private fun exitRecipeRawJson() {
-        supportFragmentManager.findFragmentByTag(TAG_RECIPE_RAW_JSON_FRAGMENT)?.let { fragment ->
-            supportFragmentManager.beginTransaction().remove(fragment).commitAllowingStateLoss()
-        }
-        root.visibility = View.VISIBLE
-        // 回到编辑器:用最近一次记录的 recipe
-        val recipe = pendingRawJsonRecipeId?.let { id -> latestRecipeById(id) }
-        if (recipe != null) showRecipeEditor(recipe) else showConsole()
-    }
-
-    override fun onRecipeRawJsonBackRequested() {
-        requestNavigationBack()
-    }
-
-    /** RecipeRawJsonFragment.RecipeProvider 实现:按 id 加载最新 recipe。 */
-    override fun latestRecipeFor(recipeId: String): KiteRecipe? = latestRecipeById(recipeId)
-
-    /** RecipeRawJsonFragment.UiKitProvider 实现:共享 Activity 的主题 tokens 给 Fragment。 */
-    override fun provideUiKit(): com.kite.app.ui.UiKit =
-        com.kite.app.ui.UiKit(this, tokens)
-
-    private fun latestRecipeById(recipeId: String): KiteRecipe {
-        val seed = currentRecipes.firstOrNull { it.id == recipeId || it.name == recipeId }
-        return latestRecipeForRawJson(seed ?: KiteRecipe(id = recipeId, name = recipeId, description = "", type = KiteRecipe.TYPE_OPEN_URL, defaultUrl = "", shortcut = false))
+        enterScreen(AppDestination.RecipeDetail) { showRecipeEditor(recipe) }
+        showFeatureFragment(
+            RecipeRawJsonFragment.newInstance(recipe.id.ifBlank { recipe.name }, themeConfig),
+            TAG_RECIPE_RAW_JSON_FRAGMENT,
+            showBottomNavigation = false
+        )
     }
 
     private fun latestRecipeForRawJson(recipe: KiteRecipe): KiteRecipe {

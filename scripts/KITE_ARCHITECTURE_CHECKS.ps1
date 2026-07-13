@@ -54,6 +54,8 @@ $surfaceEffectPath = Join-Path $Root 'app/src/main/java/com/kite/app/application
 $terminalSurfaceContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/terminal/TerminalSurfaceResultContract.kt'
 $terminalFragmentPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalFragment.kt'
 $legacyTerminalChromeHostPath = Join-Path $Root 'app/src/main/kotlin/com/kite/app/ui/terminal/TerminalChromeHost.kt'
+$recipeRawJsonFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/recipeeditor/RecipeRawJsonFragment.kt'
+$legacyRecipeRawJsonFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/RecipeRawJsonFragment.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
     (Join-Path $Root 'app/src/main/kotlin/com/kite/app')
@@ -82,6 +84,8 @@ Assert-Architecture (Test-Path $surfaceEffectPath) 'Generic surface effect contr
 Assert-Architecture (Test-Path $terminalSurfaceContractPath) 'Terminal surface result contract is missing.'
 Assert-Architecture (Test-Path $terminalFragmentPath) 'Terminal fragment is missing.'
 Assert-Architecture (-not (Test-Path $legacyTerminalChromeHostPath)) 'TerminalChromeHost must not return.'
+Assert-Architecture (Test-Path $recipeRawJsonFragmentPath) 'Recipe raw-JSON feature fragment is missing.'
+Assert-Architecture (-not (Test-Path $legacyRecipeRawJsonFragmentPath)) 'Legacy Activity-hosted raw-JSON fragment must not return.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -104,6 +108,7 @@ if ($failures.Count -eq 0) {
     $surfaceEffect = [System.IO.File]::ReadAllText($surfaceEffectPath, [System.Text.Encoding]::UTF8)
     $terminalSurfaceContract = [System.IO.File]::ReadAllText($terminalSurfaceContractPath, [System.Text.Encoding]::UTF8)
     $terminalFragment = [System.IO.File]::ReadAllText($terminalFragmentPath, [System.Text.Encoding]::UTF8)
+    $recipeRawJsonFragment = [System.IO.File]::ReadAllText($recipeRawJsonFragmentPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
             Where-Object { Test-Path $_ } |
@@ -264,6 +269,11 @@ if ($failures.Count -eq 0) {
         $main -notmatch 'TerminalChromeHost|terminalBottomNavigation|isTerminalDetailMode|terminalContainerId|openTerminalSession' -and
         $cardRun -notmatch 'TerminalChromeHost|openTerminalSession'
     ) 'Application shells must interpret terminal surface effects without terminal-specific host interfaces or fields.'
+    Assert-Architecture (
+        $recipeRawJsonFragment -match 'RecipeFeatureDependenciesOwner' -and
+        $recipeRawJsonFragment -match 'RecipeEditorResultContract\.send' -and
+        $recipeRawJsonFragment -notmatch 'activity\s+as\?|MainActivity|RecipeProvider|RecipeRawJsonHost|UiKitProvider'
+    ) 'Recipe raw-JSON fragment must load through the feature gateway and return through a result contract.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
@@ -312,7 +322,7 @@ if ($failures.Count -eq 0) {
                     })
                     Assert-Architecture ($crossFeature.Count -eq 0) "Feature source '$label' imports another feature directly: $($crossFeature -join ', ')."
                 }
-                Assert-Architecture ($source -notmatch '(?s)activity\s+as\?\s+[A-Za-z0-9_.]*Host') "Feature source '$label' delegates ownership back to an Activity Host."
+                Assert-Architecture ($source -notmatch '\bactivity\s+as\?') "Feature source '$label' casts back to an Activity."
                 Assert-Architecture ($source -notmatch 'fun\s+render[A-Za-z0-9_]*Into\s*\([^)]*ViewGroup') "Feature source '$label' exposes an Activity-style render-into callback."
             }
         }

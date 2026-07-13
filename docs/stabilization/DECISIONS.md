@@ -440,3 +440,13 @@
 理由：同一 TerminalFragment 同时用于主应用终端页和独立 CardRun。旧 Host 接口迫使两个 Activity 实现终端专属方法，Main 还需要三个字段保存 Feature 的详情状态；CardRun 的实现则故意忽略沉浸请求。数据 effect 能保留两种壳的不同策略，同时把终端状态留在 Feature 内。
 
 影响：详情返回通过 Shell back 解释，Main 只在当前 Destination 为终端时更改底栏，防止销毁或迟到结果影响其他页面；CardRun 始终保留继续、停止和关闭控制。不得恢复 `TerminalChromeHost`、`activity as?` 终端强转或 `openTerminalSession` 兼容入口。
+
+## ADR-S044 Feature 数据依赖来自 Application Owner，禁止反向强转 Activity
+
+状态：accepted
+
+决策：Feature Fragment 需要目录、Store 或协调器时，通过 Application 暴露的窄 DependenciesOwner 获取；需要返回、导航或系统动作时，通过 Result/Effect 上交。任何 Feature 源都不得用 `activity as?` 获取数据、UiKit 或回调 Host。显示环境可作为参数传入，事实必须从既有 Gateway 读取。
+
+理由：旧 Raw JSON Fragment 虽已拆成文件，却同时强转三套 MainActivity 接口，数据、主题和返回仍由 God Activity 提供；还要隐藏整个 rootHost 才能显示。这只是文件拆分，不是职责转移。统一 Gateway 和 Result 后，页面可独立测试，Shell 也无需保存 Feature 临时状态。
+
+影响：旧根包 `RecipeRawJsonFragment`、`pendingRawJsonRecipeId`、root 隐藏路由和三套 Host 接口删除。架构守卫对全部 Feature 包禁止 Activity 强转；后续模块不能以新 Host 接口恢复同类反向依赖。
