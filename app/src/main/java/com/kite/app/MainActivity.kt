@@ -852,9 +852,6 @@ open class MainActivity : AppCompatActivity() {
             runtimeSource = "temporary"
         )
 
-    private fun opaqueColor(color: Int): Int =
-        Color.rgb(Color.red(color), Color.green(color), Color.blue(color))
-
     private fun observeRuntimeStatus() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -2929,9 +2926,6 @@ open class MainActivity : AppCompatActivity() {
     private fun resourceIsInstalled(item: ResourceItem): Boolean =
         item.runtimeFacts.installed && !item.runtimeFacts.uninstalling
 
-    private fun resourceItemIsInstalled(item: ResourceItem?): Boolean =
-        item?.runtimeFacts?.let { facts -> facts.installed && !facts.uninstalling } == true
-
     private fun resourceOpenRecipe(item: ResourceItem): KiteRecipe? =
         resourceOpenRecipeJson(item)?.let { temporaryResourceRecipe(item, "open", it) }
 
@@ -3364,18 +3358,6 @@ open class MainActivity : AppCompatActivity() {
         )
     }
 
-
-    private fun resourceIdForRecipe(recipe: KiteRecipe): String? {
-        val supportedSource = recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE ||
-            recipe.runtimeSource == RESOURCE_OPEN_RUNTIME_SOURCE
-        if (!supportedSource) return null
-        val raw = recipe.id.removePrefix("resource")
-            .trimStart('-')
-            .removeSuffix("-${KiteResourceInstallRecipes.OP_INSTALL}")
-            .removeSuffix("-${KiteResourceInstallRecipes.OP_UNINSTALL}")
-            .removeSuffix("-open")
-        return raw.takeIf { it.isNotBlank() }
-    }
 
     private fun resourceIdForOpenRunRecipeId(recipeId: String): String? =
         recipeId
@@ -3831,16 +3813,6 @@ open class MainActivity : AppCompatActivity() {
     private fun mergeResourceStrings(primary: List<String>, extra: List<String>): List<String> =
         (primary + extra).map { it.trim() }.filter { it.isNotBlank() }.distinct()
 
-    private fun unresolvedBaseRequirement(
-        requirement: String,
-        providerIds: List<String>,
-        catalog: List<ResourceItem>
-    ): ResourceRequirementResolution? {
-        val providers = providerIds.mapNotNull { providerId -> catalog.firstOrNull { it.id == providerId } }
-        if (providers.any { resourceIsInstalled(it) }) return null
-        return ResourceRequirementResolution(requirement = requirement, resource = providers.firstOrNull())
-    }
-
     private fun consoleShellHeader(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(18), dp(10), dp(18), dp(10))
@@ -4176,17 +4148,6 @@ open class MainActivity : AppCompatActivity() {
         @Suppress("UNUSED_PARAMETER") reason: String
     ) {
         invalidateResourceRuntimeStateCache()
-    }
-
-    private fun handleRecipeActionWithRouter(recipe: KiteRecipe) {
-        submitRecipeAction(
-            KiteRecipeActionRequest(
-                recipe = recipe,
-                intent = KiteRecipeActionIntent.Primary,
-                source = KiteRecipeActionSource.ConsoleCard,
-                openTaskOnStart = shouldOpenCardRunTaskFromHome(recipe)
-            )
-        )
     }
 
     private fun submitRecipeAction(
@@ -4666,29 +4627,6 @@ open class MainActivity : AppCompatActivity() {
             )
         )
     }
-
-    private fun decodeRecipeIconSource(source: String): Bitmap? {
-        val normalized = source.trim().trimStart('/')
-        if (normalized.isBlank() || normalized.contains("..")) return null
-        recipeIconBitmapCache[normalized]?.let { return it }
-        val file = recipeIconFile(source)
-        val bitmap = if (file.exists()) {
-            BitmapFactory.decodeFile(file.absolutePath)
-        } else {
-            runCatching {
-                assets.open(normalized).use { stream -> BitmapFactory.decodeStream(stream) }
-            }.getOrNull()
-        }
-        if (bitmap != null) recipeIconBitmapCache[normalized] = bitmap
-        return bitmap
-    }
-
-    private fun recipeIconFile(source: String): File =
-        if (source.startsWith("/") || source.contains(":")) {
-            File(source)
-        } else {
-            File(filesDir, source)
-        }
 
     private fun requestShortcutForRecipe(recipe: KiteRecipe): Boolean {
         if (recipe.id.isBlank()) return false
@@ -5626,110 +5564,6 @@ open class MainActivity : AppCompatActivity() {
             setOnClickListener { onClick() }
         }
 
-    private fun iconTile(iconName: String, tint: Int, fill: Int): TextView = TextView(this).apply {
-        text = iconGlyph(iconName)
-        textSize = 20f
-        includeFontPadding = false
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        setTextColor(tint)
-        background = roundedBox(fill, tintBackgroundBorder(tint), dp(14).toFloat())
-        layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
-    }
-
-    private fun iconGlyph(iconName: String): String = when (iconName) {
-        "terminal" -> ">_"
-        "web" -> "◎"
-        "bot" -> "AI"
-        "file" -> "文"
-        "music" -> "♪"
-        "shopping" -> "购"
-        "logs" -> "日"
-        "tools" -> "⚙"
-        "code" -> "{ }"
-        "server" -> "▷"
-        "more" -> "…"
-        else -> "◎"
-    }
-
-    private fun statusColors(status: RecipeRunStatus): SemanticColors = when (status) {
-        RecipeRunStatus.Starting,
-        RecipeRunStatus.Running,
-        RecipeRunStatus.WaitingTerminal,
-        RecipeRunStatus.AlreadyRunning,
-        RecipeRunStatus.Opened,
-        RecipeRunStatus.Completed -> SemanticColors(tokens.success, tokens.successSoft, tokens.successBorder)
-        RecipeRunStatus.Stopping -> SemanticColors(tokens.warning, tokens.warningSoft, tokens.warningBorder)
-        RecipeRunStatus.Failed,
-        RecipeRunStatus.BridgeUnavailable -> SemanticColors(tokens.danger, tokens.dangerSoft, tokens.dangerBorder)
-        RecipeRunStatus.Unknown,
-        RecipeRunStatus.Stopped -> SemanticColors(tokens.textSecondary, tokens.surface, tokens.border)
-    }
-
-    private fun cardSummaryText(recipe: KiteRecipe, state: RecipeRuntimeState, isProblem: Boolean): TextView =
-        TextView(this).apply {
-            text = cardSummary(recipe, state, isProblem)
-            textSize = 10.8f
-            includeFontPadding = false
-            setTextColor(if (isProblem) tokens.danger else tokens.textSecondary)
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-            setLineSpacing(0f, 1.08f)
-        }
-
-    private fun cardSummary(recipe: KiteRecipe, state: RecipeRuntimeState, isProblem: Boolean): String {
-        val feedback = state.feedbackSummary()
-        if (isProblem && !feedback.isNullOrBlank()) return feedback
-        if (state.status == RecipeRunStatus.Starting ||
-            state.status == RecipeRunStatus.Stopping ||
-            state.isInterruptible()
-        ) {
-            val progress = if (state.stepCount > 0 && state.currentStepIndex >= 0) {
-                "步骤 ${state.currentStepIndex + 1}/${state.stepCount}"
-            } else {
-                state.status.label
-            }
-            return "$progress · ${state.surface.label}"
-        }
-        if (!feedback.isNullOrBlank()) return feedback
-        return recipeStepSummary(recipe)
-    }
-
-    private fun recipeStepSummary(recipe: KiteRecipe): String {
-        val firstStep = recipe.steps.firstOrNull()
-        return when {
-            firstStep?.type == KiteRecipe.STEP_SHELL -> "SH · ${compactCommand(firstStep.cmd ?: firstStep.text.orEmpty())}"
-            firstStep?.type == KiteRecipe.STEP_TERMINAL -> "终端 · ${compactCommand(firstStep.cmd ?: firstStep.text.orEmpty()).ifBlank { "打开交互" }}"
-            firstStep?.type == KiteRecipe.STEP_OPEN_WEB -> "网页 · ${compactUrlForCard(firstStep.url.orEmpty())}"
-            firstStep?.type == KiteRecipe.STEP_X11 -> "X11 · ${compactCommand(firstStep.cmd ?: firstStep.text.orEmpty())}"
-            firstStep?.type == KiteRecipe.STEP_ANDROID_ACTION -> "本机 · ${(firstStep.action ?: "系统动作").trim()}"
-            recipe.defaultUrl.isNotBlank() -> "网页 · ${compactUrlForCard(recipe.defaultUrl)}"
-            recipe.description.isNotBlank() -> recipe.description
-            else -> "顺序执行卡片"
-        }
-    }
-
-    private fun compactCommand(command: String): String =
-        command.lineSequence()
-            .map { it.trim() }
-            .firstOrNull { it.isNotBlank() }
-            ?.replace(Regex("\\s+"), " ")
-            ?.take(90)
-            .orEmpty()
-
-    private fun compactUrlForCard(url: String): String {
-        if (url.isBlank()) return "未填写网址"
-        val displayUrl = redactUrlCredentials(url)
-        return runCatching {
-            val parsed = Uri.parse(displayUrl)
-            val host = parsed.host.orEmpty()
-            if (host.isBlank()) return@runCatching displayUrl.take(90)
-            val port = parsed.port.takeIf { it > 0 }?.let { ":$it" }.orEmpty()
-            val path = parsed.path.orEmpty().takeIf { it.isNotBlank() && it != "/" }.orEmpty()
-            "$host$port$path".take(90)
-        }.getOrDefault(displayUrl.take(90))
-    }
-
     private fun redactUrlCredentials(url: String?): String {
         val value = url.orEmpty()
         if (value.isBlank()) return value
@@ -5759,25 +5593,6 @@ open class MainActivity : AppCompatActivity() {
             if (!disabled) setOnClickListener { onClick() }
         }
 
-    private fun dropZoneButton(text: String, onClick: () -> Unit): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 12f
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        setTextColor(tokens.primaryStrong)
-        setPadding(dp(12), 0, dp(12), 0)
-        background = roundedBox(tokens.surface, tokens.border, dp(17).toFloat())
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34)).apply {
-            setMargins(dp(8), 0, 0, 0)
-        }
-        setOnClickListener { onClick() }
-    }
-
-    private fun divider(): View = View(this).apply {
-        setBackgroundColor(tokens.border)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
-    }
-
     private fun roundedBox(fill: Int, stroke: Int, radius: Float, strokeWidth: Int = dp(1)): GradientDrawable =
         GradientDrawable().apply {
             setColor(fill)
@@ -5787,132 +5602,7 @@ open class MainActivity : AppCompatActivity() {
 
     private fun tintBackground(color: Int): Int = KiteTheme.tint(color, 0.88f)
 
-    private fun tintBackgroundBorder(color: Int): Int = KiteTheme.tint(color, 0.72f)
-
-    private fun displayAccentName(recipe: KiteRecipe): String =
-        recipe.card.accent.ifBlank { "primary" }
-
-    private fun accentFor(recipe: KiteRecipe): Int = KiteTheme.accent(displayAccentName(recipe), tokens).strong
-
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    private inner class ResourceHeroArtView(context: Context) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = Typeface.DEFAULT_BOLD
-            textAlign = Paint.Align.CENTER
-        }
-        private val rect = RectF()
-
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            val w = width.toFloat()
-            val h = height.toFloat()
-            if (w <= 0f || h <= 0f) return
-
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = dp(1).toFloat()
-            paint.shader = null
-            paint.color = Color.argb(70, 123, 210, 207)
-            rect.set(w * 0.06f, h * 0.27f, w * 0.94f, h * 0.80f)
-            canvas.drawOval(rect, paint)
-
-            paint.style = Paint.Style.FILL
-            paint.color = Color.argb(26, 0, 112, 107)
-            rect.set(w * 0.16f, h * 0.70f, w * 0.88f, h * 0.93f)
-            canvas.drawRoundRect(rect, dp(28).toFloat(), dp(28).toFloat(), paint)
-
-            paint.shader = LinearGradient(
-                0f,
-                h * 0.56f,
-                0f,
-                h * 0.92f,
-                Color.rgb(250, 255, 255),
-                Color.rgb(219, 244, 245),
-                Shader.TileMode.CLAMP
-            )
-            rect.set(w * 0.17f, h * 0.61f, w * 0.87f, h * 0.86f)
-            canvas.drawRoundRect(rect, dp(24).toFloat(), dp(24).toFloat(), paint)
-            paint.shader = null
-            paint.style = Paint.Style.STROKE
-            paint.color = Color.argb(120, 174, 225, 224)
-            canvas.drawRoundRect(rect, dp(24).toFloat(), dp(24).toFloat(), paint)
-
-            paint.style = Paint.Style.FILL
-            paint.shader = LinearGradient(
-                w * 0.30f,
-                h * 0.34f,
-                w * 0.78f,
-                h * 0.76f,
-                Color.rgb(35, 188, 179),
-                Color.rgb(6, 148, 112),
-                Shader.TileMode.CLAMP
-            )
-            rect.set(w * 0.32f, h * 0.39f, w * 0.78f, h * 0.72f)
-            canvas.drawRoundRect(rect, dp(20).toFloat(), dp(20).toFloat(), paint)
-            paint.shader = null
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = dp(2).toFloat()
-            paint.color = Color.argb(120, 205, 255, 252)
-            canvas.drawRoundRect(rect, dp(20).toFloat(), dp(20).toFloat(), paint)
-            drawCenteredText(canvas, "K", rect.centerX(), rect.centerY(), dp(39).toFloat(), Color.WHITE)
-
-            drawFloatingTile(canvas, w * 0.22f, h * 0.32f, dp(38).toFloat(), -17f, "</>", Color.rgb(60, 190, 185))
-            drawFloatingTile(canvas, w * 0.72f, h * 0.24f, dp(34).toFloat(), 15f, "▣", Color.rgb(70, 196, 189))
-            drawFloatingTile(canvas, w * 0.83f, h * 0.46f, dp(34).toFloat(), -12f, ">_", Color.rgb(0, 156, 141))
-
-            paint.style = Paint.Style.FILL
-            paint.shader = null
-            paint.color = Color.argb(130, 118, 211, 208)
-            listOf(
-                w * 0.15f to h * 0.50f,
-                w * 0.56f to h * 0.27f,
-                w * 0.91f to h * 0.35f
-            ).forEach { point ->
-                canvas.drawCircle(point.first, point.second, dp(1).toFloat(), paint)
-            }
-        }
-
-        private fun drawFloatingTile(
-            canvas: Canvas,
-            cx: Float,
-            cy: Float,
-            size: Float,
-            rotation: Float,
-            label: String,
-            accent: Int
-        ) {
-            canvas.save()
-            canvas.rotate(rotation, cx, cy)
-            paint.style = Paint.Style.FILL
-            paint.shader = LinearGradient(
-                cx - size,
-                cy - size,
-                cx + size,
-                cy + size,
-                Color.argb(235, 255, 255, 255),
-                Color.argb(215, 230, 252, 252),
-                Shader.TileMode.CLAMP
-            )
-            rect.set(cx - size / 2f, cy - size / 2f, cx + size / 2f, cy + size / 2f)
-            canvas.drawRoundRect(rect, dp(10).toFloat(), dp(10).toFloat(), paint)
-            paint.shader = null
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = dp(1).toFloat()
-            paint.color = Color.argb(115, 136, 219, 215)
-            canvas.drawRoundRect(rect, dp(10).toFloat(), dp(10).toFloat(), paint)
-            drawCenteredText(canvas, label, cx, cy, dp(if (label.length > 2) 10 else 15).toFloat(), accent)
-            canvas.restore()
-        }
-
-        private fun drawCenteredText(canvas: Canvas, text: String, cx: Float, cy: Float, sizePx: Float, color: Int) {
-            textPaint.shader = null
-            textPaint.textSize = sizePx
-            textPaint.color = color
-            val metrics = textPaint.fontMetrics
-            canvas.drawText(text, cx, cy - (metrics.ascent + metrics.descent) / 2f, textPaint)
-        }
-    }
 
     private data class ResourceItem(
         val id: String,
@@ -6020,18 +5710,6 @@ open class MainActivity : AppCompatActivity() {
         val accent: String,
         val iconAsset: String = "",
         val iconFit: String = ""
-    )
-
-    private data class SummaryMetric(
-        val label: String,
-        val value: String,
-        val weight: Float
-    )
-
-    private data class SemanticColors(
-        val text: Int,
-        val background: Int,
-        val border: Int
     )
 
     private fun String.requiresServiceCommand(): Boolean =
