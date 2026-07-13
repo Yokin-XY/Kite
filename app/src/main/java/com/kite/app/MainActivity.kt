@@ -50,6 +50,10 @@ import com.kite.app.application.runs.RecipeActionEffect
 import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
 import com.kite.app.application.runs.DesktopOpenCoordinator
 import com.kite.app.application.runs.DesktopOpenRequest
+import com.kite.app.application.browser.BrowserOpenCoordinator
+import com.kite.app.application.browser.BrowserOpenRequest as BrowserOpenWorkflowRequest
+import com.kite.app.application.browser.BrowserOpenResult
+import com.kite.app.application.packages.InstallApkCoordinator
 import com.kite.app.browser.BrowserHandoffDecision
 import com.kite.app.browser.BrowserHandoffPolicy
 import com.kite.app.browser.BrowserHandoffRequest
@@ -79,7 +83,6 @@ import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallSpec
 import com.kite.app.run.CardRunState as RecipeRuntimeState
-import com.kite.app.run.CardRunBrowserRouter
 import com.kite.app.run.CardRunDesktopRouter
 import com.kite.app.run.CardRunSurface
 import com.kite.app.run.CardRunStatus as RecipeRunStatus
@@ -94,7 +97,6 @@ import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.R
 import com.kite.app.foundation.bootstrap.StartupTraceStore
-import com.kite.app.foundation.runtime.ExternalExchangeManager
 import com.kite.app.foundation.runtime.RuntimeAutomationActions
 import com.kite.app.foundation.runtime.RuntimeHealthStore
 import com.kite.app.foundation.runtime.RuntimeReclaimer
@@ -193,6 +195,8 @@ open class MainActivity : AppCompatActivity() {
     private lateinit var resourceActionWorkflowCoordinator: ResourceActionWorkflowCoordinator
     private lateinit var recipeActionWorkflowCoordinator: RecipeActionWorkflowCoordinator
     private lateinit var desktopOpenCoordinator: DesktopOpenCoordinator
+    private lateinit var browserOpenCoordinator: BrowserOpenCoordinator
+    private lateinit var installApkCoordinator: InstallApkCoordinator
     private lateinit var settingsGateway: SettingsGateway
     private lateinit var rootHost: FrameLayout
     private lateinit var root: LinearLayout
@@ -269,6 +273,8 @@ open class MainActivity : AppCompatActivity() {
         resourceActionWorkflowCoordinator = appGraph.resourceActionWorkflowCoordinator
         recipeActionWorkflowCoordinator = appGraph.recipeActionWorkflowCoordinator
         desktopOpenCoordinator = appGraph.desktopOpenCoordinator
+        browserOpenCoordinator = appGraph.browserOpenCoordinator
+        installApkCoordinator = appGraph.installApkCoordinator
         runtimeBootstrapGateway = appGraph.runtimeBootstrapGateway
         firstRunOnboardingCoordinator = appGraph.firstRunOnboardingCoordinator
         runtimeStatusController = RuntimeStatusFeatureController(
@@ -765,9 +771,6 @@ open class MainActivity : AppCompatActivity() {
             true
         }
     }
-
-    private fun temporaryBrowserRecipe(recipeId: String, url: String, title: String = "临时网页"): KiteRecipe =
-        CardRunSpecialRecipes.temporaryBrowser(recipeId, url, title)
 
     private fun observeRuntimeStatus() {
         lifecycleScope.launch {
@@ -2428,29 +2431,19 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun handleBrowserOpenRequest(request: KiteBrowserOpenRequest) {
-        val normalized = request.copy(url = request.url.trim())
-        if (normalized.url.isBlank()) return
-        if (!normalized.instanceId.isNullOrBlank() && CardRunBrowserRouter.dispatch(normalized)) {
-            return
-        }
-
-        val recipe = normalized.recipeId?.let { findRecipeById(it) }
-        val instanceId = normalized.instanceId?.takeIf { it.isNotBlank() }
-        if (recipe != null && instanceId != null) {
-            updateBrowserRequestState(recipe, instanceId, normalized)
-            diagnostics.logRecipeAction(
-                recipe,
-                "browser_request_waiting_for_instance",
-                mapOf(
-                    "instanceId" to instanceId,
-                    "source" to normalized.source,
-                    "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(normalized.url)
-                )
+        when (val result = browserOpenCoordinator.open(
+            BrowserOpenWorkflowRequest(
+                url = request.url,
+                recipeId = request.recipeId,
+                instanceId = request.instanceId,
+                source = request.source
             )
-            return
+        )) {
+            BrowserOpenResult.Ignored,
+            BrowserOpenResult.RoutedToExistingSurface,
+            is BrowserOpenResult.RecordedForInstance -> Unit
+            is BrowserOpenResult.OpenTemporaryRun -> openTemporaryBrowserRun(result)
         }
-
-        openTemporaryBrowserRequest(normalized)
     }
 
     private fun handleDesktopOpenRequest(request: KiteDesktopOpenRequest): KiteDesktopOpenResponse {
@@ -2496,38 +2489,16 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun handleInstallApkRequest(request: KiteInstallApkRequest): KiteInstallApkResponse {
-        val normalizedPath = request.path.trim()
-        if (normalizedPath.isBlank()) {
-            return KiteInstallApkResponse(false, request.path, error = "missing_path")
+        val result = installApkCoordinator.resolve(request.path)
+        if (result.accepted) {
+            runOnUiThread { openApkInstaller(File(result.resolvedPath)) }
         }
-        val apkFile = resolveInstallApkFile(normalizedPath)
-            ?: return KiteInstallApkResponse(false, normalizedPath, error = "unsupported_path")
-        if (!apkFile.name.endsWith(".apk", ignoreCase = true)) {
-            return KiteInstallApkResponse(false, normalizedPath, apkFile.absolutePath, "not_apk")
-        }
-        if (!apkFile.isFile) {
-            return KiteInstallApkResponse(false, normalizedPath, apkFile.absolutePath, "apk_not_found")
-        }
-        runOnUiThread { openApkInstaller(apkFile) }
-        return KiteInstallApkResponse(true, normalizedPath, apkFile.absolutePath)
-    }
-
-    private fun resolveInstallApkFile(path: String): File? {
-        val rawPath = if (path.startsWith("file://", ignoreCase = true)) {
-            Uri.parse(path).path.orEmpty()
-        } else {
-            path
-        }.trim()
-        if (rawPath.isBlank()) return null
-        return when {
-            rawPath == ExternalExchangeManager.CONTAINER_MOUNT_PATH -> null
-            rawPath.startsWith("${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/") -> {
-                val relative = rawPath.removePrefix("${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/")
-                File(ExternalExchangeManager.ensureExchangeDir(this), relative)
-            }
-            rawPath.startsWith("/sdcard/") || rawPath.startsWith("/storage/") -> File(rawPath)
-            else -> null
-        }?.absoluteFile
+        return KiteInstallApkResponse(
+            accepted = result.accepted,
+            path = result.path,
+            resolvedPath = result.resolvedPath,
+            error = result.error
+        )
     }
 
     private fun openApkInstaller(apkFile: File) {
@@ -2542,63 +2513,22 @@ open class MainActivity : AppCompatActivity() {
             }
     }
 
-    private fun openTemporaryBrowserRequest(request: KiteBrowserOpenRequest) {
-        val intent = CardRunIntents.temporaryWebIntent(
+    private fun openTemporaryBrowserRun(result: BrowserOpenResult.OpenTemporaryRun) {
+        val intent = CardRunIntents.launchIntent(
             context = this,
-            url = request.url,
-            launchSource = request.source.ifBlank { CardRunIntents.SOURCE_BROWSER_PROXY }
-        )
-        val recipeId = intent.getStringExtra(CardRunIntents.EXTRA_RECIPE_ID).orEmpty()
-        val instanceId = intent.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID).orEmpty()
-        val recipe = temporaryBrowserRecipe(recipeId, request.url)
-        CardRunStore.start(recipe, instanceId)
-        updateBrowserRequestState(
-            recipe = recipe,
-            instanceId = instanceId,
-            request = request.copy(recipeId = recipeId, instanceId = instanceId)
-        )
-        diagnostics.logRecipeAction(
-            recipe,
-            "browser_request_opened_temporary_instance",
-            mapOf(
-                "instanceId" to instanceId,
-                "source" to request.source,
-                "url" to BrowserHandoffPolicy.redactedUrlForDiagnostics(request.url)
-            )
-        )
-        runCatching {
-            startActivity(intent)
-        }.onFailure { error ->
-            diagnostics.logOpenWebFailed(recipe, request.url, error.message.orEmpty())
-            Toast.makeText(this, "打开临时网页失败：${error.message}", Toast.LENGTH_SHORT).show()
-            openWeb(request.url, request.source, recipe)
-        }
-    }
-
-    private fun updateBrowserRequestState(
-        recipe: KiteRecipe,
-        instanceId: String,
-        request: KiteBrowserOpenRequest
-    ): RecipeRuntimeState {
-        val existing = CardRunStore.get(instanceId)
-        val status = when (existing?.status) {
-            RecipeRunStatus.Starting,
-            RecipeRunStatus.Running,
-            RecipeRunStatus.WaitingTerminal -> existing.status
-            else -> RecipeRunStatus.Opened
-        }
-        return CardRunStore.update(
-            recipe = recipe,
-            status = status,
-            instanceId = instanceId,
-            surface = CardRunSurface.Web,
-            currentStepIndex = existing?.currentStepIndex,
-            runId = existing?.runId,
-            terminalSessionId = existing?.terminalSessionId,
-            pid = existing?.pid,
-            lastMeaningfulOutput = "Ubuntu 请求打开网页",
-            nextActionUrl = request.url
-        )
+            recipeId = result.recipeId,
+            instanceId = result.instanceId,
+            launchSource = result.source.ifBlank { CardRunIntents.SOURCE_BROWSER_PROXY },
+            autoStart = false
+        ).putExtra(CardRunIntents.EXTRA_TEMP_URL, result.url)
+            .putExtra(CardRunIntents.EXTRA_TEMP_TITLE, result.title)
+        val recipe = CardRunStore.registeredRecipe(result.recipeId)
+        runCatching { startActivity(intent) }
+            .onFailure { error ->
+                diagnostics.logOpenWebFailed(recipe, result.url, error.message.orEmpty())
+                Toast.makeText(this, "打开临时网页失败：${error.message}", Toast.LENGTH_SHORT).show()
+                openWeb(result.url, result.source, recipe)
+            }
     }
 
     private fun findRecipeById(recipeId: String): KiteRecipe? {

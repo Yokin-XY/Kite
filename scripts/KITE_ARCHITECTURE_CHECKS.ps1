@@ -70,6 +70,10 @@ $recipeActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/appl
 $androidRecipeActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRecipeActionGateway.kt'
 $desktopOpenWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/DesktopOpenWorkflow.kt'
 $androidDesktopOpenGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidDesktopOpenGateway.kt'
+$browserOpenWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/browser/BrowserOpenWorkflow.kt'
+$androidBrowserOpenGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserOpenGateway.kt'
+$installApkWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/packages/InstallApkWorkflow.kt'
+$androidInstallApkGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/packages/AndroidInstallApkGateway.kt'
 $sourceRoots = @(
     (Join-Path $Root 'app/src/main/java/com/kite/app'),
     (Join-Path $Root 'app/src/main/kotlin/com/kite/app')
@@ -114,6 +118,10 @@ Assert-Architecture (Test-Path $recipeActionWorkflowPath) 'Recipe action applica
 Assert-Architecture (Test-Path $androidRecipeActionGatewayPath) 'Android recipe action adapter is missing.'
 Assert-Architecture (Test-Path $desktopOpenWorkflowPath) 'Desktop-open application workflow is missing.'
 Assert-Architecture (Test-Path $androidDesktopOpenGatewayPath) 'Android desktop-open adapter is missing.'
+Assert-Architecture (Test-Path $browserOpenWorkflowPath) 'Browser-open application workflow is missing.'
+Assert-Architecture (Test-Path $androidBrowserOpenGatewayPath) 'Android browser-open adapter is missing.'
+Assert-Architecture (Test-Path $installApkWorkflowPath) 'Install-APK application workflow is missing.'
+Assert-Architecture (Test-Path $androidInstallApkGatewayPath) 'Android install-APK adapter is missing.'
 
 if ($failures.Count -eq 0) {
     $baseline = Get-Content $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -150,6 +158,10 @@ if ($failures.Count -eq 0) {
     $androidRecipeActionGateway = [System.IO.File]::ReadAllText($androidRecipeActionGatewayPath, [System.Text.Encoding]::UTF8)
     $desktopOpenWorkflow = [System.IO.File]::ReadAllText($desktopOpenWorkflowPath, [System.Text.Encoding]::UTF8)
     $androidDesktopOpenGateway = [System.IO.File]::ReadAllText($androidDesktopOpenGatewayPath, [System.Text.Encoding]::UTF8)
+    $browserOpenWorkflow = [System.IO.File]::ReadAllText($browserOpenWorkflowPath, [System.Text.Encoding]::UTF8)
+    $androidBrowserOpenGateway = [System.IO.File]::ReadAllText($androidBrowserOpenGatewayPath, [System.Text.Encoding]::UTF8)
+    $installApkWorkflow = [System.IO.File]::ReadAllText($installApkWorkflowPath, [System.Text.Encoding]::UTF8)
+    $androidInstallApkGateway = [System.IO.File]::ReadAllText($androidInstallApkGatewayPath, [System.Text.Encoding]::UTF8)
     $allSourceFiles = @(
         $sourceRoots |
             Where-Object { Test-Path $_ } |
@@ -389,6 +401,28 @@ if ($failures.Count -eq 0) {
         $main -match 'desktopOpenCoordinator\.open' -and
         $main -notmatch 'acceptDesktopOpenRequest|temporaryDesktopRecipe|KiteX11SurfacePlan|KiteX11SurfaceServer'
     ) 'MainActivity must map desktop results to Shell effects without owning X11 preparation.'
+    Assert-Architecture (
+        $browserOpenWorkflow -match 'class\s+BrowserOpenCoordinator' -and
+        $browserOpenWorkflow -notmatch 'android\.|androidx\.|CardRunStore|WebView|MainActivity|CardRunActivity'
+    ) 'Browser-open workflow must remain an Android-free request/result contract.'
+    Assert-Architecture (
+        $androidBrowserOpenGateway -match 'CardRunBrowserRouter\.dispatch' -and
+        $androidBrowserOpenGateway -match 'CardRunStore\.update' -and
+        $androidBrowserOpenGateway -notmatch 'startActivity|(?m)^import\s+(android\.webkit\.|android\.view\.|android\.widget\.|android\.app\.Activity|com\.kite\.app\.(MainActivity|CardRunActivity|feature))'
+    ) 'Browser-open adapter must own routing and run facts without display dependencies.'
+    Assert-Architecture (
+        $installApkWorkflow -match 'class\s+InstallApkCoordinator' -and
+        $installApkWorkflow -notmatch 'android\.|androidx\.|FileProvider|Intent|MainActivity'
+    ) 'Install-APK workflow must remain an Android-free path contract.'
+    Assert-Architecture (
+        $androidInstallApkGateway -match 'ExternalExchangeManager\.ensureExchangeDir' -and
+        $androidInstallApkGateway -notmatch 'FileProvider|startActivity|(?m)^import\s+(android\.app\.Activity|com\.kite\.app\.feature)'
+    ) 'Install-APK adapter must resolve files without launching Android UI.'
+    Assert-Architecture (
+        $main -match 'browserOpenCoordinator\.open' -and
+        $main -match 'installApkCoordinator\.resolve' -and
+        $main -notmatch 'openTemporaryBrowserRequest|updateBrowserRequestState|resolveInstallApkFile'
+    ) 'MainActivity must only open the routed Web task or Android installer.'
 
     foreach ($file in $allSourceFiles) {
         $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)

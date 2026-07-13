@@ -7,6 +7,8 @@ import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserAuthRedirectCoordinator
+import com.kite.app.application.browser.BrowserOpenCoordinator
+import com.kite.app.application.packages.InstallApkCoordinator
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceActionWorkflowCoordinator
 import com.kite.app.application.recipes.RecipeFeatureGateway
@@ -37,6 +39,8 @@ import com.kite.app.platform.resources.AndroidResourceFeatureGateway
 import com.kite.app.platform.browser.AndroidBrowserHandoffGateway
 import com.kite.app.platform.browser.AndroidBrowserAuthRedirectGateway
 import com.kite.app.platform.browser.AndroidExternalBrowserLauncher
+import com.kite.app.platform.browser.AndroidBrowserOpenGateway
+import com.kite.app.platform.packages.AndroidInstallApkGateway
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.platform.resources.AndroidResourceRecipeFactory
 import com.kite.app.platform.resources.AndroidResourceRunGateway
@@ -83,6 +87,12 @@ internal class KiteAppGraph private constructor(context: Context) {
                 recipeResolver = ::resolveRecipe
             )
         )
+    }
+    val browserOpenCoordinator: BrowserOpenCoordinator by lazy {
+        BrowserOpenCoordinator(AndroidBrowserOpenGateway(diagnostics, ::resolveRecipe))
+    }
+    val installApkCoordinator: InstallApkCoordinator by lazy {
+        InstallApkCoordinator(AndroidInstallApkGateway(appContext))
     }
     val resourceInstallStore: KiteResourceInstallStore by lazy { KiteResourceInstallStore(appContext) }
     val resourceManifestLoader: KiteResourceManifestLoader by lazy { KiteResourceManifestLoader(appContext) }

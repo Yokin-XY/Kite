@@ -500,3 +500,13 @@
 理由：桌面请求的业务和运行事实原先全部写在 Main，包括临时配方、实例分配、X11 资源选择、失败投影和诊断；它并不是 Activity 显示职责。迁移只改变所有权，不改变 X11 内核、显示控件、命令协议或现有运行窗口。
 
 影响：X11 启动失败时仍保留失败 CardRun 并为新临时请求打开报告窗口；已有 instance 请求不重复新建窗口。MainActivity 不得恢复 `acceptDesktopOpenRequest`、`temporaryDesktopRecipe`、`KiteX11SurfacePlan` 或 `KiteX11SurfaceServer` 调用。Platform Gateway 不得创建 View 或依赖 Activity/Feature。
+
+## ADR-S050 本地浏览器与 APK 入站分离事实处理和系统显示
+
+状态：accepted
+
+决策：本地服务器浏览器请求经 `BrowserOpenCoordinator + AndroidBrowserOpenGateway` 路由；Gateway 优先投递既有 CardRun 浏览器显示面，否则写入指定实例或创建临时 Web CardRun。APK 请求经 `InstallApkCoordinator + AndroidInstallApkGateway` 归一化、限制支持路径并检查文件。MainActivity 只打开临时 CardRun Activity 或 Android 系统安装器。
+
+理由：浏览器运行事实、临时配方和 APK 文件解析原本与 Activity 跳转混在三个 Main 方法中。前者属于运行路由/Store，后者属于 Platform 文件边界；只有启动可见窗口和系统 Intent 才是 Shell 职责。分离后不会为修路径或状态同步重进 Main，也不会把 WebView/安装器副作用下沉。
+
+影响：既有 `CardRunBrowserRouter` 优先级、指定实例 URL 更新、临时网页失败时回退工作台、`/exchange` 与 `/sdcard`/`/storage` 支持范围和响应错误码保持。Gateway 禁止创建 WebView、Activity 或安装 Intent；Main 不得恢复 `updateBrowserRequestState`、`openTemporaryBrowserRequest` 或 `resolveInstallApkFile`。

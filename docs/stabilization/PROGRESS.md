@@ -1325,3 +1325,12 @@ T011 桌面入站适配迁移结果：
 - 桌面协调器、X11 分配、CardRun 解析和 Main 路由测试通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `2850 / 138 / 41 / 10 / 0`，零调用私有函数为 0。
 
 下一步：迁出本地服务器的浏览器运行事实写入与 APK 路径解析；Shell 继续拥有 Web 显示导航和 Android 安装器启动 Effect。
+
+T011 浏览器与 APK 入站适配结果：
+
+- 新增 `BrowserOpenCoordinator/AndroidBrowserOpenGateway`。已有实例先走 `CardRunBrowserRouter`，指定 recipe/instance 只更新唯一 CardRun Web 事实，无目标时创建可恢复的临时 Web CardRun；Gateway 不持有 WebView 或 Activity。
+- 新增 `InstallApkCoordinator/AndroidInstallApkGateway`。路径 trim、`file://`、`/exchange`、`/sdcard`、`/storage`、扩展名和文件存在性全部在 Platform 校验，Main 只对 accepted 结果启动系统安装器。
+- 删除 Main 的临时浏览器配方/状态写入、APK 路径解析和相应事实分支；临时运行窗口启动失败仍回退现有工作台。
+- 浏览器/APK 协调器、CardRun 浏览器路由、运行目标解析和 Main 路由测试通过；Kotlin 编译、架构守卫和运行车道守卫通过。MainActivity 当前为 `2780 / 135 / 43 / 10 / 0`，零调用私有函数为 0。
+
+下一步：审计 Main 的自动化测试 Intent 入口和剩余 Console/Shell 绘制职责；自动化业务动作改为调用现有工作流，测试入口本身保留为 Shell 系统回调。

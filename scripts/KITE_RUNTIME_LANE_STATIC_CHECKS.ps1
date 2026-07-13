@@ -80,6 +80,10 @@ $browserAuthRedirectCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kit
 $androidBrowserHandoffGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserHandoffGateway.kt'
 $androidBrowserAuthRedirectGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserAuthRedirectGateway.kt'
 $androidBrowserAutomationRunUpdaterPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserAutomationRunUpdater.kt'
+$browserOpenWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/browser/BrowserOpenWorkflow.kt'
+$androidBrowserOpenGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/browser/AndroidBrowserOpenGateway.kt'
+$installApkWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/packages/InstallApkWorkflow.kt'
+$androidInstallApkGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/packages/AndroidInstallApkGateway.kt'
 $webWorkbenchFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/web/WebWorkbenchFragment.kt'
 $webWorkbenchScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/web/WebWorkbenchScreen.kt'
 $runtimeManagementCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/RuntimeManagementCoordinator.kt'
@@ -224,6 +228,10 @@ $browserAuthRedirectCoordinator = Read-Utf8 $browserAuthRedirectCoordinatorPath
 $androidBrowserHandoffGateway = Read-Utf8 $androidBrowserHandoffGatewayPath
 $androidBrowserAuthRedirectGateway = Read-Utf8 $androidBrowserAuthRedirectGatewayPath
 $androidBrowserAutomationRunUpdater = Read-Utf8 $androidBrowserAutomationRunUpdaterPath
+$browserOpenWorkflow = Read-Utf8 $browserOpenWorkflowPath
+$androidBrowserOpenGateway = Read-Utf8 $androidBrowserOpenGatewayPath
+$installApkWorkflow = Read-Utf8 $installApkWorkflowPath
+$androidInstallApkGateway = Read-Utf8 $androidInstallApkGatewayPath
 $webWorkbenchFragment = Read-Utf8 $webWorkbenchFragmentPath
 $webWorkbenchScreen = Read-Utf8 $webWorkbenchScreenPath
 $runtimeManagementCoordinator = Read-Utf8 $runtimeManagementCoordinatorPath
@@ -319,6 +327,11 @@ Assert-True ($main -notmatch 'cardRunX11SurfaceBody|x11TaskTitle') 'MainActivity
 Assert-True ($desktopOpenWorkflow -match 'DesktopOpenResult' -and $desktopOpenWorkflow -notmatch 'CardRunStore|KiteX11Surface|Activity|View') 'Desktop-open application workflow must remain independent from X11 and UI implementations.'
 Assert-True ($androidDesktopOpenGateway -match 'KiteX11SurfacePlan\.allocate' -and $androidDesktopOpenGateway -match 'KiteX11SurfaceServer\.ensureStarted' -and $androidDesktopOpenGateway -match 'CardRunStore\.update') 'Desktop-open platform adapter must prepare X11 and publish the run fact before returning.'
 Assert-True ($main -match 'desktopOpenCoordinator\.open' -and $main -notmatch 'acceptDesktopOpenRequest|temporaryDesktopRecipe|KiteX11SurfacePlan|KiteX11SurfaceServer') 'MainActivity must only map desktop-open results to the existing run task and router.'
+Assert-True ($browserOpenWorkflow -match 'data class OpenTemporaryRun' -and $browserOpenWorkflow -notmatch 'CardRunStore|WebView|Activity') 'Browser-open application workflow must remain independent from run stores and displays.'
+Assert-True ($androidBrowserOpenGateway -match 'CardRunBrowserRouter\.dispatch' -and $androidBrowserOpenGateway -match 'CardRunStore\.update' -and $androidBrowserOpenGateway -notmatch 'startActivity|(?m)^import\s+android\.webkit\.') 'Browser-open platform adapter must route or publish one Web run fact without creating a display.'
+Assert-True ($installApkWorkflow -match 'InstallApkResult' -and $installApkWorkflow -notmatch 'FileProvider|Intent|Activity') 'Install-APK application workflow must remain a path/result contract.'
+Assert-True ($androidInstallApkGateway -match 'ExternalExchangeManager\.ensureExchangeDir' -and $androidInstallApkGateway -notmatch 'FileProvider|startActivity') 'Install-APK platform adapter must validate supported paths without opening Android UI.'
+Assert-True ($main -match 'browserOpenCoordinator\.open' -and $main -match 'installApkCoordinator\.resolve' -and $main -notmatch 'openTemporaryBrowserRequest|updateBrowserRequestState|resolveInstallApkFile') 'MainActivity must only execute browser/install Shell effects.'
 Assert-True ($main -match 'browserHandoffCoordinator\.launch' -and $main -notmatch 'browserAuthSessions\.createPending\(request, decision\)|browserLoopbackCallbackBridge\.prepare\(session\)') 'MainActivity must delegate browser handoff sequencing to BrowserHandoffCoordinator.'
 Assert-True ($browserHandoffCoordinator -match '(?s)createPending\(request, decision\).*updateWaiting\(session, request\).*prepareCallback\(session\).*openExternal\(request\.url\)' -and $browserHandoffCoordinator -notmatch 'import android\.|import androidx\.') 'Browser handoff coordinator must preserve side-effect order without Android UI dependencies.'
 Assert-True ($androidBrowserHandoffGateway -match 'CardRunStore\.update' -and $androidBrowserHandoffGateway -match 'loopbackBridge\.prepare' -and $androidBrowserHandoffGateway -match 'sessions\.markFailed') 'Android browser handoff gateway must own Store, loopback, and session adapters.'
