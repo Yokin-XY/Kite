@@ -17,6 +17,10 @@ internal interface RunSurfaceBinding {
 
     fun reload(): Boolean = false
 
+    fun goForward(): Boolean = false
+
+    fun stopLoading(): Boolean = false
+
     fun reconcile(): Boolean = false
 
     fun dispose() = Unit
@@ -110,6 +114,10 @@ internal class RunSurfaceHost(
     fun handleBack(): Boolean = binding?.handleBack() == true
 
     fun reload(): Boolean = binding?.reload() == true
+
+    fun goForward(): Boolean = binding?.goForward() == true
+
+    fun stopLoading(): Boolean = binding?.stopLoading() == true
 
     fun reconcile(): Boolean = binding?.reconcile() == true
 

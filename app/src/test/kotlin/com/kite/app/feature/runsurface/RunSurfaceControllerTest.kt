@@ -115,6 +115,50 @@ class RunSurfaceControllerTest {
         assertEquals(listOf("instance-1"), actions.stoppedInstances)
     }
 
+    @Test
+    fun `实例窗口由同一运行事实投影并标记当前显示面`() {
+        val recipe = recipe(KiteRecipeStep(id = "web", type = KiteRecipe.STEP_OPEN_WEB, url = "https://example.com"))
+
+        val ui = controller.attach(
+            recipe,
+            state(
+                surface = CardRunSurface.Web,
+                terminalSessionId = "terminal-1",
+                nextActionUrl = "https://www.example.com:8443/path",
+                report = "执行完成",
+                x11Display = ":1"
+            )
+        )
+
+        assertEquals(
+            listOf(
+                CardRunSurface.Report,
+                CardRunSurface.Terminal,
+                CardRunSurface.Web,
+                CardRunSurface.X11
+            ),
+            ui.windows.map(RunSurfaceWindowUiState::surface)
+        )
+        assertEquals(CardRunSurface.Web, ui.windows.single(RunSurfaceWindowUiState::selected).surface)
+        assertEquals("example.com:8443", ui.windows.first { it.surface == CardRunSurface.Web }.subtitle)
+    }
+
+    @Test
+    fun `停止确认期间不再暴露重复停止动作`() {
+        val recipe = recipe(KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL, cmd = "bash"))
+
+        val ui = controller.attach(
+            recipe,
+            state(
+                surface = CardRunSurface.Terminal,
+                status = CardRunStatus.Stopping,
+                terminalSessionId = "terminal-1"
+            )
+        )
+
+        assertFalse(ui.canStop)
+    }
+
     private fun recipe(step: KiteRecipeStep): KiteRecipe = KiteRecipe(
         id = "recipe-1",
         name = "测试运行",
@@ -132,7 +176,8 @@ class RunSurfaceControllerTest {
         terminalSessionId: String? = null,
         nextActionUrl: String? = null,
         report: String? = null,
-        lastError: String? = null
+        lastError: String? = null,
+        x11Display: String? = null
     ): CardRunState = CardRunState(
         instanceId = instanceId,
         recipeId = "recipe-1",
@@ -143,6 +188,7 @@ class RunSurfaceControllerTest {
         stepCount = 1,
         terminalSessionId = terminalSessionId,
         nextActionUrl = nextActionUrl,
+        x11Display = x11Display,
         lastError = lastError,
         shellReportText = report,
         createdAt = 1L,

@@ -4,6 +4,7 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
+import java.net.URI
 
 internal data class RunSurfaceTarget(
     val recipeId: String,
@@ -26,6 +27,30 @@ internal sealed interface RunSurfaceContent {
     data object InstallWizard : RunSurfaceContent
 }
 
+internal enum class RunSurfaceWindowKind {
+    Report,
+    Terminal,
+    Web,
+    X11,
+    InstallWizard
+}
+
+internal data class RunSurfaceWindowUiState(
+    val surface: CardRunSurface,
+    val kind: RunSurfaceWindowKind,
+    val title: String,
+    val subtitle: String,
+    val selected: Boolean
+)
+
+internal data class RunWebNavigationUiState(
+    val url: String = "",
+    val canGoBack: Boolean = false,
+    val canGoForward: Boolean = false,
+    val loading: Boolean = false,
+    val progress: Int = 0
+)
+
 internal data class RunSurfaceUiState(
     val target: RunSurfaceTarget,
     val title: String,
@@ -39,6 +64,7 @@ internal data class RunSurfaceUiState(
     val createdAt: Long,
     val canCompleteCurrentStep: Boolean,
     val canStop: Boolean,
+    val windows: List<RunSurfaceWindowUiState>,
     val updatedAt: Long
 )
 
@@ -70,9 +96,105 @@ internal object RunSurfaceProjector {
             stepCount = state.stepCount,
             createdAt = state.createdAt,
             canCompleteCurrentStep = canCompleteCurrentStep(recipe, state),
-            canStop = state.isInterruptible() || state.hasRunBinding(),
+            canStop = state.status != CardRunStatus.Stopping &&
+                (state.isInterruptible() || state.hasRunBinding()),
+            windows = projectWindows(state),
             updatedAt = state.updatedAt
         )
+    }
+
+    private fun projectWindows(state: CardRunState): List<RunSurfaceWindowUiState> = buildList {
+        if (state.hasReportWindow()) {
+            add(
+                RunSurfaceWindowUiState(
+                    surface = CardRunSurface.Report,
+                    kind = RunSurfaceWindowKind.Report,
+                    title = "SH 报告",
+                    subtitle = state.status.label,
+                    selected = state.surface == CardRunSurface.Report || state.surface == CardRunSurface.Summary
+                )
+            )
+        }
+        if (!state.terminalSessionId.isNullOrBlank()) {
+            add(
+                RunSurfaceWindowUiState(
+                    surface = CardRunSurface.Terminal,
+                    kind = RunSurfaceWindowKind.Terminal,
+                    title = "终端",
+                    subtitle = "终端会话",
+                    selected = state.surface == CardRunSurface.Terminal
+                )
+            )
+        }
+        if (!state.nextActionUrl.isNullOrBlank() || state.surface == CardRunSurface.Web) {
+            add(
+                RunSurfaceWindowUiState(
+                    surface = CardRunSurface.Web,
+                    kind = RunSurfaceWindowKind.Web,
+                    title = "网页",
+                    subtitle = webWindowSubtitle(state.nextActionUrl),
+                    selected = state.surface == CardRunSurface.Web
+                )
+            )
+        }
+        if (!state.x11Display.isNullOrBlank() || state.surface == CardRunSurface.X11) {
+            add(
+                RunSurfaceWindowUiState(
+                    surface = CardRunSurface.X11,
+                    kind = RunSurfaceWindowKind.X11,
+                    title = "X11",
+                    subtitle = state.x11Display?.let { "DISPLAY=$it" } ?: "桌面窗口",
+                    selected = state.surface == CardRunSurface.X11
+                )
+            )
+        }
+        if (state.surface == CardRunSurface.InstallWizard) {
+            add(
+                RunSurfaceWindowUiState(
+                    surface = CardRunSurface.InstallWizard,
+                    kind = RunSurfaceWindowKind.InstallWizard,
+                    title = "安装向导",
+                    subtitle = state.status.label,
+                    selected = true
+                )
+            )
+        }
+        if (isEmpty()) {
+            add(
+                RunSurfaceWindowUiState(
+                    surface = state.surface,
+                    kind = state.surface.windowKind(),
+                    title = state.surface.label,
+                    subtitle = state.status.label,
+                    selected = true
+                )
+            )
+        }
+    }.distinctBy(RunSurfaceWindowUiState::surface)
+
+    private fun CardRunState.hasReportWindow(): Boolean =
+        !shellReportText.isNullOrBlank() ||
+            !lastMeaningfulOutput.isNullOrBlank() ||
+            !lastError.isNullOrBlank() ||
+            surface == CardRunSurface.Report ||
+            surface == CardRunSurface.Summary
+
+    private fun webWindowSubtitle(url: String?): String {
+        val value = url?.trim().orEmpty()
+        if (value.isBlank()) return "等待网址"
+        val parsed = runCatching { URI(value) }.getOrNull()
+        val host = parsed?.host?.removePrefix("www.").orEmpty()
+        val port = parsed?.port?.takeIf { it > 0 }?.let { ":$it" }.orEmpty()
+        return (host + port).ifBlank { "网页窗口" }
+    }
+
+    private fun CardRunSurface.windowKind(): RunSurfaceWindowKind = when (this) {
+        CardRunSurface.Terminal -> RunSurfaceWindowKind.Terminal
+        CardRunSurface.Web -> RunSurfaceWindowKind.Web
+        CardRunSurface.X11 -> RunSurfaceWindowKind.X11
+        CardRunSurface.InstallWizard -> RunSurfaceWindowKind.InstallWizard
+        CardRunSurface.Report,
+        CardRunSurface.Summary -> RunSurfaceWindowKind.Report
     }
 
     private fun structureKey(state: CardRunState, surface: CardRunSurface): String = buildString {

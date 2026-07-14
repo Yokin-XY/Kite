@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
@@ -26,19 +27,29 @@ import com.kite.app.foundation.runtime.ExternalExchangeManager
 import java.io.File
 import java.net.URI
 
+data class KiteWebNavigationState(
+    val url: String,
+    val canGoBack: Boolean,
+    val canGoForward: Boolean,
+    val loading: Boolean,
+    val progress: Int
+)
+
 class KiteWebShell(
     private val activity: Activity,
     private val webView: WebView,
     private val diagnostics: KiteDiagnostics,
     private val onStatus: (String) -> Unit,
     private val browserHandoffLauncher: BrowserHandoffLauncher? = null,
-    private val browserAutomationController: BrowserAutomationController? = null
+    private val browserAutomationController: BrowserAutomationController? = null,
+    private val onNavigationState: (KiteWebNavigationState) -> Unit = {}
 ) {
     private var currentRecipeId: String? = null
     private var currentRecipeName: String? = null
     private var currentInstanceId: String? = null
     private var currentOpenSource: String? = null
     private var pendingHttpAuth: BasicHttpAuth? = null
+    private var lastNavigationState: KiteWebNavigationState? = null
 
     init {
         webView.settings.javaScriptEnabled = true
@@ -51,6 +62,14 @@ class KiteWebShell(
         webView.settings.loadWithOverviewMode = true
 
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                publishNavigationState(
+                    url = view.url,
+                    loading = newProgress < 100,
+                    progress = newProgress
+                )
+            }
+
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
                 diagnostics.logConsole(consoleMessage)
                 browserAutomationController?.recordConsoleMessage(
@@ -72,6 +91,14 @@ class KiteWebShell(
                 return handleNavigation(url)
             }
 
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                publishNavigationState(url = url, loading = true, progress = 0)
+            }
+
+            override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                publishNavigationState(url = url)
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
                 diagnostics.writeWebAppStatus(
                     url = url,
@@ -82,6 +109,7 @@ class KiteWebShell(
                     openSource = currentOpenSource
                 )
                 onStatus("Loaded: $url")
+                publishNavigationState(url = url, loading = false, progress = 100)
                 browserAutomationController?.onPageFinished(url, view.title)
             }
 
@@ -109,6 +137,11 @@ class KiteWebShell(
                         description = error.description?.toString().orEmpty()
                     )
                     onStatus("Load failed: ${request.url}")
+                    publishNavigationState(
+                        url = request.url.toString(),
+                        loading = false,
+                        progress = 100
+                    )
                 }
             }
 
@@ -174,6 +207,7 @@ class KiteWebShell(
                 url = preparedUrl
             )
             webView.loadUrl(preparedUrl)
+            publishNavigationState(preparedUrl, loading = true, progress = 0)
         } else {
             browserAutomationController?.closeActiveSession()
             openExternal(preparedUrl)
@@ -206,6 +240,26 @@ class KiteWebShell(
             url = preparedUrl
         )
         webView.loadUrl(preparedUrl)
+        publishNavigationState(preparedUrl, loading = true, progress = 0)
+    }
+
+    private fun publishNavigationState(
+        url: String? = null,
+        loading: Boolean? = null,
+        progress: Int? = null
+    ) {
+        val previous = lastNavigationState
+        val nextProgress = (progress ?: previous?.progress ?: 0).coerceIn(0, 100)
+        val next = KiteWebNavigationState(
+            url = url ?: webView.url.orEmpty().ifBlank { previous?.url.orEmpty() },
+            canGoBack = webView.canGoBack(),
+            canGoForward = webView.canGoForward(),
+            loading = loading ?: (previous?.loading == true && nextProgress < 100),
+            progress = nextProgress
+        )
+        if (next == previous) return
+        lastNavigationState = next
+        onNavigationState(next)
     }
 
     private fun handleNavigation(url: String): Boolean {

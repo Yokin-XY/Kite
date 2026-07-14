@@ -10,7 +10,9 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
+import com.kite.app.R
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.UiKit
 import com.kite.app.ui.terminal.TerminalFragment
@@ -20,11 +22,14 @@ internal class RunTerminalSurfaceBinding(
     context: Context,
     private val fragmentManager: FragmentManager,
     private val instanceId: String,
-    private val tokens: ThemeTokens
+    private val tokens: ThemeTokens,
+    private val fragmentFactory: (String) -> Fragment = { sessionId ->
+        TerminalFragment.detailOnly(sessionId)
+    }
 ) : RunSurfaceBinding {
     private val ui = UiKit(context, tokens)
-    private val containerId = View.generateViewId()
-    private val fragmentTag = "kite-run-terminal-${instanceId.hashCode()}"
+    private val containerId = R.id.kite_run_terminal_container
+    private val fragmentTag = "$FRAGMENT_TAG_PREFIX${instanceId.hashCode()}"
     private var sessionId: String? = null
     private var disposed = false
     private var pendingAttach: Runnable? = null
@@ -39,41 +44,69 @@ internal class RunTerminalSurfaceBinding(
             ?.sessionId
             ?.takeIf { it.isNotBlank() }
         if (nextSessionId == null) {
+            detachFragmentNow()
+            sessionId = null
             showLoading()
             return
         }
-        if (sessionId == nextSessionId && fragmentManager.findFragmentByTag(fragmentTag)?.isAdded == true) return
         sessionId = nextSessionId
+        scheduleAttach(nextSessionId)
+    }
+
+    override fun reconcile(): Boolean {
+        val activeSessionId = sessionId ?: return false
+        return scheduleAttach(activeSessionId)
+    }
+
+    private fun scheduleAttach(nextSessionId: String): Boolean {
+        if (isFragmentMounted(fragmentManager.findFragmentByTag(fragmentTag))) return false
         val attach = Runnable {
             pendingAttach = null
-            if (disposed || sessionId != nextSessionId || fragmentManager.isStateSaved) return@Runnable
-            val existing = fragmentManager.findFragmentByTag(fragmentTag)
-            if (existing?.isAdded == true && !existing.isDetached) return@Runnable
+            if (disposed || sessionId != nextSessionId || fragmentManager.isStateSaved ||
+                fragmentManager.isDestroyed || root.parent == null
+            ) return@Runnable
+            var existing = fragmentManager.findFragmentByTag(fragmentTag)
+            if (isFragmentMounted(existing)) return@Runnable
             root.removeAllViews()
             val transaction = fragmentManager.beginTransaction()
-            if (existing?.isDetached == true) {
+                .setReorderingAllowed(true)
+            if (existing?.isDetached == true && existing.id == containerId) {
                 transaction.attach(existing)
             } else {
-                transaction.replace(containerId, TerminalFragment.detailOnly(nextSessionId), fragmentTag)
+                existing?.let(transaction::remove)
+                transaction.add(containerId, fragmentFactory(nextSessionId), fragmentTag)
             }
-            transaction.commitAllowingStateLoss()
+            transaction.commitNowAllowingStateLoss()
         }
         pendingAttach?.let(root::removeCallbacks)
         pendingAttach = attach
         root.post(attach)
+        return true
     }
 
     override fun dispose() {
         disposed = true
         pendingAttach?.let(root::removeCallbacks)
         pendingAttach = null
+        detachFragmentNow()
+    }
+
+    private fun detachFragmentNow() {
         val fragment = fragmentManager.findFragmentByTag(fragmentTag) ?: return
-        if (fragment.isAdded && !fragment.isDetached) {
+        if (!fragmentManager.isDestroyed && fragment.isAdded && !fragment.isDetached) {
             fragmentManager.beginTransaction()
+                .setReorderingAllowed(true)
                 .detach(fragment)
-                .commitAllowingStateLoss()
+                .commitNowAllowingStateLoss()
         }
     }
+
+    private fun isFragmentMounted(fragment: Fragment?): Boolean =
+        fragment?.isAdded == true &&
+            !fragment.isDetached &&
+            fragment.view?.parent === root
+
+    internal fun fragmentTagForTesting(): String = fragmentTag
 
     private fun showLoading() {
         if (root.childCount > 0 && root.getChildAt(0).contentDescription == LOADING_DESCRIPTION) return
@@ -108,7 +141,20 @@ internal class RunTerminalSurfaceBinding(
         ))
     }
 
-    private companion object {
-        const val LOADING_DESCRIPTION = "运行终端准备中"
+    internal companion object {
+        private const val LOADING_DESCRIPTION = "运行终端准备中"
+        internal const val FRAGMENT_TAG_PREFIX = "kite-run-terminal-"
+
+        fun removeIncompatibleRestoredFragments(fragmentManager: FragmentManager) {
+            if (fragmentManager.isDestroyed) return
+            val incompatible = fragmentManager.fragments.filter { fragment ->
+                fragment.tag?.startsWith(FRAGMENT_TAG_PREFIX) == true &&
+                    fragment.id != R.id.kite_run_terminal_container
+            }
+            if (incompatible.isEmpty()) return
+            val transaction = fragmentManager.beginTransaction().setReorderingAllowed(true)
+            incompatible.forEach(transaction::remove)
+            transaction.commitNowAllowingStateLoss()
+        }
     }
 }

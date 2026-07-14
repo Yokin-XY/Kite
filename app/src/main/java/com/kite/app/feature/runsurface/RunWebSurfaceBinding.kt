@@ -29,6 +29,7 @@ import com.kite.app.browser.automation.BrowserAutomationSessionStore
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.UiKit
+import com.kite.app.web.KiteWebNavigationState
 import com.kite.app.web.KiteWebShell
 
 /** Web 显示绑定拥有自己的 WebView；认证会话与运行事实仍由外部 Gateway 拥有。 */
@@ -41,7 +42,8 @@ internal class RunWebSurfaceBinding(
     private val onAutomationEvent: (BrowserAutomationEvent) -> Unit,
     private val onLaunchHandoff: (BrowserHandoffRequest, BrowserHandoffDecision, Boolean) -> Boolean,
     private val onOpenExternal: (String) -> Boolean,
-    private val onManualUrl: (String) -> Unit
+    private val onManualUrl: (String) -> Unit,
+    private val onNavigationState: (RunWebNavigationUiState) -> Unit
 ) : RunSurfaceBinding {
     private val ui = UiKit(activity, tokens)
     private var webView: WebView? = null
@@ -49,6 +51,7 @@ internal class RunWebSurfaceBinding(
     private var automationController: BrowserAutomationController? = null
     private var renderedKey = ""
     private var disposed = false
+    private var navigationState = RunWebNavigationUiState()
 
     override val root: FrameLayout = FrameLayout(activity).apply {
         setBackgroundColor(tokens.pageBackground)
@@ -60,8 +63,10 @@ internal class RunWebSurfaceBinding(
         val nextKey = "${state.target.instanceId}|$url"
         if (nextKey == renderedKey) return
         renderedKey = nextKey
-        root.removeAllViews()
         if (url.isBlank()) {
+            releaseWebRuntime()
+            root.removeAllViews()
+            publishNavigation(RunWebNavigationUiState())
             root.addView(addressInputBody(), matchParent())
             return
         }
@@ -75,10 +80,16 @@ internal class RunWebSurfaceBinding(
         when (val decision = BrowserHandoffPolicy.classify(url, OPEN_SOURCE)) {
             is BrowserHandoffDecision.StartAuthHandoff,
             is BrowserHandoffDecision.StartCliCallbackHandoff -> {
+                releaseWebRuntime()
+                root.removeAllViews()
+                publishNavigation(RunWebNavigationUiState(url = url))
                 root.addView(authWaitingBody(request, decision), matchParent())
                 onLaunchHandoff(request, decision, false)
             }
             BrowserHandoffDecision.OpenExternalBrowser -> {
+                releaseWebRuntime()
+                root.removeAllViews()
+                publishNavigation(RunWebNavigationUiState(url = url))
                 val opened = onOpenExternal(url)
                 root.addView(externalBrowserBody(url, opened), matchParent())
             }
@@ -100,24 +111,43 @@ internal class RunWebSurfaceBinding(
         return true
     }
 
+    override fun goForward(): Boolean {
+        val current = webView ?: return false
+        if (!current.canGoForward()) return false
+        current.goForward()
+        return true
+    }
+
+    override fun stopLoading(): Boolean {
+        val current = webView ?: return false
+        current.stopLoading()
+        publishNavigation(navigationState.copy(loading = false))
+        return true
+    }
+
     override fun dispose() {
         if (disposed) return
         disposed = true
-        automationController?.closeActiveSession()
-        automationController = null
-        webShell = null
-        webView?.let { current ->
-            (current.parent as? ViewGroup)?.removeView(current)
-            current.stopLoading()
-            current.onPause()
-            current.removeAllViews()
-            current.destroy()
-        }
-        webView = null
+        releaseWebRuntime()
         root.removeAllViews()
     }
 
     private fun loadInWebView(state: RunSurfaceUiState, url: String) {
+        root.removeAllViews()
+        val existingView = webView
+        val existingShell = webShell
+        if (existingView != null && existingShell != null) {
+            root.addView(existingView, matchParent())
+            existingShell.loadInWebView(
+                url = url,
+                recipeId = state.target.recipeId,
+                recipeName = state.title,
+                instanceId = state.target.instanceId,
+                openSource = OPEN_SOURCE,
+                automationEnabled = automationEnabled()
+            )
+            return
+        }
         val currentWebView = WebView(activity)
         val controller = BrowserAutomationController(
             webView = currentWebView,
@@ -132,7 +162,8 @@ internal class RunWebSurfaceBinding(
             browserHandoffLauncher = BrowserHandoffLauncher { request, decision ->
                 onLaunchHandoff(request, decision, false)
             },
-            browserAutomationController = controller
+            browserAutomationController = controller,
+            onNavigationState = ::handleNavigationState
         )
         webView = currentWebView
         automationController = controller
@@ -146,6 +177,38 @@ internal class RunWebSurfaceBinding(
             openSource = OPEN_SOURCE,
             automationEnabled = automationEnabled()
         )
+    }
+
+    private fun handleNavigationState(state: KiteWebNavigationState) {
+        publishNavigation(
+            RunWebNavigationUiState(
+                url = state.url,
+                canGoBack = state.canGoBack,
+                canGoForward = state.canGoForward,
+                loading = state.loading,
+                progress = state.progress
+            )
+        )
+    }
+
+    private fun publishNavigation(state: RunWebNavigationUiState) {
+        if (navigationState == state) return
+        navigationState = state
+        onNavigationState(state)
+    }
+
+    private fun releaseWebRuntime() {
+        automationController?.closeActiveSession()
+        automationController = null
+        webShell = null
+        webView?.let { current ->
+            (current.parent as? ViewGroup)?.removeView(current)
+            current.stopLoading()
+            current.onPause()
+            current.removeAllViews()
+            current.destroy()
+        }
+        webView = null
     }
 
     private fun authWaitingBody(

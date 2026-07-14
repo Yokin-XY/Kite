@@ -44,6 +44,7 @@ import com.kite.app.feature.runsurface.CardRunLaunchTarget
 import com.kite.app.feature.runsurface.CardRunMissingStatePolicy
 import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.feature.runsurface.RunActivityChrome
+import com.kite.app.feature.runsurface.RunActivityChromeActions
 import com.kite.app.feature.runsurface.RunSurfaceActionGateway
 import com.kite.app.feature.runsurface.RunSurfaceBinding
 import com.kite.app.feature.runsurface.RunSurfaceContent
@@ -99,6 +100,7 @@ class CardRunActivity : AppCompatActivity() {
 
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
+            if (chrome?.handleBack() == true) return
             if (surfaceHost?.handleBack() == true) return
             closeTaskWindow()
         }
@@ -107,6 +109,7 @@ class CardRunActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         StartupTraceStore.markStage(this, "card_run.super_on_create")
         super.onCreate(savedInstanceState)
+        RunTerminalSurfaceBinding.removeIncompatibleRestoredFragments(supportFragmentManager)
         onBackPressedDispatcher.addCallback(this, backCallback)
         graph = KiteAppGraph.from(applicationContext)
         diagnostics = graph.diagnostics
@@ -154,6 +157,7 @@ class CardRunActivity : AppCompatActivity() {
         super.onResume()
         graph.browserAuthRedirectCoordinator.reconcile()
         currentTarget?.instanceId?.let(CardRunStore::get)?.let(::renderState)
+        surfaceHost?.reconcile()
         StartupTraceStore.markReady(applicationContext)
     }
 
@@ -252,10 +256,22 @@ class CardRunActivity : AppCompatActivity() {
         val nextChrome = RunActivityChrome(
             context = this,
             tokens = tokens,
-            onComplete = ::completeCurrentStep,
-            onStop = ::stopCurrentRun,
-            onReload = { host.reload() },
-            onClose = ::closeTaskWindow
+            actions = RunActivityChromeActions(
+                onComplete = ::completeCurrentStep,
+                onStop = ::stopCurrentRun,
+                onCloseWindow = ::closeTaskWindow,
+                onSelectSurface = { surface ->
+                    currentState?.instanceId?.let { CardRunStore.selectSurface(it, surface) }
+                },
+                onOpenWeb = {
+                    currentState?.instanceId?.let { CardRunStore.selectSurface(it, CardRunSurface.Web) }
+                },
+                onWebBack = { host.handleBack() },
+                onWebForward = { host.goForward() },
+                onWebReload = { host.reload() },
+                onWebStopLoading = { host.stopLoading() },
+                onSubmitWebUrl = ::openManualWebUrl
+            )
         )
         host.setOverlay(nextChrome.root)
         surfaceHost = host
@@ -298,7 +314,8 @@ class CardRunActivity : AppCompatActivity() {
             onAutomationEvent = { event -> browserAutomationUpdater.update(event) },
             onLaunchHandoff = { request, decision, force -> launchBrowserHandoff(request, decision, force) },
             onOpenExternal = ::openExternalBrowser,
-            onManualUrl = ::openManualWebUrl
+            onManualUrl = ::openManualWebUrl,
+            onNavigationState = { navigation -> chrome?.updateWebNavigation(navigation) }
         )
         is RunSurfaceContent.X11 -> RunX11SurfaceBinding(this, tokens)
         RunSurfaceContent.InstallWizard -> createInstallWizardBinding()
@@ -356,7 +373,7 @@ class CardRunActivity : AppCompatActivity() {
     private fun stopCurrentRun() {
         val instanceId = currentState?.instanceId ?: return
         when (val result = runOrchestrator.stop(instanceId)) {
-            is RunCommandResult.Accepted -> closeTaskWindow()
+            is RunCommandResult.Accepted -> Unit
             is RunCommandResult.Ignored -> Toast.makeText(this, "无法停止：${result.reason}", Toast.LENGTH_SHORT).show()
         }
     }
