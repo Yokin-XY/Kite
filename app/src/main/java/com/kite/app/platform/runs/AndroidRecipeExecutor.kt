@@ -10,6 +10,7 @@ import com.kite.app.application.runs.RecipeStepCompletionRequest
 import com.kite.app.application.runs.RecipeStepCompletionResult
 import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.application.runs.RecipeStopRequest
+import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunExecutionEffect
 import com.kite.app.application.runs.RunStateMutation
 import com.kite.app.application.runs.StopExecutionOutcome
@@ -154,12 +155,7 @@ internal class AndroidRecipeExecutor(
                 request.instanceId,
                 request.generation,
                 request.stepIndex,
-                RunStateMutation(
-                    status = CardRunStatus.Running,
-                    surface = CardRunSurface.Report,
-                    currentStepIndex = request.stepIndex,
-                    lastMeaningfulOutput = "正在准备 Ubuntu"
-                )
+                runtimePreparationMutation(request.step.type, request.stepIndex)
             )
         )
         thread(name = "KiteRunPrep-${request.instanceId.take(24)}", isDaemon = true) {
@@ -827,6 +823,19 @@ internal class AndroidRecipeExecutor(
         ?.firstOrNull { it.isNotBlank() }
 
     companion object {
+        internal fun runtimePreparationMutation(stepType: String, stepIndex: Int): RunStateMutation =
+            RunStateMutation(
+                status = CardRunStatus.Running,
+                surface = RunOrchestrator.surfaceFor(stepType),
+                currentStepIndex = stepIndex,
+                lastMeaningfulOutput = when (stepType) {
+                    KiteRecipe.STEP_TERMINAL -> "正在准备终端环境"
+                    KiteRecipe.STEP_X11 -> "正在准备 X11 环境"
+                    KiteRecipe.STEP_SHELL -> "正在准备 SH 环境"
+                    else -> "正在准备运行环境"
+                }
+            )
+
         private const val TERMINAL_COMMAND_DELAY_MS = 650L
         private val TERMINAL_FINISHED_STATUSES = setOf(
             ManagedTerminalStatus.EXITED,

@@ -87,6 +87,28 @@ class AndroidRecipeExecutorTest {
     }
 
     @Test
+    fun `终端准备过程保持终端显示面而不生成 SH 报告`() {
+        val preparing = AndroidRecipeExecutor.runtimePreparationMutation(
+            stepType = KiteRecipe.STEP_TERMINAL,
+            stepIndex = 0
+        )
+
+        assertEquals(CardRunSurface.Terminal, preparing.surface)
+        assertEquals("正在准备终端环境", preparing.lastMeaningfulOutput)
+    }
+
+    @Test
+    fun `只有 SH 步骤的准备过程使用报告显示面`() {
+        val preparing = AndroidRecipeExecutor.runtimePreparationMutation(
+            stepType = KiteRecipe.STEP_SHELL,
+            stepIndex = 0
+        )
+
+        assertEquals(CardRunSurface.Report, preparing.surface)
+        assertEquals("正在准备 SH 环境", preparing.lastMeaningfulOutput)
+    }
+
+    @Test
     fun `尚未获得进程绑定的启动任务可以确定取消`() {
         val recipe = recipe(KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "sleep 10"))
         var result: StopExecutionResult? = null

@@ -156,17 +156,18 @@ internal object RunSurfaceProjector {
             .mapValues { (_, values) -> values.maxByOrNull(CardRunState::updatedAt)!! }
         val fixed = linkedMapOf<String, WindowSource>()
 
-        if (parent.hasReportWindow()) {
-            val stepIndex = reportStepIndex(recipe, parent.currentStepIndex)
-            val source = replayByStep[stepIndex]?.takeIf { it.surface == CardRunSurface.Report } ?: parent
-            fixed[CardRunWindowIds.workflow(stepIndex, CardRunSurface.Report)] = workflowSource(
-                recipe = recipe,
-                parent = parent,
-                source = source,
-                stepIndex = stepIndex,
-                surface = CardRunSurface.Report
-            )
-        }
+        reportStepIndex(recipe, parent.currentStepIndex)
+            ?.takeIf { stepIndex -> parent.hasReportWindowFor(stepIndex) }
+            ?.let { stepIndex ->
+                val source = replayByStep[stepIndex]?.takeIf { it.surface == CardRunSurface.Report } ?: parent
+                fixed[CardRunWindowIds.workflow(stepIndex, CardRunSurface.Report)] = workflowSource(
+                    recipe = recipe,
+                    parent = parent,
+                    source = source,
+                    stepIndex = stepIndex,
+                    surface = CardRunSurface.Report
+                )
+            }
         if (!parent.terminalSessionId.isNullOrBlank() ||
             (parent.surface == CardRunSurface.Terminal && !selectedManualWindow)
         ) {
@@ -261,7 +262,11 @@ internal object RunSurfaceProjector {
                 windowId = SUMMARY_WINDOW_ID,
                 surface = parent.surface,
                 kind = parent.surface.windowKind(),
-                title = parent.surface.label,
+                title = when (parent.surface) {
+                    CardRunSurface.Report,
+                    CardRunSurface.Summary -> "执行摘要"
+                    else -> parent.surface.label
+                },
                 subtitle = parent.status.label,
                 state = parent,
                 stepIndex = null,
@@ -285,7 +290,11 @@ internal object RunSurfaceProjector {
             surface = surface,
             kind = surface.windowKind(),
             title = when (surface) {
-                CardRunSurface.Report -> "SH 报告"
+                CardRunSurface.Report -> when (step?.type) {
+                    KiteRecipe.STEP_SHELL -> "SH 报告"
+                    KiteRecipe.STEP_ANDROID_ACTION -> "动作报告"
+                    else -> "执行摘要"
+                }
                 CardRunSurface.Terminal -> "终端"
                 CardRunSurface.Web -> "网页"
                 CardRunSurface.X11 -> "X11"
@@ -349,11 +358,12 @@ internal object RunSurfaceProjector {
         )
     }
 
-    private fun reportStepIndex(recipe: KiteRecipe, currentStepIndex: Int): Int {
+    private fun reportStepIndex(recipe: KiteRecipe, currentStepIndex: Int): Int? {
+        if (recipe.steps.isEmpty()) return null
         val capped = currentStepIndex.coerceIn(0, recipe.steps.lastIndex.coerceAtLeast(0))
         return (capped downTo 0).firstOrNull { index ->
             recipe.steps.getOrNull(index)?.type in REPORT_STEP_TYPES
-        } ?: capped
+        }
     }
 
     private fun stepIndexFor(recipe: KiteRecipe, state: CardRunState, stepType: String): Int {
@@ -364,12 +374,12 @@ internal object RunSurfaceProjector {
             ?: current.coerceAtLeast(0)
     }
 
-    private fun CardRunState.hasReportWindow(): Boolean =
+    private fun CardRunState.hasReportWindowFor(stepIndex: Int): Boolean =
         !shellReportText.isNullOrBlank() ||
-            !lastMeaningfulOutput.isNullOrBlank() ||
-            !lastError.isNullOrBlank() ||
-            surface == CardRunSurface.Report ||
-            surface == CardRunSurface.Summary
+            (currentStepIndex == stepIndex && (
+                surface == CardRunSurface.Report ||
+                    !lastError.isNullOrBlank()
+                ))
 
     private fun CardRunState.manualWindowSubtitle(): String = when (ownerKind) {
         CardRunState.OWNER_KIND_WEB -> webWindowSubtitle(nextActionUrl)
