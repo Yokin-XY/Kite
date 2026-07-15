@@ -3,7 +3,7 @@
   "id": "kite.vscode.x11",
   "base": {
     "name": "VS Code",
-    "description": "VS Code 桌面版",
+    "description": "实验性 X11 桌面版",
     "version": "stable arm64",
     "icon": {
       "type": "text",
@@ -17,7 +17,12 @@
     "category": "GUI",
     "accent": "teal",
     "sizeLabel": "桌面应用",
-    "longDescription": "在 Ubuntu 实例里安装 Microsoft 官方 arm64 VS Code，并通过 Kite 内嵌 X11 桌面能力打开。",
+    "badge": {
+      "label": "实验能力",
+      "iconText": "!",
+      "accent": "orange"
+    },
+    "longDescription": "实验性能力：在 Ubuntu 实例里安装 Microsoft 官方 arm64 VS Code，并通过 Kite 内嵌 X11 桌面能力打开；当前不属于稳定发布承诺。",
     "requirementRows": [
       {
         "label": "运行环境",

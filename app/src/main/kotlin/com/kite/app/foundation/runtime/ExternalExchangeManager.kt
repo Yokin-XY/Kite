@@ -235,7 +235,7 @@ object ExternalExchangeManager {
             Do not put bridgeUrl, bridgePort, token, runId, pid, rootPid, processGroupId, systemSessionId, or runtime status into card JSON.
 
             Full repository guide:
-            - docs/HOME_CARD_SCHEMA.md
+            - docs/reference/home-card-schema.md
         """.trimIndent() + "\n"
         runCatching {
             val existingContent = if (guide.exists()) {

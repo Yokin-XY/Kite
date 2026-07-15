@@ -3,7 +3,7 @@
   "id": "kite.pcmanfm.x11",
   "base": {
     "name": "PCManFM",
-    "description": "轻量文件管理器",
+    "description": "实验性 X11 文件管理器",
     "version": "ubuntu apt",
     "icon": {
       "type": "text",
@@ -17,7 +17,12 @@
     "category": "GUI",
     "accent": "cyan",
     "sizeLabel": "文件管理器",
-    "longDescription": "安装 Ubuntu apt 源里的 PCManFM，用来验证 Kite 的 SH/终端请求式 X11 渲染链路，也可作为轻量文件管理器使用。",
+    "badge": {
+      "label": "实验能力",
+      "iconText": "!",
+      "accent": "orange"
+    },
+    "longDescription": "实验性能力：安装 Ubuntu apt 源里的 PCManFM，用来验证 Kite 的 SH/终端请求式 X11 渲染链路；当前不属于稳定发布承诺。",
     "requirementRows": [
       {
         "label": "运行环境",

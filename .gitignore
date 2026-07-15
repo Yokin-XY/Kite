@@ -1,31 +1,32 @@
+# Gradle、Android Studio 和本机构建输出。
 .gradle/
-build/
-app/build/
-local.properties
-*.iml
+**/build/
 .idea/
+*.iml
+local.properties
+.externalNativeBuild/
+.cxx/
+captures/
+
+# 本机环境、密钥和临时配置。
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
 .DS_Store
+Thumbs.db
+/references/
+/.codex-remote-attachments/
+
+# 构建、诊断和人工验证产物不进入源码仓库。
+*.apk
+*.aab
+*.apks
+*.log
+*.hprof
+*.trace
+/local-artifacts/
 /kite-*.png
 /card-run-*.png
 /terminal-*-check.png
-
-# Local planning and workspace notes.
-/docs/*
-# 重构治理文件(Playbook/PROGRESS/DECISIONS)是工程基础设施,需纳入版本控制,
-# 以抗上下文压缩、支持 PR 审查。其他 docs 仍按本地笔记处理。
-!/docs/refactor/
-!/docs/refactor/**
-!/docs/stabilization/
-!/docs/stabilization/**
-!/docs/browser-login/
-!/docs/browser-login/**
-!/docs/browser-automation/
-!/docs/browser-automation/**
-!/docs/parallel-workstreams/
-!/docs/parallel-workstreams/**
-!/docs/x11-super-operation/
-!/docs/x11-super-operation/**
-!/docs/screenshots/
-/docs/screenshots/*
-!/docs/screenshots/kite-*.png
-/references/

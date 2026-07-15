@@ -31,7 +31,7 @@ function Imported-Types {
     )
 }
 
-$baselinePath = Join-Path $Root 'docs/stabilization/architecture-baseline.json'
+$baselinePath = Join-Path $Root 'docs/tasks/stabilization/architecture-baseline.json'
 $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
 $taskContractInitializerPath = Join-Path $Root 'app/src/main/java/com/kite/app/KiteTaskContractInitializer.kt'
 $cardRunPath = Join-Path $Root 'app/src/main/java/com/kite/app/CardRunActivity.kt'
