@@ -55,6 +55,60 @@ data class TaskManagerSnapshot(
     val refreshedAt: Long = 0L
 )
 
+private fun TaskManagerSnapshot.withoutRuntimeOwners(
+    ownerIds: Collection<String>
+): TaskManagerSnapshot {
+    if (ownerIds.isEmpty()) return this
+    return copy(processes = processes.filterNot { process -> process.runtimeOwnerId in ownerIds })
+}
+
+internal data class TaskManagerSnapshotDecision(
+    val snapshot: TaskManagerSnapshot,
+    val emptyExpiryDelayMs: Long? = null
+)
+
+/** 短暂保留上一份非空进程表，但明确给出空快照必须生效的剩余时间。 */
+internal class TaskManagerSnapshotGrace(
+    private val graceMs: Long,
+    private val nowMs: () -> Long = System::currentTimeMillis
+) {
+    private var lastNonEmptySnapshot: TaskManagerSnapshot? = null
+    private var emptySnapshotStartedAtMs: Long? = null
+
+    @Synchronized
+    fun accept(next: TaskManagerSnapshot): TaskManagerSnapshotDecision {
+        if (next.processes.isNotEmpty()) {
+            lastNonEmptySnapshot = next
+            emptySnapshotStartedAtMs = null
+            return TaskManagerSnapshotDecision(next)
+        }
+        val previous = lastNonEmptySnapshot ?: return TaskManagerSnapshotDecision(next)
+        val now = nowMs()
+        val startedAt = emptySnapshotStartedAtMs ?: now.also { emptySnapshotStartedAtMs = it }
+        val elapsedMs = (now - startedAt).coerceAtLeast(0L)
+        if (elapsedMs >= graceMs) {
+            lastNonEmptySnapshot = null
+            emptySnapshotStartedAtMs = null
+            return TaskManagerSnapshotDecision(next)
+        }
+        return TaskManagerSnapshotDecision(
+            snapshot = previous.copy(refreshedAt = next.refreshedAt),
+            emptyExpiryDelayMs = (graceMs - elapsedMs).coerceAtLeast(1L)
+        )
+    }
+
+    @Synchronized
+    fun confirmOwnersStopped(ownerIds: Set<String>): TaskManagerSnapshot? {
+        val previous = lastNonEmptySnapshot ?: return null
+        val retained = previous.withoutRuntimeOwners(ownerIds)
+        lastNonEmptySnapshot = retained.takeIf { it.processes.isNotEmpty() }
+        if (retained.processes.isEmpty()) {
+            emptySnapshotStartedAtMs = null
+        }
+        return retained
+    }
+}
+
 /**
  * 任务入口层适配器，给任务页提供进程/运行项快照与入口动作。
  *
@@ -65,11 +119,23 @@ object TaskManagerStore {
     private const val UI_REFRESH_MIN_INTERVAL_MS = 2_000L
     private const val MAX_LIVE_PROCESS_ROWS = 160
     private const val EMPTY_PROCESS_GRACE_MS = 1_500L
+    private const val CONFIRMED_STOP_SUPPRESSION_MS = 10_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val actionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _snapshot = MutableStateFlow(TaskManagerSnapshot())
     val snapshot: StateFlow<TaskManagerSnapshot> = _snapshot
+    private val snapshotGrace = TaskManagerSnapshotGrace(EMPTY_PROCESS_GRACE_MS)
+    private val confirmedStoppedOwners = linkedMapOf<String, Long>()
+
+    @Volatile
+    private var latestRawSnapshot = TaskManagerSnapshot()
+
+    @Volatile
+    private var rawSnapshotVersion = 0L
+
+    @Volatile
+    private var emptyExpiryJob: Job? = null
 
     @Volatile
     private var refreshJob: Job? = null
@@ -79,16 +145,12 @@ object TaskManagerStore {
 
     @Volatile
     private var lastRefreshAtMs = 0L
-    @Volatile
-    private var lastNonEmptySnapshot: TaskManagerSnapshot? = null
-    @Volatile
-    private var emptySnapshotStartedAtMs = 0L
 
     init {
         scope.launch {
             RuntimeHealthStore.snapshot.collect { healthSnapshot ->
                 val items = buildTaskItems(healthSnapshot)
-                _snapshot.value = stabilizeSnapshot(TaskManagerSnapshot(
+                publishSnapshot(TaskManagerSnapshot(
                     spaceId = healthSnapshot.spaceId,
                     processes = items,
                     refreshedAt = maxOf(
@@ -183,6 +245,26 @@ object TaskManagerStore {
         return _snapshot.value.processes.firstOrNull { it.id == processId }
     }
 
+    /** 终止层已经直接探测确认 owner 退出时，立即撤掉对应的旧进程投影。 */
+    @Synchronized
+    internal fun confirmOwnersStopped(ownerIds: Collection<String>) {
+        val normalized = ownerIds.map(String::trim).filter(String::isNotEmpty).toSet()
+        if (normalized.isEmpty()) return
+
+        val now = System.currentTimeMillis()
+        normalized.forEach { ownerId ->
+            confirmedStoppedOwners[ownerId] = now + CONFIRMED_STOP_SUPPRESSION_MS
+        }
+        snapshotGrace.confirmOwnersStopped(normalized)
+        latestRawSnapshot = latestRawSnapshot.withoutRuntimeOwners(normalized)
+        rawSnapshotVersion += 1L
+        emptyExpiryJob?.cancel()
+        emptyExpiryJob = null
+        _snapshot.value = _snapshot.value
+            .withoutRuntimeOwners(normalized)
+            .copy(refreshedAt = maxOf(_snapshot.value.refreshedAt, now))
+    }
+
     @Synchronized
     private fun clearPendingRefresh() {
         pendingRefresh = false
@@ -196,22 +278,36 @@ object TaskManagerStore {
     }
 
     @Synchronized
-    private fun stabilizeSnapshot(next: TaskManagerSnapshot): TaskManagerSnapshot {
-        if (next.processes.isNotEmpty()) {
-            lastNonEmptySnapshot = next
-            emptySnapshotStartedAtMs = 0L
-            return next
-        }
-        val previous = lastNonEmptySnapshot ?: return next
+    private fun publishSnapshot(next: TaskManagerSnapshot) {
         val now = System.currentTimeMillis()
-        if (emptySnapshotStartedAtMs == 0L) {
-            emptySnapshotStartedAtMs = now
+        confirmedStoppedOwners.entries.removeAll { (_, expiresAt) -> expiresAt <= now }
+        val filtered = next.withoutRuntimeOwners(confirmedStoppedOwners.keys)
+        latestRawSnapshot = filtered
+        rawSnapshotVersion += 1L
+        val decision = snapshotGrace.accept(filtered)
+        _snapshot.value = decision.snapshot
+        scheduleEmptyExpiry(decision.emptyExpiryDelayMs, rawSnapshotVersion)
+    }
+
+    @Synchronized
+    private fun scheduleEmptyExpiry(delayMs: Long?, expectedVersion: Long) {
+        emptyExpiryJob?.cancel()
+        emptyExpiryJob = null
+        if (delayMs == null) return
+        emptyExpiryJob = scope.launch {
+            delay(delayMs)
+            expireEmptySnapshot(expectedVersion)
         }
-        // ponytail: short empty grace hides collector gaps; replace with refresh generations if collectors expose them.
-        return if (now - emptySnapshotStartedAtMs < EMPTY_PROCESS_GRACE_MS) {
-            previous.copy(refreshedAt = next.refreshedAt)
-        } else {
-            next
+    }
+
+    @Synchronized
+    private fun expireEmptySnapshot(expectedVersion: Long) {
+        if (rawSnapshotVersion != expectedVersion || latestRawSnapshot.processes.isNotEmpty()) return
+        emptyExpiryJob = null
+        val decision = snapshotGrace.accept(latestRawSnapshot)
+        _snapshot.value = decision.snapshot
+        decision.emptyExpiryDelayMs?.let { delayMs ->
+            scheduleEmptyExpiry(delayMs, expectedVersion)
         }
     }
 

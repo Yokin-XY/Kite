@@ -24,9 +24,11 @@ import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.runtime.RuntimeFrameCoordinator
 import com.kite.app.foundation.runtime.TerminalSessionStore
 import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
+import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
@@ -649,11 +651,15 @@ internal class AndroidRecipeExecutor(
                     if (status.ok || status.accepted) {
                         stopRuntime(request, retriedAfterStableBridge = true, callback)
                     } else {
-                        callback(StopExecutionResult(StopExecutionOutcome.ConnectionError, "Bridge 连接失败"))
+                        deliverStopResult(
+                            request,
+                            StopExecutionResult(StopExecutionOutcome.ConnectionError, "Bridge 连接失败"),
+                            callback
+                        )
                     }
                 }
             } else {
-                callback(result.toStopExecutionResult())
+                deliverStopResult(request, result.toStopExecutionResult(), callback)
             }
         }
         val bridgeRunId = request.bridgeRunId()
@@ -682,6 +688,27 @@ internal class AndroidRecipeExecutor(
                 callback = bridgeCallback
             )
         }
+    }
+
+    private fun deliverStopResult(
+        request: RecipeStopRequest,
+        result: StopExecutionResult,
+        callback: (StopExecutionResult) -> Unit
+    ) {
+        if (result.outcome == StopExecutionOutcome.Confirmed && result.remainingProcessIds.isEmpty()) {
+            TaskManagerStore.confirmOwnersStopped(request.runtimeOwnerIds)
+        }
+        scope.launch(Dispatchers.IO) {
+            RuntimeFrameCoordinator.refreshProcessSnapshot(
+                context = appContext,
+                reason = "run-stop:${request.instanceId}"
+            )
+            RuntimeFrameCoordinator.scheduleProcessRefreshBurst(
+                context = appContext,
+                reason = "run-stop:${request.instanceId}"
+            )
+        }
+        callback(result)
     }
 
     private fun BridgeResult.toStopExecutionResult(): StopExecutionResult {
