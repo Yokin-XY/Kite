@@ -7,6 +7,7 @@ data class RuntimeManagementSnapshot(
     val runs: List<CardRunState> = emptyList(),
     val terminals: List<RuntimeManagedTerminal> = emptyList(),
     val processes: List<RuntimeManagedProcess> = emptyList(),
+    val topology: InstanceRuntimeTopology = InstanceRuntimeTopologyBuilder.build(runs, terminals, processes),
     val observedProcessCount: Int = 0,
     val refreshedAt: Long = 0L
 )

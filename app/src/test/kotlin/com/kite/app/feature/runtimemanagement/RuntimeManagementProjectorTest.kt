@@ -38,7 +38,7 @@ class RuntimeManagementProjectorTest {
                     process(
                         id = "root-card-card-1",
                         pid = 41,
-                        ownerId = "card:card-1",
+                        ownerId = run.runtimeRootOwnerId,
                         ownerKind = RuntimeManagedOwnerKind.Card,
                         isOwnerRoot = true
                     ),
@@ -46,7 +46,7 @@ class RuntimeManagementProjectorTest {
                         id = "process-52",
                         pid = 52,
                         parentPid = 41,
-                        ownerId = "card:card-1",
+                        ownerId = run.runtimeOwnerId,
                         ownerKind = RuntimeManagedOwnerKind.Card,
                         canEndDirectly = true
                     )
@@ -97,7 +97,7 @@ class RuntimeManagementProjectorTest {
             id = "process-52",
             pid = 52,
             parentPid = 41,
-            ownerId = "card:card-1",
+            ownerId = run.runtimeOwnerId,
             ownerKind = RuntimeManagedOwnerKind.Card,
             canEndDirectly = true
         )
@@ -201,6 +201,13 @@ class RuntimeManagementProjectorTest {
         surface: CardRunSurface = CardRunSurface.Summary,
         nextActionUrl: String? = null
     ): CardRunState = CardRunState(
+        runtimeRootOwnerId = "card:$instanceId@10",
+        runtimeOwnerId = "card:$instanceId@10/step/0-start/attempt/1",
+        runtimeUnitId = "card:$instanceId@10/step/0-start/attempt/1",
+        ownedRuntimeOwnerIds = listOf(
+            "card:$instanceId@10",
+            "card:$instanceId@10/step/0-start/attempt/1"
+        ),
         instanceId = instanceId,
         recipeId = recipeId,
         recipeName = "OpenClaw",

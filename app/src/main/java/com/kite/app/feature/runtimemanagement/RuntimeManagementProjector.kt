@@ -15,18 +15,29 @@ internal object RuntimeManagementProjector {
         snapshot: RuntimeManagementSnapshot,
         mutations: Map<String, RuntimeManagementMutation> = emptyMap()
     ): RuntimeManagementUiState {
-        val roots = snapshot.runs
-            .filter { it.parentInstanceId.isNullOrBlank() && it.belongsOnManagementPage() }
+        val topology = snapshot.topology
+        val processesById = snapshot.processes.associateBy(RuntimeManagedProcess::id)
+        val roots = topology.rootInstanceIds
+            .mapNotNull(topology.nodesByInstanceId::get)
+            .map { it.run }
+            .filter { it.belongsOnManagementPage() }
             .sortedByDescending(CardRunState::updatedAt)
-        val assignments = assignProcesses(roots, snapshot.processes)
+        val assignments = roots.associate { root ->
+            root.instanceId to topology.subtree(root.instanceId)
+                .flatMap { it.processIds }
+                .distinct()
+                .mapNotNull(processesById::get)
+                .sortedWith(
+                    compareByDescending<RuntimeManagedProcess> { it.isOwnerRoot }
+                        .thenBy(RuntimeManagedProcess::parentPid)
+                        .thenBy(RuntimeManagedProcess::pid)
+                )
+        }
         val assignedProcessIds = assignments.values.flatten().mapTo(mutableSetOf(), RuntimeManagedProcess::id)
         val terminalsById = snapshot.terminals.associateBy(RuntimeManagedTerminal::id)
-        val childrenByParent = snapshot.runs
-            .filter { !it.parentInstanceId.isNullOrBlank() }
-            .groupBy { it.parentInstanceId.orEmpty() }
-        val assignedTerminalIds = snapshot.runs
-            .mapNotNull(CardRunState::terminalSessionId)
-            .filter(String::isNotBlank)
+        val assignedTerminalIds = roots
+            .flatMap { root -> topology.subtree(root.instanceId) }
+            .flatMap { it.terminalSessionIds }
             .toSet()
 
         val runs = roots.map { run ->
@@ -50,7 +61,10 @@ internal object RuntimeManagementProjector {
                 statusLabel = run.status.label,
                 statusTone = KiteCardRunUiProjector.project(run.status).tone,
                 createdAt = run.createdAt,
-                surfaces = surfacesFor(run, childrenByParent[run.instanceId].orEmpty()),
+                surfaces = surfacesFor(
+                    run,
+                    topology.descendants(run.instanceId).map { it.run }
+                ),
                 terminalTitle = terminal?.title,
                 processCount = maxOf(terminal?.processCount ?: 0, processes.size, if (run.boundPids().isEmpty()) 0 else 1),
                 mainProcess = processStates.firstOrNull(RuntimeManagementProcessUiState::isMain),
@@ -130,34 +144,6 @@ internal object RuntimeManagementProjector {
                 mutationPhase = mutation?.phase
             )
         )
-    }
-
-    private fun assignProcesses(
-        runs: List<CardRunState>,
-        processes: List<RuntimeManagedProcess>
-    ): Map<String, List<RuntimeManagedProcess>> {
-        val assignments = linkedMapOf<String, MutableList<RuntimeManagedProcess>>()
-        processes.forEach { process ->
-            val owner = runs
-                .map { run -> run to process.matchScore(run) }
-                .filter { it.second > 0 }
-                .maxWithOrNull(compareBy<Pair<CardRunState, Int>> { it.second }.thenBy { it.first.updatedAt })
-                ?.first
-                ?: return@forEach
-            assignments.getOrPut(owner.instanceId) { mutableListOf() }.add(process)
-        }
-        return assignments.mapValues { (_, items) ->
-            items.sortedWith(compareByDescending<RuntimeManagedProcess> { it.isOwnerRoot }.thenBy { it.parentPid }.thenBy { it.pid })
-        }
-    }
-
-    private fun RuntimeManagedProcess.matchScore(run: CardRunState): Int {
-        if (ownerId == run.expectedOwnerId()) return 50
-        if (unitId == "card:${run.instanceId}") return 40
-        if (!run.terminalSessionId.isNullOrBlank() && linkedTerminalSessionId == run.terminalSessionId) return 30
-        val pids = run.boundPids()
-        if (pid in pids || parentPid in pids || ownerRootPid in pids) return 20
-        return 0
     }
 
     private fun RuntimeManagedProcess.isMainFor(run: CardRunState): Boolean {
@@ -284,27 +270,14 @@ internal object RuntimeManagementProjector {
             surface == CardRunSurface.Report ||
             surface == CardRunSurface.Summary
 
-    private fun CardRunState.expectedOwnerId(): String = when (ownerKind) {
-        CardRunState.OWNER_KIND_RESOURCE -> "resource:${resourceId().orEmpty().ifBlank { instanceId }}"
-        CardRunState.OWNER_KIND_TERMINAL -> "terminal:${terminalSessionId ?: runId ?: instanceId}"
-        else -> "card:$instanceId"
-    }
-
-    private fun CardRunState.resourceId(): String? = when {
-        recipeId.startsWith("resource-") -> recipeId
-            .removePrefix("resource-")
-            .removeSuffix("-install")
-            .removeSuffix("-uninstall")
-            .takeIf(String::isNotBlank)
-        else -> stepId?.takeIf(String::isNotBlank)
-    }
-
     private fun CardRunState.boundPids(): Set<Int> = listOf(rootPid, pid)
         .mapNotNull { it?.trim()?.toIntOrNull()?.takeIf { value -> value > 0 } }
         .toSet()
 
     private fun CardRunState.belongsOnManagementPage(): Boolean =
-        countsAsRunningCard() || (hasRunBinding() && status in setOf(CardRunStatus.Failed, CardRunStatus.BridgeUnavailable))
+        countsAsRunningCard() ||
+            ((hasRunBinding() || hasRuntimeOwnership()) &&
+                status in setOf(CardRunStatus.Failed, CardRunStatus.BridgeUnavailable))
 
     private fun CardRunState.countsAsRunningCard(): Boolean = status in setOf(
         CardRunStatus.Starting,
