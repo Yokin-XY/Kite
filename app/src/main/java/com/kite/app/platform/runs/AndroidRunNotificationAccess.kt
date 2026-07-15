@@ -1,6 +1,7 @@
 package com.kite.app.platform.runs
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -37,6 +38,29 @@ internal object AndroidRunNotificationAccess {
                 context.applicationContext,
                 Manifest.permission.POST_NOTIFICATIONS
             ) != PackageManager.PERMISSION_GRANTED
+
+    fun postSafely(
+        context: Context,
+        manager: NotificationManagerCompat,
+        tag: String?,
+        id: Int,
+        notification: Notification
+    ): Boolean {
+        val appContext = context.applicationContext
+        if (!isAvailable(appContext)) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(appContext, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return false
+        }
+        return try {
+            manager.notify(tag, id, notification)
+            true
+        } catch (_: SecurityException) {
+            false
+        }
+    }
 
     fun runChannelSettingsIntent(context: Context): Intent =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

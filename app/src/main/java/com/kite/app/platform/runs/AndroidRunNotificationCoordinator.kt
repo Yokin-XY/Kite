@@ -320,7 +320,13 @@ internal class AndroidRunNotificationCoordinator(
             }
         viewBinder.bind(builder, model, ::actionPendingIntent)
         val notification = builder.build()
-        manager.notify(notificationTag(model.instanceId), INSTANCE_NOTIFICATION_ID, notification)
+        AndroidRunNotificationAccess.postSafely(
+            context = appContext,
+            manager = manager,
+            tag = notificationTag(model.instanceId),
+            id = INSTANCE_NOTIFICATION_ID,
+            notification = notification
+        )
     }
 
     private fun publishSummary(models: List<RunNotificationUiState>) {
@@ -339,7 +345,13 @@ internal class AndroidRunNotificationCoordinator(
             .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
             .setOngoing(active > 0)
             .build()
-        manager.notify(SUMMARY_NOTIFICATION_ID, summary)
+        AndroidRunNotificationAccess.postSafely(
+            context = appContext,
+            manager = manager,
+            tag = null,
+            id = SUMMARY_NOTIFICATION_ID,
+            notification = summary
+        )
     }
 
     private fun actionPendingIntent(action: RunNotificationAction): PendingIntent = when (action) {
