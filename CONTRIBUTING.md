@@ -24,6 +24,8 @@ powershell -File scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1
 
 ## 文档与产物
 
-- 长期有效说明进入 `README.md`、`docs/architecture/`、`docs/guides/` 或 `docs/reference/`。
+- 根 `README.md` 只保留长期稳定的项目介绍和入口；具体说明进入 `docs/architecture/`、`docs/guides/` 或 `docs/reference/`，分类见 [文档总览](docs/README.md)。
+- 版本、APK、校验值和更新内容只写入 GitHub Releases；主线实时状态由 GitHub Actions 提供，不在文档中手写当前值。
+- 同一事实只维护一份，其他页面使用链接指向它，不复制版本号、能力状态、协议正文或任务进度。
 - 当前跨会话任务文件进入 `docs/tasks/<task>/`，任务完成后提炼结论并清理流水。
 - APK、截图、logcat、诊断 JSON 和临时报告进入被忽略的 `local-artifacts/`；发布安装包进入 GitHub Releases。
