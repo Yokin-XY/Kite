@@ -13,8 +13,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RunSurfaceControllerTest {
-    private val actions = FakeRunSurfaceActions()
-    private val controller = RunSurfaceController(actions)
+    private val controller = RunSurfaceController()
 
     @Test
     fun `报告内容变化不改变显示结构键`() {
@@ -87,7 +86,7 @@ class RunSurfaceControllerTest {
 
         assertEquals(RunSurfaceContent.Terminal("terminal-1"), ui.content)
         assertFalse(ui.canCompleteCurrentStep)
-        assertTrue(ui.canStop)
+        assertTrue(ui.canCloseInstance)
     }
 
     @Test
@@ -101,28 +100,29 @@ class RunSurfaceControllerTest {
     }
 
     @Test
-    fun `页面离开只解绑而显式停止才提交停止命令`() {
+    fun `页面离开只解绑显示目标`() {
         val recipe = recipe(KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL, cmd = "bash"))
         controller.attach(recipe, state(surface = CardRunSurface.Terminal, terminalSessionId = "terminal-1"))
 
         controller.detach()
 
-        assertFalse(controller.stop())
-        assertTrue(actions.stoppedInstances.isEmpty())
-
-        controller.attach(recipe, state(surface = CardRunSurface.Terminal, terminalSessionId = "terminal-1"))
-        assertTrue(controller.stop())
-        assertEquals(listOf("instance-1"), actions.stoppedInstances)
+        assertNull(controller.update(recipe, state(surface = CardRunSurface.Terminal, terminalSessionId = "terminal-1")))
     }
 
     @Test
     fun `实例窗口由同一运行事实投影并标记当前显示面`() {
-        val recipe = recipe(KiteRecipeStep(id = "web", type = KiteRecipe.STEP_OPEN_WEB, url = "https://example.com"))
+        val recipe = recipe(
+            KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "echo ok"),
+            KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL, cmd = "bash"),
+            KiteRecipeStep(id = "web", type = KiteRecipe.STEP_OPEN_WEB, url = "https://example.com"),
+            KiteRecipeStep(id = "x11", type = KiteRecipe.STEP_X11, cmd = "start-x11")
+        )
 
         val ui = controller.attach(
             recipe,
             state(
                 surface = CardRunSurface.Web,
+                currentStepIndex = 2,
                 terminalSessionId = "terminal-1",
                 nextActionUrl = "https://www.example.com:8443/path",
                 report = "执行完成",
@@ -144,6 +144,24 @@ class RunSurfaceControllerTest {
     }
 
     @Test
+    fun `终端作为第一步时通用进度不能生成 SH 报告窗口`() {
+        val recipe = recipe(KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL, cmd = "bash"))
+
+        val ui = controller.attach(
+            recipe,
+            state(
+                surface = CardRunSurface.Terminal,
+                status = CardRunStatus.WaitingTerminal,
+                terminalSessionId = "terminal-1",
+                lastMeaningfulOutput = "等待终端完成"
+            )
+        )
+
+        assertEquals(listOf(CardRunSurface.Terminal), ui.windows.map(RunSurfaceWindowUiState::surface))
+        assertEquals("终端", ui.windows.single().title)
+    }
+
+    @Test
     fun `停止确认期间不再暴露重复停止动作`() {
         val recipe = recipe(KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL, cmd = "bash"))
 
@@ -156,26 +174,28 @@ class RunSurfaceControllerTest {
             )
         )
 
-        assertFalse(ui.canStop)
+        assertFalse(ui.canCloseInstance)
     }
 
-    private fun recipe(step: KiteRecipeStep): KiteRecipe = KiteRecipe(
+    private fun recipe(vararg steps: KiteRecipeStep): KiteRecipe = KiteRecipe(
         id = "recipe-1",
         name = "测试运行",
         description = "",
         type = KiteRecipe.TYPE_START_SERVICE,
         defaultUrl = "",
         shortcut = false,
-        execution = KiteExecution.steps(listOf(step))
+        execution = KiteExecution.steps(steps.toList())
     )
 
     private fun state(
         instanceId: String = "instance-1",
         surface: CardRunSurface,
         status: CardRunStatus = CardRunStatus.Running,
+        currentStepIndex: Int = 0,
         terminalSessionId: String? = null,
         nextActionUrl: String? = null,
         report: String? = null,
+        lastMeaningfulOutput: String? = null,
         lastError: String? = null,
         x11Display: String? = null
     ): CardRunState = CardRunState(
@@ -184,22 +204,15 @@ class RunSurfaceControllerTest {
         recipeName = "测试运行",
         status = status,
         surface = surface,
-        currentStepIndex = 0,
+        currentStepIndex = currentStepIndex,
         stepCount = 1,
         terminalSessionId = terminalSessionId,
         nextActionUrl = nextActionUrl,
         x11Display = x11Display,
+        lastMeaningfulOutput = lastMeaningfulOutput,
         lastError = lastError,
         shellReportText = report,
         createdAt = 1L,
         updatedAt = 1L
     )
-}
-
-private class FakeRunSurfaceActions : RunSurfaceActionGateway {
-    val stoppedInstances = mutableListOf<String>()
-
-    override fun stop(instanceId: String) {
-        stoppedInstances += instanceId
-    }
 }

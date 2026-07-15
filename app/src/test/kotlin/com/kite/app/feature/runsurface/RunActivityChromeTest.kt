@@ -80,7 +80,7 @@ class RunActivityChromeTest {
     }
 
     @Test
-    fun `实例窗口只保留停止新建返回且新建提供终端网页`() {
+    fun `实例窗口只保留关闭新建返回且新建提供终端网页`() {
         val fixture = fixture()
         fixture.renderTerminal()
         val firstTapAt = SystemClock.uptimeMillis()
@@ -88,7 +88,7 @@ class RunActivityChromeTest {
         dispatchTap(fixture.chrome.handleForTesting(), firstTapAt + 100L)
         fixture.actionLog.clear()
 
-        assertNotNull(fixture.chrome.root.findByDescription("停止任务"))
+        assertNotNull(fixture.chrome.root.findByDescription("关闭"))
         assertNotNull(fixture.chrome.root.findByDescription("新建"))
         assertNotNull(fixture.chrome.root.findByDescription("返回"))
         assertNull(fixture.chrome.root.findByDescription("完成步骤"))
@@ -112,7 +112,7 @@ class RunActivityChromeTest {
             context = activity,
             tokens = testTokens(),
             actions = RunActivityChromeActions(
-                onStop = { actionLog += "stop" },
+                onCloseInstance = { actionLog += "close-instance" },
                 onSelectWindow = { windowId, surface -> actionLog += "select-$windowId-${surface.name}" },
                 onRestartWindow = { actionLog += "restart-$it" },
                 onCloseWindow = { actionLog += "close-$it" },

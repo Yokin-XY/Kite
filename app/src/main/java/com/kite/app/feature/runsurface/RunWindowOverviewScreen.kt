@@ -33,14 +33,14 @@ internal class RunWindowOverviewScreen(
     private val onCloseWindow: (String) -> Unit,
     private val onOpenWeb: () -> Unit,
     private val onOpenTerminal: () -> Unit,
-    private val onStop: () -> Unit
+    private val onCloseInstance: () -> Unit
 ) {
     private val ui = UiKit(context, tokens)
     private val grid = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val cards = linkedMapOf<String, LinearLayout>()
-    private val stopButton: View
+    private val closeButton: View
     private var structureSignature = ""
-    private var canStop = false
+    private var canCloseInstance = false
 
     val root: FrameLayout = FrameLayout(context).apply {
         visibility = View.GONE
@@ -102,11 +102,11 @@ internal class RunWindowOverviewScreen(
                 ui.dp(1)
             )
         }
-        stopButton = dockButton(
+        closeButton = dockButton(
             icon = R.drawable.card_run_window_dock_trash,
-            label = "停止任务"
-        ) { confirmStop() }
-        dock.addView(stopButton, dockParams())
+            label = "关闭"
+        ) { confirmCloseInstance() }
+        dock.addView(closeButton, dockParams())
         dock.addView(
             dockButton(
                 icon = R.drawable.card_run_window_dock_add,
@@ -132,9 +132,9 @@ internal class RunWindowOverviewScreen(
     }
 
     fun render(state: RunSurfaceUiState) {
-        canStop = state.canStop
-        stopButton.isEnabled = canStop
-        stopButton.alpha = if (canStop) 1f else 0.38f
+        canCloseInstance = state.canCloseInstance
+        closeButton.isEnabled = canCloseInstance
+        closeButton.alpha = if (canCloseInstance) 1f else 0.38f
         val nextSignature = state.windows.joinToString("|") {
             "${it.windowId}:${it.surface.name}:${it.kind.name}:${it.title}:${it.subtitle}:${it.canRestart}:${it.canClose}"
         }
@@ -372,13 +372,13 @@ internal class RunWindowOverviewScreen(
     private fun dockParams(): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
 
-    private fun confirmStop() {
-        if (!canStop) return
+    private fun confirmCloseInstance() {
+        if (!canCloseInstance) return
         AlertDialog.Builder(root.context)
-            .setTitle("停止当前任务？")
-            .setMessage("窗口会保留到后台确认停止结果。")
+            .setTitle("关闭当前实例？")
+            .setMessage("将关闭这个实例产生的窗口和运行，确认完成后退出当前任务窗口。")
             .setNegativeButton("取消", null)
-            .setPositiveButton("停止任务") { _, _ -> onStop() }
+            .setPositiveButton("关闭") { _, _ -> onCloseInstance() }
             .show()
     }
 

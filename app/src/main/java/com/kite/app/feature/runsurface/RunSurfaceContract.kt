@@ -70,14 +70,10 @@ internal data class RunSurfaceUiState(
     val stepCount: Int,
     val createdAt: Long,
     val canCompleteCurrentStep: Boolean,
-    val canStop: Boolean,
+    val canCloseInstance: Boolean,
     val windows: List<RunSurfaceWindowUiState>,
     val updatedAt: Long
 )
-
-internal interface RunSurfaceActionGateway {
-    fun stop(instanceId: String)
-}
 
 internal object RunSurfaceProjector {
     private data class WindowSource(
@@ -122,8 +118,7 @@ internal object RunSurfaceProjector {
             stepCount = state.stepCount,
             createdAt = contentState.createdAt,
             canCompleteCurrentStep = RunStepActionPolicy.canComplete(recipe, state),
-            canStop = state.status != CardRunStatus.Stopping &&
-                (state.isInterruptible() || state.hasRunBinding() || children.any { it.hasRunBinding() }),
+            canCloseInstance = state.status != CardRunStatus.Stopping,
             windows = sources.map { source ->
                 RunSurfaceWindowUiState(
                     windowId = source.windowId,

@@ -187,7 +187,7 @@ class RunTerminalSurfaceBindingTest {
         stepCount = 1,
         createdAt = 1L,
         canCompleteCurrentStep = true,
-        canStop = true,
+        canCloseInstance = true,
         windows = emptyList(),
         updatedAt = 1L
     )

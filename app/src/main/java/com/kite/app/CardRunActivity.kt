@@ -47,7 +47,6 @@ import com.kite.app.feature.runsurface.CardRunMissingStatePolicy
 import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.feature.runsurface.RunActivityChrome
 import com.kite.app.feature.runsurface.RunActivityChromeActions
-import com.kite.app.feature.runsurface.RunSurfaceActionGateway
 import com.kite.app.feature.runsurface.RunSurfaceBinding
 import com.kite.app.feature.runsurface.RunSurfaceContent
 import com.kite.app.feature.runsurface.RunSurfaceController
@@ -102,6 +101,8 @@ class CardRunActivity : AppCompatActivity() {
     private var registeredBrowserInstanceId: String? = null
     private var registeredDesktopInstanceId: String? = null
     private var registeredCloserInstanceId: String? = null
+    private var pendingCloseInstanceId: String? = null
+    private var pendingCloseGeneration: Long? = null
     private var tickScheduled = false
 
     private val backCallback = object : OnBackPressedCallback(true) {
@@ -139,11 +140,7 @@ class CardRunActivity : AppCompatActivity() {
             openExternal = ::openExternalBrowser
         )
         browserAutomationUpdater = AndroidBrowserAutomationRunUpdater(::resolveRecipeById)
-        surfaceController = RunSurfaceController(object : RunSurfaceActionGateway {
-            override fun stop(instanceId: String) {
-                runOrchestrator.stop(instanceId)
-            }
-        })
+        surfaceController = RunSurfaceController()
         registerTerminalSurfaceResults()
         observeRunFacts()
         handleLaunchIntent(intent)
@@ -278,7 +275,7 @@ class CardRunActivity : AppCompatActivity() {
             context = this,
             tokens = tokens,
             actions = RunActivityChromeActions(
-                onStop = ::stopCurrentRun,
+                onCloseInstance = ::closeCurrentInstance,
                 onSelectWindow = { windowId, surface ->
                     currentState?.instanceId?.let { instanceId ->
                         CardRunStore.selectWindow(instanceId, windowId, surface)
@@ -308,6 +305,16 @@ class CardRunActivity : AppCompatActivity() {
         val target = currentTarget ?: return
         if (state.instanceId != target.instanceId || state.recipeId != target.recipe.id) return
         currentState = state
+        if (
+            pendingCloseInstanceId == state.instanceId &&
+            pendingCloseGeneration == state.createdAt &&
+            state.status == CardRunStatus.Stopped
+        ) {
+            pendingCloseInstanceId = null
+            pendingCloseGeneration = null
+            closeTaskWindow()
+            return
+        }
         val children = CardRunStore.childrenOf(state.instanceId)
         val uiState = surfaceController.update(target.recipe, state, children)
             ?: surfaceController.attach(target.recipe, state, children)
@@ -393,11 +400,25 @@ class CardRunActivity : AppCompatActivity() {
         }
     }
 
-    private fun stopCurrentRun() {
-        val instanceId = currentState?.instanceId ?: return
-        when (val result = runOrchestrator.stop(instanceId)) {
+    private fun closeCurrentInstance() {
+        val state = currentState ?: return
+        if (state.status == CardRunStatus.Stopped) {
+            closeTaskWindow()
+            return
+        }
+        pendingCloseInstanceId = state.instanceId
+        pendingCloseGeneration = state.createdAt
+        when (val result = runOrchestrator.stop(state.instanceId)) {
             is RunCommandResult.Accepted -> Unit
-            is RunCommandResult.Ignored -> Toast.makeText(this, "无法停止：${result.reason}", Toast.LENGTH_SHORT).show()
+            is RunCommandResult.Ignored -> {
+                pendingCloseInstanceId = null
+                pendingCloseGeneration = null
+                if (result.reason == "already_stopped") {
+                    closeTaskWindow()
+                } else {
+                    Toast.makeText(this, "无法关闭：${result.reason}", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
@@ -747,6 +768,8 @@ class CardRunActivity : AppCompatActivity() {
         chrome = null
         currentTarget = null
         currentState = null
+        pendingCloseInstanceId = null
+        pendingCloseGeneration = null
     }
 
     private fun closeTaskWindow() {

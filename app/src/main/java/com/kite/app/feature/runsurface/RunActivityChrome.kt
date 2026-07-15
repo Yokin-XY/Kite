@@ -20,7 +20,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 internal data class RunActivityChromeActions(
-    val onStop: () -> Unit,
+    val onCloseInstance: () -> Unit,
     val onSelectWindow: (String, CardRunSurface) -> Unit,
     val onRestartWindow: (String) -> Unit,
     val onCloseWindow: (String) -> Unit,
@@ -66,7 +66,7 @@ internal class RunActivityChrome(
             onCloseWindow = actions.onCloseWindow,
             onOpenWeb = actions.onOpenWeb,
             onOpenTerminal = actions.onOpenTerminal,
-            onStop = actions.onStop
+            onCloseInstance = actions.onCloseInstance
         )
         root.addView(
             overview.root,

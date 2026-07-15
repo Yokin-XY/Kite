@@ -4,9 +4,7 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunState
 
 /** 只拥有当前显示绑定；attach/detach 不拥有底层运行生命周期。 */
-internal class RunSurfaceController(
-    private val actions: RunSurfaceActionGateway
-) {
+internal class RunSurfaceController {
     private var target: RunSurfaceTarget? = null
 
     fun attach(
@@ -33,9 +31,4 @@ internal class RunSurfaceController(
         target = null
     }
 
-    fun stop(): Boolean {
-        val current = target ?: return false
-        actions.stop(current.instanceId)
-        return true
-    }
 }
