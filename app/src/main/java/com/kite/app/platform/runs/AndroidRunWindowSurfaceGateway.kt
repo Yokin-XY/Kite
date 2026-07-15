@@ -13,6 +13,8 @@ import com.kite.app.application.runs.StopExecutionOutcome
 import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.runtime.TerminalSessionStore
+import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
+import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.recipe.KiteRecipe
@@ -21,11 +23,13 @@ import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
 import com.kite.app.run.CardRunSurface
+import com.kite.app.resources.KiteResourceInstallRecipes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 实例窗口的 Platform 适配器。手动窗口使用独立子运行事实，流程步骤重放也使用
@@ -99,9 +103,17 @@ internal class AndroidRunWindowSurfaceGateway(
             if (latest == null || latest.createdAt != generation) return@launch
             result.fold(
                 onSuccess = { (record, environment) ->
-                    if (environment.isNotEmpty()) {
-                        TerminalRuntimeHost.setLaunchEnvironmentOverrides(appContext, record.id, environment)
-                    }
+                    val runtimeOwner = RuntimeOwnerIdentity.terminal(
+                        rootNamespace = runtimeNamespace(recipe, parent),
+                        instanceId = child.instanceId,
+                        generation = generation,
+                        terminalSessionId = record.id
+                    )
+                    TerminalRuntimeHost.setLaunchEnvironmentOverrides(
+                        appContext,
+                        record.id,
+                        environment + runtimeOwner.environment()
+                    )
                     CardRunStore.update(
                         recipe = recipe,
                         status = CardRunStatus.Opened,
@@ -110,6 +122,9 @@ internal class AndroidRunWindowSurfaceGateway(
                         ownerKind = CardRunState.OWNER_KIND_TERMINAL,
                         surface = CardRunSurface.Terminal,
                         currentStepIndex = -1,
+                        runtimeRootOwnerId = runtimeOwner.rootOwnerId,
+                        runtimeOwnerId = runtimeOwner.ownerId,
+                        runtimeUnitId = runtimeOwner.unitId,
                         runId = record.id,
                         terminalSessionId = record.id,
                         lastMeaningfulOutput = "已打开全新终端：${record.title}"
@@ -265,7 +280,22 @@ internal class AndroidRunWindowSurfaceGateway(
             generation = generation,
             stepIndex = stepIndex,
             step = step,
-            previousState = child
+            previousState = child,
+            attemptId = replayAttemptIds.incrementAndGet(),
+            runtimeRootOwnerId = RuntimeOwnerIdentity.root(runtimeNamespace(recipe, parent), child.instanceId, generation)
+        ).withStepOwner(runtimeNamespace(recipe, parent))
+        CardRunStore.update(
+            recipe = recipe,
+            status = CardRunStatus.Running,
+            instanceId = child.instanceId,
+            parentInstanceId = parent.instanceId,
+            ownerKind = CardRunState.OWNER_KIND_STEP_REPLAY,
+            stepId = step.id,
+            surface = surfaceFor(step.type),
+            currentStepIndex = stepIndex,
+            runtimeRootOwnerId = request.runtimeRootOwnerId,
+            runtimeOwnerId = request.runtimeOwnerId,
+            runtimeUnitId = request.runtimeUnitId
         )
         executor.execute(request) { event ->
             handleReplayEvent(recipe, parent, child, step, generation, event)
@@ -326,6 +356,10 @@ internal class AndroidRunWindowSurfaceGateway(
             stepId = step.id,
             surface = mutation.surface ?: surfaceFor(step.type),
             currentStepIndex = mutation.currentStepIndex,
+            runtimeRootOwnerId = mutation.runtimeRootOwnerId,
+            runtimeOwnerId = mutation.runtimeOwnerId,
+            runtimeUnitId = mutation.runtimeUnitId,
+            ownedRuntimeOwnerIds = mutation.ownedRuntimeOwnerIds,
             runId = mutation.runId,
             terminalSessionId = mutation.terminalSessionId,
             pid = mutation.pid,
@@ -382,10 +416,12 @@ internal class AndroidRunWindowSurfaceGateway(
         CardRunStore.get(instanceId)?.takeIf { it.recipeId == recipe.id }
 
     private fun CardRunState.toStopRequest(recipe: KiteRecipe): RecipeStopRequest? {
-        if (!hasRunBinding()) return null
+        if (!hasRunBinding() && !hasRuntimeOwnership()) return null
         return RecipeStopRequest(
             recipe = recipe,
             instanceId = instanceId,
+            generation = createdAt,
+            runtimeOwnerIds = ownedRuntimeOwnerIds,
             runId = runId,
             terminalSessionId = terminalSessionId,
             pid = pid,
@@ -401,7 +437,38 @@ internal class AndroidRunWindowSurfaceGateway(
         is RunExecutionEffect.StopResolved -> copy(instanceId = parentInstanceId)
     }
 
+    private fun RecipeStepExecutionRequest.withStepOwner(
+        namespace: RuntimeOwnerNamespace
+    ): RecipeStepExecutionRequest {
+        val owner = RuntimeOwnerIdentity.step(
+            namespace = namespace,
+            instanceId = instanceId,
+            generation = generation,
+            stepIndex = stepIndex,
+            stepId = step.id,
+            attemptId = attemptId
+        )
+        return copy(
+            runtimeRootOwnerId = owner.rootOwnerId,
+            runtimeOwnerId = owner.ownerId,
+            runtimeUnitId = owner.unitId
+        )
+    }
+
+    private fun runtimeNamespace(recipe: KiteRecipe, state: CardRunState): RuntimeOwnerNamespace =
+        if (
+            state.runtimeRootOwnerId?.startsWith("resource:") == true ||
+            state.ownerKind == CardRunState.OWNER_KIND_RESOURCE ||
+            state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD ||
+            recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE
+        ) {
+            RuntimeOwnerNamespace.Resource
+        } else {
+            RuntimeOwnerNamespace.Card
+        }
+
     private companion object {
+        val replayAttemptIds = AtomicLong(System.currentTimeMillis())
         val MANUAL_WINDOW_OWNER_KINDS = setOf(
             CardRunState.OWNER_KIND_TERMINAL,
             CardRunState.OWNER_KIND_WEB

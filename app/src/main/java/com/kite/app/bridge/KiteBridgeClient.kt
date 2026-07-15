@@ -123,6 +123,7 @@ class KiteBridgeClient(
             processGroupId = null,
             systemSessionId = null,
             cardInstanceId = null,
+            runtimeOwnerIds = emptyList(),
             callback = callback
         )
     }
@@ -135,17 +136,18 @@ class KiteBridgeClient(
         processGroupId: String? = null,
         systemSessionId: String? = null,
         cardInstanceId: String? = null,
+        runtimeOwnerIds: Collection<String> = emptyList(),
         callback: (BridgeResult) -> Unit
     ) {
         val context = appContext
         val direct = directRuns[runId]
         if (context != null && direct != null) {
-            stopDirectRuns(context, recipe, listOf(direct), callback)
+            stopDirectRuns(context, recipe, listOf(direct), runtimeOwnerIds, callback)
             return
         }
         val directProcess = directProcesses[runId]
         if (context != null && directProcess != null) {
-            stopDirectProcesses(context, recipe, listOf(directProcess), cardInstanceId, callback)
+            stopDirectProcesses(context, recipe, listOf(directProcess), cardInstanceId, runtimeOwnerIds, callback)
             return
         }
         if (context != null) {
@@ -157,15 +159,16 @@ class KiteBridgeClient(
                 processGroupId = processGroupId,
                 systemSessionId = systemSessionId,
                 cardInstanceId = cardInstanceId,
+                runtimeOwnerId = runtimeOwnerIds.firstOrNull { it.isNotBlank() },
                 pidFilePath = cardInstanceId
                     ?.takeIf { it.isNotBlank() }
                     ?.let { cardRunPidFilePath(it, runId) }
             ).takeIf { it.hasProcessBinding() }
             if (persisted != null) {
-                stopDirectRuns(context, recipe, listOf(persisted), callback)
+                stopDirectRuns(context, recipe, listOf(persisted), runtimeOwnerIds, callback)
                 return
             }
-            callback(stoppedWithoutActiveDirectBinding(context, recipe, runId, cardInstanceId))
+            callback(stoppedWithoutActiveDirectBinding(context, recipe, runId, cardInstanceId, runtimeOwnerIds))
             return
         }
 
@@ -187,16 +190,16 @@ class KiteBridgeClient(
         val context = appContext
         val direct = directRuns.values.filter { it.recipeId == recipe.id }
         if (context != null && direct.isNotEmpty()) {
-            stopDirectRuns(context, recipe, direct, callback)
+            stopDirectRuns(context, recipe, direct, emptyList(), callback)
             return
         }
         val directProcess = directProcesses.values.filter { it.recipeId == recipe.id }
         if (context != null && directProcess.isNotEmpty()) {
-            stopDirectProcesses(context, recipe, directProcess, null, callback)
+            stopDirectProcesses(context, recipe, directProcess, null, emptyList(), callback)
             return
         }
         if (context != null) {
-            callback(stoppedWithoutActiveDirectBinding(context, recipe, "", null))
+            callback(stoppedWithoutActiveDirectBinding(context, recipe, "", null, emptyList()))
             return
         }
 
@@ -404,6 +407,7 @@ class KiteBridgeClient(
                             processGroupId = execution.processGroupId,
                             systemSessionId = execution.systemSessionId,
                             cardInstanceId = execution.cardInstanceId,
+                            runtimeOwnerId = execution.runtimeOwnerId,
                             pidFilePath = execution.pidFilePath
                         )
                         break
@@ -498,6 +502,7 @@ class KiteBridgeClient(
         processGroupId: String?,
         systemSessionId: String?,
         cardInstanceId: String? = null,
+        runtimeOwnerIds: Collection<String> = emptyList(),
         callback: (BridgeResult) -> Unit
     ) {
         stopRun(
@@ -508,6 +513,7 @@ class KiteBridgeClient(
             processGroupId = processGroupId,
             systemSessionId = systemSessionId,
             cardInstanceId = cardInstanceId,
+            runtimeOwnerIds = runtimeOwnerIds,
             callback = callback
         )
     }
@@ -533,7 +539,8 @@ class KiteBridgeClient(
             env = config.env + extraEnv,
             timeoutMs = timeoutMs,
             activeRecipeId = recipe.id,
-            activeRunId = runId
+            activeRunId = runId,
+            runtimeOwnerId = extraEnv["KF_RUNTIME_ID"]
         ) { output, chunk ->
             updateDirectProcessBinding(runId, output)
             val meta = extractRunBindingMeta(output)
@@ -569,6 +576,7 @@ class KiteBridgeClient(
             rootPid = runMeta.rootPid,
             processGroupId = runMeta.processGroupId,
             systemSessionId = runMeta.systemSessionId,
+            runtimeOwnerId = extraEnv["KF_RUNTIME_ID"],
             report = KiteStepReport(
                 stepId = step.id,
                 type = step.type,
@@ -639,6 +647,7 @@ class KiteBridgeClient(
             processGroupId = runMeta.processGroupId ?: pid,
             systemSessionId = runMeta.systemSessionId ?: pid,
             cardInstanceId = cardInstanceId,
+            runtimeOwnerId = extraEnv["KF_RUNTIME_ID"],
             pidFilePath = pidFilePath,
             report = KiteStepReport(
                 stepId = step.id,
@@ -657,6 +666,7 @@ class KiteBridgeClient(
         context: Context,
         recipe: KiteRecipe,
         bindings: List<DirectRunBinding>,
+        ownerIdHints: Collection<String>,
         callback: (BridgeResult) -> Unit
     ) {
         val requestId = newRequestId()
@@ -678,7 +688,14 @@ class KiteBridgeClient(
                 }
                 directRuns.remove(binding.runId)
             }
-            output.append(stopOwnerProcesses(context, recipe, bindings.map { it.cardInstanceId }))
+            output.append(
+                stopOwnerProcesses(
+                    context = context,
+                    recipe = recipe,
+                    cardInstanceIds = bindings.map { it.cardInstanceId },
+                    runtimeOwnerIds = ownerIdHints + bindings.mapNotNull { it.runtimeOwnerId }
+                )
+            )
             val stoppedOk = !stopPayloadHasRemaining(output.toString())
             if (stoppedOk) {
                 bindings.forEach { binding ->
@@ -722,6 +739,7 @@ class KiteBridgeClient(
         recipe: KiteRecipe,
         bindings: List<DirectProcessBinding>,
         cardInstanceIdHint: String?,
+        ownerIdHints: Collection<String>,
         callback: (BridgeResult) -> Unit
     ) {
         val requestId = newRequestId()
@@ -750,7 +768,14 @@ class KiteBridgeClient(
                 }
                 directProcesses.remove(binding.runId)
             }
-            output.append(stopOwnerProcesses(context, recipe, listOf(cardInstanceIdHint)))
+            output.append(
+                stopOwnerProcesses(
+                    context = context,
+                    recipe = recipe,
+                    cardInstanceIds = listOf(cardInstanceIdHint),
+                    runtimeOwnerIds = ownerIdHints + bindings.mapNotNull { it.runtimeOwnerId }
+                )
+            )
             val stoppedOk = !stopPayloadHasRemaining(output.toString())
             val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
             val report = KiteRunReport(
@@ -788,11 +813,12 @@ class KiteBridgeClient(
         context: Context,
         recipe: KiteRecipe,
         runId: String,
-        cardInstanceId: String?
+        cardInstanceId: String?,
+        runtimeOwnerIds: Collection<String>
     ): BridgeResult {
         val requestId = newRequestId()
         val resolvedRunId = runId.ifBlank { requestId }
-        val ownerStopOutput = stopOwnerProcesses(context, recipe, listOf(cardInstanceId))
+        val ownerStopOutput = stopOwnerProcesses(context, recipe, listOf(cardInstanceId), runtimeOwnerIds)
         val stoppedOk = !stopPayloadHasRemaining(ownerStopOutput)
         val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
         val report = KiteRunReport(
@@ -830,6 +856,7 @@ class KiteBridgeClient(
         timeoutMs: Long,
         activeRecipeId: String? = null,
         activeRunId: String? = null,
+        runtimeOwnerId: String? = null,
         onOutput: ((output: String, chunk: String) -> Unit)? = null
     ): DirectProcessResult {
         val output = StringBuilder()
@@ -839,7 +866,12 @@ class KiteBridgeClient(
             .apply { environment().putAll(env) }
             .start()
         if (!activeRecipeId.isNullOrBlank() && !activeRunId.isNullOrBlank()) {
-            directProcesses[activeRunId] = DirectProcessBinding(activeRecipeId, activeRunId, process)
+            directProcesses[activeRunId] = DirectProcessBinding(
+                recipeId = activeRecipeId,
+                runId = activeRunId,
+                process = process,
+                runtimeOwnerId = runtimeOwnerId
+            )
         }
         val reader = thread(start = true, isDaemon = true, name = "KiteDirectReader") {
             runCatching {
@@ -988,12 +1020,19 @@ class KiteBridgeClient(
     private fun stopOwnerProcesses(
         context: Context,
         recipe: KiteRecipe,
-        cardInstanceIds: Collection<String?>
+        cardInstanceIds: Collection<String?>,
+        runtimeOwnerIds: Collection<String> = emptyList()
     ): String {
-        val ownerIds = cardInstanceIds
-            .ifEmpty { listOf(null) }
-            .map { cardInstanceId -> runtimeOwnerId(recipe, cardInstanceId?.takeIf { it.isNotBlank() } ?: recipe.id) }
+        val explicitOwnerIds = runtimeOwnerIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
             .distinct()
+        val ownerIds = explicitOwnerIds.ifEmpty {
+            cardInstanceIds
+                .ifEmpty { listOf(null) }
+                .map { cardInstanceId -> runtimeOwnerId(recipe, cardInstanceId?.takeIf { it.isNotBlank() } ?: recipe.id) }
+                .distinct()
+        }
         return ownerIds.joinToString(separator = "") { ownerId ->
             ProotOwnerProcessTerminator.terminate(context, ownerId).toStopOutput()
         }
@@ -1220,6 +1259,7 @@ private data class DirectRunBinding(
     val processGroupId: String? = null,
     val systemSessionId: String? = null,
     val cardInstanceId: String? = null,
+    val runtimeOwnerId: String? = null,
     val pidFilePath: String? = null
 ) {
     fun hasProcessBinding(): Boolean =
@@ -1235,7 +1275,8 @@ private data class DirectProcessBinding(
     val process: Process,
     val pid: String? = null,
     val processGroupId: String? = null,
-    val systemSessionId: String? = null
+    val systemSessionId: String? = null,
+    val runtimeOwnerId: String? = null
 )
 
 private data class DirectProcessResult(
@@ -1252,6 +1293,7 @@ private data class DirectStepExecution(
     val processGroupId: String? = null,
     val systemSessionId: String? = null,
     val cardInstanceId: String? = null,
+    val runtimeOwnerId: String? = null,
     val pidFilePath: String? = null,
     val report: KiteStepReport
 )

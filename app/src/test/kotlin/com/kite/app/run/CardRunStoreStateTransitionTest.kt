@@ -155,6 +155,37 @@ class CardRunStoreStateTransitionTest {
         assertEquals(CardRunSurface.X11, CardRunStore.get("r8")?.surface)
     }
 
+    @Test
+    fun `运行 owner 按叶子累积并随运行绑定统一清除`() {
+        val recipe = TestRecipes.serviceRecipe(id = "owner-store")
+        CardRunStore.start(recipe)
+
+        CardRunStore.update(
+            recipe = recipe,
+            status = CardRunStatus.Running,
+            runtimeRootOwnerId = "card:owner-store@1",
+            runtimeOwnerId = "card:owner-store@1/step/0-start/attempt/1",
+            runtimeUnitId = "step:0:start:attempt:1"
+        )
+        val accumulated = CardRunStore.update(
+            recipe = recipe,
+            status = CardRunStatus.Running,
+            runtimeOwnerId = "card:owner-store@1/step/1-serve/attempt/2",
+            runtimeUnitId = "step:1:serve:attempt:2"
+        )
+
+        assertEquals(2, accumulated.ownedRuntimeOwnerIds.size)
+        assertEquals("card:owner-store@1", accumulated.runtimeRootOwnerId)
+        val cleared = CardRunStore.update(
+            recipe = recipe,
+            status = CardRunStatus.Stopped,
+            clearRunBinding = true
+        )
+        assertTrue(cleared.ownedRuntimeOwnerIds.isEmpty())
+        assertNull(cleared.runtimeOwnerId)
+        assertNull(cleared.runtimeUnitId)
+    }
+
     // ------------------------------------------------------------------
     // 进程恢复归一化(真实契约)
     //

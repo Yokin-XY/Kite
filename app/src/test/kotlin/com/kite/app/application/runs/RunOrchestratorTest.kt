@@ -13,6 +13,24 @@ import org.junit.Test
 
 class RunOrchestratorTest {
     @Test
+    fun `步骤执行请求携带实例代次叶子 owner 并写入运行事实`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val recipe = recipe("owner-chain", KiteRecipe.STEP_SHELL)
+
+        orchestrator.start(RunStartRequest(recipe, "owner-instance"))
+
+        val request = executor.executeRequests.single()
+        val state = gateway.state("owner-instance")!!
+        assertEquals(state.createdAt, request.generation)
+        assertTrue(request.runtimeRootOwnerId!!.startsWith("card:owner-instance@"))
+        assertTrue(request.runtimeOwnerId!!.contains("/step/0-"))
+        assertEquals(request.runtimeOwnerId, state.runtimeOwnerId)
+        assertEquals(listOf(request.runtimeOwnerId), state.ownedRuntimeOwnerIds)
+    }
+
+    @Test
     fun `所有步骤类型按顺序进入同一个执行端口`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor(autoComplete = true)
@@ -543,6 +561,16 @@ private class FakeRunStateGateway : RunStateGateway {
             surface = mutation.surface ?: existing.surface,
             currentStepIndex = mutation.currentStepIndex ?: existing.currentStepIndex,
             stepCount = recipe.steps.size,
+            runtimeRootOwnerId = mutation.runtimeRootOwnerId ?: existing.runtimeRootOwnerId,
+            runtimeOwnerId = if (mutation.clearRunBinding) null else mutation.runtimeOwnerId ?: existing.runtimeOwnerId,
+            runtimeUnitId = if (mutation.clearRunBinding) null else mutation.runtimeUnitId ?: existing.runtimeUnitId,
+            ownedRuntimeOwnerIds = if (mutation.clearRunBinding) {
+                emptyList()
+            } else {
+                (mutation.ownedRuntimeOwnerIds.orEmpty().ifEmpty { existing.ownedRuntimeOwnerIds } +
+                    listOfNotNull(mutation.runtimeOwnerId))
+                    .distinct()
+            },
             runId = if (mutation.clearRunBinding) null else mutation.runId ?: existing.runId,
             terminalSessionId = if (mutation.clearRunBinding || mutation.clearTerminalSession) {
                 null

@@ -25,6 +25,8 @@ internal class StopCoordinator {
         val request = RecipeStopRequest(
             recipe = recipe,
             instanceId = state.instanceId,
+            generation = state.createdAt,
+            runtimeOwnerIds = state.ownedRuntimeOwnerIds,
             runId = state.runId,
             terminalSessionId = terminalSessionId,
             pid = state.pid,

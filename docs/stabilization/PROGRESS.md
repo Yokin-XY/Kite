@@ -1555,4 +1555,18 @@ T018.1 状态：completed。
   身份生成纯函数有合同测试，现有启动入口编译通过。
 - 依赖是否满足：T018.1 已让底层按复合进程生命周期保存 owner 事实，依赖满足。
 
-当前状态：in_progress。下一步审计所有 owner 环境注入调用点并建立统一身份合同。
+完成结果：
+
+- 新增统一 `RuntimeOwnerIdentity`：实例 root 使用 `namespace + instanceId + generation`，步骤叶子再加入
+  `stepIndex + stepId + attemptId`；同实例新代次和同一步重试均不会复用 owner。
+- `RunOrchestrator` 在分派前生成并提交 owner 事实，`RecipeStepExecutionRequest` 将精确
+  `KF_RUNTIME_ID/KF_UNIT_ID` 带到 Shell、X11 和其他执行入口；资源流程使用 `resource:` 命名空间。
+- 流程终端在真实 session 创建后改用 `terminal:<session>/instance/<instance>@<generation>` 叶子，手动新终端
+  同样具备独立 owner；TaskManager 继续能从结构化 owner 解析终端会话。
+- `CardRunStore` 持久化实例 root、当前 owner/unit 和该代次累计的 owner 集合；停止请求传递完整 owner 集合，
+  Bridge 优先按精确 owner 回收，仅为旧状态保留原有 `card/resource:<id>` 回退。
+- 步骤重放与资源取消清理不再绕过身份注入；直接运行绑定同步保存精确 owner，避免停止时重新猜测。
+- `RuntimeOwnerIdentityTest`、`RunOrchestratorTest`、`CardRunStoreStateTransitionTest` 目标测试通过，生产 Kotlin
+  编译通过；未触碰浏览器未提交改动和终端 UI 未提交改动。
+
+T018.2 状态：completed。下一步进入 T018.3，收紧 owner 关停的发现、分组信号、复核和 Unknown 语义。

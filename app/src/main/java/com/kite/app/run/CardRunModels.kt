@@ -54,6 +54,10 @@ data class CardRunState(
     val selectedWindowId: String? = null,
     val currentStepIndex: Int = -1,
     val stepCount: Int = 0,
+    val runtimeRootOwnerId: String? = null,
+    val runtimeOwnerId: String? = null,
+    val runtimeUnitId: String? = null,
+    val ownedRuntimeOwnerIds: List<String> = emptyList(),
     val runId: String? = null,
     val terminalSessionId: String? = null,
     val pid: String? = null,
@@ -86,6 +90,8 @@ data class CardRunState(
             !processGroupId.isNullOrBlank() ||
             !terminalSessionId.isNullOrBlank() ||
             !x11Display.isNullOrBlank()
+
+    fun hasRuntimeOwnership(): Boolean = ownedRuntimeOwnerIds.any { it.isNotBlank() }
 
     fun recommendedSurface(): CardRunSurface = when {
         !nextActionUrl.isNullOrBlank() -> CardRunSurface.Web

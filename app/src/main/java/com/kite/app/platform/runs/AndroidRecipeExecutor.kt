@@ -23,6 +23,8 @@ import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.runtime.ExternalExchangeManager
 import com.kite.app.foundation.runtime.TerminalSessionStore
+import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
+import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
@@ -342,13 +344,19 @@ internal class AndroidRecipeExecutor(
             }.onSuccess { record ->
                 TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
                 TerminalSessionStore.refresh(appContext, force = true)
+                val terminalOwner = RuntimeOwnerIdentity.terminal(
+                    rootNamespace = request.runtimeNamespace(),
+                    instanceId = request.instanceId,
+                    generation = request.generation,
+                    terminalSessionId = record.id,
+                    stepIndex = request.stepIndex,
+                    stepId = request.step.id,
+                    attemptId = request.attemptId
+                )
                 TerminalRuntimeHost.setLaunchEnvironmentOverrides(
                     appContext = appContext,
                     sessionId = record.id,
-                    overrides = browserEnvironment(request, "terminal_step") + mapOf(
-                        "KF_RUNTIME_ID" to "terminal:${record.id}",
-                        "KF_UNIT_ID" to "card:${request.instanceId}"
-                    )
+                    overrides = browserEnvironment(request, "terminal_step") + terminalOwner.environment()
                 )
                 TerminalRuntimeHost.stageEmbeddedSession(appContext, record)
                 pendingTerminals[record.id] = PendingTerminal(request, callback)
@@ -361,6 +369,9 @@ internal class AndroidRecipeExecutor(
                             status = CardRunStatus.WaitingTerminal,
                             surface = CardRunSurface.Terminal,
                             currentStepIndex = request.stepIndex,
+                            runtimeRootOwnerId = terminalOwner.rootOwnerId,
+                            runtimeOwnerId = terminalOwner.ownerId,
+                            runtimeUnitId = terminalOwner.unitId,
                             runId = record.id,
                             terminalSessionId = record.id,
                             lastMeaningfulOutput = "等待终端完成：${record.title}",
@@ -662,6 +673,7 @@ internal class AndroidRecipeExecutor(
                 processGroupId = request.processGroupId,
                 systemSessionId = request.systemSessionId,
                 cardInstanceId = request.instanceId,
+                runtimeOwnerIds = request.runtimeOwnerIds,
                 callback = bridgeCallback
             )
         } else {
@@ -673,6 +685,7 @@ internal class AndroidRecipeExecutor(
                 processGroupId = request.processGroupId,
                 systemSessionId = request.systemSessionId,
                 cardInstanceId = request.instanceId,
+                runtimeOwnerIds = request.runtimeOwnerIds,
                 callback = bridgeCallback
             )
         }
@@ -722,7 +735,19 @@ internal class AndroidRecipeExecutor(
             recipeId = request.recipe.id,
             instanceId = request.instanceId,
             source = source
-        )
+        ) + listOfNotNull(
+            request.runtimeOwnerId?.takeIf { it.isNotBlank() }
+                ?.let { RuntimeOwnerIdentity.RUNTIME_ID_ENV to it },
+            request.runtimeUnitId?.takeIf { it.isNotBlank() }
+                ?.let { RuntimeOwnerIdentity.UNIT_ID_ENV to it }
+        ).toMap()
+
+    private fun RecipeStepExecutionRequest.runtimeNamespace(): RuntimeOwnerNamespace =
+        if (runtimeRootOwnerId?.startsWith("resource:") == true) {
+            RuntimeOwnerNamespace.Resource
+        } else {
+            RuntimeOwnerNamespace.Card
+        }
 
     private fun KiteRecipe.singleStepRecipe(step: KiteRecipeStep): KiteRecipe = copy(
         execution = KiteExecution.steps(listOf(step)),

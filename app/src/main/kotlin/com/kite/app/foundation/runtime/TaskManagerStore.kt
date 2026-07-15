@@ -429,10 +429,7 @@ object TaskManagerStore {
     }
 
     private fun ProotLiveProcessEntry.terminalOwnerSessionId(): String? =
-        kfRuntimeId
-            .takeIf { it.startsWith("terminal:") }
-            ?.substringAfter(':')
-            ?.takeIf { it.isNotBlank() }
+        RuntimeOwnerIdentity.terminalSessionId(kfRuntimeId)
 
     private fun ProotLiveProcessEntry.runtimeOwnerKindLabel(): String? =
         when (kfRuntimeId.substringBefore(':')) {

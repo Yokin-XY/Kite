@@ -134,6 +134,10 @@ object CardRunStore {
         stepId: String? = null,
         surface: CardRunSurface? = null,
         currentStepIndex: Int? = null,
+        runtimeRootOwnerId: String? = null,
+        runtimeOwnerId: String? = null,
+        runtimeUnitId: String? = null,
+        ownedRuntimeOwnerIds: List<String>? = null,
         runId: String? = null,
         terminalSessionId: String? = null,
         pid: String? = null,
@@ -182,6 +186,13 @@ object CardRunStore {
             !lastError.isNullOrBlank() || !lastMeaningfulOutput.isNullOrBlank() || !shellReportText.isNullOrBlank() -> CardRunSurface.Report
             else -> existing.surface
         }
+        val nextOwnedRuntimeOwnerIds = if (clearRunBinding) {
+            emptyList()
+        } else {
+            (ownedRuntimeOwnerIds.orEmpty().ifEmpty { existing.ownedRuntimeOwnerIds } +
+                listOfNotNull(runtimeOwnerId?.takeIf { it.isNotBlank() }))
+                .distinct()
+        }
         val next = existing.copy(
             recipeName = recipe.name,
             parentInstanceId = parentInstanceId ?: existing.parentInstanceId,
@@ -191,6 +202,10 @@ object CardRunStore {
             surface = resolvedSurface,
             currentStepIndex = currentStepIndex ?: existing.currentStepIndex,
             stepCount = recipe.steps.size,
+            runtimeRootOwnerId = runtimeRootOwnerId ?: existing.runtimeRootOwnerId,
+            runtimeOwnerId = if (clearRunBinding) null else runtimeOwnerId ?: existing.runtimeOwnerId,
+            runtimeUnitId = if (clearRunBinding) null else runtimeUnitId ?: existing.runtimeUnitId,
+            ownedRuntimeOwnerIds = nextOwnedRuntimeOwnerIds,
             runId = if (clearRunBinding) null else runId ?: existing.runId,
             terminalSessionId = if (clearRunBinding || clearTerminalSession) null else terminalSessionId ?: existing.terminalSessionId,
             pid = if (clearRunBinding) null else pid ?: existing.pid,
@@ -818,6 +833,10 @@ object CardRunStore {
             .put("selectedWindowId", selectedWindowId.orEmpty())
             .put("currentStepIndex", currentStepIndex)
             .put("stepCount", stepCount)
+            .put("runtimeRootOwnerId", runtimeRootOwnerId.orEmpty())
+            .put("runtimeOwnerId", runtimeOwnerId.orEmpty())
+            .put("runtimeUnitId", runtimeUnitId.orEmpty())
+            .put("ownedRuntimeOwnerIds", JSONArray().apply { ownedRuntimeOwnerIds.forEach(::put) })
             .put("runId", runId.orEmpty())
             .put("terminalSessionId", terminalSessionId.orEmpty())
             .put("pid", pid.orEmpty())
@@ -880,6 +899,18 @@ object CardRunStore {
             selectedWindowId = optString("selectedWindowId").takeIf { it.isNotBlank() },
             currentStepIndex = optInt("currentStepIndex", -1),
             stepCount = optInt("stepCount", 0),
+            runtimeRootOwnerId = optString("runtimeRootOwnerId").takeIf { it.isNotBlank() },
+            runtimeOwnerId = optString("runtimeOwnerId").takeIf { it.isNotBlank() },
+            runtimeUnitId = optString("runtimeUnitId").takeIf { it.isNotBlank() },
+            ownedRuntimeOwnerIds = optJSONArray("ownedRuntimeOwnerIds")
+                ?.let { array ->
+                    buildList {
+                        for (index in 0 until array.length()) {
+                            array.optString(index).takeIf { it.isNotBlank() }?.let(::add)
+                        }
+                    }
+                }
+                .orEmpty(),
             runId = optString("runId").takeIf { it.isNotBlank() },
             terminalSessionId = optString("terminalSessionId").takeIf { it.isNotBlank() },
             pid = optString("pid").takeIf { it.isNotBlank() },

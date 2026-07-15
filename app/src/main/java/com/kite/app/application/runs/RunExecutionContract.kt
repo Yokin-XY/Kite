@@ -18,6 +18,10 @@ internal data class RunStateMutation(
     val status: CardRunStatus,
     val surface: CardRunSurface? = null,
     val currentStepIndex: Int? = null,
+    val runtimeRootOwnerId: String? = null,
+    val runtimeOwnerId: String? = null,
+    val runtimeUnitId: String? = null,
+    val ownedRuntimeOwnerIds: List<String>? = null,
     val runId: String? = null,
     val terminalSessionId: String? = null,
     val pid: String? = null,
@@ -53,7 +57,11 @@ internal data class RecipeStepExecutionRequest(
     val generation: Long,
     val stepIndex: Int,
     val step: KiteRecipeStep,
-    val previousState: CardRunState
+    val previousState: CardRunState,
+    val attemptId: Long = 0L,
+    val runtimeRootOwnerId: String? = null,
+    val runtimeOwnerId: String? = null,
+    val runtimeUnitId: String? = null
 )
 
 internal data class RecipeStepCompletionRequest(
@@ -178,6 +186,8 @@ internal enum class StopExecutionOutcome {
 internal data class RecipeStopRequest(
     val recipe: KiteRecipe,
     val instanceId: String,
+    val generation: Long = 0L,
+    val runtimeOwnerIds: List<String> = emptyList(),
     val runId: String? = null,
     val terminalSessionId: String? = null,
     val pid: String? = null,
@@ -190,7 +200,8 @@ internal data class RecipeStopRequest(
         ?.takeIf { it.isNotBlank() && (terminalSessionId.isNullOrBlank() || it != terminalSessionId) }
 
     fun hasBridgeProcessBinding(): Boolean =
-        bridgeRunId() != null ||
+        runtimeOwnerIds.any { it.isNotBlank() } ||
+            bridgeRunId() != null ||
             !pid.isNullOrBlank() ||
             !rootPid.isNullOrBlank() ||
             !processGroupId.isNullOrBlank() ||

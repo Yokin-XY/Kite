@@ -2,6 +2,8 @@ package com.kite.app.application.runs
 
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
+import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
@@ -259,6 +261,14 @@ internal class RunOrchestrator(
             }
             val flight = Flight(dispatch.generation, dispatch.stepIndex, attemptIds.incrementAndGet())
             if (executionFlights.putIfAbsent(state.instanceId, flight) != null) return
+            val runtimeOwner = RuntimeOwnerIdentity.step(
+                namespace = runtimeNamespace(recipe, state),
+                instanceId = state.instanceId,
+                generation = dispatch.generation,
+                stepIndex = dispatch.stepIndex,
+                stepId = step.id,
+                attemptId = flight.attemptId
+            )
             val running = commit(
                 recipe,
                 state.instanceId,
@@ -266,6 +276,9 @@ internal class RunOrchestrator(
                     status = CardRunStatus.Running,
                     surface = surfaceFor(step.type),
                     currentStepIndex = dispatch.stepIndex,
+                    runtimeRootOwnerId = runtimeOwner.rootOwnerId,
+                    runtimeOwnerId = runtimeOwner.ownerId,
+                    runtimeUnitId = runtimeOwner.unitId,
                     lastMeaningfulOutput = stepStartingMessage(step.type),
                     clearNextActionUrl = true
                 )
@@ -277,7 +290,11 @@ internal class RunOrchestrator(
                     generation = dispatch.generation,
                     stepIndex = dispatch.stepIndex,
                     step = step,
-                    previousState = running
+                    previousState = running,
+                    attemptId = flight.attemptId,
+                    runtimeRootOwnerId = runtimeOwner.rootOwnerId,
+                    runtimeOwnerId = runtimeOwner.ownerId,
+                    runtimeUnitId = runtimeOwner.unitId
                 ),
                 attemptId = flight.attemptId
             )
@@ -420,6 +437,10 @@ internal class RunOrchestrator(
                         status = CardRunStatus.Failed,
                         surface = previous.surface,
                         currentStepIndex = previous.currentStepIndex,
+                        runtimeRootOwnerId = previous.runtimeRootOwnerId,
+                        runtimeOwnerId = previous.runtimeOwnerId,
+                        runtimeUnitId = previous.runtimeUnitId,
+                        ownedRuntimeOwnerIds = previous.ownedRuntimeOwnerIds,
                         runId = previous.runId,
                         terminalSessionId = previous.terminalSessionId,
                         pid = previous.pid,
@@ -463,6 +484,10 @@ internal class RunOrchestrator(
                             status = resolution.status,
                             surface = previousState.surface,
                             currentStepIndex = previousState.currentStepIndex,
+                            runtimeRootOwnerId = previousState.runtimeRootOwnerId,
+                            runtimeOwnerId = previousState.runtimeOwnerId,
+                            runtimeUnitId = previousState.runtimeUnitId,
+                            ownedRuntimeOwnerIds = previousState.ownedRuntimeOwnerIds,
                             runId = previousState.runId,
                             terminalSessionId = previousState.terminalSessionId,
                             pid = previousState.pid,
@@ -567,6 +592,8 @@ internal class RunOrchestrator(
                     RecipeStopRequest(
                         recipe = recipe,
                         instanceId = state.instanceId,
+                        generation = state.createdAt,
+                        runtimeOwnerIds = state.ownedRuntimeOwnerIds,
                         runId = sessionId,
                         terminalSessionId = sessionId,
                         interruptTerminal = true
@@ -577,6 +604,8 @@ internal class RunOrchestrator(
                 RecipeStopRequest(
                     recipe = recipe,
                     instanceId = state.instanceId,
+                    generation = state.createdAt,
+                    runtimeOwnerIds = state.ownedRuntimeOwnerIds,
                     runId = state.runId,
                     terminalSessionId = state.terminalSessionId,
                     pid = state.pid,
@@ -589,6 +618,17 @@ internal class RunOrchestrator(
             }
             else -> null
         }
+
+        private fun runtimeNamespace(recipe: KiteRecipe, state: CardRunState): RuntimeOwnerNamespace =
+            if (
+                state.ownerKind == CardRunState.OWNER_KIND_RESOURCE ||
+                state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD ||
+                recipe.runtimeSource == KiteResourceInstallRecipes.RUNTIME_SOURCE
+            ) {
+                RuntimeOwnerNamespace.Resource
+            } else {
+                RuntimeOwnerNamespace.Card
+            }
 
         private fun CardRunStatus.preventsDuplicateStart(): Boolean =
             this == CardRunStatus.Running ||

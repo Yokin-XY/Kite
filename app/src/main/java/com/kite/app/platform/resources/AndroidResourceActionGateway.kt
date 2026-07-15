@@ -16,6 +16,8 @@ import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
+import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
+import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
 import com.kite.app.recipe.KiteRecipe
@@ -374,9 +376,15 @@ internal class AndroidResourceActionGateway(
 
     private suspend fun cleanupCancelledResources(resourceIds: List<String>): Boolean {
         val recipe = cancelCleanupRecipe(resourceIds)
+        val runtimeOwner = RuntimeOwnerIdentity.operation(
+            namespace = RuntimeOwnerNamespace.Resource,
+            instanceId = recipe.id,
+            generation = System.currentTimeMillis(),
+            operationId = "cancel-cleanup"
+        )
         return withTimeoutOrNull(CLEANUP_TIMEOUT_MS) {
             suspendCancellableCoroutine { continuation ->
-                bridgeClient.runRecipe(recipe) { result ->
+                bridgeClient.runRecipe(recipe, extraEnv = runtimeOwner.environment()) { result ->
                     if (continuation.isActive) continuation.resume(result.ok || result.accepted)
                 }
             }
