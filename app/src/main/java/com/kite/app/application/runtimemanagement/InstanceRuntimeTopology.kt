@@ -42,6 +42,19 @@ data class InstanceRuntimeTopology(
     fun descendants(instanceId: String): List<RuntimeInstanceNode> =
         subtree(instanceId).drop(1)
 
+    fun descendantsDeepestFirst(instanceId: String): List<RuntimeInstanceNode> {
+        val ordered = mutableListOf<RuntimeInstanceNode>()
+        val seen = mutableSetOf<String>()
+        fun visit(currentId: String) {
+            if (!seen.add(currentId)) return
+            val current = nodesByInstanceId[currentId] ?: return
+            current.childInstanceIds.forEach(::visit)
+            if (currentId != instanceId) ordered += current
+        }
+        visit(instanceId)
+        return ordered
+    }
+
     fun ownerIdsForSubtree(instanceId: String): List<String> = subtree(instanceId)
         .flatMap(RuntimeInstanceNode::ownerIds)
         .distinct()

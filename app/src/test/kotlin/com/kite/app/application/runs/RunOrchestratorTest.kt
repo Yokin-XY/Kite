@@ -227,6 +227,92 @@ class RunOrchestratorTest {
     }
 
     @Test
+    fun `父实例等待全部子窗口确认后才提交底层停止`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val ownedWindows = FakeRunOwnedWindowGateway()
+        val orchestrator = RunOrchestrator(
+            stateGateway = gateway,
+            executor = executor,
+            ownedWindowGateway = ownedWindows
+        )
+        val recipe = recipe("wait-children", KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "root-instance"))
+
+        orchestrator.stop("root-instance")
+
+        assertEquals(CardRunStatus.Stopping, gateway.state("root-instance")?.status)
+        assertTrue(executor.stopRequests.isEmpty())
+        assertEquals(listOf("root-instance"), ownedWindows.requests.map { it.first })
+
+        ownedWindows.complete(RunOwnedWindowsCloseResult(confirmed = true))
+        assertEquals(1, executor.stopRequests.size)
+        executor.emitStop(StopExecutionResult(StopExecutionOutcome.Confirmed, "已停止"))
+        assertEquals(CardRunStatus.Stopped, gateway.state("root-instance")?.status)
+    }
+
+    @Test
+    fun `任一子窗口未确认关闭时恢复父状态且不停止父进程`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val ownedWindows = FakeRunOwnedWindowGateway()
+        val effects = mutableListOf<RunExecutionEffect>()
+        val orchestrator = RunOrchestrator(
+            stateGateway = gateway,
+            executor = executor,
+            effectSink = effects::add,
+            ownedWindowGateway = ownedWindows
+        )
+        val recipe = recipe("child-failure", KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "root-instance"))
+
+        orchestrator.stop("root-instance")
+        ownedWindows.complete(
+            RunOwnedWindowsCloseResult(
+                confirmed = false,
+                remainingInstanceIds = listOf("grandchild-instance")
+            )
+        )
+
+        assertTrue(executor.stopRequests.isEmpty())
+        assertEquals(CardRunStatus.Running, gateway.state("root-instance")?.status)
+        assertEquals(
+            "子窗口未确认关闭：grandchild-instance",
+            gateway.state("root-instance")?.lastError
+        )
+        assertEquals(false, (effects.single() as RunExecutionEffect.StopResolved).stopped)
+    }
+
+    @Test
+    fun `旧代次的子窗口关闭回调不能停止新代次实例`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val ownedWindows = FakeRunOwnedWindowGateway()
+        val orchestrator = RunOrchestrator(
+            stateGateway = gateway,
+            executor = executor,
+            ownedWindowGateway = ownedWindows
+        )
+        val recipe = recipe("stale-child-close", KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "same-instance"))
+        val oldGeneration = gateway.state("same-instance")!!.createdAt
+        orchestrator.stop("same-instance")
+        gateway.seed(
+            gateway.state("same-instance")!!.copy(
+                status = CardRunStatus.Running,
+                createdAt = oldGeneration + 100,
+                updatedAt = oldGeneration + 100
+            )
+        )
+
+        ownedWindows.complete(RunOwnedWindowsCloseResult(confirmed = true))
+
+        assertTrue(executor.stopRequests.isEmpty())
+        assertEquals(oldGeneration + 100, gateway.state("same-instance")?.createdAt)
+        assertEquals(CardRunStatus.Running, gateway.state("same-instance")?.status)
+    }
+
+    @Test
     fun `停止后存在残留进程时恢复原状态并给出确定错误`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
@@ -597,5 +683,23 @@ private class FakeRunStateGateway : RunStateGateway {
 
     fun seed(state: CardRunState) {
         states[state.instanceId] = state
+    }
+}
+
+private class FakeRunOwnedWindowGateway : RunOwnedWindowGateway {
+    val requests = mutableListOf<Pair<String, Long>>()
+    private var callback: ((RunOwnedWindowsCloseResult) -> Unit)? = null
+
+    override fun closeAll(
+        instanceId: String,
+        expectedGeneration: Long,
+        callback: (RunOwnedWindowsCloseResult) -> Unit
+    ) {
+        requests += instanceId to expectedGeneration
+        this.callback = callback
+    }
+
+    fun complete(result: RunOwnedWindowsCloseResult) {
+        callback?.invoke(result)
     }
 }

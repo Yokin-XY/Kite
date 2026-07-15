@@ -46,7 +46,17 @@ data class RuntimeManagementCommandState(
     val phase: RuntimeManagementCommandPhase,
     val requestedAt: Long,
     val deadlineAt: Long,
-    val message: String = ""
+    val message: String = "",
+    val stopTarget: RuntimeStopConfirmationTarget? = null
+)
+
+data class RuntimeStopConfirmationTarget(
+    val rootInstanceId: String,
+    val rootGeneration: Long,
+    val instanceGenerations: Map<String, Long>,
+    val ownerIds: Set<String>,
+    val terminalSessionIds: Set<String>,
+    val processIds: Set<String>
 )
 
 sealed interface RuntimeManagementSubmitResult {
@@ -71,6 +81,11 @@ class RuntimeManagementCoordinator internal constructor(
 
     suspend fun submit(command: RuntimeManagementCommand): RuntimeManagementSubmitResult {
         val now = clock()
+        val stopTarget = if (command is RuntimeManagementCommand.StopRun) {
+            gateway.currentSnapshot().captureStopTarget(command.instanceId)
+        } else {
+            null
+        }
         synchronized(lock) {
             val current = mutableCommands.value[command.mutationKey]
             if (current?.phase == RuntimeManagementCommandPhase.Requested ||
@@ -83,7 +98,8 @@ class RuntimeManagementCoordinator internal constructor(
                     command = command,
                     phase = RuntimeManagementCommandPhase.Requested,
                     requestedAt = now,
-                    deadlineAt = now + confirmationTimeoutMs.coerceAtLeast(1L)
+                    deadlineAt = now + confirmationTimeoutMs.coerceAtLeast(1L),
+                    stopTarget = stopTarget
                 )
             )
         }
@@ -118,7 +134,7 @@ class RuntimeManagementCoordinator internal constructor(
             mutableCommands.value.values.forEach { commandState ->
                 if (commandState.phase == RuntimeManagementCommandPhase.Failed) return@forEach
                 when {
-                    snapshot.confirms(commandState.command, commandState.requestedAt) ->
+                    snapshot.confirms(commandState) ->
                         next = next - commandState.command.mutationKey
                     now >= commandState.deadlineAt ->
                         next = next + (
@@ -151,12 +167,9 @@ class RuntimeManagementCoordinator internal constructor(
     }
 
     private fun RuntimeManagementSnapshot.confirms(
-        command: RuntimeManagementCommand,
-        requestedAt: Long
-    ): Boolean = when (command) {
-        is RuntimeManagementCommand.StopRun -> runs
-            .firstOrNull { it.instanceId == command.instanceId }
-            ?.status == CardRunStatus.Stopped || runs.none { it.instanceId == command.instanceId }
+        state: RuntimeManagementCommandState
+    ): Boolean = when (val command = state.command) {
+        is RuntimeManagementCommand.StopRun -> confirmsStop(state.stopTarget)
         is RuntimeManagementCommand.EndTerminal -> terminals.none { it.id == command.sessionId && it.isLive }
         is RuntimeManagementCommand.EndProcess -> processes.none {
             it.id == command.processId || (command.pid > 0 && it.pid == command.pid)
@@ -165,7 +178,47 @@ class RuntimeManagementCoordinator internal constructor(
             it.linkedRuntimeId == command.runtimeId
         }
         is RuntimeManagementCommand.RestartBackgroundRuntime ->
-            refreshedAt >= requestedAt && processes.any { it.linkedRuntimeId == command.runtimeId }
+            refreshedAt >= state.requestedAt && processes.any { it.linkedRuntimeId == command.runtimeId }
+    }
+
+    private fun RuntimeManagementSnapshot.captureStopTarget(instanceId: String): RuntimeStopConfirmationTarget? {
+        val root = topology.node(instanceId) ?: return null
+        val subtree = topology.subtree(instanceId)
+        return RuntimeStopConfirmationTarget(
+            rootInstanceId = instanceId,
+            rootGeneration = root.identity.generation,
+            instanceGenerations = subtree.associate { it.identity.instanceId to it.identity.generation },
+            ownerIds = subtree.flatMap { it.ownerIds }.toSet(),
+            terminalSessionIds = subtree.flatMap { it.terminalSessionIds }.toSet(),
+            processIds = subtree.flatMap { it.processIds }.toSet()
+        )
+    }
+
+    private fun RuntimeManagementSnapshot.confirmsStop(target: RuntimeStopConfirmationTarget?): Boolean {
+        target ?: return false
+        val currentRoot = topology.node(target.rootInstanceId)
+            ?.takeIf { it.identity.generation == target.rootGeneration }
+        if (currentRoot != null) {
+            if (currentRoot.run.status != CardRunStatus.Stopped) return false
+            if (topology.descendants(target.rootInstanceId).isNotEmpty()) return false
+            val subtree = topology.subtree(target.rootInstanceId)
+            if (subtree.any { it.processIds.isNotEmpty() }) return false
+            val currentTerminalIds = subtree.flatMap { it.terminalSessionIds }.toSet()
+            if (terminals.any { it.isLive && it.id in currentTerminalIds }) return false
+        }
+        val staleDescendantRemains = target.instanceGenerations.any { (instanceId, generation) ->
+            instanceId != target.rootInstanceId &&
+                topology.node(instanceId)?.identity?.generation == generation
+        }
+        if (staleDescendantRemains) return false
+        if (processes.any { process ->
+                process.id in target.processIds ||
+                    process.ownerId in target.ownerIds ||
+                    process.linkedTerminalSessionId in target.terminalSessionIds
+            }
+        ) return false
+        if (terminals.any { it.isLive && it.id in target.terminalSessionIds }) return false
+        return currentRoot == null || currentRoot.run.status == CardRunStatus.Stopped
     }
 
     private fun fail(mutationKey: String, message: String) {

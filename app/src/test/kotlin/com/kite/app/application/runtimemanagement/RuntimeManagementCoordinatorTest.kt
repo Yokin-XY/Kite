@@ -32,6 +32,60 @@ class RuntimeManagementCoordinatorTest {
     }
 
     @Test
+    fun `stopped root does not confirm while its owned process remains`() = runTest {
+        val owner = "card:run-1@10/step/0-shell/attempt/1"
+        val running = run(CardRunStatus.Running, owner = owner)
+        val ownedProcess = process(ownerId = owner)
+        val gateway = FakeGateway(snapshot(runs = listOf(running), processes = listOf(ownedProcess)))
+        val coordinator = coordinator(gateway)
+
+        coordinator.submit(RuntimeManagementCommand.StopRun("run-1"))
+        val residue = snapshot(
+            runs = listOf(run(CardRunStatus.Stopped, owner = owner)),
+            processes = listOf(ownedProcess)
+        )
+        gateway.publish(residue)
+        coordinator.reconcile(residue)
+
+        assertEquals(
+            RuntimeManagementCommandPhase.AwaitingConfirmation,
+            coordinator.commands.value.getValue("run:run-1").phase
+        )
+
+        val closed = snapshot(runs = listOf(run(CardRunStatus.Stopped, owner = owner)))
+        gateway.publish(closed)
+        coordinator.reconcile(closed)
+        assertTrue(coordinator.commands.value.isEmpty())
+    }
+
+    @Test
+    fun `missing root does not confirm while captured descendant fact remains`() = runTest {
+        val root = run(CardRunStatus.Running)
+        val child = CardRunState(
+            instanceId = "child-1",
+            recipeId = root.recipeId,
+            parentInstanceId = root.instanceId,
+            status = CardRunStatus.Running,
+            createdAt = 11L,
+            updatedAt = 11L
+        )
+        val gateway = FakeGateway(snapshot(runs = listOf(root, child)))
+        val coordinator = coordinator(gateway)
+
+        coordinator.submit(RuntimeManagementCommand.StopRun("run-1"))
+        val childRemains = snapshot(runs = listOf(child))
+        gateway.publish(childRemains)
+        coordinator.reconcile(childRemains)
+
+        assertTrue(coordinator.commands.value.containsKey("run:run-1"))
+
+        val closed = snapshot()
+        gateway.publish(closed)
+        coordinator.reconcile(closed)
+        assertTrue(coordinator.commands.value.isEmpty())
+    }
+
+    @Test
     fun `end child process never mutates card state and completes only after pid disappears`() = runTest {
         val process = process()
         val gateway = FakeGateway(snapshot(runs = listOf(run(CardRunStatus.Running)), processes = listOf(process)))
@@ -114,17 +168,27 @@ class RuntimeManagementCoordinatorTest {
         processes: List<RuntimeManagedProcess> = emptyList()
     ) = RuntimeManagementSnapshot(runs = runs, processes = processes, refreshedAt = 100L)
 
-    private fun run(status: CardRunStatus) = CardRunState(
+    private fun run(
+        status: CardRunStatus,
+        owner: String? = null
+    ) = CardRunState(
         instanceId = "run-1",
         recipeId = "recipe-1",
-        status = status
+        status = status,
+        runtimeRootOwnerId = owner,
+        runtimeOwnerId = owner,
+        runtimeUnitId = owner,
+        ownedRuntimeOwnerIds = listOfNotNull(owner),
+        createdAt = 10L,
+        updatedAt = 10L
     )
 
-    private fun process() = RuntimeManagedProcess(
+    private fun process(ownerId: String? = null) = RuntimeManagedProcess(
         id = "process-52",
         pid = 52,
         title = "child",
         stateLabel = "运行中",
+        ownerId = ownerId,
         canEndDirectly = true
     )
 

@@ -39,6 +39,10 @@ class InstanceRuntimeTopologyBuilderTest {
         assertEquals(listOf("root"), topology.rootInstanceIds)
         assertEquals(listOf("root", "child", "grandchild"), topology.subtree("root").map { it.identity.instanceId })
         assertEquals(listOf("child", "grandchild"), topology.descendants("root").map { it.identity.instanceId })
+        assertEquals(
+            listOf("grandchild", "child"),
+            topology.descendantsDeepestFirst("root").map { it.identity.instanceId }
+        )
     }
 
     @Test
@@ -71,6 +75,26 @@ class InstanceRuntimeTopologyBuilderTest {
 
         assertEquals(listOf("legacy"), topology.unassignedProcessIds)
         assertTrue(topology.node("root")?.processIds.orEmpty().isEmpty())
+    }
+
+    @Test
+    fun `shared background runtime stays outside an instance subtree`() {
+        val run = run("root", owner = "card:root@100/step/0-shell/attempt/1")
+        val owned = process("owned", 81, ownerId = run.runtimeOwnerId)
+        val shared = process("shared-runtime", 82, ownerId = "background:shared-runtime")
+            .copy(
+                ownerKind = RuntimeManagedOwnerKind.BackgroundRuntime,
+                linkedRuntimeId = "shared-runtime"
+            )
+
+        val topology = InstanceRuntimeTopologyBuilder.build(
+            runs = listOf(run),
+            terminals = emptyList(),
+            processes = listOf(owned, shared)
+        )
+
+        assertEquals(listOf("owned"), topology.node("root")?.processIds)
+        assertEquals(listOf("shared-runtime"), topology.unassignedProcessIds)
     }
 
     private fun run(

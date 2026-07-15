@@ -93,11 +93,23 @@ internal data class RunStepRestartCommand(
     val expectedStepId: String
 )
 
+internal data class RunOwnedWindowsCloseResult(
+    val confirmed: Boolean,
+    val message: String = "",
+    val remainingInstanceIds: List<String> = emptyList()
+)
+
 internal fun interface RunOwnedWindowGateway {
-    fun closeAll(instanceId: String)
+    fun closeAll(
+        instanceId: String,
+        expectedGeneration: Long,
+        callback: (RunOwnedWindowsCloseResult) -> Unit
+    )
 
     companion object {
-        val None = RunOwnedWindowGateway { }
+        val None = RunOwnedWindowGateway { _, _, callback ->
+            callback(RunOwnedWindowsCloseResult(confirmed = true))
+        }
     }
 }
 
