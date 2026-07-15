@@ -83,6 +83,24 @@ class AppNavigatorContractTest {
     }
 
     @Test
+    fun `只有一级目标拥有主导航`() {
+        val navigator = navigator()
+        val destinationsWithPrimaryNavigation = AppDestination.entries
+            .filter { navigator.contract(it).showsPrimaryNavigation }
+            .toSet()
+
+        assertEquals(
+            setOf(
+                AppDestination.Console,
+                AppDestination.Terminal,
+                AppDestination.Resources,
+                AppDestination.Settings
+            ),
+            destinationsWithPrimaryNavigation
+        )
+    }
+
+    @Test
     fun `恢复策略必须保持现有白名单边界`() {
         val navigator = navigator()
 

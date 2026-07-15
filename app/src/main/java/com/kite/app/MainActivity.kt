@@ -1439,8 +1439,7 @@ open class MainActivity : AppCompatActivity() {
 
     private fun showFeatureFragment(
         fragment: Fragment,
-        tag: String,
-        showBottomNavigation: Boolean = true
+        tag: String
     ) {
         rootHost.setBackgroundColor(tokens.pageBackground)
         root.setBackgroundColor(tokens.pageBackground)
@@ -1450,7 +1449,7 @@ open class MainActivity : AppCompatActivity() {
             setBackgroundColor(tokens.pageBackground)
         }
         root.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        if (showBottomNavigation) {
+        if (appNavigator.contract().showsPrimaryNavigation) {
             val nav = bottomNavigation()
             showBottomNavigationImmediately(nav)
             root.addView(nav)
@@ -1750,8 +1749,7 @@ open class MainActivity : AppCompatActivity() {
         currentResourceDetailId = null
         showFeatureFragment(
             ResourceSearchFragment.newInstance(initialQuery.trim()),
-            TAG_RESOURCE_SEARCH_FRAGMENT,
-            showBottomNavigation = false
+            TAG_RESOURCE_SEARCH_FRAGMENT
         )
     }
 
@@ -1764,8 +1762,7 @@ open class MainActivity : AppCompatActivity() {
         enterScreen(AppDestination.ResourceRawJson) { showResourceDetail(resourceId) }
         showFeatureFragment(
             ResourceRawJsonFragment.newInstance(resourceId),
-            TAG_RESOURCE_RAW_JSON_FRAGMENT,
-            showBottomNavigation = false
+            TAG_RESOURCE_RAW_JSON_FRAGMENT
         )
     }
 
@@ -2194,8 +2191,7 @@ open class MainActivity : AppCompatActivity() {
         enterScreen(AppDestination.RecipeDetail) { showRecipeEditor(recipe) }
         showFeatureFragment(
             RecipeRawJsonFragment.newInstance(recipe.id.ifBlank { recipe.name }, themeConfig),
-            TAG_RECIPE_RAW_JSON_FRAGMENT,
-            showBottomNavigation = false
+            TAG_RECIPE_RAW_JSON_FRAGMENT
         )
     }
 
@@ -2229,8 +2225,7 @@ open class MainActivity : AppCompatActivity() {
                 emptyDetail = emptyDetail,
                 initialHistoryId = initialHistoryId
             ),
-            TAG_RUN_HISTORY_FRAGMENT,
-            showBottomNavigation = false
+            TAG_RUN_HISTORY_FRAGMENT
         )
     }
 
@@ -2377,8 +2372,7 @@ open class MainActivity : AppCompatActivity() {
                 pageBackground = tokens.pageBackground,
                 textPrimary = tokens.textPrimary
             ),
-            tag = TAG_WEB_WORKBENCH_FRAGMENT,
-            showBottomNavigation = false
+            tag = TAG_WEB_WORKBENCH_FRAGMENT
         )
     }
 
@@ -2394,8 +2388,8 @@ open class MainActivity : AppCompatActivity() {
         elevation = dp(6).toFloat()
         addView(navItem("▦", "配置", currentScreen == AppDestination.Console) { appNavigator.navigate(AppDestination.Console) })
         addView(navItem(">_", "终端", currentScreen == AppDestination.Terminal) { appNavigator.navigate(AppDestination.Terminal) })
-        addView(navItem("≡", "资源", currentScreen == AppDestination.Resources || currentScreen == AppDestination.ResourceManage || currentScreen == AppDestination.ResourceDetail || currentScreen == AppDestination.ResourceMore || currentScreen == AppDestination.ResourceRawJson) { appNavigator.navigate(AppDestination.Resources) })
-        addView(navItem("⚙", "设置", currentScreen == AppDestination.Settings || currentScreen == AppDestination.ThemeSettings) { appNavigator.navigate(AppDestination.Settings) })
+        addView(navItem("≡", "资源", currentScreen == AppDestination.Resources) { appNavigator.navigate(AppDestination.Resources) })
+        addView(navItem("⚙", "设置", currentScreen == AppDestination.Settings) { appNavigator.navigate(AppDestination.Settings) })
     }
 
     private fun rebindBottomNavigationTheme() {

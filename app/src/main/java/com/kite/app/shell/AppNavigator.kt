@@ -43,7 +43,10 @@ internal data class DestinationContract(
     val kind: DestinationKind,
     val backPolicy: BackPolicy,
     val restorePolicy: RestorePolicy = RestorePolicy.None
-)
+) {
+    val showsPrimaryNavigation: Boolean
+        get() = kind == DestinationKind.Root
+}
 
 internal sealed interface NavigationBackAction {
     data object System : NavigationBackAction
