@@ -94,6 +94,15 @@ data class ProotTraceeRecord(
     val exitCode: Int? = null,
     val signal: Int? = null
 ) {
+    val lifecycleId: String
+        get() = prootTraceeLifecycleId(
+            telemetrySessionId = telemetrySessionId,
+            prootStartMs = prootStartMs,
+            prootPid = prootPid,
+            traceePid = traceePid,
+            legacyCreatedAtMs = createdAtMs
+        )
+
     val running: Boolean
         get() = exitedAtMs == null && signaledAtMs == null
 
@@ -134,14 +143,23 @@ data class ProotLiveProcessEntry(
     val childEventCount: Int,
     val exitCode: Int? = null,
     val signal: Int? = null
-)
+) {
+    val lifecycleId: String
+        get() = prootTraceeLifecycleId(
+            telemetrySessionId = telemetrySessionId,
+            prootStartMs = prootStartMs,
+            prootPid = prootPid,
+            traceePid = traceePid,
+            legacyCreatedAtMs = createdAtMs
+        )
+}
 
 data class ProotProcessLiveTable(
-    val mode: String = "telemetry_process_live_table_v1",
+    val mode: String = "telemetry_process_live_table_v2",
     val generatedAtMs: Long = 0L,
     val sourceStatus: String = "not_started",
     val sourcePath: String = "",
-    val retentionMode: String = "running_plus_bounded_terminal_v1",
+    val retentionMode: String = "running_plus_bounded_terminal_lifecycle_v2",
     val terminalRetentionMaxEntries: Int = 5_000,
     val terminalRetentionTtlMs: Long = 7L * 24L * 60L * 60L * 1000L,
     val liveTraceeCount: Int = 0,
@@ -169,7 +187,7 @@ data class ProotOwnerProcessGroup(
 )
 
 data class ProotOwnerProcessIndex(
-    val mode: String = "telemetry_owner_process_index_v0",
+    val mode: String = "telemetry_owner_process_index_v1",
     val generatedAtMs: Long = 0L,
     val sourceStatus: String = "not_started",
     val ownerCount: Int = 0,
@@ -179,6 +197,24 @@ data class ProotOwnerProcessIndex(
     fun summary(): String {
         return "mode=$mode status=$sourceStatus owners=$ownerCount live=$liveTraceeCount"
     }
+}
+
+private fun prootTraceeLifecycleId(
+    telemetrySessionId: String,
+    prootStartMs: Long,
+    prootPid: Int,
+    traceePid: Int,
+    legacyCreatedAtMs: Long
+): String {
+    val explicit = telemetrySessionId.isNotBlank() || prootStartMs > 0L
+    val generation = if (explicit) 0L else legacyCreatedAtMs
+    return listOf(
+        telemetrySessionId.ifBlank { "legacy" },
+        prootStartMs,
+        prootPid,
+        traceePid,
+        generation
+    ).joinToString(":")
 }
 
 enum class ProotPressureSignalLevel {

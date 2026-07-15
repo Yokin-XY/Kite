@@ -1,15 +1,15 @@
 # Kite 主线稳定化进度
 
-最后更新：2026-07-14
+最后更新：2026-07-15
 
 ## 当前恢复指针
 
 ```text
-方向：运行窗口交互封口
-状态：completed
-当前任务：T014 首页卡片通知生命周期封口
+方向：运行实例容器与进程闭环
+状态：in_progress
+当前任务：T018.2 实例代次与叶子 owner 身份
 代码分支：main
-代码策略：T014 已完成；等待用户指定下一项主线任务
+代码策略：先收紧底层事实，再接实例拓扑和运行管理；不触碰未提交的浏览器与终端改动
 ```
 
 ## 方向总览
@@ -25,6 +25,10 @@
 | 第二阶段架构迁移 | completed | T001-T012 已完成并通过发布验收 |
 | T013 运行窗口交互封口 | completed | 精确步骤通知、权限门、实例总览和 Web 动画均已通过全量与真机验收 |
 | T014 首页卡片通知生命周期 | completed | 关闭、下一步、卡片级终态保留、清除抑制、再次运行和高重要级渠道迁移均已通过真机验收 |
+| T015 通知权限与服务频道 | completed | Android 标准权限链、卡片频道和静默后台频道均已验收 |
+| T016 实例窗口重置与独立子窗口 | completed | 流程窗口重置、手动窗口关闭和独立终端已由用户人工确认 |
+| T017 一级导航与二级页层级 | completed | 主导航仅属于四个根目标，二级页面隐藏并复用统一返回合同 |
+| T018 运行实例容器与进程闭环 | in_progress | 遥测生命周期身份已收紧，正在统一实例与叶子 owner 身份 |
 
 ## P0 公共安全网记录
 
@@ -1501,3 +1505,54 @@ T015 状态：completed。本任务没有提升 targetSdk，也没有改动资�
   已达成，本轮不再执行自动交互测试。
 
 T016 状态：completed。下一项处理一级底部导航与资源二级页面的层级边界。
+
+### 2026-07-15 T017 一级导航与二级页层级封口
+
+- `DestinationContract.showsPrimaryNavigation` 由目标层级统一计算，只有 Console、Terminal、Resources、
+  Settings 四个根目标显示一级底部导航。
+- MainActivity 不再按页面名称维护底栏白名单；资源详情、资源管理等二级目标统一隐藏主导航。
+- `AppNavigatorContractTest` 固定四个根目标集合；提交 `64709f3 [T017]` 已进入本地 main。
+
+T017 状态：completed。
+
+### 2026-07-15 T018.1 PRoot 遥测复合身份与读取串行化
+
+三问自检：
+
+- 目标是什么：先让 Android 端能够准确区分 PID 复用和不同 PRoot 启动代次，并保证所有遥测读取按单写者
+  顺序修改状态，为后续 owner 关停和实例拓扑提供可信事实。
+- 完成标准是什么：对应 PLAYBOOK T018 前两项中的复合身份部分；新增 PID 复用回归测试，现有读取、轮转、
+  owner 索引行为不回归，目标单测和 Kotlin 编译通过。
+- 依赖是否满足：T006/T008 已提供运行编排与管理入口，T016/T017 已完成窗口与导航封口；原生遥测二进制
+  与当前 KFshell 源码哈希和事件字段已审计，依赖满足。
+
+底层审计确认：
+
+- 原生 PRoot 会在 exec 时读取 `KF_RUNTIME_ID/KF_UNIT_ID`，并上报 fork/clone/exec/exit/signal；该机制真实存在。
+- Android 端当前使用裸 `traceePid` 作为 Map 键，旧终态会污染复用 PID；`refreshBlocking` 与异步 refresh
+  也可以并发进入同一读取器。
+- 本小段只修事实身份和读取次序，不接 UI、不新增页面刷新，也不把遥测不完整问题提前伪装成已解决。
+
+完成结果：
+
+- `ProotTelemetryStore` 内部由裸 PID 键改为 telemetry session、PRoot 启动时间、宿主 PID、tracee PID
+  组成的复合生命周期键；旧协议在终态后再次创建同 PID 时分配兼容代次。
+- `refreshBlocking`、异步 refresh 和测试读取共用 `readerLock`，不会并发推进 offset、partial line 和 Store 状态。
+- `ProotTraceeRecord/ProotLiveProcessEntry` 暴露稳定只读 `lifecycleId`；owner root 的 PID 映射只消费运行中
+  生命周期，旧终态不会覆盖复用 PID 的当前父子关系。
+- 新增 4 个回归用例，覆盖新会话 PID 复用、同会话终态、旧协议兼容代次和跨会话父 owner 隔离。
+- `:app:testDebugUnitTest --tests ProotTelemetryStoreLifecycleTest` 通过，生产 Kotlin 编译同步通过。
+
+T018.1 状态：completed。
+
+### 2026-07-15 T018.2 实例代次与叶子 owner 身份
+
+三问自检：
+
+- 目标是什么：让卡片、资源操作、流程终端和手动终端都能把明确的实例代次与叶子执行单元带入
+  `KF_RUNTIME_ID/KF_UNIT_ID`，消除资源 ID 共享 owner 和手动终端无 owner。
+- 完成标准是什么：同实例新代次 owner 不碰撞；同资源并发操作不碰撞；每个终端会话可单独归属和停止；
+  身份生成纯函数有合同测试，现有启动入口编译通过。
+- 依赖是否满足：T018.1 已让底层按复合进程生命周期保存 owner 事实，依赖满足。
+
+当前状态：in_progress。下一步审计所有 owner 环境注入调用点并建立统一身份合同。

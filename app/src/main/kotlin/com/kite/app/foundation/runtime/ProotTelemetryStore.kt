@@ -41,6 +41,7 @@ object ProotTelemetryStore {
     @Volatile
     private var pendingRefresh = false
 
+    private val readerLock = Any()
     private val lock = Any()
     private var lastPath: String = ""
     private var lastOffsetBytes: Long = 0L
@@ -50,7 +51,7 @@ object ProotTelemetryStore {
     private var probeDeclaredTargetLiveTracees: Int = 0
     private var counters = ProotTelemetryCounters()
     private val recentEvents = ArrayDeque<ProotTelemetryEvent>()
-    private val tracees = LinkedHashMap<Int, ProotTraceeRecord>()
+    private val tracees = LinkedHashMap<TraceeLifecycleKey, ProotTraceeRecord>()
 
     fun startAutoRefresh(context: Context) {
         val appContext = context.applicationContext
@@ -572,6 +573,12 @@ object ProotTelemetryStore {
     }
 
     private fun readTelemetry(context: Context) {
+        synchronized(readerLock) {
+            readTelemetryLocked(context)
+        }
+    }
+
+    private fun readTelemetryLocked(context: Context) {
         val file = telemetryFile(context)
         if (!file.exists()) {
             synchronized(lock) {
@@ -856,7 +863,8 @@ object ProotTelemetryStore {
     private fun applyEvent(event: ProotTelemetryEvent) {
         counters = counters.increment(event.eventType)
         pushRecentEvent(event)
-        val existing = tracees[event.traceePid]
+        val traceeKey = resolveTraceeLifecycleKey(event)
+        val existing = tracees[traceeKey]
         when (event.eventType) {
             ProotTelemetryEventType.ProotTelemetryStarted -> {
                 // Startup only proves that native PRoot can open and append telemetry.
@@ -865,8 +873,11 @@ object ProotTelemetryStore {
             ProotTelemetryEventType.ForkDetected,
             ProotTelemetryEventType.CloneDetected,
             ProotTelemetryEventType.VforkDetected -> {
-                val parent = event.parentTraceePid?.let(tracees::get)
-                tracees[event.traceePid] = (existing ?: ProotTraceeRecord(
+                val parentKey = event.parentTraceePid?.let { parentPid ->
+                    resolveParentLifecycleKey(event, parentPid)
+                }
+                val parent = parentKey?.let(tracees::get)
+                tracees[traceeKey] = (existing ?: ProotTraceeRecord(
                     traceePid = event.traceePid,
                     traceeVpid = event.traceeVpid,
                     telemetrySessionId = event.telemetrySessionId,
@@ -899,10 +910,10 @@ object ProotTelemetryStore {
                     kfRuntimeId = event.kfRuntimeId.ifBlank { existing?.kfRuntimeId ?: parent?.kfRuntimeId.orEmpty() },
                     kfUnitId = event.kfUnitId.ifBlank { existing?.kfUnitId ?: parent?.kfUnitId.orEmpty() }
                 )
-                event.parentTraceePid?.let { parentPid ->
-                    tracees[parentPid]?.let { parent ->
-                        tracees[parentPid] = parent.copy(
-                            childEventCount = parent.childEventCount + 1,
+                parentKey?.let { key ->
+                    tracees[key]?.let { parentRecord ->
+                        tracees[key] = parentRecord.copy(
+                            childEventCount = parentRecord.childEventCount + 1,
                             lastEventAtMs = event.timestampMs,
                             lastSourceHook = event.sourceHook,
                             lastCostLevel = event.costLevel
@@ -911,7 +922,7 @@ object ProotTelemetryStore {
                 }
             }
             ProotTelemetryEventType.ExecDetected -> {
-                tracees[event.traceePid] = (existing ?: ProotTraceeRecord(
+                tracees[traceeKey] = (existing ?: ProotTraceeRecord(
                     traceePid = event.traceePid,
                     traceeVpid = event.traceeVpid,
                     telemetrySessionId = event.telemetrySessionId,
@@ -951,7 +962,7 @@ object ProotTelemetryStore {
                 )
             }
             ProotTelemetryEventType.TraceeExited -> {
-                tracees[event.traceePid] = (existing ?: minimalRecord(event)).copy(
+                tracees[traceeKey] = (existing ?: minimalRecord(event)).copy(
                     telemetrySessionId = event.telemetrySessionId.ifBlank { existing?.telemetrySessionId.orEmpty() },
                     prootStartMs = event.prootStartMs.takeIf { it > 0L } ?: existing?.prootStartMs ?: 0L,
                     processGroupId = event.processGroupId ?: existing?.processGroupId,
@@ -965,7 +976,7 @@ object ProotTelemetryStore {
                 )
             }
             ProotTelemetryEventType.TraceeSignaled -> {
-                tracees[event.traceePid] = (existing ?: minimalRecord(event)).copy(
+                tracees[traceeKey] = (existing ?: minimalRecord(event)).copy(
                     telemetrySessionId = event.telemetrySessionId.ifBlank { existing?.telemetrySessionId.orEmpty() },
                     prootStartMs = event.prootStartMs.takeIf { it > 0L } ?: existing?.prootStartMs ?: 0L,
                     processGroupId = event.processGroupId ?: existing?.processGroupId,
@@ -980,7 +991,7 @@ object ProotTelemetryStore {
             }
             ProotTelemetryEventType.Unknown -> {
                 if (existing != null) {
-                    tracees[event.traceePid] = existing.copy(
+                    tracees[traceeKey] = existing.copy(
                         lastEventAtMs = event.timestampMs,
                         lastEventType = event.eventType,
                         lastSourceHook = event.sourceHook,
@@ -990,6 +1001,50 @@ object ProotTelemetryStore {
             }
         }
         trimTracees()
+    }
+
+    private fun resolveTraceeLifecycleKey(event: ProotTelemetryEvent): TraceeLifecycleKey {
+        val exact = event.exactLifecycleKey()
+        if (event.hasExplicitLifecycleIdentity()) return exact
+
+        val candidates = tracees.entries
+            .asSequence()
+            .filter { (key, _) ->
+                key.prootPid == event.prootPid && key.traceePid == event.traceePid
+            }
+            .sortedByDescending { (_, record) -> record.lastEventAtMs }
+            .toList()
+        val running = candidates.firstOrNull { (_, record) -> record.running }
+        if (event.eventType in TRACEE_LIFECYCLE_START_EVENTS && running == null) {
+            return exact.copy(legacyGenerationMs = event.timestampMs)
+        }
+        return running?.key
+            ?: candidates.firstOrNull()?.key
+            ?: exact.copy(legacyGenerationMs = event.timestampMs)
+    }
+
+    private fun resolveParentLifecycleKey(
+        event: ProotTelemetryEvent,
+        parentTraceePid: Int
+    ): TraceeLifecycleKey? {
+        val exact = TraceeLifecycleKey(
+            telemetrySessionId = event.telemetrySessionId,
+            prootStartMs = event.prootStartMs,
+            prootPid = event.prootPid,
+            traceePid = parentTraceePid
+        )
+        if (event.hasExplicitLifecycleIdentity()) {
+            return exact.takeIf(tracees::containsKey)
+        }
+        return tracees.entries
+            .asSequence()
+            .filter { (key, record) ->
+                key.prootPid == event.prootPid &&
+                    key.traceePid == parentTraceePid &&
+                    record.running
+            }
+            .maxByOrNull { (_, record) -> record.lastEventAtMs }
+            ?.key
     }
 
     private fun minimalRecord(event: ProotTelemetryEvent): ProotTraceeRecord {
@@ -1031,23 +1086,23 @@ object ProotTelemetryStore {
 
         val now = System.currentTimeMillis()
         val terminalCutoff = now - TERMINAL_TRACEE_TTL_MS
-        val expiredTerminal = tracees.values
-            .filter { !it.running && it.terminalAtMs() in 1 until terminalCutoff }
-            .map { it.traceePid }
+        val expiredTerminal = tracees.entries
+            .filter { (_, record) -> !record.running && record.terminalAtMs() in 1 until terminalCutoff }
+            .map { it.key }
 
         expiredTerminal.forEach(tracees::remove)
 
-        val terminal = tracees.values
-            .filter { !it.running }
+        val terminal = tracees.entries
+            .filter { (_, record) -> !record.running }
             .sortedWith(
-                compareBy<ProotTraceeRecord> { it.terminalAtMs() }
-                    .thenBy { it.traceePid }
+                compareBy<Map.Entry<TraceeLifecycleKey, ProotTraceeRecord>> { it.value.terminalAtMs() }
+                    .thenBy { it.value.traceePid }
             )
         if (terminal.size <= MAX_TERMINAL_TRACEE_RECORDS) return
 
         val overflowTerminal = terminal
             .take(terminal.size - MAX_TERMINAL_TRACEE_RECORDS)
-            .map { it.traceePid }
+            .map { it.key }
         overflowTerminal.forEach(tracees::remove)
     }
 
@@ -1249,51 +1304,53 @@ object ProotTelemetryStore {
     }
 
     internal fun readTelemetryFileForTests(file: File, readerEpochMs: Long = 0L): ProotTelemetrySnapshot {
-        synchronized(lock) {
-            resetReaderState(file.absolutePath)
-            this.readerEpochMs = readerEpochMs
-        }
-        val baselineResult = readRotationBaselineIfNeeded(file)
-        val readResult = readNewLines(file)
-        synchronized(lock) {
-            baselineResult?.let { baseline ->
-                if (baseline.skippedBytes > 0L) {
-                    counters = counters.copy(skippedBytes = counters.skippedBytes + baseline.skippedBytes)
-                }
-                baseline.lines.forEach { line ->
-                    if (line.isBlank()) return@forEach
-                    val event = parseEvent(line) ?: return@forEach
-                    if (event.belongsToRotationBaseline(System.currentTimeMillis())) {
-                        applyEvent(event)
+        return synchronized(readerLock) {
+            synchronized(lock) {
+                resetReaderState(file.absolutePath)
+                this.readerEpochMs = readerEpochMs
+            }
+            val baselineResult = readRotationBaselineIfNeeded(file)
+            val readResult = readNewLines(file)
+            synchronized(lock) {
+                baselineResult?.let { baseline ->
+                    if (baseline.skippedBytes > 0L) {
+                        counters = counters.copy(skippedBytes = counters.skippedBytes + baseline.skippedBytes)
+                    }
+                    baseline.lines.forEach { line ->
+                        if (line.isBlank()) return@forEach
+                        val event = parseEvent(line) ?: return@forEach
+                        if (event.belongsToRotationBaseline(System.currentTimeMillis())) {
+                            applyEvent(event)
+                        }
                     }
                 }
-            }
-            if (readResult.skippedBytes > 0L) {
-                counters = counters.copy(skippedBytes = counters.skippedBytes + readResult.skippedBytes)
-            }
-            var parseErrors = 0
-            readResult.lines.forEach { line ->
-                if (line.isBlank()) return@forEach
-                val event = parseEvent(line)
-                if (event == null) {
-                    parseErrors += 1
-                    return@forEach
+                if (readResult.skippedBytes > 0L) {
+                    counters = counters.copy(skippedBytes = counters.skippedBytes + readResult.skippedBytes)
                 }
-                if (!event.belongsToCurrentReaderEpoch()) {
-                    return@forEach
+                var parseErrors = 0
+                readResult.lines.forEach { line ->
+                    if (line.isBlank()) return@forEach
+                    val event = parseEvent(line)
+                    if (event == null) {
+                        parseErrors += 1
+                        return@forEach
+                    }
+                    if (!event.belongsToCurrentReaderEpoch()) {
+                        return@forEach
+                    }
+                    applyEvent(event)
                 }
-                applyEvent(event)
+                if (parseErrors > 0) {
+                    counters = counters.copy(parseErrors = counters.parseErrors + parseErrors)
+                }
+                _snapshot.value = buildSnapshot(
+                    file = file,
+                    collectionStatus = "loaded",
+                    lastRefreshEvents = readResult.lines.size - parseErrors,
+                    lastRefreshForkExecEvents = recentEvents.count { it.eventType in FORK_EXEC_EVENT_TYPES }
+                )
+                _snapshot.value
             }
-            if (parseErrors > 0) {
-                counters = counters.copy(parseErrors = counters.parseErrors + parseErrors)
-            }
-            _snapshot.value = buildSnapshot(
-                file = file,
-                collectionStatus = "loaded",
-                lastRefreshEvents = readResult.lines.size - parseErrors,
-                lastRefreshForkExecEvents = recentEvents.count { it.eventType in FORK_EXEC_EVENT_TYPES }
-            )
-            return _snapshot.value
         }
     }
 
@@ -1339,11 +1396,39 @@ object ProotTelemetryStore {
         val skippedBytes: Long
     )
 
+    private data class TraceeLifecycleKey(
+        val telemetrySessionId: String,
+        val prootStartMs: Long,
+        val prootPid: Int,
+        val traceePid: Int,
+        val legacyGenerationMs: Long = 0L
+    )
+
+    private fun ProotTelemetryEvent.exactLifecycleKey(): TraceeLifecycleKey {
+        return TraceeLifecycleKey(
+            telemetrySessionId = telemetrySessionId,
+            prootStartMs = prootStartMs,
+            prootPid = prootPid,
+            traceePid = traceePid
+        )
+    }
+
+    private fun ProotTelemetryEvent.hasExplicitLifecycleIdentity(): Boolean {
+        return telemetrySessionId.isNotBlank() || prootStartMs > 0L
+    }
+
     private val FORK_EXEC_EVENT_TYPES = setOf(
         ProotTelemetryEventType.ForkDetected,
         ProotTelemetryEventType.CloneDetected,
         ProotTelemetryEventType.VforkDetected,
         ProotTelemetryEventType.ExecDetected
+    )
+
+    private val TRACEE_LIFECYCLE_START_EVENTS = setOf(
+        ProotTelemetryEventType.TraceeCreated,
+        ProotTelemetryEventType.ForkDetected,
+        ProotTelemetryEventType.CloneDetected,
+        ProotTelemetryEventType.VforkDetected
     )
 }
 

@@ -1425,7 +1425,9 @@ object RuntimeHealthStore {
         excludedOwnerIds: Set<String> = emptySet(),
         processRefreshedAt: Long
     ): List<RuntimeRootSnapshot> {
-        val entriesByPid = prootTelemetry.processLiveTable.entries.associateBy { it.traceePid }
+        val entriesByPid = prootTelemetry.processLiveTable.entries
+            .filter { it.state == ProotLiveProcessState.RUNNING }
+            .associateBy { it.traceePid }
         return prootTelemetry.ownerProcessIndex.groups
             .mapNotNull { group ->
                 if (group.ownerId in excludedOwnerIds) return@mapNotNull null
