@@ -87,6 +87,46 @@ class AndroidRunWindowSurfaceGatewayTest {
     }
 
     @Test
+    fun `close all sends manual terminal ownership to executor before removing child`() {
+        val recipe = TestRecipes.serviceRecipe("manual-terminal-close")
+        val root = seed(recipe, "root", parentInstanceId = null, runId = "root-run")
+        CardRunStore.start(
+            recipe = recipe,
+            instanceId = "manual-terminal",
+            parentInstanceId = root.instanceId,
+            ownerKind = CardRunState.OWNER_KIND_TERMINAL
+        )
+        CardRunStore.update(
+            recipe = recipe,
+            status = CardRunStatus.Opened,
+            instanceId = "manual-terminal",
+            parentInstanceId = root.instanceId,
+            ownerKind = CardRunState.OWNER_KIND_TERMINAL,
+            runtimeOwnerId = "terminal:manual-session/instance/manual-terminal/manual",
+            ownedRuntimeOwnerIds = listOf("terminal:manual-session/instance/manual-terminal/manual"),
+            runId = "manual-session",
+            terminalSessionId = "manual-session"
+        )
+        val executor = RecordingStopExecutor()
+        val gateway = AndroidRunWindowSurfaceGateway(
+            context = context,
+            diagnostics = KiteDiagnostics(context),
+            executor = executor
+        )
+
+        gateway.closeAll(root.instanceId, root.createdAt) { }
+
+        val request = executor.stopRequests.single()
+        assertEquals("manual-terminal", request.instanceId)
+        assertEquals("manual-session", request.terminalSessionId)
+        assertEquals(
+            listOf("terminal:manual-session/instance/manual-terminal/manual"),
+            request.runtimeOwnerIds
+        )
+        assertNull(CardRunStore.get("manual-terminal"))
+    }
+
+    @Test
     fun `replay starts new generation even when old cleanup is not yet confirmed`() {
         val recipe = TestRecipes.serviceRecipe("replay-old-residue")
         val root = seed(recipe, "root", parentInstanceId = null, runId = null)
@@ -133,6 +173,7 @@ private class RecordingStopExecutor(
     private val failingInstanceId: String? = null
 ) : RecipeExecutor {
     val stoppedInstanceIds = mutableListOf<String>()
+    val stopRequests = mutableListOf<RecipeStopRequest>()
     val executeRequests = mutableListOf<RecipeStepExecutionRequest>()
 
     override fun execute(
@@ -144,6 +185,7 @@ private class RecordingStopExecutor(
 
     override fun stop(request: RecipeStopRequest, callback: (StopExecutionResult) -> Unit) {
         stoppedInstanceIds += request.instanceId
+        stopRequests += request
         callback(
             if (request.instanceId == failingInstanceId) {
                 StopExecutionResult(StopExecutionOutcome.Failed, "模拟未确认")

@@ -445,7 +445,7 @@ class RunOrchestratorTest {
     }
 
     @Test
-    fun `无运行绑定的网页实例本地闭合不调用执行核心`() {
+    fun `无运行绑定的实例本地闭合不调用执行核心`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
         val effects = mutableListOf<RunExecutionEffect>()
@@ -477,10 +477,37 @@ class RunOrchestratorTest {
                 instanceId = "web-instance",
                 recipeId = recipe.id,
                 stopped = true,
-                message = "网页实例已关闭"
+                message = "已关闭"
             ),
             effects.single()
         )
+    }
+
+    @Test
+    fun `尚未取得运行绑定的启动实例也能关闭`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val recipe = recipe("starting-local", KiteRecipe.STEP_TERMINAL)
+        gateway.register(recipe)
+        gateway.seed(
+            CardRunState(
+                instanceId = "starting-instance",
+                recipeId = recipe.id,
+                recipeName = recipe.name,
+                status = CardRunStatus.Starting,
+                surface = CardRunSurface.Terminal,
+                currentStepIndex = 0,
+                createdAt = 11L,
+                updatedAt = 11L
+            )
+        )
+        val orchestrator = RunOrchestrator(gateway, executor)
+
+        val result = orchestrator.stop("starting-instance")
+
+        assertEquals(RunCommandResult.Accepted("starting-instance"), result)
+        assertTrue(executor.stopRequests.isEmpty())
+        assertEquals(CardRunStatus.Stopped, gateway.state("starting-instance")?.status)
     }
 
     @Test

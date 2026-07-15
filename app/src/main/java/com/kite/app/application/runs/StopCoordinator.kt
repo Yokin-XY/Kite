@@ -35,11 +35,8 @@ internal class StopCoordinator {
             systemSessionId = state.systemSessionId,
             interruptTerminal = terminalSessionId != null
         )
-        if (terminalSessionId == null && !request.hasBridgeProcessBinding() && state.status == CardRunStatus.Opened) {
-            return StopPlan.CompleteLocally("网页实例已关闭")
-        }
-        if (terminalSessionId == null && !request.hasBridgeProcessBinding() && !state.isInterruptible()) {
-            return StopPlan.Ignore("not_running")
+        if (terminalSessionId == null && !request.hasBridgeProcessBinding()) {
+            return StopPlan.CompleteLocally("已关闭")
         }
         return StopPlan.Execute(request)
     }
