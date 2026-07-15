@@ -696,7 +696,7 @@ class KiteBridgeClient(
                     runtimeOwnerIds = ownerIdHints + bindings.mapNotNull { it.runtimeOwnerId }
                 )
             )
-            val stoppedOk = !stopPayloadHasRemaining(output.toString())
+            val stoppedOk = OwnerStopOutputEvidence.isConfirmed(output.toString())
             if (stoppedOk) {
                 bindings.forEach { binding ->
                     output.append(cleanCardRunPidFile(context, binding.pidFilePath))
@@ -776,7 +776,7 @@ class KiteBridgeClient(
                     runtimeOwnerIds = ownerIdHints + bindings.mapNotNull { it.runtimeOwnerId }
                 )
             )
-            val stoppedOk = !stopPayloadHasRemaining(output.toString())
+            val stoppedOk = OwnerStopOutputEvidence.isConfirmed(output.toString())
             val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
             val report = KiteRunReport(
                 protocolVersion = KiteRecipe.PROTOCOL_VERSION,
@@ -819,7 +819,7 @@ class KiteBridgeClient(
         val requestId = newRequestId()
         val resolvedRunId = runId.ifBlank { requestId }
         val ownerStopOutput = stopOwnerProcesses(context, recipe, listOf(cardInstanceId), runtimeOwnerIds)
-        val stoppedOk = !stopPayloadHasRemaining(ownerStopOutput)
+        val stoppedOk = OwnerStopOutputEvidence.isConfirmed(ownerStopOutput)
         val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
         val report = KiteRunReport(
             protocolVersion = KiteRecipe.PROTOCOL_VERSION,
@@ -1187,17 +1187,6 @@ class KiteBridgeClient(
             printf '__kite_stop_remaining:%s\n' "${'$'}kf_remaining_line"
         """.trimIndent()
     }
-
-    private fun stopPayloadHasRemaining(output: String): Boolean =
-        output.lineSequence()
-            .filter { it.startsWith("__kite_stop_remaining:") }
-            .lastOrNull()
-            ?.substringAfter(':')
-            ?.split(',')
-            ?.any { value ->
-                value.trim().matches(Regex("\\d+"))
-            }
-            ?: false
 
     private fun numericProcessId(value: String?): String? =
         value?.trim()

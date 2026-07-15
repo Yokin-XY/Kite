@@ -694,14 +694,27 @@ internal class AndroidRecipeExecutor(
     private fun BridgeResult.toStopExecutionResult(): StopExecutionResult {
         val observation = stopObservationText()
         val observationLines = observation.lineSequence().map(String::trim).toList()
-        val residueMarkerObserved = observationLines.any { it.startsWith("__kite_stop_remaining:") }
+        val ownerOutcomeUnconfirmed = observationLines
+            .filter { it.startsWith("__kite_owner_stop_outcome:") }
+            .map { it.substringAfter(':').trim() }
+            .any { it != "CONFIRMED" }
+        val bridgeConfirmedStop = status == KiteRunReport.STATUS_STOPPED && (ok || accepted)
+        val residueMarkerObserved = bridgeConfirmedStop &&
+            !ownerOutcomeUnconfirmed &&
+            observationLines.any {
+                it.startsWith("__kite_stop_remaining:") ||
+                    it.startsWith("__kite_stop_remaining_pgid:")
+            }
         val remaining = observationLines
             .map(String::trim)
-            .filter { it.startsWith("__kite_stop_remaining:") }
-            .lastOrNull()
-            ?.substringAfter(':')
-            ?.split(',')
-            .orEmpty()
+            .filter {
+                it.startsWith("__kite_stop_remaining:") ||
+                    it.startsWith("__kite_stop_remaining_pgid:")
+            }
+            .flatMap { it.substringAfter(':').split(',') }
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
         val confirmed = remaining.isEmpty() && (ok || accepted) && status == KiteRunReport.STATUS_STOPPED
         return StopExecutionResult(
             outcome = when {
@@ -714,7 +727,9 @@ internal class AndroidRecipeExecutor(
             },
             message = runReport?.lastMeaningfulOutput() ?: message,
             remainingProcessIds = remaining,
-            manualKillObserved = MANUAL_STOP_KILLED_REGEX.containsMatchIn(observation),
+            manualKillObserved = bridgeConfirmedStop &&
+                !ownerOutcomeUnconfirmed &&
+                MANUAL_STOP_KILLED_REGEX.containsMatchIn(observation),
             residueMarkerObserved = residueMarkerObserved
         )
     }

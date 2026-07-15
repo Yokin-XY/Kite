@@ -1570,3 +1570,24 @@ T018.1 状态：completed。
   编译通过；未触碰浏览器未提交改动和终端 UI 未提交改动。
 
 T018.2 状态：completed。下一步进入 T018.3，收紧 owner 关停的发现、分组信号、复核和 Unknown 语义。
+
+### 2026-07-15 T018.3 owner 关停确认闭环
+
+完成结果：
+
+- `ProotOwnerProcessTerminator` 不再以 `remainingTraceePids.isEmpty()` 直接宣布成功，新增 Confirmed、
+  OwnerNotFound、TelemetryUnavailable、ProbeUnavailable、Timeout 和 Failed 明确结果。
+- 破坏性动作增加遥测完整性门：来源未加载、文件缺失、读取不新鲜、解析错误或跳段时不发送信号，并将
+  无法确认的原因返回 Bridge；owner 从未出现时同样不能由空集合推出“已停止”。
+- 关停先对已知 PID 与 PGID 发送 TERM，再由外层循环重新读取 owner 索引、补充新子孙并发送 KILL；每轮
+  使用 Ubuntu `/proc` 与进程组直接探测，不再只处理第一次发现的 PID。
+- 确认必须同时满足 owner 曾真实出现、连续两轮健康静默、PID/PGID 直接探测为空；只有随后仍未重新出现
+  才调用 `retireOwnerTracees` 写终态墓碑。
+- `TerminalSessionController` 删除“宿主终端进程退出就直接退役全部 tracee”的旁路，改为按结构化
+  `terminal:<session>/...` owner 集合走同一确认式终止器。
+- Bridge 新增统一输出证据解析；OWNER_NOT_FOUND、任何非 Confirmed outcome、PID 残留或 PGID 残留都会
+  阻止 `Stopped` 落状态。Android 执行层也不再让旧的空 residue 标记绕过 Bridge 失败。
+- 新增遥测完整性/稳定静默证据测试和 Bridge 输出证据测试；相关执行器、停止协调器目标测试及生产 Kotlin
+  编译通过。真实 PRoot 多代子孙关停留到本任务最终真机验收统一验证，避免每个小段反复操作手机。
+
+T018.3 状态：implementation_completed。下一步建立实例与子窗口的显式运行拓扑，并让实例停止递归消费它。

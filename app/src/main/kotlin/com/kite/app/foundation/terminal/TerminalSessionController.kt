@@ -1560,12 +1560,6 @@ class TerminalSessionController(
                         )
                         writeTerminalActionLog(report.toLogBlock("终端停止诊断 $sessionId"))
                     }
-                    if (outcome.exited) {
-                        retireStoppedTerminalOwnerTracees(
-                            sessionId = sessionId,
-                            reason = "terminal-host-process-exited:$reason"
-                        )
-                    }
                     RuntimeFrameCoordinator.refreshProcessSnapshot(
                         context = appContext,
                         reason = "terminal-stop:$sessionId"
@@ -1619,13 +1613,11 @@ class TerminalSessionController(
         )
         stopTerminalOwnerProcesses(record.id, reason)
 
-        var hostExited = false
         val report = if (resolvedPid != null && resolvedPid > 0) {
             val stopAuditSeed = HostStopAuditor.capture(resolvedPid, LOG_TAG)
             val outcome = HostProcessTerminator.terminateTerminalProcessGroup(resolvedPid) { message ->
                 Logger.i(LOG_TAG, "终端停止补偿(脱离态): session=${record.id} pid=$resolvedPid $message")
             }
-            hostExited = outcome.exited
             Logger.i(
                 LOG_TAG,
                 "终端停止补偿完成(脱离态): session=${record.id} pid=$resolvedPid exited=${outcome.exited} term=${outcome.sentTerminate} kill=${outcome.sentKill}"
@@ -1646,15 +1638,6 @@ class TerminalSessionController(
             Logger.i(LOG_TAG, "终端停止诊断(脱离态): session=${record.id} ${auditReport.toCompactSummary()}")
             writeTerminalActionLog(auditReport.toLogBlock("终端停止诊断 ${record.id}"))
         }
-        if (hostExited) {
-            withContext(Dispatchers.IO) {
-                retireStoppedTerminalOwnerTracees(
-                    sessionId = record.id,
-                    reason = "terminal-detached-host-process-exited:$reason"
-                )
-            }
-        }
-
         withContext(Dispatchers.IO) {
             KFWorkspaceManager.updateTerminalSessionStatus(
                 context = appContext,
@@ -1678,14 +1661,17 @@ class TerminalSessionController(
     }
 
     private fun stopTerminalOwnerProcesses(sessionId: String, reason: String) {
-        val ownerId = sessionId.trim().takeIf { it.isNotBlank() }?.let { "terminal:$it" } ?: return
+        val cleanSessionId = sessionId.trim().takeIf { it.isNotBlank() } ?: return
         controllerScope.launch(Dispatchers.IO) {
-            val result = ProotOwnerProcessTerminator.terminate(appContext, ownerId)
-            Logger.i(
-                LOG_TAG,
-                "终端 PRoot owner 停止: owner=$ownerId ok=${result.ok} reason=${result.reason} request=$reason"
-            )
-            writeTerminalActionLog(result.toStopOutput())
+            ProotOwnerProcessTerminator.terminateTerminalSession(appContext, cleanSessionId)
+                .forEach { result ->
+                    Logger.i(
+                        LOG_TAG,
+                        "终端 PRoot owner 停止: owner=${result.ownerId} ok=${result.ok} " +
+                            "outcome=${result.outcome} reason=${result.reason} request=$reason"
+                    )
+                    writeTerminalActionLog(result.toStopOutput())
+                }
             RuntimeFrameCoordinator.refreshProcessSnapshot(
                 context = appContext,
                 reason = "terminal-owner-stop:$sessionId"
@@ -1696,13 +1682,6 @@ class TerminalSessionController(
                 reason = "terminal-owner-stop:$sessionId"
             )
         }
-    }
-
-    private fun retireStoppedTerminalOwnerTracees(sessionId: String, reason: String) {
-        val ownerId = sessionId.trim().takeIf { it.isNotBlank() }?.let { "terminal:$it" } ?: return
-        val result = ProotTelemetryStore.retireOwnerTracees(appContext, ownerId, reason)
-        Logger.i(LOG_TAG, "终端 PRoot owner tracee 退役: ${result.summary()}")
-        writeTerminalActionLog(result.toLogBlock())
     }
 
     private fun resolveTerminalStopPid(record: ManagedTerminalRecord): Int? {
