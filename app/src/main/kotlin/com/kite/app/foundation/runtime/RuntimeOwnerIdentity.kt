@@ -100,6 +100,13 @@ internal object RuntimeOwnerIdentity {
         ?.substringBefore('/')
         ?.takeIf { it.isNotBlank() }
 
+    fun generation(ownerId: String): Long? = GENERATION_PATTERN
+        .findAll(ownerId)
+        .lastOrNull()
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toLongOrNull()
+
     private fun stableToken(raw: String): String {
         val value = raw.trim().ifBlank { "unknown" }
         if (value.length <= MAX_TOKEN_CHARS && value.all(::isWireSafe)) return value
@@ -124,4 +131,5 @@ internal object RuntimeOwnerIdentity {
     private const val MAX_TOKEN_CHARS = 72
     private const val READABLE_TOKEN_CHARS = 48
     private const val HASH_BYTES = 6
+    private val GENERATION_PATTERN = Regex("@(\\d+)(?=/|$)")
 }

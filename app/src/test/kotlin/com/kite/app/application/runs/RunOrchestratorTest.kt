@@ -222,7 +222,7 @@ class RunOrchestratorTest {
 
         val state = gateway.state("late-instance")
         assertEquals(CardRunStatus.Stopped, state?.status)
-        assertEquals("已停止", state?.lastMeaningfulOutput)
+        assertEquals("已关闭", state?.lastMeaningfulOutput)
         assertEquals(null, state?.runId)
     }
 
@@ -252,7 +252,7 @@ class RunOrchestratorTest {
     }
 
     @Test
-    fun `任一子窗口未确认关闭时恢复父状态且不停止父进程`() {
+    fun `子窗口清理不确定时父实例仍单向停止`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
         val ownedWindows = FakeRunOwnedWindowGateway()
@@ -274,13 +274,14 @@ class RunOrchestratorTest {
             )
         )
 
-        assertTrue(executor.stopRequests.isEmpty())
-        assertEquals(CardRunStatus.Running, gateway.state("root-instance")?.status)
-        assertEquals(
-            "子窗口未确认关闭：grandchild-instance",
-            gateway.state("root-instance")?.lastError
-        )
-        assertEquals(false, (effects.single() as RunExecutionEffect.StopResolved).stopped)
+        assertEquals(CardRunStatus.Stopping, gateway.state("root-instance")?.status)
+        assertEquals(1, executor.stopRequests.size)
+
+        executor.emitStop(StopExecutionResult(StopExecutionOutcome.Failed, "后台继续清理"))
+
+        assertEquals(CardRunStatus.Stopped, gateway.state("root-instance")?.status)
+        assertEquals(null, gateway.state("root-instance")?.lastError)
+        assertEquals(true, (effects.single() as RunExecutionEffect.StopResolved).stopped)
     }
 
     @Test
@@ -313,7 +314,7 @@ class RunOrchestratorTest {
     }
 
     @Test
-    fun `停止后存在残留进程时恢复原状态并给出确定错误`() {
+    fun `停止后瞬时残留只进入后台清理且不会恢复旧状态`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
         val effects = mutableListOf<RunExecutionEffect>()
@@ -344,15 +345,18 @@ class RunOrchestratorTest {
         )
 
         val state = gateway.state("residue-instance")
-        assertEquals(CardRunStatus.Running, state?.status)
-        assertEquals("停止后仍有进程残留：100", state?.lastError)
-        assertEquals("run-1", state?.runId)
+        assertEquals(CardRunStatus.Stopped, state?.status)
+        assertEquals(null, state?.lastError)
+        assertEquals(null, state?.runId)
+        assertEquals(null, state?.pid)
+        assertEquals(null, state?.runtimeRootOwnerId)
+        assertTrue(state?.ownedRuntimeOwnerIds.orEmpty().isEmpty())
         assertEquals(
             RunExecutionEffect.StopResolved(
                 instanceId = "residue-instance",
                 recipeId = recipe.id,
-                stopped = false,
-                message = "停止后仍有进程残留：100"
+                stopped = true,
+                message = "已关闭"
             ),
             effects.single()
         )
@@ -391,9 +395,53 @@ class RunOrchestratorTest {
 
         val state = gateway.state("force-kill-instance")
         assertEquals(CardRunStatus.Stopped, state?.status)
-        assertEquals("已停止，未发现进程残留", state?.lastMeaningfulOutput)
+        assertEquals("已关闭", state?.lastMeaningfulOutput)
         assertEquals(null, state?.runId)
         assertEquals(null, state?.pid)
+    }
+
+    @Test
+    fun `重新执行不等待旧 owner 完全退出并使用新叶子 owner`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val recipe = recipe("restart-residue", KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "restart-instance"))
+        val firstRequest = executor.executeRequests.single()
+        executor.emit(
+            RecipeExecutionEvent.Progress(
+                instanceId = firstRequest.instanceId,
+                generation = firstRequest.generation,
+                stepIndex = firstRequest.stepIndex,
+                mutation = RunStateMutation(
+                    status = CardRunStatus.Running,
+                    currentStepIndex = firstRequest.stepIndex,
+                    runId = "old-run",
+                    pid = "100"
+                )
+            )
+        )
+        val state = gateway.state("restart-instance")!!
+
+        orchestrator.restartStep(
+            RunStepRestartCommand(
+                instanceId = state.instanceId,
+                expectedGeneration = state.createdAt,
+                expectedStepIndex = state.currentStepIndex,
+                expectedStepId = recipe.steps.single().id
+            )
+        )
+        executor.emitStop(
+            StopExecutionResult(
+                outcome = StopExecutionOutcome.Timeout,
+                remainingProcessIds = listOf("100")
+            )
+        )
+
+        assertEquals(2, executor.executeRequests.size)
+        assertTrue(executor.executeRequests.last().runtimeOwnerId != firstRequest.runtimeOwnerId)
+        assertEquals(CardRunStatus.Running, gateway.state("restart-instance")?.status)
+        assertEquals(null, gateway.state("restart-instance")?.runId)
     }
 
     @Test
@@ -647,7 +695,11 @@ private class FakeRunStateGateway : RunStateGateway {
             surface = mutation.surface ?: existing.surface,
             currentStepIndex = mutation.currentStepIndex ?: existing.currentStepIndex,
             stepCount = recipe.steps.size,
-            runtimeRootOwnerId = mutation.runtimeRootOwnerId ?: existing.runtimeRootOwnerId,
+            runtimeRootOwnerId = if (mutation.clearRunBinding) {
+                null
+            } else {
+                mutation.runtimeRootOwnerId ?: existing.runtimeRootOwnerId
+            },
             runtimeOwnerId = if (mutation.clearRunBinding) null else mutation.runtimeOwnerId ?: existing.runtimeOwnerId,
             runtimeUnitId = if (mutation.clearRunBinding) null else mutation.runtimeUnitId ?: existing.runtimeUnitId,
             ownedRuntimeOwnerIds = if (mutation.clearRunBinding) {

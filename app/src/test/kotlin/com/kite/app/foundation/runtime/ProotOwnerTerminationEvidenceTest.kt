@@ -19,7 +19,7 @@ class ProotOwnerTerminationEvidenceTest {
     }
 
     @Test
-    fun `解析错误和跳段都禁止破坏性动作`() {
+    fun `解析错误仍禁止破坏性动作`() {
         val now = 10_000L
         val parseError = ProotTelemetrySnapshot(
             collectionStatus = "loaded",
@@ -27,12 +27,56 @@ class ProotOwnerTerminationEvidenceTest {
             refreshedAtMs = now,
             counters = ProotTelemetryCounters(totalEvents = 5L, parseErrors = 1L)
         )
-        val skipped = parseError.copy(
+
+        assertFalse(ProotOwnerTerminationEvidence.readiness(parseError, now).usable)
+    }
+
+    @Test
+    fun `历史裁剪只阻止覆盖区间之前的 owner`() {
+        val now = 10_000L
+        val snapshot = ProotTelemetrySnapshot(
+            collectionStatus = "loaded",
+            fileExists = true,
+            refreshedAtMs = now,
+            ownerEvidenceCompleteFromMs = 5_000L,
+            ownerEvidenceCoverageReason = "historical_tail_skipped",
             counters = ProotTelemetryCounters(totalEvents = 5L, skippedBytes = 20L)
         )
 
-        assertFalse(ProotOwnerTerminationEvidence.readiness(parseError, now).usable)
-        assertFalse(ProotOwnerTerminationEvidence.readiness(skipped, now).usable)
+        assertTrue(ProotOwnerTerminationEvidence.readiness(snapshot, now).usable)
+        assertTrue(
+            ProotOwnerTerminationEvidence.readiness(
+                snapshot,
+                now,
+                ownerId = "card:new@6000/step/0-start/attempt/1"
+            ).usable
+        )
+        assertFalse(
+            ProotOwnerTerminationEvidence.readiness(
+                snapshot,
+                now,
+                ownerId = "card:old@4000/step/0-start/attempt/1"
+            ).usable
+        )
+    }
+
+    @Test
+    fun `跳段但没有覆盖边界时仍拒绝 owner 停止`() {
+        val now = 10_000L
+        val snapshot = ProotTelemetrySnapshot(
+            collectionStatus = "loaded",
+            fileExists = true,
+            refreshedAtMs = now,
+            counters = ProotTelemetryCounters(totalEvents = 5L, skippedBytes = 20L)
+        )
+
+        assertFalse(
+            ProotOwnerTerminationEvidence.readiness(
+                snapshot,
+                now,
+                ownerId = "card:test@6000"
+            ).usable
+        )
     }
 
     @Test
@@ -80,13 +124,15 @@ class ProotOwnerTerminationEvidenceTest {
     }
 
     @Test
-    fun `未知结果输出显式 outcome 供 Bridge 拒绝假成功`() {
-        val output = ProotOwnerTerminationResult(
+    fun `owner 不存在保留底层 outcome 并作为已收敛目标`() {
+        val result = ProotOwnerTerminationResult(
             ownerId = "card:test@1",
             outcome = ProotOwnerTerminationOutcome.OWNER_NOT_FOUND,
             reason = "owner_not_observed"
-        ).toStopOutput()
+        )
+        val output = result.toStopOutput()
 
+        assertTrue(result.settled)
         assertTrue(output.contains("__kite_owner_stop_outcome:OWNER_NOT_FOUND"))
         assertTrue(output.contains("__kite_stop_remaining:"))
     }

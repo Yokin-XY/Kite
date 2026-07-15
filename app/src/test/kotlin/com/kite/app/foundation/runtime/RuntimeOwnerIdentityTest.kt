@@ -66,6 +66,7 @@ class RuntimeOwnerIdentityTest {
         )
 
         assertEquals("terminal-123", RuntimeOwnerIdentity.terminalSessionId(owner.ownerId))
+        assertEquals(55L, RuntimeOwnerIdentity.generation(owner.ownerId))
         assertTrue(owner.ownerId.contains("instance/instance-a@55"))
         assertEquals(owner.ownerId, owner.environment()[RuntimeOwnerIdentity.RUNTIME_ID_ENV])
         assertEquals(owner.unitId, owner.environment()[RuntimeOwnerIdentity.UNIT_ID_ENV])
@@ -80,5 +81,21 @@ class RuntimeOwnerIdentityTest {
         assertEquals(first, second)
         assertTrue(first.none(Char::isWhitespace))
         assertTrue(first.length < 100)
+    }
+
+    @Test
+    fun `根 owner 和步骤 owner 都能解析实例代次`() {
+        val handle = RuntimeOwnerIdentity.step(
+            RuntimeOwnerNamespace.Card,
+            instanceId = "demo",
+            generation = 1784086156860L,
+            stepIndex = 0,
+            stepId = "terminal",
+            attemptId = 1L
+        )
+
+        assertEquals(1784086156860L, RuntimeOwnerIdentity.generation(handle.rootOwnerId))
+        assertEquals(1784086156860L, RuntimeOwnerIdentity.generation(handle.ownerId))
+        assertEquals(null, RuntimeOwnerIdentity.generation("terminal:legacy-session"))
     }
 }

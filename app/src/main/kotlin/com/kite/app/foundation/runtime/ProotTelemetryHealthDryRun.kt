@@ -151,9 +151,9 @@ object ProotTelemetryHealthDryRun {
         if (refreshedAgeMs != null && refreshedAgeMs > STALE_REFRESH_MS) {
             return ProotTelemetryHealthState.STALE to "reader_refresh_stale"
         }
-        if (telemetry.counters.parseErrors > 0L || telemetry.counters.skippedBytes > 0L) {
+        if (telemetry.counters.parseErrors > 0L) {
             return ProotTelemetryHealthState.HISTORY_CONTAMINATED to
-                "parseErrors=${telemetry.counters.parseErrors},skippedBytes=${telemetry.counters.skippedBytes}"
+                "parseErrors=${telemetry.counters.parseErrors}"
         }
         if (telemetry.counters.totalEvents <= 0L) {
             return ProotTelemetryHealthState.CURRENTLY_QUIET to "loaded_waiting_for_first_event"
@@ -164,7 +164,13 @@ object ProotTelemetryHealthDryRun {
         if (telemetry.pressureWindow.signalLevel == ProotPressureSignalLevel.BURST) {
             return ProotTelemetryHealthState.HIGH_PRESSURE_HEALTHY to "telemetry_valid_but_pressure_burst"
         }
-        return ProotTelemetryHealthState.CURRENTLY_HEALTHY to "telemetry_valid"
+        return ProotTelemetryHealthState.CURRENTLY_HEALTHY to if (
+            telemetry.ownerEvidenceCompleteFromMs > 0L
+        ) {
+            "telemetry_valid_owner_evidence_from_${telemetry.ownerEvidenceCompleteFromMs}"
+        } else {
+            "telemetry_valid"
+        }
     }
 
     private fun ProotTelemetryHealthState.toRecommendation(): ProotTelemetryHealthRecommendation {

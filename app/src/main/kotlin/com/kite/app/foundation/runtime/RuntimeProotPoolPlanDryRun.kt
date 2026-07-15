@@ -2280,7 +2280,7 @@ object RuntimeProotPoolPlanDryRun {
     }
 
     private fun ProotTelemetryHealthDryRunSnapshot.toProotPolicySubstrate(): RuntimeProotPolicySubstrate {
-        val parseClean = parseErrors == 0L && skippedBytes == 0L
+        val parseClean = parseErrors == 0L
         val readerFresh = (refreshedAgeMs ?: Long.MAX_VALUE) <= 60_000L
         val sourceLoaded = sourceStatus == "loaded" && fileExists
         if (blocker == "none" && parseClean && sourceLoaded) {

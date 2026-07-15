@@ -47,6 +47,8 @@ object ProotTelemetryStore {
     private var lastOffsetBytes: Long = 0L
     private var rotationBaselineLoadedForPath: String = ""
     private var readerEpochMs: Long = System.currentTimeMillis()
+    private var ownerEvidenceCompleteFromMs: Long = readerEpochMs
+    private var ownerEvidenceCoverageReason: String = "reader_initializing"
     private var pendingPartialLine: String = ""
     private var probeDeclaredTargetLiveTracees: Int = 0
     private var counters = ProotTelemetryCounters()
@@ -625,6 +627,8 @@ object ProotTelemetryStore {
             counters = counters
 
             baselineResult?.let { baseline ->
+                ownerEvidenceCompleteFromMs = baseline.ownerEvidenceCompleteFromMs
+                ownerEvidenceCoverageReason = baseline.ownerEvidenceCoverageReason
                 if (baseline.skippedBytes > 0L) {
                     counters = counters.copy(skippedBytes = counters.skippedBytes + baseline.skippedBytes)
                 }
@@ -648,6 +652,11 @@ object ProotTelemetryStore {
 
             if (readResult.skippedBytes > 0L) {
                 counters = counters.copy(skippedBytes = counters.skippedBytes + readResult.skippedBytes)
+                ownerEvidenceCompleteFromMs = maxOf(
+                    ownerEvidenceCompleteFromMs,
+                    firstEventTimestamp(readResult.lines) ?: baselineNow
+                )
+                ownerEvidenceCoverageReason = "incremental_tail_gap"
             }
 
             for (line in readResult.lines) {
@@ -691,7 +700,7 @@ object ProotTelemetryStore {
             .ifBlank { fallback }
     }
 
-    private fun readRotationBaselineIfNeeded(file: File): ReadLinesResult? {
+    private fun readRotationBaselineIfNeeded(file: File): BaselineReadResult? {
         val path = file.absolutePath
         val shouldLoad = synchronized(lock) {
             resetIfPathChanged(path)
@@ -704,12 +713,27 @@ object ProotTelemetryStore {
 
         var skippedBytes = 0L
         val lines = mutableListOf<String>()
-        for (segment in telemetryBaselineFiles(file)) {
+        val rotatedFiles = rotatedTelemetryBaselineFiles(file)
+        for (segment in rotatedFiles) {
             val result = readCompleteTailLines(segment, ROTATED_BASELINE_READ_BYTES)
             skippedBytes += result.skippedBytes
             lines += result.lines
         }
+        val currentResult = readCompleteTailLines(file, ROTATED_BASELINE_READ_BYTES)
+        skippedBytes += currentResult.skippedBytes
+        lines += currentResult.lines
         val currentLength = file.length()
+        val fullHistoryLoaded = rotatedFiles.isEmpty() && currentResult.skippedBytes == 0L
+        val baselineCoverageStart = if (fullHistoryLoaded) {
+            0L
+        } else {
+            firstEventTimestamp(currentResult.lines) ?: synchronized(lock) { readerEpochMs }
+        }
+        val baselineCoverageReason = when {
+            fullHistoryLoaded -> "full_history"
+            currentResult.skippedBytes > 0L -> "historical_tail_skipped"
+            else -> "rotated_history_boundary"
+        }
 
         val loaded = synchronized(lock) {
             resetIfPathChanged(path)
@@ -727,16 +751,31 @@ object ProotTelemetryStore {
                 true
             }
         }
-        return if (loaded) ReadLinesResult(lines, skippedBytes) else null
+        return if (loaded) {
+            BaselineReadResult(
+                lines = lines,
+                skippedBytes = skippedBytes,
+                ownerEvidenceCompleteFromMs = baselineCoverageStart,
+                ownerEvidenceCoverageReason = baselineCoverageReason
+            )
+        } else {
+            null
+        }
     }
 
-    private fun telemetryBaselineFiles(file: File): List<File> {
-        val parent = file.parentFile ?: return listOf(file)
-        val rotated = (ROTATED_TELEMETRY_SEGMENTS downTo 1)
+    private fun rotatedTelemetryBaselineFiles(file: File): List<File> {
+        val parent = file.parentFile ?: return emptyList()
+        return (ROTATED_TELEMETRY_SEGMENTS downTo 1)
             .map { index -> File(parent, "${file.name}.$index") }
             .filter { it.exists() && it.isFile }
-        return rotated + file
     }
+
+    private fun firstEventTimestamp(lines: List<String>): Long? = lines
+        .asSequence()
+        .filter(String::isNotBlank)
+        .mapNotNull(::parseEvent)
+        .firstOrNull()
+        ?.timestampMs
 
     private fun readCompleteTailLines(file: File, maxBytes: Int): ReadLinesResult {
         if (!file.exists() || !file.isFile) return ReadLinesResult(emptyList(), 0L)
@@ -1145,6 +1184,8 @@ object ProotTelemetryStore {
             refreshedAtMs = now,
             lastEventAtMs = lastEventAt,
             lastReadOffsetBytes = lastOffsetBytes,
+            ownerEvidenceCompleteFromMs = ownerEvidenceCompleteFromMs,
+            ownerEvidenceCoverageReason = ownerEvidenceCoverageReason,
             lastRefreshEvents = lastRefreshEvents,
             lastRefreshForkExecEvents = lastRefreshForkExecEvents,
             probeDeclaredTargetLiveTracees = probeDeclaredTargetLiveTracees,
@@ -1289,6 +1330,8 @@ object ProotTelemetryStore {
         lastOffsetBytes = 0L
         rotationBaselineLoadedForPath = ""
         readerEpochMs = System.currentTimeMillis()
+        ownerEvidenceCompleteFromMs = readerEpochMs
+        ownerEvidenceCoverageReason = "reader_initializing"
         pendingPartialLine = ""
         counters = ProotTelemetryCounters()
         recentEvents.clear()
@@ -1313,6 +1356,8 @@ object ProotTelemetryStore {
             val readResult = readNewLines(file)
             synchronized(lock) {
                 baselineResult?.let { baseline ->
+                    ownerEvidenceCompleteFromMs = baseline.ownerEvidenceCompleteFromMs
+                    ownerEvidenceCoverageReason = baseline.ownerEvidenceCoverageReason
                     if (baseline.skippedBytes > 0L) {
                         counters = counters.copy(skippedBytes = counters.skippedBytes + baseline.skippedBytes)
                     }
@@ -1326,6 +1371,11 @@ object ProotTelemetryStore {
                 }
                 if (readResult.skippedBytes > 0L) {
                     counters = counters.copy(skippedBytes = counters.skippedBytes + readResult.skippedBytes)
+                    ownerEvidenceCompleteFromMs = maxOf(
+                        ownerEvidenceCompleteFromMs,
+                        firstEventTimestamp(readResult.lines) ?: System.currentTimeMillis()
+                    )
+                    ownerEvidenceCoverageReason = "incremental_tail_gap"
                 }
                 var parseErrors = 0
                 readResult.lines.forEach { line ->
@@ -1394,6 +1444,13 @@ object ProotTelemetryStore {
     private data class ReadLinesResult(
         val lines: List<String>,
         val skippedBytes: Long
+    )
+
+    private data class BaselineReadResult(
+        val lines: List<String>,
+        val skippedBytes: Long,
+        val ownerEvidenceCompleteFromMs: Long,
+        val ownerEvidenceCoverageReason: String
     )
 
     private data class TraceeLifecycleKey(

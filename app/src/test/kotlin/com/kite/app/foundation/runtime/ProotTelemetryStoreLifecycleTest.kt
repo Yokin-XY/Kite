@@ -100,6 +100,63 @@ class ProotTelemetryStoreLifecycleTest {
         assertEquals("", snapshot.tracees.single { it.traceePid == 713 }.kfRuntimeId)
     }
 
+    @Test
+    fun `大历史文件裁剪后新实例仍拥有完整 owner 停止证据`() {
+        val now = System.currentTimeMillis()
+        val base = now - 100_000L
+        val currentGeneration = now - 1_000L
+        val currentOwner = "card:current@$currentGeneration"
+        val lines = buildList {
+            repeat(1_800) { index ->
+                add(
+                    event(
+                        eventType = "ExecDetected",
+                        timestampMs = base + index,
+                        telemetrySessionId = "history-session",
+                        prootStartMs = base,
+                        prootPid = 51,
+                        traceePid = 2_000 + index
+                    )
+                )
+            }
+            add(
+                event(
+                    eventType = "TraceeCreated",
+                    timestampMs = currentGeneration + 100L,
+                    telemetrySessionId = "current-session",
+                    prootStartMs = currentGeneration + 100L,
+                    prootPid = 81,
+                    traceePid = 9_001,
+                    owner = currentOwner
+                )
+            )
+        }
+        val file = temp.newFile("kf-proot-telemetry-large.jsonl").apply {
+            writeText(lines.joinToString(separator = "\n", postfix = "\n"))
+        }
+
+        val snapshot = ProotTelemetryStore.readTelemetryFileForTests(file, readerEpochMs = base)
+
+        assertTrue(file.length() > 256L * 1024L)
+        assertTrue(snapshot.counters.skippedBytes > 0L)
+        assertTrue(snapshot.ownerEvidenceCompleteFromMs > base)
+        assertTrue(snapshot.ownerProcessIndex.groups.any { it.ownerId == currentOwner })
+        assertTrue(
+            ProotOwnerTerminationEvidence.readiness(
+                snapshot,
+                snapshot.refreshedAtMs,
+                ownerId = currentOwner
+            ).usable
+        )
+        assertFalse(
+            ProotOwnerTerminationEvidence.readiness(
+                snapshot,
+                snapshot.refreshedAtMs,
+                ownerId = "card:old@$base"
+            ).usable
+        )
+    }
+
     private fun telemetryFile(vararg lines: String): File {
         return temp.newFile("kf-proot-telemetry.jsonl").apply {
             writeText(lines.joinToString(separator = "\n", postfix = "\n"))

@@ -10,10 +10,10 @@ internal sealed interface StopPlan {
     data class Execute(val request: RecipeStopRequest) : StopPlan
 }
 
-internal sealed interface StopResolution {
-    data class Stopped(val summary: String) : StopResolution
-    data class Restore(val status: CardRunStatus, val error: String) : StopResolution
-}
+internal data class StopResolution(
+    val summary: String,
+    val cleanupPending: Boolean
+)
 
 /** 只解释停止策略与确认结果，不调用 Bridge、终端或页面。 */
 internal class StopCoordinator {
@@ -44,31 +44,19 @@ internal class StopCoordinator {
         return StopPlan.Execute(request)
     }
 
-    fun resolve(previousState: CardRunState, result: StopExecutionResult): StopResolution {
-        val remaining = result.remainingProcessIds
-            .map { it.trim() }
-            .filter { it.matches(Regex("\\d+")) }
-            .distinct()
-        if (remaining.isNotEmpty()) {
-            return StopResolution.Restore(
-                previousState.status,
-                "停止后仍有进程残留：${remaining.joinToString(",")}"
+    /**
+     * 用户停止是单向的逻辑关闭。执行层未及时收敛只表示旧代需要后台回收，
+     * 不能把已经关闭的卡片、窗口和运行绑定恢复成 Running。
+     */
+    fun resolve(result: StopExecutionResult): StopResolution {
+        val hasRemaining = result.remainingProcessIds.any { value ->
+            value.trim().matches(Regex("\\d+"))
+        }
+        val cleanupPending = hasRemaining || (
+            result.outcome != StopExecutionOutcome.Confirmed &&
+                !result.manualKillObserved &&
+                !result.residueMarkerObserved
             )
-        }
-        if (result.residueMarkerObserved) {
-            return StopResolution.Stopped("已停止，未发现进程残留")
-        }
-        if (result.outcome == StopExecutionOutcome.Confirmed || result.manualKillObserved) {
-            return StopResolution.Stopped(result.message.ifBlank { "已停止" })
-        }
-        val error = when (result.outcome) {
-            StopExecutionOutcome.Timeout -> "停止超时，Bridge 未及时响应"
-            StopExecutionOutcome.ConnectionError -> "Bridge 连接失败"
-            StopExecutionOutcome.Unsupported -> "停止接口暂不可用"
-            StopExecutionOutcome.ParseError -> "停止响应解析失败"
-            StopExecutionOutcome.Failed,
-            StopExecutionOutcome.Confirmed -> result.message.ifBlank { "Bridge 返回停止失败" }
-        }
-        return StopResolution.Restore(previousState.status, error)
+        return StopResolution(summary = "已关闭", cleanupPending = cleanupPending)
     }
 }

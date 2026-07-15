@@ -32,7 +32,7 @@ class RuntimeManagementCoordinatorTest {
     }
 
     @Test
-    fun `stopped root does not confirm while its owned process remains`() = runTest {
+    fun `stopped root confirms while old generation process continues background cleanup`() = runTest {
         val owner = "card:run-1@10/step/0-shell/attempt/1"
         val running = run(CardRunStatus.Running, owner = owner)
         val ownedProcess = process(ownerId = owner)
@@ -47,14 +47,57 @@ class RuntimeManagementCoordinatorTest {
         gateway.publish(residue)
         coordinator.reconcile(residue)
 
-        assertEquals(
-            RuntimeManagementCommandPhase.AwaitingConfirmation,
-            coordinator.commands.value.getValue("run:run-1").phase
-        )
+        assertTrue(coordinator.commands.value.isEmpty())
+    }
 
-        val closed = snapshot(runs = listOf(run(CardRunStatus.Stopped, owner = owner)))
-        gateway.publish(closed)
-        coordinator.reconcile(closed)
+    @Test
+    fun `old generation residue does not retain mutation after same instance starts again`() = runTest {
+        val oldOwner = "card:run-1@10/step/0-shell/attempt/1"
+        val newOwner = "card:run-1@20/step/0-shell/attempt/2"
+        val oldProcess = process(ownerId = oldOwner)
+        val gateway = FakeGateway(
+            snapshot(
+                runs = listOf(run(CardRunStatus.Running, owner = oldOwner, generation = 10L)),
+                processes = listOf(oldProcess)
+            )
+        )
+        val coordinator = coordinator(gateway)
+
+        coordinator.submit(RuntimeManagementCommand.StopRun("run-1"))
+        val nextGeneration = snapshot(
+            runs = listOf(run(CardRunStatus.Running, owner = newOwner, generation = 20L)),
+            processes = listOf(oldProcess)
+        )
+        gateway.publish(nextGeneration)
+        coordinator.reconcile(nextGeneration)
+
+        assertTrue(coordinator.commands.value.isEmpty())
+    }
+
+    @Test
+    fun `new generation child does not block old subtree confirmation`() = runTest {
+        val root = run(CardRunStatus.Running, generation = 10L)
+        val oldChild = CardRunState(
+            instanceId = "child-1",
+            recipeId = root.recipeId,
+            parentInstanceId = root.instanceId,
+            status = CardRunStatus.Running,
+            createdAt = 11L,
+            updatedAt = 11L
+        )
+        val gateway = FakeGateway(snapshot(runs = listOf(root, oldChild)))
+        val coordinator = coordinator(gateway)
+
+        coordinator.submit(RuntimeManagementCommand.StopRun("run-1"))
+        val stoppedWithNewChild = snapshot(
+            runs = listOf(
+                root.copy(status = CardRunStatus.Stopped),
+                oldChild.copy(createdAt = 21L, updatedAt = 21L)
+            )
+        )
+        gateway.publish(stoppedWithNewChild)
+        coordinator.reconcile(stoppedWithNewChild)
+
         assertTrue(coordinator.commands.value.isEmpty())
     }
 
@@ -170,7 +213,8 @@ class RuntimeManagementCoordinatorTest {
 
     private fun run(
         status: CardRunStatus,
-        owner: String? = null
+        owner: String? = null,
+        generation: Long = 10L
     ) = CardRunState(
         instanceId = "run-1",
         recipeId = "recipe-1",
@@ -179,8 +223,8 @@ class RuntimeManagementCoordinatorTest {
         runtimeOwnerId = owner,
         runtimeUnitId = owner,
         ownedRuntimeOwnerIds = listOfNotNull(owner),
-        createdAt = 10L,
-        updatedAt = 10L
+        createdAt = generation,
+        updatedAt = generation
     )
 
     private fun process(ownerId: String? = null) = RuntimeManagedProcess(

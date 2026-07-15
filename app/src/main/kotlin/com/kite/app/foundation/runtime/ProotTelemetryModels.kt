@@ -251,6 +251,8 @@ data class ProotTelemetrySnapshot(
     val refreshedAtMs: Long = 0L,
     val lastEventAtMs: Long = 0L,
     val lastReadOffsetBytes: Long = 0L,
+    val ownerEvidenceCompleteFromMs: Long = 0L,
+    val ownerEvidenceCoverageReason: String = "full_history",
     val lastRefreshEvents: Int = 0,
     val lastRefreshForkExecEvents: Int = 0,
     val probeDeclaredTargetLiveTracees: Int = 0,
@@ -267,6 +269,7 @@ data class ProotTelemetrySnapshot(
         return "mode=$mode status=$collectionStatus events=${counters.totalEvents} " +
             "live=$liveTraceeCount known=$knownTraceeCount forkExecLast=$lastRefreshForkExecEvents " +
             "pressure=${pressureWindow.signalLevel}/${pressureWindow.pressureScore} " +
+            "ownerEvidenceFrom=$ownerEvidenceCompleteFromMs " +
             "parseErrors=${counters.parseErrors}"
     }
 }

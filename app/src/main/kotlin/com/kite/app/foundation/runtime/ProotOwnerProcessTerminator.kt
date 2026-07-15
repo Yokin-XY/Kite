@@ -3,7 +3,9 @@ package com.kite.app.foundation.runtime
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 enum class ProotOwnerTerminationOutcome {
     CONFIRMED,
@@ -27,6 +29,10 @@ data class ProotOwnerTerminationResult(
 ) {
     val ok: Boolean
         get() = outcome == ProotOwnerTerminationOutcome.CONFIRMED
+
+    val settled: Boolean
+        get() = outcome == ProotOwnerTerminationOutcome.CONFIRMED ||
+            outcome == ProotOwnerTerminationOutcome.OWNER_NOT_FOUND
 
     fun toStopOutput(): String = buildString {
         appendLine("__kite_owner_stop_owner:$ownerId")
@@ -52,7 +58,8 @@ internal object ProotOwnerTerminationEvidence {
 
     fun readiness(
         snapshot: ProotTelemetrySnapshot,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        ownerId: String? = null
     ): ProotTelemetryDestructiveReadiness {
         if (snapshot.collectionStatus != "loaded") {
             return ProotTelemetryDestructiveReadiness(false, "status_${snapshot.collectionStatus}")
@@ -66,10 +73,20 @@ internal object ProotOwnerTerminationEvidence {
         if (snapshot.counters.parseErrors > 0L) {
             return ProotTelemetryDestructiveReadiness(false, "telemetry_parse_errors")
         }
-        if (snapshot.counters.skippedBytes > 0L) {
-            return ProotTelemetryDestructiveReadiness(false, "telemetry_skipped_bytes")
+        val coverageStart = snapshot.ownerEvidenceCompleteFromMs
+        if (coverageStart > 0L && ownerId != null) {
+            val generation = RuntimeOwnerIdentity.generation(ownerId)
+                ?: return ProotTelemetryDestructiveReadiness(false, "owner_generation_unavailable")
+            if (generation < coverageStart) {
+                return ProotTelemetryDestructiveReadiness(false, "owner_predates_telemetry_coverage")
+            }
+        } else if (snapshot.counters.skippedBytes > 0L && coverageStart <= 0L && ownerId != null) {
+            return ProotTelemetryDestructiveReadiness(false, "telemetry_coverage_unknown")
         }
-        return ProotTelemetryDestructiveReadiness(true, "telemetry_complete")
+        return ProotTelemetryDestructiveReadiness(
+            usable = true,
+            reason = if (coverageStart > 0L) "telemetry_owner_coverage_available" else "telemetry_complete"
+        )
     }
 
     fun canConfirm(
@@ -93,6 +110,8 @@ object ProotOwnerProcessTerminator {
     private const val TERM_GRACE_MS = 450L
     private const val KILL_GRACE_MS = 250L
     private const val SILENCE_CONFIRM_MS = 220L
+    private val RESIDUAL_REAP_DELAYS_MS = longArrayOf(250L, 1_000L, 3_000L)
+    private val ownersBeingReaped = ConcurrentHashMap.newKeySet<String>()
 
     private enum class OwnerSignal(val shellName: String) {
         TERM("TERM"),
@@ -169,7 +188,12 @@ object ProotOwnerProcessTerminator {
                 )
             )
         }
-        return ownerIds.map { ownerId -> terminate(context, ownerId) }
+        val results = ownerIds.map { ownerId -> terminate(context, ownerId) }
+        scheduleResidualReap(
+            context = context,
+            ownerIds = results.filterNot { it.settled }.map { it.ownerId }
+        )
+        return results
     }
 
     fun terminate(context: Context, ownerId: String): ProotOwnerTerminationResult {
@@ -353,9 +377,42 @@ object ProotOwnerProcessTerminator {
         )
     }
 
+    /** 旧代 owner 的补偿回收与前台实例状态解耦，并按 owner 去重。 */
+    fun scheduleResidualReap(context: Context, ownerIds: Collection<String>) {
+        val appContext = context.applicationContext
+        ownerIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+            .forEach { ownerId ->
+                if (!ownersBeingReaped.add(ownerId)) return@forEach
+                thread(
+                    name = "KiteOwnerReap-${ownerId.hashCode().toUInt().toString(16)}",
+                    isDaemon = true
+                ) {
+                    try {
+                        for ((index, delayMs) in RESIDUAL_REAP_DELAYS_MS.withIndex()) {
+                            Thread.sleep(delayMs)
+                            val result = terminate(appContext, ownerId)
+                            Logger.i(
+                                LOG_TAG,
+                                "background reap owner=$ownerId attempt=${index + 1} " +
+                                    "outcome=${result.outcome} reason=${result.reason}"
+                            )
+                            if (result.settled) break
+                        }
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                    } finally {
+                        ownersBeingReaped.remove(ownerId)
+                    }
+                }
+            }
+    }
+
     private fun discover(context: Context, ownerId: String): OwnerDiscovery {
         val snapshot = ProotTelemetryStore.refreshBlocking(context)
-        val readiness = ProotOwnerTerminationEvidence.readiness(snapshot)
+        val readiness = ProotOwnerTerminationEvidence.readiness(snapshot, ownerId = ownerId)
         if (!readiness.usable) return OwnerDiscovery.Unavailable(readiness.reason)
         val group = snapshot.ownerProcessIndex.groups.firstOrNull { it.ownerId == ownerId }
             ?: return OwnerDiscovery.Missing()

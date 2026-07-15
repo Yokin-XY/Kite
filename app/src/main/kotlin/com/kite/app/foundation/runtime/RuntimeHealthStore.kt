@@ -2596,6 +2596,8 @@ object RuntimeHealthStore {
         builder.appendLine("proot_telemetry_known_tracees=${prootTelemetry.knownTraceeCount}")
         builder.appendLine("proot_telemetry_parse_errors=${prootTelemetry.counters.parseErrors}")
         builder.appendLine("proot_telemetry_skipped_bytes=${prootTelemetry.counters.skippedBytes}")
+        builder.appendLine("proot_telemetry_owner_evidence_complete_from_ms=${prootTelemetry.ownerEvidenceCompleteFromMs}")
+        builder.appendLine("proot_telemetry_owner_evidence_coverage_reason=${prootTelemetry.ownerEvidenceCoverageReason}")
         builder.appendLine("proot_telemetry_last_event_at=${prootTelemetry.lastEventAtMs}")
         val lastProotEvent = prootTelemetry.recentEvents.lastOrNull()
         builder.appendLine("proot_telemetry_last_event_type=${lastProotEvent?.eventType?.name.toRuntimeEnvValue()}")

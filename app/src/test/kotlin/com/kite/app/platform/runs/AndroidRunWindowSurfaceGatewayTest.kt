@@ -16,7 +16,6 @@ import com.kite.app.run.CardRunStore
 import com.kite.app.run.TestRecipes
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -67,7 +66,7 @@ class AndroidRunWindowSurfaceGatewayTest {
     }
 
     @Test
-    fun `close all preserves failed child and reports the remaining subtree`() {
+    fun `close all removes child facts even while old process cleanup continues`() {
         val recipe = TestRecipes.serviceRecipe("failed-child-close")
         val root = seed(recipe, "root", parentInstanceId = null, runId = null)
         seed(recipe, "child", parentInstanceId = root.instanceId, runId = "child-run")
@@ -81,10 +80,30 @@ class AndroidRunWindowSurfaceGatewayTest {
 
         gateway.closeAll(root.instanceId, root.createdAt) { closeResult = it }
 
-        assertFalse(closeResult?.confirmed ?: true)
-        assertEquals(listOf("child"), closeResult?.remainingInstanceIds)
-        assertNotNull(CardRunStore.get("child"))
+        assertEquals(true, closeResult?.confirmed)
+        assertEquals(emptyList<String>(), closeResult?.remainingInstanceIds)
+        assertNull(CardRunStore.get("child"))
         assertNotNull(CardRunStore.get("root"))
+    }
+
+    @Test
+    fun `replay starts new generation even when old cleanup is not yet confirmed`() {
+        val recipe = TestRecipes.serviceRecipe("replay-old-residue")
+        val root = seed(recipe, "root", parentInstanceId = null, runId = null)
+        val replayInstanceId = "root:step-replay:0"
+        seed(recipe, replayInstanceId, parentInstanceId = root.instanceId, runId = "old-run")
+        val executor = RecordingStopExecutor(failingInstanceId = replayInstanceId)
+        val gateway = AndroidRunWindowSurfaceGateway(
+            context = context,
+            diagnostics = KiteDiagnostics(context),
+            executor = executor
+        )
+
+        val accepted = gateway.replayWorkflowStep(recipe, root.instanceId, 0)
+
+        assertEquals(true, accepted)
+        assertEquals(1, executor.executeRequests.size)
+        assertEquals(CardRunStatus.Running, CardRunStore.get(executor.executeRequests.single().instanceId)?.status)
     }
 
     private fun seed(
@@ -114,11 +133,14 @@ private class RecordingStopExecutor(
     private val failingInstanceId: String? = null
 ) : RecipeExecutor {
     val stoppedInstanceIds = mutableListOf<String>()
+    val executeRequests = mutableListOf<RecipeStepExecutionRequest>()
 
     override fun execute(
         request: RecipeStepExecutionRequest,
         callback: (RecipeExecutionEvent) -> Unit
-    ) = Unit
+    ) {
+        executeRequests += request
+    }
 
     override fun stop(request: RecipeStopRequest, callback: (StopExecutionResult) -> Unit) {
         stoppedInstanceIds += request.instanceId

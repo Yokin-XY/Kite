@@ -174,7 +174,6 @@ internal class RunOrchestrator(
             )
             Restart(
                 dispatch = Dispatch(state.instanceId, state.createdAt, state.currentStepIndex),
-                previousState = state,
                 stopRequest = restartStopRequest(recipe, state, step.type)
             )
         }
@@ -226,39 +225,12 @@ internal class RunOrchestrator(
 
     private fun handleOwnedWindowsCloseResult(
         preparation: StopPreparation,
-        result: RunOwnedWindowsCloseResult
+        @Suppress("UNUSED_PARAMETER") result: RunOwnedWindowsCloseResult
     ) {
         val execution = synchronized(lock) {
             val previous = preparation.previousState
             val current = stateGateway.state(previous.instanceId) ?: return
             if (current.createdAt != previous.createdAt || current.status != CardRunStatus.Stopping) return
-            if (!result.confirmed) {
-                val remaining = result.remainingInstanceIds
-                    .map(String::trim)
-                    .filter(String::isNotBlank)
-                    .distinct()
-                val error = result.message.ifBlank {
-                    if (remaining.isEmpty()) {
-                        "子窗口未确认关闭，父实例未停止"
-                    } else {
-                        "子窗口未确认关闭：${remaining.joinToString(",")}"
-                    }
-                }
-                commit(
-                    preparation.recipe,
-                    previous.instanceId,
-                    restoreAfterStopFailure(previous, error)
-                )
-                effectSink.emit(
-                    RunExecutionEffect.StopResolved(
-                        instanceId = previous.instanceId,
-                        recipeId = preparation.recipe.id,
-                        stopped = false,
-                        message = error
-                    )
-                )
-                return
-            }
             val localSummary = preparation.localSummary
             if (localSummary != null) {
                 commit(preparation.recipe, previous.instanceId, stoppedMutation(localSummary))
@@ -460,7 +432,10 @@ internal class RunOrchestrator(
         nextDispatch?.let(::dispatch)
     }
 
-    private fun handleRestartStopResult(restart: Restart, result: StopExecutionResult) {
+    private fun handleRestartStopResult(
+        restart: Restart,
+        @Suppress("UNUSED_PARAMETER") result: StopExecutionResult
+    ) {
         val shouldDispatch = synchronized(lock) {
             val state = stateGateway.state(restart.dispatch.instanceId) ?: return
             if (
@@ -469,36 +444,8 @@ internal class RunOrchestrator(
                 state.status == CardRunStatus.Stopping ||
                 state.status == CardRunStatus.Stopped
             ) return
-            val recipe = stateGateway.recipe(state.recipeId) ?: return
-            if (result.outcome == StopExecutionOutcome.Confirmed) {
-                true
-            } else {
-                val previous = restart.previousState
-                commit(
-                    recipe,
-                    state.instanceId,
-                    RunStateMutation(
-                        status = CardRunStatus.Failed,
-                        surface = previous.surface,
-                        currentStepIndex = previous.currentStepIndex,
-                        runtimeRootOwnerId = previous.runtimeRootOwnerId,
-                        runtimeOwnerId = previous.runtimeOwnerId,
-                        runtimeUnitId = previous.runtimeUnitId,
-                        ownedRuntimeOwnerIds = previous.ownedRuntimeOwnerIds,
-                        runId = previous.runId,
-                        terminalSessionId = previous.terminalSessionId,
-                        pid = previous.pid,
-                        rootPid = previous.rootPid,
-                        processGroupId = previous.processGroupId,
-                        systemSessionId = previous.systemSessionId,
-                        nextActionUrl = previous.nextActionUrl,
-                        x11Display = previous.x11Display,
-                        x11SocketPath = previous.x11SocketPath,
-                        lastError = result.message.ifBlank { "旧步骤未确认停止，未开始重新执行" }
-                    )
-                )
-                false
-            }
+            stateGateway.recipe(state.recipeId) ?: return
+            true
         }
         if (shouldDispatch) dispatch(restart.dispatch)
     }
@@ -508,53 +455,16 @@ internal class RunOrchestrator(
             val current = stateGateway.state(previousState.instanceId) ?: return
             if (current.createdAt != previousState.createdAt || current.status != CardRunStatus.Stopping) return
             val recipe = stateGateway.recipe(previousState.recipeId) ?: return
-            when (val resolution = stopCoordinator.resolve(previousState, result)) {
-                is StopResolution.Stopped -> {
-                    commit(recipe, previousState.instanceId, stoppedMutation(resolution.summary))
-                    effectSink.emit(
-                        RunExecutionEffect.StopResolved(
-                            instanceId = previousState.instanceId,
-                            recipeId = recipe.id,
-                            stopped = true,
-                            message = resolution.summary
-                        )
-                    )
-                }
-                is StopResolution.Restore -> {
-                    commit(
-                        recipe,
-                        previousState.instanceId,
-                        RunStateMutation(
-                            status = resolution.status,
-                            surface = previousState.surface,
-                            currentStepIndex = previousState.currentStepIndex,
-                            runtimeRootOwnerId = previousState.runtimeRootOwnerId,
-                            runtimeOwnerId = previousState.runtimeOwnerId,
-                            runtimeUnitId = previousState.runtimeUnitId,
-                            ownedRuntimeOwnerIds = previousState.ownedRuntimeOwnerIds,
-                            runId = previousState.runId,
-                            terminalSessionId = previousState.terminalSessionId,
-                            pid = previousState.pid,
-                            rootPid = previousState.rootPid,
-                            processGroupId = previousState.processGroupId,
-                            systemSessionId = previousState.systemSessionId,
-                            lastMeaningfulOutput = previousState.lastMeaningfulOutput,
-                            lastError = resolution.error,
-                            nextActionUrl = previousState.nextActionUrl,
-                            x11Display = previousState.x11Display,
-                            x11SocketPath = previousState.x11SocketPath
-                        )
-                    )
-                    effectSink.emit(
-                        RunExecutionEffect.StopResolved(
-                            instanceId = previousState.instanceId,
-                            recipeId = recipe.id,
-                            stopped = false,
-                            message = resolution.error
-                        )
-                    )
-                }
-            }
+            val resolution = stopCoordinator.resolve(result)
+            commit(recipe, previousState.instanceId, stoppedMutation(resolution.summary))
+            effectSink.emit(
+                RunExecutionEffect.StopResolved(
+                    instanceId = previousState.instanceId,
+                    recipeId = recipe.id,
+                    stopped = true,
+                    message = resolution.summary
+                )
+            )
         }
     }
 
@@ -599,7 +509,6 @@ internal class RunOrchestrator(
     )
     private data class Restart(
         val dispatch: Dispatch,
-        val previousState: CardRunState,
         val stopRequest: RecipeStopRequest?
     )
 
@@ -749,25 +658,5 @@ internal class RunOrchestrator(
             x11SocketPath = state.x11SocketPath
         )
 
-        private fun restoreAfterStopFailure(state: CardRunState, error: String): RunStateMutation = RunStateMutation(
-            status = state.status,
-            surface = state.surface,
-            currentStepIndex = state.currentStepIndex,
-            runtimeRootOwnerId = state.runtimeRootOwnerId,
-            runtimeOwnerId = state.runtimeOwnerId,
-            runtimeUnitId = state.runtimeUnitId,
-            ownedRuntimeOwnerIds = state.ownedRuntimeOwnerIds,
-            runId = state.runId,
-            terminalSessionId = state.terminalSessionId,
-            pid = state.pid,
-            rootPid = state.rootPid,
-            processGroupId = state.processGroupId,
-            systemSessionId = state.systemSessionId,
-            lastMeaningfulOutput = state.lastMeaningfulOutput,
-            lastError = error,
-            nextActionUrl = state.nextActionUrl,
-            x11Display = state.x11Display,
-            x11SocketPath = state.x11SocketPath
-        )
     }
 }

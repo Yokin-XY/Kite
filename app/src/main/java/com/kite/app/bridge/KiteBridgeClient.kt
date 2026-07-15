@@ -22,13 +22,18 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 class KiteBridgeClient(
     private val diagnostics: KiteDiagnostics,
     private val appContext: Context? = null,
-    private val baseUrl: String = DEFAULT_BASE_URL
+    private val baseUrl: String = DEFAULT_BASE_URL,
+    private val stopExecutor: Executor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "KiteBridgeStop").apply { isDaemon = true }
+    }
 ) {
     private val directRuns = ConcurrentHashMap<String, DirectRunBinding>()
     private val directProcesses = ConcurrentHashMap<String, DirectProcessBinding>()
@@ -168,7 +173,9 @@ class KiteBridgeClient(
                 stopDirectRuns(context, recipe, listOf(persisted), runtimeOwnerIds, callback)
                 return
             }
-            callback(stoppedWithoutActiveDirectBinding(context, recipe, runId, cardInstanceId, runtimeOwnerIds))
+            stopExecutor.execute {
+                callback(stoppedWithoutActiveDirectBinding(context, recipe, runId, cardInstanceId, runtimeOwnerIds))
+            }
             return
         }
 
@@ -199,7 +206,9 @@ class KiteBridgeClient(
             return
         }
         if (context != null) {
-            callback(stoppedWithoutActiveDirectBinding(context, recipe, "", null, emptyList()))
+            stopExecutor.execute {
+                callback(stoppedWithoutActiveDirectBinding(context, recipe, "", null, emptyList()))
+            }
             return
         }
 
@@ -670,7 +679,7 @@ class KiteBridgeClient(
         callback: (BridgeResult) -> Unit
     ) {
         val requestId = newRequestId()
-        thread(name = "KiteDirectBridgeStop", isDaemon = true) {
+        stopExecutor.execute {
             val runId = bindings.firstOrNull()?.runId ?: requestId
             val output = StringBuilder()
             bindings.forEach { binding ->
@@ -743,7 +752,7 @@ class KiteBridgeClient(
         callback: (BridgeResult) -> Unit
     ) {
         val requestId = newRequestId()
-        thread(name = "KiteDirectProcessStop", isDaemon = true) {
+        stopExecutor.execute {
             val runId = bindings.firstOrNull()?.runId ?: requestId
             val output = StringBuilder()
             bindings.forEach { binding ->
@@ -1033,9 +1042,14 @@ class KiteBridgeClient(
                 .map { cardInstanceId -> runtimeOwnerId(recipe, cardInstanceId?.takeIf { it.isNotBlank() } ?: recipe.id) }
                 .distinct()
         }
-        return ownerIds.joinToString(separator = "") { ownerId ->
-            ProotOwnerProcessTerminator.terminate(context, ownerId).toStopOutput()
+        val results = ownerIds.map { ownerId ->
+            ProotOwnerProcessTerminator.terminate(context, ownerId)
         }
+        ProotOwnerProcessTerminator.scheduleResidualReap(
+            context = context,
+            ownerIds = results.filterNot { it.settled }.map { it.ownerId }
+        )
+        return results.joinToString(separator = "") { result -> result.toStopOutput() }
     }
 
     private fun cardRunPidDir(cardInstanceId: String): String =

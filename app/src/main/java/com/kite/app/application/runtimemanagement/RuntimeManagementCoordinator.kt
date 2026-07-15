@@ -53,10 +53,7 @@ data class RuntimeManagementCommandState(
 data class RuntimeStopConfirmationTarget(
     val rootInstanceId: String,
     val rootGeneration: Long,
-    val instanceGenerations: Map<String, Long>,
-    val ownerIds: Set<String>,
-    val terminalSessionIds: Set<String>,
-    val processIds: Set<String>
+    val instanceGenerations: Map<String, Long>
 )
 
 sealed interface RuntimeManagementSubmitResult {
@@ -187,10 +184,7 @@ class RuntimeManagementCoordinator internal constructor(
         return RuntimeStopConfirmationTarget(
             rootInstanceId = instanceId,
             rootGeneration = root.identity.generation,
-            instanceGenerations = subtree.associate { it.identity.instanceId to it.identity.generation },
-            ownerIds = subtree.flatMap { it.ownerIds }.toSet(),
-            terminalSessionIds = subtree.flatMap { it.terminalSessionIds }.toSet(),
-            processIds = subtree.flatMap { it.processIds }.toSet()
+            instanceGenerations = subtree.associate { it.identity.instanceId to it.identity.generation }
         )
     }
 
@@ -200,24 +194,13 @@ class RuntimeManagementCoordinator internal constructor(
             ?.takeIf { it.identity.generation == target.rootGeneration }
         if (currentRoot != null) {
             if (currentRoot.run.status != CardRunStatus.Stopped) return false
-            if (topology.descendants(target.rootInstanceId).isNotEmpty()) return false
-            val subtree = topology.subtree(target.rootInstanceId)
-            if (subtree.any { it.processIds.isNotEmpty() }) return false
-            val currentTerminalIds = subtree.flatMap { it.terminalSessionIds }.toSet()
-            if (terminals.any { it.isLive && it.id in currentTerminalIds }) return false
         }
         val staleDescendantRemains = target.instanceGenerations.any { (instanceId, generation) ->
             instanceId != target.rootInstanceId &&
                 topology.node(instanceId)?.identity?.generation == generation
         }
         if (staleDescendantRemains) return false
-        if (processes.any { process ->
-                process.id in target.processIds ||
-                    process.ownerId in target.ownerIds ||
-                    process.linkedTerminalSessionId in target.terminalSessionIds
-            }
-        ) return false
-        if (terminals.any { it.isLive && it.id in target.terminalSessionIds }) return false
+        // 进程与终端残留属于旧代后台回收，不能让旧 mutationKey 阻塞同实例的新代次。
         return currentRoot == null || currentRoot.run.status == CardRunStatus.Stopped
     }
 

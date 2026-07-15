@@ -7,7 +7,7 @@
 ```text
 方向：运行实例容器与进程闭环
 状态：in_progress
-当前任务：T018.6 全量验证与真机验收
+当前任务：T018.9 停止链后台化与 ANR 封口
 代码分支：main
 代码策略：先收紧底层事实，再接实例拓扑和运行管理；不触碰未提交的浏览器与终端改动
 ```
@@ -28,7 +28,7 @@
 | T015 通知权限与服务频道 | completed | Android 标准权限链、卡片频道和静默后台频道均已验收 |
 | T016 实例窗口重置与独立子窗口 | completed | 流程窗口重置、手动窗口关闭和独立终端已由用户人工确认 |
 | T017 一级导航与二级页层级 | completed | 主导航仅属于四个根目标，二级页面隐藏并复用统一返回合同 |
-| T018 运行实例容器与进程闭环 | in_progress | owner 关停与显式拓扑已完成，正在让停止编排递归消费同一拓扑 |
+| T018 运行实例容器与进程闭环 | in_progress | owner 关停与显式拓扑已完成，停止探针竞态和 UI 线程同步关停均已封口 |
 
 ## P0 公共安全网记录
 
@@ -1644,3 +1644,106 @@ OnePlus 8T 实例子孙关闭验收。
 
 T018.6 状态：automated_completed。剩余唯一验收是 OnePlus 8T 上创建实例子窗口、停止根实例并确认子孙窗口、
 终端与进程一起消失，以及快速再次启动不会被旧代次回调误停。
+
+### 2026-07-15 T018.7 大历史遥测下的 owner 停止回归修复
+
+人工反馈：OnePlus 8T 停止实例时出现整块 `__kite_owner_stop_*` 原文，两个 owner 均返回
+`TELEMETRY_UNAVAILABLE / telemetry_skipped_bytes`，且未发送 TERM/KILL。只读核对发现真机遥测文件已达
+7,911,976 bytes，而首次读取上限为 256 KiB；本次实例完整事件位于末尾覆盖区间内，旧安全门却把历史裁剪累计值
+当成永久来源损坏。
+
+完成结果：
+
+- `ProotTelemetryStore` 新增 owner 证据连续覆盖起点和原因。首次尾读、轮转边界及后续增量跳段分别推进覆盖
+  边界，`skippedBytes` 保留诊断但不再永久毒化遥测健康与压力策略。
+- `ProotOwnerTerminationEvidence` 按结构化 owner 的实例 generation 校验覆盖区间；新实例可继续精确停止，旧于
+  边界、代次未知或解析错误的 owner 仍拒绝破坏性动作。
+- Android 停止结果统一复用 `OwnerStopOutputEvidence`。任何非 `CONFIRMED` outcome 都阻止成功；原始协议标记
+  留在运行报告，界面只接收“运行记录暂不完整”等简短中文结果，不再生成占满屏幕的 Toast。
+- 新增大于 256 KiB 历史文件、新旧 owner 覆盖边界、owner 代次解析、残留合并和用户消息投影回归测试。
+- 全量 `:app:testDebugUnitTest :app:assembleDebug` 通过：517 项测试、0 失败、1 项既有跳过；架构和运行车道静态
+  护栏通过，`git diff --check` 无空白错误。
+- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`，232,317,644 bytes，SHA-256
+  `7A8921F0EE5804D959BAA553EDC63F743B5CCBD533EB46B713181368673F619C`。
+
+T018.7 状态：automated_completed。尚未覆盖安装设备；下一步由用户在 OnePlus 8T 复测同一实例停止动作，确认
+不再出现原始协议 Toast，且实例及其终端/网页/进程一起关闭。
+
+### 2026-07-15 T018.8 停止单向收口与旧代后台回收
+
+三问自检：
+
+- 目标是什么：把用户停止固定为 `Running -> Stopping -> Stopped` 单向状态机；终端、子窗口和当前运行绑定
+  随逻辑实例一起闭合，未及时退出的旧代 owner 只进入后台回收，不得恢复旧卡片或阻塞下一次启动。
+- 完成标准是什么：残留 PID、探针超时、owner 不存在及子窗口清理不确定均不恢复运行态；停止后清空当前
+  root/leaf owner、终端和进程绑定；旧代残留可去重重试回收；运行管理只等待旧代逻辑事实闭合；快速重启不被
+  旧代结果覆盖。
+- 依赖是否满足：T018.2-T018.7 已提供代次化 owner、确认式终止器、显式子树和统一停止入口；本次只调整
+  停止结果语义与后台补偿，不新增 Store、设备特判或进程隔离层，依赖满足。
+
+人工证据：OnePlus 8T 的停止结果曾报告 29 个残留 PID，但随后只读核对 `/proc` 已全部消失；终端日志确认
+根进程退出，最终 owner 探针比真实 SIGTERM 早约 62ms。当前 `StopCoordinator` 把该瞬时残留解释为
+`Restore(previousState)`，从而把旧 run、terminal 和 owner 绑定整份写回。这是状态解释竞态，不是停止命令未执行。
+
+完成结果：
+
+- `StopCoordinator` 删除恢复分支，任何执行结果都只把当前代次提交为 `Stopped`；残留、超时和来源不确定只标记
+  `cleanupPending`，不再写回旧 status、run、terminal、owner 或 PID。
+- `CardRunStore.clearRunBinding` 同时清空 root owner；终端停止先结束 session，再进入 owner 回收。流程子窗口和
+  历史步骤重放即使旧进程尚未确认退出，也会移除旧显示事实并创建新的精确 attempt owner。
+- `KiteBridgeClient` 与纯终端停止统一把未收敛 owner 提交给去重后台回收器，按 250ms、1s、3s 有限重试；
+  `OWNER_NOT_FOUND` 作为目标已不存在直接收敛，仍保留明确 outcome 与残留 PID/PGID 诊断。
+- 运行管理确认只比较停止请求捕获的旧代 root 和子孙 generation；旧代进程、终端残留及停止后创建的新代窗口
+  不再占用旧 `run:<instanceId>` mutation，也不会影响下一次启动。
+- 新增/更新回归覆盖瞬时残留、子窗口不确定、重放旧代残留、root owner 清除、owner 不存在、旧代进程残留、
+  同实例新代次和新代子窗口。聚焦测试通过；全量测试为 521 项、0 失败、0 错误、1 项既有跳过。
+- `:app:testDebugUnitTest :app:assembleDebug`、`KITE_ARCHITECTURE_CHECKS.ps1`、
+  `KITE_RUNTIME_LANE_STATIC_CHECKS.ps1` 与 `git diff --check` 全部通过。运行车道护栏已改为禁止停止恢复旧事实，
+  并要求后台 owner 回收、绑定清空和旧代确认合同持续存在。
+- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`，231,877,480 bytes，SHA-256
+  `594F21593DB11B5800D5D8FBFBEB813F8B673CCE8E7CE3204AC87CE402D16EE7`。
+
+T018.8 状态：automated_completed。下一步覆盖安装 OnePlus 8T，由用户人工验收“启动 -> 停止 -> 卡片立即回到
+启动、实例窗口消失 -> 立即再次启动”，同时观察运行管理不再保留旧 SH/终端卡片。
+
+设备交付：Debug APK 已通过 ADB 覆盖安装到 OnePlus 8T `3f8bbaad / KB2000`，安装返回 `Success`；设备侧
+`com.kite.app` 为 `versionName=0.0.1`、`versionCode=1`，`lastUpdateTime=2026-07-15 12:47:21`。未代替用户启动、
+截图或操作流程，等待人工业务验收。
+
+### 2026-07-15 T018.9 停止链后台化与 ANR 封口
+
+三问自检：
+
+- 目标是什么：消除首页停止 OpenCode 后全应用失去响应的问题，保证 UI 线程只提交停止意图，owner 遥测、
+  shell 探测、TERM/KILL 和等待均在后台执行。
+- 完成标准是什么：同一真机路径不再产生输入 ANR；点击停止后的 300ms 内仍能切换主导航；停止最终回到
+  “启动”；不改变 T018.8 的单向停止、精确 owner 与后台残留回收语义。
+- 依赖是否满足：T018.8 已统一停止状态和 owner 回收；本次只修正 Bridge 停止接口的线程边界，不触碰页面
+  Store、终端/Web 生命周期或进程归属算法，依赖满足。
+
+根因证据：
+
+- OnePlus 8T DropBox 在 `12:48:51` 和 `12:50:49` 连续记录两次 `Input dispatching timed out`。两次主线程
+  堆栈均从首页停止按钮进入 `RunOrchestrator -> AndroidRecipeExecutor -> KiteBridgeClient`；一次阻塞在
+  `ProotOwnerProcessTerminator.executeUbuntuShell/process.waitFor`，另一次在
+  `ProotTelemetryStore.refreshBlocking/readTelemetryLocked` 扫描遥测。
+- 根因是 `KiteBridgeClient.stopRun()` 的无直接绑定分支表面使用 callback，实际在调用线程同步执行
+  `stoppedWithoutActiveDirectBinding()`；终端 `endSession()` 本身只投递协程，不是本次 ANR 阻塞点。
+
+完成结果：
+
+- `KiteBridgeClient` 增加单线程 `KiteBridgeStop` 队列。direct run、direct process 和无直接绑定三条停止路径
+  统一进入该队列，避免 UI 阻塞，也避免多个停止同时争抢全局遥测锁。
+- 新增 `KiteBridgeClientStopDispatchTest`，用可控 Executor 证明按 run 和按 recipe 的无直接绑定停止均只排队，
+  调用线程不会执行 owner 终止或提前收到 callback。
+- 全量 `:app:testDebugUnitTest :app:assembleDebug` 通过：523 项测试、0 失败、0 错误、1 项既有跳过；架构和
+  运行车道静态检查通过，`git diff --check` 无空白错误。
+- Debug APK 为 `231,877,480` bytes，SHA-256
+  `682C8CECE3D1A2BB4DC8728A287574EBF2AA13AD6E6E2FD3B2146BF9F4CA0721`；ADB 覆盖安装返回 `Success`，最终
+  APK 冷启动 `1524ms`。
+- OnePlus 8T 按“启动 OpenCode -> 等 CLI 完整显示 -> 返回首页 -> 停止”连续验证三轮。停止后 300ms 点击
+  “资源”或“设置”均立即切页，回首页后 OpenCode 均为“启动”。logcat 未发现 FATAL、ANR 或输入超时；
+  DropBox 仍只有修复前的两条 ANR，没有新增记录。
+
+T018.9 状态：completed。该回归已完成自动化、构建与真实 OpenCode 路径验收；T018 总任务仍保留多实例/
+子孙进程综合验收门，不因本次 ANR 封口提前宣布完成。

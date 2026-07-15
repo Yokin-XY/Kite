@@ -129,8 +129,7 @@ object RuntimePressureConsumer {
     ): RuntimePressureConsumerSnapshot {
         val telemetryHealthy = prootTelemetry.collectionStatus == "loaded" &&
             prootTelemetry.fileExists &&
-            prootTelemetry.counters.parseErrors == 0L &&
-            prootTelemetry.counters.skippedBytes == 0L
+            prootTelemetry.counters.parseErrors == 0L
         val runningRootCount = roots.count { it.isRunning }
         val unattributedRootCount = roots.count {
             it.isRunning && it.ownerKind == RuntimeRootOwnerKind.UNATTRIBUTED

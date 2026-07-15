@@ -11,12 +11,11 @@ import com.kite.app.application.runs.RunOwnedWindowGateway
 import com.kite.app.application.runs.RunOwnedWindowsCloseResult
 import com.kite.app.application.runs.RunStateMutation
 import com.kite.app.application.runs.StopCoordinator
-import com.kite.app.application.runs.StopExecutionOutcome
-import com.kite.app.application.runs.StopResolution
 import com.kite.app.application.runtimemanagement.InstanceRuntimeTopologyBuilder
 import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.runtime.TerminalSessionStore
+import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
@@ -232,23 +231,9 @@ internal class AndroidRunWindowSurfaceGateway(
         if (stopRequest == null) {
             executeReplay(recipe, parent, child, stepIndex, step, generation)
         } else {
-            executor.stop(stopRequest) stopCallback@{ result ->
+            executor.stop(stopRequest) stopCallback@{ _ ->
                 if (CardRunStore.get(child.instanceId)?.createdAt != generation) return@stopCallback
-                if (result.outcome == StopExecutionOutcome.Confirmed) {
-                    executeReplay(recipe, parent, child, stepIndex, step, generation)
-                } else {
-                    CardRunStore.update(
-                        recipe = recipe,
-                        status = CardRunStatus.Failed,
-                        instanceId = child.instanceId,
-                        parentInstanceId = parent.instanceId,
-                        ownerKind = CardRunState.OWNER_KIND_STEP_REPLAY,
-                        stepId = step.id,
-                        surface = surfaceFor(step.type),
-                        currentStepIndex = stepIndex,
-                        lastError = result.message.ifBlank { "旧步骤未确认停止，未开始重新执行" }
-                    )
-                }
+                executeReplay(recipe, parent, child, stepIndex, step, generation)
             }
         }
         diagnostics.logRecipeAction(
@@ -318,13 +303,7 @@ internal class AndroidRunWindowSurfaceGateway(
             return
         }
         if (current.createdAt != expected.createdAt) {
-            callback(
-                RunOwnedWindowsCloseResult(
-                    confirmed = false,
-                    message = "子窗口 ${current.instanceId} 已进入新代次，未处理旧关闭结果",
-                    remainingInstanceIds = descendants.drop(index).map(CardRunState::instanceId)
-                )
-            )
+            closeOwnedDescendants(rootInstanceId, rootGeneration, descendants, index + 1, callback)
             return
         }
 
@@ -332,14 +311,10 @@ internal class AndroidRunWindowSurfaceGateway(
         val request = recipe?.let { current.toStopRequest(it) }
         if (request == null) {
             if (current.hasRunBinding() || current.hasRuntimeOwnership()) {
-                callback(
-                    RunOwnedWindowsCloseResult(
-                        confirmed = false,
-                        message = "子窗口 ${current.instanceId} 缺少停止所需的配方事实",
-                        remainingInstanceIds = descendants.drop(index).map(CardRunState::instanceId)
-                    )
+                ProotOwnerProcessTerminator.scheduleResidualReap(
+                    appContext,
+                    current.ownedRuntimeOwnerIds + listOfNotNull(current.runtimeOwnerId)
                 )
-                return
             }
             CardRunStore.removeRun(current.instanceId)
             closeOwnedDescendants(rootInstanceId, rootGeneration, descendants, index + 1, callback)
@@ -353,28 +328,12 @@ internal class AndroidRunWindowSurfaceGateway(
                 return@stop
             }
             if (latest.createdAt != current.createdAt) {
-                callback(
-                    RunOwnedWindowsCloseResult(
-                        confirmed = false,
-                        message = "子窗口 ${current.instanceId} 已进入新代次，旧停止结果已丢弃",
-                        remainingInstanceIds = descendants.drop(index).map(CardRunState::instanceId)
-                    )
-                )
+                closeOwnedDescendants(rootInstanceId, rootGeneration, descendants, index + 1, callback)
                 return@stop
             }
-            when (val resolution = stopCoordinator.resolve(current, result)) {
-                is StopResolution.Stopped -> {
-                    CardRunStore.removeRun(current.instanceId)
-                    closeOwnedDescendants(rootInstanceId, rootGeneration, descendants, index + 1, callback)
-                }
-                is StopResolution.Restore -> callback(
-                    RunOwnedWindowsCloseResult(
-                        confirmed = false,
-                        message = "子窗口 ${current.instanceId} 未确认关闭：${resolution.error}",
-                        remainingInstanceIds = descendants.drop(index).map(CardRunState::instanceId)
-                    )
-                )
-            }
+            stopCoordinator.resolve(result)
+            CardRunStore.removeRun(current.instanceId)
+            closeOwnedDescendants(rootInstanceId, rootGeneration, descendants, index + 1, callback)
         }
     }
 

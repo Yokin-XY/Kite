@@ -182,6 +182,7 @@ class CardRunStoreStateTransitionTest {
             clearRunBinding = true
         )
         assertTrue(cleared.ownedRuntimeOwnerIds.isEmpty())
+        assertNull(cleared.runtimeRootOwnerId)
         assertNull(cleared.runtimeOwnerId)
         assertNull(cleared.runtimeUnitId)
     }

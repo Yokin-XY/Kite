@@ -202,7 +202,7 @@ object CardRunStore {
             surface = resolvedSurface,
             currentStepIndex = currentStepIndex ?: existing.currentStepIndex,
             stepCount = recipe.steps.size,
-            runtimeRootOwnerId = runtimeRootOwnerId ?: existing.runtimeRootOwnerId,
+            runtimeRootOwnerId = if (clearRunBinding) null else runtimeRootOwnerId ?: existing.runtimeRootOwnerId,
             runtimeOwnerId = if (clearRunBinding) null else runtimeOwnerId ?: existing.runtimeOwnerId,
             runtimeUnitId = if (clearRunBinding) null else runtimeUnitId ?: existing.runtimeUnitId,
             ownedRuntimeOwnerIds = nextOwnedRuntimeOwnerIds,

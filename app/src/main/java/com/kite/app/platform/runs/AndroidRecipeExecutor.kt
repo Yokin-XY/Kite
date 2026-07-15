@@ -18,6 +18,7 @@ import com.kite.app.bridge.BridgeErrorType
 import com.kite.app.bridge.BridgeProgress
 import com.kite.app.bridge.BridgeResult
 import com.kite.app.bridge.KiteBridgeClient
+import com.kite.app.bridge.OwnerStopOutputEvidence
 import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
@@ -134,11 +135,7 @@ internal class AndroidRecipeExecutor(
         request.terminalSessionId?.takeIf { it.isNotBlank() }?.let { sessionId ->
             pendingTerminals.remove(sessionId)
             TerminalRuntimeHost.sendCommand(appContext, "\u0003", sessionId)
-            scheduler.schedule(
-                { TerminalRuntimeHost.endSession(appContext, sessionId) },
-                TERMINAL_STOP_GRACE_MS,
-                TimeUnit.MILLISECONDS
-            )
+            TerminalRuntimeHost.endSession(appContext, sessionId)
         }
         if (!request.hasBridgeProcessBinding()) {
             callback(StopExecutionResult(StopExecutionOutcome.Confirmed, "终端已发送中断并关闭"))
@@ -694,10 +691,7 @@ internal class AndroidRecipeExecutor(
     private fun BridgeResult.toStopExecutionResult(): StopExecutionResult {
         val observation = stopObservationText()
         val observationLines = observation.lineSequence().map(String::trim).toList()
-        val ownerOutcomeUnconfirmed = observationLines
-            .filter { it.startsWith("__kite_owner_stop_outcome:") }
-            .map { it.substringAfter(':').trim() }
-            .any { it != "CONFIRMED" }
+        val ownerOutcomeUnconfirmed = OwnerStopOutputEvidence.hasUnconfirmedOwnerOutcome(observation)
         val bridgeConfirmedStop = status == KiteRunReport.STATUS_STOPPED && (ok || accepted)
         val residueMarkerObserved = bridgeConfirmedStop &&
             !ownerOutcomeUnconfirmed &&
@@ -705,17 +699,12 @@ internal class AndroidRecipeExecutor(
                 it.startsWith("__kite_stop_remaining:") ||
                     it.startsWith("__kite_stop_remaining_pgid:")
             }
-        val remaining = observationLines
-            .map(String::trim)
-            .filter {
-                it.startsWith("__kite_stop_remaining:") ||
-                    it.startsWith("__kite_stop_remaining_pgid:")
-            }
-            .flatMap { it.substringAfter(':').split(',') }
-            .map(String::trim)
-            .filter(String::isNotBlank)
-            .distinct()
-        val confirmed = remaining.isEmpty() && (ok || accepted) && status == KiteRunReport.STATUS_STOPPED
+        val remaining = OwnerStopOutputEvidence.remainingProcessIds(observation)
+        val confirmed = !ownerOutcomeUnconfirmed &&
+            remaining.isEmpty() &&
+            (ok || accepted) &&
+            status == KiteRunReport.STATUS_STOPPED
+        val ownerMessage = OwnerStopOutputEvidence.userMessage(observation)
         return StopExecutionResult(
             outcome = when {
                 confirmed -> StopExecutionOutcome.Confirmed
@@ -725,7 +714,7 @@ internal class AndroidRecipeExecutor(
                 errorType == BridgeErrorType.ParseError -> StopExecutionOutcome.ParseError
                 else -> StopExecutionOutcome.Failed
             },
-            message = runReport?.lastMeaningfulOutput() ?: message,
+            message = ownerMessage ?: runReport?.lastMeaningfulOutput() ?: message,
             remainingProcessIds = remaining,
             manualKillObserved = bridgeConfirmedStop &&
                 !ownerOutcomeUnconfirmed &&
@@ -839,7 +828,6 @@ internal class AndroidRecipeExecutor(
 
     companion object {
         private const val TERMINAL_COMMAND_DELAY_MS = 650L
-        private const val TERMINAL_STOP_GRACE_MS = 350L
         private val TERMINAL_FINISHED_STATUSES = setOf(
             ManagedTerminalStatus.EXITED,
             ManagedTerminalStatus.FAILED,
