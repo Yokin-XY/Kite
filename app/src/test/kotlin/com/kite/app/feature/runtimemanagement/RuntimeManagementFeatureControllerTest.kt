@@ -58,8 +58,14 @@ class RuntimeManagementFeatureControllerTest {
                 recipeName = "OpenClaw",
                 status = CardRunStatus.Running,
                 surface = com.kite.app.run.CardRunSurface.Report,
+                runtimeRootOwnerId = "card:run-1@10",
+                runtimeOwnerId = "card:run-1@10/step/0-shell/attempt/1",
+                runtimeUnitId = "card:run-1@10/step/0-shell/attempt/1",
+                ownedRuntimeOwnerIds = listOf("card:run-1@10/step/0-shell/attempt/1"),
                 rootPid = "41",
-                lastMeaningfulOutput = "running"
+                lastMeaningfulOutput = "running",
+                createdAt = 10L,
+                updatedAt = 10L
             )
         ),
         processes = listOf(
@@ -69,7 +75,7 @@ class RuntimeManagementFeatureControllerTest {
                 parentPid = 41,
                 title = "child",
                 stateLabel = "运行中",
-                ownerId = "card:run-1",
+                ownerId = "card:run-1@10/step/0-shell/attempt/1",
                 canEndDirectly = true
             )
         )

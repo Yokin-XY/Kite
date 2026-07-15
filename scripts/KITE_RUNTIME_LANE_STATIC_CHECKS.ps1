@@ -8,6 +8,7 @@ $mainPath = Join-Path $Root 'app/src/main/java/com/kite/app/MainActivity.kt'
 $cardRunActivityPath = Join-Path $Root 'app/src/main/java/com/kite/app/CardRunActivity.kt'
 $storePath = Join-Path $Root 'app/src/main/java/com/kite/app/resources/KiteResourceInstallStore.kt'
 $bridgeClientPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteBridgeClient.kt'
+$ownerStopOutputEvidencePath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/OwnerStopOutputEvidence.kt'
 $browserProxyPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteBrowserProxy.kt'
 $localServerPath = Join-Path $Root 'app/src/main/java/com/kite/app/bridge/KiteLocalServer.kt'
 $cardRunModelsPath = Join-Path $Root 'app/src/main/java/com/kite/app/run/CardRunModels.kt'
@@ -98,6 +99,7 @@ $runtimeManagementGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/
 $androidRuntimeManagementGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runtimemanagement/AndroidRuntimeManagementGateway.kt'
 $runtimeManagementControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementFeatureController.kt'
 $runtimeManagementProjectorPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementProjector.kt'
+$instanceRuntimeTopologyPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimemanagement/InstanceRuntimeTopology.kt'
 $runtimeManagementFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementFragment.kt'
 $runtimeManagementScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runtimemanagement/RuntimeManagementScreen.kt'
 $runtimeBootstrapSnapshotPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runtimebootstrap/RuntimeBootstrapSnapshot.kt'
@@ -154,6 +156,7 @@ $main = Read-Utf8 $mainPath
 $cardRunActivity = Read-Utf8 $cardRunActivityPath
 $store = Read-Utf8 $storePath
 $bridgeClient = Read-Utf8 $bridgeClientPath
+$ownerStopOutputEvidence = Read-Utf8 $ownerStopOutputEvidencePath
 $browserProxy = Read-Utf8 $browserProxyPath
 $localServer = Read-Utf8 $localServerPath
 $cardRunModels = Read-Utf8 $cardRunModelsPath
@@ -253,6 +256,7 @@ $runtimeManagementGateway = Read-Utf8 $runtimeManagementGatewayPath
 $androidRuntimeManagementGateway = Read-Utf8 $androidRuntimeManagementGatewayPath
 $runtimeManagementController = Read-Utf8 $runtimeManagementControllerPath
 $runtimeManagementProjector = Read-Utf8 $runtimeManagementProjectorPath
+$instanceRuntimeTopology = Read-Utf8 $instanceRuntimeTopologyPath
 $runtimeManagementFragment = Read-Utf8 $runtimeManagementFragmentPath
 $runtimeManagementScreen = Read-Utf8 $runtimeManagementScreenPath
 $runtimeBootstrapSnapshot = Read-Utf8 $runtimeBootstrapSnapshotPath
@@ -319,7 +323,7 @@ Assert-True ($runExecutionEffectBus -match 'MutableSharedFlow<RunExecutionEffect
 Assert-True ($runLifecycleEventHub -match 'CopyOnWriteArrayList<RunLifecycleSink>' -and $runLifecycleEventHub -notmatch 'MutableStateFlow|mutableMapOf') 'Run lifecycle events must notify after fact commits without becoming a second state store.'
 Assert-True ($androidRecipeExecutor -match 'class AndroidRecipeExecutor' -and $androidRecipeExecutor -match 'when \(request\.step\.type\)' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_SHELL' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_TERMINAL' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_OPEN_WEB' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_X11' -and $androidRecipeExecutor -match 'KiteRecipe\.STEP_ANDROID_ACTION') 'Android recipe executor must dispatch every supported step through the shared execution port.'
 Assert-True ($androidRecipeExecutor -match '!request\.hasBridgeProcessBinding\(\)' -and $androidRecipeExecutor -match 'val bridgeRunId = request\.bridgeRunId\(\)') 'Android stop execution must bypass Bridge for terminal-only sessions and use only the normalized Bridge run id.'
-Assert-True ($androidRecipeExecutor -match 'residueMarkerObserved = observationLines\.any' -and $androidRecipeExecutor -match 'residueMarkerObserved = residueMarkerObserved') 'Android stop execution must preserve explicit Bridge residue-audit evidence for StopCoordinator.'
+Assert-True ($androidRecipeExecutor -match 'val residueMarkerObserved = bridgeConfirmedStop' -and $androidRecipeExecutor -match 'residueMarkerObserved = residueMarkerObserved') 'Android stop execution must preserve explicit Bridge residue-audit evidence for StopCoordinator.'
 Assert-True ($androidRecipeExecutor -notmatch '(?m)^import\s+(android\.app\.Activity|android\.view\.|android\.widget\.|com\.kite\.app\.(MainActivity|CardRunActivity|shell\.|feature\.))') 'Android recipe executor must remain independent from pages, View widgets, Shell, and Feature code.'
 Assert-True ($androidRunStateGateway -match 'CardRunStore\.(registerRecipe|registeredRecipe|get|currentForRecipe|start|update)') 'Android run-state adapter must keep CardRunStore as the single run-fact owner.'
 Assert-True ($resourceRunCoordinator -match 'class ResourceRunCoordinator' -and $resourceRunCoordinator -match 'RunLifecycleEventHub' -and $resourceRunCoordinator -match 'startNextPlannedInstall') 'Resource run coordination must own terminal settlement and dependency-plan continuation at process scope.'
@@ -488,7 +492,7 @@ Assert-True ($bridgeClient -match 'val runEnv = directRuntimeEnv\(recipe, runId,
 Assert-True ($bridgeClient -match 'executeDirectShellStep\(context, recipe, runId, requestId, step, runEnv, onProgress\)') 'all direct shell steps must receive the owner-aware runtime env.'
 $terminalStep = Member-Function-Body $androidRecipeExecutor 'executeTerminal'
 Assert-True ($main -notmatch 'openCardRunBlankTerminal|withTerminalOwner') 'MainActivity must not recreate the removed blank CardRun terminal path.'
-Assert-True ($terminalStep.Contains('"KF_RUNTIME_ID" to "terminal:${record.id}"') -and $terminalStep.Contains('"KF_UNIT_ID" to "card:${request.instanceId}"')) 'terminal recipe steps must launch with terminal owner env.'
+Assert-True ($terminalStep -match 'RuntimeOwnerIdentity\.terminal\(' -and $terminalStep -match 'terminalOwner\.environment\(\)') 'terminal recipe steps must launch with the structured terminal owner environment.'
 Assert-True ($terminalStep -match 'createEmbeddedShellSession' -and $terminalStep -notmatch 'createShellSession') 'recipe terminal steps must use non-persistent embedded sessions.'
 Assert-True ($terminalSessionController -match 'TerminalSessionEndPolicy\.shouldSelectManagedFallback' -and $terminalSessionController -match 'embeddedSessionRecords\.remove\(targetSessionId\)') 'ending an embedded terminal must not wake an unrelated managed fallback session.'
 Assert-True ($terminalSessionController -match '(?s)resolveWritableSessionHolder.*embeddedSessionRecords\[resolvedTargetId\].*managed = false') 'targeted terminal input must resolve a staged embedded session while attach is still in flight.'
@@ -528,12 +532,10 @@ Assert-True ($taskManagerStore -match 'private fun ProotLiveProcessEntry\.termin
 Assert-True ($taskManagerStore -match 'private fun ProotLiveProcessEntry\.runtimeOwnerKindLabel' -and $taskManagerStore -match 'runtimeOwnerKindLabel = ownerEntry\.runtimeOwnerKindLabel\(\)') 'task manager PRoot process rows must expose owner kind labels.'
 Assert-True ($taskManagerStore -match 'private fun stabilizeSnapshot' -and $taskManagerStore -match 'EMPTY_PROCESS_GRACE_MS') 'task manager snapshots must smooth transient empty collector gaps.'
 Assert-True ($taskManagerStore -match 'private fun ProotLiveProcessEntry\.ownerSource' -and $taskManagerStore -match 'entriesByPid\[parentPid\]' -and $taskManagerStore -match 'val ownerEntry = ownerSource\(entriesByPid\)') 'task manager PRoot rows must inherit owner identity from parent tracees when child events are missing tags.'
-$assignRuntimeManagementProcesses = Member-Function-Body $runtimeManagementProjector 'assignProcesses'
-$runtimeManagementMatchScore = Member-Function-Body $runtimeManagementProjector 'RuntimeManagedProcess.matchScore'
-Assert-True ($assignRuntimeManagementProcesses -match 'process\.matchScore\(run\)') 'runtime management grouping must score owner facts before assigning processes to card runs.'
-Assert-True ($runtimeManagementMatchScore -match 'ownerId == run\.expectedOwnerId\(\)' -and $runtimeManagementMatchScore -match 'unitId == "card:\$\{run\.instanceId\}"') 'runtime management grouping must consume owner and unit identity before pid fallbacks.'
-Assert-True ($runtimeManagementMatchScore -match 'linkedTerminalSessionId == run\.terminalSessionId' -and $runtimeManagementMatchScore -match 'pid in pids') 'runtime management grouping must retain terminal and pid compatibility fallbacks.'
-Assert-True ($runtimeManagementProjector -match 'private fun CardRunState\.expectedOwnerId') 'runtime management projection must derive the expected PRoot owner id from the run fact.'
+Assert-True ($runtimeManagementProjector -match 'val topology = snapshot\.topology' -and $runtimeManagementProjector -notmatch 'assignProcesses\(|matchScore\(|expectedOwnerId\(') 'runtime management grouping must consume the explicit topology and must not restore score-based ownership guesses.'
+Assert-True ($instanceRuntimeTopology -match 'run\.ownedRuntimeOwnerIds' -and $instanceRuntimeTopology -match 'run\.runtimeRootOwnerId' -and $instanceRuntimeTopology -match 'run\.runtimeOwnerId') 'instance topology must consume the persisted root and leaf owner identities.'
+Assert-True ($instanceRuntimeTopology -match 'when \(candidates\.size\)' -and $instanceRuntimeTopology -match 'ambiguous \+= process\.id') 'instance topology must preserve ambiguous ownership instead of choosing an arbitrary run.'
+Assert-True ($instanceRuntimeTopology -match 'process\.parentPid' -and $instanceRuntimeTopology -match 'assignments\[parent\.id\]') 'instance topology may inherit ownership only from a uniquely identified real parent process.'
 Assert-True ($prootPoolPlan -match 'val ownerContainerCount: Int') 'PRoot pool plan must expose owner container count.'
 Assert-True ($prootPoolPlan -match 'val ownerContainerTraceeCount: Int') 'PRoot pool plan must expose owner tracee count.'
 Assert-True ($prootPoolPlan -match 'entry\.ownerKind == RuntimeRootOwnerKind\.CARD' -and $prootPoolPlan -match 'entry\.ownerKind == RuntimeRootOwnerKind\.RESOURCE') 'PRoot pool plan must derive owner container pressure from card/resource owner roots.'
@@ -542,9 +544,9 @@ Assert-True ($runtimeMemoryLifecycleRuleTrigger -match 'prootRule\(snapshot, now
 Assert-True ($backgroundRuntimeRegistry -match 'PROOT_CAPACITY_WORKER_INITIAL_COUNT = 2') 'PRoot capacity registry must pre-register an inactive second worker for auto-bound scale-out.'
 Assert-True ($prootOwnerTerminator -match 'object ProotOwnerProcessTerminator') 'owner stop must have a dedicated PRoot owner terminator.'
 Assert-True ($prootOwnerTerminator -match 'ProotTelemetryStore\.refreshBlocking') 'owner stop must use blocking telemetry refresh for residue checks.'
-Assert-True ($prootOwnerTerminator -match 'WorkSurfaceRuntimeBridge\.buildShellExecConfig' -and $prootOwnerTerminator -match 'buildUbuntuOwnerKillPayload' -and $prootOwnerTerminator -match 'OWNER_STOP_DEADLINE_MS = 10_000L') 'owner stop must run the bounded KO transaction inside Ubuntu.'
-Assert-True ($prootOwnerTerminator -match 'kf_collect_tree' -and $prootOwnerTerminator -match 'kf_kill_pids' -and $prootOwnerTerminator -match 'kill -KILL' -and $prootOwnerTerminator -notmatch 'kf_kill_groups' -and $prootOwnerTerminator -notmatch 'kill -KILL -- "-') 'owner stop must kill the Ubuntu tracee pid tree, not broad process groups.'
-Assert-True ($prootOwnerTerminator -match 'ProotTelemetryStore\.retireOwnerTracees' -and $prootOwnerTerminator -match 'probeUbuntuLiveTracees') 'owner stop must tombstone stale telemetry only after Ubuntu /proc checks show tracee pids are gone.'
+Assert-True ($prootOwnerTerminator -match 'WorkSurfaceRuntimeBridge\.buildShellExecConfig' -and $prootOwnerTerminator -match 'buildUbuntuSignalPayload' -and $prootOwnerTerminator -match 'OWNER_STOP_DEADLINE_MS = 10_000L') 'owner stop must run the bounded TERM and KILL transaction inside Ubuntu.'
+Assert-True ($prootOwnerTerminator -match 'kf_owner_pids' -and $prootOwnerTerminator -match 'kf_owner_pgids' -and $prootOwnerTerminator -match 'kf_signal_pgids' -and $prootOwnerTerminator -match 'kill -.*-- "-.*kf_pgid' -and $prootOwnerTerminator -match 'kill -.*kf_pid') 'owner stop must signal both Ubuntu tracee pids and their process groups.'
+Assert-True ($prootOwnerTerminator -match 'ProotTelemetryStore\.retireOwnerTracees' -and $prootOwnerTerminator -match 'confirmAndRetire' -and $prootOwnerTerminator -match 'probeUbuntuLiveTargets') 'owner stop must tombstone stale telemetry only after direct Ubuntu pid and process-group probes are silent.'
 Assert-True ($prootOwnerTerminator -notmatch 'Os\.kill' -and $prootOwnerTerminator -notmatch 'sendSignal\(-') 'owner stop must not manage owner processes through Android platform signals.'
 Assert-True ($prootOwnerTerminator -match '__kite_owner_stop_owner' -and $prootOwnerTerminator -match '__kite_stop_remaining') 'owner stop must report owner and final remaining tracees.'
 Assert-True ($runtimeReclaimer -match 'fun reclaimOwnerRuntime' -and $runtimeReclaimer -match 'ProotOwnerProcessTerminator\.terminate') 'RuntimeReclaimer explicit owner reclaim must terminate through the PRoot owner terminator.'
@@ -554,12 +556,12 @@ Assert-True ($runtimeReclaimer -match 'RuntimeRootOwnerKind\.CARD,\s*\r?\n\s*Run
 Assert-True ($bridgeClient -match 'ProotOwnerProcessTerminator\.terminate') 'bridge stop must invoke the PRoot owner terminator.'
 Assert-True ($bridgeClient -match 'private fun stopOwnerProcesses') 'bridge stop must collect owner stop output centrally.'
 Assert-True ($terminalSessionController -match 'private fun stopTerminalOwnerProcesses') 'terminal stop must have a dedicated owner stop hook.'
-Assert-True ($terminalSessionController -match 'ProotOwnerProcessTerminator\.terminate\(appContext, ownerId\)') 'terminal stop must invoke the PRoot owner terminator.'
-Assert-True ($terminalSessionController.Contains('"terminal:$it"')) 'terminal stop must derive the owner id from the terminal session id.'
+Assert-True ($terminalSessionController -match 'ProotOwnerProcessTerminator\.terminateTerminalSession\(appContext, cleanSessionId\)') 'terminal stop must invoke the session-aware PRoot owner terminator.'
+Assert-True ($prootOwnerTerminator -match 'RuntimeOwnerIdentity\.terminalSessionId\(it\) == cleanSessionId') 'terminal stop must resolve every structured leaf owner belonging to the terminal session.'
 Assert-True ($terminalSessionController -match 'attachingSessionIds' -and $terminalSessionController -match 'waitForSessionAttach') 'terminal session attach must be idempotent so a terminal owner cannot be split across duplicate PRoot sessions.'
-Assert-True ($terminalSessionController -match 'retireStoppedTerminalOwnerTracees' -and $terminalSessionController -match 'terminal-host-process-exited' -and $terminalSessionController -match 'outcome\.exited') 'terminal stop must tombstone owner tracees only after host process exit is confirmed.'
-Assert-True ($bridgeClient -match 'lastOrNull\(\).*substringAfter' -or $bridgeClient -match '(?s)filter \{ it\.startsWith\("__kite_stop_remaining:"\) \}.*lastOrNull\(\)') 'bridge residue parsing must use the final stop remaining marker.'
-Assert-True ($androidRecipeExecutor -match '(?s)filter \{ it\.startsWith\("__kite_stop_remaining:"\) \}.*lastOrNull\(\)') 'Execution adapter residue parsing must use the final stop remaining marker.'
+Assert-True ($terminalSessionController -notmatch 'retireOwnerTracees' -and $prootOwnerTerminator -match 'confirmAndRetire') 'terminal stop must not tombstone telemetry outside the directly probed owner terminator.'
+Assert-True ($bridgeClient -match 'OwnerStopOutputEvidence\.isConfirmed' -and $ownerStopOutputEvidence -match '__kite_stop_remaining_pgid:' -and $ownerStopOutputEvidence -match '__kite_owner_stop_outcome:') 'bridge residue parsing must reject pid, process-group, and unconfirmed owner evidence through one parser.'
+Assert-True ($androidRecipeExecutor -match '__kite_stop_remaining_pgid:' -and $androidRecipeExecutor -match 'ownerOutcomeUnconfirmed' -and $androidRecipeExecutor -match 'remainingProcessIds = remaining') 'Execution adapter residue parsing must preserve pid, process-group, and owner outcome evidence.'
 Assert-True ($bridgeClient -match 'cardRunPidFilePath') 'detached shell launch must create a pidfile through the pidfile helper.'
 Assert-True ($bridgeClient.Contains('card-runs/${safeId(cardInstanceId)}')) 'detached shell pidfiles must be grouped by cardInstanceId.'
 Assert-True ($bridgeClient.Contains('${safeId(runId)}.pid')) 'detached shell pidfiles must be keyed by runId.'
@@ -594,7 +596,7 @@ Assert-True ($stopCoordinator -match 'RecipeStopRequest' -and $stopCoordinator -
 Assert-True ($androidRecipeExecutor -match 'bridgeClient\.stopProcessBinding' -and $androidRecipeExecutor -match 'cardInstanceId = request\.instanceId') 'Execution adapter must stop retained process bindings with card ownership identity.'
 Assert-True ($stopCoordinator -match 'remaining\.isNotEmpty\(\)' -and $stopCoordinator -match '\u505c\u6b62\u540e\u4ecd\u6709\u8fdb\u7a0b\u6b8b\u7559') 'Stop failure must keep process residue visible in the run fact.'
 Assert-True ($stopCoordinator -match 'residueMarkerObserved' -and $stopCoordinator -match '\u5df2\u505c\u6b62\uff0c\u672a\u53d1\u73b0\u8fdb\u7a0b\u6b8b\u7559') 'Stop success must require an explicit empty-residue result when the marker is present.'
-Assert-True ($androidRecipeExecutor -match 'manualKillObserved = MANUAL_STOP_KILLED_REGEX' -and $stopCoordinator -match 'result\.manualKillObserved') 'Manual Killed output must be interpreted by the execution and stop contracts instead of page callbacks.'
+Assert-True ($androidRecipeExecutor -match 'manualKillObserved = bridgeConfirmedStop' -and $androidRecipeExecutor -match 'MANUAL_STOP_KILLED_REGEX\.containsMatchIn\(observation\)' -and $stopCoordinator -match 'result\.manualKillObserved') 'Manual Killed output must be interpreted by the execution and stop contracts instead of page callbacks.'
 Assert-True ($runOrchestrator -match 'current\.createdAt != previousState\.createdAt \|\| current\.status != CardRunStatus\.Stopping') 'Late stop callbacks must be rejected against the current run generation and state.'
 Assert-True ($main -notmatch 'legacyStopRecipeByCardInstanceId|handleStopResultV2|bridgeFailureArrivedAfterManualStop|stopRemainingProcesses') 'MainActivity must not retain a second stop result interpreter.'
 

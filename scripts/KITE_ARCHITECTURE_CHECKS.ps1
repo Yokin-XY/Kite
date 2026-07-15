@@ -278,8 +278,10 @@ if ($failures.Count -eq 0) {
         $runtimeManagementContract -notmatch '\(\)\s*->\s*Unit'
     ) 'Runtime-management UI actions must be data commands with explicit confirmation state, not View callbacks.'
     Assert-Architecture (
-        $runtimeManagementProjector -match 'assignProcesses\(' -and
+        $runtimeManagementProjector -match 'val\s+topology\s*=\s*snapshot\.topology' -and
+        $runtimeManagementProjector -match 'topology\.subtree\(' -and
         $runtimeManagementProjector -match 'RuntimeManagementMutation' -and
+        $runtimeManagementProjector -notmatch 'assignProcesses\(|matchScore\(|expectedOwnerId\(' -and
         $runtimeManagementProjector -notmatch 'TaskManagerStore|TerminalSessionStore|CardRunStore|android\.|androidx\.|Context|View'
     ) 'Runtime-management projection must stay pure and must not read stores or Android UI directly.'
     Assert-Architecture (

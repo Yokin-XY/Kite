@@ -1626,3 +1626,21 @@ T018.4 状态：completed。下一步让实例停止按该拓扑最深层优先�
 
 T018.5 状态：implementation_completed。下一步执行全量单测、Debug 构建和静态护栏，再交给用户一次性完成
 OnePlus 8T 实例子孙关闭验收。
+
+### 2026-07-15 T018.6 自动化验收
+
+完成结果：
+
+- 全量 `:app:testDebugUnitTest :app:assembleDebug` 通过：511 项测试、0 失败、1 项既有跳过。
+- 旧运行管理 Feature/Screen 夹具从 `card:<instance>` 猜测 owner 更新为生产使用的
+  `instance + generation + leaf owner`；新拓扑拒绝旧夹具属于预期行为，不以恢复评分逻辑迁就测试。
+- 架构护栏更新为要求运行管理消费 `snapshot.topology`，并禁止 `assignProcesses/matchScore/expectedOwnerId`
+  回流；运行车道护栏同步检查结构化终端 owner、PID+PGID 关停、直接探测后墓碑和统一残留证据解析。
+- `KITE_ARCHITECTURE_CHECKS.ps1` 与 `KITE_RUNTIME_LANE_STATIC_CHECKS.ps1` 均通过；架构债务快照为
+  `lines=2561, functions=126, fields=41, hosts=0, resourceDelegates=0, resourceFunctions=10, screenRefs=0,
+  inheritedActivities=0, runtimeStateRefs=0`。
+- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`，231,877,480 bytes，SHA-256
+  `13B3AC9E51B5F9F7813152EEA8D33D50753CC570F8BFA805818EF864763FD8A4`。
+
+T018.6 状态：automated_completed。剩余唯一验收是 OnePlus 8T 上创建实例子窗口、停止根实例并确认子孙窗口、
+终端与进程一起消失，以及快速再次启动不会被旧代次回调误停。
