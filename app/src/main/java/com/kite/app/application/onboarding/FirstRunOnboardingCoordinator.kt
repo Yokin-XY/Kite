@@ -6,19 +6,22 @@ internal enum class FirstRunOnboardingPhase {
     NotStarted,
     AwaitingRuntimePermissionResult,
     AwaitingAllFilesReturn,
+    AwaitingNotificationSettingsReturn,
     Completed
 }
 
 internal data class FirstRunOnboardingFacts(
     val missingRuntimePermissions: Set<RuntimePermissionKind> = emptySet(),
-    val needsAllFilesAccess: Boolean = false
+    val needsAllFilesAccess: Boolean = false,
+    val needsNotificationChannelSetup: Boolean = false
 )
 
 internal data class FirstRunOnboardingState(
     val phase: FirstRunOnboardingPhase,
     val active: Boolean,
     val missingRuntimePermissions: Set<RuntimePermissionKind>,
-    val needsAllFilesAccess: Boolean
+    val needsAllFilesAccess: Boolean,
+    val needsNotificationChannelSetup: Boolean
 )
 
 internal sealed interface FirstRunOnboardingEffect {
@@ -27,6 +30,7 @@ internal sealed interface FirstRunOnboardingEffect {
     ) : FirstRunOnboardingEffect
 
     data object OpenAllFilesSettings : FirstRunOnboardingEffect
+    data object OpenRunNotificationSettings : FirstRunOnboardingEffect
 }
 
 internal data class FirstRunOnboardingTransition(
@@ -49,6 +53,8 @@ internal class FirstRunOnboardingCoordinator(
     private var runtimePermissionRequestInFlight = false
     private var allFilesSettingsInFlight = false
     private var hostPausedForAllFilesSettings = false
+    private var notificationSettingsInFlight = false
+    private var hostPausedForNotificationSettings = false
 
     fun startOrRecover(facts: FirstRunOnboardingFacts): FirstRunOnboardingTransition =
         when (store.readPhase()) {
@@ -57,13 +63,17 @@ internal class FirstRunOnboardingCoordinator(
                 if (runtimePermissionRequestInFlight) transition(facts) else afterRuntimePermissionAttempt(facts)
             }
             FirstRunOnboardingPhase.AwaitingAllFilesReturn -> {
-                if (allFilesSettingsInFlight) transition(facts) else complete(facts)
+                if (allFilesSettingsInFlight) transition(facts) else afterAllFilesAttempt(facts)
+            }
+            FirstRunOnboardingPhase.AwaitingNotificationSettingsReturn -> {
+                if (notificationSettingsInFlight) transition(facts) else complete(facts)
             }
             FirstRunOnboardingPhase.Completed -> transition(facts)
         }
 
     fun onHostPaused() {
         if (allFilesSettingsInFlight) hostPausedForAllFilesSettings = true
+        if (notificationSettingsInFlight) hostPausedForNotificationSettings = true
     }
 
     fun onHostResumed(facts: FirstRunOnboardingFacts): FirstRunOnboardingTransition {
@@ -74,6 +84,15 @@ internal class FirstRunOnboardingCoordinator(
         ) {
             allFilesSettingsInFlight = false
             hostPausedForAllFilesSettings = false
+            return afterAllFilesAttempt(facts)
+        }
+        if (
+            store.readPhase() == FirstRunOnboardingPhase.AwaitingNotificationSettingsReturn &&
+            notificationSettingsInFlight &&
+            hostPausedForNotificationSettings
+        ) {
+            notificationSettingsInFlight = false
+            hostPausedForNotificationSettings = false
             return complete(facts)
         }
         return startOrRecover(facts)
@@ -97,9 +116,14 @@ internal class FirstRunOnboardingCoordinator(
                 else -> requestRuntimePermissions(facts)
             }
             FirstRunOnboardingPhase.AwaitingAllFilesReturn -> when {
-                !facts.needsAllFilesAccess -> complete(facts)
+                !facts.needsAllFilesAccess -> afterAllFilesAttempt(facts)
                 allFilesSettingsInFlight -> transition(facts)
                 else -> openAllFilesSettings(facts)
+            }
+            FirstRunOnboardingPhase.AwaitingNotificationSettingsReturn -> when {
+                !facts.needsNotificationChannelSetup -> complete(facts)
+                notificationSettingsInFlight -> transition(facts)
+                else -> openNotificationSettings(facts)
             }
             FirstRunOnboardingPhase.Completed -> transition(facts)
         }
@@ -107,16 +131,20 @@ internal class FirstRunOnboardingCoordinator(
     private fun startNextStep(facts: FirstRunOnboardingFacts): FirstRunOnboardingTransition = when {
         facts.missingRuntimePermissions.isNotEmpty() -> requestRuntimePermissions(facts)
         facts.needsAllFilesAccess -> openAllFilesSettings(facts)
+        facts.needsNotificationChannelSetup -> openNotificationSettings(facts)
         else -> complete(facts)
     }
 
     private fun afterRuntimePermissionAttempt(
         facts: FirstRunOnboardingFacts
-    ): FirstRunOnboardingTransition = if (facts.needsAllFilesAccess) {
-        openAllFilesSettings(facts)
-    } else {
-        complete(facts)
+    ): FirstRunOnboardingTransition = when {
+        facts.needsAllFilesAccess -> openAllFilesSettings(facts)
+        facts.needsNotificationChannelSetup -> openNotificationSettings(facts)
+        else -> complete(facts)
     }
+
+    private fun afterAllFilesAttempt(facts: FirstRunOnboardingFacts): FirstRunOnboardingTransition =
+        if (facts.needsNotificationChannelSetup) openNotificationSettings(facts) else complete(facts)
 
     private fun requestRuntimePermissions(
         facts: FirstRunOnboardingFacts
@@ -136,11 +164,20 @@ internal class FirstRunOnboardingCoordinator(
         return transition(facts, FirstRunOnboardingEffect.OpenAllFilesSettings)
     }
 
+    private fun openNotificationSettings(facts: FirstRunOnboardingFacts): FirstRunOnboardingTransition {
+        store.writePhase(FirstRunOnboardingPhase.AwaitingNotificationSettingsReturn)
+        notificationSettingsInFlight = true
+        hostPausedForNotificationSettings = false
+        return transition(facts, FirstRunOnboardingEffect.OpenRunNotificationSettings)
+    }
+
     private fun complete(facts: FirstRunOnboardingFacts): FirstRunOnboardingTransition {
         store.writePhase(FirstRunOnboardingPhase.Completed)
         runtimePermissionRequestInFlight = false
         allFilesSettingsInFlight = false
         hostPausedForAllFilesSettings = false
+        notificationSettingsInFlight = false
+        hostPausedForNotificationSettings = false
         return transition(facts)
     }
 
@@ -154,7 +191,8 @@ internal class FirstRunOnboardingCoordinator(
                 phase = phase,
                 active = phase != FirstRunOnboardingPhase.Completed,
                 missingRuntimePermissions = facts.missingRuntimePermissions,
-                needsAllFilesAccess = facts.needsAllFilesAccess
+                needsAllFilesAccess = facts.needsAllFilesAccess,
+                needsNotificationChannelSetup = facts.needsNotificationChannelSetup
             ),
             effect = effect
         )

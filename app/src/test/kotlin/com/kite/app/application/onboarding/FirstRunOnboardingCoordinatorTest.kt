@@ -104,12 +104,44 @@ class FirstRunOnboardingCoordinatorTest {
         assertNull(result.effect)
     }
 
+    @Test
+    fun `notification channel review runs once after required permissions`() {
+        val store = FakeStore()
+        val coordinator = FirstRunOnboardingCoordinator(store)
+        val needsReview = facts(needsNotificationReview = true)
+
+        val launch = coordinator.startOrRecover(needsReview)
+        coordinator.onHostPaused()
+        val returned = coordinator.onHostResumed(needsReview)
+
+        assertEquals(FirstRunOnboardingEffect.OpenRunNotificationSettings, launch.effect)
+        assertEquals(FirstRunOnboardingPhase.Completed, store.phase)
+        assertFalse(returned.state.active)
+    }
+
+    @Test
+    fun `process replacement after notification settings does not reopen it`() {
+        val store = FakeStore()
+        FirstRunOnboardingCoordinator(store).startOrRecover(
+            facts(needsNotificationReview = true)
+        )
+
+        val recovered = FirstRunOnboardingCoordinator(store).startOrRecover(
+            facts(needsNotificationReview = true)
+        )
+
+        assertEquals(FirstRunOnboardingPhase.Completed, store.phase)
+        assertNull(recovered.effect)
+    }
+
     private fun facts(
         missing: Set<RuntimePermissionKind> = emptySet(),
-        needsAllFiles: Boolean = false
+        needsAllFiles: Boolean = false,
+        needsNotificationReview: Boolean = false
     ) = FirstRunOnboardingFacts(
         missingRuntimePermissions = missing,
-        needsAllFilesAccess = needsAllFiles
+        needsAllFilesAccess = needsAllFiles,
+        needsNotificationChannelSetup = needsNotificationReview
     )
 
     private class FakeStore(

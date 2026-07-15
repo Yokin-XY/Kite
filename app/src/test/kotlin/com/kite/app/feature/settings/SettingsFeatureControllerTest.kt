@@ -23,7 +23,7 @@ class SettingsFeatureControllerTest {
         ))
 
         assertFalse(state.notificationsEnabled)
-        assertTrue(state.notificationSubtitle.contains("未开启"))
+        assertTrue(state.notificationSubtitle.contains("未允许"))
         assertTrue(state.dropZoneAvailable)
         assertEquals("共享区可用", state.dropZoneMessage)
     }

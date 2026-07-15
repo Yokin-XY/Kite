@@ -39,9 +39,7 @@ internal class SettingsFragment : Fragment() {
         onHideMainTask = { enabled ->
             dispatch(SettingsFeatureAction.SetHideMainTaskFromRecents(enabled))
         },
-        onNotificationState = { enabled ->
-            dispatch(SettingsFeatureAction.RequestNotificationState(enabled))
-        },
+        onOpenNotificationSettings = { dispatch(SettingsFeatureAction.OpenNotificationSettings) },
         onOpenDropZone = { dispatch(SettingsFeatureAction.OpenDropZone) }
     ).also { screen = it }.root
 
@@ -79,8 +77,8 @@ internal class SettingsFragment : Fragment() {
                 ).show()
                 SettingsFeatureEffect.RecentTaskVisibilityChanged ->
                     send(SettingsFeatureRequest.ApplyRecentTaskVisibility)
-                is SettingsFeatureEffect.NotificationStateRequested ->
-                    send(SettingsFeatureRequest.RequestNotificationState(effect.enabled))
+                SettingsFeatureEffect.NotificationSettingsRequested ->
+                    send(SettingsFeatureRequest.OpenNotificationSettings)
                 is SettingsFeatureEffect.DropZoneRequested ->
                     send(SettingsFeatureRequest.OpenDropZone(effect.available))
                 is SettingsFeatureEffect.ThemeChanged,

@@ -16,14 +16,14 @@ internal class SettingsScreen(
     private val onSelectBrowserMode: (BrowserRuntimeMode) -> Unit,
     onRestoreLastScreen: (Boolean) -> Unit,
     onHideMainTask: (Boolean) -> Unit,
-    onNotificationState: (Boolean) -> Unit,
+    onOpenNotificationSettings: () -> Unit,
     onOpenDropZone: () -> Unit
 ) {
     private val factory = SettingsViewFactory(context, KiteTheme.resolve(initialState.theme))
     private lateinit var browserBinding: SettingsViewFactory.NavigationBinding
     private lateinit var restoreBinding: SettingsViewFactory.SwitchBinding
     private lateinit var recentsBinding: SettingsViewFactory.SwitchBinding
-    private lateinit var notificationBinding: SettingsViewFactory.SwitchBinding
+    private lateinit var notificationBinding: SettingsViewFactory.NavigationBinding
     private lateinit var dropZoneBinding: SettingsViewFactory.NavigationBinding
     private var latestState = initialState
 
@@ -64,13 +64,17 @@ internal class SettingsScreen(
                     onHideMainTask
                 )
                 addView(recentsBinding.root)
-                notificationBinding = factory.switchRow(
-                    "系统通知",
+                notificationBinding = factory.navigationRow(
+                    "首页卡片通知",
                     initialState.notificationSubtitle,
-                    initialState.notificationsEnabled,
-                    onNotificationState
+                    onOpenNotificationSettings
                 )
-                addView(notificationBinding.root)
+                addView(notificationBinding.root.apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { setMargins(0, factory.dp(12), 0, 0) }
+                })
                 dropZoneBinding = factory.navigationRow(
                     "投放区",
                     initialState.dropZoneMessage,
@@ -91,7 +95,7 @@ internal class SettingsScreen(
         browserBinding.subtitle.text = state.browserRuntimeMode.title
         restoreBinding.bind(state.restoreLastScreen)
         recentsBinding.bind(state.hideMainTaskFromRecents)
-        notificationBinding.bind(state.notificationsEnabled, state.notificationSubtitle)
+        notificationBinding.subtitle.text = state.notificationSubtitle
         dropZoneBinding.subtitle.text = state.dropZoneMessage
     }
 }

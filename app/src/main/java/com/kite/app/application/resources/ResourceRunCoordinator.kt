@@ -84,11 +84,14 @@ internal class ResourceRunCoordinator(
 
     fun isBundled(resourceId: String): Boolean = gateway.isBundled(resourceId)
 
+    fun startRejectionReason(): String? = runOrchestrator.startRejection()?.reason
+
     fun start(request: ResourceRunLaunchRequest): ResourceRunLaunchResult {
         if (request.resourceId.isBlank()) return ResourceRunLaunchResult.Rejected("missing_resource_id")
         if (request.operation !in SUPPORTED_OPERATIONS) {
             return ResourceRunLaunchResult.Rejected("unsupported_operation:${request.operation}")
         }
+        startRejectionReason()?.let { return ResourceRunLaunchResult.Rejected(it) }
         gateway.markOperationStarted(request.resourceId, request.operation)
         val state = gateway.beginRun(request)
         activeRuns[state.instanceId] = ActiveRun(request)
@@ -208,6 +211,7 @@ internal class ResourceRunCoordinator(
     }
 
     private fun startNextPlannedInstall(resourceIds: List<String>, parentInstanceId: String?): Boolean {
+        if (startRejectionReason() != null) return false
         var remaining = resourceIds
         while (remaining.isNotEmpty()) {
             val resourceId = remaining.first()

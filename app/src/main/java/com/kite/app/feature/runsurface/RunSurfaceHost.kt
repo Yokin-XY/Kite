@@ -6,7 +6,14 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import com.kite.app.theme.ThemeTokens
 
-internal interface RunSurfaceBinding {
+/** 当前显示面的可选工具栏；正文、输入区和主流程动作不属于这个合同。 */
+internal interface RunSurfaceToolbarOwner {
+    fun setSurfaceToolbarVisible(visible: Boolean): Boolean = false
+
+    fun toggleSurfaceToolbar(): Boolean = false
+}
+
+internal interface RunSurfaceBinding : RunSurfaceToolbarOwner {
     val root: View
 
     fun render(state: RunSurfaceUiState)
@@ -37,8 +44,7 @@ internal class StaticRunSurfaceBinding(
  */
 internal class RunSurfaceHost(
     context: Context,
-    tokens: ThemeTokens,
-    onCompleteCurrentStep: () -> Unit
+    tokens: ThemeTokens
 ) {
     private val contentHost = FrameLayout(context)
     private val overlayHost = FrameLayout(context)
@@ -48,8 +54,7 @@ internal class RunSurfaceHost(
     private val reportFactory: () -> RunSurfaceBinding = {
         RunReportScreen(
             context = context,
-            tokens = tokens,
-            onCompleteCurrentStep = onCompleteCurrentStep
+            tokens = tokens
         )
     }
 
@@ -118,6 +123,11 @@ internal class RunSurfaceHost(
     fun goForward(): Boolean = binding?.goForward() == true
 
     fun stopLoading(): Boolean = binding?.stopLoading() == true
+
+    fun setSurfaceToolbarVisible(visible: Boolean): Boolean =
+        binding?.setSurfaceToolbarVisible(visible) == true
+
+    fun toggleSurfaceToolbar(): Boolean = binding?.toggleSurfaceToolbar() == true
 
     fun reconcile(): Boolean = binding?.reconcile() == true
 

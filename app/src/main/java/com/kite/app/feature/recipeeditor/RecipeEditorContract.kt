@@ -62,6 +62,7 @@ internal data class RecipeEditorDraft(
     val description: String = "",
     val shortcutRequested: Boolean = false,
     val launchOpenInstance: Boolean = true,
+    val keepFinishedNotification: Boolean = false,
     val steps: List<RecipeEditorStepDraft> = emptyList()
 ) {
     fun normalized(): RecipeEditorDraft {
@@ -112,6 +113,7 @@ internal data class RecipeEditorDraft(
             command = "",
             shortcut = false,
             openInstanceOnStart = value.launchOpenInstance,
+            keepFinishedNotification = value.keepFinishedNotification,
             iconName = value.selectedIconName,
             iconType = value.selectedIconType,
             iconSource = value.selectedIconSource,
@@ -131,6 +133,7 @@ internal data class RecipeEditorDraft(
         .put("description", description)
         .put("shortcutRequested", shortcutRequested)
         .put("launchOpenInstance", launchOpenInstance)
+        .put("keepFinishedNotification", keepFinishedNotification)
         .put("steps", JSONArray().apply {
             steps.forEach { step ->
                 put(JSONObject()
@@ -162,6 +165,7 @@ internal data class RecipeEditorDraft(
                 name = recipe.name,
                 description = recipe.description,
                 launchOpenInstance = recipe.launch.openInstance,
+                keepFinishedNotification = recipe.launch.keepFinishedNotification,
                 steps = recipe.steps.map(RecipeEditorStepDraft::fromStep)
             ).normalized()
         }
@@ -193,6 +197,7 @@ internal data class RecipeEditorDraft(
                 description = json.optString("description"),
                 shortcutRequested = json.optBoolean("shortcutRequested", false),
                 launchOpenInstance = json.optBoolean("launchOpenInstance", true),
+                keepFinishedNotification = json.optBoolean("keepFinishedNotification", false),
                 steps = steps
             ).normalized()
         }.getOrNull()
@@ -250,6 +255,7 @@ internal sealed interface RecipeEditorAction {
     data class SelectImageIcon(val source: String) : RecipeEditorAction
     data class SelectGroup(val groupId: String) : RecipeEditorAction
     data class SetLaunchOpenInstance(val enabled: Boolean) : RecipeEditorAction
+    data class SetKeepFinishedNotification(val enabled: Boolean) : RecipeEditorAction
     data class SetShortcutRequested(val requested: Boolean) : RecipeEditorAction
     data class PutStep(val index: Int?, val step: RecipeEditorStepDraft) : RecipeEditorAction
     data class RemoveStep(val index: Int) : RecipeEditorAction

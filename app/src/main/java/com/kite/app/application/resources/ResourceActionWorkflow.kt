@@ -18,6 +18,7 @@ internal sealed interface ResourceActionEffect {
     ) : ResourceActionEffect
 
     data class Message(val text: String) : ResourceActionEffect
+    data object RequireNotifications : ResourceActionEffect
 }
 
 internal interface ResourceActionGateway {

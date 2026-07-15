@@ -6,9 +6,8 @@
     <string name="tab_status">状态</string>
     <string name="tab_bridge">环境</string>
 
-    <string name="service_notification_title">KFShell 运行中</string>
-    <string name="service_notification_text">Linux 容器环境已就绪</string>
-    <string name="flask_notification_text">设备控制接口仍在规划中</string>
+    <string name="service_notification_title">Kite 后台运行</string>
+    <string name="service_notification_text">容器环境正在为卡片和终端保持可用</string>
 
     <string name="status_memory">内存</string>
     <string name="status_cpu">CPU</string>

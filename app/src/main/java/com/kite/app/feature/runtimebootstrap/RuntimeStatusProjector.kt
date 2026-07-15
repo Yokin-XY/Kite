@@ -27,14 +27,21 @@ internal object RuntimeStatusProjector {
         onboarding: RuntimePermissionOnboardingUiInput,
         counts: RuntimeStatusCounts
     ): RuntimeStatusUiState {
-        val labels = permissionLabels(onboarding.missingPermissions, onboarding.needsAllFilesAccess)
+        val labels = permissionLabels(
+            onboarding.missingPermissions,
+            onboarding.needsAllFilesAccess,
+            onboarding.needsNotificationChannelSetup
+        )
         return RuntimeStatusUiState(
             title = FIRST_RUN_PERMISSION_TITLE,
-            detail = listOf(
-                "Kite 会先集中申请一次系统能力：${labels.joinToString("、")}。",
-                "如果你暂时拒绝，Kite 不会反复打扰；之后 Ubuntu 解压、通知、桌面图标会在各自入口继续提示。",
-                "完成授权后会继续检查 Ubuntu 基础环境。"
-            ).joinToString("\n"),
+            detail = buildList {
+                add("Kite 会先集中申请一次系统能力：${labels.joinToString("、")}。")
+                if (onboarding.needsNotificationChannelSetup) {
+                    add("系统会打开“首页卡片进度”类别；请允许横幅，以便等待下一步时及时提醒。")
+                }
+                add("如果你暂时拒绝，Kite 不会反复打扰；之后可从设置中的“首页卡片通知”重新配置。")
+                add("完成授权后会继续检查 Ubuntu 基础环境。")
+            }.joinToString("\n"),
             blocksUbuntuActions = true,
             isProblem = false,
             permissionOnboarding = true,
@@ -43,7 +50,12 @@ internal object RuntimeStatusProjector {
                 onboarding.needsAllFilesAccess -> RuntimeStatusAction.OpenAllFilesSettings
                 else -> RuntimeStatusAction.RetryDeployment
             },
-            primaryActionLabel = "开始授权",
+            primaryActionLabel = when {
+                onboarding.missingPermissions.isNotEmpty() -> "开始授权"
+                onboarding.needsAllFilesAccess -> "打开文件设置"
+                onboarding.needsNotificationChannelSetup -> "设置卡片通知"
+                else -> "继续"
+            },
             counts = counts
         )
     }
@@ -239,9 +251,11 @@ internal object RuntimeStatusProjector {
 
     private fun permissionLabels(
         permissions: Set<RuntimePermissionKind>,
-        needsAllFilesAccess: Boolean
+        needsAllFilesAccess: Boolean,
+        needsNotificationChannelSetup: Boolean = false
     ): List<String> = buildList {
         if (needsAllFilesAccess) add("全部文件访问")
+        if (needsNotificationChannelSetup) add("首页卡片通知")
         permissions.forEach { permission ->
             add(
                 when (permission) {

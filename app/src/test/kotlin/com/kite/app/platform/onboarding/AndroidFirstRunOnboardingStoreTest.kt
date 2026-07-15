@@ -26,13 +26,13 @@ class AndroidFirstRunOnboardingStoreTest {
     }
 
     @Test
-    fun `legacy completion marker migrates to completed phase`() {
+    fun `legacy completion marker reopens onboarding for notification channel review`() {
         preferences.edit()
             .putBoolean("first_run_permission_onboarding_done", true)
             .commit()
 
         assertEquals(
-            FirstRunOnboardingPhase.Completed,
+            FirstRunOnboardingPhase.NotStarted,
             AndroidFirstRunOnboardingStore(context).readPhase()
         )
     }
@@ -61,5 +61,10 @@ class AndroidFirstRunOnboardingStoreTest {
             AndroidFirstRunOnboardingStore(context).readPhase()
         )
         assertTrue(preferences.getBoolean("first_run_permission_onboarding_done", false))
+        assertEquals(2, preferences.getInt("first_run_permission_onboarding_version", 0))
+        assertEquals(
+            FirstRunOnboardingPhase.Completed,
+            AndroidFirstRunOnboardingStore(context).readPhase()
+        )
     }
 }

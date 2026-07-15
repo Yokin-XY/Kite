@@ -176,6 +176,7 @@ class RunTerminalSurfaceBindingTest {
 
     private fun terminalState(): RunSurfaceUiState = RunSurfaceUiState(
         target = RunSurfaceTarget("recipe-1", "instance-1"),
+        selectedWindowId = "workflow:0:Terminal",
         title = "终端",
         status = CardRunStatus.WaitingTerminal,
         statusLabel = CardRunStatus.WaitingTerminal.label,

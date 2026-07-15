@@ -9,6 +9,7 @@ import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceRunLaunchRequest
 import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.runs.RunCommandResult
+import com.kite.app.application.runs.RUN_NOTIFICATIONS_REQUIRED
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartRequest
 import com.kite.app.bridge.KiteBridgeClient
@@ -101,12 +102,6 @@ internal class AndroidResourceActionGateway(
             )
         }
         val instanceId = recipe.id
-        CardRunStore.start(
-            recipe = recipe,
-            instanceId = instanceId,
-            ownerKind = CardRunState.OWNER_KIND_RESOURCE,
-            stepId = target.id
-        )
         return if (shouldOpenRunTask(recipe)) {
             listOf(
                 ResourceActionEffect.OpenRun(recipe.id, instanceId, autoStart = true),
@@ -122,7 +117,7 @@ internal class AndroidResourceActionGateway(
                 )
             )) {
                 is RunCommandResult.Accepted -> message("正在打开 ${target.name}")
-                is RunCommandResult.Ignored -> message("资源运行未启动：${result.reason}")
+                is RunCommandResult.Ignored -> result.asResourceStartEffect("资源运行未启动")
             }
         }
     }
@@ -213,15 +208,17 @@ internal class AndroidResourceActionGateway(
             recipe,
             mapOf("resourceId" to targetId)
         )
-        runCoordinator.start(
+        return when (val result = runCoordinator.start(
             ResourceRunLaunchRequest(
                 resourceId = targetId,
                 recipe = recipe,
                 operation = KiteResourceInstallRecipes.OP_INSTALL,
                 stageBundledResource = runCoordinator.isBundled(targetId)
             )
-        )
-        return emptyList()
+        )) {
+            is ResourceRunLaunchResult.Accepted -> emptyList()
+            is ResourceRunLaunchResult.Rejected -> result.asResourceStartEffect("资源获取未启动")
+        }
     }
 
     private fun acceptInstallPlan(
@@ -300,7 +297,7 @@ internal class AndroidResourceActionGateway(
             )
         )) {
             is ResourceRunLaunchResult.Accepted -> message("正在卸载 ${target.name}")
-            is ResourceRunLaunchResult.Rejected -> message("资源运行未启动：${result.reason}")
+            is ResourceRunLaunchResult.Rejected -> result.asResourceStartEffect("资源运行未启动")
         }
     }
 
@@ -470,6 +467,20 @@ internal class AndroidResourceActionGateway(
 
     private fun message(text: String): List<ResourceActionEffect> =
         listOf(ResourceActionEffect.Message(text))
+
+    private fun RunCommandResult.Ignored.asResourceStartEffect(prefix: String): List<ResourceActionEffect> =
+        if (reason == RUN_NOTIFICATIONS_REQUIRED) {
+            listOf(ResourceActionEffect.RequireNotifications)
+        } else {
+            message("$prefix：$reason")
+        }
+
+    private fun ResourceRunLaunchResult.Rejected.asResourceStartEffect(prefix: String): List<ResourceActionEffect> =
+        if (reason == RUN_NOTIFICATIONS_REQUIRED) {
+            listOf(ResourceActionEffect.RequireNotifications)
+        } else {
+            message("$prefix：$reason")
+        }
 
     private data class ResourceTarget(val manifest: KiteResourceManifest) {
         val id: String get() = manifest.id

@@ -19,6 +19,7 @@ internal sealed interface RecipeActionEffect {
     data class CloseRunTask(val recipeId: String, val instanceId: String) : RecipeActionEffect
     data object ShowConsole : RecipeActionEffect
     data class Message(val text: String) : RecipeActionEffect
+    data object RequireNotifications : RecipeActionEffect
 }
 
 internal data class RecipeActionStartResult(
@@ -78,12 +79,19 @@ internal class RecipeActionWorkflowCoordinator(
         is KiteActionRoute.StopRecipe -> stopEffects(request.recipe, state)
         is KiteActionRoute.RunRecipe -> {
             val started = gateway.start(route.recipe, state, request.instanceId)
-            buildList {
-                add(RecipeActionEffect.FocusRun(started.instanceId))
-                if (request.source != KiteRecipeActionSource.Editor && route.recipe.launch.openInstance) {
-                    add(RecipeActionEffect.ShowConsole)
+            when (val command = started.command) {
+                is RunCommandResult.Accepted -> buildList {
+                    add(RecipeActionEffect.FocusRun(started.instanceId))
+                    if (request.source != KiteRecipeActionSource.Editor && route.recipe.launch.openInstance) {
+                        add(RecipeActionEffect.ShowConsole)
+                    } else {
+                        add(RecipeActionEffect.OpenRun(route.recipe.id, started.instanceId, autoStart = false))
+                    }
+                }
+                is RunCommandResult.Ignored -> if (command.reason == RUN_NOTIFICATIONS_REQUIRED) {
+                    listOf(RecipeActionEffect.RequireNotifications)
                 } else {
-                    add(RecipeActionEffect.OpenRun(route.recipe.id, started.instanceId, autoStart = false))
+                    listOf(RecipeActionEffect.Message("运行未启动：${command.reason}"))
                 }
             }
         }

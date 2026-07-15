@@ -122,15 +122,6 @@
         </service>
 
         <service
-            android:name="com.kite.app.bridge.service.FlaskApiService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Device control API server" />
-        </service>
-
-        <service
             android:name="com.kite.app.run.KiteX11ServerService"
             android:exported="false"
             android:process=":x11" />
@@ -145,6 +136,10 @@
 
         <receiver
             android:name="com.kite.app.CardShortcutPinnedReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name="com.kite.app.shell.RunNotificationActionReceiver"
             android:exported="false" />
     </application>
 </manifest>

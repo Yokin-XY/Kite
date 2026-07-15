@@ -174,6 +174,9 @@ internal class RecipeEditorFragment : Fragment() {
         override fun onSetLaunchOpenInstance(enabled: Boolean) =
             dispatch(RecipeEditorAction.SetLaunchOpenInstance(enabled))
 
+        override fun onSetKeepFinishedNotification(enabled: Boolean) =
+            dispatch(RecipeEditorAction.SetKeepFinishedNotification(enabled))
+
         override fun onSetShortcutRequested(requested: Boolean) =
             dispatch(RecipeEditorAction.SetShortcutRequested(requested))
 

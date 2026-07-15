@@ -2,6 +2,7 @@ package com.kite.app.foundation.bootstrap
 
 import android.app.Application
 import android.app.Application.ActivityLifecycleCallbacks
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Activity
@@ -20,6 +21,7 @@ import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kite.app.foundation.runtime.HostSelfAdbBridgeWorker
 import com.kite.app.foundation.runtime.RuntimeLifecycleSignalStore
 import com.kite.app.foundation.runtime.RuntimePressureResponder
+import com.kite.app.run.CardRunStore
 import com.kite.app.ui.terminal.TerminalUiPreferences
 import com.kite.app.shell.KiteAppGraph
 import com.kite.app.feature.web.WebWorkbenchDependenciesOwner
@@ -64,8 +66,11 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
         .accepted
 
     companion object {
-        const val CHANNEL_SHELL = "kfshell_service"
-        const val CHANNEL_API = "flask_api_service"
+        const val CHANNEL_BACKGROUND_RUNTIME = "kite_background_runtime_v2"
+        const val CHANNEL_RUNS = "kite_home_run_progress_v2"
+        private const val LEGACY_CHANNEL_SHELL = "kfshell_service"
+        private const val LEGACY_CHANNEL_API = "flask_api_service"
+        private const val LEGACY_CHANNEL_RUNS = "kite_run_progress"
 
         @Volatile
         private var launchStartedAtElapsed: Long = 0L
@@ -106,6 +111,10 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
         StartupTraceStore.runApplicationStage(this, "application.notification_channels") {
             createNotificationChannels()
         }
+        StartupTraceStore.runApplicationStage(this, "application.run_notifications") {
+            CardRunStore.initialize(this)
+            KiteAppGraph.from(this).runNotificationCoordinator.start()
+        }
         markLaunchStage("App", "通知通道就绪")
     }
 
@@ -121,25 +130,33 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val shellChannel = NotificationChannel(
-                CHANNEL_SHELL,
-                "KFShell 服务",
+            val backgroundRuntimeChannel = NotificationChannel(
+                CHANNEL_BACKGROUND_RUNTIME,
+                "后台运行",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Linux 容器运行环境"
+                description = "Android 要求的容器后台运行状态，不用于卡片进度提醒"
+                setSound(null, null)
+                enableVibration(false)
+                enableLights(false)
+                setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_SECRET
             }
 
-            val apiChannel = NotificationChannel(
-                CHANNEL_API,
-                "设备控制 API",
-                NotificationManager.IMPORTANCE_LOW
+            val runChannel = NotificationChannel(
+                CHANNEL_RUNS,
+                "首页卡片进度",
+                NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "设备控制 HTTP API 服务"
+                description = "显示每个首页卡片实例的进度、关闭和下一步操作"
             }
 
             val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(shellChannel)
-            manager.createNotificationChannel(apiChannel)
+            manager.deleteNotificationChannel(LEGACY_CHANNEL_SHELL)
+            manager.deleteNotificationChannel(LEGACY_CHANNEL_API)
+            manager.deleteNotificationChannel(LEGACY_CHANNEL_RUNS)
+            manager.createNotificationChannel(backgroundRuntimeChannel)
+            manager.createNotificationChannel(runChannel)
         }
     }
 

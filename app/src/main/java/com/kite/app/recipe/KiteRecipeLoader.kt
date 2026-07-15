@@ -456,7 +456,10 @@ class KiteRecipeLoader(
             defaultUrl = defaultUrl,
             shortcut = input.shortcut,
             icon = icon,
-            launch = KiteLaunchConfig(openInstance = input.openInstanceOnStart),
+            launch = KiteLaunchConfig(
+                openInstance = input.openInstanceOnStart,
+                keepFinishedNotification = input.keepFinishedNotification
+            ),
             execution = KiteExecution.steps(explicitSteps),
             actions = KiteRecipe.defaultActionsFor(explicitSteps, defaultUrl),
             taskLabel = input.name.trim(),
@@ -671,6 +674,7 @@ data class NewRecipeInput(
     val command: String,
     val shortcut: Boolean,
     val openInstanceOnStart: Boolean = true,
+    val keepFinishedNotification: Boolean = false,
     val iconName: String = "",
     val iconType: String = KiteRecipeIcon.TYPE_BUILTIN,
     val iconSource: String = "",

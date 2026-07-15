@@ -1,12 +1,18 @@
 package com.kite.app.feature.runsurface
 
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -22,13 +28,16 @@ import com.kite.app.ui.UiKit
 internal class RunWindowOverviewScreen(
     private val context: Context,
     private val tokens: ThemeTokens,
-    private val onSelectSurface: (CardRunSurface) -> Unit,
+    private val onSelectWindow: (String, CardRunSurface) -> Unit,
+    private val onRestartWindow: (String) -> Unit,
+    private val onCloseWindow: (String) -> Unit,
     private val onOpenWeb: () -> Unit,
+    private val onOpenTerminal: () -> Unit,
     private val onStop: () -> Unit
 ) {
     private val ui = UiKit(context, tokens)
     private val grid = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-    private val cards = linkedMapOf<CardRunSurface, LinearLayout>()
+    private val cards = linkedMapOf<String, LinearLayout>()
     private val stopButton: View
     private var structureSignature = ""
     private var canStop = false
@@ -101,11 +110,8 @@ internal class RunWindowOverviewScreen(
         dock.addView(
             dockButton(
                 icon = R.drawable.card_run_window_dock_add,
-                label = "打开网页"
-            ) {
-                hide()
-                onOpenWeb()
-            },
+                label = "新建"
+            ) { showCreateBubble() },
             dockParams()
         )
         dock.addView(
@@ -130,14 +136,14 @@ internal class RunWindowOverviewScreen(
         stopButton.isEnabled = canStop
         stopButton.alpha = if (canStop) 1f else 0.38f
         val nextSignature = state.windows.joinToString("|") {
-            "${it.surface.name}:${it.kind.name}:${it.title}:${it.subtitle}"
+            "${it.windowId}:${it.surface.name}:${it.kind.name}:${it.title}:${it.subtitle}:${it.canRestart}:${it.canClose}"
         }
         if (nextSignature != structureSignature) {
             structureSignature = nextSignature
             rebuildGrid(state.windows)
         }
         state.windows.forEach { window ->
-            cards[window.surface]?.applyWindowSelection(window.selected)
+            cards[window.windowId]?.applyWindowSelection(window.selected)
         }
     }
 
@@ -194,7 +200,7 @@ internal class RunWindowOverviewScreen(
             }
             rowWindows.forEachIndexed { index, window ->
                 val card = windowCard(window)
-                cards[window.surface] = card
+                cards[window.windowId] = card
                 row.addView(
                     card,
                     LinearLayout.LayoutParams(0, ui.dp(218), 1f).apply {
@@ -238,6 +244,16 @@ internal class RunWindowOverviewScreen(
                 LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        windowHeaderAction(
+                            icon = R.drawable.ic_refresh_light,
+                            description = "重新执行${window.title}",
+                            visible = window.canRestart
+                        ) { onRestartWindow(window.windowId) },
+                        LinearLayout.LayoutParams(ui.dp(28), ui.dp(28)).apply {
+                            setMargins(0, 0, ui.dp(5), 0)
+                        }
+                    )
                     addView(ImageView(context).apply {
                         setImageResource(window.kind.iconRes())
                         scaleType = ImageView.ScaleType.FIT_CENTER
@@ -252,6 +268,16 @@ internal class RunWindowOverviewScreen(
                         maxLines = 1
                         setTextColor(tokens.textPrimary)
                     }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(
+                        windowHeaderAction(
+                            icon = R.drawable.ic_close_light,
+                            description = "关闭${window.title}",
+                            visible = window.canClose
+                        ) { onCloseWindow(window.windowId) },
+                        LinearLayout.LayoutParams(ui.dp(28), ui.dp(28)).apply {
+                            setMargins(ui.dp(5), 0, 0, 0)
+                        }
+                    )
                 },
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -284,9 +310,32 @@ internal class RunWindowOverviewScreen(
             applyWindowSelection(window.selected)
             setOnClickListener { pressed(this) {
                 hide()
-                onSelectSurface(window.surface)
+                onSelectWindow(window.windowId, window.surface)
             } }
         }
+
+    private fun windowHeaderAction(
+        icon: Int,
+        description: String,
+        visible: Boolean,
+        action: () -> Unit
+    ): View = FrameLayout(root.context).apply {
+        contentDescription = if (visible) description else null
+        isClickable = visible
+        isFocusable = visible
+        visibility = if (visible) View.VISIBLE else View.INVISIBLE
+        background = ui.roundedBox(
+            if (visible) Color.argb(20, 31, 35, 41) else Color.TRANSPARENT,
+            Color.TRANSPARENT,
+            ui.dp(14).toFloat()
+        )
+        addView(ImageView(context).apply {
+            setImageResource(icon)
+            imageTintList = android.content.res.ColorStateList.valueOf(tokens.textSecondary)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+        }, FrameLayout.LayoutParams(ui.dp(18), ui.dp(18), Gravity.CENTER))
+        if (visible) setOnClickListener { pressed(this, action) }
+    }
 
     private fun LinearLayout.applyWindowSelection(selected: Boolean) {
         background = ui.roundedBox(
@@ -333,6 +382,112 @@ internal class RunWindowOverviewScreen(
             .show()
     }
 
+    private fun showCreateBubble() {
+        val bubble = Dialog(root.context)
+        val row = LinearLayout(root.context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            isClickable = true
+            setOnClickListener { }
+            alpha = 0f
+            scaleX = 0.72f
+            scaleY = 0.72f
+            translationY = ui.dp(22).toFloat()
+            addView(createBubbleButton(terminal = true) {
+                bubble.dismiss()
+                hide()
+                onOpenTerminal()
+            }, LinearLayout.LayoutParams(ui.dp(62), ui.dp(62)).apply {
+                setMargins(0, 0, ui.dp(16), 0)
+            })
+            addView(createBubbleButton(terminal = false) {
+                bubble.dismiss()
+                hide()
+                onOpenWeb()
+            }, LinearLayout.LayoutParams(ui.dp(62), ui.dp(62)))
+        }
+        val overlay = FrameLayout(root.context).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            isClickable = true
+            setOnClickListener { bubble.dismiss() }
+            addView(
+                row,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                ).apply { setMargins(0, 0, 0, ui.dp(112)) }
+            )
+        }
+        bubble.setContentView(overlay)
+        bubble.setOnShowListener {
+            row.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .translationY(0f)
+                .setDuration(180L)
+                .setInterpolator(PathInterpolator(0.2f, 0f, 0f, 1f))
+                .start()
+        }
+        bubble.show()
+        bubble.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0f)
+            decorView.setPadding(0, 0, 0, 0)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+    }
+
+    private fun createBubbleButton(terminal: Boolean, action: () -> Unit): View =
+        FrameLayout(root.context).apply {
+            contentDescription = if (terminal) "新建终端" else "新建网页"
+            tooltipText = contentDescription
+            background = ui.roundedBox(
+                if (terminal) Color.rgb(34, 184, 98) else Color.rgb(59, 130, 246),
+                Color.TRANSPARENT,
+                ui.dp(31).toFloat(),
+                0
+            )
+            elevation = ui.dp(6).toFloat()
+            addView(
+                createBubbleGlyph(terminal),
+                FrameLayout.LayoutParams(ui.dp(34), ui.dp(34), Gravity.CENTER)
+            )
+            setOnClickListener { pressed(this, action) }
+        }
+
+    private fun createBubbleGlyph(terminal: Boolean): View = object : View(root.context) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            strokeWidth = 2.5f * resources.displayMetrics.density
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (terminal) {
+                canvas.drawLine(w * 0.24f, h * 0.34f, w * 0.43f, h * 0.50f, paint)
+                canvas.drawLine(w * 0.24f, h * 0.66f, w * 0.43f, h * 0.50f, paint)
+                canvas.drawLine(w * 0.56f, h * 0.68f, w * 0.78f, h * 0.68f, paint)
+            } else {
+                canvas.drawRoundRect(
+                    RectF(w * 0.18f, h * 0.24f, w * 0.82f, h * 0.64f),
+                    ui.dp(3).toFloat(),
+                    ui.dp(3).toFloat(),
+                    paint
+                )
+                canvas.drawLine(w * 0.50f, h * 0.64f, w * 0.50f, h * 0.78f, paint)
+                canvas.drawLine(w * 0.34f, h * 0.80f, w * 0.66f, h * 0.80f, paint)
+            }
+        }
+    }
+
     private fun pressed(view: View, action: () -> Unit) {
         view.animate()
             .scaleX(0.96f)
@@ -364,4 +519,5 @@ internal class RunWindowOverviewScreen(
         RunSurfaceWindowKind.Report,
         RunSurfaceWindowKind.InstallWizard -> R.drawable.card_run_window_preview_shell
     }
+
 }

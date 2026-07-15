@@ -2,7 +2,11 @@ package com.kite.app.feature.runsurface
 
 import android.app.Activity
 import android.os.Looper
+import android.os.SystemClock
+import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import com.kite.app.recipe.KiteExecution
@@ -16,119 +20,143 @@ import com.kite.app.theme.ThemeConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowDialog
 import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 class RunActivityChromeTest {
     @Test
-    fun `侧边把手展开成熟控制模型并能进入真实窗口总览`() {
+    fun `单击竖条只转交当前显示面的工具栏显隐`() {
         val fixture = fixture()
-        fixture.chrome.render(
-            RunSurfaceProjector.project(
-                recipe(KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL, cmd = "bash")),
-                state(
-                    surface = CardRunSurface.Terminal,
-                    status = CardRunStatus.WaitingTerminal,
-                    terminalSessionId = "terminal-1"
-                )
-            )
-        )
+        fixture.renderTerminal()
 
-        val handle = fixture.chrome.root.findByDescription("运行窗口控制")
-        assertNotNull(handle)
-        handle!!.performClick()
+        dispatchTap(fixture.chrome.handleForTesting(), SystemClock.uptimeMillis())
 
-        assertTrue(fixture.chrome.expandedForTesting())
-        assertNotNull(fixture.chrome.root.findByText("完成并继续"))
+        assertEquals(listOf("toggle-toolbar"), fixture.actionLog)
+        assertFalse(fixture.chrome.overviewVisibleForTesting())
+        assertNull(fixture.chrome.root.findByText("完成并继续"))
+    }
 
-        fixture.chrome.root.findByDescription("实例窗口")!!.performClick()
+    @Test
+    fun `双击竖条恢复第一次显隐并进入实例窗口`() {
+        val fixture = fixture()
+        fixture.renderTerminal()
+        val firstTapAt = SystemClock.uptimeMillis()
 
+        dispatchTap(fixture.chrome.handleForTesting(), firstTapAt)
+        dispatchTap(fixture.chrome.handleForTesting(), firstTapAt + 100L)
+
+        assertEquals(listOf("toggle-toolbar", "toggle-toolbar"), fixture.actionLog)
         assertTrue(fixture.chrome.overviewVisibleForTesting())
-        assertFalse(fixture.chrome.expandedForTesting())
     }
 
     @Test
-    fun `网页控制条同步前进后退加载和地址状态`() {
+    fun `长按拖动竖条不触发工具栏或实例窗口`() {
         val fixture = fixture()
-        fixture.chrome.render(
-            RunSurfaceProjector.project(
-                recipe(KiteRecipeStep(id = "web", type = KiteRecipe.STEP_OPEN_WEB, url = "https://example.com")),
-                state(
-                    surface = CardRunSurface.Web,
-                    status = CardRunStatus.Opened,
-                    nextActionUrl = "https://example.com/start"
-                )
-            )
-        )
+        fixture.renderTerminal()
+        val handle = fixture.chrome.handleForTesting()
+        val downAt = SystemClock.uptimeMillis()
+        handle.dispatchTouchEvent(MotionEvent.obtain(downAt, downAt, MotionEvent.ACTION_DOWN, 10f, 10f, 0))
 
-        fixture.chrome.updateWebNavigation(
-            RunWebNavigationUiState(
-                url = "https://example.com/next",
-                canGoBack = true,
-                canGoForward = false,
-                loading = true,
-                progress = 42
-            )
+        shadowOf(Looper.getMainLooper()).idleFor(
+            ViewConfiguration.getLongPressTimeout().toLong() + 1L,
+            TimeUnit.MILLISECONDS
         )
+        handle.dispatchTouchEvent(MotionEvent.obtain(downAt, downAt + 600L, MotionEvent.ACTION_MOVE, 10f, 260f, 0))
+        handle.dispatchTouchEvent(MotionEvent.obtain(downAt, downAt + 620L, MotionEvent.ACTION_UP, 10f, 260f, 0))
 
-        assertEquals("https://example.com/next", fixture.chrome.webAddressForTesting().text.toString())
-        assertTrue(fixture.chrome.root.findByDescription("后退")!!.isEnabled)
-        assertFalse(fixture.chrome.root.findByDescription("前进")!!.isEnabled)
-        assertNotNull(fixture.chrome.root.findByDescription("停止加载"))
+        val params = handle.layoutParams as FrameLayout.LayoutParams
+        assertEquals(Gravity.RIGHT or Gravity.TOP, params.gravity)
+        assertTrue(params.topMargin > 0)
+        assertTrue(fixture.actionLog.isEmpty())
+        assertFalse(fixture.chrome.overviewVisibleForTesting())
     }
 
     @Test
-    fun `完成动作未获状态确认时明确进入可重试状态`() {
+    fun `实例窗口只保留停止新建返回且新建提供终端网页`() {
         val fixture = fixture()
-        fixture.chrome.render(
-            RunSurfaceProjector.project(
-                recipe(KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL, cmd = "bash")),
-                state(
-                    surface = CardRunSurface.Terminal,
-                    status = CardRunStatus.WaitingTerminal,
-                    terminalSessionId = "terminal-1"
-                )
-            )
-        )
+        fixture.renderTerminal()
+        val firstTapAt = SystemClock.uptimeMillis()
+        dispatchTap(fixture.chrome.handleForTesting(), firstTapAt)
+        dispatchTap(fixture.chrome.handleForTesting(), firstTapAt + 100L)
+        fixture.actionLog.clear()
 
-        fixture.chrome.root.findByText("完成并继续")!!.performClick()
-        assertNotNull(fixture.chrome.root.findByText("处理中"))
+        assertNotNull(fixture.chrome.root.findByDescription("停止任务"))
+        assertNotNull(fixture.chrome.root.findByDescription("新建"))
+        assertNotNull(fixture.chrome.root.findByDescription("返回"))
+        assertNull(fixture.chrome.root.findByDescription("完成步骤"))
 
-        shadowOf(Looper.getMainLooper()).idleFor(1801L, TimeUnit.MILLISECONDS)
-
-        assertNotNull(fixture.chrome.root.findByText("请重试"))
+        fixture.chrome.root.findByDescription("新建")!!.performClick()
+        shadowOf(Looper.getMainLooper()).idleFor(200L, TimeUnit.MILLISECONDS)
+        val bubble = ShadowDialog.getLatestDialog()
+        assertNotNull(bubble.findViewById<View>(android.R.id.content).findByDescription("新建终端"))
+        assertNotNull(bubble.findViewById<View>(android.R.id.content).findByDescription("新建网页"))
+        bubble.findViewById<View>(android.R.id.content).findByDescription("新建终端")!!.performClick()
+        shadowOf(Looper.getMainLooper()).idleFor(200L, TimeUnit.MILLISECONDS)
+        assertEquals(listOf("open-terminal"), fixture.actionLog)
     }
 
     private fun fixture(): Fixture {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val host = FrameLayout(activity)
         activity.setContentView(host)
+        val actionLog = mutableListOf<String>()
         val chrome = RunActivityChrome(
             context = activity,
-            tokens = KiteTheme.resolve(
-                ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
-            ),
+            tokens = testTokens(),
             actions = RunActivityChromeActions(
-                onComplete = {},
-                onStop = {},
-                onCloseWindow = {},
-                onSelectSurface = {},
-                onOpenWeb = {},
-                onWebBack = {},
-                onWebForward = {},
-                onWebReload = {},
-                onWebStopLoading = {},
-                onSubmitWebUrl = {}
+                onStop = { actionLog += "stop" },
+                onSelectWindow = { windowId, surface -> actionLog += "select-$windowId-${surface.name}" },
+                onRestartWindow = { actionLog += "restart-$it" },
+                onCloseWindow = { actionLog += "close-$it" },
+                onOpenWeb = { actionLog += "open-web" },
+                onOpenTerminal = { actionLog += "open-terminal" },
+                onToggleSurfaceToolbar = { actionLog += "toggle-toolbar" }
             )
         )
-        host.addView(chrome.root)
-        return Fixture(chrome)
+        host.addView(
+            chrome.root,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        host.measure(
+            View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(1920, View.MeasureSpec.EXACTLY)
+        )
+        host.layout(0, 0, 1080, 1920)
+        shadowOf(Looper.getMainLooper()).idle()
+        return Fixture(chrome, actionLog)
+    }
+
+    private fun Fixture.renderTerminal() {
+        chrome.render(
+            RunSurfaceProjector.project(
+                recipe(KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL, cmd = "bash")),
+                state(
+                    surface = CardRunSurface.Terminal,
+                    status = CardRunStatus.WaitingTerminal,
+                    terminalSessionId = "terminal-1"
+                )
+            )
+        )
+    }
+
+    private fun dispatchTap(view: View, downAt: Long) {
+        val down = MotionEvent.obtain(downAt, downAt, MotionEvent.ACTION_DOWN, 10f, 10f, 0)
+        val up = MotionEvent.obtain(downAt, downAt + 20L, MotionEvent.ACTION_UP, 10f, 10f, 0)
+        view.dispatchTouchEvent(down)
+        view.dispatchTouchEvent(up)
+        down.recycle()
+        up.recycle()
     }
 
     private fun recipe(step: KiteRecipeStep): KiteRecipe = KiteRecipe(
@@ -144,8 +172,7 @@ class RunActivityChromeTest {
     private fun state(
         surface: CardRunSurface,
         status: CardRunStatus,
-        terminalSessionId: String? = null,
-        nextActionUrl: String? = null
+        terminalSessionId: String? = null
     ): CardRunState = CardRunState(
         instanceId = "instance-1",
         recipeId = "recipe-1",
@@ -155,28 +182,83 @@ class RunActivityChromeTest {
         currentStepIndex = 0,
         stepCount = 1,
         terminalSessionId = terminalSessionId,
-        nextActionUrl = nextActionUrl,
         createdAt = 1L,
         updatedAt = 1L
     )
 
-    private fun View.findByDescription(value: String): View? {
-        if (contentDescription?.toString() == value) return this
-        if (this !is ViewGroup) return null
-        repeat(childCount) { index ->
-            getChildAt(index).findByDescription(value)?.let { return it }
-        }
-        return null
-    }
+    private data class Fixture(
+        val chrome: RunActivityChrome,
+        val actionLog: MutableList<String>
+    )
+}
 
-    private fun View.findByText(value: String): View? {
-        if (this is android.widget.TextView && text?.toString() == value) return this
-        if (this !is ViewGroup) return null
-        repeat(childCount) { index ->
-            getChildAt(index).findByText(value)?.let { return it }
-        }
-        return null
-    }
+@RunWith(RobolectricTestRunner::class)
+class RunWebToolbarTest {
+    @Test
+    fun `网页工具栏独立同步导航状态并提交网址`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val actionLog = mutableListOf<String>()
+        val toolbar = RunWebToolbar(
+            activity = activity,
+            tokens = testTokens(),
+            actions = RunWebToolbarActions(
+                onBack = { actionLog += "back" },
+                onForward = { actionLog += "forward" },
+                onReload = { actionLog += "reload" },
+                onSubmitUrl = { actionLog += "url:$it" }
+            )
+        )
 
-    private data class Fixture(val chrome: RunActivityChrome)
+        toolbar.render(
+            RunWebNavigationUiState(
+                url = "https://example.com/next",
+                canGoBack = true,
+                canGoForward = false,
+                loading = true,
+                progress = 42
+            )
+        )
+
+        assertEquals("https://example.com/next", toolbar.addressForTesting().text.toString())
+        assertTrue(toolbar.root.findByDescription("后退")!!.isEnabled)
+        assertFalse(toolbar.root.findByDescription("前进")!!.isEnabled)
+        assertNotNull(toolbar.root.findByDescription("停止加载"))
+
+        toolbar.addressForTesting().setText("https://kite.test")
+        toolbar.root.findByDescription("打开网址")!!.performClick()
+        toolbar.root.findByDescription("停止加载")!!.performClick()
+
+        assertEquals(listOf("url:https://kite.test", "reload"), actionLog)
+        assertTrue(toolbar.toggle())
+        assertEquals(View.VISIBLE, toolbar.root.visibility)
+        shadowOf(Looper.getMainLooper()).idleFor(200L, TimeUnit.MILLISECONDS)
+        assertEquals(View.GONE, toolbar.root.visibility)
+        assertTrue(toolbar.toggle())
+        assertEquals(View.VISIBLE, toolbar.root.visibility)
+        shadowOf(Looper.getMainLooper()).idleFor(200L, TimeUnit.MILLISECONDS)
+        assertEquals(1f, toolbar.root.scaleX)
+        toolbar.dispose()
+    }
+}
+
+private fun testTokens() = KiteTheme.resolve(
+    ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
+)
+
+private fun View.findByDescription(value: String): View? {
+    if (contentDescription?.toString() == value) return this
+    if (this !is ViewGroup) return null
+    repeat(childCount) { index ->
+        getChildAt(index).findByDescription(value)?.let { return it }
+    }
+    return null
+}
+
+private fun View.findByText(value: String): View? {
+    if (this is android.widget.TextView && text?.toString() == value) return this
+    if (this !is ViewGroup) return null
+    repeat(childCount) { index ->
+        getChildAt(index).findByText(value)?.let { return it }
+    }
+    return null
 }

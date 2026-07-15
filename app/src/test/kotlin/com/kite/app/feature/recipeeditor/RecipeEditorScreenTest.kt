@@ -125,6 +125,7 @@ class RecipeEditorScreenTest {
         override fun onSelectGroup(groupId: String) = Unit
         override fun onCreateGroup(name: String) = Unit
         override fun onSetLaunchOpenInstance(enabled: Boolean) = Unit
+        override fun onSetKeepFinishedNotification(enabled: Boolean) = Unit
         override fun onSetShortcutRequested(requested: Boolean) = Unit
         override fun onPutStep(index: Int?, step: RecipeEditorStepDraft) = Unit
         override fun onRemoveStep(index: Int) = Unit

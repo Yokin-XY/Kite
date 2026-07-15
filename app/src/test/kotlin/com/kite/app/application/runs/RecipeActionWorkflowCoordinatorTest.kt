@@ -74,6 +74,16 @@ class RecipeActionWorkflowCoordinatorTest {
     }
 
     @Test
+    fun `通知不可用时只请求权限且不打开半成品运行窗口`() {
+        gateway.startCommand = RunCommandResult.Ignored(RUN_NOTIFICATIONS_REQUIRED)
+
+        val effects = dispatch(KiteRecipeActionIntent.Start)
+
+        assertEquals(listOf("start:instance-1"), gateway.calls)
+        assertEquals(listOf(RecipeActionEffect.RequireNotifications), effects)
+    }
+
+    @Test
     fun `accepted stop closes the exact instance and returns to console`() {
         gateway.state = gateway.state.copy(status = CardRunStatus.Running)
 
@@ -123,6 +133,7 @@ class RecipeActionWorkflowCoordinatorTest {
             status = CardRunStatus.Stopped
         )
         val calls = mutableListOf<String>()
+        var startCommand: RunCommandResult = RunCommandResult.Accepted(state.instanceId)
 
         override fun resolveState(
             recipe: KiteRecipe,
@@ -136,7 +147,7 @@ class RecipeActionWorkflowCoordinatorTest {
             preferredInstanceId: String?
         ): RecipeActionStartResult {
             calls += "start:${previousState.instanceId}"
-            return RecipeActionStartResult(previousState.instanceId, RunCommandResult.Accepted(previousState.instanceId))
+            return RecipeActionStartResult(previousState.instanceId, startCommand)
         }
 
         override fun stop(recipe: KiteRecipe, state: CardRunState): RunCommandResult {

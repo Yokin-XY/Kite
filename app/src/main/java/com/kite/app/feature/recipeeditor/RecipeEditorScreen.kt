@@ -44,6 +44,7 @@ internal interface RecipeEditorScreenActions {
     fun onSelectGroup(groupId: String)
     fun onCreateGroup(name: String)
     fun onSetLaunchOpenInstance(enabled: Boolean)
+    fun onSetKeepFinishedNotification(enabled: Boolean)
     fun onSetShortcutRequested(requested: Boolean)
     fun onPutStep(index: Int?, step: RecipeEditorStepDraft)
     fun onRemoveStep(index: Int)
@@ -362,6 +363,11 @@ internal class RecipeEditorScreen(
                 "关闭后在主应用内执行。",
                 state.draft.launchOpenInstance
             ) { actions.onSetLaunchOpenInstance(it) })
+            addView(switchRow(
+                "保留结束通知",
+                "运行结束后保留可清除的结果通知。",
+                state.draft.keepFinishedNotification
+            ) { actions.onSetKeepFinishedNotification(it) })
             addView(commandRow(
                 "桌面快捷方式",
                 if (state.draft.shortcutRequested) "保存后申请" else "点击后申请创建"

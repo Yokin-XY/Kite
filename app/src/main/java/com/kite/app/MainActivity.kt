@@ -2,7 +2,6 @@ package com.kite.app
 
 import android.animation.ValueAnimator
 import android.app.ActivityManager
-import android.app.NotificationManager
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -92,6 +91,7 @@ import com.kite.app.shell.AppNavigator
 import com.kite.app.shell.KiteAppGraph
 import com.kite.app.shell.NavigationBackAction
 import com.kite.app.shell.RestorePolicy
+import com.kite.app.shell.RunNotificationPermissionFragment
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.R
@@ -156,6 +156,7 @@ import com.kite.app.feature.runhistory.RunHistoryResultContract
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
 import com.kite.app.ui.terminal.TerminalFragment
 import com.kite.app.shell.TerminalSurfaceShellBinding
+import com.kite.app.platform.runs.AndroidRunNotificationAccess
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.core.content.FileProvider
@@ -254,6 +255,7 @@ open class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, navigationBackCallback)
         StartupTraceStore.markStage(this, "main.diagnostics_and_settings")
         val appGraph = KiteAppGraph.from(applicationContext)
+        RunNotificationPermissionFragment.install(supportFragmentManager)
         resourceFeatureGateway = appGraph.resourceFeatureGateway
         recipeFeatureGateway = appGraph.recipeFeatureGateway
         diagnostics = appGraph.diagnostics
@@ -819,7 +821,8 @@ open class MainActivity : AppCompatActivity() {
         }
         return FirstRunOnboardingFacts(
             missingRuntimePermissions = missing,
-            needsAllFilesAccess = permissionSnapshot.needsAllFilesAccess
+            needsAllFilesAccess = permissionSnapshot.needsAllFilesAccess,
+            needsNotificationChannelSetup = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
         )
     }
 
@@ -828,7 +831,8 @@ open class MainActivity : AppCompatActivity() {
             RuntimePermissionOnboardingUiInput(
                 active = transition.state.active,
                 missingPermissions = transition.state.missingRuntimePermissions,
-                needsAllFilesAccess = transition.state.needsAllFilesAccess
+                needsAllFilesAccess = transition.state.needsAllFilesAccess,
+                needsNotificationChannelSetup = transition.state.needsNotificationChannelSetup
             )
         )
         when (val effect = transition.effect) {
@@ -848,6 +852,7 @@ open class MainActivity : AppCompatActivity() {
                 }
             }
             FirstRunOnboardingEffect.OpenAllFilesSettings -> openAllFilesAccessSettings()
+            FirstRunOnboardingEffect.OpenRunNotificationSettings -> openRunNotificationSettings()
             null -> if (!transition.state.active) runtimeStatusController.ensureReady()
         }
     }
@@ -875,53 +880,27 @@ open class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun notificationsEnabled(): Boolean {
-        val manager = getSystemService(NotificationManager::class.java) ?: return true
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            manager.areNotificationsEnabled()
-        } else {
-            true
-        }
-    }
-
-    private fun requestNotificationAccess() {
-        if (notificationsEnabled()) {
-            openAppNotificationSettings()
-            return
-        }
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
+    private fun requestRunNotificationSettings() {
+        if (AndroidRunNotificationAccess.needsRuntimePermission(this)) {
             requestPermissions(
                 arrayOf(Manifest.permission.POST_NOTIFICATIONS),
                 REQUEST_NOTIFICATION_PERMISSION
             )
             return
         }
-        openAppNotificationSettings()
-    }
-
-    private fun handleNotificationSettingToggle(wantsEnabled: Boolean) {
-        if (wantsEnabled) {
-            requestNotificationAccess()
-        } else {
-            openAppNotificationSettings()
-        }
+        openRunNotificationSettings()
     }
 
     private fun openAppNotificationSettings() {
-        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-            }
-        } else {
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
-        }
-        runCatching { startActivity(intent) }
+        runCatching { startActivity(AndroidRunNotificationAccess.appSettingsIntent(this)) }
             .onFailure {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }
+    }
+
+    private fun openRunNotificationSettings() {
+        runCatching { startActivity(AndroidRunNotificationAccess.runChannelSettingsIntent(this)) }
+            .onFailure { openAppNotificationSettings() }
     }
 
     private fun openAllFilesAccessSettings() {
@@ -1169,8 +1148,9 @@ open class MainActivity : AppCompatActivity() {
                 firstRunOnboardingCoordinator.onRuntimePermissionResult(currentFirstRunOnboardingFacts())
             )
         } else if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
-            if (notificationsEnabled()) {
+            if (AndroidRunNotificationAccess.isAvailable(this)) {
                 Toast.makeText(this, "通知已开启", Toast.LENGTH_SHORT).show()
+                openRunNotificationSettings()
             } else {
                 Toast.makeText(this, "通知未开启，可在设置中再次授权", Toast.LENGTH_SHORT).show()
             }
@@ -1559,8 +1539,7 @@ open class MainActivity : AppCompatActivity() {
                 SettingsFeatureRequest.OpenTheme -> showThemeSettings()
                 is SettingsFeatureRequest.ApplyTheme -> applyThemeConfig(request.theme)
                 SettingsFeatureRequest.ApplyRecentTaskVisibility -> applyRecentTaskVisibilitySetting()
-                is SettingsFeatureRequest.RequestNotificationState ->
-                    handleNotificationSettingToggle(request.enabled)
+                SettingsFeatureRequest.OpenNotificationSettings -> requestRunNotificationSettings()
                 is SettingsFeatureRequest.OpenDropZone -> {
                     if (request.available) refreshDropZoneRecipes() else requestDropZoneAccess()
                 }
@@ -1754,6 +1733,8 @@ open class MainActivity : AppCompatActivity() {
                     )
                 )
                 is ResourceActionEffect.Message -> showResourceDiscreteToast(effect.text)
+                ResourceActionEffect.RequireNotifications ->
+                    RunNotificationPermissionFragment.request(supportFragmentManager, "Kite 资源任务", "resource-start")
             }
         }
     }
@@ -2034,13 +2015,20 @@ open class MainActivity : AppCompatActivity() {
             state.primaryAction != RuntimeStatusAction.RetryDeployment
 
     private fun submitRecipeAction(request: KiteRecipeActionRequest) {
-        applyRecipeActionEffects(
-            recipeActionWorkflowCoordinator.dispatch(
-                request = request,
-                runtimeBlocked = isUbuntuActionBlocked(request.recipe),
-                focusedInstanceId = focusedRunInstanceId
-            )
+        val effects = recipeActionWorkflowCoordinator.dispatch(
+            request = request,
+            runtimeBlocked = isUbuntuActionBlocked(request.recipe),
+            focusedInstanceId = focusedRunInstanceId
         )
+        if (RecipeActionEffect.RequireNotifications in effects) {
+            RunNotificationPermissionFragment.request(
+                fragmentManager = supportFragmentManager,
+                title = request.recipe.name.ifBlank { "Kite 运行实例" },
+                key = "start:${request.recipe.id}",
+                retry = { submitRecipeAction(request) }
+            )
+        }
+        applyRecipeActionEffects(effects)
     }
 
     private fun applyRecipeActionEffects(effects: List<RecipeActionEffect>) {
@@ -2074,6 +2062,7 @@ open class MainActivity : AppCompatActivity() {
                 }
                 RecipeActionEffect.ShowConsole -> showConsole()
                 is RecipeActionEffect.Message -> Toast.makeText(this, effect.text, Toast.LENGTH_SHORT).show()
+                RecipeActionEffect.RequireNotifications -> Unit
             }
         }
     }

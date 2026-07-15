@@ -23,8 +23,7 @@ import com.kite.app.ui.UiKit
 /** 报告显示面只消费 RunSurfaceUiState，并通过回调提交用户意图。 */
 internal class RunReportScreen(
     private val context: Context,
-    private val tokens: ThemeTokens,
-    private val onCompleteCurrentStep: () -> Unit
+    private val tokens: ThemeTokens
 ) : RunSurfaceBinding {
     private val ui = UiKit(context, tokens)
     private val content = LinearLayout(context).apply {
@@ -38,7 +37,6 @@ internal class RunReportScreen(
     private val insightHost = FrameLayout(context)
     private val outputText = TextView(context)
     private val outputScroll = ScrollView(context)
-    private val continueButton = toolButton("›", "继续") { onCompleteCurrentStep() }
     private val footerRow = LinearLayout(context)
     private val footerText = TextView(context)
     private var currentState: RunSurfaceUiState? = null
@@ -78,7 +76,6 @@ internal class RunReportScreen(
     override fun dispose() {
         currentState = null
         currentReport = null
-        continueButton.setOnClickListener(null)
     }
 
     private fun summaryCard(): View = LinearLayout(context).apply {
@@ -173,9 +170,6 @@ internal class RunReportScreen(
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(toolButton("⧉", "复制") {
                 copyText("Kite SH 输出", currentReport?.outputText.orEmpty(), "已复制 SH 输出")
-            })
-            addView(continueButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                setMargins(ui.dp(12), 0, 0, 0)
             })
         })
         outputText.apply {
@@ -289,7 +283,6 @@ internal class RunReportScreen(
             else -> outputText.text = next
         }
         outputText.setTextColor(if (report.failed) tokens.danger else REPORT_TEXT)
-        continueButton.visibility = if (state.canCompleteCurrentStep) View.VISIBLE else View.GONE
         footerRow.visibility = if (RunReportPresenter.isLive(state.status)) View.VISIBLE else View.GONE
         footerText.text = RunReportPresenter.footerLabel(state)
         if (RunReportPresenter.isLive(state.status)) {

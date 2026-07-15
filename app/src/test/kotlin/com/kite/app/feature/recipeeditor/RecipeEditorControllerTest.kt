@@ -75,6 +75,7 @@ class RecipeEditorControllerTest {
         controller.dispatch(RecipeEditorAction.SetName("  New Tool  "))
         controller.dispatch(RecipeEditorAction.SetDescription("  Description  "))
         controller.dispatch(RecipeEditorAction.SelectGroup("ai"))
+        controller.dispatch(RecipeEditorAction.SetKeepFinishedNotification(true))
         controller.dispatch(RecipeEditorAction.SetShortcutRequested(true))
         controller.dispatch(
             RecipeEditorAction.PutStep(
@@ -89,6 +90,7 @@ class RecipeEditorControllerTest {
         assertEquals("New Tool", gateway.savedInput?.name)
         assertEquals("echo ok", gateway.savedInput?.steps?.single()?.command)
         assertEquals("ai", gateway.savedInput?.groupId)
+        assertTrue(gateway.savedInput?.keepFinishedNotification == true)
         assertEquals(null, gateway.persistedDraft)
         assertFalse(controller.state.value.isDirty)
     }
@@ -160,6 +162,7 @@ class RecipeEditorControllerTest {
             selectedIconType = "image",
             selectedIconSource = "recipe-icons/tool.png",
             launchOpenInstance = false,
+            keepFinishedNotification = true,
             steps = listOf(
                 RecipeEditorStepDraft.shell("echo one"),
                 RecipeEditorStepDraft.openWeb("http://127.0.0.1")
@@ -203,7 +206,10 @@ class RecipeEditorControllerTest {
                 category = input.category,
                 groupId = input.groupId,
                 defaultUrl = input.url,
-                launch = KiteLaunchConfig(openInstance = input.openInstanceOnStart)
+                launch = KiteLaunchConfig(
+                    openInstance = input.openInstanceOnStart,
+                    keepFinishedNotification = input.keepFinishedNotification
+                )
             )
         }
 

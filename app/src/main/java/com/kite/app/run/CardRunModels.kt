@@ -51,6 +51,7 @@ data class CardRunState(
     val stepId: String? = null,
     val status: CardRunStatus,
     val surface: CardRunSurface = CardRunSurface.Summary,
+    val selectedWindowId: String? = null,
     val currentStepIndex: Int = -1,
     val stepCount: Int = 0,
     val runId: String? = null,
@@ -113,6 +114,7 @@ data class CardRunState(
         const val OWNER_KIND_INSTALL_WIZARD = "install_wizard"
         const val OWNER_KIND_TERMINAL = "terminal"
         const val OWNER_KIND_WEB = "web"
+        const val OWNER_KIND_STEP_REPLAY = "step_replay"
         const val OWNER_KIND_X11 = "x11"
 
         fun fromRecipeStatus(recipeId: String, status: String): CardRunState =
@@ -122,6 +124,19 @@ data class CardRunState(
                 status = CardRunStatus.fromRecipeStatus(status)
             )
     }
+}
+
+object CardRunWindowIds {
+    private const val WORKFLOW_PREFIX = "workflow:"
+
+    fun workflow(stepIndex: Int, surface: CardRunSurface): String =
+        "$WORKFLOW_PREFIX$stepIndex:${surface.name}"
+
+    fun workflowStepIndex(windowId: String): Int? = windowId
+        .takeIf { it.startsWith(WORKFLOW_PREFIX) }
+        ?.removePrefix(WORKFLOW_PREFIX)
+        ?.substringBefore(':')
+        ?.toIntOrNull()
 }
 
 data class CardRunHistoryEntry(

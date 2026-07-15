@@ -116,7 +116,10 @@ class RunOrchestratorTest {
 
         val resumedExecutor = FakeRecipeExecutor(autoComplete = true)
         val resumed = RunOrchestrator(gateway, resumedExecutor)
-        val result = resumed.completeCurrentStep("resume-instance", "终端已完成")
+        val result = resumed.completeStep(
+            RunStepActionPolicy.completionCommand(recipe, gateway.state("resume-instance")!!)!!
+                .copy(output = "终端已完成")
+        )
 
         assertEquals(RunCommandResult.Accepted("resume-instance"), result)
         assertEquals(listOf(KiteRecipe.STEP_SHELL), resumedExecutor.executeRequests.map { it.step.type })
@@ -163,7 +166,10 @@ class RunOrchestratorTest {
             )
         )
 
-        orchestrator.completeCurrentStep("completion-race-instance", "终端完成")
+        orchestrator.completeStep(
+            RunStepActionPolicy.completionCommand(recipe, gateway.state("completion-race-instance")!!)!!
+                .copy(output = "终端完成")
+        )
 
         assertEquals(2, executor.executeRequests.size)
         assertEquals(1, executor.executeRequests.last().stepIndex)
@@ -353,6 +359,52 @@ class RunOrchestratorTest {
         assertEquals(null, request.bridgeRunId())
         assertEquals(false, request.hasBridgeProcessBinding())
         assertEquals(true, request.interruptTerminal)
+    }
+
+    @Test
+    fun `通知动作必须精确匹配实例代次步骤序号和步骤身份`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val recipe = recipe("exact-step", KiteRecipe.STEP_TERMINAL, KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "exact-step-instance"))
+        val request = executor.executeRequests.single()
+        executor.emit(
+            RecipeExecutionEvent.AwaitingUser(
+                instanceId = request.instanceId,
+                generation = request.generation,
+                stepIndex = request.stepIndex,
+                mutation = RunStateMutation(
+                    status = CardRunStatus.WaitingTerminal,
+                    surface = CardRunSurface.Terminal,
+                    currentStepIndex = 0,
+                    terminalSessionId = "terminal-exact"
+                )
+            )
+        )
+        val exact = RunStepActionPolicy.completionCommand(recipe, gateway.state(request.instanceId)!!)!!
+
+        assertEquals(
+            RunCommandResult.Ignored("generation_mismatch"),
+            orchestrator.completeStep(exact.copy(expectedGeneration = exact.expectedGeneration - 1))
+        )
+        assertEquals(
+            RunCommandResult.Ignored("step_index_mismatch"),
+            orchestrator.completeStep(exact.copy(expectedStepIndex = exact.expectedStepIndex + 1))
+        )
+        assertEquals(
+            RunCommandResult.Ignored("step_id_mismatch"),
+            orchestrator.completeStep(exact.copy(expectedStepId = "other-step"))
+        )
+        assertEquals(CardRunStatus.WaitingTerminal, gateway.state(request.instanceId)?.status)
+
+        assertEquals(
+            RunCommandResult.Accepted(request.instanceId),
+            orchestrator.completeStep(exact.copy(output = "当前步骤完成"))
+        )
+        assertEquals(CardRunStatus.Running, gateway.state(request.instanceId)?.status)
+        assertEquals(1, gateway.state(request.instanceId)?.currentStepIndex)
+        assertEquals(KiteRecipe.STEP_SHELL, executor.executeRequests.last().step.type)
     }
 
     private fun recipe(id: String, vararg types: String): KiteRecipe = KiteRecipe(

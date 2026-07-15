@@ -18,7 +18,8 @@ internal data class RuntimeStatusCounts(
 internal data class RuntimePermissionOnboardingUiInput(
     val active: Boolean = false,
     val missingPermissions: Set<RuntimePermissionKind> = emptySet(),
-    val needsAllFilesAccess: Boolean = false
+    val needsAllFilesAccess: Boolean = false,
+    val needsNotificationChannelSetup: Boolean = false
 )
 
 internal data class RuntimeStatusUiState(

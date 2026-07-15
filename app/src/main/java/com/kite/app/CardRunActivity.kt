@@ -27,8 +27,10 @@ import com.kite.app.application.resources.ResourceRunContinuation
 import com.kite.app.application.resources.ResourceRunLaunchRequest
 import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.runs.RunCommandResult
+import com.kite.app.application.runs.RUN_NOTIFICATIONS_REQUIRED
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartRequest
+import com.kite.app.application.runs.RunStepRestartCommand
 import com.kite.app.bridge.KiteBrowserOpenRequest
 import com.kite.app.browser.BrowserHandoffDecision
 import com.kite.app.browser.BrowserHandoffPolicy
@@ -58,6 +60,7 @@ import com.kite.app.feature.runsurface.StaticRunSurfaceBinding
 import com.kite.app.foundation.bootstrap.StartupTraceStore
 import com.kite.app.platform.browser.AndroidBrowserAutomationRunUpdater
 import com.kite.app.platform.resources.AndroidResourceOpenRecipeResolver
+import com.kite.app.platform.runs.AndroidRunWindowSurfaceGateway
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.run.CardRunBrowserRouter
@@ -66,8 +69,10 @@ import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
 import com.kite.app.run.CardRunSurface
+import com.kite.app.run.CardRunWindowIds
 import com.kite.app.shell.KiteAppGraph
 import com.kite.app.shell.RunInstallWizardSurfaceBinding
+import com.kite.app.shell.RunNotificationPermissionFragment
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
@@ -85,6 +90,7 @@ class CardRunActivity : AppCompatActivity() {
     private lateinit var browserAutomationSessions: BrowserAutomationSessionStore
     private lateinit var browserAutomationUpdater: AndroidBrowserAutomationRunUpdater
     private lateinit var resourceOpenRecipeResolver: AndroidResourceOpenRecipeResolver
+    private lateinit var runWindowSurfaceGateway: AndroidRunWindowSurfaceGateway
     private lateinit var launchResolver: CardRunLaunchResolver
     private lateinit var tokens: ThemeTokens
     private lateinit var root: FrameLayout
@@ -112,10 +118,12 @@ class CardRunActivity : AppCompatActivity() {
         RunTerminalSurfaceBinding.removeIncompatibleRestoredFragments(supportFragmentManager)
         onBackPressedDispatcher.addCallback(this, backCallback)
         graph = KiteAppGraph.from(applicationContext)
+        RunNotificationPermissionFragment.install(supportFragmentManager)
         diagnostics = graph.diagnostics
         runOrchestrator = graph.runOrchestrator
         browserAutomationSessions = graph.browserAutomationSessions
         resourceOpenRecipeResolver = AndroidResourceOpenRecipeResolver(graph.resourceManifestLoader)
+        runWindowSurfaceGateway = graph.runWindowSurfaceGateway
         CardRunStore.initialize(applicationContext)
         tokens = loadTokens()
         applyTerminalTheme()
@@ -132,10 +140,6 @@ class CardRunActivity : AppCompatActivity() {
         )
         browserAutomationUpdater = AndroidBrowserAutomationRunUpdater(::resolveRecipeById)
         surfaceController = RunSurfaceController(object : RunSurfaceActionGateway {
-            override fun completeCurrentStep(instanceId: String, output: String) {
-                runOrchestrator.completeCurrentStep(instanceId, output)
-            }
-
             override fun stop(instanceId: String) {
                 runOrchestrator.stop(instanceId)
             }
@@ -205,16 +209,45 @@ class CardRunActivity : AppCompatActivity() {
             return
         }
         title = target.recipe.name
-        val initial = existing ?: CardRunStore.start(
-                recipe = target.recipe,
-                instanceId = target.instanceId,
-                ownerKind = if (target.installTargetResourceId != null) {
-                    CardRunState.OWNER_KIND_INSTALL_WIZARD
-                } else {
-                    CardRunState.OWNER_KIND_CARD
-                },
-                stepId = target.installTargetResourceId
-            )
+        val ownerKind = existing?.ownerKind ?: if (target.installTargetResourceId != null) {
+            CardRunState.OWNER_KIND_INSTALL_WIZARD
+        } else {
+            CardRunState.OWNER_KIND_CARD
+        }
+        val stepId = existing?.stepId ?: target.installTargetResourceId
+        if (target.autoStart && existing?.status.requiresFreshStart()) {
+            when (val result = runOrchestrator.start(
+                RunStartRequest(
+                    recipe = target.recipe,
+                    instanceId = target.instanceId,
+                    parentInstanceId = existing?.parentInstanceId,
+                    ownerKind = ownerKind,
+                    stepId = stepId
+                )
+            )) {
+                is RunCommandResult.Accepted -> Unit
+                is RunCommandResult.Ignored -> {
+                    if (result.reason == RUN_NOTIFICATIONS_REQUIRED) {
+                        showNotificationBlocked(target.recipe.name)
+                        RunNotificationPermissionFragment.request(
+                            fragmentManager = supportFragmentManager,
+                            title = target.recipe.name,
+                            key = "start:${target.instanceId}",
+                            retry = { bindTarget(target) }
+                        )
+                    } else {
+                        showLaunchError("运行未启动：${result.reason}")
+                    }
+                    return
+                }
+            }
+        }
+        val initial = CardRunStore.get(target.instanceId) ?: existing ?: CardRunStore.start(
+            recipe = target.recipe,
+            instanceId = target.instanceId,
+            ownerKind = ownerKind,
+            stepId = stepId
+        )
         val state = if (target.installTargetResourceId != null && initial.surface != CardRunSurface.InstallWizard) {
             CardRunStore.update(
                 recipe = target.recipe,
@@ -229,20 +262,9 @@ class CardRunActivity : AppCompatActivity() {
         } else {
             initial
         }
-        surfaceController.attach(target.recipe, state)
+        surfaceController.attach(target.recipe, state, CardRunStore.childrenOf(state.instanceId))
         ensureSurfaceShell()
         registerInstanceRoutes(target.recipe, target.instanceId)
-        if (target.autoStart) {
-            runOrchestrator.start(
-                RunStartRequest(
-                    recipe = target.recipe,
-                    instanceId = target.instanceId,
-                    parentInstanceId = state.parentInstanceId,
-                    ownerKind = state.ownerKind,
-                    stepId = state.stepId
-                )
-            )
-        }
         renderState(CardRunStore.get(target.instanceId) ?: state)
     }
 
@@ -250,27 +272,23 @@ class CardRunActivity : AppCompatActivity() {
         if (surfaceHost != null) return
         val host = RunSurfaceHost(
             context = this,
-            tokens = tokens,
-            onCompleteCurrentStep = ::completeCurrentStep
+            tokens = tokens
         )
         val nextChrome = RunActivityChrome(
             context = this,
             tokens = tokens,
             actions = RunActivityChromeActions(
-                onComplete = ::completeCurrentStep,
                 onStop = ::stopCurrentRun,
-                onCloseWindow = ::closeTaskWindow,
-                onSelectSurface = { surface ->
-                    currentState?.instanceId?.let { CardRunStore.selectSurface(it, surface) }
+                onSelectWindow = { windowId, surface ->
+                    currentState?.instanceId?.let { instanceId ->
+                        CardRunStore.selectWindow(instanceId, windowId, surface)
+                    }
                 },
-                onOpenWeb = {
-                    currentState?.instanceId?.let { CardRunStore.selectSurface(it, CardRunSurface.Web) }
-                },
-                onWebBack = { host.handleBack() },
-                onWebForward = { host.goForward() },
-                onWebReload = { host.reload() },
-                onWebStopLoading = { host.stopLoading() },
-                onSubmitWebUrl = ::openManualWebUrl
+                onRestartWindow = ::restartWorkflowWindow,
+                onCloseWindow = ::closeManualWindow,
+                onOpenWeb = ::openBlankWebSurface,
+                onOpenTerminal = ::openBlankTerminalSurface,
+                onToggleSurfaceToolbar = { host.toggleSurfaceToolbar() }
             )
         )
         host.setOverlay(nextChrome.root)
@@ -290,8 +308,9 @@ class CardRunActivity : AppCompatActivity() {
         val target = currentTarget ?: return
         if (state.instanceId != target.instanceId || state.recipeId != target.recipe.id) return
         currentState = state
-        val uiState = surfaceController.update(target.recipe, state)
-            ?: surfaceController.attach(target.recipe, state)
+        val children = CardRunStore.childrenOf(state.instanceId)
+        val uiState = surfaceController.update(target.recipe, state, children)
+            ?: surfaceController.attach(target.recipe, state, children)
         applySystemBars(uiState.surface)
         surfaceHost?.render(uiState, ::createSurfaceBinding)
         chrome?.render(uiState)
@@ -302,7 +321,7 @@ class CardRunActivity : AppCompatActivity() {
         is RunSurfaceContent.Terminal -> RunTerminalSurfaceBinding(
             context = this,
             fragmentManager = supportFragmentManager,
-            instanceId = state.target.instanceId,
+            instanceId = "${state.selectedWindowId}:${state.content.sessionId.orEmpty()}",
             tokens = tokens
         )
         is RunSurfaceContent.Web -> RunWebSurfaceBinding(
@@ -314,8 +333,7 @@ class CardRunActivity : AppCompatActivity() {
             onAutomationEvent = { event -> browserAutomationUpdater.update(event) },
             onLaunchHandoff = { request, decision, force -> launchBrowserHandoff(request, decision, force) },
             onOpenExternal = ::openExternalBrowser,
-            onManualUrl = ::openManualWebUrl,
-            onNavigationState = { navigation -> chrome?.updateWebNavigation(navigation) }
+            onManualUrl = ::openManualWebUrl
         )
         is RunSurfaceContent.X11 -> RunX11SurfaceBinding(this, tokens)
         RunSurfaceContent.InstallWizard -> createInstallWizardBinding()
@@ -335,12 +353,7 @@ class CardRunActivity : AppCompatActivity() {
             planResourceIds = planIds,
             onPlanAction = { action ->
                 when (action) {
-                    KiteInstallPlanActionIntent.StartNext -> {
-                        if (!graph.resourceRunCoordinator.startNextPlannedInstall(target?.instanceId)) {
-                            Toast.makeText(this, "当前没有可启动的获取项", Toast.LENGTH_SHORT).show()
-                            surfaceHost?.reconcile()
-                        }
-                    }
+                    KiteInstallPlanActionIntent.StartNext -> startNextPlannedInstall()
                     KiteInstallPlanActionIntent.Finish -> closeTaskWindow()
                 }
             },
@@ -349,6 +362,23 @@ class CardRunActivity : AppCompatActivity() {
             onReportUnavailable = { Toast.makeText(this, "报告正在准备", Toast.LENGTH_SHORT).show() },
             onLiveTickRequired = ::scheduleTickIfNeeded
         )
+    }
+
+    private fun startNextPlannedInstall() {
+        val target = currentTarget ?: return
+        if (graph.resourceRunCoordinator.startRejectionReason() == RUN_NOTIFICATIONS_REQUIRED) {
+            RunNotificationPermissionFragment.request(
+                fragmentManager = supportFragmentManager,
+                title = target.recipe.name,
+                key = "resource-next:${target.instanceId}",
+                retry = ::startNextPlannedInstall
+            )
+            return
+        }
+        if (!graph.resourceRunCoordinator.startNextPlannedInstall(target.instanceId)) {
+            Toast.makeText(this, "当前没有可启动的获取项", Toast.LENGTH_SHORT).show()
+            surfaceHost?.reconcile()
+        }
     }
 
     private fun observeRunFacts() {
@@ -363,13 +393,6 @@ class CardRunActivity : AppCompatActivity() {
         }
     }
 
-    private fun completeCurrentStep() {
-        val state = currentState ?: return
-        val target = currentTarget ?: return
-        if (!RunSurfaceProjectorBridge.canComplete(target.recipe, state)) return
-        runOrchestrator.completeCurrentStep(state.instanceId, completionMessage(target.recipe, state))
-    }
-
     private fun stopCurrentRun() {
         val instanceId = currentState?.instanceId ?: return
         when (val result = runOrchestrator.stop(instanceId)) {
@@ -378,14 +401,53 @@ class CardRunActivity : AppCompatActivity() {
         }
     }
 
-    private fun completionMessage(recipe: KiteRecipe, state: CardRunState): String =
-        when (recipe.steps.getOrNull(state.currentStepIndex)?.type) {
-            KiteRecipe.STEP_TERMINAL -> "终端已由用户标记完成"
-            KiteRecipe.STEP_OPEN_WEB -> "网页已由用户标记完成"
-            KiteRecipe.STEP_X11 -> "X11 GUI 已由用户标记完成"
-            KiteRecipe.STEP_SHELL -> "SH 报告已由用户确认继续"
-            else -> "步骤已由用户标记完成"
+    private fun restartWorkflowWindow(windowId: String) {
+        val target = currentTarget ?: return
+        val state = currentState ?: return
+        val stepIndex = CardRunWindowIds.workflowStepIndex(windowId) ?: return
+        val step = target.recipe.steps.getOrNull(stepIndex) ?: return
+        val accepted = if (stepIndex == state.currentStepIndex) {
+            when (val result = runOrchestrator.restartStep(
+                RunStepRestartCommand(
+                    instanceId = state.instanceId,
+                    expectedGeneration = state.createdAt,
+                    expectedStepIndex = stepIndex,
+                    expectedStepId = step.id
+                )
+            )) {
+                is RunCommandResult.Accepted -> true
+                is RunCommandResult.Ignored -> {
+                    Toast.makeText(this, "无法重新执行：${result.reason}", Toast.LENGTH_SHORT).show()
+                    false
+                }
+            }
+        } else {
+            runWindowSurfaceGateway.replayWorkflowStep(target.recipe, state.instanceId, stepIndex)
         }
+        if (!accepted) return
+    }
+
+    private fun closeManualWindow(windowId: String) {
+        val target = currentTarget ?: return
+        val instanceId = currentState?.instanceId ?: return
+        if (!runWindowSurfaceGateway.closeManualWindow(target.recipe, instanceId, windowId)) {
+            Toast.makeText(this, "该窗口不能单独关闭", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openBlankWebSurface() {
+        val target = currentTarget ?: return
+        if (!runWindowSurfaceGateway.openBlankWeb(target.recipe, target.instanceId)) {
+            Toast.makeText(this, "当前实例已经结束", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openBlankTerminalSurface() {
+        val target = currentTarget ?: return
+        if (!runWindowSurfaceGateway.createBlankTerminal(target.recipe, target.instanceId)) {
+            Toast.makeText(this, "当前实例已经结束", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     private fun registerInstanceRoutes(recipe: KiteRecipe, instanceId: String) {
         CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
@@ -462,6 +524,7 @@ class CardRunActivity : AppCompatActivity() {
             Toast.makeText(this, "请输入网页地址", Toast.LENGTH_SHORT).show()
             return
         }
+        if (runWindowSurfaceGateway.openManualWebUrl(target.recipe, state.instanceId, url)) return
         CardRunStore.update(
             recipe = target.recipe,
             status = state.status.takeIf {
@@ -509,7 +572,16 @@ class CardRunActivity : AppCompatActivity() {
             )
         )) {
             is ResourceRunLaunchResult.Accepted -> Unit
-            is ResourceRunLaunchResult.Rejected -> Toast.makeText(this, result.reason, Toast.LENGTH_SHORT).show()
+            is ResourceRunLaunchResult.Rejected -> if (result.reason == RUN_NOTIFICATIONS_REQUIRED) {
+                RunNotificationPermissionFragment.request(
+                    fragmentManager = supportFragmentManager,
+                    title = recipe.name,
+                    key = "resource-uninstall:$resourceId",
+                    retry = { uninstallFailedResource(resourceId) }
+                )
+            } else {
+                Toast.makeText(this, result.reason, Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -627,6 +699,22 @@ class CardRunActivity : AppCompatActivity() {
         }
     }
 
+    private fun showNotificationBlocked(title: String) {
+        root.removeAllViews()
+        root.addView(
+            placeholder("等待通知权限", "$title 的进度、结果和下一步会显示在系统通知中。"),
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
+    }
+
+    private fun CardRunStatus?.requiresFreshStart(): Boolean = this == null || this in setOf(
+        CardRunStatus.Unknown,
+        CardRunStatus.Stopped,
+        CardRunStatus.Completed,
+        CardRunStatus.Failed,
+        CardRunStatus.BridgeUnavailable
+    )
+
     private fun showLaunchError(message: String) {
         root.removeAllViews()
         root.addView(
@@ -698,10 +786,4 @@ class CardRunActivity : AppCompatActivity() {
             window.decorView.systemUiVisibility = 0
         }
     }
-}
-
-/** 复用既有纯投影的完成门禁，避免 Activity 自己重新定义步骤规则。 */
-private object RunSurfaceProjectorBridge {
-    fun canComplete(recipe: KiteRecipe, state: CardRunState): Boolean =
-        com.kite.app.feature.runsurface.RunSurfaceProjector.project(recipe, state).canCompleteCurrentStep
 }

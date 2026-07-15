@@ -23,14 +23,14 @@ internal sealed interface SettingsFeatureAction {
     data class SelectBrowserMode(val mode: BrowserRuntimeMode) : SettingsFeatureAction
     data class SetRestoreLastScreen(val enabled: Boolean) : SettingsFeatureAction
     data class SetHideMainTaskFromRecents(val enabled: Boolean) : SettingsFeatureAction
-    data class RequestNotificationState(val enabled: Boolean) : SettingsFeatureAction
+    data object OpenNotificationSettings : SettingsFeatureAction
     data object OpenDropZone : SettingsFeatureAction
 }
 
 internal sealed interface SettingsFeatureEffect {
     data class ThemeChanged(val theme: ThemeConfig) : SettingsFeatureEffect
     data object RecentTaskVisibilityChanged : SettingsFeatureEffect
-    data class NotificationStateRequested(val enabled: Boolean) : SettingsFeatureEffect
+    data object NotificationSettingsRequested : SettingsFeatureEffect
     data class DropZoneRequested(val available: Boolean) : SettingsFeatureEffect
     data class BrowserModeChanged(val mode: BrowserRuntimeMode) : SettingsFeatureEffect
 }
@@ -43,9 +43,9 @@ internal object SettingsProjector {
         hideMainTaskFromRecents = snapshot.hideMainTaskFromRecents,
         notificationsEnabled = snapshot.notificationsEnabled,
         notificationSubtitle = if (snapshot.notificationsEnabled) {
-            "已开启，后台运行和容器服务会显示系统通知。"
+            "已允许通知；点击设置首页卡片进度的横幅、锁屏和提醒方式。"
         } else {
-            "未开启，点击后进入系统通知授权。"
+            "未允许通知；点击完成系统授权并设置首页卡片进度。"
         },
         dropZoneAvailable = snapshot.dropZone.available,
         dropZoneMessage = snapshot.dropZone.message,

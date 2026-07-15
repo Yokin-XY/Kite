@@ -218,9 +218,33 @@ object CardRunStore {
     @Synchronized
     fun selectSurface(instanceId: String, surface: CardRunSurface): CardRunState? {
         val existing = get(instanceId) ?: return null
-        val next = existing.copy(surface = surface, updatedAt = System.currentTimeMillis())
+        val next = existing.copy(
+            surface = surface,
+            selectedWindowId = null,
+            updatedAt = System.currentTimeMillis()
+        )
         upsert(next)
         return next
+    }
+
+    @Synchronized
+    fun selectWindow(instanceId: String, windowId: String, surface: CardRunSurface): CardRunState? {
+        val existing = get(instanceId) ?: return null
+        val next = existing.copy(
+            surface = surface,
+            selectedWindowId = windowId,
+            updatedAt = System.currentTimeMillis()
+        )
+        upsert(next)
+        return next
+    }
+
+    @Synchronized
+    fun removeRun(instanceId: String): CardRunState? {
+        val removed = runsByInstance.remove(instanceId) ?: return null
+        _runs.value = sortedRuns()
+        schedulePersistRuns()
+        return removed
     }
 
     @Synchronized
@@ -485,7 +509,8 @@ object CardRunStore {
 
     private fun CardRunState.skipsHistory(): Boolean =
         recipeId.startsWith("resource-install-wizard-") ||
-            recipeId.startsWith("tmp-")
+            recipeId.startsWith("tmp-") ||
+            (!parentInstanceId.isNullOrBlank() && ownerKind in WINDOW_OWNER_KINDS)
 
     private fun recordHistoryStart(recipe: KiteRecipe, state: CardRunState, now: Long = state.createdAt) {
         if (state.skipsHistory()) return
@@ -790,6 +815,7 @@ object CardRunStore {
             .put("stepId", stepId.orEmpty())
             .put("status", status.name)
             .put("surface", surface.name)
+            .put("selectedWindowId", selectedWindowId.orEmpty())
             .put("currentStepIndex", currentStepIndex)
             .put("stepCount", stepCount)
             .put("runId", runId.orEmpty())
@@ -851,6 +877,7 @@ object CardRunStore {
             stepId = optString("stepId").takeIf { it.isNotBlank() },
             status = status,
             surface = surface,
+            selectedWindowId = optString("selectedWindowId").takeIf { it.isNotBlank() },
             currentStepIndex = optInt("currentStepIndex", -1),
             stepCount = optInt("stepCount", 0),
             runId = optString("runId").takeIf { it.isNotBlank() },
@@ -933,5 +960,10 @@ object CardRunStore {
     private const val MAX_HISTORY_REPORT_CHARS = 4000
     private const val PROCESS_RESTORE_ABORTED_MESSAGE = "Kite 重新启动，上次运行未确认正常结束"
     private const val PERSIST_DEBOUNCE_MS = 300L
+    private val WINDOW_OWNER_KINDS = setOf(
+        CardRunState.OWNER_KIND_TERMINAL,
+        CardRunState.OWNER_KIND_WEB,
+        CardRunState.OWNER_KIND_STEP_REPLAY
+    )
 
 }

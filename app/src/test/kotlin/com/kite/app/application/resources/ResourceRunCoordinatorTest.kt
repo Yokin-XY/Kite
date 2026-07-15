@@ -7,6 +7,7 @@ import com.kite.app.application.runs.RecipeStopRequest
 import com.kite.app.application.runs.RunLifecycleEvent
 import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunOrchestrator
+import com.kite.app.application.runs.RunStartGate
 import com.kite.app.application.runs.RunStartRequest
 import com.kite.app.application.runs.RunStateGateway
 import com.kite.app.application.runs.RunStateMutation
@@ -136,12 +137,40 @@ class ResourceRunCoordinatorTest {
         assertEquals("wizard-instance", gateway.startedRequests.single().parentInstanceId)
     }
 
+    @Test
+    fun `启动门拒绝时不写入资源处理中事实或推进安装队列`() {
+        val gateway = FakeResourceRunGateway()
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(
+            gateway = gateway,
+            hub = hub,
+            startGate = RunStartGate { "notification_permission_required" }
+        )
+
+        val result = coordinator.start(launch("blocked", KiteResourceInstallRecipes.OP_INSTALL))
+        gateway.pendingResources += "blocked"
+
+        assertEquals(
+            ResourceRunLaunchResult.Rejected("notification_permission_required"),
+            result
+        )
+        assertTrue(gateway.operationStarts.isEmpty())
+        assertTrue(gateway.startedRequests.isEmpty())
+        assertTrue(!coordinator.startNextPlannedInstall("wizard-instance"))
+        assertTrue(gateway.planStepsStarted.isEmpty())
+    }
+
     private fun coordinator(
         gateway: FakeResourceRunGateway,
-        hub: RunLifecycleEventHub
+        hub: RunLifecycleEventHub,
+        startGate: RunStartGate = RunStartGate.Allow
     ): ResourceRunCoordinator = ResourceRunCoordinator(
         gateway = gateway,
-        runOrchestrator = RunOrchestrator(FakeRunStateGateway(), NoOpRecipeExecutor()),
+        runOrchestrator = RunOrchestrator(
+            stateGateway = FakeRunStateGateway(),
+            executor = NoOpRecipeExecutor(),
+            startGate = startGate
+        ),
         lifecycleHub = hub
     )
 
@@ -183,6 +212,7 @@ private class FakeResourceRunGateway : ResourceRunGateway {
     data class Failure(val resourceId: String, val operation: String, val reason: String)
 
     val startedRequests = mutableListOf<ResourceRunLaunchRequest>()
+    val operationStarts = mutableListOf<Pair<String, String>>()
     val installedResources = mutableListOf<String>()
     val savedSnapshots = mutableListOf<String>()
     val failedResources = mutableListOf<Failure>()
@@ -221,7 +251,9 @@ private class FakeResourceRunGateway : ResourceRunGateway {
 
     override fun failRunPreparation(request: ResourceRunLaunchRequest, instanceId: String, message: String) = Unit
 
-    override fun markOperationStarted(resourceId: String, operation: String) = Unit
+    override fun markOperationStarted(resourceId: String, operation: String) {
+        operationStarts += resourceId to operation
+    }
 
     override fun markInstalled(resourceId: String, runId: String?, summary: String?) {
         installedResources += resourceId

@@ -1,6 +1,7 @@
 package com.kite.app.shell
 
 import android.content.Context
+import com.kite.app.CardRunTaskCloser
 import com.kite.app.action.KiteActionRouter
 import com.kite.app.action.KiteRecipeActionCoordinator
 import com.kite.app.bridge.KiteBridgeClient
@@ -16,6 +17,7 @@ import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunHistoryGateway
 import com.kite.app.application.runs.RunOrchestrator
+import com.kite.app.application.runs.RunStartGate
 import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
 import com.kite.app.application.runs.DesktopOpenCoordinator
 import com.kite.app.application.runs.RuntimeOwnerProbeCoordinator
@@ -53,6 +55,8 @@ import com.kite.app.platform.runs.AndroidDesktopOpenGateway
 import com.kite.app.platform.runs.AndroidRuntimeOwnerProbeGateway
 import com.kite.app.platform.runs.AndroidRunHistoryGateway
 import com.kite.app.platform.runs.AndroidRunStateGateway
+import com.kite.app.platform.runs.AndroidRunWindowSurfaceGateway
+import com.kite.app.platform.runs.AndroidRunNotificationCoordinator
 import com.kite.app.platform.runtimemanagement.AndroidRuntimeManagementGateway
 import com.kite.app.platform.runtimebootstrap.AndroidRuntimeBootstrapGateway
 import com.kite.app.platform.onboarding.AndroidFirstRunOnboardingStore
@@ -131,19 +135,49 @@ internal class KiteAppGraph private constructor(context: Context) {
     }
     val runExecutionEffectBus: RunExecutionEffectBus by lazy { RunExecutionEffectBus() }
     val runHistoryGateway: RunHistoryGateway by lazy { AndroidRunHistoryGateway() }
+    private val recipeExecutor: AndroidRecipeExecutor by lazy {
+        AndroidRecipeExecutor(appContext, bridgeClient, diagnostics)
+    }
+    val runWindowSurfaceGateway: AndroidRunWindowSurfaceGateway by lazy {
+        AndroidRunWindowSurfaceGateway(
+            context = appContext,
+            diagnostics = diagnostics,
+            executor = recipeExecutor,
+            effectSink = runExecutionEffectBus
+        )
+    }
     val runLifecycleEventHub: RunLifecycleEventHub by lazy { RunLifecycleEventHub() }
+    val recipeActionGateway: AndroidRecipeActionGateway by lazy {
+        AndroidRecipeActionGateway(runOrchestrator, diagnostics)
+    }
+    val runNotificationCoordinator: AndroidRunNotificationCoordinator by lazy {
+        AndroidRunNotificationCoordinator(
+            context = appContext,
+            recipeResolver = ::resolveRecipe,
+            restartRecipeResolver = ::resolveLatestRecipe,
+            completeStep = { command -> runOrchestrator.completeStep(command) },
+            closeRun = { recipe, state -> recipeActionGateway.stop(recipe, state) },
+            restartRun = { recipe, state ->
+                recipeActionGateway.start(recipe, state, state.instanceId).command
+            },
+            closeRunTask = { instanceId -> CardRunTaskCloser.close(instanceId) },
+            viewBinder = AndroidRunNotificationViewBinder(appContext)
+        )
+    }
     val runOrchestrator: RunOrchestrator by lazy {
         RunOrchestrator(
             stateGateway = AndroidRunStateGateway(),
-            executor = AndroidRecipeExecutor(appContext, bridgeClient, diagnostics),
+            executor = recipeExecutor,
             effectSink = runExecutionEffectBus,
-            lifecycleSink = runLifecycleEventHub
+            lifecycleSink = runLifecycleEventHub,
+            startGate = RunStartGate(runNotificationCoordinator::startRejectionReason),
+            ownedWindowGateway = runWindowSurfaceGateway
         )
     }
     val recipeActionWorkflowCoordinator: RecipeActionWorkflowCoordinator by lazy {
         RecipeActionWorkflowCoordinator(
             planner = KiteRecipeActionCoordinator(KiteActionRouter()),
-            gateway = AndroidRecipeActionGateway(runOrchestrator, diagnostics)
+            gateway = recipeActionGateway
         )
     }
     val desktopOpenCoordinator: DesktopOpenCoordinator by lazy {
@@ -221,6 +255,9 @@ internal class KiteAppGraph private constructor(context: Context) {
     private fun resolveRecipe(recipeId: String): KiteRecipe? =
         CardRunStore.registeredRecipe(recipeId)
             ?: recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
+
+    private fun resolveLatestRecipe(recipeId: String): KiteRecipe? =
+        recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
 
     companion object {
         @Volatile

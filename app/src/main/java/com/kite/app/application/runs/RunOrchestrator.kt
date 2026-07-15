@@ -5,6 +5,7 @@ import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 进程级运行编排器。它只管理步骤顺序、实例代次和运行事实，不知道页面是否可见。
@@ -14,15 +15,19 @@ internal class RunOrchestrator(
     private val executor: RecipeExecutor,
     private val stopCoordinator: StopCoordinator = StopCoordinator(),
     private val effectSink: RunExecutionEffectSink = RunExecutionEffectSink { },
-    private val lifecycleSink: RunLifecycleSink = RunLifecycleSink { }
+    private val lifecycleSink: RunLifecycleSink = RunLifecycleSink { },
+    private val startGate: RunStartGate = RunStartGate.Allow,
+    private val ownedWindowGateway: RunOwnedWindowGateway = RunOwnedWindowGateway.None
 ) {
-    private data class Flight(val generation: Long, val stepIndex: Int)
+    private data class Flight(val generation: Long, val stepIndex: Int, val attemptId: Long)
 
     private val lock = Any()
     private val executionFlights = mutableMapOf<String, Flight>()
     private val completionFlights = mutableMapOf<String, Flight>()
+    private val attemptIds = AtomicLong()
 
     fun start(request: RunStartRequest): RunCommandResult {
+        startRejection()?.let { return it }
         val dispatch = synchronized(lock) {
             stateGateway.register(request.recipe)
             val existing = stateGateway.state(request.instanceId)
@@ -66,34 +71,46 @@ internal class RunOrchestrator(
         return RunCommandResult.Accepted(dispatch.instanceId)
     }
 
-    fun completeCurrentStep(instanceId: String, output: String): RunCommandResult {
+    fun startRejection(): RunCommandResult.Ignored? =
+        startGate.rejectionReason()?.let(RunCommandResult::Ignored)
+
+    fun completeStep(command: RunStepCompletionCommand): RunCommandResult {
         val completion = synchronized(lock) {
-            val state = stateGateway.state(instanceId)
+            val state = stateGateway.state(command.instanceId)
                 ?: return RunCommandResult.Ignored("missing_instance")
             val recipe = stateGateway.recipe(state.recipeId)
                 ?: return RunCommandResult.Ignored("missing_recipe")
             val step = recipe.steps.getOrNull(state.currentStepIndex)
                 ?: return RunCommandResult.Ignored("missing_step")
-            if (!state.canCompleteCurrentStep()) {
+            if (state.createdAt != command.expectedGeneration) {
+                return RunCommandResult.Ignored("generation_mismatch")
+            }
+            if (state.currentStepIndex != command.expectedStepIndex) {
+                return RunCommandResult.Ignored("step_index_mismatch")
+            }
+            if (step.id != command.expectedStepId) {
+                return RunCommandResult.Ignored("step_id_mismatch")
+            }
+            if (!RunStepActionPolicy.canComplete(recipe, state)) {
                 return RunCommandResult.Ignored("step_not_waiting")
             }
-            val flight = Flight(state.createdAt, state.currentStepIndex)
-            if (completionFlights.putIfAbsent(instanceId, flight) != null) {
+            val flight = Flight(state.createdAt, state.currentStepIndex, attemptIds.incrementAndGet())
+            if (completionFlights.putIfAbsent(command.instanceId, flight) != null) {
                 return RunCommandResult.Ignored("completion_in_flight")
             }
             val request = RecipeStepCompletionRequest(
                 recipe = recipe,
-                instanceId = instanceId,
+                instanceId = command.instanceId,
                 generation = state.createdAt,
                 stepIndex = state.currentStepIndex,
                 step = step,
                 state = state,
-                output = output
+                output = command.output
             )
-            executionFlights.remove(instanceId)
+            executionFlights.remove(command.instanceId)
             commit(
                 recipe,
-                instanceId,
+                command.instanceId,
                 RunStateMutation(
                     status = CardRunStatus.Running,
                     surface = if (
@@ -116,7 +133,56 @@ internal class RunOrchestrator(
         executor.completeWaitingStep(completion.request) { result ->
             handleCompletionResult(completion.request, result)
         }
-        return RunCommandResult.Accepted(instanceId)
+        return RunCommandResult.Accepted(command.instanceId)
+    }
+
+    fun restartStep(command: RunStepRestartCommand): RunCommandResult {
+        val restart = synchronized(lock) {
+            val state = stateGateway.state(command.instanceId)
+                ?: return RunCommandResult.Ignored("missing_instance")
+            val recipe = stateGateway.recipe(state.recipeId)
+                ?: return RunCommandResult.Ignored("missing_recipe")
+            val step = recipe.steps.getOrNull(command.expectedStepIndex)
+                ?: return RunCommandResult.Ignored("missing_step")
+            if (state.createdAt != command.expectedGeneration) {
+                return RunCommandResult.Ignored("generation_mismatch")
+            }
+            if (state.currentStepIndex != command.expectedStepIndex) {
+                return RunCommandResult.Ignored("step_not_current")
+            }
+            if (step.id != command.expectedStepId) {
+                return RunCommandResult.Ignored("step_id_mismatch")
+            }
+            if (state.status == CardRunStatus.Stopping || state.status == CardRunStatus.Stopped) {
+                return RunCommandResult.Ignored("instance_stopping")
+            }
+            clearFlights(state.instanceId)
+            commit(
+                recipe,
+                state.instanceId,
+                RunStateMutation(
+                    status = CardRunStatus.Starting,
+                    surface = surfaceFor(step.type),
+                    currentStepIndex = state.currentStepIndex,
+                    lastMeaningfulOutput = restartMessage(step.type),
+                    clearRunBinding = step.type == KiteRecipe.STEP_SHELL || step.type == KiteRecipe.STEP_X11,
+                    clearTerminalSession = step.type == KiteRecipe.STEP_TERMINAL,
+                    clearNextActionUrl = step.type == KiteRecipe.STEP_OPEN_WEB
+                )
+            )
+            Restart(
+                dispatch = Dispatch(state.instanceId, state.createdAt, state.currentStepIndex),
+                previousState = state,
+                stopRequest = restartStopRequest(recipe, state, step.type)
+            )
+        }
+        val stopRequest = restart.stopRequest
+        if (stopRequest == null) {
+            dispatch(restart.dispatch)
+        } else {
+            executor.stop(stopRequest) { result -> handleRestartStopResult(restart, result) }
+        }
+        return RunCommandResult.Accepted(command.instanceId)
     }
 
     fun stop(instanceId: String): RunCommandResult {
@@ -129,6 +195,7 @@ internal class RunOrchestrator(
                 is StopPlan.Ignore -> return RunCommandResult.Ignored(plan.reason)
                 is StopPlan.CompleteLocally -> {
                     clearFlights(instanceId)
+                    ownedWindowGateway.closeAll(instanceId)
                     commit(recipe, instanceId, stoppedMutation(plan.summary))
                     effectSink.emit(
                         RunExecutionEffect.StopResolved(
@@ -142,6 +209,7 @@ internal class RunOrchestrator(
                 }
                 is StopPlan.Execute -> {
                     clearFlights(instanceId)
+                    ownedWindowGateway.closeAll(instanceId)
                     commit(
                         recipe,
                         instanceId,
@@ -189,7 +257,7 @@ internal class RunOrchestrator(
                 )
                 return
             }
-            val flight = Flight(dispatch.generation, dispatch.stepIndex)
+            val flight = Flight(dispatch.generation, dispatch.stepIndex, attemptIds.incrementAndGet())
             if (executionFlights.putIfAbsent(state.instanceId, flight) != null) return
             val running = commit(
                 recipe,
@@ -202,21 +270,26 @@ internal class RunOrchestrator(
                     clearNextActionUrl = true
                 )
             )
-            RecipeStepExecutionRequest(
-                recipe = recipe,
-                instanceId = state.instanceId,
-                generation = dispatch.generation,
-                stepIndex = dispatch.stepIndex,
-                step = step,
-                previousState = running
+            Execution(
+                request = RecipeStepExecutionRequest(
+                    recipe = recipe,
+                    instanceId = state.instanceId,
+                    generation = dispatch.generation,
+                    stepIndex = dispatch.stepIndex,
+                    step = step,
+                    previousState = running
+                ),
+                attemptId = flight.attemptId
             )
         }
-        executor.execute(execution, ::handleExecutionEvent)
+        executor.execute(execution.request) { event ->
+            handleExecutionEvent(event, execution.attemptId)
+        }
     }
 
-    private fun handleExecutionEvent(event: RecipeExecutionEvent) {
+    private fun handleExecutionEvent(event: RecipeExecutionEvent, attemptId: Long) {
         val nextDispatch = synchronized(lock) {
-            val state = validStateFor(event) ?: return
+            val state = validStateFor(event, attemptId) ?: return
             val recipe = stateGateway.recipe(state.recipeId) ?: return
             when (event) {
                 is RecipeExecutionEvent.Progress -> {
@@ -326,6 +399,45 @@ internal class RunOrchestrator(
         nextDispatch?.let(::dispatch)
     }
 
+    private fun handleRestartStopResult(restart: Restart, result: StopExecutionResult) {
+        val shouldDispatch = synchronized(lock) {
+            val state = stateGateway.state(restart.dispatch.instanceId) ?: return
+            if (
+                state.createdAt != restart.dispatch.generation ||
+                state.currentStepIndex != restart.dispatch.stepIndex ||
+                state.status == CardRunStatus.Stopping ||
+                state.status == CardRunStatus.Stopped
+            ) return
+            val recipe = stateGateway.recipe(state.recipeId) ?: return
+            if (result.outcome == StopExecutionOutcome.Confirmed) {
+                true
+            } else {
+                val previous = restart.previousState
+                commit(
+                    recipe,
+                    state.instanceId,
+                    RunStateMutation(
+                        status = CardRunStatus.Failed,
+                        surface = previous.surface,
+                        currentStepIndex = previous.currentStepIndex,
+                        runId = previous.runId,
+                        terminalSessionId = previous.terminalSessionId,
+                        pid = previous.pid,
+                        rootPid = previous.rootPid,
+                        processGroupId = previous.processGroupId,
+                        systemSessionId = previous.systemSessionId,
+                        nextActionUrl = previous.nextActionUrl,
+                        x11Display = previous.x11Display,
+                        x11SocketPath = previous.x11SocketPath,
+                        lastError = result.message.ifBlank { "旧步骤未确认停止，未开始重新执行" }
+                    )
+                )
+                false
+            }
+        }
+        if (shouldDispatch) dispatch(restart.dispatch)
+    }
+
     private fun handleStopResult(previousState: CardRunState, result: StopExecutionResult) {
         synchronized(lock) {
             val current = stateGateway.state(previousState.instanceId) ?: return
@@ -377,9 +489,13 @@ internal class RunOrchestrator(
         }
     }
 
-    private fun validStateFor(event: RecipeExecutionEvent): CardRunState? {
+    private fun validStateFor(event: RecipeExecutionEvent, attemptId: Long): CardRunState? {
         val expected = executionFlights[event.instanceId] ?: return null
-        if (expected.generation != event.generation || expected.stepIndex != event.stepIndex) return null
+        if (
+            expected.generation != event.generation ||
+            expected.stepIndex != event.stepIndex ||
+            expected.attemptId != attemptId
+        ) return null
         val state = stateGateway.state(event.instanceId) ?: return null
         if (
             state.createdAt != event.generation ||
@@ -403,8 +519,14 @@ internal class RunOrchestrator(
     }
 
     private data class Dispatch(val instanceId: String, val generation: Long, val stepIndex: Int)
+    private data class Execution(val request: RecipeStepExecutionRequest, val attemptId: Long)
     private data class Completion(val request: RecipeStepCompletionRequest)
     private data class StopExecution(val previousState: CardRunState, val request: RecipeStopRequest)
+    private data class Restart(
+        val dispatch: Dispatch,
+        val previousState: CardRunState,
+        val stopRequest: RecipeStopRequest?
+    )
 
     companion object {
         fun surfaceFor(stepType: String): CardRunSurface = when (stepType) {
@@ -425,6 +547,49 @@ internal class RunOrchestrator(
             else -> "正在执行步骤"
         }
 
+        private fun restartMessage(stepType: String): String = when (stepType) {
+            KiteRecipe.STEP_SHELL -> "正在重置并重新执行 SH"
+            KiteRecipe.STEP_TERMINAL -> "正在关闭旧终端并创建新终端"
+            KiteRecipe.STEP_OPEN_WEB -> "正在重新打开流程网页"
+            KiteRecipe.STEP_X11 -> "正在重置 X11 窗口"
+            KiteRecipe.STEP_ANDROID_ACTION -> "正在重新执行安卓动作"
+            else -> "正在重新执行步骤"
+        }
+
+        private fun restartStopRequest(
+            recipe: KiteRecipe,
+            state: CardRunState,
+            stepType: String
+        ): RecipeStopRequest? = when (stepType) {
+            KiteRecipe.STEP_TERMINAL -> state.terminalSessionId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { sessionId ->
+                    RecipeStopRequest(
+                        recipe = recipe,
+                        instanceId = state.instanceId,
+                        runId = sessionId,
+                        terminalSessionId = sessionId,
+                        interruptTerminal = true
+                    )
+                }
+            KiteRecipe.STEP_SHELL,
+            KiteRecipe.STEP_X11 -> if (state.hasRunBinding()) {
+                RecipeStopRequest(
+                    recipe = recipe,
+                    instanceId = state.instanceId,
+                    runId = state.runId,
+                    terminalSessionId = state.terminalSessionId,
+                    pid = state.pid,
+                    rootPid = state.rootPid,
+                    processGroupId = state.processGroupId,
+                    systemSessionId = state.systemSessionId
+                )
+            } else {
+                null
+            }
+            else -> null
+        }
+
         private fun CardRunStatus.preventsDuplicateStart(): Boolean =
             this == CardRunStatus.Running ||
                 this == CardRunStatus.WaitingTerminal ||
@@ -441,12 +606,6 @@ internal class RunOrchestrator(
 
         private fun CardRunStatus.stopsExecution(): Boolean =
             this == CardRunStatus.Stopping || this == CardRunStatus.Stopped
-
-        private fun CardRunState.canCompleteCurrentStep(): Boolean =
-            status == CardRunStatus.WaitingTerminal ||
-                status == CardRunStatus.Opened ||
-                status == CardRunStatus.Running ||
-                status == CardRunStatus.AlreadyRunning
 
         private fun CardRunState.hasOnlyTerminalRunBinding(): Boolean =
             !terminalSessionId.isNullOrBlank() &&

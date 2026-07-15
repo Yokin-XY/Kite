@@ -66,6 +66,41 @@ internal data class RecipeStepCompletionRequest(
     val output: String
 )
 
+/**
+ * 一次人工步骤确认的完整身份。调用方必须提交它看到的运行代次和步骤，
+ * 编排器不会把迟到动作重新解释成“完成当前步骤”。
+ */
+internal data class RunStepCompletionCommand(
+    val instanceId: String,
+    val expectedGeneration: Long,
+    val expectedStepIndex: Int,
+    val expectedStepId: String,
+    val output: String
+)
+
+internal data class RunStepRestartCommand(
+    val instanceId: String,
+    val expectedGeneration: Long,
+    val expectedStepIndex: Int,
+    val expectedStepId: String
+)
+
+internal fun interface RunOwnedWindowGateway {
+    fun closeAll(instanceId: String)
+
+    companion object {
+        val None = RunOwnedWindowGateway { }
+    }
+}
+
+internal fun interface RunStartGate {
+    fun rejectionReason(): String?
+
+    companion object {
+        val Allow = RunStartGate { null }
+    }
+}
+
 internal sealed interface RecipeExecutionEvent {
     val instanceId: String
     val generation: Long

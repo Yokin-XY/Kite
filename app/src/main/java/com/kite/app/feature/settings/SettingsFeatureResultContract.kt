@@ -9,7 +9,7 @@ internal sealed interface SettingsFeatureRequest {
     data object OpenTheme : SettingsFeatureRequest
     data class ApplyTheme(val theme: ThemeConfig) : SettingsFeatureRequest
     data object ApplyRecentTaskVisibility : SettingsFeatureRequest
-    data class RequestNotificationState(val enabled: Boolean) : SettingsFeatureRequest
+    data object OpenNotificationSettings : SettingsFeatureRequest
     data class OpenDropZone(val available: Boolean) : SettingsFeatureRequest
 }
 
@@ -30,9 +30,7 @@ internal object SettingsFeatureResultContract {
             )
         )
         KIND_APPLY_RECENTS -> SettingsFeatureRequest.ApplyRecentTaskVisibility
-        KIND_NOTIFICATION -> SettingsFeatureRequest.RequestNotificationState(
-            bundle.getBoolean(KEY_ENABLED)
-        )
+        KIND_NOTIFICATION -> SettingsFeatureRequest.OpenNotificationSettings
         KIND_DROP_ZONE -> SettingsFeatureRequest.OpenDropZone(bundle.getBoolean(KEY_AVAILABLE))
         else -> null
     }
@@ -47,10 +45,7 @@ internal object SettingsFeatureResultContract {
                 putInt(KEY_BACKGROUND_COLOR, request.theme.backgroundColor)
             }
             SettingsFeatureRequest.ApplyRecentTaskVisibility -> putString(KEY_KIND, KIND_APPLY_RECENTS)
-            is SettingsFeatureRequest.RequestNotificationState -> {
-                putString(KEY_KIND, KIND_NOTIFICATION)
-                putBoolean(KEY_ENABLED, request.enabled)
-            }
+            SettingsFeatureRequest.OpenNotificationSettings -> putString(KEY_KIND, KIND_NOTIFICATION)
             is SettingsFeatureRequest.OpenDropZone -> {
                 putString(KEY_KIND, KIND_DROP_ZONE)
                 putBoolean(KEY_AVAILABLE, request.available)
@@ -61,7 +56,6 @@ internal object SettingsFeatureResultContract {
     private const val KEY_KIND = "kind"
     private const val KEY_THEME_COLOR = "theme_color"
     private const val KEY_BACKGROUND_COLOR = "background_color"
-    private const val KEY_ENABLED = "enabled"
     private const val KEY_AVAILABLE = "available"
     private const val KIND_BACK = "back"
     private const val KIND_OPEN_THEME = "open_theme"

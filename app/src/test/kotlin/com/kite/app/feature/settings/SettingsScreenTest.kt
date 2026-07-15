@@ -30,7 +30,7 @@ class SettingsScreenTest {
             onSelectBrowserMode = {},
             onRestoreLastScreen = { switchCallbacks += 1 },
             onHideMainTask = { switchCallbacks += 1 },
-            onNotificationState = { switchCallbacks += 1 },
+            onOpenNotificationSettings = { switchCallbacks += 1 },
             onOpenDropZone = {}
         )
         activity.setContentView(screen.root)

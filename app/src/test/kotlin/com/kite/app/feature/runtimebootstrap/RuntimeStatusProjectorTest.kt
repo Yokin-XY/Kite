@@ -134,4 +134,19 @@ class RuntimeStatusProjectorTest {
         assertEquals("开始授权", state.primaryActionLabel)
         assertTrue(state.detail.contains("系统通知"))
     }
+
+    @Test
+    fun notificationChannelReviewHasExplicitSystemSettingsSemantics() {
+        val state = RuntimeStatusProjector.project(
+            snapshot = RuntimeBootstrapSnapshot(),
+            onboarding = RuntimePermissionOnboardingUiInput(
+                active = true,
+                needsNotificationChannelSetup = true
+            )
+        )
+
+        assertEquals("设置卡片通知", state.primaryActionLabel)
+        assertTrue(state.detail.contains("首页卡片进度"))
+        assertTrue(state.detail.contains("横幅"))
+    }
 }

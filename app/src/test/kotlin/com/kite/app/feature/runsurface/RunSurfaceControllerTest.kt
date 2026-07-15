@@ -75,7 +75,7 @@ class RunSurfaceControllerTest {
     }
 
     @Test
-    fun `终端绑定携带同一实例和会话身份`() {
+    fun `最终终端绑定携带同一实例和会话身份但不暴露继续动作`() {
         val recipe = recipe(KiteRecipeStep(id = "terminal", type = KiteRecipe.STEP_TERMINAL, cmd = "bash"))
         val state = state(
             surface = CardRunSurface.Terminal,
@@ -86,7 +86,7 @@ class RunSurfaceControllerTest {
         val ui = controller.attach(recipe, state)
 
         assertEquals(RunSurfaceContent.Terminal("terminal-1"), ui.content)
-        assertTrue(ui.canCompleteCurrentStep)
+        assertFalse(ui.canCompleteCurrentStep)
         assertTrue(ui.canStop)
     }
 
@@ -197,12 +197,7 @@ class RunSurfaceControllerTest {
 }
 
 private class FakeRunSurfaceActions : RunSurfaceActionGateway {
-    val completedInstances = mutableListOf<String>()
     val stoppedInstances = mutableListOf<String>()
-
-    override fun completeCurrentStep(instanceId: String, output: String) {
-        completedInstances += instanceId
-    }
 
     override fun stop(instanceId: String) {
         stoppedInstances += instanceId

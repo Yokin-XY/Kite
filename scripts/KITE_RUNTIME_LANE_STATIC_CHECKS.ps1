@@ -53,6 +53,8 @@ $recipeEditorScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/featur
 $androidRecipeFeatureGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/recipes/AndroidRecipeFeatureGateway.kt'
 $runExecutionContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunExecutionContract.kt'
 $runOrchestratorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunOrchestrator.kt'
+$runStepActionPolicyPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunStepActionPolicy.kt'
+$runNotificationContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunNotificationContract.kt'
 $recipeActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RecipeActionWorkflow.kt'
 $runExecutionEffectBusPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunExecutionEffectBus.kt'
 $runLifecycleEventHubPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RunLifecycleEventHub.kt'
@@ -64,6 +66,7 @@ $androidDesktopOpenGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app
 $runtimeOwnerProbeWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/runs/RuntimeOwnerProbeWorkflow.kt'
 $androidRuntimeOwnerProbeGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRuntimeOwnerProbeGateway.kt'
 $androidRunStateGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRunStateGateway.kt'
+$androidRunNotificationCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/runs/AndroidRunNotificationCoordinator.kt'
 $resourceRunCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceRunCoordinator.kt'
 $resourceActionWorkflowPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/resources/ResourceActionWorkflow.kt'
 $androidResourceRecipeFactoryPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/resources/AndroidResourceRecipeFactory.kt'
@@ -72,6 +75,8 @@ $androidResourceActionGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/
 $runSurfaceContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceContract.kt'
 $runSurfaceControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceController.kt'
 $runSurfaceHostPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunSurfaceHost.kt'
+$runActivityChromePath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunActivityChrome.kt'
+$runWindowOverviewScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunWindowOverviewScreen.kt'
 $runReportScreenPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunReportScreen.kt'
 $runTerminalSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunTerminalSurfaceBinding.kt'
 $runWebSurfaceBindingPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/runsurface/RunWebSurfaceBinding.kt'
@@ -203,6 +208,8 @@ $recipeEditorScreen = Read-Utf8 $recipeEditorScreenPath
 $androidRecipeFeatureGateway = Read-Utf8 $androidRecipeFeatureGatewayPath
 $runExecutionContract = Read-Utf8 $runExecutionContractPath
 $runOrchestrator = Read-Utf8 $runOrchestratorPath
+$runStepActionPolicy = Read-Utf8 $runStepActionPolicyPath
+$runNotificationContract = Read-Utf8 $runNotificationContractPath
 $recipeActionWorkflow = Read-Utf8 $recipeActionWorkflowPath
 $runExecutionEffectBus = Read-Utf8 $runExecutionEffectBusPath
 $runLifecycleEventHub = Read-Utf8 $runLifecycleEventHubPath
@@ -214,6 +221,7 @@ $androidDesktopOpenGateway = Read-Utf8 $androidDesktopOpenGatewayPath
 $runtimeOwnerProbeWorkflow = Read-Utf8 $runtimeOwnerProbeWorkflowPath
 $androidRuntimeOwnerProbeGateway = Read-Utf8 $androidRuntimeOwnerProbeGatewayPath
 $androidRunStateGateway = Read-Utf8 $androidRunStateGatewayPath
+$androidRunNotificationCoordinator = Read-Utf8 $androidRunNotificationCoordinatorPath
 $resourceRunCoordinator = Read-Utf8 $resourceRunCoordinatorPath
 $resourceActionWorkflow = Read-Utf8 $resourceActionWorkflowPath
 $androidResourceRecipeFactory = Read-Utf8 $androidResourceRecipeFactoryPath
@@ -222,6 +230,8 @@ $androidResourceActionGateway = Read-Utf8 $androidResourceActionGatewayPath
 $runSurfaceContract = Read-Utf8 $runSurfaceContractPath
 $runSurfaceController = Read-Utf8 $runSurfaceControllerPath
 $runSurfaceHost = Read-Utf8 $runSurfaceHostPath
+$runActivityChrome = Read-Utf8 $runActivityChromePath
+$runWindowOverviewScreen = Read-Utf8 $runWindowOverviewScreenPath
 $runReportScreen = Read-Utf8 $runReportScreenPath
 $runTerminalSurfaceBinding = Read-Utf8 $runTerminalSurfaceBindingPath
 $runWebSurfaceBinding = Read-Utf8 $runWebSurfaceBindingPath
@@ -298,7 +308,8 @@ Assert-True ($kiteAppGraph -match 'fun createRecipeLoader\(\): KiteRecipeLoader 
 Assert-True ($runExecutionContract -match 'interface RunStateGateway' -and $runExecutionContract -match 'interface RecipeExecutor' -and $runExecutionContract -match 'RecipeExecutionEvent') 'Run application contract must expose one state owner port, one executor port, and structured execution events.'
 Assert-True ($runExecutionContract -match '(?s)fun bridgeRunId\(\).*terminalSessionId\.isNullOrBlank\(\).*it != terminalSessionId' -and $runExecutionContract -match 'fun hasBridgeProcessBinding\(\)') 'A terminal-owned runId must not be classified as a Bridge process binding.'
 Assert-True ($runOrchestrator -match 'class RunOrchestrator' -and $runOrchestrator -match 'executionFlights' -and $runOrchestrator -match 'validStateFor') 'Run orchestrator must enforce one execution flight per instance generation and reject stale events.'
-Assert-True ($runOrchestrator -match '(?s)fun completeCurrentStep\b.*executionFlights\.remove\(instanceId\).*clearTerminalSession.*executor\.completeWaitingStep') 'Waiting-step completion must revoke the old execution flight and display binding before closing the runtime resource.'
+Assert-True ($runOrchestrator -match '(?s)fun completeStep\(command: RunStepCompletionCommand\).*createdAt != command\.expectedGeneration.*currentStepIndex != command\.expectedStepIndex.*step\.id != command\.expectedStepId.*executionFlights\.remove\(command\.instanceId\).*clearTerminalSession.*executor\.completeWaitingStep') 'Waiting-step completion must validate the exact generation and step identity before revoking the old execution flight and display binding.'
+Assert-True ($runStepActionPolicy -match 'object RunStepActionPolicy' -and $runNotificationContract -match 'RunStepActionPolicy\.completionCommand') 'The notification and visible projection must share one step-completion policy.'
 Assert-True ($stopCoordinator -match 'class StopCoordinator' -and $stopCoordinator -match 'remainingProcessIds' -and $stopCoordinator -match 'StopResolution') 'Stop coordinator must resolve confirmed stop and process residue before writing final state.'
 Assert-True ($stopCoordinator -match 'result\.residueMarkerObserved' -and $stopCoordinator -match '\u5df2\u505c\u6b62\uff0c\u672a\u53d1\u73b0\u8fdb\u7a0b\u6b8b\u7559') 'An explicit empty Bridge residue audit must confirm stopped state even when force-kill returns a nonzero execution result.'
 $runApplicationLayer = $runExecutionContract + "`n" + $runOrchestrator + "`n" + $stopCoordinator
@@ -327,7 +338,15 @@ Assert-True ($cardRunActivity -match 'RunTerminalSurfaceBinding\.removeIncompati
 Assert-True ($main -notmatch 'showCardRunTerminalFragment|cardRunTerminalContainerId|CARD_RUN_TERMINAL_FRAGMENT_TAG') 'MainActivity must not retain the legacy CardRun terminal Fragment binding.'
 Assert-True ($cardRunActivity -match '(?s)override fun handleOnBackPressed\(\)\s*\{\s*if \(chrome\?\.handleBack\(\) == true\) return\s*if \(surfaceHost\?\.handleBack\(\) == true\) return\s*closeTaskWindow\(\)\s*\}' -and $cardRunActivity -match '(?s)private fun closeTaskWindow\(\).*finishAndRemoveTask\(\)') 'CardRun back must close transient chrome, then delegate surface history, and only then detach the task window.'
 Assert-True ($runWebSurfaceBinding -match 'WebView\(activity\)' -and $runWebSurfaceBinding -match 'KiteWebShell\(' -and $runWebSurfaceBinding -match 'override fun handleBack\(\)' -and $runWebSurfaceBinding -match 'override fun reload\(\)' -and $runWebSurfaceBinding -match 'current\.destroy\(\)') 'Web surface binding must own WebView creation, history/reload, and display disposal.'
-Assert-True ($cardRunActivity -match 'onWebBack = \{ host\.handleBack\(\) \}' -and $cardRunActivity -match 'onWebForward = \{ host\.goForward\(\) \}' -and $cardRunActivity -match 'onWebReload = \{ host\.reload\(\) \}' -and $cardRunActivity -match 'onWebStopLoading = \{ host\.stopLoading\(\) \}' -and $main -notmatch 'runSurfaceHost|RunWebSurfaceBinding') 'CardRun Web chrome must control only the currently bound Web surface through RunSurfaceHost.'
+Assert-True ($runSurfaceHost -match 'interface RunSurfaceToolbarOwner' -and $runSurfaceHost -match 'fun toggleSurfaceToolbar\(\)' -and $cardRunActivity -match 'onToggleSurfaceToolbar = \{ host\.toggleSurfaceToolbar\(\) \}') 'The instance handle must delegate only the current surface toolbar through RunSurfaceHost.'
+Assert-True ($runWebSurfaceBinding -match 'private val toolbar = RunWebToolbar' -and $runWebSurfaceBinding -match 'override fun toggleSurfaceToolbar\(\)' -and $runWebSurfaceBinding -match 'override fun setSurfaceToolbarVisible\(visible: Boolean\)') 'The Web surface must own its navigation toolbar and toolbar visibility.'
+Assert-True ($runWebSurfaceBinding -match 'requestedVisible' -and $runWebSurfaceBinding -match 'setDuration\(180L\)' -and $runWebSurfaceBinding -match 'scaleX\(0\.18f\)') 'The Web-owned toolbar must animate as a capsule while tracking requested visibility across overlapping taps.'
+Assert-True ($runTerminalSurfaceBinding -notmatch 'toggleSurfaceToolbar|setSurfaceToolbarVisible' -and $terminalFragment -notmatch 'RunSurfaceToolbarOwner' -and $runReportScreen -notmatch 'toggleSurfaceToolbar|setSurfaceToolbarVisible') 'Terminal input and report core actions must not be treated as optional surface toolbars.'
+Assert-True ($runActivityChrome -match 'onSingleTap = actions\.onToggleSurfaceToolbar' -and $runActivityChrome -match 'onDoubleTap = ::showOverview' -and $runActivityChrome -match 'getLongPressTimeout' -and $runActivityChrome -notmatch 'standardControls|webControls|autoOpenedKey') 'The instance chrome must keep only single-tap toolbar, double-tap overview, and long-press drag behavior.'
+Assert-True ($runWindowOverviewScreen.Contains('private val onStop: () -> Unit') -and $runWindowOverviewScreen.Contains('private val onOpenWeb: () -> Unit') -and $runWindowOverviewScreen.Contains('private val onOpenTerminal: () -> Unit') -and $runWindowOverviewScreen -notmatch 'onComplete|完成步骤') 'The instance overview must keep stop, animated Web/terminal creation, and back without hosting step completion.'
+Assert-True ($runNotificationContract -match 'data class CompleteStep' -and $runNotificationContract -match '"下一步"' -and $androidRunNotificationCoordinator -match 'EXTRA_GENERATION' -and $androidRunNotificationCoordinator -match 'EXTRA_STEP_INDEX' -and $androidRunNotificationCoordinator -match 'EXTRA_STEP_ID') 'Each next-step notification action must carry the exact instance generation, step index, and step id.'
+Assert-True ($kiteAppGraph -match 'startGate = RunStartGate\(runNotificationCoordinator::startRejectionReason\)' -and $recipeActionWorkflow -match 'RecipeActionEffect\.RequireNotifications') 'Run creation must be gated before facts are written and return a permission effect instead of a half-started instance.'
+Assert-True ($main -notmatch 'runSurfaceHost|RunWebSurfaceBinding') 'MainActivity must not regain CardRun Web display ownership.'
 Assert-True ($main -notmatch 'showCardRunWebView|cardRunBrowserAuthWaitingBody|cardRunExternalBrowserBody|cardRunWebAddressInputBody') 'MainActivity must not retain the legacy CardRun Web display builders.'
 Assert-True ($runX11SurfaceBinding -match 'KiteX11SurfaceServer\.surfaceView' -and $runX11SurfaceBinding -match 'override fun dispose\(\)' -and $runX11SurfaceBinding -notmatch 'RunOrchestrator|stop\(') 'X11 surface binding must own only the visible LorieView lifecycle.'
 Assert-True ($main -notmatch 'cardRunX11SurfaceBody|x11TaskTitle') 'MainActivity must not retain the legacy CardRun X11 display builder.'
@@ -415,8 +434,8 @@ Assert-True ($resourceSecondaryRequest -notmatch '\bhandleResource(?:Install|Uni
 
 Assert-True ($resourceInstallWizardPresentation -match 'KiteInstallPlanActionCoordinator\.plan' -and $resourceInstallWizardScreen -match 'onPlanAction\(intent\)') 'install wizard primary action must submit a coordinated plan intent.'
 Assert-True ($resourceInstallWizardScreen -notmatch '\bstartNextResourceInstallFromPlan\s*\(' -and $resourceInstallWizardScreen -notmatch '\bshowResources\s*\(') 'install wizard button binding must not execute or navigate directly.'
-Assert-True ($cardRunActivity -match 'resourceRunCoordinator\.startNextPlannedInstall\(target\?\.instanceId\)' -and $resourceRunCoordinator -match 'fun startNextPlannedInstall\(parentInstanceId: String\?\)') 'install-plan execution must delegate from the run shell to ResourceRunCoordinator.'
-Assert-True ($cardRunActivity -match 'onCloseWindow = ::closeTaskWindow' -and $cardRunActivity -match 'onStop = ::stopCurrentRun' -and $cardRunActivity -match '(?s)private fun stopCurrentRun\(\).*runOrchestrator\.stop\(instanceId\).*RunCommandResult\.Accepted -> Unit') 'CardRun close must only detach the window while explicit stop waits for owner confirmation on the selected instance.'
+Assert-True ($cardRunActivity -match 'resourceRunCoordinator\.startNextPlannedInstall\(target\.instanceId\)' -and $resourceRunCoordinator -match 'fun startNextPlannedInstall\(parentInstanceId: String\?\)') 'install-plan execution must delegate from the run shell to ResourceRunCoordinator.'
+Assert-True ($cardRunActivity -match 'onStop = ::stopCurrentRun' -and $cardRunActivity -match '(?s)private fun closeTaskWindow\(\).*finishAndRemoveTask\(\)' -and $cardRunActivity -match '(?s)private fun stopCurrentRun\(\).*runOrchestrator\.stop\(instanceId\).*RunCommandResult\.Accepted -> Unit') 'CardRun close must only detach the window while explicit stop waits for owner confirmation on the selected instance.'
 
 $showRunManagement = Function-Body $main 'showKiteProcessOverview'
 Assert-True ($showRunManagement -match 'RuntimeManagementFragment\.newInstance\(forceRefresh\)' -and $showRunManagement -match 'showFeatureFragment') 'run management destination must route to its owning feature fragment.'

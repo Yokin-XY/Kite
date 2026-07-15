@@ -475,16 +475,21 @@ data class KiteRecipeCard(
 }
 
 data class KiteLaunchConfig(
-    val openInstance: Boolean = true
+    val openInstance: Boolean = true,
+    val keepFinishedNotification: Boolean = false
 ) {
-    fun isDefault(): Boolean = openInstance
+    fun isDefault(): Boolean = openInstance && !keepFinishedNotification
 
     fun toJson(): JSONObject = JSONObject()
         .put("openInstance", openInstance)
+        .put("keepFinishedNotification", keepFinishedNotification)
 
     companion object {
         fun fromJson(json: JSONObject?): KiteLaunchConfig =
-            KiteLaunchConfig(openInstance = json?.optBoolean("openInstance", true) ?: true)
+            KiteLaunchConfig(
+                openInstance = json?.optBoolean("openInstance", true) ?: true,
+                keepFinishedNotification = json?.optBoolean("keepFinishedNotification", false) ?: false
+            )
     }
 }
 

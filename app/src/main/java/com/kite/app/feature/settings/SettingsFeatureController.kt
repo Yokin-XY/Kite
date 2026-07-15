@@ -49,8 +49,8 @@ internal class SettingsFeatureController(
             gateway.update(SettingsCommand.SetHideMainTaskFromRecents(action.enabled))
             SettingsFeatureEffect.RecentTaskVisibilityChanged
         }
-        is SettingsFeatureAction.RequestNotificationState ->
-            SettingsFeatureEffect.NotificationStateRequested(action.enabled)
+        SettingsFeatureAction.OpenNotificationSettings ->
+            SettingsFeatureEffect.NotificationSettingsRequested
         SettingsFeatureAction.OpenDropZone -> SettingsFeatureEffect.DropZoneRequested(
             state.value.dropZoneAvailable
         )

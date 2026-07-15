@@ -14,18 +14,24 @@ internal class AndroidFirstRunOnboardingStore(context: Context) : FirstRunOnboar
     override fun readPhase(): FirstRunOnboardingPhase {
         val stored = preferences.getString(KEY_PHASE, null)
             ?.let { value -> runCatching { FirstRunOnboardingPhase.valueOf(value) }.getOrNull() }
-        if (stored != null) return stored
-        return if (preferences.getBoolean(KEY_LEGACY_DONE, false)) {
+        if (stored != null && stored != FirstRunOnboardingPhase.Completed) return stored
+        val wasCompleted = stored == FirstRunOnboardingPhase.Completed ||
+            preferences.getBoolean(KEY_LEGACY_DONE, false)
+        val completedVersion = preferences.getInt(KEY_COMPLETED_VERSION, 0)
+        return if (wasCompleted && completedVersion >= CURRENT_VERSION) {
             FirstRunOnboardingPhase.Completed
-        } else {
-            FirstRunOnboardingPhase.NotStarted
-        }
+        } else FirstRunOnboardingPhase.NotStarted
     }
 
     override fun writePhase(phase: FirstRunOnboardingPhase) {
         preferences.edit()
             .putString(KEY_PHASE, phase.name)
             .putBoolean(KEY_LEGACY_DONE, phase == FirstRunOnboardingPhase.Completed)
+            .apply {
+                if (phase == FirstRunOnboardingPhase.Completed) {
+                    putInt(KEY_COMPLETED_VERSION, CURRENT_VERSION)
+                }
+            }
             .commit()
     }
 
@@ -33,5 +39,7 @@ internal class AndroidFirstRunOnboardingStore(context: Context) : FirstRunOnboar
         private const val PREFERENCES_NAME = "kite_app_settings"
         private const val KEY_PHASE = "first_run_permission_onboarding_phase"
         private const val KEY_LEGACY_DONE = "first_run_permission_onboarding_done"
+        private const val KEY_COMPLETED_VERSION = "first_run_permission_onboarding_version"
+        private const val CURRENT_VERSION = 2
     }
 }

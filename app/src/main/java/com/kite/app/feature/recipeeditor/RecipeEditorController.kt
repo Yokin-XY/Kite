@@ -49,6 +49,9 @@ internal class RecipeEditorController(
             is RecipeEditorAction.SetLaunchOpenInstance -> updateDraft {
                 copy(launchOpenInstance = action.enabled)
             }
+            is RecipeEditorAction.SetKeepFinishedNotification -> updateDraft {
+                copy(keepFinishedNotification = action.enabled)
+            }
             is RecipeEditorAction.SetShortcutRequested -> updateDraft {
                 copy(shortcutRequested = action.requested)
             }
