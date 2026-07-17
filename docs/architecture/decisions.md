@@ -30,6 +30,10 @@ Kite 先在现有 Gradle 模块内建立 App Shell、Feature、Application、Pla
 
 普通和本地网页由 WebView 承载；OAuth/SSO 授权交给系统浏览器。Kite 只桥接标准请求和回调，不伪造浏览器身份，不为单个 Provider 写登录协议特判。
 
+## 容器网络服从 Android 应用网络
+
+PRoot、终端和其中运行的 CLI 保持 Kite 的 Android 应用 UID，并使用共享宿主网络栈。Kite 不识别或复制 VPN 应用、节点、规则和包名单；Android 根据用户对 Kite 的按应用设置决定流量走 VPN 还是普通网络。容器 DNS 只采用 Android 当前默认网络提供的服务器，并随默认网络变化更新；系统没有可用 DNS 时不得擅自切换到公共 DNS。系统浏览器使用浏览器自己的 UID 和网络规则。
+
 ## 实验能力不进入稳定承诺
 
 浏览器自动化和 X11 可以保留实现并继续研究，但默认稳定路径、发布说明和正式验收不得依赖它们。实验能力必须在入口和文档中明确提示。

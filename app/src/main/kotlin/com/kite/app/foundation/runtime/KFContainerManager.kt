@@ -36,6 +36,7 @@ import kotlin.concurrent.thread
  * - proot 启动时通过 bind mount 将运行时 resolv.conf 挂入容器 /etc/resolv.conf
  * - 所有容器启动路径（launch / exec / shell / bootstrap）统一经过 [buildNetworkPlan]
  *   和 [buildContainerProotBaseArgv]，不存在旁路
+ * - 长驻容器只跟随 Android 给 Kite 分配的默认网络，不识别或复制 VPN 配置
  */
 object KFContainerManager {
     private const val PROOT_TELEMETRY_MODE = "debug_jsonl_lifecycle_v0"
@@ -59,10 +60,10 @@ object KFContainerManager {
      * - 网络模式标识
      * - 诊断用元数据
      *
-     * 后续扩展字段（proxy / dns-over-https / 连接诊断）都应加在此处。
+     * 网络选择权属于 Android；这里不得增加 VPN、节点或 provider 特判。
      */
     data class ContainerNetworkPlan(
-        /** 当前生效的 DNS 服务器列表（IPv4） */
+        /** Android 当前默认网络提供的 DNS 服务器列表 */
         val dnsServers: List<String>,
         /** 运行时 resolv.conf 的写入路径（app 私有目录） */
         val runtimeResolvConfPath: String,
@@ -72,10 +73,6 @@ object KFContainerManager {
         val networkMode: NetworkMode,
         /** 调试用：此次 DNS 来源描述 */
         val dnsSourceDescription: String,
-        /** 预留扩展：HTTP 代理（暂为空 map） */
-        val httpProxy: Map<String, String> = emptyMap(),
-        /** 预留扩展：HTTPS 代理（暂为空 map） */
-        val httpsProxy: Map<String, String> = emptyMap(),
         val semantics: RuntimeNetworkSemantics,
     ) {
         /** proot argv 中用于 bind-mount resolv.conf 的参数片段 */
@@ -1006,8 +1003,8 @@ object KFContainerManager {
      * 都必须调用此函数获取网络配置，不允许自行计算 DNS 或拼装 resolv.conf。
      *
      * 策略：
-     * 1. 优先使用系统返回的 DNS（去重 + 过滤无效地址）
-     * 2. 若系统 DNS 为空或全部无效，追加公共 fallback DNS
+     * 1. 只使用 Android 给 Kite 当前默认网络返回的 DNS（去重 + 过滤无效地址）
+     * 2. 系统没有可用 DNS 时明确保持无 DNS，不擅自追加公共 DNS 旁路
      * 3. 运行时 resolv.conf 写入 app 私有目录（layout.tmpDir），不再污染 rootfs
      */
     private fun buildNetworkPlan(
@@ -1015,8 +1012,9 @@ object KFContainerManager {
         layout: AssetExtractor.RuntimeLayout,
         container: ContainerRecord
     ): ContainerNetworkPlan {
+        AndroidDefaultNetworkAlignment.ensureStarted(context)
         val rawDnsServers = resolveDnsServersFromSystem(context)
-        val effectiveDnsServers = buildEffectiveDnsList(rawDnsServers)
+        val effectiveDnsServers = ContainerDnsPolicy.normalize(rawDnsServers)
         val runtimeResolvPath = File(layout.tmpDir, "resolv.conf").absolutePath
 
         // 确保运行时 resolv.conf 已写入 app 私有目录
@@ -1035,9 +1033,9 @@ object KFContainerManager {
             networkMode = container.networkMode,
             semantics = container.networkMode.toRuntimeNetworkSemantics(),
             dnsSourceDescription = when {
-                rawDnsServers.isEmpty() -> "system-empty:using-fallback"
-                effectiveDnsServers.any { it in PUBLIC_DNS_SERVERS } -> "system+fallback"
-                else -> "system-only"
+                rawDnsServers.isEmpty() -> "android-default-network:no-dns"
+                effectiveDnsServers.isEmpty() -> "android-default-network:no-usable-dns"
+                else -> "android-default-network"
             }
         )
     }
@@ -1059,44 +1057,11 @@ object KFContainerManager {
     }
 
     /**
-     * 构建生效的 DNS 列表。
-     *
-     * 策略（不过滤私网 DNS，只过滤明确无效地址）：
-     * - 过滤掉 null/空串、loopback（127.0.0.0/8）、link-local（169.254.0.0/16）
-     * - 如果系统 DNS 非空则返回去重后的系统列表
-     * - 如果系统 DNS 为空则使用公共 fallback
-     * - 如果系统 DNS 全部被过滤掉，追加公共 fallback
-     */
-    private fun buildEffectiveDnsList(systemDns: List<String>): List<String> {
-        val valid = systemDns
-            .filter { ip -> ip.isNotBlank() && !isClearlyInvalidDns(ip) }
-            .distinct()
-
-        return when {
-            valid.isNotEmpty() -> valid
-            systemDns.isEmpty() -> PUBLIC_DNS_SERVERS
-            else -> {
-                // 系统返回的 DNS 全部是无效地址，过滤掉并追加公共 DNS
-                PUBLIC_DNS_SERVERS
-            }
-        }
-    }
-
-    /**
-     * 判断一个 IP 地址是否"明显无效"。
-     * 只排除极端无效场景，不做完整的 RFC 规范校验。
-     */
-    private fun isClearlyInvalidDns(ip: String): Boolean {
-        return ip == "0.0.0.0" ||
-            ip.startsWith("127.") ||      // loopback
-            ip.startsWith("169.254.")      // link-local
-    }
-
-    /**
      * 将 resolv.conf 写入**运行时目录**（app 私有目录），而非 rootfs。
      * 这样 rootfs 保持干净，多个容器实例共享同一份运行时 resolv.conf。
      */
-    private fun writeRuntimeResolvConf(runtimeResolvPath: String, dnsServers: List<String>) {
+    @Synchronized
+    private fun writeRuntimeResolvConf(runtimeResolvPath: String, dnsServers: List<String>): Boolean {
         val file = File(runtimeResolvPath)
         file.parentFile?.mkdirs()
         runCatching {
@@ -1107,15 +1072,30 @@ object KFContainerManager {
         }.onFailure { error ->
             Logger.i("ContainerManager", "清理旧 resolv.conf 路径失败，继续尝试覆盖: ${error.message}")
         }
-        file.writeText(
-            dnsServers
-                .ifEmpty { PUBLIC_DNS_SERVERS }
-                .joinToString(separator = "\n", postfix = "\n") { "nameserver $it" }
-        )
+        val content = ContainerDnsPolicy.renderResolvConf(dnsServers)
+        val unchanged = file.exists() && runCatching { file.readText() == content }.getOrDefault(false)
+        if (unchanged) return false
+        file.writeText(content)
+        return true
     }
 
-    /** 公共 fallback DNS（当系统 DNS 完全无效时使用） */
-    private val PUBLIC_DNS_SERVERS = listOf("1.1.1.1", "8.8.8.8", "223.5.5.5")
+    /**
+     * 默认网络变化时只重写已 bind-mount 的运行时 resolv.conf。
+     * 不准备 rootfs、不重建终端，也不读取 VPN 或 provider 状态。
+     */
+    internal fun refreshAndroidDefaultNetworkResolver(context: Context, reason: String) {
+        val appContext = context.applicationContext
+        val layout = AssetExtractor.getRuntimeLayout(appContext)
+        val dnsServers = ContainerDnsPolicy.normalize(resolveDnsServersFromSystem(appContext))
+        val runtimeResolvPath = File(layout.tmpDir, "resolv.conf").absolutePath
+        val changed = writeRuntimeResolvConf(runtimeResolvPath, dnsServers)
+        if (changed) {
+            Logger.i(
+                "ContainerNetwork",
+                "Android 默认网络已对齐容器 DNS: reason=$reason dns=${dnsServers.joinToString()}"
+            )
+        }
+    }
 
     /**
      * 启动前刷新容器运行时文件。

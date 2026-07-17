@@ -18,7 +18,9 @@ Browser Handoff 根据 URL 和来源分类：
 
 - `http://localhost`、`http://127.*` 和 IPv6 loopback 页面留在 WebView。
 - 普通卡片 Web 页面默认留在 WebView。
+- CLI 通过 `$BROWSER`、`xdg-open` 或终端入口请求打开的公网地址交给系统浏览器。
 - 带有标准 OAuth 参数的授权请求交给系统浏览器。
+- 设备码登录只打开系统浏览器并保留原终端，由 CLI 自己轮询授权结果，不创建回调桥。
 - 非 HTTP/HTTPS scheme 交给 Android 系统处理。
 
 授权请求至少需要能识别 `client_id`、`redirect_uri` 和 `response_type`。Provider 自己仍负责校验 client、state、PKCE、scope 和账号条件。

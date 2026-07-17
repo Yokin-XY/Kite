@@ -214,10 +214,30 @@ class BrowserHandoffPolicyTest {
     }
 
     @Test
-    fun ordinaryBrowserProxyUrlStillUsesWebView() {
+    fun ordinaryBrowserProxyUrlOpensExternalBrowser() {
         val decision = BrowserHandoffPolicy.classify(
             url = "https://example.test/docs",
             source = "browser_proxy"
+        )
+
+        assertEquals(BrowserHandoffDecision.OpenExternalBrowser, decision)
+    }
+
+    @Test
+    fun kimiDeviceAuthorizationOpensExternalBrowserWithoutProviderRule() {
+        val decision = BrowserHandoffPolicy.classify(
+            url = "https://www.kimi.com/code/authorize_device",
+            source = "terminal_step"
+        )
+
+        assertEquals(BrowserHandoffDecision.OpenExternalBrowser, decision)
+    }
+
+    @Test
+    fun ordinaryCardRunUrlStillUsesWebView() {
+        val decision = BrowserHandoffPolicy.classify(
+            url = "https://example.test/docs",
+            source = "card_run_surface"
         )
 
         assertEquals(BrowserHandoffDecision.StayInWebView, decision)

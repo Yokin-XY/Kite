@@ -1,5 +1,8 @@
 package com.kite.app.application.browser
 
+import com.kite.app.browser.BrowserHandoffDecision
+import com.kite.app.browser.BrowserHandoffPolicy
+
 internal data class BrowserOpenRequest(
     val url: String,
     val recipeId: String?,
@@ -21,6 +24,7 @@ internal sealed interface BrowserOpenResult {
         val source: String,
         val title: String = "临时网页"
     ) : BrowserOpenResult
+    data class OpenExternalBrowser(val url: String) : BrowserOpenResult
 }
 
 internal fun interface BrowserOpenGateway {
@@ -32,6 +36,14 @@ internal class BrowserOpenCoordinator(
 ) {
     fun open(request: BrowserOpenRequest): BrowserOpenResult {
         val normalized = request.copy(url = request.url.trim())
-        return if (normalized.url.isBlank()) BrowserOpenResult.Ignored else gateway.open(normalized)
+        if (normalized.url.isBlank()) return BrowserOpenResult.Ignored
+        return if (
+            BrowserHandoffPolicy.classify(normalized.url, normalized.source) ==
+            BrowserHandoffDecision.OpenExternalBrowser
+        ) {
+            BrowserOpenResult.OpenExternalBrowser(normalized.url)
+        } else {
+            gateway.open(normalized)
+        }
     }
 }

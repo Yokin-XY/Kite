@@ -28,11 +28,45 @@ class BrowserOpenCoordinatorTest {
             expected
         }
 
-        val result = coordinator.open(request("  https://example.com  "))
+        val result = coordinator.open(request("  https://example.com  ", "card_run_surface"))
 
         assertEquals("https://example.com", received?.url)
         assertEquals(expected, result)
     }
 
-    private fun request(url: String) = BrowserOpenRequest(url, null, null, "test")
+    @Test
+    fun `CLI browser request opens externally without creating a Web run`() {
+        var called = false
+        val coordinator = BrowserOpenCoordinator {
+            called = true
+            BrowserOpenResult.RoutedToExistingSurface
+        }
+
+        val result = coordinator.open(
+            request("https://www.kimi.com/code/authorize_device", "terminal_step")
+        )
+
+        assertEquals(
+            BrowserOpenResult.OpenExternalBrowser("https://www.kimi.com/code/authorize_device"),
+            result
+        )
+        assertFalse(called)
+    }
+
+    @Test
+    fun `local terminal Web UI still reaches the Web surface gateway`() {
+        var called = false
+        val coordinator = BrowserOpenCoordinator {
+            called = true
+            BrowserOpenResult.RoutedToExistingSurface
+        }
+
+        val result = coordinator.open(request("http://127.0.0.1:5494/", "terminal_step"))
+
+        assertEquals(BrowserOpenResult.RoutedToExistingSurface, result)
+        assertEquals(true, called)
+    }
+
+    private fun request(url: String, source: String = "test") =
+        BrowserOpenRequest(url, null, null, source)
 }

@@ -51,14 +51,7 @@ sealed class BrowserHandoffDecision {
 }
 
 object BrowserHandoffPolicy {
-    private val webViewSources = setOf(
-        "card_run_surface",
-        "browser_proxy",
-        "ubuntu_browser",
-        "terminal_page",
-        "terminal_step",
-        "shell_step"
-    )
+    private val internalWebViewSources = setOf("card_run_surface")
     private val redactedDiagnosticParameterOrder = listOf(
         "response_type",
         "client_id",
@@ -92,7 +85,7 @@ object BrowserHandoffPolicy {
             }
         }
 
-        return if (source.orEmpty() in webViewSources) {
+        return if (source.orEmpty() in internalWebViewSources) {
             BrowserHandoffDecision.StayInWebView
         } else {
             BrowserHandoffDecision.OpenExternalBrowser

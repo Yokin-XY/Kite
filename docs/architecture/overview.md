@@ -52,6 +52,7 @@ Platform 是 Android 适配器；Foundation 保存可跨 Feature 复用的运行
 
 - KF/KFShell Bridge 与本地 HTTP 服务。
 - Ubuntu PRoot、owner 遥测和进程终止。
+- Android 默认网络与容器 DNS 对齐；容器流量保持 Kite 应用 UID，由系统按应用网络规则接管。
 - 终端会话与 TerminalView。
 - WebView、系统浏览器和认证回调桥。
 - 资源安装、工具链、共享目录、日志和启动诊断。

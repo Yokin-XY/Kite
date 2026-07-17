@@ -494,19 +494,27 @@ class CardRunActivity : AppCompatActivity() {
         request: KiteBrowserOpenRequest
     ) {
         val decision = BrowserHandoffPolicy.classify(request.url, request.source)
-        if (BrowserHandoffPolicy.isHandoff(decision)) {
-            launchBrowserHandoff(
-                BrowserHandoffRequest(
-                    url = request.url,
-                    recipeId = recipe.id,
-                    recipeName = recipe.name,
-                    instanceId = instanceId,
-                    source = request.source
-                ),
-                decision,
-                false
-            )
-            return
+        when {
+            BrowserHandoffPolicy.isHandoff(decision) -> {
+                launchBrowserHandoff(
+                    BrowserHandoffRequest(
+                        url = request.url,
+                        recipeId = recipe.id,
+                        recipeName = recipe.name,
+                        instanceId = instanceId,
+                        source = request.source
+                    ),
+                    decision,
+                    false
+                )
+                return
+            }
+            decision == BrowserHandoffDecision.OpenExternalBrowser -> {
+                if (!openExternalBrowser(request.url)) {
+                    Toast.makeText(this, "无法打开系统浏览器", Toast.LENGTH_LONG).show()
+                }
+                return
+            }
         }
         val existing = CardRunStore.get(instanceId)
         CardRunStore.update(

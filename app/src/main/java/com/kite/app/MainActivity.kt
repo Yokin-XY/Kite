@@ -2242,6 +2242,11 @@ open class MainActivity : AppCompatActivity() {
             BrowserOpenResult.RoutedToExistingSurface,
             is BrowserOpenResult.RecordedForInstance -> Unit
             is BrowserOpenResult.OpenTemporaryRun -> openTemporaryBrowserRun(result)
+            is BrowserOpenResult.OpenExternalBrowser -> {
+                if (!openCustomTabOrSystemBrowser(Uri.parse(result.url))) {
+                    Toast.makeText(this, "无法打开系统浏览器", Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
