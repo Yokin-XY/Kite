@@ -37,7 +37,7 @@ class HomeScreenTest {
         val rebound = screen.actionViewForTest("tool")!!
 
         assertSame(initial, rebound)
-        assertEquals("停止", rebound.text.toString())
+        assertEquals(rebound.context.getString(R.string.home_action_stop), rebound.text.toString())
     }
 
     @Test
@@ -49,7 +49,7 @@ class HomeScreenTest {
         screen.acknowledge("tool")
 
         val action = screen.actionViewForTest("tool")!!
-        assertEquals("启动中", action.text.toString())
+        assertEquals(action.context.getString(R.string.home_action_starting), action.text.toString())
         assertTrue(!action.isEnabled)
     }
 

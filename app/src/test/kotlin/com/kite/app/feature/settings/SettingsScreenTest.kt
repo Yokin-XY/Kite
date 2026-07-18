@@ -5,6 +5,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.R
+import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import org.junit.Assert.assertEquals
@@ -27,6 +29,7 @@ class SettingsScreenTest {
             initialState = state(),
             onBack = {},
             onOpenTheme = {},
+            onSelectAppLanguage = {},
             onSelectBrowserMode = {},
             onRestoreLastScreen = { switchCallbacks += 1 },
             onHideMainTask = { switchCallbacks += 1 },
@@ -38,18 +41,19 @@ class SettingsScreenTest {
 
         screen.render(state().copy(
             browserRuntimeMode = BrowserRuntimeMode.AutomationBrowser,
+            appLanguage = AppLanguagePreference.English,
             notificationsEnabled = true,
-            notificationSubtitle = "通知已校准",
-            dropZoneMessage = "共享区可用",
+            dropZoneAvailable = true,
             revision = 2L
         ))
 
         assertSame(firstChild, (screen.root as ViewGroup).getChildAt(0))
         assertEquals(0, switchCallbacks)
         val texts = screen.root.allTexts()
-        assertTrue(texts.contains(BrowserRuntimeMode.AutomationBrowser.title))
-        assertTrue(texts.contains("通知已校准"))
-        assertTrue(texts.contains("共享区可用"))
+        assertTrue(texts.contains(activity.browserModeTitle(BrowserRuntimeMode.AutomationBrowser)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_language_english)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_notifications_enabled_summary)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_drop_zone_available_summary)))
     }
 
     @Test
@@ -73,13 +77,12 @@ class SettingsScreenTest {
 
     private fun state() = SettingsUiState(
         theme = ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor),
+        appLanguage = AppLanguagePreference.System,
         browserRuntimeMode = BrowserRuntimeMode.Default,
         restoreLastScreen = true,
         hideMainTaskFromRecents = false,
         notificationsEnabled = false,
-        notificationSubtitle = "通知未开启",
         dropZoneAvailable = false,
-        dropZoneMessage = "投放区尚未检查",
         revision = 1L
     )
 

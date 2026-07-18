@@ -14,6 +14,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import com.kite.app.R
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.UiKit
@@ -77,7 +78,7 @@ internal class RuntimeStatusChrome(
             state.visible -> tokens.textSecondary
             else -> tokens.success
         }
-        view.text = state.statusLabel
+        view.text = localizedStatusLabel(state)
         view.textSize = 10.5f
         view.typeface = Typeface.DEFAULT_BOLD
         view.gravity = Gravity.CENTER
@@ -156,7 +157,7 @@ internal class RuntimeStatusChrome(
         binding.root.visibility = View.VISIBLE
         binding.root.bringToFront()
         binding.root.setBackgroundColor(withAlpha(tokens.pageBackground, 238))
-        binding.title.text = state.title.ifBlank { "正在准备 Ubuntu" }
+        binding.title.text = state.title.ifBlank { activity.getString(R.string.runtime_preparing_ubuntu) }
         binding.title.setTextColor(if (state.isProblem) tokens.danger else tokens.textPrimary)
         binding.detail.text = state.detail
         binding.detail.visibility = if (state.detail.isBlank()) View.GONE else View.VISIBLE
@@ -278,7 +279,7 @@ internal class RuntimeStatusChrome(
                     background = rounded(tokens.success, Color.TRANSPARENT, 5, 0)
                 }, LinearLayout.LayoutParams(dp(10), dp(10)).apply { setMargins(0, 0, dp(10), 0) })
                 addView(TextView(context).apply {
-                    text = "运行状态"
+                    text = activity.getString(R.string.runtime_panel_heading)
                     textSize = 15.5f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(tokens.textPrimary)
@@ -299,9 +300,9 @@ internal class RuntimeStatusChrome(
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(18), 0, dp(16))
-                addView(metric("▣", "卡片", tokens.primaryStrong, cardCount))
-                addView(metric(">_", "终端", Color.rgb(0, 150, 136), terminalCount))
-                addView(metric("⌁", "进程", tokens.warning, processCount))
+                addView(metric("▣", activity.getString(R.string.runtime_metric_cards), tokens.primaryStrong, cardCount))
+                addView(metric(">_", activity.getString(R.string.runtime_metric_terminals), Color.rgb(0, 150, 136), terminalCount))
+                addView(metric("⌁", activity.getString(R.string.runtime_metric_processes), tokens.warning, processCount))
             })
             addView(progress.apply {
                 max = 100
@@ -372,7 +373,11 @@ internal class RuntimeStatusChrome(
     }
 
     private fun bindPanel(binding: PanelBinding, state: RuntimeStatusUiState) {
-        binding.title.text = if (state.visible) state.title else "Ubuntu 环境可用"
+        binding.title.text = if (state.visible) {
+            state.title
+        } else {
+            activity.getString(R.string.runtime_ubuntu_available)
+        }
         binding.title.setTextColor(if (state.isProblem) tokens.danger else tokens.textPrimary)
         binding.detail.text = if (state.visible) state.detail else ""
         binding.detail.visibility = if (binding.detail.text.isNullOrBlank()) View.GONE else View.VISIBLE
@@ -384,7 +389,11 @@ internal class RuntimeStatusChrome(
         binding.actionRow.background = if (primary) {
             rounded(tokens.primaryStrong, tokens.primaryStrong, 14)
         } else null
-        binding.action.text = state.primaryActionLabel
+        binding.action.text = if (state.primaryAction == RuntimeStatusAction.OpenProcessManagement) {
+            activity.getString(R.string.runtime_view_processes)
+        } else {
+            state.primaryActionLabel
+        }
         binding.action.setTextColor(if (primary) tokens.buttonText else tokens.textPrimary)
         binding.chevron.visibility = if (primary) View.GONE else View.VISIBLE
     }
@@ -402,7 +411,7 @@ internal class RuntimeStatusChrome(
         bar.progressDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
         bar.indeterminateDrawable?.setTint(if (state.isProblem) tokens.danger else tokens.primaryStrong)
         label.text = state.progressText.ifBlank {
-            if (showBar) "正在执行首次准备" else ""
+            if (showBar) activity.getString(R.string.runtime_preparing_first_run) else ""
         }
         label.visibility = if (label.text.isNullOrBlank()) View.GONE else View.VISIBLE
     }
@@ -428,6 +437,18 @@ internal class RuntimeStatusChrome(
                 })
             }
         }
+
+    private fun localizedStatusLabel(state: RuntimeStatusUiState): String = when {
+        state.isProblem -> activity.getString(R.string.runtime_status_problem)
+        state.requiresPermission -> activity.getString(R.string.runtime_status_permission_pending)
+        state.showProgress && state.progressPercent != null -> activity.getString(
+            R.string.runtime_status_extracting,
+            state.progressPercent
+        )
+        state.blocksUbuntuActions -> activity.getString(R.string.runtime_status_deploying)
+        state.visible -> activity.getString(R.string.runtime_status_not_deployed)
+        else -> activity.getString(R.string.runtime_status_ready)
+    }
 
     private fun metric(icon: String, label: String, accent: Int, value: TextView): View = row().apply {
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)

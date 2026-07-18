@@ -1796,13 +1796,13 @@ open class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 addView(systemTitleButton())
                 addView(TextView(context).apply {
-                    text = "配置表控制台"
+                    text = getString(R.string.console_subtitle)
                     textSize = 14f
                     setTextColor(tokens.textSecondary)
                 })
             })
             addView(iconButton("⌕", dp(62), Color.TRANSPARENT, tokens.textPrimary, dp(18)) {
-                Toast.makeText(context, "搜索稍后接入", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, getString(R.string.console_search_pending), Toast.LENGTH_SHORT).show()
             }.apply {
                 layoutParams = LinearLayout.LayoutParams(dp(62), dp(62)).apply {
                     setMargins(0, -dp(3), dp(8), 0)
@@ -2391,10 +2391,10 @@ open class MainActivity : AppCompatActivity() {
             Color.blue(tokens.surfaceElevated)
         ))
         elevation = dp(6).toFloat()
-        addView(navItem("▦", "配置", currentScreen == AppDestination.Console) { appNavigator.navigate(AppDestination.Console) })
-        addView(navItem(">_", "终端", currentScreen == AppDestination.Terminal) { appNavigator.navigate(AppDestination.Terminal) })
-        addView(navItem("≡", "资源", currentScreen == AppDestination.Resources) { appNavigator.navigate(AppDestination.Resources) })
-        addView(navItem("⚙", "设置", currentScreen == AppDestination.Settings) { appNavigator.navigate(AppDestination.Settings) })
+        addView(navItem("▦", getString(R.string.nav_cards), currentScreen == AppDestination.Console) { appNavigator.navigate(AppDestination.Console) })
+        addView(navItem(">_", getString(R.string.nav_terminal), currentScreen == AppDestination.Terminal) { appNavigator.navigate(AppDestination.Terminal) })
+        addView(navItem("≡", getString(R.string.nav_resources), currentScreen == AppDestination.Resources) { appNavigator.navigate(AppDestination.Resources) })
+        addView(navItem("⚙", getString(R.string.nav_settings), currentScreen == AppDestination.Settings) { appNavigator.navigate(AppDestination.Settings) })
     }
 
     private fun rebindBottomNavigationTheme() {

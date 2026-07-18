@@ -18,6 +18,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.kite.app.R
 
 class StartupGuardActivity : Activity() {
     private var readyReceiverRegistered = false
@@ -85,12 +86,12 @@ class StartupGuardActivity : Activity() {
             setBackgroundColor(Color.rgb(247, 248, 250))
         }
         content.addView(TextView(this).apply {
-            text = "Kite 启动失败诊断"
+            text = getString(R.string.startup_failure_title)
             textSize = 24f
             setTextColor(Color.rgb(24, 28, 36))
         })
         content.addView(TextView(this).apply {
-            text = "上一次启动没有完成。下面是最后到达的真实阶段，可直接复制或分享。"
+            text = getString(R.string.startup_failure_summary)
             textSize = 15f
             setTextColor(Color.rgb(72, 79, 91))
             setPadding(0, spacing, 0, spacing)
@@ -110,10 +111,10 @@ class StartupGuardActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        actions.addView(actionButton("复制诊断信息") { copyReport(report) })
-        actions.addView(actionButton("分享诊断信息") { shareReport(report) })
-        actions.addView(actionButton("打开应用设置") { openAppSettings() })
-        actions.addView(actionButton("重新尝试启动") {
+        actions.addView(actionButton(getString(R.string.startup_copy_diagnostics)) { copyReport(report) })
+        actions.addView(actionButton(getString(R.string.startup_share_diagnostics)) { shareReport(report) })
+        actions.addView(actionButton(getString(R.string.startup_open_app_settings)) { openAppSettings() })
+        actions.addView(actionButton(getString(R.string.startup_retry)) {
             StartupTraceStore.clearFailureForRetry(this)
             launchMainActivity()
         })
@@ -144,16 +145,16 @@ class StartupGuardActivity : Activity() {
 
     private fun copyReport(report: String) {
         val clipboard = getSystemService(ClipboardManager::class.java)
-        clipboard.setPrimaryClip(ClipData.newPlainText("Kite 启动诊断", report))
-        Toast.makeText(this, "诊断信息已复制", Toast.LENGTH_SHORT).show()
+        clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.startup_diagnostics_clip_label), report))
+        Toast.makeText(this, getString(R.string.startup_diagnostics_copied), Toast.LENGTH_SHORT).show()
     }
 
     private fun shareReport(report: String) {
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "Kite 启动诊断")
+            putExtra(Intent.EXTRA_SUBJECT, getString(R.string.startup_diagnostics_clip_label))
             putExtra(Intent.EXTRA_TEXT, report)
-        }, "分享 Kite 启动诊断"))
+        }, getString(R.string.startup_share_chooser)))
     }
 
     private fun openAppSettings() {

@@ -3,6 +3,7 @@ package com.kite.app.platform.settings
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.kite.app.application.settings.SettingsCommand
+import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.application.settings.SettingsDropZoneSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
@@ -35,6 +36,7 @@ class AndroidSettingsGatewayTest {
 
         assertEquals(KiteTheme.defaultThemeColor, snapshot.themeColor)
         assertEquals(KiteTheme.defaultBackgroundColor, snapshot.backgroundColor)
+        assertEquals(AppLanguagePreference.System, snapshot.appLanguage)
         assertEquals(BrowserRuntimeMode.Default, snapshot.browserRuntimeMode)
         assertTrue(snapshot.restoreLastScreen)
         assertFalse(snapshot.hideMainTaskFromRecents)
@@ -65,20 +67,40 @@ class AndroidSettingsGatewayTest {
         val gateway = AndroidSettingsGateway(
             context = context,
             readNotificationsEnabled = { true },
-            readDropZone = { SettingsDropZoneSnapshot(true, "共享区可用") }
+            readDropZone = { SettingsDropZoneSnapshot(true) }
         )
 
         val refreshed = gateway.refresh()
 
         assertTrue(refreshed.notificationsEnabled)
         assertTrue(refreshed.dropZone.available)
-        assertEquals("共享区可用", refreshed.dropZone.message)
         assertEquals(refreshed, gateway.snapshots.value)
+    }
+
+    @Test
+    fun `language command uses platform locale owner and publishes the selected language`() {
+        var platformLanguage = AppLanguagePreference.System
+        val gateway = AndroidSettingsGateway(
+            context = context,
+            readNotificationsEnabled = { false },
+            readAppLanguage = { platformLanguage },
+            applyAppLanguage = { platformLanguage = it },
+            readDropZone = { SettingsDropZoneSnapshot() }
+        )
+
+        val snapshot = gateway.update(
+            SettingsCommand.SetAppLanguage(AppLanguagePreference.English)
+        )
+
+        assertEquals(AppLanguagePreference.English, platformLanguage)
+        assertEquals(AppLanguagePreference.English, snapshot.appLanguage)
+        assertEquals(snapshot, gateway.snapshots.value)
     }
 
     private fun gateway(): AndroidSettingsGateway = AndroidSettingsGateway(
         context = context,
         readNotificationsEnabled = { false },
-        readDropZone = { SettingsDropZoneSnapshot(false, "测试未授权") }
+        readAppLanguage = { AppLanguagePreference.System },
+        readDropZone = { SettingsDropZoneSnapshot(false) }
     )
 }

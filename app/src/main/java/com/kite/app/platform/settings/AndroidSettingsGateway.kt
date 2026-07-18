@@ -3,6 +3,9 @@ package com.kite.app.platform.settings
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
+import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.application.settings.SettingsCommand
 import com.kite.app.application.settings.SettingsDropZoneSnapshot
 import com.kite.app.application.settings.SettingsGateway
@@ -24,6 +27,16 @@ internal class AndroidSettingsGateway(
         } else {
             true
         }
+    },
+    private val readAppLanguage: () -> AppLanguagePreference = {
+        AppLanguagePreference.fromLanguageTags(
+            AppCompatDelegate.getApplicationLocales().toLanguageTags()
+        )
+    },
+    private val applyAppLanguage: (AppLanguagePreference) -> Unit = { language ->
+        AppCompatDelegate.setApplicationLocales(
+            LocaleListCompat.forLanguageTags(language.languageTag.orEmpty())
+        )
     },
     private val readDropZone: () -> SettingsDropZoneSnapshot
 ) : SettingsGateway {
@@ -49,6 +62,7 @@ internal class AndroidSettingsGateway(
             is SettingsCommand.SetBackgroundColor -> themePreferences.edit()
                 .putInt(KEY_BACKGROUND_COLOR, command.color)
                 .commit()
+            is SettingsCommand.SetAppLanguage -> applyAppLanguage(command.language)
             is SettingsCommand.SetBrowserRuntimeMode -> appPreferences.edit()
                 .putString(KEY_BROWSER_RUNTIME_MODE, command.mode.storageKey)
                 .commit()
@@ -67,6 +81,7 @@ internal class AndroidSettingsGateway(
     ): SettingsSnapshot = SettingsSnapshot(
         themeColor = themePreferences.getInt(KEY_THEME_COLOR, KiteTheme.defaultThemeColor),
         backgroundColor = themePreferences.getInt(KEY_BACKGROUND_COLOR, KiteTheme.defaultBackgroundColor),
+        appLanguage = readAppLanguage(),
         browserRuntimeMode = BrowserRuntimeMode.fromStorageKey(
             appPreferences.getString(KEY_BROWSER_RUNTIME_MODE, null)
         ),

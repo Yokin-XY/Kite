@@ -14,6 +14,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.tabs.TabLayout
+import com.kite.app.R
 import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunStatus
@@ -26,7 +27,7 @@ private const val HOME_PAGE_GROUP_PREFIX = "group:"
 
 /** 首页分页、滚动、卡片结构和局部运行绑定的真实所有者。 */
 internal class HomeScreen(
-    context: Context,
+    private val context: Context,
     initialPageId: String,
     initialScrollY: Int,
     private val onOpenEditor: (String) -> Unit,
@@ -42,7 +43,7 @@ internal class HomeScreen(
         onPrimaryAction = onPrimaryAction
     )
     private val tabs = TabLayout(context).apply {
-        contentDescription = "配置分页"
+        contentDescription = context.getString(R.string.home_tabs_description)
         tabMode = TabLayout.MODE_SCROLLABLE
         tabGravity = TabLayout.GRAVITY_START
         isFocusable = false
@@ -109,7 +110,7 @@ internal class HomeScreen(
                 textSize = 23f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
-                contentDescription = "新建卡片分组"
+                contentDescription = context.getString(R.string.home_create_group_description)
                 setTextColor(factory.tokens.primaryStrong)
                 background = factory.roundedBox(
                     factory.tokens.surface,
@@ -154,11 +155,24 @@ internal class HomeScreen(
         val visibleItems = itemsForPage(state, selectedPageId)
         when {
             state.phase == HomeCatalogPhase.Loading && state.items.isEmpty() ->
-                showState("正在读取卡片", "卡片目录会在后台加载。")
+                showState(
+                    context.getString(R.string.home_loading_title),
+                    context.getString(R.string.home_loading_summary)
+                )
             state.phase == HomeCatalogPhase.Failed && state.items.isEmpty() ->
-                showState("卡片读取失败", state.errorMessage ?: "暂时无法读取卡片目录", onRetry)
+                showState(
+                    context.getString(R.string.home_load_failed_title),
+                    state.errorMessage ?: context.getString(R.string.home_load_failed_summary),
+                    onRetry
+                )
             visibleItems.isEmpty() ->
-                showState("暂无卡片", if (selectedPageId == HOME_PAGE_ALL) "新建或导入卡片后会显示在这里。" else "当前分页没有卡片。")
+                showState(
+                    context.getString(R.string.home_empty_title),
+                    context.getString(
+                        if (selectedPageId == HOME_PAGE_ALL) R.string.home_empty_all_summary
+                        else R.string.home_empty_page_summary
+                    )
+                )
             else -> renderGrid(visibleItems, state.groups)
         }
     }
@@ -291,9 +305,9 @@ internal class HomeScreen(
         val opened = state.items.count { it.projection.live }
         val stopped = state.items.count { it.run.status in stoppedStatuses }
         return listOf(
-            HomePage(HOME_PAGE_ALL, "▦  全部 ${state.items.size}"),
-            HomePage(HOME_PAGE_OPENED, "▶  已打开 $opened"),
-            HomePage(HOME_PAGE_STOPPED, "■  已停止 $stopped")
+            HomePage(HOME_PAGE_ALL, context.getString(R.string.home_tab_all, state.items.size)),
+            HomePage(HOME_PAGE_OPENED, context.getString(R.string.home_tab_opened, opened)),
+            HomePage(HOME_PAGE_STOPPED, context.getString(R.string.home_tab_stopped, stopped))
         ) + state.groups.map { group -> HomePage(groupPageId(group.id), group.name) }
     }
 

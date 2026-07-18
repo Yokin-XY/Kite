@@ -128,7 +128,7 @@ internal class KiteAppGraph private constructor(context: Context) {
             context = appContext,
             readDropZone = {
                 createDropZoneManager().prepareDropZone().let { status ->
-                    SettingsDropZoneSnapshot(status.available, status.message)
+                    SettingsDropZoneSnapshot(status.available)
                 }
             }
         )

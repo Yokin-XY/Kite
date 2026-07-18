@@ -31,7 +31,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="PRoot 设备校准"
+                    android:text="@string/status_proot_calibration_title"
                     android:textColor="@color/text_primary"
                     android:textSize="17sp"
                     android:textStyle="bold" />
@@ -41,7 +41,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="从 1 开始自动寻峰：先写计划，再执行测试；完成后生成本机 PRoot 策略。"
+                    android:text="@string/status_proot_calibration_description"
                     android:textColor="@color/text_secondary"
                     android:textIsSelectable="true"
                     android:textSize="13sp" />
@@ -51,7 +51,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="开始 PRoot 校准"
+                    android:text="@string/status_proot_calibration_start"
                     app:backgroundTint="@color/primary" />
 
             </LinearLayout>
@@ -86,7 +86,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="--"
+                    android:text="@string/placeholder_pending"
                     android:textColor="@color/text_secondary"
                     android:textSize="14sp" />
 
@@ -132,7 +132,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="--"
+                    android:text="@string/placeholder_pending"
                     android:textColor="@color/text_secondary"
                     android:textSize="14sp" />
 
@@ -178,7 +178,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="--"
+                    android:text="@string/placeholder_pending"
                     android:textColor="@color/text_secondary"
                     android:textSize="14sp" />
 
@@ -214,7 +214,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="--"
+                    android:text="@string/placeholder_pending"
                     android:textColor="@color/text_secondary"
                     android:textSize="14sp" />
 
@@ -242,7 +242,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="PRoot 设备校准（Debug）"
+                    android:text="@string/status_proot_calibration_debug_title"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -252,7 +252,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="--"
+                    android:text="@string/placeholder_pending"
                     android:textColor="@color/text_secondary"
                     android:textIsSelectable="true"
                     android:textSize="13sp" />
@@ -262,7 +262,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="运行 P0：单 PRoot tracee 上限"
+                    android:text="@string/status_proot_calibration_p0"
                     app:backgroundTint="@color/primary" />
 
             </LinearLayout>
@@ -288,7 +288,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Telemetry 手动修复（Debug）"
+                    android:text="@string/status_telemetry_repair_debug_title"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -298,7 +298,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="--"
+                    android:text="@string/placeholder_pending"
                     android:textColor="@color/text_secondary"
                     android:textSize="14sp" />
 
@@ -308,7 +308,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="归档并清空污染 telemetry" />
+                    android:text="@string/status_telemetry_repair_action" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>

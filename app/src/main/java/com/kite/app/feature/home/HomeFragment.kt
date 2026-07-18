@@ -11,6 +11,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.kite.app.R
 import com.kite.app.application.recipes.RecipeFeatureDependenciesOwner
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import kotlinx.coroutines.launch
@@ -132,7 +133,11 @@ internal class HomeFragment : Fragment() {
                 is HomeFeatureEffect.ExternalRefreshCompleted ->
                     Toast.makeText(requireContext(), effect.message, Toast.LENGTH_SHORT).show()
                 is HomeFeatureEffect.ActionUnavailable ->
-                    Toast.makeText(requireContext(), "刷新失败：${effect.reason}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        requireContext(),
+                        getString(R.string.home_refresh_failed, effect.reason),
+                        Toast.LENGTH_SHORT
+                    ).show()
                 else -> Unit
             }
         }
@@ -140,20 +145,20 @@ internal class HomeFragment : Fragment() {
 
     private fun showCreateGroupDialog() {
         val input = EditText(requireContext()).apply {
-            hint = "例如：AI 工具"
+            hint = getString(R.string.home_create_group_hint)
             maxLines = 1
         }
         val dialog = AlertDialog.Builder(requireContext())
-            .setTitle("新建卡片分组")
+            .setTitle(R.string.home_create_group_title)
             .setView(input)
-            .setNegativeButton("取消", null)
-            .setPositiveButton("创建", null)
+            .setNegativeButton(R.string.home_create_group_cancel, null)
+            .setPositiveButton(R.string.home_create_group_confirm, null)
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val name = input.text?.toString().orEmpty().trim()
                 if (name.isBlank()) {
-                    input.error = "请输入分组名称"
+                    input.error = getString(R.string.home_create_group_name_required)
                     return@setOnClickListener
                 }
                 viewLifecycleOwner.lifecycleScope.launch {

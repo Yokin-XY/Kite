@@ -16,6 +16,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.kite.app.R
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.run.CardRunState
@@ -27,7 +28,8 @@ import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.UiKit
 import java.io.File
-import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 
 internal object HomeFeatureTheme {
@@ -87,7 +89,7 @@ internal class HomeFeatureViewFactory(
             })
             retry?.let { action ->
                 addView(TextView(context).apply {
-                    text = "重试"
+                    text = context.getString(R.string.common_retry)
                     textSize = 13f
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
@@ -130,7 +132,7 @@ internal class HomeFeatureViewFactory(
                 Gravity.START or Gravity.TOP
             ).apply { setMargins(dp(15), dp(58), dp(92), 0) })
             addView(TextView(context).apply {
-                text = groupLabel.ifBlank { "未分组" }
+                text = groupLabel.ifBlank { context.getString(R.string.home_ungrouped) }
                 textSize = 9.8f
                 includeFontPadding = false
                 setTextColor(tokens.textTertiary)
@@ -173,10 +175,12 @@ internal class HomeFeatureViewFactory(
 
     fun bind(binding: HomeCardBinding, item: HomeRecipeItemUiState) {
         binding.item = item
-        binding.root.contentDescription = buildString {
-            append(item.recipe.name)
-            item.projection.badgeLabel?.let { append("，").append(it) }
-            append("，").append(item.projection.primaryActionLabel)
+        val badge = localizedBadge(item)
+        val action = localizedAction(item.projection.primaryAction)
+        binding.root.contentDescription = if (badge == null) {
+            context.getString(R.string.home_card_description_no_status, item.recipe.name, action)
+        } else {
+            context.getString(R.string.home_card_description, item.recipe.name, badge, action)
         }
         bindStatus(binding.statusHost, item)
         bindCue(binding.cueView, item)
@@ -188,11 +192,11 @@ internal class HomeFeatureViewFactory(
         binding ?: return
         binding.actionButton.apply {
             text = when (binding.item.projection.primaryAction) {
-                KiteRunPrimaryAction.Stop -> "停止中"
+                KiteRunPrimaryAction.Stop -> context.getString(R.string.home_action_stopping)
                 KiteRunPrimaryAction.Start,
-                KiteRunPrimaryAction.Retry -> "启动中"
+                KiteRunPrimaryAction.Retry -> context.getString(R.string.home_action_starting)
                 KiteRunPrimaryAction.Busy,
-                KiteRunPrimaryAction.Blocked -> "处理中"
+                KiteRunPrimaryAction.Blocked -> context.getString(R.string.home_action_busy)
             }
             isEnabled = false
             alpha = 0.62f
@@ -206,7 +210,7 @@ internal class HomeFeatureViewFactory(
 
     private fun bindStatus(host: FrameLayout, item: HomeRecipeItemUiState) {
         host.removeAllViews()
-        val label = item.projection.badgeLabel ?: return
+        val label = localizedBadge(item) ?: return
         val tone = colors(item.projection.tone)
         host.addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -252,7 +256,7 @@ internal class HomeFeatureViewFactory(
             else -> tokens.primaryStrong
         }
         view.apply {
-            text = projection.primaryActionLabel
+            text = localizedAction(projection.primaryAction)
             textSize = 12.5f
             includeFontPadding = false
             typeface = Typeface.DEFAULT_BOLD
@@ -273,10 +277,10 @@ internal class HomeFeatureViewFactory(
             text = when {
                 state.status == CardRunStatus.Unknown -> ""
                 state.status == CardRunStatus.Failed || state.status == CardRunStatus.BridgeUnavailable ->
-                    "已停止 · ${formatElapsed(state)}"
+                    context.getString(R.string.home_run_stopped_elapsed, formatElapsed(state))
                 state.isBusy() || state.isActive() || state.status == CardRunStatus.Opened ->
-                    "运行 · ${formatElapsed(state)}"
-                else -> "上次 · ${formatLastRunTime(state.updatedAt)}"
+                    context.getString(R.string.home_run_active_elapsed, formatElapsed(state))
+                else -> context.getString(R.string.home_run_last, formatLastRunTime(state.updatedAt))
             }
             textSize = 9.5f
             includeFontPadding = false
@@ -305,7 +309,7 @@ internal class HomeFeatureViewFactory(
     }
 
     private fun compactTitle(raw: String): Pair<String, Float> {
-        val value = raw.trim().ifBlank { "未命名卡片" }
+        val value = raw.trim().ifBlank { context.getString(R.string.home_unnamed_card) }
         val bytes = value.toByteArray(Charsets.UTF_8).size
         val progress = ((bytes - 12).coerceAtLeast(0).toFloat() / 8f).coerceIn(0f, 1f)
         val size = 13.2f - (3.2f * progress)
@@ -319,25 +323,30 @@ internal class HomeFeatureViewFactory(
 
     private fun stepCue(recipe: KiteRecipe, state: CardRunState): String {
         val steps = recipe.steps
-        if (steps.isEmpty()) return "无步骤"
+        if (steps.isEmpty()) return context.getString(R.string.home_no_steps)
         val total = (state.stepCount.takeIf { it > 0 } ?: steps.size).coerceAtLeast(1)
         return if (state.isBusy() || state.isActive() || state.status == CardRunStatus.Opened ||
             state.status == CardRunStatus.Failed || state.status == CardRunStatus.BridgeUnavailable
         ) {
             val index = state.currentStepIndex.coerceIn(0, total - 1)
-            "${stepKind(steps.getOrNull(index) ?: steps.first())} · ${index + 1}/$total"
+            context.getString(
+                R.string.home_step_progress,
+                stepKind(steps.getOrNull(index) ?: steps.first()),
+                index + 1,
+                total
+            )
         } else {
             val first = stepKind(steps.first())
-            if (total == 1) first else "$first · ${total}项"
+            if (total == 1) first else context.getString(R.string.home_step_count, first, total)
         }
     }
 
     private fun stepKind(step: com.kite.app.recipe.KiteRecipeStep): String = when (step.type) {
-        KiteRecipe.STEP_SHELL -> "命令"
-        KiteRecipe.STEP_TERMINAL -> "终端"
-        KiteRecipe.STEP_OPEN_WEB -> "网页"
-        KiteRecipe.STEP_ANDROID_ACTION -> "本机"
-        else -> "卡片"
+        KiteRecipe.STEP_SHELL -> context.getString(R.string.home_step_command)
+        KiteRecipe.STEP_TERMINAL -> context.getString(R.string.home_step_terminal)
+        KiteRecipe.STEP_OPEN_WEB -> context.getString(R.string.home_step_web)
+        KiteRecipe.STEP_ANDROID_ACTION -> context.getString(R.string.home_step_native)
+        else -> context.getString(R.string.home_step_card)
     }
 
     private fun recipeIcon(recipe: KiteRecipe, size: Int, fallbackTextSize: Float): View {
@@ -377,10 +386,10 @@ internal class HomeFeatureViewFactory(
         "terminal" -> ">_"
         "web" -> "◎"
         "bot" -> "AI"
-        "file" -> "文"
+        "file" -> context.getString(R.string.home_icon_file)
         "music" -> "♪"
-        "shopping" -> "购"
-        "logs" -> "日"
+        "shopping" -> context.getString(R.string.home_icon_shopping)
+        "logs" -> context.getString(R.string.home_icon_logs)
         "tools" -> "⚙"
         "code" -> "{ }"
         "server" -> "▷"
@@ -404,29 +413,46 @@ internal class HomeFeatureViewFactory(
         }
         val seconds = ((endAt - state.createdAt).coerceAtLeast(0L) / 1000L)
         return when {
-            seconds < 3600L -> String.format("%02d:%02d", seconds / 60L, seconds % 60L)
-            seconds < 86400L -> "${seconds / 3600L}小时"
-            else -> "${seconds / 86400L}天"
+            seconds < 3600L -> String.format(Locale.US, "%02d:%02d", seconds / 60L, seconds % 60L)
+            seconds < 86400L -> context.getString(R.string.home_duration_hours, seconds / 3600L)
+            else -> context.getString(R.string.home_duration_days, seconds / 86400L)
         }
     }
 
     private fun formatLastRunTime(timestamp: Long): String {
         val ageMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0L)
-        if (ageMs < 60_000L) return "刚刚"
-        if (ageMs < 30L * 60_000L) return "${ageMs / 60_000L}分钟前"
-        val now = Calendar.getInstance()
-        val then = Calendar.getInstance().apply { timeInMillis = timestamp }
-        if (now.get(Calendar.YEAR) == then.get(Calendar.YEAR) &&
-            now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)
-        ) {
-            return String.format("%02d:%02d", then.get(Calendar.HOUR_OF_DAY), then.get(Calendar.MINUTE))
+        if (ageMs < 60_000L) return context.getString(R.string.home_just_now)
+        if (ageMs < 30L * 60_000L) {
+            return context.getString(R.string.home_minutes_ago, ageMs / 60_000L)
         }
-        val yesterday = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
-        if (yesterday.get(Calendar.YEAR) == then.get(Calendar.YEAR) &&
-            yesterday.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)
-        ) return "昨天"
-        return "${then.get(Calendar.MONTH) + 1}月${then.get(Calendar.DAY_OF_MONTH)}日"
+        val nowDay = java.time.LocalDate.now()
+        val thenDay = java.time.Instant.ofEpochMilli(timestamp)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate()
+        if (nowDay == thenDay) {
+            return android.text.format.DateFormat.getTimeFormat(context).format(Date(timestamp))
+        }
+        if (nowDay.minusDays(1L) == thenDay) return context.getString(R.string.terminal_time_yesterday)
+        return android.text.format.DateFormat.getDateFormat(context).format(Date(timestamp))
     }
+
+    private fun localizedBadge(item: HomeRecipeItemUiState): String? = when {
+        item.projection.problem -> context.getString(R.string.home_status_failed)
+        item.run.status == CardRunStatus.WaitingTerminal || item.run.status == CardRunStatus.Opened ->
+            context.getString(R.string.home_status_manual_action)
+        item.projection.live -> context.getString(R.string.home_status_running)
+        else -> null
+    }
+
+    private fun localizedAction(action: KiteRunPrimaryAction): String = context.getString(
+        when (action) {
+            KiteRunPrimaryAction.Start -> R.string.home_action_start
+            KiteRunPrimaryAction.Stop -> R.string.home_action_stop
+            KiteRunPrimaryAction.Retry -> R.string.home_action_retry
+            KiteRunPrimaryAction.Busy -> R.string.home_action_busy
+            KiteRunPrimaryAction.Blocked -> R.string.home_action_wait
+        }
+    )
 
     private data class SemanticColors(val text: Int, val background: Int)
 }

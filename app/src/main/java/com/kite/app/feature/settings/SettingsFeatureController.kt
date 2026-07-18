@@ -37,6 +37,10 @@ internal class SettingsFeatureController(
                 com.kite.app.theme.ThemeConfig(snapshot.themeColor, snapshot.backgroundColor)
             )
         }
+        is SettingsFeatureAction.SelectAppLanguage -> {
+            gateway.update(SettingsCommand.SetAppLanguage(action.language))
+            SettingsFeatureEffect.AppLanguageChanged(action.language)
+        }
         is SettingsFeatureAction.SelectBrowserMode -> {
             gateway.update(SettingsCommand.SetBrowserRuntimeMode(action.mode))
             SettingsFeatureEffect.BrowserModeChanged(action.mode)

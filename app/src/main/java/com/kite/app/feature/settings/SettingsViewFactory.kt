@@ -14,6 +14,8 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
+import com.kite.app.R
+import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.ThemeTokens
 
@@ -55,7 +57,7 @@ internal class SettingsViewFactory(
             background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(16).toFloat())
             layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
             setOnClickListener { onBack() }
-            contentDescription = "返回"
+            contentDescription = context.getString(R.string.common_back)
         })
         addView(TextView(context).apply {
             text = title
@@ -172,16 +174,16 @@ internal class SettingsViewFactory(
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(12), 0, 0, 0)
                 addView(TextView(context).apply {
-                    text = "主题预览"
+                    text = context.getString(R.string.settings_theme_preview_title)
                     textSize = 16f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(tokens.textPrimary)
                 })
-                addView(subtitleView("按钮、卡片和辅助信息会跟随这里的颜色。"))
+                addView(subtitleView(context.getString(R.string.settings_theme_preview_summary)))
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         })
         addView(TextView(context).apply {
-            text = "启动 / 打开"
+            text = context.getString(R.string.settings_theme_preview_action)
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -203,12 +205,12 @@ internal class SettingsViewFactory(
             setPadding(dp(18), dp(18), dp(18), dp(16))
             background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
             addView(TextView(context).apply {
-                text = "浏览器模式"
+                text = context.getString(R.string.settings_browser_mode_title)
                 textSize = 18f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(tokens.textPrimary)
             })
-            addView(subtitleView("选择网页运行面；账号授权仍遵守系统浏览器回跳边界。").apply {
+            addView(subtitleView(context.getString(R.string.settings_browser_mode_dialog_summary)).apply {
                 setPadding(0, dp(6), 0, dp(12))
             })
             BrowserRuntimeMode.values().forEach { mode ->
@@ -218,7 +220,56 @@ internal class SettingsViewFactory(
                 })
             }
             addView(TextView(context).apply {
-                text = "关闭"
+                text = context.getString(R.string.common_close)
+                gravity = Gravity.CENTER
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textSecondary)
+                background = roundedBox(tokens.surface, tokens.border, dp(14).toFloat())
+                setPadding(0, dp(11), 0, dp(11))
+                setOnClickListener { dialog.dismiss() }
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, dp(12), 0, 0) }
+            })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setGravity(Gravity.CENTER)
+        dialog.window?.setLayout(
+            (context.resources.displayMetrics.widthPixels * 0.9f).toInt(),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
+
+    fun showLanguageDialog(
+        state: SettingsUiState,
+        onSelect: (AppLanguagePreference) -> Unit
+    ) {
+        val dialog = Dialog(context)
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(16))
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
+            addView(TextView(context).apply {
+                text = context.getString(R.string.settings_language_dialog_title)
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(subtitleView(context.getString(R.string.settings_language_dialog_summary)).apply {
+                setPadding(0, dp(6), 0, dp(12))
+            })
+            AppLanguagePreference.entries.forEach { language ->
+                addView(languageChoice(language, language == state.appLanguage) {
+                    onSelect(language)
+                    dialog.dismiss()
+                })
+            }
+            addView(TextView(context).apply {
+                text = context.getString(R.string.common_close)
                 gravity = Gravity.CENTER
                 textSize = 14f
                 typeface = Typeface.DEFAULT_BOLD
@@ -326,12 +377,47 @@ internal class SettingsViewFactory(
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             addView(TextView(context).apply {
-                text = mode.title
+                text = context.browserModeTitle(mode)
                 textSize = 15f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(tokens.textPrimary)
             })
-            addView(subtitleView(mode.summary).apply { setPadding(0, dp(4), dp(10), 0) })
+            addView(subtitleView(context.browserModeSummary(mode)).apply {
+                setPadding(0, dp(4), dp(10), 0)
+            })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(TextView(context).apply {
+            text = if (selected) "✓" else ""
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setTextColor(tokens.primaryStrong)
+            layoutParams = LinearLayout.LayoutParams(dp(28), dp(40))
+        })
+        setOnClickListener { onClick() }
+    }
+
+    private fun languageChoice(
+        language: AppLanguagePreference,
+        selected: Boolean,
+        onClick: () -> Unit
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(14), dp(12), dp(12), dp(12))
+        background = roundedBox(
+            if (selected) tokens.primarySubtle else tokens.surface,
+            if (selected) tokens.primaryStrong else tokens.border,
+            dp(16).toFloat()
+        )
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(0, dp(8), 0, 0) }
+        addView(TextView(context).apply {
+            text = context.appLanguageLabel(language)
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(tokens.textPrimary)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addView(TextView(context).apply {
             text = if (selected) "✓" else ""

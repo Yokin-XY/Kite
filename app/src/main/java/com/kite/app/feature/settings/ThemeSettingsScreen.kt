@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import com.kite.app.R
 import com.kite.app.theme.KiteTheme
 
 internal class ThemeSettingsScreen(
@@ -27,22 +28,22 @@ internal class ThemeSettingsScreen(
         root.addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(factory.tokens.pageBackground)
-            addView(factory.topBar("主题", onBack))
+            addView(factory.topBar(context.getString(R.string.settings_theme_title), onBack))
             addView(ScrollView(context).apply {
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(factory.dp(22), factory.dp(8), factory.dp(22), factory.dp(96))
-                    addView(factory.sectionTitle("主题色"))
+                    addView(factory.sectionTitle(context.getString(R.string.settings_theme_color_section)))
                     addView(factory.colorPresetRow(
-                        KiteTheme.themeColorChoices.map { it.label to it.color },
+                        KiteTheme.themeColorChoices.map { context.themeChoiceLabel(it) to it.color },
                         state.theme.themeColor,
                         onThemeColor
                     ))
-                    addView(factory.sectionTitle("背景色").apply {
+                    addView(factory.sectionTitle(context.getString(R.string.settings_background_color_section)).apply {
                         setPadding(0, factory.dp(24), 0, factory.dp(16))
                     })
                     addView(factory.colorPresetRow(
-                        KiteTheme.backgroundColorChoices.map { it.label to it.color },
+                        KiteTheme.backgroundColorChoices.map { context.themeChoiceLabel(it) to it.color },
                         state.theme.backgroundColor,
                         onBackgroundColor
                     ))

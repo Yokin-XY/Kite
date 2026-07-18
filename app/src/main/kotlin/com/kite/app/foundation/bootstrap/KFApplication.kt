@@ -9,6 +9,7 @@ import android.app.Activity
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import com.kite.app.R
 import com.kite.app.application.resources.ResourceFeatureDependenciesOwner
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.recipes.RecipeFeatureDependenciesOwner
@@ -132,10 +133,10 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val backgroundRuntimeChannel = NotificationChannel(
                 CHANNEL_BACKGROUND_RUNTIME,
-                "后台运行",
+                getString(R.string.notification_channel_background_name),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Android 要求的容器后台运行状态，不用于卡片进度提醒"
+                description = getString(R.string.notification_channel_background_description)
                 setSound(null, null)
                 enableVibration(false)
                 enableLights(false)
@@ -145,10 +146,10 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
 
             val runChannel = NotificationChannel(
                 CHANNEL_RUNS,
-                "首页卡片进度",
+                getString(R.string.notification_channel_runs_name),
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "显示每个首页卡片实例的进度、关闭和下一步操作"
+                description = getString(R.string.notification_channel_runs_description)
             }
 
             val manager = getSystemService(NotificationManager::class.java)

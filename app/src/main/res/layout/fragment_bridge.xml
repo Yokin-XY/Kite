@@ -41,7 +41,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="KF 工具环境"
+                    android:text="@string/bridge_toolchain_section"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -59,7 +59,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="检查并修复"
+                    android:text="@string/bridge_toolchain_prepare_repair"
                     app:backgroundTint="@color/primary" />
 
                 <com.google.android.material.button.MaterialButton
@@ -68,7 +68,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="环境诊断"
+                    android:text="@string/bridge_toolchain_doctor"
                     app:strokeColor="@color/outline" />
 
             </LinearLayout>
@@ -93,7 +93,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="版本清单 / 诊断输出"
+                    android:text="@string/bridge_inventory_section"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -129,7 +129,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="ADB 自动化"
+                    android:text="@string/bridge_adb_automation"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -140,7 +140,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="复制一键补全 ADB 命令"
+                    android:text="@string/bridge_copy_prepare_adb"
                     app:strokeColor="@color/outline" />
 
                 <com.google.android.material.button.MaterialButton
@@ -149,7 +149,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="复制环境诊断 ADB 命令"
+                    android:text="@string/bridge_copy_doctor_adb"
                     app:strokeColor="@color/outline" />
 
             </LinearLayout>
@@ -161,7 +161,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:text="刷新状态"
+            android:text="@string/bridge_refresh"
             app:strokeColor="@color/outline" />
 
     </LinearLayout>

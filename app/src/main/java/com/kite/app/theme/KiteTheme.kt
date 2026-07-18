@@ -14,7 +14,7 @@ data class ThemeConfig(
 )
 
 data class ThemeChoice(
-    val label: String,
+    val key: String,
     val color: Int
 )
 
@@ -76,19 +76,19 @@ object KiteTheme {
     val defaultBackgroundColor: Int = Color.rgb(246, 248, 250)
 
     val themeColorChoices: List<ThemeChoice> = listOf(
-        ThemeChoice("冷青", Color.rgb(14, 116, 144)),
-        ThemeChoice("紫", Color.rgb(109, 67, 230)),
-        ThemeChoice("绿", Color.rgb(5, 150, 105)),
-        ThemeChoice("蓝", Color.rgb(37, 99, 235)),
-        ThemeChoice("橙", Color.rgb(234, 88, 12))
+        ThemeChoice("cool_cyan", Color.rgb(14, 116, 144)),
+        ThemeChoice("purple", Color.rgb(109, 67, 230)),
+        ThemeChoice("green", Color.rgb(5, 150, 105)),
+        ThemeChoice("blue", Color.rgb(37, 99, 235)),
+        ThemeChoice("orange", Color.rgb(234, 88, 12))
     )
 
     val backgroundColorChoices: List<ThemeChoice> = listOf(
-        ThemeChoice("冷灰", Color.rgb(246, 248, 250)),
-        ThemeChoice("白", Color.WHITE),
-        ThemeChoice("米白", Color.rgb(251, 247, 239)),
-        ThemeChoice("雾蓝", Color.rgb(243, 247, 251)),
-        ThemeChoice("浅青", Color.rgb(241, 248, 247))
+        ThemeChoice("cool_gray", Color.rgb(246, 248, 250)),
+        ThemeChoice("white", Color.WHITE),
+        ThemeChoice("ivory", Color.rgb(251, 247, 239)),
+        ThemeChoice("mist_blue", Color.rgb(243, 247, 251)),
+        ThemeChoice("light_cyan", Color.rgb(241, 248, 247))
     )
 
     val defaultTextPrimary: Int = Color.rgb(15, 23, 42)

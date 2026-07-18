@@ -10,6 +10,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.application.settings.SettingsFeatureDependenciesOwner
+import com.kite.app.R
 import kotlinx.coroutines.launch
 
 /** 设置首页。页面只投影 Gateway 快照，系统页面与主壳副作用通过 Result 上交。 */
@@ -30,6 +31,9 @@ internal class SettingsFragment : Fragment() {
         initialState = controller.state.value,
         onBack = { send(SettingsFeatureRequest.Back) },
         onOpenTheme = { send(SettingsFeatureRequest.OpenTheme) },
+        onSelectAppLanguage = { language ->
+            dispatch(SettingsFeatureAction.SelectAppLanguage(language))
+        },
         onSelectBrowserMode = { mode ->
             dispatch(SettingsFeatureAction.SelectBrowserMode(mode))
         },
@@ -72,7 +76,10 @@ internal class SettingsFragment : Fragment() {
             when (val effect = controller.dispatch(action)) {
                 is SettingsFeatureEffect.BrowserModeChanged -> Toast.makeText(
                     requireContext(),
-                    "已切换为：${effect.mode.title}",
+                    getString(
+                        R.string.settings_browser_mode_changed,
+                        requireContext().browserModeTitle(effect.mode)
+                    ),
                     Toast.LENGTH_SHORT
                 ).show()
                 SettingsFeatureEffect.RecentTaskVisibilityChanged ->
@@ -81,6 +88,7 @@ internal class SettingsFragment : Fragment() {
                     send(SettingsFeatureRequest.OpenNotificationSettings)
                 is SettingsFeatureEffect.DropZoneRequested ->
                     send(SettingsFeatureRequest.OpenDropZone(effect.available))
+                is SettingsFeatureEffect.AppLanguageChanged,
                 is SettingsFeatureEffect.ThemeChanged,
                 null -> Unit
             }

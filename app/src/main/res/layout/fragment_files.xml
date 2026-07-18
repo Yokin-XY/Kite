@@ -112,7 +112,7 @@
                     android:layout_weight="1"
                     android:fontFamily="monospace"
                     android:gravity="center_vertical"
-                    android:text="/"
+                    android:text="@string/files_root_path"
                     android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 

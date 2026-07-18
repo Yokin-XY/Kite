@@ -4,13 +4,13 @@ import com.kite.app.browser.BrowserRuntimeMode
 import kotlinx.coroutines.flow.StateFlow
 
 data class SettingsDropZoneSnapshot(
-    val available: Boolean = false,
-    val message: String = "投放区尚未检查"
+    val available: Boolean = false
 )
 
 data class SettingsSnapshot(
     val themeColor: Int,
     val backgroundColor: Int,
+    val appLanguage: AppLanguagePreference,
     val browserRuntimeMode: BrowserRuntimeMode,
     val restoreLastScreen: Boolean,
     val hideMainTaskFromRecents: Boolean,
@@ -22,6 +22,7 @@ data class SettingsSnapshot(
 sealed interface SettingsCommand {
     data class SetThemeColor(val color: Int) : SettingsCommand
     data class SetBackgroundColor(val color: Int) : SettingsCommand
+    data class SetAppLanguage(val language: AppLanguagePreference) : SettingsCommand
     data class SetBrowserRuntimeMode(val mode: BrowserRuntimeMode) : SettingsCommand
     data class SetRestoreLastScreen(val enabled: Boolean) : SettingsCommand
     data class SetHideMainTaskFromRecents(val enabled: Boolean) : SettingsCommand
