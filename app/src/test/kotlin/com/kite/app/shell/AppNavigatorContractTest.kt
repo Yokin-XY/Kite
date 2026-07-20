@@ -1,5 +1,6 @@
 package com.kite.app.shell
 
+import com.kite.app.feature.settings.SettingsCategoryDestination
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -25,8 +26,15 @@ class AppNavigatorContractTest {
             AppDestination.Resources to AppDestination.Console,
             AppDestination.ResourceSearch to AppDestination.Resources,
             AppDestination.ResourceManage to AppDestination.Resources,
-            AppDestination.Processes to AppDestination.Console,
             AppDestination.Settings to AppDestination.Console,
+            AppDestination.SettingsAppearanceLanguage to AppDestination.Settings,
+            AppDestination.SettingsAppBehavior to AppDestination.Settings,
+            AppDestination.SettingsTerminalWorkbench to AppDestination.Settings,
+            AppDestination.SettingsBrowserLogin to AppDestination.Settings,
+            AppDestination.SettingsPermissionsFiles to AppDestination.Settings,
+            AppDestination.SettingsRuntimeEnvironment to AppDestination.Settings,
+            AppDestination.SettingsExperimentalFeatures to AppDestination.Settings,
+            AppDestination.SettingsHelpAbout to AppDestination.Settings,
             AppDestination.ThemeSettings to AppDestination.Settings
         )
 
@@ -63,7 +71,8 @@ class AppNavigatorContractTest {
             AppDestination.RecipeMore to AppDestination.Console,
             AppDestination.ResourceDetail to AppDestination.Resources,
             AppDestination.ResourceMore to AppDestination.Resources,
-            AppDestination.ResourceRawJson to AppDestination.Resources
+            AppDestination.ResourceRawJson to AppDestination.Resources,
+            AppDestination.Processes to AppDestination.Console
         )
 
         expectedFallbacks.forEach { (destination, fallback) ->
@@ -106,6 +115,14 @@ class AppNavigatorContractTest {
 
         assertEquals(RestorePolicy.Direct, navigator.contract(AppDestination.Terminal).restorePolicy)
         assertEquals(RestorePolicy.Direct, navigator.contract(AppDestination.Settings).restorePolicy)
+        assertEquals(
+            RestorePolicy.Direct,
+            navigator.contract(AppDestination.SettingsAppearanceLanguage).restorePolicy,
+        )
+        assertEquals(
+            RestorePolicy.Direct,
+            navigator.contract(AppDestination.SettingsHelpAbout).restorePolicy,
+        )
         assertEquals(RestorePolicy.Direct, navigator.contract(AppDestination.ThemeSettings).restorePolicy)
         assertEquals(RestorePolicy.Direct, navigator.contract(AppDestination.Resources).restorePolicy)
         assertEquals(RestorePolicy.Direct, navigator.contract(AppDestination.ResourceManage).restorePolicy)
@@ -127,6 +144,15 @@ class AppNavigatorContractTest {
         navigator.navigate(AppDestination.Resources)
 
         assertEquals(listOf(AppDestination.Settings, AppDestination.Resources), navigated)
+    }
+
+    @Test
+    fun `设置分类与 Shell 目标必须完整双向映射`() {
+        SettingsCategoryDestination.entries.forEach { category ->
+            val destination = category.toAppDestination()
+            assertEquals(category, destination.toSettingsCategoryOrNull())
+        }
+        assertEquals(null, AppDestination.Console.toSettingsCategoryOrNull())
     }
 
     private fun navigator(): AppNavigator = AppNavigator(AppNavigator.DestinationSink { })

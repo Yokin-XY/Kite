@@ -130,6 +130,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private var isCtrlPressed = false
     private var isAltPressed = false
     private var currentFontSizeDp = 35
+    private var currentTerminalThemeMode = TerminalThemeMode.SYSTEM
     private var currentSpace: SpaceRecord? = null
     private var currentTerminalSnapshot = TerminalSessionsSnapshot()
     private var lastManagedSessionsRenderSignature: String = ""
@@ -153,7 +154,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         }
 
         override fun themeLabel(): String =
-            TerminalUiPreferences.loadThemeMode(requireContext()).label
+            requireContext().terminalThemeLabel(TerminalUiPreferences.loadThemeMode(requireContext()))
     }
     private var terminalPanelPageIndex = 0
     private var sessionNoteJob: Job? = null
@@ -253,6 +254,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     override fun onResume() {
         super.onResume()
+        syncTerminalUiPreferences()
         terminalView.setTerminalCursorBlinkerState(true, true)
         if (isDetailMode) {
             terminalComposerInput.post {
@@ -305,6 +307,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             notifyManagedSessionsChanged = !isDetailOnlyMode()
         )
         currentFontSizeDp = TerminalUiPreferences.loadFontSizeDp(appContext)
+        currentTerminalThemeMode = TerminalUiPreferences.loadThemeMode(appContext)
 
         applyTerminalColorScheme()
         terminalView.setTerminalViewClient(this)
@@ -1450,7 +1453,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         val modes = arrayOf(TerminalThemeMode.SYSTEM, TerminalThemeMode.DARK, TerminalThemeMode.LIGHT)
         MaterialAlertDialogBuilder(requireContext())
             .setTitle(getString(R.string.terminal_theme_button))
-            .setItems(modes.map { it.label }.toTypedArray()) { _, which ->
+            .setItems(modes.map { requireContext().terminalThemeLabel(it) }.toTypedArray()) { _, which ->
                 applyTerminalThemeMode(modes[which])
             }
             .show()
@@ -1458,11 +1461,31 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private fun applyTerminalThemeMode(mode: TerminalThemeMode) {
         TerminalUiPreferences.saveThemeMode(requireContext().applicationContext, mode)
+        currentTerminalThemeMode = mode
         applyTerminalColorScheme()
         applyTerminalDetailTheme()
         terminalView.mTermSession?.emulator?.mColors?.reset()
         refreshTerminalColors()
         keepLatestTerminalOutputVisible()
+    }
+
+    private fun syncTerminalUiPreferences() {
+        val context = requireContext().applicationContext
+        val storedFontSize = TerminalUiPreferences.loadFontSizeDp(context)
+        if (::terminalView.isInitialized && storedFontSize != currentFontSizeDp) {
+            currentFontSizeDp = storedFontSize
+            terminalView.setTextSize(currentFontSizeDp)
+            relayoutTerminalAfterFontSizeChange()
+        }
+        val storedThemeMode = TerminalUiPreferences.loadThemeMode(context)
+        if (::terminalView.isInitialized && storedThemeMode != currentTerminalThemeMode) {
+            currentTerminalThemeMode = storedThemeMode
+            applyTerminalColorScheme()
+            applyTerminalDetailTheme()
+            terminalView.mTermSession?.emulator?.mColors?.reset()
+            refreshTerminalColors()
+            keepLatestTerminalOutputVisible()
+        }
     }
 
     private fun sendTerminalInput(rawInput: String) {

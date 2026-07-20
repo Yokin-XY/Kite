@@ -145,6 +145,8 @@ import com.kite.app.feature.web.WebWorkbenchTarget
 import com.kite.app.feature.settings.SettingsFeatureRequest
 import com.kite.app.feature.settings.SettingsFeatureResultContract
 import com.kite.app.feature.settings.SettingsFragment
+import com.kite.app.feature.settings.SettingsCategoryDestination
+import com.kite.app.feature.settings.SettingsCategoryFragment
 import com.kite.app.feature.settings.ThemeSettingsFragment
 import com.kite.app.feature.recipeeditor.RecipeEditorDraft
 import com.kite.app.feature.recipeeditor.RecipeEditorFragment
@@ -155,7 +157,10 @@ import com.kite.app.feature.runhistory.RunHistoryFragment
 import com.kite.app.feature.runhistory.RunHistoryResultContract
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
 import com.kite.app.ui.terminal.TerminalFragment
+import com.kite.app.ui.logs.LogActivity
 import com.kite.app.shell.TerminalSurfaceShellBinding
+import com.kite.app.shell.toAppDestination
+import com.kite.app.shell.toSettingsCategoryOrNull
 import com.kite.app.platform.runs.AndroidRunNotificationAccess
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
@@ -1266,8 +1271,8 @@ open class MainActivity : AppCompatActivity() {
             ?.updateRuntimeBlocked(runtimeStatusState.blocksUbuntuActions)
     }
 
-    private fun showKiteProcessOverview(forceRefresh: Boolean = true) {
-        enterScreen(AppDestination.Processes)
+    private fun showKiteProcessOverview(forceRefresh: Boolean = true, onBack: (() -> Unit)? = null) {
+        enterScreen(AppDestination.Processes, onBack)
         showFeatureFragment(
             fragment = RuntimeManagementFragment.newInstance(forceRefresh),
             tag = TAG_RUNTIME_MANAGEMENT_FRAGMENT
@@ -1379,13 +1384,11 @@ open class MainActivity : AppCompatActivity() {
         root.removeAllViews()
     }
 
-    /**
-     * 过渡期:AppNavigator 的老路径分发。把 AppDestination 枚举映射到老的 show* 方法。
-     * T6b 起逐个 AppDestination 改走 Fragment 时,这些分支会被 routeToFragment 取代。
-     * 仅无参、可在路由层触发的 AppDestination 在此分发;带参 AppDestination(如 ResourceDetail 需 resourceId)
-     * 仍由各自的 show*(args) 直接调用,不经过此无参入口。
-     */
     private fun dispatchLegacyDestination(screen: AppDestination) {
+        screen.toSettingsCategoryOrNull()?.let {
+            showSettingsCategory(it)
+            return
+        }
         when (screen) {
             AppDestination.Console -> showConsole()
             AppDestination.Terminal -> showTerminal()
@@ -1420,6 +1423,10 @@ open class MainActivity : AppCompatActivity() {
     private fun showSettings() {
         enterScreen(AppDestination.Settings)
         showFeatureFragment(SettingsFragment(), TAG_SETTINGS_FRAGMENT)
+    }
+    private fun showSettingsCategory(destination: SettingsCategoryDestination) {
+        enterScreen(destination.toAppDestination())
+        showFeatureFragment(SettingsCategoryFragment.newInstance(destination), TAG_SETTINGS_CATEGORY_FRAGMENT)
     }
 
     private fun browserRuntimeMode(): BrowserRuntimeMode =
@@ -1535,10 +1542,14 @@ open class MainActivity : AppCompatActivity() {
         ) { _, bundle ->
             when (val request = SettingsFeatureResultContract.parse(bundle)) {
                 SettingsFeatureRequest.Back -> requestNavigationBack()
+                is SettingsFeatureRequest.OpenCategory -> showSettingsCategory(request.destination)
                 SettingsFeatureRequest.OpenTheme -> showThemeSettings()
                 is SettingsFeatureRequest.ApplyTheme -> applyThemeConfig(request.theme)
                 SettingsFeatureRequest.ApplyRecentTaskVisibility -> applyRecentTaskVisibilitySetting()
                 SettingsFeatureRequest.OpenNotificationSettings -> requestRunNotificationSettings()
+                SettingsFeatureRequest.OpenAllFilesSettings -> openAllFilesAccessSettings()
+                SettingsFeatureRequest.OpenProcesses -> showKiteProcessOverview(onBack = { showSettingsCategory(SettingsCategoryDestination.RuntimeEnvironment) })
+                SettingsFeatureRequest.OpenLogs -> startActivity(Intent(this, LogActivity::class.java))
                 is SettingsFeatureRequest.OpenDropZone -> {
                     if (request.available) refreshDropZoneRecipes() else requestDropZoneAccess()
                 }
@@ -2500,6 +2511,7 @@ open class MainActivity : AppCompatActivity() {
         private const val TAG_RUNTIME_MANAGEMENT_FRAGMENT = "kite-runtime-management"
         private const val TAG_WEB_WORKBENCH_FRAGMENT = "kite-web-workbench"
         private const val TAG_SETTINGS_FRAGMENT = "kite-settings"
+        private const val TAG_SETTINGS_CATEGORY_FRAGMENT = "kite-settings-category"
         private const val TAG_THEME_SETTINGS_FRAGMENT = "kite-theme-settings"
         private const val TAG_BOTTOM_NAVIGATION_VIEW = "kite-bottom-navigation"
         private const val RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE =

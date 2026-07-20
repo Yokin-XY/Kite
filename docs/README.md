@@ -24,12 +24,14 @@
 - [构建与安装](guides/build-and-install.md)：开发环境、Gradle 构建、APK 安装和真机检查。
 - [卡片与资源](guides/cards-and-resources.md)：首页卡片、资源清单、安装流程和状态边界。
 - [浏览器认证](guides/browser-auth.md)：WebView、系统浏览器 handoff 和认证回调。
+- [应用语言](guides/app-localization.md)：资源库架构、语言切换和新增语言流程。
 - [验证方式](guides/verification.md)：单元测试、静态护栏、构建和人工验收。
 
 ## 架构
 
 - [架构总览](architecture/overview.md)：模块化单体分层、职责和核心业务链。
 - [状态与生命周期](architecture/state-and-lifecycle.md)：状态拥有者、局部更新、显示面与运行生命周期。
+- [设置中心架构](architecture/settings.md)：能力分类、状态拥有者、入口类型和新增设置流程。
 - [长期决策](architecture/decisions.md)：当前仍然有效的架构决策。
 
 ## 协议参考

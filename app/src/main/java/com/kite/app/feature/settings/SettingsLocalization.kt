@@ -21,13 +21,6 @@ internal fun Context.browserModeTitle(mode: BrowserRuntimeMode): String = getStr
     }
 )
 
-internal fun Context.browserModeSummary(mode: BrowserRuntimeMode): String = getString(
-    when (mode) {
-        BrowserRuntimeMode.WebViewWithSystemAuth -> R.string.browser_mode_webview_system_auth_summary
-        BrowserRuntimeMode.AutomationBrowser -> R.string.browser_mode_automation_summary
-    }
-)
-
 internal fun Context.themeChoiceLabel(choice: ThemeChoice): String {
     val resourceId = when (choice.key) {
         "cool_cyan" -> R.string.theme_choice_cool_cyan

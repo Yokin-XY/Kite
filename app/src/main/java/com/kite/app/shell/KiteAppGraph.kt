@@ -126,6 +126,8 @@ internal class KiteAppGraph private constructor(context: Context) {
     val settingsGateway: SettingsGateway by lazy {
         AndroidSettingsGateway(
             context = appContext,
+            readAppLanguage = AndroidAppLocaleOwner::current,
+            applyAppLanguage = AndroidAppLocaleOwner::apply,
             readDropZone = {
                 createDropZoneManager().prepareDropZone().let { status ->
                     SettingsDropZoneSnapshot(status.available)

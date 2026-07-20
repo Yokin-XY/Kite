@@ -17,6 +17,8 @@ import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementDependenciesOwner
 import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
+import com.kite.app.application.runtimebootstrap.RuntimeBootstrapDependenciesOwner
+import com.kite.app.application.runtimebootstrap.RuntimeBootstrapGateway
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kite.app.foundation.runtime.HostSelfAdbBridgeWorker
@@ -33,7 +35,7 @@ import com.kite.app.application.runs.RunHistoryGateway
 
 class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner,
     RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner, SettingsFeatureDependenciesOwner,
-    RunHistoryDependenciesOwner {
+    RuntimeBootstrapDependenciesOwner, RunHistoryDependenciesOwner {
 
     override val resourceFeatureGateway: ResourceFeatureGateway
         get() = KiteAppGraph.from(this).resourceFeatureGateway
@@ -46,6 +48,9 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
 
     override val runtimeManagementCoordinator: RuntimeManagementCoordinator
         get() = KiteAppGraph.from(this).runtimeManagementCoordinator
+
+    override val runtimeBootstrapGateway: RuntimeBootstrapGateway
+        get() = KiteAppGraph.from(this).runtimeBootstrapGateway
 
     override val webWorkbenchDiagnostics
         get() = KiteAppGraph.from(this).diagnostics

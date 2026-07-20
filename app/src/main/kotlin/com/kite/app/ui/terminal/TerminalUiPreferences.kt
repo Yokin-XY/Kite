@@ -2,14 +2,12 @@ package com.kite.app.ui.terminal
 
 import android.content.Context
 import android.content.res.Configuration
+import com.kite.app.R
 
-enum class TerminalThemeMode(
-    val storageValue: String,
-    val label: String
-) {
-    SYSTEM("system", "跟随系统"),
-    DARK("dark", "深色"),
-    LIGHT("light", "浅色");
+enum class TerminalThemeMode(val storageValue: String) {
+    SYSTEM("system"),
+    DARK("dark"),
+    LIGHT("light");
 
     companion object {
         fun fromStorage(value: String?): TerminalThemeMode {
@@ -51,6 +49,8 @@ object TerminalUiPreferences {
         return closestFontSize(scaled)
     }
 
+    fun fontPresets(): List<Int> = FONT_PRESETS.toList()
+
     fun loadThemeMode(context: Context): TerminalThemeMode {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return TerminalThemeMode.fromStorage(prefs.getString(KEY_THEME_MODE, TerminalThemeMode.SYSTEM.storageValue))
@@ -83,3 +83,11 @@ object TerminalUiPreferences {
         return FONT_PRESETS.minByOrNull { kotlin.math.abs(it - value) } ?: DEFAULT_FONT_SIZE_DP
     }
 }
+
+fun Context.terminalThemeLabel(mode: TerminalThemeMode): String = getString(
+    when (mode) {
+        TerminalThemeMode.SYSTEM -> R.string.terminal_theme_system
+        TerminalThemeMode.DARK -> R.string.terminal_theme_dark
+        TerminalThemeMode.LIGHT -> R.string.terminal_theme_light
+    }
+)

@@ -15,6 +15,14 @@ internal enum class AppDestination {
     ResourceRawJson,
     Processes,
     Settings,
+    SettingsAppearanceLanguage,
+    SettingsAppBehavior,
+    SettingsTerminalWorkbench,
+    SettingsBrowserLogin,
+    SettingsPermissionsFiles,
+    SettingsRuntimeEnvironment,
+    SettingsExperimentalFeatures,
+    SettingsHelpAbout,
     ThemeSettings
 }
 
@@ -171,12 +179,60 @@ internal class AppNavigator(
             DestinationContract(
                 AppDestination.Processes,
                 DestinationKind.Child,
-                BackPolicy.Parent(AppDestination.Console)
+                BackPolicy.Contextual(AppDestination.Console)
             ),
             DestinationContract(
                 AppDestination.Settings,
                 DestinationKind.Root,
                 BackPolicy.Parent(AppDestination.Console),
+                RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsAppearanceLanguage,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.Settings),
+                RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsAppBehavior,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.Settings),
+                RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsTerminalWorkbench,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.Settings),
+                RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsBrowserLogin,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.Settings),
+                RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsPermissionsFiles,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.Settings),
+                RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsRuntimeEnvironment,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.Settings),
+                RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsExperimentalFeatures,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.Settings),
+                RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsHelpAbout,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.Settings),
                 RestorePolicy.Direct
             ),
             DestinationContract(

@@ -11,3 +11,7 @@ interface RuntimeBootstrapGateway {
 
     fun ensureReady()
 }
+
+interface RuntimeBootstrapDependenciesOwner {
+    val runtimeBootstrapGateway: RuntimeBootstrapGateway
+}

@@ -25,7 +25,7 @@
             android:paddingBottom="10dp">
 
             <Space
-                android:layout_width="36dp"
+                android:layout_width="48dp"
                 android:layout_height="1dp" />
 
             <TextView
@@ -40,10 +40,11 @@
 
             <androidx.appcompat.widget.AppCompatImageButton
                 android:id="@+id/btnListAdd"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:padding="4dp"
+                android:contentDescription="@string/terminal_new_session"
+                android:padding="10dp"
                 android:src="@drawable/ic_add_light" />
         </LinearLayout>
 
@@ -108,10 +109,11 @@
 
             <androidx.appcompat.widget.AppCompatImageButton
                 android:id="@+id/btnBackToSessions"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:padding="4dp"
+                android:contentDescription="@string/common_back"
+                android:padding="10dp"
                 android:src="@drawable/ic_arrow_back_light" />
 
             <LinearLayout
@@ -147,8 +149,8 @@
             </LinearLayout>
 
             <Space
-                android:layout_width="36dp"
-                android:layout_height="36dp" />
+                android:layout_width="48dp"
+                android:layout_height="48dp" />
         </LinearLayout>
 
         <FrameLayout

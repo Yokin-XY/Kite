@@ -3,8 +3,6 @@ package com.kite.app.platform.settings
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
-import androidx.appcompat.app.AppCompatDelegate
-import androidx.core.os.LocaleListCompat
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.application.settings.SettingsCommand
 import com.kite.app.application.settings.SettingsDropZoneSnapshot
@@ -28,16 +26,8 @@ internal class AndroidSettingsGateway(
             true
         }
     },
-    private val readAppLanguage: () -> AppLanguagePreference = {
-        AppLanguagePreference.fromLanguageTags(
-            AppCompatDelegate.getApplicationLocales().toLanguageTags()
-        )
-    },
-    private val applyAppLanguage: (AppLanguagePreference) -> Unit = { language ->
-        AppCompatDelegate.setApplicationLocales(
-            LocaleListCompat.forLanguageTags(language.languageTag.orEmpty())
-        )
-    },
+    private val readAppLanguage: () -> AppLanguagePreference = { AppLanguagePreference.System },
+    private val applyAppLanguage: (AppLanguagePreference) -> Unit = {},
     private val readDropZone: () -> SettingsDropZoneSnapshot
 ) : SettingsGateway {
     private val appContext = context.applicationContext
