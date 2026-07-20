@@ -28,7 +28,9 @@ internal class ThemeSettingsFragment : Fragment() {
         context = requireContext(),
         onBack = { send(SettingsFeatureRequest.Back) },
         onThemeColor = { color -> dispatch(SettingsFeatureAction.SelectThemeColor(color)) },
-        onBackgroundColor = { color -> dispatch(SettingsFeatureAction.SelectBackgroundColor(color)) }
+        onBackgroundColor = { color -> dispatch(SettingsFeatureAction.SelectBackgroundColor(color)) },
+        onThemeMode = { mode -> dispatch(SettingsFeatureAction.SelectThemeMode(mode)) },
+        onThemeStyle = { styleKey -> dispatch(SettingsFeatureAction.SelectThemeStyle(styleKey)) },
     ).also { created ->
         screen = created
         created.render(controller.state.value)

@@ -4,6 +4,8 @@ import com.kite.app.application.settings.SettingsSnapshot
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.KiteThemeMode
+import com.kite.app.application.settings.themeConfig
 
 internal data class SettingsUiState(
     val theme: ThemeConfig,
@@ -20,6 +22,8 @@ internal sealed interface SettingsFeatureAction {
     data object Refresh : SettingsFeatureAction
     data class SelectThemeColor(val color: Int) : SettingsFeatureAction
     data class SelectBackgroundColor(val color: Int) : SettingsFeatureAction
+    data class SelectThemeMode(val mode: KiteThemeMode) : SettingsFeatureAction
+    data class SelectThemeStyle(val styleKey: String) : SettingsFeatureAction
     data class SelectAppLanguage(val language: AppLanguagePreference) : SettingsFeatureAction
     data class SelectBrowserMode(val mode: BrowserRuntimeMode) : SettingsFeatureAction
     data class SetRestoreLastScreen(val enabled: Boolean) : SettingsFeatureAction
@@ -39,7 +43,7 @@ internal sealed interface SettingsFeatureEffect {
 
 internal object SettingsProjector {
     fun project(snapshot: SettingsSnapshot): SettingsUiState = SettingsUiState(
-        theme = ThemeConfig(snapshot.themeColor, snapshot.backgroundColor),
+        theme = snapshot.themeConfig(),
         appLanguage = snapshot.appLanguage,
         browserRuntimeMode = snapshot.browserRuntimeMode,
         restoreLastScreen = snapshot.restoreLastScreen,

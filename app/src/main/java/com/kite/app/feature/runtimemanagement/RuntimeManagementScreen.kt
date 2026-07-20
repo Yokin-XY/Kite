@@ -12,9 +12,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.kite.app.run.KiteRunUiTone
-import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
+import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.kite.app.ui.UiKit
 
 /** 运行管理真实视图所有者。普通状态只绑定已有行，结构变化才重建滚动内容。 */
@@ -593,13 +593,6 @@ internal class RuntimeManagementScreen(
 }
 
 private object RuntimeManagementTheme {
-    fun tokens(context: Context): ThemeTokens {
-        val store = context.getSharedPreferences("kite_theme", Context.MODE_PRIVATE)
-        return KiteTheme.resolve(
-            ThemeConfig(
-                themeColor = store.getInt("theme_color", KiteTheme.defaultThemeColor),
-                backgroundColor = store.getInt("background_color", KiteTheme.defaultBackgroundColor)
-            )
-        )
-    }
+    fun tokens(context: Context): ThemeTokens =
+        context.kiteThemeEnvironment(ThemeScope.RUN).tokens
 }

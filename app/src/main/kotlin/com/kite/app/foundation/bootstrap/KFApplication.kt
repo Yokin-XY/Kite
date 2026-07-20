@@ -30,12 +30,15 @@ import com.kite.app.shell.KiteAppGraph
 import com.kite.app.feature.web.WebWorkbenchDependenciesOwner
 import com.kite.app.application.settings.SettingsFeatureDependenciesOwner
 import com.kite.app.application.settings.SettingsGateway
+import com.kite.app.application.theme.ThemeEnvironmentDependenciesOwner
+import com.kite.app.application.theme.ThemeEnvironmentGateway
+import com.kite.app.platform.theme.AndroidThemeEnvironmentGateway
 import com.kite.app.application.runs.RunHistoryDependenciesOwner
 import com.kite.app.application.runs.RunHistoryGateway
 
 class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner,
     RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner, SettingsFeatureDependenciesOwner,
-    RuntimeBootstrapDependenciesOwner, RunHistoryDependenciesOwner {
+    RuntimeBootstrapDependenciesOwner, RunHistoryDependenciesOwner, ThemeEnvironmentDependenciesOwner {
 
     override val resourceFeatureGateway: ResourceFeatureGateway
         get() = KiteAppGraph.from(this).resourceFeatureGateway
@@ -60,6 +63,13 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
 
     override val settingsFeatureGateway: SettingsGateway
         get() = KiteAppGraph.from(this).settingsGateway
+
+    override val themeEnvironmentGateway: ThemeEnvironmentGateway by lazy(LazyThreadSafetyMode.NONE) {
+        AndroidThemeEnvironmentGateway(
+            context = this,
+            settingsGateway = settingsFeatureGateway,
+        )
+    }
 
     override val runHistoryGateway: RunHistoryGateway
         get() = KiteAppGraph.from(this).runHistoryGateway

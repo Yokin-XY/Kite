@@ -2,6 +2,7 @@ package com.kite.app.feature.settings
 
 import android.os.Bundle
 import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.KiteThemeMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -11,15 +12,19 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class SettingsFeatureResultContractTest {
     @Test
-    fun `theme request round-trips both colors`() {
+    fun `theme request round-trips colors mode and style`() {
         val bundle = Bundle().apply {
             putString("kind", "apply_theme")
             putInt("theme_color", 0x112233)
             putInt("background_color", 0x445566)
+            putString("theme_mode", "dark")
+            putString("theme_style", "standard")
         }
 
         assertEquals(
-            SettingsFeatureRequest.ApplyTheme(ThemeConfig(0x112233, 0x445566)),
+            SettingsFeatureRequest.ApplyTheme(
+                ThemeConfig(0x112233, 0x445566, KiteThemeMode.DARK, "standard")
+            ),
             SettingsFeatureResultContract.parse(bundle)
         )
     }

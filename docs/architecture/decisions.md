@@ -57,3 +57,9 @@ PRoot、终端和其中运行的 CLI 保持 Kite 的 Android 应用 UID，并使
 ## 终端快捷动作声明输入副作用
 
 终端快捷页继续通过 `TerminalPanelActionRegistry` 扩展。每个动作显式声明执行后保留还是清理实时预输入，统一执行入口先运行 handler，再由终端 host 兑现输入副作用。页面不得通过控制字符串内容猜测 Ctrl+C、Enter 等动作语义；主题、分页和动作反馈只更新现有终端控件。
+
+## 主题统一解释，颜色与组件样式分层
+
+主题偏好由 `SettingsGateway` 持有，`ThemeEnvironmentGateway` 是应用级唯一读取入口。`KiteTheme` 统一解析跟随系统/亮色/暗色、基础颜色、样式注册键和类型化作用域；页面不直接读取 SharedPreferences，也不自行判断 Android 明暗。
+
+统一的是入口、语义和继承规则，不是要求所有显示面完全同形。颜色使用 `ThemeTokens`，组件形态使用 `ThemeStyleDefinition + ThemeComponentStyle`，局部差异使用 `ThemeScope`。新增颜色或组件风格只扩展中央定义；页面不得按 `styleKey` 编写条件分支。终端已校准色板保持独立，但“跟随应用”消费相同的有效明暗状态。

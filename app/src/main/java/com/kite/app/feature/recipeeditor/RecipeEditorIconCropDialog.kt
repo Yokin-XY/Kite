@@ -16,9 +16,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
+import com.kite.app.ui.theme.kiteThemeEnvironment
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -278,13 +278,7 @@ private fun cropRounded(fill: Int, stroke: Int, radius: Float): GradientDrawable
     }
 
 private fun editorCropTokens(context: Context): ThemeTokens {
-    val settings = context.getSharedPreferences("kite_theme", Context.MODE_PRIVATE)
-    return KiteTheme.resolve(
-        ThemeConfig(
-            themeColor = settings.getInt("theme_color", KiteTheme.defaultThemeColor),
-            backgroundColor = settings.getInt("background_color", KiteTheme.defaultBackgroundColor)
-        )
-    )
+    return context.kiteThemeEnvironment(ThemeScope.EDITOR).tokens
 }
 
 private fun Context.dp(value: Int): Int =

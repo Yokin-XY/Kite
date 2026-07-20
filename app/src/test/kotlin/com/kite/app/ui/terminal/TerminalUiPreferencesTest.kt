@@ -4,6 +4,7 @@ import android.app.Activity
 import com.kite.app.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -31,5 +32,13 @@ class TerminalUiPreferencesTest {
         TerminalUiPreferences.saveFontSizeDp(activity, 999)
 
         assertEquals(TerminalUiPreferences.fontPresets().last(), TerminalUiPreferences.loadFontSizeDp(activity))
+    }
+
+    @Test
+    fun `终端跟随模式使用应用有效主题而显式选择仍可覆盖`() {
+        assertTrue(TerminalUiPreferences.resolveTerminalDarkMode(TerminalThemeMode.SYSTEM, true))
+        assertFalse(TerminalUiPreferences.resolveTerminalDarkMode(TerminalThemeMode.SYSTEM, false))
+        assertTrue(TerminalUiPreferences.resolveTerminalDarkMode(TerminalThemeMode.DARK, false))
+        assertFalse(TerminalUiPreferences.resolveTerminalDarkMode(TerminalThemeMode.LIGHT, true))
     }
 }

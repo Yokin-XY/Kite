@@ -12,6 +12,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.application.runs.RunHistoryDependenciesOwner
 import com.kite.app.application.runs.RunHistoryGateway
 import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.KiteTheme
+import com.kite.app.theme.KiteThemeMode
 import kotlinx.coroutines.launch
 
 internal class RunHistoryFragment : Fragment() {
@@ -77,7 +79,9 @@ internal class RunHistoryFragment : Fragment() {
 
     private fun themeConfig(): ThemeConfig = ThemeConfig(
         requireArguments().getInt(ARG_THEME_COLOR),
-        requireArguments().getInt(ARG_BACKGROUND_COLOR)
+        requireArguments().getInt(ARG_BACKGROUND_COLOR),
+        KiteThemeMode.fromStorageKey(requireArguments().getString(ARG_THEME_MODE)),
+        requireArguments().getString(ARG_THEME_STYLE) ?: KiteTheme.defaultStyleKey,
     )
 
     companion object {
@@ -88,6 +92,8 @@ internal class RunHistoryFragment : Fragment() {
         private const val ARG_EMPTY_DETAIL = "empty_detail"
         private const val ARG_THEME_COLOR = "theme_color"
         private const val ARG_BACKGROUND_COLOR = "background_color"
+        private const val ARG_THEME_MODE = "theme_mode"
+        private const val ARG_THEME_STYLE = "theme_style"
 
         fun newInstance(
             recipeId: String,
@@ -105,6 +111,8 @@ internal class RunHistoryFragment : Fragment() {
                 putString(ARG_EMPTY_DETAIL, emptyDetail)
                 putInt(ARG_THEME_COLOR, theme.themeColor)
                 putInt(ARG_BACKGROUND_COLOR, theme.backgroundColor)
+                putString(ARG_THEME_MODE, theme.mode.storageKey)
+                putString(ARG_THEME_STYLE, theme.styleKey)
             }
         }
     }

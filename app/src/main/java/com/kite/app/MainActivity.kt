@@ -97,6 +97,9 @@ import com.kite.app.shell.RestorePolicy
 import com.kite.app.shell.RunNotificationPermissionFragment
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
+import com.kite.app.application.theme.ThemeEnvironmentDependenciesOwner
+import com.kite.app.ui.theme.applyKiteWindowTheme
+import com.kite.app.ui.theme.isSystemDarkTheme
 import com.kite.app.R
 import com.kite.app.foundation.bootstrap.StartupTraceStore
 import com.kite.app.foundation.runtime.RuntimeAutomationActions
@@ -242,7 +245,7 @@ open class MainActivity : AppCompatActivity() {
     private var dropZoneStatus: DropZoneStatus = DropZoneStatus(available = false, message = "投放区尚未检查")
     private var isDropZoneRefreshing = false
     private var themeConfig = ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
-    private var tokens = KiteTheme.resolve(themeConfig)
+    private var tokens = KiteTheme.resolveEnvironment(themeConfig, systemDark = false).tokens
     private var pendingRuntimePermissionBootstrap = false
     private var runtimePermissionRequestInFlight = false
     private lateinit var firstRunOnboardingCoordinator: FirstRunOnboardingCoordinator
@@ -284,10 +287,10 @@ open class MainActivity : AppCompatActivity() {
             managementGateway = appGraph.runtimeManagementGateway,
             scope = lifecycleScope
         )
-        themeConfig = settingsGateway.currentSnapshot().let { snapshot ->
-            ThemeConfig(snapshot.themeColor, snapshot.backgroundColor)
-        }
-        tokens = KiteTheme.resolve(themeConfig)
+        val environment = (applicationContext as ThemeEnvironmentDependenciesOwner).themeEnvironmentGateway.current()
+        themeConfig = environment.config
+        tokens = environment.tokens
+        applyKiteWindowTheme(tokens, environment.isDark)
         applyKiteTerminalTheme()
         recipeLoader = appGraph.createRecipeLoader()
         dropZoneManager = appGraph.createDropZoneManager()
@@ -737,8 +740,6 @@ open class MainActivity : AppCompatActivity() {
         }
     }
 
-
-
     private fun observeRunExecutionEffects() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -865,7 +866,6 @@ open class MainActivity : AppCompatActivity() {
         }
     }
 
-
     private fun requestFirstRunRuntimePermissions(startBootstrapAfterGrant: Boolean) {
         if (startBootstrapAfterGrant) {
             pendingRuntimePermissionBootstrap = true
@@ -963,7 +963,6 @@ open class MainActivity : AppCompatActivity() {
         }
     }.ifEmpty { listOf("文件访问") }
 
-
     private fun setRuntimeStatusState(state: RuntimeStatusUiState) {
         val previous = runtimeStatusState
         if (runtimeStatusState == state) return
@@ -1018,11 +1017,12 @@ open class MainActivity : AppCompatActivity() {
         return previous.progressText.isBlank() != next.progressText.isBlank()
     }
 
-
     private fun applyThemeConfig(config: ThemeConfig) {
-        if (themeConfig == config) return
-        themeConfig = config
-        tokens = KiteTheme.resolve(config)
+        val next = KiteTheme.resolveEnvironment(config, isSystemDarkTheme())
+        if (themeConfig == next.config && tokens == next.tokens) return
+        themeConfig = next.config
+        tokens = next.tokens
+        applyKiteWindowTheme(tokens, next.isDark)
         applyKiteTerminalTheme()
         if (::root.isInitialized) {
             root.setBackgroundColor(tokens.pageBackground)
@@ -1115,7 +1115,6 @@ open class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "已恢复未保存配置", Toast.LENGTH_SHORT).show()
         return true
     }
-
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -1996,7 +1995,6 @@ open class MainActivity : AppCompatActivity() {
         }.getOrDefault(false)
     }
 
-
     private fun isUbuntuActionBlocked(recipe: KiteRecipe): Boolean =
         runtimeStatusState.blocksUbuntuActions && recipe.hasUbuntuStep()
 
@@ -2071,10 +2069,6 @@ open class MainActivity : AppCompatActivity() {
             }
         }
     }
-
-
-
-
 
     private fun shouldOpenStepSurface(recipe: KiteRecipe, step: KiteRecipeStep): Boolean {
         return when (KiteRecipe.normalizeSurfaceMode(step.surfaceMode)) {

@@ -10,8 +10,37 @@ import android.graphics.Color
  */
 data class ThemeConfig(
     val themeColor: Int,
-    val backgroundColor: Int
+    val backgroundColor: Int,
+    val mode: KiteThemeMode = KiteThemeMode.SYSTEM,
+    val styleKey: String = "standard",
 )
+
+enum class KiteThemeMode(val storageKey: String) {
+    SYSTEM("system"),
+    LIGHT("light"),
+    DARK("dark");
+
+    companion object {
+        fun fromStorageKey(value: String?): KiteThemeMode =
+            entries.firstOrNull { it.storageKey == value } ?: SYSTEM
+    }
+}
+
+enum class KiteEffectiveThemeMode {
+    LIGHT,
+    DARK,
+}
+
+/** 页面只声明自己属于哪个显示作用域，不按样式名写条件分支。 */
+enum class ThemeScope {
+    APP,
+    HOME,
+    RESOURCE,
+    SETTINGS,
+    EDITOR,
+    RUN,
+    TERMINAL,
+}
 
 data class ThemeChoice(
     val key: String,
@@ -71,6 +100,51 @@ data class ThemeSpacing(
     val itemGap: Int
 )
 
+/**
+ * 与颜色分离的组件样式合同。以后改变圆角、描边或层级，只扩展样式定义；
+ * 页面仍消费相同的语义字段。
+ */
+data class ThemeComponentStyle(
+    val shapes: ThemeShapes,
+    val spacing: ThemeSpacing,
+    val cardElevation: Int,
+    val controlElevation: Int,
+    val strokeWidth: Int,
+)
+
+data class ThemeStyleDefinition(
+    val key: String,
+    val base: ThemeComponentStyle,
+    val scopeOverrides: Map<ThemeScope, ThemeComponentStyle> = emptyMap(),
+) {
+    fun forScope(scope: ThemeScope): ThemeComponentStyle = scopeOverrides[scope] ?: base
+}
+
+data class ScopedThemeEnvironment(
+    val scope: ThemeScope,
+    val mode: KiteEffectiveThemeMode,
+    val tokens: ThemeTokens,
+    val components: ThemeComponentStyle,
+) {
+    val isDark: Boolean get() = mode == KiteEffectiveThemeMode.DARK
+}
+
+data class ThemeEnvironment(
+    val config: ThemeConfig,
+    val mode: KiteEffectiveThemeMode,
+    val tokens: ThemeTokens,
+    val style: ThemeStyleDefinition,
+) {
+    val isDark: Boolean get() = mode == KiteEffectiveThemeMode.DARK
+
+    fun forScope(scope: ThemeScope): ScopedThemeEnvironment = ScopedThemeEnvironment(
+        scope = scope,
+        mode = mode,
+        tokens = tokens,
+        components = style.forScope(scope),
+    )
+}
+
 data class KiteTone(
     val strong: Int,
     val soft: Int,
@@ -93,18 +167,34 @@ enum class KiteAccent(val key: String) {
 }
 
 object KiteTheme {
-    val shapes = ThemeShapes(
-        cardRadius = 24,
-        controlRadius = 18,
-        chipRadius = 20,
-        iconTileRadius = 14
+    const val defaultStyleKey: String = "standard"
+
+    private val standardStyle = ThemeStyleDefinition(
+        key = defaultStyleKey,
+        base = ThemeComponentStyle(
+            shapes = ThemeShapes(
+                cardRadius = 24,
+                controlRadius = 18,
+                chipRadius = 20,
+                iconTileRadius = 14,
+            ),
+            spacing = ThemeSpacing(
+                pageHorizontal = 18,
+                sectionGap = 12,
+                itemGap = 8,
+            ),
+            cardElevation = 1,
+            controlElevation = 0,
+            strokeWidth = 1,
+        ),
     )
 
-    val spacing = ThemeSpacing(
-        pageHorizontal = 18,
-        sectionGap = 12,
-        itemGap = 8
-    )
+    /** 新样式只需登记到这里；设置页和作用域解析不需要新增页面分支。 */
+    val styleDefinitions: List<ThemeStyleDefinition> = listOf(standardStyle)
+
+    /** 兼容现有组件；新代码优先从 ThemeEnvironment.components 消费。 */
+    val shapes: ThemeShapes get() = standardStyle.base.shapes
+    val spacing: ThemeSpacing get() = standardStyle.base.spacing
 
     val defaultThemeColor: Int = Color.rgb(14, 116, 144)
     val defaultBackgroundColor: Int = Color.rgb(246, 248, 250)
@@ -129,7 +219,30 @@ object KiteTheme {
     val defaultTextSecondary: Int = Color.rgb(100, 116, 139)
     val defaultBorder: Int = Color.rgb(226, 232, 240)
 
-    fun resolve(config: ThemeConfig): ThemeTokens {
+    /** 旧调用点的过渡入口，等同于在非暗色系统中解析。 */
+    fun resolve(config: ThemeConfig): ThemeTokens = resolveEnvironment(config, systemDark = false).tokens
+
+    fun resolveEnvironment(config: ThemeConfig, systemDark: Boolean): ThemeEnvironment {
+        val effectiveMode = when (config.mode) {
+            KiteThemeMode.SYSTEM -> if (systemDark) KiteEffectiveThemeMode.DARK else KiteEffectiveThemeMode.LIGHT
+            KiteThemeMode.LIGHT -> KiteEffectiveThemeMode.LIGHT
+            KiteThemeMode.DARK -> KiteEffectiveThemeMode.DARK
+        }
+        val style = styleDefinitions.firstOrNull { it.key == config.styleKey } ?: standardStyle
+        val normalizedConfig = if (style.key == config.styleKey) config else config.copy(styleKey = style.key)
+        val tokens = when (effectiveMode) {
+            KiteEffectiveThemeMode.LIGHT -> resolveLightTokens(normalizedConfig)
+            KiteEffectiveThemeMode.DARK -> resolveDarkTokens(normalizedConfig)
+        }
+        return ThemeEnvironment(
+            config = normalizedConfig,
+            mode = effectiveMode,
+            tokens = tokens,
+            style = style,
+        )
+    }
+
+    private fun resolveLightTokens(config: ThemeConfig): ThemeTokens {
         val bg = config.backgroundColor
         val primary = config.themeColor
         val danger = Color.rgb(185, 28, 28)
@@ -166,6 +279,46 @@ object KiteTheme {
             info = info,
             infoSoft = blend(info, bg, 0.9f),
             infoBorder = blend(info, bg, 0.76f)
+        )
+    }
+
+    private fun resolveDarkTokens(config: ThemeConfig): ThemeTokens {
+        val bg = blend(config.backgroundColor, Color.rgb(9, 14, 24), 0.94f)
+        val primary = blend(config.themeColor, Color.WHITE, 0.18f)
+        val danger = Color.rgb(248, 113, 113)
+        val warning = Color.rgb(251, 146, 60)
+        val success = Color.rgb(52, 211, 153)
+        val info = Color.rgb(96, 165, 250)
+        return ThemeTokens(
+            pageBackground = bg,
+            surface = blend(Color.rgb(30, 41, 59), bg, 0.34f),
+            surfaceElevated = blend(Color.rgb(51, 65, 85), bg, 0.38f),
+            cardBackground = blend(Color.rgb(30, 41, 59), bg, 0.28f),
+            inputBackground = blend(Color.rgb(15, 23, 42), bg, 0.22f),
+            overlay = Color.argb(184, 0, 0, 0),
+            border = Color.rgb(51, 65, 85),
+            borderStrong = Color.rgb(71, 85, 105),
+            shadow = Color.argb(110, 0, 0, 0),
+            textPrimary = Color.rgb(241, 245, 249),
+            textSecondary = Color.rgb(148, 163, 184),
+            textTertiary = Color.rgb(100, 116, 139),
+            primaryStrong = primary,
+            primarySoft = blend(primary, bg, 0.78f),
+            primarySubtle = blend(primary, bg, 0.88f),
+            primaryText = blend(primary, Color.WHITE, 0.2f),
+            buttonText = Color.WHITE,
+            danger = danger,
+            dangerSoft = blend(danger, bg, 0.86f),
+            dangerBorder = blend(danger, bg, 0.68f),
+            warning = warning,
+            warningSoft = blend(warning, bg, 0.86f),
+            warningBorder = blend(warning, bg, 0.68f),
+            success = success,
+            successSoft = blend(success, bg, 0.84f),
+            successBorder = blend(success, bg, 0.66f),
+            info = info,
+            infoSoft = blend(info, bg, 0.86f),
+            infoBorder = blend(info, bg, 0.68f),
         )
     }
 

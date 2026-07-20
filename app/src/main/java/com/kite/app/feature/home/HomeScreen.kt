@@ -24,7 +24,6 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.kite.app.R
 import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteRecipe
-import com.kite.app.theme.KiteTheme
 import java.util.Locale
 import kotlin.math.abs
 
@@ -57,9 +56,11 @@ internal class HomeScreen(
     private val onExternalRefresh: () -> Unit,
     private val onRetry: () -> Unit
 ) {
+    private val themeEnvironment = HomeFeatureTheme.environment(context)
     private val factory = HomeFeatureViewFactory(
         context = context,
-        tokens = HomeFeatureTheme.tokens(context),
+        tokens = themeEnvironment.tokens,
+        components = themeEnvironment.components,
         onOpenEditor = onOpenEditor,
         onPrimaryAction = onPrimaryAction
     )
@@ -86,7 +87,7 @@ internal class HomeScreen(
         background = factory.roundedBox(
             factory.tokens.inputBackground,
             factory.tokens.border,
-            factory.dp(KiteTheme.shapes.controlRadius).toFloat()
+            factory.dp(factory.components.shapes.controlRadius).toFloat()
         )
         setText(searchQuery)
         doAfterTextChanged { editable ->
@@ -107,7 +108,7 @@ internal class HomeScreen(
         background = factory.roundedBox(
             factory.tokens.surface,
             factory.tokens.border,
-            factory.dp(KiteTheme.shapes.controlRadius).toFloat()
+            factory.dp(factory.components.shapes.controlRadius).toFloat()
         )
         addView(iconView(R.drawable.ic_material_sort, factory.tokens.textSecondary, factory.dp(21)))
         addView(TextView(context).apply {
@@ -186,14 +187,14 @@ internal class HomeScreen(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(
-                factory.dp(KiteTheme.spacing.pageHorizontal),
+                factory.dp(factory.components.spacing.pageHorizontal),
                 factory.dp(4),
-                factory.dp(KiteTheme.spacing.pageHorizontal),
+                factory.dp(factory.components.spacing.pageHorizontal),
                 0
             )
             addView(searchInput, LinearLayout.LayoutParams(0, factory.dp(48), 1f))
             addView(arrangeButton, LinearLayout.LayoutParams(factory.dp(98), factory.dp(48)).apply {
-                setMargins(factory.dp(KiteTheme.spacing.sectionGap), 0, 0, 0)
+                setMargins(factory.dp(factory.components.spacing.sectionGap), 0, 0, 0)
             })
         })
         addView(chipScroller, LinearLayout.LayoutParams(
@@ -299,16 +300,16 @@ internal class HomeScreen(
         tabsSignature = signature
         chipRow.removeAllViews()
         chipRow.setPadding(
-            factory.dp(KiteTheme.spacing.pageHorizontal),
+            factory.dp(factory.components.spacing.pageHorizontal),
             0,
-            factory.dp(KiteTheme.spacing.pageHorizontal),
+            factory.dp(factory.components.spacing.pageHorizontal),
             0
         )
         pages.forEach { page ->
             chipRow.addView(pageChip(page), LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 factory.dp(42)
-            ).apply { setMargins(0, 0, factory.dp(KiteTheme.spacing.itemGap), 0) })
+            ).apply { setMargins(0, 0, factory.dp(factory.components.spacing.itemGap), 0) })
         }
         chipRow.addView(createGroupChip(), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -331,7 +332,7 @@ internal class HomeScreen(
         background = factory.roundedBox(
             if (selected) factory.tokens.primarySubtle else factory.tokens.surface,
             if (selected) factory.tokens.primaryStrong else factory.tokens.border,
-            factory.dp(KiteTheme.shapes.chipRadius).toFloat()
+            factory.dp(factory.components.shapes.chipRadius).toFloat()
         )
         addView(iconView(
             page.iconRes,
@@ -361,7 +362,7 @@ internal class HomeScreen(
         background = factory.roundedBox(
             factory.tokens.pageBackground,
             factory.tokens.borderStrong,
-            factory.dp(KiteTheme.shapes.chipRadius).toFloat(),
+            factory.dp(factory.components.shapes.chipRadius).toFloat(),
             dashWidth = factory.dp(4).toFloat(),
             dashGap = factory.dp(3).toFloat()
         )

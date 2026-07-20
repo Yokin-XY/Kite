@@ -9,8 +9,7 @@
         <item name="colorOnSurface">@color/text_primary</item>
         <item name="android:windowBackground">@color/background</item>
         <item name="android:statusBarColor">@color/background</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:navigationBarColor">#F3F6F8</item>
+        <item name="android:navigationBarColor">@color/background</item>
         <item name="android:colorAccent">#2563EB</item>
     </style>
 </resources>

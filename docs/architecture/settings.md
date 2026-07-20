@@ -33,6 +33,26 @@
 
 禁止为了显示一个设置项再复制一份布尔值、安装状态、权限结论或运行状态。页面只提交用户意图和显示拥有者投影。
 
+## 主题是统一环境，不是页面颜色表
+
+主题偏好由 `SettingsGateway` 持有，当前包括：
+
+- `themeMode`：`SYSTEM`、`LIGHT`、`DARK`。
+- `themeColor/backgroundColor`：基础颜色选择。
+- `themeStyleKey`：组件样式注册键。
+
+`ThemeEnvironmentGateway` 是应用级唯一读取入口。它把偏好与 Android 当前明暗状态交给 `KiteTheme.resolveEnvironment()`，得到有效明暗、语义颜色和组件样式。页面不得直接读取 `kite_theme`、自行判断系统明暗或按样式名写条件分支。
+
+颜色与组件样式分层：
+
+- `ThemeTokens` 表达页面背景、表面、文字、边框、主色和状态色。
+- `ThemeComponentStyle` 表达圆角、间距、描边和层级。
+- `ThemeStyleDefinition` 登记一套组件样式，`ThemeScope` 允许首页、资源、设置、编辑、运行和终端在中央合同内继承或覆盖局部形态。
+
+新增一套颜色时，只增加颜色定义或选择项；新增一套界面形态时，只在 `KiteTheme.styleDefinitions` 登记样式并补充本地化名称。设置页自动消费注册表，普通页面继续读取语义字段，不需要逐页增加新主题分支。当前 `standard` 是第一套默认样式，只表达现有结构，不锁定最终品牌配色。
+
+终端 ANSI 色板继续由终端模块独立校准。终端选择“跟随应用”时使用 `ThemeEnvironment` 的有效明暗；显式亮色/暗色仍可覆盖，但切换只能重置当前画布颜色，不得重连会话。
+
 ## 入口语义
 
 `SettingsCatalog` 使用固定入口类型描述交互：

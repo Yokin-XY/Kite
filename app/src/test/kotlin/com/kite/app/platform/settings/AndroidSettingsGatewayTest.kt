@@ -7,6 +7,7 @@ import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.application.settings.SettingsDropZoneSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
+import com.kite.app.theme.KiteThemeMode
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -36,6 +37,8 @@ class AndroidSettingsGatewayTest {
 
         assertEquals(KiteTheme.defaultThemeColor, snapshot.themeColor)
         assertEquals(KiteTheme.defaultBackgroundColor, snapshot.backgroundColor)
+        assertEquals(KiteThemeMode.SYSTEM, snapshot.themeMode)
+        assertEquals(KiteTheme.defaultStyleKey, snapshot.themeStyleKey)
         assertEquals(AppLanguagePreference.System, snapshot.appLanguage)
         assertEquals(BrowserRuntimeMode.Default, snapshot.browserRuntimeMode)
         assertTrue(snapshot.restoreLastScreen)
@@ -49,6 +52,8 @@ class AndroidSettingsGatewayTest {
 
         gateway.update(SettingsCommand.SetThemeColor(0x112233))
         gateway.update(SettingsCommand.SetBackgroundColor(0x445566))
+        gateway.update(SettingsCommand.SetThemeMode(KiteThemeMode.DARK))
+        gateway.update(SettingsCommand.SetThemeStyle(KiteTheme.defaultStyleKey))
         gateway.update(SettingsCommand.SetBrowserRuntimeMode(BrowserRuntimeMode.AutomationBrowser))
         gateway.update(SettingsCommand.SetRestoreLastScreen(false))
         val latest = gateway.update(SettingsCommand.SetHideMainTaskFromRecents(true))
@@ -56,6 +61,8 @@ class AndroidSettingsGatewayTest {
 
         assertEquals(0x112233, latest.themeColor)
         assertEquals(0x445566, latest.backgroundColor)
+        assertEquals(KiteThemeMode.DARK, latest.themeMode)
+        assertEquals(KiteTheme.defaultStyleKey, latest.themeStyleKey)
         assertEquals(BrowserRuntimeMode.AutomationBrowser, latest.browserRuntimeMode)
         assertFalse(latest.restoreLastScreen)
         assertTrue(latest.hideMainTaskFromRecents)

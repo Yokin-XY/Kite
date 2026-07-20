@@ -65,7 +65,7 @@
     <string name="settings_diagnostics_scope_title">诊断边界</string>
     <string name="settings_diagnostics_scope_summary">此页只提供日志和真实状态入口，不在后台持续扫描网络、文件或运行时。</string>
     <string name="settings_theme_title">主题</string>
-    <string name="settings_theme_summary">主题色、背景色和卡片色彩</string>
+    <string name="settings_theme_summary">显示模式、颜色和界面样式的统一入口</string>
     <string name="settings_language_title">语言</string>
     <string name="settings_language_dialog_title">应用语言</string>
     <string name="settings_language_dialog_summary">默认跟随系统；手动选择后，Kite 会记住并同步到系统的应用语言设置。</string>
@@ -87,6 +87,18 @@
     <string name="settings_drop_zone_unavailable_summary">共享卡片目录尚不可用；点击检查文件访问授权。</string>
     <string name="settings_theme_color_section">主题色</string>
     <string name="settings_background_color_section">背景色</string>
+    <string name="settings_theme_mode_section">显示模式</string>
+    <string name="settings_theme_mode_title">明暗模式</string>
+    <string name="settings_theme_mode_dialog_title">明暗模式</string>
+    <string name="settings_theme_mode_dialog_summary">跟随系统会自动与 Android 的明暗状态保持一致；也可以固定为亮色或暗色。</string>
+    <string name="settings_theme_mode_system">跟随系统</string>
+    <string name="settings_theme_mode_light">亮色</string>
+    <string name="settings_theme_mode_dark">暗色</string>
+    <string name="settings_theme_style_section">界面样式</string>
+    <string name="settings_theme_style_title">组件样式</string>
+    <string name="settings_theme_style_dialog_title">组件样式</string>
+    <string name="settings_theme_style_dialog_summary">颜色与组件形态彼此独立。以后新增的圆角、描边和层级方案会统一出现在这里。</string>
+    <string name="settings_theme_style_standard">标准</string>
     <string name="settings_theme_preview_title">主题预览</string>
     <string name="settings_theme_preview_summary">按钮、卡片和辅助信息会跟随这里的颜色。</string>
     <string name="settings_theme_preview_action">启动 / 打开</string>
@@ -315,7 +327,7 @@
     <string name="terminal_font_smaller">A-</string>
     <string name="terminal_font_larger">A+</string>
     <string name="terminal_theme_button">主题</string>
-    <string name="terminal_theme_system">跟随系统</string>
+    <string name="terminal_theme_system">跟随应用</string>
     <string name="terminal_theme_dark">深色</string>
     <string name="terminal_theme_light">浅色</string>
     <string name="terminal_font_changed">终端字号已切到 %1$dsp</string>

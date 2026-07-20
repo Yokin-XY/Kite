@@ -72,9 +72,10 @@ import com.kite.app.run.CardRunWindowIds
 import com.kite.app.shell.KiteAppGraph
 import com.kite.app.shell.RunInstallWizardSurfaceBinding
 import com.kite.app.shell.RunNotificationPermissionFragment
-import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
+import com.kite.app.ui.theme.kiteThemeEnvironment
+import com.kite.app.ui.theme.applyKiteWindowTheme
 import com.kite.app.ui.UiKit
 import com.kite.app.ui.terminal.KiteTerminalShellTheme
 import com.kite.app.shell.TerminalSurfaceShellBinding
@@ -92,6 +93,7 @@ class CardRunActivity : AppCompatActivity() {
     private lateinit var runWindowSurfaceGateway: AndroidRunWindowSurfaceGateway
     private lateinit var launchResolver: CardRunLaunchResolver
     private lateinit var tokens: ThemeTokens
+    private var themeDark: Boolean = false
     private lateinit var root: FrameLayout
     private lateinit var surfaceController: RunSurfaceController
     private var surfaceHost: RunSurfaceHost? = null
@@ -126,7 +128,10 @@ class CardRunActivity : AppCompatActivity() {
         resourceOpenRecipeResolver = AndroidResourceOpenRecipeResolver(graph.resourceManifestLoader)
         runWindowSurfaceGateway = graph.runWindowSurfaceGateway
         CardRunStore.initialize(applicationContext)
-        tokens = loadTokens()
+        val theme = kiteThemeEnvironment(ThemeScope.RUN)
+        tokens = theme.tokens
+        themeDark = theme.isDark
+        applyKiteWindowTheme(tokens, themeDark)
         applyTerminalTheme()
         root = FrameLayout(this).apply { setBackgroundColor(tokens.pageBackground) }
         setContentView(root)
@@ -665,16 +670,6 @@ class CardRunActivity : AppCompatActivity() {
         )
     }
 
-    private fun loadTokens(): ThemeTokens {
-        val prefs = getSharedPreferences("kite_theme", MODE_PRIVATE)
-        return KiteTheme.resolve(
-            ThemeConfig(
-                themeColor = prefs.getInt("theme_color", KiteTheme.defaultThemeColor),
-                backgroundColor = prefs.getInt("background_color", KiteTheme.defaultBackgroundColor)
-            )
-        )
-    }
-
     private fun applyTerminalTheme() {
         KiteTerminalShellTheme.apply(
             KiteTerminalShellTheme.Palette(
@@ -794,6 +789,7 @@ class CardRunActivity : AppCompatActivity() {
                     controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 } else {
                     controller.show(WindowInsets.Type.systemBars())
+                    applyKiteWindowTheme(tokens, themeDark)
                 }
             }
         } else {
@@ -805,6 +801,7 @@ class CardRunActivity : AppCompatActivity() {
             } else {
                 0
             }
+            if (!immersive) applyKiteWindowTheme(tokens, themeDark)
         }
     }
 
@@ -812,9 +809,11 @@ class CardRunActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(true)
             window.insetsController?.show(WindowInsets.Type.systemBars())
+            applyKiteWindowTheme(tokens, themeDark)
         } else {
             @Suppress("DEPRECATION")
             window.decorView.systemUiVisibility = 0
+            applyKiteWindowTheme(tokens, themeDark)
         }
     }
 }

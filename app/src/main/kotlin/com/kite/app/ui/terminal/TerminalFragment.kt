@@ -135,6 +135,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private var isAltPressed = false
     private var currentFontSizeDp = 35
     private var currentTerminalThemeMode = TerminalThemeMode.SYSTEM
+    private var currentTerminalDarkMode = false
     private var currentSpace: SpaceRecord? = null
     private var currentTerminalSnapshot = TerminalSessionsSnapshot()
     private var lastManagedSessionsRenderSignature: String = ""
@@ -411,6 +412,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private fun applyTerminalColorScheme() {
         val colors = TerminalColors.COLOR_SCHEME.mDefaultColors
         val isDark = TerminalUiPreferences.resolveTerminalDarkMode(requireContext())
+        currentTerminalDarkMode = isDark
         TerminalColorPalette.applyTo(colors, isDark)
         applyTerminalCanvasBackground()
     }
@@ -1548,7 +1550,10 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             relayoutTerminalAfterFontSizeChange()
         }
         val storedThemeMode = TerminalUiPreferences.loadThemeMode(context)
-        if (::terminalView.isInitialized && storedThemeMode != currentTerminalThemeMode) {
+        val effectiveDarkMode = TerminalUiPreferences.resolveTerminalDarkMode(context)
+        if (::terminalView.isInitialized &&
+            (storedThemeMode != currentTerminalThemeMode || effectiveDarkMode != currentTerminalDarkMode)
+        ) {
             currentTerminalThemeMode = storedThemeMode
             applyTerminalColorScheme()
             applyTerminalDetailTheme()

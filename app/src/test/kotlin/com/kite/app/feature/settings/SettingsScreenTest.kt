@@ -235,6 +235,7 @@ class SettingsScreenTest {
 
         screen.render(initial)
         val firstPage = screen.root.getChildAt(0)
+        val texts = screen.root.allTexts()
         screen.render(initial.copy(revision = 2L))
         val samePage = screen.root.getChildAt(0)
         screen.render(initial.copy(
@@ -244,6 +245,9 @@ class SettingsScreenTest {
 
         assertSame(firstPage, samePage)
         assertNotSame(firstPage, screen.root.getChildAt(0))
+        assertTrue(texts.contains(activity.getString(R.string.settings_theme_mode_section)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_theme_mode_title)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_theme_style_standard)))
     }
 
     private fun state() = SettingsUiState(

@@ -71,7 +71,7 @@
             android:exported="true"
             android:finishOnTaskLaunch="false"
             android:launchMode="singleTask"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:theme="@style/Theme.Kite"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

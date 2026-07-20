@@ -10,6 +10,7 @@ import com.kite.app.application.settings.SettingsGateway
 import com.kite.app.application.settings.SettingsSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
+import com.kite.app.theme.KiteThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +53,12 @@ internal class AndroidSettingsGateway(
             is SettingsCommand.SetBackgroundColor -> themePreferences.edit()
                 .putInt(KEY_BACKGROUND_COLOR, command.color)
                 .commit()
+            is SettingsCommand.SetThemeMode -> themePreferences.edit()
+                .putString(KEY_THEME_MODE, command.mode.storageKey)
+                .commit()
+            is SettingsCommand.SetThemeStyle -> themePreferences.edit()
+                .putString(KEY_THEME_STYLE, command.styleKey)
+                .commit()
             is SettingsCommand.SetAppLanguage -> applyAppLanguage(command.language)
             is SettingsCommand.SetBrowserRuntimeMode -> appPreferences.edit()
                 .putString(KEY_BROWSER_RUNTIME_MODE, command.mode.storageKey)
@@ -79,7 +86,11 @@ internal class AndroidSettingsGateway(
         hideMainTaskFromRecents = appPreferences.getBoolean(KEY_HIDE_MAIN_TASK_FROM_RECENTS, false),
         notificationsEnabled = readNotificationsEnabled(),
         dropZone = dropZone,
-        revision = nextRevision()
+        revision = nextRevision(),
+        themeMode = KiteThemeMode.fromStorageKey(themePreferences.getString(KEY_THEME_MODE, null)),
+        themeStyleKey = themePreferences.getString(KEY_THEME_STYLE, null)
+            ?.takeIf { key -> KiteTheme.styleDefinitions.any { it.key == key } }
+            ?: KiteTheme.defaultStyleKey,
     )
 
     @Synchronized
@@ -94,6 +105,8 @@ internal class AndroidSettingsGateway(
         const val APP_PREFERENCES = "kite_app_settings"
         const val KEY_THEME_COLOR = "theme_color"
         const val KEY_BACKGROUND_COLOR = "background_color"
+        const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_THEME_STYLE = "theme_style"
         const val KEY_BROWSER_RUNTIME_MODE = "browser_runtime_mode"
         const val KEY_RESTORE_LAST_SCREEN = "restore_last_screen"
         const val KEY_HIDE_MAIN_TASK_FROM_RECENTS = "hide_main_task_from_recents"

@@ -272,3 +272,42 @@ T011 状态：completed。
 - 验收后终端偏好恢复 `dark`、字号保持 35sp，测试会话用 `exit` 正常结束并从列表清理；Kite 进程存活，FATAL/ANR/Input timeout 匹配为 0。
 
 T012 状态：completed。
+
+## 2026-07-20 T014 启动与三问自检
+
+- 目标是什么：把主题从分散的颜色偏好升级成一个可扩展的应用级入口；基础层统一颜色与有效明暗，进阶层允许组件和局部显示面通过同一合同选择样式。
+- 完成标准是什么：主题只有一个持有与解析路径，主要页面不再各自读取偏好；设置能切换跟随系统/亮色/暗色并消费样式注册表；系统栏、应用外壳和终端跟随同一有效主题；自动门和 OnePlus 8T 真机验收通过。
+- 依赖是否满足：T012 已稳定终端明暗色板和无重连切换路径，T013 已建立首页组件形状与间距基础；当前代码审查已确认散落入口和系统暗色不生效的真实路径，依赖满足。
+
+### 已确认事实
+
+- `ThemeConfig` 目前只有 `themeColor/backgroundColor`，`KiteTheme.resolve()` 固定按亮色生成 token，没有系统/亮色/暗色模式。
+- `MainActivity` 是当前可见外壳的主题应用者，但 `CardRunActivity`、首页、资源、编辑器和运行管理仍有直接读取 `kite_theme` 的路径，形成多个解释入口。
+- 系统状态栏和导航栏在资源主题中固定为亮色；真机系统报告暗色时，Kite 首页、设置和资源页仍为亮色。
+- `TerminalUiPreferences.SYSTEM` 直接读取系统 `uiMode`，终端外壳则使用应用全局亮色 token，存在同一页面内外明暗分裂的所有权问题。
+- 现有终端明暗 ANSI 色板已人工校准，本轮只统一有效主题来源，不重做色板或会话生命周期。
+
+### 压力分诊
+
+- 事件：用户显式切换主题，或系统明暗状态变化。
+- 状态拥有者：主题偏好由 `SettingsGateway` 持有；有效主题由应用级主题环境提供者解析。
+- 可见消费者：当前 Activity 系统栏与根容器、首页、资源、设置、编辑器、运行管理、运行窗口和终端显示面。
+- 触及的热路径：显式主题应用、Activity 配置变化、当前可见控件的轻量重绑。
+- 禁止的大范围动作：主题偏好分散读取、页面各自推导明暗、周期轮询、资源/运行状态重查、终端重连、WebView 重建或以整页刷新代替主题信号。
+- 验证证据：模式/样式/作用域纯合同测试，Gateway 持久化测试，设置交互测试，全量门禁，OnePlus 8T 逐页截图和 FATAL/ANR 日志。
+
+T014 状态：in_progress。
+
+### T014 验收结果
+
+- 新增 `ThemeEnvironment`、`KiteThemeMode`、`ThemeStyleDefinition`、`ThemeComponentStyle` 和 `ThemeScope`；颜色、组件形态与局部作用域分层，`standard` 作为首套默认样式登记到中央注册表。
+- `SettingsGateway` 新增 `themeMode/themeStyleKey` 与类型化命令；旧主题色和背景色键保持不变，缺失新键时默认跟随系统并回退 `standard`。
+- `ThemeEnvironmentGateway` 成为应用级唯一主题读取合同，Android 系统明暗由 Platform 适配，Window 系统栏由 UI 绑定；生产代码直接读取 `kite_theme` 或调用旧 `KiteTheme.resolve()` 的位置均清零。
+- 首页使用 `HOME` 作用域的组件样式；资源、设置、编辑器、运行管理、运行历史、运行窗口和终端均消费统一有效环境。终端界面文案由“跟随系统”改为“跟随应用”，已校准 ANSI 色板和会话重置路径不变。
+- 设置主题页新增“跟随系统/亮色/暗色”和注册表驱动的“组件样式”入口；当前只有 `standard`，以后新增样式不需要修改设置页或逐页写样式名分支。
+- 自动门：580 项测试、0 失败、0 错误、1 项既有跳过；Lint 0 错误；架构债务 `lines=2575/functions=127/fields=41`，未调高基线；架构检查、运行车道检查、本地化审计、`git diff --check` 和 Debug APK 构建通过。
+- Debug APK：232,993,266 bytes，SHA-256 `0D037E0FC640F615D68FB8BB750CB19ABF9FB94984E7CC0FA2A0D5E04D100C03`。
+- OnePlus 8T `3f8bbaad` 真机证明：系统暗色 + 默认跟随为暗色；显式亮色即时变亮；显式暗色在 Android 临时切到亮色并冷启动后仍保持暗色；首页、设置、资源外壳和终端外壳可读，进程日志中 FATAL/ANR/Input timeout 为 0。
+- 验收后 Android 已恢复暗色，Kite 已恢复 `theme_mode=system`，最终前台为 `com.kite.app/.MainActivity`；没有创建终端会话或改变终端原有独立主题偏好。
+
+T014 状态：completed。

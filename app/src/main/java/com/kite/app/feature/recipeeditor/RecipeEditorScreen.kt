@@ -28,8 +28,9 @@ import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.KiteRunPrimaryAction
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
+import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.kite.app.ui.UiKit
 
 internal interface RecipeEditorScreenActions {
@@ -1162,13 +1163,7 @@ internal class RecipeEditorScreen(
         val presetIcons = listOf("terminal", "web", "bot", "file", "tools", "server", "code", "logs")
 
         fun editorTokens(context: Context): ThemeTokens {
-            val store = context.getSharedPreferences("kite_theme", Context.MODE_PRIVATE)
-            return KiteTheme.resolve(
-                ThemeConfig(
-                    store.getInt("theme_color", KiteTheme.defaultThemeColor),
-                    store.getInt("background_color", KiteTheme.defaultBackgroundColor)
-                )
-            )
+            return context.kiteThemeEnvironment(ThemeScope.EDITOR).tokens
         }
     }
 }

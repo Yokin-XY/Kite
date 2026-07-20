@@ -19,21 +19,15 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.util.LruCache
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
+import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.kite.app.ui.UiKit
 import java.util.concurrent.Executors
 
 internal object ResourceFeatureTheme {
-    fun tokens(context: Context): ThemeTokens {
-        val store = context.getSharedPreferences("kite_theme", Context.MODE_PRIVATE)
-        return KiteTheme.resolve(
-            ThemeConfig(
-                themeColor = store.getInt("theme_color", KiteTheme.defaultThemeColor),
-                backgroundColor = store.getInt("background_color", KiteTheme.defaultBackgroundColor)
-            )
-        )
-    }
+    fun tokens(context: Context): ThemeTokens =
+        context.kiteThemeEnvironment(ThemeScope.RESOURCE).tokens
 }
 
 internal data class ResourceItemViewBinding(

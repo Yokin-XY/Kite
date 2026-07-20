@@ -6,6 +6,7 @@ import com.kite.app.application.settings.SettingsGateway
 import com.kite.app.application.settings.SettingsSnapshot
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.browser.BrowserRuntimeMode
+import com.kite.app.theme.KiteThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
@@ -36,6 +37,8 @@ class SettingsFeatureControllerTest {
         assertNull(controller.dispatch(SettingsFeatureAction.SetRestoreLastScreen(false)))
         val recents = controller.dispatch(SettingsFeatureAction.SetHideMainTaskFromRecents(true))
         val theme = controller.dispatch(SettingsFeatureAction.SelectThemeColor(0x123456))
+        val themeMode = controller.dispatch(SettingsFeatureAction.SelectThemeMode(KiteThemeMode.DARK))
+        val themeStyle = controller.dispatch(SettingsFeatureAction.SelectThemeStyle("standard"))
         val language = controller.dispatch(
             SettingsFeatureAction.SelectAppLanguage(AppLanguagePreference.English)
         )
@@ -47,6 +50,8 @@ class SettingsFeatureControllerTest {
         assertTrue(gateway.currentSnapshot().hideMainTaskFromRecents)
         assertEquals(SettingsFeatureEffect.RecentTaskVisibilityChanged, recents)
         assertEquals(0x123456, (theme as SettingsFeatureEffect.ThemeChanged).theme.themeColor)
+        assertEquals(KiteThemeMode.DARK, (themeMode as SettingsFeatureEffect.ThemeChanged).theme.mode)
+        assertEquals("standard", (themeStyle as SettingsFeatureEffect.ThemeChanged).theme.styleKey)
         assertEquals(
             AppLanguagePreference.English,
             (language as SettingsFeatureEffect.AppLanguageChanged).language
@@ -90,6 +95,8 @@ class SettingsFeatureControllerTest {
             val next = when (command) {
                 is SettingsCommand.SetThemeColor -> current.copy(themeColor = command.color)
                 is SettingsCommand.SetBackgroundColor -> current.copy(backgroundColor = command.color)
+                is SettingsCommand.SetThemeMode -> current.copy(themeMode = command.mode)
+                is SettingsCommand.SetThemeStyle -> current.copy(themeStyleKey = command.styleKey)
                 is SettingsCommand.SetAppLanguage -> current.copy(appLanguage = command.language)
                 is SettingsCommand.SetBrowserRuntimeMode -> current.copy(browserRuntimeMode = command.mode)
                 is SettingsCommand.SetRestoreLastScreen -> current.copy(restoreLastScreen = command.enabled)

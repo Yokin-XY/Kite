@@ -66,7 +66,7 @@
     <string name="settings_diagnostics_scope_title">Diagnostics boundary</string>
     <string name="settings_diagnostics_scope_summary">This page exposes logs and real status entry points. It does not continuously scan the network, files, or runtime in the background.</string>
     <string name="settings_theme_title">Theme</string>
-    <string name="settings_theme_summary">Accent, background, and card colors</string>
+    <string name="settings_theme_summary">One place for display mode, colors, and interface style</string>
     <string name="settings_language_title">Language</string>
     <string name="settings_language_dialog_title">App language</string>
     <string name="settings_language_dialog_summary">Kite follows the system by default. A manual choice is remembered and synchronized with Android app-language settings.</string>
@@ -88,6 +88,18 @@
     <string name="settings_drop_zone_unavailable_summary">The shared card directory is unavailable. Tap to check file-access permission.</string>
     <string name="settings_theme_color_section">Accent color</string>
     <string name="settings_background_color_section">Background color</string>
+    <string name="settings_theme_mode_section">Display mode</string>
+    <string name="settings_theme_mode_title">Light and dark mode</string>
+    <string name="settings_theme_mode_dialog_title">Light and dark mode</string>
+    <string name="settings_theme_mode_dialog_summary">Follow system stays aligned with Android. You can also keep Kite light or dark.</string>
+    <string name="settings_theme_mode_system">Follow system</string>
+    <string name="settings_theme_mode_light">Light</string>
+    <string name="settings_theme_mode_dark">Dark</string>
+    <string name="settings_theme_style_section">Interface style</string>
+    <string name="settings_theme_style_title">Component style</string>
+    <string name="settings_theme_style_dialog_title">Component style</string>
+    <string name="settings_theme_style_dialog_summary">Colors and component shape are independent. Future radius, border, and elevation styles appear here.</string>
+    <string name="settings_theme_style_standard">Standard</string>
     <string name="settings_theme_preview_title">Theme preview</string>
     <string name="settings_theme_preview_summary">Buttons, cards, and supporting text follow these colors.</string>
     <string name="settings_theme_preview_action">Start / Open</string>
@@ -316,7 +328,7 @@
     <string name="terminal_font_smaller">A-</string>
     <string name="terminal_font_larger">A+</string>
     <string name="terminal_theme_button">Theme</string>
-    <string name="terminal_theme_system">Use system theme</string>
+    <string name="terminal_theme_system">Follow app theme</string>
     <string name="terminal_theme_dark">Dark</string>
     <string name="terminal_theme_light">Light</string>
     <string name="terminal_font_changed">Terminal font size changed to %1$dsp</string>

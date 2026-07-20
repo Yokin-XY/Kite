@@ -3,6 +3,8 @@ package com.kite.app.feature.settings
 import android.os.Bundle
 import androidx.fragment.app.Fragment
 import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.KiteTheme
+import com.kite.app.theme.KiteThemeMode
 
 internal sealed interface SettingsFeatureRequest {
     data object Back : SettingsFeatureRequest
@@ -33,7 +35,9 @@ internal object SettingsFeatureResultContract {
         KIND_APPLY_THEME -> SettingsFeatureRequest.ApplyTheme(
             ThemeConfig(
                 themeColor = bundle.getInt(KEY_THEME_COLOR),
-                backgroundColor = bundle.getInt(KEY_BACKGROUND_COLOR)
+                backgroundColor = bundle.getInt(KEY_BACKGROUND_COLOR),
+                mode = KiteThemeMode.fromStorageKey(bundle.getString(KEY_THEME_MODE)),
+                styleKey = bundle.getString(KEY_THEME_STYLE) ?: KiteTheme.defaultStyleKey,
             )
         )
         KIND_APPLY_RECENTS -> SettingsFeatureRequest.ApplyRecentTaskVisibility
@@ -57,6 +61,8 @@ internal object SettingsFeatureResultContract {
                 putString(KEY_KIND, KIND_APPLY_THEME)
                 putInt(KEY_THEME_COLOR, request.theme.themeColor)
                 putInt(KEY_BACKGROUND_COLOR, request.theme.backgroundColor)
+                putString(KEY_THEME_MODE, request.theme.mode.storageKey)
+                putString(KEY_THEME_STYLE, request.theme.styleKey)
             }
             SettingsFeatureRequest.ApplyRecentTaskVisibility -> putString(KEY_KIND, KIND_APPLY_RECENTS)
             SettingsFeatureRequest.OpenNotificationSettings -> putString(KEY_KIND, KIND_NOTIFICATION)
@@ -73,6 +79,8 @@ internal object SettingsFeatureResultContract {
     private const val KEY_KIND = "kind"
     private const val KEY_THEME_COLOR = "theme_color"
     private const val KEY_BACKGROUND_COLOR = "background_color"
+    private const val KEY_THEME_MODE = "theme_mode"
+    private const val KEY_THEME_STYLE = "theme_style"
     private const val KEY_AVAILABLE = "available"
     private const val KEY_CATEGORY = "category"
     private const val KIND_BACK = "back"

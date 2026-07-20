@@ -2,6 +2,7 @@ package com.kite.app.feature.settings
 
 import com.kite.app.application.settings.SettingsCommand
 import com.kite.app.application.settings.SettingsGateway
+import com.kite.app.application.settings.themeConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,15 +28,19 @@ internal class SettingsFeatureController(
         }
         is SettingsFeatureAction.SelectThemeColor -> {
             val snapshot = gateway.update(SettingsCommand.SetThemeColor(action.color))
-            SettingsFeatureEffect.ThemeChanged(
-                com.kite.app.theme.ThemeConfig(snapshot.themeColor, snapshot.backgroundColor)
-            )
+            SettingsFeatureEffect.ThemeChanged(snapshot.themeConfig())
         }
         is SettingsFeatureAction.SelectBackgroundColor -> {
             val snapshot = gateway.update(SettingsCommand.SetBackgroundColor(action.color))
-            SettingsFeatureEffect.ThemeChanged(
-                com.kite.app.theme.ThemeConfig(snapshot.themeColor, snapshot.backgroundColor)
-            )
+            SettingsFeatureEffect.ThemeChanged(snapshot.themeConfig())
+        }
+        is SettingsFeatureAction.SelectThemeMode -> {
+            val snapshot = gateway.update(SettingsCommand.SetThemeMode(action.mode))
+            SettingsFeatureEffect.ThemeChanged(snapshot.themeConfig())
+        }
+        is SettingsFeatureAction.SelectThemeStyle -> {
+            val snapshot = gateway.update(SettingsCommand.SetThemeStyle(action.styleKey))
+            SettingsFeatureEffect.ThemeChanged(snapshot.themeConfig())
         }
         is SettingsFeatureAction.SelectAppLanguage -> {
             gateway.update(SettingsCommand.SetAppLanguage(action.language))

@@ -17,10 +17,13 @@ import android.widget.TextView
 import com.kite.app.R
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.theme.ThemeTokens
+import com.kite.app.theme.KiteTheme
+import com.kite.app.theme.ThemeComponentStyle
 
 internal class SettingsViewFactory(
     private val context: Context,
-    val tokens: ThemeTokens
+    val tokens: ThemeTokens,
+    private val components: ThemeComponentStyle = KiteTheme.styleDefinitions.first().base,
 ) {
     class NavigationBinding(
         val root: View,
@@ -87,8 +90,8 @@ internal class SettingsViewFactory(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(18), dp(16), dp(16), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
-            elevation = dp(1).toFloat()
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(components.shapes.cardRadius).toFloat())
+            elevation = dp(components.cardElevation).toFloat()
             addView(labelColumn(title, subtitleView), LinearLayout.LayoutParams(
                 0,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -124,8 +127,8 @@ internal class SettingsViewFactory(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(18), dp(14), dp(16), dp(14))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
-            elevation = dp(1).toFloat()
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(components.shapes.cardRadius).toFloat())
+            elevation = dp(components.cardElevation).toFloat()
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -164,7 +167,7 @@ internal class SettingsViewFactory(
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(16), dp(18), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
+            background = roundedBox(tokens.cardBackground, tokens.border, dp(components.shapes.cardRadius).toFloat())
             addView(TextView(context).apply {
                 text = title
                 textSize = 16f
@@ -193,7 +196,7 @@ internal class SettingsViewFactory(
     fun themePreviewCard(): View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(18), dp(18), dp(18), dp(18))
-        background = roundedBox(tokens.cardBackground, tokens.border, dp(24).toFloat())
+        background = roundedBox(tokens.cardBackground, tokens.border, dp(components.shapes.cardRadius).toFloat())
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT

@@ -8,6 +8,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import com.kite.app.R
 import com.kite.app.theme.KiteTheme
+import com.kite.app.theme.ThemeScope
+import com.kite.app.ui.theme.isSystemDarkTheme
 
 internal class SettingsScreen(
     private val context: Context,
@@ -16,7 +18,11 @@ internal class SettingsScreen(
     onBack: () -> Unit,
     onOpenCategory: (SettingsCategoryDestination) -> Unit,
 ) {
-    private val factory = SettingsViewFactory(context, KiteTheme.resolve(initialState.theme))
+    private val themeEnvironment = KiteTheme.resolveEnvironment(
+        initialState.theme,
+        context.isSystemDarkTheme(),
+    ).forScope(ThemeScope.SETTINGS)
+    private val factory = SettingsViewFactory(context, themeEnvironment.tokens, themeEnvironment.components)
     private val scrollView = ScrollView(context)
 
     val root: View = LinearLayout(context).apply {

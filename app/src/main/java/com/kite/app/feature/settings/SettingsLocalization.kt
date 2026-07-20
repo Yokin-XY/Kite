@@ -5,6 +5,8 @@ import com.kite.app.R
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.ThemeChoice
+import com.kite.app.theme.KiteThemeMode
+import com.kite.app.theme.ThemeStyleDefinition
 
 internal fun Context.appLanguageLabel(language: AppLanguagePreference): String = getString(
     when (language) {
@@ -36,4 +38,17 @@ internal fun Context.themeChoiceLabel(choice: ThemeChoice): String {
         else -> null
     }
     return resourceId?.let(::getString) ?: choice.key
+}
+
+internal fun Context.themeModeLabel(mode: KiteThemeMode): String = getString(
+    when (mode) {
+        KiteThemeMode.SYSTEM -> R.string.settings_theme_mode_system
+        KiteThemeMode.LIGHT -> R.string.settings_theme_mode_light
+        KiteThemeMode.DARK -> R.string.settings_theme_mode_dark
+    },
+)
+
+internal fun Context.themeStyleLabel(style: ThemeStyleDefinition): String = when (style.key) {
+    "standard" -> getString(R.string.settings_theme_style_standard)
+    else -> style.key
 }

@@ -24,6 +24,8 @@ import com.kite.app.run.CardRunStatus
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeConfig
 import com.kite.app.theme.ThemeTokens
+import com.kite.app.theme.ThemeScope
+import com.kite.app.ui.theme.isSystemDarkTheme
 import com.kite.app.ui.UiKit
 import java.util.Calendar
 
@@ -37,7 +39,10 @@ internal class RunHistoryScreen(
     private val onOpenEntry: (String) -> Unit,
     private val onOpenReport: (Int) -> Unit
 ) {
-    private val tokens: ThemeTokens = KiteTheme.resolve(theme)
+    private val tokens: ThemeTokens = KiteTheme.resolveEnvironment(
+        theme,
+        context.isSystemDarkTheme(),
+    ).forScope(ThemeScope.RUN).tokens
     private val ui = UiKit(context, tokens)
     private var renderSignature: Int? = null
 

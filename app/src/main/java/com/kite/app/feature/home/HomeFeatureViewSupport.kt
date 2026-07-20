@@ -24,8 +24,10 @@ import com.kite.app.run.CardRunStatus
 import com.kite.app.run.KiteRunPrimaryAction
 import com.kite.app.run.KiteRunUiTone
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeComponentStyle
+import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
+import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.kite.app.ui.UiKit
 import java.io.File
 import java.util.Date
@@ -33,15 +35,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 internal object HomeFeatureTheme {
-    fun tokens(context: Context): ThemeTokens {
-        val store = context.getSharedPreferences("kite_theme", Context.MODE_PRIVATE)
-        return KiteTheme.resolve(
-            ThemeConfig(
-                themeColor = store.getInt("theme_color", KiteTheme.defaultThemeColor),
-                backgroundColor = store.getInt("background_color", KiteTheme.defaultBackgroundColor)
-            )
-        )
-    }
+    fun environment(context: Context) = context.kiteThemeEnvironment(ThemeScope.HOME)
 }
 
 internal data class HomeCardBinding(
@@ -58,6 +52,7 @@ internal data class HomeCardBinding(
 internal class HomeFeatureViewFactory(
     private val context: Context,
     internal val tokens: ThemeTokens,
+    internal val components: ThemeComponentStyle = KiteTheme.styleDefinitions.first().base,
     private val onOpenEditor: (String) -> Unit,
     private val onPrimaryAction: (String) -> Unit
 ) {
@@ -120,7 +115,7 @@ internal class HomeFeatureViewFactory(
             background = roundedBox(
                 tokens.cardBackground,
                 tokens.border,
-                dp(KiteTheme.shapes.cardRadius).toFloat()
+                dp(components.shapes.cardRadius).toFloat()
             )
             elevation = dp(1).toFloat()
             isClickable = true
@@ -371,7 +366,7 @@ internal class HomeFeatureViewFactory(
             background = roundedBox(
                 KiteTheme.tint(tone.strong, 0.88f),
                 tone.border,
-                dp(KiteTheme.shapes.iconTileRadius).toFloat()
+                dp(components.shapes.iconTileRadius).toFloat()
             )
         }
         if (recipe.icon.type != KiteRecipeIcon.TYPE_IMAGE || recipe.icon.source.isBlank()) return fallback
@@ -379,7 +374,7 @@ internal class HomeFeatureViewFactory(
             background = roundedBox(
                 tokens.surface,
                 tone.border,
-                dp(KiteTheme.shapes.iconTileRadius).toFloat()
+                dp(components.shapes.iconTileRadius).toFloat()
             )
             clipToOutline = true
             addView(fallback, FrameLayout.LayoutParams(
