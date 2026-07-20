@@ -311,3 +311,50 @@ T014 状态：in_progress。
 - 验收后 Android 已恢复暗色，Kite 已恢复 `theme_mode=system`，最终前台为 `com.kite.app/.MainActivity`；没有创建终端会话或改变终端原有独立主题偏好。
 
 T014 状态：completed。
+
+## 2026-07-20 T015 主题系统规划校准
+
+- 用户明确主题系统首先需要分类标准和新模块接入规则，不应先把现有页面接线结果当成最终架构。
+- 对照 Material 3、Fluent 2、Carbon、Android Styles、Android View 主题和 Design Tokens Community Group 2025.10，确定 Kite 使用“原始值 → 语义 token → 组件配方 → 标准组件 → 功能模块”，特殊内容另走适配器。
+- 正式分类为四类：可切换颜色方案、可切换组件风格、不可随主题切换的固定设计基础、有限跟随的独立内容。
+- 现有 T014 的 Gateway、有效明暗、语义颜色接线、系统栏和终端“跟随应用”继续保留；页面级 `ThemeScope`、混合页面间距的 `ThemeComponentStyle` 和两个原始颜色独立拼装方式需要调整。
+- 新增 `docs/architecture/theme-system.md`，包含统一入口、命名规则、标准组件目录、新模块接入检查表、新 token 准入、迁移阶段和验收门。
+- 本轮只修改长期架构和任务文档，没有修改生产代码、测试、资源、版本号或设备状态，也没有执行构建、提交或推送。
+
+T015 状态：completed（规划完成，实施未开始）。
+
+## 2026-07-20 T016 启动与三问自检
+
+- 目标是什么：按 T015 已确认规范，把设置/命令上游与 UI/特殊显示面下游之间建立成同一套中间主题规则协议，并用首页、设置证明组件可以按标准快速接入。
+- 完成标准是什么：引用 PLAYBOOK T016 的八项验收；重点是统一类型化命令与选择、中央解析和回退、页面作用域清零、固定基础与组件配方分离、临时入口收口、自动门和 OnePlus 8T 证据。
+- 依赖是否满足：T015 已完成行业对照、分类标准、新模块检查表和 T014 保留/调整清单；T014 已提供单一 Gateway、有效明暗和主要消费者接线，依赖满足。
+
+### 压力分诊
+
+- 症状或功能：主题设置或未来命令改变外观，当前可见界面需要消费新合同。
+- 可见显示面：主壳、首页、设置、资源、编辑器、运行管理、运行窗口、终端外壳；Web/X11 内容保持独立。
+- 压力风险：把协议迁移误做成整页周期刷新，或因主题变化重建终端、WebView、X11 和运行实例。
+- 通道：UI Binding / Theme Environment；不进入运行创建或编排通道。
+- 状态拥有者：用户选择由 `SettingsGateway` 持有，中间协议负责归一化和解析，页面只消费环境。
+- 事件来源：设置页、未来外部命令或 Android 系统明暗变化。
+- 可见消费者：标准组件与特殊内容外壳。
+- 触及的热路径：主题 effect 后的当前页面重绑、Activity 系统栏更新、终端现有颜色刷新路径。
+- 禁止的大范围刷新：轮询、资源/运行事实重查、`showCardRunSurface(...)` 普通状态重建、WebView reload、终端重连、X11 重启。
+- 验证证据：协议/迁移/组件配方单测，架构与压力静态门，全量构建，OnePlus 8T 明暗截图和进程日志。
+
+T016 状态：in_progress。
+
+### T016 实施与验收结果
+
+- 新增 Android-free 的 `ThemeProtocol.kt`，用 `ThemeCommand`、`ThemeSelection`、`ThemeCatalog`、`ThemeEnvironment` 分离上游意图、持久化选择、可发现能力和下游解析结果；`KiteTheme` 同样移除 Android 颜色依赖，命令端可在纯 JVM 使用。
+- `SettingsGateway` 只接收 `SettingsCommand.UpdateTheme(ThemeCommand)`；`AndroidSettingsGateway` 写入新协议键，并把旧 `theme_color/background_color/theme_style` 读取为受控自定义选择。未知颜色方案和风格包统一回退 `standard`。
+- 生产代码中的 `ThemeConfig`、`ThemeScope`、`ScopedThemeEnvironment` 和 `resolveEnvironment` 清零；Bundle 通过统一 `ThemeSelectionBundle` 适配，Gateway 只返回一个环境。
+- `ThemeFoundations` 固定页面间距和 48dp 触控底线，`ThemeComponentRecipes` 表达卡片、交互卡片、控件、标签、图标容器和对话框。首页与设置作为首批消费者，设置在只有一个方案/风格时隐藏临时调色板和单选项入口。
+- 静态门新增主题协议、Android-free、旧字段唯一迁移点和页面作用域清零约束；主壳债务为 `lines=2575/functions=127/fields=41`，未提高基线。终端仍只跟随应用有效明暗，ANSI 色板保持独立；Web/X11/运行与资源通道未引入重载、轮询或事实重查。
+- 自动验证：聚焦测试通过；全量 `584` 项单测零失败；`lintDebug`、架构检查、运行车道静态检查、`git diff --check` 和 `assembleDebug` 均通过。
+- Debug APK：232,155,814 bytes，SHA-256 `C5A6C276A1408F5619DA5634406714FFD4869E702370C0877363F704B490D113`。
+- OnePlus 8T `3f8bbaad`：保留数据安装成功；真实执行“跟随系统 → 亮色 → 跟随系统”，新协议键正确落盘，切换期间 PID 始终为 `9541`、任务始终为 `t4252`，没有重建进程或 Activity。
+- 最终 APK 再次保留数据安装并冷启动 `1597ms` 进入 `com.kite.app/.MainActivity`；最终 PID `10659`、任务 `t4253`，`theme_mode=system`，系统仍为暗色。FATAL、ANR、Input dispatch timeout 为 0；截图只保存在未跟踪的 `local-artifacts/theme-t016/`。
+- 未修改版本号，未提交、推送或发布；用户未跟踪的 `design-qa.md` 未改动。
+
+T016 状态：completed。

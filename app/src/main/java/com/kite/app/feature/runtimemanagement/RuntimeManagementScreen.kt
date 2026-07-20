@@ -12,7 +12,6 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.kite.app.run.KiteRunUiTone
-import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.kite.app.ui.UiKit
@@ -594,5 +593,5 @@ internal class RuntimeManagementScreen(
 
 private object RuntimeManagementTheme {
     fun tokens(context: Context): ThemeTokens =
-        context.kiteThemeEnvironment(ThemeScope.RUN).tokens
+        context.kiteThemeEnvironment().tokens
 }

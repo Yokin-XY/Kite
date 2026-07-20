@@ -32,6 +32,7 @@
 - [架构总览](architecture/overview.md)：模块化单体分层、职责和核心业务链。
 - [状态与生命周期](architecture/state-and-lifecycle.md)：状态拥有者、局部更新、显示面与运行生命周期。
 - [设置中心架构](architecture/settings.md)：能力分类、状态拥有者、入口类型和新增设置流程。
+- [主题系统规范](architecture/theme-system.md)：颜色、组件风格、固定设计基础、特殊内容边界和新模块接入标准。
 - [长期决策](architecture/decisions.md)：当前仍然有效的架构决策。
 
 ## 协议参考

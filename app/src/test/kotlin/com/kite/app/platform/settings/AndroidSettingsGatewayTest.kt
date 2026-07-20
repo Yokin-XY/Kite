@@ -8,6 +8,9 @@ import com.kite.app.application.settings.SettingsDropZoneSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.KiteThemeMode
+import com.kite.app.theme.ThemeColorSeed
+import com.kite.app.theme.ThemeColorSelection
+import com.kite.app.theme.ThemeCommand
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -35,10 +38,7 @@ class AndroidSettingsGatewayTest {
 
         val snapshot = gateway.currentSnapshot()
 
-        assertEquals(KiteTheme.defaultThemeColor, snapshot.themeColor)
-        assertEquals(KiteTheme.defaultBackgroundColor, snapshot.backgroundColor)
-        assertEquals(KiteThemeMode.SYSTEM, snapshot.themeMode)
-        assertEquals(KiteTheme.defaultStyleKey, snapshot.themeStyleKey)
+        assertEquals(KiteTheme.defaultSelection, snapshot.themeSelection)
         assertEquals(AppLanguagePreference.System, snapshot.appLanguage)
         assertEquals(BrowserRuntimeMode.Default, snapshot.browserRuntimeMode)
         assertTrue(snapshot.restoreLastScreen)
@@ -50,23 +50,41 @@ class AndroidSettingsGatewayTest {
     fun `commands persist and publish app settings without losing other fields`() {
         val gateway = gateway()
 
-        gateway.update(SettingsCommand.SetThemeColor(0x112233))
-        gateway.update(SettingsCommand.SetBackgroundColor(0x445566))
-        gateway.update(SettingsCommand.SetThemeMode(KiteThemeMode.DARK))
-        gateway.update(SettingsCommand.SetThemeStyle(KiteTheme.defaultStyleKey))
+        gateway.update(SettingsCommand.UpdateTheme(
+            ThemeCommand.SetCustomColors(ThemeColorSeed(0x112233, 0x445566))
+        ))
+        gateway.update(SettingsCommand.UpdateTheme(ThemeCommand.SetMode(KiteThemeMode.DARK)))
         gateway.update(SettingsCommand.SetBrowserRuntimeMode(BrowserRuntimeMode.AutomationBrowser))
         gateway.update(SettingsCommand.SetRestoreLastScreen(false))
         val latest = gateway.update(SettingsCommand.SetHideMainTaskFromRecents(true))
         val restored = gateway()
 
-        assertEquals(0x112233, latest.themeColor)
-        assertEquals(0x445566, latest.backgroundColor)
-        assertEquals(KiteThemeMode.DARK, latest.themeMode)
-        assertEquals(KiteTheme.defaultStyleKey, latest.themeStyleKey)
+        assertEquals(
+            ThemeColorSelection.Custom(ThemeColorSeed(0x112233, 0x445566)),
+            latest.themeSelection.colors,
+        )
+        assertEquals(KiteThemeMode.DARK, latest.themeSelection.mode)
         assertEquals(BrowserRuntimeMode.AutomationBrowser, latest.browserRuntimeMode)
         assertFalse(latest.restoreLastScreen)
         assertTrue(latest.hideMainTaskFromRecents)
         assertEquals(latest.copy(revision = restored.currentSnapshot().revision), restored.currentSnapshot())
+    }
+
+    @Test
+    fun `旧调色板键迁移为受控自定义选择`() {
+        context.getSharedPreferences("kite_theme", Context.MODE_PRIVATE).edit()
+            .putInt("theme_color", 0x102030)
+            .putInt("background_color", 0xF0F1F2)
+            .putString("theme_mode", "light")
+            .commit()
+
+        val selection = gateway().currentSnapshot().themeSelection
+
+        assertEquals(KiteThemeMode.LIGHT, selection.mode)
+        assertEquals(
+            ThemeColorSelection.Custom(ThemeColorSeed(0x102030, 0xF0F1F2)),
+            selection.colors,
+        )
     }
 
     @Test

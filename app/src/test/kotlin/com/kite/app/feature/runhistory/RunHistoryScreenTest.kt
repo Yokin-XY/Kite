@@ -8,7 +8,6 @@ import com.kite.app.run.CardRunHistoryEntry
 import com.kite.app.run.CardRunHistoryStep
 import com.kite.app.run.CardRunStatus
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -22,7 +21,7 @@ class RunHistoryScreenTest {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val screen = RunHistoryScreen(
             context = activity,
-            theme = ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor),
+            theme = KiteTheme.defaultSelection,
             listTitle = "运行历史",
             emptyTitle = "空",
             emptyDetail = "暂无",

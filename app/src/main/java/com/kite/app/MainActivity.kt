@@ -96,7 +96,7 @@ import com.kite.app.shell.NavigationBackAction
 import com.kite.app.shell.RestorePolicy
 import com.kite.app.shell.RunNotificationPermissionFragment
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeSelection
 import com.kite.app.application.theme.ThemeEnvironmentDependenciesOwner
 import com.kite.app.ui.theme.applyKiteWindowTheme
 import com.kite.app.ui.theme.isSystemDarkTheme
@@ -244,8 +244,8 @@ open class MainActivity : AppCompatActivity() {
     private var currentRecipes: List<KiteRecipe> = emptyList()
     private var dropZoneStatus: DropZoneStatus = DropZoneStatus(available = false, message = "投放区尚未检查")
     private var isDropZoneRefreshing = false
-    private var themeConfig = ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
-    private var tokens = KiteTheme.resolveEnvironment(themeConfig, systemDark = false).tokens
+    private var themeSelection = KiteTheme.defaultSelection
+    private var tokens = KiteTheme.resolve(themeSelection, systemDark = false).tokens
     private var pendingRuntimePermissionBootstrap = false
     private var runtimePermissionRequestInFlight = false
     private lateinit var firstRunOnboardingCoordinator: FirstRunOnboardingCoordinator
@@ -288,7 +288,7 @@ open class MainActivity : AppCompatActivity() {
             scope = lifecycleScope
         )
         val environment = (applicationContext as ThemeEnvironmentDependenciesOwner).themeEnvironmentGateway.current()
-        themeConfig = environment.config
+        themeSelection = environment.selection
         tokens = environment.tokens
         applyKiteWindowTheme(tokens, environment.isDark)
         applyKiteTerminalTheme()
@@ -1017,10 +1017,10 @@ open class MainActivity : AppCompatActivity() {
         return previous.progressText.isBlank() != next.progressText.isBlank()
     }
 
-    private fun applyThemeConfig(config: ThemeConfig) {
-        val next = KiteTheme.resolveEnvironment(config, isSystemDarkTheme())
-        if (themeConfig == next.config && tokens == next.tokens) return
-        themeConfig = next.config
+    private fun applyThemeSelection(selection: ThemeSelection) {
+        val next = KiteTheme.resolve(selection, isSystemDarkTheme())
+        if (themeSelection == next.selection && tokens == next.tokens) return
+        themeSelection = next.selection
         tokens = next.tokens
         applyKiteWindowTheme(tokens, next.isDark)
         applyKiteTerminalTheme()
@@ -1546,7 +1546,7 @@ open class MainActivity : AppCompatActivity() {
                 SettingsFeatureRequest.Back -> requestNavigationBack()
                 is SettingsFeatureRequest.OpenCategory -> showSettingsCategory(request.destination)
                 SettingsFeatureRequest.OpenTheme -> showThemeSettings()
-                is SettingsFeatureRequest.ApplyTheme -> applyThemeConfig(request.theme)
+                is SettingsFeatureRequest.ApplyTheme -> applyThemeSelection(request.theme)
                 SettingsFeatureRequest.ApplyRecentTaskVisibility -> applyRecentTaskVisibilitySetting()
                 SettingsFeatureRequest.OpenNotificationSettings -> requestRunNotificationSettings()
                 SettingsFeatureRequest.OpenAllFilesSettings -> openAllFilesAccessSettings()
@@ -1817,7 +1817,7 @@ open class MainActivity : AppCompatActivity() {
             size = dp(44),
             fill = Color.TRANSPARENT,
             tint = tokens.textPrimary,
-            radius = dp(KiteTheme.shapes.controlRadius),
+            radius = dp(KiteTheme.resolve(themeSelection, isSystemDarkTheme()).components.control.radius),
             description = getString(R.string.home_create_card_description),
             onClick = ::showCreateConfig
         ))
@@ -2192,7 +2192,7 @@ open class MainActivity : AppCompatActivity() {
     private fun showRecipeRawJson(recipe: KiteRecipe) {
         enterScreen(AppDestination.RecipeDetail) { showRecipeEditor(recipe) }
         showFeatureFragment(
-            RecipeRawJsonFragment.newInstance(recipe.id.ifBlank { recipe.name }, themeConfig),
+            RecipeRawJsonFragment.newInstance(recipe.id.ifBlank { recipe.name }, themeSelection),
             TAG_RECIPE_RAW_JSON_FRAGMENT
         )
     }
@@ -2221,7 +2221,7 @@ open class MainActivity : AppCompatActivity() {
         showFeatureFragment(
             RunHistoryFragment.newInstance(
                 recipeId = recipeId,
-                theme = themeConfig,
+                theme = themeSelection,
                 listTitle = listTitle,
                 emptyTitle = emptyTitle,
                 emptyDetail = emptyDetail,

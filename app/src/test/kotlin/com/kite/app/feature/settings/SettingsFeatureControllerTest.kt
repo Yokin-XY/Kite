@@ -7,6 +7,10 @@ import com.kite.app.application.settings.SettingsSnapshot
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteThemeMode
+import com.kite.app.theme.KiteTheme
+import com.kite.app.theme.ThemeColorSeed
+import com.kite.app.theme.ThemeColorSelection
+import com.kite.app.theme.ThemeCommand
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
@@ -36,9 +40,12 @@ class SettingsFeatureControllerTest {
 
         assertNull(controller.dispatch(SettingsFeatureAction.SetRestoreLastScreen(false)))
         val recents = controller.dispatch(SettingsFeatureAction.SetHideMainTaskFromRecents(true))
-        val theme = controller.dispatch(SettingsFeatureAction.SelectThemeColor(0x123456))
-        val themeMode = controller.dispatch(SettingsFeatureAction.SelectThemeMode(KiteThemeMode.DARK))
-        val themeStyle = controller.dispatch(SettingsFeatureAction.SelectThemeStyle("standard"))
+        val theme = controller.dispatch(SettingsFeatureAction.UpdateTheme(
+            ThemeCommand.SetCustomColors(ThemeColorSeed(0x123456, 0xF4F6F8))
+        ))
+        val themeMode = controller.dispatch(SettingsFeatureAction.UpdateTheme(
+            ThemeCommand.SetMode(KiteThemeMode.DARK)
+        ))
         val language = controller.dispatch(
             SettingsFeatureAction.SelectAppLanguage(AppLanguagePreference.English)
         )
@@ -49,9 +56,11 @@ class SettingsFeatureControllerTest {
         assertFalse(gateway.currentSnapshot().restoreLastScreen)
         assertTrue(gateway.currentSnapshot().hideMainTaskFromRecents)
         assertEquals(SettingsFeatureEffect.RecentTaskVisibilityChanged, recents)
-        assertEquals(0x123456, (theme as SettingsFeatureEffect.ThemeChanged).theme.themeColor)
+        assertEquals(
+            ThemeColorSelection.Custom(ThemeColorSeed(0x123456, 0xF4F6F8)),
+            (theme as SettingsFeatureEffect.ThemeChanged).theme.colors,
+        )
         assertEquals(KiteThemeMode.DARK, (themeMode as SettingsFeatureEffect.ThemeChanged).theme.mode)
-        assertEquals("standard", (themeStyle as SettingsFeatureEffect.ThemeChanged).theme.styleKey)
         assertEquals(
             AppLanguagePreference.English,
             (language as SettingsFeatureEffect.AppLanguageChanged).language
@@ -93,10 +102,9 @@ class SettingsFeatureControllerTest {
         override fun update(command: SettingsCommand): SettingsSnapshot {
             val current = mutable.value
             val next = when (command) {
-                is SettingsCommand.SetThemeColor -> current.copy(themeColor = command.color)
-                is SettingsCommand.SetBackgroundColor -> current.copy(backgroundColor = command.color)
-                is SettingsCommand.SetThemeMode -> current.copy(themeMode = command.mode)
-                is SettingsCommand.SetThemeStyle -> current.copy(themeStyleKey = command.styleKey)
+                is SettingsCommand.UpdateTheme -> current.copy(
+                    themeSelection = KiteTheme.apply(current.themeSelection, command.command)
+                )
                 is SettingsCommand.SetAppLanguage -> current.copy(appLanguage = command.language)
                 is SettingsCommand.SetBrowserRuntimeMode -> current.copy(browserRuntimeMode = command.mode)
                 is SettingsCommand.SetRestoreLastScreen -> current.copy(restoreLastScreen = command.enabled)
@@ -111,15 +119,17 @@ class SettingsFeatureControllerTest {
 
     private companion object {
         fun snapshot() = SettingsSnapshot(
-            themeColor = 0x123456,
-            backgroundColor = 0xF4F6F8,
             appLanguage = AppLanguagePreference.System,
             browserRuntimeMode = BrowserRuntimeMode.Default,
             restoreLastScreen = true,
             hideMainTaskFromRecents = false,
             notificationsEnabled = false,
             dropZone = SettingsDropZoneSnapshot(),
-            revision = 1L
+            revision = 1L,
+            themeSelection = KiteTheme.apply(
+                KiteTheme.defaultSelection,
+                ThemeCommand.SetCustomColors(ThemeColorSeed(0x123456, 0xF4F6F8)),
+            ),
         )
     }
 }

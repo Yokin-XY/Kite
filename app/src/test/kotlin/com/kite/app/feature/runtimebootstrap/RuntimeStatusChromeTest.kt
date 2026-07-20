@@ -68,12 +68,7 @@ class RuntimeStatusChromeTest {
     private fun chrome(activity: Activity, rootHost: FrameLayout) = RuntimeStatusChrome(
         activity = activity,
         rootHost = rootHost,
-        tokens = KiteTheme.resolve(
-            com.kite.app.theme.ThemeConfig(
-                KiteTheme.defaultThemeColor,
-                KiteTheme.defaultBackgroundColor
-            )
-        ),
+        tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens,
         onRefresh = {},
         onPrimaryAction = {}
     )

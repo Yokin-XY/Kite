@@ -3,12 +3,11 @@ package com.kite.app.feature.settings
 import com.kite.app.application.settings.SettingsSnapshot
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.browser.BrowserRuntimeMode
-import com.kite.app.theme.ThemeConfig
-import com.kite.app.theme.KiteThemeMode
-import com.kite.app.application.settings.themeConfig
+import com.kite.app.theme.ThemeCommand
+import com.kite.app.theme.ThemeSelection
 
 internal data class SettingsUiState(
-    val theme: ThemeConfig,
+    val theme: ThemeSelection,
     val appLanguage: AppLanguagePreference,
     val browserRuntimeMode: BrowserRuntimeMode,
     val restoreLastScreen: Boolean,
@@ -20,10 +19,7 @@ internal data class SettingsUiState(
 
 internal sealed interface SettingsFeatureAction {
     data object Refresh : SettingsFeatureAction
-    data class SelectThemeColor(val color: Int) : SettingsFeatureAction
-    data class SelectBackgroundColor(val color: Int) : SettingsFeatureAction
-    data class SelectThemeMode(val mode: KiteThemeMode) : SettingsFeatureAction
-    data class SelectThemeStyle(val styleKey: String) : SettingsFeatureAction
+    data class UpdateTheme(val command: ThemeCommand) : SettingsFeatureAction
     data class SelectAppLanguage(val language: AppLanguagePreference) : SettingsFeatureAction
     data class SelectBrowserMode(val mode: BrowserRuntimeMode) : SettingsFeatureAction
     data class SetRestoreLastScreen(val enabled: Boolean) : SettingsFeatureAction
@@ -33,7 +29,7 @@ internal sealed interface SettingsFeatureAction {
 }
 
 internal sealed interface SettingsFeatureEffect {
-    data class ThemeChanged(val theme: ThemeConfig) : SettingsFeatureEffect
+    data class ThemeChanged(val theme: ThemeSelection) : SettingsFeatureEffect
     data object RecentTaskVisibilityChanged : SettingsFeatureEffect
     data object NotificationSettingsRequested : SettingsFeatureEffect
     data class DropZoneRequested(val available: Boolean) : SettingsFeatureEffect
@@ -43,7 +39,7 @@ internal sealed interface SettingsFeatureEffect {
 
 internal object SettingsProjector {
     fun project(snapshot: SettingsSnapshot): SettingsUiState = SettingsUiState(
-        theme = snapshot.themeConfig(),
+        theme = snapshot.themeSelection,
         appLanguage = snapshot.appLanguage,
         browserRuntimeMode = snapshot.browserRuntimeMode,
         restoreLastScreen = snapshot.restoreLastScreen,

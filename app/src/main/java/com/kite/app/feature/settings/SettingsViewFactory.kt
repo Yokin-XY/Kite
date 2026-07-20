@@ -10,7 +10,6 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
@@ -18,12 +17,14 @@ import com.kite.app.R
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeComponentStyle
+import com.kite.app.theme.ThemeComponentRecipes
+import com.kite.app.theme.ThemeFoundations
 
 internal class SettingsViewFactory(
     private val context: Context,
     val tokens: ThemeTokens,
-    private val components: ThemeComponentStyle = KiteTheme.styleDefinitions.first().base,
+    private val foundations: ThemeFoundations = KiteTheme.foundations,
+    private val components: ThemeComponentRecipes = KiteTheme.catalog.stylePacks.first().components,
 ) {
     class NavigationBinding(
         val root: View,
@@ -70,7 +71,10 @@ internal class SettingsViewFactory(
             gravity = Gravity.CENTER
             setTextColor(tokens.textPrimary)
             background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(16).toFloat())
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+            layoutParams = LinearLayout.LayoutParams(
+                dp(foundations.minimumTouchTarget),
+                dp(foundations.minimumTouchTarget),
+            )
             setOnClickListener { onBack() }
             contentDescription = context.getString(R.string.common_back)
         })
@@ -81,7 +85,10 @@ internal class SettingsViewFactory(
             setTextColor(tokens.textPrimary)
             gravity = Gravity.CENTER
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(View(context), LinearLayout.LayoutParams(dp(44), dp(44)))
+        addView(View(context), LinearLayout.LayoutParams(
+            dp(foundations.minimumTouchTarget),
+            dp(foundations.minimumTouchTarget),
+        ))
     }
 
     fun navigationRow(title: String, subtitle: String, onClick: () -> Unit): NavigationBinding {
@@ -90,8 +97,8 @@ internal class SettingsViewFactory(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(18), dp(16), dp(16), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(components.shapes.cardRadius).toFloat())
-            elevation = dp(components.cardElevation).toFloat()
+            background = containerBackground(tokens.cardBackground, tokens.border, components.interactiveCard)
+            elevation = dp(components.interactiveCard.elevation).toFloat()
             addView(labelColumn(title, subtitleView), LinearLayout.LayoutParams(
                 0,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -127,8 +134,8 @@ internal class SettingsViewFactory(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(18), dp(14), dp(16), dp(14))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(components.shapes.cardRadius).toFloat())
-            elevation = dp(components.cardElevation).toFloat()
+            background = containerBackground(tokens.cardBackground, tokens.border, components.interactiveCard)
+            elevation = dp(components.interactiveCard.elevation).toFloat()
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -167,7 +174,7 @@ internal class SettingsViewFactory(
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(16), dp(18), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(components.shapes.cardRadius).toFloat())
+            background = containerBackground(tokens.cardBackground, tokens.border, components.card)
             addView(TextView(context).apply {
                 text = title
                 textSize = 16f
@@ -179,24 +186,10 @@ internal class SettingsViewFactory(
         return InformationBinding(root, subtitle)
     }
 
-    fun colorPresetRow(
-        options: List<Pair<String, Int>>,
-        selectedColor: Int,
-        onSelect: (Int) -> Unit
-    ): View = HorizontalScrollView(context).apply {
-        isHorizontalScrollBarEnabled = false
-        addView(LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            options.forEach { (label, color) ->
-                addView(colorPresetChip(label, color, color == selectedColor) { onSelect(color) })
-            }
-        })
-    }
-
     fun themePreviewCard(): View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(18), dp(18), dp(18), dp(18))
-        background = roundedBox(tokens.cardBackground, tokens.border, dp(components.shapes.cardRadius).toFloat())
+        background = containerBackground(tokens.cardBackground, tokens.border, components.card)
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -246,7 +239,7 @@ internal class SettingsViewFactory(
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(18), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
+            background = containerBackground(tokens.cardBackground, tokens.border, components.dialog)
             addView(TextView(context).apply {
                 text = context.getString(R.string.settings_language_dialog_title)
                 textSize = 18f
@@ -300,7 +293,7 @@ internal class SettingsViewFactory(
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(18), dp(16))
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(22).toFloat())
+            background = containerBackground(tokens.cardBackground, tokens.border, components.dialog)
             addView(TextView(context).apply {
                 text = title
                 textSize = 18f
@@ -350,6 +343,17 @@ internal class SettingsViewFactory(
             setStroke(strokeWidth, stroke)
         }
 
+    private fun containerBackground(
+        fill: Int,
+        stroke: Int,
+        recipe: com.kite.app.theme.ThemeContainerRecipe,
+    ): GradientDrawable = roundedBox(
+        fill = fill,
+        stroke = stroke,
+        radius = dp(recipe.radius).toFloat(),
+        strokeWidth = dp(recipe.strokeWidth),
+    )
+
     fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
     private fun labelColumn(title: String, subtitle: TextView, endPadding: Int = 0): View =
@@ -372,41 +376,6 @@ internal class SettingsViewFactory(
         maxLines = 2
         ellipsize = TextUtils.TruncateAt.END
         setPadding(0, dp(4), 0, 0)
-    }
-
-    private fun colorPresetChip(
-        label: String,
-        color: Int,
-        selected: Boolean,
-        onClick: () -> Unit
-    ): View = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(10), 0, dp(12), 0)
-        background = roundedBox(
-            if (selected) tokens.primarySubtle else tokens.surface,
-            if (selected) tokens.primaryStrong else tokens.border,
-            dp(18).toFloat(),
-            dp(if (selected) 2 else 1)
-        )
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)).apply {
-            setMargins(0, 0, dp(10), 0)
-        }
-        addView(View(context).apply {
-            background = roundedBox(color, color, dp(9).toFloat())
-            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply {
-                setMargins(0, 0, dp(8), 0)
-            }
-        })
-        addView(TextView(context).apply {
-            text = label
-            textSize = 12.5f
-            typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            setTextColor(if (selected) tokens.primaryStrong else tokens.textSecondary)
-        })
-        isFocusable = true
-        contentDescription = label
-        setOnClickListener { onClick() }
     }
 
     private fun languageChoice(

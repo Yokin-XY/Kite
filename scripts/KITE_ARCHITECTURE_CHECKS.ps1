@@ -50,6 +50,9 @@ $settingsGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/applicati
 $settingsControllerPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/settings/SettingsFeatureController.kt'
 $settingsFragmentPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/settings/SettingsFragment.kt'
 $androidSettingsGatewayPath = Join-Path $Root 'app/src/main/java/com/kite/app/platform/settings/AndroidSettingsGateway.kt'
+$themeProtocolPath = Join-Path $Root 'app/src/main/java/com/kite/app/theme/ThemeProtocol.kt'
+$kiteThemePath = Join-Path $Root 'app/src/main/java/com/kite/app/theme/KiteTheme.kt'
+$themeUiPath = Join-Path $Root 'app/src/main/java/com/kite/app/ui/theme/KiteThemeUi.kt'
 $onboardingCoordinatorPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/onboarding/FirstRunOnboardingCoordinator.kt'
 $surfaceEffectPath = Join-Path $Root 'app/src/main/java/com/kite/app/application/surface/SurfaceEffect.kt'
 $terminalSurfaceContractPath = Join-Path $Root 'app/src/main/java/com/kite/app/feature/terminal/TerminalSurfaceResultContract.kt'
@@ -101,6 +104,9 @@ Assert-Architecture (Test-Path $settingsGatewayPath) 'Settings gateway contract 
 Assert-Architecture (Test-Path $settingsControllerPath) 'Settings feature controller is missing.'
 Assert-Architecture (Test-Path $settingsFragmentPath) 'Settings feature fragment is missing.'
 Assert-Architecture (Test-Path $androidSettingsGatewayPath) 'Android settings gateway is missing.'
+Assert-Architecture (Test-Path $themeProtocolPath) 'Theme rule protocol is missing.'
+Assert-Architecture (Test-Path $kiteThemePath) 'Theme resolver is missing.'
+Assert-Architecture (Test-Path $themeUiPath) 'Theme UI environment adapter is missing.'
 Assert-Architecture (Test-Path $onboardingCoordinatorPath) 'First-run onboarding coordinator is missing.'
 Assert-Architecture (Test-Path $surfaceEffectPath) 'Generic surface effect contract is missing.'
 Assert-Architecture (Test-Path $terminalSurfaceContractPath) 'Terminal surface result contract is missing.'
@@ -147,6 +153,9 @@ if ($failures.Count -eq 0) {
     $settingsController = [System.IO.File]::ReadAllText($settingsControllerPath, [System.Text.Encoding]::UTF8)
     $settingsFragment = [System.IO.File]::ReadAllText($settingsFragmentPath, [System.Text.Encoding]::UTF8)
     $androidSettingsGateway = [System.IO.File]::ReadAllText($androidSettingsGatewayPath, [System.Text.Encoding]::UTF8)
+    $themeProtocol = [System.IO.File]::ReadAllText($themeProtocolPath, [System.Text.Encoding]::UTF8)
+    $kiteTheme = [System.IO.File]::ReadAllText($kiteThemePath, [System.Text.Encoding]::UTF8)
+    $themeUi = [System.IO.File]::ReadAllText($themeUiPath, [System.Text.Encoding]::UTF8)
     $onboardingCoordinator = [System.IO.File]::ReadAllText($onboardingCoordinatorPath, [System.Text.Encoding]::UTF8)
     $surfaceEffect = [System.IO.File]::ReadAllText($surfaceEffectPath, [System.Text.Encoding]::UTF8)
     $terminalSurfaceContract = [System.IO.File]::ReadAllText($terminalSurfaceContractPath, [System.Text.Encoding]::UTF8)
@@ -296,7 +305,7 @@ if ($failures.Count -eq 0) {
         $settingsGateway -notmatch 'android\.|androidx\.'
     ) 'Settings application contract must expose one Android-free snapshot owner.'
     Assert-Architecture (
-        $settingsController -match 'SettingsCommand\.SetThemeColor' -and
+        $settingsController -match 'SettingsCommand\.UpdateTheme' -and
         $settingsController -match 'SettingsFeatureEffect\.RecentTaskVisibilityChanged' -and
         $settingsController -notmatch 'SharedPreferences|NotificationManager|KiteDropZoneManager|android\.|androidx\.'
     ) 'Settings feature controller must submit data commands and shell effects without platform access.'
@@ -306,9 +315,42 @@ if ($failures.Count -eq 0) {
     ) 'Settings fragment must project state and return effects without delegating ownership to MainActivity.'
     Assert-Architecture (
         $androidSettingsGateway -match 'withContext\(Dispatchers\.IO\)' -and
+        $androidSettingsGateway -match 'ThemeColorSelection\.Custom' -and
+        $androidSettingsGateway -match 'KEY_LEGACY_THEME_COLOR' -and
         $androidSettingsGateway -match 'SettingsCommand\.SetBrowserRuntimeMode' -and
         $androidSettingsGateway -notmatch 'android\.view\.|android\.widget\.|Activity'
     ) 'Android settings gateway must keep system probes off the UI thread and must not own views.'
+    Assert-Architecture (
+        $themeProtocol -match 'sealed\s+interface\s+ThemeCommand' -and
+        $themeProtocol -match 'data\s+class\s+ThemeSelection' -and
+        $themeProtocol -match 'data\s+class\s+ThemeCatalog' -and
+        $themeProtocol -match 'data\s+class\s+ThemeEnvironment' -and
+        $themeProtocol -notmatch '(?m)^\s*import\s+(android\.|androidx\.)'
+    ) 'Theme command, selection, catalog, and environment must remain one Android-free middle protocol.'
+    Assert-Architecture (
+        $kiteTheme -match 'object\s+KiteTheme\s*:\s*ThemeRuleProtocol' -and
+        $kiteTheme -match 'override\s+fun\s+normalize' -and
+        $kiteTheme -match 'override\s+fun\s+apply' -and
+        $kiteTheme -match 'override\s+fun\s+resolve' -and
+        $kiteTheme -notmatch '(?m)^\s*import\s+(android\.|androidx\.)'
+    ) 'KiteTheme must centrally normalize commands and resolve environments.'
+    Assert-Architecture (
+        $themeUi -match 'themeEnvironmentGateway\.current\(\)' -and
+        $themeUi -notmatch 'ThemeScope|ScopedThemeEnvironment'
+    ) 'UI theme access must consume the shared environment without page scopes.'
+
+    foreach ($file in $allSourceFiles) {
+        $source = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
+        $label = $file.FullName.Substring($Root.Length + 1)
+        Assert-Architecture (
+            $source -notmatch '\bThemeScope\b|\bScopedThemeEnvironment\b|\bThemeConfig\b|KiteTheme\.resolveEnvironment\s*\('
+        ) "Theme source '$label' bypasses the middle protocol or restores page-scoped theming."
+        if ($file.FullName -ne $androidSettingsGatewayPath) {
+            Assert-Architecture (
+                $source -notmatch '"theme_color"|"background_color"|"theme_style"'
+            ) "Theme source '$label' persists or transports legacy raw palette fields."
+        }
+    }
     Assert-Architecture (
         $onboardingCoordinator -match 'AwaitingRuntimePermissionResult' -and
         $onboardingCoordinator -match 'AwaitingAllFilesReturn' -and

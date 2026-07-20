@@ -1,8 +1,10 @@
 package com.kite.app.feature.settings
 
 import android.os.Bundle
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.KiteThemeMode
+import com.kite.app.theme.ThemeColorSeed
+import com.kite.app.theme.ThemeColorSelection
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -15,15 +17,19 @@ class SettingsFeatureResultContractTest {
     fun `theme request round-trips colors mode and style`() {
         val bundle = Bundle().apply {
             putString("kind", "apply_theme")
-            putInt("theme_color", 0x112233)
-            putInt("background_color", 0x445566)
+            putString("theme_color_kind", "custom")
+            putInt("theme_custom_accent", 0x112233)
+            putInt("theme_custom_background", 0x445566)
             putString("theme_mode", "dark")
-            putString("theme_style", "standard")
+            putString("theme_style_pack", "standard")
         }
 
         assertEquals(
             SettingsFeatureRequest.ApplyTheme(
-                ThemeConfig(0x112233, 0x445566, KiteThemeMode.DARK, "standard")
+                KiteTheme.defaultSelection.copy(
+                    mode = KiteThemeMode.DARK,
+                    colors = ThemeColorSelection.Custom(ThemeColorSeed(0x112233, 0x445566)),
+                )
             ),
             SettingsFeatureResultContract.parse(bundle)
         )

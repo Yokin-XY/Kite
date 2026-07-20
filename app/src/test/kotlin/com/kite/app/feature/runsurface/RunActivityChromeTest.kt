@@ -16,7 +16,6 @@ import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -242,8 +241,9 @@ class RunWebToolbarTest {
 }
 
 private fun testTokens() = KiteTheme.resolve(
-    ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
-)
+    KiteTheme.defaultSelection,
+    systemDark = false,
+).tokens
 
 private fun View.findByDescription(value: String): View? {
     if (contentDescription?.toString() == value) return this

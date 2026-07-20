@@ -2,15 +2,15 @@ package com.kite.app.feature.settings
 
 import android.os.Bundle
 import androidx.fragment.app.Fragment
-import com.kite.app.theme.ThemeConfig
-import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.KiteThemeMode
+import com.kite.app.theme.ThemeSelection
+import com.kite.app.ui.theme.getThemeSelection
+import com.kite.app.ui.theme.putThemeSelection
 
 internal sealed interface SettingsFeatureRequest {
     data object Back : SettingsFeatureRequest
     data class OpenCategory(val destination: SettingsCategoryDestination) : SettingsFeatureRequest
     data object OpenTheme : SettingsFeatureRequest
-    data class ApplyTheme(val theme: ThemeConfig) : SettingsFeatureRequest
+    data class ApplyTheme(val theme: ThemeSelection) : SettingsFeatureRequest
     data object ApplyRecentTaskVisibility : SettingsFeatureRequest
     data object OpenNotificationSettings : SettingsFeatureRequest
     data object OpenAllFilesSettings : SettingsFeatureRequest
@@ -33,12 +33,7 @@ internal object SettingsFeatureResultContract {
             ?.let(SettingsFeatureRequest::OpenCategory)
         KIND_OPEN_THEME -> SettingsFeatureRequest.OpenTheme
         KIND_APPLY_THEME -> SettingsFeatureRequest.ApplyTheme(
-            ThemeConfig(
-                themeColor = bundle.getInt(KEY_THEME_COLOR),
-                backgroundColor = bundle.getInt(KEY_BACKGROUND_COLOR),
-                mode = KiteThemeMode.fromStorageKey(bundle.getString(KEY_THEME_MODE)),
-                styleKey = bundle.getString(KEY_THEME_STYLE) ?: KiteTheme.defaultStyleKey,
-            )
+            bundle.getThemeSelection(THEME_PREFIX)
         )
         KIND_APPLY_RECENTS -> SettingsFeatureRequest.ApplyRecentTaskVisibility
         KIND_NOTIFICATION -> SettingsFeatureRequest.OpenNotificationSettings
@@ -59,10 +54,7 @@ internal object SettingsFeatureResultContract {
             SettingsFeatureRequest.OpenTheme -> putString(KEY_KIND, KIND_OPEN_THEME)
             is SettingsFeatureRequest.ApplyTheme -> {
                 putString(KEY_KIND, KIND_APPLY_THEME)
-                putInt(KEY_THEME_COLOR, request.theme.themeColor)
-                putInt(KEY_BACKGROUND_COLOR, request.theme.backgroundColor)
-                putString(KEY_THEME_MODE, request.theme.mode.storageKey)
-                putString(KEY_THEME_STYLE, request.theme.styleKey)
+                putThemeSelection(THEME_PREFIX, request.theme)
             }
             SettingsFeatureRequest.ApplyRecentTaskVisibility -> putString(KEY_KIND, KIND_APPLY_RECENTS)
             SettingsFeatureRequest.OpenNotificationSettings -> putString(KEY_KIND, KIND_NOTIFICATION)
@@ -77,10 +69,7 @@ internal object SettingsFeatureResultContract {
     }
 
     private const val KEY_KIND = "kind"
-    private const val KEY_THEME_COLOR = "theme_color"
-    private const val KEY_BACKGROUND_COLOR = "background_color"
-    private const val KEY_THEME_MODE = "theme_mode"
-    private const val KEY_THEME_STYLE = "theme_style"
+    private const val THEME_PREFIX = "theme"
     private const val KEY_AVAILABLE = "available"
     private const val KEY_CATEGORY = "category"
     private const val KIND_BACK = "back"

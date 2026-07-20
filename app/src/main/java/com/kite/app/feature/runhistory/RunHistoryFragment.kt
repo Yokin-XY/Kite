@@ -11,9 +11,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.application.runs.RunHistoryDependenciesOwner
 import com.kite.app.application.runs.RunHistoryGateway
-import com.kite.app.theme.ThemeConfig
-import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.KiteThemeMode
+import com.kite.app.theme.ThemeSelection
+import com.kite.app.ui.theme.getThemeSelection
+import com.kite.app.ui.theme.putThemeSelection
 import kotlinx.coroutines.launch
 
 internal class RunHistoryFragment : Fragment() {
@@ -41,7 +41,7 @@ internal class RunHistoryFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View = RunHistoryScreen(
         context = requireContext(),
-        theme = themeConfig(),
+        theme = themeSelection(),
         listTitle = requireArguments().getString(ARG_LIST_TITLE).orEmpty().ifBlank { "运行历史" },
         emptyTitle = requireArguments().getString(ARG_EMPTY_TITLE).orEmpty().ifBlank { "还没有运行记录" },
         emptyDetail = requireArguments().getString(ARG_EMPTY_DETAIL).orEmpty().ifBlank {
@@ -77,12 +77,7 @@ internal class RunHistoryFragment : Fragment() {
     private fun initialHistoryId(): String? =
         requireArguments().getString(ARG_INITIAL_HISTORY_ID)?.takeIf(String::isNotBlank)
 
-    private fun themeConfig(): ThemeConfig = ThemeConfig(
-        requireArguments().getInt(ARG_THEME_COLOR),
-        requireArguments().getInt(ARG_BACKGROUND_COLOR),
-        KiteThemeMode.fromStorageKey(requireArguments().getString(ARG_THEME_MODE)),
-        requireArguments().getString(ARG_THEME_STYLE) ?: KiteTheme.defaultStyleKey,
-    )
+    private fun themeSelection(): ThemeSelection = requireArguments().getThemeSelection(THEME_PREFIX)
 
     companion object {
         private const val ARG_RECIPE_ID = "recipe_id"
@@ -90,14 +85,11 @@ internal class RunHistoryFragment : Fragment() {
         private const val ARG_LIST_TITLE = "list_title"
         private const val ARG_EMPTY_TITLE = "empty_title"
         private const val ARG_EMPTY_DETAIL = "empty_detail"
-        private const val ARG_THEME_COLOR = "theme_color"
-        private const val ARG_BACKGROUND_COLOR = "background_color"
-        private const val ARG_THEME_MODE = "theme_mode"
-        private const val ARG_THEME_STYLE = "theme_style"
+        private const val THEME_PREFIX = "theme"
 
         fun newInstance(
             recipeId: String,
-            theme: ThemeConfig,
+            theme: ThemeSelection,
             listTitle: String,
             emptyTitle: String,
             emptyDetail: String,
@@ -109,10 +101,7 @@ internal class RunHistoryFragment : Fragment() {
                 putString(ARG_LIST_TITLE, listTitle)
                 putString(ARG_EMPTY_TITLE, emptyTitle)
                 putString(ARG_EMPTY_DETAIL, emptyDetail)
-                putInt(ARG_THEME_COLOR, theme.themeColor)
-                putInt(ARG_BACKGROUND_COLOR, theme.backgroundColor)
-                putString(ARG_THEME_MODE, theme.mode.storageKey)
-                putString(ARG_THEME_STYLE, theme.styleKey)
+                putThemeSelection(THEME_PREFIX, theme)
             }
         }
     }

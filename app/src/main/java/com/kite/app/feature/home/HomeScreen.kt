@@ -60,6 +60,7 @@ internal class HomeScreen(
     private val factory = HomeFeatureViewFactory(
         context = context,
         tokens = themeEnvironment.tokens,
+        foundations = themeEnvironment.foundations,
         components = themeEnvironment.components,
         onOpenEditor = onOpenEditor,
         onPrimaryAction = onPrimaryAction
@@ -87,7 +88,8 @@ internal class HomeScreen(
         background = factory.roundedBox(
             factory.tokens.inputBackground,
             factory.tokens.border,
-            factory.dp(factory.components.shapes.controlRadius).toFloat()
+            factory.dp(factory.components.control.radius).toFloat(),
+            factory.dp(factory.components.control.strokeWidth),
         )
         setText(searchQuery)
         doAfterTextChanged { editable ->
@@ -108,7 +110,8 @@ internal class HomeScreen(
         background = factory.roundedBox(
             factory.tokens.surface,
             factory.tokens.border,
-            factory.dp(factory.components.shapes.controlRadius).toFloat()
+            factory.dp(factory.components.control.radius).toFloat(),
+            factory.dp(factory.components.control.strokeWidth),
         )
         addView(iconView(R.drawable.ic_material_sort, factory.tokens.textSecondary, factory.dp(21)))
         addView(TextView(context).apply {
@@ -187,14 +190,14 @@ internal class HomeScreen(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(
-                factory.dp(factory.components.spacing.pageHorizontal),
+                factory.dp(factory.foundations.spacing.pageHorizontal),
                 factory.dp(4),
-                factory.dp(factory.components.spacing.pageHorizontal),
+                factory.dp(factory.foundations.spacing.pageHorizontal),
                 0
             )
             addView(searchInput, LinearLayout.LayoutParams(0, factory.dp(48), 1f))
             addView(arrangeButton, LinearLayout.LayoutParams(factory.dp(98), factory.dp(48)).apply {
-                setMargins(factory.dp(factory.components.spacing.sectionGap), 0, 0, 0)
+                setMargins(factory.dp(factory.foundations.spacing.sectionGap), 0, 0, 0)
             })
         })
         addView(chipScroller, LinearLayout.LayoutParams(
@@ -300,16 +303,16 @@ internal class HomeScreen(
         tabsSignature = signature
         chipRow.removeAllViews()
         chipRow.setPadding(
-            factory.dp(factory.components.spacing.pageHorizontal),
+            factory.dp(factory.foundations.spacing.pageHorizontal),
             0,
-            factory.dp(factory.components.spacing.pageHorizontal),
+            factory.dp(factory.foundations.spacing.pageHorizontal),
             0
         )
         pages.forEach { page ->
             chipRow.addView(pageChip(page), LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 factory.dp(42)
-            ).apply { setMargins(0, 0, factory.dp(factory.components.spacing.itemGap), 0) })
+            ).apply { setMargins(0, 0, factory.dp(factory.foundations.spacing.itemGap), 0) })
         }
         chipRow.addView(createGroupChip(), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -332,7 +335,8 @@ internal class HomeScreen(
         background = factory.roundedBox(
             if (selected) factory.tokens.primarySubtle else factory.tokens.surface,
             if (selected) factory.tokens.primaryStrong else factory.tokens.border,
-            factory.dp(factory.components.shapes.chipRadius).toFloat()
+            factory.dp(factory.components.chip.radius).toFloat(),
+            factory.dp(factory.components.chip.strokeWidth),
         )
         addView(iconView(
             page.iconRes,
@@ -362,7 +366,8 @@ internal class HomeScreen(
         background = factory.roundedBox(
             factory.tokens.pageBackground,
             factory.tokens.borderStrong,
-            factory.dp(factory.components.shapes.chipRadius).toFloat(),
+            factory.dp(factory.components.chip.radius).toFloat(),
+            factory.dp(factory.components.chip.strokeWidth),
             dashWidth = factory.dp(4).toFloat(),
             dashGap = factory.dp(3).toFloat()
         )

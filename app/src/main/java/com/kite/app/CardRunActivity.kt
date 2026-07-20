@@ -72,7 +72,6 @@ import com.kite.app.run.CardRunWindowIds
 import com.kite.app.shell.KiteAppGraph
 import com.kite.app.shell.RunInstallWizardSurfaceBinding
 import com.kite.app.shell.RunNotificationPermissionFragment
-import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.kite.app.ui.theme.applyKiteWindowTheme
@@ -128,7 +127,7 @@ class CardRunActivity : AppCompatActivity() {
         resourceOpenRecipeResolver = AndroidResourceOpenRecipeResolver(graph.resourceManifestLoader)
         runWindowSurfaceGateway = graph.runWindowSurfaceGateway
         CardRunStore.initialize(applicationContext)
-        val theme = kiteThemeEnvironment(ThemeScope.RUN)
+        val theme = kiteThemeEnvironment()
         tokens = theme.tokens
         themeDark = theme.isDark
         applyKiteWindowTheme(tokens, themeDark)

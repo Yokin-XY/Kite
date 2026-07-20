@@ -16,7 +16,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.theme.kiteThemeEnvironment
 import kotlin.math.max
@@ -278,7 +277,7 @@ private fun cropRounded(fill: Int, stroke: Int, radius: Float): GradientDrawable
     }
 
 private fun editorCropTokens(context: Context): ThemeTokens {
-    return context.kiteThemeEnvironment(ThemeScope.EDITOR).tokens
+    return context.kiteThemeEnvironment().tokens
 }
 
 private fun Context.dp(value: Int): Int =

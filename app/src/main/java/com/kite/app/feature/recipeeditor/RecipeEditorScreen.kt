@@ -28,7 +28,6 @@ import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.KiteRunPrimaryAction
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.kite.app.ui.UiKit
@@ -1163,7 +1162,7 @@ internal class RecipeEditorScreen(
         val presetIcons = listOf("terminal", "web", "bot", "file", "tools", "server", "code", "logs")
 
         fun editorTokens(context: Context): ThemeTokens {
-            return context.kiteThemeEnvironment(ThemeScope.EDITOR).tokens
+            return context.kiteThemeEnvironment().tokens
         }
     }
 }

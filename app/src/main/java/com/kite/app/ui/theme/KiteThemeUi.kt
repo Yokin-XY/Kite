@@ -6,14 +6,13 @@ import android.content.res.Configuration
 import android.os.Build
 import androidx.core.view.WindowInsetsControllerCompat
 import com.kite.app.application.theme.ThemeEnvironmentDependenciesOwner
-import com.kite.app.theme.ScopedThemeEnvironment
-import com.kite.app.theme.ThemeScope
+import com.kite.app.theme.ThemeEnvironment
 import com.kite.app.theme.ThemeTokens
 
-fun Context.kiteThemeEnvironment(scope: ThemeScope = ThemeScope.APP): ScopedThemeEnvironment {
+fun Context.kiteThemeEnvironment(): ThemeEnvironment {
     val owner = applicationContext as? ThemeEnvironmentDependenciesOwner
         ?: error("Application 必须提供 ThemeEnvironmentGateway")
-    return owner.themeEnvironmentGateway.current(scope)
+    return owner.themeEnvironmentGateway.current()
 }
 
 fun Context.isSystemDarkTheme(): Boolean =

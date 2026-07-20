@@ -22,16 +22,15 @@ import com.kite.app.run.CardRunHistoryEntry
 import com.kite.app.run.CardRunHistoryStep
 import com.kite.app.run.CardRunStatus
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeSelection
 import com.kite.app.theme.ThemeTokens
-import com.kite.app.theme.ThemeScope
 import com.kite.app.ui.theme.isSystemDarkTheme
 import com.kite.app.ui.UiKit
 import java.util.Calendar
 
 internal class RunHistoryScreen(
     private val context: Context,
-    theme: ThemeConfig,
+    theme: ThemeSelection,
     private val listTitle: String,
     private val emptyTitle: String,
     private val emptyDetail: String,
@@ -39,10 +38,10 @@ internal class RunHistoryScreen(
     private val onOpenEntry: (String) -> Unit,
     private val onOpenReport: (Int) -> Unit
 ) {
-    private val tokens: ThemeTokens = KiteTheme.resolveEnvironment(
+    private val tokens: ThemeTokens = KiteTheme.resolve(
         theme,
         context.isSystemDarkTheme(),
-    ).forScope(ThemeScope.RUN).tokens
+    ).tokens
     private val ui = UiKit(context, tokens)
     private var renderSignature: Int? = null
 

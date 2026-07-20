@@ -2,8 +2,8 @@ package com.kite.app.application.settings
 
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.KiteThemeMode
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeCommand
+import com.kite.app.theme.ThemeSelection
 import kotlinx.coroutines.flow.StateFlow
 
 data class SettingsDropZoneSnapshot(
@@ -11,8 +11,6 @@ data class SettingsDropZoneSnapshot(
 )
 
 data class SettingsSnapshot(
-    val themeColor: Int,
-    val backgroundColor: Int,
     val appLanguage: AppLanguagePreference,
     val browserRuntimeMode: BrowserRuntimeMode,
     val restoreLastScreen: Boolean,
@@ -20,22 +18,11 @@ data class SettingsSnapshot(
     val notificationsEnabled: Boolean,
     val dropZone: SettingsDropZoneSnapshot,
     val revision: Long = 0L,
-    val themeMode: KiteThemeMode = KiteThemeMode.SYSTEM,
-    val themeStyleKey: String = KiteTheme.defaultStyleKey,
-)
-
-fun SettingsSnapshot.themeConfig(): ThemeConfig = ThemeConfig(
-    themeColor = themeColor,
-    backgroundColor = backgroundColor,
-    mode = themeMode,
-    styleKey = themeStyleKey,
+    val themeSelection: ThemeSelection = KiteTheme.defaultSelection,
 )
 
 sealed interface SettingsCommand {
-    data class SetThemeColor(val color: Int) : SettingsCommand
-    data class SetBackgroundColor(val color: Int) : SettingsCommand
-    data class SetThemeMode(val mode: KiteThemeMode) : SettingsCommand
-    data class SetThemeStyle(val styleKey: String) : SettingsCommand
+    data class UpdateTheme(val command: ThemeCommand) : SettingsCommand
     data class SetAppLanguage(val language: AppLanguagePreference) : SettingsCommand
     data class SetBrowserRuntimeMode(val mode: BrowserRuntimeMode) : SettingsCommand
     data class SetRestoreLastScreen(val enabled: Boolean) : SettingsCommand

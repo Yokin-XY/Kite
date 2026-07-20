@@ -58,8 +58,16 @@ PRoot、终端和其中运行的 CLI 保持 Kite 的 Android 应用 UID，并使
 
 终端快捷页继续通过 `TerminalPanelActionRegistry` 扩展。每个动作显式声明执行后保留还是清理实时预输入，统一执行入口先运行 handler，再由终端 host 兑现输入副作用。页面不得通过控制字符串内容猜测 Ctrl+C、Enter 等动作语义；主题、分页和动作反馈只更新现有终端控件。
 
-## 主题统一解释，颜色与组件样式分层
+## 主题按语义和组件治理，不按页面扩张
 
-主题偏好由 `SettingsGateway` 持有，`ThemeEnvironmentGateway` 是应用级唯一读取入口。`KiteTheme` 统一解析跟随系统/亮色/暗色、基础颜色、样式注册键和类型化作用域；页面不直接读取 SharedPreferences，也不自行判断 Android 明暗。
+主题偏好由 `SettingsGateway` 持有，`ThemeEnvironmentGateway` 是应用级唯一读取入口。`KiteTheme` 统一解析跟随系统/亮色/暗色和外观选择；页面不直接读取 SharedPreferences，也不自行判断 Android 明暗。
 
-统一的是入口、语义和继承规则，不是要求所有显示面完全同形。颜色使用 `ThemeTokens`，组件形态使用 `ThemeStyleDefinition + ThemeComponentStyle`，局部差异使用 `ThemeScope`。新增颜色或组件风格只扩展中央定义；页面不得按 `styleKey` 编写条件分支。终端已校准色板保持独立，但“跟随应用”消费相同的有效明暗状态。
+颜色方案只替换稳定语义角色的值；界面风格只替换标准组件配方。页面网格、字体层级、触控底线、导航结构和业务行为属于固定设计基础，不随主题包切换。普通功能页不拥有 `HOME/RESOURCE/SETTINGS` 等页面级主题作用域；局部差异通过组件变体、表面层级或终端/Web/X11 等特殊内容适配器表达。
+
+当前实现以 `ThemeCommand`、`ThemeSelection`、`ThemeCatalog` 和 `ThemeEnvironment` 作为中间规则协议。设置和未来命令入口不再发送裸颜色字段，页面级 `ThemeScope` 已移除，页面间距与触控底线进入固定基础，组件外观进入组件配方。旧颜色键仅作为兼容迁移输入；完整规则见[主题系统规范](theme-system.md)。
+
+## 主题命令与接收组件通过中间协议解耦
+
+主题上游只表达“改变模式、选择颜色方案、导入受控种子、选择风格包、恢复默认”等意图，下游只消费已归一化的语义颜色、固定基础、组件配方和特殊内容策略。未知目录键统一回退，任何功能页都不能成为主题规则解释者。
+
+`KiteTheme` 和主题协议保持 Android-free，Android 系统明暗、SharedPreferences 与 Bundle 分别由 Platform/UI 适配器接入。这样命令端、设置端或接收组件任一侧大改时，另一侧只需继续遵守同一协议，不需要同步页面字段和字符串特判。

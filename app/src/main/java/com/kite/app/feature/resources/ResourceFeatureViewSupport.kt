@@ -19,7 +19,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.util.LruCache
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeScope
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.kite.app.ui.UiKit
@@ -27,7 +26,7 @@ import java.util.concurrent.Executors
 
 internal object ResourceFeatureTheme {
     fun tokens(context: Context): ThemeTokens =
-        context.kiteThemeEnvironment(ThemeScope.RESOURCE).tokens
+        context.kiteThemeEnvironment().tokens
 }
 
 internal data class ResourceItemViewBinding(

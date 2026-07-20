@@ -12,7 +12,6 @@ import com.kite.app.application.runtimebootstrap.RuntimeBootstrapStage
 import com.kite.app.application.runtimebootstrap.RuntimeRootfsPhase
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeScope
 import com.kite.app.ui.theme.isSystemDarkTheme
 import com.kite.app.ui.terminal.TerminalThemeMode
 import com.kite.app.ui.terminal.TerminalUiPreferences
@@ -48,11 +47,16 @@ internal class SettingsCategoryScreen(
     onOpenDropZone: () -> Unit = {},
 ) {
     private val spec = SettingsCatalog.categories.single { it.destination == destination }
-    private val themeEnvironment = KiteTheme.resolveEnvironment(
+    private val themeEnvironment = KiteTheme.resolve(
         initialState.theme,
         context.isSystemDarkTheme(),
-    ).forScope(ThemeScope.SETTINGS)
-    private val factory = SettingsViewFactory(context, themeEnvironment.tokens, themeEnvironment.components)
+    )
+    private val factory = SettingsViewFactory(
+        context,
+        themeEnvironment.tokens,
+        themeEnvironment.foundations,
+        themeEnvironment.components,
+    )
     private var latestState = initialState
     private var terminalFontSize = initialTerminalFontSize
     private var terminalTheme = initialTerminalTheme

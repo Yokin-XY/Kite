@@ -9,10 +9,10 @@ import androidx.lifecycle.lifecycleScope
 import com.kite.app.application.recipes.RecipeFeatureDependenciesOwner
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
-import com.kite.app.theme.KiteThemeMode
-import com.kite.app.theme.ThemeScope
+import com.kite.app.theme.ThemeSelection
+import com.kite.app.ui.theme.getThemeSelection
 import com.kite.app.ui.theme.isSystemDarkTheme
+import com.kite.app.ui.theme.putThemeSelection
 import kotlinx.coroutines.launch
 
 /** 原始 JSON 只读页。数据来自 RecipeFeatureGateway，返回通过 Feature Result。 */
@@ -29,18 +29,13 @@ internal class RecipeRawJsonFragment : Fragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        val theme = ThemeConfig(
-            themeColor = requireArguments().getInt(ARG_THEME_COLOR),
-            backgroundColor = requireArguments().getInt(ARG_BACKGROUND_COLOR),
-            mode = KiteThemeMode.fromStorageKey(requireArguments().getString(ARG_THEME_MODE)),
-            styleKey = requireArguments().getString(ARG_THEME_STYLE) ?: KiteTheme.defaultStyleKey,
-        )
+        val theme = requireArguments().getThemeSelection(THEME_PREFIX)
         return RecipeRawJsonScreen(
             context = requireContext(),
-            tokens = KiteTheme.resolveEnvironment(
+            tokens = KiteTheme.resolve(
                 theme,
                 requireContext().isSystemDarkTheme(),
-            ).forScope(ThemeScope.EDITOR).tokens,
+            ).tokens,
             onBack = { RecipeEditorResultContract.send(this, RecipeEditorRequest.CloseRawJson) }
         ).also {
             screen = it
@@ -68,19 +63,13 @@ internal class RecipeRawJsonFragment : Fragment() {
 
     companion object {
         private const val ARG_RECIPE_KEY = "recipe_key"
-        private const val ARG_THEME_COLOR = "theme_color"
-        private const val ARG_BACKGROUND_COLOR = "background_color"
-        private const val ARG_THEME_MODE = "theme_mode"
-        private const val ARG_THEME_STYLE = "theme_style"
+        private const val THEME_PREFIX = "theme"
 
-        fun newInstance(recipeKey: String, theme: ThemeConfig): RecipeRawJsonFragment =
+        fun newInstance(recipeKey: String, theme: ThemeSelection): RecipeRawJsonFragment =
             RecipeRawJsonFragment().apply {
                 arguments = Bundle().apply {
                     putString(ARG_RECIPE_KEY, recipeKey)
-                    putInt(ARG_THEME_COLOR, theme.themeColor)
-                    putInt(ARG_BACKGROUND_COLOR, theme.backgroundColor)
-                    putString(ARG_THEME_MODE, theme.mode.storageKey)
-                    putString(ARG_THEME_STYLE, theme.styleKey)
+                    putThemeSelection(THEME_PREFIX, theme)
                 }
             }
     }

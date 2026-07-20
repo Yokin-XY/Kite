@@ -12,7 +12,6 @@ import com.kite.app.R
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -79,9 +78,7 @@ class RunTerminalSurfaceBindingTest {
 
         val host = FrameLayout(activity)
         activity.setContentView(host)
-        val tokens = KiteTheme.resolve(
-            ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
-        )
+        val tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens
         val binding = RunTerminalSurfaceBinding(
             context = activity,
             fragmentManager = manager,
@@ -154,9 +151,7 @@ class RunTerminalSurfaceBindingTest {
         val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup().get()
         val host = FrameLayout(activity)
         activity.setContentView(host)
-        val tokens = KiteTheme.resolve(
-            ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
-        )
+        val tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens
         val binding = RunTerminalSurfaceBinding(
             context = activity,
             fragmentManager = activity.supportFragmentManager,

@@ -6,7 +6,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -49,9 +48,7 @@ class RecipeRawJsonScreenTest {
 
     private fun screen(activity: Activity, onBack: () -> Unit = {}) = RecipeRawJsonScreen(
         context = activity,
-        tokens = KiteTheme.resolve(
-            ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor)
-        ),
+        tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens,
         onBack = onBack
     )
 

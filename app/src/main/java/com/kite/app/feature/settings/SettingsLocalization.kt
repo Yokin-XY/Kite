@@ -4,9 +4,9 @@ import android.content.Context
 import com.kite.app.R
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.browser.BrowserRuntimeMode
-import com.kite.app.theme.ThemeChoice
+import com.kite.app.theme.ThemeColorSchemeDefinition
 import com.kite.app.theme.KiteThemeMode
-import com.kite.app.theme.ThemeStyleDefinition
+import com.kite.app.theme.ThemeStylePackDefinition
 
 internal fun Context.appLanguageLabel(language: AppLanguagePreference): String = getString(
     when (language) {
@@ -23,23 +23,6 @@ internal fun Context.browserModeTitle(mode: BrowserRuntimeMode): String = getStr
     }
 )
 
-internal fun Context.themeChoiceLabel(choice: ThemeChoice): String {
-    val resourceId = when (choice.key) {
-        "cool_cyan" -> R.string.theme_choice_cool_cyan
-        "purple" -> R.string.theme_choice_purple
-        "green" -> R.string.theme_choice_green
-        "blue" -> R.string.theme_choice_blue
-        "orange" -> R.string.theme_choice_orange
-        "cool_gray" -> R.string.theme_choice_cool_gray
-        "white" -> R.string.theme_choice_white
-        "ivory" -> R.string.theme_choice_ivory
-        "mist_blue" -> R.string.theme_choice_mist_blue
-        "light_cyan" -> R.string.theme_choice_light_cyan
-        else -> null
-    }
-    return resourceId?.let(::getString) ?: choice.key
-}
-
 internal fun Context.themeModeLabel(mode: KiteThemeMode): String = getString(
     when (mode) {
         KiteThemeMode.SYSTEM -> R.string.settings_theme_mode_system
@@ -48,7 +31,13 @@ internal fun Context.themeModeLabel(mode: KiteThemeMode): String = getString(
     },
 )
 
-internal fun Context.themeStyleLabel(style: ThemeStyleDefinition): String = when (style.key) {
+internal fun Context.themeColorSchemeLabel(scheme: ThemeColorSchemeDefinition): String =
+    when (scheme.key.value) {
+        "standard" -> getString(R.string.settings_theme_style_standard)
+        else -> scheme.key.value
+    }
+
+internal fun Context.themeStyleLabel(style: ThemeStylePackDefinition): String = when (style.key.value) {
     "standard" -> getString(R.string.settings_theme_style_standard)
-    else -> style.key
+    else -> style.key.value
 }

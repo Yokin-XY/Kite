@@ -12,27 +12,24 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class KiteThemeEnvironmentTest {
-    private val base = ThemeConfig(
-        themeColor = KiteTheme.defaultThemeColor,
-        backgroundColor = KiteTheme.defaultBackgroundColor,
-    )
+    private val base = KiteTheme.defaultSelection
 
     @Test
     fun `跟随系统只在系统暗色时解析为暗色`() {
-        assertFalse(KiteTheme.resolveEnvironment(base, systemDark = false).isDark)
-        assertTrue(KiteTheme.resolveEnvironment(base, systemDark = true).isDark)
+        assertFalse(KiteTheme.resolve(base, systemDark = false).isDark)
+        assertTrue(KiteTheme.resolve(base, systemDark = true).isDark)
     }
 
     @Test
     fun `显式明暗模式覆盖系统状态`() {
         assertFalse(
-            KiteTheme.resolveEnvironment(
+            KiteTheme.resolve(
                 base.copy(mode = KiteThemeMode.LIGHT),
                 systemDark = true,
             ).isDark,
         )
         assertTrue(
-            KiteTheme.resolveEnvironment(
+            KiteTheme.resolve(
                 base.copy(mode = KiteThemeMode.DARK),
                 systemDark = false,
             ).isDark,
@@ -40,27 +37,56 @@ class KiteThemeEnvironmentTest {
     }
 
     @Test
-    fun `未知样式回退标准样式且作用域继承中央定义`() {
-        val environment = KiteTheme.resolveEnvironment(
-            base.copy(styleKey = "future_missing_style"),
+    fun `未知色彩和样式在中间协议中央回退`() {
+        val environment = KiteTheme.resolve(
+            base.copy(
+                colors = ThemeColorSelection.Registered(ThemeColorSchemeKey("missing")),
+                stylePack = ThemeStylePackKey("missing"),
+            ),
             systemDark = false,
         )
 
-        assertEquals(KiteTheme.defaultStyleKey, environment.style.key)
-        assertEquals(
-            environment.style.base,
-            environment.forScope(ThemeScope.HOME).components,
-        )
-        assertEquals(
-            environment.style.base,
-            environment.forScope(ThemeScope.TERMINAL).components,
-        )
+        assertEquals(KiteTheme.defaultSelection, environment.selection)
+        assertEquals(KiteTheme.defaultStyleKey, environment.selection.stylePack.value)
+        assertEquals(KiteTheme.defaultColorSchemeKey,
+            (environment.selection.colors as ThemeColorSelection.Registered).key.value)
+    }
+
+    @Test
+    fun `命令端和接收端共用同一主题协议`() {
+        val selected = KiteTheme.apply(base, ThemeCommand.SetMode(KiteThemeMode.DARK))
+        val environment = KiteTheme.resolve(selected, systemDark = false)
+
+        assertEquals(KiteThemeMode.DARK, selected.mode)
+        assertTrue(environment.isDark)
+        assertEquals(selected, environment.selection)
+    }
+
+    @Test
+    fun `历史自定义颜色通过受控选择保留而不进入公开目录`() {
+        val custom = ThemeColorSeed(0xFF123456.toInt(), 0xFFF4F6F8.toInt())
+        val selected = KiteTheme.apply(base, ThemeCommand.SetCustomColors(custom))
+        val environment = KiteTheme.resolve(selected, systemDark = false)
+
+        assertEquals(ThemeColorSelection.Custom(custom), environment.selection.colors)
+        assertEquals(1, KiteTheme.catalog.selectableColorSchemes.size)
+        assertEquals(1, KiteTheme.catalog.selectableStylePacks.size)
+    }
+
+    @Test
+    fun `固定基础与组件配方分离且特殊内容策略明确`() {
+        val environment = KiteTheme.resolve(base, systemDark = false)
+
+        assertEquals(48, environment.foundations.minimumTouchTarget)
+        assertEquals(ThemeContentModePolicy.FOLLOW_EFFECTIVE_MODE, environment.contentPolicies.terminal)
+        assertEquals(ThemeContentModePolicy.PREFER_EFFECTIVE_MODE, environment.contentPolicies.web)
+        assertEquals(ThemeContentModePolicy.PRESERVE_CONTENT, environment.contentPolicies.x11)
     }
 
     @Test
     fun `明暗环境都提供可读语义前景`() {
-        val light = KiteTheme.resolveEnvironment(base, systemDark = false).tokens
-        val dark = KiteTheme.resolveEnvironment(base, systemDark = true).tokens
+        val light = KiteTheme.resolve(base, systemDark = false).tokens
+        val dark = KiteTheme.resolve(base, systemDark = true).tokens
 
         assertTrue(luminance(light.textPrimary) < luminance(light.pageBackground))
         assertTrue(luminance(dark.textPrimary) > luminance(dark.pageBackground))

@@ -3,7 +3,6 @@ package com.kite.app.ui.terminal
 import android.content.Context
 import com.kite.app.R
 import com.kite.app.ui.theme.kiteThemeEnvironment
-import com.kite.app.theme.ThemeScope
 
 enum class TerminalThemeMode(val storageValue: String) {
     SYSTEM("system"),
@@ -70,7 +69,7 @@ object TerminalUiPreferences {
     }
 
     fun resolveTerminalDarkMode(context: Context): Boolean {
-        val applicationDark = context.kiteThemeEnvironment(ThemeScope.TERMINAL).isDark
+        val applicationDark = context.kiteThemeEnvironment().isDark
         return resolveTerminalDarkMode(loadThemeMode(context.applicationContext), applicationDark)
     }
 

@@ -9,6 +9,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.application.settings.SettingsFeatureDependenciesOwner
+import com.kite.app.theme.ThemeCommand
 import kotlinx.coroutines.launch
 
 /** 主题页仅重绑自身颜色；主壳 Chrome/终端主题通过明确 effect 同步。 */
@@ -27,10 +28,7 @@ internal class ThemeSettingsFragment : Fragment() {
     ): View = ThemeSettingsScreen(
         context = requireContext(),
         onBack = { send(SettingsFeatureRequest.Back) },
-        onThemeColor = { color -> dispatch(SettingsFeatureAction.SelectThemeColor(color)) },
-        onBackgroundColor = { color -> dispatch(SettingsFeatureAction.SelectBackgroundColor(color)) },
-        onThemeMode = { mode -> dispatch(SettingsFeatureAction.SelectThemeMode(mode)) },
-        onThemeStyle = { styleKey -> dispatch(SettingsFeatureAction.SelectThemeStyle(styleKey)) },
+        onThemeCommand = { command -> dispatch(SettingsFeatureAction.UpdateTheme(command)) },
     ).also { created ->
         screen = created
         created.render(controller.state.value)

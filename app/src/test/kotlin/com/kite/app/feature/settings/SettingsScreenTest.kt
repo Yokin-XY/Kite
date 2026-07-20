@@ -12,8 +12,10 @@ import com.kite.app.application.runtimebootstrap.RuntimeBootstrapStage
 import com.kite.app.application.runtimebootstrap.RuntimePermissionSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeConfig
+import com.kite.app.theme.ThemeColorSeed
+import com.kite.app.theme.ThemeCommand
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -230,7 +232,7 @@ class SettingsScreenTest {
     @Test
     fun `theme screen only rebuilds when theme identity changes`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-        val screen = ThemeSettingsScreen(activity, {}, {}, {})
+        val screen = ThemeSettingsScreen(activity, {}, {})
         val initial = state()
 
         screen.render(initial)
@@ -239,7 +241,12 @@ class SettingsScreenTest {
         screen.render(initial.copy(revision = 2L))
         val samePage = screen.root.getChildAt(0)
         screen.render(initial.copy(
-            theme = ThemeConfig(0x123456, initial.theme.backgroundColor),
+            theme = KiteTheme.apply(
+                initial.theme,
+                ThemeCommand.SetCustomColors(
+                    ThemeColorSeed(0x123456, KiteTheme.defaultBackgroundColor)
+                ),
+            ),
             revision = 3L
         ))
 
@@ -247,11 +254,12 @@ class SettingsScreenTest {
         assertNotSame(firstPage, screen.root.getChildAt(0))
         assertTrue(texts.contains(activity.getString(R.string.settings_theme_mode_section)))
         assertTrue(texts.contains(activity.getString(R.string.settings_theme_mode_title)))
-        assertTrue(texts.contains(activity.getString(R.string.settings_theme_style_standard)))
+        assertFalse(texts.contains(activity.getString(R.string.settings_theme_style_title)))
+        assertFalse(texts.contains(activity.getString(R.string.settings_theme_color_section)))
     }
 
     private fun state() = SettingsUiState(
-        theme = ThemeConfig(KiteTheme.defaultThemeColor, KiteTheme.defaultBackgroundColor),
+        theme = KiteTheme.defaultSelection,
         appLanguage = AppLanguagePreference.System,
         browserRuntimeMode = BrowserRuntimeMode.Default,
         restoreLastScreen = true,
