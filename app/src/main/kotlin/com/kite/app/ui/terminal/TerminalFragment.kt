@@ -3,6 +3,7 @@ package com.kite.app.ui.terminal
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -39,7 +40,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.AppCompatImageButton
 import androidx.appcompat.widget.PopupMenu
-import androidx.core.graphics.ColorUtils
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
@@ -124,6 +125,9 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private lateinit var terminalControlPanel: LinearLayout
     private lateinit var terminalControlPager: HorizontalScrollView
     private lateinit var terminalControlPage: LinearLayout
+    private lateinit var terminalControlIndicator: LinearLayout
+    private lateinit var terminalPanelToggle: MaterialButton
+    private lateinit var terminalSendButton: MaterialButton
     private lateinit var terminalView: TerminalView
     private lateinit var terminalController: TerminalSessionController
 
@@ -139,6 +143,10 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private val terminalPanelActionHost = object : TerminalPanelActionHost {
         override fun sendInput(input: String) {
             sendTerminalInput(input)
+        }
+
+        override fun applyComposerEffect(effect: TerminalComposerEffect) {
+            applyTerminalComposerEffect(effect)
         }
 
         override fun adjustFont(step: Int) {
@@ -157,6 +165,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             requireContext().terminalThemeLabel(TerminalUiPreferences.loadThemeMode(requireContext()))
     }
     private var terminalPanelPageIndex = 0
+    private val terminalPanelActionBindings = LinkedHashMap<String, PanelActionBinding>()
     private var sessionNoteJob: Job? = null
     private var terminalRefreshJob: Job? = null
     @Volatile
@@ -179,7 +188,6 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private var followTerminalOutput = true
     private var terminalTouchScrolling = false
     private var terminalTouchStartTopRow = 0
-    private var baseTerminalPalette: IntArray? = null
     private var detailOnlyInitialSessionOpened = false
     @Volatile
     private var uiRefreshScheduled = false
@@ -402,104 +410,21 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private fun applyTerminalColorScheme() {
         val colors = TerminalColors.COLOR_SCHEME.mDefaultColors
-        val basePalette = baseTerminalPalette ?: colors.clone().also { baseTerminalPalette = it }
-        System.arraycopy(basePalette, 0, colors, 0, minOf(basePalette.size, colors.size))
         val isDark = TerminalUiPreferences.resolveTerminalDarkMode(requireContext())
-        if (isDark) {
-            applyDarkTerminalPalette(colors)
-        } else {
-            applyLightTerminalPalette(colors)
-        }
-        TerminalColors.COLOR_SCHEME.setCursorColorForBackground()
+        TerminalColorPalette.applyTo(colors, isDark)
         applyTerminalCanvasBackground()
-    }
-
-    private fun applyDarkTerminalPalette(colors: IntArray) {
-        colors[TextStyle.COLOR_INDEX_FOREGROUND] = 0xFFF2F6FB.toInt()
-        colors[TextStyle.COLOR_INDEX_BACKGROUND] = 0xFF0B1118.toInt()
-        applyAnsiOverride(colors, 0, 0xFF2C3440.toInt())
-        applyAnsiOverride(colors, 7, 0xFFD6DEE8.toInt())
-        applyAnsiOverride(colors, 8, 0xFF667381.toInt())
-        applyAnsiOverride(colors, 15, 0xFFF7FBFF.toInt())
-    }
-
-    private fun applyLightTerminalPalette(colors: IntArray) {
-        val background = 0xFFFDFDFD.toInt()
-        val foreground = 0xFF1F2329.toInt()
-        colors[TextStyle.COLOR_INDEX_FOREGROUND] = foreground
-        colors[TextStyle.COLOR_INDEX_BACKGROUND] = background
-
-        for (index in 0 until minOf(16, colors.size)) {
-            colors[index] = adaptAnsiColorForLightMode(colors[index], background, foreground, index)
-        }
-
-        applyAnsiOverride(colors, 0, 0xFF252B33.toInt())
-        applyAnsiOverride(colors, 7, 0xFF5F6873.toInt())
-        applyAnsiOverride(colors, 8, 0xFF6D7784.toInt())
-        applyAnsiOverride(colors, 15, 0xFF4D5661.toInt())
-    }
-
-    private fun applyAnsiOverride(colors: IntArray, index: Int, value: Int) {
-        if (index in colors.indices) {
-            colors[index] = value
-        }
-    }
-
-    private fun adaptAnsiColorForLightMode(
-        originalColor: Int,
-        backgroundColor: Int,
-        foregroundColor: Int,
-        index: Int
-    ): Int {
-        val specialTargetLightness = when (index) {
-            3, 11 -> 0.34f
-            6, 14 -> 0.33f
-            2, 10 -> 0.32f
-            7, 15 -> 0.40f
-            else -> 0.38f
-        }
-        var adjusted = originalColor
-        if (ColorUtils.calculateLuminance(adjusted) > 0.66) {
-            adjusted = reduceColorLightness(adjusted, specialTargetLightness)
-        }
-        if (ColorUtils.calculateContrast(adjusted, backgroundColor) < 4.5) {
-            adjusted = blendTowardForeground(adjusted, foregroundColor, backgroundColor, 4.5)
-        }
-        return adjusted
-    }
-
-    private fun reduceColorLightness(color: Int, targetLightness: Float): Int {
-        val hsl = FloatArray(3)
-        ColorUtils.colorToHSL(color, hsl)
-        hsl[2] = minOf(hsl[2], targetLightness)
-        return ColorUtils.HSLToColor(hsl)
-    }
-
-    private fun blendTowardForeground(
-        color: Int,
-        foregroundColor: Int,
-        backgroundColor: Int,
-        minContrast: Double
-    ): Int {
-        var adjusted = color
-        var blend = 0f
-        while (ColorUtils.calculateContrast(adjusted, backgroundColor) < minContrast && blend < 1f) {
-            blend += 0.12f
-            adjusted = ColorUtils.blendARGB(color, foregroundColor, blend.coerceAtMost(1f))
-        }
-        return adjusted
     }
 
     private fun setupTerminalComposer() {
         terminalInputBar.removeAllViews()
-        terminalInputBar.setPadding(dp(12), dp(10), dp(12), dp(10))
+        terminalInputBar.setPadding(dp(10), dp(8), dp(10), dp(10))
         applyTerminalComposerBackground()
 
         terminalControlPanel = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 0, 0, dp(8))
+            setPadding(0, 0, 0, dp(6))
         }
         terminalControlPager = object : HorizontalScrollView(requireContext()) {
             override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -531,6 +456,20 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
+        terminalControlIndicator = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        }
+        terminalControlPanel.addView(
+            terminalControlIndicator,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(16),
+            ).apply {
+                topMargin = dp(2)
+            },
+        )
         terminalInputBar.addView(
             terminalControlPanel,
             LinearLayout.LayoutParams(
@@ -544,24 +483,28 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             gravity = Gravity.BOTTOM
         }
 
-        val panelToggle = composerRoundButton("+").apply {
+        terminalPanelToggle = composerIconButton(
+            iconRes = R.drawable.ic_terminal_prompt_light,
+            contentDescriptionRes = R.string.terminal_show_shortcuts,
+        ).apply {
             setOnClickListener { toggleTerminalPanel() }
         }
-        composerRow.addView(panelToggle, LinearLayout.LayoutParams(dp(44), dp(44)))
+        composerRow.addView(terminalPanelToggle, LinearLayout.LayoutParams(dp(48), dp(48)))
 
         val inputCard = MaterialCardView(requireContext()).apply {
-            radius = dp(16).toFloat()
+            radius = dp(18).toFloat()
             cardElevation = 0f
             setCardBackgroundColor(terminalColor(R.color.terminal_page_surface))
             strokeColor = terminalColor(R.color.terminal_page_line)
             strokeWidth = dp(1)
             minimumHeight = dp(48)
             minimumWidth = 0
-            setContentPadding(dp(12), dp(8), dp(10), dp(8))
+            setContentPadding(dp(14), dp(8), dp(12), dp(8))
         }
         terminalComposerInput = EditText(requireContext()).apply {
             background = null
-            hint = "输入命令或与 Agent 对话"
+            hint = getString(R.string.terminal_composer_hint)
+            contentDescription = getString(R.string.terminal_composer_hint)
             setHintTextColor(terminalColor(R.color.terminal_page_subtext))
             setTextColor(terminalColor(R.color.terminal_page_text))
             textSize = 14f
@@ -615,27 +558,40 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         composerRow.addView(
             inputCard,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp(8)
+                marginStart = dp(7)
             }
         )
 
-        val sendButton = composerRoundButton("➤").apply {
+        terminalSendButton = composerIconButton(
+            iconRes = R.drawable.ic_send_light,
+            contentDescriptionRes = R.string.terminal_send_input,
+        ).apply {
             setOnClickListener { submitComposerInput() }
         }
         composerRow.addView(
-            sendButton,
-            LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-                marginStart = dp(8)
+            terminalSendButton,
+            LinearLayout.LayoutParams(dp(48), dp(48)).apply {
+                marginStart = dp(7)
             }
         )
 
-        terminalInputBar.addView(composerRow)
-        renderTerminalPanelPage()
+        terminalInputBar.addView(
+            composerRow,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        if (::terminalControlPage.isInitialized) {
+            renderTerminalPanelPage()
+        }
+        refreshComposerActionButtons()
         terminalComposerInput.post { updateComposerScrollState() }
     }
 
     private fun renderTerminalPanelPage() {
         terminalControlPage.removeAllViews()
+        terminalPanelActionBindings.clear()
         TerminalPanelActionRegistry.snapshot().forEach { page ->
             terminalControlPage.addView(buildTerminalPanelPageContainer(buildTerminalPanelPage(page)))
         }
@@ -643,6 +599,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             updateTerminalPanelPageWidths()
             terminalControlPager.scrollTo(terminalPanelPageIndex * terminalControlPager.width, 0)
         }
+        renderTerminalPanelIndicator()
     }
 
     private fun setTerminalPanelPage(pageIndex: Int) {
@@ -654,6 +611,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         terminalControlPager.post {
             terminalControlPager.smoothScrollTo(terminalPanelPageIndex * terminalControlPager.width, 0)
         }
+        renderTerminalPanelIndicator()
     }
 
     private fun buildTerminalPanelPageContainer(content: View): View {
@@ -692,6 +650,41 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             .roundToInt()
             .coerceIn(0, (terminalControlPage.childCount - 1).coerceAtLeast(0))
         terminalControlPager.smoothScrollTo(terminalPanelPageIndex * terminalControlPager.width, 0)
+        renderTerminalPanelIndicator()
+    }
+
+    private fun renderTerminalPanelIndicator() {
+        if (!::terminalControlIndicator.isInitialized) {
+            return
+        }
+        val pageCount = TerminalPanelActionRegistry.snapshot().size.coerceAtLeast(1)
+        terminalPanelPageIndex = terminalPanelPageIndex.coerceIn(0, pageCount - 1)
+        terminalControlIndicator.removeAllViews()
+        repeat(pageCount) { index ->
+            val selected = index == terminalPanelPageIndex
+            terminalControlIndicator.addView(
+                View(requireContext()).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(3).toFloat()
+                        setColor(
+                            terminalColor(
+                                if (selected) R.color.terminal_page_blue else R.color.terminal_page_gray_chip,
+                            ),
+                        )
+                    }
+                },
+                LinearLayout.LayoutParams(dp(if (selected) 18 else 6), dp(6)).apply {
+                    marginStart = dp(3)
+                    marginEnd = dp(3)
+                },
+            )
+        }
+        terminalControlIndicator.contentDescription = getString(
+            R.string.terminal_shortcut_page_status,
+            terminalPanelPageIndex + 1,
+            pageCount,
+        )
     }
 
     private fun updateComposerScrollState() {
@@ -750,19 +743,20 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 buildPanelGrid(
                     page.actions.map { action ->
                         PanelButton(
-                            title = action.title,
-                            subtitle = action.resolvedSubtitle(terminalPanelActionHost),
+                            id = action.id,
+                            title = getString(action.titleRes),
+                            subtitle = action.resolvedSubtitle(terminalPanelActionHost, ::getString),
                             iconRes = action.iconRes
-                        ) { anchor -> action.handler.execute(terminalPanelActionHost, anchor) }
+                        ) { anchor -> action.execute(terminalPanelActionHost, anchor) }
                     }
                 ),
-                LinearLayout.LayoutParams(dp(166), ViewGroup.LayoutParams.WRAP_CONTENT)
+                LinearLayout.LayoutParams(dp(172), ViewGroup.LayoutParams.WRAP_CONTENT)
             )
             if (page.showDpad) {
                 addView(
                     buildDpadCluster(),
-                    LinearLayout.LayoutParams(dp(132), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                        marginStart = dp(12)
+                    LinearLayout.LayoutParams(dp(150), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        marginStart = dp(8)
                     }
                 )
             }
@@ -780,29 +774,32 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 GridLayout.spec(row),
                 GridLayout.spec(col)
             ).apply {
-                width = dp(42)
-                height = dp(42)
+                width = dp(48)
+                height = dp(48)
                 setMargins(dp(1), dp(1), dp(1), dp(1))
             }
             grid.addView(view ?: SpaceView(requireContext()), params)
         }
 
         addCell(null, 0, 0)
-        addCell(controlTile("↑", "").also {
+        addCell(controlTile("↑", "", contentDescription = getString(R.string.terminal_direction_up)).also {
             bindRepeatingKey(it, KeyEvent.KEYCODE_DPAD_UP, "\u001b[A")
         }, 0, 1)
         addCell(null, 0, 2)
-        addCell(controlTile("←", "").also {
+        addCell(controlTile("←", "", contentDescription = getString(R.string.terminal_direction_left)).also {
             bindRepeatingKey(it, KeyEvent.KEYCODE_DPAD_LEFT, "\u001b[D")
         }, 1, 0)
-        addCell(controlTile("Enter", "回车").also {
-            it.setOnClickListener { sendTerminalInput("\r") }
+        addCell(controlTile("↵", getString(R.string.terminal_enter)).also {
+            it.setOnClickListener {
+                sendTerminalInput("\r")
+                applyTerminalComposerEffect(TerminalComposerEffect.RESET_AFTER_ACTION)
+            }
         }, 1, 1)
-        addCell(controlTile("→", "").also {
+        addCell(controlTile("→", "", contentDescription = getString(R.string.terminal_direction_right)).also {
             bindRepeatingKey(it, KeyEvent.KEYCODE_DPAD_RIGHT, "\u001b[C")
         }, 1, 2)
         addCell(null, 2, 0)
-        addCell(controlTile("↓", "").also {
+        addCell(controlTile("↓", "", contentDescription = getString(R.string.terminal_direction_down)).also {
             bindRepeatingKey(it, KeyEvent.KEYCODE_DPAD_DOWN, "\u001b[B")
         }, 2, 1)
         addCell(null, 2, 2)
@@ -816,15 +813,26 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             rowCount = ((buttons.size + columns - 1) / columns).coerceAtLeast(1)
         }
         buttons.forEachIndexed { index, button ->
-            val tile = controlTile(button.title, button.subtitle, button.iconRes).apply {
+            var subtitleView: TextView? = null
+            val tile = controlTile(
+                button.title,
+                button.subtitle,
+                button.iconRes,
+                onSubtitleView = { subtitleView = it },
+            ).apply {
                 setOnClickListener { button.action(this) }
             }
+            terminalPanelActionBindings[button.id] = PanelActionBinding(
+                tile = tile,
+                title = button.title,
+                subtitleView = subtitleView,
+            )
             val params = GridLayout.LayoutParams(
                 GridLayout.spec(index / columns),
                 GridLayout.spec(index % columns)
             ).apply {
-                width = dp(76)
-                height = dp(44)
+                width = dp(80)
+                height = dp(48)
                 setMargins(dp(3), dp(3), dp(3), dp(3))
             }
             grid.addView(tile, params)
@@ -836,7 +844,9 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         title: String,
         subtitle: String,
         iconRes: Int? = null,
-        compact: Boolean = false
+        compact: Boolean = false,
+        contentDescription: String = listOf(title, subtitle).filter(String::isNotBlank).joinToString(", "),
+        onSubtitleView: (TextView) -> Unit = {},
     ): MaterialCardView {
         return MaterialCardView(requireContext()).apply {
             radius = dp(13).toFloat()
@@ -844,11 +854,12 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             setCardBackgroundColor(terminalColor(R.color.terminal_page_surface))
             strokeColor = terminalColor(R.color.terminal_page_line)
             strokeWidth = dp(1)
-            minimumWidth = dp(44)
-            setMinimumWidth(dp(44))
+            minimumWidth = dp(48)
+            setMinimumWidth(dp(48))
             isClickable = true
             isFocusable = true
-            addView(buildControlTileContent(title, subtitle, iconRes, compact))
+            this.contentDescription = contentDescription
+            addView(buildControlTileContent(title, subtitle, iconRes, compact, onSubtitleView))
         }
     }
 
@@ -856,7 +867,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         title: String,
         subtitle: String,
         iconRes: Int?,
-        compact: Boolean
+        compact: Boolean,
+        onSubtitleView: (TextView) -> Unit,
     ): View {
         if (subtitle.isBlank()) {
             return TextView(requireContext()).apply {
@@ -892,6 +904,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             maxLines = 1
             gravity = Gravity.CENTER
         }
+        onSubtitleView(subtitleView)
         val textColumn = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -1011,18 +1024,22 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         }
     }
 
-    private fun composerRoundButton(label: String): MaterialButton {
+    private fun composerIconButton(iconRes: Int, contentDescriptionRes: Int): MaterialButton {
         return MaterialButton(requireContext()).apply {
-            text = label
-            textSize = 22f
-            setTextColor(terminalColor(R.color.terminal_page_text))
-            cornerRadius = dp(22)
+            text = ""
+            icon = ContextCompat.getDrawable(requireContext(), iconRes)
+            iconSize = dp(22)
+            iconPadding = 0
+            iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
+            gravity = Gravity.CENTER
+            contentDescription = getString(contentDescriptionRes)
+            cornerRadius = dp(24)
             insetTop = 0
             insetBottom = 0
             minWidth = 0
             minimumWidth = 0
             setPadding(0, 0, 0, 0)
-            backgroundTintList = android.content.res.ColorStateList.valueOf(
+            backgroundTintList = ColorStateList.valueOf(
                 terminalColor(R.color.terminal_page_input_bg)
             )
         }
@@ -1051,7 +1068,35 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         if (expanded) {
             hideSoftKeyboard(terminalComposerInput)
         }
+        refreshComposerActionButtons()
         renderTerminalPanelPage()
+    }
+
+    private fun refreshComposerActionButtons() {
+        if (::terminalPanelToggle.isInitialized) {
+            terminalPanelToggle.setIconResource(
+                if (isTerminalPanelExpanded) R.drawable.ic_close_light else R.drawable.ic_terminal_prompt_light,
+            )
+            terminalPanelToggle.contentDescription = getString(
+                if (isTerminalPanelExpanded) R.string.terminal_hide_shortcuts
+                else R.string.terminal_show_shortcuts,
+            )
+            terminalPanelToggle.backgroundTintList = ColorStateList.valueOf(
+                terminalColor(
+                    if (isTerminalPanelExpanded) R.color.terminal_page_blue
+                    else R.color.terminal_page_input_bg,
+                ),
+            )
+            terminalPanelToggle.iconTint = ColorStateList.valueOf(
+                if (isTerminalPanelExpanded) Color.WHITE else terminalColor(R.color.terminal_page_text),
+            )
+        }
+        if (::terminalSendButton.isInitialized) {
+            terminalSendButton.backgroundTintList = ColorStateList.valueOf(
+                terminalColor(R.color.terminal_page_blue),
+            )
+            terminalSendButton.iconTint = ColorStateList.valueOf(Color.WHITE)
+        }
     }
 
     private fun submitComposerInput() {
@@ -1151,10 +1196,17 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private data class PanelButton(
+        val id: String,
         val title: String,
         val subtitle: String,
         val iconRes: Int? = null,
         val action: (View) -> Unit
+    )
+
+    private data class PanelActionBinding(
+        val tile: MaterialCardView,
+        val title: String,
+        val subtitleView: TextView?,
     )
 
     private fun dp(value: Int): Int {
@@ -1191,6 +1243,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
                 R.color.terminal_page_line -> Color.rgb(225, 229, 234)
                 R.color.terminal_page_gray_chip -> Color.rgb(201, 206, 214)
                 R.color.terminal_page_input_bg -> Color.rgb(244, 246, 248)
+                R.color.terminal_page_blue -> Color.rgb(59, 130, 246)
                 else -> color(resId)
             }
         }
@@ -1274,13 +1327,29 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             terminalComposerInput.setHintTextColor(terminalColor(R.color.terminal_page_subtext))
         }
         applyThemeToTerminalControlTree(terminalInputBar)
+        renderTerminalPanelIndicator()
+        refreshComposerActionButtons()
+    }
+
+    private fun refreshTerminalPanelActionSubtitles() {
+        TerminalPanelActionRegistry.snapshot()
+            .flatMap(TerminalPanelPage::actions)
+            .forEach { action ->
+                val binding = terminalPanelActionBindings[action.id] ?: return@forEach
+                val subtitle = action.resolvedSubtitle(terminalPanelActionHost, ::getString)
+                binding.subtitleView?.text = subtitle
+                binding.tile.contentDescription = listOf(binding.title, subtitle)
+                    .filter(String::isNotBlank)
+                    .joinToString(", ")
+            }
     }
 
     private fun applyThemeToTerminalControlTree(view: View) {
         when (view) {
             is MaterialButton -> {
                 view.setTextColor(terminalColor(R.color.terminal_page_text))
-                view.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                view.iconTint = ColorStateList.valueOf(terminalColor(R.color.terminal_page_text))
+                view.backgroundTintList = ColorStateList.valueOf(
                     terminalColor(R.color.terminal_page_input_bg)
                 )
             }
@@ -1464,6 +1533,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         currentTerminalThemeMode = mode
         applyTerminalColorScheme()
         applyTerminalDetailTheme()
+        refreshTerminalPanelActionSubtitles()
         terminalView.mTermSession?.emulator?.mColors?.reset()
         refreshTerminalColors()
         keepLatestTerminalOutputVisible()
@@ -1482,6 +1552,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             currentTerminalThemeMode = storedThemeMode
             applyTerminalColorScheme()
             applyTerminalDetailTheme()
+            refreshTerminalPanelActionSubtitles()
             terminalView.mTermSession?.emulator?.mColors?.reset()
             refreshTerminalColors()
             keepLatestTerminalOutputVisible()
@@ -1490,18 +1561,13 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
 
     private fun sendTerminalInput(rawInput: String) {
         terminalController.writeRawInput(rawInput)
-        if (composerLiveSyncEnabled && shouldResetComposerAfterControlInput(rawInput)) {
-            resetComposerAfterRealtimeControl()
-        }
         setTerminalOutputFollow(true)
         keepLatestTerminalOutputVisible()
     }
 
-    private fun shouldResetComposerAfterControlInput(rawInput: String): Boolean {
-        return when (rawInput) {
-            "\r" -> true
-
-            else -> false
+    private fun applyTerminalComposerEffect(effect: TerminalComposerEffect) {
+        if (composerLiveSyncEnabled && effect == TerminalComposerEffect.RESET_AFTER_ACTION) {
+            resetComposerAfterRealtimeControl()
         }
     }
 

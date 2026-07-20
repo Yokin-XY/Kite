@@ -5,10 +5,16 @@ import com.kite.app.R
 
 interface TerminalPanelActionHost {
     fun sendInput(input: String)
+    fun applyComposerEffect(effect: TerminalComposerEffect)
     fun adjustFont(step: Int)
     fun pasteClipboard()
     fun showThemeMenu(anchor: View)
     fun themeLabel(): String
+}
+
+enum class TerminalComposerEffect {
+    PRESERVE,
+    RESET_AFTER_ACTION,
 }
 
 fun interface TerminalPanelActionHandler {
@@ -17,14 +23,20 @@ fun interface TerminalPanelActionHandler {
 
 data class TerminalPanelAction(
     val id: String,
-    val title: String,
-    val subtitle: String = "",
+    val titleRes: Int,
+    val subtitleRes: Int? = null,
     val iconRes: Int? = null,
     val subtitleProvider: ((TerminalPanelActionHost) -> String)? = null,
+    val composerEffect: TerminalComposerEffect = TerminalComposerEffect.PRESERVE,
     val handler: TerminalPanelActionHandler
 ) {
-    fun resolvedSubtitle(host: TerminalPanelActionHost): String =
-        subtitleProvider?.invoke(host) ?: subtitle
+    fun resolvedSubtitle(host: TerminalPanelActionHost, resolveString: (Int) -> String): String =
+        subtitleProvider?.invoke(host) ?: subtitleRes?.let(resolveString).orEmpty()
+
+    fun execute(host: TerminalPanelActionHost, anchor: View) {
+        handler.execute(host, anchor)
+        host.applyComposerEffect(composerEffect)
+    }
 }
 
 data class TerminalPanelPage(
@@ -80,26 +92,59 @@ object TerminalPanelActionRegistry {
                 id = "control",
                 showDpad = true,
                 actions = listOf(
-                    inputAction("interrupt", "Ctrl+C", "中断", "\u0003", R.drawable.ic_terminal_interrupt),
-                    inputAction("clear", "Ctrl+L", "清屏", "\u000c", R.drawable.ic_terminal_clear_line),
-                    fontAction("font-smaller", "A-", "缩小字体", -1),
-                    fontAction("font-larger", "A+", "放大字体", 1)
+                    inputAction(
+                        id = "interrupt",
+                        titleRes = R.string.terminal_ctrl_c,
+                        subtitleRes = R.string.terminal_action_interrupt,
+                        input = "\u0003",
+                        iconRes = R.drawable.ic_terminal_interrupt,
+                        composerEffect = TerminalComposerEffect.RESET_AFTER_ACTION,
+                    ),
+                    inputAction(
+                        id = "clear",
+                        titleRes = R.string.terminal_ctrl_l,
+                        subtitleRes = R.string.terminal_action_clear_screen,
+                        input = "\u000c",
+                        iconRes = R.drawable.ic_terminal_clear_line,
+                    ),
+                    fontAction(
+                        "font-smaller",
+                        R.string.terminal_font_smaller,
+                        R.string.terminal_action_font_smaller,
+                        -1,
+                    ),
+                    fontAction(
+                        "font-larger",
+                        R.string.terminal_font_larger,
+                        R.string.terminal_action_font_larger,
+                        1,
+                    ),
                 )
             ),
             TerminalPanelPage(
                 id = "utility",
                 actions = listOf(
-                    inputAction("escape", "Esc", "取消", "\u001b"),
-                    inputAction("tab", "Tab", "补全", "\t"),
+                    inputAction(
+                        "escape",
+                        R.string.terminal_esc,
+                        R.string.terminal_action_escape,
+                        "\u001b",
+                    ),
+                    inputAction(
+                        "tab",
+                        R.string.terminal_tab,
+                        R.string.terminal_action_tab,
+                        "\t",
+                    ),
                     TerminalPanelAction(
                         id = "paste",
-                        title = "粘贴",
-                        subtitle = "剪贴板",
+                        titleRes = R.string.terminal_paste,
+                        subtitleRes = R.string.terminal_action_clipboard,
                         handler = TerminalPanelActionHandler { host, _ -> host.pasteClipboard() }
                     ),
                     TerminalPanelAction(
                         id = "theme",
-                        title = "主题",
+                        titleRes = R.string.terminal_theme_button,
                         subtitleProvider = { host -> host.themeLabel() },
                         handler = TerminalPanelActionHandler { host, anchor -> host.showThemeMenu(anchor) }
                     )
@@ -110,30 +155,32 @@ object TerminalPanelActionRegistry {
 
     private fun inputAction(
         id: String,
-        title: String,
-        subtitle: String,
+        titleRes: Int,
+        subtitleRes: Int,
         input: String,
-        iconRes: Int? = null
+        iconRes: Int? = null,
+        composerEffect: TerminalComposerEffect = TerminalComposerEffect.PRESERVE,
     ): TerminalPanelAction {
         return TerminalPanelAction(
             id = id,
-            title = title,
-            subtitle = subtitle,
+            titleRes = titleRes,
+            subtitleRes = subtitleRes,
             iconRes = iconRes,
+            composerEffect = composerEffect,
             handler = TerminalPanelActionHandler { host, _ -> host.sendInput(input) }
         )
     }
 
     private fun fontAction(
         id: String,
-        title: String,
-        subtitle: String,
+        titleRes: Int,
+        subtitleRes: Int,
         step: Int
     ): TerminalPanelAction {
         return TerminalPanelAction(
             id = id,
-            title = title,
-            subtitle = subtitle,
+            titleRes = titleRes,
+            subtitleRes = subtitleRes,
             handler = TerminalPanelActionHandler { host, _ -> host.adjustFont(step) }
         )
     }

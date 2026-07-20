@@ -648,7 +648,10 @@ Assert-True ($runtimePressureResponder -match 'level == ComponentCallbacks2\.TRI
 $renderTerminalPanel = Function-Body $terminalFragment 'renderTerminalPanelPage'
 $buildTerminalPanel = Function-Body $terminalFragment 'buildTerminalPanelPage'
 Assert-True ($renderTerminalPanel -match 'TerminalPanelActionRegistry\.snapshot\(\)') 'Terminal panel pages must come from the action registry.'
-Assert-True ($buildTerminalPanel -match 'action\.handler\.execute\(terminalPanelActionHost, anchor\)') 'Terminal panel tiles must execute registered actions through the terminal host contract.'
+Assert-True ($buildTerminalPanel -match 'action\.execute\(terminalPanelActionHost, anchor\)') 'Terminal panel tiles must execute registered actions through the terminal host contract.'
+Assert-True (
+    $terminalPanelActionRegistry -match 'handler\.execute\(host, anchor\)\s*host\.applyComposerEffect\(composerEffect\)'
+) 'Terminal action execution must apply the registered handler and its typed composer effect through the same host contract.'
 Assert-True ($terminalPanelActionRegistry -match 'fun register\(' -and $terminalPanelActionRegistry -match 'fun unregister\(') 'Terminal panel registry must expose stable extension operations.'
 $startupMarkStage = Member-Function-Body $startupTraceStore 'markStage'
 $startupMarkReady = Member-Function-Body $startupTraceStore 'markReady'
