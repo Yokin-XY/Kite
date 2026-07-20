@@ -65,8 +65,14 @@ internal class HomeFeatureViewFactory(
 
     fun dp(value: Int): Int = ui.dp(value)
 
-    fun roundedBox(fill: Int, stroke: Int, radius: Float) =
-        ui.roundedBox(fill, stroke, radius)
+    fun roundedBox(
+        fill: Int,
+        stroke: Int,
+        radius: Float,
+        strokeWidth: Int = dp(1),
+        dashWidth: Float = 0f,
+        dashGap: Float = 0f
+    ) = ui.roundedBox(fill, stroke, radius, strokeWidth, dashWidth, dashGap)
 
     fun stateBlock(title: String, detail: String, retry: (() -> Unit)? = null): View =
         LinearLayout(context).apply {
@@ -111,7 +117,11 @@ internal class HomeFeatureViewFactory(
         val actionButton = TextView(context)
         val actionSubline = TextView(context)
         val root = FrameLayout(context).apply {
-            background = roundedBox(tokens.cardBackground, tokens.border, dp(24).toFloat())
+            background = roundedBox(
+                tokens.cardBackground,
+                tokens.border,
+                dp(KiteTheme.shapes.cardRadius).toFloat()
+            )
             elevation = dp(1).toFloat()
             isClickable = true
             isFocusable = true
@@ -130,7 +140,7 @@ internal class HomeFeatureViewFactory(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.START or Gravity.TOP
-            ).apply { setMargins(dp(15), dp(58), dp(92), 0) })
+            ).apply { setMargins(dp(15), dp(58), dp(15), 0) })
             addView(TextView(context).apply {
                 text = groupLabel.ifBlank { context.getString(R.string.home_ungrouped) }
                 textSize = 9.8f
@@ -358,11 +368,19 @@ internal class HomeFeatureViewFactory(
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(tone.strong)
-            background = roundedBox(KiteTheme.tint(tone.strong, 0.88f), tone.border, dp(14).toFloat())
+            background = roundedBox(
+                KiteTheme.tint(tone.strong, 0.88f),
+                tone.border,
+                dp(KiteTheme.shapes.iconTileRadius).toFloat()
+            )
         }
         if (recipe.icon.type != KiteRecipeIcon.TYPE_IMAGE || recipe.icon.source.isBlank()) return fallback
         return FrameLayout(context).apply {
-            background = roundedBox(tokens.surface, tone.border, dp(14).toFloat())
+            background = roundedBox(
+                tokens.surface,
+                tone.border,
+                dp(KiteTheme.shapes.iconTileRadius).toFloat()
+            )
             clipToOutline = true
             addView(fallback, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,

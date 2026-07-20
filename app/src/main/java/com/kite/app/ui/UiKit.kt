@@ -41,13 +41,24 @@ class UiKit(
         }
 
     /** 圆角矩形背景。 */
-    fun roundedBox(fill: Int, stroke: Int, radius: Float, strokeWidth: Int = dp(1)): GradientDrawable =
+    fun roundedBox(
+        fill: Int,
+        stroke: Int,
+        radius: Float,
+        strokeWidth: Int = dp(1),
+        dashWidth: Float = 0f,
+        dashGap: Float = 0f
+    ): GradientDrawable =
         GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = radius
             setColor(fill)
             if (stroke != Color.TRANSPARENT) {
-                setStroke(strokeWidth, stroke)
+                if (dashWidth > 0f && dashGap > 0f) {
+                    setStroke(strokeWidth, stroke, dashWidth, dashGap)
+                } else {
+                    setStroke(strokeWidth, stroke)
+                }
             }
         }
 

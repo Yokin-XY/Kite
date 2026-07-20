@@ -8,6 +8,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -27,12 +28,14 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.annotation.DrawableRes
 import androidx.browser.customtabs.CustomTabsIntent
 import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.action.KiteRecipeActionRequest
@@ -1797,49 +1800,43 @@ open class MainActivity : AppCompatActivity() {
             TAG_RESOURCE_DETAIL_FRAGMENT
         )
     }
-    private fun consoleShellHeader(): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(18), dp(10), dp(18), dp(10))
-        addView(row {
-            gravity = Gravity.CENTER_VERTICAL
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(systemTitleButton())
-                addView(TextView(context).apply {
-                    text = getString(R.string.console_subtitle)
-                    textSize = 14f
-                    setTextColor(tokens.textSecondary)
-                })
-            })
-            addView(iconButton("⌕", dp(62), Color.TRANSPARENT, tokens.textPrimary, dp(18)) {
-                Toast.makeText(context, getString(R.string.console_search_pending), Toast.LENGTH_SHORT).show()
-            }.apply {
-                layoutParams = LinearLayout.LayoutParams(dp(62), dp(62)).apply {
-                    setMargins(0, -dp(3), dp(8), 0)
-                }
-            })
-            addView(iconButton("+", dp(50), tokens.primaryStrong, tokens.buttonText, dp(18)) { showCreateConfig() }.apply {
-                layoutParams = LinearLayout.LayoutParams(dp(50), dp(50)).apply {
-                    setMargins(0, -dp(6), 0, 0)
-                }
-            })
-        })
+    private fun consoleShellHeader(): View = row {
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(
+            dp(KiteTheme.spacing.pageHorizontal),
+            dp(12),
+            dp(KiteTheme.spacing.pageHorizontal),
+            dp(8)
+        )
+        addView(systemTitleButton(), LinearLayout.LayoutParams(
+            0,
+            dp(44),
+            1f
+        ))
+        addView(vectorButton(
+            iconRes = R.drawable.ic_material_add,
+            size = dp(44),
+            fill = Color.TRANSPARENT,
+            tint = tokens.textPrimary,
+            radius = dp(KiteTheme.shapes.controlRadius),
+            description = getString(R.string.home_create_card_description),
+            onClick = ::showCreateConfig
+        ))
     }
 
     private fun systemTitleButton(): View = row {
         gravity = Gravity.CENTER_VERTICAL
         setPadding(0, 0, dp(8), 0)
         addView(TextView(context).apply {
-            text = "Kite"
-            textSize = 31f
+            text = getString(R.string.nav_cards)
+            textSize = 24f
             typeface = Typeface.DEFAULT_BOLD
             includeFontPadding = false
             setTextColor(tokens.textPrimary)
         })
         val statusPill = systemStatusPill().also { consoleSystemStatusPillView = it }
-        addView(statusPill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(26)).apply {
-            setMargins(dp(10), dp(2), 0, 0)
+        addView(statusPill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(30)).apply {
+            setMargins(dp(12), 0, 0, 0)
         })
         val openPanel = { runtimeStatusChrome.showPanel(auto = false, anchor = statusPill) }
         setOnClickListener { openPanel() }
@@ -2402,10 +2399,10 @@ open class MainActivity : AppCompatActivity() {
             Color.blue(tokens.surfaceElevated)
         ))
         elevation = dp(6).toFloat()
-        addView(navItem("▦", getString(R.string.nav_cards), currentScreen == AppDestination.Console) { appNavigator.navigate(AppDestination.Console) })
-        addView(navItem(">_", getString(R.string.nav_terminal), currentScreen == AppDestination.Terminal) { appNavigator.navigate(AppDestination.Terminal) })
-        addView(navItem("≡", getString(R.string.nav_resources), currentScreen == AppDestination.Resources) { appNavigator.navigate(AppDestination.Resources) })
-        addView(navItem("⚙", getString(R.string.nav_settings), currentScreen == AppDestination.Settings) { appNavigator.navigate(AppDestination.Settings) })
+        addView(navItem(R.drawable.ic_material_view_module, getString(R.string.nav_cards), currentScreen == AppDestination.Console) { appNavigator.navigate(AppDestination.Console) })
+        addView(navItem(R.drawable.ic_terminal, getString(R.string.nav_terminal), currentScreen == AppDestination.Terminal) { appNavigator.navigate(AppDestination.Terminal) })
+        addView(navItem(R.drawable.ic_material_view_list, getString(R.string.nav_resources), currentScreen == AppDestination.Resources) { appNavigator.navigate(AppDestination.Resources) })
+        addView(navItem(R.drawable.ic_material_settings, getString(R.string.nav_settings), currentScreen == AppDestination.Settings) { appNavigator.navigate(AppDestination.Settings) })
     }
 
     private fun rebindBottomNavigationTheme() {
@@ -2417,18 +2414,21 @@ open class MainActivity : AppCompatActivity() {
         root.addView(replacement, index)
     }
 
-    private fun navItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit): View = LinearLayout(this).apply {
+    private fun navItem(@DrawableRes iconRes: Int, label: String, selected: Boolean, onClick: () -> Unit): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
+        contentDescription = label
+        isClickable = true
+        isFocusable = true
         layoutParams = LinearLayout.LayoutParams(0, dp(47), 1f)
-        addView(TextView(context).apply {
-            text = icon
-            textSize = if (icon == "≡") 17f else 19f
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            setTextColor(if (selected) tokens.primaryStrong else tokens.textSecondary)
+        addView(ImageView(context).apply {
+            setImageResource(iconRes)
+            imageTintList = ColorStateList.valueOf(
+                if (selected) tokens.primaryStrong else tokens.textSecondary
+            )
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(22),
                 dp(24)
             )
         })
@@ -2455,24 +2455,27 @@ open class MainActivity : AppCompatActivity() {
         content()
     }
 
-    private fun iconButton(text: String, size: Int, fill: Int, textColor: Int, radius: Int, onClick: () -> Unit): TextView =
-        TextView(this).apply {
-            this.text = text
-            textSize = when (text) {
-                "+" -> 38f
-                "⌕" -> 37f
-                "保存" -> 13f
-                else -> 24f
-            }
-            gravity = Gravity.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-            includeFontPadding = false
-            setTextColor(textColor)
-            background = roundedBox(fill, fill, radius.toFloat())
-            if (fill != Color.TRANSPARENT) elevation = dp(4).toFloat()
-            layoutParams = LinearLayout.LayoutParams(size, size)
-            setOnClickListener { onClick() }
-        }
+    private fun vectorButton(
+        @DrawableRes iconRes: Int,
+        size: Int,
+        fill: Int,
+        tint: Int,
+        radius: Int,
+        description: String,
+        onClick: () -> Unit
+    ): ImageView = ImageView(this).apply {
+        setImageResource(iconRes)
+        imageTintList = ColorStateList.valueOf(tint)
+        scaleType = ImageView.ScaleType.CENTER_INSIDE
+        setPadding(dp(10), dp(10), dp(10), dp(10))
+        contentDescription = description
+        isClickable = true
+        isFocusable = true
+        background = roundedBox(fill, if (fill == Color.TRANSPARENT) Color.TRANSPARENT else fill, radius.toFloat())
+        if (fill != Color.TRANSPARENT) elevation = dp(2).toFloat()
+        layoutParams = LinearLayout.LayoutParams(size, size)
+        setOnClickListener { onClick() }
+    }
 
     private fun redactUrlCredentials(url: String?): String {
         val value = url.orEmpty()

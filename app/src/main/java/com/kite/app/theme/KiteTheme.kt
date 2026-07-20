@@ -50,6 +50,27 @@ data class ThemeTokens(
     val infoBorder: Int
 )
 
+/**
+ * 与颜色无关的形状 token。页面只能消费这些语义半径，避免各自写一套圆角。
+ * 数值单位为 dp，由视图层在使用时换算为像素。
+ */
+data class ThemeShapes(
+    val cardRadius: Int,
+    val controlRadius: Int,
+    val chipRadius: Int,
+    val iconTileRadius: Int
+)
+
+/**
+ * 页面级间距 token。这里只收口跨页面会反复出现的骨架尺寸。
+ * 数值单位为 dp。
+ */
+data class ThemeSpacing(
+    val pageHorizontal: Int,
+    val sectionGap: Int,
+    val itemGap: Int
+)
+
 data class KiteTone(
     val strong: Int,
     val soft: Int,
@@ -72,6 +93,19 @@ enum class KiteAccent(val key: String) {
 }
 
 object KiteTheme {
+    val shapes = ThemeShapes(
+        cardRadius = 24,
+        controlRadius = 18,
+        chipRadius = 20,
+        iconTileRadius = 14
+    )
+
+    val spacing = ThemeSpacing(
+        pageHorizontal = 18,
+        sectionGap = 12,
+        itemGap = 8
+    )
+
     val defaultThemeColor: Int = Color.rgb(14, 116, 144)
     val defaultBackgroundColor: Int = Color.rgb(246, 248, 250)
 

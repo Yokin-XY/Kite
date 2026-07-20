@@ -32,12 +32,16 @@ internal class HomeFragment : Fragment() {
     private var screen: HomeScreen? = null
     private var restoredPageId = HOME_PAGE_ALL
     private var restoredScrollY = 0
+    private var restoredSearchQuery = ""
+    private var restoredSortMode = HomeSortMode.Default
     private var runtimeBlocked = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         restoredPageId = savedInstanceState?.getString(STATE_PAGE_ID).orEmpty().ifBlank { HOME_PAGE_ALL }
         restoredScrollY = savedInstanceState?.getInt(STATE_SCROLL_Y) ?: 0
+        restoredSearchQuery = savedInstanceState?.getString(STATE_SEARCH_QUERY).orEmpty()
+        restoredSortMode = HomeSortMode.fromStorage(savedInstanceState?.getString(STATE_SORT_MODE))
         runtimeBlocked = arguments?.getBoolean(ARG_RUNTIME_BLOCKED, true) ?: true
     }
 
@@ -49,6 +53,8 @@ internal class HomeFragment : Fragment() {
         context = requireContext(),
         initialPageId = restoredPageId,
         initialScrollY = restoredScrollY,
+        initialSearchQuery = restoredSearchQuery,
+        initialSortMode = restoredSortMode,
         onOpenEditor = { recipeId -> send(HomeFeatureRequest.OpenEditor(recipeId)) },
         onPrimaryAction = ::submitPrimary,
         onCreateGroup = ::showCreateGroupDialog,
@@ -91,12 +97,16 @@ internal class HomeFragment : Fragment() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_PAGE_ID, screen?.selectedPageId() ?: restoredPageId)
         outState.putInt(STATE_SCROLL_Y, screen?.scrollY() ?: restoredScrollY)
+        outState.putString(STATE_SEARCH_QUERY, screen?.searchQuery() ?: restoredSearchQuery)
+        outState.putString(STATE_SORT_MODE, (screen?.sortMode() ?: restoredSortMode).storageValue)
         super.onSaveInstanceState(outState)
     }
 
     override fun onDestroyView() {
         restoredPageId = screen?.selectedPageId() ?: restoredPageId
         restoredScrollY = screen?.scrollY() ?: restoredScrollY
+        restoredSearchQuery = screen?.searchQuery() ?: restoredSearchQuery
+        restoredSortMode = screen?.sortMode() ?: restoredSortMode
         screen?.dispose()
         screen = null
         super.onDestroyView()
@@ -184,6 +194,8 @@ internal class HomeFragment : Fragment() {
         private const val ARG_RUNTIME_BLOCKED = "runtime_blocked"
         private const val STATE_PAGE_ID = "home_page_id"
         private const val STATE_SCROLL_Y = "home_scroll_y"
+        private const val STATE_SEARCH_QUERY = "home_search_query"
+        private const val STATE_SORT_MODE = "home_sort_mode"
 
         fun newInstance(runtimeBlocked: Boolean): HomeFragment = HomeFragment().apply {
             arguments = Bundle().apply { putBoolean(ARG_RUNTIME_BLOCKED, runtimeBlocked) }

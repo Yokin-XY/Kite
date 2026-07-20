@@ -102,7 +102,17 @@
     <string name="theme_choice_mist_blue">Mist blue</string>
     <string name="theme_choice_light_cyan">Light cyan</string>
 
-    <string name="home_tabs_description">Card pages</string>
+    <string name="home_tabs_description">Card categories</string>
+    <string name="home_search_hint">Search configurations</string>
+    <string name="home_search_description">Search card configurations</string>
+    <string name="home_arrange">Arrange</string>
+    <string name="home_arrange_description">Arrange: %1$s</string>
+    <string name="home_sort_default">Default order</string>
+    <string name="home_sort_name">By name</string>
+    <string name="home_sort_recent">Recently run</string>
+    <string name="home_selected_page_description">Selected: %1$s</string>
+    <string name="home_group_action">Group</string>
+    <string name="home_create_card_description">Create card</string>
     <string name="home_create_group_description">Create card group</string>
     <string name="home_create_group_title">Create card group</string>
     <string name="home_create_group_hint">For example: AI tools</string>
@@ -117,9 +127,9 @@
     <string name="home_empty_title">No cards</string>
     <string name="home_empty_all_summary">New or imported cards will appear here.</string>
     <string name="home_empty_page_summary">There are no cards on this page.</string>
-    <string name="home_tab_all">▦  All %1$d</string>
-    <string name="home_tab_opened">▶  Opened %1$d</string>
-    <string name="home_tab_stopped">■  Stopped %1$d</string>
+    <string name="home_empty_search_summary">No matching configurations were found.</string>
+    <string name="home_tab_all">All %1$d</string>
+    <string name="home_tab_running">Running %1$d</string>
     <string name="home_ungrouped">Ungrouped</string>
     <string name="home_unnamed_card">Unnamed card</string>
     <string name="home_status_failed">Failed</string>
@@ -153,12 +163,10 @@
     <string name="home_icon_shopping">$</string>
     <string name="home_icon_logs">L</string>
 
-    <string name="nav_cards">Cards</string>
+    <string name="nav_cards">Overview</string>
     <string name="nav_terminal">Terminal</string>
     <string name="nav_resources">Resources</string>
     <string name="nav_settings">Settings</string>
-    <string name="console_subtitle">Card console</string>
-    <string name="console_search_pending">Search is coming later</string>
 
     <string name="startup_failure_title">Kite startup diagnostics</string>
     <string name="startup_failure_summary">The previous startup did not finish. The last verified stage is shown below and can be copied or shared.</string>

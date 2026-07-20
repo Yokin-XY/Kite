@@ -101,7 +101,17 @@
     <string name="theme_choice_mist_blue">雾蓝</string>
     <string name="theme_choice_light_cyan">浅青</string>
 
-    <string name="home_tabs_description">卡片分页</string>
+    <string name="home_tabs_description">卡片分类</string>
+    <string name="home_search_hint">搜索配置</string>
+    <string name="home_search_description">搜索卡片配置</string>
+    <string name="home_arrange">排列方式</string>
+    <string name="home_arrange_description">排列方式：%1$s</string>
+    <string name="home_sort_default">默认顺序</string>
+    <string name="home_sort_name">按名称</string>
+    <string name="home_sort_recent">最近运行</string>
+    <string name="home_selected_page_description">已选择：%1$s</string>
+    <string name="home_group_action">分组</string>
+    <string name="home_create_card_description">新建卡片</string>
     <string name="home_create_group_description">新建卡片分组</string>
     <string name="home_create_group_title">新建卡片分组</string>
     <string name="home_create_group_hint">例如：AI 工具</string>
@@ -116,9 +126,9 @@
     <string name="home_empty_title">暂无卡片</string>
     <string name="home_empty_all_summary">新建或导入卡片后会显示在这里。</string>
     <string name="home_empty_page_summary">当前分页没有卡片。</string>
-    <string name="home_tab_all">▦  全部 %1$d</string>
-    <string name="home_tab_opened">▶  已打开 %1$d</string>
-    <string name="home_tab_stopped">■  已停止 %1$d</string>
+    <string name="home_empty_search_summary">没有找到匹配的配置。</string>
+    <string name="home_tab_all">全部 %1$d</string>
+    <string name="home_tab_running">运行中 %1$d</string>
     <string name="home_ungrouped">未分组</string>
     <string name="home_unnamed_card">未命名卡片</string>
     <string name="home_status_failed">失败</string>
@@ -152,12 +162,10 @@
     <string name="home_icon_shopping">购</string>
     <string name="home_icon_logs">日</string>
 
-    <string name="nav_cards">配置</string>
+    <string name="nav_cards">总览</string>
     <string name="nav_terminal">终端</string>
     <string name="nav_resources">资源</string>
     <string name="nav_settings">设置</string>
-    <string name="console_subtitle">配置表控制台</string>
-    <string name="console_search_pending">搜索稍后接入</string>
 
     <string name="startup_failure_title">Kite 启动失败诊断</string>
     <string name="startup_failure_summary">上一次启动没有完成。下面是最后到达的真实阶段，可直接复制或分享。</string>

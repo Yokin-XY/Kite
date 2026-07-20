@@ -73,13 +73,101 @@ class HomeScreenTest {
         assertEquals(listOf("tool"), screen.visibleRecipeIdsForTest())
     }
 
-    private fun screen(onPrimary: (String) -> Unit = {}): HomeScreen = HomeScreen(
+    @Test
+    fun legacyCategoryBecomesAVisibleFilterWithoutCopyingGroupState() {
+        val screen = screen()
+        attach(screen)
+        screen.render(
+            HomeFeatureUiState(
+                phase = HomeCatalogPhase.Ready,
+                items = listOf(item(recipe("audit", category = "验收")), item(recipe("tool")))
+            )
+        )
+
+        assertTrue(screen.chipLabelsForTest().contains("验收"))
+    }
+
+    @Test
+    fun legacyCategoryMergesIntoMatchingGroupWithoutCaseSensitiveGap() {
+        val screen = screen()
+        attach(screen)
+        screen.render(
+            HomeFeatureUiState(
+                phase = HomeCatalogPhase.Ready,
+                groups = listOf(KiteCardGroup(id = "audit", name = "Audit")),
+                items = listOf(item(recipe("legacy", category = "audit")))
+            )
+        )
+
+        assertEquals(1, screen.chipLabelsForTest().count { it.equals("Audit", ignoreCase = true) })
+        screen.selectGroup("audit")
+        assertEquals(listOf("legacy"), screen.visibleRecipeIdsForTest())
+    }
+
+    @Test
+    fun runningChipReplacesStoppedPageAndShowsLiveCount() {
+        val screen = screen()
+        attach(screen)
+        screen.render(
+            HomeFeatureUiState(
+                phase = HomeCatalogPhase.Ready,
+                items = listOf(
+                    item(recipe("live"), CardRunStatus.Running),
+                    item(recipe("done"), CardRunStatus.Completed)
+                )
+            )
+        )
+
+        val labels = screen.chipLabelsForTest()
+        val expected = ApplicationProvider.getApplicationContext<android.content.Context>()
+            .getString(R.string.home_tab_running, 1)
+        assertTrue(labels.contains(expected))
+        assertEquals(3, labels.size)
+        screen.dispose()
+    }
+
+    @Test
+    fun searchFiltersOnlyCurrentInMemoryItems() {
+        val screen = screen()
+        attach(screen)
+        screen.render(
+            HomeFeatureUiState(
+                phase = HomeCatalogPhase.Ready,
+                items = listOf(item(recipe("terminal")), item(recipe("browser")))
+            )
+        )
+
+        screen.searchViewForTest().setText("browser")
+
+        assertEquals(listOf("browser"), screen.visibleRecipeIdsForTest())
+    }
+
+    @Test
+    fun nameSortUsesPresentationStateWithoutChangingRunFacts() {
+        val screen = screen(initialSortMode = HomeSortMode.Name)
+        attach(screen)
+        screen.render(
+            HomeFeatureUiState(
+                phase = HomeCatalogPhase.Ready,
+                items = listOf(item(recipe("zeta")), item(recipe("alpha")))
+            )
+        )
+
+        assertEquals(listOf("alpha", "zeta"), screen.visibleRecipeIdsForTest())
+    }
+
+    private fun screen(
+        onPrimary: (String) -> Unit = {},
+        initialSortMode: HomeSortMode = HomeSortMode.Default
+    ): HomeScreen = HomeScreen(
         context = ContextThemeWrapper(
             ApplicationProvider.getApplicationContext(),
             R.style.Theme_Kite
         ),
         initialPageId = HOME_PAGE_ALL,
         initialScrollY = 0,
+        initialSearchQuery = "",
+        initialSortMode = initialSortMode,
         onOpenEditor = {},
         onPrimaryAction = onPrimary,
         onCreateGroup = {},
@@ -117,12 +205,17 @@ class HomeScreenTest {
         )
     }
 
-    private fun recipe(id: String, groupId: String = ""): KiteRecipe = KiteRecipe(
+    private fun recipe(
+        id: String,
+        groupId: String = "",
+        category: String = ""
+    ): KiteRecipe = KiteRecipe(
         id = id,
         name = id.replaceFirstChar(Char::uppercase),
         description = "Test recipe",
         type = KiteRecipe.TYPE_START_SERVICE,
         groupId = groupId,
+        category = category,
         defaultUrl = "",
         shortcut = false,
         launch = KiteLaunchConfig(openInstance = true),
