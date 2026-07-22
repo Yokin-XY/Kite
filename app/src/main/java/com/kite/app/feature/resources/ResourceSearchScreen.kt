@@ -1,7 +1,7 @@
 package com.kite.app.feature.resources
 
 import android.content.Context
-import android.graphics.Color
+import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.text.Editable
 import android.text.InputType
@@ -13,9 +13,11 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.kite.app.R
 import com.kite.app.action.KiteResourceActionIntent
 
 /** 搜索页面的真实视图所有者；过滤只针对 Controller 已加载的内存目录。 */
@@ -36,7 +38,7 @@ internal class ResourceSearchScreen(
     )
     private val resultsHost = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        contentDescription = "资源搜索结果"
+        contentDescription = context.getString(R.string.resource_search_results_description)
     }
     private val scrollView = ScrollView(context).apply {
         addView(LinearLayout(context).apply {
@@ -48,7 +50,7 @@ internal class ResourceSearchScreen(
     private val input = EditText(context).apply {
         setText(initialQuery)
         setSelection(text?.length ?: 0)
-        hint = "搜索资源"
+        hint = context.getString(R.string.resource_catalog_search)
         textSize = 17f
         includeFontPadding = false
         setSingleLine(true)
@@ -59,7 +61,7 @@ internal class ResourceSearchScreen(
         setPadding(0, 0, 0, 0)
         setTextColor(factory.tokens.textPrimary)
         setHintTextColor(factory.tokens.textTertiary)
-        contentDescription = "搜索资源输入框"
+        contentDescription = context.getString(R.string.resource_search_input_description)
     }
     private val bindings = linkedMapOf<String, ResourceItemViewBinding>()
     private var latestState = ResourceFeatureUiState()
@@ -69,7 +71,7 @@ internal class ResourceSearchScreen(
 
     val root: View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        contentDescription = "资源搜索"
+        contentDescription = context.getString(R.string.resource_search_description)
         setBackgroundColor(factory.tokens.pageBackground)
         addView(topBar(context))
         addView(scrollView, LinearLayout.LayoutParams(
@@ -101,23 +103,27 @@ internal class ResourceSearchScreen(
     fun render(state: ResourceFeatureUiState) {
         latestState = state
         if (state.phase == ResourceCatalogPhase.Loading && state.items.isEmpty()) {
-            replaceResults(factory.stateBlock("正在搜索资源", "资源目录会在后台加载。", loading = true))
+            replaceResults(factory.stateBlock(
+                root.context.getString(R.string.resource_search_loading_title),
+                root.context.getString(R.string.resource_catalog_loading_summary),
+                loading = true
+            ))
             return
         }
         if (state.phase == ResourceCatalogPhase.Failed && state.items.isEmpty()) {
             replaceResults(factory.stateBlock(
-                "资源搜索失败",
-                state.errorMessage ?: "暂时无法读取资源目录",
+                root.context.getString(R.string.resource_search_failed_title),
+                state.errorMessage ?: root.context.getString(R.string.resource_catalog_request_failed_summary),
                 retry = onRetry
             ))
             return
         }
         val query = query()
-        val items = state.items.searchResources(query)
+        val items = state.items.searchResources(root.context, query)
         val nextSignature = buildString {
             append(query)
             items.forEach { item ->
-                val presentation = item.presentation()
+                val presentation = item.presentation(root.context)
                 append('|').append(item.resourceId)
                 append(':').append(presentation.name)
                 append(':').append(presentation.description)
@@ -133,17 +139,7 @@ internal class ResourceSearchScreen(
     }
 
     fun acknowledge(resourceId: String, intent: KiteResourceActionIntent) {
-        val label = when (intent) {
-            KiteResourceActionIntent.Install,
-            KiteResourceActionIntent.ReopenInstall -> "准备中"
-            KiteResourceActionIntent.Open -> "打开中"
-            KiteResourceActionIntent.Stop -> "停止中"
-            KiteResourceActionIntent.Uninstall -> "卸载中"
-            KiteResourceActionIntent.CancelInstall,
-            KiteResourceActionIntent.CancelFailedInstall -> "取消中"
-            KiteResourceActionIntent.BusyStatus,
-            KiteResourceActionIntent.Unsupported -> "处理中"
-        }
+        val label = factory.acknowledgementLabel(intent)
         factory.acknowledge(bindings[resourceId], label)
     }
 
@@ -216,7 +212,7 @@ internal class ResourceSearchScreen(
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(0, factory.dp(24), 0, 0) }
         addView(TextView(context).apply {
-            text = "没有找到相关资源"
+            text = context.getString(R.string.resource_search_empty)
             textSize = 16f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(factory.tokens.textPrimary)
@@ -233,42 +229,35 @@ internal class ResourceSearchScreen(
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(factory.dp(16), factory.dp(12), factory.dp(16), factory.dp(8))
-        addView(TextView(context).apply {
-            text = "‹"
-            textSize = 30f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(factory.tokens.textPrimary)
-            contentDescription = "返回"
-            setOnClickListener { onBack() }
-        }, LinearLayout.LayoutParams(factory.dp(44), factory.dp(44)))
+        addView(factory.ui.imageButton(
+            context = context,
+            iconRes = R.drawable.ic_arrow_back_light,
+            contentDescription = context.getString(R.string.common_back),
+            onClick = onBack
+        ), LinearLayout.LayoutParams(factory.dp(44), factory.dp(44)))
         addView(FrameLayout(context).apply {
             background = factory.roundedBox(factory.tokens.surfaceElevated, factory.tokens.border, factory.dp(22).toFloat())
-            addView(TextView(context).apply {
-                text = "⌕"
-                textSize = 28f
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(factory.tokens.textPrimary)
+            addView(ImageView(context).apply {
+                setImageResource(R.drawable.ic_material_search)
+                imageTintList = ColorStateList.valueOf(factory.tokens.textPrimary)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(factory.dp(11), factory.dp(11), factory.dp(11), factory.dp(11))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }, FrameLayout.LayoutParams(factory.dp(44), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START))
             addView(input, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ).apply { setMargins(factory.dp(44), 0, factory.dp(42), 0) })
-            addView(TextView(context).apply {
-                text = "×"
-                textSize = 22f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(factory.tokens.textTertiary)
-                contentDescription = "清空搜索"
-                setOnClickListener {
+            addView(factory.ui.imageButton(
+                context = context,
+                iconRes = R.drawable.ic_close_light,
+                contentDescription = context.getString(R.string.resource_search_clear),
+                tint = factory.tokens.textTertiary,
+                onClick = {
                     input.setText("")
                     input.requestFocus()
                 }
-            }, FrameLayout.LayoutParams(factory.dp(42), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+            ), FrameLayout.LayoutParams(factory.dp(42), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
         }, LinearLayout.LayoutParams(0, factory.dp(46), 1f).apply {
             setMargins(factory.dp(6), 0, factory.dp(10), 0)
         })

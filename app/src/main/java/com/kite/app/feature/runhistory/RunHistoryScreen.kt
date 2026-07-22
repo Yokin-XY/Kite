@@ -431,6 +431,7 @@ internal class RunHistoryScreen(
         CardRunStatus.Failed, CardRunStatus.BridgeUnavailable -> tokens.danger
         CardRunStatus.Completed -> tokens.success
         CardRunStatus.Stopped -> tokens.info
+        CardRunStatus.CleanupPending -> tokens.warning
         CardRunStatus.Starting, CardRunStatus.Running, CardRunStatus.WaitingTerminal,
         CardRunStatus.AlreadyRunning, CardRunStatus.Opened -> tokens.primaryStrong
         else -> tokens.textSecondary

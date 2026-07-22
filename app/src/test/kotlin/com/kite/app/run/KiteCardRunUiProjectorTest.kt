@@ -28,6 +28,19 @@ class KiteCardRunUiProjectorTest {
     }
 
     @Test
+    fun `停止未确认不冒充启动失败且允许继续停止`() {
+        val pending = KiteCardRunUiProjector.project(CardRunStatus.CleanupPending)
+
+        assertEquals("待确认", pending.badgeLabel)
+        assertEquals(KiteRunUiTone.Warning, pending.tone)
+        assertEquals(KiteRunPrimaryAction.ContinueStop, pending.primaryAction)
+        assertEquals("继续停止", pending.primaryActionLabel)
+        assertTrue(pending.primaryActionEnabled)
+        assertFalse(pending.problem)
+        assertFalse(pending.live)
+    }
+
+    @Test
     fun `运行环境阻塞只改变动作承诺不改变事实色调`() {
         val blocked = KiteCardRunUiProjector.project(CardRunStatus.Stopped, runtimeBlocked = true)
 

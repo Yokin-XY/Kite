@@ -36,6 +36,7 @@ internal object KiteResourceActionCoordinator {
             in installLabels -> KiteResourceActionIntent.Install
             "处理中", "获取中" -> KiteResourceActionIntent.ReopenInstall
             "打开", "运行中" -> KiteResourceActionIntent.Open
+            "继续停止" -> KiteResourceActionIntent.Stop
             "卸载", "继续卸载" -> KiteResourceActionIntent.Uninstall
             "卸载中" -> KiteResourceActionIntent.BusyStatus
             else -> KiteResourceActionIntent.Unsupported

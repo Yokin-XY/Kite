@@ -32,7 +32,7 @@ class RuntimeManagementCoordinatorTest {
     }
 
     @Test
-    fun `stopped root confirms while old generation process continues background cleanup`() = runTest {
+    fun `stopped root does not confirm while captured process remains`() = runTest {
         val owner = "card:run-1@10/step/0-shell/attempt/1"
         val running = run(CardRunStatus.Running, owner = owner)
         val ownedProcess = process(ownerId = owner)
@@ -47,6 +47,11 @@ class RuntimeManagementCoordinatorTest {
         gateway.publish(residue)
         coordinator.reconcile(residue)
 
+        assertTrue(coordinator.commands.value.containsKey("run:run-1"))
+
+        val fullyStopped = snapshot(runs = listOf(run(CardRunStatus.Stopped, owner = owner)))
+        gateway.publish(fullyStopped)
+        coordinator.reconcile(fullyStopped)
         assertTrue(coordinator.commands.value.isEmpty())
     }
 
@@ -151,6 +156,31 @@ class RuntimeManagementCoordinatorTest {
     }
 
     @Test
+    fun `end process tree waits until every captured lifecycle disappears`() = runTest {
+        val first = process()
+        val second = process().copy(id = "process-53", pid = 53)
+        val gateway = FakeGateway(snapshot(processes = listOf(first, second)))
+        val coordinator = coordinator(gateway)
+        val command = RuntimeManagementCommand.EndProcessTree(
+            processIds = listOf(first.id, second.id),
+            mutationKey = "process-tree:test",
+        )
+
+        coordinator.submit(command)
+        assertEquals(listOf(listOf(first.id, second.id)), gateway.endedTrees)
+
+        val oneRemains = snapshot(processes = listOf(second))
+        gateway.publish(oneRemains)
+        coordinator.reconcile(oneRemains)
+        assertTrue(coordinator.commands.value.containsKey("process-tree:test"))
+
+        val empty = snapshot()
+        gateway.publish(empty)
+        coordinator.reconcile(empty)
+        assertTrue(coordinator.commands.value.isEmpty())
+    }
+
+    @Test
     fun `timeout becomes visible failure instead of silent reset`() = runTest {
         var now = 100L
         val gateway = FakeGateway(snapshot(processes = listOf(process())))
@@ -240,6 +270,7 @@ class RuntimeManagementCoordinatorTest {
         private val mutableSnapshots = MutableStateFlow(initial)
         override val snapshots = mutableSnapshots
         val endedProcesses = mutableListOf<Pair<String, Int>>()
+        val endedTrees = mutableListOf<List<String>>()
         var processDispatch = RuntimeManagementDispatchResult.accepted("process_end_requested")
 
         override fun currentSnapshot(): RuntimeManagementSnapshot = mutableSnapshots.value
@@ -252,6 +283,11 @@ class RuntimeManagementCoordinatorTest {
         override suspend fun endProcess(processId: String, pid: Int): RuntimeManagementDispatchResult {
             endedProcesses += processId to pid
             return processDispatch
+        }
+
+        override suspend fun endProcessTree(processIds: List<String>): RuntimeManagementDispatchResult {
+            endedTrees += processIds
+            return RuntimeManagementDispatchResult.accepted("process_tree_end_requested")
         }
 
         override suspend fun stopBackgroundRuntime(runtimeId: String) =

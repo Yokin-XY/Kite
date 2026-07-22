@@ -16,16 +16,18 @@ import android.widget.TextView
 import com.kite.app.R
 import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.theme.ThemeTokens
-import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeComponentRecipes
-import com.kite.app.theme.ThemeFoundations
+import com.kite.app.theme.ThemeEnvironment
+import com.kite.app.ui.UiKit
+import com.kite.app.ui.UiTextRole
 
 internal class SettingsViewFactory(
     private val context: Context,
-    val tokens: ThemeTokens,
-    private val foundations: ThemeFoundations = KiteTheme.foundations,
-    private val components: ThemeComponentRecipes = KiteTheme.catalog.stylePacks.first().components,
+    environment: ThemeEnvironment,
 ) {
+    private val ui = UiKit(context, environment)
+    val tokens: ThemeTokens = environment.tokens
+    private val foundations = environment.foundations
+    private val components = environment.components
     class NavigationBinding(
         val root: View,
         val subtitle: TextView,
@@ -61,35 +63,7 @@ internal class SettingsViewFactory(
         fun shouldDispatch(): Boolean = !binding
     }
 
-    fun topBar(title: String, onBack: () -> Unit): View = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(18), dp(14), dp(18), dp(10))
-        addView(TextView(context).apply {
-            text = "‹"
-            textSize = 28f
-            gravity = Gravity.CENTER
-            setTextColor(tokens.textPrimary)
-            background = roundedBox(Color.TRANSPARENT, Color.TRANSPARENT, dp(16).toFloat())
-            layoutParams = LinearLayout.LayoutParams(
-                dp(foundations.minimumTouchTarget),
-                dp(foundations.minimumTouchTarget),
-            )
-            setOnClickListener { onBack() }
-            contentDescription = context.getString(R.string.common_back)
-        })
-        addView(TextView(context).apply {
-            text = title
-            textSize = 22f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(tokens.textPrimary)
-            gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(View(context), LinearLayout.LayoutParams(
-            dp(foundations.minimumTouchTarget),
-            dp(foundations.minimumTouchTarget),
-        ))
-    }
+    fun topBar(title: String, onBack: () -> Unit): View = ui.topBar(context, title, onBack)
 
     fun navigationRow(title: String, subtitle: String, onClick: () -> Unit): NavigationBinding {
         val subtitleView = subtitleView(subtitle)
@@ -157,9 +131,7 @@ internal class SettingsViewFactory(
 
     fun sectionTitle(text: String): TextView = TextView(context).apply {
         this.text = text
-        textSize = 13.5f
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(tokens.textPrimary)
+        ui.applyTextRole(this, UiTextRole.SectionTitle)
         setPadding(0, 0, 0, dp(12))
     }
 
@@ -177,9 +149,7 @@ internal class SettingsViewFactory(
             background = containerBackground(tokens.cardBackground, tokens.border, components.card)
             addView(TextView(context).apply {
                 text = title
-                textSize = 16f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
+                ui.applyTextRole(this, UiTextRole.CardTitle)
             })
             addView(subtitle)
         }
@@ -337,22 +307,13 @@ internal class SettingsViewFactory(
     }
 
     fun roundedBox(fill: Int, stroke: Int, radius: Float, strokeWidth: Int = dp(1)): GradientDrawable =
-        GradientDrawable().apply {
-            setColor(fill)
-            cornerRadius = radius
-            setStroke(strokeWidth, stroke)
-        }
+        ui.roundedBox(fill, stroke, radius, strokeWidth)
 
     private fun containerBackground(
         fill: Int,
         stroke: Int,
         recipe: com.kite.app.theme.ThemeContainerRecipe,
-    ): GradientDrawable = roundedBox(
-        fill = fill,
-        stroke = stroke,
-        radius = dp(recipe.radius).toFloat(),
-        strokeWidth = dp(recipe.strokeWidth),
-    )
+    ): GradientDrawable = ui.containerBackground(fill, stroke, recipe)
 
     fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
 
@@ -362,17 +323,14 @@ internal class SettingsViewFactory(
             if (endPadding > 0) setPadding(0, 0, endPadding, 0)
             addView(TextView(context).apply {
                 text = title
-                textSize = 16f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
+                ui.applyTextRole(this, UiTextRole.CardTitle)
             })
             addView(subtitle)
         }
 
     private fun subtitleView(value: String): TextView = TextView(context).apply {
         text = value
-        textSize = 12.5f
-        setTextColor(tokens.textSecondary)
+        ui.applyTextRole(this, UiTextRole.Supporting)
         maxLines = 2
         ellipsize = TextUtils.TruncateAt.END
         setPadding(0, dp(4), 0, 0)

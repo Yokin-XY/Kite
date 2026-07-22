@@ -6,9 +6,11 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.kite.app.R
 import com.kite.app.application.runtimemanagement.RuntimeManagementCommandPhase
 import com.kite.app.application.runtimemanagement.RuntimeManagementDependenciesOwner
 import kotlinx.coroutines.delay
@@ -24,14 +26,28 @@ internal class RuntimeManagementFragment : Fragment() {
     private val gateway by lazy(LazyThreadSafetyMode.NONE) { dependencies.runtimeManagementGateway }
     private val coordinator by lazy(LazyThreadSafetyMode.NONE) { dependencies.runtimeManagementCoordinator }
     private val controller by lazy(LazyThreadSafetyMode.NONE) {
-        RuntimeManagementFeatureController(gateway, coordinator)
+        RuntimeManagementFeatureController(
+            gateway,
+            coordinator,
+            RuntimeManagementText.from(requireContext()),
+        )
     }
     private var screen: RuntimeManagementScreen? = null
     private var restoredScrollY = 0
+    private var restoredScopeKey: String? = null
+    private val backCallback = object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            if (screen?.navigateUp() == true) return
+            isEnabled = false
+            requireActivity().onBackPressedDispatcher.onBackPressed()
+            isEnabled = true
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         restoredScrollY = savedInstanceState?.getInt(STATE_SCROLL_Y) ?: 0
+        restoredScopeKey = savedInstanceState?.getString(STATE_SCOPE_KEY)
     }
 
     override fun onCreateView(
@@ -43,11 +59,13 @@ internal class RuntimeManagementFragment : Fragment() {
         initialScrollY = restoredScrollY,
         onBack = { send(RuntimeManagementRequest.Back) },
         onRefresh = { dispatch(RuntimeManagementFeatureAction.Refresh(force = true)) },
-        onAction = { action -> dispatch(RuntimeManagementFeatureAction.Submit(action)) }
+        onAction = { action -> dispatch(RuntimeManagementFeatureAction.Submit(action)) },
+        initialScopeKey = restoredScopeKey,
     ).also { screen = it }.root
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { controller.state.collect { state -> screen?.render(state) } }
@@ -76,6 +94,7 @@ internal class RuntimeManagementFragment : Fragment() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putInt(STATE_SCROLL_Y, screen?.scrollY() ?: restoredScrollY)
+        outState.putString(STATE_SCOPE_KEY, screen?.scopeKey() ?: restoredScopeKey)
         super.onSaveInstanceState(outState)
     }
 
@@ -97,7 +116,11 @@ internal class RuntimeManagementFragment : Fragment() {
                     )
                 )
                 is RuntimeManagementFeatureEffect.ActionRejected ->
-                    Toast.makeText(requireContext(), "操作未执行：${effect.reason}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        requireContext(),
+                        getString(R.string.runtime_management_action_rejected, effect.reason),
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 null -> Unit
             }
         }
@@ -110,6 +133,7 @@ internal class RuntimeManagementFragment : Fragment() {
     companion object {
         private const val ARG_FORCE_REFRESH = "force_refresh"
         private const val STATE_SCROLL_Y = "scroll_y"
+        private const val STATE_SCOPE_KEY = "scope_key"
 
         fun newInstance(forceRefresh: Boolean): RuntimeManagementFragment =
             RuntimeManagementFragment().apply {

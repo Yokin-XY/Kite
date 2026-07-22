@@ -40,19 +40,26 @@ class ResourceCatalogScreenTest {
             onRetry = {}
         )
         attach(screen)
+        val context = screen.root.context
         screen.render(state(action = "获取", state = "未获取", installed = false))
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 
-        val initialButton = screen.root.textViews().first { it.text.toString() == "获取" }
+        val initialButton = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_install)
+        }
         initialButton.performClick()
         assertEquals(listOf("tool"), clicked)
 
         screen.render(state(action = "打开", state = "已获取", installed = true))
         shadowOf(Looper.getMainLooper()).idle()
 
-        val reboundButton = screen.root.textViews().first { it.text.toString() == "打开" }
+        val reboundButton = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_open)
+        }
         assertSame(initialButton, reboundButton)
-        assertTrue(screen.root.textViews().any { it.text.toString().contains("已获取") })
+        assertTrue(screen.root.textViews().any {
+            it.text.toString().contains(context.getString(R.string.resource_state_installed))
+        })
     }
 
     @Test
@@ -68,12 +75,15 @@ class ResourceCatalogScreenTest {
             onRetry = {}
         )
         attach(screen)
+        val context = screen.root.context
         screen.render(state(action = "获取", state = "未获取", installed = false))
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 
         screen.acknowledge("tool", KiteResourceActionIntent.Install)
 
-        assertTrue(screen.root.textViews().any { it.text.toString() == "准备中" && !it.isEnabled })
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_state_preparing) && !it.isEnabled
+        })
     }
 
     private fun state(action: String, state: String, installed: Boolean): ResourceFeatureUiState {

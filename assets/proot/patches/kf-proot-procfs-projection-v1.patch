@@ -1,26 +1,35 @@
 diff --git a/src/GNUmakefile b/src/GNUmakefile
+index 81d266dab2c44bda495e62b587e4cdb1172981ba..90f6de099db6835435903e8d8992a1e78fc7ed4f 100644
 --- a/src/GNUmakefile
 +++ b/src/GNUmakefile
-@@
+@@ -78,6 +78,7 @@ OBJECTS += \
+ 	extension/fake_id0/fake_id0.o \
  	extension/hidden_files/hidden_files.o \
  	extension/mountinfo/mountinfo.o \
 +	extension/kf_procfs/kf_procfs.o \
  	extension/port_switch/port_switch.o \
+ 	extension/sysvipc/sysvipc.o \
+ 	extension/sysvipc/sysvipc_msg.o \
 diff --git a/src/cli/cli.c b/src/cli/cli.c
+index bbc640040344cd9514e9b70fad87a9e916c90007..2dd10df1fdc9ea3e13ef2c791ea747971060fed3 100644
 --- a/src/cli/cli.c
 +++ b/src/cli/cli.c
-@@
+@@ -484,6 +484,9 @@ int main(int argc, char *const argv[])
  	if (NULL == getenv("PROOT_NO_MOUNTINFO"))
  		initialize_extension(tracee, mountinfo_callback, NULL);
-+
+ 
 +	if (NULL == getenv("PROOT_NO_KF_PROCFS"))
 +		initialize_extension(tracee, kf_procfs_callback, NULL);
- 
++
  	/* Start the first tracee.  */
+ 	status = launch_process(tracee, &argv[status]);
+ 	if (status < 0) {
 diff --git a/src/extension/extension.h b/src/extension/extension.h
+index 24409b9e569b844309f7d031a44fde42c7004625..8445a8fb04b3657e43b21c24d8195a090248ce83 100644
 --- a/src/extension/extension.h
 +++ b/src/extension/extension.h
-@@
+@@ -207,5 +207,6 @@ extern int link2symlink_callback(Extension *extension, ExtensionEvent event, int
+ extern int fix_symlink_size_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
  extern int ashmem_memfd_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
  extern int mountinfo_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
 +extern int kf_procfs_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
@@ -28,9 +37,10 @@ diff --git a/src/extension/extension.h b/src/extension/extension.h
  #endif /* EXTENSION_H */
 diff --git a/src/extension/kf_procfs/kf_procfs.c b/src/extension/kf_procfs/kf_procfs.c
 new file mode 100644
+index 0000000000000000000000000000000000000000..10084535c6486f2afc17097a912a2d77dd29c35e
 --- /dev/null
 +++ b/src/extension/kf_procfs/kf_procfs.c
-@@
+@@ -0,0 +1,149 @@
 +#include "extension/extension.h"
 +
 +#include <errno.h>

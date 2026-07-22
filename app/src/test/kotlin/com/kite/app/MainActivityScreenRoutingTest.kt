@@ -2,9 +2,12 @@ package com.kite.app
 
 import android.os.Bundle
 import android.os.Looper
+import com.kite.app.feature.runhistory.RunHistoryFragment
 import com.kite.app.feature.web.WebWorkbenchFragment
 import com.kite.app.feature.resources.ResourceFeatureRequest
 import com.kite.app.feature.resources.ResourceFeatureResultContract
+import com.kite.app.application.runs.RecipeActionEffect
+import com.kite.app.theme.KiteTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -64,6 +67,18 @@ class MainActivityScreenRoutingTest {
         )
         method.isAccessible = true
         method.invoke(activity, url, "test", null)
+    }
+
+    private fun applyRecipeActionEffects(
+        activity: MainActivity,
+        effects: List<RecipeActionEffect>
+    ) {
+        val method = MainActivity::class.java.getDeclaredMethod(
+            "applyRecipeActionEffects",
+            List::class.java
+        )
+        method.isAccessible = true
+        method.invoke(activity, effects)
     }
 
     // ------------------------------------------------------------------
@@ -183,6 +198,35 @@ class MainActivityScreenRoutingTest {
     }
 
     @Test
+    fun `运行历史列表返回只退出一次且不重新进入 Fragment 返回回调`() {
+        val activity = createResumedActivity()
+        setCurrentScreen(activity, "RecipeMore")
+        activity.supportFragmentManager.beginTransaction()
+            .add(
+                android.R.id.content,
+                RunHistoryFragment.newInstance(
+                    recipeId = "missing-recipe",
+                    theme = KiteTheme.defaultSelection,
+                    listTitle = "运行历史",
+                    emptyTitle = "还没有运行记录",
+                    emptyDetail = "暂无记录"
+                ),
+                "kite-run-history"
+            )
+            .commitNow()
+
+        activity.onBackPressedDispatcher.onBackPressed()
+        shadowOf(Looper.getMainLooper()).idle()
+        activity.supportFragmentManager.executePendingTransactions()
+
+        assertEquals("Console", activity.currentScreenNameForTest())
+        assertEquals(
+            null,
+            activity.supportFragmentManager.findFragmentByTag("kite-run-history")
+        )
+    }
+
+    @Test
     fun `首次新建配置必须创建编辑 Fragment 而不是复用空引用`() {
         val activity = Robolectric.buildActivity(MainActivity::class.java).setup().get()
 
@@ -269,6 +313,22 @@ class MainActivityScreenRoutingTest {
         val beforeView = beforeFragment?.view
 
         controller.pause().resume()
+        activity.supportFragmentManager.executePendingTransactions()
+
+        val afterFragment = activity.supportFragmentManager.findFragmentByTag("kite-home")
+        assertSame(beforeFragment, afterFragment)
+        assertSame(beforeView, afterFragment?.view)
+    }
+
+    @Test
+    fun `首页动作要求显示 Console 时不重建现有 Home 显示面`() {
+        val activity = createResumedActivity()
+        activity.supportFragmentManager.executePendingTransactions()
+        val beforeFragment = activity.supportFragmentManager.findFragmentByTag("kite-home")
+        val beforeView = beforeFragment?.view
+
+        applyRecipeActionEffects(activity, listOf(RecipeActionEffect.ShowConsole))
+        shadowOf(Looper.getMainLooper()).idle()
         activity.supportFragmentManager.executePendingTransactions()
 
         val afterFragment = activity.supportFragmentManager.findFragmentByTag("kite-home")

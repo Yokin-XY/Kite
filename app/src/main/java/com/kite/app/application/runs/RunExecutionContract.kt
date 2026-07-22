@@ -188,8 +188,9 @@ internal sealed interface RecipeStepCompletionResult {
 
 internal enum class StopExecutionOutcome {
     Confirmed,
+    StillRunning,
+    VerificationUnavailable,
     Failed,
-    Timeout,
     ConnectionError,
     Unsupported,
     ParseError

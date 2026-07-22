@@ -94,3 +94,7 @@ Platform 是 Android 适配器；Foundation 保存可跨 Feature 复用的运行
 稳定主线包含卡片、资源、终端、运行实例、运行管理和 WebView + 系统浏览器认证桥。
 
 浏览器自动化和 X11 仍是实验实现。它们可以使用既有模块边界继续研究，但不得改变稳定能力的默认路径，也不作为正式版本完成标准。
+
+## PRoot 进程控制
+
+PRoot 进程以会话、生命周期编号、host PID 和 Linux start time 组成强身份。事件负责增量更新，按会话活动注册表负责冷启动和缺口恢复；单进程、应用树和卡片停止均在 Android 原生侧定向核验后执行。没有独占证据的 Android PGID 不得作为卡片停止兜底。完整规则见 [PRoot 进程事实与控制协议](runtime-process-control.md)。

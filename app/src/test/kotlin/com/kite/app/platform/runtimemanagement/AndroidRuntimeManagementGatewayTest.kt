@@ -21,6 +21,7 @@ class AndroidRuntimeManagementGatewayTest {
 
         assertEquals(RuntimeManagedOwnerKind.Card, mapped.ownerKind)
         assertTrue(mapped.isOwnerRoot)
+        assertFalse(mapped.isRuntimeScaffold)
         assertFalse(mapped.canEndDirectly)
     }
 
@@ -51,6 +52,21 @@ class AndroidRuntimeManagementGatewayTest {
 
         assertEquals(RuntimeManagedOwnerKind.System, mapped.ownerKind)
         assertEquals("容器守护进程", mapped.title)
+        assertTrue(mapped.isRuntimeScaffold)
+    }
+
+    @Test
+    fun `maps capacity root as scaffold by stable runtime identity rather than root id`() {
+        val mapped = AndroidRuntimeManagementGateway.run {
+            process(
+                id = "root-BACKGROUND_RUNTIME-worker-2",
+                commandLine = "/bin/bash -lc trap; /run/kf-proot-capacity/worker-2.pid",
+            ).toRuntimeManagedProcess()
+        }
+
+        assertEquals("PRoot 容量工作器", mapped.title)
+        assertTrue(mapped.isOwnerRoot)
+        assertTrue(mapped.isRuntimeScaffold)
     }
 
     private fun process(

@@ -1,6 +1,7 @@
 package com.kite.app.feature.resources
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.text.TextUtils
@@ -9,10 +10,12 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import com.google.android.material.tabs.TabLayout
+import com.kite.app.R
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.resources.KiteResourceHomeLayout
 import com.kite.app.resources.KiteResourceHomeTab
@@ -38,10 +41,10 @@ internal class ResourceCatalogScreen(
     private val heroHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val sectionsHost = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        contentDescription = "资源目录内容"
+        contentDescription = context.getString(R.string.resource_catalog_content_description)
     }
     private val tabLayout = TabLayout(context).apply {
-        contentDescription = "资源分类"
+        contentDescription = context.getString(R.string.resource_catalog_categories_description)
         tabMode = TabLayout.MODE_SCROLLABLE
         tabGravity = TabLayout.GRAVITY_START
         isFocusable = false
@@ -66,7 +69,7 @@ internal class ResourceCatalogScreen(
     private var restoredScrollY = initialScrollY.coerceAtLeast(0)
 
     val root: View = FrameLayout(context).apply {
-        contentDescription = "资源目录"
+        contentDescription = context.getString(R.string.resource_catalog_description)
         setBackgroundColor(factory.tokens.pageBackground)
         scrollView.addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -82,11 +85,11 @@ internal class ResourceCatalogScreen(
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
         addView(searchPill(context), FrameLayout.LayoutParams(
-            factory.dp(184),
+            factory.dp(148),
             factory.dp(42),
             Gravity.TOP or Gravity.END
         ).apply {
-            setMargins(0, factory.dp(11), factory.dp(20), 0)
+            setMargins(0, factory.dp(11), factory.dp(16), 0)
         })
     }
 
@@ -117,13 +120,13 @@ internal class ResourceCatalogScreen(
         }
         renderHero(state)
         renderTabs(state.homeLayout)
-        val sections = buildResourceSections(state.items, state.homeLayout, selectedTabId)
+        val sections = buildResourceSections(root.context, state.items, state.homeLayout, selectedTabId)
         val nextSignature = buildString {
             append(selectedTabId)
             sections.forEach { section ->
                 append('|').append(section.id).append(':').append(section.style)
                 section.items.forEach { item ->
-                    val presentation = item.presentation()
+                    val presentation = item.presentation(root.context)
                     append(',').append(item.resourceId)
                     append(':').append(presentation.name)
                     append(':').append(presentation.description)
@@ -142,17 +145,7 @@ internal class ResourceCatalogScreen(
     }
 
     fun acknowledge(resourceId: String, intent: KiteResourceActionIntent) {
-        val label = when (intent) {
-            KiteResourceActionIntent.Install,
-            KiteResourceActionIntent.ReopenInstall -> "准备中"
-            KiteResourceActionIntent.Open -> "打开中"
-            KiteResourceActionIntent.Stop -> "停止中"
-            KiteResourceActionIntent.Uninstall -> "卸载中"
-            KiteResourceActionIntent.CancelInstall,
-            KiteResourceActionIntent.CancelFailedInstall -> "取消中"
-            KiteResourceActionIntent.BusyStatus,
-            KiteResourceActionIntent.Unsupported -> "处理中"
-        }
+        val label = factory.acknowledgementLabel(intent)
         bindings[resourceId].orEmpty().forEach { factory.acknowledge(it, label) }
     }
 
@@ -169,17 +162,21 @@ internal class ResourceCatalogScreen(
         statusHost.removeAllViews()
         when {
             state.phase == ResourceCatalogPhase.Loading && state.items.isEmpty() ->
-                statusHost.addView(factory.stateBlock("正在读取资源", "资源目录会在后台加载。", loading = true))
+                statusHost.addView(factory.stateBlock(
+                    root.context.getString(R.string.resource_catalog_loading_title),
+                    root.context.getString(R.string.resource_catalog_loading_summary),
+                    loading = true
+                ))
             state.phase == ResourceCatalogPhase.Failed && state.items.isEmpty() ->
                 statusHost.addView(factory.stateBlock(
-                    "资源请求失败",
-                    state.errorMessage ?: "暂时无法读取资源目录",
+                    root.context.getString(R.string.resource_catalog_request_failed_title),
+                    state.errorMessage ?: root.context.getString(R.string.resource_catalog_request_failed_summary),
                     retry = onRetry
                 ))
             state.phase == ResourceCatalogPhase.Failed ->
                 statusHost.addView(factory.stateBlock(
-                    "目录更新失败",
-                    "仍显示上一次可用内容，可点击重试。",
+                    root.context.getString(R.string.resource_catalog_update_failed_title),
+                    root.context.getString(R.string.resource_catalog_update_failed_summary),
                     retry = onRetry
                 ))
         }
@@ -187,16 +184,27 @@ internal class ResourceCatalogScreen(
 
     private fun renderTabs(layout: KiteResourceHomeLayout?) {
         val tabs = layout?.tabs.orEmpty().ifEmpty {
-            listOf(KiteResourceHomeTab(RESOURCE_HOME_TAB_ALL, "全部", emptyList()))
+            listOf(KiteResourceHomeTab(
+                RESOURCE_HOME_TAB_ALL,
+                root.context.getString(R.string.resource_catalog_tab_all),
+                emptyList()
+            ))
         }
         if (tabs.none { it.id == selectedTabId }) selectedTabId = RESOURCE_HOME_TAB_ALL
-        val signature = tabs.joinToString("|") { "${it.id}:${it.label}" }
+        val displayLabels = tabs.associate { tab ->
+            tab.id to if (tab.id == RESOURCE_HOME_TAB_ALL) {
+                root.context.getString(R.string.resource_catalog_tab_all)
+            } else {
+                tab.label
+            }
+        }
+        val signature = tabs.joinToString("|") { "${it.id}:${displayLabels[it.id]}" }
         if (tabsSignature == signature && tabLayout.tabCount == tabs.size) return
         tabsSignature = signature
         tabLayout.removeAllTabs()
         tabs.forEach { tab ->
             tabLayout.addTab(
-                tabLayout.newTab().setText(tab.label).setTag(tab.id),
+                tabLayout.newTab().setText(displayLabels[tab.id]).setTag(tab.id),
                 tab.id == selectedTabId
             )
         }
@@ -233,7 +241,10 @@ internal class ResourceCatalogScreen(
         sectionsHost.removeAllViews()
         bindings.clear()
         if (sections.isEmpty()) {
-            sectionsHost.addView(factory.stateBlock("暂无资源", "当前分类还没有可显示的资源。"))
+            sectionsHost.addView(factory.stateBlock(
+                root.context.getString(R.string.resource_catalog_empty_title),
+                root.context.getString(R.string.resource_catalog_empty_summary)
+            ))
             return
         }
         renderSectionBatch(sections, generation, 0)
@@ -361,16 +372,18 @@ internal class ResourceCatalogScreen(
     private fun header(context: Context): View = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(0, factory.dp(16), factory.dp(198), 0)
+        setPadding(0, factory.dp(16), factory.dp(160), 0)
         isClickable = true
         isFocusable = true
-        contentDescription = "打开资源管理"
+        contentDescription = context.getString(R.string.resource_catalog_open_management)
         setOnClickListener { onManage() }
         addView(TextView(context).apply {
-            text = "资源 ›"
-            textSize = 30f
+            text = context.getString(R.string.resource_catalog_title) + " ›"
+            textSize = 24f
             typeface = Typeface.DEFAULT_BOLD
             includeFontPadding = false
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
             setTextColor(factory.tokens.textPrimary)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     }
@@ -382,24 +395,23 @@ internal class ResourceCatalogScreen(
         isFocusable = true
         elevation = factory.dp(5).toFloat()
         background = factory.roundedBox(factory.tokens.surfaceElevated, factory.tokens.borderStrong, factory.dp(21).toFloat())
-        contentDescription = "搜索资源"
+        contentDescription = context.getString(R.string.resource_catalog_search)
         setPadding(factory.dp(16), 0, factory.dp(12), 0)
         setOnClickListener { onSearch() }
         addView(TextView(context).apply {
-            text = "搜索资源"
+            text = context.getString(R.string.resource_catalog_search_short)
             textSize = 14f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             setTextColor(factory.tokens.textSecondary)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(TextView(context).apply {
-            text = "⌕"
-            textSize = 27f
-            typeface = Typeface.DEFAULT_BOLD
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            setTextColor(factory.tokens.textPrimary)
-        })
+        addView(ImageView(context).apply {
+            setImageResource(R.drawable.ic_material_search)
+            imageTintList = ColorStateList.valueOf(factory.tokens.textPrimary)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(factory.dp(6), factory.dp(6), factory.dp(6), factory.dp(6))
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(factory.dp(28), factory.dp(28)))
     }
 
     private fun restoreScrollIfNeeded() {

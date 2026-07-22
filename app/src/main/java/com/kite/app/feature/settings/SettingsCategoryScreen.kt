@@ -53,9 +53,7 @@ internal class SettingsCategoryScreen(
     )
     private val factory = SettingsViewFactory(
         context,
-        themeEnvironment.tokens,
-        themeEnvironment.foundations,
-        themeEnvironment.components,
+        themeEnvironment,
     )
     private var latestState = initialState
     private var terminalFontSize = initialTerminalFontSize

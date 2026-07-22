@@ -82,7 +82,7 @@ index df3f3b5..0d0e22c 100644
  
  #include <talloc.h>
 diff --git a/src/tracee/event.c b/src/tracee/event.c
-index 6c241b5..cefc056 100644
+index 6c241b5..e88e1ed 100644
 --- a/src/tracee/event.c
 +++ b/src/tracee/event.c
 @@ -38,6 +38,7 @@
@@ -129,13 +129,14 @@ index 6c241b5..cefc056 100644
  	else if (WIFSTOPPED(tracee_status)) {
 diff --git a/src/tracee/telemetry.c b/src/tracee/telemetry.c
 new file mode 100644
-index 0000000..b985db5
+index 0000000..4789e6c
 --- /dev/null
 +++ b/src/tracee/telemetry.c
-@@ -0,0 +1,300 @@
+@@ -0,0 +1,688 @@
 +/* -*- c-set-style: "K&R"; c-basic-offset: 8 -*- */
 +
 +#include <errno.h>
++#include <dirent.h>
 +#include <fcntl.h>
 +#include <inttypes.h>
 +#include <limits.h>
@@ -151,7 +152,7 @@ index 0000000..b985db5
 +#include "tracee/reg.h"
 +#include "tracee/telemetry.h"
 +
-+#define KF_TELEMETRY_SCHEMA "kf_proot_lifecycle_event_v1"
++#define KF_TELEMETRY_SCHEMA "kf_proot_lifecycle_event_v2"
 +#define KF_TELEMETRY_COST_LEVEL "lifecycle_low"
 +#define KF_TELEMETRY_ARGV_PREVIEW_MAX 192
 +#define KF_TELEMETRY_ARGV_PARTS_MAX 4
@@ -162,6 +163,7 @@ index 0000000..b985db5
 +static long long proot_start_ms = 0;
 +static char telemetry_session_id[64] = "";
 +static unsigned int telemetry_rotate_counter = KF_TELEMETRY_ROTATE_CHECK_INTERVAL;
++static uint64_t telemetry_event_seq = 0;
 +
 +static uint64_t fnv1a64_update(uint64_t hash, const char *value)
 +{
@@ -213,6 +215,69 @@ index 0000000..b985db5
 +	}
 +
 +	return path;
++}
++
++static const char *active_registry_root()
++{
++	static int initialized = 0;
++	static const char *path = NULL;
++
++	if (!initialized) {
++		path = getenv("KF_PROOT_ACTIVE_REGISTRY_ROOT");
++		if (path != NULL && path[0] == '\0')
++			path = NULL;
++		initialized = 1;
++	}
++
++	return path;
++}
++
++static uint64_t read_start_time_ticks(pid_t pid)
++{
++	char path[64];
++	char buffer[4096];
++	char *cursor;
++	char *token;
++	char *saveptr = NULL;
++	ssize_t count;
++	int fd;
++	int field = 3;
++
++	if (snprintf(path, sizeof(path), "/proc/%d/stat", pid) >= (int) sizeof(path))
++		return 0;
++	fd = open(path, O_RDONLY | O_CLOEXEC);
++	if (fd < 0)
++		return 0;
++	count = read(fd, buffer, sizeof(buffer) - 1);
++	(void) close(fd);
++	if (count <= 0)
++		return 0;
++	buffer[count] = '\0';
++
++	/* comm may contain spaces and parentheses; the final ')' is the only
++	 * safe boundary before field 3 (state).
++	 */
++	cursor = strrchr(buffer, ')');
++	if (cursor == NULL || cursor[1] == '\0')
++		return 0;
++	cursor++;
++	while (*cursor == ' ')
++		cursor++;
++
++	for (token = strtok_r(cursor, " ", &saveptr);
++	     token != NULL;
++	     token = strtok_r(NULL, " ", &saveptr), field++) {
++		if (field == 22)
++			return strtoull(token, NULL, 10);
++	}
++	return 0;
++}
++
++void kf_telemetry_capture_tracee_identity(Tracee *tracee)
++{
++	if (tracee == NULL || tracee->pid <= 0 || tracee->kf_start_time_ticks != 0)
++		return;
++	tracee->kf_start_time_ticks = read_start_time_ticks(tracee->pid);
 +}
 +
 +static int telemetry_archive_path(char *buffer, size_t buffer_size,
@@ -307,6 +372,256 @@ index 0000000..b985db5
 +		fputs("null", stream);
 +	else
 +		json_string(stream, value);
++}
++
++static int ensure_registry_session_dir(char session_dir[PATH_MAX])
++{
++	const char *root = active_registry_root();
++
++	if (root == NULL)
++		return -1;
++	if (mkdir(root, 0700) != 0 && errno != EEXIST)
++		return -1;
++	if (snprintf(session_dir, PATH_MAX, "%s/%s", root, session_id()) >= PATH_MAX)
++		return -1;
++	if (mkdir(session_dir, 0700) != 0 && errno != EEXIST)
++		return -1;
++	return 0;
++}
++
++static int begin_registry_update(const char *session_dir, uint64_t event_seq,
++				 char marker_path[PATH_MAX])
++{
++	char payload[64];
++	int fd;
++	int count;
++
++	if (snprintf(marker_path, PATH_MAX, "%s/.updating", session_dir) >= PATH_MAX)
++		return -1;
++	fd = open(marker_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
++	if (fd < 0)
++		return -1;
++	count = snprintf(payload, sizeof(payload), "%" PRIu64 "\n", event_seq);
++	if (count > 0)
++		(void) write(fd, payload, (size_t) count);
++	(void) close(fd);
++	return 0;
++}
++
++static int write_registry_meta(const char *session_dir, uint64_t event_seq)
++{
++	char path[PATH_MAX];
++	char temporary[PATH_MAX];
++	FILE *stream;
++	int fd;
++
++	if (snprintf(path, sizeof(path), "%s/meta.json", session_dir) >= (int) sizeof(path))
++		return -1;
++	if (snprintf(temporary, sizeof(temporary), "%s/meta.json.tmp.%d",
++		     session_dir, getpid()) >= (int) sizeof(temporary))
++		return -1;
++	fd = open(temporary, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
++	if (fd < 0)
++		return -1;
++	stream = fdopen(fd, "w");
++	if (stream == NULL) {
++		(void) close(fd);
++		return -1;
++	}
++	fputs("{\"schema\":", stream);
++	json_string(stream, "kf_proot_active_registry_v1");
++	json_key_string(stream, "telemetrySessionId", session_id());
++	fprintf(stream, ",\"prootStartMs\":%lld", proot_start_ms);
++	fprintf(stream, ",\"prootPid\":%d", getpid());
++	fprintf(stream, ",\"lastEventSeq\":%" PRIu64, event_seq);
++	fputs(",\"stable\":true}\n", stream);
++	if (fclose(stream) != 0) {
++		(void) unlink(temporary);
++		return -1;
++	}
++	if (rename(temporary, path) != 0) {
++		(void) unlink(temporary);
++		return -1;
++	}
++	return 0;
++}
++
++static int write_registry_entry(const char *session_dir,
++				const Tracee *tracee,
++				const char *event_type,
++				const char *executable,
++				const char *argv_hash,
++				const char *argv_preview,
++				const char *cwd,
++				pid_t pgid,
++				pid_t sid,
++				uint64_t event_seq)
++{
++	char path[PATH_MAX];
++	char temporary[PATH_MAX];
++	const Tracee *parent = tracee->parent;
++	FILE *stream;
++	int fd;
++
++	if (snprintf(path, sizeof(path), "%s/%" PRIu64 ".json",
++		     session_dir, tracee->vpid) >= (int) sizeof(path))
++		return -1;
++	if (snprintf(temporary, sizeof(temporary), "%s/%" PRIu64 ".json.tmp.%d",
++		     session_dir, tracee->vpid, getpid()) >= (int) sizeof(temporary))
++		return -1;
++	fd = open(temporary, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
++	if (fd < 0)
++		return -1;
++	stream = fdopen(fd, "w");
++	if (stream == NULL) {
++		(void) close(fd);
++		return -1;
++	}
++
++	fputs("{\"schema\":", stream);
++	json_string(stream, "kf_proot_active_tracee_v1");
++	json_key_string(stream, "telemetrySessionId", session_id());
++	fprintf(stream, ",\"prootStartMs\":%lld", proot_start_ms);
++	fprintf(stream, ",\"prootPid\":%d", getpid());
++	fprintf(stream, ",\"lastEventSeq\":%" PRIu64, event_seq);
++	fprintf(stream, ",\"lifecycleSeq\":%" PRIu64, tracee->vpid);
++	fprintf(stream, ",\"traceePid\":%d", tracee->pid);
++	fprintf(stream, ",\"traceeVpid\":%" PRIu64, tracee->vpid);
++	fprintf(stream, ",\"startTimeTicks\":%" PRIu64, tracee->kf_start_time_ticks);
++	if (pgid > 0)
++		fprintf(stream, ",\"processGroupId\":%d", pgid);
++	else
++		fputs(",\"processGroupId\":null", stream);
++	if (sid > 0)
++		fprintf(stream, ",\"sessionId\":%d", sid);
++	else
++		fputs(",\"sessionId\":null", stream);
++	if (parent != NULL) {
++		fprintf(stream, ",\"parentTraceePid\":%d", parent->pid);
++		fprintf(stream, ",\"parentTraceeVpid\":%" PRIu64, parent->vpid);
++		fprintf(stream, ",\"parentLifecycleSeq\":%" PRIu64, parent->vpid);
++	}
++	else {
++		fputs(",\"parentTraceePid\":null", stream);
++		fputs(",\"parentTraceeVpid\":null", stream);
++		fputs(",\"parentLifecycleSeq\":null", stream);
++	}
++	json_key_string(stream, "lastEventType", event_type);
++	json_key_string(stream, "executable", executable);
++	json_key_string(stream, "argvHash", argv_hash);
++	json_key_string(stream, "argvPreview", argv_preview);
++	json_key_string(stream, "cwd", cwd);
++	json_key_string(stream, "kfRuntimeId", tracee->kf_runtime_id);
++	json_key_string(stream, "kfUnitId", tracee->kf_unit_id);
++	fputs("}\n", stream);
++	if (fclose(stream) != 0) {
++		(void) unlink(temporary);
++		return -1;
++	}
++	if (rename(temporary, path) != 0) {
++		(void) unlink(temporary);
++		return -1;
++	}
++	return 0;
++}
++
++static int remove_registry_entry(const char *session_dir, uint64_t lifecycle_seq)
++{
++	char path[PATH_MAX];
++
++	if (snprintf(path, sizeof(path), "%s/%" PRIu64 ".json",
++		     session_dir, lifecycle_seq) >= (int) sizeof(path))
++		return -1;
++	if (unlink(path) != 0 && errno != ENOENT)
++		return -1;
++	return 0;
++}
++
++static bool registry_session_has_active_entries(const char *session_dir)
++{
++	DIR *directory;
++	struct dirent *entry;
++	bool found = false;
++
++	directory = opendir(session_dir);
++	if (directory == NULL)
++		return false;
++	while ((entry = readdir(directory)) != NULL) {
++		size_t length = strlen(entry->d_name);
++
++		if (length <= 5 || strcmp(entry->d_name + length - 5, ".json") != 0)
++			continue;
++		if (strcmp(entry->d_name, "meta.json") == 0)
++			continue;
++		found = true;
++		break;
++	}
++	(void) closedir(directory);
++	return found;
++}
++
++static int retire_empty_registry_session(const char *session_dir, uint64_t event_seq)
++{
++	const char *root = active_registry_root();
++	char retired_dir[PATH_MAX];
++	char path[PATH_MAX];
++
++	if (root == NULL || registry_session_has_active_entries(session_dir))
++		return 0;
++	if (snprintf(retired_dir, sizeof(retired_dir), "%s/.retired-%s-%" PRIu64,
++		     root, session_id(), event_seq) >= (int) sizeof(retired_dir))
++		return -1;
++	if (rename(session_dir, retired_dir) != 0)
++		return errno == ENOENT ? 0 : -1;
++
++	if (snprintf(path, sizeof(path), "%s/.updating", retired_dir) < (int) sizeof(path))
++		(void) unlink(path);
++	if (snprintf(path, sizeof(path), "%s/meta.json", retired_dir) < (int) sizeof(path))
++		(void) unlink(path);
++	(void) rmdir(retired_dir);
++	return 0;
++}
++
++static void publish_active_registry(const Tracee *tracee,
++				    const char *event_type,
++				    const char *executable,
++				    const char *argv_hash,
++				    const char *argv_preview,
++				    const char *cwd,
++				    pid_t pgid,
++				    pid_t sid,
++				    uint64_t event_seq)
++{
++	char session_dir[PATH_MAX];
++	char marker_path[PATH_MAX];
++	int status;
++	bool terminal;
++	bool session_retired = false;
++
++	if (active_registry_root() == NULL || tracee == NULL)
++		return;
++	if (ensure_registry_session_dir(session_dir) != 0)
++		return;
++	if (begin_registry_update(session_dir, event_seq, marker_path) != 0)
++		return;
++
++	terminal = strcmp(event_type, "TraceeExited") == 0 ||
++		strcmp(event_type, "TraceeSignaled") == 0;
++	status = terminal
++		? remove_registry_entry(session_dir, tracee->vpid)
++		: write_registry_entry(session_dir, tracee, event_type, executable,
++			argv_hash, argv_preview, cwd, pgid, sid, event_seq);
++	if (status == 0 && terminal && !registry_session_has_active_entries(session_dir)) {
++		status = retire_empty_registry_session(session_dir, event_seq);
++		session_retired = status == 0;
++	}
++	else if (status == 0)
++		status = write_registry_meta(session_dir, event_seq);
++	/* A leftover marker is intentional: it makes an interrupted update
++	 * explicitly unreadable instead of exposing a partially updated snapshot.
++	 */
++	if (status == 0 && !session_retired)
++		(void) unlink(marker_path);
 +}
 +
 +static const char *env_value(const char *env, const char *key)
@@ -404,7 +719,7 @@ index 0000000..b985db5
 +	}
 +}
 +
-+void kf_telemetry_emit_lifecycle_event(const Tracee *tracee,
++void kf_telemetry_emit_lifecycle_event(Tracee *tracee,
 +					const char *event_type,
 +					const char *state,
 +					const char *source_hook,
@@ -421,35 +736,50 @@ index 0000000..b985db5
 +	const Tracee *parent;
 +	pid_t pgid;
 +	pid_t sid;
++	uint64_t event_seq;
 +
 +	if (path == NULL || tracee == NULL || event_type == NULL)
 +		return;
 +
++	/* The first tracee is allocated before launch_process assigns its real pid.
++	 * Retry identity capture at the first observable event so it receives the
++	 * same PID-reuse protection as forked children.
++	 */
++	kf_telemetry_capture_tracee_identity(tracee);
++	parent = tracee->parent;
++	pgid = getpgid(tracee->pid);
++	sid = getsid(tracee->pid);
++	event_seq = ++telemetry_event_seq;
++
 +	maybe_rotate_telemetry_file(path);
 +
 +	fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
-+	if (fd < 0)
++	if (fd < 0) {
++		publish_active_registry(tracee, event_type, executable, argv_hash,
++					argv_preview, cwd, pgid, sid, event_seq);
 +		return;
++	}
 +
 +	stream = fdopen(fd, "a");
 +	if (stream == NULL) {
 +		close(fd);
++		publish_active_registry(tracee, event_type, executable, argv_hash,
++					argv_preview, cwd, pgid, sid, event_seq);
 +		return;
 +	}
-+
-+	parent = tracee->parent;
-+	pgid = getpgid(tracee->pid);
-+	sid = getsid(tracee->pid);
 +
 +	fputc('{', stream);
 +	fprintf(stream, "\"schema\":\"%s\"", KF_TELEMETRY_SCHEMA);
 +	json_key_string(stream, "eventType", event_type);
 +	fprintf(stream, ",\"timestampMs\":%lld", now_ms());
 +	json_key_string(stream, "telemetrySessionId", session_id());
++	fprintf(stream, ",\"eventSeq\":%" PRIu64, event_seq);
 +	fprintf(stream, ",\"prootStartMs\":%lld", proot_start_ms);
 +	fprintf(stream, ",\"prootPid\":%d", getpid());
 +	fprintf(stream, ",\"traceePid\":%d", tracee->pid);
 +	fprintf(stream, ",\"traceeVpid\":%" PRIu64, tracee->vpid);
++	fprintf(stream, ",\"lifecycleSeq\":%" PRIu64, tracee->vpid);
++	fprintf(stream, ",\"startTimeTicks\":%" PRIu64, tracee->kf_start_time_ticks);
 +	if (pgid > 0)
 +		fprintf(stream, ",\"processGroupId\":%d", pgid);
 +	else
@@ -461,10 +791,12 @@ index 0000000..b985db5
 +	if (parent != NULL) {
 +		fprintf(stream, ",\"parentTraceePid\":%d", parent->pid);
 +		fprintf(stream, ",\"parentTraceeVpid\":%" PRIu64, parent->vpid);
++		fprintf(stream, ",\"parentLifecycleSeq\":%" PRIu64, parent->vpid);
 +	}
 +	else {
 +		fputs(",\"parentTraceePid\":null", stream);
 +		fputs(",\"parentTraceeVpid\":null", stream);
++		fputs(",\"parentLifecycleSeq\":null", stream);
 +	}
 +	json_key_string(stream, "state", state);
 +	json_key_string(stream, "sourceHook", source_hook);
@@ -486,13 +818,15 @@ index 0000000..b985db5
 +	fputs("}\n", stream);
 +
 +	(void) fclose(stream);
++	publish_active_registry(tracee, event_type, executable, argv_hash,
++				argv_preview, cwd, pgid, sid, event_seq);
 +}
 diff --git a/src/tracee/telemetry.h b/src/tracee/telemetry.h
 new file mode 100644
-index 0000000..644597d
+index 0000000..4e0fa14
 --- /dev/null
 +++ b/src/tracee/telemetry.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,32 @@
 +/* -*- c-set-style: "K&R"; c-basic-offset: 8 -*- */
 +
 +#ifndef TRACEE_TELEMETRY_H
@@ -503,7 +837,8 @@ index 0000000..644597d
 +#include "tracee/tracee.h"
 +
 +extern void kf_telemetry_capture_exec_argv(Tracee *tracee);
-+extern void kf_telemetry_emit_lifecycle_event(const Tracee *tracee,
++extern void kf_telemetry_capture_tracee_identity(Tracee *tracee);
++extern void kf_telemetry_emit_lifecycle_event(Tracee *tracee,
 +					const char *event_type,
 +					const char *state,
 +					const char *source_hook,
@@ -525,7 +860,7 @@ index 0000000..644597d
 +
 +#endif /* TRACEE_TELEMETRY_H */
 diff --git a/src/tracee/tracee.c b/src/tracee/tracee.c
-index 861f7d8..b63c1cc 100644
+index 861f7d8..14fefb8 100644
 --- a/src/tracee/tracee.c
 +++ b/src/tracee/tracee.c
 @@ -36,6 +36,7 @@
@@ -536,7 +871,15 @@ index 861f7d8..b63c1cc 100644
  #include "path/binding.h"
  #include "syscall/sysnum.h"
  #include "tracee/event.h"
-@@ -595,6 +596,29 @@ int new_child(Tracee *parent, word_t clone_flags)
+@@ -225,6 +226,7 @@ static Tracee *new_tracee(pid_t pid)
+ 
+ 	tracee->pid = pid;
+ 	tracee->vpid = next_vpid++;
++	kf_telemetry_capture_tracee_identity(tracee);
+ 
+ 	LIST_INSERT_HEAD(&tracees, tracee, link);
+ 
+@@ -595,6 +597,30 @@ int new_child(Tracee *parent, word_t clone_flags)
  
  	inherit_extensions(child, parent, clone_flags);
  
@@ -568,10 +911,10 @@ index 861f7d8..b63c1cc 100644
  	 * stopped until that moment.  */
  	if (child->sigstop == SIGSTOP_PENDING) {
 diff --git a/src/tracee/tracee.h b/src/tracee/tracee.h
-index 0214b58..7d7e396 100644
+index 0214b58..b50e145 100644
 --- a/src/tracee/tracee.h
 +++ b/src/tracee/tracee.h
-@@ -298,6 +298,13 @@ typedef struct tracee {
+@@ -298,6 +298,14 @@ typedef struct tracee {
  	char *new_exe;
  	char *host_exe;
  
@@ -581,6 +924,7 @@ index 0214b58..7d7e396 100644
 +	char *kf_exec_argv_preview;
 +	char *kf_runtime_id;
 +	char *kf_unit_id;
++	uint64_t kf_start_time_ticks;
 +
  
  	/**********************************************************************

@@ -60,6 +60,7 @@ internal class KiteRecipeActionCoordinator(
                 state.status == CardRunStatus.Starting || state.status == CardRunStatus.Stopping ->
                     KiteRecipeActionPlan.Ignored("busy")
                 runtimeBlocked -> KiteRecipeActionPlan.RuntimeRequired
+                state.status == CardRunStatus.CleanupPending -> KiteRecipeActionPlan.Stop
                 state.isInterruptible() -> KiteRecipeActionPlan.Stop
                 request.openTaskOnStart -> KiteRecipeActionPlan.LaunchTask
                 else -> KiteRecipeActionPlan.Execute(
@@ -70,6 +71,7 @@ internal class KiteRecipeActionCoordinator(
                 state.status == CardRunStatus.Starting || state.status == CardRunStatus.Stopping ->
                     KiteRecipeActionPlan.Ignored("busy")
                 runtimeBlocked -> KiteRecipeActionPlan.RuntimeRequired
+                state.status == CardRunStatus.CleanupPending -> KiteRecipeActionPlan.OpenRun
                 state.isInterruptible() || state.hasRunBinding() -> KiteRecipeActionPlan.OpenRun
                 else -> KiteRecipeActionPlan.Execute(
                     router.route(request.recipe, KiteRecipe.ACTION_START)

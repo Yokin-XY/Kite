@@ -27,19 +27,24 @@ import org.robolectric.Shadows.shadowOf
 class ResourceSearchScreenTest {
     @Test
     fun `查询过滤与事实更新复用原结果按钮`() {
-        val screen = createScreen(initialQuery = "tool")
+        val screen = createScreen(initialQuery = "toolx")
         attach(screen)
+        val context = screen.root.context
         screen.render(state(installed = false))
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 
         assertTrue(screen.root.textViews().any { it.text.toString() == "Tool" })
         assertFalse(screen.root.textViews().any { it.text.toString() == "Other" })
-        val initialButton = screen.root.textViews().first { it.text.toString() == "获取" }
+        val initialButton = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_install)
+        }
 
         screen.render(state(installed = true))
         shadowOf(Looper.getMainLooper()).idle()
 
-        val reboundButton = screen.root.textViews().first { it.text.toString() == "打开" }
+        val reboundButton = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_open)
+        }
         assertSame(initialButton, reboundButton)
     }
 
@@ -48,16 +53,21 @@ class ResourceSearchScreenTest {
         var backCount = 0
         val screen = createScreen(initialQuery = "missing", onBack = { backCount += 1 })
         attach(screen)
+        val context = screen.root.context
         screen.render(state(installed = false))
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
-        assertTrue(screen.root.textViews().any { it.text.toString() == "没有找到相关资源" })
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_search_empty)
+        })
 
         screen.root.views().filterIsInstance<EditText>().single().setText("")
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
         assertTrue(screen.root.textViews().any { it.text.toString() == "Tool" })
         assertTrue(screen.root.textViews().any { it.text.toString() == "Other" })
 
-        screen.root.views().first { it.contentDescription?.toString() == "返回" }.performClick()
+        screen.root.views().first {
+            it.contentDescription?.toString() == context.getString(R.string.common_back)
+        }.performClick()
         assertEquals(1, backCount)
     }
 
@@ -78,7 +88,7 @@ class ResourceSearchScreenTest {
     private fun state(installed: Boolean): ResourceFeatureUiState = ResourceFeatureUiState(
         phase = ResourceCatalogPhase.Ready,
         items = listOf(
-            item("tool", "Tool", installed),
+            item("toolx", "Tool", installed),
             item("other", "Other", installed = false)
         )
     )

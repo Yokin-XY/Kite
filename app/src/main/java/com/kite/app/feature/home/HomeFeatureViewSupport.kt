@@ -1,14 +1,9 @@
 package com.kite.app.feature.home
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
-import android.os.Handler
-import android.os.Looper
 import android.text.TextUtils
-import android.util.LruCache
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -28,11 +23,10 @@ import com.kite.app.theme.ThemeComponentRecipes
 import com.kite.app.theme.ThemeFoundations
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.theme.kiteThemeEnvironment
+import com.kite.app.ui.RecipeIconBitmapRepository
 import com.kite.app.ui.UiKit
-import java.io.File
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.Executors
 
 internal object HomeFeatureTheme {
     fun environment(context: Context) = context.kiteThemeEnvironment()
@@ -199,7 +193,8 @@ internal class HomeFeatureViewFactory(
         binding ?: return
         binding.actionButton.apply {
             text = when (binding.item.projection.primaryAction) {
-                KiteRunPrimaryAction.Stop -> context.getString(R.string.home_action_stopping)
+                KiteRunPrimaryAction.Stop,
+                KiteRunPrimaryAction.ContinueStop -> context.getString(R.string.home_action_stopping)
                 KiteRunPrimaryAction.Start,
                 KiteRunPrimaryAction.Retry -> context.getString(R.string.home_action_starting)
                 KiteRunPrimaryAction.Busy,
@@ -259,7 +254,8 @@ internal class HomeFeatureViewFactory(
         val projection = item.projection
         val fill = when (projection.primaryAction) {
             KiteRunPrimaryAction.Retry -> tokens.danger
-            KiteRunPrimaryAction.Stop -> tokens.warning
+            KiteRunPrimaryAction.Stop,
+            KiteRunPrimaryAction.ContinueStop -> tokens.warning
             else -> tokens.primaryStrong
         }
         view.apply {
@@ -283,6 +279,8 @@ internal class HomeFeatureViewFactory(
         view.apply {
             text = when {
                 state.status == CardRunStatus.Unknown -> ""
+                state.status == CardRunStatus.CleanupPending ->
+                    context.getString(R.string.home_run_cleanup_pending)
                 state.status == CardRunStatus.Failed || state.status == CardRunStatus.BridgeUnavailable ->
                     context.getString(R.string.home_run_stopped_elapsed, formatElapsed(state))
                 state.isBusy() || state.isActive() || state.status == CardRunStatus.Opened ->
@@ -295,10 +293,10 @@ internal class HomeFeatureViewFactory(
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             setTextColor(
-                if (state.status == CardRunStatus.Failed || state.status == CardRunStatus.BridgeUnavailable) {
-                    tokens.danger
-                } else {
-                    tokens.textSecondary
+                when (state.status) {
+                    CardRunStatus.Failed, CardRunStatus.BridgeUnavailable -> tokens.danger
+                    CardRunStatus.CleanupPending -> tokens.warning
+                    else -> tokens.textSecondary
                 }
             )
         }
@@ -333,7 +331,8 @@ internal class HomeFeatureViewFactory(
         if (steps.isEmpty()) return context.getString(R.string.home_no_steps)
         val total = (state.stepCount.takeIf { it > 0 } ?: steps.size).coerceAtLeast(1)
         return if (state.isBusy() || state.isActive() || state.status == CardRunStatus.Opened ||
-            state.status == CardRunStatus.Failed || state.status == CardRunStatus.BridgeUnavailable
+            state.status == CardRunStatus.Failed || state.status == CardRunStatus.BridgeUnavailable ||
+            state.status == CardRunStatus.CleanupPending
         ) {
             val index = state.currentStepIndex.coerceIn(0, total - 1)
             context.getString(
@@ -383,7 +382,7 @@ internal class HomeFeatureViewFactory(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
-            HomeRecipeIconRepository.load(context, recipe.icon.source, size) { bitmap ->
+            RecipeIconBitmapRepository.load(context, recipe.icon.source, size) { bitmap ->
                 if (parent == null) return@load
                 removeAllViews()
                 addView(ImageView(context).apply {
@@ -453,6 +452,7 @@ internal class HomeFeatureViewFactory(
 
     private fun localizedBadge(item: HomeRecipeItemUiState): String? = when {
         item.projection.problem -> context.getString(R.string.home_status_failed)
+        item.run.status == CardRunStatus.CleanupPending -> context.getString(R.string.home_status_cleanup_pending)
         item.run.status == CardRunStatus.WaitingTerminal || item.run.status == CardRunStatus.Opened ->
             context.getString(R.string.home_status_manual_action)
         item.projection.live -> context.getString(R.string.home_status_running)
@@ -463,6 +463,7 @@ internal class HomeFeatureViewFactory(
         when (action) {
             KiteRunPrimaryAction.Start -> R.string.home_action_start
             KiteRunPrimaryAction.Stop -> R.string.home_action_stop
+            KiteRunPrimaryAction.ContinueStop -> R.string.home_action_continue_stop
             KiteRunPrimaryAction.Retry -> R.string.home_action_retry
             KiteRunPrimaryAction.Busy -> R.string.home_action_busy
             KiteRunPrimaryAction.Blocked -> R.string.home_action_wait
@@ -470,45 +471,4 @@ internal class HomeFeatureViewFactory(
     )
 
     private data class SemanticColors(val text: Int, val background: Int)
-}
-
-private object HomeRecipeIconRepository {
-    private val cache = object : LruCache<String, Bitmap>(8 * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
-    }
-    private val executor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "KiteHomeIcon").apply { isDaemon = true }
-    }
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val inFlight = linkedMapOf<String, MutableList<(Bitmap) -> Unit>>()
-
-    fun load(context: Context, source: String, size: Int, callback: (Bitmap) -> Unit) {
-        val value = source.trim().takeIf { it.isNotBlank() && !it.contains("..") } ?: return
-        val key = "$value@$size"
-        synchronized(this) {
-            cache.get(key)?.let { bitmap ->
-                mainHandler.post { callback(bitmap) }
-                return
-            }
-            val waiters = inFlight.getOrPut(key) { mutableListOf() }
-            waiters += callback
-            if (waiters.size > 1) return
-        }
-        val appContext = context.applicationContext
-        executor.execute {
-            val bitmap = decode(appContext, value)
-            val waiters = synchronized(this) {
-                if (bitmap != null) cache.put(key, bitmap)
-                inFlight.remove(key).orEmpty()
-            }
-            if (bitmap != null) mainHandler.post { waiters.forEach { it(bitmap) } }
-        }
-    }
-
-    private fun decode(context: Context, source: String): Bitmap? {
-        val file = if (source.startsWith("/")) File(source) else File(context.filesDir, source)
-        if (file.isFile) return BitmapFactory.decodeFile(file.absolutePath)
-        val asset = source.trimStart('/')
-        return runCatching { context.assets.open(asset).use(BitmapFactory::decodeStream) }.getOrNull()
-    }
 }

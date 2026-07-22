@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.kite.app.R
 import com.kite.app.ui.UiKit
 import org.json.JSONArray
 import org.json.JSONObject
@@ -14,8 +15,9 @@ internal class ResourceRawJsonScreen(
     private val context: Context,
     onBack: () -> Unit
 ) {
-    private val tokens = ResourceFeatureTheme.tokens(context)
-    private val ui = UiKit(context, tokens)
+    private val environment = ResourceFeatureTheme.environment(context)
+    private val tokens = environment.tokens
+    private val ui = UiKit(context, environment)
     private var signature: String? = null
     private val content = TextView(context).apply {
         textSize = 14f
@@ -27,7 +29,7 @@ internal class ResourceRawJsonScreen(
     val root: LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(tokens.pageBackground)
-        addView(ui.topBar(context, "原始 JSON", onBack))
+        addView(ui.topBar(context, context.getString(R.string.resource_raw_json_title), onBack))
         addView(ScrollView(context).apply { addView(content) }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             0,
@@ -36,7 +38,7 @@ internal class ResourceRawJsonScreen(
     }
 
     fun render(item: ResourceItemUiState?) {
-        val next = item?.rawJsonForUi() ?: "正在读取资源清单..."
+        val next = item?.rawJsonForUi() ?: context.getString(R.string.resource_raw_json_loading)
         if (signature == next) return
         signature = next
         content.text = next

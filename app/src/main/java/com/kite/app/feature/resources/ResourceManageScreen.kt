@@ -8,16 +8,17 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.kite.app.R
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.resources.KiteResourceStepTone
+import com.kite.app.ui.UiKit
 
 /** 资源管理页面的真实视图所有者；队列与已获取列表分别做结构更新和事实重绑。 */
 internal class ResourceManageScreen(
-    context: Context,
+    private val context: Context,
     initialScrollY: Int,
     private val onBack: () -> Unit,
     private val onOpenDetail: (String) -> Unit,
@@ -26,6 +27,8 @@ internal class ResourceManageScreen(
     private val onCancelPlan: (String, List<String>) -> Unit,
     private val onRetry: () -> Unit
 ) {
+    private val environment = ResourceFeatureTheme.environment(context)
+    private val ui = UiKit(context, environment)
     private val factory = ResourceFeatureViewFactory(
         context = context,
         tokens = ResourceFeatureTheme.tokens(context),
@@ -43,18 +46,18 @@ internal class ResourceManageScreen(
 
     val root: View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        contentDescription = "资源管理"
+        contentDescription = context.getString(R.string.resource_manage_title)
         setBackgroundColor(factory.tokens.pageBackground)
         addView(topBar())
         scrollView.addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(factory.dp(22), factory.dp(18), factory.dp(22), factory.dp(34))
-            addView(factory.sectionTitle("执行队列"))
+            addView(factory.sectionTitle(context.getString(R.string.resource_manage_queue)))
             addView(queueHost, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(0, factory.dp(12), 0, 0) })
-            addView(factory.sectionTitle("已获取资源").apply {
+            addView(factory.sectionTitle(context.getString(R.string.resource_manage_installed)).apply {
                 setPadding(0, factory.dp(24), 0, factory.dp(12))
             })
             addView(installedHost)
@@ -81,7 +84,7 @@ internal class ResourceManageScreen(
     }
 
     fun acknowledge(resourceId: String, intent: KiteResourceActionIntent) {
-        factory.acknowledge(installedBindings[resourceId], acknowledgementLabel(intent))
+        factory.acknowledge(installedBindings[resourceId], factory.acknowledgementLabel(intent))
     }
 
     fun scrollY(): Int = scrollView.scrollY.takeIf { it > 0 } ?: restoredScrollY
@@ -97,14 +100,17 @@ internal class ResourceManageScreen(
         queueBinding = null
         queueHost.removeAllViews()
         queueHost.addView(factory.stateBlock(
-            title = "正在读取资源管理信息",
-            detail = "执行队列和已获取资源会在后台加载，避免阻塞当前页面。",
+            title = context.getString(R.string.resource_manage_loading_title),
+            detail = context.getString(R.string.resource_manage_loading_summary),
             loading = true
         ))
         installedStructureSignature = "loading"
         installedBindings.clear()
         installedHost.removeAllViews()
-        installedHost.addView(emptyBlock("正在校准已获取资源", "读取完成后会直接更新当前区域。"))
+        installedHost.addView(emptyBlock(
+            context.getString(R.string.resource_manage_installed_sync_title),
+            context.getString(R.string.resource_manage_installed_sync_summary),
+        ))
     }
 
     private fun renderFailure(message: String) {
@@ -112,12 +118,15 @@ internal class ResourceManageScreen(
         queueBinding = null
         queueHost.removeAllViews()
         queueHost.addView(factory.stateBlock(
-            title = "资源管理读取失败",
-            detail = message.ifBlank { "稍后返回资源页后可重新进入。" },
+            title = context.getString(R.string.resource_manage_failed_title),
+            detail = message.ifBlank { context.getString(R.string.resource_manage_failed_summary) },
             retry = onRetry
         ))
         if (installedHost.childCount == 0) {
-            installedHost.addView(emptyBlock("暂无已获取资源", "资源目录恢复后会在这里重新校准。"))
+            installedHost.addView(emptyBlock(
+                context.getString(R.string.resource_manage_empty_installed_title),
+                context.getString(R.string.resource_manage_empty_recover_summary),
+            ))
         }
     }
 
@@ -130,8 +139,8 @@ internal class ResourceManageScreen(
                 queueBinding = null
                 queueHost.removeAllViews()
                 queueHost.addView(emptyBlock(
-                    "暂无执行任务",
-                    "从资源商店点击获取或卸载后，这里会显示当前队列。"
+                    context.getString(R.string.resource_manage_empty_queue_title),
+                    context.getString(R.string.resource_manage_empty_queue_summary),
                 ))
             }
             return
@@ -233,23 +242,33 @@ internal class ResourceManageScreen(
                 itemsById[resourceId]?.phase in setOf(ResourceItemPhase.Preparing, ResourceItemPhase.Installing)
         }
         val status = when {
-            hasRunningStep -> QueueStatus("获取中", KiteResourceStepTone.Primary)
-            hasUninstalling -> QueueStatus("卸载中", KiteResourceStepTone.Primary)
-            hasUninstallFailure -> QueueStatus("卸载失败", KiteResourceStepTone.Danger)
-            hasFailure -> QueueStatus("已停止", KiteResourceStepTone.Danger)
-            completedCount >= resourceIds.size -> QueueStatus("已完成", KiteResourceStepTone.Success)
-            else -> QueueStatus("等待中", KiteResourceStepTone.Neutral)
+            hasRunningStep -> QueueStatus(context.getString(R.string.resource_state_installing), KiteResourceStepTone.Primary)
+            hasUninstalling -> QueueStatus(context.getString(R.string.resource_state_uninstalling), KiteResourceStepTone.Primary)
+            hasUninstallFailure -> QueueStatus(context.getString(R.string.resource_state_uninstall_failed), KiteResourceStepTone.Danger)
+            hasFailure -> QueueStatus(context.getString(R.string.resource_manage_queue_stopped), KiteResourceStepTone.Danger)
+            completedCount >= resourceIds.size -> QueueStatus(context.getString(R.string.resource_manage_queue_completed), KiteResourceStepTone.Success)
+            else -> QueueStatus(context.getString(R.string.resource_manage_queue_waiting), KiteResourceStepTone.Neutral)
         }
-        val targetName = itemsById[targetId]?.presentation()?.name ?: targetId.ifBlank { "获取任务" }
+        val targetName = itemsById[targetId]?.presentation(context)?.name
+            ?: targetId.ifBlank { context.getString(R.string.resource_manage_queue_target) }
         val tone = when (status.tone) {
             KiteResourceStepTone.Primary -> factory.tokens.primaryStrong
             KiteResourceStepTone.Success -> factory.tokens.success
             KiteResourceStepTone.Danger -> factory.tokens.danger
             KiteResourceStepTone.Neutral -> factory.tokens.textSecondary
         }
-        binding.root.contentDescription = "$targetName，${status.label}，点击打开，上滑关闭"
+        binding.root.contentDescription = context.getString(
+            R.string.resource_manage_queue_description,
+            targetName,
+            status.label,
+        )
         binding.title.text = targetName
-        binding.detail.text = "$completedCount/${resourceIds.size} · ${status.label} · 点击打开，上滑关闭"
+        binding.detail.text = context.getString(
+            R.string.resource_manage_queue_detail,
+            completedCount,
+            resourceIds.size,
+            status.label,
+        )
         binding.badge.apply {
             text = status.label
             setTextColor(tone)
@@ -313,7 +332,7 @@ internal class ResourceManageScreen(
     private fun renderInstalled(state: ResourceFeatureUiState) {
         val installed = state.items.filter { it.phase in installedPhases }
         val signature = installed.joinToString("|") { item ->
-            val presentation = item.presentation()
+            val presentation = item.presentation(context)
             listOf(
                 item.resourceId,
                 presentation.name,
@@ -329,8 +348,8 @@ internal class ResourceManageScreen(
             installedHost.removeAllViews()
             if (installed.isEmpty()) {
                 installedHost.addView(emptyBlock(
-                    "暂无已获取资源",
-                    "获取成功并完成注册后，会出现在这里。"
+                    context.getString(R.string.resource_manage_empty_installed_title),
+                    context.getString(R.string.resource_manage_empty_installed_summary),
                 ))
             } else {
                 installedHost.addView(LinearLayout(root.context).apply {
@@ -359,30 +378,11 @@ internal class ResourceManageScreen(
         }
     }
 
-    private fun topBar(): View = FrameLayout(rootContext()).apply {
-        setPadding(factory.dp(18), 0, factory.dp(18), 0)
-        addView(TextView(context).apply {
-            text = "‹"
-            textSize = 25f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            contentDescription = "返回"
-            setTextColor(factory.tokens.textPrimary)
-            setOnClickListener { onBack() }
-        }, FrameLayout.LayoutParams(factory.dp(44), factory.dp(56), Gravity.START or Gravity.CENTER_VERTICAL))
-        addView(TextView(context).apply {
-            text = "资源管理"
-            textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(factory.tokens.textPrimary)
-        }, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            factory.dp(56),
-            Gravity.CENTER
-        ).apply { setMargins(factory.dp(52), 0, factory.dp(52), 0) })
-    }
+    private fun topBar(): View = ui.topBar(
+        context = context,
+        title = context.getString(R.string.resource_manage_title),
+        onBack = onBack,
+    )
 
     private fun emptyBlock(title: String, detail: String): View = LinearLayout(rootContext()).apply {
         orientation = LinearLayout.VERTICAL
@@ -416,18 +416,6 @@ internal class ResourceManageScreen(
     }
 
     private fun rootContext(): Context = scrollView.context
-
-    private fun acknowledgementLabel(intent: KiteResourceActionIntent): String = when (intent) {
-        KiteResourceActionIntent.Install,
-        KiteResourceActionIntent.ReopenInstall -> "准备中"
-        KiteResourceActionIntent.Open -> "打开中"
-        KiteResourceActionIntent.Stop -> "停止中"
-        KiteResourceActionIntent.Uninstall -> "卸载中"
-        KiteResourceActionIntent.CancelInstall,
-        KiteResourceActionIntent.CancelFailedInstall -> "取消中"
-        KiteResourceActionIntent.BusyStatus,
-        KiteResourceActionIntent.Unsupported -> "处理中"
-    }
 
     private fun colorWithAlpha(color: Int, alpha: Float): Int = Color.argb(
         (255 * alpha.coerceIn(0f, 1f)).toInt(),

@@ -18,6 +18,8 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.util.LruCache
+import com.kite.app.R
+import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.theme.kiteThemeEnvironment
@@ -25,8 +27,10 @@ import com.kite.app.ui.UiKit
 import java.util.concurrent.Executors
 
 internal object ResourceFeatureTheme {
+    fun environment(context: Context) = context.kiteThemeEnvironment()
+
     fun tokens(context: Context): ThemeTokens =
-        context.kiteThemeEnvironment().tokens
+        environment(context).tokens
 }
 
 internal data class ResourceItemViewBinding(
@@ -44,7 +48,7 @@ internal class ResourceFeatureViewFactory(
     private val onOpenDetail: (String) -> Unit,
     private val onPrimaryAction: (String) -> Unit
 ) {
-    private val ui = UiKit(context, tokens)
+    internal val ui = UiKit(context, ResourceFeatureTheme.environment(context))
 
     fun dp(value: Int): Int = ui.dp(value)
 
@@ -78,7 +82,7 @@ internal class ResourceFeatureViewFactory(
             })
             retry?.let { action ->
                 addView(TextView(context).apply {
-                    text = "重试"
+                    text = context.getString(R.string.resource_retry)
                     textSize = 13f
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
@@ -105,7 +109,9 @@ internal class ResourceFeatureViewFactory(
         val width = (context.resources.displayMetrics.widthPixels - dp(44)).coerceAtLeast(dp(280))
         val height = (width * 780f / 1200f).toInt().coerceIn(dp(180), dp(240))
         return FrameLayout(context).apply {
-            contentDescription = contentDescriptionText.ifBlank { "资源海报，点击查看资源详情" }
+            contentDescription = contentDescriptionText.ifBlank {
+                context.getString(R.string.resource_poster_description)
+            }
             isClickable = true
             isFocusable = true
             background = roundedBox(tokens.surface, tokens.border, dp(24).toFloat())
@@ -125,7 +131,7 @@ internal class ResourceFeatureViewFactory(
     }
 
     fun listRow(item: ResourceItemUiState): ResourceItemViewBinding {
-        val presentation = item.presentation()
+        val presentation = item.presentation(context)
         val stateView = TextView(context).apply {
             textSize = 11f
             setTextColor(tokens.textTertiary)
@@ -171,7 +177,7 @@ internal class ResourceFeatureViewFactory(
     }
 
     fun shelfItem(item: ResourceItemUiState): ResourceItemViewBinding {
-        val presentation = item.presentation()
+        val presentation = item.presentation(context)
         val action = TextView(context)
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -203,15 +209,20 @@ internal class ResourceFeatureViewFactory(
 
     fun bind(binding: ResourceItemViewBinding, item: ResourceItemUiState = binding.item) {
         binding.item = item
-        val presentation = item.presentation()
-        binding.root.contentDescription = "${presentation.name}，${presentation.stateLabel}"
+        val presentation = item.presentation(context)
+        val stateLabel = item.localizedStateLabel()
+        binding.root.contentDescription = context.getString(
+            R.string.resource_content_description,
+            presentation.name,
+            stateLabel,
+        )
         binding.stateView?.text = listOf(
             presentation.version,
             presentation.sizeLabel,
-            presentation.stateLabel
+            stateLabel
         ).filter(String::isNotBlank).joinToString(" · ")
         binding.actionButton.apply {
-            text = presentation.actionLabel
+            text = item.localizedActionLabel()
             textSize = if (binding.compact) 12.2f else 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -236,6 +247,48 @@ internal class ResourceFeatureViewFactory(
         }
     }
 
+    fun acknowledgementLabel(intent: KiteResourceActionIntent): String = context.getString(when (intent) {
+        KiteResourceActionIntent.Install,
+        KiteResourceActionIntent.ReopenInstall -> R.string.resource_state_preparing
+        KiteResourceActionIntent.Open -> R.string.resource_state_starting
+        KiteResourceActionIntent.Stop -> R.string.resource_state_stopping
+        KiteResourceActionIntent.Uninstall -> R.string.resource_state_uninstalling
+        KiteResourceActionIntent.CancelInstall,
+        KiteResourceActionIntent.CancelFailedInstall -> R.string.resource_action_cancel
+        KiteResourceActionIntent.BusyStatus,
+        KiteResourceActionIntent.Unsupported -> R.string.resource_action_processing
+    })
+
+    fun stateLabel(item: ResourceItemUiState): String = item.localizedStateLabel()
+
+    fun actionLabel(intent: KiteResourceActionIntent): String = context.getString(when (intent) {
+        KiteResourceActionIntent.Install -> R.string.resource_action_install
+        KiteResourceActionIntent.ReopenInstall -> R.string.resource_action_retry
+        KiteResourceActionIntent.Open -> R.string.resource_action_open
+        KiteResourceActionIntent.Stop -> R.string.resource_action_stop
+        KiteResourceActionIntent.Uninstall -> R.string.resource_action_uninstall
+        KiteResourceActionIntent.CancelInstall,
+        KiteResourceActionIntent.CancelFailedInstall -> R.string.resource_action_cancel
+        KiteResourceActionIntent.BusyStatus -> R.string.resource_action_processing
+        KiteResourceActionIntent.Unsupported -> R.string.resource_action_unavailable
+    })
+
+    private fun ResourceItemUiState.localizedStateLabel(): String = context.getString(when (phase) {
+        ResourceItemPhase.NotInstalled -> R.string.resource_state_not_installed
+        ResourceItemPhase.Preparing -> R.string.resource_state_preparing
+        ResourceItemPhase.Installing -> R.string.resource_state_installing
+        ResourceItemPhase.Installed -> R.string.resource_state_installed
+        ResourceItemPhase.Starting -> R.string.resource_state_starting
+        ResourceItemPhase.Running -> R.string.resource_state_running
+        ResourceItemPhase.Stopping -> R.string.resource_state_stopping
+        ResourceItemPhase.Uninstalling -> R.string.resource_state_uninstalling
+        ResourceItemPhase.InstallFailed -> R.string.resource_state_install_failed
+        ResourceItemPhase.UninstallFailed -> R.string.resource_state_uninstall_failed
+        ResourceItemPhase.Busy -> R.string.resource_state_busy
+    })
+
+    private fun ResourceItemUiState.localizedActionLabel(): String = actionLabel(primaryIntent)
+
     fun icon(
         item: ResourceItemUiState,
         size: Int,
@@ -243,10 +296,10 @@ internal class ResourceFeatureViewFactory(
         radius: Float,
         textSize: Float
     ): View = icon(
-        textValue = item.presentation().iconText,
-        accent = item.presentation().accent,
-        assetPath = item.presentation().iconAsset,
-        iconFit = item.presentation().iconFit,
+        textValue = item.presentation(context).iconText,
+        accent = item.presentation(context).accent,
+        assetPath = item.presentation(context).iconAsset,
+        iconFit = item.presentation(context).iconFit,
         size = size,
         padding = padding,
         radius = radius,
@@ -312,7 +365,7 @@ internal class ResourceFeatureViewFactory(
         assetPath: String,
         contentDescriptionText: String
     ): View {
-        val presentation = item.presentation()
+        val presentation = item.presentation(context)
         val tone = KiteTheme.accent(presentation.accent, tokens)
         return FrameLayout(context).apply {
             background = roundedBox(tokens.surface, tone.border, dp(22).toFloat())
@@ -323,7 +376,9 @@ internal class ResourceFeatureViewFactory(
                 dp(228)
             ).apply { setMargins(0, dp(20), 0, 0) }
             val image = ImageView(context).apply {
-                contentDescription = contentDescriptionText.ifBlank { "${presentation.name} 视觉预览" }
+                contentDescription = contentDescriptionText.ifBlank {
+                    context.getString(R.string.resource_visual_preview, presentation.name)
+                }
                 scaleType = ImageView.ScaleType.CENTER_CROP
             }
             addView(image, FrameLayout.LayoutParams(

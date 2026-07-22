@@ -53,6 +53,7 @@ object KiteResourceUiProjector {
         when (status) {
             CardRunStatus.Starting -> "启动中" to "启动中"
             CardRunStatus.Stopping -> "停止中" to "停止中"
+            CardRunStatus.CleanupPending -> "停止待确认" to "继续停止"
             CardRunStatus.WaitingTerminal -> "等待终端" to "运行中"
             CardRunStatus.Running,
             CardRunStatus.AlreadyRunning,

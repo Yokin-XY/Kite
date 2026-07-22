@@ -1,6 +1,7 @@
 package com.kite.app.feature.resources
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.text.TextUtils
@@ -8,11 +9,15 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.ImageView
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.appcompat.content.res.AppCompatResources
+import com.kite.app.R
 import com.kite.app.run.CardRunHistoryEntry
 import com.kite.app.run.CardRunStatus
-import com.kite.app.theme.KiteTheme
+import com.kite.app.ui.UiKit
+import com.kite.app.ui.UiTextRole
 import java.util.Calendar
 
 internal class ResourceMoreScreen(
@@ -21,18 +26,25 @@ internal class ResourceMoreScreen(
     private val onCreateHomeCard: () -> Unit,
     private val onOpenHistory: (String) -> Unit
 ) {
-    private val tokens = ResourceFeatureTheme.tokens(context)
+    private val environment = ResourceFeatureTheme.environment(context)
+    private val tokens = environment.tokens
+    private val ui = UiKit(context, environment)
     private val factory = ResourceFeatureViewFactory(context, tokens, {}, {})
     private val content = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(22), dp(18), dp(22), dp(34))
+        setPadding(
+            dp(environment.foundations.spacing.pageHorizontal),
+            dp(environment.foundations.spacing.sectionGap),
+            dp(environment.foundations.spacing.pageHorizontal),
+            dp(96),
+        )
     }
     private var signature: Int? = null
 
     val root: LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(tokens.pageBackground)
-        addView(com.kite.app.ui.UiKit(context, tokens).topBar(context, "资源管理", onBack))
+        addView(ui.topBar(context, context.getString(R.string.resource_manage_title), onBack))
         addView(ScrollView(context).apply { addView(content) }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             0,
@@ -46,7 +58,11 @@ internal class ResourceMoreScreen(
         signature = nextSignature
         content.removeAllViews()
         if (item == null) {
-            content.addView(factory.stateBlock("正在读取资源", "稍后会显示资源管理选项。", loading = true))
+            content.addView(factory.stateBlock(
+                context.getString(R.string.resource_more_loading_title),
+                context.getString(R.string.resource_more_loading_summary),
+                loading = true,
+            ))
             return
         }
         content.addView(header(item))
@@ -89,29 +105,40 @@ internal class ResourceMoreScreen(
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), 0, dp(16), 0)
             alpha = if (canCreate) 1f else 0.56f
-            background = factory.roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+            background = ui.containerBackground(
+                tokens.cardBackground,
+                tokens.border,
+                environment.components.interactiveCard,
+            )
+            elevation = dp(environment.components.interactiveCard.elevation).toFloat()
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(68)).apply {
                 setMargins(0, dp(22), 0, 0)
             }
-            addView(TextView(context).apply {
-                text = "+"
-                textSize = 21f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                includeFontPadding = false
-                setTextColor(tokens.primaryStrong)
-                background = factory.roundedBox(tokens.primarySubtle, tokens.primarySoft, dp(14).toFloat())
+            addView(ImageView(context).apply {
+                setImageDrawable(AppCompatResources.getDrawable(context, R.drawable.ic_material_add))
+                imageTintList = ColorStateList.valueOf(tokens.primaryStrong)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                background = ui.containerBackground(
+                    tokens.primarySubtle,
+                    tokens.primarySoft,
+                    environment.components.iconTile,
+                )
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }, LinearLayout.LayoutParams(dp(42), dp(42)).apply { setMargins(0, 0, dp(14), 0) })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(TextView(context).apply {
-                    text = "创建首页卡片"
+                    text = context.getString(R.string.resource_more_create_card)
                     textSize = 15f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(tokens.textPrimary)
                 })
                 addView(TextView(context).apply {
-                    text = if (canCreate) "把这个资源的打开卡片固定到首页" else "这个资源还没有可创建的首页模板"
+                    text = context.getString(
+                        if (canCreate) R.string.resource_more_create_card_summary
+                        else R.string.resource_more_create_card_unavailable,
+                    )
                     textSize = 12f
                     setTextColor(tokens.textSecondary)
                     maxLines = 1
@@ -119,11 +146,11 @@ internal class ResourceMoreScreen(
                     setPadding(0, dp(4), 0, 0)
                 })
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(TextView(context).apply {
-                text = "›"
-                textSize = 24f
-                gravity = Gravity.CENTER
-                setTextColor(tokens.textTertiary)
+            addView(ImageView(context).apply {
+                setImageDrawable(AppCompatResources.getDrawable(context, R.drawable.ic_chevron_right_light))
+                imageTintList = ColorStateList.valueOf(tokens.textTertiary)
+                scaleType = ImageView.ScaleType.CENTER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }, LinearLayout.LayoutParams(dp(24), dp(42)))
             if (canCreate) setOnClickListener { onCreateHomeCard() }
         }
@@ -133,10 +160,8 @@ internal class ResourceMoreScreen(
         orientation = LinearLayout.VERTICAL
         setPadding(0, dp(18), 0, dp(4))
         addView(TextView(context).apply {
-            text = "最近获取日志"
-            textSize = 13.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(tokens.textPrimary)
+            text = context.getString(R.string.resource_more_history_title)
+            ui.applyTextRole(this, UiTextRole.SectionTitle)
             setPadding(0, 0, 0, dp(10))
         })
         if (history.isEmpty()) addView(emptyHistory()) else history.forEachIndexed { index, entry ->
@@ -147,15 +172,15 @@ internal class ResourceMoreScreen(
     private fun emptyHistory(): View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(16), dp(12), dp(16), dp(12))
-        background = factory.roundedBox(tokens.cardBackground, tokens.border, dp(18).toFloat())
+        background = ui.containerBackground(tokens.cardBackground, tokens.border, environment.components.card)
         addView(TextView(context).apply {
-            text = "还没有获取日志"
+            text = context.getString(R.string.resource_more_history_empty)
             textSize = 14.5f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(tokens.textPrimary)
         })
         addView(TextView(context).apply {
-            text = "资源获取或失败后，这里会保留对应资源自己的步骤和 SH 报告。"
+            text = context.getString(R.string.resource_more_history_empty_summary)
             textSize = 12f
             setTextColor(tokens.textSecondary)
             setPadding(0, dp(8), 0, 0)
@@ -166,7 +191,11 @@ internal class ResourceMoreScreen(
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(14), dp(11), dp(12), dp(11))
-        background = factory.roundedBox(tokens.cardBackground, tokens.border, dp(16).toFloat())
+        background = ui.containerBackground(
+            tokens.cardBackground,
+            tokens.border,
+            environment.components.interactiveCard,
+        )
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -184,7 +213,7 @@ internal class ResourceMoreScreen(
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             addView(TextView(context).apply {
-                text = "${entry.status.label} · ${duration(entry)} · ${progress(entry)}"
+                text = "${localizedRunStatus(entry.status)} · ${duration(entry)} · ${progress(entry)}"
                 textSize = 12.2f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(tokens.textPrimary)
@@ -198,36 +227,42 @@ internal class ResourceMoreScreen(
                 setPadding(0, dp(3), 0, 0)
             })
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(TextView(context).apply {
-            text = "›"
-            textSize = 24f
-            setTextColor(tokens.textTertiary)
-            gravity = Gravity.CENTER
-        }, LinearLayout.LayoutParams(dp(22), ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(ImageView(context).apply {
+            setImageDrawable(AppCompatResources.getDrawable(context, R.drawable.ic_chevron_right_light))
+            imageTintList = ColorStateList.valueOf(tokens.textTertiary)
+            scaleType = ImageView.ScaleType.CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(22), ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
     private fun progress(entry: CardRunHistoryEntry): String {
         val total = entry.stepCount.takeIf { it > 0 } ?: entry.steps.size
-        if (total <= 0) return "无步骤"
+        if (total <= 0) return context.getString(R.string.resource_more_no_steps)
         val done = when {
             entry.status == CardRunStatus.Completed -> total
             entry.currentStepIndex < 0 -> 0
             entry.isClosed() -> (entry.currentStepIndex + 1).coerceIn(0, total)
             else -> entry.currentStepIndex.coerceIn(0, total - 1) + 1
         }
-        return "步骤 $done/$total"
+        return context.getString(R.string.resource_more_steps, done, total)
     }
 
     private fun duration(entry: CardRunHistoryEntry): String {
         val endAt = entry.endedAt ?: if (entry.isClosed()) entry.updatedAt else System.currentTimeMillis()
         val seconds = ((endAt - entry.startedAt).coerceAtLeast(0L) / 1000L)
         return if (seconds < 3600L) String.format("%02d:%02d", seconds / 60L, seconds % 60L)
-        else if (seconds < 86400L) "${seconds / 3600L}小时" else "${seconds / 86400L}天"
+        else if (seconds < 86400L) context.getString(R.string.resource_more_hours, seconds / 3600L)
+        else context.getString(R.string.resource_more_days, seconds / 86400L)
     }
 
     private fun timeline(entry: CardRunHistoryEntry): String {
         val end = entry.endedAt ?: entry.updatedAt.takeIf { entry.isClosed() }
-        return "开始 ${clock(entry.startedAt)} · ${end?.let { "结束 ${clock(it)}" } ?: "进行中"}"
+        return context.getString(
+            R.string.resource_more_timeline,
+            context.getString(R.string.resource_more_started, clock(entry.startedAt)),
+            end?.let { context.getString(R.string.resource_more_ended, clock(it)) }
+                ?: context.getString(R.string.resource_more_in_progress),
+        )
     }
 
     private fun clock(timestamp: Long): String {
@@ -239,10 +274,26 @@ internal class ResourceMoreScreen(
         CardRunStatus.Failed, CardRunStatus.BridgeUnavailable -> tokens.danger
         CardRunStatus.Completed -> tokens.success
         CardRunStatus.Stopped -> tokens.info
+        CardRunStatus.CleanupPending -> tokens.warning
         CardRunStatus.Starting, CardRunStatus.Running, CardRunStatus.WaitingTerminal,
         CardRunStatus.AlreadyRunning, CardRunStatus.Opened -> tokens.primaryStrong
         else -> tokens.textSecondary
     }
+
+    private fun localizedRunStatus(status: CardRunStatus): String = context.getString(when (status) {
+        CardRunStatus.Unknown -> R.string.runtime_management_status_unknown
+        CardRunStatus.Stopped -> R.string.runtime_management_status_stopped
+        CardRunStatus.Starting -> R.string.runtime_management_status_starting
+        CardRunStatus.Running -> R.string.runtime_management_status_running
+        CardRunStatus.WaitingTerminal -> R.string.runtime_management_status_waiting_terminal
+        CardRunStatus.AlreadyRunning -> R.string.runtime_management_status_already_running
+        CardRunStatus.Opened -> R.string.runtime_management_status_opened
+        CardRunStatus.Completed -> R.string.runtime_management_status_completed
+        CardRunStatus.Failed -> R.string.runtime_management_status_failed
+        CardRunStatus.Stopping -> R.string.runtime_management_status_stopping
+        CardRunStatus.CleanupPending -> R.string.runtime_management_status_cleanup_pending
+        CardRunStatus.BridgeUnavailable -> R.string.runtime_management_status_bridge_unavailable
+    })
 
     private fun dp(value: Int): Int = factory.dp(value)
 }

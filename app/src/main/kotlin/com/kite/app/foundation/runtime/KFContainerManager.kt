@@ -39,8 +39,9 @@ import kotlin.concurrent.thread
  * - 长驻容器只跟随 Android 给 Kite 分配的默认网络，不识别或复制 VPN 配置
  */
 object KFContainerManager {
-    private const val PROOT_TELEMETRY_MODE = "debug_jsonl_lifecycle_v0"
+    private const val PROOT_TELEMETRY_MODE = "lifecycle_v2_active_registry_v1"
     private const val PROOT_TELEMETRY_FILE_NAME = "kf-proot-telemetry.jsonl"
+    private const val PROOT_ACTIVE_REGISTRY_DIR_NAME = "kf-proot-active"
     private const val RUNTIME_SMOKE_TOKEN = "KITE_RUNTIME_READY"
     private const val RUNTIME_SMOKE_TIMEOUT_MS = 12_000L
     private const val CONTAINER_ROOTFS_READY_MARKER = ".kf-container-rootfs-ready"
@@ -666,6 +667,7 @@ object KFContainerManager {
         layout: AssetExtractor.RuntimeLayout
     ): LinkedHashMap<String, String> {
         val prootTelemetryFile = prepareProotTelemetryFile(layout)
+        val prootActiveRegistryRoot = prepareProotActiveRegistryRoot(layout)
         val env = linkedMapOf(
             "HOME" to "/root",
             "USER" to "root",
@@ -682,7 +684,8 @@ object KFContainerManager {
             "UV_LINK_MODE" to "copy",
             "PROOT_TMP_DIR" to layout.tmpDir.absolutePath,
             "KF_PROOT_TELEMETRY_MODE" to PROOT_TELEMETRY_MODE,
-            "KF_PROOT_TELEMETRY_PATH" to prootTelemetryFile.absolutePath
+            "KF_PROOT_TELEMETRY_PATH" to prootTelemetryFile.absolutePath,
+            "KF_PROOT_ACTIVE_REGISTRY_ROOT" to prootActiveRegistryRoot.absolutePath,
         )
         addProotLoaderEnvironmentIfNeeded(layout, env)
         return env
@@ -867,6 +870,7 @@ object KFContainerManager {
             "KF_PROJECT_DIR",
             "KF_GRADLE_HELPER",
             "KF_PROOT_TELEMETRY_PATH",
+            "KF_PROOT_ACTIVE_REGISTRY_ROOT",
             "KF_PROCFS_PROJECTION_ROOT",
             "TZ",
             "PATH"
@@ -1094,6 +1098,18 @@ object KFContainerManager {
                 "ContainerNetwork",
                 "Android 默认网络已对齐容器 DNS: reason=$reason dns=${dnsServers.joinToString()}"
             )
+        }
+    }
+
+    private fun prepareProotActiveRegistryRoot(layout: AssetExtractor.RuntimeLayout): File {
+        return File(layout.tmpDir, PROOT_ACTIVE_REGISTRY_DIR_NAME).also { root ->
+            runCatching { root.mkdirs() }
+                .onFailure { error ->
+                    Logger.e(
+                        "KFContainerManager",
+                        "无法准备 PRoot 活跃注册表目录: ${root.absolutePath}, ${error.message}",
+                    )
+                }
         }
     }
 

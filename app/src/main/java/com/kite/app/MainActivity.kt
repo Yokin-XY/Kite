@@ -1575,7 +1575,8 @@ open class MainActivity : AppCompatActivity() {
             RunHistoryResultContract.REQUEST_KEY,
             this
         ) { _, bundle ->
-            if (RunHistoryResultContract.isBack(bundle)) requestNavigationBack()
+            // Fragment 已耗尽内部返回栈；再次投递 dispatcher 会同步回到 sendBack。
+            if (RunHistoryResultContract.isBack(bundle)) handleAppNavigationBack()
         }
     }
 
@@ -2063,7 +2064,7 @@ open class MainActivity : AppCompatActivity() {
                         closeCardRunInstanceForStop(recipe, state, "recipe_action_stop_accepted")
                     }
                 }
-                RecipeActionEffect.ShowConsole -> showConsole()
+                RecipeActionEffect.ShowConsole -> if (currentScreen != AppDestination.Console) showConsole()
                 is RecipeActionEffect.Message -> Toast.makeText(this, effect.text, Toast.LENGTH_SHORT).show()
                 RecipeActionEffect.RequireNotifications -> Unit
             }

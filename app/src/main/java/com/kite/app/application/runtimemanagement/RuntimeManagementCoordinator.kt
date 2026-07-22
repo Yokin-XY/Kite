@@ -24,6 +24,11 @@ sealed interface RuntimeManagementCommand {
         override val mutationKey: String = "process:$processId"
     ) : RuntimeManagementCommand
 
+    data class EndProcessTree(
+        val processIds: List<String>,
+        override val mutationKey: String,
+    ) : RuntimeManagementCommand
+
     data class StopBackgroundRuntime(
         val runtimeId: String,
         override val mutationKey: String = "runtime:$runtimeId"
@@ -53,7 +58,9 @@ data class RuntimeManagementCommandState(
 data class RuntimeStopConfirmationTarget(
     val rootInstanceId: String,
     val rootGeneration: Long,
-    val instanceGenerations: Map<String, Long>
+    val instanceGenerations: Map<String, Long>,
+    val processIds: Set<String> = emptySet(),
+    val terminalSessionIds: Set<String> = emptySet(),
 )
 
 sealed interface RuntimeManagementSubmitResult {
@@ -159,6 +166,7 @@ class RuntimeManagementCoordinator internal constructor(
         is RuntimeManagementCommand.StopRun -> stopRun(command.instanceId)
         is RuntimeManagementCommand.EndTerminal -> gateway.endTerminal(command.sessionId)
         is RuntimeManagementCommand.EndProcess -> gateway.endProcess(command.processId, command.pid)
+        is RuntimeManagementCommand.EndProcessTree -> gateway.endProcessTree(command.processIds)
         is RuntimeManagementCommand.StopBackgroundRuntime -> gateway.stopBackgroundRuntime(command.runtimeId)
         is RuntimeManagementCommand.RestartBackgroundRuntime -> gateway.restartBackgroundRuntime(command.runtimeId)
     }
@@ -169,8 +177,11 @@ class RuntimeManagementCoordinator internal constructor(
         is RuntimeManagementCommand.StopRun -> confirmsStop(state.stopTarget)
         is RuntimeManagementCommand.EndTerminal -> terminals.none { it.id == command.sessionId && it.isLive }
         is RuntimeManagementCommand.EndProcess -> processes.none {
-            it.id == command.processId || (command.pid > 0 && it.pid == command.pid)
+            it.id == command.processId ||
+                (command.processId.isBlank() && command.pid > 0 && it.pid == command.pid)
         }
+        is RuntimeManagementCommand.EndProcessTree ->
+            processes.none { it.id in command.processIds }
         is RuntimeManagementCommand.StopBackgroundRuntime -> processes.none {
             it.linkedRuntimeId == command.runtimeId
         }
@@ -184,13 +195,19 @@ class RuntimeManagementCoordinator internal constructor(
         return RuntimeStopConfirmationTarget(
             rootInstanceId = instanceId,
             rootGeneration = root.identity.generation,
-            instanceGenerations = subtree.associate { it.identity.instanceId to it.identity.generation }
+            instanceGenerations = subtree.associate { it.identity.instanceId to it.identity.generation },
+            processIds = subtree.flatMap { it.processIds }.toSet(),
+            terminalSessionIds = subtree.flatMap { it.terminalSessionIds }.toSet(),
         )
     }
 
     private fun RuntimeManagementSnapshot.confirmsStop(target: RuntimeStopConfirmationTarget?): Boolean {
         target ?: return false
-        val currentRoot = topology.node(target.rootInstanceId)
+        val anyCurrentRoot = topology.node(target.rootInstanceId)
+        if (anyCurrentRoot != null && anyCurrentRoot.identity.generation != target.rootGeneration) {
+            return true
+        }
+        val currentRoot = anyCurrentRoot
             ?.takeIf { it.identity.generation == target.rootGeneration }
         if (currentRoot != null) {
             if (currentRoot.run.status != CardRunStatus.Stopped) return false
@@ -200,7 +217,8 @@ class RuntimeManagementCoordinator internal constructor(
                 topology.node(instanceId)?.identity?.generation == generation
         }
         if (staleDescendantRemains) return false
-        // 进程与终端残留属于旧代后台回收，不能让旧 mutationKey 阻塞同实例的新代次。
+        if (processes.any { it.id in target.processIds }) return false
+        if (terminals.any { it.id in target.terminalSessionIds && it.isLive }) return false
         return currentRoot == null || currentRoot.run.status == CardRunStatus.Stopped
     }
 

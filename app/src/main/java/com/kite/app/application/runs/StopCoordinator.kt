@@ -12,7 +12,8 @@ internal sealed interface StopPlan {
 
 internal data class StopResolution(
     val summary: String,
-    val cleanupPending: Boolean
+    val confirmed: Boolean,
+    val cleanupPending: Boolean,
 )
 
 /** 只解释停止策略与确认结果，不调用 Bridge、终端或页面。 */
@@ -26,7 +27,7 @@ internal class StopCoordinator {
             recipe = recipe,
             instanceId = state.instanceId,
             generation = state.createdAt,
-            runtimeOwnerIds = state.ownedRuntimeOwnerIds,
+            runtimeOwnerIds = state.runtimeOwnerIdsForStop(),
             runId = state.runId,
             terminalSessionId = terminalSessionId,
             pid = state.pid,
@@ -41,19 +42,20 @@ internal class StopCoordinator {
         return StopPlan.Execute(request)
     }
 
-    /**
-     * 用户停止是单向的逻辑关闭。执行层未及时收敛只表示旧代需要后台回收，
-     * 不能把已经关闭的卡片、窗口和运行绑定恢复成 Running。
-     */
+    /** 只有控制层明确确认无残留，卡片才可以清除 owner 和进程绑定。 */
     fun resolve(result: StopExecutionResult): StopResolution {
         val hasRemaining = result.remainingProcessIds.any { value ->
             value.trim().matches(Regex("\\d+"))
         }
-        val cleanupPending = hasRemaining || (
-            result.outcome != StopExecutionOutcome.Confirmed &&
-                !result.manualKillObserved &&
-                !result.residueMarkerObserved
-            )
-        return StopResolution(summary = "已关闭", cleanupPending = cleanupPending)
+        val confirmed = result.outcome == StopExecutionOutcome.Confirmed && !hasRemaining
+        return StopResolution(
+            summary = if (confirmed) {
+                "已关闭"
+            } else {
+                result.message.trim().ifBlank { "未能确认所有进程已经结束，请重试" }
+            },
+            confirmed = confirmed,
+            cleanupPending = !confirmed,
+        )
     }
 }

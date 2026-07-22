@@ -59,6 +59,13 @@ class KiteRecipeActionCoordinatorTest {
     }
 
     @Test
+    fun `停止待确认的首页主动作继续停止而不是重新启动`() {
+        val plan = plan(KiteRecipeActionIntent.Primary, CardRunStatus.CleanupPending)
+
+        assertEquals(KiteRecipeActionPlan.Stop, plan)
+    }
+
+    @Test
     fun `编辑页启动遇到已有实例时归一化为打开`() {
         val plan = plan(
             intent = KiteRecipeActionIntent.Start,

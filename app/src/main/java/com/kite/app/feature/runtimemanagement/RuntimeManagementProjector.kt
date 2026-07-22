@@ -9,32 +9,40 @@ import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
 import com.kite.app.run.KiteCardRunUiProjector
 
-/** 把三个事实源合成一份页面状态；不读取 Store，不执行动作，也不保存页面展开状态。 */
+/** 把事实快照投影成一级作用域和可复用的二级应用组；不读取 Store，也不保存页面状态。 */
 internal object RuntimeManagementProjector {
     fun project(
         snapshot: RuntimeManagementSnapshot,
-        mutations: Map<String, RuntimeManagementMutation> = emptyMap()
+        mutations: Map<String, RuntimeManagementMutation> = emptyMap(),
+        text: RuntimeManagementText = RuntimeManagementText.zhCn(),
     ): RuntimeManagementUiState {
         val topology = snapshot.topology
         val processesById = snapshot.processes.associateBy(RuntimeManagedProcess::id)
-        val roots = topology.rootInstanceIds
+        val candidateRoots = topology.rootInstanceIds
             .mapNotNull(topology.nodesByInstanceId::get)
             .map { it.run }
-            .filter { it.belongsOnManagementPage() }
             .sortedByDescending(CardRunState::updatedAt)
-        val assignments = roots.associate { root ->
+        val candidateAssignments = candidateRoots.associate { root ->
             root.instanceId to topology.subtree(root.instanceId)
                 .flatMap { it.processIds }
                 .distinct()
                 .mapNotNull(processesById::get)
-                .sortedWith(
-                    compareByDescending<RuntimeManagedProcess> { it.isOwnerRoot }
-                        .thenBy(RuntimeManagedProcess::parentPid)
-                        .thenBy(RuntimeManagedProcess::pid)
-                )
+        }
+        val terminalsById = snapshot.terminals.associateBy(RuntimeManagedTerminal::id)
+        val roots = candidateRoots.filter { root ->
+            val hasLiveTerminal = topology.subtree(root.instanceId)
+                .flatMap { it.terminalSessionIds }
+                .mapNotNull(terminalsById::get)
+                .any(RuntimeManagedTerminal::isLive)
+            root.belongsOnManagementPage(
+                processes = candidateAssignments[root.instanceId].orEmpty(),
+                hasLiveTerminal = hasLiveTerminal,
+            )
+        }
+        val assignments = roots.associate { root ->
+            root.instanceId to candidateAssignments[root.instanceId].orEmpty()
         }
         val assignedProcessIds = assignments.values.flatten().mapTo(mutableSetOf(), RuntimeManagedProcess::id)
-        val terminalsById = snapshot.terminals.associateBy(RuntimeManagedTerminal::id)
         val assignedTerminalIds = roots
             .flatMap { root -> topology.subtree(root.instanceId) }
             .flatMap { it.terminalSessionIds }
@@ -42,214 +50,421 @@ internal object RuntimeManagementProjector {
 
         val runs = roots.map { run ->
             val processes = assignments[run.instanceId].orEmpty()
-            val main = processes.firstOrNull { it.isMainFor(run) }
-                ?: processes.firstOrNull { it.isOwnerRoot }
-            val processStates = processes.map { process ->
-                process.toUiState(
-                    run = run,
-                    isMain = process.id == main?.id,
-                    mutation = mutations[process.mutationKey()]
-                )
-            }
+            val title = run.recipeName.ifBlank { run.recipeId.ifBlank { text.cardFallback } }
+            val groups = groupsFor(
+                processes = processes,
+                run = run,
+                cardLabel = title,
+                keyPrefix = "card:${run.instanceId}",
+                mutations = mutations,
+                text = text,
+            )
             val terminal = run.terminalSessionId?.let(terminalsById::get)
+            val icon = snapshot.cardIconsByRecipeId[run.recipeId]
             RuntimeManagementRunUiState(
                 instanceId = run.instanceId,
                 recipeId = run.recipeId,
-                title = run.recipeName.ifBlank { run.recipeId.ifBlank { "Kite 卡片" } },
-                sourceLabel = run.ownerKind.sourceLabel(),
+                title = title,
+                sourceLabel = text.source(run.ownerKind),
                 status = run.status,
-                statusLabel = run.status.label,
+                statusLabel = text.status(run.status),
                 statusTone = KiteCardRunUiProjector.project(run.status).tone,
                 createdAt = run.createdAt,
-                surfaces = surfacesFor(
-                    run,
-                    topology.descendants(run.instanceId).map { it.run }
+                icon = RuntimeManagementCardIconUiState(
+                    type = icon?.type.orEmpty().ifBlank { "builtin" },
+                    name = icon?.name.orEmpty().ifBlank { "default" },
+                    source = icon?.source.orEmpty(),
                 ),
+                surfaces = surfacesFor(run, topology.descendants(run.instanceId).map { it.run }, text),
                 terminalTitle = terminal?.title,
-                processCount = maxOf(terminal?.processCount ?: 0, processes.size, if (run.boundPids().isEmpty()) 0 else 1),
-                mainProcess = processStates.firstOrNull(RuntimeManagementProcessUiState::isMain),
-                childProcesses = processStates.filterNot(RuntimeManagementProcessUiState::isMain),
-                stopAction = run.stopAction(mutations[run.mutationKey()])
+                processCount = maxOf(
+                    terminal?.processCount ?: 0,
+                    processes.size,
+                ),
+                processGroups = groups,
+                stopAction = run.stopAction(mutations[run.mutationKey()], text),
             )
         }
 
-        val otherProcesses = snapshot.processes.filterNot { it.id in assignedProcessIds }
-        val sections = listOf(
-            RuntimeManagedOwnerKind.BackgroundRuntime to "后台服务",
-            RuntimeManagedOwnerKind.Resource to "资源任务",
-            RuntimeManagedOwnerKind.Terminal to "终端进程",
-            RuntimeManagedOwnerKind.System to "系统",
-            RuntimeManagedOwnerKind.Unattributed to "其他"
-        ).mapNotNull { (kind, label) ->
-            val items = otherProcesses
-                .filter { process -> process.ownerKind == kind }
-                .sortedBy(RuntimeManagedProcess::pid)
-                .map { process ->
-                    process.toUiState(
-                        run = null,
-                        isMain = false,
-                        mutation = mutations[process.mutationKey()]
-                    )
+        val unassignedProcesses = snapshot.processes.filterNot { it.id in assignedProcessIds }
+        val unassignedGroups = groupsFor(
+            processes = unassignedProcesses,
+            run = null,
+            cardLabel = null,
+            keyPrefix = "unassigned",
+            mutations = mutations,
+            text = text,
+        ).toMutableList()
+        val representedTerminalIds = snapshot.terminals.mapNotNull { terminal ->
+            val terminalPids = listOfNotNull(terminal.rootPid, terminal.observedPid).filter { it > 0 }.toSet()
+            terminal.id.takeIf { id ->
+                unassignedProcesses.any { process ->
+                    process.linkedTerminalSessionId == id || process.pid in terminalPids || process.ownerRootPid in terminalPids
                 }
-            if (items.isEmpty()) null else RuntimeManagementProcessSectionUiState(
-                key = kind.name,
-                title = label,
-                processes = items
-            )
-        }
+            }
+        }.toSet()
+        snapshot.terminals
+            .filter { terminal -> terminal.isLive && terminal.id !in assignedTerminalIds && terminal.id !in representedTerminalIds }
+            .sortedBy(RuntimeManagedTerminal::title)
+            .forEach { terminal -> unassignedGroups += terminal.toProcessGroup(mutations[terminal.mutationKey()], text) }
 
+        val allGroups = mergeForAll(
+            runs.flatMap(RuntimeManagementRunUiState::processGroups) + unassignedGroups,
+            mutations,
+            text,
+        )
         return RuntimeManagementUiState(
             summary = RuntimeManagementSummaryUiState(
                 runningCards = roots.count { it.countsAsRunningCard() },
                 runningTerminals = snapshot.terminals.count(RuntimeManagedTerminal::isLive),
-                runningProcesses = maxOf(snapshot.processes.size, snapshot.observedProcessCount).coerceAtLeast(0)
+                runningProcesses = maxOf(snapshot.processes.size, snapshot.observedProcessCount).coerceAtLeast(0),
             ),
             runs = runs,
-            standaloneTerminals = snapshot.terminals
-                .filter { terminal -> terminal.isLive && terminal.id !in assignedTerminalIds }
-                .sortedBy(RuntimeManagedTerminal::title)
-                .map { terminal -> terminal.toStandaloneUiState(mutations[terminal.mutationKey()]) },
-            otherProcessSections = sections,
-            refreshedAt = snapshot.refreshedAt
+            allProcessGroups = allGroups,
+            unassignedProcessGroups = unassignedGroups,
+            refreshedAt = snapshot.refreshedAt,
         )
     }
 
-    private fun RuntimeManagedTerminal.toStandaloneUiState(
-        mutation: RuntimeManagementMutation?
-    ): RuntimeManagementTerminalUiState {
+    private fun groupsFor(
+        processes: List<RuntimeManagedProcess>,
+        run: CardRunState?,
+        cardLabel: String?,
+        keyPrefix: String,
+        mutations: Map<String, RuntimeManagementMutation>,
+        text: RuntimeManagementText,
+    ): List<RuntimeManagementProcessGroupUiState> {
+        if (processes.isEmpty()) return emptyList()
+        val byPid = processes.filter { it.pid > 0 }.associateBy(RuntimeManagedProcess::pid)
+        val regular = processes.filterNot(RuntimeManagedProcess::isRuntimeScaffold)
+        val roots = regular.groupBy { process -> regularRoot(process, byPid).id }
+            .values
+            .map { members ->
+                val memberIds = members.mapTo(mutableSetOf(), RuntimeManagedProcess::id)
+                val root = members.firstOrNull { process ->
+                    process.parentPid <= 1 || byPid[process.parentPid]?.let { it.id !in memberIds } != false
+                } ?: members.minBy(RuntimeManagedProcess::pid)
+                val ordered = treeOrder(members, root)
+                val groupKey = "$keyPrefix:app:${normalizeGroupName(root.title)}:${root.id}"
+                RuntimeManagementProcessGroupUiState(
+                    key = groupKey,
+                    title = text.processTitle(root.title).ifBlank { text.processFallback },
+                    processCount = members.size,
+                    processes = ordered.map { (process, depth) ->
+                        process.toUiState(
+                            run = run,
+                            cardLabel = cardLabel,
+                            depth = depth,
+                            mutation = mutations[process.mutationKey()],
+                            text = text,
+                        )
+                    },
+                    cardLabels = listOfNotNull(cardLabel),
+                ).withProcessTreeAction(mutations, text)
+            }
+
+        val infrastructure = processes.filter(RuntimeManagedProcess::isRuntimeScaffold)
+        val infrastructureGroup = infrastructure.takeIf { it.isNotEmpty() }?.let { members ->
+            RuntimeManagementProcessGroupUiState(
+                key = "$keyPrefix:foundation",
+                title = text.runtimeFoundation,
+                processCount = members.size,
+                processes = forestOrder(members).map { (process, depth) ->
+                    process.toUiState(
+                        run = run,
+                        cardLabel = cardLabel,
+                        depth = depth,
+                        mutation = mutations[process.mutationKey()],
+                        text = text,
+                    )
+                },
+                cardLabels = listOfNotNull(cardLabel),
+                isInfrastructure = true,
+            )
+        }
+        val applicationGroups = if (run == null) {
+            roots
+        } else {
+            mergeWithinCard(roots, keyPrefix, mutations, text)
+        }
+        return applicationGroups.sortedBy { it.title.lowercase() } + listOfNotNull(infrastructureGroup)
+    }
+
+    private fun regularRoot(
+        process: RuntimeManagedProcess,
+        byPid: Map<Int, RuntimeManagedProcess>,
+    ): RuntimeManagedProcess {
+        var current = process
+        val seen = mutableSetOf<String>()
+        while (seen.add(current.id)) {
+            val parent = byPid[current.parentPid] ?: break
+            if (parent.isRuntimeScaffold) break
+            current = parent
+        }
+        return current
+    }
+
+    private fun treeOrder(
+        processes: List<RuntimeManagedProcess>,
+        preferredRoot: RuntimeManagedProcess,
+    ): List<Pair<RuntimeManagedProcess, Int>> {
+        val ids = processes.mapTo(mutableSetOf(), RuntimeManagedProcess::id)
+        val children = processes.groupBy(RuntimeManagedProcess::parentPid)
+        val ordered = mutableListOf<Pair<RuntimeManagedProcess, Int>>()
+        val seen = mutableSetOf<String>()
+        fun visit(process: RuntimeManagedProcess, depth: Int) {
+            if (!seen.add(process.id)) return
+            ordered += process to depth
+            children[process.pid].orEmpty().sortedBy(RuntimeManagedProcess::pid).forEach { visit(it, depth + 1) }
+        }
+        visit(preferredRoot, 0)
+        processes
+            .filter { it.id !in seen && (it.parentPid <= 1 || byProcessId(processes, it.parentPid)?.id !in ids) }
+            .sortedBy(RuntimeManagedProcess::pid)
+            .forEach { visit(it, 0) }
+        processes.filter { it.id !in seen }.sortedBy(RuntimeManagedProcess::pid).forEach { visit(it, 0) }
+        return ordered
+    }
+
+    private fun forestOrder(processes: List<RuntimeManagedProcess>): List<Pair<RuntimeManagedProcess, Int>> {
+        if (processes.isEmpty()) return emptyList()
+        val byPid = processes.filter { it.pid > 0 }.associateBy(RuntimeManagedProcess::pid)
+        val roots = processes.filter { it.parentPid <= 1 || byPid[it.parentPid] == null }.sortedBy(RuntimeManagedProcess::pid)
+        val ordered = mutableListOf<Pair<RuntimeManagedProcess, Int>>()
+        val seen = mutableSetOf<String>()
+        val children = processes.groupBy(RuntimeManagedProcess::parentPid)
+        fun visit(process: RuntimeManagedProcess, depth: Int) {
+            if (!seen.add(process.id)) return
+            ordered += process to depth
+            children[process.pid].orEmpty().sortedBy(RuntimeManagedProcess::pid).forEach { visit(it, depth + 1) }
+        }
+        roots.forEach { visit(it, 0) }
+        processes.filter { it.id !in seen }.sortedBy(RuntimeManagedProcess::pid).forEach { visit(it, 0) }
+        return ordered
+    }
+
+    private fun byProcessId(processes: List<RuntimeManagedProcess>, pid: Int): RuntimeManagedProcess? =
+        processes.firstOrNull { it.pid == pid }
+
+    private fun mergeForAll(
+        groups: List<RuntimeManagementProcessGroupUiState>,
+        mutations: Map<String, RuntimeManagementMutation>,
+        text: RuntimeManagementText,
+    ): List<RuntimeManagementProcessGroupUiState> =
+        groups.groupBy { group -> if (group.isInfrastructure) "foundation" else normalizeGroupName(group.title) }
+            .values
+            .map { matches ->
+                val first = matches.first()
+                first.copy(
+                    key = "all:${if (first.isInfrastructure) "foundation" else normalizeGroupName(first.title)}",
+                    processCount = matches.sumOf(RuntimeManagementProcessGroupUiState::processCount),
+                    processes = matches.flatMap(RuntimeManagementProcessGroupUiState::processes)
+                        .sortedWith(compareBy<RuntimeManagementProcessUiState> { it.cardLabel.orEmpty() }
+                            .thenBy(RuntimeManagementProcessUiState::depth)
+                            .thenBy(RuntimeManagementProcessUiState::pid)),
+                    cardLabels = matches.flatMap(RuntimeManagementProcessGroupUiState::cardLabels).distinct().sorted(),
+                ).withProcessTreeAction(mutations, text)
+            }
+            .sortedWith(compareBy<RuntimeManagementProcessGroupUiState> { it.isInfrastructure }.thenBy { it.title.lowercase() })
+
+    /** 同一卡片生命周期内，同应用身份的多个根进程属于一个应用组；未归属范围不做这种推断。 */
+    private fun mergeWithinCard(
+        groups: List<RuntimeManagementProcessGroupUiState>,
+        keyPrefix: String,
+        mutations: Map<String, RuntimeManagementMutation>,
+        text: RuntimeManagementText,
+    ): List<RuntimeManagementProcessGroupUiState> = groups
+        .groupBy { group -> normalizeGroupName(group.title) }
+        .values
+        .map { matches ->
+            val first = matches.first()
+            first.copy(
+                key = "$keyPrefix:app:${normalizeGroupName(first.title)}",
+                processCount = matches.sumOf(RuntimeManagementProcessGroupUiState::processCount),
+                processes = matches
+                    .sortedBy { group -> group.processes.minOfOrNull(RuntimeManagementProcessUiState::pid) ?: Int.MAX_VALUE }
+                    .flatMap(RuntimeManagementProcessGroupUiState::processes),
+                cardLabels = matches.flatMap(RuntimeManagementProcessGroupUiState::cardLabels).distinct(),
+            ).withProcessTreeAction(mutations, text)
+        }
+
+    private fun RuntimeManagedTerminal.toProcessGroup(
+        mutation: RuntimeManagementMutation?,
+        text: RuntimeManagementText,
+    ): RuntimeManagementProcessGroupUiState {
         val pending = mutation?.phase == RuntimeManagementMutationPhase.Requested ||
             mutation?.phase == RuntimeManagementMutationPhase.AwaitingConfirmation
-        return RuntimeManagementTerminalUiState(
-            key = id,
-            title = title.ifBlank { "终端" },
-            subtitle = buildList {
-                add(
-                    when (mutation?.phase) {
-                        RuntimeManagementMutationPhase.Requested -> "请求中"
-                        RuntimeManagementMutationPhase.AwaitingConfirmation -> "待确认"
-                        RuntimeManagementMutationPhase.Failed -> "失败"
-                        null -> statusLabel
-                    }
-                )
-                if (processCount > 0) add("进程 $processCount")
-                (observedPid ?: rootPid)?.takeIf { it > 0 }?.let { add("PID $it") }
-            }.filter(String::isNotBlank).joinToString(" · "),
-            processCount = processCount,
-            endAction = RuntimeManagementActionUiState(
-                label = if (pending) "结束中" else "结束终端",
-                target = RuntimeManagementActionTarget.EndTerminal(id),
-                mutationKey = mutationKey(),
-                enabled = !pending,
-                danger = true,
-                mutationPhase = mutation?.phase
-            )
+        val pid = observedPid ?: rootPid ?: 0
+        val state = when (mutation?.phase) {
+            RuntimeManagementMutationPhase.Requested -> text.requested
+            RuntimeManagementMutationPhase.AwaitingConfirmation -> text.awaiting
+            RuntimeManagementMutationPhase.Failed -> text.failed
+            null -> text.processState(statusLabel)
+        }
+        val action = RuntimeManagementActionUiState(
+            label = if (pending) text.ending else text.endTerminal,
+            target = RuntimeManagementActionTarget.EndTerminal(id),
+            mutationKey = mutationKey(),
+            enabled = !pending,
+            danger = true,
+            mutationPhase = mutation?.phase,
         )
-    }
-
-    private fun RuntimeManagedProcess.isMainFor(run: CardRunState): Boolean {
-        val pids = run.boundPids()
-        return isOwnerRoot || pid in pids || ownerRootPid in pids
+        val item = RuntimeManagementProcessUiState(
+            key = "terminal:$id",
+            pid = pid,
+            parentPid = 0,
+            title = title.ifBlank { text.terminalFallback },
+            subtitle = listOf(text.owner(RuntimeManagedOwnerKind.Terminal), state).joinToString(" · "),
+            stateLabel = state,
+            ownerLabel = text.owner(RuntimeManagedOwnerKind.Terminal),
+            purpose = text.terminalProcessCount(processCount),
+            commandLine = "",
+            stopAction = action,
+        )
+        return RuntimeManagementProcessGroupUiState(
+            key = "unassigned:terminal:$id",
+            title = item.title,
+            processCount = processCount.coerceAtLeast(1),
+            processes = listOf(item),
+        )
     }
 
     private fun RuntimeManagedProcess.toUiState(
         run: CardRunState?,
-        isMain: Boolean,
-        mutation: RuntimeManagementMutation?
+        cardLabel: String?,
+        depth: Int,
+        mutation: RuntimeManagementMutation?,
+        text: RuntimeManagementText,
     ): RuntimeManagementProcessUiState {
-        val ownerLabel = ownerKind.ownerLabel()
-        val state = mutation?.phase?.let { phase ->
-            when (phase) {
-                RuntimeManagementMutationPhase.Requested -> "请求中"
-                RuntimeManagementMutationPhase.AwaitingConfirmation -> "待确认"
-                RuntimeManagementMutationPhase.Failed -> "失败"
-            }
-        } ?: stateLabel
+        val ownerLabel = text.owner(ownerKind)
+        val state = when (mutation?.phase) {
+            RuntimeManagementMutationPhase.Requested -> text.requested
+            RuntimeManagementMutationPhase.AwaitingConfirmation -> text.awaiting
+            RuntimeManagementMutationPhase.Failed -> text.failed
+            null -> text.processState(stateLabel)
+        }
         return RuntimeManagementProcessUiState(
             key = id,
             pid = pid,
             parentPid = parentPid,
-            title = buildList {
-                if (pid > 0) add("PID $pid")
-                title.takeIf(String::isNotBlank)?.let(::add)
-            }.joinToString(" · ").ifBlank { "进程" },
-            subtitle = listOf(ownerLabel, state).filter(String::isNotBlank).joinToString(" · "),
+            title = text.processTitle(title).ifBlank { text.processFallback },
+            subtitle = buildList {
+                add(state)
+                if (!cardLabel.isNullOrBlank()) add(cardLabel)
+            }.joinToString(" · "),
+            stateLabel = state,
             ownerLabel = ownerLabel,
-            purpose = purpose.ifBlank { "卡片或用户启动的普通进程" },
-            isMain = isMain,
-            stopAction = stopAction(run, isMain, mutation)
+            purpose = text.processPurpose(purpose.ifBlank { text.processGenericPurpose }),
+            commandLine = commandLine,
+            cardInstanceId = run?.instanceId,
+            cardLabel = cardLabel,
+            depth = depth,
+            isInfrastructure = isRuntimeScaffold,
+            canEndAsTree = canEndDirectly && identityVerified && !lifecycleId.isNullOrBlank(),
+            processGroupId = processGroupId,
+            lifecycleId = lifecycleId,
+            kernelState = kernelState,
+            identityVerified = identityVerified,
+            stopAction = stopAction(run, mutation, text),
+        )
+    }
+
+    private fun RuntimeManagementProcessGroupUiState.withProcessTreeAction(
+        mutations: Map<String, RuntimeManagementMutation>,
+        text: RuntimeManagementText,
+    ): RuntimeManagementProcessGroupUiState {
+        if (isInfrastructure || processes.isEmpty() || processes.any { !it.canEndAsTree }) {
+            return copy(stopAction = null)
+        }
+        val processIds = processes.map(RuntimeManagementProcessUiState::key).distinct().sorted()
+        val mutationKey = "process-tree:${processIds.joinToString("|").hashCode().toUInt().toString(16)}"
+        val mutation = mutations[mutationKey]
+        val pending = mutation?.phase == RuntimeManagementMutationPhase.Requested ||
+            mutation?.phase == RuntimeManagementMutationPhase.AwaitingConfirmation
+        return copy(
+            stopAction = RuntimeManagementActionUiState(
+                label = if (pending) text.ending else text.endProcessGroup,
+                target = RuntimeManagementActionTarget.EndProcessTree(processIds),
+                mutationKey = mutationKey,
+                enabled = !pending,
+                danger = true,
+                mutationPhase = mutation?.phase,
+            ),
         )
     }
 
     private fun RuntimeManagedProcess.stopAction(
         run: CardRunState?,
-        isMain: Boolean,
-        mutation: RuntimeManagementMutation?
+        mutation: RuntimeManagementMutation?,
+        text: RuntimeManagementText,
     ): RuntimeManagementActionUiState? {
         val pending = mutation?.phase == RuntimeManagementMutationPhase.Requested ||
             mutation?.phase == RuntimeManagementMutationPhase.AwaitingConfirmation
         val target = when {
-            isMain && run != null -> RuntimeManagementActionTarget.StopRun(run.instanceId)
-            isOwnerRoot && !linkedTerminalSessionId.isNullOrBlank() ->
-                RuntimeManagementActionTarget.EndTerminal(linkedTerminalSessionId)
-            isOwnerRoot && !linkedRuntimeId.isNullOrBlank() ->
-                RuntimeManagementActionTarget.StopBackgroundRuntime(linkedRuntimeId)
+            run != null && isMainFor(run) -> RuntimeManagementActionTarget.StopRun(run.instanceId)
+            isOwnerRoot && !linkedTerminalSessionId.isNullOrBlank() -> RuntimeManagementActionTarget.EndTerminal(linkedTerminalSessionId)
+            isOwnerRoot && !linkedRuntimeId.isNullOrBlank() -> RuntimeManagementActionTarget.StopBackgroundRuntime(linkedRuntimeId)
             canEndDirectly -> RuntimeManagementActionTarget.EndProcess(id, pid)
             else -> return null
         }
         return RuntimeManagementActionUiState(
             label = when {
-                pending -> "结束中"
-                target is RuntimeManagementActionTarget.StopRun -> "停止任务"
-                target is RuntimeManagementActionTarget.EndTerminal -> "结束终端"
-                target is RuntimeManagementActionTarget.StopBackgroundRuntime -> "停止任务"
-                else -> "结束进程"
+                pending -> text.ending
+                target is RuntimeManagementActionTarget.StopRun -> text.stopTask
+                target is RuntimeManagementActionTarget.EndTerminal -> text.endTerminal
+                target is RuntimeManagementActionTarget.StopBackgroundRuntime -> text.stopTask
+                else -> text.endProcess
             },
             target = target,
             mutationKey = mutationKey(),
             enabled = !pending,
             danger = true,
-            mutationPhase = mutation?.phase
+            mutationPhase = mutation?.phase,
         )
     }
 
-    private fun CardRunState.stopAction(mutation: RuntimeManagementMutation?): RuntimeManagementActionUiState? {
+    private fun CardRunState.stopAction(
+        mutation: RuntimeManagementMutation?,
+        text: RuntimeManagementText,
+    ): RuntimeManagementActionUiState? {
         val pending = status == CardRunStatus.Stopping ||
             mutation?.phase == RuntimeManagementMutationPhase.Requested ||
             mutation?.phase == RuntimeManagementMutationPhase.AwaitingConfirmation
         if (!pending && !status.canRequestStop()) return null
         return RuntimeManagementActionUiState(
-            label = if (pending) "停止中" else "停止",
+            label = if (pending) text.stopping else text.stop,
             target = RuntimeManagementActionTarget.StopRun(instanceId),
             mutationKey = mutationKey(),
             enabled = !pending,
             danger = true,
-            mutationPhase = mutation?.phase
+            mutationPhase = mutation?.phase,
         )
     }
 
-    private fun surfacesFor(root: CardRunState, children: List<CardRunState>): List<RuntimeManagementSurfaceUiState> {
+    private fun surfacesFor(
+        root: CardRunState,
+        children: List<CardRunState>,
+        text: RuntimeManagementText,
+    ): List<RuntimeManagementSurfaceUiState> {
         val states = listOf(root) + children.sortedBy(CardRunState::createdAt)
         return buildList {
             states.forEach { state ->
-                if (state.hasReportSurface()) add(state.surfaceItem(CardRunSurface.Report, "SH 报告", "执行输出"))
-                if (!state.terminalSessionId.isNullOrBlank()) add(state.surfaceItem(CardRunSurface.Terminal, "终端", "终端窗口"))
+                if (state.hasReportSurface()) add(state.surfaceItem(CardRunSurface.Report, text.surface(CardRunSurface.Report), text.reportCaption, text.open))
+                if (!state.terminalSessionId.isNullOrBlank()) add(state.surfaceItem(CardRunSurface.Terminal, text.surface(CardRunSurface.Terminal), text.terminalCaption, text.open))
                 if (!state.nextActionUrl.isNullOrBlank() || state.surface == CardRunSurface.Web) {
-                    add(state.surfaceItem(CardRunSurface.Web, "网页", state.nextActionUrl.orEmpty().ifBlank { "等待网址" }))
+                    add(state.surfaceItem(CardRunSurface.Web, text.surface(CardRunSurface.Web), state.nextActionUrl.orEmpty().ifBlank { text.waitingUrl }, text.open))
                 }
-                if (!state.x11Display.isNullOrBlank()) {
-                    add(state.surfaceItem(CardRunSurface.X11, "X11", "DISPLAY=${state.x11Display}"))
-                }
+                if (!state.x11Display.isNullOrBlank()) add(state.surfaceItem(CardRunSurface.X11, "X11", "DISPLAY=${state.x11Display}", text.open))
             }
-            if (isEmpty()) {
-                add(root.surfaceItem(root.surface, root.surface.label, root.status.label))
-            }
+            if (isEmpty()) add(root.surfaceItem(root.surface, text.surface(root.surface), text.status(root.status), text.open))
         }.distinctBy(RuntimeManagementSurfaceUiState::key)
     }
 
     private fun CardRunState.surfaceItem(
         targetSurface: CardRunSurface,
         title: String,
-        caption: String
+        caption: String,
+        actionLabel: String,
     ): RuntimeManagementSurfaceUiState = RuntimeManagementSurfaceUiState(
         key = "$instanceId:${targetSurface.name}",
         instanceId = instanceId,
@@ -257,27 +472,31 @@ internal object RuntimeManagementProjector {
         title = title,
         caption = caption,
         openAction = RuntimeManagementActionUiState(
-            label = "打开",
+            label = actionLabel,
             target = RuntimeManagementActionTarget.OpenSurface(recipeId, instanceId, targetSurface),
-            mutationKey = "surface:$instanceId:${targetSurface.name}"
-        )
+            mutationKey = "surface:$instanceId:${targetSurface.name}",
+        ),
     )
 
+    private fun RuntimeManagedProcess.isMainFor(run: CardRunState): Boolean {
+        val pids = run.boundPids()
+        return isOwnerRoot || pid in pids
+    }
+
+    private fun normalizeGroupName(value: String): String = value.trim().lowercase().ifBlank { "process" }
+
     private fun CardRunState.hasReportSurface(): Boolean =
-        !shellReportText.isNullOrBlank() ||
-            !lastMeaningfulOutput.isNullOrBlank() ||
-            !lastError.isNullOrBlank() ||
-            surface == CardRunSurface.Report ||
-            surface == CardRunSurface.Summary
+        !shellReportText.isNullOrBlank() || !lastMeaningfulOutput.isNullOrBlank() || !lastError.isNullOrBlank() ||
+            surface == CardRunSurface.Report || surface == CardRunSurface.Summary
 
     private fun CardRunState.boundPids(): Set<Int> = listOf(rootPid, pid)
         .mapNotNull { it?.trim()?.toIntOrNull()?.takeIf { value -> value > 0 } }
         .toSet()
 
-    private fun CardRunState.belongsOnManagementPage(): Boolean =
-        countsAsRunningCard() ||
-            ((hasRunBinding() || hasRuntimeOwnership()) &&
-                status in setOf(CardRunStatus.Failed, CardRunStatus.BridgeUnavailable))
+    private fun CardRunState.belongsOnManagementPage(
+        processes: List<RuntimeManagedProcess>,
+        hasLiveTerminal: Boolean,
+    ): Boolean = countsAsRunningCard() || processes.isNotEmpty() || hasLiveTerminal
 
     private fun CardRunState.countsAsRunningCard(): Boolean = status in setOf(
         CardRunStatus.Starting,
@@ -285,7 +504,7 @@ internal object RuntimeManagementProjector {
         CardRunStatus.WaitingTerminal,
         CardRunStatus.AlreadyRunning,
         CardRunStatus.Opened,
-        CardRunStatus.Stopping
+        CardRunStatus.Stopping,
     )
 
     private fun CardRunStatus.canRequestStop(): Boolean = this in setOf(
@@ -295,29 +514,11 @@ internal object RuntimeManagementProjector {
         CardRunStatus.AlreadyRunning,
         CardRunStatus.Opened,
         CardRunStatus.Failed,
-        CardRunStatus.BridgeUnavailable
+        CardRunStatus.CleanupPending,
+        CardRunStatus.BridgeUnavailable,
     )
 
-    private fun String.sourceLabel(): String = when (this) {
-        CardRunState.OWNER_KIND_RESOURCE -> "资源"
-        CardRunState.OWNER_KIND_INSTALL_WIZARD -> "安装"
-        CardRunState.OWNER_KIND_TERMINAL -> "终端"
-        CardRunState.OWNER_KIND_WEB -> "网页"
-        else -> "首页"
-    }
-
-    private fun RuntimeManagedOwnerKind.ownerLabel(): String = when (this) {
-        RuntimeManagedOwnerKind.Card -> "卡片"
-        RuntimeManagedOwnerKind.Resource -> "资源"
-        RuntimeManagedOwnerKind.Terminal -> "卡片终端"
-        RuntimeManagedOwnerKind.BackgroundRuntime,
-        RuntimeManagedOwnerKind.System -> "系统"
-        RuntimeManagedOwnerKind.Unattributed -> "未关联卡片"
-    }
-
     private fun CardRunState.mutationKey(): String = "run:$instanceId"
-
     private fun RuntimeManagedProcess.mutationKey(): String = "process:$id"
-
     private fun RuntimeManagedTerminal.mutationKey(): String = "terminal:$id"
 }

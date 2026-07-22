@@ -11,6 +11,7 @@ enum class KiteRunUiTone {
 enum class KiteRunPrimaryAction {
     Start,
     Stop,
+    ContinueStop,
     Retry,
     Busy,
     Blocked
@@ -37,13 +38,14 @@ object KiteCardRunUiProjector {
             status == CardRunStatus.Opened
         val tone = when (status) {
             CardRunStatus.Failed, CardRunStatus.BridgeUnavailable -> KiteRunUiTone.Danger
-            CardRunStatus.Stopping -> KiteRunUiTone.Warning
+            CardRunStatus.Stopping, CardRunStatus.CleanupPending -> KiteRunUiTone.Warning
             CardRunStatus.Starting, CardRunStatus.WaitingTerminal -> KiteRunUiTone.Info
             CardRunStatus.Running, CardRunStatus.AlreadyRunning, CardRunStatus.Opened -> KiteRunUiTone.Success
             else -> KiteRunUiTone.Neutral
         }
         val badge = when {
             problem -> "失败"
+            status == CardRunStatus.CleanupPending -> "待确认"
             status == CardRunStatus.WaitingTerminal || status == CardRunStatus.Opened -> "手动操作"
             live -> "运行中"
             else -> null
@@ -51,6 +53,7 @@ object KiteCardRunUiProjector {
         val action = when {
             runtimeBlocked -> KiteRunPrimaryAction.Blocked
             problem -> KiteRunPrimaryAction.Retry
+            status == CardRunStatus.CleanupPending -> KiteRunPrimaryAction.ContinueStop
             status.isInterruptibleStatus() -> KiteRunPrimaryAction.Stop
             status == CardRunStatus.Starting || status == CardRunStatus.Stopping -> KiteRunPrimaryAction.Busy
             else -> KiteRunPrimaryAction.Start
@@ -62,6 +65,7 @@ object KiteCardRunUiProjector {
             primaryActionLabel = when (action) {
                 KiteRunPrimaryAction.Start -> "启动"
                 KiteRunPrimaryAction.Stop -> "停止"
+                KiteRunPrimaryAction.ContinueStop -> "继续停止"
                 KiteRunPrimaryAction.Retry -> "重试"
                 KiteRunPrimaryAction.Busy -> "处理中"
                 KiteRunPrimaryAction.Blocked -> "等待"

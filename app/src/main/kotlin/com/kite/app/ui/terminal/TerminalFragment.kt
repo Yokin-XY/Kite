@@ -72,6 +72,9 @@ import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.application.surface.SurfaceChromeMode
 import com.kite.app.application.surface.SurfaceEffect
 import com.kite.app.feature.terminal.TerminalSurfaceResultContract
+import com.kite.app.theme.ThemeEnvironment
+import com.kite.app.ui.UiKit
+import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.termux.terminal.TerminalColors
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TextStyle
@@ -130,6 +133,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     private lateinit var terminalSendButton: MaterialButton
     private lateinit var terminalView: TerminalView
     private lateinit var terminalController: TerminalSessionController
+    private lateinit var appThemeEnvironment: ThemeEnvironment
+    private lateinit var appUi: UiKit
 
     private var isCtrlPressed = false
     private var isAltPressed = false
@@ -290,6 +295,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun setupViews(view: View) {
+        appThemeEnvironment = requireContext().kiteThemeEnvironment()
+        appUi = UiKit(requireContext(), appThemeEnvironment)
         listPage = view.findViewById(R.id.terminalListPage)
         detailPage = view.findViewById(R.id.terminalDetailPage)
         terminalDetailHeader = (detailPage as ViewGroup).getChildAt(0)
@@ -361,7 +368,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         }
 
         terminalListRefresh?.setColorSchemeColors(
-            color(R.color.terminal_page_blue)
+            appThemeEnvironment.tokens.primaryStrong
         )
         terminalListRefresh?.setOnRefreshListener {
             requestTerminalRefresh("pull-to-refresh", force = true, userVisible = true)
@@ -1264,24 +1271,54 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun applyShellThemeToStaticViews(root: View) {
-        fun tintHeader(header: View?) {
-            header?.setBackgroundColor(color(R.color.terminal_page_header))
+        val appTokens = appThemeEnvironment.tokens
+        fun tintListHeader(header: View?) {
+            header?.setBackgroundColor(appTokens.pageBackground)
             if (header is ViewGroup) {
                 for (index in 0 until header.childCount) {
                     when (val child = header.getChildAt(index)) {
-                        is TextView -> child.setTextColor(color(R.color.terminal_page_text))
-                        is AppCompatImageButton -> child.setColorFilter(color(R.color.terminal_page_text))
+                        is TextView -> {
+                            child.setTextColor(appTokens.textPrimary)
+                            child.textSize = appThemeEnvironment.foundations.typography.pageTitle
+                            child.typeface = Typeface.DEFAULT_BOLD
+                        }
+                        is AppCompatImageButton -> child.setColorFilter(appTokens.textPrimary)
                     }
                 }
             }
         }
 
-        root.setBackgroundColor(color(R.color.terminal_page_bg))
-        listPage?.setBackgroundColor(color(R.color.terminal_page_surface))
+        root.setBackgroundColor(appTokens.pageBackground)
+        listPage?.setBackgroundColor(appTokens.pageBackground)
         detailPage.setBackgroundColor(color(R.color.terminal_page_bg))
-        tintHeader((listPage as? ViewGroup)?.getChildAt(0))
-        tintHeader((detailPage as? ViewGroup)?.getChildAt(0))
-        tvEmptySessions?.setTextColor(color(R.color.terminal_page_subtext))
+        tintListHeader((listPage as? ViewGroup)?.getChildAt(0))
+        tvEmptySessions?.apply {
+            setTextColor(appTokens.textSecondary)
+            textSize = appThemeEnvironment.foundations.typography.supporting
+            background = appUi.containerBackground(
+                appTokens.cardBackground,
+                appTokens.border,
+                appThemeEnvironment.components.card,
+            )
+            setPadding(appUi.dp(22), appUi.dp(30), appUi.dp(22), appUi.dp(30))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                setMargins(
+                    appUi.dp(appThemeEnvironment.foundations.spacing.pageHorizontal),
+                    appUi.dp(appThemeEnvironment.foundations.spacing.sectionGap),
+                    appUi.dp(appThemeEnvironment.foundations.spacing.pageHorizontal),
+                    0,
+                )
+            }
+        }
+        terminalListContainer?.setPadding(
+            appUi.dp(appThemeEnvironment.foundations.spacing.pageHorizontal),
+            appUi.dp(appThemeEnvironment.foundations.spacing.sectionGap),
+            appUi.dp(appThemeEnvironment.foundations.spacing.pageHorizontal),
+            appUi.dp(96),
+        )
         tvDetailTitle.setTextColor(color(R.color.terminal_page_text))
         tvDetailSubtitle.setTextColor(color(R.color.terminal_page_subtext))
         tvSessionNote.setTextColor(color(R.color.terminal_page_subtext))
@@ -1846,16 +1883,29 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         val statusView = itemView.findViewById<TextView>(R.id.tvSessionItemStatus)
 
         val (bgColorRes, textColorRes, labelText) = badge
-        root.setBackgroundColor(color(R.color.terminal_page_surface))
-        iconCard.setCardBackgroundColor(color(R.color.terminal_page_green))
-        iconView.setColorFilter(color(R.color.terminal_page_surface))
-        chevronView.setColorFilter(color(R.color.terminal_page_subtext))
-        divider.setBackgroundColor(color(R.color.terminal_page_line))
+        val appTokens = appThemeEnvironment.tokens
+        root.background = appUi.containerBackground(
+            appTokens.cardBackground,
+            appTokens.border,
+            appThemeEnvironment.components.interactiveCard,
+        )
+        root.elevation = appUi.dp(appThemeEnvironment.components.interactiveCard.elevation).toFloat()
+        root.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { setMargins(0, 0, 0, appUi.dp(appThemeEnvironment.foundations.spacing.itemGap)) }
+        iconCard.radius = appUi.dp(appThemeEnvironment.components.iconTile.radius).toFloat()
+        iconCard.setCardBackgroundColor(appTokens.primarySubtle)
+        iconView.setColorFilter(appTokens.primaryStrong)
+        chevronView.setColorFilter(appTokens.textTertiary)
+        divider.visibility = View.GONE
         statusCard.setCardBackgroundColor(color(bgColorRes))
         statusView.setTextColor(color(textColorRes))
-        titleView.setTextColor(color(R.color.terminal_page_text))
-        sourceView.setTextColor(color(R.color.terminal_page_subtext))
-        timeView.setTextColor(color(R.color.terminal_page_subtext))
+        titleView.setTextColor(appTokens.textPrimary)
+        titleView.textSize = appThemeEnvironment.foundations.typography.cardTitle
+        sourceView.setTextColor(appTokens.textSecondary)
+        sourceView.textSize = appThemeEnvironment.foundations.typography.supporting
+        timeView.setTextColor(appTokens.textSecondary)
 
         val titleParts = splitTerminalTitle(title)
         titleView.text = titleParts.main

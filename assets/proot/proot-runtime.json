@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "component": "proot",
-  "assetId": "kf-proot-arm64-d30b988-lifecycle-v8",
-  "activeRuntimeId": "kf-proot-lifecycle-v8",
+  "assetId": "kf-proot-arm64-d30b988-lifecycle-v12",
+  "activeRuntimeId": "kf-proot-lifecycle-v12",
   "selectionMode": "runtime_migration_standard_v1",
   "provider": "termux-proot-fork",
   "sourceKind": "local_kf_lifecycle_build",
@@ -16,15 +16,15 @@
   "libtallocAssetPath": "proot/libtalloc.so.2",
   "loaderAssetPath": "proot/loader",
   "loader32AssetPath": "proot/loader32",
-  "telemetryMode": "debug_jsonl_lifecycle_v0",
+  "telemetryMode": "lifecycle_v2_active_registry_v1",
   "telemetrySubstrateState": "PASS",
   "telemetrySubstrateReason": "kf_lifecycle_proot_built_from_termux_fork",
   "policyOwnership": "android_control_plane",
   "ubuntuAuthority": "advisory_only",
   "availableRuntimes": [
     {
-      "runtimeId": "kf-proot-lifecycle-v8",
-      "assetId": "kf-proot-arm64-d30b988-lifecycle-v8",
+      "runtimeId": "kf-proot-lifecycle-v12",
+      "assetId": "kf-proot-arm64-d30b988-lifecycle-v12",
       "provider": "termux-proot-fork",
       "sourceKind": "local_kf_lifecycle_build",
       "sourceRepository": "https://github.com/termux/proot",
@@ -32,10 +32,16 @@
       "sourceTag": "unknown",
       "executableAssetPath": "proot/proot-kf-lifecycle-arm64",
       "loaderMode": "embedded",
-      "telemetryMode": "debug_jsonl_lifecycle_v0",
-      "sha256": "9414A2BCA6B17D57C036C540E251CED6D170AD2C3469A7C9472AF4963DE8BEE6",
+      "telemetryMode": "lifecycle_v2_active_registry_v1",
+      "capabilities": [
+        "process_lifecycle_events",
+        "active_process_registry",
+        "procfs_projection",
+        "verified_process_signals"
+      ],
+      "sha256": "DFEB842ADB5C2FB41991110AE67A79299CA874F8E22A338F171371C617717C88",
       "binaryRole": "active_runtime",
-      "validationState": "validated_wsl_arm64_lifecycle_fact_export_v8_read_time_resource_view_procfs_bypass"
+      "validationState": "validated_android_arm64_build_v12_active_only_registry_retirement"
     },
     {
       "runtimeId": "stock-preexisting",
@@ -78,6 +84,10 @@
     "Lifecycle v6 additionally rotates the raw telemetry JSONL at 8 MiB with three archives; KF retains all running tracees and bounds terminal live-table history to 5000 entries or 7 days.",
     "Lifecycle v7 keeps procfs projection for normal Ubuntu commands but lets kf-resource-sampler bypass stat/statm projection and update runtime-process-table resource columns.",
     "Lifecycle v8 additionally lets standard resource-view commands such as ps aux and top bypass stat/statm projection while refreshing runtime-process-table resource columns on read.",
+    "Lifecycle v9 emits eventSeq, lifecycleSeq, parentLifecycleSeq, and startTimeTicks, and maintains a per-PRoot active tracee registry for cold-start and event-gap reconciliation.",
+    "Lifecycle v10 fixes active-registry JSON framing so native registry snapshots can be parsed during cold-start and event-gap reconciliation.",
+    "Lifecycle v11 retries identity capture for the initial tracee at its first event, preventing owner shutdown from falling back to shared Android process groups.",
+    "Lifecycle v12 atomically retires empty active-registry sessions, keeping registry cost proportional to current live PRoot sessions instead of accumulated history.",
     "PRoot is a fact source only; Android/KF remains the policy and execution authority.",
     "Stock PRoot remains packaged as a no-telemetry fallback.",
     "Legacy termux-baseline remains packaged only as quarantined historical metadata.",

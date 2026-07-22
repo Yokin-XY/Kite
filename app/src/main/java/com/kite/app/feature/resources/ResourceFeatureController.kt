@@ -229,6 +229,7 @@ internal class ResourceFeatureController(
         facts.installing -> ResourceItemPhase.Installing
         openRunStatus == CardRunStatus.Starting -> ResourceItemPhase.Starting
         openRunStatus == CardRunStatus.Stopping -> ResourceItemPhase.Stopping
+        openRunStatus == CardRunStatus.CleanupPending -> ResourceItemPhase.Stopping
         openRunStatus == CardRunStatus.Running ||
             openRunStatus == CardRunStatus.AlreadyRunning ||
             openRunStatus == CardRunStatus.Opened ||

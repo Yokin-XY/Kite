@@ -36,14 +36,17 @@ class ResourceInstallWizardScreenTest {
         val actions = mutableListOf<KiteInstallPlanActionIntent>()
         val screen = createScreen(onPlanAction = actions::add)
         attach(screen)
+        val context = screen.root.context
         screen.render(pendingState())
         shadowOf(Looper.getMainLooper()).idle()
 
-        val button = screen.root.textViews().first { it.text.toString() == "开始获取" }
+        val button = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_action_start)
+        }
         button.performClick()
 
         assertEquals(listOf(KiteInstallPlanActionIntent.StartNext), actions)
-        assertEquals("准备中", button.text.toString())
+        assertEquals(context.getString(R.string.resource_state_preparing), button.text.toString())
         assertFalse(button.isEnabled)
     }
 
@@ -52,20 +55,36 @@ class ResourceInstallWizardScreenTest {
         val requests = mutableListOf<ResourceInstallWizardRunRequest>()
         val screen = createScreen(onOpenRun = requests::add)
         attach(screen)
+        val context = screen.root.context
         screen.render(runningState(surface = CardRunSurface.Report))
         shadowOf(Looper.getMainLooper()).idle()
 
-        val initialStatus = screen.root.textViews().first { it.text.toString() == "获取中" }
+        val initialStatus = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_state_installing)
+        }
         screen.render(runningState(surface = CardRunSurface.Terminal))
         shadowOf(Looper.getMainLooper()).idle()
 
-        val reboundStatus = screen.root.textViews().first { it.text.toString() == "获取中" }
+        val reboundStatus = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_state_installing)
+        }
         assertSame(initialStatus, reboundStatus)
         screen.tick(now = 66_000L)
-        assertTrue(screen.root.textViews().any { it.text.toString() == "资源 · 1/1 · 运行 01:05" })
+        val base = "${context.getString(R.string.resource_wizard_fallback_resource)} · 1/1"
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_subtitle_running, base, "01:05")
+        })
 
-        screen.root.textViews().first { it.text.toString() == "打开终端" }.performClick()
-        screen.root.views().first { it.contentDescription?.toString() == "Tool，获取中" }.performClick()
+        screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_open_terminal)
+        }.performClick()
+        screen.root.views().first {
+            it.contentDescription?.toString() == context.getString(
+                R.string.resource_wizard_row_description,
+                "Tool",
+                context.getString(R.string.resource_state_installing)
+            )
+        }.performClick()
 
         assertEquals(CardRunSurface.Terminal, requests[0].surface)
         assertEquals(CardRunSurface.Report, requests[1].surface)
@@ -82,17 +101,26 @@ class ResourceInstallWizardScreenTest {
             onUninstallFailedResource = failedResources::add
         )
         attach(screen)
+        val context = screen.root.context
         screen.render(failedState())
         shadowOf(Looper.getMainLooper()).idle()
 
-        screen.root.textViews().first { it.text.toString() == "需卸载" }.performClick()
+        screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_state_install_failed)
+        }.performClick()
         assertEquals(listOf("tool"), failedResources)
-        assertTrue(screen.root.textViews().any { it.text.toString() == "发现异常请手动处理" })
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_detail_failure)
+        })
 
         screen.render(finishedState())
         shadowOf(Looper.getMainLooper()).idle()
-        assertTrue(screen.root.textViews().any { it.text.toString() == "已完成" })
-        screen.root.textViews().first { it.text.toString() == "完成" }.performClick()
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_manage_queue_completed)
+        })
+        screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_action_complete)
+        }.performClick()
         assertEquals(listOf(KiteInstallPlanActionIntent.Finish), actions)
     }
 

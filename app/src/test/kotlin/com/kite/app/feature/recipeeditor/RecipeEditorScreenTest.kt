@@ -21,6 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 class RecipeEditorScreenTest {
@@ -31,8 +32,7 @@ class RecipeEditorScreenTest {
 
         screen.render(state())
 
-        assertTrue(screen.root.allText().contains("暂无运行记录"))
-        assertTrue(screen.root.allText().none { it.contains("步骤 1/1") })
+        assertTrue(screen.root.allText().contains(screen.root.context.getString(R.string.recipe_editor_no_runs)))
     }
 
     @Test
@@ -42,9 +42,37 @@ class RecipeEditorScreenTest {
         attach(screen)
         screen.render(state())
 
-        screen.root.findByDescription("下移动作")!!.performClick()
+        screen.root.findByDescription(
+            screen.root.context.getString(R.string.recipe_editor_move_down)
+        )!!.performClick()
 
         assertEquals(listOf(0 to 1), actions.moves)
+    }
+
+    @Test
+    fun `editor chrome uses standard actions without text glyph navigation`() {
+        val screen = screen(RecordingActions())
+        attach(screen)
+        screen.render(state())
+
+        val texts = screen.root.allText()
+        val context = screen.root.context
+        val addAction = context.getString(R.string.recipe_editor_add_action)
+        assertTrue(texts.contains(context.getString(R.string.recipe_editor_edit_title)))
+        assertTrue(texts.contains(addAction))
+        assertTrue(texts.none { it.startsWith("+") && it.contains(addAction) })
+        assertTrue(screen.root.findByDescription(context.getString(R.string.common_back)) != null)
+        assertTrue(screen.root.findByDescription(context.getString(R.string.recipe_editor_more)) != null)
+    }
+
+    @Test
+    @Config(qualifiers = "en")
+    fun `empty category uses localized ungrouped label`() {
+        val screen = screen(RecordingActions())
+        attach(screen)
+        screen.render(state())
+
+        assertTrue(screen.root.allText().contains("Ungrouped"))
     }
 
     private fun screen(actions: RecordingActions): RecipeEditorScreen = RecipeEditorScreen(

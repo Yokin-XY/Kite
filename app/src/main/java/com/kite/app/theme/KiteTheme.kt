@@ -103,6 +103,15 @@ object KiteTheme : ThemeRuleProtocol {
 
     val foundations = ThemeFoundations(
         spacing = ThemeSpacing(pageHorizontal = 18, sectionGap = 12, itemGap = 8),
+        typography = ThemeTypography(
+            pageTitle = 22f,
+            sectionTitle = 13.5f,
+            cardTitle = 16f,
+            body = 14f,
+            supporting = 12.5f,
+            action = 13f,
+            badge = 10.5f,
+        ),
         minimumTouchTarget = 48,
     )
 

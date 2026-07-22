@@ -10,7 +10,9 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.kite.app.R
 import com.kite.app.action.KiteInstallPlanActionIntent
+import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceStepTone
 import com.kite.app.run.CardRunSurface
 
@@ -45,25 +47,30 @@ internal class ResourceInstallWizardScreen(
 
     val root: View = ScrollView(context).apply {
         isFillViewport = true
-        contentDescription = "资源获取向导"
+        contentDescription = context.getString(R.string.resource_wizard_description)
         setBackgroundColor(factory.tokens.pageBackground)
         addView(contentHost)
     }
 
     fun render(state: ResourceFeatureUiState) {
         if (state.items.isEmpty() && state.phase in setOf(ResourceCatalogPhase.Idle, ResourceCatalogPhase.Loading)) {
-            renderStateBlock("正在读取执行队列", "资源状态会在后台校准，当前安装任务不会因此停止。")
+            renderStateBlock(
+                root.context.getString(R.string.resource_wizard_loading_title),
+                root.context.getString(R.string.resource_wizard_loading_summary)
+            )
             return
         }
         if (state.items.isEmpty() && state.phase == ResourceCatalogPhase.Failed) {
             renderStateBlock(
-                title = "执行队列读取失败",
-                detail = state.errorMessage.orEmpty().ifBlank { "请重试读取资源状态。" },
+                title = root.context.getString(R.string.resource_wizard_failed_title),
+                detail = state.errorMessage.orEmpty()
+                    .ifBlank { root.context.getString(R.string.resource_wizard_failed_summary) },
                 retry = onRetry
             )
             return
         }
         val next = ResourceInstallWizardPresenter.project(
+            context = root.context,
             state = state,
             requestedTargetResourceId = requestedTargetResourceId,
             seedResourceIds = seedResourceIds
@@ -77,7 +84,7 @@ internal class ResourceInstallWizardScreen(
     fun tick(now: Long = System.currentTimeMillis()): Boolean {
         val state = currentState ?: return false
         state.rows.forEach { row ->
-            rowBindings[row.resourceId]?.subtitle?.text = row.subtitle(now)
+            rowBindings[row.resourceId]?.subtitle?.text = row.subtitle(root.context, now)
         }
         return state.rows.any { it.run?.isLiveForWizard() == true }
     }
@@ -105,7 +112,7 @@ internal class ResourceInstallWizardScreen(
         contentHost.addView(header(title, detail, progress))
         headerBinding = HeaderBinding(title, detail, progress)
         primaryButton = actionButton().also(contentHost::addView)
-        contentHost.addView(factory.sectionTitle("执行队列").apply {
+        contentHost.addView(factory.sectionTitle(root.context.getString(R.string.resource_wizard_queue_title)).apply {
             setPadding(0, factory.dp(24), 0, factory.dp(12))
         })
         state.rows.forEach { row ->
@@ -136,7 +143,11 @@ internal class ResourceInstallWizardScreen(
         }
         val pending = pendingPlanAction
         button.apply {
-            text = if (pending == KiteInstallPlanActionIntent.StartNext) "准备中" else state.primaryLabel
+            text = if (pending == KiteInstallPlanActionIntent.StartNext) {
+                root.context.getString(R.string.resource_state_preparing)
+            } else {
+                state.primaryLabel
+            }
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -155,7 +166,7 @@ internal class ResourceInstallWizardScreen(
                 state.primaryIntent?.let { intent ->
                     pendingPlanAction = intent
                     if (intent == KiteInstallPlanActionIntent.StartNext) {
-                        text = "准备中"
+                        text = root.context.getString(R.string.resource_state_preparing)
                         isEnabled = false
                         isClickable = false
                         alpha = 0.72f
@@ -168,8 +179,13 @@ internal class ResourceInstallWizardScreen(
 
     private fun bindRow(binding: RowBinding, row: ResourceInstallWizardRowViewState, now: Long) {
         val tone = toneColor(row.projection.tone)
+        val statusLabel = localizedStatusLabel(row)
         binding.root.apply {
-            contentDescription = "${row.name}，${row.projection.statusLabel}"
+            contentDescription = root.context.getString(
+                R.string.resource_wizard_row_description,
+                row.name,
+                statusLabel
+            )
             background = factory.roundedBox(
                 factory.tokens.cardBackground,
                 if (row.isActive) factory.tokens.primarySoft else factory.tokens.border,
@@ -191,9 +207,9 @@ internal class ResourceInstallWizardScreen(
             setTextColor(tone)
             background = factory.roundedBox(colorWithAlpha(tone, 0.11f), Color.TRANSPARENT, factory.dp(12).toFloat())
         }
-        binding.subtitle.text = row.subtitle(now)
+        binding.subtitle.text = row.subtitle(root.context, now)
         binding.status.apply {
-            text = row.projection.statusLabel
+            text = statusLabel
             setTextColor(tone)
             background = factory.roundedBox(colorWithAlpha(tone, 0.11f), Color.TRANSPARENT, factory.dp(11).toFloat())
             isClickable = row.projection.failed && !row.projection.uninstalling
@@ -211,8 +227,8 @@ internal class ResourceInstallWizardScreen(
         binding.secondaryKey = key
         binding.secondaryHost.removeAllViews()
         val label = when (surface) {
-            CardRunSurface.Terminal -> "打开终端"
-            CardRunSurface.Web -> "打开网页"
+            CardRunSurface.Terminal -> root.context.getString(R.string.resource_wizard_open_terminal)
+            CardRunSurface.Web -> root.context.getString(R.string.resource_wizard_open_web)
             else -> null
         }
         if (label == null || row.run == null) {
@@ -380,6 +396,19 @@ internal class ResourceInstallWizardScreen(
         KiteResourceStepTone.Success -> factory.tokens.success
         KiteResourceStepTone.Danger -> factory.tokens.danger
         KiteResourceStepTone.Neutral -> factory.tokens.textSecondary
+    }
+
+    private fun localizedStatusLabel(row: ResourceInstallWizardRowViewState): String = when {
+        row.projection.uninstalling -> root.context.getString(R.string.resource_state_uninstalling)
+        row.projection.failed && row.operation == KiteResourceInstallStore.OP_UNINSTALL ->
+            root.context.getString(R.string.resource_state_uninstall_failed)
+        row.projection.failed -> root.context.getString(R.string.resource_state_install_failed)
+        row.projection.statusLabel == "待获取" -> root.context.getString(R.string.resource_manage_queue_waiting)
+        row.projection.statusLabel == "准备中" -> root.context.getString(R.string.resource_state_preparing)
+        row.projection.statusLabel == "获取中" -> root.context.getString(R.string.resource_state_installing)
+        row.projection.statusLabel == "已完成" -> root.context.getString(R.string.resource_manage_queue_completed)
+        row.projection.statusLabel == "已停止" -> root.context.getString(R.string.resource_manage_queue_stopped)
+        else -> row.projection.statusLabel
     }
 
     private fun colorWithAlpha(color: Int, alpha: Float): Int = Color.argb(

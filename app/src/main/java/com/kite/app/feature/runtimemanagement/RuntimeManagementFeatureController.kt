@@ -13,10 +13,11 @@ import kotlinx.coroutines.flow.asStateFlow
 /** 运行管理的纯状态控制器。页面只提交数据动作，Shell 只接收导航 Effect。 */
 internal class RuntimeManagementFeatureController(
     private val gateway: RuntimeManagementGateway,
-    private val coordinator: RuntimeManagementCoordinator
+    private val coordinator: RuntimeManagementCoordinator,
+    private val text: RuntimeManagementText = RuntimeManagementText.zhCn(),
 ) {
     private val mutableState = MutableStateFlow(
-        RuntimeManagementProjector.project(gateway.currentSnapshot())
+        RuntimeManagementProjector.project(gateway.currentSnapshot(), text = text)
     )
     val state: StateFlow<RuntimeManagementUiState> = mutableState.asStateFlow()
 
@@ -64,6 +65,12 @@ internal class RuntimeManagementFeatureController(
                     mutationKey = action.mutationKey
                 )
             )
+            is RuntimeManagementActionTarget.EndProcessTree -> submitCommand(
+                RuntimeManagementCommand.EndProcessTree(
+                    processIds = target.processIds,
+                    mutationKey = action.mutationKey,
+                )
+            )
             is RuntimeManagementActionTarget.StopBackgroundRuntime -> submitCommand(
                 RuntimeManagementCommand.StopBackgroundRuntime(target.runtimeId, action.mutationKey)
             )
@@ -96,6 +103,6 @@ internal class RuntimeManagementFeatureController(
                 message = command.message
             )
         }
-        mutableState.value = RuntimeManagementProjector.project(snapshot, mutations)
+        mutableState.value = RuntimeManagementProjector.project(snapshot, mutations, text)
     }
 }

@@ -682,32 +682,18 @@ class KiteBridgeClient(
         stopExecutor.execute {
             val runId = bindings.firstOrNull()?.runId ?: requestId
             val output = StringBuilder()
-            bindings.forEach { binding ->
-                val pid = binding.pid
-                val processGroupId = binding.processGroupId
-                if (!pid.isNullOrBlank() || !processGroupId.isNullOrBlank()) {
-                    val payload = buildStopProcessGroupPayload(pid = pid, processGroupId = processGroupId)
-                    val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
-                        context = context,
-                        workingDirectory = DEFAULT_WORKDIR,
-                        payload = payload,
-                        loginShell = true
-                    )
-                    output.append(executeProcess(config.command, config.env, DIRECT_STOP_TIMEOUT_MS).output)
-                }
-                directRuns.remove(binding.runId)
-            }
-            output.append(
-                stopOwnerProcesses(
-                    context = context,
-                    recipe = recipe,
-                    cardInstanceIds = bindings.map { it.cardInstanceId },
-                    runtimeOwnerIds = ownerIdHints + bindings.mapNotNull { it.runtimeOwnerId }
-                )
+            val ownerIds = ownerIdHints + bindings.mapNotNull { it.runtimeOwnerId }
+            val ownerOutput = stopOwnerProcesses(
+                context = context,
+                recipe = recipe,
+                cardInstanceIds = bindings.map { it.cardInstanceId },
+                runtimeOwnerIds = ownerIds,
             )
-            val stoppedOk = OwnerStopOutputEvidence.isConfirmed(output.toString())
+            val stoppedOk = OwnerStopOutputEvidence.isConfirmed(ownerOutput)
+            output.append(ownerOutput)
             if (stoppedOk) {
                 bindings.forEach { binding ->
+                    directRuns.remove(binding.runId)
                     output.append(cleanCardRunPidFile(context, binding.pidFilePath))
                 }
             }
@@ -755,37 +741,28 @@ class KiteBridgeClient(
         stopExecutor.execute {
             val runId = bindings.firstOrNull()?.runId ?: requestId
             val output = StringBuilder()
-            bindings.forEach { binding ->
-                runCatching {
-                    if (!binding.pid.isNullOrBlank() || !binding.processGroupId.isNullOrBlank()) {
-                        val payload = buildStopProcessGroupPayload(
-                            pid = binding.pid,
-                            processGroupId = binding.processGroupId
-                        )
-                        val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
-                            context = context,
-                            workingDirectory = DEFAULT_WORKDIR,
-                            payload = payload,
-                            loginShell = true
-                        )
-                        output.append(executeProcess(config.command, config.env, DIRECT_STOP_TIMEOUT_MS).output)
-                    }
-                    binding.process.destroy()
-                    if (!binding.process.waitFor(1200L, TimeUnit.MILLISECONDS)) {
-                        binding.process.destroyForcibly()
-                    }
-                }
-                directProcesses.remove(binding.runId)
-            }
-            output.append(
-                stopOwnerProcesses(
-                    context = context,
-                    recipe = recipe,
-                    cardInstanceIds = listOf(cardInstanceIdHint),
-                    runtimeOwnerIds = ownerIdHints + bindings.mapNotNull { it.runtimeOwnerId }
-                )
+            val ownerIds = ownerIdHints + bindings.mapNotNull { it.runtimeOwnerId }
+            val ownerOutput = stopOwnerProcesses(
+                context = context,
+                recipe = recipe,
+                cardInstanceIds = listOf(cardInstanceIdHint),
+                runtimeOwnerIds = ownerIds,
             )
-            val stoppedOk = OwnerStopOutputEvidence.isConfirmed(output.toString())
+            val stoppedOk = OwnerStopOutputEvidence.isConfirmed(ownerOutput)
+            if (stoppedOk) {
+                bindings.forEach { binding ->
+                    runCatching {
+                        if (binding.process.isAlive) {
+                            binding.process.destroy()
+                            if (!binding.process.waitFor(300L, TimeUnit.MILLISECONDS)) {
+                                binding.process.destroyForcibly()
+                            }
+                        }
+                    }
+                    directProcesses.remove(binding.runId)
+                }
+            }
+            output.append(ownerOutput)
             val status = if (stoppedOk) KiteRunReport.STATUS_STOPPED else KiteRunReport.STATUS_FAILED
             val report = KiteRunReport(
                 protocolVersion = KiteRecipe.PROTOCOL_VERSION,
@@ -1123,89 +1100,6 @@ class KiteBridgeClient(
             "exec bash -lc ${shellQuote(safeCommand)}"
         ).joinToString("; ")
     }
-
-    private fun buildStopProcessGroupPayload(pid: String?, processGroupId: String?): String {
-        val safePid = numericProcessId(pid)
-        val safeGroup = numericProcessId(processGroupId)
-        if (safePid == null && safeGroup == null) {
-            return "printf '__kite_stop:no-target\\n'"
-        }
-        return """
-            kf_stop_pid=${shellQuote(safePid.orEmpty())}
-            kf_stop_pgid=${shellQuote(safeGroup.orEmpty())}
-            printf '__kite_stop_mode:force-kill\n'
-            printf '__kite_stop_target_pid:%s\n' "${'$'}kf_stop_pid"
-            printf '__kite_stop_target_pgid:%s\n' "${'$'}kf_stop_pgid"
-            kf_children_of() {
-              ps -eo pid=,ppid= 2>/dev/null | awk -v p="${'$'}1" '${'$'}2 == p { print ${'$'}1 }'
-            }
-            kf_collect_tree() {
-              kf_todo="${'$'}1"
-              kf_seen=""
-              while [ -n "${'$'}kf_todo" ]; do
-                kf_next=""
-                for kf_parent in ${'$'}kf_todo; do
-                  for kf_child in ${'$'}(kf_children_of "${'$'}kf_parent"); do
-                    case " ${'$'}kf_seen " in
-                      *" ${'$'}kf_child "*) ;;
-                      *) printf '%s\n' "${'$'}kf_child"; kf_seen="${'$'}kf_seen ${'$'}kf_child"; kf_next="${'$'}kf_next ${'$'}kf_child" ;;
-                    esac
-                  done
-                done
-                kf_todo="${'$'}kf_next"
-              done
-            }
-            kf_collect_group() {
-              [ -n "${'$'}kf_stop_pgid" ] || return 0
-              ps -eo pid=,pgid= 2>/dev/null | awk -v pg="${'$'}kf_stop_pgid" '${'$'}2 == pg { print ${'$'}1 }'
-            }
-            kf_targets=${'$'}(
-              {
-                [ -n "${'$'}kf_stop_pid" ] && printf '%s\n' "${'$'}kf_stop_pid"
-                [ -n "${'$'}kf_stop_pid" ] && kf_collect_tree "${'$'}kf_stop_pid"
-                kf_collect_group
-              } | awk 'NF && ${'$'}1 ~ /^[0-9]+${'$'}/ && ${'$'}1 > 1 && !seen[${'$'}1]++ { print ${'$'}1 }'
-            )
-            kf_targets_line=${'$'}(printf '%s\n' "${'$'}kf_targets" | tr '\n' ',')
-            printf '__kite_stop_targets:%s\n' "${'$'}kf_targets_line"
-            kf_kill_group() {
-              [ -n "${'$'}kf_stop_pgid" ] || return 0
-              kill "${'$'}1" -- "-${'$'}kf_stop_pgid" >/dev/null 2>&1 && return 0
-              kill "${'$'}1" "-${'$'}kf_stop_pgid" >/dev/null 2>&1 || true
-            }
-            kf_kill_targets() {
-              for kf_target in ${'$'}kf_targets; do
-                [ "${'$'}kf_target" = "${'$'}${'$'}" ] && continue
-                [ -n "${'$'}PPID" ] && [ "${'$'}kf_target" = "${'$'}PPID" ] && continue
-                kill "${'$'}1" "${'$'}kf_target" >/dev/null 2>&1 || true
-              done
-            }
-            kf_kill_group -KILL
-            kf_kill_targets -KILL
-            sleep 0.06
-            kf_kill_group -KILL
-            kf_kill_targets -KILL
-            kf_is_live_process() {
-              [ -n "${'$'}1" ] || return 1
-              [ -d "/proc/${'$'}1" ] || return 1
-              kf_state=${'$'}(sed 's/^.*) //' "/proc/${'$'}1/stat" 2>/dev/null | awk '{ print ${'$'}1 }')
-              [ "${'$'}kf_state" = "Z" ] && return 1
-              kill -0 "${'$'}1" >/dev/null 2>&1
-            }
-            kf_remaining=${'$'}(
-              for kf_target in ${'$'}kf_targets; do
-                kf_is_live_process "${'$'}kf_target" && printf '%s\n' "${'$'}kf_target"
-              done
-            )
-            kf_remaining_line=${'$'}(printf '%s\n' "${'$'}kf_remaining" | tr '\n' ',')
-            printf '__kite_stop_remaining:%s\n' "${'$'}kf_remaining_line"
-        """.trimIndent()
-    }
-
-    private fun numericProcessId(value: String?): String? =
-        value?.trim()
-            ?.takeIf { it.matches(Regex("\\d+")) }
-            ?.takeIf { it.toLongOrNull()?.let { number -> number > 1L } == true }
 
     private fun extractRunBindingMeta(text: String): RunBindingMeta {
         val rootPid = extractTaggedNumber(text, "__kite_root_pid")

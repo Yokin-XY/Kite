@@ -6,6 +6,7 @@ import android.view.View
 import android.widget.FrameLayout
 import com.kite.app.R
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -27,6 +28,7 @@ class TerminalLayoutAccessibilityTest {
             expectedSizeDp = 48,
             expectedDescription = activity.getString(R.string.common_back),
         )
+        assertFalse(activity.getString(R.string.terminal_empty_sessions).contains("+"))
     }
 
     @Test

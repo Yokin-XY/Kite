@@ -35,7 +35,7 @@ class RecipeRawJsonScreenTest {
         var backCount = 0
         val screen = screen(activity) { backCount += 1 }
         activity.setContentView(screen.root)
-        screen.root.findByText("‹")?.performClick()
+        screen.root.findByDescription(activity.getString(com.kite.app.R.string.common_back))?.performClick()
         screen.renderError("missing")
 
         assertEquals(1, backCount)
@@ -61,6 +61,14 @@ class RecipeRawJsonScreenTest {
         if (this is TextView && text.toString() == value) return this
         if (this is ViewGroup) repeat(childCount) { index ->
             getChildAt(index).findByText(value)?.let { return it }
+        }
+        return null
+    }
+
+    private fun View.findByDescription(value: String): View? {
+        if (contentDescription?.toString() == value) return this
+        if (this is ViewGroup) repeat(childCount) { index ->
+            getChildAt(index).findByDescription(value)?.let { return it }
         }
         return null
     }

@@ -1,10 +1,10 @@
 package com.kite.app.foundation.runtime
 
 import android.content.Context
+import com.kite.app.foundation.jni.KFJni
 import com.kite.app.foundation.logging.Logger
-import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 enum class ProotOwnerTerminationOutcome {
@@ -12,7 +12,7 @@ enum class ProotOwnerTerminationOutcome {
     OWNER_NOT_FOUND,
     TELEMETRY_UNAVAILABLE,
     PROBE_UNAVAILABLE,
-    TIMEOUT,
+    STILL_RUNNING,
     FAILED
 }
 
@@ -70,8 +70,14 @@ internal object ProotOwnerTerminationEvidence {
         if (snapshot.refreshedAtMs <= 0L || now - snapshot.refreshedAtMs > MAX_REFRESH_AGE_MS) {
             return ProotTelemetryDestructiveReadiness(false, "telemetry_refresh_stale")
         }
-        if (snapshot.counters.parseErrors > 0L) {
+        val activeRegistryComplete = snapshot.activeRegistryStatus == "loaded" &&
+            snapshot.activeRegistryReconciledAtMs > 0L &&
+            snapshot.activeRegistryUnstableSessions.isEmpty()
+        if (snapshot.counters.parseErrors > 0L && !activeRegistryComplete) {
             return ProotTelemetryDestructiveReadiness(false, "telemetry_parse_errors")
+        }
+        if (activeRegistryComplete) {
+            return ProotTelemetryDestructiveReadiness(true, "active_registry_complete")
         }
         val coverageStart = snapshot.ownerEvidenceCompleteFromMs
         if (coverageStart > 0L && ownerId != null) {
@@ -102,58 +108,30 @@ internal object ProotOwnerTerminationEvidence {
         liveProcessGroupIds.isEmpty()
 }
 
+/** 执行窗口只限制升级动作；最终状态必须由目标事实决定。 */
+internal object ProotOwnerTerminationDecision {
+    fun finalOutcome(
+        remainingTraceePids: Collection<Int>,
+        remainingProcessGroupIds: Collection<Int>,
+    ): ProotOwnerTerminationOutcome = if (
+        remainingTraceePids.none { it > 1 } &&
+        remainingProcessGroupIds.none { it > 1 }
+    ) {
+        ProotOwnerTerminationOutcome.CONFIRMED
+    } else {
+        ProotOwnerTerminationOutcome.STILL_RUNNING
+    }
+}
+
 object ProotOwnerProcessTerminator {
     private const val LOG_TAG = "ProotOwnerProcessStop"
-    private const val OWNER_STOP_DEADLINE_MS = 10_000L
-    private const val OWNER_SHELL_TIMEOUT_MS = 3_000L
-    private const val OWNER_STOP_MAX_ROUNDS = 12
-    private const val TERM_GRACE_MS = 450L
-    private const val KILL_GRACE_MS = 250L
     private const val SILENCE_CONFIRM_MS = 220L
+    private const val DIRECT_OWNER_STOP_DEADLINE_MS = 3_500L
+    private const val DIRECT_OWNER_MAX_ROUNDS = 8
+    private const val DIRECT_TERM_GRACE_MS = 300L
+    private const val DIRECT_KILL_GRACE_MS = 180L
     private val RESIDUAL_REAP_DELAYS_MS = longArrayOf(250L, 1_000L, 3_000L)
     private val ownersBeingReaped = ConcurrentHashMap.newKeySet<String>()
-
-    private enum class OwnerSignal(val shellName: String) {
-        TERM("TERM"),
-        KILL("KILL")
-    }
-
-    private data class OwnerSignalTargets(
-        val traceePids: List<Int> = emptyList(),
-        val processGroupIds: List<Int> = emptyList()
-    ) {
-        fun isEmpty(): Boolean = traceePids.isEmpty() && processGroupIds.isEmpty()
-
-        operator fun plus(other: OwnerSignalTargets): OwnerSignalTargets = OwnerSignalTargets(
-            traceePids = (traceePids + other.traceePids).validProcessIds(),
-            processGroupIds = (processGroupIds + other.processGroupIds).validProcessIds()
-        )
-    }
-
-    private sealed interface OwnerDiscovery {
-        data class Ready(val targets: OwnerSignalTargets) : OwnerDiscovery
-        data class Missing(val reason: String = "owner_not_observed") : OwnerDiscovery
-        data class Unavailable(val reason: String) : OwnerDiscovery
-    }
-
-    private data class OwnerSignalResult(
-        val discoveredTargets: OwnerSignalTargets,
-        val markerObserved: Boolean,
-        val timedOut: Boolean,
-        val exitCode: Int
-    )
-
-    private data class OwnerProbeResult(
-        val liveTargets: OwnerSignalTargets,
-        val reliable: Boolean,
-        val reason: String
-    )
-
-    private data class ShellCommandResult(
-        val exitCode: Int,
-        val output: String,
-        val timedOut: Boolean
-    )
 
     fun terminateTerminalSession(
         context: Context,
@@ -206,176 +184,267 @@ object ProotOwnerProcessTerminator {
             )
         }
 
-        val appContext = context.applicationContext
-        val initial = discover(appContext, cleanOwnerId)
-        if (initial is OwnerDiscovery.Unavailable) {
-            return unavailableResult(cleanOwnerId, initial.reason)
+        return terminateDirectV2(context.applicationContext, cleanOwnerId).also { result ->
+            if (result.settled) {
+                TaskManagerStore.confirmOwnersStopped(listOf(cleanOwnerId))
+            }
         }
-        if (initial is OwnerDiscovery.Missing) {
-            return ProotOwnerTerminationResult(
-                ownerId = cleanOwnerId,
+    }
+
+    /**
+     * v2 正常路径：只使用 owner 已登记的稳定引用，逐个核验 starttime 后直接发信号。
+     * 不启动 Ubuntu Shell、不跑 `ps`、不枚举 `/proc`；新派生进程会在下一轮事件刷新中加入。
+     */
+    private fun terminateDirectV2(
+        context: Context,
+        ownerId: String,
+    ): ProotOwnerTerminationResult {
+        val firstSnapshot = ProotTelemetryStore.refreshBlocking(context)
+        val readiness = ProotOwnerTerminationEvidence.readiness(firstSnapshot, ownerId = ownerId)
+        if (!readiness.usable) return unavailableResult(ownerId, readiness.reason)
+        val firstGroup = firstSnapshot.ownerProcessIndex.groups.firstOrNull { it.ownerId == ownerId }
+            ?: return ProotOwnerTerminationResult(
+                ownerId = ownerId,
                 outcome = ProotOwnerTerminationOutcome.OWNER_NOT_FOUND,
-                reason = initial.reason
+                reason = "owner_not_observed",
             )
+        if (firstGroup.processRefs.isEmpty() || firstGroup.telemetrySessionIds.isEmpty()) {
+            return unavailableResult(ownerId, "owner_v2_registry_binding_missing")
         }
-        initial as OwnerDiscovery.Ready
-        if (initial.targets.isEmpty()) {
-            return ProotOwnerTerminationResult(
-                ownerId = cleanOwnerId,
-                outcome = ProotOwnerTerminationOutcome.TELEMETRY_UNAVAILABLE,
-                reason = "owner_has_no_signal_target"
-            )
+        if (firstGroup.processRefs.any { !it.hasStrongIdentity }) {
+            return unavailableResult(ownerId, "owner_v2_strong_identity_required")
         }
 
-        var allTargets = initial.targets
-        var latestLive = initial.targets
+        val verifier = ProotProcessVerifier()
+        val backend = ProotProcessControlBackend(
+            verifier = ProotProcessIdentityVerifier(verifier::verify),
+            signalSender = ProotProcessSignalSender { pid, signal ->
+                runCatching { KFJni.sendSignal(pid, signal) }.getOrDefault(false)
+            },
+        )
+        val allTargets = linkedMapOf<String, ProotProcessControlTarget>()
+        val telemetrySessionIds = firstGroup.telemetrySessionIds.toMutableSet()
+        firstGroup.toControlTargets(firstSnapshot).forEach { target ->
+            allTargets[target.ref.lifecycleId] = target
+        }
         var sentTerminate = false
         var sentKill = false
-        var healthySilentRounds = 0
-        val deadline = System.currentTimeMillis() + OWNER_STOP_DEADLINE_MS
+        var silentRounds = 0
+        val deadline = System.currentTimeMillis() + DIRECT_OWNER_STOP_DEADLINE_MS
 
-        Logger.i(
-            LOG_TAG,
-            "stop owner=$cleanOwnerId tracees=${allTargets.traceePids.joinToString(",")} " +
-                "pgids=${allTargets.processGroupIds.joinToString(",")} deadlineMs=$OWNER_STOP_DEADLINE_MS"
-        )
-
-        for (round in 0 until OWNER_STOP_MAX_ROUNDS) {
-            if (System.currentTimeMillis() >= deadline) break
-
-            when (val discovery = discover(appContext, cleanOwnerId)) {
-                is OwnerDiscovery.Unavailable -> {
-                    return unavailableResult(
-                        ownerId = cleanOwnerId,
-                        reason = discovery.reason,
-                        targets = allTargets,
-                        remaining = latestLive,
-                        sentTerminate = sentTerminate,
-                        sentKill = sentKill
-                    )
-                }
-                is OwnerDiscovery.Ready -> {
-                    val before = allTargets
-                    allTargets += discovery.targets
-                    if (allTargets != before) healthySilentRounds = 0
-                }
-                is OwnerDiscovery.Missing -> Unit
-            }
-
-            val probe = probeUbuntuLiveTargets(appContext, allTargets)
-            if (!probe.reliable) {
+        Logger.i(LOG_TAG, "direct owner stop owner=$ownerId mode=identity_v2")
+        repeat(DIRECT_OWNER_MAX_ROUNDS) {
+            if (System.currentTimeMillis() >= deadline) return@repeat
+            val snapshot = ProotTelemetryStore.refreshBlocking(context)
+            val currentGroup = snapshot.ownerProcessIndex.groups.firstOrNull { it.ownerId == ownerId }
+            currentGroup?.telemetrySessionIds?.let(telemetrySessionIds::addAll)
+            val telemetryTargets = currentGroup?.toControlTargets(snapshot).orEmpty()
+            if (telemetryTargets.any { !it.ref.hasStrongIdentity }) {
                 return ProotOwnerTerminationResult(
-                    ownerId = cleanOwnerId,
-                    outcome = ProotOwnerTerminationOutcome.PROBE_UNAVAILABLE,
-                    targetTraceePids = allTargets.traceePids,
-                    targetProcessGroupIds = allTargets.processGroupIds,
-                    remainingTraceePids = latestLive.traceePids,
-                    remainingProcessGroupIds = latestLive.processGroupIds,
+                    ownerId = ownerId,
+                    outcome = ProotOwnerTerminationOutcome.TELEMETRY_UNAVAILABLE,
+                    targetTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+                    targetProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
+                    remainingTraceePids = telemetryTargets.map { it.ref.hostPid }.validProcessIds(),
+                    remainingProcessGroupIds = telemetryTargets.mapNotNull { it.processGroupId }.validProcessIds(),
                     sentTerminate = sentTerminate,
                     sentKill = sentKill,
-                    reason = probe.reason
+                    reason = "owner_v2_identity_became_incomplete",
                 )
             }
-            latestLive = probe.liveTargets
+            telemetryTargets.forEach { target -> allTargets[target.ref.lifecycleId] = target }
 
-            val verificationDiscovery = discover(appContext, cleanOwnerId)
-            if (verificationDiscovery is OwnerDiscovery.Unavailable) {
-                return unavailableResult(
-                    cleanOwnerId,
-                    verificationDiscovery.reason,
-                    allTargets,
-                    latestLive,
-                    sentTerminate,
-                    sentKill
+            val registry = ProotActiveRegistryReader(File(snapshot.activeRegistryRootPath))
+                .readSessions(telemetrySessionIds)
+            if (!registry.complete) {
+                return ProotOwnerTerminationResult(
+                    ownerId = ownerId,
+                    outcome = ProotOwnerTerminationOutcome.TELEMETRY_UNAVAILABLE,
+                    targetTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+                    targetProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
+                    remainingTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+                    remainingProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
+                    sentTerminate = sentTerminate,
+                    sentKill = sentKill,
+                    reason = "owner_target_registry_${registry.status.name.lowercase()}",
                 )
             }
-            val newlyDiscovered = if (verificationDiscovery is OwnerDiscovery.Ready) {
-                val before = allTargets
-                allTargets += verificationDiscovery.targets
-                allTargets != before
-            } else {
-                false
+            val registryTargets = registry.sessions
+                .flatMap(ProotActiveRegistrySession::entries)
+                .filter { it.kfRuntimeId == ownerId }
+                .map { it.toControlTarget() }
+            if (registryTargets.any { !it.ref.hasStrongIdentity }) {
+                return unavailableResult(ownerId, "owner_target_registry_identity_incomplete")
             }
-            if (newlyDiscovered) {
-                healthySilentRounds = 0
-                continue
+            registryTargets.forEach { target -> allTargets[target.ref.lifecycleId] = target }
+
+            val verifications = ProotTelemetryStore.verifyProcessRefs(
+                context,
+                allTargets.values.map { it.ref },
+                refreshFirst = false,
+            )
+            val verificationById = verifications.associateBy { it.ref.lifecycleId }
+            val unreadable = allTargets.values.filter { target ->
+                verificationById[target.ref.lifecycleId]?.status == ProotProcessVerificationStatus.UNREADABLE
             }
-            if (latestLive.isEmpty()) {
-                healthySilentRounds += 1
-                if (
-                    ProotOwnerTerminationEvidence.canConfirm(
-                        ownerWasObserved = true,
-                        healthySilentRounds = healthySilentRounds,
-                        probeReliable = true,
-                        liveTraceePids = latestLive.traceePids,
-                        liveProcessGroupIds = latestLive.processGroupIds
-                    )
-                ) {
-                    return confirmAndRetire(
-                        context = appContext,
-                        ownerId = cleanOwnerId,
-                        allTargets = allTargets,
+            if (unreadable.isNotEmpty()) {
+                return ProotOwnerTerminationResult(
+                    ownerId = ownerId,
+                    outcome = ProotOwnerTerminationOutcome.PROBE_UNAVAILABLE,
+                    targetTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+                    targetProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
+                    remainingTraceePids = unreadable.map { it.ref.hostPid }.validProcessIds(),
+                    remainingProcessGroupIds = unreadable.mapNotNull { it.processGroupId }.validProcessIds(),
+                    sentTerminate = sentTerminate,
+                    sentKill = sentKill,
+                    reason = "owner_targeted_proc_unreadable",
+                )
+            }
+            val remaining = allTargets.values.filter { target ->
+                verificationById[target.ref.lifecycleId]?.status == ProotProcessVerificationStatus.MATCHED_ACTIVE
+            }
+
+            if (remaining.isEmpty() && registryTargets.isEmpty()) {
+                silentRounds += 1
+                if (silentRounds >= 2) {
+                    return ProotOwnerTerminationResult(
+                        ownerId = ownerId,
+                        outcome = ProotOwnerTerminationOutcome.CONFIRMED,
+                        targetTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+                        targetProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
                         sentTerminate = sentTerminate,
-                        sentKill = sentKill
+                        sentKill = sentKill,
+                        reason = "owner_stably_silent_after_identity_probe",
                     )
                 }
                 Thread.sleep(SILENCE_CONFIRM_MS)
-                continue
+                return@repeat
             }
-            healthySilentRounds = 0
+            silentRounds = 0
 
-            val signal = if (!sentTerminate) OwnerSignal.TERM else OwnerSignal.KILL
-            val signalTargets = allTargets + latestLive
-            val signalResult = signalUbuntuTargets(appContext, signalTargets, signal)
-            allTargets += signalResult.discoveredTargets
-            if (signal == OwnerSignal.TERM) sentTerminate = signalResult.markerObserved
-            if (signal == OwnerSignal.KILL) sentKill = sentKill || signalResult.markerObserved
-            if (signalResult.timedOut) {
-                return ProotOwnerTerminationResult(
-                    ownerId = cleanOwnerId,
-                    outcome = ProotOwnerTerminationOutcome.TIMEOUT,
-                    targetTraceePids = allTargets.traceePids,
-                    targetProcessGroupIds = allTargets.processGroupIds,
-                    remainingTraceePids = latestLive.traceePids,
-                    remainingProcessGroupIds = latestLive.processGroupIds,
-                    sentTerminate = sentTerminate,
-                    sentKill = sentKill,
-                    reason = "owner_signal_${signal.shellName.lowercase()}_timeout"
-                )
+            val signal = if (!sentTerminate) ProotControlSignal.TERM else ProotControlSignal.KILL
+            val signalResult = backend.signal(remaining, signal)
+            ProotTelemetryStore.applyProcessVerifications(
+                context,
+                signalResult.attempts.map(ProotSignalAttempt::verification),
+            )
+            if (signal == ProotControlSignal.TERM) {
+                sentTerminate = signalResult.sentHostPids.isNotEmpty()
+            } else {
+                sentKill = sentKill || signalResult.sentHostPids.isNotEmpty()
             }
-            if (!signalResult.markerObserved || signalResult.exitCode != 0) {
-                return ProotOwnerTerminationResult(
-                    ownerId = cleanOwnerId,
-                    outcome = ProotOwnerTerminationOutcome.FAILED,
-                    targetTraceePids = allTargets.traceePids,
-                    targetProcessGroupIds = allTargets.processGroupIds,
-                    remainingTraceePids = latestLive.traceePids,
-                    remainingProcessGroupIds = latestLive.processGroupIds,
-                    sentTerminate = sentTerminate,
-                    sentKill = sentKill,
-                    reason = "owner_signal_${signal.shellName.lowercase()}_failed_${signalResult.exitCode}"
-                )
-            }
-            Thread.sleep(if (round == 0) TERM_GRACE_MS else KILL_GRACE_MS)
+            Thread.sleep(if (signal == ProotControlSignal.TERM) DIRECT_TERM_GRACE_MS else DIRECT_KILL_GRACE_MS)
         }
 
-        val finalProbe = probeUbuntuLiveTargets(appContext, allTargets)
+        val finalSnapshot = ProotTelemetryStore.refreshBlocking(context)
+        val finalGroup = finalSnapshot.ownerProcessIndex.groups.firstOrNull { it.ownerId == ownerId }
+        finalGroup?.telemetrySessionIds?.let(telemetrySessionIds::addAll)
+        val finalTelemetryTargets = finalGroup?.toControlTargets(finalSnapshot).orEmpty()
+        if (finalTelemetryTargets.any { !it.ref.hasStrongIdentity }) {
+            return unavailableResult(ownerId, "owner_v2_identity_became_incomplete_at_deadline")
+        }
+        finalTelemetryTargets.forEach { target -> allTargets[target.ref.lifecycleId] = target }
+        val finalRegistry = ProotActiveRegistryReader(File(finalSnapshot.activeRegistryRootPath))
+            .readSessions(telemetrySessionIds)
+        if (!finalRegistry.complete) {
+            return ProotOwnerTerminationResult(
+                ownerId = ownerId,
+                outcome = ProotOwnerTerminationOutcome.TELEMETRY_UNAVAILABLE,
+                targetTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+                targetProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
+                remainingTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+                remainingProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
+                sentTerminate = sentTerminate,
+                sentKill = sentKill,
+                reason = "owner_target_registry_${finalRegistry.status.name.lowercase()}_at_deadline",
+            )
+        }
+        val finalRegistryTargets = finalRegistry.sessions
+            .flatMap(ProotActiveRegistrySession::entries)
+            .filter { it.kfRuntimeId == ownerId }
+            .map { it.toControlTarget() }
+        if (finalRegistryTargets.any { !it.ref.hasStrongIdentity }) {
+            return unavailableResult(ownerId, "owner_target_registry_identity_incomplete_at_deadline")
+        }
+        finalRegistryTargets.forEach { target -> allTargets[target.ref.lifecycleId] = target }
+        val finalVerifications = ProotTelemetryStore.verifyProcessRefs(
+            context,
+            allTargets.values.map { it.ref },
+            refreshFirst = false,
+        )
+        val unreadable = finalVerifications.filter {
+            it.status == ProotProcessVerificationStatus.UNREADABLE
+        }
+        if (unreadable.isNotEmpty()) {
+            return ProotOwnerTerminationResult(
+                ownerId = ownerId,
+                outcome = ProotOwnerTerminationOutcome.PROBE_UNAVAILABLE,
+                targetTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+                targetProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
+                remainingTraceePids = unreadable.map { it.ref.hostPid }.validProcessIds(),
+                remainingProcessGroupIds = unreadable.mapNotNull { result ->
+                    allTargets[result.ref.lifecycleId]?.processGroupId
+                }.validProcessIds(),
+                sentTerminate = sentTerminate,
+                sentKill = sentKill,
+                reason = "owner_targeted_proc_unreadable_at_deadline",
+            )
+        }
+        val finalVerificationById = finalVerifications.associateBy { it.ref.lifecycleId }
+        val remaining = allTargets.values.filter { target ->
+            finalVerificationById[target.ref.lifecycleId]?.status == ProotProcessVerificationStatus.MATCHED_ACTIVE
+        }
+        val remainingTraceePids = remaining.map { it.ref.hostPid }.validProcessIds()
+        val remainingProcessGroupIds = remaining.mapNotNull { it.processGroupId }.validProcessIds()
+        val finalOutcome = ProotOwnerTerminationDecision.finalOutcome(
+            remainingTraceePids = remainingTraceePids,
+            remainingProcessGroupIds = remainingProcessGroupIds,
+        )
+        if (finalOutcome == ProotOwnerTerminationOutcome.CONFIRMED) {
+            return ProotOwnerTerminationResult(
+                ownerId = ownerId,
+                outcome = ProotOwnerTerminationOutcome.CONFIRMED,
+                targetTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+                targetProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
+                sentTerminate = sentTerminate,
+                sentKill = sentKill,
+                reason = "owner_absent_at_final_identity_probe",
+            )
+        }
         return ProotOwnerTerminationResult(
-            ownerId = cleanOwnerId,
-            outcome = if (finalProbe.reliable) {
-                ProotOwnerTerminationOutcome.TIMEOUT
-            } else {
-                ProotOwnerTerminationOutcome.PROBE_UNAVAILABLE
-            },
-            targetTraceePids = allTargets.traceePids,
-            targetProcessGroupIds = allTargets.processGroupIds,
-            remainingTraceePids = finalProbe.liveTargets.traceePids,
-            remainingProcessGroupIds = finalProbe.liveTargets.processGroupIds,
+            ownerId = ownerId,
+            outcome = finalOutcome,
+            targetTraceePids = allTargets.values.map { it.ref.hostPid }.validProcessIds(),
+            targetProcessGroupIds = allTargets.values.mapNotNull { it.processGroupId }.validProcessIds(),
+            remainingTraceePids = remainingTraceePids,
+            remainingProcessGroupIds = remainingProcessGroupIds,
             sentTerminate = sentTerminate,
             sentKill = sentKill,
-            reason = if (finalProbe.reliable) "owner_stop_deadline_reached" else finalProbe.reason
+            reason = "owner_still_running_after_escalation",
         )
     }
+
+    private fun ProotOwnerProcessGroup.toControlTargets(
+        snapshot: ProotTelemetrySnapshot,
+    ): List<ProotProcessControlTarget> {
+        val entriesByLifecycle = snapshot.processLiveTable.entries
+            .associateBy(ProotLiveProcessEntry::lifecycleId)
+        return processRefs.map { ref ->
+            val entry = entriesByLifecycle[ref.lifecycleId]
+            ProotProcessControlTarget(
+                ref = ref,
+                parentHostPid = entry?.parentTraceePid,
+                processGroupId = entry?.processGroupId,
+            )
+        }
+    }
+
+    private fun ProotActiveTraceeEntry.toControlTarget(): ProotProcessControlTarget =
+        ProotProcessControlTarget(
+            ref = processRef(),
+            parentHostPid = parentTraceePid,
+            processGroupId = processGroupId,
+        )
 
     /** 旧代 owner 的补偿回收与前台实例状态解耦，并按 owner 去重。 */
     fun scheduleResidualReap(context: Context, ownerIds: Collection<String>) {
@@ -410,233 +479,14 @@ object ProotOwnerProcessTerminator {
             }
     }
 
-    private fun discover(context: Context, ownerId: String): OwnerDiscovery {
-        val snapshot = ProotTelemetryStore.refreshBlocking(context)
-        val readiness = ProotOwnerTerminationEvidence.readiness(snapshot, ownerId = ownerId)
-        if (!readiness.usable) return OwnerDiscovery.Unavailable(readiness.reason)
-        val group = snapshot.ownerProcessIndex.groups.firstOrNull { it.ownerId == ownerId }
-            ?: return OwnerDiscovery.Missing()
-        return OwnerDiscovery.Ready(
-            OwnerSignalTargets(
-                traceePids = group.traceePids.validProcessIds(),
-                processGroupIds = group.processGroupIds.validProcessIds()
-            )
-        )
-    }
-
-    private fun signalUbuntuTargets(
-        context: Context,
-        targets: OwnerSignalTargets,
-        signal: OwnerSignal
-    ): OwnerSignalResult {
-        val result = executeUbuntuShell(context, buildUbuntuSignalPayload(targets, signal))
-        return OwnerSignalResult(
-            discoveredTargets = OwnerSignalTargets(
-                traceePids = parseTaggedPidList(result.output, "__kite_owner_signal_targets:"),
-                processGroupIds = parseTaggedPidList(result.output, "__kite_owner_signal_pgids:")
-            ),
-            markerObserved = result.output.contains("__kite_owner_signal_sent:${signal.shellName}"),
-            timedOut = result.timedOut,
-            exitCode = result.exitCode
-        )
-    }
-
-    private fun probeUbuntuLiveTargets(context: Context, targets: OwnerSignalTargets): OwnerProbeResult {
-        if (targets.isEmpty()) return OwnerProbeResult(OwnerSignalTargets(), true, "no_targets")
-        val result = executeUbuntuShell(context, buildUbuntuLiveProbePayload(targets))
-        val markerObserved = result.output.contains("__kite_probe_complete:true")
-        return OwnerProbeResult(
-            liveTargets = OwnerSignalTargets(
-                traceePids = parseTaggedPidList(result.output, "__kite_probe_remaining:"),
-                processGroupIds = parseTaggedPidList(result.output, "__kite_probe_remaining_pgid:")
-            ),
-            reliable = markerObserved && !result.timedOut && result.exitCode == 0,
-            reason = when {
-                result.timedOut -> "owner_probe_timeout"
-                !markerObserved -> "owner_probe_marker_missing"
-                result.exitCode != 0 -> "owner_probe_exit_${result.exitCode}"
-                else -> "owner_probe_complete"
-            }
-        )
-    }
-
-    private fun confirmAndRetire(
-        context: Context,
-        ownerId: String,
-        allTargets: OwnerSignalTargets,
-        sentTerminate: Boolean,
-        sentKill: Boolean
-    ): ProotOwnerTerminationResult {
-        val retired = ProotTelemetryStore.retireOwnerTracees(
-            context = context,
-            ownerId = ownerId,
-            reason = "owner_direct_probe_confirmed_exit"
-        )
-        Logger.i(LOG_TAG, "retire owner after direct Ubuntu /proc proof: ${retired.summary()}")
-        val after = discover(context, ownerId)
-        if (after is OwnerDiscovery.Unavailable) {
-            return unavailableResult(ownerId, after.reason, allTargets, OwnerSignalTargets(), sentTerminate, sentKill)
-        }
-        if (after is OwnerDiscovery.Ready && !after.targets.isEmpty()) {
-            return ProotOwnerTerminationResult(
-                ownerId = ownerId,
-                outcome = ProotOwnerTerminationOutcome.FAILED,
-                targetTraceePids = allTargets.traceePids,
-                targetProcessGroupIds = allTargets.processGroupIds,
-                remainingTraceePids = after.targets.traceePids,
-                remainingProcessGroupIds = after.targets.processGroupIds,
-                sentTerminate = sentTerminate,
-                sentKill = sentKill,
-                reason = "owner_reappeared_after_retire"
-            )
-        }
-        return ProotOwnerTerminationResult(
-            ownerId = ownerId,
-            outcome = ProotOwnerTerminationOutcome.CONFIRMED,
-            targetTraceePids = allTargets.traceePids,
-            targetProcessGroupIds = allTargets.processGroupIds,
-            sentTerminate = sentTerminate,
-            sentKill = sentKill,
-            reason = "owner_stably_silent_after_direct_probe"
-        )
-    }
-
     private fun unavailableResult(
         ownerId: String,
         reason: String,
-        targets: OwnerSignalTargets = OwnerSignalTargets(),
-        remaining: OwnerSignalTargets = OwnerSignalTargets(),
-        sentTerminate: Boolean = false,
-        sentKill: Boolean = false
     ): ProotOwnerTerminationResult = ProotOwnerTerminationResult(
         ownerId = ownerId,
         outcome = ProotOwnerTerminationOutcome.TELEMETRY_UNAVAILABLE,
-        targetTraceePids = targets.traceePids,
-        targetProcessGroupIds = targets.processGroupIds,
-        remainingTraceePids = remaining.traceePids,
-        remainingProcessGroupIds = remaining.processGroupIds,
-        sentTerminate = sentTerminate,
-        sentKill = sentKill,
         reason = reason
     )
-
-    private fun executeUbuntuShell(context: Context, payload: String): ShellCommandResult {
-        val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
-            context = context,
-            workingDirectory = "/root",
-            payload = payload,
-            loginShell = true
-        )
-        return runCatching {
-            val process = ProcessBuilder(config.command)
-                .redirectErrorStream(true)
-                .apply { environment().putAll(config.env) }
-                .start()
-            val finished = process.waitFor(OWNER_SHELL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            if (!finished) process.destroyForcibly()
-            val output = process.inputStream.bufferedReader().use { it.readText() }
-            ShellCommandResult(
-                exitCode = if (finished) process.exitValue() else -1,
-                output = output,
-                timedOut = !finished
-            )
-        }.getOrElse { error ->
-            Logger.i(LOG_TAG, "Ubuntu owner shell failed: ${error.message}")
-            ShellCommandResult(exitCode = -1, output = error.message.orEmpty(), timedOut = false)
-        }
-    }
-
-    private fun buildUbuntuSignalPayload(targets: OwnerSignalTargets, signal: OwnerSignal): String {
-        val pids = targets.traceePids.joinToString(" ")
-        val pgids = targets.processGroupIds.joinToString(" ")
-        return """
-            kf_owner_pids='$pids'
-            kf_owner_pgids='$pgids'
-            kf_signal='${signal.shellName}'
-            kf_signal_targets=""
-            kf_signal_pgids=""
-            kf_self_pgid=${'$'}(ps -o pgid= -p "${'$'}${'$'}" 2>/dev/null | tr -d ' ')
-            kf_add_pid() {
-              case "${'$'}1" in ''|*[!0-9]*|0|1) return 0 ;; esac
-              case " ${'$'}kf_signal_targets " in *" ${'$'}1 "*) ;; *) kf_signal_targets="${'$'}kf_signal_targets ${'$'}1" ;; esac
-            }
-            kf_add_pgid() {
-              case "${'$'}1" in ''|*[!0-9]*|0|1) return 0 ;; esac
-              [ "${'$'}1" = "${'$'}kf_self_pgid" ] && return 0
-              case " ${'$'}kf_signal_pgids " in *" ${'$'}1 "*) ;; *) kf_signal_pgids="${'$'}kf_signal_pgids ${'$'}1" ;; esac
-            }
-            kf_children_of() {
-              ps -eo pid=,ppid= 2>/dev/null | awk -v p="${'$'}1" '${'$'}2 == p { print ${'$'}1 }'
-            }
-            kf_collect_tree() {
-              kf_todo="${'$'}1"
-              kf_seen=""
-              while [ -n "${'$'}kf_todo" ]; do
-                kf_next=""
-                for kf_parent in ${'$'}kf_todo; do
-                  kf_add_pid "${'$'}kf_parent"
-                  for kf_child in ${'$'}(kf_children_of "${'$'}kf_parent"); do
-                    case " ${'$'}kf_seen " in
-                      *" ${'$'}kf_child "*) ;;
-                      *) kf_seen="${'$'}kf_seen ${'$'}kf_child"; kf_next="${'$'}kf_next ${'$'}kf_child" ;;
-                    esac
-                  done
-                done
-                kf_todo="${'$'}kf_next"
-              done
-            }
-            for kf_pid in ${'$'}kf_owner_pids; do kf_collect_tree "${'$'}kf_pid"; done
-            for kf_pgid in ${'$'}kf_owner_pgids; do kf_add_pgid "${'$'}kf_pgid"; done
-            for kf_pgid in ${'$'}kf_signal_pgids; do kill -"${'$'}kf_signal" -- "-${'$'}kf_pgid" >/dev/null 2>&1 || true; done
-            for kf_pid in ${'$'}kf_signal_targets; do
-              [ "${'$'}kf_pid" = "${'$'}${'$'}" ] && continue
-              [ -n "${'$'}PPID" ] && [ "${'$'}kf_pid" = "${'$'}PPID" ] && continue
-              kill -"${'$'}kf_signal" "${'$'}kf_pid" >/dev/null 2>&1 || true
-            done
-            printf '__kite_owner_signal_targets:%s\n' "${'$'}(printf '%s\n' ${'$'}kf_signal_targets | tr ' ' ',' | sed 's/^,*//;s/,*${'$'}//')"
-            printf '__kite_owner_signal_pgids:%s\n' "${'$'}(printf '%s\n' ${'$'}kf_signal_pgids | tr ' ' ',' | sed 's/^,*//;s/,*${'$'}//')"
-            printf '__kite_owner_signal_sent:%s\n' "${'$'}kf_signal"
-        """.trimIndent()
-    }
-
-    private fun buildUbuntuLiveProbePayload(targets: OwnerSignalTargets): String {
-        val pids = targets.traceePids.joinToString(" ")
-        val pgids = targets.processGroupIds.joinToString(" ")
-        return """
-            kf_owner_pids='$pids'
-            kf_owner_pgids='$pgids'
-            kf_is_live_process() {
-              [ -n "${'$'}1" ] || return 1
-              [ -d "/proc/${'$'}1" ] || return 1
-              kf_state=${'$'}(sed 's/^.*) //' "/proc/${'$'}1/stat" 2>/dev/null | awk '{ print ${'$'}1 }')
-              [ "${'$'}kf_state" = "Z" ] && return 1
-              kill -0 "${'$'}1" >/dev/null 2>&1
-            }
-            kf_remaining=${'$'}(
-              for kf_pid in ${'$'}kf_owner_pids; do
-                kf_is_live_process "${'$'}kf_pid" && printf '%s\n' "${'$'}kf_pid"
-              done
-            )
-            kf_remaining_pgids=${'$'}(
-              for kf_pgid in ${'$'}kf_owner_pgids; do
-                kill -0 -- "-${'$'}kf_pgid" >/dev/null 2>&1 && printf '%s\n' "${'$'}kf_pgid"
-              done
-            )
-            printf '__kite_probe_remaining:%s\n' "${'$'}(printf '%s\n' "${'$'}kf_remaining" | tr '\n' ',')"
-            printf '__kite_probe_remaining_pgid:%s\n' "${'$'}(printf '%s\n' "${'$'}kf_remaining_pgids" | tr '\n' ',')"
-            printf '__kite_probe_complete:true\n'
-        """.trimIndent()
-    }
-
-    private fun parseTaggedPidList(output: String, prefix: String): List<Int> = output
-        .lineSequence()
-        .filter { it.startsWith(prefix) }
-        .lastOrNull()
-        ?.substringAfter(':')
-        ?.split(',')
-        .orEmpty()
-        .mapNotNull { it.trim().toIntOrNull()?.takeIf { pid -> pid > 1 } }
-        .validProcessIds()
 
     private fun Collection<Int>.validProcessIds(): List<Int> =
         filter { it > 1 }.distinct().sorted()

@@ -17,6 +17,7 @@ object CardRunStore {
     private val registeredRecipes = linkedMapOf<String, KiteRecipe>()
     private val runsByInstance = linkedMapOf<String, CardRunState>()
     private val historiesByRecipe = linkedMapOf<String, MutableList<CardRunHistoryEntry>>()
+    private val recentlyConfirmedRuntimeOwners = linkedMapOf<String, Long>()
     private val persistExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "KiteCardRunStorePersist").apply { isDaemon = true }
     }
@@ -38,6 +39,7 @@ object CardRunStore {
         runsByInstance.clear()
         normalized.forEach { runsByInstance[it.instanceId] = it }
         historiesByRecipe.clear()
+        recentlyConfirmedRuntimeOwners.clear()
         loadPersistedHistory().forEach { entry ->
             historiesByRecipe.getOrPut(entry.recipeId) { mutableListOf() }.add(entry)
         }
@@ -64,6 +66,7 @@ object CardRunStore {
         registeredRecipes.clear()
         runsByInstance.clear()
         historiesByRecipe.clear()
+        recentlyConfirmedRuntimeOwners.clear()
         _runs.value = emptyList()
         prefs = null
         initialized = false
@@ -227,7 +230,10 @@ object CardRunStore {
         } else {
             recordHistoryUpdate(recipe, next, now)
         }
-        return next
+        if (next.status == CardRunStatus.CleanupPending) {
+            reconcileCleanupPendingOwners(recentConfirmedOwnerIds(now))
+        }
+        return get(next.instanceId) ?: next
     }
 
     @Synchronized
@@ -278,6 +284,84 @@ object CardRunStore {
 
     @Synchronized
     fun snapshot(): List<CardRunState> = _runs.value
+
+    /**
+     * 终止层已核验 owner 退出时，只收敛对应的“停止待确认”实例。
+     * owner id 携带运行代次，因此旧代确认不会误停新代实例。
+     */
+    @Synchronized
+    fun confirmRuntimeOwnersStopped(ownerIds: Collection<String>): Set<String> {
+        val confirmedOwners = ownerIds.map(String::trim).filter(String::isNotBlank).toSet()
+        if (confirmedOwners.isEmpty()) return emptySet()
+
+        val now = System.currentTimeMillis()
+        pruneRecentOwnerConfirmations(now)
+        confirmedOwners.forEach { ownerId ->
+            recentlyConfirmedRuntimeOwners[ownerId] = now + OWNER_CONFIRMATION_RETENTION_MS
+        }
+        return reconcileCleanupPendingOwners(recentConfirmedOwnerIds(now))
+    }
+
+    private fun reconcileCleanupPendingOwners(confirmedOwners: Set<String>): Set<String> {
+        if (confirmedOwners.isEmpty()) return emptySet()
+
+        val settledInstances = linkedSetOf<String>()
+        runsByInstance.values.toList().forEach { run ->
+            if (run.status != CardRunStatus.CleanupPending) return@forEach
+            val knownOwners = (
+                run.ownedRuntimeOwnerIds + listOfNotNull(run.runtimeRootOwnerId, run.runtimeOwnerId)
+            ).map(String::trim).filter(String::isNotBlank).toSet()
+            if (knownOwners.none(confirmedOwners::contains)) return@forEach
+
+            val remainingOwners = knownOwners - confirmedOwners
+            val now = System.currentTimeMillis()
+            val next = if (remainingOwners.isEmpty()) {
+                settledInstances += run.instanceId
+                run.copy(
+                    status = CardRunStatus.Stopped,
+                    surface = CardRunSurface.Summary,
+                    runtimeRootOwnerId = null,
+                    runtimeOwnerId = null,
+                    runtimeUnitId = null,
+                    ownedRuntimeOwnerIds = emptyList(),
+                    runId = null,
+                    terminalSessionId = null,
+                    pid = null,
+                    rootPid = null,
+                    processGroupId = null,
+                    systemSessionId = null,
+                    lastMeaningfulOutput = "已关闭",
+                    lastError = null,
+                    nextActionUrl = null,
+                    x11Display = null,
+                    x11SocketPath = null,
+                    updatedAt = now,
+                )
+            } else {
+                run.copy(
+                    runtimeRootOwnerId = run.runtimeRootOwnerId?.takeUnless(confirmedOwners::contains),
+                    runtimeOwnerId = run.runtimeOwnerId?.takeUnless(confirmedOwners::contains),
+                    ownedRuntimeOwnerIds = run.ownedRuntimeOwnerIds.filterNot(confirmedOwners::contains),
+                    updatedAt = now,
+                )
+            }
+            upsert(next)
+            registeredRecipes[next.recipeId]?.let { recipe -> recordHistoryUpdate(recipe, next, now) }
+        }
+        return settledInstances
+    }
+
+    private fun recentConfirmedOwnerIds(now: Long): Set<String> {
+        pruneRecentOwnerConfirmations(now)
+        return recentlyConfirmedRuntimeOwners.keys.toSet()
+    }
+
+    private fun pruneRecentOwnerConfirmations(now: Long) {
+        recentlyConfirmedRuntimeOwners.entries.removeAll { (_, expiresAt) -> expiresAt <= now }
+        while (recentlyConfirmedRuntimeOwners.size > MAX_RECENT_OWNER_CONFIRMATIONS) {
+            recentlyConfirmedRuntimeOwners.entries.firstOrNull()?.key?.let(recentlyConfirmedRuntimeOwners::remove)
+        }
+    }
 
     @Synchronized
     fun childrenOf(parentInstanceId: String): List<CardRunState> =
@@ -500,6 +584,7 @@ object CardRunStore {
 
     private fun CardRunState.shouldDropCurrentAfterProcessRestore(): Boolean =
         status.endsHistoryEntry() ||
+            status == CardRunStatus.CleanupPending ||
             status.shouldResetAfterProcessRestore() ||
             hasRunBinding() ||
             !parentInstanceId.isNullOrBlank() ||
@@ -804,11 +889,14 @@ object CardRunStore {
             status == CardRunStatus.Opened ||
             status == CardRunStatus.Completed ||
             status == CardRunStatus.Failed ||
+            status == CardRunStatus.CleanupPending ||
             status == CardRunStatus.BridgeUnavailable
     }
 
     private fun CardRunHistoryEntry.normalizedHistoryAfterProcessRestore(): CardRunHistoryEntry =
-        if (!status.shouldResetAfterProcessRestore() || endedAt != null) {
+        if (status == CardRunStatus.CleanupPending && endedAt == null) {
+            copy(endedAt = updatedAt)
+        } else if (!status.shouldResetAfterProcessRestore() || endedAt != null) {
             this
         } else {
             copy(
@@ -990,6 +1078,8 @@ object CardRunStore {
     private const val MAX_HISTORY_SUMMARY_CHARS = 500
     private const val MAX_HISTORY_REPORT_CHARS = 4000
     private const val PROCESS_RESTORE_ABORTED_MESSAGE = "Kite 重新启动，上次运行未确认正常结束"
+    private const val OWNER_CONFIRMATION_RETENTION_MS = 60_000L
+    private const val MAX_RECENT_OWNER_CONFIRMATIONS = 512
     private const val PERSIST_DEBOUNCE_MS = 300L
     private val WINDOW_OWNER_KINDS = setOf(
         CardRunState.OWNER_KIND_TERMINAL,

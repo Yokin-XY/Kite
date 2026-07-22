@@ -156,6 +156,46 @@ class CardRunStoreStateTransitionTest {
     }
 
     @Test
+    fun `owner 逐个确认退出后待确认实例才收敛为已停止`() {
+        val recipe = TestRecipes.serviceRecipe(id = "owner-confirm")
+        CardRunStore.start(recipe)
+        CardRunStore.update(
+            recipe = recipe,
+            status = CardRunStatus.Running,
+            runtimeRootOwnerId = "card:owner-confirm@10",
+            runtimeOwnerId = "card:owner-confirm@10/step/0-start/attempt/1",
+            ownedRuntimeOwnerIds = listOf(
+                "card:owner-confirm@10",
+                "card:owner-confirm@10/step/0-start/attempt/1",
+            ),
+            runId = "run-1",
+            pid = "52",
+            lastError = "停止待确认",
+        )
+
+        // 终止层可能在 RunOrchestrator 写入 CleanupPending 之前先确认某个 owner。
+        val first = CardRunStore.confirmRuntimeOwnersStopped(listOf("card:owner-confirm@10/step/0-start/attempt/1"))
+        assertTrue(first.isEmpty())
+        assertEquals(CardRunStatus.Running, CardRunStore.get("owner-confirm")?.status)
+
+        CardRunStore.update(
+            recipe = recipe,
+            status = CardRunStatus.CleanupPending,
+            lastError = "停止待确认",
+        )
+        assertEquals(CardRunStatus.CleanupPending, CardRunStore.get("owner-confirm")?.status)
+
+        val second = CardRunStore.confirmRuntimeOwnersStopped(listOf("card:owner-confirm@10"))
+        val settled = CardRunStore.get("owner-confirm")
+        assertEquals(setOf("owner-confirm"), second)
+        assertEquals(CardRunStatus.Stopped, settled?.status)
+        assertTrue(settled?.ownedRuntimeOwnerIds.orEmpty().isEmpty())
+        assertNull(settled?.runId)
+        assertNull(settled?.pid)
+        assertNull(settled?.lastError)
+    }
+
+    @Test
     fun `运行 owner 按叶子累积并随运行绑定统一清除`() {
         val recipe = TestRecipes.serviceRecipe(id = "owner-store")
         CardRunStore.start(recipe)

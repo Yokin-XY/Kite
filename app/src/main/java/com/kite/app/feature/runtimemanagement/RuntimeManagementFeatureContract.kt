@@ -27,6 +27,7 @@ internal sealed interface RuntimeManagementActionTarget {
     data class StopRun(val instanceId: String) : RuntimeManagementActionTarget
     data class EndTerminal(val sessionId: String) : RuntimeManagementActionTarget
     data class EndProcess(val processId: String, val pid: Int) : RuntimeManagementActionTarget
+    data class EndProcessTree(val processIds: List<String>) : RuntimeManagementActionTarget
     data class StopBackgroundRuntime(val runtimeId: String) : RuntimeManagementActionTarget
     data class RestartBackgroundRuntime(val runtimeId: String) : RuntimeManagementActionTarget
 }
@@ -61,10 +62,36 @@ internal data class RuntimeManagementProcessUiState(
     val parentPid: Int,
     val title: String,
     val subtitle: String,
+    val stateLabel: String,
     val ownerLabel: String,
     val purpose: String,
-    val isMain: Boolean,
+    val commandLine: String,
+    val cardInstanceId: String? = null,
+    val cardLabel: String? = null,
+    val depth: Int = 0,
+    val isInfrastructure: Boolean = false,
+    val canEndAsTree: Boolean = false,
+    val processGroupId: Int? = null,
+    val lifecycleId: String? = null,
+    val kernelState: String = "UNKNOWN",
+    val identityVerified: Boolean = false,
     val stopAction: RuntimeManagementActionUiState?
+)
+
+internal data class RuntimeManagementProcessGroupUiState(
+    val key: String,
+    val title: String,
+    val processCount: Int,
+    val processes: List<RuntimeManagementProcessUiState>,
+    val cardLabels: List<String> = emptyList(),
+    val isInfrastructure: Boolean = false,
+    val stopAction: RuntimeManagementActionUiState? = null,
+)
+
+internal data class RuntimeManagementCardIconUiState(
+    val type: String = "builtin",
+    val name: String = "default",
+    val source: String = ""
 )
 
 internal data class RuntimeManagementRunUiState(
@@ -76,37 +103,23 @@ internal data class RuntimeManagementRunUiState(
     val statusLabel: String,
     val statusTone: KiteRunUiTone,
     val createdAt: Long,
+    val icon: RuntimeManagementCardIconUiState = RuntimeManagementCardIconUiState(),
     val surfaces: List<RuntimeManagementSurfaceUiState>,
     val terminalTitle: String?,
     val processCount: Int,
-    val mainProcess: RuntimeManagementProcessUiState?,
-    val childProcesses: List<RuntimeManagementProcessUiState>,
+    val processGroups: List<RuntimeManagementProcessGroupUiState>,
     val stopAction: RuntimeManagementActionUiState?
-)
-
-internal data class RuntimeManagementTerminalUiState(
-    val key: String,
-    val title: String,
-    val subtitle: String,
-    val processCount: Int,
-    val endAction: RuntimeManagementActionUiState?
-)
-
-internal data class RuntimeManagementProcessSectionUiState(
-    val key: String,
-    val title: String,
-    val processes: List<RuntimeManagementProcessUiState>
 )
 
 internal data class RuntimeManagementUiState(
     val summary: RuntimeManagementSummaryUiState = RuntimeManagementSummaryUiState(),
     val runs: List<RuntimeManagementRunUiState> = emptyList(),
-    val standaloneTerminals: List<RuntimeManagementTerminalUiState> = emptyList(),
-    val otherProcessSections: List<RuntimeManagementProcessSectionUiState> = emptyList(),
+    val allProcessGroups: List<RuntimeManagementProcessGroupUiState> = emptyList(),
+    val unassignedProcessGroups: List<RuntimeManagementProcessGroupUiState> = emptyList(),
     val refreshedAt: Long = 0L
 ) {
     val isEmpty: Boolean
-        get() = runs.isEmpty() && standaloneTerminals.isEmpty() && otherProcessSections.all { it.processes.isEmpty() }
+        get() = runs.isEmpty() && unassignedProcessGroups.isEmpty()
 }
 
 internal sealed interface RuntimeManagementFeatureAction {

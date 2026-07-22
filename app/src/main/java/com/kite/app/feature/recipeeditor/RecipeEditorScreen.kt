@@ -2,6 +2,7 @@ package com.kite.app.feature.recipeeditor
 
 import android.app.Dialog
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
@@ -21,6 +22,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
+import androidx.appcompat.content.res.AppCompatResources
+import com.kite.app.R
 import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteRecipe
@@ -28,9 +31,9 @@ import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.KiteRunPrimaryAction
 import com.kite.app.theme.KiteTheme
-import com.kite.app.theme.ThemeTokens
 import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.kite.app.ui.UiKit
+import com.kite.app.ui.UiTextRole
 
 internal interface RecipeEditorScreenActions {
     fun onBack()
@@ -62,10 +65,17 @@ internal class RecipeEditorScreen(
     private val iconSources: () -> List<String>,
     private val iconBytes: (String) -> ByteArray?
 ) {
-    private val tokens = editorTokens(context)
-    private val ui = UiKit(context, tokens)
+    private val environment = context.kiteThemeEnvironment()
+    private val tokens = environment.tokens
+    private val ui = UiKit(context, environment)
     private val titleView = TextView(context)
     private val rightAction = TextView(context)
+    private val moreAction = ui.imageButton(
+        context = context,
+        iconRes = R.drawable.ic_more_vert_light,
+        contentDescription = context.getString(R.string.recipe_editor_more),
+        onClick = ::showMoreDialog,
+    )
     private val nameInput = EditText(context)
     private val descriptionInput = EditText(context)
     private val iconHost = FrameLayout(context)
@@ -88,11 +98,16 @@ internal class RecipeEditorScreen(
         addView(statusHost)
         val body = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(20), dp(24), dp(148))
+            setPadding(
+                dp(environment.foundations.spacing.pageHorizontal),
+                dp(environment.foundations.spacing.sectionGap),
+                dp(environment.foundations.spacing.pageHorizontal),
+                dp(148),
+            )
             addView(identityPanel())
             addView(descriptionPanel())
             addView(divider(dp(24)))
-            addView(sectionTitle("动作流程"))
+            addView(sectionTitle(context.getString(R.string.recipe_editor_flow_title)))
             addView(templateRow())
             addView(stepsHost)
             addView(addStepButton())
@@ -137,9 +152,11 @@ internal class RecipeEditorScreen(
     fun render(state: RecipeEditorUiState) {
         latestState = state
         rendering = true
-        titleView.text = if (state.isNew) "新建配置" else "编辑配置"
-        rightAction.text = if (state.isNew) "保存" else "..."
-        rightAction.setTextColor(if (state.isNew) tokens.primaryStrong else tokens.textPrimary)
+        titleView.text = context.getString(
+            if (state.isNew) R.string.recipe_editor_new_title else R.string.recipe_editor_edit_title,
+        )
+        rightAction.visibility = if (state.isNew) View.VISIBLE else View.GONE
+        moreAction.visibility = if (state.isNew) View.GONE else View.VISIBLE
         setTextIfChanged(nameInput, state.draft.name)
         setTextIfChanged(descriptionInput, state.draft.description)
         groupDetail.text = groupLabel(state)
@@ -153,11 +170,19 @@ internal class RecipeEditorScreen(
     }
 
     fun acknowledgeRun() {
+        val startLabels = setOf(
+            context.getString(R.string.recipe_editor_run_start),
+            context.getString(R.string.recipe_editor_run_retry),
+        )
         runActionHost.childrenTextViews().forEach { button ->
             button.isEnabled = false
             button.alpha = 0.58f
-            if (button.text == "启动" || button.text == "重新启动") button.text = "启动中"
-            if (button.text == "停止") button.text = "停止中"
+            if (button.text.toString() in startLabels) {
+                button.text = context.getString(R.string.recipe_editor_run_starting)
+            }
+            if (button.text == context.getString(R.string.recipe_editor_run_stop)) {
+                button.text = context.getString(R.string.recipe_editor_run_stopping)
+            }
         }
     }
 
@@ -172,7 +197,10 @@ internal class RecipeEditorScreen(
             setPadding(dp(20), dp(20), dp(20), dp(16))
             background = rounded(tokens.cardBackground, tokens.border, dp(20).toFloat())
             addView(TextView(context).apply {
-                text = if (creatingNew) "取消新建配置？" else "保存这次修改？"
+                text = context.getString(
+                    if (creatingNew) R.string.recipe_editor_unsaved_new_title
+                    else R.string.recipe_editor_unsaved_edit_title,
+                )
                 textSize = 17f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
@@ -181,7 +209,9 @@ internal class RecipeEditorScreen(
             addView(row().apply {
                 setPadding(0, dp(20), 0, 0)
                 addView(dialogAction(
-                    if (creatingNew) "取消" else "不保存",
+                    context.getString(
+                        if (creatingNew) R.string.recipe_editor_cancel else R.string.recipe_editor_discard,
+                    ),
                     tokens.danger,
                     soft = true
                 ) {
@@ -191,7 +221,9 @@ internal class RecipeEditorScreen(
                     setMargins(0, 0, dp(8), 0)
                 })
                 addView(dialogAction(
-                    if (creatingNew) "继续编辑" else "保存",
+                    context.getString(
+                        if (creatingNew) R.string.recipe_editor_continue_editing else R.string.recipe_editor_save,
+                    ),
                     if (creatingNew) tokens.textPrimary else Color.WHITE,
                     soft = creatingNew
                 ) {
@@ -219,14 +251,14 @@ internal class RecipeEditorScreen(
             setPadding(dp(20), dp(20), dp(20), dp(16))
             background = rounded(tokens.cardBackground, tokens.border, dp(18).toFloat())
             addView(TextView(context).apply {
-                text = "删除 ${recipe.name}？"
+                text = context.getString(R.string.recipe_editor_delete_title, recipe.name)
                 textSize = 17f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(tokens.textPrimary)
                 gravity = Gravity.CENTER
             })
             addView(TextView(context).apply {
-                text = "卡片配置会从共享目录移除。"
+                text = context.getString(R.string.recipe_editor_delete_summary)
                 textSize = 12.5f
                 setTextColor(tokens.textSecondary)
                 gravity = Gravity.CENTER
@@ -234,9 +266,9 @@ internal class RecipeEditorScreen(
             })
             addView(row().apply {
                 setPadding(0, dp(18), 0, 0)
-                addView(dialogAction("取消", tokens.textPrimary, soft = true) { dialog.dismiss() },
+                addView(dialogAction(context.getString(R.string.recipe_editor_cancel), tokens.textPrimary, soft = true) { dialog.dismiss() },
                     LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(0, 0, dp(8), 0) })
-                addView(dialogAction("删除", Color.WHITE, soft = false, danger = true) {
+                addView(dialogAction(context.getString(R.string.recipe_editor_delete), Color.WHITE, soft = false, danger = true) {
                     dialog.dismiss()
                     actions.onDelete()
                 }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(dp(8), 0, 0, 0) })
@@ -252,13 +284,13 @@ internal class RecipeEditorScreen(
 
     fun showGroupDialog() {
         val dialog = Dialog(context)
-        val input = editorInput("新建分组")
+        val input = editorInput(context.getString(R.string.recipe_editor_new_group_hint))
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(18), dp(16))
             background = rounded(tokens.cardBackground, tokens.border, dp(22).toFloat())
             addView(TextView(context).apply {
-                text = "选择分组"
+                text = context.getString(R.string.recipe_editor_select_group)
                 textSize = 18f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
@@ -268,7 +300,7 @@ internal class RecipeEditorScreen(
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
                     if (latestState.groups.isEmpty()) {
-                        addView(stateText("还没有分组"))
+                        addView(stateText(context.getString(R.string.recipe_editor_no_groups)))
                     } else {
                         latestState.groups.forEach { group ->
                             addView(groupChoice(group, group.id == latestState.draft.groupId) {
@@ -283,9 +315,9 @@ internal class RecipeEditorScreen(
             })
             addView(row().apply {
                 addView(input, LinearLayout.LayoutParams(0, dp(44), 1f))
-                addView(dialogAction("新建", Color.WHITE, soft = false) {
+                addView(dialogAction(context.getString(R.string.recipe_editor_create_group), Color.WHITE, soft = false) {
                     val name = input.text?.toString().orEmpty().trim()
-                    if (name.isBlank()) input.error = "请输入分组名" else {
+                    if (name.isBlank()) input.error = context.getString(R.string.recipe_editor_group_required) else {
                         actions.onCreateGroup(name)
                         dialog.dismiss()
                     }
@@ -307,14 +339,14 @@ internal class RecipeEditorScreen(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(18), dp(16))
             background = rounded(tokens.surfaceElevated, Color.TRANSPARENT, dp(24).toFloat())
-            addView(sectionTitle("选择头像"))
+            addView(sectionTitle(context.getString(R.string.recipe_editor_icon_picker_title)))
             addView(TextView(context).apply {
-                text = "从头像集选择，或添加一张新图片"
+                text = context.getString(R.string.recipe_editor_icon_picker_summary)
                 textSize = 12f
                 setTextColor(tokens.textSecondary)
                 setPadding(0, dp(4), 0, dp(12))
             })
-            addView(iconSectionTitle("头像集"))
+            addView(iconSectionTitle(context.getString(R.string.recipe_editor_icon_collection)))
             addView(iconGrid().apply {
                 iconSources().forEach { source ->
                     addView(imageIconChoice(source) {
@@ -326,10 +358,12 @@ internal class RecipeEditorScreen(
                     dialog.dismiss()
                     actions.onPickImage()
                 }.apply {
-                    addView(iconChoiceGlyph("+", "添加"))
+                    addView(iconChoiceGlyph("+", context.getString(R.string.recipe_editor_icon_add)))
                 })
             })
-            addView(iconSectionTitle("预置图标").apply { setPadding(0, dp(14), 0, dp(8)) })
+            addView(iconSectionTitle(context.getString(R.string.recipe_editor_builtin_icons)).apply {
+                setPadding(0, dp(14), 0, dp(8))
+            })
             addView(iconGrid().apply {
                 presetIcons.forEach { name ->
                     addView(iconChoiceFrame(
@@ -357,29 +391,39 @@ internal class RecipeEditorScreen(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(18), dp(16))
             background = rounded(tokens.cardBackground, tokens.border, dp(20).toFloat())
-            addView(sectionTitle("更多配置"))
+            addView(sectionTitle(context.getString(R.string.recipe_editor_more_title)))
             addView(switchRow(
-                "启动时打开独立实例页",
-                "关闭后在主应用内执行。",
+                context.getString(R.string.recipe_editor_open_instance_title),
+                context.getString(R.string.recipe_editor_open_instance_summary),
                 state.draft.launchOpenInstance
             ) { actions.onSetLaunchOpenInstance(it) })
             addView(switchRow(
-                "保留结束通知",
-                "运行结束后保留可清除的结果通知。",
+                context.getString(R.string.recipe_editor_keep_notification_title),
+                context.getString(R.string.recipe_editor_keep_notification_summary),
                 state.draft.keepFinishedNotification
             ) { actions.onSetKeepFinishedNotification(it) })
             addView(commandRow(
-                "桌面快捷方式",
-                if (state.draft.shortcutRequested) "保存后申请" else "点击后申请创建"
+                context.getString(R.string.recipe_editor_shortcut_title),
+                context.getString(
+                    if (state.draft.shortcutRequested) R.string.recipe_editor_shortcut_after_save
+                    else R.string.recipe_editor_shortcut_request,
+                )
             ) {
                 actions.onSetShortcutRequested(true)
             })
-            addView(commandRow("保存修改", "校验并写入共享卡片目录") {
+            addView(commandRow(
+                context.getString(R.string.recipe_editor_save_changes),
+                context.getString(R.string.recipe_editor_save_changes_summary),
+            ) {
                 dialog.dismiss()
                 actions.onSave()
             })
             if (!state.isNew) {
-                addView(commandRow("删除配置", "从共享卡片目录移除", danger = true) {
+                addView(commandRow(
+                    context.getString(R.string.recipe_editor_delete_config),
+                    context.getString(R.string.recipe_editor_delete_config_summary),
+                    danger = true,
+                ) {
                     dialog.dismiss()
                     showDeleteConfirm()
                 })
@@ -396,50 +440,78 @@ internal class RecipeEditorScreen(
 
     private fun header(): View = row().apply {
         setPadding(dp(18), dp(14), dp(18), dp(10))
-        addView(iconButton("‹", "返回") { actions.onBack() })
+        addView(ui.imageButton(
+            context = context,
+            iconRes = R.drawable.ic_arrow_back_light,
+            contentDescription = context.getString(R.string.common_back),
+            onClick = actions::onBack,
+        ), LinearLayout.LayoutParams(
+            dp(environment.foundations.minimumTouchTarget),
+            dp(environment.foundations.minimumTouchTarget),
+        ))
         titleView.apply {
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
+            ui.applyTextRole(this, UiTextRole.PageTitle)
             gravity = Gravity.CENTER
-            setTextColor(tokens.textPrimary)
         }
         addView(titleView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         rightAction.apply {
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
+            text = context.getString(R.string.recipe_editor_save)
+            ui.applyTextRole(this, UiTextRole.Action)
             gravity = Gravity.CENTER
             includeFontPadding = false
-            contentDescription = "编辑器操作"
-            setOnClickListener {
-                if (latestState.isNew) actions.onSave() else showMoreDialog()
-            }
+            setTextColor(tokens.primaryStrong)
+            contentDescription = context.getString(R.string.recipe_editor_save)
+            setOnClickListener { actions.onSave() }
         }
-        addView(rightAction, LinearLayout.LayoutParams(dp(44), dp(44)))
+        addView(FrameLayout(context).apply {
+            addView(rightAction, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            addView(moreAction, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+        }, LinearLayout.LayoutParams(
+            dp(environment.foundations.minimumTouchTarget),
+            dp(environment.foundations.minimumTouchTarget),
+        ))
     }
 
     private fun identityPanel(): View = row().apply {
-        setPadding(0, dp(8), 0, dp(14))
+        setPadding(dp(18), dp(16), dp(18), dp(16))
+        background = ui.containerBackground(
+            tokens.cardBackground,
+            tokens.border,
+            environment.components.card,
+        )
+        elevation = dp(environment.components.card.elevation).toFloat()
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { setMargins(0, 0, 0, dp(environment.foundations.spacing.sectionGap)) }
         addView(iconHost, LinearLayout.LayoutParams(dp(58), dp(58)))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), 0, 0, 0)
             addView(nameInput.apply {
-                hint = "输入卡片名称"
-                textSize = 14.5f
+                hint = context.getString(R.string.recipe_editor_name_hint)
+                textSize = 15f
                 typeface = Typeface.DEFAULT_BOLD
                 setSingleLine(true)
                 setTextColor(tokens.textPrimary)
                 setHintTextColor(tokens.textTertiary)
-                setPadding(0, 0, 0, 0)
-                background = null
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30)))
-            addView(View(context).apply { setBackgroundColor(tokens.textPrimary) },
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
+                setPadding(dp(14), 0, dp(14), 0)
+                background = ui.containerBackground(
+                    tokens.inputBackground,
+                    tokens.border,
+                    environment.components.control,
+                )
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
             addView(TextView(context).apply {
-                text = "点击头像选择图片 ›"
-                textSize = 8.8f
-                setTextColor(tokens.textSecondary)
-                setPadding(0, dp(5), 0, 0)
+                text = context.getString(R.string.recipe_editor_choose_icon)
+                ui.applyTextRole(this, UiTextRole.Supporting)
+                setPadding(dp(2), dp(6), 0, 0)
                 setOnClickListener { showIconDialog() }
             })
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -448,21 +520,31 @@ internal class RecipeEditorScreen(
 
     private fun descriptionPanel(): View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
+        setPadding(dp(18), dp(16), dp(18), dp(16))
+        background = ui.containerBackground(
+            tokens.cardBackground,
+            tokens.border,
+            environment.components.card,
+        )
+        elevation = dp(environment.components.card.elevation).toFloat()
         addView(TextView(context).apply {
-            text = "说明"
-            textSize = 11f
-            setTextColor(tokens.textSecondary)
+            text = context.getString(R.string.recipe_editor_description_title)
+            ui.applyTextRole(this, UiTextRole.CardTitle)
         })
         addView(descriptionInput.apply {
-            hint = "简短说明这张卡片会做什么"
-            textSize = 12.5f
+            hint = context.getString(R.string.recipe_editor_description_hint)
+            textSize = environment.foundations.typography.body
             setSingleLine(true)
             setTextColor(tokens.textPrimary)
             setHintTextColor(tokens.textTertiary)
-            background = rounded(tokens.inputBackground, tokens.border, dp(12).toFloat())
-            setPadding(dp(12), 0, dp(12), 0)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
-            setMargins(0, dp(6), 0, 0)
+            background = ui.containerBackground(
+                tokens.inputBackground,
+                tokens.border,
+                environment.components.control,
+            )
+            setPadding(dp(14), 0, dp(14), 0)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
+            setMargins(0, dp(10), 0, 0)
         })
     }
 
@@ -470,54 +552,73 @@ internal class RecipeEditorScreen(
         isHorizontalScrollBarEnabled = false
         addView(row().apply {
             setPadding(0, 0, 0, dp(8))
-            addView(templateChip("打开网页", KiteRecipe.TYPE_OPEN_URL))
-            addView(templateChip("命令 + 网页", KiteRecipe.TYPE_COMMAND_WEB))
-            addView(templateChip("启动服务", KiteRecipe.TYPE_START_SERVICE))
+            addView(templateChip(context.getString(R.string.recipe_editor_template_web), KiteRecipe.TYPE_OPEN_URL))
+            addView(templateChip(context.getString(R.string.recipe_editor_template_command_web), KiteRecipe.TYPE_COMMAND_WEB))
+            addView(templateChip(context.getString(R.string.recipe_editor_template_service), KiteRecipe.TYPE_START_SERVICE))
         })
     }
 
     private fun templateChip(label: String, type: String): View = TextView(context).apply {
         text = label
-        textSize = 10.5f
-        typeface = Typeface.DEFAULT_BOLD
+        ui.applyTextRole(this, UiTextRole.Badge)
         gravity = Gravity.CENTER
         setTextColor(tokens.primaryStrong)
-        background = rounded(tokens.primarySubtle, tokens.primarySoft, dp(14).toFloat())
-        setPadding(dp(10), 0, dp(10), 0)
+        background = ui.containerBackground(
+            tokens.primarySubtle,
+            tokens.primarySoft,
+            environment.components.chip,
+        )
+        setPadding(dp(12), 0, dp(12), 0)
         setOnClickListener { actions.onApplyTemplate(type) }
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28)).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply {
             setMargins(0, 0, dp(7), 0)
         }
     }
 
-    private fun addStepButton(): View = TextView(context).apply {
-        text = "+  添加动作"
-        textSize = 11.5f
-        typeface = Typeface.DEFAULT_BOLD
+    private fun addStepButton(): View = row().apply {
         gravity = Gravity.CENTER
-        setTextColor(tokens.primaryStrong)
-        background = rounded(tokens.surface, tokens.primarySoft, dp(18).toFloat())
+        background = ui.containerBackground(
+            tokens.surface,
+            tokens.primarySoft,
+            environment.components.control,
+        )
+        addView(ImageView(context).apply {
+            setImageDrawable(AppCompatResources.getDrawable(context, R.drawable.ic_material_add))
+            imageTintList = ColorStateList.valueOf(tokens.primaryStrong)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { setMargins(0, 0, dp(8), 0) })
+        addView(TextView(context).apply {
+            text = context.getString(R.string.recipe_editor_add_action)
+            ui.applyTextRole(this, UiTextRole.Action)
+            setTextColor(tokens.primaryStrong)
+        })
+        contentDescription = context.getString(R.string.recipe_editor_add_action)
         setOnClickListener { showStepDialog() }
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply {
             setMargins(0, dp(14), 0, dp(4))
         }
     }
 
     private fun groupRow(): View = row().apply {
-        setPadding(0, dp(16), 0, dp(4))
+        setPadding(dp(18), dp(14), dp(16), dp(14))
+        background = ui.containerBackground(
+            tokens.cardBackground,
+            tokens.border,
+            environment.components.interactiveCard,
+        )
+        elevation = dp(environment.components.interactiveCard.elevation).toFloat()
         isClickable = true
+        isFocusable = true
         setOnClickListener { showGroupDialog() }
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             addView(TextView(context).apply {
-                text = "所属分组"
-                textSize = 13f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(tokens.textPrimary)
+                text = context.getString(R.string.recipe_editor_group_title)
+                ui.applyTextRole(this, UiTextRole.CardTitle)
             })
             groupDetail.apply {
-                textSize = 11f
-                setTextColor(tokens.textSecondary)
+                ui.applyTextRole(this, UiTextRole.Supporting)
                 setPadding(0, dp(3), dp(8), 0)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
@@ -525,24 +626,27 @@ internal class RecipeEditorScreen(
             addView(groupDetail)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addView(TextView(context).apply {
-            text = "选择"
-            textSize = 12.5f
-            typeface = Typeface.DEFAULT_BOLD
+            text = context.getString(R.string.recipe_editor_choose)
+            ui.applyTextRole(this, UiTextRole.Action)
             gravity = Gravity.CENTER
             setTextColor(tokens.primaryStrong)
-            background = rounded(tokens.primarySubtle, tokens.primarySoft, dp(14).toFloat())
-        }, LinearLayout.LayoutParams(dp(66), dp(34)))
+            background = ui.containerBackground(
+                tokens.primarySubtle,
+                tokens.primarySoft,
+                environment.components.chip,
+            )
+        }, LinearLayout.LayoutParams(dp(72), dp(38)))
     }
 
     private fun renderStatus(state: RecipeEditorUiState) {
         statusHost.removeAllViews()
         val message = when {
-            state.phase == RecipeEditorPhase.Loading -> "正在读取卡片"
-            state.phase == RecipeEditorPhase.Saving -> "正在保存"
-            state.phase == RecipeEditorPhase.Deleting -> "正在删除"
+            state.phase == RecipeEditorPhase.Loading -> context.getString(R.string.recipe_editor_status_loading)
+            state.phase == RecipeEditorPhase.Saving -> context.getString(R.string.recipe_editor_status_saving)
+            state.phase == RecipeEditorPhase.Deleting -> context.getString(R.string.recipe_editor_status_deleting)
             state.validationErrors.isNotEmpty() -> state.validationErrors.first().message
             state.errorMessage != null -> state.errorMessage
-            state.phase == RecipeEditorPhase.Failed -> "操作失败"
+            state.phase == RecipeEditorPhase.Failed -> context.getString(R.string.recipe_editor_status_failed)
             else -> null
         } ?: return
         statusHost.addView(TextView(context).apply {
@@ -586,14 +690,6 @@ internal class RecipeEditorScreen(
                 setTextColor(tokens.primaryStrong)
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
-        iconHost.addView(TextView(context).apply {
-            text = "✎"
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
-            background = rounded(tokens.surfaceElevated, Color.TRANSPARENT, dp(9).toFloat())
-        }, FrameLayout.LayoutParams(dp(19), dp(19), Gravity.END or Gravity.BOTTOM))
     }
 
     private fun renderSteps(state: RecipeEditorUiState) {
@@ -607,7 +703,7 @@ internal class RecipeEditorScreen(
             stepsHost.addView(stepRow(index, step, state.draft.steps.size))
         }
         if (state.draft.steps.isEmpty()) {
-            stepsHost.addView(stateText("尚未添加动作"))
+            stepsHost.addView(stateText(context.getString(R.string.recipe_editor_no_actions)))
         }
     }
 
@@ -652,10 +748,13 @@ internal class RecipeEditorScreen(
         existingOnlyHost.removeAllViews()
         val recipe = state.originalRecipe ?: return
         existingOnlyHost.addView(divider(dp(22)))
-        existingOnlyHost.addView(commandRow("查看原始 JSON", "检查完整卡片定义") {
+        existingOnlyHost.addView(commandRow(
+            context.getString(R.string.recipe_editor_raw_json),
+            context.getString(R.string.recipe_editor_raw_json_summary),
+        ) {
             actions.onOpenRawJson(recipe.id)
         })
-        existingOnlyHost.addView(commandRow("最近运行", runHistorySummary(state)) {
+        existingOnlyHost.addView(commandRow(context.getString(R.string.recipe_editor_recent_runs), runHistorySummary(state)) {
             actions.onOpenRunHistory(recipe.id)
         })
     }
@@ -672,13 +771,13 @@ internal class RecipeEditorScreen(
         runActionHost.gravity = Gravity.CENTER_VERTICAL
         if (projection.live) {
             runActionHost.background = rounded(tokens.primarySubtle, tokens.border, dp(16).toFloat())
-            runActionHost.addView(runButton("打开", tokens.primaryStrong, state.run?.status != CardRunStatus.Stopping) {
+            runActionHost.addView(runButton(context.getString(R.string.recipe_editor_run_open), tokens.primaryStrong, state.run?.status != CardRunStatus.Stopping) {
                 acknowledgeRun()
                 actions.onRun(KiteRecipeActionIntent.Open)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 7f))
             runActionHost.addView(View(context).apply { setBackgroundColor(tokens.border) },
                 LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT).apply { setMargins(0, dp(10), 0, dp(10)) })
-            runActionHost.addView(runButton("停止", tokens.danger, state.run?.status != CardRunStatus.Stopping) {
+            runActionHost.addView(runButton(context.getString(R.string.recipe_editor_run_stop), tokens.danger, state.run?.status != CardRunStatus.Stopping) {
                 acknowledgeRun()
                 actions.onRun(KiteRecipeActionIntent.Stop)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 3f))
@@ -691,7 +790,10 @@ internal class RecipeEditorScreen(
                 dp(16).toFloat()
             )
             runActionHost.addView(runButton(
-                if (projection.primaryAction == KiteRunPrimaryAction.Retry) "重新启动" else "启动",
+                context.getString(
+                    if (projection.primaryAction == KiteRunPrimaryAction.Retry) R.string.recipe_editor_run_retry
+                    else R.string.recipe_editor_run_start,
+                ),
                 if (enabled) Color.WHITE else tokens.textSecondary,
                 enabled
             ) {
@@ -719,21 +821,29 @@ internal class RecipeEditorScreen(
             fields.removeAllViews()
             when (type) {
                 KiteRecipe.STEP_TERMINAL ->
-                    fields.addView(stepDialogField("终端输入", "可留空，只打开终端", command) { command = it })
+                    fields.addView(stepDialogField(
+                        context.getString(R.string.recipe_editor_terminal_input),
+                        context.getString(R.string.recipe_editor_terminal_input_hint),
+                        command,
+                    ) { command = it })
                 KiteRecipe.STEP_SHELL -> {
-                    fields.addView(stepDialogField("sh 命令", "echo hello", command) { command = it })
-                    fields.addView(stepDialogField("执行位置（可选）", "/workspace", workdir) { workdir = it })
+                    fields.addView(stepDialogField(context.getString(R.string.recipe_editor_shell_command), "echo hello", command) { command = it })
+                    fields.addView(stepDialogField(context.getString(R.string.recipe_editor_workdir), "/workspace", workdir) { workdir = it })
                 }
-                else -> fields.addView(stepDialogField("网页地址", "http://127.0.0.1:8648", url) { url = it })
+                else -> fields.addView(stepDialogField(
+                    context.getString(R.string.recipe_editor_web_address),
+                    "http://127.0.0.1:8648",
+                    url,
+                ) { url = it })
             }
         }
 
         fun renderTabs() {
             tabs.removeAllViews()
             listOf(
-                KiteRecipe.STEP_TERMINAL to ">_ 终端",
-                KiteRecipe.STEP_SHELL to "sh 命令",
-                KiteRecipe.STEP_OPEN_WEB to "◎ 网页"
+                KiteRecipe.STEP_TERMINAL to ">_ ${context.getString(R.string.recipe_editor_step_terminal)}",
+                KiteRecipe.STEP_SHELL to context.getString(R.string.recipe_editor_shell_command),
+                KiteRecipe.STEP_OPEN_WEB to "◎ ${context.getString(R.string.recipe_editor_step_web)}"
             ).forEach { (value, label) ->
                 tabs.addView(TextView(context).apply {
                     text = label
@@ -756,19 +866,32 @@ internal class RecipeEditorScreen(
         }
 
         content.addView(row().apply {
-            addView(iconButton("‹", "关闭") { dialog.dismiss() })
+            addView(ui.imageButton(
+                context = context,
+                iconRes = R.drawable.ic_close_light,
+                contentDescription = context.getString(R.string.common_close),
+                onClick = { dialog.dismiss() },
+            ), LinearLayout.LayoutParams(dp(44), dp(44)))
             addView(TextView(context).apply {
-                text = if (index == null) "添加动作" else "编辑动作"
+                text = context.getString(
+                    if (index == null) R.string.recipe_editor_add_action else R.string.recipe_editor_edit_action,
+                )
                 textSize = 16f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 setTextColor(tokens.textPrimary)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             if (index != null) {
-                addView(iconButton("删", "删除动作", tokens.danger) {
-                    dialog.dismiss()
-                    actions.onRemoveStep(index)
-                })
+                addView(ui.imageButton(
+                    context = context,
+                    iconRes = R.drawable.ic_delete_light,
+                    contentDescription = context.getString(R.string.recipe_editor_delete_action),
+                    tint = tokens.danger,
+                    onClick = {
+                        dialog.dismiss()
+                        actions.onRemoveStep(index)
+                    },
+                ), LinearLayout.LayoutParams(dp(44), dp(44)))
             } else {
                 addView(View(context), LinearLayout.LayoutParams(dp(44), dp(44)))
             }
@@ -780,7 +903,9 @@ internal class RecipeEditorScreen(
             setMargins(0, dp(14), 0, dp(18))
         })
         content.addView(fields, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        content.addView(dialogAction(if (index == null) "添加" else "保存", Color.WHITE, soft = false) {
+        content.addView(dialogAction(context.getString(
+            if (index == null) R.string.recipe_editor_add else R.string.recipe_editor_save,
+        ), Color.WHITE, soft = false) {
             val step = when (type) {
                 KiteRecipe.STEP_TERMINAL -> RecipeEditorStepDraft.terminal(command.trim())
                 KiteRecipe.STEP_SHELL -> {
@@ -849,34 +974,46 @@ internal class RecipeEditorScreen(
             setTextColor(tokens.textSecondary)
             alpha = if (enabled) 1f else 0.3f
             isEnabled = enabled
-            contentDescription = if (label == "↑") "上移动作" else "下移动作"
+            contentDescription = context.getString(
+                if (label == "↑") R.string.recipe_editor_move_up else R.string.recipe_editor_move_down,
+            )
             if (enabled) setOnClickListener { click() }
             layoutParams = LinearLayout.LayoutParams(dp(30), dp(38))
         }
 
     private fun stepTypeLabel(step: RecipeEditorStepDraft): String = when (step.type) {
-        KiteRecipe.STEP_TERMINAL -> "终端"
-        KiteRecipe.STEP_SHELL -> "sh 命令"
-        else -> "打开网页"
+        KiteRecipe.STEP_TERMINAL -> context.getString(R.string.recipe_editor_step_terminal)
+        KiteRecipe.STEP_SHELL -> context.getString(R.string.recipe_editor_shell_command)
+        else -> context.getString(R.string.recipe_editor_step_open_web)
     }
 
     private fun stepSummary(step: RecipeEditorStepDraft): String = when (step.type) {
-        KiteRecipe.STEP_TERMINAL -> step.command.ifBlank { "打开终端" }
-        KiteRecipe.STEP_SHELL -> step.command.ifBlank { "未填写 sh 命令" }
-        else -> step.url.ifBlank { "未填写打开地址" }
+        KiteRecipe.STEP_TERMINAL -> step.command.ifBlank {
+            context.getString(R.string.recipe_editor_step_open_terminal)
+        }
+        KiteRecipe.STEP_SHELL -> step.command.ifBlank {
+            context.getString(R.string.recipe_editor_step_missing_shell)
+        }
+        else -> step.url.ifBlank { context.getString(R.string.recipe_editor_step_missing_url) }
     }
 
     private fun runHistorySummary(state: RecipeEditorUiState): String {
-        val run = state.run ?: return "暂无运行记录"
+        val run = state.run ?: return context.getString(R.string.recipe_editor_no_runs)
         if (run.instanceId.startsWith("idle_") && run.status == CardRunStatus.Unknown) {
-            return "暂无运行记录"
+            return context.getString(R.string.recipe_editor_no_runs)
         }
-        return "${run.status.label} · 步骤 ${(run.currentStepIndex + 1).coerceAtLeast(1)}/${run.stepCount.coerceAtLeast(1)}"
+        return context.getString(
+            R.string.recipe_editor_run_history,
+            localizedRunStatus(run.status),
+            (run.currentStepIndex + 1).coerceAtLeast(1),
+            run.stepCount.coerceAtLeast(1),
+        )
     }
 
     private fun groupLabel(state: RecipeEditorUiState): String =
         state.groups.firstOrNull { it.id == state.draft.groupId }?.name
-            ?: KiteRecipe.normalizeCategory(state.originalRecipe?.category).ifBlank { "未分组" }
+            ?: KiteRecipe.normalizeCategory(state.originalRecipe?.category)
+                .ifBlank { context.getString(R.string.home_ungrouped) }
 
     private fun groupChoice(group: KiteCardGroup, selected: Boolean, click: () -> Unit): View =
         TextView(context).apply {
@@ -918,7 +1055,7 @@ internal class RecipeEditorScreen(
                 topMargin = dp(4)
             })
             addView(TextView(context).apply {
-                text = "自定义"
+                text = context.getString(R.string.recipe_editor_icon_custom)
                 textSize = 10.5f
                 gravity = Gravity.CENTER
                 setTextColor(tokens.textSecondary)
@@ -1053,18 +1190,6 @@ internal class RecipeEditorScreen(
         setOnClickListener { click() }
     }
 
-    private fun iconButton(text: String, description: String, color: Int = tokens.textPrimary, click: () -> Unit): View =
-        TextView(context).apply {
-            this.text = text
-            contentDescription = description
-            textSize = if (text == "删") 13f else 24f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(color)
-            setOnClickListener { click() }
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
-        }
-
     private fun editorInput(hint: String): EditText = EditText(context).apply {
         this.hint = hint
         textSize = 13f
@@ -1086,14 +1211,11 @@ internal class RecipeEditorScreen(
 
     private fun sectionTitle(text: String): TextView = TextView(context).apply {
         this.text = text
-        textSize = 13.5f
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(tokens.textPrimary)
+        ui.applyTextRole(this, UiTextRole.SectionTitle)
         setPadding(0, 0, 0, dp(12))
     }
 
     private fun divider(top: Int): View = View(context).apply {
-        setBackgroundColor(tokens.border)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
             setMargins(0, top, 0, dp(18))
         }
@@ -1138,31 +1260,42 @@ internal class RecipeEditorScreen(
         "terminal" -> ">_"
         "web" -> "◎"
         "bot" -> "AI"
-        "file" -> "文"
+        "file" -> "F"
         "tools" -> "⚙"
         "server" -> "▷"
         "code" -> "{ }"
-        "logs" -> "日"
+        "logs" -> "LOG"
         else -> "◎"
     }
 
     private fun iconLabel(name: String): String = when (name) {
-        "terminal" -> "终端"
-        "web" -> "网页"
+        "terminal" -> context.getString(R.string.recipe_editor_icon_terminal)
+        "web" -> context.getString(R.string.recipe_editor_icon_web)
         "bot" -> "AI"
-        "file" -> "文件"
-        "tools" -> "工具"
-        "server" -> "服务"
-        "code" -> "代码"
-        "logs" -> "日志"
-        else -> "图标"
+        "file" -> context.getString(R.string.recipe_editor_icon_file)
+        "tools" -> context.getString(R.string.recipe_editor_icon_tools)
+        "server" -> context.getString(R.string.recipe_editor_icon_server)
+        "code" -> context.getString(R.string.recipe_editor_icon_code)
+        "logs" -> context.getString(R.string.recipe_editor_icon_logs)
+        else -> context.getString(R.string.recipe_editor_icon_generic)
     }
+
+    private fun localizedRunStatus(status: CardRunStatus): String = context.getString(when (status) {
+        CardRunStatus.Unknown -> R.string.runtime_management_status_unknown
+        CardRunStatus.Stopped -> R.string.runtime_management_status_stopped
+        CardRunStatus.Starting -> R.string.runtime_management_status_starting
+        CardRunStatus.Running -> R.string.runtime_management_status_running
+        CardRunStatus.WaitingTerminal -> R.string.runtime_management_status_waiting_terminal
+        CardRunStatus.AlreadyRunning -> R.string.runtime_management_status_already_running
+        CardRunStatus.Opened -> R.string.runtime_management_status_opened
+        CardRunStatus.Completed -> R.string.runtime_management_status_completed
+        CardRunStatus.Failed -> R.string.runtime_management_status_failed
+        CardRunStatus.Stopping -> R.string.runtime_management_status_stopping
+        CardRunStatus.CleanupPending -> R.string.runtime_management_status_cleanup_pending
+        CardRunStatus.BridgeUnavailable -> R.string.runtime_management_status_bridge_unavailable
+    })
 
     private companion object {
         val presetIcons = listOf("terminal", "web", "bot", "file", "tools", "server", "code", "logs")
-
-        fun editorTokens(context: Context): ThemeTokens {
-            return context.kiteThemeEnvironment().tokens
-        }
     }
 }

@@ -313,8 +313,16 @@ internal class AndroidRunWindowSurfaceGateway(
             if (current.hasRunBinding() || current.hasRuntimeOwnership()) {
                 ProotOwnerProcessTerminator.scheduleResidualReap(
                     appContext,
-                    current.ownedRuntimeOwnerIds + listOfNotNull(current.runtimeOwnerId)
+                    current.runtimeOwnerIdsForStop()
                 )
+                callback(
+                    RunOwnedWindowsCloseResult(
+                        confirmed = false,
+                        message = "子窗口仍有运行绑定，已进入后台回收",
+                        remainingInstanceIds = descendants.drop(index).map(CardRunState::instanceId),
+                    ),
+                )
+                return
             }
             CardRunStore.removeRun(current.instanceId)
             closeOwnedDescendants(rootInstanceId, rootGeneration, descendants, index + 1, callback)
@@ -331,9 +339,19 @@ internal class AndroidRunWindowSurfaceGateway(
                 closeOwnedDescendants(rootInstanceId, rootGeneration, descendants, index + 1, callback)
                 return@stop
             }
-            stopCoordinator.resolve(result)
-            CardRunStore.removeRun(current.instanceId)
-            closeOwnedDescendants(rootInstanceId, rootGeneration, descendants, index + 1, callback)
+            val resolution = stopCoordinator.resolve(result)
+            if (resolution.confirmed) {
+                CardRunStore.removeRun(current.instanceId)
+                closeOwnedDescendants(rootInstanceId, rootGeneration, descendants, index + 1, callback)
+            } else {
+                callback(
+                    RunOwnedWindowsCloseResult(
+                        confirmed = false,
+                        message = resolution.summary,
+                        remainingInstanceIds = descendants.drop(index).map(CardRunState::instanceId),
+                    ),
+                )
+            }
         }
     }
 
@@ -492,7 +510,7 @@ internal class AndroidRunWindowSurfaceGateway(
             recipe = recipe,
             instanceId = instanceId,
             generation = createdAt,
-            runtimeOwnerIds = ownedRuntimeOwnerIds,
+            runtimeOwnerIds = runtimeOwnerIdsForStop(),
             runId = runId,
             terminalSessionId = terminalSessionId,
             pid = pid,

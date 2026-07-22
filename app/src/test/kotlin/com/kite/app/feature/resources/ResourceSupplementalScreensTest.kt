@@ -4,6 +4,7 @@ import android.app.Activity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import com.kite.app.R
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.application.resources.ResourceFeatureDescriptor
 import com.kite.app.resources.KiteResourceUiProjection
@@ -24,6 +25,7 @@ class ResourceSupplementalScreensTest {
         val opened = mutableListOf<String>()
         val screen = ResourceMoreScreen(activity, {}, {}, opened::add)
         activity.setContentView(screen.root)
+        val context = screen.root.context
         val history = CardRunHistoryEntry(
             historyId = "history",
             recipeId = "install",
@@ -36,13 +38,15 @@ class ResourceSupplementalScreensTest {
 
         screen.render(item(), listOf(history))
         val historyRow = screen.root.views().first { view ->
-            view.isClickable && view.texts().any { it.contains("已完成") }
+            view.isClickable && view.texts().any {
+                it.contains(context.getString(R.string.runtime_management_status_completed))
+            }
         }
         historyRow.performClick()
 
         assertEquals(listOf("history"), opened)
-        assertTrue(screen.root.texts().contains("资源管理"))
-        assertTrue(screen.root.texts().contains("创建首页卡片"))
+        assertTrue(screen.root.texts().contains(context.getString(R.string.resource_manage_title)))
+        assertTrue(screen.root.texts().contains(context.getString(R.string.resource_more_create_card)))
     }
 
     @Test
@@ -50,9 +54,10 @@ class ResourceSupplementalScreensTest {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val screen = ResourceRawJsonScreen(activity) {}
         activity.setContentView(screen.root)
+        val context = screen.root.context
 
         screen.render(null)
-        assertTrue(screen.root.texts().contains("正在读取资源清单..."))
+        assertTrue(screen.root.texts().contains(context.getString(R.string.resource_raw_json_loading)))
         screen.render(item())
         assertTrue(screen.root.texts().any { it.contains("\"id\": \"tool\"") })
     }

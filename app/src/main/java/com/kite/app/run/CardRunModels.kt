@@ -14,6 +14,7 @@ enum class CardRunStatus(
     Completed("已完成", "finished"),
     Failed("启动失败", "failed"),
     Stopping("停止中", "stopping"),
+    CleanupPending("停止待确认", "cleanup_pending"),
     BridgeUnavailable("桥接不可用", "bridge_unavailable");
 
     companion object {
@@ -27,6 +28,7 @@ enum class CardRunStatus(
             "running" -> Running
             "already_running" -> AlreadyRunning
             "failed" -> Failed
+            "cleanup_pending" -> CleanupPending
             "stopped" -> Stopped
             else -> Unknown
         }
@@ -91,7 +93,15 @@ data class CardRunState(
             !terminalSessionId.isNullOrBlank() ||
             !x11Display.isNullOrBlank()
 
-    fun hasRuntimeOwnership(): Boolean = ownedRuntimeOwnerIds.any { it.isNotBlank() }
+    /**
+     * 一次停止事务必须使用同一代实例的完整 owner 集合。
+     * 叶子 owner 放在前面，根 owner 只补充生命周期范围，避免调用方各自漏传身份。
+     */
+    fun runtimeOwnerIdsForStop(): List<String> = (
+        ownedRuntimeOwnerIds + listOfNotNull(runtimeOwnerId, runtimeRootOwnerId)
+    ).map(String::trim).filter(String::isNotBlank).distinct()
+
+    fun hasRuntimeOwnership(): Boolean = runtimeOwnerIdsForStop().isNotEmpty()
 
     fun recommendedSurface(): CardRunSurface = when {
         !nextActionUrl.isNullOrBlank() -> CardRunSurface.Web

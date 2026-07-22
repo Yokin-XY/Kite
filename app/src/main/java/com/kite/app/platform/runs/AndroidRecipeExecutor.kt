@@ -24,6 +24,8 @@ import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
+import com.kite.app.foundation.runtime.ProotOwnerTerminationOutcome
 import com.kite.app.foundation.runtime.RuntimeFrameCoordinator
 import com.kite.app.foundation.runtime.TerminalSessionStore
 import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
@@ -144,7 +146,7 @@ internal class AndroidRecipeExecutor(
             callback(StopExecutionResult(StopExecutionOutcome.Confirmed, "终端已发送中断并关闭"))
             return
         }
-        stopRuntime(request, retriedAfterStableBridge = false, callback)
+        stopRuntime(request, callback)
     }
 
     private fun withUbuntuRuntime(
@@ -642,22 +644,11 @@ internal class AndroidRecipeExecutor(
 
     private fun stopRuntime(
         request: RecipeStopRequest,
-        retriedAfterStableBridge: Boolean,
         callback: (StopExecutionResult) -> Unit
     ) {
         val bridgeCallback: (BridgeResult) -> Unit = { result ->
-            if (result.errorType == BridgeErrorType.Timeout && !retriedAfterStableBridge) {
-                bridgeClient.checkStatus { status ->
-                    if (status.ok || status.accepted) {
-                        stopRuntime(request, retriedAfterStableBridge = true, callback)
-                    } else {
-                        deliverStopResult(
-                            request,
-                            StopExecutionResult(StopExecutionOutcome.ConnectionError, "Bridge 连接失败"),
-                            callback
-                        )
-                    }
-                }
+            if (result.errorType == BridgeErrorType.Timeout) {
+                deliverStopResult(request, verifyStopAfterTransportDeadline(request), callback)
             } else {
                 deliverStopResult(request, result.toStopExecutionResult(), callback)
             }
@@ -688,6 +679,46 @@ internal class AndroidRecipeExecutor(
                 callback = bridgeCallback
             )
         }
+    }
+
+    /**
+     * 传输等待窗口结束只触发一次 owner 定向核验，不产生“超时”终态，也不重复提交停止命令。
+     * 最终结果只来自强身份进程事实；缺少 owner 时明确报告无法核验。
+     */
+    private fun verifyStopAfterTransportDeadline(request: RecipeStopRequest): StopExecutionResult {
+        val ownerIds = request.runtimeOwnerIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        if (ownerIds.isEmpty()) {
+            return StopExecutionResult(
+                outcome = StopExecutionOutcome.VerificationUnavailable,
+                message = "缺少运行 owner 身份，无法核验实例是否已经停止",
+            )
+        }
+
+        val results = ownerIds.map { ownerId ->
+            ProotOwnerProcessTerminator.terminate(appContext, ownerId)
+        }
+        ProotOwnerProcessTerminator.scheduleResidualReap(
+            context = appContext,
+            ownerIds = results.filterNot { it.settled }.map { it.ownerId },
+        )
+        val output = results.joinToString(separator = "") { it.toStopOutput() }
+        val remaining = OwnerStopOutputEvidence.remainingProcessIds(output)
+        val confirmed = results.all { it.settled } && remaining.isEmpty()
+        return StopExecutionResult(
+            outcome = when {
+                confirmed -> StopExecutionOutcome.Confirmed
+                remaining.isNotEmpty() || results.any {
+                    it.outcome == ProotOwnerTerminationOutcome.STILL_RUNNING
+                } -> StopExecutionOutcome.StillRunning
+                else -> StopExecutionOutcome.VerificationUnavailable
+            },
+            message = OwnerStopOutputEvidence.userMessage(output)
+                ?: if (confirmed) "已关闭" else "无法确认实例进程状态",
+            remainingProcessIds = remaining,
+        )
     }
 
     private fun deliverStopResult(
@@ -731,7 +762,10 @@ internal class AndroidRecipeExecutor(
         return StopExecutionResult(
             outcome = when {
                 confirmed -> StopExecutionOutcome.Confirmed
-                errorType == BridgeErrorType.Timeout -> StopExecutionOutcome.Timeout
+                remaining.isNotEmpty() || observation.contains("__kite_owner_stop_outcome:STILL_RUNNING") ->
+                    StopExecutionOutcome.StillRunning
+                ownerOutcomeUnconfirmed || errorType == BridgeErrorType.Timeout ->
+                    StopExecutionOutcome.VerificationUnavailable
                 errorType == BridgeErrorType.ConnectionError -> StopExecutionOutcome.ConnectionError
                 errorType == BridgeErrorType.UnsupportedEndpoint -> StopExecutionOutcome.Unsupported
                 errorType == BridgeErrorType.ParseError -> StopExecutionOutcome.ParseError

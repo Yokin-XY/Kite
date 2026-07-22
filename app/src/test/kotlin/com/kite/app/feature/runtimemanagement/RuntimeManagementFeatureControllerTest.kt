@@ -19,13 +19,18 @@ class RuntimeManagementFeatureControllerTest {
     fun `submit process action immediately projects awaiting confirmation`() = runTest {
         val gateway = FakeGateway(snapshot())
         val controller = controller(gateway)
-        val action = controller.state.value.runs.single().childProcesses.single().stopAction!!
+        val action = controller.state.value.runs.single().processGroups
+            .flatMap(RuntimeManagementProcessGroupUiState::processes)
+            .single { it.key == "process-52" }
+            .stopAction!!
 
         val effect = controller.dispatch(RuntimeManagementFeatureAction.Submit(action))
 
         assertNull(effect)
         assertEquals(listOf("process-52" to 52), gateway.endedProcesses)
-        val projected = controller.state.value.runs.single().childProcesses.single()
+        val projected = controller.state.value.runs.single().processGroups
+            .flatMap(RuntimeManagementProcessGroupUiState::processes)
+            .single { it.key == "process-52" }
         assertEquals("结束中", projected.stopAction?.label)
         assertEquals(CardRunStatus.Running, controller.state.value.runs.single().status)
     }

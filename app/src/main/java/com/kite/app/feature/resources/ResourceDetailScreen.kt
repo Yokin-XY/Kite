@@ -12,6 +12,7 @@ import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.kite.app.R
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.theme.KiteTheme
 
@@ -44,7 +45,7 @@ internal class ResourceDetailScreen(
     private var restoredScrollY = initialScrollY.coerceAtLeast(0)
 
     val root: View = FrameLayout(context).apply {
-        contentDescription = "资源详情"
+        contentDescription = context.getString(R.string.resource_detail_description)
         setBackgroundColor(factory.tokens.pageBackground)
         addView(contentHost, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -56,10 +57,14 @@ internal class ResourceDetailScreen(
         val item = state.item(resourceId)
         when {
             item == null && state.phase in setOf(ResourceCatalogPhase.Idle, ResourceCatalogPhase.Loading) ->
-                renderState("正在读取资源", resourceId, loading = true)
+                renderState(root.context.getString(R.string.resource_catalog_loading_title), resourceId, loading = true)
             item == null && state.phase == ResourceCatalogPhase.Failed ->
-                renderState("资源请求失败", state.errorMessage ?: resourceId, retry = onRetry)
-            item == null -> renderState("资源暂不可用", resourceId)
+                renderState(
+                    root.context.getString(R.string.resource_detail_request_failed_title),
+                    state.errorMessage ?: resourceId,
+                    retry = onRetry
+                )
+            item == null -> renderState(root.context.getString(R.string.resource_detail_unavailable_title), resourceId)
             else -> renderItem(state, item)
         }
     }
@@ -83,7 +88,7 @@ internal class ResourceDetailScreen(
 
     private fun renderItem(state: ResourceFeatureUiState, item: ResourceItemUiState) {
         currentItem = item
-        val detail = item.detailPresentation()
+        val detail = item.detailPresentation(root.context)
         if (staticSignature != detail.staticSignature || scrollView == null) {
             staticSignature = detail.staticSignature
             rebuildContent(state, item, detail)
@@ -106,21 +111,32 @@ internal class ResourceDetailScreen(
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(factory.dp(22), factory.dp(8), factory.dp(22), factory.dp(34))
-                addView(chrome(item.resourceId))
                 addView(header(item, detail))
                 addView(actionArea())
                 addView(visual(item, detail))
-                addView(infoBlock("简介", detail.longDescription))
+                addView(infoBlock(context.getString(R.string.resource_detail_section_intro), detail.longDescription))
                 recommendationBlock(state, detail)?.let(::addView)
                 addView(sourceBlock(detail))
-                if (detail.includes.isNotEmpty()) addView(bulletBlock("包含内容", detail.includes))
-                if (detail.notes.isNotEmpty()) addView(bulletBlock("说明", detail.notes))
+                if (detail.includes.isNotEmpty()) {
+                    addView(bulletBlock(context.getString(R.string.resource_detail_section_includes), detail.includes))
+                }
+                if (detail.notes.isNotEmpty()) {
+                    addView(bulletBlock(context.getString(R.string.resource_detail_section_notes), detail.notes))
+                }
                 addView(stepBlock(detail.steps))
                 addView(requirementsBlock(detail))
             })
         }
         scrollView = scroll
-        contentHost.addView(scroll, FrameLayout.LayoutParams(
+        contentHost.addView(LinearLayout(root.context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(chrome(item.resourceId))
+            addView(scroll, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            ))
+        }, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
@@ -148,9 +164,16 @@ internal class ResourceDetailScreen(
         contentHost.removeAllViews()
         contentHost.addView(LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(factory.dp(22), factory.dp(8), factory.dp(22), factory.dp(34))
             addView(chrome(resourceId, showMore = false))
-            addView(factory.stateBlock(title, detail, loading, retry))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(factory.dp(22), 0, factory.dp(22), factory.dp(34))
+                addView(factory.stateBlock(title, detail, loading, retry))
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            ))
         }, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
@@ -158,12 +181,12 @@ internal class ResourceDetailScreen(
     }
 
     private fun bindDynamic(item: ResourceItemUiState) {
-        val presentation = item.presentation()
-        statusValue?.text = presentation.stateLabel
+        val presentation = item.presentation(root.context)
+        statusValue?.text = factory.stateLabel(item)
         val split = item.secondaryIntent != null
         primaryButton?.apply {
             layoutParams = LinearLayout.LayoutParams(0, factory.dp(46), if (split) 0.7f else 1f)
-            text = presentation.actionLabel
+            text = factory.actionLabel(item.primaryIntent)
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -186,7 +209,7 @@ internal class ResourceDetailScreen(
             }
             setOnClickListener(null)
             if (split) {
-                text = presentation.secondaryActionLabel.orEmpty()
+                text = item.secondaryIntent?.let(factory::actionLabel).orEmpty()
                 textSize = 13f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
@@ -206,17 +229,7 @@ internal class ResourceDetailScreen(
 
     private fun acknowledge(button: TextView?, intent: KiteResourceActionIntent) {
         button?.apply {
-            text = when (intent) {
-                KiteResourceActionIntent.Install,
-                KiteResourceActionIntent.ReopenInstall -> "准备中"
-                KiteResourceActionIntent.Open -> "打开中"
-                KiteResourceActionIntent.Stop -> "停止中"
-                KiteResourceActionIntent.Uninstall -> "卸载中"
-                KiteResourceActionIntent.CancelInstall,
-                KiteResourceActionIntent.CancelFailedInstall -> "取消中"
-                KiteResourceActionIntent.BusyStatus,
-                KiteResourceActionIntent.Unsupported -> "处理中"
-            }
+            text = factory.acknowledgementLabel(intent)
             isEnabled = false
             alpha = 0.58f
             setOnClickListener(null)
@@ -224,31 +237,21 @@ internal class ResourceDetailScreen(
     }
 
     private fun chrome(resourceId: String, showMore: Boolean = true): View =
-        LinearLayout(root.context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, factory.dp(8))
-            addView(chromeButton("‹", "返回") { onBack() })
-            addView(View(context), LinearLayout.LayoutParams(0, factory.dp(32), 1f))
-            addView(if (showMore) {
-                chromeButton("•••", "更多操作") { onMore(resourceId) }
+        factory.ui.topBar(
+            context = root.context,
+            title = root.context.getString(R.string.resource_catalog_title),
+            onBack = onBack,
+            trailingAction = if (showMore) {
+                factory.ui.imageButton(
+                    context = root.context,
+                    iconRes = R.drawable.ic_more_vert_light,
+                    contentDescription = root.context.getString(R.string.resource_detail_more_actions),
+                    onClick = { onMore(resourceId) }
+                )
             } else {
-                View(context).apply { layoutParams = LinearLayout.LayoutParams(factory.dp(32), factory.dp(32)) }
-            })
-        }
-
-    private fun chromeButton(label: String, description: String, action: () -> Unit): TextView =
-        TextView(root.context).apply {
-            text = label
-            textSize = if (label == "•••") 15f else 25f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(factory.tokens.textPrimary)
-            contentDescription = description
-            setOnClickListener { action() }
-            layoutParams = LinearLayout.LayoutParams(factory.dp(32), factory.dp(32))
-        }
+                null
+            }
+        )
 
     private fun header(item: ResourceItemUiState, detail: ResourceDetailPresentation): View {
         val presentation = detail.item
@@ -427,7 +430,7 @@ internal class ResourceDetailScreen(
         return LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, factory.dp(20), 0, 0)
-            addView(sectionTitle("推荐"))
+            addView(sectionTitle(context.getString(R.string.resource_detail_section_recommendations)))
             addView(HorizontalScrollView(context).apply {
                 isHorizontalScrollBarEnabled = false
                 layoutParams = LinearLayout.LayoutParams(
@@ -453,7 +456,7 @@ internal class ResourceDetailScreen(
         recommendation: ResourceDetailRecommendation,
         item: ResourceItemUiState
     ): View = LinearLayout(root.context).apply {
-        val presentation = item.presentation()
+        val presentation = item.presentation(root.context)
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
         contentDescription = "${presentation.name}，${recommendation.label}"
@@ -475,7 +478,7 @@ internal class ResourceDetailScreen(
     private fun sourceBlock(detail: ResourceDetailPresentation): View = LinearLayout(root.context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(0, factory.dp(24), 0, 0)
-        addView(sectionTitle("来源"))
+        addView(sectionTitle(context.getString(R.string.resource_detail_section_source)))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(factory.dp(14), factory.dp(12), factory.dp(14), factory.dp(14))
@@ -489,7 +492,7 @@ internal class ResourceDetailScreen(
                 gravity = Gravity.CENTER_VERTICAL
                 val tone = KiteTheme.accent(detail.item.accent, factory.tokens)
                 addView(TextView(context).apply {
-                    text = "源"
+                    text = context.getString(R.string.resource_detail_source_mark)
                     textSize = 12f
                     typeface = Typeface.DEFAULT_BOLD
                     gravity = Gravity.CENTER
@@ -519,11 +522,11 @@ internal class ResourceDetailScreen(
                 factory.dp(1)
             ).apply { setMargins(0, factory.dp(12), 0, factory.dp(12)) })
             addView(TextView(context).apply {
-                text = "查看原始 JSON  ›"
+                text = context.getString(R.string.resource_detail_raw_json_action)
                 textSize = 14f
                 setTextColor(factory.tokens.textPrimary)
                 setPadding(0, factory.dp(8), 0, factory.dp(8))
-                contentDescription = "查看原始 JSON"
+                contentDescription = context.getString(R.string.resource_detail_raw_json_description)
                 setOnClickListener { onRawJson(resourceId) }
             })
         })
@@ -532,7 +535,7 @@ internal class ResourceDetailScreen(
     private fun stepBlock(steps: List<ResourceDetailStep>): View = LinearLayout(root.context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(0, factory.dp(24), 0, 0)
-        addView(sectionTitle("执行预览"))
+        addView(sectionTitle(context.getString(R.string.resource_detail_section_execution)))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(factory.dp(14), factory.dp(10), factory.dp(14), factory.dp(10))
@@ -569,7 +572,7 @@ internal class ResourceDetailScreen(
         LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(0, factory.dp(26), 0, 0)
-            addView(sectionTitle("依赖与要求"))
+            addView(sectionTitle(context.getString(R.string.resource_detail_section_requirements)))
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(factory.dp(16), factory.dp(8), factory.dp(16), factory.dp(8))
@@ -578,9 +581,13 @@ internal class ResourceDetailScreen(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 ).apply { setMargins(0, factory.dp(14), 0, 0) }
-                val rows = detail.requirements + ResourceDetailRequirement("状态", currentItem?.presentation()?.stateLabel.orEmpty())
+                val statusLabel = context.getString(R.string.resource_detail_status)
+                val rows = detail.requirements + ResourceDetailRequirement(
+                    statusLabel,
+                    currentItem?.let(factory::stateLabel).orEmpty()
+                )
                 rows.forEachIndexed { index, requirement ->
-                    addView(requirementRow(requirement, dynamicStatus = requirement.label == "状态"))
+                    addView(requirementRow(requirement, dynamicStatus = requirement.label == statusLabel))
                     if (index != rows.lastIndex) addView(factory.divider(), LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         factory.dp(1)

@@ -29,19 +29,26 @@ class ResourceDetailScreenTest {
         val primaryActions = mutableListOf<String>()
         val screen = createScreen(onPrimaryAction = primaryActions::add)
         attach(screen)
+        val context = screen.root.context
         screen.render(state(installed = false))
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 
-        val initialButton = screen.root.textViews().first { it.text.toString() == "获取" }
+        val initialButton = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_install)
+        }
         initialButton.performClick()
         assertEquals(listOf("tool"), primaryActions)
 
         screen.render(state(installed = true))
         shadowOf(Looper.getMainLooper()).idle()
 
-        val reboundButton = screen.root.textViews().first { it.text.toString() == "打开" }
+        val reboundButton = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_open)
+        }
         assertSame(initialButton, reboundButton)
-        assertTrue(screen.root.textViews().any { it.text.toString() == "已获取" })
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_state_installed)
+        })
     }
 
     @Test
@@ -57,13 +64,22 @@ class ResourceDetailScreenTest {
             onSecondaryAction = secondary::add
         )
         attach(screen)
+        val context = screen.root.context
         screen.render(state(installed = true, running = true))
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 
-        screen.root.views().first { it.contentDescription?.toString() == "返回" }.performClick()
-        screen.root.views().first { it.contentDescription?.toString() == "更多操作" }.performClick()
-        screen.root.views().first { it.contentDescription?.toString() == "查看原始 JSON" }.performClick()
-        val stopButton = screen.root.textViews().first { it.text.toString() == "终止" }
+        screen.root.views().first {
+            it.contentDescription?.toString() == context.getString(R.string.common_back)
+        }.performClick()
+        screen.root.views().first {
+            it.contentDescription?.toString() == context.getString(R.string.resource_detail_more_actions)
+        }.performClick()
+        screen.root.views().first {
+            it.contentDescription?.toString() == context.getString(R.string.resource_detail_raw_json_description)
+        }.performClick()
+        val stopButton = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_stop)
+        }
         stopButton.performClick()
 
         assertEquals(1, backCount)
@@ -73,7 +89,7 @@ class ResourceDetailScreenTest {
 
         screen.acknowledgeSecondary(KiteResourceActionIntent.Stop)
 
-        assertEquals("停止中", stopButton.text.toString())
+        assertEquals(context.getString(R.string.resource_state_stopping), stopButton.text.toString())
         assertFalse(stopButton.isEnabled)
     }
 

@@ -252,7 +252,7 @@ class RunOrchestratorTest {
     }
 
     @Test
-    fun `子窗口清理不确定时父实例仍单向停止`() {
+    fun `子窗口清理未确认时父实例保留绑定并进入待确认态`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
         val ownedWindows = FakeRunOwnedWindowGateway()
@@ -274,14 +274,10 @@ class RunOrchestratorTest {
             )
         )
 
-        assertEquals(CardRunStatus.Stopping, gateway.state("root-instance")?.status)
-        assertEquals(1, executor.stopRequests.size)
-
-        executor.emitStop(StopExecutionResult(StopExecutionOutcome.Failed, "后台继续清理"))
-
-        assertEquals(CardRunStatus.Stopped, gateway.state("root-instance")?.status)
-        assertEquals(null, gateway.state("root-instance")?.lastError)
-        assertEquals(true, (effects.single() as RunExecutionEffect.StopResolved).stopped)
+        assertEquals(CardRunStatus.CleanupPending, gateway.state("root-instance")?.status)
+        assertTrue(executor.stopRequests.isEmpty())
+        assertEquals("仍有子进程未结束，请重试", gateway.state("root-instance")?.lastError)
+        assertEquals(false, (effects.single() as RunExecutionEffect.StopResolved).stopped)
     }
 
     @Test
@@ -314,7 +310,7 @@ class RunOrchestratorTest {
     }
 
     @Test
-    fun `停止后瞬时残留只进入后台清理且不会恢复旧状态`() {
+    fun `停止仍有残留时不清除运行绑定`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
         val effects = mutableListOf<RunExecutionEffect>()
@@ -345,25 +341,23 @@ class RunOrchestratorTest {
         )
 
         val state = gateway.state("residue-instance")
-        assertEquals(CardRunStatus.Stopped, state?.status)
-        assertEquals(null, state?.lastError)
-        assertEquals(null, state?.runId)
-        assertEquals(null, state?.pid)
-        assertEquals(null, state?.runtimeRootOwnerId)
-        assertTrue(state?.ownedRuntimeOwnerIds.orEmpty().isEmpty())
+        assertEquals(CardRunStatus.CleanupPending, state?.status)
+        assertEquals("未能确认所有进程已经结束，请重试", state?.lastError)
+        assertEquals("run-1", state?.runId)
+        assertEquals("100", state?.pid)
         assertEquals(
             RunExecutionEffect.StopResolved(
                 instanceId = "residue-instance",
                 recipeId = recipe.id,
-                stopped = true,
-                message = "已关闭"
+                stopped = false,
+                message = "未能确认所有进程已经结束，请重试"
             ),
             effects.single()
         )
     }
 
     @Test
-    fun `Bridge 强杀返回失败但残留审计为空时仍确认停止`() {
+    fun `Bridge 返回失败时即使残留标记为空也不冒充确认`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
         val orchestrator = RunOrchestrator(gateway, executor)
@@ -394,10 +388,10 @@ class RunOrchestratorTest {
         )
 
         val state = gateway.state("force-kill-instance")
-        assertEquals(CardRunStatus.Stopped, state?.status)
-        assertEquals("已关闭", state?.lastMeaningfulOutput)
-        assertEquals(null, state?.runId)
-        assertEquals(null, state?.pid)
+        assertEquals(CardRunStatus.CleanupPending, state?.status)
+        assertEquals("__kite_stop_mode:force-kill\n__kite_stop_remaining:", state?.lastError)
+        assertEquals("force-run", state?.runId)
+        assertEquals("9570", state?.pid)
     }
 
     @Test
@@ -433,7 +427,7 @@ class RunOrchestratorTest {
         )
         executor.emitStop(
             StopExecutionResult(
-                outcome = StopExecutionOutcome.Timeout,
+                outcome = StopExecutionOutcome.VerificationUnavailable,
                 remainingProcessIds = listOf("100")
             )
         )

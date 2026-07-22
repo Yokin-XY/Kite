@@ -46,7 +46,23 @@ data class ThemeColorSchemeDefinition(
 /** 固定设计基础不会跟随样式包切换。 */
 data class ThemeFoundations(
     val spacing: ThemeSpacing,
+    val typography: ThemeTypography,
     val minimumTouchTarget: Int,
+)
+
+/**
+ * 固定排版层级，单位为 sp。
+ *
+ * 排版表达的是信息层级，不属于可切换样式包，避免换主题时页面结构和可读性一起漂移。
+ */
+data class ThemeTypography(
+    val pageTitle: Float,
+    val sectionTitle: Float,
+    val cardTitle: Float,
+    val body: Float,
+    val supporting: Float,
+    val action: Float,
+    val badge: Float,
 )
 
 /** 一个语义容器的形状、层级和边界配方，单位均为 dp。 */

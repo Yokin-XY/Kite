@@ -66,7 +66,7 @@ class AndroidRunWindowSurfaceGatewayTest {
     }
 
     @Test
-    fun `close all removes child facts even while old process cleanup continues`() {
+    fun `close all keeps child facts when process cleanup is unconfirmed`() {
         val recipe = TestRecipes.serviceRecipe("failed-child-close")
         val root = seed(recipe, "root", parentInstanceId = null, runId = null)
         seed(recipe, "child", parentInstanceId = root.instanceId, runId = "child-run")
@@ -80,9 +80,9 @@ class AndroidRunWindowSurfaceGatewayTest {
 
         gateway.closeAll(root.instanceId, root.createdAt) { closeResult = it }
 
-        assertEquals(true, closeResult?.confirmed)
-        assertEquals(emptyList<String>(), closeResult?.remainingInstanceIds)
-        assertNull(CardRunStore.get("child"))
+        assertEquals(false, closeResult?.confirmed)
+        assertEquals(listOf("child"), closeResult?.remainingInstanceIds)
+        assertNotNull(CardRunStore.get("child"))
         assertNotNull(CardRunStore.get("root"))
     }
 

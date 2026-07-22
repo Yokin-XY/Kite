@@ -32,20 +32,25 @@ class ResourceManageScreenTest {
         val actions = mutableListOf<String>()
         val screen = createScreen(onPrimaryAction = actions::add)
         attach(screen)
+        val context = screen.root.context
         screen.render(installedState(actionLabel = "打开", stateLabel = "已获取"))
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 
-        val initialButton = screen.root.textViews().first { it.text.toString() == "打开" }
+        val initialButton = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_open)
+        }
         initialButton.performClick()
         assertEquals(listOf("tool"), actions)
 
         screen.render(installedState(actionLabel = "运行中", stateLabel = "运行中"))
         shadowOf(Looper.getMainLooper()).idle()
 
-        val reboundButton = screen.root.textViews().first { it.text.toString() == "运行中" }
+        val reboundButton = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_open)
+        }
         assertSame(initialButton, reboundButton)
         screen.acknowledge("tool", KiteResourceActionIntent.Open)
-        assertEquals("打开中", reboundButton.text.toString())
+        assertEquals(context.getString(R.string.resource_state_starting), reboundButton.text.toString())
         assertFalse(reboundButton.isEnabled)
     }
 
@@ -58,12 +63,19 @@ class ResourceManageScreenTest {
             onCancelPlan = { target, ids -> cancelled += target to ids }
         )
         attach(screen)
+        val context = screen.root.context
         screen.render(planState(statusLabel = "待获取", tone = KiteResourceStepTone.Neutral))
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 
-        val initialBadge = screen.root.textViews().first { it.text.toString() == "等待中" }
+        val initialBadge = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_manage_queue_waiting)
+        }
         val card = screen.root.views().first {
-            it.contentDescription?.toString()?.contains("点击打开，上滑关闭") == true
+            it.contentDescription?.toString() == context.getString(
+                R.string.resource_manage_queue_description,
+                "Tool",
+                context.getString(R.string.resource_manage_queue_waiting)
+            )
         }
         card.performClick()
         assertEquals(listOf("tool"), opened)
@@ -71,7 +83,9 @@ class ResourceManageScreenTest {
         screen.render(planState(statusLabel = "获取中", tone = KiteResourceStepTone.Primary))
         shadowOf(Looper.getMainLooper()).idle()
 
-        val reboundBadge = screen.root.textViews().first { it.text.toString() == "获取中" }
+        val reboundBadge = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_state_installing)
+        }
         assertSame(initialBadge, reboundBadge)
 
         val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, 100f, 240f, 0)
@@ -89,11 +103,16 @@ class ResourceManageScreenTest {
         var backCount = 0
         val screen = createScreen(onBack = { backCount += 1 })
         attach(screen)
+        val context = screen.root.context
         screen.render(ResourceFeatureUiState(phase = ResourceCatalogPhase.Loading))
         shadowOf(Looper.getMainLooper()).idle()
 
-        assertTrue(screen.root.textViews().any { it.text.toString() == "正在读取资源管理信息" })
-        screen.root.views().first { it.contentDescription?.toString() == "返回" }.performClick()
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_manage_loading_title)
+        })
+        screen.root.views().first {
+            it.contentDescription?.toString() == context.getString(R.string.common_back)
+        }.performClick()
         assertEquals(1, backCount)
     }
 

@@ -29,9 +29,7 @@ internal class ThemeSettingsScreen(
         val environment = KiteTheme.resolve(state.theme, systemDark)
         val factory = SettingsViewFactory(
             context,
-            environment.tokens,
-            environment.foundations,
-            environment.components,
+            environment,
         )
         root.setBackgroundColor(factory.tokens.pageBackground)
         root.removeAllViews()

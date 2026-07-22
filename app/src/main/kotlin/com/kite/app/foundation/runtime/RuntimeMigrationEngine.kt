@@ -27,6 +27,7 @@ object RuntimeMigrationEngine {
         "termux-proot-baseline-arm64-58aad2c-telemetry-startup-v1"
     private const val TELEMETRY_DEBUG_JSONL_LIFECYCLE_V0 = "debug_jsonl_lifecycle_v0"
     private const val TELEMETRY_NONE_CURRENT = "none_current"
+    private const val CAPABILITY_PROCESS_LIFECYCLE_EVENTS = "process_lifecycle_events"
     private const val SUBSTRATE_PASS = "PASS"
     private const val SUBSTRATE_PARTIAL = "PARTIAL"
     private const val SUBSTRATE_BLOCKED = "BLOCKED"
@@ -134,13 +135,32 @@ object RuntimeMigrationEngine {
 
     private fun findTelemetryCapableRuntime(descriptor: JSONObject): JSONObject? {
         val runtimes = descriptor.optJSONArray("availableRuntimes") ?: return null
+        val activeRuntimeId = descriptor.optString("activeRuntimeId")
         for (index in 0 until runtimes.length()) {
             val runtime = runtimes.optJSONObject(index) ?: continue
-            if (candidateTelemetryMode(runtime, descriptor) == TELEMETRY_DEBUG_JSONL_LIFECYCLE_V0) {
+            if (runtime.optString("runtimeId") == activeRuntimeId && hasLifecycleTelemetryCapability(runtime)) {
+                return runtime
+            }
+        }
+        for (index in 0 until runtimes.length()) {
+            val runtime = runtimes.optJSONObject(index) ?: continue
+            if (hasLifecycleTelemetryCapability(runtime) ||
+                candidateTelemetryMode(runtime, descriptor) == TELEMETRY_DEBUG_JSONL_LIFECYCLE_V0
+            ) {
                 return runtime
             }
         }
         return null
+    }
+
+    private fun hasLifecycleTelemetryCapability(runtime: JSONObject): Boolean {
+        val capabilities = runtime.optJSONArray("capabilities") ?: return false
+        for (index in 0 until capabilities.length()) {
+            if (capabilities.optString(index) == CAPABILITY_PROCESS_LIFECYCLE_EVENTS) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun candidateTelemetryMode(runtime: JSONObject, descriptor: JSONObject): String {
@@ -197,6 +217,10 @@ object RuntimeMigrationEngine {
         descriptor.put(
             "telemetryMode",
             runtime.optString("telemetryMode").ifBlank { TELEMETRY_NONE_CURRENT }
+        )
+        descriptor.put(
+            "capabilities",
+            runtime.optJSONArray("capabilities")?.let { JSONArray(it.toString()) } ?: JSONArray()
         )
         descriptor.put("telemetrySubstrateState", substrateState)
         descriptor.put("telemetrySubstrateReason", reason)

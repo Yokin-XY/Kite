@@ -52,6 +52,106 @@ class ProotTelemetryStoreLifecycleTest {
     }
 
     @Test
+    fun `v2 生命周期编号允许同一会话复用 host PID 而不串代`() {
+        val base = System.currentTimeMillis() - 10_000L
+        val file = telemetryFile(
+            event(
+                "TraceeCreated",
+                base,
+                "session-v2",
+                100L,
+                51,
+                701,
+                owner = "card:old",
+                eventSeq = 1L,
+                lifecycleSeq = 10L,
+                startTimeTicks = 1000L,
+            ),
+            event(
+                "TraceeExited",
+                base + 100L,
+                "session-v2",
+                100L,
+                51,
+                701,
+                exitCode = 0,
+                eventSeq = 2L,
+                lifecycleSeq = 10L,
+                startTimeTicks = 1000L,
+            ),
+            event(
+                "TraceeCreated",
+                base + 200L,
+                "session-v2",
+                100L,
+                51,
+                701,
+                owner = "card:new",
+                eventSeq = 3L,
+                lifecycleSeq = 11L,
+                startTimeTicks = 2000L,
+            ),
+        )
+
+        val snapshot = ProotTelemetryStore.readTelemetryFileForTests(file)
+
+        assertEquals(2, snapshot.tracees.size)
+        assertEquals(2, snapshot.tracees.map(ProotTraceeRecord::lifecycleId).distinct().size)
+        assertFalse(snapshot.tracees.single { it.lifecycleSeq == 10L }.running)
+        assertTrue(snapshot.tracees.single { it.lifecycleSeq == 11L }.running)
+        assertEquals(2000L, snapshot.tracees.single(ProotTraceeRecord::running).startTimeTicks)
+    }
+
+    @Test
+    fun `v2 事件缺口降低 owner 证据而重复事件不会重复投影`() {
+        val base = System.currentTimeMillis() - 10_000L
+        val duplicate = event(
+            "ExecDetected",
+            base + 100L,
+            "session-gap",
+            100L,
+            51,
+            702,
+            owner = "card:a",
+            eventSeq = 2L,
+            lifecycleSeq = 20L,
+        )
+        val file = telemetryFile(
+            event(
+                "TraceeCreated",
+                base,
+                "session-gap",
+                100L,
+                51,
+                702,
+                owner = "card:a",
+                eventSeq = 1L,
+                lifecycleSeq = 20L,
+            ),
+            duplicate,
+            duplicate,
+            event(
+                "ExecDetected",
+                base + 200L,
+                "session-gap",
+                100L,
+                51,
+                702,
+                owner = "card:a",
+                eventSeq = 4L,
+                lifecycleSeq = 20L,
+            ),
+        )
+
+        val snapshot = ProotTelemetryStore.readTelemetryFileForTests(file)
+
+        assertEquals(1L, snapshot.counters.duplicateEvents)
+        assertEquals(1L, snapshot.counters.sequenceGaps)
+        assertEquals("event_sequence_gap", snapshot.ownerEvidenceCoverageReason)
+        assertEquals(2, snapshot.tracees.single().execCount)
+    }
+
+    @Test
     fun `旧协议 PID 终止后新的创建事件开启兼容代次`() {
         val base = System.currentTimeMillis() - 10_000L
         val file = telemetryFile(
@@ -173,7 +273,11 @@ class ProotTelemetryStoreLifecycleTest {
         owner: String = "",
         exitCode: Int? = null,
         signal: Int? = null,
-        parentTraceePid: Int? = null
+        parentTraceePid: Int? = null,
+        eventSeq: Long = 0L,
+        lifecycleSeq: Long = 0L,
+        startTimeTicks: Long = 0L,
+        parentLifecycleSeq: Long? = null,
     ): String {
         val fields = mutableListOf(
             "\"schema\":\"kf_proot_lifecycle_event_v1\"",
@@ -191,6 +295,10 @@ class ProotTelemetryStoreLifecycleTest {
         exitCode?.let { fields += "\"exitCode\":$it" }
         signal?.let { fields += "\"signal\":$it" }
         parentTraceePid?.let { fields += "\"parentTraceePid\":$it" }
+        if (eventSeq > 0L) fields += "\"eventSeq\":$eventSeq"
+        if (lifecycleSeq > 0L) fields += "\"lifecycleSeq\":$lifecycleSeq"
+        if (startTimeTicks > 0L) fields += "\"startTimeTicks\":$startTimeTicks"
+        parentLifecycleSeq?.let { fields += "\"parentLifecycleSeq\":$it" }
         return fields.joinToString(prefix = "{", postfix = "}")
     }
 }

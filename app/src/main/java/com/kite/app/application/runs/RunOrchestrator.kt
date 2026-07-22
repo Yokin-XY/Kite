@@ -225,12 +225,25 @@ internal class RunOrchestrator(
 
     private fun handleOwnedWindowsCloseResult(
         preparation: StopPreparation,
-        @Suppress("UNUSED_PARAMETER") result: RunOwnedWindowsCloseResult
+        result: RunOwnedWindowsCloseResult
     ) {
         val execution = synchronized(lock) {
             val previous = preparation.previousState
             val current = stateGateway.state(previous.instanceId) ?: return
             if (current.createdAt != previous.createdAt || current.status != CardRunStatus.Stopping) return
+            if (!result.confirmed) {
+                val message = result.message.ifBlank { "仍有子进程未结束，请重试" }
+                commit(preparation.recipe, previous.instanceId, cleanupPendingMutation(previous, message))
+                effectSink.emit(
+                    RunExecutionEffect.StopResolved(
+                        instanceId = previous.instanceId,
+                        recipeId = preparation.recipe.id,
+                        stopped = false,
+                        message = message,
+                    ),
+                )
+                return@synchronized null
+            }
             val localSummary = preparation.localSummary
             if (localSummary != null) {
                 commit(preparation.recipe, previous.instanceId, stoppedMutation(localSummary))
@@ -456,12 +469,20 @@ internal class RunOrchestrator(
             if (current.createdAt != previousState.createdAt || current.status != CardRunStatus.Stopping) return
             val recipe = stateGateway.recipe(previousState.recipeId) ?: return
             val resolution = stopCoordinator.resolve(result)
-            commit(recipe, previousState.instanceId, stoppedMutation(resolution.summary))
+            commit(
+                recipe,
+                previousState.instanceId,
+                if (resolution.confirmed) {
+                    stoppedMutation(resolution.summary)
+                } else {
+                    cleanupPendingMutation(previousState, resolution.summary)
+                },
+            )
             effectSink.emit(
                 RunExecutionEffect.StopResolved(
                     instanceId = previousState.instanceId,
                     recipeId = recipe.id,
-                    stopped = true,
+                    stopped = resolution.confirmed,
                     message = resolution.summary
                 )
             )
@@ -552,7 +573,7 @@ internal class RunOrchestrator(
                         recipe = recipe,
                         instanceId = state.instanceId,
                         generation = state.createdAt,
-                        runtimeOwnerIds = state.ownedRuntimeOwnerIds,
+                        runtimeOwnerIds = state.runtimeOwnerIdsForStop(),
                         runId = sessionId,
                         terminalSessionId = sessionId,
                         interruptTerminal = true
@@ -564,7 +585,7 @@ internal class RunOrchestrator(
                     recipe = recipe,
                     instanceId = state.instanceId,
                     generation = state.createdAt,
-                    runtimeOwnerIds = state.ownedRuntimeOwnerIds,
+                    runtimeOwnerIds = state.runtimeOwnerIdsForStop(),
                     runId = state.runId,
                     terminalSessionId = state.terminalSessionId,
                     pid = state.pid,
@@ -594,17 +615,21 @@ internal class RunOrchestrator(
                 this == CardRunStatus.WaitingTerminal ||
                 this == CardRunStatus.AlreadyRunning ||
                 this == CardRunStatus.Opened ||
-                this == CardRunStatus.Stopping
+                this == CardRunStatus.Stopping ||
+                this == CardRunStatus.CleanupPending
 
         private fun CardRunStatus.endsExecutionGeneration(): Boolean =
             this == CardRunStatus.Stopped ||
                 this == CardRunStatus.Completed ||
                 this == CardRunStatus.Failed ||
                 this == CardRunStatus.BridgeUnavailable ||
+                this == CardRunStatus.CleanupPending ||
                 this == CardRunStatus.Unknown
 
         private fun CardRunStatus.stopsExecution(): Boolean =
-            this == CardRunStatus.Stopping || this == CardRunStatus.Stopped
+            this == CardRunStatus.Stopping ||
+                this == CardRunStatus.Stopped ||
+                this == CardRunStatus.CleanupPending
 
         private fun CardRunState.hasOnlyTerminalRunBinding(): Boolean =
             !terminalSessionId.isNullOrBlank() &&
@@ -637,6 +662,27 @@ internal class RunOrchestrator(
             clearRunBinding = true,
             clearTerminalSession = true,
             clearNextActionUrl = true
+        )
+
+        private fun cleanupPendingMutation(state: CardRunState, summary: String): RunStateMutation = RunStateMutation(
+            status = CardRunStatus.CleanupPending,
+            surface = state.surface,
+            currentStepIndex = state.currentStepIndex,
+            runtimeRootOwnerId = state.runtimeRootOwnerId,
+            runtimeOwnerId = state.runtimeOwnerId,
+            runtimeUnitId = state.runtimeUnitId,
+            ownedRuntimeOwnerIds = state.ownedRuntimeOwnerIds,
+            runId = state.runId,
+            terminalSessionId = state.terminalSessionId,
+            pid = state.pid,
+            rootPid = state.rootPid,
+            processGroupId = state.processGroupId,
+            systemSessionId = state.systemSessionId,
+            nextActionUrl = state.nextActionUrl,
+            x11Display = state.x11Display,
+            x11SocketPath = state.x11SocketPath,
+            lastMeaningfulOutput = summary,
+            lastError = summary,
         )
 
         private fun stoppingMutation(state: CardRunState): RunStateMutation = RunStateMutation(

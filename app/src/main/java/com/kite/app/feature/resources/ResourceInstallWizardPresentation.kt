@@ -1,5 +1,7 @@
 package com.kite.app.feature.resources
 
+import android.content.Context
+import com.kite.app.R
 import com.kite.app.action.KiteInstallPlanActionCoordinator
 import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.application.resources.ResourceFeatureRunSnapshot
@@ -42,6 +44,7 @@ internal data class ResourceInstallWizardViewState(
 
 internal object ResourceInstallWizardPresenter {
     fun project(
+        context: Context,
         state: ResourceFeatureUiState,
         requestedTargetResourceId: String,
         seedResourceIds: List<String>
@@ -63,8 +66,9 @@ internal object ResourceInstallWizardPresenter {
                 ?: KiteResourceInstallStore.OP_INSTALL
             ResourceInstallWizardRowViewState(
                 resourceId = resourceId,
-                name = item?.presentation()?.name ?: resourceId,
-                sourceLabel = item?.presentation()?.sourceLabel.orEmpty().ifBlank { "资源" },
+                name = item?.presentation(context)?.name ?: resourceId,
+                sourceLabel = item?.presentation(context)?.sourceLabel.orEmpty()
+                    .ifBlank { context.getString(R.string.resource_wizard_fallback_resource) },
                 index = index,
                 total = resourceIds.size,
                 isActive = false,
@@ -93,14 +97,20 @@ internal object ResourceInstallWizardPresenter {
                     itemsById[row.resourceId]?.phase in installedPhases
                 )
         }
-        val targetName = itemsById[targetResourceId]?.presentation()?.name
-            ?: targetResourceId.ifBlank { "获取任务" }
+        val targetName = itemsById[targetResourceId]?.presentation(context)?.name
+            ?: targetResourceId.ifBlank { context.getString(R.string.resource_wizard_install_task) }
         val detail = when {
-            hasRunningStep -> "正在获取：${rows.firstOrNull { it.resourceId == activeResourceId }?.name.orEmpty()}"
-            hasUninstallingStep -> "正在卸载：${rows.firstOrNull { it.resourceId == activeResourceId }?.name.orEmpty()}"
-            hasFailure -> "发现异常请手动处理"
-            hasPending -> "将按顺序获取 ${resourceIds.size} 个资源"
-            else -> "执行队列已完成"
+            hasRunningStep -> context.getString(
+                R.string.resource_wizard_detail_installing,
+                rows.firstOrNull { it.resourceId == activeResourceId }?.name.orEmpty()
+            )
+            hasUninstallingStep -> context.getString(
+                R.string.resource_wizard_detail_uninstalling,
+                rows.firstOrNull { it.resourceId == activeResourceId }?.name.orEmpty()
+            )
+            hasFailure -> context.getString(R.string.resource_wizard_detail_failure)
+            hasPending -> context.getString(R.string.resource_wizard_detail_pending, resourceIds.size)
+            else -> context.getString(R.string.resource_wizard_detail_completed)
         }
         val action = KiteInstallPlanActionCoordinator.plan(
             hasRunningStep = hasRunningStep,
@@ -114,7 +124,13 @@ internal object ResourceInstallWizardPresenter {
             detail = detail,
             completedCount = completedCount.coerceIn(0, resourceIds.size),
             totalCount = resourceIds.size,
-            primaryLabel = action.label,
+            primaryLabel = when {
+                hasUninstallingStep -> context.getString(R.string.resource_state_uninstalling)
+                hasFailure -> context.getString(R.string.resource_wizard_detail_failure)
+                hasRunningStep -> context.getString(R.string.resource_state_installing)
+                hasPending -> context.getString(R.string.resource_wizard_action_start)
+                else -> context.getString(R.string.resource_wizard_action_complete)
+            },
             primaryEnabled = action.enabled,
             primaryIntent = action.intent,
             rows = rows
@@ -157,22 +173,27 @@ internal fun ResourceFeatureRunSnapshot.isLiveForWizard(): Boolean =
         status == CardRunStatus.AlreadyRunning ||
         status == CardRunStatus.Opened
 
-internal fun ResourceInstallWizardRowViewState.subtitle(now: Long): String {
+internal fun ResourceInstallWizardRowViewState.subtitle(context: Context, now: Long): String {
     val base = "$sourceLabel · ${index + 1}/$total"
     val currentRun = run ?: return base
     val endAt = if (currentRun.isLiveForWizard()) now else currentRun.updatedAt
     val seconds = ((endAt - currentRun.startedAt).coerceAtLeast(0L) / 1000L)
     val elapsed = when {
         seconds < 60L * 60L -> String.format("%02d:%02d", seconds / 60L, seconds % 60L)
-        seconds < 24L * 60L * 60L -> "${seconds / (60L * 60L)}小时"
-        else -> "${seconds / (24L * 60L * 60L)}天"
+        seconds < 24L * 60L * 60L -> context.getString(
+            R.string.resource_wizard_duration_hours,
+            seconds / (60L * 60L)
+        )
+        else -> context.getString(R.string.resource_wizard_duration_days, seconds / (24L * 60L * 60L))
     }
     return when {
-        currentRun.isLiveForWizard() -> "$base · 运行 $elapsed"
-        currentRun.status == CardRunStatus.Completed -> "$base · 用时 $elapsed"
+        currentRun.isLiveForWizard() -> context.getString(R.string.resource_wizard_subtitle_running, base, elapsed)
+        currentRun.status == CardRunStatus.Completed ->
+            context.getString(R.string.resource_wizard_subtitle_duration, base, elapsed)
         currentRun.status == CardRunStatus.Failed || currentRun.status == CardRunStatus.BridgeUnavailable ->
-            "$base · 失败 $elapsed"
-        currentRun.status == CardRunStatus.Stopped -> "$base · 已停止 $elapsed"
+            context.getString(R.string.resource_wizard_subtitle_failed, base, elapsed)
+        currentRun.status == CardRunStatus.Stopped ->
+            context.getString(R.string.resource_wizard_subtitle_stopped, base, elapsed)
         else -> base
     }
 }

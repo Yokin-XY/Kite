@@ -24,6 +24,7 @@ import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
 import com.kite.app.foundation.runtime.HostSelfAdbBridgeWorker
 import com.kite.app.foundation.runtime.RuntimeLifecycleSignalStore
 import com.kite.app.foundation.runtime.RuntimePressureResponder
+import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.run.CardRunStore
 import com.kite.app.ui.terminal.TerminalUiPreferences
 import com.kite.app.shell.KiteAppGraph
@@ -35,10 +36,18 @@ import com.kite.app.application.theme.ThemeEnvironmentGateway
 import com.kite.app.platform.theme.AndroidThemeEnvironmentGateway
 import com.kite.app.application.runs.RunHistoryDependenciesOwner
 import com.kite.app.application.runs.RunHistoryGateway
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner,
     RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner, SettingsFeatureDependenciesOwner,
     RuntimeBootstrapDependenciesOwner, RunHistoryDependenciesOwner, ThemeEnvironmentDependenciesOwner {
+
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override val resourceFeatureGateway: ResourceFeatureGateway
         get() = KiteAppGraph.from(this).resourceFeatureGateway
@@ -129,6 +138,9 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
         }
         StartupTraceStore.runApplicationStage(this, "application.run_notifications") {
             CardRunStore.initialize(this)
+            applicationScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                TaskManagerStore.confirmedStoppedOwnerEvents.collect(CardRunStore::confirmRuntimeOwnersStopped)
+            }
             KiteAppGraph.from(this).runNotificationCoordinator.start()
         }
         markLaunchStage("App", "通知通道就绪")

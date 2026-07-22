@@ -78,6 +78,19 @@ class KiteThemeEnvironmentTest {
         val environment = KiteTheme.resolve(base, systemDark = false)
 
         assertEquals(48, environment.foundations.minimumTouchTarget)
+        assertEquals(22f, environment.foundations.typography.pageTitle)
+        assertEquals(16f, environment.foundations.typography.cardTitle)
+        assertEquals(12.5f, environment.foundations.typography.supporting)
+        assertTrue(
+            environment.foundations.typography.pageTitle >
+                environment.foundations.typography.cardTitle,
+        )
+        assertTrue(
+            environment.foundations.typography.cardTitle >
+                environment.foundations.typography.supporting,
+        )
+        assertEquals(24, environment.components.card.radius)
+        assertEquals(18, environment.components.control.radius)
         assertEquals(ThemeContentModePolicy.FOLLOW_EFFECTIVE_MODE, environment.contentPolicies.terminal)
         assertEquals(ThemeContentModePolicy.PREFER_EFFECTIVE_MODE, environment.contentPolicies.web)
         assertEquals(ThemeContentModePolicy.PRESERVE_CONTENT, environment.contentPolicies.x11)

@@ -23,9 +23,7 @@ internal class SettingsScreen(
     )
     private val factory = SettingsViewFactory(
         context,
-        themeEnvironment.tokens,
-        themeEnvironment.foundations,
-        themeEnvironment.components,
+        themeEnvironment,
     )
     private val scrollView = ScrollView(context)
 

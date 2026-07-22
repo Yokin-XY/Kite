@@ -2,6 +2,7 @@ package com.kite.app.platform.runtimemanagement
 
 import android.content.Context
 import com.kite.app.application.runtimemanagement.RuntimeManagedOwnerKind
+import com.kite.app.application.runtimemanagement.RuntimeManagedCardIcon
 import com.kite.app.application.runtimemanagement.RuntimeManagedProcess
 import com.kite.app.application.runtimemanagement.RuntimeManagedTerminal
 import com.kite.app.application.runtimemanagement.RuntimeManagementDispatchResult
@@ -37,7 +38,7 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
         TaskManagerStore.snapshot,
         RuntimeHealthStore.snapshot
     ) { runs, terminals, tasks, health ->
-        mapSnapshot(runs, terminals, tasks, health)
+        mapSnapshot(runs, terminals, tasks, health, cardIcons(runs))
     }.stateIn(
         scope = scope,
         started = SharingStarted.Eagerly,
@@ -52,8 +53,20 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
         runs = CardRunStore.runs.value,
         terminals = TerminalSessionStore.snapshot.value,
         tasks = TaskManagerStore.snapshot.value,
-        health = RuntimeHealthStore.snapshot.value
+        health = RuntimeHealthStore.snapshot.value,
+        cardIconsByRecipeId = cardIcons(CardRunStore.runs.value),
     )
+
+    private fun cardIcons(runs: List<CardRunState>): Map<String, RuntimeManagedCardIcon> = runs
+        .map(CardRunState::recipeId)
+        .filter(String::isNotBlank)
+        .distinct()
+        .mapNotNull { recipeId ->
+            CardRunStore.registeredRecipe(recipeId)?.icon?.let { icon ->
+                recipeId to RuntimeManagedCardIcon(icon.type, icon.name, icon.source)
+            }
+        }
+        .toMap()
 
     override fun refresh(force: Boolean) {
         TerminalSessionStore.refresh(appContext, force = force)
@@ -70,9 +83,24 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
     override suspend fun endProcess(processId: String, pid: Int): RuntimeManagementDispatchResult {
         if (pid <= 1) return RuntimeManagementDispatchResult.rejected("invalid_pid")
         val item = TaskManagerStore.getProcess(processId)
-            ?: TaskManagerStore.snapshot.value.processes.firstOrNull { it.pid == pid }
+            ?: processId.takeIf(String::isBlank)?.let {
+                TaskManagerStore.snapshot.value.processes.firstOrNull { candidate -> candidate.pid == pid }
+            }
+            ?: return RuntimeManagementDispatchResult.rejected("process_not_found")
+        if (item.processRef != null && item.processRef.hasStrongIdentity.not()) {
+            return RuntimeManagementDispatchResult.rejected("process_identity_unavailable")
+        }
         TaskManagerStore.endProcess(appContext, item, pid)
         return RuntimeManagementDispatchResult.accepted("process_end_requested")
+    }
+
+    override suspend fun endProcessTree(processIds: List<String>): RuntimeManagementDispatchResult {
+        val accepted = TaskManagerStore.endProcessTree(appContext, processIds)
+        return if (accepted) {
+            RuntimeManagementDispatchResult.accepted("process_tree_end_requested")
+        } else {
+            RuntimeManagementDispatchResult.rejected("process_tree_identity_unavailable")
+        }
     }
 
     override suspend fun stopBackgroundRuntime(runtimeId: String): RuntimeManagementDispatchResult {
@@ -94,7 +122,8 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
             runs: List<CardRunState>,
             terminals: TerminalSessionsSnapshot,
             tasks: TaskManagerSnapshot,
-            health: RuntimeHealthSnapshot
+            health: RuntimeHealthSnapshot,
+            cardIconsByRecipeId: Map<String, RuntimeManagedCardIcon> = emptyMap(),
         ): RuntimeManagementSnapshot {
             val liveTerminalIds = terminals.liveSessions.mapTo(mutableSetOf(), TerminalSessionItem::id)
             val observedProcessCount = listOf(
@@ -108,6 +137,7 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
                 runs = runs,
                 terminals = terminals.sessions.map { it.toRuntimeManagedTerminal(it.id in liveTerminalIds) },
                 processes = tasks.processes.map { it.toRuntimeManagedProcess() },
+                cardIconsByRecipeId = cardIconsByRecipeId,
                 observedProcessCount = observedProcessCount,
                 refreshedAt = maxOf(tasks.refreshedAt, terminals.refreshedAt, health.reconciledAt)
             )
@@ -130,7 +160,12 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
                 linkedTerminalSessionId = linkedTerminalSessionId,
                 linkedRuntimeId = linkedRuntimeId,
                 isOwnerRoot = id.startsWith("root-"),
-                canEndDirectly = TaskManagerAction.END_PROCESS in availableActions
+                isRuntimeScaffold = isRuntimeScaffold(identity),
+                canEndDirectly = TaskManagerAction.END_PROCESS in availableActions,
+                lifecycleId = lifecycleId,
+                processGroupId = processGroupId,
+                kernelState = kernelState.name,
+                identityVerified = processRef?.hasStrongIdentity == true,
             )
         }
 
@@ -160,6 +195,7 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
 
         private fun TaskManagerProcessItem.processName(identity: String): String = when {
             "supervisord" in identity -> "容器守护进程"
+            "容量工作器" in identity || "proot-capacity" in identity -> "PRoot 容量工作器"
             "/runtime/bin/proot" in identity || "link2symlink" in identity -> "PRoot 容器入口"
             "/workspace/.kf/system/bin/kf-runner" in identity -> "Kite 命令启动器"
             "locale-check" in identity -> "语言环境检查"
@@ -171,6 +207,7 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
 
         private fun TaskManagerProcessItem.processPurpose(identity: String): String = when {
             "supervisord" in identity -> "维护 Ubuntu 容器里的后台服务"
+            "容量工作器" in identity || "proot-capacity" in identity -> "为卡片和终端保留可用的 PRoot 容量"
             "/runtime/bin/proot" in identity || "link2symlink" in identity -> "启动并隔离 Ubuntu 文件系统"
             "/workspace/.kf/system/bin/kf-runner" in identity -> "执行卡片命令前的统一入口"
             "locale-check" in identity -> "检查 Ubuntu 语言环境"
@@ -195,6 +232,17 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
                 "/runtime/bin/proot" in identity ||
                 "link2symlink" in identity ||
                 "/workspace/.kf/system/" in identity ||
+                "locale-check" in identity ||
+                "mkdir -p /run/" in identity
+
+        private fun TaskManagerProcessItem.isRuntimeScaffold(identity: String): Boolean =
+            "容器骨架" in identity ||
+                "容量工作器" in identity ||
+                "proot-capacity" in identity ||
+                "supervisord" in identity ||
+                "/runtime/bin/proot" in identity ||
+                "link2symlink" in identity ||
+                "/workspace/.kf/system/bin/kf-runner" in identity ||
                 "locale-check" in identity ||
                 "mkdir -p /run/" in identity
 

@@ -67,4 +67,15 @@ class OwnerStopOutputEvidenceTest {
         assertEquals(listOf("42", "43", "88"), OwnerStopOutputEvidence.remainingProcessIds(output))
         assertEquals("停止后仍有进程残留：42,43,88", OwnerStopOutputEvidence.userMessage(output))
     }
+
+    @Test
+    fun `仍在运行 outcome 不会被解释成前端超时`() {
+        val output = """
+            __kite_owner_stop_outcome:STILL_RUNNING
+            __kite_stop_remaining:
+        """.trimIndent()
+
+        assertFalse(OwnerStopOutputEvidence.isConfirmed(output))
+        assertEquals("停止后仍观测到运行进程", OwnerStopOutputEvidence.userMessage(output))
+    }
 }

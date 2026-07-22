@@ -54,6 +54,14 @@ object ProotTelemetryStore {
     private var counters = ProotTelemetryCounters()
     private val recentEvents = ArrayDeque<ProotTelemetryEvent>()
     private val tracees = LinkedHashMap<TraceeLifecycleKey, ProotTraceeRecord>()
+    private val eventContinuity = ProotEventContinuityTracker()
+    private val processVerifier = ProotProcessVerifier()
+    private var activeRegistryRecoveryPending = true
+    private var latestActiveRegistry = ProotActiveRegistrySnapshot(
+        status = ProotActiveRegistryReadStatus.MISSING,
+        rootPath = "",
+    )
+    private var activeRegistryReconciledAtMs = 0L
 
     fun startAutoRefresh(context: Context) {
         val appContext = context.applicationContext
@@ -97,6 +105,68 @@ object ProotTelemetryStore {
         val appContext = context.applicationContext
         readTelemetry(appContext)
         return snapshot.value
+    }
+
+    /**
+     * 只核验调用方已经持有的稳定引用，并把核验结果合并回同一份运行事实。
+     * 该入口不会枚举 `/proc`，成本与目标数量线性相关。
+     */
+    fun verifyProcessRefs(
+        context: Context,
+        refs: Collection<ProotProcessRef>,
+        refreshFirst: Boolean = true,
+    ): List<ProotProcessVerification> {
+        val appContext = context.applicationContext
+        val unique = refs
+            .filter { it.hostPid > 1 }
+            .distinctBy(ProotProcessRef::lifecycleId)
+        if (unique.isEmpty()) return emptyList()
+        if (refreshFirst) readTelemetry(appContext)
+        val results = unique.map(processVerifier::verify)
+        applyProcessVerifications(appContext, results)
+        return results
+    }
+
+    /** 接收控制后端刚刚完成的定向核验，避免为了更新 UI 再做一次探测。 */
+    fun applyProcessVerifications(
+        context: Context,
+        results: Collection<ProotProcessVerification>,
+    ) {
+        if (results.isEmpty()) return
+        val appContext = context.applicationContext
+        synchronized(readerLock) {
+            val now = System.currentTimeMillis()
+            results.forEach { verification ->
+                val key = tracees.keys.firstOrNull { it.matches(verification.ref) } ?: return@forEach
+                val record = tracees[key] ?: return@forEach
+                val terminal = verification.terminal ||
+                    verification.status == ProotProcessVerificationStatus.MATCHED_ZOMBIE
+                tracees[key] = record.copy(
+                    processGroupId = verification.processGroupId ?: record.processGroupId,
+                    sessionId = verification.sessionId ?: record.sessionId,
+                    parentTraceePid = verification.parentPid ?: record.parentTraceePid,
+                    lastEventAtMs = if (terminal) now else record.lastEventAtMs,
+                    lastSourceHook = if (terminal) {
+                        "android_targeted_identity_terminal"
+                    } else {
+                        record.lastSourceHook
+                    },
+                    exitedAtMs = if (terminal) now else record.exitedAtMs,
+                    kernelState = verification.kernelState,
+                    verificationStatus = verification.status,
+                    verifiedAtElapsedMs = verification.verifiedAtElapsedMs,
+                    evidenceSource = "event+android_targeted_probe",
+                )
+            }
+            trimTracees()
+            val current = _snapshot.value
+            _snapshot.value = buildSnapshot(
+                file = telemetryFile(appContext),
+                collectionStatus = current.collectionStatus,
+                lastRefreshEvents = 0,
+                lastRefreshForkExecEvents = 0,
+            )
+        }
     }
 
     fun rotateHistoryContaminatedJsonl(
@@ -582,9 +652,11 @@ object ProotTelemetryStore {
 
     private fun readTelemetryLocked(context: Context) {
         val file = telemetryFile(context)
+        val activeRegistry = readActiveRegistryIfNeeded(context)
         if (!file.exists()) {
             synchronized(lock) {
                 resetIfPathChanged(file.absolutePath)
+                activeRegistry?.let(::reconcileActiveRegistry)
                 _snapshot.value = buildSnapshot(
                     file = file,
                     collectionStatus = "file_missing",
@@ -650,6 +722,8 @@ object ProotTelemetryStore {
                 }
             }
 
+            activeRegistry?.let(::reconcileActiveRegistry)
+
             if (readResult.skippedBytes > 0L) {
                 counters = counters.copy(skippedBytes = counters.skippedBytes + readResult.skippedBytes)
                 ownerEvidenceCompleteFromMs = maxOf(
@@ -657,6 +731,7 @@ object ProotTelemetryStore {
                     firstEventTimestamp(readResult.lines) ?: baselineNow
                 )
                 ownerEvidenceCoverageReason = "incremental_tail_gap"
+                activeRegistryRecoveryPending = true
             }
 
             for (line in readResult.lines) {
@@ -677,6 +752,9 @@ object ProotTelemetryStore {
             }
             if (parseErrors > 0) {
                 counters = counters.copy(parseErrors = counters.parseErrors + parseErrors)
+                ownerEvidenceCompleteFromMs = maxOf(ownerEvidenceCompleteFromMs, baselineNow)
+                ownerEvidenceCoverageReason = "telemetry_parse_error"
+                activeRegistryRecoveryPending = true
             }
 
             _snapshot.value = buildSnapshot(
@@ -690,6 +768,144 @@ object ProotTelemetryStore {
 
     private fun telemetryFile(context: Context): File {
         return File(AssetExtractor.getRuntimeLayout(context).tmpDir, TELEMETRY_FILE_NAME)
+    }
+
+    private fun activeRegistryRoot(context: Context): File {
+        return File(AssetExtractor.getRuntimeLayout(context).tmpDir, "kf-proot-active")
+    }
+
+    private fun readActiveRegistryIfNeeded(context: Context): ProotActiveRegistrySnapshot? {
+        val shouldRead = synchronized(lock) { activeRegistryRecoveryPending }
+        if (!shouldRead) return null
+        return ProotActiveRegistryReader(activeRegistryRoot(context)).read()
+    }
+
+    private fun reconcileActiveRegistry(registry: ProotActiveRegistrySnapshot) {
+        latestActiveRegistry = registry
+        val now = System.currentTimeMillis()
+        registry.sessions.forEach { session ->
+            val activeKeys = mutableSetOf<TraceeLifecycleKey>()
+            session.entries.forEach entryLoop@{ entry ->
+                val key = TraceeLifecycleKey(
+                    telemetrySessionId = entry.telemetrySessionId,
+                    prootStartMs = entry.prootStartMs,
+                    prootPid = entry.prootPid,
+                    traceePid = entry.traceePid,
+                    lifecycleSeq = entry.lifecycleSeq,
+                )
+                val verification = processVerifier.verify(entry.processRef())
+                if (verification.terminal) {
+                    tracees[key]?.let { existing ->
+                        tracees[key] = existing.copy(
+                            lastEventAtMs = now,
+                            lastSourceHook = "active_registry_identity_terminal",
+                            exitedAtMs = now,
+                            eventSeq = maxOf(existing.eventSeq, entry.lastEventSeq),
+                            kernelState = verification.kernelState,
+                            verificationStatus = verification.status,
+                            verifiedAtElapsedMs = verification.verifiedAtElapsedMs,
+                            evidenceSource = "active_registry+direct_probe",
+                        )
+                    }
+                    return@entryLoop
+                }
+
+                activeKeys += key
+                val existing = tracees[key]
+                val parentOwner = entry.parentLifecycleSeq?.let { parentSeq ->
+                    tracees.entries.firstOrNull { (parentKey, parentRecord) ->
+                        parentKey.telemetrySessionId == entry.telemetrySessionId &&
+                            parentKey.lifecycleSeq == parentSeq &&
+                            parentRecord.running
+                    }?.value
+                }
+                tracees[key] = (existing ?: ProotTraceeRecord(
+                    traceePid = entry.traceePid,
+                    traceeVpid = entry.traceeVpid,
+                    telemetrySessionId = entry.telemetrySessionId,
+                    prootStartMs = entry.prootStartMs,
+                    prootPid = entry.prootPid,
+                    processGroupId = entry.processGroupId,
+                    sessionId = entry.sessionId,
+                    parentTraceePid = entry.parentTraceePid,
+                    parentTraceeVpid = entry.parentTraceeVpid,
+                    createdAtMs = now,
+                    lastEventAtMs = now,
+                    lastEventType = entry.lastEventType,
+                    lastSourceHook = "active_registry_reconcile",
+                    executable = entry.executable,
+                    argvHash = entry.argvHash,
+                    argvPreview = entry.argvPreview,
+                    cwd = entry.cwd,
+                    kfRuntimeId = entry.kfRuntimeId.ifBlank { parentOwner?.kfRuntimeId.orEmpty() },
+                    kfUnitId = entry.kfUnitId.ifBlank { parentOwner?.kfUnitId.orEmpty() },
+                    eventSeq = entry.lastEventSeq,
+                    lifecycleSeq = entry.lifecycleSeq,
+                    startTimeTicks = entry.startTimeTicks,
+                    parentLifecycleSeq = entry.parentLifecycleSeq,
+                )).copy(
+                    processGroupId = verification.processGroupId ?: entry.processGroupId,
+                    sessionId = verification.sessionId ?: entry.sessionId,
+                    parentTraceePid = verification.parentPid ?: entry.parentTraceePid,
+                    parentTraceeVpid = entry.parentTraceeVpid,
+                    lastEventAtMs = now,
+                    lastEventType = entry.lastEventType,
+                    lastSourceHook = "active_registry_reconcile",
+                    executable = entry.executable.ifBlank { existing?.executable.orEmpty() },
+                    argvHash = entry.argvHash.ifBlank { existing?.argvHash.orEmpty() },
+                    argvPreview = entry.argvPreview.ifBlank { existing?.argvPreview.orEmpty() },
+                    cwd = entry.cwd.ifBlank { existing?.cwd.orEmpty() },
+                    kfRuntimeId = entry.kfRuntimeId.ifBlank {
+                        existing?.kfRuntimeId ?: parentOwner?.kfRuntimeId.orEmpty()
+                    },
+                    kfUnitId = entry.kfUnitId.ifBlank {
+                        existing?.kfUnitId ?: parentOwner?.kfUnitId.orEmpty()
+                    },
+                    exitedAtMs = null,
+                    signaledAtMs = null,
+                    exitCode = null,
+                    signal = null,
+                    eventSeq = maxOf(existing?.eventSeq ?: 0L, entry.lastEventSeq),
+                    startTimeTicks = entry.startTimeTicks.takeIf { it > 0L }
+                        ?: existing?.startTimeTicks
+                        ?: 0L,
+                    parentLifecycleSeq = entry.parentLifecycleSeq ?: existing?.parentLifecycleSeq,
+                    kernelState = verification.kernelState,
+                    verificationStatus = verification.status,
+                    verifiedAtElapsedMs = verification.verifiedAtElapsedMs,
+                    evidenceSource = "active_registry+direct_probe",
+                )
+            }
+
+            tracees.entries
+                .filter { (key, record) ->
+                    key.telemetrySessionId == session.telemetrySessionId &&
+                        record.running &&
+                        key !in activeKeys
+                }
+                .map { it.key }
+                .forEach { key ->
+                    val record = tracees.getValue(key)
+                    tracees[key] = record.copy(
+                        lastEventAtMs = now,
+                        lastSourceHook = "active_registry_snapshot_missing",
+                        exitedAtMs = now,
+                        evidenceSource = "active_registry",
+                    )
+                }
+            eventContinuity.reset(session.telemetrySessionId, session.lastEventSeq)
+        }
+
+        val completeForObservedSessions = registry.complete &&
+            (registry.sessions.isNotEmpty() || tracees.values.none(ProotTraceeRecord::running))
+        if (completeForObservedSessions) {
+            ownerEvidenceCompleteFromMs = 0L
+            ownerEvidenceCoverageReason = "active_registry_reconciled"
+            activeRegistryRecoveryPending = false
+            activeRegistryReconciledAtMs = now
+        } else {
+            activeRegistryRecoveryPending = true
+        }
     }
 
     private fun telemetryLabel(value: String, fallback: String): String {
@@ -875,15 +1091,20 @@ object ProotTelemetryStore {
             ProotTelemetryEvent(
                 eventType = type,
                 timestampMs = json.optLong("timestampMs", System.currentTimeMillis()),
+                schema = json.optString("schema", ""),
                 telemetrySessionId = json.optString("telemetrySessionId", ""),
                 prootStartMs = json.optLong("prootStartMs", 0L),
                 prootPid = json.optInt("prootPid", 0),
                 traceePid = json.optInt("traceePid", 0),
                 traceeVpid = json.optLong("traceeVpid", 0L),
+                eventSeq = json.optLong("eventSeq", 0L),
+                lifecycleSeq = json.optLong("lifecycleSeq", 0L),
+                startTimeTicks = json.optLong("startTimeTicks", 0L),
                 processGroupId = json.optIntOrNull("processGroupId")?.takeIf { it > 0 },
                 sessionId = json.optIntOrNull("sessionId")?.takeIf { it > 0 },
                 parentTraceePid = json.optIntOrNull("parentTraceePid")?.takeIf { it > 0 },
                 parentTraceeVpid = json.optLongOrNull("parentTraceeVpid")?.takeIf { it > 0L },
+                parentLifecycleSeq = json.optLongOrNull("parentLifecycleSeq")?.takeIf { it > 0L },
                 flags = json.optLong("flags", 0L),
                 sourceHook = json.optString("sourceHook", "unknown"),
                 costLevel = json.optString("costLevel", "lifecycle_low"),
@@ -900,6 +1121,17 @@ object ProotTelemetryStore {
     }
 
     private fun applyEvent(event: ProotTelemetryEvent) {
+        val continuity = eventContinuity.observe(event.telemetrySessionId, event.eventSeq)
+        if (continuity.status == ProotEventContinuityStatus.DUPLICATE_OR_OLD) {
+            counters = counters.copy(duplicateEvents = counters.duplicateEvents + 1L)
+            return
+        }
+        if (continuity.requiresSnapshot) {
+            counters = counters.copy(sequenceGaps = counters.sequenceGaps + 1L)
+            ownerEvidenceCompleteFromMs = maxOf(ownerEvidenceCompleteFromMs, event.timestampMs)
+            ownerEvidenceCoverageReason = "event_sequence_gap"
+            activeRegistryRecoveryPending = true
+        }
         counters = counters.increment(event.eventType)
         pushRecentEvent(event)
         val traceeKey = resolveTraceeLifecycleKey(event)
@@ -936,7 +1168,11 @@ object ProotTelemetryStore {
                     argvPreview = event.argvPreview,
                     cwd = event.cwd,
                     kfRuntimeId = event.kfRuntimeId.ifBlank { parent?.kfRuntimeId.orEmpty() },
-                    kfUnitId = event.kfUnitId.ifBlank { parent?.kfUnitId.orEmpty() }
+                    kfUnitId = event.kfUnitId.ifBlank { parent?.kfUnitId.orEmpty() },
+                    eventSeq = event.eventSeq,
+                    lifecycleSeq = event.lifecycleSeq,
+                    startTimeTicks = event.startTimeTicks,
+                    parentLifecycleSeq = event.parentLifecycleSeq,
                 )).copy(
                     telemetrySessionId = event.telemetrySessionId.ifBlank { existing?.telemetrySessionId.orEmpty() },
                     prootStartMs = event.prootStartMs.takeIf { it > 0L } ?: existing?.prootStartMs ?: 0L,
@@ -947,7 +1183,12 @@ object ProotTelemetryStore {
                     lastSourceHook = event.sourceHook,
                     lastCostLevel = event.costLevel,
                     kfRuntimeId = event.kfRuntimeId.ifBlank { existing?.kfRuntimeId ?: parent?.kfRuntimeId.orEmpty() },
-                    kfUnitId = event.kfUnitId.ifBlank { existing?.kfUnitId ?: parent?.kfUnitId.orEmpty() }
+                    kfUnitId = event.kfUnitId.ifBlank { existing?.kfUnitId ?: parent?.kfUnitId.orEmpty() },
+                    eventSeq = maxOf(event.eventSeq, existing?.eventSeq ?: 0L),
+                    startTimeTicks = event.startTimeTicks.takeIf { it > 0L }
+                        ?: existing?.startTimeTicks
+                        ?: 0L,
+                    parentLifecycleSeq = event.parentLifecycleSeq ?: existing?.parentLifecycleSeq,
                 )
                 parentKey?.let { key ->
                     tracees[key]?.let { parentRecord ->
@@ -981,7 +1222,11 @@ object ProotTelemetryStore {
                     argvPreview = event.argvPreview.ifBlank { existing?.argvPreview.orEmpty() },
                     cwd = event.cwd.ifBlank { existing?.cwd.orEmpty() },
                     kfRuntimeId = event.kfRuntimeId.ifBlank { existing?.kfRuntimeId.orEmpty() },
-                    kfUnitId = event.kfUnitId.ifBlank { existing?.kfUnitId.orEmpty() }
+                    kfUnitId = event.kfUnitId.ifBlank { existing?.kfUnitId.orEmpty() },
+                    eventSeq = event.eventSeq,
+                    lifecycleSeq = event.lifecycleSeq,
+                    startTimeTicks = event.startTimeTicks,
+                    parentLifecycleSeq = event.parentLifecycleSeq,
                 )).copy(
                     telemetrySessionId = event.telemetrySessionId.ifBlank { existing?.telemetrySessionId.orEmpty() },
                     prootStartMs = event.prootStartMs.takeIf { it > 0L } ?: existing?.prootStartMs ?: 0L,
@@ -997,7 +1242,12 @@ object ProotTelemetryStore {
                     cwd = event.cwd.ifBlank { existing?.cwd.orEmpty() },
                     kfRuntimeId = event.kfRuntimeId.ifBlank { existing?.kfRuntimeId.orEmpty() },
                     kfUnitId = event.kfUnitId.ifBlank { existing?.kfUnitId.orEmpty() },
-                    execCount = (existing?.execCount ?: 0) + 1
+                    execCount = (existing?.execCount ?: 0) + 1,
+                    eventSeq = maxOf(event.eventSeq, existing?.eventSeq ?: 0L),
+                    startTimeTicks = event.startTimeTicks.takeIf { it > 0L }
+                        ?: existing?.startTimeTicks
+                        ?: 0L,
+                    parentLifecycleSeq = event.parentLifecycleSeq ?: existing?.parentLifecycleSeq,
                 )
             }
             ProotTelemetryEventType.TraceeExited -> {
@@ -1011,7 +1261,11 @@ object ProotTelemetryStore {
                     lastSourceHook = event.sourceHook,
                     lastCostLevel = event.costLevel,
                     exitedAtMs = event.timestampMs,
-                    exitCode = event.exitCode
+                    exitCode = event.exitCode,
+                    eventSeq = maxOf(event.eventSeq, existing?.eventSeq ?: 0L),
+                    startTimeTicks = event.startTimeTicks.takeIf { it > 0L }
+                        ?: existing?.startTimeTicks
+                        ?: 0L,
                 )
             }
             ProotTelemetryEventType.TraceeSignaled -> {
@@ -1025,7 +1279,11 @@ object ProotTelemetryStore {
                     lastSourceHook = event.sourceHook,
                     lastCostLevel = event.costLevel,
                     signaledAtMs = event.timestampMs,
-                    signal = event.signal
+                    signal = event.signal,
+                    eventSeq = maxOf(event.eventSeq, existing?.eventSeq ?: 0L),
+                    startTimeTicks = event.startTimeTicks.takeIf { it > 0L }
+                        ?: existing?.startTimeTicks
+                        ?: 0L,
                 )
             }
             ProotTelemetryEventType.Unknown -> {
@@ -1070,15 +1328,17 @@ object ProotTelemetryStore {
             telemetrySessionId = event.telemetrySessionId,
             prootStartMs = event.prootStartMs,
             prootPid = event.prootPid,
-            traceePid = parentTraceePid
+            traceePid = parentTraceePid,
+            lifecycleSeq = event.parentLifecycleSeq ?: 0L,
         )
-        if (event.hasExplicitLifecycleIdentity()) {
+        if (event.hasExplicitLifecycleIdentity() && event.parentLifecycleSeq != null) {
             return exact.takeIf(tracees::containsKey)
         }
         return tracees.entries
             .asSequence()
             .filter { (key, record) ->
                 key.prootPid == event.prootPid &&
+                    (event.telemetrySessionId.isBlank() || key.telemetrySessionId == event.telemetrySessionId) &&
                     key.traceePid == parentTraceePid &&
                     record.running
             }
@@ -1109,7 +1369,11 @@ object ProotTelemetryStore {
             kfRuntimeId = event.kfRuntimeId,
             kfUnitId = event.kfUnitId,
             exitCode = event.exitCode,
-            signal = event.signal
+            signal = event.signal,
+            eventSeq = event.eventSeq,
+            lifecycleSeq = event.lifecycleSeq,
+            startTimeTicks = event.startTimeTicks,
+            parentLifecycleSeq = event.parentLifecycleSeq,
         )
     }
 
@@ -1186,6 +1450,16 @@ object ProotTelemetryStore {
             lastReadOffsetBytes = lastOffsetBytes,
             ownerEvidenceCompleteFromMs = ownerEvidenceCompleteFromMs,
             ownerEvidenceCoverageReason = ownerEvidenceCoverageReason,
+            activeRegistryStatus = if (activeRegistryRecoveryPending) {
+                "recovery_pending_${latestActiveRegistry.status.name.lowercase()}"
+            } else {
+                latestActiveRegistry.status.name.lowercase()
+            },
+            activeRegistryRootPath = latestActiveRegistry.rootPath,
+            activeRegistrySessionCount = latestActiveRegistry.sessions.size,
+            activeRegistryTraceeCount = latestActiveRegistry.activeTraceeCount,
+            activeRegistryUnstableSessions = latestActiveRegistry.unstableSessionIds,
+            activeRegistryReconciledAtMs = activeRegistryReconciledAtMs,
             lastRefreshEvents = lastRefreshEvents,
             lastRefreshForkExecEvents = lastRefreshForkExecEvents,
             probeDeclaredTargetLiveTracees = probeDeclaredTargetLiveTracees,
@@ -1234,7 +1508,15 @@ object ProotTelemetryStore {
                 execCount = record.execCount,
                 childEventCount = record.childEventCount,
                 exitCode = record.exitCode,
-                signal = record.signal
+                signal = record.signal,
+                eventSeq = record.eventSeq,
+                lifecycleSeq = record.lifecycleSeq,
+                startTimeTicks = record.startTimeTicks,
+                parentLifecycleSeq = record.parentLifecycleSeq,
+                kernelState = record.kernelState,
+                verificationStatus = record.verificationStatus,
+                verifiedAtElapsedMs = record.verifiedAtElapsedMs,
+                evidenceSource = record.evidenceSource,
             )
         }
         return ProotProcessLiveTable(
@@ -1276,6 +1558,10 @@ object ProotTelemetryStore {
                     sessionIds = entries.mapNotNull { it.sessionId?.takeIf { sid -> sid > 1 } }
                         .distinct()
                         .sorted(),
+                    lifecycleIds = entries.map { it.lifecycleId }.distinct().sorted(),
+                    processRefs = entries.map(ProotLiveProcessEntry::processRef)
+                        .distinctBy(ProotProcessRef::lifecycleId)
+                        .sortedBy(ProotProcessRef::lifecycleId),
                     liveTraceeCount = entries.size,
                     lastSeenAtMs = entries.maxOfOrNull { it.lastSeenAtMs } ?: 0L
                 )
@@ -1336,6 +1622,13 @@ object ProotTelemetryStore {
         counters = ProotTelemetryCounters()
         recentEvents.clear()
         tracees.clear()
+        eventContinuity.clear()
+        activeRegistryRecoveryPending = true
+        latestActiveRegistry = ProotActiveRegistrySnapshot(
+            status = ProotActiveRegistryReadStatus.MISSING,
+            rootPath = "",
+        )
+        activeRegistryReconciledAtMs = 0L
     }
 
     private fun ProotTelemetryEvent.belongsToCurrentReaderEpoch(): Boolean {
@@ -1376,6 +1669,7 @@ object ProotTelemetryStore {
                         firstEventTimestamp(readResult.lines) ?: System.currentTimeMillis()
                     )
                     ownerEvidenceCoverageReason = "incremental_tail_gap"
+                    activeRegistryRecoveryPending = true
                 }
                 var parseErrors = 0
                 readResult.lines.forEach { line ->
@@ -1392,6 +1686,9 @@ object ProotTelemetryStore {
                 }
                 if (parseErrors > 0) {
                     counters = counters.copy(parseErrors = counters.parseErrors + parseErrors)
+                    ownerEvidenceCompleteFromMs = maxOf(ownerEvidenceCompleteFromMs, System.currentTimeMillis())
+                    ownerEvidenceCoverageReason = "telemetry_parse_error"
+                    activeRegistryRecoveryPending = true
                 }
                 _snapshot.value = buildSnapshot(
                     file = file,
@@ -1458,20 +1755,29 @@ object ProotTelemetryStore {
         val prootStartMs: Long,
         val prootPid: Int,
         val traceePid: Int,
+        val lifecycleSeq: Long = 0L,
         val legacyGenerationMs: Long = 0L
-    )
+    ) {
+        fun matches(ref: ProotProcessRef): Boolean =
+            telemetrySessionId == ref.telemetrySessionId &&
+                prootStartMs == ref.prootStartMs &&
+                prootPid == ref.prootPid &&
+                traceePid == ref.hostPid &&
+                lifecycleSeq == ref.lifecycleSeq
+    }
 
     private fun ProotTelemetryEvent.exactLifecycleKey(): TraceeLifecycleKey {
         return TraceeLifecycleKey(
             telemetrySessionId = telemetrySessionId,
             prootStartMs = prootStartMs,
             prootPid = prootPid,
-            traceePid = traceePid
+            traceePid = traceePid,
+            lifecycleSeq = lifecycleSeq,
         )
     }
 
     private fun ProotTelemetryEvent.hasExplicitLifecycleIdentity(): Boolean {
-        return telemetrySessionId.isNotBlank() || prootStartMs > 0L
+        return lifecycleSeq > 0L || telemetrySessionId.isNotBlank() || prootStartMs > 0L
     }
 
     private val FORK_EXEC_EVENT_TYPES = setOf(

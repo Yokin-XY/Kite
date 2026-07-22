@@ -45,7 +45,8 @@ internal object OwnerStopOutputEvidence {
         return when (unconfirmed) {
             "TELEMETRY_UNAVAILABLE" -> "运行记录暂不完整，未执行强制停止"
             "PROBE_UNAVAILABLE" -> "无法确认实例进程状态，未标记为已停止"
-            "TIMEOUT" -> "停止超时，实例状态仍待确认"
+            "STILL_RUNNING" -> "停止后仍观测到运行进程"
+            "TIMEOUT" -> "停止结果暂时无法核验"
             else -> "停止失败，请稍后重试"
         }
     }

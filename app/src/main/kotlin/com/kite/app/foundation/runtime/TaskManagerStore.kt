@@ -10,6 +10,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -46,6 +48,11 @@ data class TaskManagerProcessItem(
     val runtimeRealityLabel: String? = null,
     val runtimeStaleReason: String? = null,
     val runtimeLastSeenAt: Long? = null,
+    val lifecycleId: String? = null,
+    val processGroupId: Int? = null,
+    val processRef: ProotProcessRef? = null,
+    val kernelState: ProotKernelProcessState = ProotKernelProcessState.UNKNOWN,
+    val verificationStatus: ProotProcessVerificationStatus? = null,
     val availableActions: List<TaskManagerAction> = emptyList()
 )
 
@@ -125,6 +132,8 @@ object TaskManagerStore {
     private val actionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _snapshot = MutableStateFlow(TaskManagerSnapshot())
     val snapshot: StateFlow<TaskManagerSnapshot> = _snapshot
+    private val _confirmedStoppedOwnerEvents = MutableSharedFlow<Set<String>>(extraBufferCapacity = 16)
+    val confirmedStoppedOwnerEvents: SharedFlow<Set<String>> = _confirmedStoppedOwnerEvents
     private val snapshotGrace = TaskManagerSnapshotGrace(EMPTY_PROCESS_GRACE_MS)
     private val confirmedStoppedOwners = linkedMapOf<String, Long>()
 
@@ -179,7 +188,7 @@ object TaskManagerStore {
             } else {
                 (lastRefreshAtMs + UI_REFRESH_MIN_INTERVAL_MS - now).coerceAtLeast(0L)
             }
-            refreshJob = scope.launch {
+            refreshJob = actionScope.launch {
                 try {
                     if (delayMs > 0L) {
                         delay(delayMs)
@@ -188,7 +197,21 @@ object TaskManagerStore {
                         clearPendingRefresh()
                         lastRefreshAtMs = System.currentTimeMillis()
                         RuntimeHealthStore.attachContext(appContext)
-                        ProotTelemetryStore.refresh(appContext)
+                        val telemetry = ProotTelemetryStore.refreshBlocking(appContext)
+                        val visibleRefs = telemetry.processLiveTable.entries
+                            .asSequence()
+                            .filter { it.state == ProotLiveProcessState.RUNNING }
+                            .map(ProotLiveProcessEntry::processRef)
+                            .filter(ProotProcessRef::hasStrongIdentity)
+                            .take(MAX_LIVE_PROCESS_ROWS)
+                            .toList()
+                        if (visibleRefs.isNotEmpty()) {
+                            ProotTelemetryStore.verifyProcessRefs(
+                                appContext,
+                                visibleRefs,
+                                refreshFirst = false,
+                            )
+                        }
                         RuntimeHealthStore.publishCurrentSnapshot(
                             context = appContext,
                             reason = "task-manager-refresh"
@@ -218,15 +241,55 @@ object TaskManagerStore {
 
     fun endProcess(context: Context, item: TaskManagerProcessItem?, pid: Int) {
         val ownerId = item?.let(TaskManagerProcessStopTargetResolver::ownerId)
-        if (ownerId == null) {
-            endProcess(context, pid)
+        val appContext = context.applicationContext
+        if (ownerId != null) {
+            actionScope.launch {
+                ProotOwnerProcessTerminator.terminate(appContext, ownerId)
+                refresh(appContext, force = true)
+            }
             return
         }
+
+        val processTarget = item?.processRef?.let { ref ->
+            ProotProcessControlTarget(
+                ref = ref,
+                parentHostPid = item.parentPid.takeIf { it > 1 },
+                processGroupId = item.processGroupId,
+            )
+        }
+        if (processTarget != null && processTarget.ref.hasStrongIdentity) {
+            actionScope.launch {
+                ProotDirectProcessTerminator.terminate(appContext, processTarget)
+                refresh(appContext, force = true)
+            }
+        } else {
+            endProcess(appContext, pid)
+        }
+    }
+
+    fun endProcessTree(context: Context, processIds: Collection<String>): Boolean {
+        val ids = processIds.map(String::trim).filter(String::isNotBlank).distinct()
+        if (ids.isEmpty()) return false
+        val itemsById = _snapshot.value.processes.associateBy(TaskManagerProcessItem::id)
+        val items = ids.mapNotNull(itemsById::get)
+        if (items.size != ids.size) return false
+        val targets = items.mapNotNull { item ->
+            item.processRef?.let { ref ->
+                ProotProcessControlTarget(
+                    ref = ref,
+                    parentHostPid = item.parentPid.takeIf { it > 1 },
+                    processGroupId = item.processGroupId,
+                )
+            }
+        }
+        if (targets.size != items.size || targets.any { !it.ref.hasStrongIdentity }) return false
+
         val appContext = context.applicationContext
         actionScope.launch {
-            ProotOwnerProcessTerminator.terminate(appContext, ownerId)
+            ProotDirectProcessTreeTerminator.terminate(appContext, targets)
             refresh(appContext, force = true)
         }
+        return true
     }
 
     fun stopRuntime(context: Context, runtimeId: String) {
@@ -263,6 +326,7 @@ object TaskManagerStore {
         _snapshot.value = _snapshot.value
             .withoutRuntimeOwners(normalized)
             .copy(refreshedAt = maxOf(_snapshot.value.refreshedAt, now))
+        _confirmedStoppedOwnerEvents.tryEmit(normalized)
     }
 
     @Synchronized
@@ -473,14 +537,14 @@ object TaskManagerStore {
         val runtimeUnitId = ownerEntry.kfUnitId.takeIf { it.isNotBlank() }
         val terminalSessionId = ownerEntry.terminalOwnerSessionId()
         return TaskManagerProcessItem(
-            id = "ubuntu-process-$traceePid",
+            id = "ubuntu-process-$lifecycleId",
             pid = traceePid,
             parentPid = parentTraceePid ?: 0,
             title = title,
             subtitle = buildUbuntuProcessSubtitle(commandIdentity),
             sourceLabel = "Ubuntu 进程",
             stateLabel = when (state) {
-                ProotLiveProcessState.RUNNING -> "运行中"
+                ProotLiveProcessState.RUNNING -> kernelState.managementLabel()
                 ProotLiveProcessState.EXITED -> "已退出"
                 ProotLiveProcessState.SIGNALED -> "已结束"
                 ProotLiveProcessState.UNKNOWN -> "未知"
@@ -502,9 +566,14 @@ object TaskManagerStore {
             runtimeRootPid = traceePid,
             runtimeRealityLabel = "PRoot 事件表",
             runtimeLastSeenAt = lastSeenAtMs.takeIf { it > 0L },
+            lifecycleId = lifecycleId,
+            processGroupId = processGroupId,
+            processRef = processRef(),
+            kernelState = kernelState,
+            verificationStatus = verificationStatus,
             availableActions = listOfNotNull(
                 terminalSessionId?.let { TaskManagerAction.OPEN_TERMINAL },
-                TaskManagerAction.END_PROCESS,
+                TaskManagerAction.END_PROCESS.takeIf { processRef().hasStrongIdentity },
                 TaskManagerAction.REFRESH
             )
         )
@@ -621,4 +690,17 @@ internal object TaskManagerProcessStopTargetResolver {
                 ownerId.startsWith("terminal:")
         }
     }
+
+}
+
+private fun ProotKernelProcessState.managementLabel(): String = when (this) {
+    ProotKernelProcessState.RUNNING -> "运行中"
+    ProotKernelProcessState.SLEEPING -> "休眠"
+    ProotKernelProcessState.DISK_SLEEP -> "不可中断等待"
+    ProotKernelProcessState.STOPPED,
+    ProotKernelProcessState.TRACING_STOP -> "已暂停"
+    ProotKernelProcessState.ZOMBIE -> "僵尸"
+    ProotKernelProcessState.DEAD -> "已结束"
+    ProotKernelProcessState.IDLE -> "空闲"
+    ProotKernelProcessState.UNKNOWN -> "运行中"
 }

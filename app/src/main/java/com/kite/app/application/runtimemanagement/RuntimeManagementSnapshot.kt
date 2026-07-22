@@ -7,9 +7,17 @@ data class RuntimeManagementSnapshot(
     val runs: List<CardRunState> = emptyList(),
     val terminals: List<RuntimeManagedTerminal> = emptyList(),
     val processes: List<RuntimeManagedProcess> = emptyList(),
+    val cardIconsByRecipeId: Map<String, RuntimeManagedCardIcon> = emptyMap(),
     val topology: InstanceRuntimeTopology = InstanceRuntimeTopologyBuilder.build(runs, terminals, processes),
     val observedProcessCount: Int = 0,
     val refreshedAt: Long = 0L
+)
+
+/** 卡片配方已经声明的图标事实；位图加载仍由 UI 专用仓库异步完成。 */
+data class RuntimeManagedCardIcon(
+    val type: String = "builtin",
+    val name: String = "default",
+    val source: String = ""
 )
 
 data class RuntimeManagedTerminal(
@@ -46,5 +54,10 @@ data class RuntimeManagedProcess(
     val linkedTerminalSessionId: String? = null,
     val linkedRuntimeId: String? = null,
     val isOwnerRoot: Boolean = false,
-    val canEndDirectly: Boolean = false
+    val isRuntimeScaffold: Boolean = false,
+    val canEndDirectly: Boolean = false,
+    val lifecycleId: String? = null,
+    val processGroupId: Int? = null,
+    val kernelState: String = "UNKNOWN",
+    val identityVerified: Boolean = false,
 )

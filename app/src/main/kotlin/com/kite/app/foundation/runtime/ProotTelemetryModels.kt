@@ -22,15 +22,20 @@ enum class ProotTelemetryEventType {
 data class ProotTelemetryEvent(
     val eventType: ProotTelemetryEventType,
     val timestampMs: Long,
+    val schema: String = "",
     val telemetrySessionId: String = "",
     val prootStartMs: Long = 0L,
     val prootPid: Int,
     val traceePid: Int,
     val traceeVpid: Long,
+    val eventSeq: Long = 0L,
+    val lifecycleSeq: Long = traceeVpid,
+    val startTimeTicks: Long = 0L,
     val processGroupId: Int?,
     val sessionId: Int?,
     val parentTraceePid: Int?,
     val parentTraceeVpid: Long?,
+    val parentLifecycleSeq: Long? = parentTraceeVpid,
     val flags: Long,
     val sourceHook: String,
     val costLevel: String,
@@ -56,7 +61,9 @@ data class ProotTelemetryCounters(
     val traceeSignaled: Long = 0L,
     val unknownEvents: Long = 0L,
     val parseErrors: Long = 0L,
-    val skippedBytes: Long = 0L
+    val skippedBytes: Long = 0L,
+    val sequenceGaps: Long = 0L,
+    val duplicateEvents: Long = 0L,
 )
 
 enum class ProotLiveProcessState {
@@ -92,7 +99,15 @@ data class ProotTraceeRecord(
     val exitedAtMs: Long? = null,
     val signaledAtMs: Long? = null,
     val exitCode: Int? = null,
-    val signal: Int? = null
+    val signal: Int? = null,
+    val eventSeq: Long = 0L,
+    val lifecycleSeq: Long = traceeVpid,
+    val startTimeTicks: Long = 0L,
+    val parentLifecycleSeq: Long? = parentTraceeVpid,
+    val kernelState: ProotKernelProcessState = ProotKernelProcessState.UNKNOWN,
+    val verificationStatus: ProotProcessVerificationStatus? = null,
+    val verifiedAtElapsedMs: Long = 0L,
+    val evidenceSource: String = "event",
 ) {
     val lifecycleId: String
         get() = prootTraceeLifecycleId(
@@ -100,6 +115,7 @@ data class ProotTraceeRecord(
             prootStartMs = prootStartMs,
             prootPid = prootPid,
             traceePid = traceePid,
+            lifecycleSeq = lifecycleSeq,
             legacyCreatedAtMs = createdAtMs
         )
 
@@ -142,7 +158,15 @@ data class ProotLiveProcessEntry(
     val execCount: Int,
     val childEventCount: Int,
     val exitCode: Int? = null,
-    val signal: Int? = null
+    val signal: Int? = null,
+    val eventSeq: Long = 0L,
+    val lifecycleSeq: Long = traceeVpid,
+    val startTimeTicks: Long = 0L,
+    val parentLifecycleSeq: Long? = parentTraceeVpid,
+    val kernelState: ProotKernelProcessState = ProotKernelProcessState.UNKNOWN,
+    val verificationStatus: ProotProcessVerificationStatus? = null,
+    val verifiedAtElapsedMs: Long = 0L,
+    val evidenceSource: String = "event",
 ) {
     val lifecycleId: String
         get() = prootTraceeLifecycleId(
@@ -150,8 +174,19 @@ data class ProotLiveProcessEntry(
             prootStartMs = prootStartMs,
             prootPid = prootPid,
             traceePid = traceePid,
+            lifecycleSeq = lifecycleSeq,
             legacyCreatedAtMs = createdAtMs
         )
+
+    fun processRef(): ProotProcessRef = ProotProcessRef(
+        telemetrySessionId = telemetrySessionId,
+        prootStartMs = prootStartMs,
+        prootPid = prootPid,
+        lifecycleSeq = lifecycleSeq,
+        hostPid = traceePid,
+        guestPid = traceeVpid,
+        startTimeTicks = startTimeTicks,
+    )
 }
 
 data class ProotProcessLiveTable(
@@ -182,6 +217,8 @@ data class ProotOwnerProcessGroup(
     val traceePids: List<Int> = emptyList(),
     val processGroupIds: List<Int> = emptyList(),
     val sessionIds: List<Int> = emptyList(),
+    val lifecycleIds: List<String> = emptyList(),
+    val processRefs: List<ProotProcessRef> = emptyList(),
     val liveTraceeCount: Int = 0,
     val lastSeenAtMs: Long = 0L
 )
@@ -204,8 +241,12 @@ private fun prootTraceeLifecycleId(
     prootStartMs: Long,
     prootPid: Int,
     traceePid: Int,
+    lifecycleSeq: Long,
     legacyCreatedAtMs: Long
 ): String {
+    if (telemetrySessionId.isNotBlank() && lifecycleSeq > 0L) {
+        return "$telemetrySessionId:$lifecycleSeq"
+    }
     val explicit = telemetrySessionId.isNotBlank() || prootStartMs > 0L
     val generation = if (explicit) 0L else legacyCreatedAtMs
     return listOf(
@@ -253,6 +294,12 @@ data class ProotTelemetrySnapshot(
     val lastReadOffsetBytes: Long = 0L,
     val ownerEvidenceCompleteFromMs: Long = 0L,
     val ownerEvidenceCoverageReason: String = "full_history",
+    val activeRegistryStatus: String = "not_started",
+    val activeRegistryRootPath: String = "",
+    val activeRegistrySessionCount: Int = 0,
+    val activeRegistryTraceeCount: Int = 0,
+    val activeRegistryUnstableSessions: List<String> = emptyList(),
+    val activeRegistryReconciledAtMs: Long = 0L,
     val lastRefreshEvents: Int = 0,
     val lastRefreshForkExecEvents: Int = 0,
     val probeDeclaredTargetLiveTracees: Int = 0,
