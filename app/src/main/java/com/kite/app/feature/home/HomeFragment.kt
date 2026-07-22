@@ -1,11 +1,10 @@
 package com.kite.app.feature.home
 
-import android.app.AlertDialog
+import android.app.Dialog
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.EditText
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
@@ -14,6 +13,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.R
 import com.kite.app.application.recipes.RecipeFeatureDependenciesOwner
 import com.kite.app.application.recipes.RecipeFeatureGateway
+import com.kite.app.ui.UiKit
+import com.kite.app.ui.theme.kiteThemeEnvironment
 import kotlinx.coroutines.launch
 
 /** 首页卡片 Feature。视图和页面状态留在模块内，Shell 只接收导航与动作 Effect。 */
@@ -35,6 +36,7 @@ internal class HomeFragment : Fragment() {
     private var restoredSearchQuery = ""
     private var restoredSortMode = HomeSortMode.Default
     private var runtimeBlocked = true
+    private var createGroupDialog: Dialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -107,6 +109,8 @@ internal class HomeFragment : Fragment() {
         restoredScrollY = screen?.scrollY() ?: restoredScrollY
         restoredSearchQuery = screen?.searchQuery() ?: restoredSearchQuery
         restoredSortMode = screen?.sortMode() ?: restoredSortMode
+        createGroupDialog?.dismiss()
+        createGroupDialog = null
         screen?.dispose()
         screen = null
         super.onDestroyView()
@@ -154,36 +158,33 @@ internal class HomeFragment : Fragment() {
     }
 
     private fun showCreateGroupDialog() {
-        val input = EditText(requireContext()).apply {
-            hint = getString(R.string.home_create_group_hint)
-            maxLines = 1
-        }
-        val dialog = AlertDialog.Builder(requireContext())
-            .setTitle(R.string.home_create_group_title)
-            .setView(input)
-            .setNegativeButton(R.string.home_create_group_cancel, null)
-            .setPositiveButton(R.string.home_create_group_confirm, null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val name = input.text?.toString().orEmpty().trim()
-                if (name.isBlank()) {
-                    input.error = getString(R.string.home_create_group_name_required)
-                    return@setOnClickListener
-                }
-                viewLifecycleOwner.lifecycleScope.launch {
-                    when (val effect = controller.dispatch(HomeFeatureAction.CreateGroup(name))) {
-                        is HomeFeatureEffect.GroupCreated -> {
-                            screen?.selectGroup(effect.group.id)
-                            dialog.dismiss()
-                        }
-                        is HomeFeatureEffect.ActionUnavailable -> input.error = effect.reason
-                        else -> Unit
+        createGroupDialog?.dismiss()
+        val context = requireContext()
+        val handle = UiKit(context, context.kiteThemeEnvironment()).showTextInputDialog(
+            context = context,
+            title = getString(R.string.home_create_group_title),
+            hint = getString(R.string.home_create_group_hint),
+            dismissLabel = getString(R.string.home_create_group_cancel),
+            confirmLabel = getString(R.string.home_create_group_confirm),
+        ) { name, dialogHandle ->
+            if (name.isBlank()) {
+                dialogHandle.showError(getString(R.string.home_create_group_name_required))
+                return@showTextInputDialog
+            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                when (val effect = controller.dispatch(HomeFeatureAction.CreateGroup(name))) {
+                    is HomeFeatureEffect.GroupCreated -> {
+                        screen?.selectGroup(effect.group.id)
+                        dialogHandle.dismiss()
                     }
+                    is HomeFeatureEffect.ActionUnavailable -> dialogHandle.showError(effect.reason)
+                    else -> Unit
                 }
             }
         }
-        dialog.show()
+        createGroupDialog = handle.dialog.also { dialog ->
+            dialog.setOnDismissListener { createGroupDialog = null }
+        }
     }
 
     private fun send(request: HomeFeatureRequest) {

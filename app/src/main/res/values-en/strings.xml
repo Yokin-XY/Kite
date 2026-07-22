@@ -198,6 +198,14 @@
     <string name="notification_channel_background_description">Android-required container background state. It is not used for card progress alerts.</string>
     <string name="notification_channel_runs_name">Home card progress</string>
     <string name="notification_channel_runs_description">Shows progress, close actions, and next steps for each home card instance.</string>
+    <string name="run_notification_permission_title">Notification permission required</string>
+    <string name="run_notification_permission_summary">%1$s uses system notifications for progress, results, and next actions. Allow notifications; banner behavior is controlled by the “Home card progress” channel.</string>
+    <string name="run_notification_permission_open">Enable</string>
+    <string name="run_notification_permission_later">Not now</string>
+    <string name="run_notification_permission_denied">Notifications are disabled. You can grant access later in Settings.</string>
+    <string name="run_notification_permission_settings_failed">Unable to open notification settings</string>
+    <string name="run_window_close_instance_title">Close this instance?</string>
+    <string name="run_window_close_instance_summary">This closes the windows and processes created by this instance, then exits the current task window after confirmation.</string>
     <string name="runtime_status_problem">Problem</string>
     <string name="runtime_status_permission_pending">Permission needed</string>
     <string name="runtime_status_extracting">Extracting %1$d%%</string>

@@ -1,10 +1,14 @@
 package com.kite.app.ui
 
 import android.app.Activity
+import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.TextView
 import com.kite.app.theme.KiteTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -40,5 +44,91 @@ class UiKitTest {
 
         assertEquals(first.textSize, second.textSize, 0f)
         assertEquals(first.currentTextColor, second.currentTextColor)
+    }
+
+    @Test
+    fun `标准确认弹层使用主题容器和危险动作而不是系统 AlertDialog`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val environment = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false)
+        val ui = UiKit(activity, environment)
+        var confirmed = false
+
+        val dialog = ui.showConfirmDialog(
+            context = activity,
+            title = "关闭当前实例？",
+            message = "将关闭这个实例产生的窗口和运行。",
+            dismissLabel = "取消",
+            primaryAction = UiDialogAction("关闭", UiActionRole.Danger) { confirmed = true },
+        )
+        val content = dialog.findViewById<View>(android.R.id.content)
+
+        assertFalse(dialog is android.app.AlertDialog)
+        assertNotNull(content.findByText("关闭当前实例？"))
+        assertEquals(environment.tokens.danger, (content.findByText("关闭") as TextView).currentTextColor)
+        content.findByText("关闭")!!.performClick()
+        assertTrue(confirmed)
+        assertFalse(dialog.isShowing)
+    }
+
+    @Test
+    fun `标准单选弹层标记当前选项并在选择后回调`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val ui = UiKit(activity, KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false))
+        var selected = -1
+        val dialog = ui.showChoiceDialog(
+            context = activity,
+            title = "终端主题",
+            options = listOf("跟随系统", "深色", "浅色"),
+            selectedIndex = 1,
+            dismissLabel = "关闭",
+        ) { selected = it }
+        val content = dialog.findViewById<View>(android.R.id.content)
+
+        assertTrue(content.findByText("深色")!!.isSelected)
+        content.findByText("浅色")!!.performClick()
+        assertEquals(2, selected)
+        assertFalse(dialog.isShowing)
+    }
+
+    @Test
+    fun `标准输入弹层允许异步校验后再关闭`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val ui = UiKit(activity, KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false))
+        var submitted = ""
+        val handle = ui.showTextInputDialog(
+            context = activity,
+            title = "新建卡片分组",
+            hint = "例如：AI 工具",
+            dismissLabel = "取消",
+            confirmLabel = "创建",
+        ) { value, dialogHandle ->
+            submitted = value
+            if (value.isBlank()) dialogHandle.showError("请输入分组名称") else dialogHandle.dismiss()
+        }
+        val content = handle.dialog.findViewById<View>(android.R.id.content)
+        val input = content.findFirstEditText()!!
+
+        content.findByText("创建")!!.performClick()
+        assertEquals("请输入分组名称", input.error?.toString())
+        assertTrue(handle.dialog.isShowing)
+
+        input.setText("AI 工具")
+        content.findByText("创建")!!.performClick()
+        assertEquals("AI 工具", submitted)
+        assertFalse(handle.dialog.isShowing)
+    }
+
+    private fun View.findByText(value: String): View? {
+        if (this is TextView && text?.toString() == value) return this
+        if (this !is ViewGroup) return null
+        repeat(childCount) { index -> getChildAt(index).findByText(value)?.let { return it } }
+        return null
+    }
+
+    private fun View.findFirstEditText(): EditText? {
+        if (this is EditText) return this
+        if (this !is ViewGroup) return null
+        repeat(childCount) { index -> getChildAt(index).findFirstEditText()?.let { return it } }
+        return null
     }
 }

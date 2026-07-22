@@ -9,6 +9,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import com.kite.app.R
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeStep
@@ -100,6 +101,27 @@ class RunActivityChromeTest {
         bubble.findViewById<View>(android.R.id.content).findByDescription("新建终端")!!.performClick()
         shadowOf(Looper.getMainLooper()).idleFor(200L, TimeUnit.MILLISECONDS)
         assertEquals(listOf("open-terminal"), fixture.actionLog)
+    }
+
+    @Test
+    fun `关闭实例使用主题确认弹层并只在确认后提交动作`() {
+        val fixture = fixture()
+        fixture.renderTerminal()
+        val firstTapAt = SystemClock.uptimeMillis()
+        dispatchTap(fixture.chrome.handleForTesting(), firstTapAt)
+        dispatchTap(fixture.chrome.handleForTesting(), firstTapAt + 100L)
+        fixture.actionLog.clear()
+
+        fixture.chrome.root.findByDescription("关闭")!!.performClick()
+        shadowOf(Looper.getMainLooper()).idleFor(200L, TimeUnit.MILLISECONDS)
+        val dialog = ShadowDialog.getLatestDialog()
+        val content = dialog.findViewById<View>(android.R.id.content)
+
+        assertFalse(dialog is android.app.AlertDialog)
+        assertNotNull(content.findByText(fixture.chrome.root.context.getString(R.string.run_window_close_instance_title)))
+        assertTrue(fixture.actionLog.isEmpty())
+        content.findByText(fixture.chrome.root.context.getString(R.string.common_close))!!.performClick()
+        assertEquals(listOf("close-instance"), fixture.actionLog)
     }
 
     private fun fixture(): Fixture {

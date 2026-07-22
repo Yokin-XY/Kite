@@ -1,16 +1,21 @@
 package com.kite.app.shell
 
 import android.Manifest
+import android.app.Dialog
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.kite.app.R
 import com.kite.app.platform.runs.AndroidRunNotificationAccess
+import com.kite.app.ui.UiActionRole
+import com.kite.app.ui.UiDialogAction
+import com.kite.app.ui.UiKit
+import com.kite.app.ui.theme.kiteThemeEnvironment
 import kotlinx.coroutines.launch
 
 /**
@@ -21,13 +26,13 @@ internal class RunNotificationPermissionFragment : Fragment() {
     private val coordinator by lazy { KiteAppGraph.from(requireContext()).runNotificationCoordinator }
     private var pendingRetry: (() -> Unit)? = null
     private var shownRequirementKey: String? = null
-    private var dialog: AlertDialog? = null
+    private var dialog: Dialog? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (!granted) {
-            Toast.makeText(requireContext(), "通知未开启，可在设置中再次授权", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.run_notification_permission_denied, Toast.LENGTH_SHORT).show()
         }
         coordinator.refresh()
         resumePendingAction()
@@ -76,19 +81,20 @@ internal class RunNotificationPermissionFragment : Fragment() {
         if (dialog?.isShowing == true) return
         if (!explicit && shownRequirementKey == key) return
         shownRequirementKey = key
-        dialog = AlertDialog.Builder(requireContext())
-            .setTitle("需要通知权限")
-            .setMessage(
-                "$title 的进度、结果和下一步操作由系统通知承载。" +
-                    "请允许通知；顶部提醒由系统里的“首页卡片进度”类别控制。"
-            )
-            .setPositiveButton("去开启") { _, _ -> requestAccess() }
-            .setNegativeButton("暂不", null)
-            .create()
-            .also { nextDialog ->
-                nextDialog.setOnDismissListener { dialog = null }
-                nextDialog.show()
-            }
+        val context = requireContext()
+        dialog = UiKit(context, context.kiteThemeEnvironment()).showConfirmDialog(
+            context = context,
+            title = getString(R.string.run_notification_permission_title),
+            message = getString(R.string.run_notification_permission_summary, title),
+            dismissLabel = getString(R.string.run_notification_permission_later),
+            primaryAction = UiDialogAction(
+                label = getString(R.string.run_notification_permission_open),
+                role = UiActionRole.Primary,
+                onClick = ::requestAccess,
+            ),
+        ).also { nextDialog ->
+            nextDialog.setOnDismissListener { dialog = null }
+        }
     }
 
     private fun requestAccess() {
@@ -100,7 +106,7 @@ internal class RunNotificationPermissionFragment : Fragment() {
         } else {
             runCatching { startActivity(AndroidRunNotificationAccess.runChannelSettingsIntent(context)) }
                 .onFailure {
-                    Toast.makeText(context, "无法打开通知设置", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, R.string.run_notification_permission_settings_failed, Toast.LENGTH_SHORT).show()
                 }
         }
     }

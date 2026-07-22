@@ -7,12 +7,14 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.ImageView
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.annotation.DrawableRes
@@ -236,11 +238,145 @@ class UiKit private constructor(
         fields: List<UiDialogField>,
         dismissLabel: String,
         primaryAction: UiDialogAction? = null,
+    ): Dialog = showDialogCard(
+        context = context,
+        title = title,
+        dismissLabel = dismissLabel,
+        primaryAction = primaryAction,
+    ) {
+        fields.forEach { field ->
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(context).apply {
+                    text = field.label
+                    applyTextRole(this, UiTextRole.Supporting)
+                })
+                addView(TextView(context).apply {
+                    text = field.value
+                    applyTextRole(this, UiTextRole.Body)
+                    setPadding(0, dp(3), 0, 0)
+                })
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { setMargins(0, dp(14), 0, 0) })
+        }
+    }
+
+    /** 标准确认弹层：说明文字与危险/主要动作均由主题语义控制。 */
+    fun showConfirmDialog(
+        context: Context,
+        title: String,
+        message: String,
+        dismissLabel: String,
+        primaryAction: UiDialogAction,
+    ): Dialog = showDialogCard(
+        context = context,
+        title = title,
+        dismissLabel = dismissLabel,
+        primaryAction = primaryAction,
+    ) {
+        addView(TextView(context).apply {
+            text = message
+            applyTextRole(this, UiTextRole.Body)
+            setPadding(0, dp(12), 0, 0)
+        })
+    }
+
+    /** 标准单选弹层：选择后立即回调并关闭，不复制页面状态。 */
+    fun showChoiceDialog(
+        context: Context,
+        title: String,
+        options: List<String>,
+        selectedIndex: Int,
+        dismissLabel: String,
+        onSelect: (Int) -> Unit,
+    ): Dialog {
+        lateinit var dialog: Dialog
+        dialog = showDialogCard(
+            context = context,
+            title = title,
+            dismissLabel = dismissLabel,
+            primaryAction = null,
+        ) {
+            options.forEachIndexed { index, label ->
+                addView(TextView(context).apply {
+                    text = label
+                    contentDescription = label
+                    applyTextRole(this, UiTextRole.Action)
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(16), 0, dp(16), 0)
+                    isSelected = index == selectedIndex
+                    setTextColor(if (isSelected) tokens.primaryText else tokens.textPrimary)
+                    background = containerBackground(
+                        fill = if (isSelected) tokens.primarySubtle else tokens.surface,
+                        stroke = if (isSelected) tokens.primaryStrong else tokens.border,
+                        recipe = components.control,
+                    )
+                    setOnClickListener {
+                        onSelect(index)
+                        dialog.dismiss()
+                    }
+                }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(48),
+                ).apply { setMargins(0, dp(10), 0, 0) })
+            }
+        }
+        return dialog
+    }
+
+    /** 标准单行输入弹层：异步校验由调用方通过 handle 回写错误或关闭。 */
+    fun showTextInputDialog(
+        context: Context,
+        title: String,
+        hint: String,
+        dismissLabel: String,
+        confirmLabel: String,
+        onSubmit: (String, UiTextInputDialogHandle) -> Unit,
+    ): UiTextInputDialogHandle {
+        val input = EditText(context).apply {
+            this.hint = hint
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            maxLines = 1
+            setTextColor(tokens.textPrimary)
+            setHintTextColor(tokens.textTertiary)
+            setPadding(dp(16), 0, dp(16), 0)
+            background = containerBackground(tokens.inputBackground, tokens.border, components.control)
+        }
+        lateinit var handle: UiTextInputDialogHandle
+        val dialog = showDialogCard(
+            context = context,
+            title = title,
+            dismissLabel = dismissLabel,
+            primaryAction = UiDialogAction(
+                label = confirmLabel,
+                role = UiActionRole.Primary,
+                dismissOnClick = false,
+            ) {
+                onSubmit(input.text?.toString().orEmpty().trim(), handle)
+            },
+        ) {
+            addView(input, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(52),
+            ).apply { setMargins(0, dp(14), 0, 0) })
+        }
+        handle = UiTextInputDialogHandle(dialog, input)
+        return handle
+    }
+
+    private fun showDialogCard(
+        context: Context,
+        title: String,
+        dismissLabel: String,
+        primaryAction: UiDialogAction?,
+        body: LinearLayout.() -> Unit,
     ): Dialog {
         val dialog = Dialog(context)
         val actionRow = rowWith(context) {
             val actions = buildList {
-                add(UiDialogAction(dismissLabel, UiActionRole.Secondary) { dialog.dismiss() })
+                add(UiDialogAction(dismissLabel, UiActionRole.Secondary) {})
                 primaryAction?.let(::add)
             }
             actions.forEachIndexed { index, action ->
@@ -251,7 +387,7 @@ class UiKit private constructor(
                     alpha = if (action.enabled) 1f else 0.62f
                     setOnClickListener {
                         if (!action.enabled) return@setOnClickListener
-                        dialog.dismiss()
+                        if (action.dismissOnClick) dialog.dismiss()
                         action.onClick()
                     }
                 }, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
@@ -274,23 +410,7 @@ class UiKit private constructor(
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
             })
-            fields.forEach { field ->
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(TextView(context).apply {
-                        text = field.label
-                        applyTextRole(this, UiTextRole.Supporting)
-                    })
-                    addView(TextView(context).apply {
-                        text = field.value
-                        applyTextRole(this, UiTextRole.Body)
-                        setPadding(0, dp(3), 0, 0)
-                    })
-                }, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ).apply { setMargins(0, dp(14), 0, 0) })
-            }
+            body()
             addView(actionRow, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -337,5 +457,20 @@ data class UiDialogAction(
     val label: String,
     val role: UiActionRole,
     val enabled: Boolean = true,
+    val dismissOnClick: Boolean = true,
     val onClick: () -> Unit,
 )
+
+class UiTextInputDialogHandle internal constructor(
+    val dialog: Dialog,
+    private val input: EditText,
+) {
+    val value: String get() = input.text?.toString().orEmpty()
+
+    fun showError(message: String) {
+        input.error = message
+        input.requestFocus()
+    }
+
+    fun dismiss() = dialog.dismiss()
+}

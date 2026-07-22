@@ -197,6 +197,14 @@
     <string name="notification_channel_background_description">Android 要求的容器后台运行状态，不用于卡片进度提醒</string>
     <string name="notification_channel_runs_name">首页卡片进度</string>
     <string name="notification_channel_runs_description">显示每个首页卡片实例的进度、关闭和下一步操作</string>
+    <string name="run_notification_permission_title">需要通知权限</string>
+    <string name="run_notification_permission_summary">%1$s 的进度、结果和下一步操作由系统通知承载。请允许通知；顶部提醒由系统里的“首页卡片进度”类别控制。</string>
+    <string name="run_notification_permission_open">去开启</string>
+    <string name="run_notification_permission_later">暂不</string>
+    <string name="run_notification_permission_denied">通知未开启，可在设置中再次授权</string>
+    <string name="run_notification_permission_settings_failed">无法打开通知设置</string>
+    <string name="run_window_close_instance_title">关闭当前实例？</string>
+    <string name="run_window_close_instance_summary">将关闭这个实例产生的窗口和运行，确认完成后退出当前任务窗口。</string>
     <string name="runtime_status_problem">异常</string>
     <string name="runtime_status_permission_pending">待授权</string>
     <string name="runtime_status_extracting">解压 %1$d%%</string>

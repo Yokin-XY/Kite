@@ -1,6 +1,5 @@
 package com.kite.app.feature.runsurface
 
-import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
 import android.graphics.Canvas
@@ -22,6 +21,8 @@ import android.widget.TextView
 import com.kite.app.R
 import com.kite.app.run.CardRunSurface
 import com.kite.app.theme.ThemeTokens
+import com.kite.app.ui.UiActionRole
+import com.kite.app.ui.UiDialogAction
 import com.kite.app.ui.UiKit
 
 /** 当前实例内的显示面总览。窗口事实来自 RunSurfaceUiState，本视图不保存运行状态。 */
@@ -374,12 +375,17 @@ internal class RunWindowOverviewScreen(
 
     private fun confirmCloseInstance() {
         if (!canCloseInstance) return
-        AlertDialog.Builder(root.context)
-            .setTitle("关闭当前实例？")
-            .setMessage("将关闭这个实例产生的窗口和运行，确认完成后退出当前任务窗口。")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("关闭") { _, _ -> onCloseInstance() }
-            .show()
+        ui.showConfirmDialog(
+            context = root.context,
+            title = root.context.getString(R.string.run_window_close_instance_title),
+            message = root.context.getString(R.string.run_window_close_instance_summary),
+            dismissLabel = root.context.getString(R.string.common_cancel),
+            primaryAction = UiDialogAction(
+                label = root.context.getString(R.string.common_close),
+                role = UiActionRole.Danger,
+                onClick = onCloseInstance,
+            ),
+        )
     }
 
     private fun showCreateBubble() {

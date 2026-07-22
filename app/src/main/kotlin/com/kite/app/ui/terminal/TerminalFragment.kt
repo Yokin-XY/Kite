@@ -48,7 +48,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.button.MaterialButton
 import com.kite.app.R
@@ -1558,13 +1557,15 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun showThemeDialog() {
-        val modes = arrayOf(TerminalThemeMode.SYSTEM, TerminalThemeMode.DARK, TerminalThemeMode.LIGHT)
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(getString(R.string.terminal_theme_button))
-            .setItems(modes.map { requireContext().terminalThemeLabel(it) }.toTypedArray()) { _, which ->
-                applyTerminalThemeMode(modes[which])
-            }
-            .show()
+        val modes = listOf(TerminalThemeMode.SYSTEM, TerminalThemeMode.DARK, TerminalThemeMode.LIGHT)
+        val context = requireContext()
+        appUi.showChoiceDialog(
+            context = context,
+            title = getString(R.string.terminal_theme_button),
+            options = modes.map(context::terminalThemeLabel),
+            selectedIndex = modes.indexOf(currentTerminalThemeMode),
+            dismissLabel = getString(R.string.common_close),
+        ) { selectedIndex -> applyTerminalThemeMode(modes[selectedIndex]) }
     }
 
     private fun applyTerminalThemeMode(mode: TerminalThemeMode) {

@@ -691,6 +691,12 @@ foreach ($reason in @(
     Assert-True ($signalMethod -match '\bemitSignal\s*\(') "install store must emit signal for $reason."
 }
 
+$nativeDialogUsages = @(
+    Get-ChildItem (Join-Path $Root 'app/src/main') -Recurse -File -Include '*.kt' |
+        Select-String -Pattern 'AlertDialog\.Builder|MaterialAlertDialogBuilder'
+)
+Assert-True ($nativeDialogUsages.Count -eq 0) 'app-owned dialogs must use UiKit instead of Android AlertDialog or MaterialAlertDialogBuilder.'
+
 if ($failures.Count -gt 0) {
     Write-Host 'Kite runtime lane static checks failed:' -ForegroundColor Red
     foreach ($failure in $failures) {
