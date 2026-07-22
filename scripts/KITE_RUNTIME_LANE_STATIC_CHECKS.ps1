@@ -697,6 +697,12 @@ $nativeDialogUsages = @(
 )
 Assert-True ($nativeDialogUsages.Count -eq 0) 'app-owned dialogs must use UiKit instead of Android AlertDialog or MaterialAlertDialogBuilder.'
 
+$nativePopupMenuUsages = @(
+    Get-ChildItem (Join-Path $Root 'app/src/main') -Recurse -File -Include '*.kt' |
+        Select-String -Pattern '\bPopupMenu\b'
+)
+Assert-True ($nativePopupMenuUsages.Count -eq 0) 'app-owned contextual menus must use UiKit instead of Android or AppCompat PopupMenu.'
+
 if ($failures.Count -gt 0) {
     Write-Host 'Kite runtime lane static checks failed:' -ForegroundColor Red
     foreach ($failure in $failures) {

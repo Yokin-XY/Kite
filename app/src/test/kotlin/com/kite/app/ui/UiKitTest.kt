@@ -4,6 +4,7 @@ import android.app.Activity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.TextView
 import com.kite.app.theme.KiteTheme
 import org.junit.Assert.assertEquals
@@ -91,6 +92,29 @@ class UiKitTest {
     }
 
     @Test
+    fun `标准锚点菜单使用主题选中态并在点击后关闭`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val ui = UiKit(activity, KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false))
+        val anchor = TextView(activity).apply { text = "排列方式" }
+        activity.setContentView(FrameLayout(activity).apply { addView(anchor) })
+        var selected = ""
+
+        val popup = ui.showAnchoredMenu(
+            context = activity,
+            anchor = anchor,
+            items = listOf(
+                UiMenuItem("默认顺序", selected = true, checkable = true) { selected = "default" },
+                UiMenuItem("按名称", checkable = true) { selected = "name" },
+            ),
+        )
+
+        assertTrue(popup.contentView.findByDescription("默认顺序")!!.isSelected)
+        popup.contentView.findByDescription("按名称")!!.performClick()
+        assertEquals("name", selected)
+        assertFalse(popup.isShowing)
+    }
+
+    @Test
     fun `标准输入弹层允许异步校验后再关闭`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val ui = UiKit(activity, KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false))
@@ -129,6 +153,13 @@ class UiKitTest {
         if (this is EditText) return this
         if (this !is ViewGroup) return null
         repeat(childCount) { index -> getChildAt(index).findFirstEditText()?.let { return it } }
+        return null
+    }
+
+    private fun View.findByDescription(value: String): View? {
+        if (contentDescription?.toString() == value) return this
+        if (this !is ViewGroup) return null
+        repeat(childCount) { index -> getChildAt(index).findByDescription(value)?.let { return it } }
         return null
     }
 }

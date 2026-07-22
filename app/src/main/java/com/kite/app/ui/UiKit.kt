@@ -13,9 +13,11 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.annotation.DrawableRes
 import androidx.appcompat.content.res.AppCompatResources
@@ -326,6 +328,108 @@ class UiKit private constructor(
         return dialog
     }
 
+    /**
+     * 标准锚点菜单：用于排序、筛选和页面级轻量动作。
+     * 菜单只承载调用方给出的选项，不读取或复制页面状态。
+     */
+    fun showAnchoredMenu(
+        context: Context,
+        anchor: View,
+        items: List<UiMenuItem>,
+        widthDp: Int = 208,
+    ): PopupWindow {
+        lateinit var popup: PopupWindow
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            background = containerBackground(
+                fill = tokens.cardBackground,
+                stroke = tokens.border,
+                recipe = components.dialog,
+            )
+            elevation = dp(components.dialog.elevation).toFloat()
+            items.forEach { item ->
+                addView(rowWith(context) {
+                    contentDescription = item.label
+                    isSelected = item.selected
+                    isEnabled = item.enabled
+                    isClickable = true
+                    isFocusable = true
+                    setPadding(dp(14), 0, dp(12), 0)
+                    background = containerBackground(
+                        fill = if (item.selected) tokens.primarySubtle else Color.TRANSPARENT,
+                        stroke = Color.TRANSPARENT,
+                        recipe = components.control,
+                    )
+                    addView(TextView(context).apply {
+                        text = item.label
+                        applyTextRole(this, UiTextRole.Body)
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setTextColor(
+                            when (item.role) {
+                                UiActionRole.Primary -> tokens.primaryText
+                                UiActionRole.Secondary -> tokens.textPrimary
+                                UiActionRole.Danger -> tokens.danger
+                            }
+                        )
+                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    if (item.checkable) {
+                        addView(selectionIndicator(context, item.selected), LinearLayout.LayoutParams(dp(24), dp(24)).apply {
+                            setMargins(dp(12), 0, 0, 0)
+                        })
+                    }
+                    alpha = if (item.enabled) 1f else 0.48f
+                    setOnClickListener {
+                        if (!item.enabled) return@setOnClickListener
+                        popup.dismiss()
+                        item.onClick()
+                    }
+                }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(52),
+                ).apply {
+                    if (childCount > 0) setMargins(0, dp(2), 0, 0)
+                })
+            }
+        }
+        val horizontalMargin = dp(12)
+        val popupWidth = dp(widthDp).coerceAtMost(
+            context.resources.displayMetrics.widthPixels - horizontalMargin * 2,
+        )
+        popup = PopupWindow(
+            content,
+            popupWidth,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true,
+        ).apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            isOutsideTouchable = true
+            isClippingEnabled = true
+            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+            elevation = dp(components.dialog.elevation).toFloat()
+        }
+        popup.showAsDropDown(anchor, anchor.width - popupWidth, dp(6))
+        return popup
+    }
+
+    private fun selectionIndicator(context: Context, selected: Boolean): View =
+        FrameLayout(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.TRANSPARENT)
+                setStroke(dp(2), if (selected) tokens.primaryStrong else tokens.borderStrong)
+            }
+            if (selected) {
+                addView(View(context).apply {
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(tokens.primaryStrong)
+                    }
+                }, FrameLayout.LayoutParams(dp(10), dp(10), Gravity.CENTER))
+            }
+        }
+
     /** 标准单行输入弹层：异步校验由调用方通过 handle 回写错误或关闭。 */
     fun showTextInputDialog(
         context: Context,
@@ -458,6 +562,15 @@ data class UiDialogAction(
     val role: UiActionRole,
     val enabled: Boolean = true,
     val dismissOnClick: Boolean = true,
+    val onClick: () -> Unit,
+)
+
+data class UiMenuItem(
+    val label: String,
+    val selected: Boolean = false,
+    val checkable: Boolean = false,
+    val enabled: Boolean = true,
+    val role: UiActionRole = UiActionRole.Secondary,
     val onClick: () -> Unit,
 )
 

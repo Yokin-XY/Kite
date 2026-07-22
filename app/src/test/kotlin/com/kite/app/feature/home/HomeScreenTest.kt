@@ -2,6 +2,8 @@ package com.kite.app.feature.home
 
 import android.app.Activity
 import android.view.ContextThemeWrapper
+import android.view.View
+import android.view.ViewGroup
 import androidx.test.core.app.ApplicationProvider
 import com.kite.app.R
 import com.kite.app.recipe.KiteCardGroup
@@ -156,6 +158,29 @@ class HomeScreenTest {
         assertEquals(listOf("alpha", "zeta"), screen.visibleRecipeIdsForTest())
     }
 
+    @Test
+    fun arrangeButtonUsesThemedAnchoredMenuAndKeepsSortAsPresentationState() {
+        val screen = screen()
+        attach(screen)
+        screen.render(
+            HomeFeatureUiState(
+                phase = HomeCatalogPhase.Ready,
+                items = listOf(item(recipe("zeta")), item(recipe("alpha")))
+            )
+        )
+
+        screen.arrangeViewForTest().performClick()
+        val popup = screen.anchoredMenuForTest()!!
+        popup.contentView.findByDescription(
+            ApplicationProvider.getApplicationContext<android.content.Context>()
+                .getString(R.string.home_sort_name)
+        )!!.performClick()
+
+        assertEquals(HomeSortMode.Name, screen.sortMode())
+        assertEquals(listOf("alpha", "zeta"), screen.visibleRecipeIdsForTest())
+        assertTrue(screen.anchoredMenuForTest() == null)
+    }
+
     private fun screen(
         onPrimary: (String) -> Unit = {},
         initialSortMode: HomeSortMode = HomeSortMode.Default
@@ -223,4 +248,11 @@ class HomeScreenTest {
             listOf(KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "echo ok"))
         )
     )
+
+    private fun View.findByDescription(value: String): View? {
+        if (contentDescription?.toString() == value) return this
+        if (this !is ViewGroup) return null
+        repeat(childCount) { index -> getChildAt(index).findByDescription(value)?.let { return it } }
+        return null
+    }
 }

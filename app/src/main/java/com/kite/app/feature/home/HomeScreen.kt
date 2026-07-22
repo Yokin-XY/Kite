@@ -14,7 +14,7 @@ import android.widget.GridLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.PopupMenu
+import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.annotation.DrawableRes
@@ -24,6 +24,8 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.kite.app.R
 import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteRecipe
+import com.kite.app.ui.UiKit
+import com.kite.app.ui.UiMenuItem
 import java.util.Locale
 import kotlin.math.abs
 
@@ -57,6 +59,7 @@ internal class HomeScreen(
     private val onRetry: () -> Unit
 ) {
     private val themeEnvironment = HomeFeatureTheme.environment(context)
+    private val ui = UiKit(context, themeEnvironment)
     private val factory = HomeFeatureViewFactory(
         context = context,
         tokens = themeEnvironment.tokens,
@@ -67,6 +70,7 @@ internal class HomeScreen(
     )
     private var searchQuery = initialSearchQuery.trim()
     private var sortMode = initialSortMode
+    private var anchoredMenu: PopupWindow? = null
     private val searchInput = EditText(context).apply {
         hint = context.getString(R.string.home_search_hint)
         contentDescription = context.getString(R.string.home_search_description)
@@ -276,6 +280,8 @@ internal class HomeScreen(
     fun dispose() {
         disposed = true
         elapsedTickPosted = false
+        anchoredMenu?.dismiss()
+        anchoredMenu = null
         bindings.clear()
     }
 
@@ -294,6 +300,10 @@ internal class HomeScreen(
         }
 
     internal fun searchViewForTest(): EditText = searchInput
+
+    internal fun arrangeViewForTest(): View = arrangeButton
+
+    internal fun anchoredMenuForTest(): PopupWindow? = anchoredMenu
 
     private fun renderTabs(pages: List<HomePage>) {
         val signature = pages.joinToString("|") { page ->
@@ -397,28 +407,37 @@ internal class HomeScreen(
         }
 
     private fun showSortMenu(anchor: View) {
-        PopupMenu(context, anchor).apply {
-            menu.add(0, SORT_DEFAULT, 0, R.string.home_sort_default).isChecked = sortMode == HomeSortMode.Default
-            menu.add(0, SORT_NAME, 1, R.string.home_sort_name).isChecked = sortMode == HomeSortMode.Name
-            menu.add(0, SORT_RECENT, 2, R.string.home_sort_recent).isChecked = sortMode == HomeSortMode.Recent
-            menu.setGroupCheckable(0, true, true)
-            setOnMenuItemClickListener { item ->
-                val next = when (item.itemId) {
-                    SORT_NAME -> HomeSortMode.Name
-                    SORT_RECENT -> HomeSortMode.Recent
-                    else -> HomeSortMode.Default
-                }
-                if (next != sortMode) {
-                    sortMode = next
-                    arrangeButton.contentDescription = sortContentDescription()
-                    scrollByPage[selectedPageId] = 0
-                    structureSignature = ""
-                    render(latestState)
-                }
-                true
-            }
-            show()
+        anchoredMenu?.dismiss()
+        val options = listOf(
+            HomeSortMode.Default to R.string.home_sort_default,
+            HomeSortMode.Name to R.string.home_sort_name,
+            HomeSortMode.Recent to R.string.home_sort_recent,
+        )
+        val popup = ui.showAnchoredMenu(
+            context = context,
+            anchor = anchor,
+            items = options.map { (mode, labelRes) ->
+                UiMenuItem(
+                    label = context.getString(labelRes),
+                    selected = mode == sortMode,
+                    checkable = true,
+                    onClick = { selectSortMode(mode) },
+                )
+            },
+        )
+        anchoredMenu = popup
+        popup.setOnDismissListener {
+            if (anchoredMenu === popup) anchoredMenu = null
         }
+    }
+
+    private fun selectSortMode(next: HomeSortMode) {
+        if (next == sortMode) return
+        sortMode = next
+        arrangeButton.contentDescription = sortContentDescription()
+        scrollByPage[selectedPageId] = 0
+        structureSignature = ""
+        render(latestState)
     }
 
     private fun sortContentDescription(): String = context.getString(
@@ -629,8 +648,5 @@ internal class HomeScreen(
     )
 
     private companion object {
-        const val SORT_DEFAULT = 1
-        const val SORT_NAME = 2
-        const val SORT_RECENT = 3
     }
 }

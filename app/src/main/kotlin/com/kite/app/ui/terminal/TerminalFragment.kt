@@ -34,12 +34,12 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
+import android.widget.PopupWindow
 import android.widget.Scroller
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.AppCompatImageButton
-import androidx.appcompat.widget.PopupMenu
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -73,6 +73,7 @@ import com.kite.app.application.surface.SurfaceEffect
 import com.kite.app.feature.terminal.TerminalSurfaceResultContract
 import com.kite.app.theme.ThemeEnvironment
 import com.kite.app.ui.UiKit
+import com.kite.app.ui.UiMenuItem
 import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.termux.terminal.TerminalColors
 import com.termux.terminal.TerminalSession
@@ -170,6 +171,7 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             requireContext().terminalThemeLabel(TerminalUiPreferences.loadThemeMode(requireContext()))
     }
     private var terminalPanelPageIndex = 0
+    private var anchoredMenu: PopupWindow? = null
     private val terminalPanelActionBindings = LinkedHashMap<String, PanelActionBinding>()
     private var sessionNoteJob: Job? = null
     private var terminalRefreshJob: Job? = null
@@ -1541,31 +1543,25 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
     }
 
     private fun showThemeMenu(anchor: View) {
-        PopupMenu(requireContext(), anchor, Gravity.END).apply {
-            menu.add(Menu.NONE, TerminalThemeMode.SYSTEM.ordinal, Menu.NONE, getString(R.string.terminal_theme_system))
-            menu.add(Menu.NONE, TerminalThemeMode.DARK.ordinal, Menu.NONE, getString(R.string.terminal_theme_dark))
-            menu.add(Menu.NONE, TerminalThemeMode.LIGHT.ordinal, Menu.NONE, getString(R.string.terminal_theme_light))
-            setOnMenuItemClickListener(::handleThemeMenuItem)
-            show()
-        }
-    }
-
-    private fun handleThemeMenuItem(item: MenuItem): Boolean {
-        val mode = TerminalThemeMode.entries.firstOrNull { it.ordinal == item.itemId } ?: return false
-        applyTerminalThemeMode(mode)
-        return true
-    }
-
-    private fun showThemeDialog() {
+        anchoredMenu?.dismiss()
         val modes = listOf(TerminalThemeMode.SYSTEM, TerminalThemeMode.DARK, TerminalThemeMode.LIGHT)
         val context = requireContext()
-        appUi.showChoiceDialog(
+        val popup = appUi.showAnchoredMenu(
             context = context,
-            title = getString(R.string.terminal_theme_button),
-            options = modes.map(context::terminalThemeLabel),
-            selectedIndex = modes.indexOf(currentTerminalThemeMode),
-            dismissLabel = getString(R.string.common_close),
-        ) { selectedIndex -> applyTerminalThemeMode(modes[selectedIndex]) }
+            anchor = anchor,
+            items = modes.map { mode ->
+                UiMenuItem(
+                    label = context.terminalThemeLabel(mode),
+                    selected = mode == currentTerminalThemeMode,
+                    checkable = true,
+                    onClick = { applyTerminalThemeMode(mode) },
+                )
+            },
+        )
+        anchoredMenu = popup
+        popup.setOnDismissListener {
+            if (anchoredMenu === popup) anchoredMenu = null
+        }
     }
 
     private fun applyTerminalThemeMode(mode: TerminalThemeMode) {
@@ -2200,6 +2196,8 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
             uiRefreshDirty = false
         }
         stopRepeatingKey()
+        anchoredMenu?.dismiss()
+        anchoredMenu = null
         terminalView.setTerminalCursorBlinkerState(false, false)
         super.onDestroyView()
     }

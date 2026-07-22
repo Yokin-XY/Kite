@@ -14,7 +14,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.PopupMenu
+import android.widget.PopupWindow
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -27,6 +27,7 @@ import com.kite.app.ui.UiActionRole
 import com.kite.app.ui.UiDialogAction
 import com.kite.app.ui.UiDialogField
 import com.kite.app.ui.UiKit
+import com.kite.app.ui.UiMenuItem
 import com.kite.app.ui.UiTextRole
 import com.kite.app.ui.theme.kiteThemeEnvironment
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -59,6 +60,7 @@ internal class RuntimeManagementScreen(
     private var bodyRebuildCount = 0
     private var restoredScrollY = initialScrollY.coerceAtLeast(0)
     private var dialog: Dialog? = null
+    private var anchoredMenu: PopupWindow? = null
     private var disposed = false
 
     val root: View = LinearLayout(context).apply {
@@ -111,6 +113,8 @@ internal class RuntimeManagementScreen(
         restoredScrollY = scroll.scrollY
         dialog?.dismiss()
         dialog = null
+        anchoredMenu?.dismiss()
+        anchoredMenu = null
         runBindings.clear()
         processBindings.clear()
         cardContextBinding = null
@@ -460,10 +464,18 @@ internal class RuntimeManagementScreen(
     }
 
     private fun showPageMenu(anchor: View) {
-        PopupMenu(context, anchor).apply {
-            menu.add(context.getString(R.string.runtime_management_refresh))
-            setOnMenuItemClickListener { onRefresh(); true }
-        }.show()
+        anchoredMenu?.dismiss()
+        val popup = ui.showAnchoredMenu(
+            context = context,
+            anchor = anchor,
+            items = listOf(
+                UiMenuItem(context.getString(R.string.runtime_management_refresh), onClick = onRefresh),
+            ),
+        )
+        anchoredMenu = popup
+        popup.setOnDismissListener {
+            if (anchoredMenu === popup) anchoredMenu = null
+        }
     }
 
     private fun menuButton(contentDescription: String, onClick: (View) -> Unit): ImageView {
