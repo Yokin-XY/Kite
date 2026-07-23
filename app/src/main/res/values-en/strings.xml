@@ -676,6 +676,12 @@
     <string name="resource_detail_step_install">Run install step</string>
     <string name="resource_detail_step_open">Open resource</string>
     <string name="resource_wizard_description">Resource installation</string>
+    <string name="resource_wizard_page_title">Resource installation</string>
+    <string name="resource_wizard_header_state_syncing">Synchronizing install status</string>
+    <string name="resource_wizard_header_state_running">Install plan is running</string>
+    <string name="resource_wizard_header_state_failure">Install plan needs attention</string>
+    <string name="resource_wizard_header_state_pending">Install plan is ready to start</string>
+    <string name="resource_wizard_header_state_completed">Install plan completed</string>
     <string name="resource_wizard_loading_title">Loading queue</string>
     <string name="resource_wizard_loading_summary">Resource status is checked in the background without stopping the current installation.</string>
     <string name="resource_wizard_failed_title">Could not load queue</string>

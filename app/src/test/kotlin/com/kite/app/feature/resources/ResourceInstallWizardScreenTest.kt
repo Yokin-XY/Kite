@@ -5,6 +5,7 @@ import android.os.Looper
 import android.view.ContextThemeWrapper
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
 import com.kite.app.R
@@ -225,6 +226,20 @@ class ResourceInstallWizardScreenTest {
         assertFalse(screen.root.textViews().any {
             it.text.toString() == context.getString(R.string.resource_wizard_action_complete)
         })
+
+        screen.render(
+            ResourceFeatureUiState(
+                phase = ResourceCatalogPhase.Ready,
+                items = listOf(item(ResourceItemPhase.NotInstalled)),
+            )
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_detail_syncing)
+        })
+        assertFalse(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_action_complete)
+        })
     }
 
     @Test
@@ -311,6 +326,46 @@ class ResourceInstallWizardScreenTest {
         assertFalse(row.isFocusable)
         row.performClick()
         assertTrue(requests.isEmpty())
+    }
+
+    @Test
+    fun `向导提供可见返回状态图标与标准触控尺寸`() {
+        var exits = 0
+        val screen = createScreen(onContinueInBackground = { exits += 1 })
+        attach(screen)
+        val context = screen.root.context
+        val minimumTouchTarget = (48 * context.resources.displayMetrics.density).toInt()
+
+        screen.render(pendingState())
+        shadowOf(Looper.getMainLooper()).idle()
+        screen.root.views().first {
+            it.contentDescription?.toString() == context.getString(R.string.common_back)
+        }.performClick()
+        assertEquals(1, exits)
+        assertTrue(screen.root.imageViews().any {
+            it.contentDescription?.toString() == context.getString(R.string.resource_wizard_header_state_pending)
+        })
+        assertTrue(screen.root.textViews()
+            .filter { it.text.toString() in setOf(
+                context.getString(R.string.resource_wizard_continue_in_background),
+                context.getString(R.string.resource_wizard_cancel_plan),
+            ) }
+            .all { it.layoutParams.height >= minimumTouchTarget })
+
+        screen.render(runningState(surface = CardRunSurface.Report))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(screen.root.imageViews().any {
+            it.contentDescription?.toString() == context.getString(R.string.resource_wizard_header_state_running)
+        })
+        assertTrue(screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_open_report)
+        }.layoutParams.height >= minimumTouchTarget)
+
+        screen.render(finishedState())
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(screen.root.imageViews().any {
+            it.contentDescription?.toString() == context.getString(R.string.resource_wizard_header_state_completed)
+        })
     }
 
     private fun createScreen(
@@ -438,4 +493,6 @@ class ResourceInstallWizardScreenTest {
     }
 
     private fun View.textViews(): List<TextView> = views().filterIsInstance<TextView>()
+
+    private fun View.imageViews(): List<ImageView> = views().filterIsInstance<ImageView>()
 }

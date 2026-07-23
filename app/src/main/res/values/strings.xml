@@ -675,6 +675,12 @@
     <string name="resource_detail_step_install">执行获取步骤</string>
     <string name="resource_detail_step_open">打开资源</string>
     <string name="resource_wizard_description">资源获取向导</string>
+    <string name="resource_wizard_page_title">资源获取</string>
+    <string name="resource_wizard_header_state_syncing">正在校准获取状态</string>
+    <string name="resource_wizard_header_state_running">正在执行获取计划</string>
+    <string name="resource_wizard_header_state_failure">获取计划需要处理</string>
+    <string name="resource_wizard_header_state_pending">获取计划等待开始</string>
+    <string name="resource_wizard_header_state_completed">获取计划已完成</string>
     <string name="resource_wizard_loading_title">正在读取执行队列</string>
     <string name="resource_wizard_loading_summary">资源状态会在后台校准，当前安装任务不会因此停止。</string>
     <string name="resource_wizard_failed_title">执行队列读取失败</string>

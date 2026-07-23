@@ -1,6 +1,7 @@
 package com.kite.app.feature.resources
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.text.TextUtils
@@ -8,8 +9,10 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.ImageView
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.appcompat.content.res.AppCompatResources
 import com.kite.app.R
 import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.resources.KiteResourceInstallStore
@@ -50,11 +53,25 @@ internal class ResourceInstallWizardScreen(
     private var currentState: ResourceInstallWizardViewState? = null
     private var pendingPlanAction: KiteInstallPlanActionIntent? = null
 
-    val root: View = ScrollView(context).apply {
+    private val scrollHost = ScrollView(context).apply {
         isFillViewport = true
+        addView(contentHost)
+    }
+
+    val root: View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
         contentDescription = context.getString(R.string.resource_wizard_description)
         setBackgroundColor(factory.tokens.pageBackground)
-        addView(contentHost)
+        addView(factory.ui.topBar(
+            context = context,
+            title = context.getString(R.string.resource_wizard_page_title),
+            onBack = onContinueInBackground,
+        ))
+        addView(scrollHost, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+            1f,
+        ))
     }
 
     fun render(state: ResourceFeatureUiState) {
@@ -112,11 +129,12 @@ internal class ResourceInstallWizardScreen(
         structureSignature = signature
         rowBindings.clear()
         contentHost.removeAllViews()
+        val statusIcon = ImageView(root.context)
         val title = TextView(root.context)
         val detail = TextView(root.context)
         val progress = TextView(root.context)
-        contentHost.addView(header(title, detail, progress))
-        headerBinding = HeaderBinding(title, detail, progress)
+        contentHost.addView(header(statusIcon, title, detail, progress))
+        headerBinding = HeaderBinding(statusIcon, title, detail, progress)
         primaryButton = actionButton().also(contentHost::addView)
         planControlBinding = planControls().also { contentHost.addView(it.root) }
         contentHost.addView(factory.sectionTitle(root.context.getString(R.string.resource_wizard_queue_title)).apply {
@@ -131,6 +149,7 @@ internal class ResourceInstallWizardScreen(
 
     private fun bind(state: ResourceInstallWizardViewState, now: Long) {
         headerBinding?.apply {
+            bindHeaderIcon(icon, state.headerState)
             title.text = state.title
             detail.text = state.detail
             progress.text = if (state.totalCount > 0) {
@@ -170,11 +189,14 @@ internal class ResourceInstallWizardScreen(
             alpha = if (enabled) 1f else 0.72f
             isEnabled = enabled
             isClickable = enabled
+            isFocusable = enabled
+            contentDescription = text
             setOnClickListener(if (enabled) View.OnClickListener {
                 state.primaryIntent?.let { intent ->
                     pendingPlanAction = intent
                     if (intent == KiteInstallPlanActionIntent.StartNext) {
                         text = root.context.getString(R.string.resource_state_preparing)
+                        contentDescription = text
                         isEnabled = false
                         isClickable = false
                         alpha = 0.72f
@@ -208,6 +230,7 @@ internal class ResourceInstallWizardScreen(
             } else {
                 root.context.getString(R.string.resource_wizard_cancel_plan)
             }
+            contentDescription = text
             isEnabled = !binding.cancelPending
             isClickable = isEnabled
             alpha = if (isEnabled) 1f else 0.58f
@@ -252,9 +275,9 @@ internal class ResourceInstallWizardScreen(
             text = statusLabel
             setTextColor(tone)
             background = factory.roundedBox(colorWithAlpha(tone, 0.11f), Color.TRANSPARENT, factory.dp(11).toFloat())
+            setOnClickListener(null)
             isClickable = false
             isFocusable = false
-            setOnClickListener(null)
         }
         bindSecondaryAction(binding, row)
     }
@@ -298,7 +321,7 @@ internal class ResourceInstallWizardScreen(
         )
     }
 
-    private fun header(title: TextView, detail: TextView, progress: TextView): View =
+    private fun header(icon: ImageView, title: TextView, detail: TextView, progress: TextView): View =
         LinearLayout(root.context).apply {
             orientation = LinearLayout.VERTICAL
             minimumHeight = factory.dp(136)
@@ -311,7 +334,9 @@ internal class ResourceInstallWizardScreen(
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                addView(factory.icon("↓", "teal", "", "", factory.dp(54), factory.dp(8), factory.dp(14).toFloat(), 15f).apply {
+                addView(icon.apply {
+                    scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    setPadding(factory.dp(15), factory.dp(15), factory.dp(15), factory.dp(15))
                     layoutParams = LinearLayout.LayoutParams(factory.dp(54), factory.dp(54)).apply {
                         setMargins(0, 0, factory.dp(14), 0)
                     }
@@ -342,6 +367,44 @@ internal class ResourceInstallWizardScreen(
             })
         }
 
+    private fun bindHeaderIcon(icon: ImageView, state: ResourceInstallWizardHeaderState) {
+        val (drawable, tone, description) = when (state) {
+            ResourceInstallWizardHeaderState.Syncing -> Triple(
+                R.drawable.ic_refresh_light,
+                factory.tokens.textSecondary,
+                R.string.resource_wizard_header_state_syncing,
+            )
+            ResourceInstallWizardHeaderState.Running -> Triple(
+                R.drawable.ic_material_play_arrow,
+                factory.tokens.primaryStrong,
+                R.string.resource_wizard_header_state_running,
+            )
+            ResourceInstallWizardHeaderState.Failure -> Triple(
+                R.drawable.ic_close_light,
+                factory.tokens.danger,
+                R.string.resource_wizard_header_state_failure,
+            )
+            ResourceInstallWizardHeaderState.Pending -> Triple(
+                R.drawable.ic_download_light,
+                factory.tokens.primaryStrong,
+                R.string.resource_wizard_header_state_pending,
+            )
+            ResourceInstallWizardHeaderState.Completed -> Triple(
+                R.drawable.ic_check_light,
+                factory.tokens.success,
+                R.string.resource_wizard_header_state_completed,
+            )
+        }
+        icon.setImageDrawable(AppCompatResources.getDrawable(root.context, drawable))
+        icon.imageTintList = ColorStateList.valueOf(tone)
+        icon.background = factory.roundedBox(
+            colorWithAlpha(tone, 0.11f),
+            colorWithAlpha(tone, 0.18f),
+            factory.dp(14).toFloat(),
+        )
+        icon.contentDescription = root.context.getString(description)
+    }
+
     private fun actionButton(): TextView = TextView(root.context).apply {
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, factory.dp(52)).apply {
             setMargins(0, factory.dp(16), 0, 0)
@@ -367,8 +430,8 @@ internal class ResourceInstallWizardScreen(
         val host = LinearLayout(root.context).apply {
             orientation = LinearLayout.HORIZONTAL
             visibility = View.GONE
-            addView(background, LinearLayout.LayoutParams(0, factory.dp(44), 1f))
-            addView(cancel, LinearLayout.LayoutParams(0, factory.dp(44), 1f).apply {
+            addView(background, LinearLayout.LayoutParams(0, factory.dp(48), 1f))
+            addView(cancel, LinearLayout.LayoutParams(0, factory.dp(48), 1f).apply {
                 setMargins(factory.dp(10), 0, 0, 0)
             })
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -474,7 +537,7 @@ internal class ResourceInstallWizardScreen(
             factory.dp(13).toFloat()
         )
         setPadding(factory.dp(10), 0, factory.dp(10), 0)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, factory.dp(28)).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, factory.dp(48)).apply {
             setMargins(0, 0, factory.dp(8), 0)
         }
         isFocusable = true
@@ -523,6 +586,7 @@ internal class ResourceInstallWizardScreen(
     )
 
     private data class HeaderBinding(
+        val icon: ImageView,
         val title: TextView,
         val detail: TextView,
         val progress: TextView

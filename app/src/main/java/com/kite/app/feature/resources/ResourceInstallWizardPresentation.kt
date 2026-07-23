@@ -24,6 +24,14 @@ internal enum class ResourceInstallWizardPlanActionResult {
     Rejected,
 }
 
+internal enum class ResourceInstallWizardHeaderState {
+    Syncing,
+    Running,
+    Failure,
+    Pending,
+    Completed,
+}
+
 internal data class ResourceInstallWizardRowViewState(
     val resourceId: String,
     val name: String,
@@ -47,6 +55,7 @@ internal data class ResourceInstallWizardViewState(
     val primaryEnabled: Boolean,
     val primaryIntent: KiteInstallPlanActionIntent?,
     val showPlanControls: Boolean,
+    val headerState: ResourceInstallWizardHeaderState,
     val rows: List<ResourceInstallWizardRowViewState>
 )
 
@@ -68,7 +77,11 @@ internal object ResourceInstallWizardPresenter {
         val initialRows = resourceIds.mapIndexed { index, resourceId ->
             val item = itemsById[resourceId]
             val step = stepsById[resourceId]
-            val isCalibrating = item == null && step == null
+            val isCalibrating = (item == null && step == null) || (
+                item?.phase == ResourceItemPhase.NotInstalled &&
+                    step == null &&
+                    resourceId !in state.plan.pendingResourceIds
+            )
             val operation = step?.operation
                 ?.takeIf(String::isNotBlank)
                 ?: item?.operation?.takeIf(String::isNotBlank)
@@ -151,6 +164,13 @@ internal object ResourceInstallWizardPresenter {
             primaryEnabled = action.enabled && !isCalibrating,
             primaryIntent = action.intent.takeUnless { isCalibrating },
             showPlanControls = showPlanControls,
+            headerState = when {
+                isCalibrating -> ResourceInstallWizardHeaderState.Syncing
+                hasRunningStep || hasUninstallingStep -> ResourceInstallWizardHeaderState.Running
+                hasFailure -> ResourceInstallWizardHeaderState.Failure
+                hasPending -> ResourceInstallWizardHeaderState.Pending
+                else -> ResourceInstallWizardHeaderState.Completed
+            },
             rows = rows
         )
     }
