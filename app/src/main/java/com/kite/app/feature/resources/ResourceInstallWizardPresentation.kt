@@ -31,6 +31,7 @@ internal data class ResourceInstallWizardRowViewState(
     val index: Int,
     val total: Int,
     val isActive: Boolean,
+    val isCalibrating: Boolean,
     val projection: KiteResourceInstallStepUiProjection,
     val operation: String,
     val run: ResourceFeatureRunSnapshot?
@@ -66,6 +67,7 @@ internal object ResourceInstallWizardPresenter {
         val initialRows = resourceIds.mapIndexed { index, resourceId ->
             val item = itemsById[resourceId]
             val step = stepsById[resourceId]
+            val isCalibrating = item == null && step == null
             val operation = step?.operation
                 ?.takeIf(String::isNotBlank)
                 ?: item?.operation?.takeIf(String::isNotBlank)
@@ -78,6 +80,7 @@ internal object ResourceInstallWizardPresenter {
                 index = index,
                 total = resourceIds.size,
                 isActive = false,
+                isCalibrating = isCalibrating,
                 projection = step?.projection ?: fallbackProjection(item, resourceId in resourceIds),
                 operation = operation,
                 run = step?.run ?: item?.operationRun
@@ -88,6 +91,7 @@ internal object ResourceInstallWizardPresenter {
         }
         val hasUninstallingStep = initialRows.any { it.projection.uninstalling }
         val hasFailure = initialRows.any { it.projection.failed && !it.projection.uninstalling }
+        val isCalibrating = initialRows.any(ResourceInstallWizardRowViewState::isCalibrating)
         val pendingIds = state.plan.pendingResourceIds.filter(resourceIds::contains)
         val hasPending = pendingIds.isNotEmpty() && !hasFailure
         val activeResourceId = initialRows.firstOrNull { row ->
@@ -106,6 +110,7 @@ internal object ResourceInstallWizardPresenter {
         val targetName = itemsById[targetResourceId]?.presentation(context)?.name
             ?: targetResourceId.ifBlank { context.getString(R.string.resource_wizard_install_task) }
         val detail = when {
+            isCalibrating -> context.getString(R.string.resource_wizard_detail_syncing)
             hasRunningStep -> context.getString(
                 R.string.resource_wizard_detail_installing,
                 rows.firstOrNull { it.resourceId == activeResourceId }?.name.orEmpty()
@@ -131,14 +136,15 @@ internal object ResourceInstallWizardPresenter {
             completedCount = completedCount.coerceIn(0, resourceIds.size),
             totalCount = resourceIds.size,
             primaryLabel = when {
+                isCalibrating -> context.getString(R.string.resource_wizard_status_syncing)
                 hasUninstallingStep -> context.getString(R.string.resource_state_uninstalling)
                 hasFailure -> context.getString(R.string.resource_wizard_detail_failure)
                 hasRunningStep -> context.getString(R.string.resource_state_installing)
                 hasPending -> context.getString(R.string.resource_wizard_action_start)
                 else -> context.getString(R.string.resource_wizard_action_complete)
             },
-            primaryEnabled = action.enabled,
-            primaryIntent = action.intent,
+            primaryEnabled = action.enabled && !isCalibrating,
+            primaryIntent = action.intent.takeUnless { isCalibrating },
             rows = rows
         )
     }

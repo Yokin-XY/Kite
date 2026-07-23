@@ -195,6 +195,38 @@ class ResourceInstallWizardScreenTest {
         assertEquals(listOf(CardRunSurface.Report), requests.map(ResourceInstallWizardRunRequest::surface))
     }
 
+    @Test
+    fun `资源事实尚未齐全时显示校准态且禁止完成`() {
+        val actions = mutableListOf<KiteInstallPlanActionIntent>()
+        val screen = createScreen(onPlanAction = { action, _ -> actions += action })
+        attach(screen)
+        val context = screen.root.context
+
+        screen.render(
+            ResourceFeatureUiState(
+                phase = ResourceCatalogPhase.Ready,
+                items = emptyList(),
+            )
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_detail_syncing)
+        })
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_status_syncing)
+        })
+        val primary = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_status_syncing)
+        }
+        assertFalse(primary.isEnabled)
+        primary.performClick()
+        assertTrue(actions.isEmpty())
+        assertFalse(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_action_complete)
+        })
+    }
+
     private fun createScreen(
         onPlanAction: (
             KiteInstallPlanActionIntent,

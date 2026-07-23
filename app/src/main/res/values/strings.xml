@@ -694,6 +694,8 @@
     <string name="resource_wizard_detail_failure">发现异常请手动处理</string>
     <string name="resource_wizard_detail_pending">将按顺序获取 %1$d 个资源</string>
     <string name="resource_wizard_detail_completed">执行队列已完成</string>
+    <string name="resource_wizard_detail_syncing">正在校准执行状态</string>
+    <string name="resource_wizard_status_syncing">校准中</string>
     <string name="resource_wizard_action_start">开始获取</string>
     <string name="resource_wizard_action_complete">完成</string>
     <string name="resource_wizard_duration_hours">%1$d小时</string>

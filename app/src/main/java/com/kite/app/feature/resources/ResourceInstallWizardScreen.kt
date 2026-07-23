@@ -421,6 +421,7 @@ internal class ResourceInstallWizardScreen(
     }
 
     private fun localizedStatusLabel(row: ResourceInstallWizardRowViewState): String = when {
+        row.isCalibrating -> root.context.getString(R.string.resource_wizard_status_syncing)
         row.projection.uninstalling -> root.context.getString(R.string.resource_state_uninstalling)
         row.projection.failed && row.operation == KiteResourceInstallStore.OP_UNINSTALL ->
             root.context.getString(R.string.resource_state_uninstall_failed)
