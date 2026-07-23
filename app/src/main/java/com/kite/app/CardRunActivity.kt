@@ -39,6 +39,7 @@ import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.browser.automation.BrowserAutomationSessionStore
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.feature.resources.ResourceInstallWizardRunRequest
+import com.kite.app.feature.resources.ResourceInstallWizardPlanActionResult
 import com.kite.app.feature.runsurface.CardRunLaunchRequest
 import com.kite.app.feature.runsurface.CardRunLaunchResolution
 import com.kite.app.feature.runsurface.CardRunLaunchResolver
@@ -364,11 +365,13 @@ class CardRunActivity : AppCompatActivity() {
             gateway = graph.resourceFeatureGateway,
             targetResourceId = targetId,
             planResourceIds = planIds,
-            onPlanAction = { action ->
+            onPlanAction = { action, acknowledge ->
                 when (action) {
-                    KiteInstallPlanActionIntent.StartNext -> startNextPlannedInstall()
-                    KiteInstallPlanActionIntent.Finish ->
+                    KiteInstallPlanActionIntent.StartNext -> startNextPlannedInstall(acknowledge)
+                    KiteInstallPlanActionIntent.Finish -> {
+                        acknowledge(ResourceInstallWizardPlanActionResult.Accepted)
                         closeTaskWindow(CardRunTaskCloseReason.FinishCompleted)
+                    }
                 }
             },
             onOpenRun = ::openResourceRun,
@@ -378,20 +381,30 @@ class CardRunActivity : AppCompatActivity() {
         )
     }
 
-    private fun startNextPlannedInstall() {
-        val target = currentTarget ?: return
+    private fun startNextPlannedInstall(
+        acknowledge: (ResourceInstallWizardPlanActionResult) -> Unit,
+    ) {
+        val target = currentTarget ?: run {
+            acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
+            return
+        }
         if (graph.resourceRunCoordinator.startRejectionReason() == RUN_NOTIFICATIONS_REQUIRED) {
+            acknowledge(ResourceInstallWizardPlanActionResult.Deferred)
             RunNotificationPermissionFragment.request(
                 fragmentManager = supportFragmentManager,
                 title = target.recipe.name,
                 key = "resource-next:${target.instanceId}",
-                retry = ::startNextPlannedInstall
+                retry = { startNextPlannedInstall(acknowledge) },
+                onCancelled = { acknowledge(ResourceInstallWizardPlanActionResult.Rejected) },
             )
             return
         }
         if (!graph.resourceRunCoordinator.startNextPlannedInstall(target.instanceId)) {
             Toast.makeText(this, "当前没有可启动的获取项", Toast.LENGTH_SHORT).show()
+            acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
             surfaceHost?.reconcile()
+        } else {
+            acknowledge(ResourceInstallWizardPlanActionResult.Accepted)
         }
     }
 

@@ -17,7 +17,10 @@ internal class ResourceInstallWizardSurface(
     private val gateway: ResourceFeatureGateway,
     val targetResourceId: String,
     val planResourceIds: List<String>,
-    onPlanAction: (KiteInstallPlanActionIntent) -> Unit,
+    onPlanAction: (
+        KiteInstallPlanActionIntent,
+        (ResourceInstallWizardPlanActionResult) -> Unit,
+    ) -> Unit,
     onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     onUninstallFailedResource: (String) -> Unit,
     onReportUnavailable: (String) -> Unit,

@@ -34,7 +34,10 @@ class ResourceInstallWizardScreenTest {
     @Test
     fun `开始获取立即承诺准备中并只提交计划意图`() {
         val actions = mutableListOf<KiteInstallPlanActionIntent>()
-        val screen = createScreen(onPlanAction = actions::add)
+        val screen = createScreen(onPlanAction = { action, acknowledge ->
+            actions += action
+            acknowledge(ResourceInstallWizardPlanActionResult.Accepted)
+        })
         attach(screen)
         val context = screen.root.context
         screen.render(pendingState())
@@ -48,6 +51,50 @@ class ResourceInstallWizardScreenTest {
         assertEquals(listOf(KiteInstallPlanActionIntent.StartNext), actions)
         assertEquals(context.getString(R.string.resource_state_preparing), button.text.toString())
         assertFalse(button.isEnabled)
+    }
+
+    @Test
+    fun `开始获取被拒绝后撤销准备中并恢复按钮`() {
+        val screen = createScreen(onPlanAction = { _, acknowledge ->
+            acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
+        })
+        attach(screen)
+        val context = screen.root.context
+        screen.render(pendingState())
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val button = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_action_start)
+        }
+        button.performClick()
+
+        assertEquals(context.getString(R.string.resource_wizard_action_start), button.text.toString())
+        assertTrue(button.isEnabled)
+    }
+
+    @Test
+    fun `权限等待保持准备中并在取消后恢复按钮`() {
+        lateinit var acknowledge: (ResourceInstallWizardPlanActionResult) -> Unit
+        val screen = createScreen(onPlanAction = { _, callback ->
+            acknowledge = callback
+            callback(ResourceInstallWizardPlanActionResult.Deferred)
+        })
+        attach(screen)
+        val context = screen.root.context
+        screen.render(pendingState())
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val button = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_action_start)
+        }
+        button.performClick()
+        assertEquals(context.getString(R.string.resource_state_preparing), button.text.toString())
+        assertFalse(button.isEnabled)
+
+        acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
+
+        assertEquals(context.getString(R.string.resource_wizard_action_start), button.text.toString())
+        assertTrue(button.isEnabled)
     }
 
     @Test
@@ -97,7 +144,10 @@ class ResourceInstallWizardScreenTest {
         val failedResources = mutableListOf<String>()
         val actions = mutableListOf<KiteInstallPlanActionIntent>()
         val screen = createScreen(
-            onPlanAction = actions::add,
+            onPlanAction = { action, acknowledge ->
+                actions += action
+                acknowledge(ResourceInstallWizardPlanActionResult.Accepted)
+            },
             onUninstallFailedResource = failedResources::add
         )
         attach(screen)
@@ -125,7 +175,10 @@ class ResourceInstallWizardScreenTest {
     }
 
     private fun createScreen(
-        onPlanAction: (KiteInstallPlanActionIntent) -> Unit = {},
+        onPlanAction: (
+            KiteInstallPlanActionIntent,
+            (ResourceInstallWizardPlanActionResult) -> Unit,
+        ) -> Unit = { _, acknowledge -> acknowledge(ResourceInstallWizardPlanActionResult.Accepted) },
         onOpenRun: (ResourceInstallWizardRunRequest) -> Unit = {},
         onUninstallFailedResource: (String) -> Unit = {}
     ): ResourceInstallWizardScreen = ResourceInstallWizardScreen(

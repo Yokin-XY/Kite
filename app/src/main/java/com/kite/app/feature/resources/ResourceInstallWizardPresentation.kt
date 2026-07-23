@@ -18,6 +18,12 @@ internal data class ResourceInstallWizardRunRequest(
     val surface: CardRunSurface
 )
 
+internal enum class ResourceInstallWizardPlanActionResult {
+    Accepted,
+    Deferred,
+    Rejected,
+}
+
 internal data class ResourceInstallWizardRowViewState(
     val resourceId: String,
     val name: String,

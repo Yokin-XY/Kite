@@ -25,17 +25,22 @@ import kotlinx.coroutines.launch
 internal class RunNotificationPermissionFragment : Fragment() {
     private val coordinator by lazy { KiteAppGraph.from(requireContext()).runNotificationCoordinator }
     private var pendingRetry: (() -> Unit)? = null
+    private var pendingCancellation: (() -> Unit)? = null
+    private var awaitingExternalAccess = false
     private var shownRequirementKey: String? = null
     private var dialog: Dialog? = null
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (!granted) {
+        awaitingExternalAccess = false
+        if (granted) {
+            coordinator.refresh()
+            resumePendingAction()
+        } else {
             Toast.makeText(requireContext(), R.string.run_notification_permission_denied, Toast.LENGTH_SHORT).show()
+            cancelPendingAction()
         }
-        coordinator.refresh()
-        resumePendingAction()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,18 +63,35 @@ internal class RunNotificationPermissionFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         coordinator.refresh()
-        resumePendingAction()
+        if (awaitingExternalAccess) {
+            awaitingExternalAccess = false
+            if (AndroidRunNotificationAccess.isAvailable(requireContext())) {
+                resumePendingAction()
+            } else {
+                cancelPendingAction()
+            }
+        } else {
+            resumePendingAction()
+        }
     }
 
     override fun onDestroy() {
         dialog?.dismiss()
         dialog = null
         pendingRetry = null
+        pendingCancellation = null
+        awaitingExternalAccess = false
         super.onDestroy()
     }
 
-    fun request(title: String, key: String, retry: (() -> Unit)? = null) {
+    fun request(
+        title: String,
+        key: String,
+        retry: (() -> Unit)? = null,
+        onCancelled: (() -> Unit)? = null,
+    ) {
         pendingRetry = retry
+        pendingCancellation = onCancelled
         showRequirement(title, key, explicit = true)
     }
 
@@ -90,10 +112,14 @@ internal class RunNotificationPermissionFragment : Fragment() {
             primaryAction = UiDialogAction(
                 label = getString(R.string.run_notification_permission_open),
                 role = UiActionRole.Primary,
+                dismissOnClick = false,
                 onClick = ::requestAccess,
             ),
         ).also { nextDialog ->
-            nextDialog.setOnDismissListener { dialog = null }
+            nextDialog.setOnDismissListener {
+                dialog = null
+                if (!awaitingExternalAccess && pendingRetry != null) cancelPendingAction()
+            }
         }
     }
 
@@ -102,11 +128,17 @@ internal class RunNotificationPermissionFragment : Fragment() {
         if (AndroidRunNotificationAccess.isAvailable(context)) {
             resumePendingAction()
         } else if (AndroidRunNotificationAccess.needsRuntimePermission(context)) {
+            awaitingExternalAccess = true
+            dialog?.dismiss()
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
+            awaitingExternalAccess = true
+            dialog?.dismiss()
             runCatching { startActivity(AndroidRunNotificationAccess.runChannelSettingsIntent(context)) }
                 .onFailure {
+                    awaitingExternalAccess = false
                     Toast.makeText(context, R.string.run_notification_permission_settings_failed, Toast.LENGTH_SHORT).show()
+                    cancelPendingAction()
                 }
         }
     }
@@ -115,10 +147,29 @@ internal class RunNotificationPermissionFragment : Fragment() {
         if (!AndroidRunNotificationAccess.isAvailable(requireContext())) return
         coordinator.refresh()
         shownRequirementKey = null
-        dialog?.dismiss()
         val retry = pendingRetry ?: return
         pendingRetry = null
+        pendingCancellation = null
+        awaitingExternalAccess = false
+        dismissDialogWithoutCallback()
         retry()
+    }
+
+    private fun cancelPendingAction() {
+        shownRequirementKey = null
+        awaitingExternalAccess = false
+        pendingRetry = null
+        val cancellation = pendingCancellation
+        pendingCancellation = null
+        dismissDialogWithoutCallback()
+        cancellation?.invoke()
+    }
+
+    private fun dismissDialogWithoutCallback() {
+        val current = dialog ?: return
+        dialog = null
+        current.setOnDismissListener(null)
+        current.dismiss()
     }
 
     companion object {
@@ -136,9 +187,10 @@ internal class RunNotificationPermissionFragment : Fragment() {
             fragmentManager: FragmentManager,
             title: String,
             key: String,
-            retry: (() -> Unit)? = null
+            retry: (() -> Unit)? = null,
+            onCancelled: (() -> Unit)? = null,
         ) {
-            install(fragmentManager).request(title, key, retry)
+            install(fragmentManager).request(title, key, retry, onCancelled)
         }
     }
 }

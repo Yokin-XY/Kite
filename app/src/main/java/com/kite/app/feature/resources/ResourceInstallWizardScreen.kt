@@ -21,7 +21,10 @@ internal class ResourceInstallWizardScreen(
     context: Context,
     private val requestedTargetResourceId: String,
     private val seedResourceIds: List<String>,
-    private val onPlanAction: (KiteInstallPlanActionIntent) -> Unit,
+    private val onPlanAction: (
+        KiteInstallPlanActionIntent,
+        (ResourceInstallWizardPlanActionResult) -> Unit,
+    ) -> Unit,
     private val onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     private val onUninstallFailedResource: (String) -> Unit,
     private val onReportUnavailable: (String) -> Unit,
@@ -171,10 +174,16 @@ internal class ResourceInstallWizardScreen(
                         isClickable = false
                         alpha = 0.72f
                     }
-                    onPlanAction(intent)
+                    onPlanAction(intent, ::acknowledgePlanAction)
                 }
             } else null)
         }
+    }
+
+    private fun acknowledgePlanAction(result: ResourceInstallWizardPlanActionResult) {
+        if (result != ResourceInstallWizardPlanActionResult.Rejected) return
+        pendingPlanAction = null
+        currentState?.let(::bindPrimaryAction)
     }
 
     private fun bindRow(binding: RowBinding, row: ResourceInstallWizardRowViewState, now: Long) {
