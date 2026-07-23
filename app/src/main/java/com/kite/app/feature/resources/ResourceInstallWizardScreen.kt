@@ -27,7 +27,6 @@ internal class ResourceInstallWizardScreen(
     ) -> Unit,
     private val onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     private val onUninstallFailedResource: (String) -> Unit,
-    private val onReportUnavailable: (String) -> Unit,
     private val onContinueInBackground: () -> Unit,
     private val onCancelPlan: ((ResourceInstallWizardPlanActionResult) -> Unit) -> Unit,
     private val onRetry: () -> Unit,
@@ -225,6 +224,7 @@ internal class ResourceInstallWizardScreen(
     private fun bindRow(binding: RowBinding, row: ResourceInstallWizardRowViewState, now: Long) {
         val tone = toneColor(row.projection.tone)
         val statusLabel = localizedStatusLabel(row)
+        val canOpenRun = row.run != null
         binding.root.apply {
             contentDescription = root.context.getString(
                 R.string.resource_wizard_row_description,
@@ -236,16 +236,11 @@ internal class ResourceInstallWizardScreen(
                 if (row.isActive) factory.tokens.primarySoft else factory.tokens.border,
                 factory.dp(16).toFloat()
             )
-            isClickable = true
-            isFocusable = true
-            setOnClickListener {
-                val run = row.run
-                if (run == null) {
-                    onReportUnavailable(row.resourceId)
-                } else {
-                    onOpenRun(row.runRequest(CardRunSurface.Report))
-                }
-            }
+            setOnClickListener(if (canOpenRun) View.OnClickListener {
+                onOpenRun(row.runRequest(CardRunSurface.Report))
+            } else null)
+            isClickable = canOpenRun
+            isFocusable = canOpenRun
         }
         binding.number.apply {
             text = (row.index + 1).toString()

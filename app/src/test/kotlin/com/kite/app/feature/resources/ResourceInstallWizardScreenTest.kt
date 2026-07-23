@@ -291,6 +291,28 @@ class ResourceInstallWizardScreenTest {
         })
     }
 
+    @Test
+    fun `没有运行显示面的队列行不可点击也不可聚焦`() {
+        val requests = mutableListOf<ResourceInstallWizardRunRequest>()
+        val screen = createScreen(onOpenRun = requests::add)
+        attach(screen)
+        val context = screen.root.context
+        screen.render(pendingState())
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val row = screen.root.views().first {
+            it.contentDescription?.toString() == context.getString(
+                R.string.resource_wizard_row_description,
+                "Tool",
+                context.getString(R.string.resource_manage_queue_waiting),
+            )
+        }
+        assertFalse(row.isClickable)
+        assertFalse(row.isFocusable)
+        row.performClick()
+        assertTrue(requests.isEmpty())
+    }
+
     private fun createScreen(
         onPlanAction: (
             KiteInstallPlanActionIntent,
@@ -311,7 +333,6 @@ class ResourceInstallWizardScreenTest {
         onPlanAction = onPlanAction,
         onOpenRun = onOpenRun,
         onUninstallFailedResource = onUninstallFailedResource,
-        onReportUnavailable = {},
         onContinueInBackground = onContinueInBackground,
         onCancelPlan = onCancelPlan,
         onRetry = {},

@@ -377,7 +377,6 @@ class CardRunActivity : AppCompatActivity() {
             },
             onOpenRun = ::openResourceRun,
             onUninstallFailedResource = ::confirmUninstallFailedResource,
-            onReportUnavailable = { Toast.makeText(this, "报告正在准备", Toast.LENGTH_SHORT).show() },
             onContinueInBackground = { closeTaskWindow(CardRunTaskCloseReason.DismissSurface) },
             onCancelPlan = ::confirmCancelInstallPlan,
             onLiveTickRequired = ::scheduleTickIfNeeded
