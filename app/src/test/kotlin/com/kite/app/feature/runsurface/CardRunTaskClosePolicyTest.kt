@@ -10,70 +10,67 @@ import org.junit.Test
 class CardRunTaskClosePolicyTest {
     @Test
     fun `完成计划退出时移除安装向导临时实例`() {
-        val state = state(
-            ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD,
-            surface = CardRunSurface.InstallWizard,
+        val decision = decide(
+            reason = CardRunTaskCloseReason.FinishCompleted,
+            hasInstallPlan = false,
+            hasRunningInstallPlan = false,
+            hasActiveChildRun = false,
         )
 
-        assertTrue(
-            CardRunTaskClosePolicy.shouldRemoveRunState(
-                state = state,
-                reason = CardRunTaskCloseReason.FinishCompleted,
-                hasActiveInstallPlan = false,
-                hasActiveChildRun = false,
-            )
-        )
+        assertTrue(decision.removeRunState)
+        assertFalse(decision.clearInstallPlan)
     }
 
     @Test
-    fun `安装进行中返回只退出显示面并保留向导根`() {
-        val state = state(
-            ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD,
-            surface = CardRunSurface.InstallWizard,
+    fun `未开始计划退出时同时清理计划与向导根`() {
+        val decision = decide(
+            reason = CardRunTaskCloseReason.DismissSurface,
+            hasInstallPlan = true,
+            hasRunningInstallPlan = false,
+            hasActiveChildRun = false,
         )
 
-        assertFalse(
-            CardRunTaskClosePolicy.shouldRemoveRunState(
-                state = state,
-                reason = CardRunTaskCloseReason.DismissSurface,
-                hasActiveInstallPlan = true,
-                hasActiveChildRun = true,
-            )
-        )
+        assertTrue(decision.removeRunState)
+        assertTrue(decision.clearInstallPlan)
     }
 
     @Test
-    fun `计划事实暂时清空但子运行仍活动时保留向导根`() {
-        val state = state(
-            ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD,
-            surface = CardRunSurface.InstallWizard,
+    fun `安装实际运行中退出只隐藏显示面`() {
+        val decision = decide(
+            reason = CardRunTaskCloseReason.DismissSurface,
+            hasInstallPlan = true,
+            hasRunningInstallPlan = true,
+            hasActiveChildRun = false,
         )
 
-        assertFalse(
-            CardRunTaskClosePolicy.shouldRemoveRunState(
-                state = state,
-                reason = CardRunTaskCloseReason.DismissSurface,
-                hasActiveInstallPlan = false,
-                hasActiveChildRun = true,
-            )
-        )
+        assertFalse(decision.removeRunState)
+        assertFalse(decision.clearInstallPlan)
     }
 
     @Test
-    fun `确认停止整个实例后允许移除向导根`() {
-        val state = state(
-            ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD,
-            surface = CardRunSurface.InstallWizard,
+    fun `计划事实暂时没有运行项但子运行仍活动时保留向导根`() {
+        val decision = decide(
+            reason = CardRunTaskCloseReason.DismissSurface,
+            hasInstallPlan = true,
+            hasRunningInstallPlan = false,
+            hasActiveChildRun = true,
         )
 
-        assertTrue(
-            CardRunTaskClosePolicy.shouldRemoveRunState(
-                state = state,
-                reason = CardRunTaskCloseReason.StopConfirmed,
-                hasActiveInstallPlan = true,
-                hasActiveChildRun = true,
-            )
+        assertFalse(decision.removeRunState)
+        assertFalse(decision.clearInstallPlan)
+    }
+
+    @Test
+    fun `确认停止整个实例后清理计划与向导根`() {
+        val decision = decide(
+            reason = CardRunTaskCloseReason.StopConfirmed,
+            hasInstallPlan = true,
+            hasRunningInstallPlan = true,
+            hasActiveChildRun = true,
         )
+
+        assertTrue(decision.removeRunState)
+        assertTrue(decision.clearInstallPlan)
     }
 
     @Test
@@ -82,15 +79,16 @@ class CardRunTaskClosePolicyTest {
             ownerKind = CardRunState.OWNER_KIND_CARD,
             surface = CardRunSurface.Terminal,
         )
-
-        assertFalse(
-            CardRunTaskClosePolicy.shouldRemoveRunState(
-                state = state,
-                reason = CardRunTaskCloseReason.StopConfirmed,
-                hasActiveInstallPlan = false,
-                hasActiveChildRun = false,
-            )
+        val decision = CardRunTaskClosePolicy.decide(
+            state = state,
+            reason = CardRunTaskCloseReason.StopConfirmed,
+            hasInstallPlan = false,
+            hasRunningInstallPlan = false,
+            hasActiveChildRun = false,
         )
+
+        assertFalse(decision.removeRunState)
+        assertFalse(decision.clearInstallPlan)
     }
 
     @Test
@@ -107,6 +105,19 @@ class CardRunTaskClosePolicyTest {
             )
         )
     }
+
+    private fun decide(
+        reason: CardRunTaskCloseReason,
+        hasInstallPlan: Boolean,
+        hasRunningInstallPlan: Boolean,
+        hasActiveChildRun: Boolean,
+    ) = CardRunTaskClosePolicy.decide(
+        state = state(CardRunState.OWNER_KIND_INSTALL_WIZARD, CardRunSurface.InstallWizard),
+        reason = reason,
+        hasInstallPlan = hasInstallPlan,
+        hasRunningInstallPlan = hasRunningInstallPlan,
+        hasActiveChildRun = hasActiveChildRun,
+    )
 
     private fun state(
         ownerKind: String,

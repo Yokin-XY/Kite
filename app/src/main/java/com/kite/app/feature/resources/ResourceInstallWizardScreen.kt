@@ -17,7 +17,6 @@ import com.kite.app.R
 import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceStepTone
-import com.kite.app.run.CardRunSurface
 
 /** CardRun 内安装向导的真实视图所有者，只消费 ResourceFeatureUiState。 */
 internal class ResourceInstallWizardScreen(
@@ -28,10 +27,8 @@ internal class ResourceInstallWizardScreen(
         KiteInstallPlanActionIntent,
         (ResourceInstallWizardPlanActionResult) -> Unit,
     ) -> Unit,
-    private val onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     private val onUninstallFailedResource: (String) -> Unit,
-    private val onContinueInBackground: () -> Unit,
-    private val onCancelPlan: ((ResourceInstallWizardPlanActionResult) -> Unit) -> Unit,
+    private val onExit: () -> Unit,
     private val onRetry: () -> Unit,
     private val onLiveTickRequired: () -> Unit
 ) {
@@ -48,7 +45,6 @@ internal class ResourceInstallWizardScreen(
     private val rowBindings = linkedMapOf<String, RowBinding>()
     private var headerBinding: HeaderBinding? = null
     private var primaryButton: TextView? = null
-    private var planControlBinding: PlanControlBinding? = null
     private var structureSignature = ""
     private var currentState: ResourceInstallWizardViewState? = null
     private var pendingPlanAction: KiteInstallPlanActionIntent? = null
@@ -65,7 +61,7 @@ internal class ResourceInstallWizardScreen(
         addView(factory.ui.topBar(
             context = context,
             title = context.getString(R.string.resource_wizard_page_title),
-            onBack = onContinueInBackground,
+            onBack = onExit,
         ))
         addView(scrollHost, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -116,7 +112,6 @@ internal class ResourceInstallWizardScreen(
         rowBindings.clear()
         headerBinding = null
         primaryButton = null
-        planControlBinding = null
     }
 
     private fun ensureStructure(state: ResourceInstallWizardViewState) {
@@ -136,7 +131,6 @@ internal class ResourceInstallWizardScreen(
         contentHost.addView(header(statusIcon, title, detail, progress))
         headerBinding = HeaderBinding(statusIcon, title, detail, progress)
         primaryButton = actionButton().also(contentHost::addView)
-        planControlBinding = planControls().also { contentHost.addView(it.root) }
         contentHost.addView(factory.sectionTitle(root.context.getString(R.string.resource_wizard_queue_title)).apply {
             setPadding(0, factory.dp(24), 0, factory.dp(12))
         })
@@ -159,7 +153,6 @@ internal class ResourceInstallWizardScreen(
             }
         }
         bindPrimaryAction(state)
-        bindPlanControls(state)
         state.rows.forEach { row -> rowBindings[row.resourceId]?.let { bindRow(it, row, now) } }
     }
 
@@ -213,41 +206,9 @@ internal class ResourceInstallWizardScreen(
         currentState?.let(::bindPrimaryAction)
     }
 
-    private fun bindPlanControls(state: ResourceInstallWizardViewState) {
-        val binding = planControlBinding ?: return
-        binding.root.visibility = if (state.showPlanControls) View.VISIBLE else View.GONE
-        if (!state.showPlanControls) {
-            binding.cancelPending = false
-            return
-        }
-        binding.background.apply {
-            isEnabled = !binding.cancelPending
-            alpha = if (isEnabled) 1f else 0.58f
-        }
-        binding.cancel.apply {
-            text = if (binding.cancelPending) {
-                root.context.getString(R.string.resource_wizard_cancel_plan_pending)
-            } else {
-                root.context.getString(R.string.resource_wizard_cancel_plan)
-            }
-            contentDescription = text
-            isEnabled = !binding.cancelPending
-            isClickable = isEnabled
-            alpha = if (isEnabled) 1f else 0.58f
-        }
-    }
-
-    private fun acknowledgeCancelPlan(result: ResourceInstallWizardPlanActionResult) {
-        val binding = planControlBinding ?: return
-        if (result != ResourceInstallWizardPlanActionResult.Rejected) return
-        binding.cancelPending = false
-        currentState?.let(::bindPlanControls)
-    }
-
     private fun bindRow(binding: RowBinding, row: ResourceInstallWizardRowViewState, now: Long) {
         val tone = toneColor(row.projection.tone)
         val statusLabel = localizedStatusLabel(row)
-        val canOpenRun = row.run != null
         binding.root.apply {
             contentDescription = root.context.getString(
                 R.string.resource_wizard_row_description,
@@ -259,11 +220,9 @@ internal class ResourceInstallWizardScreen(
                 if (row.isActive) factory.tokens.primarySoft else factory.tokens.border,
                 factory.dp(16).toFloat()
             )
-            setOnClickListener(if (canOpenRun) View.OnClickListener {
-                onOpenRun(row.runRequest(CardRunSurface.Report))
-            } else null)
-            isClickable = canOpenRun
-            isFocusable = canOpenRun
+            setOnClickListener(null)
+            isClickable = false
+            isFocusable = false
         }
         binding.number.apply {
             text = (row.index + 1).toString()
@@ -283,23 +242,11 @@ internal class ResourceInstallWizardScreen(
     }
 
     private fun bindSecondaryAction(binding: RowBinding, row: ResourceInstallWizardRowViewState) {
-        val surface = row.run?.surface
         val canRecoverFailure = row.projection.failed && !row.projection.uninstalling
-        val key = "${row.operation}|${row.run?.instanceId.orEmpty()}|${surface?.name.orEmpty()}|$canRecoverFailure"
+        val key = "${row.operation}|$canRecoverFailure"
         if (binding.secondaryKey == key) return
         binding.secondaryKey = key
         binding.secondaryHost.removeAllViews()
-        val label = when (surface) {
-            CardRunSurface.Report -> root.context.getString(R.string.resource_wizard_open_report)
-            CardRunSurface.Terminal -> root.context.getString(R.string.resource_wizard_open_terminal)
-            CardRunSurface.Web -> root.context.getString(R.string.resource_wizard_open_web)
-            else -> null
-        }
-        if (label != null && row.run != null) {
-            binding.secondaryHost.addView(inlineButton(label) {
-                onOpenRun(row.runRequest(requireNotNull(surface)))
-            })
-        }
         if (canRecoverFailure) {
             binding.secondaryHost.addView(
                 inlineButton(
@@ -309,16 +256,6 @@ internal class ResourceInstallWizardScreen(
             )
         }
         binding.secondaryHost.visibility = if (binding.secondaryHost.childCount > 0) View.VISIBLE else View.GONE
-    }
-
-    private fun ResourceInstallWizardRowViewState.runRequest(surface: CardRunSurface): ResourceInstallWizardRunRequest {
-        val snapshot = requireNotNull(run)
-        return ResourceInstallWizardRunRequest(
-            resourceId = resourceId,
-            operation = operation,
-            instanceId = snapshot.instanceId,
-            surface = surface
-        )
     }
 
     private fun header(icon: ImageView, title: TextView, detail: TextView, progress: TextView): View =
@@ -410,55 +347,6 @@ internal class ResourceInstallWizardScreen(
             setMargins(0, factory.dp(16), 0, 0)
         }
     }
-
-    private fun planControls(): PlanControlBinding {
-        val background = planControlButton(
-            label = root.context.getString(R.string.resource_wizard_continue_in_background),
-            danger = false,
-            onClick = onContinueInBackground,
-        )
-        val cancel = planControlButton(
-            label = root.context.getString(R.string.resource_wizard_cancel_plan),
-            danger = true,
-        ) {
-            val binding = planControlBinding ?: return@planControlButton
-            if (binding.cancelPending) return@planControlButton
-            binding.cancelPending = true
-            currentState?.let(::bindPlanControls)
-            onCancelPlan(::acknowledgeCancelPlan)
-        }
-        val host = LinearLayout(root.context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            visibility = View.GONE
-            addView(background, LinearLayout.LayoutParams(0, factory.dp(48), 1f))
-            addView(cancel, LinearLayout.LayoutParams(0, factory.dp(48), 1f).apply {
-                setMargins(factory.dp(10), 0, 0, 0)
-            })
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(0, factory.dp(10), 0, 0)
-            }
-        }
-        return PlanControlBinding(host, background, cancel)
-    }
-
-    private fun planControlButton(label: String, danger: Boolean, onClick: () -> Unit): TextView =
-        TextView(root.context).apply {
-            text = label
-            contentDescription = label
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            setTextColor(if (danger) factory.tokens.danger else factory.tokens.primaryStrong)
-            background = factory.roundedBox(
-                if (danger) factory.tokens.dangerSoft else factory.tokens.primarySubtle,
-                if (danger) factory.tokens.dangerBorder else factory.tokens.primarySoft,
-                factory.dp(15).toFloat(),
-            )
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { onClick() }
-        }
 
     private fun row(state: ResourceInstallWizardRowViewState): RowBinding {
         val number = TextView(root.context)
@@ -552,7 +440,6 @@ internal class ResourceInstallWizardScreen(
         rowBindings.clear()
         headerBinding = null
         primaryButton = null
-        planControlBinding = null
         contentHost.removeAllViews()
         contentHost.addView(factory.stateBlock(title, detail, loading = retry == null, retry = retry))
     }
@@ -601,10 +488,4 @@ internal class ResourceInstallWizardScreen(
         var secondaryKey: String = ""
     )
 
-    private data class PlanControlBinding(
-        val root: LinearLayout,
-        val background: TextView,
-        val cancel: TextView,
-        var cancelPending: Boolean = false,
-    )
 }

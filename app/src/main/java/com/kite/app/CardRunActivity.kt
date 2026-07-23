@@ -24,7 +24,6 @@ import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserHandoffLaunchResult
 import com.kite.app.application.resources.ResourceRunContinuation
-import com.kite.app.application.resources.ResourceActionEffect
 import com.kite.app.application.resources.ResourceRunLaunchRequest
 import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.runs.RunCommandResult
@@ -39,7 +38,6 @@ import com.kite.app.browser.BrowserHandoffRequest
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.browser.automation.BrowserAutomationSessionStore
 import com.kite.app.diagnostics.KiteDiagnostics
-import com.kite.app.feature.resources.ResourceInstallWizardRunRequest
 import com.kite.app.feature.resources.ResourceInstallWizardPlanActionResult
 import com.kite.app.feature.runsurface.CardRunLaunchRequest
 import com.kite.app.feature.runsurface.CardRunLaunchResolution
@@ -375,10 +373,8 @@ class CardRunActivity : AppCompatActivity() {
                     }
                 }
             },
-            onOpenRun = ::openResourceRun,
             onUninstallFailedResource = ::confirmUninstallFailedResource,
-            onContinueInBackground = { closeTaskWindow(CardRunTaskCloseReason.DismissSurface) },
-            onCancelPlan = ::confirmCancelInstallPlan,
+            onExit = { closeTaskWindow(CardRunTaskCloseReason.DismissSurface) },
             onLiveTickRequired = ::scheduleTickIfNeeded
         )
     }
@@ -591,24 +587,6 @@ class CardRunActivity : AppCompatActivity() {
         )
     }
 
-    private fun openResourceRun(request: ResourceInstallWizardRunRequest) {
-        val recipe = graph.resourceRunCoordinator.recipe(request.resourceId, request.operation)
-            ?: CardRunStore.get(request.instanceId)?.recipeId?.let(::resolveRecipeById)
-        if (recipe == null) {
-            Toast.makeText(this, "运行报告正在准备", Toast.LENGTH_SHORT).show()
-            return
-        }
-        CardRunStore.registerRecipe(recipe)
-        val childIntent = CardRunIntents.launchIntent(
-            context = this,
-            recipeId = recipe.id,
-            instanceId = request.instanceId,
-            launchSource = CardRunIntents.SOURCE_RESOURCE_INSTALL,
-            autoStart = false
-        ).apply { flags = flags and Intent.FLAG_ACTIVITY_NEW_DOCUMENT.inv() }
-        startActivity(childIntent)
-    }
-
     private fun confirmUninstallFailedResource(resourceId: String) {
         UiKit(this, kiteThemeEnvironment()).showConfirmDialog(
             context = this,
@@ -621,70 +599,6 @@ class CardRunActivity : AppCompatActivity() {
                 onClick = { uninstallFailedResource(resourceId) },
             ),
         )
-    }
-
-    private fun confirmCancelInstallPlan(
-        acknowledge: (ResourceInstallWizardPlanActionResult) -> Unit,
-    ) {
-        val snapshot = graph.resourceInstallStore.planSnapshot()
-        val targetResourceId = snapshot.targetResourceId
-            .ifBlank { currentTarget?.installTargetResourceId.orEmpty() }
-        val planResourceIds = snapshot.resourceIds
-            .ifEmpty { currentTarget?.installPlanResourceIds.orEmpty() }
-            .ifEmpty { snapshot.pendingResourceIds }
-        if (targetResourceId.isBlank() && planResourceIds.isEmpty()) {
-            Toast.makeText(this, getString(R.string.resource_wizard_no_active_plan), Toast.LENGTH_SHORT).show()
-            acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
-            return
-        }
-        var confirmed = false
-        lateinit var dialog: android.app.Dialog
-        dialog = UiKit(this, kiteThemeEnvironment()).showConfirmDialog(
-            context = this,
-            title = getString(R.string.resource_wizard_cancel_confirm_title),
-            message = getString(R.string.resource_wizard_cancel_confirm_summary),
-            dismissLabel = getString(R.string.common_cancel),
-            primaryAction = com.kite.app.ui.UiDialogAction(
-                label = getString(R.string.resource_wizard_cancel_confirm_action),
-                role = com.kite.app.ui.UiActionRole.Danger,
-                dismissOnClick = false,
-                onClick = {
-                    confirmed = true
-                    dialog.dismiss()
-                    acknowledge(ResourceInstallWizardPlanActionResult.Deferred)
-                    cancelInstallPlan(targetResourceId, planResourceIds, acknowledge)
-                },
-            ),
-        )
-        dialog.setOnDismissListener {
-            if (!confirmed) acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
-        }
-    }
-
-    private fun cancelInstallPlan(
-        targetResourceId: String,
-        planResourceIds: List<String>,
-        acknowledge: (ResourceInstallWizardPlanActionResult) -> Unit,
-    ) {
-        lifecycleScope.launch {
-            runCatching {
-                graph.resourceActionWorkflowCoordinator.cancelPlan(targetResourceId, planResourceIds)
-            }.onSuccess { effects ->
-                effects.filterIsInstance<ResourceActionEffect.Message>().forEach { effect ->
-                    Toast.makeText(this@CardRunActivity, effect.text, Toast.LENGTH_SHORT).show()
-                }
-                acknowledge(ResourceInstallWizardPlanActionResult.Accepted)
-                closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
-            }.onFailure { error ->
-                Toast.makeText(
-                    this@CardRunActivity,
-                    error.message ?: getString(R.string.resource_wizard_cancel_failed),
-                    Toast.LENGTH_SHORT,
-                ).show()
-                acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
-                surfaceHost?.reconcile()
-            }
-        }
     }
 
     private fun uninstallFailedResource(resourceId: String) {
@@ -873,18 +787,19 @@ class CardRunActivity : AppCompatActivity() {
     }
 
     private fun closeTaskWindow(reason: CardRunTaskCloseReason) {
-        currentState
-            ?.takeIf { state ->
-                val plan = graph.resourceInstallStore.planSnapshot()
-                CardRunTaskClosePolicy.shouldRemoveRunState(
-                    state = state,
-                    reason = reason,
-                    hasActiveInstallPlan = plan.targetResourceId.isNotBlank() || plan.resourceIds.isNotEmpty(),
-                    hasActiveChildRun = CardRunStore.childrenOf(state.instanceId)
-                        .any(CardRunTaskClosePolicy::isActiveChild),
-                )
-            }
-            ?.let { state -> CardRunStore.removeRun(state.instanceId) }
+        currentState?.let { state ->
+            val plan = graph.resourceInstallStore.planSnapshot()
+            val decision = CardRunTaskClosePolicy.decide(
+                state = state,
+                reason = reason,
+                hasInstallPlan = plan.targetResourceId.isNotBlank() || plan.resourceIds.isNotEmpty(),
+                hasRunningInstallPlan = plan.runningResourceIds.isNotEmpty(),
+                hasActiveChildRun = CardRunStore.childrenOf(state.instanceId)
+                    .any(CardRunTaskClosePolicy::isActiveChild),
+            )
+            if (decision.clearInstallPlan) graph.resourceInstallStore.clearPlan()
+            if (decision.removeRunState) CardRunStore.removeRun(state.instanceId)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) finishAndRemoveTask() else finish()
     }
 

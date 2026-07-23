@@ -99,9 +99,8 @@ class ResourceInstallWizardScreenTest {
     }
 
     @Test
-    fun `运行事实变化只重绑原行并携带确定实例打开显示面`() {
-        val requests = mutableListOf<ResourceInstallWizardRunRequest>()
-        val screen = createScreen(onOpenRun = requests::add)
+    fun `运行事实变化只重绑原行并更新耗时`() {
+        val screen = createScreen()
         attach(screen)
         val context = screen.root.context
         screen.render(runningState(surface = CardRunSurface.Report))
@@ -123,21 +122,15 @@ class ResourceInstallWizardScreenTest {
             it.text.toString() == context.getString(R.string.resource_wizard_subtitle_running, base, "01:05")
         })
 
-        screen.root.textViews().first {
-            it.text.toString() == context.getString(R.string.resource_wizard_open_terminal)
-        }.performClick()
-        screen.root.views().first {
+        val row = screen.root.views().first {
             it.contentDescription?.toString() == context.getString(
                 R.string.resource_wizard_row_description,
                 "Tool",
                 context.getString(R.string.resource_state_installing)
             )
-        }.performClick()
-
-        assertEquals(CardRunSurface.Terminal, requests[0].surface)
-        assertEquals(CardRunSurface.Report, requests[1].surface)
-        assertTrue(requests.all { it.instanceId == "install-instance" })
-        assertTrue(requests.all { it.operation == KiteResourceInstallStore.OP_INSTALL })
+        }
+        assertFalse(row.isClickable)
+        assertFalse(row.isFocusable)
     }
 
     @Test
@@ -181,19 +174,23 @@ class ResourceInstallWizardScreenTest {
     }
 
     @Test
-    fun `有报告的步骤显示明确查看报告入口`() {
-        val requests = mutableListOf<ResourceInstallWizardRunRequest>()
-        val screen = createScreen(onOpenRun = requests::add)
+    fun `运行步骤不提供报告入口且队列行保持只读`() {
+        val screen = createScreen()
         attach(screen)
         val context = screen.root.context
         screen.render(runningState(surface = CardRunSurface.Report))
         shadowOf(Looper.getMainLooper()).idle()
 
-        screen.root.textViews().first {
-            it.text.toString() == context.getString(R.string.resource_wizard_open_report)
-        }.performClick()
-
-        assertEquals(listOf(CardRunSurface.Report), requests.map(ResourceInstallWizardRunRequest::surface))
+        assertFalse(screen.root.textViews().any { it.text.toString() == "查看报告" })
+        val row = screen.root.views().first {
+            it.contentDescription?.toString() == context.getString(
+                R.string.resource_wizard_row_description,
+                "Tool",
+                context.getString(R.string.resource_state_installing),
+            )
+        }
+        assertFalse(row.isClickable)
+        assertFalse(row.isFocusable)
     }
 
     @Test
@@ -243,34 +240,16 @@ class ResourceInstallWizardScreenTest {
     }
 
     @Test
-    fun `活动计划提供后台继续并在取消确认被拒绝后恢复`() {
-        var backgroundRequests = 0
-        lateinit var cancelAcknowledge: (ResourceInstallWizardPlanActionResult) -> Unit
-        val screen = createScreen(
-            onContinueInBackground = { backgroundRequests += 1 },
-            onCancelPlan = { acknowledge -> cancelAcknowledge = acknowledge },
-        )
+    fun `活动计划不显示后台继续取消计划或报告入口`() {
+        val screen = createScreen()
         attach(screen)
-        val context = screen.root.context
         screen.render(pendingState())
         shadowOf(Looper.getMainLooper()).idle()
 
-        screen.root.textViews().first {
-            it.text.toString() == context.getString(R.string.resource_wizard_continue_in_background)
-        }.performClick()
-        assertEquals(1, backgroundRequests)
-
-        screen.root.textViews().first {
-            it.text.toString() == context.getString(R.string.resource_wizard_cancel_plan)
-        }.performClick()
-        assertTrue(screen.root.textViews().any {
-            it.text.toString() == context.getString(R.string.resource_wizard_cancel_plan_pending) && !it.isEnabled
-        })
-
-        cancelAcknowledge(ResourceInstallWizardPlanActionResult.Rejected)
-        assertTrue(screen.root.textViews().any {
-            it.text.toString() == context.getString(R.string.resource_wizard_cancel_plan) && it.isEnabled
-        })
+        val labels = screen.root.textViews().map { it.text.toString() }
+        assertFalse("后台继续" in labels)
+        assertFalse("取消获取计划" in labels)
+        assertFalse("查看报告" in labels)
     }
 
     @Test
@@ -308,8 +287,7 @@ class ResourceInstallWizardScreenTest {
 
     @Test
     fun `没有运行显示面的队列行不可点击也不可聚焦`() {
-        val requests = mutableListOf<ResourceInstallWizardRunRequest>()
-        val screen = createScreen(onOpenRun = requests::add)
+        val screen = createScreen()
         attach(screen)
         val context = screen.root.context
         screen.render(pendingState())
@@ -324,14 +302,12 @@ class ResourceInstallWizardScreenTest {
         }
         assertFalse(row.isClickable)
         assertFalse(row.isFocusable)
-        row.performClick()
-        assertTrue(requests.isEmpty())
     }
 
     @Test
     fun `向导提供可见返回状态图标与标准触控尺寸`() {
         var exits = 0
-        val screen = createScreen(onContinueInBackground = { exits += 1 })
+        val screen = createScreen(onExit = { exits += 1 })
         attach(screen)
         val context = screen.root.context
         val minimumTouchTarget = (48 * context.resources.displayMetrics.density).toInt()
@@ -345,21 +321,15 @@ class ResourceInstallWizardScreenTest {
         assertTrue(screen.root.imageViews().any {
             it.contentDescription?.toString() == context.getString(R.string.resource_wizard_header_state_pending)
         })
-        assertTrue(screen.root.textViews()
-            .filter { it.text.toString() in setOf(
-                context.getString(R.string.resource_wizard_continue_in_background),
-                context.getString(R.string.resource_wizard_cancel_plan),
-            ) }
-            .all { it.layoutParams.height >= minimumTouchTarget })
+        assertTrue(screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_action_start)
+        }.layoutParams.height >= minimumTouchTarget)
 
         screen.render(runningState(surface = CardRunSurface.Report))
         shadowOf(Looper.getMainLooper()).idle()
         assertTrue(screen.root.imageViews().any {
             it.contentDescription?.toString() == context.getString(R.string.resource_wizard_header_state_running)
         })
-        assertTrue(screen.root.textViews().first {
-            it.text.toString() == context.getString(R.string.resource_wizard_open_report)
-        }.layoutParams.height >= minimumTouchTarget)
 
         screen.render(finishedState())
         shadowOf(Looper.getMainLooper()).idle()
@@ -373,10 +343,8 @@ class ResourceInstallWizardScreenTest {
             KiteInstallPlanActionIntent,
             (ResourceInstallWizardPlanActionResult) -> Unit,
         ) -> Unit = { _, acknowledge -> acknowledge(ResourceInstallWizardPlanActionResult.Accepted) },
-        onOpenRun: (ResourceInstallWizardRunRequest) -> Unit = {},
         onUninstallFailedResource: (String) -> Unit = {},
-        onContinueInBackground: () -> Unit = {},
-        onCancelPlan: ((ResourceInstallWizardPlanActionResult) -> Unit) -> Unit = {},
+        onExit: () -> Unit = {},
         seedResourceIds: List<String> = listOf("tool"),
     ): ResourceInstallWizardScreen = ResourceInstallWizardScreen(
         context = ContextThemeWrapper(
@@ -386,10 +354,8 @@ class ResourceInstallWizardScreenTest {
         requestedTargetResourceId = "tool",
         seedResourceIds = seedResourceIds,
         onPlanAction = onPlanAction,
-        onOpenRun = onOpenRun,
         onUninstallFailedResource = onUninstallFailedResource,
-        onContinueInBackground = onContinueInBackground,
-        onCancelPlan = onCancelPlan,
+        onExit = onExit,
         onRetry = {},
         onLiveTickRequired = {}
     )

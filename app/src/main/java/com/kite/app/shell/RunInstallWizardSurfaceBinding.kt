@@ -4,7 +4,6 @@ import android.content.Context
 import android.view.View
 import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.application.resources.ResourceFeatureGateway
-import com.kite.app.feature.resources.ResourceInstallWizardRunRequest
 import com.kite.app.feature.resources.ResourceInstallWizardPlanActionResult
 import com.kite.app.feature.resources.ResourceInstallWizardSurface
 import com.kite.app.feature.runsurface.RunSurfaceBinding
@@ -20,10 +19,8 @@ internal class RunInstallWizardSurfaceBinding(
         KiteInstallPlanActionIntent,
         (ResourceInstallWizardPlanActionResult) -> Unit,
     ) -> Unit,
-    onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     onUninstallFailedResource: (String) -> Unit,
-    onContinueInBackground: () -> Unit,
-    onCancelPlan: ((ResourceInstallWizardPlanActionResult) -> Unit) -> Unit,
+    onExit: () -> Unit,
     onLiveTickRequired: () -> Unit
 ) : RunSurfaceBinding {
     private val surface = ResourceInstallWizardSurface(
@@ -32,10 +29,8 @@ internal class RunInstallWizardSurfaceBinding(
         targetResourceId = targetResourceId,
         planResourceIds = planResourceIds,
         onPlanAction = onPlanAction,
-        onOpenRun = onOpenRun,
         onUninstallFailedResource = onUninstallFailedResource,
-        onContinueInBackground = onContinueInBackground,
-        onCancelPlan = onCancelPlan,
+        onExit = onExit,
         onLiveTickRequired = onLiveTickRequired
     )
 

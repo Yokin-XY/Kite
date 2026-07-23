@@ -9,17 +9,34 @@ internal enum class CardRunTaskCloseReason {
     StopConfirmed,
 }
 
+internal data class CardRunTaskCloseDecision(
+    val removeRunState: Boolean,
+    val clearInstallPlan: Boolean,
+)
+
 /** 明确关闭任务窗口时，决定纯显示面实例是否已经可以退出活动运行集合。 */
 internal object CardRunTaskClosePolicy {
-    fun shouldRemoveRunState(
+    fun decide(
         state: CardRunState,
         reason: CardRunTaskCloseReason,
-        hasActiveInstallPlan: Boolean,
+        hasInstallPlan: Boolean,
+        hasRunningInstallPlan: Boolean,
         hasActiveChildRun: Boolean,
-    ): Boolean {
-        if (state.ownerKind != CardRunState.OWNER_KIND_INSTALL_WIZARD) return false
-        if (reason == CardRunTaskCloseReason.StopConfirmed) return true
-        return !hasActiveInstallPlan && !hasActiveChildRun
+    ): CardRunTaskCloseDecision {
+        if (state.ownerKind != CardRunState.OWNER_KIND_INSTALL_WIZARD) {
+            return CardRunTaskCloseDecision(removeRunState = false, clearInstallPlan = false)
+        }
+        if (reason == CardRunTaskCloseReason.StopConfirmed) {
+            return CardRunTaskCloseDecision(
+                removeRunState = true,
+                clearInstallPlan = hasInstallPlan,
+            )
+        }
+        val executionActive = hasRunningInstallPlan || hasActiveChildRun
+        return CardRunTaskCloseDecision(
+            removeRunState = !executionActive,
+            clearInstallPlan = hasInstallPlan && !executionActive,
+        )
     }
 
     fun isActiveChild(state: CardRunState): Boolean = state.status !in endedChildStatuses

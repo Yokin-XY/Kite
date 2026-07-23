@@ -21,10 +21,8 @@ internal class ResourceInstallWizardSurface(
         KiteInstallPlanActionIntent,
         (ResourceInstallWizardPlanActionResult) -> Unit,
     ) -> Unit,
-    onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     onUninstallFailedResource: (String) -> Unit,
-    onContinueInBackground: () -> Unit,
-    onCancelPlan: ((ResourceInstallWizardPlanActionResult) -> Unit) -> Unit,
+    onExit: () -> Unit,
     onLiveTickRequired: () -> Unit
 ) {
     private val controller = ResourceFeatureController(gateway)
@@ -35,10 +33,8 @@ internal class ResourceInstallWizardSurface(
         requestedTargetResourceId = targetResourceId,
         seedResourceIds = planResourceIds,
         onPlanAction = onPlanAction,
-        onOpenRun = onOpenRun,
         onUninstallFailedResource = onUninstallFailedResource,
-        onContinueInBackground = onContinueInBackground,
-        onCancelPlan = onCancelPlan,
+        onExit = onExit,
         onRetry = { refresh(forceCatalogRefresh = true) },
         onLiveTickRequired = onLiveTickRequired
     )

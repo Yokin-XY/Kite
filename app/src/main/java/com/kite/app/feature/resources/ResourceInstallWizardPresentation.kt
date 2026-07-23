@@ -8,15 +8,7 @@ import com.kite.app.application.resources.ResourceFeatureRunSnapshot
 import com.kite.app.resources.KiteResourceInstallStepUiProjection
 import com.kite.app.resources.KiteResourceInstallStepUiProjector
 import com.kite.app.resources.KiteResourceInstallStore
-import com.kite.app.run.CardRunSurface
 import com.kite.app.run.CardRunStatus
-
-internal data class ResourceInstallWizardRunRequest(
-    val resourceId: String,
-    val operation: String,
-    val instanceId: String,
-    val surface: CardRunSurface
-)
 
 internal enum class ResourceInstallWizardPlanActionResult {
     Accepted,
@@ -54,7 +46,6 @@ internal data class ResourceInstallWizardViewState(
     val primaryLabel: String,
     val primaryEnabled: Boolean,
     val primaryIntent: KiteInstallPlanActionIntent?,
-    val showPlanControls: Boolean,
     val headerState: ResourceInstallWizardHeaderState,
     val rows: List<ResourceInstallWizardRowViewState>
 )
@@ -143,10 +134,6 @@ internal object ResourceInstallWizardPresenter {
             hasPending = hasPending,
             hasFailure = hasFailure
         )
-        val hasPersistedPlan = state.plan.targetResourceId.isNotBlank() || state.plan.resourceIds.isNotEmpty()
-        val showPlanControls = hasPersistedPlan && (
-            isCalibrating || hasRunningStep || hasUninstallingStep || hasFailure || hasPending
-        )
         return ResourceInstallWizardViewState(
             targetResourceId = targetResourceId,
             title = targetName,
@@ -163,7 +150,6 @@ internal object ResourceInstallWizardPresenter {
             },
             primaryEnabled = action.enabled && !isCalibrating,
             primaryIntent = action.intent.takeUnless { isCalibrating },
-            showPlanControls = showPlanControls,
             headerState = when {
                 isCalibrating -> ResourceInstallWizardHeaderState.Syncing
                 hasRunningStep || hasUninstallingStep -> ResourceInstallWizardHeaderState.Running
