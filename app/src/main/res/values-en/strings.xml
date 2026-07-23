@@ -683,6 +683,11 @@
     <string name="resource_wizard_row_description">%1$s, %2$s</string>
     <string name="resource_wizard_open_terminal">Open terminal</string>
     <string name="resource_wizard_open_web">Open web page</string>
+    <string name="resource_wizard_open_report">View report</string>
+    <string name="resource_wizard_cleanup_and_retry">Clean up and retry</string>
+    <string name="resource_wizard_cleanup_confirm_title">Clean up failed installation?</string>
+    <string name="resource_wizard_cleanup_confirm_summary">Incomplete files for this resource will be removed before installation continues.</string>
+    <string name="resource_wizard_cleanup_confirm_action">Clean up</string>
     <string name="resource_wizard_fallback_resource">Resource</string>
     <string name="resource_wizard_install_task">Install task</string>
     <string name="resource_wizard_detail_installing">Installing: %1$s</string>

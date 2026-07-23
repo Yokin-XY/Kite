@@ -375,7 +375,7 @@ class CardRunActivity : AppCompatActivity() {
                 }
             },
             onOpenRun = ::openResourceRun,
-            onUninstallFailedResource = ::uninstallFailedResource,
+            onUninstallFailedResource = ::confirmUninstallFailedResource,
             onReportUnavailable = { Toast.makeText(this, "报告正在准备", Toast.LENGTH_SHORT).show() },
             onLiveTickRequired = ::scheduleTickIfNeeded
         )
@@ -605,6 +605,20 @@ class CardRunActivity : AppCompatActivity() {
             autoStart = false
         ).apply { flags = flags and Intent.FLAG_ACTIVITY_NEW_DOCUMENT.inv() }
         startActivity(childIntent)
+    }
+
+    private fun confirmUninstallFailedResource(resourceId: String) {
+        UiKit(this, kiteThemeEnvironment()).showConfirmDialog(
+            context = this,
+            title = getString(R.string.resource_wizard_cleanup_confirm_title),
+            message = getString(R.string.resource_wizard_cleanup_confirm_summary),
+            dismissLabel = getString(R.string.common_cancel),
+            primaryAction = com.kite.app.ui.UiDialogAction(
+                label = getString(R.string.resource_wizard_cleanup_confirm_action),
+                role = com.kite.app.ui.UiActionRole.Danger,
+                onClick = { uninstallFailedResource(resourceId) },
+            ),
+        )
     }
 
     private fun uninstallFailedResource(resourceId: String) {

@@ -140,7 +140,7 @@ class ResourceInstallWizardScreenTest {
     }
 
     @Test
-    fun `失败步骤提交卸载处理且计划清空后仍保留完成队列`() {
+    fun `失败步骤通过显式按钮提交清理且状态标签不执行动作`() {
         val failedResources = mutableListOf<String>()
         val actions = mutableListOf<KiteInstallPlanActionIntent>()
         val screen = createScreen(
@@ -158,6 +158,11 @@ class ResourceInstallWizardScreenTest {
         screen.root.textViews().first {
             it.text.toString() == context.getString(R.string.resource_state_install_failed)
         }.performClick()
+        assertTrue(failedResources.isEmpty())
+
+        screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_cleanup_and_retry)
+        }.performClick()
         assertEquals(listOf("tool"), failedResources)
         assertTrue(screen.root.textViews().any {
             it.text.toString() == context.getString(R.string.resource_wizard_detail_failure)
@@ -172,6 +177,22 @@ class ResourceInstallWizardScreenTest {
             it.text.toString() == context.getString(R.string.resource_wizard_action_complete)
         }.performClick()
         assertEquals(listOf(KiteInstallPlanActionIntent.Finish), actions)
+    }
+
+    @Test
+    fun `有报告的步骤显示明确查看报告入口`() {
+        val requests = mutableListOf<ResourceInstallWizardRunRequest>()
+        val screen = createScreen(onOpenRun = requests::add)
+        attach(screen)
+        val context = screen.root.context
+        screen.render(runningState(surface = CardRunSurface.Report))
+        shadowOf(Looper.getMainLooper()).idle()
+
+        screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_open_report)
+        }.performClick()
+
+        assertEquals(listOf(CardRunSurface.Report), requests.map(ResourceInstallWizardRunRequest::surface))
     }
 
     private fun createScreen(

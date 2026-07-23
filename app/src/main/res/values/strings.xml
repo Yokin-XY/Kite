@@ -682,6 +682,11 @@
     <string name="resource_wizard_row_description">%1$s，%2$s</string>
     <string name="resource_wizard_open_terminal">打开终端</string>
     <string name="resource_wizard_open_web">打开网页</string>
+    <string name="resource_wizard_open_report">查看报告</string>
+    <string name="resource_wizard_cleanup_and_retry">清理残留并重试</string>
+    <string name="resource_wizard_cleanup_confirm_title">清理失败残留？</string>
+    <string name="resource_wizard_cleanup_confirm_summary">将先卸载这个资源留下的不完整内容，确认清理后再继续获取。</string>
+    <string name="resource_wizard_cleanup_confirm_action">确认清理</string>
     <string name="resource_wizard_fallback_resource">资源</string>
     <string name="resource_wizard_install_task">获取任务</string>
     <string name="resource_wizard_detail_installing">正在获取：%1$s</string>

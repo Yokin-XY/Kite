@@ -221,33 +221,40 @@ internal class ResourceInstallWizardScreen(
             text = statusLabel
             setTextColor(tone)
             background = factory.roundedBox(colorWithAlpha(tone, 0.11f), Color.TRANSPARENT, factory.dp(11).toFloat())
-            isClickable = row.projection.failed && !row.projection.uninstalling
-            setOnClickListener(if (isClickable) View.OnClickListener {
-                onUninstallFailedResource(row.resourceId)
-            } else null)
+            isClickable = false
+            isFocusable = false
+            setOnClickListener(null)
         }
         bindSecondaryAction(binding, row)
     }
 
     private fun bindSecondaryAction(binding: RowBinding, row: ResourceInstallWizardRowViewState) {
         val surface = row.run?.surface
-        val key = "${row.operation}|${row.run?.instanceId.orEmpty()}|${surface?.name.orEmpty()}"
+        val canRecoverFailure = row.projection.failed && !row.projection.uninstalling
+        val key = "${row.operation}|${row.run?.instanceId.orEmpty()}|${surface?.name.orEmpty()}|$canRecoverFailure"
         if (binding.secondaryKey == key) return
         binding.secondaryKey = key
         binding.secondaryHost.removeAllViews()
         val label = when (surface) {
+            CardRunSurface.Report -> root.context.getString(R.string.resource_wizard_open_report)
             CardRunSurface.Terminal -> root.context.getString(R.string.resource_wizard_open_terminal)
             CardRunSurface.Web -> root.context.getString(R.string.resource_wizard_open_web)
             else -> null
         }
-        if (label == null || row.run == null) {
-            binding.secondaryHost.visibility = View.GONE
-            return
+        if (label != null && row.run != null) {
+            binding.secondaryHost.addView(inlineButton(label) {
+                onOpenRun(row.runRequest(requireNotNull(surface)))
+            })
         }
-        binding.secondaryHost.addView(inlineButton(label) {
-            onOpenRun(row.runRequest(requireNotNull(surface)))
-        })
-        binding.secondaryHost.visibility = View.VISIBLE
+        if (canRecoverFailure) {
+            binding.secondaryHost.addView(
+                inlineButton(
+                    label = root.context.getString(R.string.resource_wizard_cleanup_and_retry),
+                    danger = true,
+                ) { onUninstallFailedResource(row.resourceId) }
+            )
+        }
+        binding.secondaryHost.visibility = if (binding.secondaryHost.childCount > 0) View.VISIBLE else View.GONE
     }
 
     private fun ResourceInstallWizardRowViewState.runRequest(surface: CardRunSurface): ResourceInstallWizardRunRequest {
@@ -369,22 +376,28 @@ internal class ResourceInstallWizardScreen(
         return RowBinding(rootView, number, subtitle, status, secondaryHost)
     }
 
-    private fun inlineButton(label: String, onClick: () -> Unit): View = TextView(root.context).apply {
+    private fun inlineButton(
+        label: String,
+        danger: Boolean = false,
+        onClick: () -> Unit,
+    ): View = TextView(root.context).apply {
         text = label
+        contentDescription = label
         textSize = 12f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         includeFontPadding = false
-        setTextColor(factory.tokens.primaryStrong)
+        setTextColor(if (danger) factory.tokens.danger else factory.tokens.primaryStrong)
         background = factory.roundedBox(
-            factory.tokens.primarySubtle,
-            factory.tokens.primarySoft,
+            if (danger) factory.tokens.dangerSoft else factory.tokens.primarySubtle,
+            if (danger) factory.tokens.dangerBorder else factory.tokens.primarySoft,
             factory.dp(13).toFloat()
         )
         setPadding(factory.dp(10), 0, factory.dp(10), 0)
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, factory.dp(28)).apply {
             setMargins(0, 0, factory.dp(8), 0)
         }
+        isFocusable = true
         setOnClickListener { onClick() }
     }
 
