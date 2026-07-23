@@ -155,6 +155,8 @@ data class ProotLiveProcessEntry(
     val cwd: String = "",
     val kfRuntimeId: String = "",
     val kfUnitId: String = "",
+    val workloadScopeId: String = "",
+    val isWorkloadLauncher: Boolean = false,
     val execCount: Int,
     val childEventCount: Int,
     val exitCode: Int? = null,
@@ -236,6 +238,27 @@ data class ProotOwnerProcessIndex(
     }
 }
 
+data class ProotWorkloadScopeGroup(
+    val workloadScopeId: String,
+    val rootLifecycleId: String,
+    val ownerIds: List<String> = emptyList(),
+    val unitIds: List<String> = emptyList(),
+    val telemetrySessionIds: List<String> = emptyList(),
+    val lifecycleIds: List<String> = emptyList(),
+    val processRefs: List<ProotProcessRef> = emptyList(),
+    val liveTraceeCount: Int = 0,
+    val lastSeenAtMs: Long = 0L,
+)
+
+data class ProotWorkloadScopeIndex(
+    val mode: String = "proot_workload_scope_index_v1",
+    val generatedAtMs: Long = 0L,
+    val sourceStatus: String = "not_started",
+    val scopeCount: Int = 0,
+    val liveTraceeCount: Int = 0,
+    val groups: List<ProotWorkloadScopeGroup> = emptyList(),
+)
+
 private fun prootTraceeLifecycleId(
     telemetrySessionId: String,
     prootStartMs: Long,
@@ -310,6 +333,7 @@ data class ProotTelemetrySnapshot(
     val tracees: List<ProotTraceeRecord> = emptyList(),
     val processLiveTable: ProotProcessLiveTable = ProotProcessLiveTable(),
     val ownerProcessIndex: ProotOwnerProcessIndex = ProotOwnerProcessIndex(),
+    val workloadScopeIndex: ProotWorkloadScopeIndex = ProotWorkloadScopeIndex(),
     val pressureWindow: ProotPressureWindow = ProotPressureWindow()
 ) {
     fun summary(): String {

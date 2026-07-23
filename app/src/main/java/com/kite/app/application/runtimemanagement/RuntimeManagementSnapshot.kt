@@ -50,6 +50,7 @@ data class RuntimeManagedProcess(
     val ownerKind: RuntimeManagedOwnerKind = RuntimeManagedOwnerKind.Unattributed,
     val ownerId: String? = null,
     val unitId: String? = null,
+    val workloadScopeId: String? = null,
     val ownerRootPid: Int? = null,
     val linkedTerminalSessionId: String? = null,
     val linkedRuntimeId: String? = null,

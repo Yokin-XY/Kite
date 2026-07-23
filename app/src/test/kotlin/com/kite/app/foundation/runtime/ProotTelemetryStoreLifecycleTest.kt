@@ -52,6 +52,27 @@ class ProotTelemetryStoreLifecycleTest {
     }
 
     @Test
+    fun `遥测 Store 生成工作负载索引且不按进程名称归组`() {
+        val base = System.currentTimeMillis() - 10_000L
+        val file = telemetryFile(
+            event("TraceeCreated", base, "scope-session", 100L, 90, 100, eventSeq = 1L, lifecycleSeq = 1L, processGroupId = 100, sessionId = 100),
+            event("ForkDetected", base + 10L, "scope-session", 100L, 90, 200, parentTraceePid = 100, eventSeq = 2L, lifecycleSeq = 2L, parentLifecycleSeq = 1L, processGroupId = 200, sessionId = 100),
+            event("ForkDetected", base + 20L, "scope-session", 100L, 90, 201, parentTraceePid = 200, eventSeq = 3L, lifecycleSeq = 3L, parentLifecycleSeq = 2L, processGroupId = 200, sessionId = 100),
+            event("ForkDetected", base + 30L, "scope-session", 100L, 90, 300, parentTraceePid = 100, eventSeq = 4L, lifecycleSeq = 4L, parentLifecycleSeq = 1L, processGroupId = 300, sessionId = 100),
+        )
+
+        val snapshot = ProotTelemetryStore.readTelemetryFileForTests(file)
+        val entries = snapshot.processLiveTable.entries.associateBy(ProotLiveProcessEntry::traceePid)
+
+        assertEquals(entries.getValue(200).workloadScopeId, entries.getValue(201).workloadScopeId)
+        assertFalse(entries.getValue(200).workloadScopeId == entries.getValue(300).workloadScopeId)
+        assertTrue(entries.getValue(100).isWorkloadLauncher)
+        assertFalse(entries.getValue(200).isWorkloadLauncher)
+        assertEquals(3, snapshot.workloadScopeIndex.scopeCount)
+        assertEquals(4, snapshot.workloadScopeIndex.liveTraceeCount)
+    }
+
+    @Test
     fun `v2 生命周期编号允许同一会话复用 host PID 而不串代`() {
         val base = System.currentTimeMillis() - 10_000L
         val file = telemetryFile(
@@ -278,6 +299,8 @@ class ProotTelemetryStoreLifecycleTest {
         lifecycleSeq: Long = 0L,
         startTimeTicks: Long = 0L,
         parentLifecycleSeq: Long? = null,
+        processGroupId: Int? = null,
+        sessionId: Int? = null,
     ): String {
         val fields = mutableListOf(
             "\"schema\":\"kf_proot_lifecycle_event_v1\"",
@@ -299,6 +322,8 @@ class ProotTelemetryStoreLifecycleTest {
         if (lifecycleSeq > 0L) fields += "\"lifecycleSeq\":$lifecycleSeq"
         if (startTimeTicks > 0L) fields += "\"startTimeTicks\":$startTimeTicks"
         parentLifecycleSeq?.let { fields += "\"parentLifecycleSeq\":$it" }
+        processGroupId?.let { fields += "\"processGroupId\":$it" }
+        sessionId?.let { fields += "\"sessionId\":$it" }
         return fields.joinToString(prefix = "{", postfix = "}")
     }
 }

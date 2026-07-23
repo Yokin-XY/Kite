@@ -1778,3 +1778,52 @@ T018.9 状态：completed。该回归已完成自动化、构建与真实 OpenCo
   `BF534E8431C9137DB3EF1372EE5ACEC746EA8D78198E44F5B15DCDDE1276E79B`。本轮未安装或操作真机。
 
 T019 状态：completed。未自动创建后续任务；T018 的多实例/子孙进程综合验收门仍按原记录保留。
+
+### 2026-07-23 T020 自动工作负载作用域与运行管理分组
+
+三问自检：
+
+- 目标是什么：删除运行管理按显示名称合并应用的旧规则，让 PRoot 已观测的父子关系与强生命周期
+  自动形成稳定工作负载作用域；“全部”、卡片详情和“未归属”消费同一身份，并允许安全结束整组。
+- 完成标准是什么：不同启动树的同名进程保持分离，同一派生树的异名进程保持归组；没有卡片 owner
+  的进程仍能按工作负载展示；整组结束不越过作用域；页面不增加扫描、轮询或整页刷新；测试、构建、
+  静态守卫和 OnePlus 8T 真机路径均有证据。
+- 依赖是否满足：T018 已提供 PRoot 会话、进程生命周期、父子链、owner 与后台确认式停止；T019 已固定
+  正式文档和产物边界。当前缺失的是工作负载身份投影及其跨层携带，依赖满足。设备当前不可写 cgroup，
+  因此本轮先实现与 cgroup 语义兼容的身份和成员合同，不伪装成内核隔离。
+
+当前基线：
+
+- `RuntimeManagementProjector.mergeForAll/mergeWithinCard` 以 `normalizeGroupName(title)` 为键，确认是同名
+  进程跨启动实例错误合并的直接原因。
+- `ProotLiveProcessEntry` 已有遥测 session、生命周期序号、父生命周期、PGID、SID、owner、unit、可执行文件
+  与 argv 摘要；`RuntimeManagedProcess` 没有携带这些足以生成/消费作用域的事实。
+- OnePlus 8T 上 Kite 位于 `/sys/fs/cgroup/uid_10332/pid_*`，目录由系统拥有且没有应用写权限；本轮不能把
+  cgroup 当成可用执行后端。
+
+完成结果：
+
+- `ProotWorkloadScopeProjector` 在单个 PRoot 会话内，以会话根、首个 PGID/SID 作业边界和组长强生命周期
+  生成 `workloadScopeId`。同一 pipeline 兄弟与异名子孙继承同一作用域，不同会话和不同作业保持隔离；
+  启动根在已经产生真实作业时只投影为“运行基础”，全过程没有应用名、包名或命令名特判。
+- `ProotTelemetryStore -> TaskManagerStore -> RuntimeManagementGateway -> Projector` 已完整携带作用域身份。
+  卡片、全部与未归属页按同一身份归组；删除 `normalizeGroupName`/`mergeWithinCard` 名称合并规则，同名只
+  决定显示，不再决定身份或停止范围。
+- 整组动作只提交 `workloadScopeId`。`ProotWorkloadScopeTerminator` 在后台读取目标作用域已知的 PRoot
+  会话注册表，用同一投影协议重建当前成员，逐个核验 `startTimeTicks` 后执行 TERM/KILL，并有限重读接住
+  新派生成员。全局注册表中无关历史会话处于 partial 不再阻塞目标会话，但目标会话自身不完整时仍失败关闭；
+  不使用名称搜索、裸 PID 或 `kill(-pgid)`。
+- 单测覆盖异名父子、pipeline 兄弟、同会话多作业、跨会话同 PGID、无作业边界、活动注册表重投影、
+  组长先退出后子进程继承原作用域、跨页面作用域一致和动作合同。全量
+  `:app:testDebugUnitTest :app:assembleDebug` 通过：645 项测试、0 失败、
+  0 错误、1 项既有跳过；架构检查、运行车道静态检查和 `git diff --check` 通过。
+- Debug APK 为 `237,690,625` bytes，SHA-256
+  `0BA59D783A9BE2686A557956F92256F1E16E9BE88CFB0BA2E1EAC48AA394F5F9`；版本保持
+  `versionName=0.2.1`、`versionCode=7`，本任务不单独改版本。
+- OnePlus 8T `3f8bbaad / KB2000` 覆盖安装成功。未归属页上四个独立 `sleep` 各自保持为一个作用域，
+  没有因同名合并；OpenCode 应用进程自动归入一个作用域。最终包确认“结束进程组”时，页面原显示 17 个
+  成员，目标注册表在执行窗口接住新派生成员，日志返回
+  `outcome=CONFIRMED targets=19 remaining=0 reason=workload_scope_quiet`；页面只保留一个终端基础进程，
+  随后停止卡片回到“启动/运行中 0”。Kite PID `28379` 保持存活，logcat 无 FATAL、ANR 或 StackOverflowError。
+
+T020 状态：completed。长期规则已同步到运行进程控制架构和决策文档；未执行 Git commit、push 或发布。

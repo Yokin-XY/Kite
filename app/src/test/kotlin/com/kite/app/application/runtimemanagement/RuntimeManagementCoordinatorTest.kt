@@ -156,23 +156,23 @@ class RuntimeManagementCoordinatorTest {
     }
 
     @Test
-    fun `end process tree waits until every captured lifecycle disappears`() = runTest {
-        val first = process()
-        val second = process().copy(id = "process-53", pid = 53)
+    fun `end workload scope waits until every current member disappears`() = runTest {
+        val first = process().copy(workloadScopeId = "workload:a")
+        val second = process().copy(id = "process-53", pid = 53, workloadScopeId = "workload:a")
         val gateway = FakeGateway(snapshot(processes = listOf(first, second)))
         val coordinator = coordinator(gateway)
-        val command = RuntimeManagementCommand.EndProcessTree(
-            processIds = listOf(first.id, second.id),
-            mutationKey = "process-tree:test",
+        val command = RuntimeManagementCommand.EndWorkloadScope(
+            workloadScopeId = "workload:a",
+            mutationKey = "workload:workload:a",
         )
 
         coordinator.submit(command)
-        assertEquals(listOf(listOf(first.id, second.id)), gateway.endedTrees)
+        assertEquals(listOf("workload:a"), gateway.endedWorkloads)
 
         val oneRemains = snapshot(processes = listOf(second))
         gateway.publish(oneRemains)
         coordinator.reconcile(oneRemains)
-        assertTrue(coordinator.commands.value.containsKey("process-tree:test"))
+        assertTrue(coordinator.commands.value.containsKey("workload:workload:a"))
 
         val empty = snapshot()
         gateway.publish(empty)
@@ -270,7 +270,7 @@ class RuntimeManagementCoordinatorTest {
         private val mutableSnapshots = MutableStateFlow(initial)
         override val snapshots = mutableSnapshots
         val endedProcesses = mutableListOf<Pair<String, Int>>()
-        val endedTrees = mutableListOf<List<String>>()
+        val endedWorkloads = mutableListOf<String>()
         var processDispatch = RuntimeManagementDispatchResult.accepted("process_end_requested")
 
         override fun currentSnapshot(): RuntimeManagementSnapshot = mutableSnapshots.value
@@ -285,9 +285,9 @@ class RuntimeManagementCoordinatorTest {
             return processDispatch
         }
 
-        override suspend fun endProcessTree(processIds: List<String>): RuntimeManagementDispatchResult {
-            endedTrees += processIds
-            return RuntimeManagementDispatchResult.accepted("process_tree_end_requested")
+        override suspend fun endWorkloadScope(workloadScopeId: String): RuntimeManagementDispatchResult {
+            endedWorkloads += workloadScopeId
+            return RuntimeManagementDispatchResult.accepted("workload_scope_end_requested")
         }
 
         override suspend fun stopBackgroundRuntime(runtimeId: String) =

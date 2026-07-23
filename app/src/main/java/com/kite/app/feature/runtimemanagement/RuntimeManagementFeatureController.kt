@@ -65,9 +65,9 @@ internal class RuntimeManagementFeatureController(
                     mutationKey = action.mutationKey
                 )
             )
-            is RuntimeManagementActionTarget.EndProcessTree -> submitCommand(
-                RuntimeManagementCommand.EndProcessTree(
-                    processIds = target.processIds,
+            is RuntimeManagementActionTarget.EndWorkloadScope -> submitCommand(
+                RuntimeManagementCommand.EndWorkloadScope(
+                    workloadScopeId = target.workloadScopeId,
                     mutationKey = action.mutationKey,
                 )
             )

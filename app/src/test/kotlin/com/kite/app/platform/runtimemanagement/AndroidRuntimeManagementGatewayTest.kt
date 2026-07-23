@@ -42,6 +42,31 @@ class AndroidRuntimeManagementGatewayTest {
     }
 
     @Test
+    fun `maps system generated workload identity without deriving it from title`() {
+        val mapped = AndroidRuntimeManagementGateway.run {
+            process(
+                id = "process-52",
+                workloadScopeId = "workload:session-a:2",
+            ).toRuntimeManagedProcess()
+        }
+
+        assertEquals("workload:session-a:2", mapped.workloadScopeId)
+    }
+
+    @Test
+    fun `maps session launch scope as infrastructure without shell name matching`() {
+        val mapped = AndroidRuntimeManagementGateway.run {
+            process(
+                id = "process-41",
+                commandLine = "custom-launch-command",
+                isWorkloadLauncher = true,
+            ).toRuntimeManagedProcess()
+        }
+
+        assertTrue(mapped.isRuntimeScaffold)
+    }
+
+    @Test
     fun `maps system process by stable platform identity`() {
         val mapped = AndroidRuntimeManagementGateway.run {
             process(
@@ -74,6 +99,8 @@ class AndroidRuntimeManagementGatewayTest {
         ownerId: String? = null,
         ownerKindLabel: String? = null,
         commandLine: String = "proc",
+        workloadScopeId: String? = null,
+        isWorkloadLauncher: Boolean = false,
         actions: List<TaskManagerAction> = emptyList()
     ): TaskManagerProcessItem = TaskManagerProcessItem(
         id = id,
@@ -87,6 +114,8 @@ class AndroidRuntimeManagementGatewayTest {
         command = "proc",
         commandLine = commandLine,
         runtimeOwnerId = ownerId,
+        workloadScopeId = workloadScopeId,
+        isWorkloadLauncher = isWorkloadLauncher,
         runtimeOwnerKindLabel = ownerKindLabel,
         availableActions = actions
     )

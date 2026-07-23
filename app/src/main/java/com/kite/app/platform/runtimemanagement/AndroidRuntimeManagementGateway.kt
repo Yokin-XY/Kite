@@ -94,12 +94,12 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
         return RuntimeManagementDispatchResult.accepted("process_end_requested")
     }
 
-    override suspend fun endProcessTree(processIds: List<String>): RuntimeManagementDispatchResult {
-        val accepted = TaskManagerStore.endProcessTree(appContext, processIds)
+    override suspend fun endWorkloadScope(workloadScopeId: String): RuntimeManagementDispatchResult {
+        val accepted = TaskManagerStore.endWorkloadScope(appContext, workloadScopeId)
         return if (accepted) {
-            RuntimeManagementDispatchResult.accepted("process_tree_end_requested")
+            RuntimeManagementDispatchResult.accepted("workload_scope_end_requested")
         } else {
-            RuntimeManagementDispatchResult.rejected("process_tree_identity_unavailable")
+            RuntimeManagementDispatchResult.rejected("workload_scope_identity_unavailable")
         }
     }
 
@@ -156,11 +156,12 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
                 ownerKind = ownerKind(identity),
                 ownerId = runtimeOwnerId,
                 unitId = runtimeUnitId,
+                workloadScopeId = workloadScopeId,
                 ownerRootPid = runtimeRootPid,
                 linkedTerminalSessionId = linkedTerminalSessionId,
                 linkedRuntimeId = linkedRuntimeId,
                 isOwnerRoot = id.startsWith("root-"),
-                isRuntimeScaffold = isRuntimeScaffold(identity),
+                isRuntimeScaffold = isWorkloadLauncher || isRuntimeScaffold(identity),
                 canEndDirectly = TaskManagerAction.END_PROCESS in availableActions,
                 lifecycleId = lifecycleId,
                 processGroupId = processGroupId,

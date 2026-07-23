@@ -1439,6 +1439,11 @@ object ProotTelemetryStore {
             generatedAtMs = now,
             sourceStatus = collectionStatus
         )
+        val workloadScopeIndex = buildWorkloadScopeIndex(
+            liveTable = liveTable,
+            generatedAtMs = now,
+            sourceStatus = collectionStatus,
+        )
         return ProotTelemetrySnapshot(
             sourcePath = file.absolutePath,
             collectionStatus = collectionStatus,
@@ -1470,6 +1475,7 @@ object ProotTelemetryStore {
             tracees = traceeList,
             processLiveTable = liveTable,
             ownerProcessIndex = ownerIndex,
+            workloadScopeIndex = workloadScopeIndex,
             pressureWindow = pressureWindow
         )
     }
@@ -1480,6 +1486,11 @@ object ProotTelemetryStore {
         sourceStatus: String,
         sourcePath: String
     ): ProotProcessLiveTable {
+        val workloadScopeIds = ProotWorkloadScopeProjector.project(traceeList)
+        val workloadLauncherIds = ProotWorkloadScopeProjector.launcherLifecycleIds(
+            records = traceeList,
+            scopeIds = workloadScopeIds,
+        )
         val entries = traceeList.map { record ->
             ProotLiveProcessEntry(
                 prootPid = record.prootPid,
@@ -1505,6 +1516,8 @@ object ProotTelemetryStore {
                 cwd = record.cwd,
                 kfRuntimeId = record.kfRuntimeId,
                 kfUnitId = record.kfUnitId,
+                workloadScopeId = workloadScopeIds[record.lifecycleId].orEmpty(),
+                isWorkloadLauncher = record.lifecycleId in workloadLauncherIds,
                 execCount = record.execCount,
                 childEventCount = record.childEventCount,
                 exitCode = record.exitCode,
@@ -1699,6 +1712,47 @@ object ProotTelemetryStore {
                 _snapshot.value
             }
         }
+    }
+
+    private fun buildWorkloadScopeIndex(
+        liveTable: ProotProcessLiveTable,
+        generatedAtMs: Long,
+        sourceStatus: String,
+    ): ProotWorkloadScopeIndex {
+        val liveEntries = liveTable.entries.filter { entry ->
+            entry.state == ProotLiveProcessState.RUNNING && entry.workloadScopeId.isNotBlank()
+        }
+        val groups = liveEntries
+            .groupBy(ProotLiveProcessEntry::workloadScopeId)
+            .toSortedMap()
+            .map { (scopeId, entries) ->
+                ProotWorkloadScopeGroup(
+                    workloadScopeId = scopeId,
+                    rootLifecycleId = scopeId.removePrefix("workload:"),
+                    ownerIds = entries.mapNotNull { it.kfRuntimeId.takeIf(String::isNotBlank) }
+                        .distinct()
+                        .sorted(),
+                    unitIds = entries.mapNotNull { it.kfUnitId.takeIf(String::isNotBlank) }
+                        .distinct()
+                        .sorted(),
+                    telemetrySessionIds = entries.mapNotNull {
+                        it.telemetrySessionId.takeIf(String::isNotBlank)
+                    }.distinct().sorted(),
+                    lifecycleIds = entries.map(ProotLiveProcessEntry::lifecycleId).distinct().sorted(),
+                    processRefs = entries.map(ProotLiveProcessEntry::processRef)
+                        .distinctBy(ProotProcessRef::lifecycleId)
+                        .sortedBy(ProotProcessRef::lifecycleId),
+                    liveTraceeCount = entries.size,
+                    lastSeenAtMs = entries.maxOfOrNull(ProotLiveProcessEntry::lastSeenAtMs) ?: 0L,
+                )
+            }
+        return ProotWorkloadScopeIndex(
+            generatedAtMs = generatedAtMs,
+            sourceStatus = sourceStatus,
+            scopeCount = groups.size,
+            liveTraceeCount = liveEntries.size,
+            groups = groups,
+        )
     }
 
     private fun uniqueHistoryArchiveFile(file: File, now: Long): File {

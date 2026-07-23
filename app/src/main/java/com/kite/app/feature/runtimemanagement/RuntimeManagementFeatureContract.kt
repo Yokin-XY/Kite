@@ -27,7 +27,7 @@ internal sealed interface RuntimeManagementActionTarget {
     data class StopRun(val instanceId: String) : RuntimeManagementActionTarget
     data class EndTerminal(val sessionId: String) : RuntimeManagementActionTarget
     data class EndProcess(val processId: String, val pid: Int) : RuntimeManagementActionTarget
-    data class EndProcessTree(val processIds: List<String>) : RuntimeManagementActionTarget
+    data class EndWorkloadScope(val workloadScopeId: String) : RuntimeManagementActionTarget
     data class StopBackgroundRuntime(val runtimeId: String) : RuntimeManagementActionTarget
     data class RestartBackgroundRuntime(val runtimeId: String) : RuntimeManagementActionTarget
 }
@@ -70,7 +70,7 @@ internal data class RuntimeManagementProcessUiState(
     val cardLabel: String? = null,
     val depth: Int = 0,
     val isInfrastructure: Boolean = false,
-    val canEndAsTree: Boolean = false,
+    val canEndAsWorkload: Boolean = false,
     val processGroupId: Int? = null,
     val lifecycleId: String? = null,
     val kernelState: String = "UNKNOWN",
@@ -83,6 +83,7 @@ internal data class RuntimeManagementProcessGroupUiState(
     val title: String,
     val processCount: Int,
     val processes: List<RuntimeManagementProcessUiState>,
+    val workloadScopeId: String? = null,
     val cardLabels: List<String> = emptyList(),
     val isInfrastructure: Boolean = false,
     val stopAction: RuntimeManagementActionUiState? = null,

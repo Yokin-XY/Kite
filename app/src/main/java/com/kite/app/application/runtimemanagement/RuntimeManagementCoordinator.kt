@@ -24,8 +24,8 @@ sealed interface RuntimeManagementCommand {
         override val mutationKey: String = "process:$processId"
     ) : RuntimeManagementCommand
 
-    data class EndProcessTree(
-        val processIds: List<String>,
+    data class EndWorkloadScope(
+        val workloadScopeId: String,
         override val mutationKey: String,
     ) : RuntimeManagementCommand
 
@@ -166,7 +166,7 @@ class RuntimeManagementCoordinator internal constructor(
         is RuntimeManagementCommand.StopRun -> stopRun(command.instanceId)
         is RuntimeManagementCommand.EndTerminal -> gateway.endTerminal(command.sessionId)
         is RuntimeManagementCommand.EndProcess -> gateway.endProcess(command.processId, command.pid)
-        is RuntimeManagementCommand.EndProcessTree -> gateway.endProcessTree(command.processIds)
+        is RuntimeManagementCommand.EndWorkloadScope -> gateway.endWorkloadScope(command.workloadScopeId)
         is RuntimeManagementCommand.StopBackgroundRuntime -> gateway.stopBackgroundRuntime(command.runtimeId)
         is RuntimeManagementCommand.RestartBackgroundRuntime -> gateway.restartBackgroundRuntime(command.runtimeId)
     }
@@ -180,8 +180,8 @@ class RuntimeManagementCoordinator internal constructor(
             it.id == command.processId ||
                 (command.processId.isBlank() && command.pid > 0 && it.pid == command.pid)
         }
-        is RuntimeManagementCommand.EndProcessTree ->
-            processes.none { it.id in command.processIds }
+        is RuntimeManagementCommand.EndWorkloadScope ->
+            processes.none { it.workloadScopeId == command.workloadScopeId }
         is RuntimeManagementCommand.StopBackgroundRuntime -> processes.none {
             it.linkedRuntimeId == command.runtimeId
         }

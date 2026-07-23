@@ -137,7 +137,10 @@ internal object RuntimeManagementProjector {
         if (processes.isEmpty()) return emptyList()
         val byPid = processes.filter { it.pid > 0 }.associateBy(RuntimeManagedProcess::pid)
         val regular = processes.filterNot(RuntimeManagedProcess::isRuntimeScaffold)
-        val roots = regular.groupBy { process -> regularRoot(process, byPid).id }
+        val roots = regular.groupBy { process ->
+            process.workloadScopeId?.takeIf(String::isNotBlank)
+                ?: "fallback:${regularRoot(process, byPid).id}"
+        }
             .values
             .map { members ->
                 val memberIds = members.mapTo(mutableSetOf(), RuntimeManagedProcess::id)
@@ -145,7 +148,12 @@ internal object RuntimeManagementProjector {
                     process.parentPid <= 1 || byPid[process.parentPid]?.let { it.id !in memberIds } != false
                 } ?: members.minBy(RuntimeManagedProcess::pid)
                 val ordered = treeOrder(members, root)
-                val groupKey = "$keyPrefix:app:${normalizeGroupName(root.title)}:${root.id}"
+                val workloadScopeId = members.mapNotNull(RuntimeManagedProcess::workloadScopeId)
+                    .distinct()
+                    .singleOrNull()
+                val groupKey = workloadScopeId
+                    ?.let { "$keyPrefix:workload:$it" }
+                    ?: "$keyPrefix:process-tree:${root.id}"
                 RuntimeManagementProcessGroupUiState(
                     key = groupKey,
                     title = text.processTitle(root.title).ifBlank { text.processFallback },
@@ -159,8 +167,9 @@ internal object RuntimeManagementProjector {
                             text = text,
                         )
                     },
+                    workloadScopeId = workloadScopeId,
                     cardLabels = listOfNotNull(cardLabel),
-                ).withProcessTreeAction(mutations, text)
+                ).withWorkloadScopeAction(mutations, text)
             }
 
         val infrastructure = processes.filter(RuntimeManagedProcess::isRuntimeScaffold)
@@ -182,12 +191,7 @@ internal object RuntimeManagementProjector {
                 isInfrastructure = true,
             )
         }
-        val applicationGroups = if (run == null) {
-            roots
-        } else {
-            mergeWithinCard(roots, keyPrefix, mutations, text)
-        }
-        return applicationGroups.sortedBy { it.title.lowercase() } + listOfNotNull(infrastructureGroup)
+        return roots.sortedBy { it.title.lowercase() } + listOfNotNull(infrastructureGroup)
     }
 
     private fun regularRoot(
@@ -251,42 +255,29 @@ internal object RuntimeManagementProjector {
         mutations: Map<String, RuntimeManagementMutation>,
         text: RuntimeManagementText,
     ): List<RuntimeManagementProcessGroupUiState> =
-        groups.groupBy { group -> if (group.isInfrastructure) "foundation" else normalizeGroupName(group.title) }
+        groups.groupBy { group -> when {
+            group.isInfrastructure -> "foundation"
+            !group.workloadScopeId.isNullOrBlank() -> "workload:${group.workloadScopeId}"
+            else -> "projection:${group.key}"
+        } }
             .values
             .map { matches ->
                 val first = matches.first()
                 first.copy(
-                    key = "all:${if (first.isInfrastructure) "foundation" else normalizeGroupName(first.title)}",
+                    key = when {
+                        first.isInfrastructure -> "all:foundation"
+                        !first.workloadScopeId.isNullOrBlank() -> "all:workload:${first.workloadScopeId}"
+                        else -> "all:projection:${first.key}"
+                    },
                     processCount = matches.sumOf(RuntimeManagementProcessGroupUiState::processCount),
                     processes = matches.flatMap(RuntimeManagementProcessGroupUiState::processes)
                         .sortedWith(compareBy<RuntimeManagementProcessUiState> { it.cardLabel.orEmpty() }
                             .thenBy(RuntimeManagementProcessUiState::depth)
                             .thenBy(RuntimeManagementProcessUiState::pid)),
                     cardLabels = matches.flatMap(RuntimeManagementProcessGroupUiState::cardLabels).distinct().sorted(),
-                ).withProcessTreeAction(mutations, text)
+                ).withWorkloadScopeAction(mutations, text)
             }
             .sortedWith(compareBy<RuntimeManagementProcessGroupUiState> { it.isInfrastructure }.thenBy { it.title.lowercase() })
-
-    /** 同一卡片生命周期内，同应用身份的多个根进程属于一个应用组；未归属范围不做这种推断。 */
-    private fun mergeWithinCard(
-        groups: List<RuntimeManagementProcessGroupUiState>,
-        keyPrefix: String,
-        mutations: Map<String, RuntimeManagementMutation>,
-        text: RuntimeManagementText,
-    ): List<RuntimeManagementProcessGroupUiState> = groups
-        .groupBy { group -> normalizeGroupName(group.title) }
-        .values
-        .map { matches ->
-            val first = matches.first()
-            first.copy(
-                key = "$keyPrefix:app:${normalizeGroupName(first.title)}",
-                processCount = matches.sumOf(RuntimeManagementProcessGroupUiState::processCount),
-                processes = matches
-                    .sortedBy { group -> group.processes.minOfOrNull(RuntimeManagementProcessUiState::pid) ?: Int.MAX_VALUE }
-                    .flatMap(RuntimeManagementProcessGroupUiState::processes),
-                cardLabels = matches.flatMap(RuntimeManagementProcessGroupUiState::cardLabels).distinct(),
-            ).withProcessTreeAction(mutations, text)
-        }
 
     private fun RuntimeManagedTerminal.toProcessGroup(
         mutation: RuntimeManagementMutation?,
@@ -360,7 +351,7 @@ internal object RuntimeManagementProjector {
             cardLabel = cardLabel,
             depth = depth,
             isInfrastructure = isRuntimeScaffold,
-            canEndAsTree = canEndDirectly && identityVerified && !lifecycleId.isNullOrBlank(),
+            canEndAsWorkload = canEndDirectly && identityVerified && !lifecycleId.isNullOrBlank(),
             processGroupId = processGroupId,
             lifecycleId = lifecycleId,
             kernelState = kernelState,
@@ -369,22 +360,22 @@ internal object RuntimeManagementProjector {
         )
     }
 
-    private fun RuntimeManagementProcessGroupUiState.withProcessTreeAction(
+    private fun RuntimeManagementProcessGroupUiState.withWorkloadScopeAction(
         mutations: Map<String, RuntimeManagementMutation>,
         text: RuntimeManagementText,
     ): RuntimeManagementProcessGroupUiState {
-        if (isInfrastructure || processes.isEmpty() || processes.any { !it.canEndAsTree }) {
+        val scopeId = workloadScopeId?.takeIf(String::isNotBlank)
+        if (isInfrastructure || scopeId == null || processes.isEmpty() || processes.any { !it.canEndAsWorkload }) {
             return copy(stopAction = null)
         }
-        val processIds = processes.map(RuntimeManagementProcessUiState::key).distinct().sorted()
-        val mutationKey = "process-tree:${processIds.joinToString("|").hashCode().toUInt().toString(16)}"
+        val mutationKey = "workload:$scopeId"
         val mutation = mutations[mutationKey]
         val pending = mutation?.phase == RuntimeManagementMutationPhase.Requested ||
             mutation?.phase == RuntimeManagementMutationPhase.AwaitingConfirmation
         return copy(
             stopAction = RuntimeManagementActionUiState(
                 label = if (pending) text.ending else text.endProcessGroup,
-                target = RuntimeManagementActionTarget.EndProcessTree(processIds),
+                target = RuntimeManagementActionTarget.EndWorkloadScope(scopeId),
                 mutationKey = mutationKey,
                 enabled = !pending,
                 danger = true,
@@ -482,8 +473,6 @@ internal object RuntimeManagementProjector {
         val pids = run.boundPids()
         return isOwnerRoot || pid in pids
     }
-
-    private fun normalizeGroupName(value: String): String = value.trim().lowercase().ifBlank { "process" }
 
     private fun CardRunState.hasReportSurface(): Boolean =
         !shellReportText.isNullOrBlank() || !lastMeaningfulOutput.isNullOrBlank() || !lastError.isNullOrBlank() ||

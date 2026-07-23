@@ -43,6 +43,8 @@ data class TaskManagerProcessItem(
     val linkedTerminalTitle: String? = null,
     val runtimeOwnerId: String? = null,
     val runtimeUnitId: String? = null,
+    val workloadScopeId: String? = null,
+    val isWorkloadLauncher: Boolean = false,
     val runtimeOwnerKindLabel: String? = null,
     val runtimeRootPid: Int? = null,
     val runtimeRealityLabel: String? = null,
@@ -267,26 +269,12 @@ object TaskManagerStore {
         }
     }
 
-    fun endProcessTree(context: Context, processIds: Collection<String>): Boolean {
-        val ids = processIds.map(String::trim).filter(String::isNotBlank).distinct()
-        if (ids.isEmpty()) return false
-        val itemsById = _snapshot.value.processes.associateBy(TaskManagerProcessItem::id)
-        val items = ids.mapNotNull(itemsById::get)
-        if (items.size != ids.size) return false
-        val targets = items.mapNotNull { item ->
-            item.processRef?.let { ref ->
-                ProotProcessControlTarget(
-                    ref = ref,
-                    parentHostPid = item.parentPid.takeIf { it > 1 },
-                    processGroupId = item.processGroupId,
-                )
-            }
-        }
-        if (targets.size != items.size || targets.any { !it.ref.hasStrongIdentity }) return false
-
+    fun endWorkloadScope(context: Context, workloadScopeId: String): Boolean {
+        val scopeId = workloadScopeId.trim().takeIf(String::isNotBlank) ?: return false
+        if (_snapshot.value.processes.none { it.workloadScopeId == scopeId }) return false
         val appContext = context.applicationContext
         actionScope.launch {
-            ProotDirectProcessTreeTerminator.terminate(appContext, targets)
+            ProotWorkloadScopeTerminator.terminate(appContext, scopeId)
             refresh(appContext, force = true)
         }
         return true
@@ -562,6 +550,8 @@ object TaskManagerStore {
             linkedTerminalTitle = terminalSessionId?.let { "终端 $it" },
             runtimeOwnerId = runtimeOwnerId,
             runtimeUnitId = runtimeUnitId,
+            workloadScopeId = workloadScopeId.takeIf(String::isNotBlank),
+            isWorkloadLauncher = isWorkloadLauncher,
             runtimeOwnerKindLabel = ownerEntry.runtimeOwnerKindLabel(),
             runtimeRootPid = traceePid,
             runtimeRealityLabel = "PRoot 事件表",

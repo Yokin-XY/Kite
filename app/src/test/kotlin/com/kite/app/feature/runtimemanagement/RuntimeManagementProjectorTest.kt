@@ -23,9 +23,9 @@ class RuntimeManagementProjectorTest {
                 terminals = listOf(RuntimeManagedTerminal("terminal-1", "A 终端", "运行中", 3, isLive = true)),
                 processes = listOf(
                     process("root", 41, title = "Kite 命令启动器", ownerId = run.runtimeRootOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, isOwnerRoot = true, isRuntimeScaffold = true),
-                    process("wechat", 52, parentPid = 41, title = "WeChat", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, canEndDirectly = true),
-                    process("wechat-render", 53, parentPid = 52, title = "WeChat Renderer", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, canEndDirectly = true),
-                    process("ime", 60, parentPid = 41, title = "WeChat Input", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, canEndDirectly = true),
+                    process("wechat", 52, parentPid = 41, title = "WeChat", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, canEndDirectly = true, workloadScopeId = "workload:wechat"),
+                    process("wechat-render", 53, parentPid = 52, title = "WeChat Renderer", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, canEndDirectly = true, workloadScopeId = "workload:wechat"),
+                    process("ime", 60, parentPid = 41, title = "WeChat Input", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, canEndDirectly = true, workloadScopeId = "workload:ime"),
                 ),
                 cardIconsByRecipeId = mapOf("recipe-1" to RuntimeManagedCardIcon("image", "default", "icons/a.png")),
                 observedProcessCount = 4,
@@ -43,40 +43,38 @@ class RuntimeManagementProjectorTest {
     }
 
     @Test
-    fun `all scope merges same application across cards and retains card labels`() {
+    fun `all scope keeps same display name separate when workload identities differ`() {
         val a = runState(instanceId = "a", recipeId = "recipe-a", recipeName = "卡片 A", rootPid = "41", status = CardRunStatus.Running)
         val b = runState(instanceId = "b", recipeId = "recipe-b", recipeName = "卡片 B", rootPid = "81", status = CardRunStatus.Running)
         val state = RuntimeManagementProjector.project(RuntimeManagementSnapshot(
             runs = listOf(a, b),
             processes = listOf(
-                process("a-app", 42, parentPid = 41, title = "bash", ownerId = a.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card),
-                process("b-app", 82, parentPid = 81, title = "bash", ownerId = b.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card),
+                process("a-app", 42, parentPid = 41, title = "bash", ownerId = a.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, workloadScopeId = "workload:a"),
+                process("b-app", 82, parentPid = 81, title = "bash", ownerId = b.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, workloadScopeId = "workload:b"),
             ),
         ))
 
         assertEquals(2, state.runs.size)
-        val all = state.allProcessGroups.single()
-        assertEquals("bash", all.title)
-        assertEquals(2, all.processCount)
-        assertEquals(listOf("卡片 A", "卡片 B"), all.cardLabels)
-        assertEquals(setOf("卡片 A", "卡片 B"), all.processes.mapNotNull { it.cardLabel }.toSet())
+        assertEquals(2, state.allProcessGroups.size)
+        assertEquals(setOf("workload:a", "workload:b"), state.allProcessGroups.mapNotNull { it.workloadScopeId }.toSet())
+        assertTrue(state.allProcessGroups.all { it.title == "bash" && it.processCount == 1 })
     }
 
     @Test
-    fun `card scope merges peer roots with the same application identity`() {
+    fun `card scope does not use equal titles as application identity`() {
         val run = runState(rootPid = "41", status = CardRunStatus.Running)
         val state = RuntimeManagementProjector.project(RuntimeManagementSnapshot(
             runs = listOf(run),
             processes = listOf(
                 process("scaffold", 41, title = "Kite 命令启动器", ownerId = run.runtimeRootOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, isRuntimeScaffold = true),
-                process("worker-a", 52, parentPid = 41, title = "opencode", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card),
-                process("worker-b", 53, parentPid = 41, title = "opencode", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card),
+                process("worker-a", 52, parentPid = 41, title = "opencode", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, workloadScopeId = "workload:a"),
+                process("worker-b", 53, parentPid = 41, title = "opencode", ownerId = run.runtimeOwnerId, ownerKind = RuntimeManagedOwnerKind.Card, workloadScopeId = "workload:b"),
             ),
         ))
 
-        val group = state.runs.single().processGroups.first { it.title == "opencode" }
-        assertEquals(2, group.processCount)
-        assertEquals(listOf(52, 53), group.processes.map { it.pid })
+        val groups = state.runs.single().processGroups.filter { it.title == "opencode" }
+        assertEquals(2, groups.size)
+        assertEquals(setOf("workload:a", "workload:b"), groups.mapNotNull { it.workloadScopeId }.toSet())
     }
 
     @Test
@@ -186,6 +184,7 @@ class RuntimeManagementProjectorTest {
                         ownerKind = RuntimeManagedOwnerKind.Card,
                         canEndDirectly = true,
                         identityVerified = true,
+                        workloadScopeId = "workload:wechat",
                     ),
                     process(
                         id = "life-child",
@@ -196,14 +195,15 @@ class RuntimeManagementProjectorTest {
                         ownerKind = RuntimeManagedOwnerKind.Card,
                         canEndDirectly = true,
                         identityVerified = true,
+                        workloadScopeId = "workload:wechat",
                     ),
                 ),
             ),
         )
 
         val group = state.runs.single().processGroups.single()
-        val target = group.stopAction?.target as RuntimeManagementActionTarget.EndProcessTree
-        assertEquals(listOf("life-child", "life-parent"), target.processIds.sorted())
+        val target = group.stopAction?.target as RuntimeManagementActionTarget.EndWorkloadScope
+        assertEquals("workload:wechat", target.workloadScopeId)
         assertTrue(group.processes.all { it.stopAction?.target is RuntimeManagementActionTarget.EndProcess })
     }
 
@@ -284,6 +284,7 @@ class RuntimeManagementProjectorTest {
         isRuntimeScaffold: Boolean = false,
         canEndDirectly: Boolean = false,
         identityVerified: Boolean = false,
+        workloadScopeId: String? = null,
     ): RuntimeManagedProcess = RuntimeManagedProcess(
         id = id,
         pid = pid,
@@ -293,6 +294,7 @@ class RuntimeManagementProjectorTest {
         stateLabel = "运行中",
         ownerKind = ownerKind,
         ownerId = ownerId,
+        workloadScopeId = workloadScopeId,
         isOwnerRoot = isOwnerRoot,
         isRuntimeScaffold = isRuntimeScaffold,
         canEndDirectly = canEndDirectly,

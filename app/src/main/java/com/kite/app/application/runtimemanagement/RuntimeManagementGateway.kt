@@ -14,8 +14,8 @@ interface RuntimeManagementGateway {
 
     suspend fun endProcess(processId: String, pid: Int): RuntimeManagementDispatchResult
 
-    suspend fun endProcessTree(processIds: List<String>): RuntimeManagementDispatchResult =
-        RuntimeManagementDispatchResult.rejected("process_tree_not_supported")
+    suspend fun endWorkloadScope(workloadScopeId: String): RuntimeManagementDispatchResult =
+        RuntimeManagementDispatchResult.rejected("workload_scope_not_supported")
 
     suspend fun stopBackgroundRuntime(runtimeId: String): RuntimeManagementDispatchResult
 
