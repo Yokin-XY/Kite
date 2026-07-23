@@ -1,6 +1,7 @@
 package com.kite.app.foundation.service
 
 import com.kite.app.foundation.runtime.RuntimeExposureScope
+import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeProcessUnitObservationState
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import org.json.JSONArray
@@ -108,6 +109,9 @@ data class BackgroundRuntimeRecord(
     val lastStopReconciliationAutoRecoverySuppressed: Boolean = false,
     val retentionClass: RuntimeRetentionClass = RuntimeRetentionClass.BATCH
 ) {
+    internal fun processIdentityEnvironment(): Map<String, String> =
+        RuntimeOwnerIdentity.backgroundRuntime(id, kind.name).environment()
+
     fun toJson(): JSONObject {
         return JSONObject()
             .put("id", id)

@@ -1019,9 +1019,7 @@ class KiteBridgeClient(
                 .map { cardInstanceId -> runtimeOwnerId(recipe, cardInstanceId?.takeIf { it.isNotBlank() } ?: recipe.id) }
                 .distinct()
         }
-        val results = ownerIds.map { ownerId ->
-            ProotOwnerProcessTerminator.terminate(context, ownerId)
-        }
+        val results = ProotOwnerProcessTerminator.terminateAll(context, ownerIds)
         ProotOwnerProcessTerminator.scheduleResidualReap(
             context = context,
             ownerIds = results.filterNot { it.settled }.map { it.ownerId }

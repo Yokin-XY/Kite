@@ -80,6 +80,56 @@ class ProotOwnerTerminationEvidenceTest {
     }
 
     @Test
+    fun `目标 owner 登记完整时不受无关全局覆盖缺口阻断`() {
+        val now = 10_000L
+        val snapshot = ProotTelemetrySnapshot(
+            collectionStatus = "loaded",
+            fileExists = true,
+            refreshedAtMs = now,
+            counters = ProotTelemetryCounters(totalEvents = 5L, skippedBytes = 20L)
+        )
+
+        assertTrue(
+            ProotOwnerTerminationEvidence.readinessForObservedOwner(
+                snapshot = snapshot,
+                targetRegistryComplete = true,
+                now = now,
+                ownerId = "terminal:run/instance/card@6000"
+            ).usable
+        )
+        assertFalse(
+            ProotOwnerTerminationEvidence.readinessForObservedOwner(
+                snapshot = snapshot,
+                targetRegistryComplete = false,
+                now = now,
+                ownerId = "terminal:run/instance/card@6000"
+            ).usable
+        )
+    }
+
+    @Test
+    fun `未观测逻辑 owner 只在完整活动登记表明确缺席时收敛`() {
+        assertTrue(
+            ProotOwnerTerminationEvidence.canSettleUnobservedOwner(
+                registryComplete = true,
+                registryOwnerObserved = false
+            )
+        )
+        assertFalse(
+            ProotOwnerTerminationEvidence.canSettleUnobservedOwner(
+                registryComplete = false,
+                registryOwnerObserved = false
+            )
+        )
+        assertFalse(
+            ProotOwnerTerminationEvidence.canSettleUnobservedOwner(
+                registryComplete = true,
+                registryOwnerObserved = true
+            )
+        )
+    }
+
+    @Test
     fun `owner 从未出现时空探测不能证明停止`() {
         assertFalse(
             ProotOwnerTerminationEvidence.canConfirm(

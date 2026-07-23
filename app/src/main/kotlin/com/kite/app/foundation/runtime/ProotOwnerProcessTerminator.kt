@@ -95,6 +95,27 @@ internal object ProotOwnerTerminationEvidence {
         )
     }
 
+    /**
+     * owner 已经携带强生命周期身份时，完整的目标会话登记表比全局历史覆盖更精确。
+     * 全局事件文件曾裁剪或其他会话尚未收敛，不应阻断这个 owner 的定向控制。
+     */
+    fun readinessForObservedOwner(
+        snapshot: ProotTelemetrySnapshot,
+        targetRegistryComplete: Boolean,
+        now: Long = System.currentTimeMillis(),
+        ownerId: String,
+    ): ProotTelemetryDestructiveReadiness = if (targetRegistryComplete) {
+        ProotTelemetryDestructiveReadiness(true, "owner_target_registry_complete")
+    } else {
+        readiness(snapshot = snapshot, now = now, ownerId = ownerId)
+    }
+
+    /** 未出现在事件投影中的 owner，只有被完整活动登记表明确排除后才能视为不存在。 */
+    fun canSettleUnobservedOwner(
+        registryComplete: Boolean,
+        registryOwnerObserved: Boolean,
+    ): Boolean = registryComplete && !registryOwnerObserved
+
     fun canConfirm(
         ownerWasObserved: Boolean,
         healthySilentRounds: Int,
@@ -166,7 +187,7 @@ object ProotOwnerProcessTerminator {
                 )
             )
         }
-        val results = ownerIds.map { ownerId -> terminate(context, ownerId) }
+        val results = terminateAll(context, ownerIds)
         scheduleResidualReap(
             context = context,
             ownerIds = results.filterNot { it.settled }.map { it.ownerId }
@@ -184,11 +205,102 @@ object ProotOwnerProcessTerminator {
             )
         }
 
-        return terminateDirectV2(context.applicationContext, cleanOwnerId).also { result ->
-            if (result.settled) {
-                TaskManagerStore.confirmOwnersStopped(listOf(cleanOwnerId))
+        return terminateAll(context, listOf(cleanOwnerId)).single()
+    }
+
+    /**
+     * 同一次停止事务共享一次事件快照和一次必要的全局登记表兜底，避免逐 owner 重扫。
+     * root 是作用域，终端 owner 也可能替代同一步骤的协议占位 owner；这两类身份由真实叶子结果收敛，
+     * 不能作为不存在的独立进程 owner 再去接受全局历史覆盖判定。
+     */
+    fun terminateAll(
+        context: Context,
+        ownerIds: Collection<String>,
+    ): List<ProotOwnerTerminationResult> {
+        val cleanOwnerIds = ownerIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        if (cleanOwnerIds.isEmpty()) return emptyList()
+
+        val appContext = context.applicationContext
+        val firstSnapshot = ProotTelemetryStore.refreshBlocking(appContext)
+        val supersededBy = cleanOwnerIds.mapNotNull { candidate ->
+            cleanOwnerIds.firstOrNull { actual ->
+                actual != candidate && RuntimeOwnerIdentity.supersedes(actual, candidate)
+            }?.let { actual -> candidate to actual }
+        }.toMap()
+        val rootsWithDescendants = cleanOwnerIds
+            .filter(RuntimeOwnerIdentity::isRoot)
+            .associateWith { root ->
+                cleanOwnerIds.filter { owner -> RuntimeOwnerIdentity.belongsToRoot(owner, root) }
+            }
+            .filterValues(List<String>::isNotEmpty)
+        val derivedOwnerIds = supersededBy.keys + rootsWithDescendants.keys
+        val directOwnerIds = cleanOwnerIds.filterNot(derivedOwnerIds::contains)
+        val observedOwnerIds = firstSnapshot.ownerProcessIndex.groups
+            .mapTo(mutableSetOf(), ProotOwnerProcessGroup::ownerId)
+        val recoveryRegistry = if (directOwnerIds.any { it !in observedOwnerIds }) {
+            ProotActiveRegistryReader(File(firstSnapshot.activeRegistryRootPath)).read()
+        } else {
+            null
+        }
+        val directResults = directOwnerIds.associateWith { ownerId ->
+            terminateDirectV2(
+                context = appContext,
+                ownerId = ownerId,
+                firstSnapshot = firstSnapshot,
+                recoveryRegistry = recoveryRegistry,
+            )
+        }
+        val resolvedResults = linkedMapOf<String, ProotOwnerTerminationResult>()
+        cleanOwnerIds.forEach { ownerId ->
+            directResults[ownerId]?.let { resolvedResults[ownerId] = it }
+        }
+        supersededBy.forEach { (provisional, actual) ->
+            val actualResult = directResults[actual]
+            resolvedResults[provisional] = if (actualResult?.settled == true) {
+                ProotOwnerTerminationResult(
+                    ownerId = provisional,
+                    outcome = ProotOwnerTerminationOutcome.OWNER_NOT_FOUND,
+                    reason = "owner_superseded_by_runtime_owner",
+                )
+            } else {
+                (actualResult ?: unavailableResult(actual, "superseding_owner_result_missing")).copy(
+                    ownerId = provisional,
+                    reason = "superseding_owner_unsettled:${actualResult?.reason ?: "result_missing"}",
+                )
             }
         }
+        rootsWithDescendants.forEach { (root, descendants) ->
+            val descendantResults = descendants.mapNotNull { owner ->
+                resolvedResults[owner] ?: directResults[owner]
+            }
+            val unsettled = descendantResults.firstOrNull { !it.settled }
+            resolvedResults[root] = if (descendantResults.size == descendants.size && unsettled == null) {
+                ProotOwnerTerminationResult(
+                    ownerId = root,
+                    outcome = ProotOwnerTerminationOutcome.CONFIRMED,
+                    targetTraceePids = descendantResults.flatMap { it.targetTraceePids }.distinct(),
+                    targetProcessGroupIds = descendantResults.flatMap { it.targetProcessGroupIds }.distinct(),
+                    sentTerminate = descendantResults.any { it.sentTerminate },
+                    sentKill = descendantResults.any { it.sentKill },
+                    reason = "owner_scope_settled_by_descendants",
+                )
+            } else {
+                (unsettled ?: unavailableResult(root, "owner_scope_result_missing")).copy(
+                    ownerId = root,
+                    reason = "owner_scope_unsettled:${unsettled?.reason ?: "result_missing"}",
+                )
+            }
+        }
+        val results = cleanOwnerIds.map { ownerId ->
+            resolvedResults[ownerId] ?: directResults.getValue(ownerId)
+        }
+        results.filter { it.settled }.forEach { result ->
+            TaskManagerStore.confirmOwnersStopped(listOf(result.ownerId))
+        }
+        return results
     }
 
     /**
@@ -198,21 +310,43 @@ object ProotOwnerProcessTerminator {
     private fun terminateDirectV2(
         context: Context,
         ownerId: String,
+        firstSnapshot: ProotTelemetrySnapshot,
+        recoveryRegistry: ProotActiveRegistrySnapshot?,
     ): ProotOwnerTerminationResult {
-        val firstSnapshot = ProotTelemetryStore.refreshBlocking(context)
-        val readiness = ProotOwnerTerminationEvidence.readiness(firstSnapshot, ownerId = ownerId)
-        if (!readiness.usable) return unavailableResult(ownerId, readiness.reason)
         val firstGroup = firstSnapshot.ownerProcessIndex.groups.firstOrNull { it.ownerId == ownerId }
-            ?: return ProotOwnerTerminationResult(
+        val recoveryEntries = recoveryRegistry
+            ?.sessions
+            .orEmpty()
+            .flatMap(ProotActiveRegistrySession::entries)
+            .filter { it.kfRuntimeId == ownerId }
+        if (firstGroup == null && ProotOwnerTerminationEvidence.canSettleUnobservedOwner(
+                registryComplete = recoveryRegistry?.complete == true,
+                registryOwnerObserved = recoveryEntries.isNotEmpty(),
+            )
+        ) {
+            return ProotOwnerTerminationResult(
+                ownerId = ownerId,
+                outcome = ProotOwnerTerminationOutcome.OWNER_NOT_FOUND,
+                reason = "owner_absent_in_complete_active_registry",
+            )
+        }
+        if (firstGroup == null && recoveryEntries.isEmpty()) {
+            val readiness = ProotOwnerTerminationEvidence.readiness(firstSnapshot, ownerId = ownerId)
+            if (!readiness.usable) return unavailableResult(ownerId, readiness.reason)
+            return ProotOwnerTerminationResult(
                 ownerId = ownerId,
                 outcome = ProotOwnerTerminationOutcome.OWNER_NOT_FOUND,
                 reason = "owner_not_observed",
             )
-        if (firstGroup.processRefs.isEmpty() || firstGroup.telemetrySessionIds.isEmpty()) {
+        }
+        if (firstGroup != null && (firstGroup.processRefs.isEmpty() || firstGroup.telemetrySessionIds.isEmpty())) {
             return unavailableResult(ownerId, "owner_v2_registry_binding_missing")
         }
-        if (firstGroup.processRefs.any { !it.hasStrongIdentity }) {
+        if (firstGroup?.processRefs.orEmpty().any { !it.hasStrongIdentity }) {
             return unavailableResult(ownerId, "owner_v2_strong_identity_required")
+        }
+        if (recoveryEntries.any { !it.processRef().hasStrongIdentity }) {
+            return unavailableResult(ownerId, "owner_recovery_registry_identity_incomplete")
         }
 
         val verifier = ProotProcessVerifier()
@@ -223,10 +357,38 @@ object ProotOwnerProcessTerminator {
             },
         )
         val allTargets = linkedMapOf<String, ProotProcessControlTarget>()
-        val telemetrySessionIds = firstGroup.telemetrySessionIds.toMutableSet()
-        firstGroup.toControlTargets(firstSnapshot).forEach { target ->
+        val telemetrySessionIds = linkedSetOf<String>()
+        firstGroup?.telemetrySessionIds?.let(telemetrySessionIds::addAll)
+        recoveryEntries.map { it.toControlTarget() }.forEach { target ->
+            telemetrySessionIds += target.ref.telemetrySessionId
             allTargets[target.ref.lifecycleId] = target
         }
+        firstGroup?.toControlTargets(firstSnapshot).orEmpty().forEach { target ->
+            allTargets[target.ref.lifecycleId] = target
+        }
+        if (telemetrySessionIds.isEmpty() || allTargets.isEmpty()) {
+            return unavailableResult(ownerId, "owner_v2_registry_binding_missing")
+        }
+
+        val firstRegistry = ProotActiveRegistryReader(File(firstSnapshot.activeRegistryRootPath))
+            .readSessions(telemetrySessionIds)
+        val firstReadiness = ProotOwnerTerminationEvidence.readinessForObservedOwner(
+            snapshot = firstSnapshot,
+            targetRegistryComplete = firstRegistry.complete,
+            ownerId = ownerId,
+        )
+        if (!firstReadiness.usable) return unavailableResult(ownerId, firstReadiness.reason)
+        if (!firstRegistry.complete) {
+            return unavailableResult(ownerId, "owner_target_registry_${firstRegistry.status.name.lowercase()}")
+        }
+        val firstRegistryTargets = firstRegistry.sessions
+            .flatMap(ProotActiveRegistrySession::entries)
+            .filter { it.kfRuntimeId == ownerId }
+            .map { it.toControlTarget() }
+        if (firstRegistryTargets.any { !it.ref.hasStrongIdentity }) {
+            return unavailableResult(ownerId, "owner_target_registry_identity_incomplete")
+        }
+        firstRegistryTargets.forEach { target -> allTargets[target.ref.lifecycleId] = target }
         var sentTerminate = false
         var sentKill = false
         var silentRounds = 0
@@ -304,7 +466,7 @@ object ProotOwnerProcessTerminator {
                 verificationById[target.ref.lifecycleId]?.status == ProotProcessVerificationStatus.MATCHED_ACTIVE
             }
 
-            if (remaining.isEmpty() && registryTargets.isEmpty()) {
+            if (remaining.isEmpty()) {
                 silentRounds += 1
                 if (silentRounds >= 2) {
                     return ProotOwnerTerminationResult(

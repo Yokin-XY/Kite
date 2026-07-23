@@ -366,16 +366,23 @@ object TaskManagerStore {
     private fun buildTaskItems(
         healthSnapshot: RuntimeHealthSnapshot
     ): List<TaskManagerProcessItem> {
+        val runningEntries = healthSnapshot.prootTelemetry.processLiveTable.entries
+            .filter { entry -> entry.state == ProotLiveProcessState.RUNNING }
+        val stronglyIdentifiedPids = runningEntries
+            .filter { entry -> entry.processRef().hasStrongIdentity }
+            .mapTo(mutableSetOf(), ProotLiveProcessEntry::traceePid)
         val rootItems = healthSnapshot.roots
             .filter { root -> root.reality == RuntimeRootReality.OBSERVED && (root.observedPid ?: 0) > 0 }
+            .filterNot { root ->
+                root.ownerKind == RuntimeRootOwnerKind.UNATTRIBUTED &&
+                    root.observedPid in stronglyIdentifiedPids
+            }
             .map { it.toTaskManagerItem() }
 
         val rootPids = rootItems
             .mapNotNull { item -> item.pid.takeIf { it > 0 } }
             .toSet()
 
-        val runningEntries = healthSnapshot.prootTelemetry.processLiveTable.entries
-            .filter { entry -> entry.state == ProotLiveProcessState.RUNNING }
         val entriesByPid = runningEntries.associateBy { it.traceePid }
         val processItems = runningEntries
             .filterNot { entry -> entry.traceePid in rootPids }
@@ -523,6 +530,7 @@ object TaskManagerStore {
         val ownerEntry = ownerSource(entriesByPid)
         val runtimeOwnerId = ownerEntry.kfRuntimeId.takeIf { it.isNotBlank() }
         val runtimeUnitId = ownerEntry.kfUnitId.takeIf { it.isNotBlank() }
+        val runtimeOwnerKindLabel = ownerEntry.runtimeOwnerKindLabel()
         val terminalSessionId = ownerEntry.terminalOwnerSessionId()
         return TaskManagerProcessItem(
             id = "ubuntu-process-$lifecycleId",
@@ -546,14 +554,15 @@ object TaskManagerStore {
             command = title,
             commandLine = commandIdentity,
             isSynthetic = false,
+            linkedRuntimeId = runtimeOwnerId.takeIf { runtimeOwnerKindLabel == "后台运行项" },
             linkedTerminalSessionId = terminalSessionId,
             linkedTerminalTitle = terminalSessionId?.let { "终端 $it" },
             runtimeOwnerId = runtimeOwnerId,
             runtimeUnitId = runtimeUnitId,
             workloadScopeId = workloadScopeId.takeIf(String::isNotBlank),
             isWorkloadLauncher = isWorkloadLauncher,
-            runtimeOwnerKindLabel = ownerEntry.runtimeOwnerKindLabel(),
-            runtimeRootPid = traceePid,
+            runtimeOwnerKindLabel = runtimeOwnerKindLabel,
+            runtimeRootPid = ownerEntry.traceePid,
             runtimeRealityLabel = "PRoot 事件表",
             runtimeLastSeenAt = lastSeenAtMs.takeIf { it > 0L },
             lifecycleId = lifecycleId,
@@ -573,26 +582,42 @@ object TaskManagerStore {
         entriesByPid: Map<Int, ProotLiveProcessEntry>
     ): ProotLiveProcessEntry {
         var current = this
+        var owner: ProotLiveProcessEntry? = null
         val seen = mutableSetOf(traceePid)
         repeat(8) {
-            if (current.kfRuntimeId.isNotBlank() || current.kfUnitId.isNotBlank()) return current
-            val parentPid = current.parentTraceePid ?: return current
-            if (!seen.add(parentPid)) return current
-            current = entriesByPid[parentPid] ?: return current
+            if (current.hasRuntimeOwnerIdentity()) {
+                val existingOwner = owner
+                if (existingOwner != null && !current.hasSameRuntimeOwner(existingOwner)) return existingOwner
+                owner = current
+            }
+            val parentPid = current.parentTraceePid ?: return owner ?: current
+            if (!seen.add(parentPid)) return owner ?: current
+            current = entriesByPid[parentPid] ?: return owner ?: current
         }
-        return current
+        return owner ?: current
+    }
+
+    private fun ProotLiveProcessEntry.hasRuntimeOwnerIdentity(): Boolean =
+        kfRuntimeId.isNotBlank() || kfUnitId.isNotBlank()
+
+    private fun ProotLiveProcessEntry.hasSameRuntimeOwner(other: ProotLiveProcessEntry): Boolean = when {
+        kfUnitId.isNotBlank() && other.kfUnitId.isNotBlank() -> kfUnitId == other.kfUnitId
+        kfRuntimeId.isNotBlank() && other.kfRuntimeId.isNotBlank() -> kfRuntimeId == other.kfRuntimeId
+        else -> false
     }
 
     private fun ProotLiveProcessEntry.terminalOwnerSessionId(): String? =
         RuntimeOwnerIdentity.terminalSessionId(kfRuntimeId)
 
-    private fun ProotLiveProcessEntry.runtimeOwnerKindLabel(): String? =
-        when (kfRuntimeId.substringBefore(':')) {
+    private fun ProotLiveProcessEntry.runtimeOwnerKindLabel(): String? = when {
+        RuntimeOwnerIdentity.isBackgroundRuntime(kfRuntimeId, kfUnitId) -> "后台运行项"
+        else -> when (kfRuntimeId.substringBefore(':')) {
             "card" -> "卡片"
             "resource" -> "资源"
             "terminal" -> "终端"
             else -> null
         }
+    }
 
     private fun ProotLiveProcessEntry.buildUbuntuProcessSubtitle(commandIdentity: String): String {
         return buildList {

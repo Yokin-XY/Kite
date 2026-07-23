@@ -87,7 +87,11 @@ internal data class RuntimeManagementProcessGroupUiState(
     val cardLabels: List<String> = emptyList(),
     val isInfrastructure: Boolean = false,
     val stopAction: RuntimeManagementActionUiState? = null,
-)
+) {
+    /** 数据层始终保留作用域；只有两个以上可见成员时，界面才需要额外的展开层。 */
+    val isExpandable: Boolean
+        get() = processes.size > 1
+}
 
 internal data class RuntimeManagementCardIconUiState(
     val type: String = "builtin",

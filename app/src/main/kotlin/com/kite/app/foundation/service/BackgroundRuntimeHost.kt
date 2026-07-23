@@ -1052,6 +1052,7 @@ object BackgroundRuntimeHost {
                 .redirectErrorStream(true)
                 .apply {
                     environment().putAll(config.env)
+                    environment().putAll(record.processIdentityEnvironment())
                 }
                 .start()
         }.onSuccess { process ->
@@ -1949,6 +1950,7 @@ object BackgroundRuntimeHost {
                 .redirectErrorStream(true)
                 .apply {
                     environment().putAll(config.env)
+                    environment().putAll(record.processIdentityEnvironment())
                 }
                 .start()
             val outputBuffer = StringBuilder()

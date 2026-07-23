@@ -222,6 +222,142 @@ class ProotTelemetryStoreLifecycleTest {
     }
 
     @Test
+    fun `完整活动注册表会淘汰整个会话已经消失的历史运行记录`() {
+        val now = System.currentTimeMillis()
+        val file = telemetryFile(
+            event(
+                eventType = "ExecDetected",
+                timestampMs = now - 10_000L,
+                telemetrySessionId = "retired-session",
+                prootStartMs = now - 10_100L,
+                prootPid = 51,
+                traceePid = 701,
+                eventSeq = 2L,
+                lifecycleSeq = 7L,
+                startTimeTicks = 1234L,
+            )
+        )
+        assertTrue(ProotTelemetryStore.readTelemetryFileForTests(file).tracees.single().running)
+
+        val reconciled = ProotTelemetryStore.reconcileActiveRegistryForTests(
+            registry = ProotActiveRegistrySnapshot(
+                status = ProotActiveRegistryReadStatus.LOADED,
+                rootPath = temp.root.absolutePath,
+            ),
+            now = now,
+        )
+
+        val record = reconciled.tracees.single()
+        assertFalse(record.running)
+        assertEquals("active_registry_session_missing", record.lastSourceHook)
+        assertEquals("active_registry", record.evidenceSource)
+        assertEquals(0, reconciled.liveTraceeCount)
+        assertEquals("active_registry_reconciled", reconciled.ownerEvidenceCoverageReason)
+    }
+
+    @Test
+    fun `冷启动文件重放完成后活动注册表仍会淘汰旧运行记录`() {
+        val now = System.currentTimeMillis()
+        val file = telemetryFile(
+            event(
+                eventType = "ExecDetected",
+                timestampMs = now - 10_000L,
+                telemetrySessionId = "stale-current-file-session",
+                prootStartMs = now - 10_100L,
+                prootPid = 52,
+                traceePid = 703,
+                eventSeq = 2L,
+                lifecycleSeq = 9L,
+                startTimeTicks = 6789L,
+            )
+        )
+
+        val snapshot = ProotTelemetryStore.readTelemetryFileForTests(
+            file = file,
+            activeRegistry = ProotActiveRegistrySnapshot(
+                status = ProotActiveRegistryReadStatus.LOADED,
+                rootPath = temp.root.absolutePath,
+            ),
+            activeRegistryNow = now,
+        )
+
+        assertFalse(snapshot.tracees.single().running)
+        assertEquals("active_registry_session_missing", snapshot.tracees.single().lastSourceHook)
+        assertEquals(0, snapshot.liveTraceeCount)
+    }
+
+    @Test
+    fun `无关会话不稳定不会阻止已消失会话退出`() {
+        val now = System.currentTimeMillis()
+        val file = telemetryFile(
+            event(
+                eventType = "ExecDetected",
+                timestampMs = now - 10_000L,
+                telemetrySessionId = "retired-while-unrelated-updates",
+                prootStartMs = now - 10_100L,
+                prootPid = 53,
+                traceePid = 704,
+                eventSeq = 2L,
+                lifecycleSeq = 10L,
+                startTimeTicks = 7890L,
+            )
+        )
+
+        val snapshot = ProotTelemetryStore.readTelemetryFileForTests(
+            file = file,
+            activeRegistry = ProotActiveRegistrySnapshot(
+                status = ProotActiveRegistryReadStatus.UNSTABLE,
+                rootPath = temp.root.absolutePath,
+                unstableSessionIds = listOf("unrelated-updating-session"),
+            ),
+            activeRegistryNow = now,
+        )
+
+        assertFalse(snapshot.tracees.single().running)
+        assertEquals("active_registry_session_missing", snapshot.tracees.single().lastSourceHook)
+        assertEquals("active_registry_reconciled", snapshot.ownerEvidenceCoverageReason)
+    }
+
+    @Test
+    fun `不完整注册表和刚创建会话都不会被误判为退出`() {
+        val now = System.currentTimeMillis()
+        val file = telemetryFile(
+            event(
+                eventType = "ExecDetected",
+                timestampMs = now - 500L,
+                telemetrySessionId = "starting-session",
+                prootStartMs = now - 600L,
+                prootPid = 61,
+                traceePid = 702,
+                eventSeq = 2L,
+                lifecycleSeq = 8L,
+                startTimeTicks = 5678L,
+            )
+        )
+        ProotTelemetryStore.readTelemetryFileForTests(file)
+
+        val incomplete = ProotTelemetryStore.reconcileActiveRegistryForTests(
+            registry = ProotActiveRegistrySnapshot(
+                status = ProotActiveRegistryReadStatus.UNSTABLE,
+                rootPath = temp.root.absolutePath,
+                unstableSessionIds = listOf("starting-session"),
+            ),
+            now = now,
+        )
+        assertTrue(incomplete.tracees.single().running)
+
+        val withinGrace = ProotTelemetryStore.reconcileActiveRegistryForTests(
+            registry = ProotActiveRegistrySnapshot(
+                status = ProotActiveRegistryReadStatus.LOADED,
+                rootPath = temp.root.absolutePath,
+            ),
+            now = now,
+        )
+        assertTrue(withinGrace.tracees.single().running)
+        assertEquals("recovery_pending_loaded", withinGrace.activeRegistryStatus)
+    }
+
+    @Test
     fun `大历史文件裁剪后新实例仍拥有完整 owner 停止证据`() {
         val now = System.currentTimeMillis()
         val base = now - 100_000L

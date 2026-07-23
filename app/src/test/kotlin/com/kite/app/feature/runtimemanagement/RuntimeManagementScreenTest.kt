@@ -171,6 +171,75 @@ class RuntimeManagementScreenTest {
         assertTrue("操作弹层缺少危险动作：$labels", labels.contains(dangerLabel))
     }
 
+    @Test
+    fun `single member scope renders one process row while multi member scope starts collapsed`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val context = ContextThemeWrapper(activity, R.style.Theme_Kite)
+        val screen = RuntimeManagementScreen(
+            context = context,
+            initialScrollY = 0,
+            onBack = {},
+            onRefresh = {},
+            onAction = {},
+        )
+        activity.setContentView(screen.root)
+        val single = RuntimeManagementProjector.project(
+            RuntimeManagementSnapshot(
+                processes = listOf(
+                    RuntimeManagedProcess(
+                        id = "single",
+                        pid = 71,
+                        title = "python",
+                        stateLabel = "运行中",
+                        workloadScopeId = "workload:single",
+                        canEndDirectly = true,
+                    )
+                )
+            )
+        )
+        screen.render(single)
+        screen.openAllForTesting()
+
+        var labels = screen.root.textViews().map { it.text.toString() }
+        assertEquals(1, labels.count { it == "python" })
+        assertFalse(labels.contains(context.getString(R.string.runtime_management_group_process_count, 1)))
+
+        val multiple = RuntimeManagementProjector.project(
+            RuntimeManagementSnapshot(
+                processes = listOf(
+                    RuntimeManagedProcess(
+                        id = "parent",
+                        pid = 81,
+                        title = "python",
+                        stateLabel = "运行中",
+                        workloadScopeId = "workload:multiple",
+                    ),
+                    RuntimeManagedProcess(
+                        id = "child",
+                        pid = 82,
+                        parentPid = 81,
+                        title = "worker",
+                        stateLabel = "运行中",
+                        workloadScopeId = "workload:multiple",
+                    ),
+                )
+            )
+        )
+        screen.render(multiple)
+
+        labels = screen.root.textViews().map { it.text.toString() }
+        assertTrue(labels.contains(context.getString(R.string.runtime_management_group_process_count, 2)))
+        assertFalse(labels.contains("worker"))
+        assertNull(screen.processRootForTesting("child"))
+
+        val groupKey = multiple.allProcessGroups.single().key
+        assertTrue(screen.processGroupHeaderForTesting(groupKey)?.performClick() == true)
+
+        labels = screen.root.textViews().map { it.text.toString() }
+        assertTrue(labels.contains("worker"))
+        assertNotNull(screen.processRootForTesting("child"))
+    }
+
     private fun projected() = RuntimeManagementProjector.project(snapshot())
 
     private fun snapshot() = RuntimeManagementSnapshot(

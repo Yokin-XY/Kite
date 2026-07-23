@@ -369,6 +369,10 @@ internal class AndroidRecipeExecutor(
                             runtimeRootOwnerId = terminalOwner.rootOwnerId,
                             runtimeOwnerId = terminalOwner.ownerId,
                             runtimeUnitId = terminalOwner.unitId,
+                            ownedRuntimeOwnerIds = (
+                                request.previousState.ownedRuntimeOwnerIds
+                                    .filterNot { it == request.runtimeOwnerId } + terminalOwner.ownerId
+                                ).distinct(),
                             runId = record.id,
                             terminalSessionId = record.id,
                             lastMeaningfulOutput = "等待终端完成：${record.title}",
@@ -697,9 +701,7 @@ internal class AndroidRecipeExecutor(
             )
         }
 
-        val results = ownerIds.map { ownerId ->
-            ProotOwnerProcessTerminator.terminate(appContext, ownerId)
-        }
+        val results = ProotOwnerProcessTerminator.terminateAll(appContext, ownerIds)
         ProotOwnerProcessTerminator.scheduleResidualReap(
             context = appContext,
             ownerIds = results.filterNot { it.settled }.map { it.ownerId },

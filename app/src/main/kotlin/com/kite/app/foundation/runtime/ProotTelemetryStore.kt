@@ -22,6 +22,7 @@ object ProotTelemetryStore {
     private const val ROTATED_TELEMETRY_SEGMENTS = 3
     private const val ROTATED_BASELINE_READ_BYTES = MAX_INCREMENTAL_READ_BYTES
     private const val ROTATED_BASELINE_EVENT_TTL_MS = TERMINAL_TRACEE_TTL_MS
+    private const val ACTIVE_REGISTRY_SESSION_CREATION_GRACE_MS = 2_000L
     private const val MAX_RECENT_EVENTS = 128
     private const val MAX_TERMINAL_TRACEE_RECORDS = 5_000
     private const val PRESSURE_WINDOW_MS = 60_000L
@@ -656,7 +657,7 @@ object ProotTelemetryStore {
         if (!file.exists()) {
             synchronized(lock) {
                 resetIfPathChanged(file.absolutePath)
-                activeRegistry?.let(::reconcileActiveRegistry)
+                activeRegistry?.let { reconcileActiveRegistry(it) }
                 _snapshot.value = buildSnapshot(
                     file = file,
                     collectionStatus = "file_missing",
@@ -722,8 +723,6 @@ object ProotTelemetryStore {
                 }
             }
 
-            activeRegistry?.let(::reconcileActiveRegistry)
-
             if (readResult.skippedBytes > 0L) {
                 counters = counters.copy(skippedBytes = counters.skippedBytes + readResult.skippedBytes)
                 ownerEvidenceCompleteFromMs = maxOf(
@@ -757,6 +756,11 @@ object ProotTelemetryStore {
                 activeRegistryRecoveryPending = true
             }
 
+            // 先重放本轮文件事件，再用同一时刻读取的活动注册表收敛。否则冷启动时
+            // 注册表会在 tracees 仍为空时被标记为已恢复，随后当前 JSONL 中的旧记录
+            // 又会被重放成运行中，并且不再获得第二次注册表校准。
+            activeRegistry?.let { reconcileActiveRegistry(it) }
+
             _snapshot.value = buildSnapshot(
                 file = file,
                 collectionStatus = "loaded",
@@ -780,9 +784,12 @@ object ProotTelemetryStore {
         return ProotActiveRegistryReader(activeRegistryRoot(context)).read()
     }
 
-    private fun reconcileActiveRegistry(registry: ProotActiveRegistrySnapshot) {
+    private fun reconcileActiveRegistry(
+        registry: ProotActiveRegistrySnapshot,
+        now: Long = System.currentTimeMillis(),
+    ) {
         latestActiveRegistry = registry
-        val now = System.currentTimeMillis()
+        val registryActiveKeys = mutableSetOf<TraceeLifecycleKey>()
         registry.sessions.forEach { session ->
             val activeKeys = mutableSetOf<TraceeLifecycleKey>()
             session.entries.forEach entryLoop@{ entry ->
@@ -811,6 +818,7 @@ object ProotTelemetryStore {
                 }
 
                 activeKeys += key
+                registryActiveKeys += key
                 val existing = tracees[key]
                 val parentOwner = entry.parentLifecycleSeq?.let { parentSeq ->
                     tracees.entries.firstOrNull { (parentKey, parentRecord) ->
@@ -881,7 +889,9 @@ object ProotTelemetryStore {
                 .filter { (key, record) ->
                     key.telemetrySessionId == session.telemetrySessionId &&
                         record.running &&
-                        key !in activeKeys
+                        key !in activeKeys &&
+                        now - maxOf(record.createdAtMs, record.lastEventAtMs) >=
+                            ACTIVE_REGISTRY_SESSION_CREATION_GRACE_MS
                 }
                 .map { it.key }
                 .forEach { key ->
@@ -896,8 +906,42 @@ object ProotTelemetryStore {
             eventContinuity.reset(session.telemetrySessionId, session.lastEventSeq)
         }
 
-        val completeForObservedSessions = registry.complete &&
-            (registry.sessions.isNotEmpty() || tracees.values.none(ProotTraceeRecord::running))
+        val activeSessionIds = registry.sessions
+            .mapTo(mutableSetOf(), ProotActiveRegistrySession::telemetrySessionId)
+        val observedSessionIds = activeSessionIds.apply {
+            addAll(registry.unstableSessionIds)
+        }
+        if (registry.status != ProotActiveRegistryReadStatus.MISSING) {
+            tracees.entries
+                .filter { (_, record) ->
+                    record.running &&
+                        record.telemetrySessionId.isNotBlank() &&
+                        record.telemetrySessionId !in observedSessionIds &&
+                        now - maxOf(record.createdAtMs, record.lastEventAtMs) >=
+                            ACTIVE_REGISTRY_SESSION_CREATION_GRACE_MS
+                }
+                .map { it.key }
+                .forEach { key ->
+                    val record = tracees.getValue(key)
+                    tracees[key] = record.copy(
+                        lastEventAtMs = now,
+                        lastSourceHook = "active_registry_session_missing",
+                        exitedAtMs = now,
+                        evidenceSource = "active_registry",
+                    )
+                }
+        }
+
+        val unresolvedRegistryRecord = tracees.entries.any { (key, record) ->
+            record.running &&
+                record.telemetrySessionId.isNotBlank() &&
+                (
+                    record.telemetrySessionId !in observedSessionIds ||
+                        key !in registryActiveKeys
+                    )
+        }
+        val completeForObservedSessions =
+            registry.status != ProotActiveRegistryReadStatus.MISSING && !unresolvedRegistryRecord
         if (completeForObservedSessions) {
             ownerEvidenceCompleteFromMs = 0L
             ownerEvidenceCoverageReason = "active_registry_reconciled"
@@ -1652,7 +1696,12 @@ object ProotTelemetryStore {
         return timestampMs in (now - ROTATED_BASELINE_EVENT_TTL_MS)..now
     }
 
-    internal fun readTelemetryFileForTests(file: File, readerEpochMs: Long = 0L): ProotTelemetrySnapshot {
+    internal fun readTelemetryFileForTests(
+        file: File,
+        readerEpochMs: Long = 0L,
+        activeRegistry: ProotActiveRegistrySnapshot? = null,
+        activeRegistryNow: Long = System.currentTimeMillis(),
+    ): ProotTelemetrySnapshot {
         return synchronized(readerLock) {
             synchronized(lock) {
                 resetReaderState(file.absolutePath)
@@ -1703,6 +1752,7 @@ object ProotTelemetryStore {
                     ownerEvidenceCoverageReason = "telemetry_parse_error"
                     activeRegistryRecoveryPending = true
                 }
+                activeRegistry?.let { reconcileActiveRegistry(it, activeRegistryNow) }
                 _snapshot.value = buildSnapshot(
                     file = file,
                     collectionStatus = "loaded",
@@ -1711,6 +1761,21 @@ object ProotTelemetryStore {
                 )
                 _snapshot.value
             }
+        }
+    }
+
+    internal fun reconcileActiveRegistryForTests(
+        registry: ProotActiveRegistrySnapshot,
+        now: Long = System.currentTimeMillis(),
+    ): ProotTelemetrySnapshot = synchronized(readerLock) {
+        synchronized(lock) {
+            reconcileActiveRegistry(registry, now)
+            buildSnapshot(
+                file = File(registry.rootPath, TELEMETRY_FILE_NAME),
+                collectionStatus = "active_registry_test",
+                lastRefreshEvents = 0,
+                lastRefreshForkExecEvents = 0,
+            )
         }
     }
 

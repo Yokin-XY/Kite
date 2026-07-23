@@ -52,8 +52,9 @@ internal class RuntimeManagementScreen(
     }
     private val runBindings = linkedMapOf<String, RunBinding>()
     private val processBindings = linkedMapOf<String, ProcessBinding>()
+    private val processGroupHeaders = linkedMapOf<String, View>()
     private var cardContextBinding: CardContextBinding? = null
-    private val collapsedGroupKeys = mutableSetOf<String>()
+    private val expandedGroupKeys = mutableSetOf<String>()
     private var scope: Scope = Scope.restore(initialScopeKey)
     private var latestState = RuntimeManagementUiState()
     private var structureSignature = ""
@@ -79,7 +80,7 @@ internal class RuntimeManagementScreen(
             scope = Scope.Overview
         }
         titleView.text = scope.title(state, context)
-        val nextSignature = "${scope.key}|${state.structureSignature()}|${collapsedGroupKeys.sorted()}"
+        val nextSignature = "${scope.key}|${state.structureSignature()}|${expandedGroupKeys.sorted()}"
         if (nextSignature != structureSignature || contentHost.childCount == 0) {
             structureSignature = nextSignature
             rebuildBody(state)
@@ -117,6 +118,8 @@ internal class RuntimeManagementScreen(
         anchoredMenu = null
         runBindings.clear()
         processBindings.clear()
+        processGroupHeaders.clear()
+        expandedGroupKeys.clear()
         cardContextBinding = null
         contentHost.removeAllViews()
     }
@@ -124,6 +127,7 @@ internal class RuntimeManagementScreen(
     internal fun bodyRebuildCountForTesting(): Int = bodyRebuildCount
     internal fun runRootForTesting(instanceId: String): View? = runBindings[instanceId]?.root
     internal fun processRootForTesting(key: String): View? = processBindings[key]?.root
+    internal fun processGroupHeaderForTesting(key: String): View? = processGroupHeaders[key]
     internal fun openAllForTesting() = openScope(Scope.All)
     internal fun openProcessMenuForTesting(key: String) = processBindings[key]?.item?.let(::showProcessMenu)
     internal fun scopeKeyForTesting(): String = scope.key
@@ -154,6 +158,7 @@ internal class RuntimeManagementScreen(
         bodyRebuildCount += 1
         runBindings.clear()
         processBindings.clear()
+        processGroupHeaders.clear()
         cardContextBinding = null
         contentHost.removeAllViews()
         when (val current = scope) {
@@ -364,20 +369,23 @@ internal class RuntimeManagementScreen(
     }
 
     private fun processGroup(group: RuntimeManagementProcessGroupUiState): View {
-        val expanded = group.key !in collapsedGroupKeys
+        if (!group.isExpandable) {
+            return singleProcessGroup(group)
+        }
+        val expanded = group.key in expandedGroupKeys
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = ui.containerBackground(tokens.cardBackground, tokens.border, environment.components.card)
             elevation = dp(environment.components.card.elevation).toFloat()
             layoutParams = marginParams(bottom = environment.foundations.spacing.itemGap)
-            addView(LinearLayout(context).apply {
+            val header = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(13), dp(11), dp(10), dp(11))
                 isClickable = true
                 isFocusable = true
                 setOnClickListener {
-                    if (!collapsedGroupKeys.add(group.key)) collapsedGroupKeys.remove(group.key)
+                    if (!expandedGroupKeys.add(group.key)) expandedGroupKeys.remove(group.key)
                     structureSignature = ""
                     render(latestState)
                 }
@@ -409,7 +417,9 @@ internal class RuntimeManagementScreen(
                     )
                 }
                 addView(chevron().apply { rotation = if (expanded) 90f else 0f }, LinearLayout.LayoutParams(dp(28), dp(40)))
-            })
+            }
+            processGroupHeaders[group.key] = header
+            addView(header)
             if (expanded) {
                 group.processes.forEach { process ->
                     addView(divider(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { setMargins(dp(58), 0, dp(12), 0) })
@@ -418,6 +428,19 @@ internal class RuntimeManagementScreen(
                     addView(binding.root)
                 }
             }
+        }
+    }
+
+    private fun singleProcessGroup(group: RuntimeManagementProcessGroupUiState): View {
+        val process = group.processes.single()
+        val binding = createProcessRow(process.copy(depth = 0))
+        processBindings[process.key] = binding
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = ui.containerBackground(tokens.cardBackground, tokens.border, environment.components.card)
+            elevation = dp(environment.components.card.elevation).toFloat()
+            layoutParams = marginParams(bottom = environment.foundations.spacing.itemGap)
+            addView(binding.root)
         }
     }
 

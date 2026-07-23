@@ -145,11 +145,13 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
 
         internal fun TaskManagerProcessItem.toRuntimeManagedProcess(): RuntimeManagedProcess {
             val identity = identityText()
+            val isOwnerRoot = id.startsWith("root-") ||
+                (runtimeRootPid == pid && (!runtimeOwnerId.isNullOrBlank() || !runtimeUnitId.isNullOrBlank()))
             return RuntimeManagedProcess(
                 id = id,
                 pid = pid,
                 parentPid = parentPid,
-                title = processName(identity),
+                title = processName(identity, isOwnerRoot),
                 stateLabel = stateLabel,
                 commandLine = commandLine,
                 purpose = processPurpose(identity),
@@ -160,7 +162,7 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
                 ownerRootPid = runtimeRootPid,
                 linkedTerminalSessionId = linkedTerminalSessionId,
                 linkedRuntimeId = linkedRuntimeId,
-                isOwnerRoot = id.startsWith("root-"),
+                isOwnerRoot = isOwnerRoot,
                 isRuntimeScaffold = isWorkloadLauncher || isRuntimeScaffold(identity),
                 canEndDirectly = TaskManagerAction.END_PROCESS in availableActions,
                 lifecycleId = lifecycleId,
@@ -194,9 +196,9 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
             else -> RuntimeManagedOwnerKind.Unattributed
         }
 
-        private fun TaskManagerProcessItem.processName(identity: String): String = when {
+        private fun TaskManagerProcessItem.processName(identity: String, isOwnerRoot: Boolean): String = when {
             "supervisord" in identity -> "容器守护进程"
-            "容量工作器" in identity || "proot-capacity" in identity -> "PRoot 容量工作器"
+            isOwnerRoot && ("容量工作器" in identity || "proot-capacity" in identity) -> "PRoot 容量工作器"
             "/runtime/bin/proot" in identity || "link2symlink" in identity -> "PRoot 容器入口"
             "/workspace/.kf/system/bin/kf-runner" in identity -> "Kite 命令启动器"
             "locale-check" in identity -> "语言环境检查"
@@ -220,6 +222,7 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
             title,
             sourceLabel,
             runtimeOwnerKindLabel.orEmpty(),
+            runtimeOwnerId.orEmpty(),
             runtimeUnitId.orEmpty(),
             command,
             commandLine

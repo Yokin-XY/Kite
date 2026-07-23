@@ -84,7 +84,13 @@ class AndroidRuntimeManagementGatewayTest {
     fun `maps capacity root as scaffold by stable runtime identity rather than root id`() {
         val mapped = AndroidRuntimeManagementGateway.run {
             process(
-                id = "root-BACKGROUND_RUNTIME-worker-2",
+                id = "ubuntu-process-session-a:6",
+                pid = 101,
+                ownerId = "background-space-main-proot-capacity-worker-2",
+                ownerKindLabel = "后台运行项",
+                runtimeUnitId = "background:proot-capacity-worker:worker-2",
+                linkedRuntimeId = "background-space-main-proot-capacity-worker-2",
+                runtimeRootPid = 101,
                 commandLine = "/bin/bash -lc trap; /run/kf-proot-capacity/worker-2.pid",
             ).toRuntimeManagedProcess()
         }
@@ -94,26 +100,56 @@ class AndroidRuntimeManagementGatewayTest {
         assertTrue(mapped.isRuntimeScaffold)
     }
 
+    @Test
+    fun `maps capacity worker child as background foundation through propagated identity`() {
+        val runtimeId = "background-space-main-proot-capacity-worker-2"
+        val mapped = AndroidRuntimeManagementGateway.run {
+            process(
+                id = "ubuntu-process-session-a:7",
+                pid = 102,
+                ownerId = runtimeId,
+                ownerKindLabel = "后台运行项",
+                runtimeUnitId = "background:proot-capacity-worker:$runtimeId",
+                linkedRuntimeId = runtimeId,
+                runtimeRootPid = 101,
+                title = "sleep",
+                commandLine = "sleep 3600",
+            ).toRuntimeManagedProcess()
+        }
+
+        assertEquals(RuntimeManagedOwnerKind.BackgroundRuntime, mapped.ownerKind)
+        assertEquals("sleep", mapped.title)
+        assertTrue(mapped.isRuntimeScaffold)
+    }
+
     private fun process(
         id: String,
+        pid: Int = 41,
+        title: String = "proc",
         ownerId: String? = null,
         ownerKindLabel: String? = null,
         commandLine: String = "proc",
         workloadScopeId: String? = null,
         isWorkloadLauncher: Boolean = false,
+        runtimeUnitId: String? = null,
+        linkedRuntimeId: String? = null,
+        runtimeRootPid: Int? = null,
         actions: List<TaskManagerAction> = emptyList()
     ): TaskManagerProcessItem = TaskManagerProcessItem(
         id = id,
-        pid = 41,
+        pid = pid,
         parentPid = 0,
-        title = "proc",
+        title = title,
         subtitle = "",
         sourceLabel = "",
         stateLabel = "运行中",
         rawState = "R",
-        command = "proc",
+        command = title,
         commandLine = commandLine,
+        linkedRuntimeId = linkedRuntimeId,
         runtimeOwnerId = ownerId,
+        runtimeUnitId = runtimeUnitId,
+        runtimeRootPid = runtimeRootPid,
         workloadScopeId = workloadScopeId,
         isWorkloadLauncher = isWorkloadLauncher,
         runtimeOwnerKindLabel = ownerKindLabel,
