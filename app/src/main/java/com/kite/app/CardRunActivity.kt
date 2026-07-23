@@ -44,6 +44,7 @@ import com.kite.app.feature.runsurface.CardRunLaunchResolution
 import com.kite.app.feature.runsurface.CardRunLaunchResolver
 import com.kite.app.feature.runsurface.CardRunLaunchTarget
 import com.kite.app.feature.runsurface.CardRunMissingStatePolicy
+import com.kite.app.feature.runsurface.CardRunTaskCloseReason
 import com.kite.app.feature.runsurface.CardRunTaskClosePolicy
 import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.feature.runsurface.RunActivityChrome
@@ -111,7 +112,7 @@ class CardRunActivity : AppCompatActivity() {
         override fun handleOnBackPressed() {
             if (chrome?.handleBack() == true) return
             if (surfaceHost?.handleBack() == true) return
-            closeTaskWindow()
+            closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
         }
     }
 
@@ -317,7 +318,7 @@ class CardRunActivity : AppCompatActivity() {
         ) {
             pendingCloseInstanceId = null
             pendingCloseGeneration = null
-            closeTaskWindow()
+            closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
             return
         }
         val children = CardRunStore.childrenOf(state.instanceId)
@@ -366,7 +367,8 @@ class CardRunActivity : AppCompatActivity() {
             onPlanAction = { action ->
                 when (action) {
                     KiteInstallPlanActionIntent.StartNext -> startNextPlannedInstall()
-                    KiteInstallPlanActionIntent.Finish -> closeTaskWindow()
+                    KiteInstallPlanActionIntent.Finish ->
+                        closeTaskWindow(CardRunTaskCloseReason.FinishCompleted)
                 }
             },
             onOpenRun = ::openResourceRun,
@@ -408,7 +410,7 @@ class CardRunActivity : AppCompatActivity() {
     private fun closeCurrentInstance() {
         val state = currentState ?: return
         if (state.status == CardRunStatus.Stopped) {
-            closeTaskWindow()
+            closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
             return
         }
         pendingCloseInstanceId = state.instanceId
@@ -419,7 +421,7 @@ class CardRunActivity : AppCompatActivity() {
                 pendingCloseInstanceId = null
                 pendingCloseGeneration = null
                 if (result.reason == "already_stopped") {
-                    closeTaskWindow()
+                    closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
                 } else {
                     Toast.makeText(this, "无法关闭：${result.reason}", Toast.LENGTH_SHORT).show()
                 }
@@ -490,7 +492,9 @@ class CardRunActivity : AppCompatActivity() {
         }
         CardRunTaskCloser.unregister(registeredCloserInstanceId)
         registeredCloserInstanceId = instanceId
-        CardRunTaskCloser.register(instanceId) { runOnUiThread(::closeTaskWindow) }
+        CardRunTaskCloser.register(instanceId) {
+            runOnUiThread { closeTaskWindow(CardRunTaskCloseReason.DismissSurface) }
+        }
     }
 
     private fun handleBrowserRequest(
@@ -775,9 +779,18 @@ class CardRunActivity : AppCompatActivity() {
         pendingCloseGeneration = null
     }
 
-    private fun closeTaskWindow() {
+    private fun closeTaskWindow(reason: CardRunTaskCloseReason) {
         currentState
-            ?.takeIf(CardRunTaskClosePolicy::shouldRemoveRunState)
+            ?.takeIf { state ->
+                val plan = graph.resourceInstallStore.planSnapshot()
+                CardRunTaskClosePolicy.shouldRemoveRunState(
+                    state = state,
+                    reason = reason,
+                    hasActiveInstallPlan = plan.targetResourceId.isNotBlank() || plan.resourceIds.isNotEmpty(),
+                    hasActiveChildRun = CardRunStore.childrenOf(state.instanceId)
+                        .any(CardRunTaskClosePolicy::isActiveChild),
+                )
+            }
             ?.let { state -> CardRunStore.removeRun(state.instanceId) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) finishAndRemoveTask() else finish()
     }
