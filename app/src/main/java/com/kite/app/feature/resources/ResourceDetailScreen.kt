@@ -186,7 +186,7 @@ internal class ResourceDetailScreen(
         val split = item.secondaryIntent != null
         primaryButton?.apply {
             layoutParams = LinearLayout.LayoutParams(0, factory.dp(46), if (split) 0.7f else 1f)
-            text = factory.actionLabel(item.primaryIntent)
+            text = factory.actionLabel(item)
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER

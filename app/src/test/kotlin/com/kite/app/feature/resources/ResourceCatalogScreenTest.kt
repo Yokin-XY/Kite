@@ -86,12 +86,58 @@ class ResourceCatalogScreenTest {
         })
     }
 
-    private fun state(action: String, state: String, installed: Boolean): ResourceFeatureUiState {
+    @Test
+    fun `运行计划显示查看进度而失败资源显示重试`() {
+        val screen = ResourceCatalogScreen(
+            context = themedContext(),
+            initialTabId = RESOURCE_HOME_TAB_ALL,
+            initialScrollY = 0,
+            onSearch = {},
+            onManage = {},
+            onOpenDetail = {},
+            onPrimaryAction = {},
+            onRetry = {}
+        )
+        attach(screen)
+        val context = screen.root.context
+
+        screen.render(state(
+            action = "获取中",
+            state = "获取中",
+            installed = false,
+            phase = ResourceItemPhase.Installing,
+            intent = KiteResourceActionIntent.ReopenInstall,
+        ))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_action_view_progress)
+        })
+
+        screen.render(state(
+            action = "重新获取",
+            state = "获取失败",
+            installed = false,
+            phase = ResourceItemPhase.InstallFailed,
+            intent = KiteResourceActionIntent.ReopenInstall,
+        ))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_action_retry)
+        })
+    }
+
+    private fun state(
+        action: String,
+        state: String,
+        installed: Boolean,
+        phase: ResourceItemPhase = if (installed) ResourceItemPhase.Installed else ResourceItemPhase.NotInstalled,
+        intent: KiteResourceActionIntent = if (installed) KiteResourceActionIntent.Open else KiteResourceActionIntent.Install,
+    ): ResourceFeatureUiState {
         val item = ResourceItemUiState(
             descriptor = ResourceFeatureDescriptor("tool", "Tool"),
-            phase = if (installed) ResourceItemPhase.Installed else ResourceItemPhase.NotInstalled,
+            phase = phase,
             projection = KiteResourceUiProjection(state, action, actionEnabled = true, secondaryActionLabel = null),
-            primaryIntent = if (installed) KiteResourceActionIntent.Open else KiteResourceActionIntent.Install,
+            primaryIntent = intent,
             secondaryIntent = null
         )
         return ResourceFeatureUiState(

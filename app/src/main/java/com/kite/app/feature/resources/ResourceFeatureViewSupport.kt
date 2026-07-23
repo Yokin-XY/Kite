@@ -261,9 +261,20 @@ internal class ResourceFeatureViewFactory(
 
     fun stateLabel(item: ResourceItemUiState): String = item.localizedStateLabel()
 
+    fun actionLabel(item: ResourceItemUiState): String = if (
+        item.phase == ResourceItemPhase.InstallFailed && item.primaryIntent in setOf(
+            KiteResourceActionIntent.Install,
+            KiteResourceActionIntent.ReopenInstall,
+        )
+    ) {
+        context.getString(R.string.resource_action_retry)
+    } else {
+        actionLabel(item.primaryIntent)
+    }
+
     fun actionLabel(intent: KiteResourceActionIntent): String = context.getString(when (intent) {
         KiteResourceActionIntent.Install -> R.string.resource_action_install
-        KiteResourceActionIntent.ReopenInstall -> R.string.resource_action_retry
+        KiteResourceActionIntent.ReopenInstall -> R.string.resource_action_view_progress
         KiteResourceActionIntent.Open -> R.string.resource_action_open
         KiteResourceActionIntent.Stop -> R.string.resource_action_stop
         KiteResourceActionIntent.Uninstall -> R.string.resource_action_uninstall
@@ -287,7 +298,7 @@ internal class ResourceFeatureViewFactory(
         ResourceItemPhase.Busy -> R.string.resource_state_busy
     })
 
-    private fun ResourceItemUiState.localizedActionLabel(): String = actionLabel(primaryIntent)
+    private fun ResourceItemUiState.localizedActionLabel(): String = actionLabel(this)
 
     fun icon(
         item: ResourceItemUiState,

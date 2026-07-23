@@ -547,6 +547,7 @@
     <string name="resource_state_busy">处理中</string>
     <string name="resource_action_install">获取</string>
     <string name="resource_action_retry">重试</string>
+    <string name="resource_action_view_progress">查看进度</string>
     <string name="resource_action_open">打开</string>
     <string name="resource_action_stop">停止</string>
     <string name="resource_action_uninstall">卸载</string>
