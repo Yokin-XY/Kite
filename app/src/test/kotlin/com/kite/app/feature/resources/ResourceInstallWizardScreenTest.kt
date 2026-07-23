@@ -258,6 +258,39 @@ class ResourceInstallWizardScreenTest {
         })
     }
 
+    @Test
+    fun `部分完成计划使用真实剩余数量`() {
+        val screen = createScreen(seedResourceIds = listOf("runtime", "tool"))
+        attach(screen)
+        val context = screen.root.context
+        screen.render(
+            ResourceFeatureUiState(
+                phase = ResourceCatalogPhase.Ready,
+                items = listOf(
+                    item(ResourceItemPhase.Installed, resourceId = "runtime"),
+                    item(ResourceItemPhase.NotInstalled, resourceId = "tool"),
+                ),
+                plan = ResourcePlanUiState(
+                    targetResourceId = "tool",
+                    resourceIds = listOf("runtime", "tool"),
+                    pendingResourceIds = listOf("tool"),
+                    steps = listOf(
+                        step("已完成", KiteResourceStepTone.Success, resourceId = "runtime"),
+                        step("待获取", KiteResourceStepTone.Neutral, resourceId = "tool"),
+                    ),
+                ),
+            )
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_detail_pending, 1)
+        })
+        assertFalse(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_detail_pending, 2)
+        })
+    }
+
     private fun createScreen(
         onPlanAction: (
             KiteInstallPlanActionIntent,
@@ -267,13 +300,14 @@ class ResourceInstallWizardScreenTest {
         onUninstallFailedResource: (String) -> Unit = {},
         onContinueInBackground: () -> Unit = {},
         onCancelPlan: ((ResourceInstallWizardPlanActionResult) -> Unit) -> Unit = {},
+        seedResourceIds: List<String> = listOf("tool"),
     ): ResourceInstallWizardScreen = ResourceInstallWizardScreen(
         context = ContextThemeWrapper(
             ApplicationProvider.getApplicationContext(),
             R.style.Theme_Kite
         ),
         requestedTargetResourceId = "tool",
-        seedResourceIds = listOf("tool"),
+        seedResourceIds = seedResourceIds,
         onPlanAction = onPlanAction,
         onOpenRun = onOpenRun,
         onUninstallFailedResource = onUninstallFailedResource,
@@ -333,9 +367,10 @@ class ResourceInstallWizardScreenTest {
 
     private fun item(
         phase: ResourceItemPhase,
-        run: ResourceFeatureRunSnapshot? = null
+        run: ResourceFeatureRunSnapshot? = null,
+        resourceId: String = "tool",
     ): ResourceItemUiState = ResourceItemUiState(
-        descriptor = ResourceFeatureDescriptor("tool", "Tool"),
+        descriptor = ResourceFeatureDescriptor(resourceId, resourceId.replaceFirstChar(Char::uppercase)),
         phase = phase,
         projection = KiteResourceUiProjection(
             stateLabel = "",
@@ -353,9 +388,10 @@ class ResourceInstallWizardScreenTest {
         label: String,
         tone: KiteResourceStepTone,
         failed: Boolean = false,
-        run: ResourceFeatureRunSnapshot? = null
+        run: ResourceFeatureRunSnapshot? = null,
+        resourceId: String = "tool",
     ): ResourcePlanStepUiState = ResourcePlanStepUiState(
-        resourceId = "tool",
+        resourceId = resourceId,
         projection = KiteResourceInstallStepUiProjection(
             statusLabel = label,
             tone = tone,

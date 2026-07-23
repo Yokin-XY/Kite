@@ -121,7 +121,7 @@ internal object ResourceInstallWizardPresenter {
                 rows.firstOrNull { it.resourceId == activeResourceId }?.name.orEmpty()
             )
             hasFailure -> context.getString(R.string.resource_wizard_detail_failure)
-            hasPending -> context.getString(R.string.resource_wizard_detail_pending, resourceIds.size)
+            hasPending -> context.getString(R.string.resource_wizard_detail_pending, pendingIds.size)
             else -> context.getString(R.string.resource_wizard_detail_completed)
         }
         val action = KiteInstallPlanActionCoordinator.plan(
