@@ -44,6 +44,7 @@ import com.kite.app.feature.runsurface.CardRunLaunchResolution
 import com.kite.app.feature.runsurface.CardRunLaunchResolver
 import com.kite.app.feature.runsurface.CardRunLaunchTarget
 import com.kite.app.feature.runsurface.CardRunMissingStatePolicy
+import com.kite.app.feature.runsurface.CardRunTaskClosePolicy
 import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.feature.runsurface.RunActivityChrome
 import com.kite.app.feature.runsurface.RunActivityChromeActions
@@ -775,6 +776,9 @@ class CardRunActivity : AppCompatActivity() {
     }
 
     private fun closeTaskWindow() {
+        currentState
+            ?.takeIf(CardRunTaskClosePolicy::shouldRemoveRunState)
+            ?.let { state -> CardRunStore.removeRun(state.instanceId) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) finishAndRemoveTask() else finish()
     }
 
