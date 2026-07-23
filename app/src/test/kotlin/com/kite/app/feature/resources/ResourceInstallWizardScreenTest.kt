@@ -227,13 +227,46 @@ class ResourceInstallWizardScreenTest {
         })
     }
 
+    @Test
+    fun `活动计划提供后台继续并在取消确认被拒绝后恢复`() {
+        var backgroundRequests = 0
+        lateinit var cancelAcknowledge: (ResourceInstallWizardPlanActionResult) -> Unit
+        val screen = createScreen(
+            onContinueInBackground = { backgroundRequests += 1 },
+            onCancelPlan = { acknowledge -> cancelAcknowledge = acknowledge },
+        )
+        attach(screen)
+        val context = screen.root.context
+        screen.render(pendingState())
+        shadowOf(Looper.getMainLooper()).idle()
+
+        screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_continue_in_background)
+        }.performClick()
+        assertEquals(1, backgroundRequests)
+
+        screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_wizard_cancel_plan)
+        }.performClick()
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_cancel_plan_pending) && !it.isEnabled
+        })
+
+        cancelAcknowledge(ResourceInstallWizardPlanActionResult.Rejected)
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_cancel_plan) && it.isEnabled
+        })
+    }
+
     private fun createScreen(
         onPlanAction: (
             KiteInstallPlanActionIntent,
             (ResourceInstallWizardPlanActionResult) -> Unit,
         ) -> Unit = { _, acknowledge -> acknowledge(ResourceInstallWizardPlanActionResult.Accepted) },
         onOpenRun: (ResourceInstallWizardRunRequest) -> Unit = {},
-        onUninstallFailedResource: (String) -> Unit = {}
+        onUninstallFailedResource: (String) -> Unit = {},
+        onContinueInBackground: () -> Unit = {},
+        onCancelPlan: ((ResourceInstallWizardPlanActionResult) -> Unit) -> Unit = {},
     ): ResourceInstallWizardScreen = ResourceInstallWizardScreen(
         context = ContextThemeWrapper(
             ApplicationProvider.getApplicationContext(),
@@ -245,6 +278,8 @@ class ResourceInstallWizardScreenTest {
         onOpenRun = onOpenRun,
         onUninstallFailedResource = onUninstallFailedResource,
         onReportUnavailable = {},
+        onContinueInBackground = onContinueInBackground,
+        onCancelPlan = onCancelPlan,
         onRetry = {},
         onLiveTickRequired = {}
     )

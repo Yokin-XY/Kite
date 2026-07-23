@@ -697,6 +697,14 @@
     <string name="resource_wizard_detail_completed">执行队列已完成</string>
     <string name="resource_wizard_detail_syncing">正在校准执行状态</string>
     <string name="resource_wizard_status_syncing">校准中</string>
+    <string name="resource_wizard_continue_in_background">后台继续</string>
+    <string name="resource_wizard_cancel_plan">取消获取计划</string>
+    <string name="resource_wizard_cancel_plan_pending">等待确认</string>
+    <string name="resource_wizard_cancel_confirm_title">取消整个获取计划？</string>
+    <string name="resource_wizard_cancel_confirm_summary">将停止尚未完成的获取任务并清理临时内容，已经完成的资源会保留。</string>
+    <string name="resource_wizard_cancel_confirm_action">确认取消</string>
+    <string name="resource_wizard_no_active_plan">当前没有可取消的获取计划</string>
+    <string name="resource_wizard_cancel_failed">取消获取计划失败</string>
     <string name="resource_wizard_action_start">开始获取</string>
     <string name="resource_wizard_action_complete">完成</string>
     <string name="resource_wizard_duration_hours">%1$d小时</string>

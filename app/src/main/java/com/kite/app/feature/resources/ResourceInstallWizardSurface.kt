@@ -24,6 +24,8 @@ internal class ResourceInstallWizardSurface(
     onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     onUninstallFailedResource: (String) -> Unit,
     onReportUnavailable: (String) -> Unit,
+    onContinueInBackground: () -> Unit,
+    onCancelPlan: ((ResourceInstallWizardPlanActionResult) -> Unit) -> Unit,
     onLiveTickRequired: () -> Unit
 ) {
     private val controller = ResourceFeatureController(gateway)
@@ -37,6 +39,8 @@ internal class ResourceInstallWizardSurface(
         onOpenRun = onOpenRun,
         onUninstallFailedResource = onUninstallFailedResource,
         onReportUnavailable = onReportUnavailable,
+        onContinueInBackground = onContinueInBackground,
+        onCancelPlan = onCancelPlan,
         onRetry = { refresh(forceCatalogRefresh = true) },
         onLiveTickRequired = onLiveTickRequired
     )

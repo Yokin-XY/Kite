@@ -46,6 +46,7 @@ internal data class ResourceInstallWizardViewState(
     val primaryLabel: String,
     val primaryEnabled: Boolean,
     val primaryIntent: KiteInstallPlanActionIntent?,
+    val showPlanControls: Boolean,
     val rows: List<ResourceInstallWizardRowViewState>
 )
 
@@ -129,6 +130,10 @@ internal object ResourceInstallWizardPresenter {
             hasPending = hasPending,
             hasFailure = hasFailure
         )
+        val hasPersistedPlan = state.plan.targetResourceId.isNotBlank() || state.plan.resourceIds.isNotEmpty()
+        val showPlanControls = hasPersistedPlan && (
+            isCalibrating || hasRunningStep || hasUninstallingStep || hasFailure || hasPending
+        )
         return ResourceInstallWizardViewState(
             targetResourceId = targetResourceId,
             title = targetName,
@@ -145,6 +150,7 @@ internal object ResourceInstallWizardPresenter {
             },
             primaryEnabled = action.enabled && !isCalibrating,
             primaryIntent = action.intent.takeUnless { isCalibrating },
+            showPlanControls = showPlanControls,
             rows = rows
         )
     }

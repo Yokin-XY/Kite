@@ -24,6 +24,7 @@ import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.application.browser.BrowserHandoffCoordinator
 import com.kite.app.application.browser.BrowserHandoffLaunchResult
 import com.kite.app.application.resources.ResourceRunContinuation
+import com.kite.app.application.resources.ResourceActionEffect
 import com.kite.app.application.resources.ResourceRunLaunchRequest
 import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.runs.RunCommandResult
@@ -377,6 +378,8 @@ class CardRunActivity : AppCompatActivity() {
             onOpenRun = ::openResourceRun,
             onUninstallFailedResource = ::confirmUninstallFailedResource,
             onReportUnavailable = { Toast.makeText(this, "报告正在准备", Toast.LENGTH_SHORT).show() },
+            onContinueInBackground = { closeTaskWindow(CardRunTaskCloseReason.DismissSurface) },
+            onCancelPlan = ::confirmCancelInstallPlan,
             onLiveTickRequired = ::scheduleTickIfNeeded
         )
     }
@@ -619,6 +622,70 @@ class CardRunActivity : AppCompatActivity() {
                 onClick = { uninstallFailedResource(resourceId) },
             ),
         )
+    }
+
+    private fun confirmCancelInstallPlan(
+        acknowledge: (ResourceInstallWizardPlanActionResult) -> Unit,
+    ) {
+        val snapshot = graph.resourceInstallStore.planSnapshot()
+        val targetResourceId = snapshot.targetResourceId
+            .ifBlank { currentTarget?.installTargetResourceId.orEmpty() }
+        val planResourceIds = snapshot.resourceIds
+            .ifEmpty { currentTarget?.installPlanResourceIds.orEmpty() }
+            .ifEmpty { snapshot.pendingResourceIds }
+        if (targetResourceId.isBlank() && planResourceIds.isEmpty()) {
+            Toast.makeText(this, getString(R.string.resource_wizard_no_active_plan), Toast.LENGTH_SHORT).show()
+            acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
+            return
+        }
+        var confirmed = false
+        lateinit var dialog: android.app.Dialog
+        dialog = UiKit(this, kiteThemeEnvironment()).showConfirmDialog(
+            context = this,
+            title = getString(R.string.resource_wizard_cancel_confirm_title),
+            message = getString(R.string.resource_wizard_cancel_confirm_summary),
+            dismissLabel = getString(R.string.common_cancel),
+            primaryAction = com.kite.app.ui.UiDialogAction(
+                label = getString(R.string.resource_wizard_cancel_confirm_action),
+                role = com.kite.app.ui.UiActionRole.Danger,
+                dismissOnClick = false,
+                onClick = {
+                    confirmed = true
+                    dialog.dismiss()
+                    acknowledge(ResourceInstallWizardPlanActionResult.Deferred)
+                    cancelInstallPlan(targetResourceId, planResourceIds, acknowledge)
+                },
+            ),
+        )
+        dialog.setOnDismissListener {
+            if (!confirmed) acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
+        }
+    }
+
+    private fun cancelInstallPlan(
+        targetResourceId: String,
+        planResourceIds: List<String>,
+        acknowledge: (ResourceInstallWizardPlanActionResult) -> Unit,
+    ) {
+        lifecycleScope.launch {
+            runCatching {
+                graph.resourceActionWorkflowCoordinator.cancelPlan(targetResourceId, planResourceIds)
+            }.onSuccess { effects ->
+                effects.filterIsInstance<ResourceActionEffect.Message>().forEach { effect ->
+                    Toast.makeText(this@CardRunActivity, effect.text, Toast.LENGTH_SHORT).show()
+                }
+                acknowledge(ResourceInstallWizardPlanActionResult.Accepted)
+                closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
+            }.onFailure { error ->
+                Toast.makeText(
+                    this@CardRunActivity,
+                    error.message ?: getString(R.string.resource_wizard_cancel_failed),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                acknowledge(ResourceInstallWizardPlanActionResult.Rejected)
+                surfaceHost?.reconcile()
+            }
+        }
     }
 
     private fun uninstallFailedResource(resourceId: String) {

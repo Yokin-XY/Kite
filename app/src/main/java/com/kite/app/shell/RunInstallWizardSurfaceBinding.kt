@@ -23,6 +23,8 @@ internal class RunInstallWizardSurfaceBinding(
     onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     onUninstallFailedResource: (String) -> Unit,
     onReportUnavailable: (String) -> Unit,
+    onContinueInBackground: () -> Unit,
+    onCancelPlan: ((ResourceInstallWizardPlanActionResult) -> Unit) -> Unit,
     onLiveTickRequired: () -> Unit
 ) : RunSurfaceBinding {
     private val surface = ResourceInstallWizardSurface(
@@ -34,6 +36,8 @@ internal class RunInstallWizardSurfaceBinding(
         onOpenRun = onOpenRun,
         onUninstallFailedResource = onUninstallFailedResource,
         onReportUnavailable = onReportUnavailable,
+        onContinueInBackground = onContinueInBackground,
+        onCancelPlan = onCancelPlan,
         onLiveTickRequired = onLiveTickRequired
     )
 

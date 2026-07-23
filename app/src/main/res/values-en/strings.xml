@@ -698,6 +698,14 @@
     <string name="resource_wizard_detail_completed">Queue completed</string>
     <string name="resource_wizard_detail_syncing">Synchronizing execution status</string>
     <string name="resource_wizard_status_syncing">Syncing</string>
+    <string name="resource_wizard_continue_in_background">Continue in background</string>
+    <string name="resource_wizard_cancel_plan">Cancel install plan</string>
+    <string name="resource_wizard_cancel_plan_pending">Awaiting confirmation</string>
+    <string name="resource_wizard_cancel_confirm_title">Cancel the entire install plan?</string>
+    <string name="resource_wizard_cancel_confirm_summary">Unfinished installs will stop and temporary content will be cleaned up. Completed resources will be kept.</string>
+    <string name="resource_wizard_cancel_confirm_action">Cancel plan</string>
+    <string name="resource_wizard_no_active_plan">There is no active install plan to cancel</string>
+    <string name="resource_wizard_cancel_failed">Could not cancel the install plan</string>
     <string name="resource_wizard_action_start">Start installation</string>
     <string name="resource_wizard_action_complete">Done</string>
     <string name="resource_wizard_duration_hours">%1$d hr</string>
