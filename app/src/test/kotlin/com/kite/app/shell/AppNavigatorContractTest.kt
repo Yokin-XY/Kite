@@ -35,6 +35,7 @@ class AppNavigatorContractTest {
             AppDestination.SettingsRuntimeEnvironment to AppDestination.Settings,
             AppDestination.SettingsExperimentalFeatures to AppDestination.Settings,
             AppDestination.SettingsHelpAbout to AppDestination.Settings,
+            AppDestination.SettingsAboutDetail to AppDestination.SettingsHelpAbout,
             AppDestination.ThemeSettings to AppDestination.Settings
         )
 
@@ -122,6 +123,10 @@ class AppNavigatorContractTest {
         assertEquals(
             RestorePolicy.Direct,
             navigator.contract(AppDestination.SettingsHelpAbout).restorePolicy,
+        )
+        assertEquals(
+            RestorePolicy.AsParent(AppDestination.SettingsHelpAbout),
+            navigator.contract(AppDestination.SettingsAboutDetail).restorePolicy,
         )
         assertEquals(RestorePolicy.Direct, navigator.contract(AppDestination.ThemeSettings).restorePolicy)
         assertEquals(RestorePolicy.Direct, navigator.contract(AppDestination.Resources).restorePolicy)

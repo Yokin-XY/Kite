@@ -213,7 +213,7 @@ class SettingsScreenTest {
     }
 
     @Test
-    fun `帮助页显示真实传入版本和日志入口`() {
+    fun `帮助页显示真实版本项目信息和声明入口`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val screen = SettingsCategoryScreen(
             context = activity,
@@ -224,9 +224,33 @@ class SettingsScreenTest {
         )
 
         val texts = screen.root.allTexts()
-        assertTrue(texts.contains(activity.getString(R.string.settings_version_summary, "0.0.4", 4L)))
+        assertTrue(texts.contains(activity.getString(R.string.app_name)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_about_version_value, "0.0.4", 4L)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_about_repository_title)))
         assertTrue(texts.contains(activity.getString(R.string.settings_logs_title)))
-        assertTrue(texts.contains(activity.getString(R.string.settings_diagnostics_scope_title)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_about_open_source_title)))
+        assertTrue(texts.contains(activity.getString(R.string.settings_about_diagnostics_title)))
+    }
+
+    @Test
+    fun `开源组件页使用声明排布并可进入完整声明`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val screen = SettingsAboutDetailScreen(
+            context = activity,
+            initialPage = SettingsAboutPage.OpenSourceComponents,
+            initialState = state(),
+            onBack = {},
+        )
+
+        assertTrue(screen.root.allTexts().contains("Ubuntu"))
+        assertTrue(screen.root.allTexts().contains("AndroidX"))
+        assertTrue(screen.root.allTexts().contains(activity.getString(R.string.settings_about_full_notices_action)))
+
+        screen.root.findTextView(activity.getString(R.string.settings_about_full_notices_action))
+            ?.performClick()
+
+        assertEquals(SettingsAboutPage.FullThirdPartyNotices, screen.currentPage)
+        assertTrue(screen.root.allTexts().contains(activity.getString(R.string.settings_about_full_notices_title)))
     }
 
     @Test
@@ -274,5 +298,15 @@ class SettingsScreenTest {
         if (this@allTexts is ViewGroup) {
             repeat(childCount) { index -> addAll(getChildAt(index).allTexts()) }
         }
+    }
+
+    private fun View.findTextView(value: String): TextView? {
+        if (this is TextView && text.toString() == value) return this
+        if (this is ViewGroup) {
+            repeat(childCount) { index ->
+                getChildAt(index).findTextView(value)?.let { return it }
+            }
+        }
+        return null
     }
 }

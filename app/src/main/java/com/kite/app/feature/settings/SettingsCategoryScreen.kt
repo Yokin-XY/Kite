@@ -1,8 +1,10 @@
 package com.kite.app.feature.settings
 
 import android.content.Context
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import com.kite.app.R
@@ -12,6 +14,7 @@ import com.kite.app.application.runtimebootstrap.RuntimeBootstrapStage
 import com.kite.app.application.runtimebootstrap.RuntimeRootfsPhase
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
+import com.kite.app.ui.UiTextRole
 import com.kite.app.ui.theme.isSystemDarkTheme
 import com.kite.app.ui.terminal.TerminalThemeMode
 import com.kite.app.ui.terminal.TerminalUiPreferences
@@ -45,6 +48,8 @@ internal class SettingsCategoryScreen(
     onOpenProcesses: () -> Unit = {},
     onOpenLogs: () -> Unit = {},
     onOpenDropZone: () -> Unit = {},
+    onOpenAboutPage: (SettingsAboutPage) -> Unit = {},
+    onOpenExternal: (String) -> Unit = {},
 ) {
     private val spec = SettingsCatalog.categories.single { it.destination == destination }
     private val themeEnvironment = KiteTheme.resolve(
@@ -202,23 +207,12 @@ internal class SettingsCategoryScreen(
                         ))
                     }
                     SettingsCategoryDestination.HelpAndAbout -> {
-                        addRow(factory.informationCard(
-                            context.getString(R.string.settings_version_title),
-                            context.getString(
-                                R.string.settings_version_summary,
-                                appInfo.versionName,
-                                appInfo.versionCode,
-                            ),
-                        ), first = true)
-                        addRow(factory.navigationRow(
-                            context.getString(R.string.settings_logs_title),
-                            context.getString(R.string.settings_logs_summary),
-                            onOpenLogs,
-                        ).root)
-                        addRow(factory.informationCard(
-                            context.getString(R.string.settings_diagnostics_scope_title),
-                            context.getString(R.string.settings_diagnostics_scope_summary),
-                        ))
+                        addHelpAboutContent(
+                            appInfo = appInfo,
+                            onOpenLogs = onOpenLogs,
+                            onOpenAboutPage = onOpenAboutPage,
+                            onOpenExternal = onOpenExternal,
+                        )
                     }
                 }
             })
@@ -257,6 +251,108 @@ internal class SettingsCategoryScreen(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ).apply { if (!first) setMargins(0, factory.dp(12), 0, 0) }
         })
+    }
+
+    private fun LinearLayout.addHelpAboutContent(
+        appInfo: SettingsAppInfo,
+        onOpenLogs: () -> Unit,
+        onOpenAboutPage: (SettingsAboutPage) -> Unit,
+        onOpenExternal: (String) -> Unit,
+    ) {
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(factory.dp(2), factory.dp(4), factory.dp(2), factory.dp(14))
+            addView(ImageView(context).apply {
+                setImageResource(R.mipmap.ic_launcher)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                contentDescription = context.getString(R.string.app_name)
+            }, LinearLayout.LayoutParams(factory.dp(64), factory.dp(64)))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(factory.dp(14), 0, 0, 0)
+                addView(factory.textView(context.getString(R.string.app_name), UiTextRole.PageTitle))
+                addView(factory.textView(
+                    context.getString(
+                        R.string.settings_about_version_value,
+                        appInfo.versionName,
+                        appInfo.versionCode,
+                    ),
+                    UiTextRole.Supporting,
+                ).apply { setPadding(0, factory.dp(4), 0, 0) })
+                addView(factory.textView(
+                    context.getString(R.string.settings_about_description),
+                    UiTextRole.Body,
+                ).apply { setPadding(0, factory.dp(8), 0, 0) })
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        })
+
+        addAboutSectionTitle(context.getString(R.string.settings_about_project_section), first = true)
+        addAboutRow(
+            factory.navigationRowWithIcon(
+                context.getString(R.string.settings_about_repository_title),
+                context.getString(R.string.settings_about_repository_summary),
+                R.drawable.ic_open_in_new,
+            ) { onOpenExternal(PROJECT_REPOSITORY_URL) }.root,
+            first = true,
+        )
+        addAboutRow(factory.navigationRowWithIcon(
+            context.getString(R.string.settings_about_releases_title),
+            context.getString(R.string.settings_about_releases_summary),
+            R.drawable.ic_open_in_new,
+        ) { onOpenExternal(PROJECT_RELEASES_URL) }.root)
+
+        addAboutSectionTitle(context.getString(R.string.settings_about_support_section))
+        addAboutRow(
+            factory.navigationRowWithIcon(
+                context.getString(R.string.settings_about_issues_title),
+                context.getString(R.string.settings_about_issues_summary),
+                R.drawable.ic_open_in_new,
+            ) { onOpenExternal(PROJECT_ISSUES_URL) }.root,
+            first = true,
+        )
+        addAboutRow(factory.navigationRowWithIcon(
+            context.getString(R.string.settings_logs_title),
+            context.getString(R.string.settings_logs_summary),
+            R.drawable.ic_chevron_right_light,
+            onOpenLogs,
+        ).root)
+
+        addAboutSectionTitle(context.getString(R.string.settings_about_legal_section))
+        addAboutRow(
+            factory.navigationRowWithIcon(
+                context.getString(R.string.settings_about_license_title),
+                context.getString(R.string.settings_about_license_summary),
+                R.drawable.ic_chevron_right_light,
+            ) { onOpenAboutPage(SettingsAboutPage.KiteLicense) }.root,
+            first = true,
+        )
+        addAboutRow(factory.navigationRowWithIcon(
+            context.getString(R.string.settings_about_open_source_title),
+            context.getString(R.string.settings_about_open_source_summary),
+            R.drawable.ic_chevron_right_light,
+        ) { onOpenAboutPage(SettingsAboutPage.OpenSourceComponents) }.root)
+        addAboutRow(factory.navigationRowWithIcon(
+            context.getString(R.string.settings_about_diagnostics_title),
+            context.getString(R.string.settings_about_diagnostics_summary),
+            R.drawable.ic_chevron_right_light,
+        ) { onOpenAboutPage(SettingsAboutPage.Diagnostics) }.root)
+    }
+
+    private fun LinearLayout.addAboutSectionTitle(title: String, first: Boolean = false) {
+        addView(factory.sectionTitle(title).apply {
+            setPadding(0, 0, 0, factory.dp(8))
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { if (!first) setMargins(0, factory.dp(16), 0, 0) })
+    }
+
+    private fun LinearLayout.addAboutRow(view: View, first: Boolean = false) {
+        addView(view, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply { if (!first) setMargins(0, factory.dp(6), 0, 0) })
     }
 
     private fun notificationSummary(enabled: Boolean): String = context.getString(
@@ -313,4 +409,10 @@ internal class SettingsCategoryScreen(
             else -> R.string.settings_runtime_not_ready_summary
         },
     )
+
+    private companion object {
+        const val PROJECT_REPOSITORY_URL = "https://github.com/Yokin-XY/Kite"
+        const val PROJECT_RELEASES_URL = "$PROJECT_REPOSITORY_URL/releases/latest"
+        const val PROJECT_ISSUES_URL = "$PROJECT_REPOSITORY_URL/issues"
+    }
 }

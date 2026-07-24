@@ -2,6 +2,7 @@ package com.kite.app.feature.settings
 
 import android.app.Dialog
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -10,6 +11,7 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
@@ -19,6 +21,8 @@ import com.kite.app.theme.ThemeTokens
 import com.kite.app.theme.ThemeEnvironment
 import com.kite.app.ui.UiKit
 import com.kite.app.ui.UiTextRole
+import androidx.annotation.DrawableRes
+import androidx.appcompat.content.res.AppCompatResources
 
 internal class SettingsViewFactory(
     private val context: Context,
@@ -92,6 +96,38 @@ internal class SettingsViewFactory(
         return NavigationBinding(root, subtitleView, title).also { it.bind(subtitle) }
     }
 
+    /** 帮助页的动作卡片使用真实矢量图标区分内部导航与外部链接。 */
+    fun navigationRowWithIcon(
+        title: String,
+        subtitle: String,
+        @DrawableRes trailingIcon: Int,
+        onClick: () -> Unit,
+    ): NavigationBinding {
+        val subtitleView = subtitleView(subtitle)
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(9), dp(12), dp(9))
+            background = containerBackground(tokens.cardBackground, tokens.border, components.interactiveCard)
+            elevation = dp(components.interactiveCard.elevation).toFloat()
+            addView(labelColumn(title, subtitleView), LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f,
+            ))
+            addView(ImageView(context).apply {
+                setImageDrawable(AppCompatResources.getDrawable(context, trailingIcon))
+                imageTintList = ColorStateList.valueOf(tokens.textTertiary)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dp(7), dp(7), dp(7), dp(7))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(dp(34), dp(38)))
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+        return NavigationBinding(root, subtitleView, title).also { it.bind(subtitle) }
+    }
+
     fun switchRow(
         title: String,
         subtitle: String,
@@ -133,6 +169,11 @@ internal class SettingsViewFactory(
         this.text = text
         ui.applyTextRole(this, UiTextRole.SectionTitle)
         setPadding(0, 0, 0, dp(12))
+    }
+
+    fun textView(text: String, role: UiTextRole): TextView = TextView(context).apply {
+        this.text = text
+        ui.applyTextRole(this, role)
     }
 
     fun informationCard(title: String, summary: String): View =

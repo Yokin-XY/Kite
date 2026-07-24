@@ -1552,6 +1552,8 @@ open class MainActivity : AppCompatActivity() {
                 SettingsFeatureRequest.OpenAllFilesSettings -> openAllFilesAccessSettings()
                 SettingsFeatureRequest.OpenProcesses -> showKiteProcessOverview(onBack = { showSettingsCategory(SettingsCategoryDestination.RuntimeEnvironment) })
                 SettingsFeatureRequest.OpenLogs -> startActivity(Intent(this, LogActivity::class.java))
+                is SettingsFeatureRequest.OpenAboutPage -> enterScreen(AppDestination.SettingsAboutDetail).also { showFeatureFragment(com.kite.app.feature.settings.SettingsAboutDetailFragment.newInstance(request.page), TAG_SETTINGS_CATEGORY_FRAGMENT) }
+                is SettingsFeatureRequest.OpenExternalLink -> openCustomTabOrSystemBrowser(Uri.parse(request.url))
                 is SettingsFeatureRequest.OpenDropZone -> {
                     if (request.available) refreshDropZoneRecipes() else requestDropZoneAccess()
                 }

@@ -82,6 +82,8 @@ internal class SettingsCategoryFragment : Fragment() {
         onOpenProcesses = { send(SettingsFeatureRequest.OpenProcesses) },
         onOpenLogs = { send(SettingsFeatureRequest.OpenLogs) },
         onOpenDropZone = { dispatch(SettingsFeatureAction.OpenDropZone) },
+        onOpenAboutPage = { page -> send(SettingsFeatureRequest.OpenAboutPage(page)) },
+        onOpenExternal = { url -> send(SettingsFeatureRequest.OpenExternalLink(url)) },
     ).also { screen = it }.root
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {

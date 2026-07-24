@@ -16,6 +16,8 @@ internal sealed interface SettingsFeatureRequest {
     data object OpenAllFilesSettings : SettingsFeatureRequest
     data object OpenProcesses : SettingsFeatureRequest
     data object OpenLogs : SettingsFeatureRequest
+    data class OpenAboutPage(val page: SettingsAboutPage) : SettingsFeatureRequest
+    data class OpenExternalLink(val url: String) : SettingsFeatureRequest
     data class OpenDropZone(val available: Boolean) : SettingsFeatureRequest
 }
 
@@ -40,6 +42,12 @@ internal object SettingsFeatureResultContract {
         KIND_ALL_FILES -> SettingsFeatureRequest.OpenAllFilesSettings
         KIND_PROCESSES -> SettingsFeatureRequest.OpenProcesses
         KIND_LOGS -> SettingsFeatureRequest.OpenLogs
+        KIND_ABOUT_PAGE -> bundle.getString(KEY_ABOUT_PAGE)
+            ?.let { value -> runCatching { SettingsAboutPage.valueOf(value) }.getOrNull() }
+            ?.let(SettingsFeatureRequest::OpenAboutPage)
+        KIND_EXTERNAL_LINK -> bundle.getString(KEY_URL)
+            ?.takeIf(String::isNotBlank)
+            ?.let(SettingsFeatureRequest::OpenExternalLink)
         KIND_DROP_ZONE -> SettingsFeatureRequest.OpenDropZone(bundle.getBoolean(KEY_AVAILABLE))
         else -> null
     }
@@ -61,6 +69,14 @@ internal object SettingsFeatureResultContract {
             SettingsFeatureRequest.OpenAllFilesSettings -> putString(KEY_KIND, KIND_ALL_FILES)
             SettingsFeatureRequest.OpenProcesses -> putString(KEY_KIND, KIND_PROCESSES)
             SettingsFeatureRequest.OpenLogs -> putString(KEY_KIND, KIND_LOGS)
+            is SettingsFeatureRequest.OpenAboutPage -> {
+                putString(KEY_KIND, KIND_ABOUT_PAGE)
+                putString(KEY_ABOUT_PAGE, request.page.name)
+            }
+            is SettingsFeatureRequest.OpenExternalLink -> {
+                putString(KEY_KIND, KIND_EXTERNAL_LINK)
+                putString(KEY_URL, request.url)
+            }
             is SettingsFeatureRequest.OpenDropZone -> {
                 putString(KEY_KIND, KIND_DROP_ZONE)
                 putBoolean(KEY_AVAILABLE, request.available)
@@ -72,6 +88,8 @@ internal object SettingsFeatureResultContract {
     private const val THEME_PREFIX = "theme"
     private const val KEY_AVAILABLE = "available"
     private const val KEY_CATEGORY = "category"
+    private const val KEY_ABOUT_PAGE = "about_page"
+    private const val KEY_URL = "url"
     private const val KIND_BACK = "back"
     private const val KIND_OPEN_CATEGORY = "open_category"
     private const val KIND_OPEN_THEME = "open_theme"
@@ -81,5 +99,7 @@ internal object SettingsFeatureResultContract {
     private const val KIND_ALL_FILES = "all_files"
     private const val KIND_PROCESSES = "processes"
     private const val KIND_LOGS = "logs"
+    private const val KIND_ABOUT_PAGE = "about_page"
+    private const val KIND_EXTERNAL_LINK = "external_link"
     private const val KIND_DROP_ZONE = "drop_zone"
 }

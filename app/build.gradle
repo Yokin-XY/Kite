@@ -3,6 +3,15 @@ plugins {
     id "org.jetbrains.kotlin.android"
 }
 
+def generatedLegalAssetsDir = layout.buildDirectory.dir("generated/legal-assets")
+def syncLegalDocuments = tasks.register("syncLegalDocuments", Sync) {
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE.txt" }
+    }
+    from(rootProject.file("THIRD_PARTY_NOTICES.md"))
+    into(generatedLegalAssetsDir.map { it.dir("legal") })
+}
+
 android {
     namespace "com.kite.app"
     compileSdk 34
@@ -31,6 +40,7 @@ android {
     sourceSets {
         main {
             assets.srcDir "../assets"
+            assets.srcDir generatedLegalAssetsDir
         }
     }
 
@@ -45,6 +55,10 @@ android {
         // Kite 当前通过 GitHub 直接分发，并依赖 targetSdk 28 的兼容行为。
         disable "ExpiredTargetSdkVersion"
     }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(syncLegalDocuments)
 }
 
 dependencies {

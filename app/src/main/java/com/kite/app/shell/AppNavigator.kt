@@ -23,6 +23,7 @@ internal enum class AppDestination {
     SettingsRuntimeEnvironment,
     SettingsExperimentalFeatures,
     SettingsHelpAbout,
+    SettingsAboutDetail,
     ThemeSettings
 }
 
@@ -234,6 +235,12 @@ internal class AppNavigator(
                 DestinationKind.Child,
                 BackPolicy.Parent(AppDestination.Settings),
                 RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsAboutDetail,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.SettingsHelpAbout),
+                RestorePolicy.AsParent(AppDestination.SettingsHelpAbout)
             ),
             DestinationContract(
                 AppDestination.ThemeSettings,

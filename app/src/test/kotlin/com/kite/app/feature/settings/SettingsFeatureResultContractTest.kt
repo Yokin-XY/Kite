@@ -78,4 +78,30 @@ class SettingsFeatureResultContractTest {
             )
         }
     }
+
+    @Test
+    fun `帮助详情页目标通过类型化名称解析`() {
+        val bundle = Bundle().apply {
+            putString("kind", "about_page")
+            putString("about_page", SettingsAboutPage.OpenSourceComponents.name)
+        }
+
+        assertEquals(
+            SettingsFeatureRequest.OpenAboutPage(SettingsAboutPage.OpenSourceComponents),
+            SettingsFeatureResultContract.parse(bundle),
+        )
+    }
+
+    @Test
+    fun `外部项目链接通过类型化请求解析`() {
+        val bundle = Bundle().apply {
+            putString("kind", "external_link")
+            putString("url", "https://github.com/Yokin-XY/Kite")
+        }
+
+        assertEquals(
+            SettingsFeatureRequest.OpenExternalLink("https://github.com/Yokin-XY/Kite"),
+            SettingsFeatureResultContract.parse(bundle),
+        )
+    }
 }
