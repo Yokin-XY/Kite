@@ -86,14 +86,13 @@
           }
         ],
         "managedCommands": [
-          "reasonix",
-          "dsnix"
+          "reasonix"
         ],
         "cleanInstallRoot": true,
         "verify": [
           {
             "id": "reasonix-commands",
-            "cmd": "command -v reasonix >/dev/null 2>&1 && command -v dsnix >/dev/null 2>&1"
+            "cmd": "command -v reasonix >/dev/null 2>&1 
           }
         ],
         "timeoutMs": 600000
@@ -127,8 +126,7 @@
         "type": "shell",
         "cmd": ":",
         "managedCommands": [
-          "reasonix",
-          "dsnix"
+          "reasonix"
         ],
         "npmUninstallPackage": "reasonix",
         "timeoutMs": 180000
