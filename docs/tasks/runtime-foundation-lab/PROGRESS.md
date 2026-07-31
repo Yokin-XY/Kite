@@ -61,8 +61,8 @@
 | RF1040 | 已完成 | 1464 项全量回归、强制构建、连续三轮真机矩阵与范围审查通过 |
 | RF1100 | 进行中 | 研究只覆盖 PRoot 启动窗口的跨入口协调，不占用会话全生命周期 |
 | RF1110 | 已完成 | 真实创建点和 READY 边界已审计，生产入口未修改 |
-| RF1120 | 进行中 | Debug 固定并发启动矩阵 |
-| RF1130 | 待开始 | 依据真机收益给出 go/no-go 与生产合同 |
+| RF1120 | 已完成 | 两整轮 28×3 固定矩阵零失败、零残留，READY 收窄稳定变慢 |
+| RF1130 | 进行中 | 依据真机收益给出 go/no-go 与生产合同 |
 | RF1140 | 待开始 | 只在 go 时生产接线并关闭父任务门 |
 
 ## RF110 开机与三问自检
@@ -309,6 +309,16 @@
 - 进一步逐入口复核：终端现有 `isRunning + pid` 仍不足以证明 shell 可交互；Agent 的 ACP initialize 是强 READY；后台已有长期 lease 且必须避免双重排队；有界 exec 已由完整任务 admission 覆盖；bootstrap 有固定 token 但属于准备事务；Bridge/ADB 仍存在直接创建旁路。
 - `ProotLaunchPlan` 已有 lane/purpose，但两类物理 config 丢失该 metadata。若矩阵 go，正确接线顺序是先透传结构化 launch metadata，再由实际创建者持有两阶段 lease；禁止从 argv 或资源/Agent 身份反推。
 - RF1110 完成，进入 RF1120 固定矩阵。矩阵先证明“只包围 start()”与“包围到 READY”的差异，不接生产入口。
+
+## RF1120 Debug 固定并发启动矩阵
+
+- 新增 Debug-only 无参数 service。命令固定为结构化 `/bin/sh -c`：先输出 `KF_LAUNCH_READY`，再继续存活 250ms；ADB 不能传入命令、路径、并发、窗口或业务身份。每个批次在创建前准备独立 config，统一起跑，记录 queue/start-return/READY/exit，并强制清理超时进程。
+- 单次 suite 固定 28 个 case：并发 1/2/4/8；无协调、start-return 释放和 READY 释放；窗口 1/2/4；每 case 三轮。OnePlus 8T 连续执行两套完整 suite，共 168 个批次，全部零失败、零残留，suite 均 28/28 通过。
+- 第一套 8 并发：无协调 ready P95/wall=66/369ms；start-return 窗口 1/2/4 为 84/66/65ms、wall 388/370/366ms；READY 窗口 1/2/4 为 160/95/78ms、wall 463/396/378ms。
+- 第二套 8 并发：无协调 ready P95/wall=70/353ms；start-return 窗口 1/2/4 为 63/58/58ms、wall 365/359/360ms；READY 窗口 1/2/4 为 194/107/77ms、wall 494/403/365ms。
+- READY 收窄在两套中均单调增加排队和尾延迟，窗口 1 最差。start-return 偶有 P95 改善，但第一套只能追平、第二套 batch wall 仍无改善，不能形成稳定收益。
+- 强制 Debug 构建通过。APK 241,350,068 bytes，SHA-256 `86CE1D1306C44C809EB7C2A3FA2B984DA5B33BA4E4014AB382D60EA83FF644AB`，已覆盖安装 OnePlus 8T；无匹配 FATAL/ANR，构建物未进入 Git。
+- RF1120 完成，RF1130 按预设发布门给出 go/no-go，不因代码已存在而放宽标准。
 
 ## RF710 开机与三问自检
 
