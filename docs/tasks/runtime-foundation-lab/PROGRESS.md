@@ -30,7 +30,8 @@
 | RF600 | 进行中 | 只先做 owner lease 合同与模拟器，不迁移终端/Agent |
 | RF610 | 已完成 | 长期 owner 状态机保持进程身份、停止意图与容量直到确认释放 |
 | RF620 | 已完成 | 容量、压力、维护屏障、去重和跨 lane 公平性纯模拟通过 |
-| RF630 | 进行中 | 固定重启恢复、PID 代次、停止竞态与孤儿协调合同 |
+| RF630 | 已完成 | 恢复去重、PID 代次、孤儿容量与停止优先合同通过 |
+| RF640 | 进行中 | 只投影低基数规划态数字，不混入 actual RuntimeHealth |
 | RF700 | 待研究 | 固定 1/2/4 之上的设备自适应校准 |
 
 ## RF110 开机与三问自检
@@ -69,6 +70,12 @@
 - 完成后拿什么证明？相关回归、强制全量单测、强制 Debug 构建、OnePlus 8T 冷启动/温复用/压力收缩/空闲行为/服务健康链与 ANR/FATAL 检查；Git 工作树干净、每个叶子提交可独立回退。
 - 依赖是否满足？满足。RF510～RF540 均已独立实现和验证；Node/Python 历史矩阵仍冻结，本门只验证本阶段新增合同和跨模块回归。
 
+## RF640 开机与三问自检
+
+- 目标是什么？把 RF620/RF630 的纯规划结果投影为有界、低基数、明确标注 `planned_not_production` 的诊断字段，同时不污染 RF510 的 actual PRoot 调度事实。
+- 完成后拿什么证明？字段只含 phase/kind/lane/action/process-match 的固定枚举计数和容量数字；不含 ownerId、leaseId、PID、启动代次、路径、命令、Agent/session 身份；读取不扫描、不恢复、不改模拟器。
+- 依赖是否满足？满足。RF620 已有稳定容量快照，RF630 已有一 owner 一 decision 的恢复计划；二者均为调用方提供的不可变值，不需要创建第二个状态源。
+
 ## RF630 开机与三问自检
 
 - 目标是什么？在不创建第二进程的前提下，固定应用重启后如何恢复 owner lease、如何核对 PID 启动代次、如何处理丢失进程与主动停止竞态。
@@ -88,6 +95,14 @@
 - 依赖是否满足？满足。RF500 已提供 actual admission/telemetry，但其 lease 仍以调用栈为寿命；现有 `CardRunStore`、`BackgroundRuntimeRegistry` 和 Agent binding 可作为未来 owner 事实源，本任务只定义桥接合同，不复制状态。
 
 ## 倒序日志
+
+### 2026-08-01 RF630 重启恢复与孤儿协调
+
+- 新增纯 `LongLivedProotRecoveryPlanner`，输入持久化 lease、调用方观察到的存活进程代次和停止意图；自身不读 `/proc`、不创建/停止进程、不连接生产 Registry，计划固定 `processStartsRequested=0`。
+- 恢复只接受 `(hostPid, processStartTicks)` 精确匹配；同 PID 新启动代次标记 `PID_REUSED` 并进入 orphan review，原进程身份不被覆盖。未发现进程同样进入/保持 orphan review并继续占容量，直到 owner 明确确认死亡。
+- 同 owner 只保留最高 generation；完全重复折叠，同代次冲突固定排序后标记 `DUPLICATE_CONFLICT_REVIEW`，不猜测哪份记录正确。跨 owner 若声称同一进程代次，两边都进入 `PROCESS_IDENTITY_CONFLICT_REVIEW`，禁止双重绑定。未启动的 `ADMITTED` 安全释放，未持久化身份的 `STARTING` 保持 review，不再启动第二进程。
+- 恢复前收到停止请求时先写入停止意图；即使随后精确重连也恢复为 `STOPPING`。RF610 新增 orphan 内停止转换，避免恢复竞态把用户停止覆盖成运行。
+- RF610～RF630 共 3 个 suite、29 项测试零失败，Debug 构建成功。首次测试编译只发现测试 helper 的可空诊断文本类型错误，修正后同范围通过，没有绕过恢复行为断言。
 
 ### 2026-08-01 RF620 长期 owner 容量与公平性模拟器
 

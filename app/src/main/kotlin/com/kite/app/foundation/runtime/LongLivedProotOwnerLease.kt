@@ -219,6 +219,25 @@ internal object LongLivedProotOwnerLeaseTransitions {
         )
     }
 
+    fun requestStopDuringOrphan(
+        record: LongLivedProotLeaseRecord,
+        nowMs: Long,
+    ): LongLivedProotLeaseTransition {
+        if (record.phase != LongLivedProotLeasePhase.ORPHAN_REVIEW) {
+            return rejected(record, "long_lived_orphan_stop_requires_orphan_review")
+        }
+        if (record.phaseBeforeOrphan == LongLivedProotLeasePhase.STOPPING) {
+            return LongLivedProotLeaseTransition(record, changed = false)
+        }
+        if (nowMs < record.updatedAtMs) return rejected(record, "long_lived_transition_time_regressed")
+        return accepted(
+            record.copy(
+                phaseBeforeOrphan = LongLivedProotLeasePhase.STOPPING,
+                updatedAtMs = nowMs,
+            )
+        )
+    }
+
     fun confirmStopped(record: LongLivedProotLeaseRecord, nowMs: Long): LongLivedProotLeaseTransition {
         if (record.phase != LongLivedProotLeasePhase.STOPPING) {
             return rejected(record, "long_lived_stop_confirmation_requires_stopping")

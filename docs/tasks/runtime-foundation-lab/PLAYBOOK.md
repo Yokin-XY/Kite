@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF600` 长生命周期 owner lease 预研
-- 当前任务：`RF630` 重启恢复与 orphan reconciliation
+- 当前任务：`RF640` 长期 lease 规划态可观测性
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -441,7 +441,11 @@
 #### RF630 重启恢复与 orphan reconciliation
 
 - 解法：模拟应用重启后的记录恢复、同进程重连、PID 复用防护、无进程进入 orphan review、死亡确认释放和 owner 主动停止竞争。
-- 验收标准：恢复不创建第二进程、不复制 owner；PID 相同但启动代次不同拒绝；恢复与停止竞态确定化。
+- 验收标准：
+  - [x] 恢复不创建第二进程，每个 owner 只保留一个最高代次决定；
+  - [x] PID 相同但启动代次不同视为复用并进入 orphan review，不重连；
+  - [x] 未观察到进程时继续占容量，只有死亡确认释放；
+  - [x] 恢复与停止竞态由停止意图优先确定化，冲突记录显式进入 review。
 - 依赖：RF620。
 
 #### RF640 长期 lease 规划态可观测性
