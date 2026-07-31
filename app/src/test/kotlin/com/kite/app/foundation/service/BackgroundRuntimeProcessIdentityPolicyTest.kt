@@ -125,6 +125,31 @@ class BackgroundRuntimeProcessIdentityPolicyTest {
         )
     }
 
+    @Test
+    fun `pending stop confirms only a gone generation and otherwise remains review`() {
+        val confirmed = selectRefreshedBackgroundRuntimeStatus(
+            currentStatus = BackgroundRuntimeStatus.RUNNING,
+            localHandleAlive = false,
+            externalServiceAlive = true,
+            withinStartingGrace = false,
+            expectedStopPending = true,
+            identityReview = true,
+            originalProcessGone = true,
+        )
+        val review = selectRefreshedBackgroundRuntimeStatus(
+            currentStatus = BackgroundRuntimeStatus.RUNNING,
+            localHandleAlive = false,
+            externalServiceAlive = false,
+            withinStartingGrace = false,
+            expectedStopPending = true,
+            identityReview = true,
+            originalProcessGone = false,
+        )
+
+        assertEquals(BackgroundRuntimeStatus.STOPPED, confirmed)
+        assertEquals(BackgroundRuntimeStatus.RUNNING, review)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `observation for another pid is rejected before a decision is made`() {
         BackgroundRuntimeProcessIdentityPolicy.decide(

@@ -8,6 +8,7 @@ import com.kite.app.foundation.service.BackgroundRuntimeHost
 import com.kite.app.foundation.service.BackgroundRuntimeRegistry
 import com.kite.app.foundation.service.BackgroundRuntimeStatus
 import com.kite.app.foundation.service.isActiveStatus
+import com.kite.app.foundation.service.persistedProcessIdentityOrNull
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.contracts.ManagedTerminalRecord
@@ -190,6 +191,14 @@ object RuntimeStateReconciler {
             System.currentTimeMillis() - current.lastStartedAt < BACKGROUND_START_GRACE_MS
         if (withinGrace) {
             return ReconcileOutcome.SKIPPED_GRACE
+        }
+        if (current.persistedProcessIdentityOrNull() != null) {
+            Logger.i(
+                LOG_TAG,
+                "strong background identity delegates stop confirmation: runtime=$runtimeId"
+            )
+            BackgroundRuntimeHost.refreshRuntimeStatuses(context, current.spaceId)
+            return ReconcileOutcome.SKIPPED_UNKNOWN
         }
 
         val stopReconciliation = RuntimeProcessStopReconciliation.evaluate(

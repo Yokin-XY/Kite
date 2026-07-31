@@ -99,8 +99,29 @@ object BackgroundRuntimeHost {
 
     private data class ExternalRuntimeProbe(
         val alive: Boolean,
-        val hostPid: Int? = null
+        val hostPid: Int? = null,
+        val identityReview: Boolean = false,
+        val originalProcessGone: Boolean = false,
+        val preservePersistedPidForReview: Boolean = false,
     )
+
+    private data class RuntimeHostProcessResolution(
+        val identityDecision: BackgroundRuntimeProcessIdentityDecision,
+        val exactOwnedPid: Int? = null,
+    ) {
+        val identityReview: Boolean
+            get() = identityDecision.recoveryAction ==
+                BackgroundRuntimeRecoveryAction.REVIEW_WITHOUT_ATTACH ||
+                (
+                    identityDecision.recoveryAction ==
+                        BackgroundRuntimeRecoveryAction.ATTACH_EXACT_PROCESS &&
+                        exactOwnedPid == null
+                    )
+
+        val originalProcessGone: Boolean
+            get() = identityDecision.stopAction ==
+                BackgroundRuntimeStopAction.CONFIRM_ORIGINAL_EXITED
+    }
 
     private data class CachedExternalRuntimeProbe(
         val checkedAtMs: Long,
@@ -1197,29 +1218,11 @@ object BackgroundRuntimeHost {
                     stoppingRuntimeIds.remove(record.id) != null
                 }
                 if (stopRequested) {
-                    BackgroundRuntimeRegistry.updateStatus(
-                        context = appContext,
-                        runtimeId = record.id,
-                        status = BackgroundRuntimeStatus.STOPPED,
-                        pid = null,
+                    confirmProcessRuntimeStopped(
+                        appContext = appContext,
+                        record = record,
                         lastExitCode = exitCode,
-                        lastError = null
                     )
-                    BackgroundRuntimeRegistry.updateHealth(
-                        context = appContext,
-                        runtimeId = record.id,
-                        healthStatus = BackgroundRuntimeHealthStatus.INACTIVE,
-                        lastHealthSummary = BackgroundRuntimeHealthText.STOPPED,
-                        lastHealthCheckedAt = null
-                    )
-                    releaseProotCapacityBudgetIfTerminal(record.id)
-                    markRuntimeManuallyStopped(appContext, record.id)
-                    RuntimeProcessStopReconciliation.markExpectedStop(
-                        context = appContext,
-                        runtimeId = record.id,
-                        source = RuntimeProcessStopReconciliation.MANUAL_STOP_REASON
-                    )
-                    clearRuntimeHealthProbe(record.id)
                     writeLog(logFile, "== ${record.title} 已按请求停止，exitCode=$exitCode ==\n")
                     return@launch
                 }
@@ -1478,33 +1481,84 @@ object BackgroundRuntimeHost {
         synchronized(stoppingRuntimeIds) {
             stoppingRuntimeIds[record.id] = System.currentTimeMillis()
         }
-        val handle = handles.remove(record.id)
+        markRuntimeManuallyStopped(appContext, record.id)
+        RuntimeProcessStopReconciliation.markExpectedStop(
+            context = appContext,
+            runtimeId = record.id,
+            source = RuntimeProcessStopReconciliation.MANUAL_STOP_REASON
+        )
+        val stoppingRecord = BackgroundRuntimeRegistry.get(appContext, record.id) ?: record
+        val handle = handles[record.id]
         val logFile = handle?.logFile ?: BackgroundRuntimeRegistry.buildLogFile(appContext, record.id)
         if (handle == null) {
-            Logger.i(LOG_TAG, "后台停止请求未命中本地句柄，尝试按外部进程补偿: ${record.id}")
+            Logger.i(LOG_TAG, "后台停止请求未命中本地句柄，按强身份检查外部进程: ${record.id}")
         }
 
         writeLog(logFile, "== 收到停止请求 ==\n")
-        val hostPid = handle?.process?.safePid() ?: resolveRuntimeHostPid(appContext, record)
+        var identityReview = false
+        var stopConfirmed = false
+        val hostPid = handle?.process?.safePid() ?: stoppingRecord.pid
         val stopAuditSeed = HostStopAuditor.capture(hostPid ?: -1, LOG_TAG)
-        if (hostPid != null && hostPid > 0) {
-            val outcome = kotlinx.coroutines.runBlocking {
-                HostProcessTerminator.terminateHostProcess(hostPid) { message ->
-                    Logger.i(LOG_TAG, "后台停止补偿: runtime=${record.id} pid=$hostPid $message")
-                }
+        if (handle != null) {
+            handle.process.destroy()
+            if (handle.process.isAlive) {
+                runCatching { handle.process.waitFor(900L, TimeUnit.MILLISECONDS) }
             }
+            if (handle.process.isAlive) {
+                handle.process.destroyForcibly()
+                runCatching { handle.process.waitFor(400L, TimeUnit.MILLISECONDS) }
+            }
+            stopConfirmed = !handle.process.isAlive
             writeLog(
                 logFile,
-                "== 停止补偿 pid=$hostPid exited=${outcome.exited} term=${outcome.sentTerminate} kill=${outcome.sentKill} ==\n"
+                "== 本地句柄停止确认 pid=${hostPid ?: 0} exited=$stopConfirmed ==\n"
             )
         } else {
-            writeLog(logFile, "== 停止补偿未命中宿主 pid ==\n")
-        }
-        if (handle?.process?.isAlive == true) {
-            handle.process.destroy()
-        }
-        if (handle?.process?.isAlive == true) {
-            handle.process.destroyForcibly()
+            val snapshot = HostProcessInspector.readSnapshot(
+                logTag = LOG_TAG,
+                timeoutSeconds = PROCESS_STATUS_TIMEOUT_SECONDS,
+            )
+            val resolution = inspectRuntimeHostProcess(appContext, stoppingRecord, snapshot)
+            identityReview = resolution.identityReview
+            val exactPid = resolution.exactOwnedPid
+            val persistedIdentity = stoppingRecord.persistedProcessIdentityOrNull()
+            when {
+                exactPid != null && persistedIdentity != null -> {
+                    val outcome = kotlinx.coroutines.runBlocking {
+                        HostProcessTerminator.terminateExactHostProcess(
+                            pid = exactPid,
+                            isExactProcess = {
+                                HostProcessInspector.readAppProcessIdentity(exactPid, LOG_TAG) ==
+                                    persistedIdentity
+                            },
+                        ) { message ->
+                            Logger.i(
+                                LOG_TAG,
+                                "后台强身份停止: runtime=${record.id} pid=$exactPid $message"
+                            )
+                        }
+                    }
+                    stopConfirmed = outcome.exited
+                    writeLog(
+                        logFile,
+                        "== 强身份停止 pid=$exactPid exited=${outcome.exited} " +
+                            "term=${outcome.sentTerminate} kill=${outcome.sentKill} ==\n"
+                    )
+                }
+                resolution.originalProcessGone -> {
+                    stopConfirmed = true
+                    writeLog(
+                        logFile,
+                        "== 原进程代次已退出 match=${resolution.identityDecision.processMatch.name} ==\n"
+                    )
+                }
+                else -> {
+                    writeLog(
+                        logFile,
+                        "== 停止待身份确认 match=${resolution.identityDecision.processMatch.name} ==\n"
+                    )
+                }
+            }
         }
         kotlinx.coroutines.runBlocking {
             HostStopAuditor.audit(stopAuditSeed, LOG_TAG)
@@ -1512,33 +1566,70 @@ object BackgroundRuntimeHost {
             Logger.i(LOG_TAG, "后台停止诊断: runtime=${record.id} ${report.toCompactSummary()}")
             writeLog(logFile, report.toLogBlock("停止诊断 ${record.title}"))
         }
+        if (stopConfirmed) {
+            confirmProcessRuntimeStopped(appContext, stoppingRecord, lastExitCode = null)
+            if (handle != null) {
+                handles.remove(record.id, handle)
+            }
+        } else {
+            BackgroundRuntimeRegistry.updateHealth(
+                context = appContext,
+                runtimeId = record.id,
+                healthStatus = BackgroundRuntimeHealthStatus.UNKNOWN,
+                lastHealthSummary = if (identityReview) {
+                    BackgroundRuntimeHealthText.STOPPING_REVIEW
+                } else {
+                    BackgroundRuntimeHealthText.STOPPING_PENDING
+                },
+                lastHealthCheckedAt = null,
+            )
+        }
+        if (handle == null) {
+            stoppingRuntimeIds.remove(record.id)
+        }
+        externalRuntimeProbeCache.remove(record.id)
+        RuntimeFrameCoordinator.refreshProcessSnapshot(
+            context = appContext,
+            reason = if (stopConfirmed) {
+                "background-runtime-stopped:${record.id}"
+            } else {
+                "background-runtime-stop-pending:${record.id}"
+            }
+        )
+        scheduleProcessRefreshBurst(appContext)
+        if (!stopConfirmed) {
+            scheduleRuntimeStatusRefreshBurst(appContext, record.id)
+        }
+    }
+
+    private fun confirmProcessRuntimeStopped(
+        appContext: Context,
+        record: BackgroundRuntimeRecord,
+        lastExitCode: Int?,
+    ) {
         BackgroundRuntimeRegistry.updateStatus(
             context = appContext,
             runtimeId = record.id,
             status = BackgroundRuntimeStatus.STOPPED,
             pid = null,
-            lastError = null
+            lastExitCode = lastExitCode,
+            lastError = null,
         )
         BackgroundRuntimeRegistry.updateHealth(
             context = appContext,
             runtimeId = record.id,
             healthStatus = BackgroundRuntimeHealthStatus.INACTIVE,
             lastHealthSummary = BackgroundRuntimeHealthText.STOPPED,
-            lastHealthCheckedAt = null
+            lastHealthCheckedAt = null,
         )
         releaseProotCapacityBudgetIfTerminal(record.id)
         markRuntimeManuallyStopped(appContext, record.id)
         RuntimeProcessStopReconciliation.markExpectedStop(
             context = appContext,
             runtimeId = record.id,
-            source = RuntimeProcessStopReconciliation.MANUAL_STOP_REASON
+            source = RuntimeProcessStopReconciliation.MANUAL_STOP_REASON,
         )
         clearRuntimeHealthProbe(record.id)
-        RuntimeFrameCoordinator.refreshProcessSnapshot(
-            context = appContext,
-            reason = "background-runtime-stopped:${record.id}"
-        )
-        scheduleProcessRefreshBurst(appContext)
     }
 
     private fun refreshProcessRuntimeStatus(appContext: Context, record: BackgroundRuntimeRecord) {
@@ -1556,24 +1647,35 @@ object BackgroundRuntimeHost {
         }
         val externalAlive = externalProbe.alive
         val externalPid = externalProbe.hostPid
-        val nextStatus = when {
-            isAlive || externalAlive -> BackgroundRuntimeStatus.RUNNING
-            withinStartingGrace -> BackgroundRuntimeStatus.STARTING
-            record.status.isActiveStatus() -> BackgroundRuntimeStatus.STOPPED
-            else -> record.status
-        }
+        val expectedStopPending = record.hasExpectedStopIntent()
+        val nextStatus = selectRefreshedBackgroundRuntimeStatus(
+            currentStatus = record.status,
+            localHandleAlive = isAlive,
+            externalServiceAlive = externalAlive,
+            withinStartingGrace = withinStartingGrace,
+            expectedStopPending = expectedStopPending,
+            identityReview = externalProbe.identityReview,
+            originalProcessGone = externalProbe.originalProcessGone,
+        )
         val updatedRecord = BackgroundRuntimeRegistry.updateStatus(
             context = appContext,
             runtimeId = record.id,
             status = nextStatus,
-            pid = selectRefreshedBackgroundRuntimePid(
-                localHandleAlive = isAlive,
-                localHandlePid = handlePid,
-                exactExternalProcessAlive = externalAlive,
-                exactExternalPid = externalPid,
-                withinStartingGrace = withinStartingGrace,
-                persistedPid = record.pid,
-            ),
+            pid = if (
+                externalProbe.identityReview &&
+                (expectedStopPending || externalProbe.preservePersistedPidForReview)
+            ) {
+                record.pid
+            } else {
+                selectRefreshedBackgroundRuntimePid(
+                    localHandleAlive = isAlive,
+                    localHandlePid = handlePid,
+                    exactExternalProcessAlive = externalAlive,
+                    exactExternalPid = externalPid,
+                    withinStartingGrace = withinStartingGrace,
+                    persistedPid = record.pid,
+                )
+            },
             lastError = resolvedRuntimeRefreshError(
                 record = record,
                 nextStatus = nextStatus,
@@ -1584,8 +1686,34 @@ object BackgroundRuntimeHost {
         )
         when (nextStatus) {
             BackgroundRuntimeStatus.RUNNING -> {
-                resetRuntimeRestartBackoff(appContext, record.id, "runtime-status-running")
-                refreshRuntimeHealth(appContext, updatedRecord ?: record.copy(status = nextStatus))
+                if (!expectedStopPending) {
+                    resetRuntimeRestartBackoff(appContext, record.id, "runtime-status-running")
+                }
+                when {
+                    externalProbe.identityReview ->
+                        BackgroundRuntimeRegistry.updateHealth(
+                            context = appContext,
+                            runtimeId = record.id,
+                            healthStatus = BackgroundRuntimeHealthStatus.UNKNOWN,
+                            lastHealthSummary = if (expectedStopPending) {
+                                BackgroundRuntimeHealthText.STOPPING_REVIEW
+                            } else {
+                                BackgroundRuntimeHealthText.IDENTITY_REVIEW
+                            },
+                            lastHealthCheckedAt = null,
+                        )
+                    expectedStopPending -> BackgroundRuntimeRegistry.updateHealth(
+                        context = appContext,
+                        runtimeId = record.id,
+                        healthStatus = BackgroundRuntimeHealthStatus.UNKNOWN,
+                        lastHealthSummary = BackgroundRuntimeHealthText.STOPPING_PENDING,
+                        lastHealthCheckedAt = null,
+                    )
+                    else -> refreshRuntimeHealth(
+                        appContext,
+                        updatedRecord ?: record.copy(status = nextStatus),
+                    )
+                }
             }
 
             BackgroundRuntimeStatus.STARTING -> {
@@ -1686,16 +1814,26 @@ object BackgroundRuntimeHost {
             logTag = LOG_TAG,
             timeoutSeconds = PROCESS_STATUS_TIMEOUT_SECONDS
         )
-        resolveRuntimeHostPid(appContext, record, hostSnapshot)?.let { hostPid ->
+        val resolution = inspectRuntimeHostProcess(appContext, record, hostSnapshot)
+        resolution.exactOwnedPid?.let { hostPid ->
             Logger.i(LOG_TAG, "命中持久宿主 pid: ${record.id}, pid=$hostPid")
-            return ExternalRuntimeProbe(alive = true, hostPid = hostPid).also {
+            return ExternalRuntimeProbe(
+                alive = true,
+                hostPid = hostPid,
+            ).also {
                 writeExternalRuntimeProbeCache(record.id, it)
             }
         }
 
         val statusCommand = record.statusCommand?.trim().orEmpty()
         if (statusCommand.isBlank()) {
-            return ExternalRuntimeProbe(alive = false)
+            return ExternalRuntimeProbe(
+                alive = false,
+                identityReview = resolution.identityReview,
+                originalProcessGone = resolution.originalProcessGone,
+                preservePersistedPidForReview =
+                    resolution.identityReview && record.persistedProcessIdentityOrNull() != null,
+            )
         }
         val logFile = BackgroundRuntimeRegistry.buildLogFile(appContext, record.id)
         Logger.i(LOG_TAG, "开始外部存活探测: ${record.id}, command=$statusCommand")
@@ -1713,7 +1851,11 @@ object BackgroundRuntimeHost {
         )
         return ExternalRuntimeProbe(
             alive = alive,
-            hostPid = resolveRuntimeHostPid(appContext, record, hostSnapshot)
+            hostPid = resolution.exactOwnedPid,
+            identityReview = resolution.identityReview,
+            originalProcessGone = resolution.originalProcessGone,
+            preservePersistedPidForReview =
+                resolution.identityReview && record.persistedProcessIdentityOrNull() != null,
         ).also { writeExternalRuntimeProbeCache(record.id, it) }
     }
 
@@ -1757,7 +1899,24 @@ object BackgroundRuntimeHost {
         record: BackgroundRuntimeRecord,
         hostSnapshot: com.kite.app.foundation.runtime.HostProcessSnapshot
     ): Int? {
-        val persistedPid = record.pid?.takeIf { it > 0 } ?: return null
+        return inspectRuntimeHostProcess(appContext, record, hostSnapshot).exactOwnedPid
+    }
+
+    private fun inspectRuntimeHostProcess(
+        appContext: Context,
+        record: BackgroundRuntimeRecord,
+        hostSnapshot: com.kite.app.foundation.runtime.HostProcessSnapshot,
+    ): RuntimeHostProcessResolution {
+        val persistedPid = record.pid?.takeIf { it > 0 }
+        if (persistedPid == null) {
+            return RuntimeHostProcessResolution(
+                identityDecision = BackgroundRuntimeProcessIdentityPolicy.decide(
+                    persistedPid = null,
+                    persistedIdentity = null,
+                    observation = null,
+                )
+            )
+        }
         val observedIdentity = hostSnapshot.strongIdentity(persistedPid)
         val observation = when {
             hostSnapshot.appProcess(persistedPid) == null ->
@@ -1776,9 +1935,14 @@ object BackgroundRuntimeHost {
                 LOG_TAG,
                 "后台宿主进程拒绝恢复: runtime=${record.id} match=${decision.processMatch.name}"
             )
-            return null
+            return RuntimeHostProcessResolution(identityDecision = decision)
         }
-        return persistedPid.takeIf { isRuntimeHostPidAlive(appContext, record, it, hostSnapshot) }
+        return RuntimeHostProcessResolution(
+            identityDecision = decision,
+            exactOwnedPid = persistedPid.takeIf {
+                isRuntimeHostPidAlive(appContext, record, it, hostSnapshot)
+            },
+        )
     }
 
     private fun captureRuntimeProcessIdentity(

@@ -368,6 +368,10 @@ object BackgroundRuntimeRegistry {
         val runtimeRoot = WorkSurfaceRuntimeBridge.getRuntimeRoot(context)
         val updated = readAll(runtimeRoot).map { record ->
             if (record.id == runtimeId) {
+                val preserveExpectedStop = record.shouldPreserveExpectedStopForObservedStatus(
+                    nextStatus = status,
+                    nextPid = pid,
+                )
                 record.withProcessPid(pid).copy(
                     status = status,
                     lastExitCode = lastExitCode ?: record.lastExitCode,
@@ -390,22 +394,24 @@ object BackgroundRuntimeRegistry {
                         record.lastStoppedAt
                     },
                     lastError = lastError,
-                    lastStopReconciliationState = if (status.isActiveStatus()) {
+                    lastStopReconciliationState = if (status.isActiveStatus() && !preserveExpectedStop) {
                         null
                     } else {
                         record.lastStopReconciliationState
                     },
-                    lastStopReconciliationReason = if (status.isActiveStatus()) {
+                    lastStopReconciliationReason = if (status.isActiveStatus() && !preserveExpectedStop) {
                         null
                     } else {
                         record.lastStopReconciliationReason
                     },
-                    lastStopReconciliationAt = if (status.isActiveStatus()) {
+                    lastStopReconciliationAt = if (status.isActiveStatus() && !preserveExpectedStop) {
                         null
                     } else {
                         record.lastStopReconciliationAt
                     },
-                    lastStopReconciliationAutoRecoverySuppressed = if (status.isActiveStatus()) {
+                    lastStopReconciliationAutoRecoverySuppressed = if (
+                        status.isActiveStatus() && !preserveExpectedStop
+                    ) {
                         false
                     } else {
                         record.lastStopReconciliationAutoRecoverySuppressed

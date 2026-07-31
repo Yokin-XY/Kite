@@ -168,3 +168,22 @@ internal fun selectRefreshedBackgroundRuntimePid(
     withinStartingGrace -> localHandlePid ?: persistedPid
     else -> null
 }
+
+internal fun selectRefreshedBackgroundRuntimeStatus(
+    currentStatus: BackgroundRuntimeStatus,
+    localHandleAlive: Boolean,
+    externalServiceAlive: Boolean,
+    withinStartingGrace: Boolean,
+    expectedStopPending: Boolean,
+    identityReview: Boolean,
+    originalProcessGone: Boolean,
+): BackgroundRuntimeStatus = when {
+    localHandleAlive -> BackgroundRuntimeStatus.RUNNING
+    expectedStopPending && originalProcessGone -> BackgroundRuntimeStatus.STOPPED
+    expectedStopPending && identityReview -> currentStatus
+    externalServiceAlive -> BackgroundRuntimeStatus.RUNNING
+    withinStartingGrace -> BackgroundRuntimeStatus.STARTING
+    identityReview -> currentStatus
+    currentStatus.isActiveStatus() -> BackgroundRuntimeStatus.STOPPED
+    else -> currentStatus
+}

@@ -45,7 +45,8 @@
 | RF830 | 进行中 | 先落停止意图，精确身份恢复，退出确认后才清记录和容量 |
 | RF831 | 已完成 | 纯合同只允许精确代次 attach/发信号，所有决策均为零进程创建 |
 | RF832 | 已完成 | 窄读新进程身份；重启恢复强校验；健康命令不再保留失效 PID |
-| RF833 | 进行中 | expected stop 先落盘，确认原代次退出后才写终态与释放容量 |
+| RF833 | 已完成 | 停止意图优先；逐信号重验代次；确认退出前不写终态、不释放容量 |
+| RF834 | 进行中 | 联合回归并在 OnePlus 8T 验证创建、重启、停止和反例边界 |
 
 ## RF110 开机与三问自检
 
@@ -167,6 +168,15 @@
 - 应用重启后的 `resolveRuntimeHostPid` 先用 RF831 比较 persisted/observed 强身份，只有 `ATTACH_EXACT_PROCESS` 才继续通过 container/owner token 门；旧 PID、boot 变化、PID 复用与 fallback 观察均不 attach。
 - statusCommand 仍可说明服务响应，但没有精确 external PID 时不再保留 `record.pid`，因此不会把服务健康冒充为 owner 进程身份。
 - 目标 4 suites、18 tests、0 failure、0 error、0 skipped；Debug 构建通过。RF832 尚未改变停止顺序，下一恢复指针 RF833。
+
+## RF833 验收
+
+- `stopProcessRuntime` 先写 manual/expected stop，再读取最新记录并决定操作；本地 handle 直接操作所拥有的 `Process`，重启后的 detached PID 必须同时满足强身份与 owner token，且 TERM/KILL 每一步前再次窄读代次。
+- 终止器返回未退出、旧记录缺身份或观察身份不可用时，记录保持活动并显示“等待退出确认/身份待确认”；不写 STOPPED、不清身份、不释放准入容量，也不启动替代进程。
+- handle 退出、强身份 guard 证明原代次消失或 snapshot 证明原 boot/代次已不存在后，统一入口才写 STOPPED、清身份、更新健康并释放容量。普通 stale reconciler 遇到强身份记录只委托身份感知 Host，不能抢先释放。
+- 活动状态刷新在同 PID 下保留已持久化停止意图；显式 expected stop 优先于 core 自动恢复。新一轮 STARTING/换 PID 仍清旧意图与身份，不把 review 变成平行状态源。
+- 目标 6 suites、23 tests、0 failure、0 error、0 skipped；Debug 构建通过。终端和 Agent 无改动。
+- 已记录内核边界：detached 路径没有 pidfd，虽在每次信号前重验 start ticks，最终 `/proc` 复核到 `kill(pid)` 之间仍有极小 TOCTOU；RF840 必须据设备能力给严格 go 或 best-effort/no-go。
 
 ## RF710 开机与三问自检
 

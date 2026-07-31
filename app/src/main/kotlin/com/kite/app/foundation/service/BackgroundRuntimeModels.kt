@@ -411,6 +411,22 @@ internal fun BackgroundRuntimeRecord.withProcessPid(nextPid: Int?): BackgroundRu
     )
 }
 
+internal fun BackgroundRuntimeRecord.shouldPreserveExpectedStopForObservedStatus(
+    nextStatus: BackgroundRuntimeStatus,
+    nextPid: Int?,
+): Boolean {
+    val normalizedPid = nextPid?.takeIf { it > 0 }
+    return status.isActiveStatus() &&
+        nextStatus.isActiveStatus() &&
+        normalizedPid != null &&
+        normalizedPid == pid &&
+        hasExpectedStopIntent()
+}
+
+internal fun BackgroundRuntimeRecord.hasExpectedStopIntent(): Boolean =
+    lastStopReconciliationState == RuntimeProcessUnitObservationState.STOPPED_EXPECTED &&
+        lastStopReconciliationAutoRecoverySuppressed
+
 internal fun BackgroundRuntimeRecord.withObservedProcessIdentity(
     identity: HostProcessIdentityObservation,
 ): BackgroundRuntimeRecord? {

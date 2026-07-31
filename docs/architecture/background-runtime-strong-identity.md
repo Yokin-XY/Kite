@@ -116,9 +116,16 @@ processStartTicks: Long?
 - [x] 创建成功后窄读目标 `/proc/<pid>` 与 boot ID 捕获强身份；该 PID 必须属于当前应用 UID。捕获失败仍允许本地 handle 运行，但长期 lease 保持 no-go。
 - [x] 应用重启只按 boot+PID+startTicks 精确 attach，并追加 container/owner token 归属门；PID 复用、boot 变化和未知观察进入 review。
 - [x] statusCommand/健康端点只证明服务响应；未得到精确外部 PID 时必须清理旧 PID，不能恢复 owner 身份。
-- expected stop 在信号前持久化；只有观察到同一代次退出才确认 STOPPED 和释放容量。
+- [x] expected stop 在信号前持久化；本地 handle 直接停止其拥有的 `Process`，重启后的外部 PID 仅在强身份和 owner token 共同命中后进入受 guard 的终止器。
+- [x] STOPPED、身份清理和容量释放只在 handle 已退出、强身份终止器确认原代次消失，或观察证明原 boot/代次已不存在后发生；身份不可得时保持 review。
 
 创建链中的 `Process` handle 本身是归属证据，因此用目标 PID 的应用 UID + boot/start ticks 捕获；应用重启后没有 handle，必须在强身份之外继续通过原有 container/owner token 门。两条链都不使用 statusCommand 生成或补全进程身份。
+
+### 外部 PID 信号的内核边界
+
+当前 JNI 终止能力最终仍是 `kill(pid, signal)`，没有持有 `pidfd`。RF833 已在 TERM、等待轮询和 KILL 前窄读 boot/PID/start ticks；一旦代次变化就把原进程视为已退出，绝不向当前 PID 继续发信号。这关闭了 TERM 等待期间 PID 被复用后再误发 KILL 的主要窗口。
+
+但“最后一次 `/proc` 复核”与实际 `kill` 系统调用之间仍存在无法由用户态 PID 比较彻底消除的微小 TOCTOU。RF840 若要求内核级严格身份持有，必须在设备内核支持时引入 pidfd 条件能力；不支持 pidfd 的设备只能把重启后 detached PID 停止标记为受强复核的 best-effort，不能宣传为内核原子保证。本地 `Process` handle 路径不受该限制。
 
 ### RF840：后台 PRoot 类别门
 

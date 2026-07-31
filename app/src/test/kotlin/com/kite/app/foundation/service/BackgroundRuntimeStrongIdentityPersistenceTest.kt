@@ -1,6 +1,7 @@
 package com.kite.app.foundation.service
 
 import com.kite.app.foundation.runtime.HostProcessIdentityObservation
+import com.kite.app.foundation.runtime.RuntimeProcessUnitObservationState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -87,6 +88,39 @@ class BackgroundRuntimeStrongIdentityPersistenceTest {
                 processBootId = "not-a-boot-id",
                 processStartTicks = 987654L,
             ).persistedProcessIdentityOrNull()
+        )
+    }
+
+    @Test
+    fun `observing the same active pid preserves a persisted expected stop`() {
+        val stopping = record().copy(
+            status = BackgroundRuntimeStatus.RUNNING,
+            pid = 321,
+            lastStopReconciliationState = RuntimeProcessUnitObservationState.STOPPED_EXPECTED,
+            lastStopReconciliationReason = "expected_stop:manual-stop",
+            lastStopReconciliationAutoRecoverySuppressed = true,
+        )
+
+        assertEquals(
+            true,
+            stopping.shouldPreserveExpectedStopForObservedStatus(
+                nextStatus = BackgroundRuntimeStatus.RUNNING,
+                nextPid = 321,
+            ),
+        )
+        assertEquals(
+            false,
+            stopping.shouldPreserveExpectedStopForObservedStatus(
+                nextStatus = BackgroundRuntimeStatus.STARTING,
+                nextPid = null,
+            ),
+        )
+        assertEquals(
+            false,
+            stopping.shouldPreserveExpectedStopForObservedStatus(
+                nextStatus = BackgroundRuntimeStatus.RUNNING,
+                nextPid = 654,
+            ),
         )
     }
 

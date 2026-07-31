@@ -310,3 +310,11 @@
 - 决定：`ProcessBuilder.start()` 返回的本地 handle 是创建归属证据，身份捕获只需目标 PID 属于应用 UID并具备 boot/start ticks；应用重启后 handle 消失，外部 attach 必须同时满足 RF831 精确身份和既有 container/owner token 门。两者都不得由 statusCommand 或健康端点补全 PID。
 - 原因：创建后为取一个 start ticks 扫描整棵 `/proc` 会给高频启动增加无谓成本；重启后只看命令 token 又无法排除 PID 复用。健康成功代表服务可响应，不代表持久 owner PID 是同一进程代次。
 - 影响：新建/复用本地 handle 会原子补强身份；旧记录仍可显示服务健康，但没有强身份就不 attach 且 PID 会被清理。RF833 可据此安全决定是否发停止信号，不能回退到弱 PID 补偿。
+
+## ADR-RF-040 显式停止意图优先且终态必须由退出证据确认
+
+- 状态：已接受，RF833 已完成
+- 日期：2026-08-01
+- 决定：后台 PROCESS 的显式停止先写现有 `lastStopReconciliation*`，再操作本地 handle 或强身份命中的 detached PID；只有原代次确认退出才写 STOPPED、清身份和释放容量。活动刷新必须保留同 PID 的 expected stop，且 expected stop 优先于 core 自动恢复。
+- 原因：先发信号再落盘会在应用死亡时丢失意图；只看 terminate 返回日志后无条件写 STOPPED 会释放仍在运行的 owner 容量；core 恢复若压过显式停止则会造成“停止后又拉起”。
+- 影响：身份不完整和观察不可用显示 review 而不是伪终态；普通 stale reconciler 不再处置带强身份的后台记录。detached 信号仍受无 pidfd 的最终 TOCTOU 限制，RF840 不能把用户态重验描述成内核原子身份持有。
