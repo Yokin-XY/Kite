@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF700` 设备自适应校准预研
-- 当前任务：`RF720` 可信信号归一与升降级门
+- 当前任务：`RF730` 候选档、迟滞与回滚模拟器
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -481,7 +481,12 @@
 #### RF720 可信信号归一与升降级门
 
 - 解法：只消费实际 coordinator 失败率/时延、可信内存压力和前后台；无热信号时最多维持或降级，禁止自动升档。
-- 验收标准：未知/陈旧/矛盾信号失败关闭；单次好样本不升档；高压或失败率立即产生降级建议但不强杀运行任务。
+- 验收标准：
+  - [x] 累计遥测按单调计数器生成带时间边界的差量窗口，重复 key、计数回退和桶总数矛盾失败关闭；
+  - [x] 非正式 policy source、未知/陈旧信号、零样本和少样本只保持，不产生升档；
+  - [x] HIGH/CRITICAL 内存、可信 thermal hot 或显著失败率只建议在 1/2/4 中降一级，不强杀运行任务；
+  - [x] 可信 thermal normal、前台、tracee guard、足量成功样本和 P95 门全部通过时，也只产出 promotion window candidate；
+  - [x] 实现是 `planned_not_production` 纯函数，`changesCoordinator=false`，不读取页面、不修改正式 coordinator。
 - 依赖：RF710。
 
 #### RF730 候选档、迟滞与回滚模拟器

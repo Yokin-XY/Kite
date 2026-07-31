@@ -246,3 +246,11 @@
 - 决定：P0 overlay 只有 schema、显式 valid、当前 calibration method、applied time、实测上界和 tracee 数关系全部可信时，才能作为后续自适应的设备安全 guard；即使通过，也不能直接选择 LOW/DEFAULT/HIGH。正式档位数字始终从 `ProotPerformanceTunings` 派生为 1/2/4。
 - 原因：P0 测量的是单 PRoot 内标准 worker 的 tracee 吞吐峰值，不是有界任务在多个 warm runner 间的并发收益。旧 profileLimits 是已废弃分段，脚本当前也明确不再生成；把 tracee 数当任务并发会跨越没有证据的模型边界。
 - 影响：overlay loader 缺 schema/valid 时失败关闭；历史 profileLimits 只保留兼容读取，不进入新对齐结果和档位显示。RF720 的升降级必须使用实际任务遥测、内存和前后台证据，thermal 不可信时不得升档。
+
+## ADR-RF-032 自适应只消费可验证差量窗口且升档证据更严格
+
+- 状态：已接受，RF720 已完成
+- 日期：2026-08-01
+- 决定：自适应评估只接受正式 RuntimeHealth policy source、RF530 累计遥测的单调差量窗口、内存/前后台、RF710 guard 与显式 thermal evidence。高压、可信过热或显著失败可以建议降一级；升档必须同时满足可信 normal thermal、足量低失败样本、P95、前台与 guard，且只标记一个健康窗口。
+- 原因：累计计数不能直接代表当前窗口，单个好样本也不能证明更高并发稳定；另一方面，高内存压力是无需等待任务样本即可收缩后续准入的安全事实。当前代码没有可靠 thermal 来源，若把 unavailable 当 normal 会让预研合同伪造生产能力。
+- 影响：RF720 永不修改 coordinator，所有结果都标记 `planned_not_production` 和 `changesCoordinator=false`。未知、陈旧、计数回退、桶矛盾、CUSTOM 档或非正式 source 均失败关闭；RF730 只能在这些窗口结果之上增加迟滞，不能降低本门要求。

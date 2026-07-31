@@ -35,7 +35,8 @@
 | RF650 | 已完成 | 1374 项全量回归通过；后台身份桥接准备 go、生产迁移 no-go |
 | RF700 | 进行中 | 在既有校准 dry-run 上对齐正式 1/2/4 策略，不另建平行体系 |
 | RF710 | 已完成 | overlay schema 失败关闭，tracee guard 与正式 1/2/4 档位彻底分离 |
-| RF720 | 进行中 | 归一 actual 遥测、内存、前后台与 thermal 缺失边界 |
+| RF720 | 已完成 | actual 差量窗口失败关闭；高压/失败只降一级，无可信 thermal 永不升档 |
+| RF730 | 进行中 | 建立连续窗口、冷却、回滚和重启恢复纯状态机 |
 
 ## RF110 开机与三问自检
 
@@ -84,6 +85,15 @@
 - 目标是什么？把 RF510/RF530 的实际 coordinator 与有界任务遥测、可信内存压力、前后台和 thermal 可用性归一成一次评估输入，明确何时只能保持/降级、何时连候选升档都不能给。
 - 完成后拿什么证明？未知、陈旧、零样本和冲突信号失败关闭；HIGH/CRITICAL 或显著失败给降级建议但不强杀任务；没有可信 thermal 时永远不产生升档建议；纯函数不改 coordinator。
 - 依赖是否满足？满足。RF710 已证明 tracee overlay 只能当 guard，正式 1/2/4 来自单一 tunings；RF530 已有固定 lane/route/result 与 queue/execute/total 聚合，可作为实际任务证据。
+
+## RF720 验收
+
+- 新增 `RuntimeProotAdaptiveSignalGate`，只接收 RF510 actual tuning、RF530 两次累计遥测读数、RF710 tracee guard 与显式 thermal evidence；没有新 Store、线程、计时器或生产装配。
+- 累计遥测必须满足唯一 key、非负值、每阶段桶数等于 entry count、前后计数单调；差量窗口固定为 30 秒至 10 分钟且最多陈旧 2 分钟，P95 由差量桶计算。
+- 正式候选只允许内置 1/2/4 档。HIGH/CRITICAL 内存、可信 hot 或至少 5 样本且失败率达到 10% 时建议降一级；最低档只保持，不强杀已运行任务。
+- 自动升档候选要求：正式 RuntimeHealth source、NORMAL 内存、前台、20 个以上差量样本、失败率低、P95 不超过 1 秒、RF710 guard ready、60 秒内可信 thermal normal。当前仓库没有可靠 thermal source，因此真实生产环境仍然不可能自动升档。
+- 目标回归覆盖 `RuntimeProotAdaptiveSignalGateTest`、`RuntimeProotCalibrationAlignmentTest`、`BoundedProotTaskTelemetryTest`：3 个 suite、21 tests、0 failure、0 error、0 skipped；Debug 编译随测试成功。
+- 下一恢复指针进入 RF730；它只能消费 RF720 的窗口 action，建立连续确认/冷却/回滚模拟器，不能写正式策略文件。
 
 ## RF710 开机与三问自检
 
