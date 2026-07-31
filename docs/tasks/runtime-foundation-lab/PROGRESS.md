@@ -29,7 +29,8 @@
 | RF550 | 已完成 | 1341 项全量回归、强制构建和 OnePlus 8T 联合门通过 |
 | RF600 | 进行中 | 只先做 owner lease 合同与模拟器，不迁移终端/Agent |
 | RF610 | 已完成 | 长期 owner 状态机保持进程身份、停止意图与容量直到确认释放 |
-| RF620 | 进行中 | 纯模拟容量、压力、维护屏障、去重和公平性，不接生产入口 |
+| RF620 | 已完成 | 容量、压力、维护屏障、去重和跨 lane 公平性纯模拟通过 |
+| RF630 | 进行中 | 固定重启恢复、PID 代次、停止竞态与孤儿协调合同 |
 | RF700 | 待研究 | 固定 1/2/4 之上的设备自适应校准 |
 
 ## RF110 开机与三问自检
@@ -68,6 +69,12 @@
 - 完成后拿什么证明？相关回归、强制全量单测、强制 Debug 构建、OnePlus 8T 冷启动/温复用/压力收缩/空闲行为/服务健康链与 ANR/FATAL 检查；Git 工作树干净、每个叶子提交可独立回退。
 - 依赖是否满足？满足。RF510～RF540 均已独立实现和验证；Node/Python 历史矩阵仍冻结，本门只验证本阶段新增合同和跨模块回归。
 
+## RF630 开机与三问自检
+
+- 目标是什么？在不创建第二进程的前提下，固定应用重启后如何恢复 owner lease、如何核对 PID 启动代次、如何处理丢失进程与主动停止竞态。
+- 完成后拿什么证明？恢复批次对同 owner 去重；仅精确进程代次可重连；未知/死亡进程进入 orphan review 并保持容量直到确认；恢复时的停止意图优先于运行重连；测试不读取真实 `/proc`、不接生产 Registry。
+- 依赖是否满足？满足。RF610 已定义可恢复的 lease phase 与进程身份，RF620 已确保 recovered lease 未来可继续参与同一容量模型而不复制 owner。
+
 ## RF620 开机与三问自检
 
 - 目标是什么？以 RF610 状态机为唯一 lease 记录，模拟长期 owner 的容量、压力准入、同 owner 去重、独占维护屏障与 lane 优先级/FIFO 公平性。
@@ -81,6 +88,14 @@
 - 依赖是否满足？满足。RF500 已提供 actual admission/telemetry，但其 lease 仍以调用栈为寿命；现有 `CardRunStore`、`BackgroundRuntimeRegistry` 和 Agent binding 可作为未来 owner 事实源，本任务只定义桥接合同，不复制状态。
 
 ## 倒序日志
+
+### 2026-08-01 RF620 长期 owner 容量与公平性模拟器
+
+- 新增纯 `LongLivedProotAdmissionSimulator`：同一 RF610 lease record 同时承载排队、准入和生命周期状态；没有生产单例、Store、线程、进程或 PRoot 调用。
+- 全局容量、lane 容量、优先级/FIFO 和压力收缩均为确定性事件。高压只阻断新的非必要 owner，既有 holder 不被强杀；必要 owner 可绕过压力门但仍受实际容量约束。
+- `EXCLUSIVE_MAINTENANCE` 以队列 sequence 建立屏障：屏障前任务可排空，屏障后不再新增共享 holder，维护完成后继续排队；被压力阻断的非必要维护不会堵住必要任务。它没有借用短任务 `SHARED_WRITE` 永久持锁。
+- 重复 owner 返回同一 lease 且不增加容量；若 lane/posture/必要性声明变化则显式 `SPEC_CONFLICT`，不能静默替换。全局事件时间单调，陈旧输入失败关闭。
+- RF610+RF620 共 2 个 suite、19 项测试零失败，Debug 构建成功；RF630 继续只模拟恢复与孤儿协调，不读取真实 `/proc`、不接生产 Registry。
 
 ### 2026-08-01 RF610 长期 owner lease 状态机
 

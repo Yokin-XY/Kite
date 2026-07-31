@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF600` 长生命周期 owner lease 预研
-- 当前任务：`RF620` 容量、互斥与公平性模拟器
+- 当前任务：`RF630` 重启恢复与 orphan reconciliation
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -431,7 +431,11 @@
 #### RF620 容量、互斥与公平性模拟器
 
 - 解法：以 lease state machine 为唯一记录，模拟容量、压力只约束新准入、exclusive maintenance 屏障、同 owner 去重和优先级/FIFO 排队。
-- 验收标准：既有 owner 不因压力被强杀；重复请求不多占容量；写维护不饥饿；队首满 lane 不阻塞可运行 lane。
+- 验收标准：
+  - [x] 既有 owner 不因压力被强杀，高压只阻断新的非必要 owner；
+  - [x] 重复 owner 不多占容量，也不能静默替换既有 spec；
+  - [x] exclusive maintenance 建立有界屏障且不饥饿，被压力阻断时不堵必要任务；
+  - [x] lane 满时不阻塞其他可运行 lane，同优先级保持 FIFO。
 - 依赖：RF610。
 
 #### RF630 重启恢复与 orphan reconciliation
