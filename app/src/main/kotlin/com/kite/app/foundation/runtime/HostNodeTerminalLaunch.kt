@@ -7,12 +7,19 @@ import com.kite.app.foundation.contracts.NetworkMode
 import java.io.File
 import java.util.TimeZone
 
+internal data class HostNodeProviderContext(
+    val androidContext: Context,
+    val container: ContainerRecord,
+    val workspaceDirectory: File,
+)
+
 /** 入口无关的 Node Runtime Provider；只生成计划，不创建进程、不持有生命周期状态。 */
-internal object HostNodeRuntimeProvider {
-    fun prepare(
-        context: Context,
-        container: ContainerRecord,
-        workspaceDirectory: File,
+internal object HostNodeRuntimeProvider :
+    RuntimeExecutionProvider<HostNodeProviderContext, ContainerLaunchConfig> {
+    override val kind: RuntimeProviderKind = RuntimeProviderKind.MANAGED_RUNTIME
+
+    override fun prepare(
+        context: HostNodeProviderContext,
         request: RuntimeExecutionRequest,
     ): RuntimeProviderDecision<ContainerLaunchConfig> {
         if (RuntimeExecutionRequirement.ANDROID_NATIVE in request.requirements) {
@@ -24,14 +31,15 @@ internal object HostNodeRuntimeProvider {
         if (RuntimeExecutionRequirement.FILESYSTEM_VIEW in request.requirements) {
             return unsupported("filesystem_view_required")
         }
+        val container = context.container
         if (container.networkMode != NetworkMode.HOST) {
             return unsupported("network_mode_requires_proot")
         }
         val workspaceControlDirectory = File(container.workspacePath, ".kf")
         val assets = when (val prepared = HostNodeRuntimePreparer.prepare(
-            context,
+            context.androidContext,
             container,
-            workspaceDirectory,
+            context.workspaceDirectory,
             workspaceControlDirectory,
         )) {
             is HostNodeRuntimePreparation.Ready -> prepared.assets
@@ -39,7 +47,7 @@ internal object HostNodeRuntimeProvider {
         }
         val layout = when (val resolved = HostNodeRuntimeResolver.resolve(
             rootfsDirectory = File(container.rootfsPath),
-            workspaceDirectory = workspaceDirectory,
+            workspaceDirectory = context.workspaceDirectory,
             workspaceControlDirectory = workspaceControlDirectory,
             assets = assets,
         )) {
@@ -64,14 +72,14 @@ internal object HostNodeRuntimeProvider {
             ?.takeIf(File::isDirectory)
             ?: return unsupported("working_directory_invalid")
         return RuntimeProviderDecision.Ready(
-            provider = RuntimeProviderKind.MANAGED_RUNTIME,
+            provider = kind,
             plan = buildConfig(container, layout, invocation, workingDirectory, request.environment),
             reason = "host_node_ready",
         )
     }
 
     private fun unsupported(reason: String) = RuntimeProviderDecision.Unsupported(
-        provider = RuntimeProviderKind.MANAGED_RUNTIME,
+        provider = kind,
         reason = reason,
     )
 

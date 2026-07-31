@@ -33,5 +33,30 @@ class RuntimeProviderDecisionTest {
         assertTrue(RuntimeFallbackPolicy.BEFORE_START_ONLY.allowsProviderFallback())
         assertFalse(RuntimeFallbackPolicy.DISABLED.allowsProviderFallback())
     }
-}
 
+    @Test
+    fun `provider interface keeps preparation context separate from execution request`() {
+        val provider = object : RuntimeExecutionProvider<String, List<String>> {
+            override val kind = RuntimeProviderKind.MANAGED_RUNTIME
+
+            override fun prepare(
+                context: String,
+                request: RuntimeExecutionRequest,
+            ): RuntimeProviderDecision<List<String>> {
+                val payload = request.payload as RuntimeExecutionPayload.Argv
+                return RuntimeProviderDecision.Ready(
+                    provider = kind,
+                    plan = listOf(context, payload.executable) + payload.arguments,
+                    reason = "test_ready",
+                )
+            }
+        }
+
+        val decision = provider.prepare(
+            context = "provider-context",
+            request = RuntimeExecutionRequest(RuntimeExecutionPayload.Argv("node", listOf("--version"))),
+        ) as RuntimeProviderDecision.Ready
+
+        assertEquals(listOf("provider-context", "node", "--version"), decision.plan)
+    }
+}

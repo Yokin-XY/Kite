@@ -140,9 +140,11 @@ class HostNodeTerminalLaunchTest {
                 "network_mode_requires_proot",
             ),
             HostNodeRuntimeProvider.prepare(
-                context = context,
-                container = container(File(root, "rootfs"), File(root, "workspace"), NetworkMode.NONE),
-                workspaceDirectory = File(root, "workspace"),
+                context = HostNodeProviderContext(
+                    context,
+                    container(File(root, "rootfs"), File(root, "workspace"), NetworkMode.NONE),
+                    File(root, "workspace"),
+                ),
                 request = RuntimeExecutionRequest(
                     payload = RuntimeExecutionPayload.CommandLine("node --version"),
                     workingDirectory = "/workspace",
@@ -163,9 +165,11 @@ class HostNodeTerminalLaunchTest {
                 "android_native_required",
             ),
             HostNodeRuntimeProvider.prepare(
-                context = context,
-                container = container,
-                workspaceDirectory = File(root, "missing-workspace"),
+                context = HostNodeProviderContext(
+                    context,
+                    container,
+                    File(root, "missing-workspace"),
+                ),
                 request = RuntimeExecutionRequest(
                     payload = RuntimeExecutionPayload.NativeCapability("network.download_sha256"),
                     requirements = setOf(RuntimeExecutionRequirement.ANDROID_NATIVE),
@@ -178,9 +182,11 @@ class HostNodeTerminalLaunchTest {
                 "full_linux_required",
             ),
             HostNodeRuntimeProvider.prepare(
-                context = context,
-                container = container,
-                workspaceDirectory = File(root, "missing-workspace"),
+                context = HostNodeProviderContext(
+                    context,
+                    container,
+                    File(root, "missing-workspace"),
+                ),
                 request = RuntimeExecutionRequest(
                     payload = RuntimeExecutionPayload.Argv("node", listOf("--version")),
                     requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),

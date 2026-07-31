@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF200` 通用依赖快速通道
-- 当前任务：`RF210` 现有 Node 标准 Provider 化
+- 当前任务：`RF220` Node 长期债务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -78,10 +78,10 @@
 - 问题证据：Node 已验证并投入使用，但类型和入口仍以 Node 专名直接耦合选择器。
 - 解法：只做等价适配，把现有 `HostNodeRuntimeProvider` 接入统一合同，不重写兼容层、不重复历史性能试验。
 - 验收标准：
-  - [ ] 既有 Node 单测继续通过；
-  - [ ] npm/npx/pnpm/openclaw 的受管 shebang 路由保持；
-  - [ ] 现有回退原因和唯一进程语义保持；
-  - [ ] 只有触及证据前提时才重跑对应真机矩阵。
+  - [x] 既有 Node 单测继续通过；
+  - [x] npm/npx/pnpm/openclaw 的受管 shebang 路由保持；
+  - [x] 现有回退原因和唯一进程语义保持；
+  - [x] 只有触及证据前提时才重跑对应真机矩阵。
 - 依赖：RF130。
 
 #### RF220 Node 长期债务门

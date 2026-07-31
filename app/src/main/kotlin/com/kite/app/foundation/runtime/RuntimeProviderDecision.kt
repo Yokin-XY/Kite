@@ -6,6 +6,16 @@ internal enum class RuntimeProviderKind {
     PROOT,
 }
 
+/** 不同 Provider 可以拥有不同准备上下文，但必须消费同一执行请求并返回同一结果合同。 */
+internal interface RuntimeExecutionProvider<in C, out T> {
+    val kind: RuntimeProviderKind
+
+    fun prepare(
+        context: C,
+        request: RuntimeExecutionRequest,
+    ): RuntimeProviderDecision<T>
+}
+
 /** Provider 只生成计划与证据，不创建进程、不写 Store。 */
 internal sealed interface RuntimeProviderDecision<out T> {
     val provider: RuntimeProviderKind
@@ -44,4 +54,3 @@ internal sealed interface RuntimeProviderDecision<out T> {
 
 internal fun RuntimeFallbackPolicy.allowsProviderFallback(): Boolean =
     this == RuntimeFallbackPolicy.BEFORE_START_ONLY
-

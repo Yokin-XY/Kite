@@ -4,6 +4,7 @@ import android.content.Context
 import com.kite.app.foundation.contracts.ContainerLaunchConfig
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.runtime.HostNodeChildProcessContract
+import com.kite.app.foundation.runtime.HostNodeProviderContext
 import com.kite.app.foundation.runtime.HostNodeRuntimeProvider
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeProviderDecision
@@ -29,9 +30,7 @@ internal object HostNodeLaunchPlanner {
         request: RuntimeExecutionRequest,
     ): HostNodeLaunchPlan {
         val baseConfig = when (val decision = HostNodeRuntimeProvider.prepare(
-            context = context,
-            container = container,
-            workspaceDirectory = workspaceDirectory,
+            context = HostNodeProviderContext(context, container, workspaceDirectory),
             request = request,
         )) {
             is RuntimeProviderDecision.Ready -> decision.plan

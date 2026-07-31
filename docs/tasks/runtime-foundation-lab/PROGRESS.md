@@ -9,8 +9,9 @@
 | RF110 | 已完成 | 总架构、三份 Provider 文档、Node 风险索引与性能证据已固化 |
 | RF120 | 已完成 | 三个 Node 入口已迁移到统一结构化请求，行为等价 |
 | RF130 | 已完成 | Ready/Unsupported/Blocked 已接入三条正式 Node 入口 |
-| RF200 | 进行中 | 当前 RF210：Node 标准 Provider 化 |
-| RF210～RF440 | 待开始 | 按任务树依赖推进 |
+| RF200 | 进行中 | RF210 已完成，当前 RF220 Node 债务门 |
+| RF210 | 已完成 | Node 显式实现标准 Provider，既有行为等价 |
+| RF220～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
 
@@ -19,6 +20,14 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF210 验收
+
+- 新增 `RuntimeExecutionProvider<C, T>` 标准接口，不强迫不同 Provider 共享不合适的 Android/container 准备上下文。
+- `HostNodeRuntimeProvider` 显式实现标准接口，Provider kind、公共请求和统一结果合同均已接通。
+- `HostNodeLaunchPlanner` 继续拥有 Node 子进程 PRoot 合同；Provider 仍不创建进程、不写 Store、不感知页面。
+- 定向回归覆盖 10 个测试套件、59 项测试，0 failure、0 error、0 skipped；未运行旧性能矩阵。
+- RF210 完成，下一任务 RF220 只审计和固化未关闭债务，不重复修复已经关闭的 HN 项。
 
 ### 2026-07-31 RF100 父任务验收
 
