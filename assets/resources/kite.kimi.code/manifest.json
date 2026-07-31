@@ -95,6 +95,7 @@
     "repository": "https://github.com/MoonshotAI/kimi-code",
     "latestUrl": "https://code.kimi.com/kimi-code/latest",
     "latestFormat": "text",
+    "maxBytes": 16777216,
     "versionArguments": ["--version", "{version}"],
     "environment": {
       "KIMI_INSTALL_DIR": "$install_root",

@@ -84,7 +84,8 @@
             "id": "download-antigravity-installer",
             "type": "download",
             "url": "https://antigravity.google/cli/install.sh",
-            "destination": "$install_root/.kite-downloads/install.sh"
+            "destination": "$install_root/.kite-downloads/install.sh",
+            "maxBytes": 16777216
           },
           {
             "id": "run-antigravity-installer",

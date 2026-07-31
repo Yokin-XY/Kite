@@ -312,7 +312,8 @@ object KiteResourceSourcePlanFactory {
                     id = "download-official-installer",
                     type = KiteResourceInstallPlanCompiler.STEP_DOWNLOAD,
                     urls = listOf(url),
-                    destination = "${'$'}install_root/.kite-downloads/install.sh"
+                    destination = "${'$'}install_root/.kite-downloads/install.sh",
+                    maxBytes = manifest.source.maxBytes,
                 ),
                 KiteResourceInstallStep(
                     id = "run-official-installer",
@@ -392,7 +393,8 @@ object KiteResourceSourcePlanFactory {
                     id = "download-release-asset",
                     type = KiteResourceInstallPlanCompiler.STEP_DOWNLOAD,
                     urls = listOf("$releaseBase/${'$'}asset_name"),
-                    destination = "${'$'}archive"
+                    destination = "${'$'}archive",
+                    maxBytes = manifest.source.maxBytes,
                 ),
                 KiteResourceInstallStep(
                     id = "install-release-asset",

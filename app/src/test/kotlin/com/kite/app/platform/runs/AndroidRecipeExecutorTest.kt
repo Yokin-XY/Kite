@@ -108,6 +108,8 @@ class AndroidRecipeExecutorTest {
 
         assertEquals(CardRunSurface.Report, preparing.surface)
         assertEquals("正在准备 SH 环境", preparing.lastMeaningfulOutput)
+        assertEquals(AndroidRecipeExecutor.SHELL_RUNTIME_LANE, preparing.runtimeLane)
+        assertEquals(AndroidRecipeExecutor.SHELL_RUNTIME_REASON, preparing.runtimeFallbackReason)
     }
 
     @Test

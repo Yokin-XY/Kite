@@ -140,6 +140,41 @@ class AndroidNativeDownloadCapabilityTest {
         assertEquals(NativeDownloadExecutionResult.Failure("native_download_unexpected_partial", 1), partial)
     }
 
+    @Test
+    fun `declared content larger than usable space fails before creating target`() {
+        val root = Files.createTempDirectory("kite-native-download-space").toFile()
+        val plan = plan(root, maximumBytes = Long.MAX_VALUE, name = "space.bin")
+        val response = object : NativeDownloadConnection {
+            override val responseCode: Int = 200
+            override val contentLength: Long = Long.MAX_VALUE - 1
+            override fun header(name: String): String? = null
+            override fun inputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+            override fun close() = Unit
+        }
+
+        val result = AndroidNativeDownloadExecutor(queueFactory(response)).execute(plan)
+
+        assertEquals(NativeDownloadExecutionResult.Failure("native_download_insufficient_space", 1), result)
+        assertFalse(plan.destination.exists())
+        assertFalse(plan.temporaryFile.exists())
+    }
+
+    @Test
+    fun `large payload remains streaming and publishes the complete digest`() {
+        val root = Files.createTempDirectory("kite-native-download-large").toFile()
+        val size = 32L * 1024L * 1024L
+        val plan = plan(root, expectedSha256 = repeatedByteSha256(size, 19), maximumBytes = size)
+        val result = AndroidNativeDownloadExecutor(
+            queueFactory(GeneratedResponse(size, 19)),
+        ).execute(plan)
+
+        result as NativeDownloadExecutionResult.Success
+        assertEquals(size, result.bytesWritten)
+        assertEquals(size, plan.destination.length())
+        assertEquals(repeatedByteSha256(size, 19), result.actualSha256)
+        assertFalse(plan.temporaryFile.exists())
+    }
+
     private fun assertBlocked(
         context: AndroidNativeCapabilityContext,
         request: RuntimeExecutionRequest,
@@ -207,6 +242,41 @@ class AndroidNativeDownloadCapabilityTest {
                 super.read(buffer, offset, minOf(length, chunkSize))
         }
         override fun close() = Unit
+    }
+
+    private class GeneratedResponse(
+        private val size: Long,
+        private val value: Int,
+    ) : NativeDownloadConnection {
+        override val responseCode: Int = 200
+        override val contentLength: Long = size
+        override fun header(name: String): String? = null
+        override fun inputStream(): InputStream = object : InputStream() {
+            private var remaining = size
+
+            override fun read(): Int = if (remaining-- > 0L) value else -1
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (remaining <= 0L) return -1
+                val count = minOf(length.toLong(), remaining).toInt()
+                buffer.fill(value.toByte(), offset, offset + count)
+                remaining -= count
+                return count
+            }
+        }
+        override fun close() = Unit
+    }
+
+    private fun repeatedByteSha256(size: Long, value: Int): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(64 * 1024) { value.toByte() }
+        var remaining = size
+        while (remaining > 0L) {
+            val count = minOf(buffer.size.toLong(), remaining).toInt()
+            digest.update(buffer, 0, count)
+            remaining -= count
+        }
+        return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
     }
 
     private fun ByteArray.sha256(): String = MessageDigest.getInstance("SHA-256")

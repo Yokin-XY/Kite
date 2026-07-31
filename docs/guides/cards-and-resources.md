@@ -38,6 +38,7 @@ assets/resources/<resource-id>/manifest.json
 - `terminal`：创建交互终端并发送预设输入。
 - `open_web`：在运行实例中打开网页。
 - `android_action`：调用由 Android 平台注册的动作。
+- `native_capability`：调用结构化 Android 原生能力，不接受任意 shell。
 
 X11 步骤属于实验能力，不建议用于正式交付卡片。
 
@@ -57,6 +58,10 @@ resolve -> acquire -> install -> verify -> commit -> cleanup
 - `verify`：验证命令、文件或运行条件。
 - `commit`：验证成功后登记资源和受管命令。
 - `cleanup`：清理临时文件；失败时恢复原版本。
+
+受管 `download` 步骤可以声明 `maxBytes`。只有动作开头的单一静态 HTTPS 下载、`$install_root` 下安全目标和正数尺寸上限同时
+满足时，Kite 才会用 Android 原生网络栈预取到资源缓存；后续安装、验证和更新锁仍走原资源事务。动态 URL、多镜像或缺少尺寸
+上限时保持 PRoot，不会根据资源名称猜测。
 
 网络失败、命令失败和验证失败都不能登记为安装成功。安装向导、资源详情和资源首页从同一安装事实投影状态。
 

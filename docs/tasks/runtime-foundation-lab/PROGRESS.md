@@ -15,7 +15,7 @@
 | RF230 | 已完成 | 纯 Python go；subprocess/venv child/第三方扩展保持 PRoot |
 | RF240 | 已完成 | 通用 glibc 资产与纯 Python 结构化 Provider 已通过真机门 |
 | RF250 | 已完成 | 子进程保持 PRoot；扩展按精确 ABI 与不可变代次开放 |
-| RF300 | 进行中 | RF310a、RF310b 已完成，进入 RF310c 资源获取迁移与压力门 |
+| RF300 | 进行中 | RF310c1 静态资源下载已迁移，进入 RF310c2 对照与压力门 |
 | RF310～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
@@ -25,6 +25,16 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF310c1 静态资源获取迁移
+
+- 资源安装步骤新增 `maxBytes` 安全上限；只有位于动作开头、单一静态 HTTPS URL、目标为 `$install_root` 安全相对路径且尺寸上限大于零的下载，才编译为 `native_capability`。
+- 原生下载先原子发布到 `/workspace/.kf/cache/resources/<id>/native-downloads`；随后既有 PRoot shell 才获取 `<install_root>.kite-update-lock`，在原事务内移动缓存、执行安装、验证、提交或回滚。下载阶段不会改活动安装根。
+- Kimi、Hermes 与 Antigravity 的固定官方安装脚本已声明 16 MiB 上限并进入原生车道；OpenCode 的 GitHub Release URL 依赖架构选择和 shell 变量，继续使用 PRoot 下载，未做资源 ID 特判。
+- 发现并修复通用运行事实缺口：普通 shell 准备阶段此前不会覆盖上一阶段的运行车道；现在统一写入 `proot_shell / shell_command_requires_proot`。
+- 资源与原生能力定向回归、Debug 构建通过；32 MiB 流式负载和声明尺寸大于可用空间的失败关闭已加入单测。
+- OnePlus 8T 固定正式链探针在同一 `CardRun` 观察到 `android_native -> proot_shell`，18,504 字节样本完成摘要验证与资源事务，总链 6,186 ms；缓存、安装根、备份和锁均清理，无 ANR/FATAL。
+- RF310c 尚未完成：固定 PRoot 对照、真实网络中断/重试与更大真机负载归 RF310c2；本阶段没有运行 Node 性能矩阵，也没有安装外部 Agent。
 
 ### 2026-07-31 RF310b 验收
 
@@ -150,4 +160,4 @@
 
 ## 待验证
 
-- RF310c 如何在不拆散更新锁/备份事务的前提下迁移资源获取步骤，并完成 PRoot 对照、网络中断和大文件压力。
+- RF310c2 固定 PRoot 对照、真实网络中断/重试与更大真机负载；动态 URL、多镜像下载需要先补结构化解析合同。

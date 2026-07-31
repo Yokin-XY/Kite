@@ -111,7 +111,8 @@
             "id": "download-hermes-installer",
             "type": "download",
             "url": "https://hermes-agent.nousresearch.com/install.sh",
-            "destination": "$install_root/.kite-downloads/install.sh"
+            "destination": "$install_root/.kite-downloads/install.sh",
+            "maxBytes": 16777216
           },
           {
             "id": "run-hermes-installer",

@@ -1016,6 +1016,8 @@ internal class AndroidRecipeExecutor(
                 status = CardRunStatus.Running,
                 surface = RunOrchestrator.surfaceFor(stepType),
                 currentStepIndex = stepIndex,
+                runtimeLane = SHELL_RUNTIME_LANE.takeIf { stepType == KiteRecipe.STEP_SHELL },
+                runtimeFallbackReason = SHELL_RUNTIME_REASON.takeIf { stepType == KiteRecipe.STEP_SHELL },
                 lastMeaningfulOutput = when (stepType) {
                     KiteRecipe.STEP_TERMINAL -> "正在准备终端环境"
                     KiteRecipe.STEP_X11 -> "正在准备 X11 环境"
@@ -1024,6 +1026,8 @@ internal class AndroidRecipeExecutor(
                 }
             )
 
+        internal const val SHELL_RUNTIME_LANE = "proot_shell"
+        internal const val SHELL_RUNTIME_REASON = "shell_command_requires_proot"
         private const val TERMINAL_COMMAND_DELAY_MS = 650L
         private val TERMINAL_FINISHED_STATUSES = setOf(
             ManagedTerminalStatus.EXITED,

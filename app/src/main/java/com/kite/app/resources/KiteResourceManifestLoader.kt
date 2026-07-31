@@ -127,7 +127,8 @@ data class KiteResourceInstallStep(
     val ref: String = "",
     val depth: Int = 1,
     val retryAttempts: Int = 4,
-    val retryDelaySeconds: Int = 2
+    val retryDelaySeconds: Int = 2,
+    val maxBytes: Long = 0L
 )
 
 data class KiteResourceInstallVerification(
@@ -854,7 +855,8 @@ class KiteResourceManifestLoader private constructor(
             environment = sourceJson.optJSONObject("environment").toStringMap(),
             profile = sourceJson.optString("profile").trim(),
             interpreter = sourceJson.optString("interpreter").trim(),
-            entry = sourceJson.optString("entry").trim()
+            entry = sourceJson.optString("entry").trim(),
+            maxBytes = sourceJson.optLong("maxBytes", 0L).coerceAtLeast(0L)
         )
     }
 
@@ -1029,7 +1031,8 @@ class KiteResourceManifestLoader private constructor(
                         ref = step.optString("ref").trim(),
                         depth = step.optInt("depth", 1).coerceIn(0, 1000),
                         retryAttempts = step.optInt("retryAttempts", 4).coerceIn(1, 10),
-                        retryDelaySeconds = step.optInt("retryDelaySeconds", 2).coerceIn(0, 60)
+                        retryDelaySeconds = step.optInt("retryDelaySeconds", 2).coerceIn(0, 60),
+                        maxBytes = step.optLong("maxBytes", 0L).coerceAtLeast(0L)
                     )
                 )
             }

@@ -66,5 +66,6 @@ data class KiteResourceSourceSpec(
     val environment: Map<String, String> = emptyMap(),
     val profile: String = "",
     val interpreter: String = "",
-    val entry: String = ""
+    val entry: String = "",
+    val maxBytes: Long = 0L
 )
