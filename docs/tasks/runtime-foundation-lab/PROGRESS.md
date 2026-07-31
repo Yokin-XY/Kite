@@ -4,12 +4,13 @@
 
 | 任务 | 状态 | 当前结论 |
 | --- | --- | --- |
-| RF000 | 进行中 | 独立分支已从 `main@8223ba0` 建立 |
-| RF100 | 进行中 | RF110～RF130 已完成，等待父任务全量回归 |
+| RF000 | 进行中 | RF100 已完成，进入 RF200 快速通道 |
+| RF100 | 已完成 | 统一请求、Provider 结果和失败关闭通过全量回归 |
 | RF110 | 已完成 | 总架构、三份 Provider 文档、Node 风险索引与性能证据已固化 |
 | RF120 | 已完成 | 三个 Node 入口已迁移到统一结构化请求，行为等价 |
 | RF130 | 已完成 | Ready/Unsupported/Blocked 已接入三条正式 Node 入口 |
-| RF200～RF440 | 待开始 | 按任务树依赖推进 |
+| RF200 | 进行中 | 当前 RF210：Node 标准 Provider 化 |
+| RF210～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
 
@@ -18,6 +19,14 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF100 父任务验收
+
+- 按工具链合同执行 `:app:testDebugUnitTest --rerun-tasks`：238 个 suite、1250 tests、0 failure、0 error、2 skipped。
+- 执行 `:app:assembleDebug --rerun-tasks`：60 个任务全部执行，`BUILD SUCCESSFUL`。
+- 本地 APK 为 `app/build/outputs/apk/debug/app-debug.apk`，240431413 bytes，SHA-256 `81794AE06AFBEAD62ABBEF463B50663108F612AC3B337D7990E6678A28BC67F9`；构建目录由 `.gitignore` 排除，未安装、未提交、未上传。
+- 新实验工作树缺少本地工具链参考，已从历史和实时 JDK/SDK/ADB/设备事实恢复 `references/toolchain.md`；该路径按仓库边界保持本地忽略。
+- RF100 完成，恢复指针进入 RF210。Node 后续只做标准 Provider 适配与等价护栏，不重跑既有性能矩阵。
 
 ### 2026-07-31 RF130 验收
 
