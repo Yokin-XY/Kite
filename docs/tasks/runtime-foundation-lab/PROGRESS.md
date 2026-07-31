@@ -59,6 +59,11 @@
 | RF1020 | 已完成 | actual controller 已限制 managed owner，并允许短任务绕过其等待项 |
 | RF1030 | 已完成 | actual v2 健康与 OnePlus 8T 六项固定矩阵通过 |
 | RF1040 | 已完成 | 1464 项全量回归、强制构建、连续三轮真机矩阵与范围审查通过 |
+| RF1100 | 进行中 | 研究只覆盖 PRoot 启动窗口的跨入口协调，不占用会话全生命周期 |
+| RF1110 | 已完成 | 真实创建点和 READY 边界已审计，生产入口未修改 |
+| RF1120 | 进行中 | Debug 固定并发启动矩阵 |
+| RF1130 | 待开始 | 依据真机收益给出 go/no-go 与生产合同 |
+| RF1140 | 待开始 | 只在 go 时生产接线并关闭父任务门 |
 
 ## RF110 开机与三问自检
 
@@ -294,6 +299,16 @@
 - 从 RF1000 起点 `e0d2125` 到父任务门的净路径只涉及 PRoot admission/actual health/warm coordinator、Debug 探针、目标测试和文档；Node、Python、终端、Agent 均无净修改，冻结性能矩阵没有重跑。
 - 类别复核结论：终端和 Agent 直接复用 `MANAGED_OWNER` 为 no-go。二者可长期空闲，若按会话存活永久占用 1/2/4 槽，会把吞吐保护变成会话数量限制；下一阶段只值得研究入口无关的“进程启动窗口协调”，不得借机接管会话全生命周期。
 - RF1000 完成。
+
+## RF1110 启动窗口审计启动
+
+- 代码中已有统一 `ProotLaunchPlan`，能表达 `INTERACTIVE/EXEC/BOOTSTRAP` lane 与 purpose，但 `ContainerLaunchConfig`/`ContainerExecConfig` 目前只携带物理 argv/env，计划事实没有进入进程创建边界。
+- 实际创建点并不唯一：Termux `TerminalSession` 内部创建 PTY 进程，Agent 由 `AgentProcessFactory` 创建双向 stdio 进程，后台与有界 exec 直接调用 `ProcessBuilder.start()`；因此不能把某个 helper 包起来就宣称全局启动协调。
+- `ProcessBuilder.start()` 只证明 Android wrapper 已创建，不证明 PRoot 已完成 rootfs 翻译或业务可用。终端现有激活探针、Agent 协议连接、exec 首字节/退出和后台强身份/健康分别是不同就绪边界。
+- 下一步先固定两阶段 launch lease 合同和 Debug 首字节矩阵；RF1110 不修改生产入口。
+- 进一步逐入口复核：终端现有 `isRunning + pid` 仍不足以证明 shell 可交互；Agent 的 ACP initialize 是强 READY；后台已有长期 lease 且必须避免双重排队；有界 exec 已由完整任务 admission 覆盖；bootstrap 有固定 token 但属于准备事务；Bridge/ADB 仍存在直接创建旁路。
+- `ProotLaunchPlan` 已有 lane/purpose，但两类物理 config 丢失该 metadata。若矩阵 go，正确接线顺序是先透传结构化 launch metadata，再由实际创建者持有两阶段 lease；禁止从 argv 或资源/Agent 身份反推。
+- RF1110 完成，进入 RF1120 固定矩阵。矩阵先证明“只包围 start()”与“包围到 READY”的差异，不接生产入口。
 
 ## RF710 开机与三问自检
 
