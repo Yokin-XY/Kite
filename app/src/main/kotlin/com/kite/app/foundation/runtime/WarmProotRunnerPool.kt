@@ -36,6 +36,7 @@ internal data class WarmProotRunnerPoolSnapshot(
     val activeSessions: Int,
     val idleSessions: Int,
     val staleSessions: Int,
+    val oldestIdleAgeMs: Long,
 )
 
 internal enum class WarmProotExecutionRoute {
@@ -190,11 +191,17 @@ internal class WarmProotRunnerPool(
     }
 
     fun snapshot(): WarmProotRunnerPoolSnapshot = lock.withLock {
+        val nowNanos = monotonicNanos()
         WarmProotRunnerPoolSnapshot(
             totalSessions = slots.size,
             activeSessions = slots.count(Slot::inUse),
             idleSessions = slots.count { !it.inUse },
             staleSessions = slots.count(Slot::stale),
+            oldestIdleAgeMs = slots.asSequence()
+                .filter { !it.inUse }
+                .map { TimeUnit.NANOSECONDS.toMillis((nowNanos - it.lastUsedNanos).coerceAtLeast(0L)) }
+                .maxOrNull()
+                ?: 0L,
         )
     }
 
@@ -390,6 +397,7 @@ internal object WarmProotExecutionCoordinator {
         val activeWarmSessions: Int,
         val idleWarmSessions: Int,
         val staleWarmSessions: Int,
+        val oldestIdleAgeMs: Long,
     )
 
     fun nextJobId(prefix: String): String =
@@ -431,7 +439,7 @@ internal object WarmProotExecutionCoordinator {
         val currentPolicy = policy
         val tuning = ProotPerformanceTunings.resolve(currentPolicy.profileGroup, currentPolicy.lanes)
         val admissionSnapshot = admission.snapshot()
-        val poolSnapshot = holder?.pool?.snapshot() ?: WarmProotRunnerPoolSnapshot(0, 0, 0, 0)
+        val poolSnapshot = holder?.pool?.snapshot() ?: WarmProotRunnerPoolSnapshot(0, 0, 0, 0, 0L)
         return TuningSnapshot(
             profileGroup = currentPolicy.profileGroup,
             pressure = currentPolicy.pressure,
@@ -446,6 +454,7 @@ internal object WarmProotExecutionCoordinator {
             activeWarmSessions = poolSnapshot.activeSessions,
             idleWarmSessions = poolSnapshot.idleSessions,
             staleWarmSessions = poolSnapshot.staleSessions,
+            oldestIdleAgeMs = poolSnapshot.oldestIdleAgeMs,
         )
     }
 

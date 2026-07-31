@@ -120,6 +120,7 @@ private object ProotCompatibilityProbe {
     }
 
     fun runBoundedProcessList(context: Context): String {
+        val beforeTuning = WarmProotExecutionCoordinator.tuningSnapshot()
         val directStartedAt = SystemClock.elapsedRealtime()
         val execution = BoundedProotTaskExecutor.executeBlocking(
             context = context,
@@ -154,10 +155,19 @@ private object ProotCompatibilityProbe {
         check(snapshot.collectionSource.contains("container_ps")) {
             "container_process_store_source:${snapshot.collectionSource}"
         }
+        val afterTuning = WarmProotExecutionCoordinator.tuningSnapshot()
         return "status=bounded_process_list_ok route=${execution.route.name.lowercase()} " +
             "elapsedMs=$directMs parsed=$parsed stdoutBytes=${completed.stdoutTail.size} " +
             "stdoutDropped=${completed.stdoutDroppedBytes} storeSource=${snapshot.collectionSource} " +
-            "storeProcesses=${snapshot.processes.size}"
+            "storeProcesses=${snapshot.processes.size} " +
+            "profile=${afterTuning.profileGroup.name.lowercase()} pressure=${afterTuning.pressure.name.lowercase()} " +
+            "foreground=${afterTuning.foreground} configuredMax=${afterTuning.configuredGlobalMax} " +
+            "effectiveMax=${afterTuning.effectiveGlobalMax} warmMax=${afterTuning.maxWarmRunners} " +
+            "idleTimeoutMs=${afterTuning.idleTimeoutMs} active=${afterTuning.activeJobs} " +
+            "queued=${afterTuning.queuedJobs} beforeSessions=${beforeTuning.totalWarmSessions} " +
+            "beforeOldestIdleMs=${beforeTuning.oldestIdleAgeMs} " +
+            "afterSessions=${afterTuning.totalWarmSessions} afterIdle=${afterTuning.idleWarmSessions} " +
+            "afterStale=${afterTuning.staleWarmSessions} afterOldestIdleMs=${afterTuning.oldestIdleAgeMs}"
     }
 
     private data class OrchestratedExecution(

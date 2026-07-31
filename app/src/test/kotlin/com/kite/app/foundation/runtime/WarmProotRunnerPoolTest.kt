@@ -46,6 +46,28 @@ class WarmProotRunnerPoolTest {
     }
 
     @Test
+    fun `expired idle session is observable and retired before later work`() {
+        var nowNanos = 0L
+        val sessions = mutableListOf<FakeSession>()
+        val pool = pool(
+            sessionFactory = { FakeSession { request -> success(request.jobId) }.also(sessions::add) },
+            tuningProvider = { WarmProotRunnerPoolTuning(maxWarmRunners = 2, idleTimeoutMs = 1L) },
+            monotonicNanos = { nowNanos },
+        )
+        assertTrue(pool.executeBlocking(admission("first"), job("first")).succeeded)
+
+        nowNanos = TimeUnit.MILLISECONDS.toNanos(2L)
+        assertEquals(2L, pool.snapshot().oldestIdleAgeMs)
+        assertTrue(pool.executeBlocking(admission("second"), job("second")).succeeded)
+
+        assertEquals(2, sessions.size)
+        assertTrue(sessions.first().closed)
+        assertFalse(sessions.last().closed)
+        assertEquals(1, pool.sessionCount())
+        pool.close()
+    }
+
+    @Test
     fun `prestart failure uses fallback under the same admission lease`() {
         var fallbackCount = 0
         val pool = pool(sessionFactory = {
@@ -205,6 +227,10 @@ class WarmProotRunnerPoolTest {
     private fun pool(
         identityProvider: () -> WarmProotRunnerIdentity? = { identity("default") },
         sessionFactory: () -> WarmProotJobSession,
+        tuningProvider: () -> WarmProotRunnerPoolTuning = {
+            WarmProotRunnerPoolTuning(maxWarmRunners = 2, idleTimeoutMs = 60_000L)
+        },
+        monotonicNanos: () -> Long = System::nanoTime,
     ): WarmProotRunnerPool {
         val lanes = RuntimeWorkloadPolicy.defaultLanes().map { lane ->
             if (lane.lane == RuntimeLaneKind.INTERACTIVE) {
@@ -223,7 +249,8 @@ class WarmProotRunnerPoolTest {
             ),
             identityProvider = identityProvider,
             sessionFactory = sessionFactory,
-            tuningProvider = { WarmProotRunnerPoolTuning(maxWarmRunners = 2, idleTimeoutMs = 60_000L) },
+            tuningProvider = tuningProvider,
+            monotonicNanos = monotonicNanos,
         )
     }
 
