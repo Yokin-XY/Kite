@@ -122,6 +122,10 @@ data class BackgroundRuntimeRecord(
     val retentionClass: RuntimeRetentionClass = RuntimeRetentionClass.BATCH,
     val processBootId: String? = null,
     val processStartTicks: Long? = null,
+    /** RF920: 同一后台 owner 的 PRoot lease 检查点；未接入生产启动链。 */
+    val longLivedProotLeaseGeneration: Long? = null,
+    val longLivedProotLeasePhase: String? = null,
+    val longLivedProotLeaseUpdatedAt: Long? = null,
 ) {
     internal fun processIdentityEnvironment(): Map<String, String> =
         RuntimeOwnerIdentity.backgroundRuntime(id, kind.name).environment()
@@ -181,6 +185,9 @@ data class BackgroundRuntimeRecord(
             .put("pid", pid)
             .put("processBootId", processBootId)
             .put("processStartTicks", processStartTicks)
+            .put("longLivedProotLeaseGeneration", longLivedProotLeaseGeneration)
+            .put("longLivedProotLeasePhase", longLivedProotLeasePhase)
+            .put("longLivedProotLeaseUpdatedAt", longLivedProotLeaseUpdatedAt)
             .put("lastHealthSummary", lastHealthSummary)
             .put("lastHealthCheckedAt", lastHealthCheckedAt)
             .put("lastExitCode", lastExitCode)
@@ -396,6 +403,12 @@ data class BackgroundRuntimeRecord(
                 processStartTicks = json.optLong("processStartTicks").takeIf {
                     !json.isNull("processStartTicks") && it > 0L
                 },
+                longLivedProotLeaseGeneration = json.optLong("longLivedProotLeaseGeneration")
+                    .takeIf { !json.isNull("longLivedProotLeaseGeneration") },
+                longLivedProotLeasePhase = json.optString("longLivedProotLeasePhase")
+                    .takeIf { !json.isNull("longLivedProotLeasePhase") },
+                longLivedProotLeaseUpdatedAt = json.optLong("longLivedProotLeaseUpdatedAt")
+                    .takeIf { !json.isNull("longLivedProotLeaseUpdatedAt") },
             )
         }
     }

@@ -50,7 +50,8 @@
 | RF840 | 已完成 | 生产接入 no-go：强身份已过门，统一容量/STARTING 持久化/actual 观测仍缺失 |
 | RF850 | 已完成 | 1431 项全量门、强制 Debug、OnePlus 8T 和范围审查全部通过 |
 | RF910 | 已完成 | 同锁 lane 事实与统一只读容量合同完成，仍标记未生产 |
-| RF920 | 待开始 | 下一恢复点：同一后台记录持久化 provisional lease generation/phase |
+| RF920 | 已完成 | 同一后台记录原子持久化 PRoot route + STARTING，尚未接生产 |
+| RF930 | 待开始 | 下一恢复点：实际仲裁准入后桥接启动、身份、外死与停止 |
 
 ## RF110 开机与三问自检
 
@@ -216,6 +217,14 @@
 - 压力收缩造成既有 holder 超过新上限时输出 OVERCOMMITTED、剩余容量归零，但不产生驱逐动作；独占维护与其他活动任务并存、同 owner 多个未释放代次或进程身份冲突均输出 CONTRACT_MISMATCH。
 - 快照固定为 `unified_contract_not_production`，只含低基数枚举、布尔和计数；没有 ownerId、leaseId、PID、命令、路径、Store、Context 或 ProcessBuilder，也没有后台生产引用。
 - 首轮编译错误来自测试错误消息 nullable，修正后执行；第二轮两个失败是测试把 RUNNING 误算 queued、把聚合 identity count 误判为身份泄漏，修正断言并增加 RELEASED 同 owner 旧代次反例。最终目标回归 21 项、0 failure、0 error、0 skipped；强制 Debug 产物刷新后再以非强制构建取得 exitCode=0，下一恢复点 RF920。
+
+## RF920 后台 provisional lease 持久化
+
+- `BackgroundRuntimeRecord` 新增 `longLivedProotLeaseGeneration/Phase/UpdatedAt` 三个最小字段；phase 以内部枚举名持久化，避免把内部状态机扩大成公共模型类型。owner 继续使用同一记录 id，强身份继续使用既有 PID/boot/start ticks。
+- 新增纯检查点策略和 Registry 原子 begin/transition：实际 controller 未来给出 generation 后，可以在进程创建前一次写入 `lastLaunchLane=proot_shell` 与 `STARTING`；后续转换必须命中 expected generation/phase 且时间不倒退。
+- 三字段全缺失的旧 JSON 仍为 absent；部分字段、未知 phase、非 PROCESS 活跃 lease、Host/PRoot 路由冲突均保留为 malformed 并拒绝覆盖，不能因解析失败制造假空闲。RELEASED 代次保留，只有更高 generation 能再次 begin。
+- 内置定义和资源定义刷新显式保留三个字段；`BackgroundRuntimeHost` 仍没有 begin/transition 调用，规划模拟器仍未装配，RF920 不改变生产启动、停止或健康行为。
+- 第一轮联合目标回归 16 项中 2 项失败，原因是新 JSON 测试遗漏 Robolectric runner，并非产品逻辑失败；补齐测试环境后 16 项全通过，新增检查点 suite 5 项再次单独通过。下一恢复点 RF930。
 
 ## RF710 开机与三问自检
 

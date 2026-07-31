@@ -147,6 +147,8 @@ RF840 的生产接入结论为 **no-go**，不是强身份链失败，而是统�
 
 RF910 的统一只读计数和后续接入边界见 [PRoot 短任务与长期 owner 统一容量合同](unified-proot-capacity.md)。
 
+RF920 已把长期 PRoot 检查点放入同一 `BackgroundRuntimeRecord`。检查点只保存 generation、phase-name 和更新时间；owner 仍由记录 id 表示，PID/boot/start ticks 仍由既有强身份字段表示，不复制命令或进程事实。`proot_shell + STARTING` 可以一次持久化，但 `BackgroundRuntimeHost` 在 RF930 前不调用该入口，因此这一步只关闭重启丢失窗口的存储前提，不代表生产容量已接入。
+
 ## 禁止方案
 
 - 不把 command token、statusCommand、端口健康或 PID-only 当强身份。

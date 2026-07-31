@@ -5,7 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** RF840 no-go 门：统一容量和 provisional lease 未完成前，不得把规划模拟器冒充生产接入。 */
+/** RF920 门：检查点可以持久化，但 RF930 前不得把规划模拟器或后台 Host 冒充生产接入。 */
 class LongLivedProotProductionBoundaryContractTest {
     @Test
     fun `background runtime does not instantiate the planned long lived controller`() {
@@ -18,8 +18,11 @@ class LongLivedProotProductionBoundaryContractTest {
 
         assertFalse(hostSource.contains("LongLivedProotAdmissionSimulator"))
         assertFalse(hostSource.contains("LongLivedProotOwnerLeaseTransitions"))
-        assertFalse(recordSource.contains("longLivedProotLeaseGeneration"))
-        assertFalse(recordSource.contains("longLivedProotLeasePhase"))
+        assertFalse(hostSource.contains("beginLongLivedProotLease"))
+        assertFalse(hostSource.contains("transitionLongLivedProotLease"))
+        assertTrue(recordSource.contains("longLivedProotLeaseGeneration"))
+        assertTrue(recordSource.contains("longLivedProotLeasePhase"))
+        assertTrue(recordSource.contains("longLivedProotLeaseUpdatedAt"))
     }
 
     @Test

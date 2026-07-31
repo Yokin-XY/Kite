@@ -47,4 +47,6 @@ ORPHAN_REVIEW
 
 `UnifiedProotCapacitySnapshot.scope` 固定为 `unified_contract_not_production`。投影不读取 Store、RuntimeHealth、`/proc` 或页面，不创建进程，也不修改 `WarmProotExecutionCoordinator`。因此 RF910 通过不代表后台长期 lease 已接入生产。
 
-RF920 必须在 `BackgroundRuntimeRecord` 内持久化 provisional lease generation/phase；RF930 才能让实际仲裁器在路由选定为 `proot_shell` 后、进程创建前原子占位。届时 production controller 必须直接生成统一 actual 快照，不能把本只读投影改名后冒充实际准入。
+RF920 已在 `BackgroundRuntimeRecord` 内加入 provisional lease 的 generation、phase-name 和更新时间，并提供原子的 `proot_shell + STARTING` 持久化原语。字段仍属于同一后台记录，没有新增 Store；定义刷新也必须保留它们。旧 JSON 三字段全缺失表示没有 lease，部分字段、未知 phase、非 PROCESS 活跃 lease 或 Host/PRoot 路由冲突均标记为损坏并失败关闭。
+
+RF920 仍未让 `BackgroundRuntimeHost` 调用这些原语，也没有把规划模拟器装入生产。RF930 才能在实际仲裁器准入之后、进程创建之前调用 begin，在创建/外死/停止结果到来时按 generation 与 expected phase 做原子转换。届时 production controller 必须直接生成统一 actual 快照，不能把本只读投影改名后冒充实际准入。

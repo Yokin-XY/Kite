@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF900` 短任务与长期 owner 统一容量仲裁
-- 当前任务：`RF920` 后台 provisional lease 持久化
+- 当前任务：`RF930` 启动、恢复与停止桥
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -581,8 +581,11 @@
 
 #### RF920 后台 provisional lease 持久化
 
-- 在同一 `BackgroundRuntimeRecord` 保存最小 lease generation/phase；路由选择为 `proot_shell` 后、进程创建前原子持有 STARTING 容量。
-- Host 路径、旧 JSON、身份缺失和 spec 冲突失败关闭；不新增平行 Store。
+- 状态：已完成，持久化原语未接生产。
+- [x] 在同一 `BackgroundRuntimeRecord` 保存 generation、phase-name 和更新时间，不新增平行 Store；
+- [x] 路由与 `STARTING` 检查点可在同一次 Registry 保存中写入，写入时 PID/boot/start ticks 仍为空；
+- [x] 旧 JSON 表示无 lease，部分字段、未知 phase、时间/代次倒退和 Host/PRoot 路由冲突失败关闭；
+- [x] 内置定义与资源定义刷新保留检查点，后台 Host 在 RF930 前无 begin/transition 调用。
 
 #### RF930 启动、恢复与停止桥
 

@@ -342,3 +342,11 @@
 - 决定：先从现有短任务 controller 同锁投影逐 lane actual 计数，再以纯函数合并长期 lease phase；RF910 不实例化第二个 controller、不接后台、不读取 Store 或进程。统一快照 scope 固定为 `unified_contract_not_production`。
 - 原因：直接改生产准入会同时跨越短任务公平队列、长期 provisional lease 持久化和重启恢复三个风险面，难以证明总容量没有超售。先固定计数和失败关闭不变量，可以让 RF920/930 复用同一事实，而不会把规划结果冒充 actual。
 - 影响：ADMITTED 到 ORPHAN_REVIEW 均持有容量；REQUESTED 只排队，RELEASED 忽略。压力缩档可出现 OVERCOMMITTED，但不得强杀既有任务；重复 owner/进程身份、lane sum 不一致和独占冲突均阻止新准入。RF920 仍必须在 `BackgroundRuntimeRecord` 内补 provisional generation/phase。
+
+## ADR-RF-044 长期 PRoot 检查点归属后台记录并失败关闭
+
+- 状态：已接受，RF920 已完成
+- 日期：2026-08-01
+- 决定：长期 PRoot 的 generation、phase-name 和更新时间直接持久化在同一 `BackgroundRuntimeRecord`；Registry 提供原子 `proot_shell + STARTING` begin 和带 expected generation/phase 的转换。内部强类型策略解释字符串 phase，不把内部 lease 枚举扩成公共模型 API。
+- 原因：进程创建前没有 PID，若只从 RUNNING/强身份反推容量，控制面重启会把 STARTING 窗口误判为空闲；另建 Store 又会复制 owner、路由和身份事实。把最小检查点写回同一记录，能让将来恢复先看占位、再看进程。
+- 影响：旧 JSON 三字段全缺失保持兼容；任意部分字段、未知 phase、路由冲突、旧 generation 或时间倒退都拒绝覆盖。RELEASED 历史保留以保证 generation 单调。RF920 不授权生产调用；RF930 必须由实际统一仲裁结果驱动这些原语，不能由页面、资源 ID、命令名或规划模拟器自行写入。

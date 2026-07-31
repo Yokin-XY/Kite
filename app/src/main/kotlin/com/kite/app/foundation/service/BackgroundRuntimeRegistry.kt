@@ -3,6 +3,7 @@ package com.kite.app.foundation.service
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.runtime.RuntimeExposureScope
+import com.kite.app.foundation.runtime.LongLivedProotLeasePhase
 import com.kite.app.foundation.runtime.RuntimeProcessUnitObservationState
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import org.json.JSONArray
@@ -143,6 +144,9 @@ object BackgroundRuntimeRegistry {
                     pid = previous.pid,
                     processBootId = previous.processBootId,
                     processStartTicks = previous.processStartTicks,
+                    longLivedProotLeaseGeneration = previous.longLivedProotLeaseGeneration,
+                    longLivedProotLeasePhase = previous.longLivedProotLeasePhase,
+                    longLivedProotLeaseUpdatedAt = previous.longLivedProotLeaseUpdatedAt,
                     lastHealthSummary = previous.lastHealthSummary,
                     lastHealthCheckedAt = previous.lastHealthCheckedAt,
                     lastExitCode = previous.lastExitCode,
@@ -327,6 +331,9 @@ object BackgroundRuntimeRegistry {
                 pid = current.pid,
                 processBootId = current.processBootId,
                 processStartTicks = current.processStartTicks,
+                longLivedProotLeaseGeneration = current.longLivedProotLeaseGeneration,
+                longLivedProotLeasePhase = current.longLivedProotLeasePhase,
+                longLivedProotLeaseUpdatedAt = current.longLivedProotLeaseUpdatedAt,
                 lastHealthSummary = current.lastHealthSummary,
                 lastHealthCheckedAt = current.lastHealthCheckedAt,
                 lastExitCode = current.lastExitCode,
@@ -483,6 +490,97 @@ object BackgroundRuntimeRegistry {
         }
         saveRecords(runtimeRoot, updated)
         return updated.firstOrNull { it.id == runtimeId }
+    }
+
+    /** RF920 原子写入 PRoot 路由与进程创建前 STARTING 占位；RF930 前没有生产调用方。 */
+    @Synchronized
+    internal fun beginLongLivedProotLease(
+        context: Context,
+        runtimeId: String,
+        generation: Long,
+        launchReason: String,
+        updatedAtMs: Long = System.currentTimeMillis(),
+    ): BackgroundRuntimeProotLeaseMutation = beginLongLivedProotLease(
+        runtimeRoot = WorkSurfaceRuntimeBridge.getRuntimeRoot(context),
+        runtimeId = runtimeId,
+        generation = generation,
+        launchReason = launchReason,
+        updatedAtMs = updatedAtMs,
+    )
+
+    @Synchronized
+    internal fun beginLongLivedProotLease(
+        runtimeRoot: File,
+        runtimeId: String,
+        generation: Long,
+        launchReason: String,
+        updatedAtMs: Long,
+    ): BackgroundRuntimeProotLeaseMutation {
+        val records = readAll(runtimeRoot)
+        val current = records.firstOrNull { it.id == runtimeId }
+            ?: return BackgroundRuntimeProotLeaseMutation(
+                record = null,
+                changed = false,
+                rejectionReason = "background_proot_lease_runtime_missing",
+            )
+        val mutation = BackgroundRuntimeProotLeaseCheckpointPolicy.beginStarting(
+            record = current,
+            generation = generation,
+            launchReason = launchReason,
+            updatedAtMs = updatedAtMs,
+        )
+        if (mutation.accepted && mutation.changed) {
+            val next = requireNotNull(mutation.record)
+            saveRecords(runtimeRoot, records.map { if (it.id == runtimeId) next else it })
+        }
+        return mutation
+    }
+
+    @Synchronized
+    internal fun transitionLongLivedProotLease(
+        context: Context,
+        runtimeId: String,
+        expectedGeneration: Long,
+        expectedPhase: LongLivedProotLeasePhase,
+        nextPhase: LongLivedProotLeasePhase,
+        updatedAtMs: Long = System.currentTimeMillis(),
+    ): BackgroundRuntimeProotLeaseMutation = transitionLongLivedProotLease(
+        runtimeRoot = WorkSurfaceRuntimeBridge.getRuntimeRoot(context),
+        runtimeId = runtimeId,
+        expectedGeneration = expectedGeneration,
+        expectedPhase = expectedPhase,
+        nextPhase = nextPhase,
+        updatedAtMs = updatedAtMs,
+    )
+
+    @Synchronized
+    internal fun transitionLongLivedProotLease(
+        runtimeRoot: File,
+        runtimeId: String,
+        expectedGeneration: Long,
+        expectedPhase: LongLivedProotLeasePhase,
+        nextPhase: LongLivedProotLeasePhase,
+        updatedAtMs: Long,
+    ): BackgroundRuntimeProotLeaseMutation {
+        val records = readAll(runtimeRoot)
+        val current = records.firstOrNull { it.id == runtimeId }
+            ?: return BackgroundRuntimeProotLeaseMutation(
+                record = null,
+                changed = false,
+                rejectionReason = "background_proot_lease_runtime_missing",
+            )
+        val mutation = BackgroundRuntimeProotLeaseCheckpointPolicy.transition(
+            record = current,
+            expectedGeneration = expectedGeneration,
+            expectedPhase = expectedPhase,
+            nextPhase = nextPhase,
+            updatedAtMs = updatedAtMs,
+        )
+        if (mutation.accepted && mutation.changed) {
+            val next = requireNotNull(mutation.record)
+            saveRecords(runtimeRoot, records.map { if (it.id == runtimeId) next else it })
+        }
+        return mutation
     }
 
     @Synchronized
