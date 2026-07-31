@@ -41,7 +41,8 @@
 | RF750 | 已完成 | 1404 项全量回归与强制构建通过；RF700 无生产装配，不覆盖安装 |
 | RF800 | 进行中 | 只沿 RF650 go 方向补后台长期 owner 强身份，不迁移终端/Agent |
 | RF810 | 已完成 | 定位 PID/token/停止窗口，确认持久强身份还需 boot ID + start ticks |
-| RF820 | 进行中 | 增加 Host 同轮强身份观察与后台 JSON 向后兼容持久化 |
+| RF820 | 已完成 | boot+PID+start ticks 观察、JSON、PID 清理不变量和原子写入口通过 |
+| RF830 | 进行中 | 先落停止意图，精确身份恢复，退出确认后才清记录和容量 |
 
 ## RF110 开机与三问自检
 
@@ -139,6 +140,15 @@
 - 发现跨设备 reboot 边界：`(pid,startTicks)` 只在同一 boot 内唯一。后台记录跨 reboot 持久化，所以 RF820 必须保存 `(bootId,pid,startTicks)`；boot 相同后才可向 RF610 提供 PID+代次。
 - 停止链当前先用内存 `stoppingRuntimeIds`，终止并无条件写 STOPPED 后才持久化 expected stop；终止结果不控制 STOPPED。RF830 必须改为先持久化意图、再精确校验代次、观察退出后确认并释放 lease。
 - RF810 只修改正式架构/任务文档，没有代码和生产行为变化，无需构建或真机。下一恢复指针进入 RF820；SERVICE、Host lane、终端和 Agent 均不进入本桥接。
+
+## RF820 验收
+
+- `HostProcessRecord` 增加 nullable `processStartTicks`，`HostProcessSnapshot` 增加 nullable boot ID；同一 `/proc` 读取链按 stat 字段 22 解析 starttime。comm 含右括号时从最后一个右括号后定位，避免错误拆字段。
+- `HostProcessIdentityObservation` 强制规范 boot UUID、正 PID 和正 start ticks；snapshot 只从 `appProcess` 生成。`ps -A` fallback 没有 start ticks，因此自然保持 identity unavailable。
+- `BackgroundRuntimeRecord` 在尾部追加可空 `processBootId/processStartTicks`，不破坏既有位置参数；JSON 缺字段向后兼容。派生身份要求三字段完整有效，坏/部分数据失败关闭。
+- `updateStatus` 通过统一 `withProcessPid` 保证同 PID 保留、换 PID/清 PID 同步清身份；内置定义刷新与 upsertDefinition 保留同一活动身份；新增 Registry 原子写入口只接受活动记录的精确 PID。
+- 目标回归 4 个 suite、18 tests、0 failure、0 error、0 skipped；首次新 JSON 测试因本地 JVM `org.json` stub 失败，改用项目既有 Robolectric 方式后原范围通过。Debug 构建成功。
+- RF820 尚未由生产 start/attach/stop 调用新身份入口，行为保持不变。下一恢复指针 RF830，先建立纯恢复/停止决策和退出确认，再接 Host。
 
 ## RF710 开机与三问自检
 

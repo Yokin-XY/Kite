@@ -1,6 +1,8 @@
 package com.kite.app.foundation.service
 
 import com.kite.app.foundation.runtime.RuntimeExposureScope
+import com.kite.app.foundation.runtime.HostProcessIdentityObservation
+import com.kite.app.foundation.runtime.normalizeHostBootId
 import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeProcessUnitObservationState
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
@@ -117,7 +119,9 @@ data class BackgroundRuntimeRecord(
     val lastStopReconciliationReason: String? = null,
     val lastStopReconciliationAt: Long? = null,
     val lastStopReconciliationAutoRecoverySuppressed: Boolean = false,
-    val retentionClass: RuntimeRetentionClass = RuntimeRetentionClass.BATCH
+    val retentionClass: RuntimeRetentionClass = RuntimeRetentionClass.BATCH,
+    val processBootId: String? = null,
+    val processStartTicks: Long? = null,
 ) {
     internal fun processIdentityEnvironment(): Map<String, String> =
         RuntimeOwnerIdentity.backgroundRuntime(id, kind.name).environment()
@@ -175,6 +179,8 @@ data class BackgroundRuntimeRecord(
             .put("status", status.name)
             .put("healthStatus", healthStatus.name)
             .put("pid", pid)
+            .put("processBootId", processBootId)
+            .put("processStartTicks", processStartTicks)
             .put("lastHealthSummary", lastHealthSummary)
             .put("lastHealthCheckedAt", lastHealthCheckedAt)
             .put("lastExitCode", lastExitCode)
@@ -383,8 +389,45 @@ data class BackgroundRuntimeRecord(
                     json.optBoolean("lastStopReconciliationAutoRecoverySuppressed", false),
                 retentionClass = RuntimeRetentionClass.entries.firstOrNull {
                     it.name == json.optString("retentionClass", RuntimeRetentionClass.BATCH.name)
-                } ?: RuntimeRetentionClass.BATCH
+                } ?: RuntimeRetentionClass.BATCH,
+                processBootId = json.optString("processBootId")
+                    .takeIf { !json.isNull("processBootId") }
+                    ?.let(::normalizeHostBootId),
+                processStartTicks = json.optLong("processStartTicks").takeIf {
+                    !json.isNull("processStartTicks") && it > 0L
+                },
             )
         }
     }
+}
+
+internal fun BackgroundRuntimeRecord.withProcessPid(nextPid: Int?): BackgroundRuntimeRecord {
+    val normalizedPid = nextPid?.takeIf { it > 0 }
+    val preserveIdentity = normalizedPid != null && normalizedPid == pid
+    return copy(
+        pid = normalizedPid,
+        processBootId = processBootId.takeIf { preserveIdentity },
+        processStartTicks = processStartTicks.takeIf { preserveIdentity },
+    )
+}
+
+internal fun BackgroundRuntimeRecord.withObservedProcessIdentity(
+    identity: HostProcessIdentityObservation,
+): BackgroundRuntimeRecord? {
+    if (!status.isActiveStatus() || pid != identity.hostPid) return null
+    return copy(
+        processBootId = identity.bootId,
+        processStartTicks = identity.processStartTicks,
+    )
+}
+
+internal fun BackgroundRuntimeRecord.persistedProcessIdentityOrNull(): HostProcessIdentityObservation? {
+    val currentPid = pid?.takeIf { it > 0 } ?: return null
+    val currentBootId = normalizeHostBootId(processBootId) ?: return null
+    val currentStartTicks = processStartTicks?.takeIf { it > 0L } ?: return null
+    return HostProcessIdentityObservation(
+        bootId = currentBootId,
+        hostPid = currentPid,
+        processStartTicks = currentStartTicks,
+    )
 }

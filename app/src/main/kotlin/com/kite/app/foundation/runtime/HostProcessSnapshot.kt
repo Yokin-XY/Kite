@@ -22,12 +22,26 @@ data class HostProcessRecord(
     val oomScoreAdj: Int? = null,
     val cpuTimeTicks: Long? = null,
     val ioReadBytes: Long? = null,
-    val ioWriteBytes: Long? = null
+    val ioWriteBytes: Long? = null,
+    val processStartTicks: Long? = null,
 )
+
+data class HostProcessIdentityObservation(
+    val bootId: String,
+    val hostPid: Int,
+    val processStartTicks: Long,
+) {
+    init {
+        require(normalizeHostBootId(bootId) == bootId) { "host_process_boot_id_invalid" }
+        require(hostPid > 0) { "host_process_pid_invalid" }
+        require(processStartTicks > 0L) { "host_process_start_ticks_invalid" }
+    }
+}
 
 class HostProcessSnapshot internal constructor(
     val allProcesses: List<HostProcessRecord>,
-    val appUser: String?
+    val appUser: String?,
+    val bootId: String? = null,
 ) {
     val appProcesses: List<HostProcessRecord> =
         if (appUser.isNullOrBlank()) {
@@ -41,6 +55,17 @@ class HostProcessSnapshot internal constructor(
 
     fun appProcess(pid: Int): HostProcessRecord? {
         return appProcessMap[pid]
+    }
+
+    fun strongIdentity(pid: Int): HostProcessIdentityObservation? {
+        val normalizedBootId = normalizeHostBootId(bootId) ?: return null
+        val process = appProcess(pid) ?: return null
+        val startTicks = process.processStartTicks?.takeIf { it > 0L } ?: return null
+        return HostProcessIdentityObservation(
+            bootId = normalizedBootId,
+            hostPid = process.pid,
+            processStartTicks = startTicks,
+        )
     }
 
     fun collectTrackedSubtree(rootPid: Int): List<HostProcessRecord> {
@@ -119,7 +144,11 @@ object HostProcessInspector {
         val procAppUser = procProcesses.firstOrNull { it.pid == AndroidProcess.myPid() }?.user
         if (procProcesses.isNotEmpty() && !procAppUser.isNullOrBlank()) {
             val appUser = procAppUser
-            return HostProcessSnapshot(allProcesses = procProcesses, appUser = appUser)
+            return HostProcessSnapshot(
+                allProcesses = procProcesses,
+                appUser = appUser,
+                bootId = readHostBootId(),
+            )
         }
 
         val processes = runCatching {
@@ -132,7 +161,11 @@ object HostProcessInspector {
             emptyList()
         }
         val appUser = processes.firstOrNull { it.pid == AndroidProcess.myPid() }?.user
-        return HostProcessSnapshot(allProcesses = processes, appUser = appUser)
+        return HostProcessSnapshot(
+            allProcesses = processes,
+            appUser = appUser,
+            bootId = readHostBootId(),
+        )
     }
 
     private fun readProcSnapshot(): List<HostProcessRecord> {
@@ -176,7 +209,8 @@ object HostProcessInspector {
             oomScoreAdj = readIntFile(File(processDir, "oom_score_adj")),
             cpuTimeTicks = procStat?.cpuTimeTicks,
             ioReadBytes = ioBytes?.first,
-            ioWriteBytes = ioBytes?.second
+            ioWriteBytes = ioBytes?.second,
+            processStartTicks = procStat?.processStartTicks,
         )
     }
 
@@ -213,26 +247,26 @@ object HostProcessInspector {
     private data class ProcStatSummary(
         val processGroupId: Int?,
         val sessionId: Int?,
-        val cpuTimeTicks: Long?
+        val cpuTimeTicks: Long?,
+        val processStartTicks: Long?,
     )
 
     private fun readProcStat(file: File): ProcStatSummary? {
-        return runCatching {
-            val raw = file.readText()
-            val endOfCommand = raw.lastIndexOf(')')
-            if (endOfCommand < 0 || endOfCommand + 2 >= raw.length) return@runCatching null
-            val fieldsFromState = raw.substring(endOfCommand + 2).trim().split(Regex("\\s+"))
-            val processGroupId = fieldsFromState.getOrNull(2)?.toIntOrNull()
-            val sessionId = fieldsFromState.getOrNull(3)?.toIntOrNull()
-            val userTicks = fieldsFromState.getOrNull(11)?.toLongOrNull() ?: 0L
-            val systemTicks = fieldsFromState.getOrNull(12)?.toLongOrNull() ?: 0L
-            ProcStatSummary(
-                processGroupId = processGroupId,
-                sessionId = sessionId,
-                cpuTimeTicks = userTicks + systemTicks
-            )
-        }.getOrNull()
+        return runCatching { parseHostProcStat(file.readText()) }
+            .getOrNull()
+            ?.let { parsed ->
+                ProcStatSummary(
+                    processGroupId = parsed.processGroupId,
+                    sessionId = parsed.sessionId,
+                    cpuTimeTicks = parsed.cpuTimeTicks,
+                    processStartTicks = parsed.processStartTicks,
+                )
+            }
     }
+
+    private fun readHostBootId(): String? = runCatching {
+        File("/proc/sys/kernel/random/boot_id").readText()
+    }.getOrNull()?.let(::normalizeHostBootId)
 
     private fun readIoBytes(file: File): Pair<Long, Long>? {
         return runCatching {
@@ -301,6 +335,38 @@ object HostProcessInspector {
         )
     }
 }
+
+internal data class HostProcStatFields(
+    val processGroupId: Int?,
+    val sessionId: Int?,
+    val cpuTimeTicks: Long?,
+    val processStartTicks: Long?,
+)
+
+/** `/proc/<pid>/stat` 中 comm 可含空格和右括号，必须从最后一个右括号后解析字段。 */
+internal fun parseHostProcStat(raw: String): HostProcStatFields? {
+    val endOfCommand = raw.lastIndexOf(')')
+    if (endOfCommand < 0 || endOfCommand + 2 >= raw.length) return null
+    val fieldsFromState = raw.substring(endOfCommand + 2).trim().split(Regex("\\s+"))
+    if (fieldsFromState.size <= 19) return null
+    val userTicks = fieldsFromState[11].toLongOrNull() ?: return null
+    val systemTicks = fieldsFromState[12].toLongOrNull() ?: return null
+    return HostProcStatFields(
+        processGroupId = fieldsFromState[2].toIntOrNull(),
+        sessionId = fieldsFromState[3].toIntOrNull(),
+        cpuTimeTicks = userTicks + systemTicks,
+        processStartTicks = fieldsFromState[19].toLongOrNull()?.takeIf { it > 0L },
+    )
+}
+
+private val HOST_BOOT_ID = Regex(
+    "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+
+internal fun normalizeHostBootId(raw: String?): String? = raw
+    ?.trim()
+    ?.lowercase()
+    ?.takeIf { HOST_BOOT_ID.matches(it) }
 
 fun HostProcessRecord.isContainerLikeProcess(
     container: ContainerRecord,

@@ -30,6 +30,8 @@ internal object BackgroundRuntimeSpacePolicy {
             },
             healthStatus = BackgroundRuntimeHealthStatus.INACTIVE,
             pid = null,
+            processBootId = null,
+            processStartTicks = null,
             lastStoppedAt = if (record.status.isActiveStatus()) stoppedAt else record.lastStoppedAt,
             lastAdmissionDeferredAt = null,
             lastAdmissionSource = null,

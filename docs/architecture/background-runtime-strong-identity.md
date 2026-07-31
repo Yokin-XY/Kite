@@ -105,11 +105,11 @@ processStartTicks: Long?
 
 ### RF820：值对象与持久化
 
-- `HostProcessRecord` 增加 nullable start ticks；`HostProcessSnapshot` 携带 nullable boot ID。
-- 抽出可测试的 `/proc stat` 第 22 字段解析。
-- `BackgroundRuntimeRecord` 增加 boot ID/start ticks，JSON 向后兼容。
-- Registry 增加原子 identity 更新与清理不变量。
-- 不修改 attach、kill、恢复或长期 lease。
+- [x] `HostProcessRecord` 增加 nullable start ticks；`HostProcessSnapshot` 携带 nullable boot ID。
+- [x] 抽出可测试的 `/proc stat` 第 22 字段解析。
+- [x] `BackgroundRuntimeRecord` 增加 boot ID/start ticks，JSON 向后兼容。
+- [x] Registry 增加原子 identity 更新与清理不变量。
+- [x] 不修改 attach、kill、恢复或长期 lease。
 
 ### RF830：停止与恢复桥
 

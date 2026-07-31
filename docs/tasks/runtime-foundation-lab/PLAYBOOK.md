@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF800` 后台长期 owner 强身份桥接
-- 当前任务：`RF810` 后台运行身份与停止链审计
+- 当前任务：`RF830` 停止确认与单实例恢复桥
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -535,7 +535,12 @@
 #### RF820 强进程身份值对象与持久化
 
 - 解法：宿主同轮 `/proc` 观察生成 `(bootId, hostPid, processStartTicks)`；后台 JSON 保存 boot/代次，只有同 boot 后才转换为 RF610 的 PID+代次身份。旧记录缺失时保持 review/no-attach。
-- 验收标准：PID 复用、设备 boot 变化拒绝；旧 JSON 兼容；PID 改变/清空同步清身份；序列化恢复和敏感字段边界通过。
+- 验收标准：
+  - [x] `/proc stat` 字段 22 在 comm 含右括号时仍正确解析，Host snapshot 只为应用 UID 进程生成同 boot 强身份；
+  - [x] boot ID 严格规范化；`ps -A` fallback、缺 start ticks、缺/坏 boot ID 都不能生成身份；
+  - [x] 后台 JSON 向后兼容保存 boot/start ticks，旧/部分/坏字段的派生身份失败关闭；
+  - [x] PID 不变保留身份，PID 改变/清空同步清理；定义刷新保留同一运行事实；
+  - [x] Registry 只在活动记录 PID 与观察 PID 精确相等时原子写身份，本叶不改变 attach/kill/恢复。
 - 依赖：RF810。
 
 #### RF830 停止确认与单实例恢复桥

@@ -141,6 +141,8 @@ object BackgroundRuntimeRegistry {
                     status = previous.status,
                     healthStatus = previous.healthStatus,
                     pid = previous.pid,
+                    processBootId = previous.processBootId,
+                    processStartTicks = previous.processStartTicks,
                     lastHealthSummary = previous.lastHealthSummary,
                     lastHealthCheckedAt = previous.lastHealthCheckedAt,
                     lastExitCode = previous.lastExitCode,
@@ -323,6 +325,8 @@ object BackgroundRuntimeRegistry {
                 status = current.status,
                 healthStatus = current.healthStatus,
                 pid = current.pid,
+                processBootId = current.processBootId,
+                processStartTicks = current.processStartTicks,
                 lastHealthSummary = current.lastHealthSummary,
                 lastHealthCheckedAt = current.lastHealthCheckedAt,
                 lastExitCode = current.lastExitCode,
@@ -364,9 +368,8 @@ object BackgroundRuntimeRegistry {
         val runtimeRoot = WorkSurfaceRuntimeBridge.getRuntimeRoot(context)
         val updated = readAll(runtimeRoot).map { record ->
             if (record.id == runtimeId) {
-                record.copy(
+                record.withProcessPid(pid).copy(
                     status = status,
-                    pid = pid,
                     lastExitCode = lastExitCode ?: record.lastExitCode,
                     lastStartedAt = if (status.isActiveStatus()) {
                         if (record.status.isActiveStatus() && record.lastStartedAt != null) {
@@ -414,6 +417,23 @@ object BackgroundRuntimeRegistry {
         }
         saveRecords(runtimeRoot, updated)
         return updated.firstOrNull { it.id == runtimeId }
+    }
+
+    /** 只有当前活动记录的 PID 与同轮宿主观察一致时才原子附加强身份。 */
+    @Synchronized
+    fun updateProcessIdentity(
+        context: Context,
+        runtimeId: String,
+        identity: com.kite.app.foundation.runtime.HostProcessIdentityObservation,
+    ): BackgroundRuntimeRecord? {
+        val runtimeRoot = WorkSurfaceRuntimeBridge.getRuntimeRoot(context)
+        var accepted: BackgroundRuntimeRecord? = null
+        val updated = readAll(runtimeRoot).map { record ->
+            if (record.id != runtimeId) return@map record
+            record.withObservedProcessIdentity(identity)?.also { accepted = it } ?: record
+        }
+        if (accepted != null) saveRecords(runtimeRoot, updated)
+        return accepted
     }
 
     @Synchronized

@@ -286,3 +286,11 @@
 - 决定：后台记录的持久强身份采用 `(bootId, hostPid, processStartTicks)`；只有 boot 一致后才向 RF610 长期 lease 提供 PID+代次。停止必须先持久化 expected stop，再校验同一强身份、发信号并观察退出，最后确认 STOPPED 和释放容量。
 - 原因：PID 会复用，start ticks 也会在设备 reboot 后重新从 boot 起点计数；仅靠 command token/statusCommand 只能证明类似进程或服务存在。当前停止链无论 terminate outcome 都写 STOPPED，且 expected stop 落盘晚于信号，无法承担长期容量释放语义。
 - 影响：RF820 先补通用 Host 观察与 Registry 持久化，不改变 attach/kill；RF830 才允许调整停止和恢复。旧 JSON、`ps -A` fallback 或任一身份字段缺失都只可继续现有诊断，不得进入长期 lease。
+
+## ADR-RF-037 强身份由同轮 Host snapshot 生成且随 PID 原子失效
+
+- 状态：已接受，RF820 已完成
+- 日期：2026-08-01
+- 决定：`HostProcessSnapshot` 只有在 boot UUID、应用 UID 进程和 stat starttime 同时可用时才生成 `HostProcessIdentityObservation`。后台记录追加 boot/start ticks；PID 改变或清空时同步清身份，Registry 只对活动且 PID 精确匹配的记录原子写入。
+- 原因：分别读取或只校验 PID 会产生 TOCTOU/复用窗口；让旧 start ticks 跟随新 PID 会制造看似完整的假身份。`ps -A` fallback 和旧 JSON 都缺少足够证据，不能为了覆盖率填默认值。
+- 影响：现有 PID/token/statusCommand 链仍按原行为运行，但不能借 RF820 宣称已强恢复。RF830 必须用观察值与持久值精确比较，并把停止意图和退出确认顺序修正后，才可考虑长期 lease。
