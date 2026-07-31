@@ -182,3 +182,11 @@
 - 决定：`supervisorctl update/status` 与固定日志尾部由 Android 生成的无参数、版本化 helper 持有；调用方只执行唯一 helper argv，并因 `update` 明确声明 `SERVICE/SHARED_WRITE`。
 - 原因：把多行 shell 直接放进 `argv` 只是伪结构化；删除 `update` 又会改变 dropped-in 配置发现语义。代码自有 helper 能保留 Linux 组合语义，同时封闭外部命令、参数和路径输入。
 - 影响：Supervisord 健康刷新进入统一 admission、warm/fallback 和 RF530 遥测；输出有硬上限，截断失败关闭。当前 OnePlus 环境缺失 Supervisord 仍真实返回 exit 127，不属于迁移失败，也不能由本阶段偷偷安装依赖。
+
+## ADR-RF-024 RF600 只开放 owner lease 合同与模拟器
+
+- 状态：已接受，RF550 已完成
+- 日期：2026-08-01
+- 决定：RF600 可以研究并实现不创建进程的长期 owner lease 状态机、模拟器和观测合同；禁止直接把短任务 admission lease 套到后台服务、终端或 Agent，也禁止在合同阶段接入生产 Store。
+- 原因：短任务 lease 由调用栈 `use {}` 释放，长期进程却可能在调用返回后继续运行、被重连、外部死亡或跨进程恢复；直接复用会提前释放容量或形成永不释放的假占用。
+- 影响：未来迁移必须逐类别证明唯一 owner、真实进程寿命、停止确认、崩溃回收、恢复和重复 attach。RF600 的完成不等于任何长期入口已受统一 admission 管理。

@@ -21,13 +21,13 @@
 | RF330 | 已完成 | 安全 ZIP 正确性通过，但真机慢于 PRoot，不进入资源快速车道 |
 | RF340 | 已完成 | 真实能力目录、薄适配、失败关闭和父任务门通过 |
 | RF400 | 已完成 | PRoot Provider、准入、温热短任务与可调性能档位完成闭环 |
-| RF500 | 进行中 | 进入 RF510，正式投影实际调度状态 |
+| RF500 | 已完成 | 实际控制面、冷启动接力、遥测和第二生产样板均已闭环 |
 | RF510 | 已完成 | actual coordinator 状态已进入 RuntimeHealth，读取不创建 pool |
 | RF520 | 已完成 | 策略文件与 host 内存先接力，RuntimeHealth 到达后完全接管 |
 | RF530 | 已完成 | route/result/lane 与 queue/execute/total 已进入低基数正式遥测 |
 | RF540 | 已完成 | 版本化固定 helper 已进入 SERVICE/SHARED_WRITE 有界 Runner |
-| RF550 | 进行中 | RF500 联合回归、真机门与下一阶段 go/no-go |
-| RF600 | 待研究 | 长生命周期 owner lease，禁止直接套用短任务 lease |
+| RF550 | 已完成 | 1341 项全量回归、强制构建和 OnePlus 8T 联合门通过 |
+| RF600 | 进行中 | 只先做 owner lease 合同与模拟器，不迁移终端/Agent |
 | RF700 | 待研究 | 固定 1/2/4 之上的设备自适应校准 |
 
 ## RF110 开机与三问自检
@@ -66,6 +66,12 @@
 - 完成后拿什么证明？相关回归、强制全量单测、强制 Debug 构建、OnePlus 8T 冷启动/温复用/压力收缩/空闲行为/服务健康链与 ANR/FATAL 检查；Git 工作树干净、每个叶子提交可独立回退。
 - 依赖是否满足？满足。RF510～RF540 均已独立实现和验证；Node/Python 历史矩阵仍冻结，本门只验证本阶段新增合同和跨模块回归。
 
+## RF610 开机与三问自检
+
+- 目标是什么？定义长期 runtime owner 与准入 lease 的同寿命状态机，明确 acquire、attach、running、stopping、released、orphan reconciliation，避免把短任务 `use {}` lease 直接套给服务/终端/Agent。
+- 完成后拿什么证明？纯模型和模拟器覆盖唯一 owner、重复 attach、启动失败、停止、进程外死亡、恢复、压力只影响新准入、同 owner 重连；本阶段不创建真实进程、不接生产 Store。
+- 依赖是否满足？满足。RF500 已提供 actual admission/telemetry，但其 lease 仍以调用栈为寿命；现有 `CardRunStore`、`BackgroundRuntimeRegistry` 和 Agent binding 可作为未来 owner 事实源，本任务只定义桥接合同，不复制状态。
+
 ## 倒序日志
 
 ### 2026-08-01 RF510 实际调度状态正式投影
@@ -96,6 +102,13 @@
 - 5 个相关 suite、23 项测试最终零失败、1 项环境跳过；首次强制轮只有既有并发池测试在编译高负载下 1 秒 latch 抖动，原范围无代码改动重跑通过。Debug 构建成功。
 - OnePlus 8T 当前 Supervisord 运行记录本身为 ERROR、启动命令 exit 127；没有安装包或伪造健康。固定 helper 冷/温两次都走 `warm_runner`，真实保持 exit 127，total 1490ms→68ms，service sample 1→2，无 fallback/reject、无 helper 残留、无 ANR/FATAL。
 - 35 秒后的共享 `kf-runner` 并非泄漏：随后固定采样显示其执行前 idle age 仅 1195ms，证明被现有容器进程采样复用；RF550 继续核对整体空闲与共享任务边界。
+
+### 2026-08-01 RF550 RF500 父任务门
+
+- 强制全量单测复算为 254 个 suite、1341 tests、0 failure、0 error、2 skipped；强制 Debug 构建成功。APK 241005680 bytes，SHA-256 `8F7DBC4073014D6CD188BE6061831D4CA64B6FB01AC4CD5EA1E396B77BEF7D7F`。
+- RF510～RF540 相对 RF440 父门只改动实际策略/池/遥测、Supervisord helper、相关 Debug 探针、测试与任务文档；没有修改 Node/Python Provider、终端、Agent、资源清单或 View 正式链。`git diff --check` 通过。
+- OnePlus 8T 覆盖安装强制构建 APK：冷进程固定采样为 `bootstrap_policy_files_host_memory/NORMAL/configured=2/effective=2`，成功 warm runner；随后两个 Supervisord helper 样本复用同一 Runner，121ms/115ms，真实保持 runtime ERROR/exit 127，无 fallback/reject、无 helper 残留、无 ANR/FATAL。
+- RF440 已有压力收缩、1/2/4 档、空闲回收与 8 并发 no-go 证据，本门不重复性能矩阵。RF600 仅 go 合同/模拟器；生产迁移、终端、Agent 和长期服务全部 no-go，直到 owner 同寿命、恢复与停止合同分别通过。
 
 ### 2026-08-01 RF500 启动
 
