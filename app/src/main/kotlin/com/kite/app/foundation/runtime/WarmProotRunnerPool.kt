@@ -31,6 +31,13 @@ internal data class WarmProotRunnerPoolTuning(
     }
 }
 
+internal data class WarmProotRunnerPoolSnapshot(
+    val totalSessions: Int,
+    val activeSessions: Int,
+    val idleSessions: Int,
+    val staleSessions: Int,
+)
+
 internal enum class WarmProotExecutionRoute {
     WARM_RUNNER,
     INDEPENDENT_FALLBACK,
@@ -182,7 +189,16 @@ internal class WarmProotRunnerPool(
         close.forEach { runCatching { it.close() } }
     }
 
-    fun sessionCount(): Int = lock.withLock { slots.size }
+    fun snapshot(): WarmProotRunnerPoolSnapshot = lock.withLock {
+        WarmProotRunnerPoolSnapshot(
+            totalSessions = slots.size,
+            activeSessions = slots.count(Slot::inUse),
+            idleSessions = slots.count { !it.inUse },
+            staleSessions = slots.count(Slot::stale),
+        )
+    }
+
+    fun sessionCount(): Int = snapshot().totalSessions
 
     override fun close() {
         val close = lock.withLock {
@@ -360,6 +376,22 @@ internal object WarmProotExecutionCoordinator {
     @Volatile
     private var holder: Holder? = null
 
+    internal data class TuningSnapshot(
+        val profileGroup: RuntimeLifecyclePolicyProfileGroup,
+        val pressure: RuntimePressureLevel,
+        val foreground: Boolean,
+        val configuredGlobalMax: Int,
+        val effectiveGlobalMax: Int,
+        val maxWarmRunners: Int,
+        val idleTimeoutMs: Long,
+        val activeJobs: Int,
+        val queuedJobs: Int,
+        val totalWarmSessions: Int,
+        val activeWarmSessions: Int,
+        val idleWarmSessions: Int,
+        val staleWarmSessions: Int,
+    )
+
     fun nextJobId(prefix: String): String =
         "${prefix.filter { it.isLetterOrDigit() || it in "-_.:@" }.take(48)}-${sequence.incrementAndGet()}"
 
@@ -393,6 +425,29 @@ internal object WarmProotExecutionCoordinator {
     }
 
     fun snapshot(): ProotJobAdmissionSnapshot = admission.snapshot()
+
+    /** 从现有 policy、admission 和 pool 即时投影，不建立第二份状态。 */
+    fun tuningSnapshot(): TuningSnapshot {
+        val currentPolicy = policy
+        val tuning = ProotPerformanceTunings.resolve(currentPolicy.profileGroup, currentPolicy.lanes)
+        val admissionSnapshot = admission.snapshot()
+        val poolSnapshot = holder?.pool?.snapshot() ?: WarmProotRunnerPoolSnapshot(0, 0, 0, 0)
+        return TuningSnapshot(
+            profileGroup = currentPolicy.profileGroup,
+            pressure = currentPolicy.pressure,
+            foreground = currentPolicy.foreground,
+            configuredGlobalMax = tuning.configuredGlobalMax,
+            effectiveGlobalMax = admissionSnapshot.effectiveGlobalMax,
+            maxWarmRunners = tuning.maxWarmRunners,
+            idleTimeoutMs = tuning.idleTimeoutMs,
+            activeJobs = admissionSnapshot.activeCount,
+            queuedJobs = admissionSnapshot.queuedCount,
+            totalWarmSessions = poolSnapshot.totalSessions,
+            activeWarmSessions = poolSnapshot.activeSessions,
+            idleWarmSessions = poolSnapshot.idleSessions,
+            staleWarmSessions = poolSnapshot.staleSessions,
+        )
+    }
 
     private fun holder(context: Context): Holder {
         holder?.let { return it }

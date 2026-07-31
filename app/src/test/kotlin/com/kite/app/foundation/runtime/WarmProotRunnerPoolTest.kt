@@ -191,9 +191,13 @@ class WarmProotRunnerPoolTest {
 
         assertTrue(entered.await(1, TimeUnit.SECONDS))
         pool.trimTo(1)
+        assertEquals(2, pool.snapshot().activeSessions)
+        assertEquals(1, pool.snapshot().staleSessions)
         release.countDown()
         assertTrue(done.await(2, TimeUnit.SECONDS))
         assertEquals(1, pool.sessionCount())
+        assertEquals(1, pool.snapshot().idleSessions)
+        assertEquals(0, pool.snapshot().staleSessions)
         executor.shutdownNow()
         pool.close()
     }

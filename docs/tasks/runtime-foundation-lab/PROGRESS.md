@@ -20,7 +20,7 @@
 | RF320 | 已完成 | 文件 Provider、Recipe/Run、权限边界和真机门通过 |
 | RF330 | 已完成 | 安全 ZIP 正确性通过，但真机慢于 PRoot，不进入资源快速车道 |
 | RF340 | 已完成 | 真实能力目录、薄适配、失败关闭和父任务门通过 |
-| RF400 | 进行中 | RF410、RF420、RF430 已完成，进入 RF440 可调性能档位 |
+| RF400 | 进行中 | RF410、RF420、RF430 与 RF440a～b 已完成，进入 RF440c 父任务门 |
 
 ## RF110 开机与三问自检
 
@@ -29,6 +29,13 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-08-01 RF440b 动态策略与可观测性
+
+- `WarmProotExecutionCoordinator` 继续只从现有 `RuntimeHealthSnapshot` 接收 active profile、lane、压力与前后台事实；策略变化更新同一 admission，并对同一 warm pool 执行动态 trim，页面和 Ubuntu 都没有直接控制入口。
+- 压力升高或退到后台只限制后续准入：回归证明已经取得 lease 的活动任务不会被强杀；超出新上限的活动 Runner 标记为 stale，待 owner 正常释放后关闭，空闲超额 Runner 可立即回收。
+- 新增即时 `TuningSnapshot`，从当前 policy、admission 与 pool 投影档位、配置/有效上限、温热上限、空闲时间、active/queued 及 Runner 活动/空闲/stale 数；没有新增持久化 Store 或复制运行事实。
+- 3 个相关 suite、25 项测试通过，覆盖内置三档、CUSTOM、压力收缩、前后台 lane、动态 trim 与活动任务保护；下一步 RF440c 只做本阶段 Debug/真机父任务门，不重复 Node/Python 性能矩阵。
 
 ### 2026-08-01 RF440a 单一性能档参数源
 

@@ -309,6 +309,65 @@ class ProotJobAdmissionControllerTest {
     }
 
     @Test
+    fun `pressure shrink keeps active leases and blocks only later admission`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE)
+        val first = granted(controller.acquireBlocking(request("first", RuntimeLaneKind.INTERACTIVE))).lease
+        val second = granted(controller.acquireBlocking(request("second", RuntimeLaneKind.INTERACTIVE))).lease
+
+        controller.updatePolicy(
+            ProotJobAdmissionPolicy(
+                profileGroup = RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE,
+                pressure = RuntimePressureLevel.HIGH,
+            )
+        )
+
+        assertEquals(1, controller.snapshot().effectiveGlobalMax)
+        assertEquals(2, controller.snapshot().activeCount)
+        val rejected = controller.acquireBlocking(
+            request("later", RuntimeLaneKind.SERVICE, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_global_capacity_timeout", rejected.reason)
+        assertEquals(2, controller.snapshot().activeCount)
+        first.close()
+        second.close()
+        controller.close()
+    }
+
+    @Test
+    fun `background transition keeps active build and blocks only later build admission`() {
+        val lanes = RuntimeWorkloadPolicy.defaultLanes()
+        val controller = ProotJobAdmissionController(
+            ProotJobAdmissionPolicy(
+                profileGroup = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED,
+                lanes = lanes,
+                pressure = RuntimePressureLevel.NORMAL,
+                foreground = true,
+            )
+        )
+        val active = granted(
+            controller.acquireBlocking(request("active-build", RuntimeLaneKind.BUILD))
+        ).lease
+
+        controller.updatePolicy(
+            ProotJobAdmissionPolicy(
+                profileGroup = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED,
+                lanes = lanes,
+                pressure = RuntimePressureLevel.NORMAL,
+                foreground = false,
+            )
+        )
+
+        assertEquals(1, controller.snapshot().activeCount)
+        val rejected = controller.acquireBlocking(
+            request("later-build", RuntimeLaneKind.BUILD, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_lane_capacity_timeout", rejected.reason)
+        assertEquals(1, controller.snapshot().activeCount)
+        active.close()
+        controller.close()
+    }
+
+    @Test
     fun `closing admission wakes queued waiter without releasing active owner`() {
         val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
         val active = granted(

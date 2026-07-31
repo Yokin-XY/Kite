@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF300` Android/NDK 原生 Provider
-- 当前任务：`RF340` Android 系统能力目录
+- 当前阶段：`RF400` Ubuntu/PRoot Provider
+- 当前任务：`RF440c` RF400 父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -349,9 +349,9 @@
 
 ##### RF440b 动态策略与可观测性
 
-- [ ] active profile、前后台和压力变化只收缩后续准入，并回收超额空闲 Runner；
-- [ ] 暴露当前档位、配置/有效上限、温热上限、空闲时间和 active/queued，不新增平行状态；
-- [ ] 生产策略变化与现有 RuntimeHealth 快照同源，不能由页面或 Ubuntu 直接控制进程池。
+- [x] active profile、前后台和压力变化只收缩后续准入，并回收超额空闲 Runner；
+- [x] 暴露当前档位、配置/有效上限、温热上限、空闲时间和 active/queued，不新增平行状态；
+- [x] 生产策略变化与现有 RuntimeHealth 快照同源，不能由页面或 Ubuntu 直接控制进程池。
 
 ##### RF440c RF400 父任务门
 
