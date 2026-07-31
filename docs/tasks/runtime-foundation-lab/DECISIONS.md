@@ -118,3 +118,11 @@
 - 决定：`native_capability` 必须先命中 `NATIVE_RECIPE` 目录项；既有 Android action 只借目录取得稳定能力 ID，随后仍调用原执行入口。
 - 原因：目录若复制执行逻辑或运行状态，会与现有 Provider、系统 Intent 和 `CardRunStore` 形成双事实源；目录若只用于展示，则未知能力仍可能绕过准入。
 - 影响：未知或调用形态不符的能力在取得运行所有权前失败关闭；APK 系统交接把 lane/能力 ID 写回同一 Run，但不创建新的进程、终端、Store 或安装完成事实。
+
+## ADR-RF-016 PRoot Provider 只拥有逻辑计划
+
+- 状态：已接受，RF410a 已落地
+- 日期：2026-08-01
+- 决定：最终 PRoot Provider 归一 payload、工作目录、环境、PTY、View 与选择原因；物理启动配置继续由既有 `KFContainerManager` 在执行入口生成。
+- 原因：把 PRoot argv、bind、网络和遥测复制进新 Provider 会形成第二套兼容实现；只返回字符串 `Fallback` 又不足以约束各入口使用同一计划。
+- 影响：RF410b 的入口适配只能把逻辑计划交给现有物理构造器，不能重写 rootfs 或 View 规则；Android 原生能力在此边界失败关闭。

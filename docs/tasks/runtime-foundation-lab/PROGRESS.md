@@ -20,7 +20,7 @@
 | RF320 | 已完成 | 文件 Provider、Recipe/Run、权限边界和真机门通过 |
 | RF330 | 已完成 | 安全 ZIP 正确性通过，但真机慢于 PRoot，不进入资源快速车道 |
 | RF340 | 已完成 | 真实能力目录、薄适配、失败关闭和父任务门通过 |
-| RF400 | 待开始 | 下一恢复指针为 RF410 现有 PRoot 标准 Provider 化 |
+| RF400 | 进行中 | RF410a 兼容 Provider 合同完成，进入 RF410b 正式入口适配 |
 
 ## RF110 开机与三问自检
 
@@ -29,6 +29,14 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-08-01 RF410a PRoot 兼容 Provider 合同
+
+- 新增纯逻辑 `ProotCompatibilityRuntimeProvider`；它消费统一 `RuntimeExecutionRequest`，只保留 payload、工作目录、环境、PTY 与显式 View 事实，不创建进程或持有运行状态。
+- PRoot 作为最终兼容 Provider 对复杂 shell、结构化 argv、完整 Linux、子进程、未验证扩展和 View 请求返回 `Ready`；选择原因由上游显式传入，不解析命令名或资源 ID。
+- Android 原生能力与 `ANDROID_NATIVE` 要求返回 `Blocked`，不能被错误包装成 PRoot 回退后静默改变能力语义。
+- 物理 PRoot argv、rootfs、bind、网络、DNS、遥测和环境生成仍只属于既有 `KFContainerManager`；本阶段没有新增第二套构造器。
+- Provider 与统一请求共 7 项目标测试通过；下一步 RF410b 让 Managed Planner 和正式入口消费该逻辑计划。
 
 ### 2026-08-01 RF340c / RF340 / RF300 父任务验收
 

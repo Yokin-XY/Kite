@@ -268,6 +268,23 @@
 - 验收标准：普通终端、复杂 shell、Linux ELF、编译器和显式 View 路径保持原行为。
 - 依赖：RF130。
 
+##### RF410a 兼容 Provider 合同
+
+- [x] 建立只表达结构化请求、工作目录、环境、PTY 与 View 事实的 PRoot 逻辑计划；
+- [x] PRoot 作为最终 Provider 返回 `Ready`，Android 原生能力不得伪装成 PRoot 回退；
+- [x] 不复制 `KFContainerManager` 的 rootfs、网络、bind、遥测和物理 argv 规则。
+
+##### RF410b 正式入口等价适配
+
+- [ ] Managed Planner 的 `Unsupported` 在启动前生成唯一 PRoot 计划，`Blocked` 和禁用回退仍失败关闭；
+- [ ] 普通终端、资源 shell、Agent 与后台入口消费同一逻辑计划，继续只创建一条业务进程；
+- [ ] 显式 View、运行 owner、结果出口和停止链保持原拥有者。
+
+##### RF410c 回归与父任务门
+
+- [ ] 普通终端、复杂 shell、Linux ELF、编译器、Agent、后台与显式 View 合同通过；
+- [ ] Debug 构建与必要真机链通过，不重跑已冻结的 Node 性能矩阵。
+
 #### RF420 负载分类与准入
 
 - 问题证据：现有 `ProotJobAdmissionController` 已支持 lane 和压力收缩，但不能据此宣称所有 PRoot 已统一调度。
