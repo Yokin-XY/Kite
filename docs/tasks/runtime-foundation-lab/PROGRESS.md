@@ -27,13 +27,14 @@
 | RF530 | 已完成 | route/result/lane 与 queue/execute/total 已进入低基数正式遥测 |
 | RF540 | 已完成 | 版本化固定 helper 已进入 SERVICE/SHARED_WRITE 有界 Runner |
 | RF550 | 已完成 | 1341 项全量回归、强制构建和 OnePlus 8T 联合门通过 |
-| RF600 | 进行中 | 只先做 owner lease 合同与模拟器，不迁移终端/Agent |
+| RF600 | 已完成 | owner lease 合同/模拟器闭环；生产长期入口仍需类别桥接门 |
 | RF610 | 已完成 | 长期 owner 状态机保持进程身份、停止意图与容量直到确认释放 |
 | RF620 | 已完成 | 容量、压力、维护屏障、去重和跨 lane 公平性纯模拟通过 |
 | RF630 | 已完成 | 恢复去重、PID 代次、孤儿容量与停止优先合同通过 |
 | RF640 | 已完成 | 固定规划态 schema 通过隐私、基数与无副作用护栏 |
-| RF650 | 进行中 | 联合回归并给后台服务生产迁移 go/no-go |
-| RF700 | 待研究 | 固定 1/2/4 之上的设备自适应校准 |
+| RF650 | 已完成 | 1374 项全量回归通过；后台身份桥接准备 go、生产迁移 no-go |
+| RF700 | 进行中 | 在既有校准 dry-run 上对齐正式 1/2/4 策略，不另建平行体系 |
+| RF710 | 进行中 | 审计 overlay/health/automation 与正式 tunings 的真实边界 |
 
 ## RF110 开机与三问自检
 
@@ -77,6 +78,12 @@
 - 完成后拿什么证明？强制联合测试、Debug 构建、静态生产引用与敏感字段检查、提交边界复核；形成后台服务样板 go/no-go 和下一任务入口。本门不重跑冻结的 Node/Python 性能矩阵，也不伪造真机长期进程证据。
 - 依赖是否满足？满足。四个叶子任务均已独立测试构建并提交前三项；RF640 等待本叶提交后进入父门，所有实现仍为无生产装配的合同/模拟器。
 
+## RF710 开机与三问自检
+
+- 目标是什么？复用而不是重写仓库已有设备校准 dry-run，找出历史 tracee/overlay 模型与 RF400 正式 1/2/4 admission/pool 档位之间可证明的映射和冲突。
+- 完成后拿什么证明？真实引用图、目标测试和对齐合同明确：校准结果只能产生候选建议，不能直接改 coordinator；未知 thermal、旧 schema 或缺失实测上界失败关闭。
+- 依赖是否满足？满足。RF650 已确认长期 owner 预研不接生产，不会与校准并行改同一状态；RF510～RF540 已提供 actual policySource、压力和有界任务遥测可作为后续可信输入。
+
 ## RF640 开机与三问自检
 
 - 目标是什么？把 RF620/RF630 的纯规划结果投影为有界、低基数、明确标注 `planned_not_production` 的诊断字段，同时不污染 RF510 的 actual PRoot 调度事实。
@@ -102,6 +109,14 @@
 - 依赖是否满足？满足。RF500 已提供 actual admission/telemetry，但其 lease 仍以调用栈为寿命；现有 `CardRunStore`、`BackgroundRuntimeRegistry` 和 Agent binding 可作为未来 owner 事实源，本任务只定义桥接合同，不复制状态。
 
 ## 倒序日志
+
+### 2026-08-01 RF650 RF600 父任务门
+
+- 强制全量单测在工具 180 秒等待窗后继续完成并完整落盘：258 个 suite、1374 tests、0 failure、0 error、2 skipped；随后同一测试任务取得 exit 0。强制 Debug 构建 exit 0。
+- APK 为 241087600 bytes，SHA-256 `6EAA1D36A662271346D388F1E5CA6B95EA6436946A9FA34F29F0E65231D3B8C8`；构建物未进入 Git。RF600 没有用户可见或生产运行改动，因此本门不安装真机、不伪造长期 owner 设备证据，也不重复 Node/Python 性能矩阵。
+- 相对 RF550，生产源码只新增 RF610～RF640 四个无装配的合同/模拟器文件；`LongLivedProot*` 的 main 引用也只存在于这四个文件。没有修改 `CardRunStore`、`BackgroundRuntimeRegistry/Host`、终端、Agent、资源清单或 RuntimeHealth actual 字段。
+- 后台服务生产迁移 **no-go**：`BackgroundRuntimeRecord` 目前只持久化 PID，没有启动代次；`HostProcessRecord` 也未投影 start ticks，外部恢复主要依赖 PID、容器命令/token 和 status probe，尚不能满足 RF630 精确代次与跨 owner 单进程合同。允许下一步做身份桥接准备，但在真实 owner 持久化、停止确认和恢复真机门前不接 lease。
+- 终端与 Agent 继续 no-go：它们各自具有交互/会话/协议生命周期，RF600 没有提供类别级唯一进程、重连和停止证据。RF700 转向既有设备校准体系与正式 1/2/4 策略的对齐，不创建第二套校准器。
 
 ### 2026-08-01 RF640 长期 owner 规划态健康投影
 

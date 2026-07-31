@@ -222,3 +222,19 @@
 - 决定：RF600 的诊断字段统一使用 `proot_long_planned_*` 前缀和 `planned_not_production` scope，只从调用方传入的不可变 admission snapshot/recovery plan 计算固定枚举计数，不接入正式 RuntimeHealth。
 - 原因：把模拟结果写入 `proot_actual_*` 会让尚未接入生产的长期 owner 冒充真实调度事实；按 owner 动态生成字段又会泄漏身份并造成无界基数。投影时回读模拟器或扫描进程也会让诊断读取产生副作用。
 - 影响：ownerId、leaseId、PID/启动代次、路径、命令和 Agent/session 身份永不进入该 schema。未来生产迁移后，actual 字段必须来自唯一生产状态拥有者并另立迁移门，不能把 planned 字段简单改名。
+
+## ADR-RF-029 后台长期 owner 生产迁移等待强进程身份桥接
+
+- 状态：已接受，RF650 已完成
+- 日期：2026-08-01
+- 决定：RF600 合同与模拟器完成，但后台服务、终端、Agent 均不接入生产 long-lived admission。后台服务只允许继续做强身份桥接准备；必须先把 PID 与 `/proc/<pid>/stat` 启动代次绑定到真实 runtime owner，并证明停止确认和应用重启恢复。
+- 原因：当前 `BackgroundRuntimeRecord` 只持久化 PID，`HostProcessRecord` 不含 start ticks，命令/token 匹配不能排除 PID 复用和跨 owner 误认。此时接 lease 会在控制面重启后出现提前释放、永久占用或第二实例风险。
+- 影响：RF600 的 `LongLivedProot*` 代码保持无生产引用。下一次后台试迁必须先有 owner→强身份→停止确认的单向适配和真机证据；终端与 Agent 另立类别门，不得借后台桥接顺带迁移。
+
+## ADR-RF-030 RF700 复用既有校准体系并对齐正式档位
+
+- 状态：已接受，RF650 已完成
+- 日期：2026-08-01
+- 决定：RF700 不新建平行设备校准器；先审计既有 `RuntimeProotDeviceCalibrationDryRun`、overlay、RuntimeHealth 与 automation 路径，再把可信结果映射为 RF400 的 1/2/4 候选建议。生产 coordinator 仍是唯一实际档位拥有者。
+- 原因：仓库已有较完整的 tracee/内存校准模型，但历史 profile limit 与当前 `ProotPerformanceTunings` 不完全一致。直接新增实现会形成第二套事实源，直接套用又可能把 tracee 容量错当任务并发。
+- 影响：未知 thermal、旧 schema、缺实测上界或信号冲突时失败关闭；在 RF750 前只允许 planned 建议，不改正式策略文件、不自动升档。
