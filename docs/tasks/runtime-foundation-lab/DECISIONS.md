@@ -350,3 +350,11 @@
 - 决定：长期 PRoot 的 generation、phase-name 和更新时间直接持久化在同一 `BackgroundRuntimeRecord`；Registry 提供原子 `proot_shell + STARTING` begin 和带 expected generation/phase 的转换。内部强类型策略解释字符串 phase，不把内部 lease 枚举扩成公共模型 API。
 - 原因：进程创建前没有 PID，若只从 RUNNING/强身份反推容量，控制面重启会把 STARTING 窗口误判为空闲；另建 Store 又会复制 owner、路由和身份事实。把最小检查点写回同一记录，能让将来恢复先看占位、再看进程。
 - 影响：旧 JSON 三字段全缺失保持兼容；任意部分字段、未知 phase、路由冲突、旧 generation 或时间倒退都拒绝覆盖。RELEASED 历史保留以保证 generation 单调。RF920 不授权生产调用；RF930 必须由实际统一仲裁结果驱动这些原语，不能由页面、资源 ID、命令名或规划模拟器自行写入。
+
+## ADR-RF-045 后台长期 owner 与短任务共用同一 actual controller
+
+- 状态：已接受，RF930 已完成
+- 日期：2026-08-01
+- 决定：后台通用 PRoot PROCESS 通过 `WarmProotExecutionCoordinator` 持有与有界短任务相同的 `ProotJobAdmissionController` lease。长期句柄 registry 只保存 owner、generation 和关闭句柄；运行状态、路由、命令和强身份继续只属于 `BackgroundRuntimeRegistry`。实际准入和 STARTING 检查点必须先于唯一进程创建；恢复导入既有 holder，停止只有 owner 树与强身份共同确认后才释放。
+- 原因：另建长期 controller 会让 1/2/4 档超售；只从 RUNNING 反推会漏掉 STARTING；进程根 PID 消失也不能证明 PRoot 子树已经退出。共享 actual controller、同记录检查点和既有 owner 终止器分别关闭这三个窗口。
+- 影响：压力收缩只阻止新准入，不驱逐恢复 holder。损坏/冲突检查点会在 actual controller 上建立低基数合同阻断。进程创建后在强身份前快速退出进入 ORPHAN_REVIEW，不以 STARTING 或普通 ERROR 冒充已释放。RF940 可以投影实际长期计数和短长总量，但不得复用 `proot_long_planned_*` 名称或迁移终端、Agent。

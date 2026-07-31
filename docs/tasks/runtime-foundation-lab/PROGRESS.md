@@ -39,10 +39,10 @@
 | RF730 | 已完成 | 三窗升档、两窗失败、紧急降档、冷却与重启 rebase 纯状态机通过 |
 | RF740 | 已完成 | planned/actual 固定投影、合同复核和敏感字段护栏通过 |
 | RF750 | 已完成 | 1404 项全量回归与强制构建通过；RF700 无生产装配，不覆盖安装 |
-| RF800 | 进行中 | 只沿 RF650 go 方向补后台长期 owner 强身份，不迁移终端/Agent |
+| RF800 | 已完成 | 后台长期 owner 强身份、停止确认与生产 no-go 边界已闭环 |
 | RF810 | 已完成 | 定位 PID/token/停止窗口，确认持久强身份还需 boot ID + start ticks |
 | RF820 | 已完成 | boot+PID+start ticks 观察、JSON、PID 清理不变量和原子写入口通过 |
-| RF830 | 进行中 | 先落停止意图，精确身份恢复，退出确认后才清记录和容量 |
+| RF830 | 已完成 | 先落停止意图，精确身份恢复，退出确认后才清记录和容量 |
 | RF831 | 已完成 | 纯合同只允许精确代次 attach/发信号，所有决策均为零进程创建 |
 | RF832 | 已完成 | 窄读新进程身份；重启恢复强校验；健康命令不再保留失效 PID |
 | RF833 | 已完成 | 停止意图优先；逐信号重验代次；确认退出前不写终态、不释放容量 |
@@ -51,7 +51,9 @@
 | RF850 | 已完成 | 1431 项全量门、强制 Debug、OnePlus 8T 和范围审查全部通过 |
 | RF910 | 已完成 | 同锁 lane 事实与统一只读容量合同完成，仍标记未生产 |
 | RF920 | 已完成 | 同一后台记录原子持久化 PRoot route + STARTING，尚未接生产 |
-| RF930 | 待开始 | 下一恢复点：实际仲裁准入后桥接启动、身份、外死与停止 |
+| RF930 | 已完成 | 后台 PRoot PROCESS 已桥接同一 actual controller 与强身份停止链 |
+| RF940 | 待开始 | 下一恢复点：独立长期 actual schema 与短长统一总量 |
+| RF950 | 待开始 | 完整故障矩阵与后台 PROCESS 生产开关门 |
 
 ## RF110 开机与三问自检
 
@@ -225,6 +227,17 @@
 - 三字段全缺失的旧 JSON 仍为 absent；部分字段、未知 phase、非 PROCESS 活跃 lease、Host/PRoot 路由冲突均保留为 malformed 并拒绝覆盖，不能因解析失败制造假空闲。RELEASED 代次保留，只有更高 generation 能再次 begin。
 - 内置定义和资源定义刷新显式保留三个字段；`BackgroundRuntimeHost` 仍没有 begin/transition 调用，规划模拟器仍未装配，RF920 不改变生产启动、停止或健康行为。
 - 第一轮联合目标回归 16 项中 2 项失败，原因是新 JSON 测试遗漏 Robolectric runner，并非产品逻辑失败；补齐测试环境后 16 项全通过，新增检查点 suite 5 项再次单独通过。下一恢复点 RF930。
+
+## RF930 启动、恢复与停止桥
+
+- `WarmProotExecutionCoordinator` 现在让有界短任务和后台长期 owner 共用同一个 `ProotJobAdmissionController`；新增的 owner registry 只持有 actual 容量句柄，不复制后台命令、状态、PID 或强身份。
+- 通用后台 PROCESS 只有在本次实际路由为 `proot_shell` 时才准入。actual lease 与同记录 `STARTING` 检查点均发生在唯一 `ProcessBuilder.start()` 之前；Host Node 不占 PRoot 容量，代码不读取资源 ID、应用名或命令名做类别特判。
+- 控制面恢复会导入持久化 holder。缩档后的既有 holder 可以形成 overcommitted，但不被驱逐；损坏检查点、恢复冲突和未知代次通过同一 actual controller 阻止新准入，不能制造假空闲。
+- 创建成功后只有取得 boot/PID/start ticks 才把 lease 转为 RUNNING；创建前失败转 RELEASED。代码复核发现“进程创建后、强身份落盘前快速退出”会滞留 STARTING，现已改为 ORPHAN_REVIEW 并增加反例测试，仍需 owner 收敛证据才能释放。
+- 显式停止先转 STOPPING，再由 `ProotOwnerProcessTerminator` 收敛完整 owner 树；只有 settled 且强身份终态成立才转 RELEASED 并关闭 actual lease。普通 stale reconciler 遇到未释放长期 lease 时交给身份感知 Host，不提前清记录。
+- 目标回归先覆盖 6 suites、35 tests，补漏后再强制执行 4 个核心 suites、30 tests；两轮均为 0 failure、0 error、0 skipped。补漏后强制 Debug 构建通过，本地 APK 241,284,208 bytes，SHA-256 `5C4929F6F2647D8C575CA391238FCFDC24A5E902FB18D58A50DAE26BA80B4247`，已覆盖安装到 OnePlus 8T，构建物未进入 Git。
+- OnePlus 8T 首轮通用受控 PRoot PROCESS 以 PID 24042、boot identity 和 start ticks 55954167 进入 generation 1/RUNNING；重复 start 的 PID、generation、start ticks 和进程数均不变。补漏后的最终 APK 再次从 RELEASED 启动为 PID 24741、generation 2、start ticks 56000069/RUNNING，并显式停止为 STOPPED/RELEASED；两轮均得到 `CONFIRMED/owner_stably_silent_after_identity_probe` 与 `trackedBefore=2 remaining=0 orphan=0 zombie=0`，强身份清空且无匹配 FATAL/ANR。
+- RF930 完成，下一恢复点 RF940。Node/Python 冻结性能矩阵未运行，终端和 Agent 未迁移。
 
 ## RF710 开机与三问自检
 

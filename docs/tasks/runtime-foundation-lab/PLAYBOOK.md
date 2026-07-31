@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF900` 短任务与长期 owner 统一容量仲裁
-- 当前任务：`RF930` 启动、恢复与停止桥
+- 当前任务：`RF940` actual 健康与迁移门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -589,8 +589,11 @@
 
 #### RF930 启动、恢复与停止桥
 
-- STARTING 创建成功后附着 boot/PID/start ticks；失败释放，外死进入 orphan review，停止只有 owner 树 settled 与强身份终态同时成立才释放。
-- 重复 start 复用同 owner/generation，不形成第二进程或第二容量。
+- 状态：已完成，后台通用 PRoot PROCESS 已接入与短任务相同的 actual controller。
+- [x] 实际准入与 `proot_shell + STARTING` 检查点发生在唯一 `ProcessBuilder.start()` 之前；
+- [x] 创建成功后附着 boot/PID/start ticks 再把 lease 转为 RUNNING；启动失败释放，快速退出或外死进入 ORPHAN_REVIEW；
+- [x] 重复 start 复用同 owner/generation，不形成第二进程或第二容量；重启恢复既有 holder，缩档只阻断新准入；
+- [x] 停止先写 STOPPING，只有 owner 树 settled 且强身份终态成立才写 RELEASED 并释放 actual lease。
 
 #### RF940 actual 健康与迁移门
 

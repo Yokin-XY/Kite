@@ -149,6 +149,14 @@ RF910 的统一只读计数和后续接入边界见 [PRoot 短任务与长期 ow
 
 RF920 已把长期 PRoot 检查点放入同一 `BackgroundRuntimeRecord`。检查点只保存 generation、phase-name 和更新时间；owner 仍由记录 id 表示，PID/boot/start ticks 仍由既有强身份字段表示，不复制命令或进程事实。`proot_shell + STARTING` 可以一次持久化，但 `BackgroundRuntimeHost` 在 RF930 前不调用该入口，因此这一步只关闭重启丢失窗口的存储前提，不代表生产容量已接入。
 
+### RF930：实际生命周期桥
+
+RF930 已让后台通用 PRoot PROCESS 与有界短任务共用 `WarmProotExecutionCoordinator` 内同一个 actual admission controller。后台仍只在 `BackgroundRuntimeRegistry` 持有业务记录；新 owner registry 只保留 generation 与容量句柄，不复制 PID、命令、状态或路由。
+
+生产顺序固定为：本次结构化路由选择 `proot_shell` → actual 准入 → 同记录写 `proot_shell + STARTING` → 唯一 `ProcessBuilder.start()` → 捕获 boot/PID/start ticks → lease RUNNING。进程创建前失败可直接 RELEASED；已经创建但强身份尚未建立便退出，以及运行中外死，均进入 ORPHAN_REVIEW 并继续占容量。
+
+停止顺序固定为：expected stop → lease STOPPING → PRoot owner 树终止 → 强身份终态 → 后台 STOPPED/身份清理 → lease RELEASED。控制面恢复先导入所有未释放检查点；缩档不驱逐 holder，损坏检查点阻断新准入。Host Node 不占 PRoot lease，且该桥不识别资源 ID、应用名、命令名、终端或 Agent。
+
 ## 禁止方案
 
 - 不把 command token、statusCommand、端口健康或 PID-only 当强身份。

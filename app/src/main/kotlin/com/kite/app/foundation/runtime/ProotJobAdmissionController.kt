@@ -62,6 +62,8 @@ internal data class ProotJobAdmissionSnapshot(
     val cancelledCount: Long,
     val timedOutCount: Long,
     val maxObservedActive: Int,
+    val restoredCount: Long = 0L,
+    val contractBlockCount: Int = 0,
 )
 
 internal sealed interface ProotJobAdmissionResult {
@@ -106,6 +108,7 @@ internal class ProotJobAdmissionController(
     private val changed = lock.newCondition()
     private val pending = mutableListOf<Waiter>()
     private val active = linkedMapOf<Long, Active>()
+    private val contractBlocks = linkedSetOf<String>()
 
     @Volatile
     private var policy: ProotJobAdmissionPolicy = initialPolicy.normalized()
@@ -115,6 +118,7 @@ internal class ProotJobAdmissionController(
     private var cancelledCount = 0L
     private var timedOutCount = 0L
     private var maxObservedActive = 0
+    private var restoredCount = 0L
     private var closed = false
 
     fun updatePolicy(updated: ProotJobAdmissionPolicy) {
@@ -177,6 +181,64 @@ internal class ProotJobAdmissionController(
         }
     }
 
+    fun blockNewAdmissions(key: String) {
+        val normalized = key.trim()
+        require(normalized.isNotBlank() && normalized.length <= 192) {
+            "admission_contract_block_key_invalid"
+        }
+        lock.withLock {
+            contractBlocks += normalized
+            changed.signalAll()
+        }
+    }
+
+    fun clearAdmissionBlock(key: String) {
+        lock.withLock {
+            contractBlocks.remove(key.trim())
+            changed.signalAll()
+        }
+    }
+
+    fun replaceAdmissionBlocks(namespace: String, values: Set<String>) {
+        val prefix = namespace.trim()
+        require(prefix.isNotBlank() && prefix.length <= 64) {
+            "admission_contract_block_namespace_invalid"
+        }
+        val replacements = values.mapTo(linkedSetOf()) { value ->
+            "$prefix${value.trim()}".also { key ->
+                require(key.length <= 192) { "admission_contract_block_key_invalid" }
+            }
+        }
+        lock.withLock {
+            contractBlocks.removeAll { it.startsWith(prefix) }
+            contractBlocks += replacements
+            changed.signalAll()
+        }
+    }
+
+    /**
+     * 控制面重建时恢复已经由持久 owner 事实证明仍占容量的任务。
+     * 恢复不受当前收缩上限驱逐；超额只会阻止后续新准入。
+     */
+    fun restoreActive(request: ProotJobAdmissionRequest): ProotJobAdmissionResult = lock.withLock {
+        validate(request)
+        if (closed) return@withLock ProotJobAdmissionResult.Rejected("admission_closed")
+        if (pending.any { it.request.jobId == request.jobId } || active.values.any {
+                it.request.jobId == request.jobId
+            }
+        ) {
+            return@withLock ProotJobAdmissionResult.Rejected("admission_job_id_conflict")
+        }
+        val sequence = ++nextSequence
+        active[sequence] = Active(sequence, request)
+        restoredCount += 1L
+        maxObservedActive = maxOf(maxObservedActive, active.size)
+        changed.signalAll()
+        ProotJobAdmissionResult.Granted(
+            ProotJobAdmissionLease(request) { release(sequence) }
+        )
+    }
+
     /** 只取消尚未准入的任务；已经开始的任务必须交回其声明的运行 owner。 */
     fun cancelQueued(jobId: String): Boolean = lock.withLock {
         val waiter = pending.firstOrNull { it.request.jobId == jobId } ?: return@withLock false
@@ -205,6 +267,8 @@ internal class ProotJobAdmissionController(
             cancelledCount = cancelledCount,
             timedOutCount = timedOutCount,
             maxObservedActive = maxObservedActive,
+            restoredCount = restoredCount,
+            contractBlockCount = contractBlocks.size,
         )
     }
 
@@ -224,6 +288,7 @@ internal class ProotJobAdmissionController(
 
     private fun canAdmit(waiter: Waiter): Boolean {
         if (selectedWaiter() !== waiter) return false
+        if (contractBlocks.isNotEmpty()) return false
         val currentPolicy = policy
         if (blockedByPressure(waiter.request, currentPolicy)) return false
         if (active.size >= currentPolicy.effectiveGlobalMax()) return false
@@ -279,6 +344,7 @@ internal class ProotJobAdmissionController(
     private fun blockedReason(waiter: Waiter): String {
         val currentPolicy = policy
         return when {
+            contractBlocks.isNotEmpty() -> "admission_contract_mismatch"
             blockedByPressure(waiter.request, currentPolicy) ->
                 "admission_pressure_${currentPolicy.pressure.name.lowercase()}"
             currentPolicy.effectiveGlobalMax() <= active.size -> "admission_global_capacity_timeout"

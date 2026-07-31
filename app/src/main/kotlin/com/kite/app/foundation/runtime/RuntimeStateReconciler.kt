@@ -7,6 +7,7 @@ import com.kite.app.foundation.service.BackgroundRuntimeHealthText
 import com.kite.app.foundation.service.BackgroundRuntimeHost
 import com.kite.app.foundation.service.BackgroundRuntimeRegistry
 import com.kite.app.foundation.service.BackgroundRuntimeStatus
+import com.kite.app.foundation.service.hasUnreleasedLongLivedProotLease
 import com.kite.app.foundation.service.isActiveStatus
 import com.kite.app.foundation.service.persistedProcessIdentityOrNull
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
@@ -192,7 +193,10 @@ object RuntimeStateReconciler {
         if (withinGrace) {
             return ReconcileOutcome.SKIPPED_GRACE
         }
-        if (current.persistedProcessIdentityOrNull() != null) {
+        if (
+            current.hasUnreleasedLongLivedProotLease() ||
+            current.persistedProcessIdentityOrNull() != null
+        ) {
             Logger.i(
                 LOG_TAG,
                 "strong background identity delegates stop confirmation: runtime=$runtimeId"

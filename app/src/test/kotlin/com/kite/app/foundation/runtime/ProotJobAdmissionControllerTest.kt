@@ -418,6 +418,45 @@ class ProotJobAdmissionControllerTest {
         executor.shutdownNow()
     }
 
+    @Test
+    fun `restored holder may exceed a shrunken limit and blocks only new admission`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val first = granted(controller.restoreActive(request("restored-one", RuntimeLaneKind.SERVICE))).lease
+        val second = granted(controller.restoreActive(request("restored-two", RuntimeLaneKind.SERVICE))).lease
+
+        val snapshot = controller.snapshot()
+        assertEquals(1, snapshot.effectiveGlobalMax)
+        assertEquals(2, snapshot.activeCount)
+        assertEquals(2L, snapshot.restoredCount)
+        val rejected = controller.acquireBlocking(
+            request("new", RuntimeLaneKind.INTERACTIVE, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_global_capacity_timeout", rejected.reason)
+
+        first.close()
+        second.close()
+        controller.close()
+    }
+
+    @Test
+    fun `contract mismatch blocks every new admission until the same key is cleared`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE)
+        controller.blockNewAdmissions("managed-owner:broken")
+
+        val rejected = controller.acquireBlocking(
+            request("blocked-by-contract", RuntimeLaneKind.INTERACTIVE, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_contract_mismatch", rejected.reason)
+        assertEquals(1, controller.snapshot().contractBlockCount)
+        controller.clearAdmissionBlock("managed-owner:broken")
+        granted(
+            controller.acquireBlocking(request("allowed-after-repair", RuntimeLaneKind.INTERACTIVE))
+        ).lease.close()
+        assertEquals(0, controller.snapshot().contractBlockCount)
+        controller.close()
+    }
+
     private fun controller(
         profile: RuntimeLifecyclePolicyProfileGroup,
         pressure: RuntimePressureLevel = RuntimePressureLevel.NORMAL,

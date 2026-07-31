@@ -8,6 +8,14 @@ import com.kite.app.foundation.runtime.HostProcessRecord
 import com.kite.app.foundation.runtime.HostStopAuditor
 import com.kite.app.foundation.runtime.HostProcessTerminator
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
+import com.kite.app.foundation.runtime.LongLivedProotLeasePhase
+import com.kite.app.foundation.runtime.ManagedProotOwnerAdmissionResult
+import com.kite.app.foundation.runtime.ProotJobAdmissionRequest
+import com.kite.app.foundation.runtime.ProotJobAccess
+import com.kite.app.foundation.runtime.ProotJobCancellationMode
+import com.kite.app.foundation.runtime.ProotJobResultMode
+import com.kite.app.foundation.runtime.RuntimeLaneKind
+import com.kite.app.foundation.runtime.WarmProotExecutionCoordinator
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
@@ -44,6 +52,7 @@ import java.io.InterruptedIOException
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.min
 
@@ -178,7 +187,8 @@ object BackgroundRuntimeHost {
     @Synchronized
     fun confirmSpaceStopped(context: Context, spaceId: String) {
         val appContext = context.applicationContext
-        val runtimeIds = BackgroundRuntimeRegistry.list(appContext, spaceId).map { it.id }.toSet()
+        val runtimeRecords = BackgroundRuntimeRegistry.list(appContext, spaceId)
+        val runtimeIds = runtimeRecords.map { it.id }.toSet()
         runtimeIds.forEach { runtimeId ->
             handles.remove(runtimeId)?.let { handle ->
                 handle.readerJob.cancel()
@@ -190,7 +200,11 @@ object BackgroundRuntimeHost {
             externalRuntimeProbeCache.remove(runtimeId)
         }
         initializedSpaceIds.remove(spaceId)
+        runtimeRecords.forEach { record -> beginManagedProotLeaseStop(appContext, record) }
         BackgroundRuntimeRegistry.confirmSpaceStopped(appContext, spaceId)
+        runtimeIds.forEach { runtimeId ->
+            releaseManagedProotLeaseAfterConfirmedStop(appContext, runtimeId)
+        }
     }
 
     fun listRuntimes(context: Context, spaceId: String? = null): List<BackgroundRuntimeRecord> {
@@ -388,10 +402,12 @@ object BackgroundRuntimeHost {
 
     private fun reconcilePersistedStates(appContext: Context) {
         val activeProcessRuntimeIds = mutableListOf<String>()
-        BackgroundRuntimeRegistry.list(appContext).forEach { record ->
+        val persistedRecords = BackgroundRuntimeRegistry.list(appContext)
+        restorePersistedManagedProotLeases(appContext, persistedRecords)
+        persistedRecords.forEach { record ->
             when (record.mode) {
                 BackgroundRuntimeMode.PROCESS -> {
-                    if (record.status.isActiveStatus()) {
+                    if (record.status.isActiveStatus() || record.hasUnreleasedLongLivedProotLease()) {
                         // 宿主重建后不能直接把进程型运行项判死，否则下一轮启动会重复拉起
                         // 已经在容器里活着的 supervisor / shell 应该先走一次外部存活探测。
                         BackgroundRuntimeRegistry.updateStatus(
@@ -479,6 +495,7 @@ object BackgroundRuntimeHost {
         }
         return record.status.isActiveStatus() ||
             record.pid != null ||
+            record.hasUnreleasedLongLivedProotLease() ||
             record.restartPolicy == BackgroundRuntimeRestartPolicy.ALWAYS_CORE
     }
 
@@ -883,6 +900,13 @@ object BackgroundRuntimeHost {
             }
             // 已在激活中（启动中或运行中）则跳过，避免重复拉起
             if (record.status.isActiveStatus()) return
+            if (record.hasUnreleasedLongLivedProotLease()) {
+                Logger.i(
+                    LOG_TAG,
+                    "后台 PRoot lease 尚待复核，拒绝创建第二实例: runtime=${record.id}"
+                )
+                return
+            }
             ensureRuntimePrerequisites(appContext, record)
             if (!record.status.isActiveStatus()) {
                 resolveRuntimeCapabilityGate(record)?.let { gate ->
@@ -1136,7 +1160,9 @@ object BackgroundRuntimeHost {
                 pid = existingPid,
                 lastError = null
             )
-            captureRuntimeProcessIdentity(appContext, record.id, existingPid)
+            captureRuntimeProcessIdentity(appContext, record.id, existingPid)?.let { identityRecord ->
+                markManagedProotLeaseRunningIfIdentityReady(appContext, identityRecord)
+            }
             BackgroundRuntimeRegistry.updateHealth(
                 context = appContext,
                 runtimeId = record.id,
@@ -1174,15 +1200,24 @@ object BackgroundRuntimeHost {
         clearRuntimeHealthProbe(record.id)
         Logger.i(LOG_TAG, "后台运行项已标记为 STARTING: ${record.id}")
 
+        var startingProotGeneration: Long? = null
         runCatching {
             Logger.i(LOG_TAG, "开始构建运行命令: ${record.id}")
             val config = buildRuntimeProcessLaunchConfig(appContext, record)
-            BackgroundRuntimeRegistry.updateLaunchRoute(
-                context = appContext,
-                runtimeId = record.id,
-                lane = config.route,
-                reason = config.reason,
-            )
+            if (config.route == "proot_shell") {
+                startingProotGeneration = acquireAndPersistManagedProotLease(
+                    appContext = appContext,
+                    record = record,
+                    launchReason = config.reason,
+                )
+            } else {
+                BackgroundRuntimeRegistry.updateLaunchRoute(
+                    context = appContext,
+                    runtimeId = record.id,
+                    lane = config.route,
+                    reason = config.reason,
+                )
+            }
             writeLog(logFile, "== 启动计划 ==\nlane=${config.route}\nreason=${config.reason}\n")
             Logger.i(
                 LOG_TAG,
@@ -1263,12 +1298,13 @@ object BackgroundRuntimeHost {
                     scheduleProcessRefreshBurst(appContext)
                     scheduleRuntimeStatusRefreshBurst(appContext, record.id)
                 } else {
+                    val reviewRecord = markManagedProotLeaseProcessLost(appContext, record.id)
                     val finalStatus = ProcessExitSemantics.backgroundFinalStatus(exitCode)
                     BackgroundRuntimeRegistry.updateStatus(
                         context = appContext,
                         runtimeId = record.id,
                         status = finalStatus,
-                        pid = null,
+                        pid = reviewRecord?.pid,
                         lastExitCode = exitCode,
                         lastError = ProcessExitSemantics.backgroundExitError(record.title, exitCode)
                     )
@@ -1307,7 +1343,9 @@ object BackgroundRuntimeHost {
                     pid = launchedPid,
                     lastError = null
                 )
-                captureRuntimeProcessIdentity(appContext, record.id, launchedPid)
+                captureRuntimeProcessIdentity(appContext, record.id, launchedPid)?.let { identityRecord ->
+                    markManagedProotLeaseRunningIfIdentityReady(appContext, identityRecord)
+                }
                 BackgroundRuntimeRegistry.updateHealth(
                     context = appContext,
                     runtimeId = record.id,
@@ -1348,6 +1386,9 @@ object BackgroundRuntimeHost {
                 lastHealthSummary = BackgroundRuntimeHealthText.NOT_RUNNING,
                 lastHealthCheckedAt = null
             )
+            startingProotGeneration?.let { generation ->
+                releaseManagedProotLeaseAfterStartFailure(appContext, record.id, generation)
+            }
             releaseProotCapacityBudgetIfTerminal(record.id)
             clearRuntimeHealthProbe(record.id)
             BackgroundRuntimeRegistry.get(appContext, record.id)?.let { latest ->
@@ -1401,7 +1442,7 @@ object BackgroundRuntimeHost {
                     return RuntimeProcessLaunchConfig(
                         command = config.command,
                         environment = config.env,
-                        route = "proot_fallback",
+                        route = "proot_shell",
                         reason = plan.reason,
                     )
                 }
@@ -1502,6 +1543,7 @@ object BackgroundRuntimeHost {
         val stopAuditSeed = HostStopAuditor.capture(hostPid ?: -1, LOG_TAG)
         val isProotOwner = stoppingRecord.lastLaunchLane == "proot_shell"
         if (isProotOwner) {
+            beginManagedProotLeaseStop(appContext, stoppingRecord)
             val ownerTermination = runCatching {
                 ProotOwnerProcessTerminator.terminate(appContext, stoppingRecord.id)
             }.onFailure { error ->
@@ -1644,6 +1686,7 @@ object BackgroundRuntimeHost {
             lastHealthSummary = BackgroundRuntimeHealthText.STOPPED,
             lastHealthCheckedAt = null,
         )
+        releaseManagedProotLeaseAfterConfirmedStop(appContext, record.id)
         releaseProotCapacityBudgetIfTerminal(record.id)
         markRuntimeManuallyStopped(appContext, record.id)
         RuntimeProcessStopReconciliation.markExpectedStop(
@@ -1669,9 +1712,14 @@ object BackgroundRuntimeHost {
         }
         val externalAlive = externalProbe.alive
         val externalPid = externalProbe.hostPid
-        val expectedStopPending = record.hasExpectedStopIntent()
+        val observationRecord = if (!isAlive && !externalAlive && !withinStartingGrace) {
+            markManagedProotLeaseProcessLost(appContext, record.id) ?: record
+        } else {
+            record
+        }
+        val expectedStopPending = observationRecord.hasExpectedStopIntent()
         val nextStatus = selectRefreshedBackgroundRuntimeStatus(
-            currentStatus = record.status,
+            currentStatus = observationRecord.status,
             localHandleAlive = isAlive,
             externalServiceAlive = externalAlive,
             withinStartingGrace = withinStartingGrace,
@@ -1684,10 +1732,12 @@ object BackgroundRuntimeHost {
             runtimeId = record.id,
             status = nextStatus,
             pid = if (
-                externalProbe.identityReview &&
-                (expectedStopPending || externalProbe.preservePersistedPidForReview)
+                observationRecord.preservesManagedProotIdentityForReview() ||
+                    (externalProbe.identityReview &&
+                        (expectedStopPending || externalProbe.preservePersistedPidForReview)
+                    )
             ) {
-                record.pid
+                observationRecord.pid
             } else {
                 selectRefreshedBackgroundRuntimePid(
                     localHandleAlive = isAlive,
@@ -1695,11 +1745,11 @@ object BackgroundRuntimeHost {
                     exactExternalProcessAlive = externalAlive,
                     exactExternalPid = externalPid,
                     withinStartingGrace = withinStartingGrace,
-                    persistedPid = record.pid,
+                    persistedPid = observationRecord.pid,
                 )
             },
             lastError = resolvedRuntimeRefreshError(
-                record = record,
+                record = observationRecord,
                 nextStatus = nextStatus,
                 isAlive = isAlive,
                 externalAlive = externalAlive,
@@ -1708,6 +1758,14 @@ object BackgroundRuntimeHost {
         )
         when (nextStatus) {
             BackgroundRuntimeStatus.RUNNING -> {
+                (updatedRecord ?: BackgroundRuntimeRegistry.get(appContext, record.id))?.let { latest ->
+                    val identityReady = if (latest.persistedProcessIdentityOrNull() != null) {
+                        latest
+                    } else {
+                        captureRuntimeProcessIdentity(appContext, latest.id, latest.pid) ?: latest
+                    }
+                    markManagedProotLeaseRunningIfIdentityReady(appContext, identityReady)
+                }
                 if (!expectedStopPending) {
                     resetRuntimeRestartBackoff(appContext, record.id, "runtime-status-running")
                 }
@@ -1971,12 +2029,12 @@ object BackgroundRuntimeHost {
         appContext: Context,
         runtimeId: String,
         pid: Int?,
-    ) {
-        val targetPid = pid?.takeIf { it > 0 } ?: return
+    ): BackgroundRuntimeRecord? {
+        val targetPid = pid?.takeIf { it > 0 } ?: return null
         val identity = HostProcessInspector.readAppProcessIdentity(targetPid, LOG_TAG)
         if (identity == null) {
             Logger.i(LOG_TAG, "后台进程强身份暂不可用: runtime=$runtimeId pid=$targetPid")
-            return
+            return null
         }
         val updated = BackgroundRuntimeRegistry.updateProcessIdentity(
             context = appContext,
@@ -1986,6 +2044,7 @@ object BackgroundRuntimeHost {
         if (updated == null) {
             Logger.i(LOG_TAG, "后台进程强身份写入被拒绝: runtime=$runtimeId pid=$targetPid")
         }
+        return updated
     }
 
     private fun isRuntimeHostPidAlive(
@@ -2539,6 +2598,278 @@ object BackgroundRuntimeHost {
             ?.takeIf { it > 0 }
             ?: Int.MAX_VALUE
     }
+
+    private fun restorePersistedManagedProotLeases(
+        appContext: Context,
+        records: List<BackgroundRuntimeRecord>,
+    ) {
+        val blockedOwners = linkedSetOf<String>()
+        records.forEach { record ->
+            when (val state = BackgroundRuntimeProotLeaseCheckpointPolicy.inspect(record)) {
+                BackgroundRuntimeProotLeaseCheckpointState.Absent -> Unit
+                is BackgroundRuntimeProotLeaseCheckpointState.Malformed -> {
+                    blockedOwners += record.id
+                    Logger.i(
+                        LOG_TAG,
+                        "后台 PRoot lease 恢复拒绝: runtime=${record.id} reason=${state.reason}"
+                    )
+                }
+                is BackgroundRuntimeProotLeaseCheckpointState.Ready -> {
+                    val checkpoint = state.checkpoint
+                    if (!checkpoint.phase.holdsManagedProotCapacity()) {
+                        return@forEach
+                    }
+                    runCatching {
+                        WarmProotExecutionCoordinator.restoreManagedOwner(
+                            context = appContext,
+                            request = managedProotAdmissionRequest(record, checkpoint.generation),
+                            generation = checkpoint.generation,
+                        )
+                    }.onSuccess { result ->
+                        when (result) {
+                            is ManagedProotOwnerAdmissionResult.Granted -> Logger.i(
+                                LOG_TAG,
+                                "后台 PRoot lease 已恢复: runtime=${record.id} " +
+                                    "generation=${checkpoint.generation} existing=${result.existing}"
+                            )
+                            is ManagedProotOwnerAdmissionResult.Rejected -> {
+                                blockedOwners += record.id
+                                Logger.i(
+                                    LOG_TAG,
+                                    "后台 PRoot lease 恢复失败关闭: runtime=${record.id} reason=${result.reason}"
+                                )
+                            }
+                        }
+                    }.onFailure { error ->
+                        blockedOwners += record.id
+                        Logger.i(
+                            LOG_TAG,
+                            "后台 PRoot lease 恢复异常并保持失败关闭: runtime=${record.id} " +
+                                "reason=${error.message}"
+                        )
+                    }
+                }
+            }
+        }
+        WarmProotExecutionCoordinator.reconcileManagedOwnerAdmissionBlocks(blockedOwners)
+    }
+
+    private fun acquireAndPersistManagedProotLease(
+        appContext: Context,
+        record: BackgroundRuntimeRecord,
+        launchReason: String,
+    ): Long {
+        val latest = BackgroundRuntimeRegistry.get(appContext, record.id)
+            ?: error("background_proot_lease_runtime_missing")
+        val generation = when (val state = BackgroundRuntimeProotLeaseCheckpointPolicy.inspect(latest)) {
+            BackgroundRuntimeProotLeaseCheckpointState.Absent -> 1L
+            is BackgroundRuntimeProotLeaseCheckpointState.Malformed -> error(state.reason)
+            is BackgroundRuntimeProotLeaseCheckpointState.Ready -> {
+                check(state.checkpoint.phase == LongLivedProotLeasePhase.RELEASED) {
+                    "background_proot_lease_active"
+                }
+                check(state.checkpoint.generation < Long.MAX_VALUE) {
+                    "background_proot_lease_generation_exhausted"
+                }
+                state.checkpoint.generation + 1L
+            }
+        }
+        WarmProotExecutionCoordinator.clearManagedOwnerAdmissionBlock(latest.id)
+        val admission = WarmProotExecutionCoordinator.acquireManagedOwnerBlocking(
+            context = appContext,
+            request = managedProotAdmissionRequest(latest, generation),
+            generation = generation,
+        )
+        if (admission is ManagedProotOwnerAdmissionResult.Rejected) {
+            error("background_proot_admission_rejected:${admission.reason}")
+        }
+        val persisted = BackgroundRuntimeRegistry.beginLongLivedProotLease(
+            context = appContext,
+            runtimeId = latest.id,
+            generation = generation,
+            launchReason = launchReason,
+        )
+        if (!persisted.accepted) {
+            WarmProotExecutionCoordinator.releaseManagedOwner(latest.id, generation)
+            error(persisted.rejectionReason ?: "background_proot_lease_persist_rejected")
+        }
+        return generation
+    }
+
+    private fun markManagedProotLeaseRunningIfIdentityReady(
+        appContext: Context,
+        record: BackgroundRuntimeRecord,
+    ) {
+        if (record.persistedProcessIdentityOrNull() == null) return
+        val state = BackgroundRuntimeProotLeaseCheckpointPolicy.inspect(record)
+        val checkpoint = (state as? BackgroundRuntimeProotLeaseCheckpointState.Ready)?.checkpoint
+            ?: return
+        if (checkpoint.phase != LongLivedProotLeasePhase.STARTING) return
+        val mutation = BackgroundRuntimeRegistry.transitionLongLivedProotLease(
+            context = appContext,
+            runtimeId = record.id,
+            expectedGeneration = checkpoint.generation,
+            expectedPhase = LongLivedProotLeasePhase.STARTING,
+            nextPhase = LongLivedProotLeasePhase.RUNNING,
+        )
+        if (!mutation.accepted) {
+            Logger.i(
+                LOG_TAG,
+                "后台 PRoot lease 附着强身份失败关闭: runtime=${record.id} " +
+                    "reason=${mutation.rejectionReason}"
+            )
+        }
+    }
+
+    private fun markManagedProotLeaseProcessLost(
+        appContext: Context,
+        runtimeId: String,
+    ): BackgroundRuntimeRecord? {
+        val record = BackgroundRuntimeRegistry.get(appContext, runtimeId) ?: return null
+        val checkpoint = (
+            BackgroundRuntimeProotLeaseCheckpointPolicy.inspect(record) as?
+                BackgroundRuntimeProotLeaseCheckpointState.Ready
+            )?.checkpoint ?: return null
+        if (checkpoint.phase !in setOf(
+                LongLivedProotLeasePhase.STARTING,
+                LongLivedProotLeasePhase.RUNNING,
+                LongLivedProotLeasePhase.STOPPING,
+            )
+        ) return record
+        val mutation = BackgroundRuntimeRegistry.transitionLongLivedProotLease(
+            context = appContext,
+            runtimeId = runtimeId,
+            expectedGeneration = checkpoint.generation,
+            expectedPhase = checkpoint.phase,
+            nextPhase = LongLivedProotLeasePhase.ORPHAN_REVIEW,
+        )
+        if (!mutation.accepted) {
+            Logger.i(LOG_TAG, "后台 PRoot lease 外死复核写入失败: runtime=$runtimeId")
+        }
+        return mutation.record
+    }
+
+    private fun beginManagedProotLeaseStop(appContext: Context, record: BackgroundRuntimeRecord) {
+        val latest = BackgroundRuntimeRegistry.get(appContext, record.id) ?: return
+        val checkpoint = (
+            BackgroundRuntimeProotLeaseCheckpointPolicy.inspect(latest) as?
+                BackgroundRuntimeProotLeaseCheckpointState.Ready
+            )?.checkpoint ?: return
+        if (checkpoint.phase == LongLivedProotLeasePhase.STOPPING) return
+        if (checkpoint.phase !in setOf(
+                LongLivedProotLeasePhase.STARTING,
+                LongLivedProotLeasePhase.RUNNING,
+                LongLivedProotLeasePhase.ORPHAN_REVIEW,
+            )
+        ) {
+            return
+        }
+        val mutation = BackgroundRuntimeRegistry.transitionLongLivedProotLease(
+            context = appContext,
+            runtimeId = latest.id,
+            expectedGeneration = checkpoint.generation,
+            expectedPhase = checkpoint.phase,
+            nextPhase = LongLivedProotLeasePhase.STOPPING,
+        )
+        if (!mutation.accepted) {
+            Logger.i(LOG_TAG, "后台 PRoot lease 停止占位失败: runtime=${record.id}")
+        }
+    }
+
+    private fun releaseManagedProotLeaseAfterStartFailure(
+        appContext: Context,
+        runtimeId: String,
+        generation: Long,
+    ) {
+        val record = BackgroundRuntimeRegistry.get(appContext, runtimeId) ?: return
+        val checkpoint = (
+            BackgroundRuntimeProotLeaseCheckpointPolicy.inspect(record) as?
+                BackgroundRuntimeProotLeaseCheckpointState.Ready
+            )?.checkpoint ?: return
+        if (
+            checkpoint.generation != generation ||
+            checkpoint.phase != LongLivedProotLeasePhase.STARTING
+        ) {
+            return
+        }
+        val mutation = BackgroundRuntimeRegistry.transitionLongLivedProotLease(
+            context = appContext,
+            runtimeId = runtimeId,
+            expectedGeneration = generation,
+            expectedPhase = LongLivedProotLeasePhase.STARTING,
+            nextPhase = LongLivedProotLeasePhase.RELEASED,
+        )
+        if (mutation.accepted) {
+            WarmProotExecutionCoordinator.releaseManagedOwner(runtimeId, generation)
+        }
+    }
+
+    private fun releaseManagedProotLeaseAfterConfirmedStop(
+        appContext: Context,
+        runtimeId: String,
+    ) {
+        val record = BackgroundRuntimeRegistry.get(appContext, runtimeId) ?: return
+        val checkpoint = (
+            BackgroundRuntimeProotLeaseCheckpointPolicy.inspect(record) as?
+                BackgroundRuntimeProotLeaseCheckpointState.Ready
+            )?.checkpoint ?: return
+        if (checkpoint.phase == LongLivedProotLeasePhase.RELEASED) {
+            WarmProotExecutionCoordinator.releaseManagedOwner(runtimeId, checkpoint.generation)
+            return
+        }
+        if (checkpoint.phase !in setOf(
+                LongLivedProotLeasePhase.STARTING,
+                LongLivedProotLeasePhase.STOPPING,
+                LongLivedProotLeasePhase.ORPHAN_REVIEW,
+            )
+        ) {
+            Logger.i(
+                LOG_TAG,
+                "后台 PRoot lease 拒绝无停止证据释放: runtime=$runtimeId phase=${checkpoint.phase}"
+            )
+            return
+        }
+        val mutation = BackgroundRuntimeRegistry.transitionLongLivedProotLease(
+            context = appContext,
+            runtimeId = runtimeId,
+            expectedGeneration = checkpoint.generation,
+            expectedPhase = checkpoint.phase,
+            nextPhase = LongLivedProotLeasePhase.RELEASED,
+        )
+        if (mutation.accepted) {
+            WarmProotExecutionCoordinator.releaseManagedOwner(runtimeId, checkpoint.generation)
+        }
+    }
+
+    private fun managedProotAdmissionRequest(
+        record: BackgroundRuntimeRecord,
+        generation: Long,
+    ): ProotJobAdmissionRequest {
+        val stableJobId = UUID.nameUUIDFromBytes(
+            "background-proot:${record.id}:$generation".toByteArray(Charsets.UTF_8)
+        )
+        return ProotJobAdmissionRequest(
+            jobId = "managed-owner:$stableJobId",
+            ownerId = record.id,
+            lane = RuntimeLaneKind.SERVICE,
+            access = ProotJobAccess.READ_ONLY,
+            cancellationMode = ProotJobCancellationMode.MANAGED_OWNER,
+            resultMode = ProotJobResultMode.DETACHED_BINDING,
+            pressureEssential = record.retentionClass == RuntimeRetentionClass.CRITICAL_CORE,
+            waitTimeoutMs = 10_000L,
+        )
+    }
+
+    private fun LongLivedProotLeasePhase.holdsManagedProotCapacity(): Boolean = this in setOf(
+        LongLivedProotLeasePhase.ADMITTED,
+        LongLivedProotLeasePhase.STARTING,
+        LongLivedProotLeasePhase.RUNNING,
+        LongLivedProotLeasePhase.STOPPING,
+        LongLivedProotLeasePhase.ORPHAN_REVIEW,
+    )
+
+    private fun BackgroundRuntimeRecord.preservesManagedProotIdentityForReview(): Boolean =
+        pid != null && hasUnreleasedLongLivedProotLease()
 
     private fun releaseProotCapacityBudgetIfTerminal(runtimeId: String) {
         RuntimeProotMemoryAdmission.release(runtimeId)

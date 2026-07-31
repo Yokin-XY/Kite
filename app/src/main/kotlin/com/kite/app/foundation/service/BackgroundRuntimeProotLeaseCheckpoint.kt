@@ -158,6 +158,7 @@ internal object BackgroundRuntimeProotLeaseCheckpointPolicy {
         LongLivedProotLeasePhase.STARTING -> next in setOf(
             LongLivedProotLeasePhase.RUNNING,
             LongLivedProotLeasePhase.STOPPING,
+            LongLivedProotLeasePhase.ORPHAN_REVIEW,
             LongLivedProotLeasePhase.RELEASED,
         )
         LongLivedProotLeasePhase.RUNNING -> next in setOf(
@@ -194,4 +195,12 @@ internal object BackgroundRuntimeProotLeaseCheckpointPolicy {
 
     private fun malformed(reason: String) =
         BackgroundRuntimeProotLeaseCheckpointState.Malformed(reason)
+}
+
+internal fun BackgroundRuntimeRecord.hasUnreleasedLongLivedProotLease(): Boolean {
+    val checkpoint = (
+        BackgroundRuntimeProotLeaseCheckpointPolicy.inspect(this) as?
+            BackgroundRuntimeProotLeaseCheckpointState.Ready
+        )?.checkpoint ?: return false
+    return checkpoint.phase != LongLivedProotLeasePhase.RELEASED
 }

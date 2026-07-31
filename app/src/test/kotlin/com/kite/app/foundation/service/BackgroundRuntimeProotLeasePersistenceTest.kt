@@ -175,6 +175,33 @@ class BackgroundRuntimeProotLeasePersistenceTest {
     }
 
     @Test
+    fun `process lost before strong identity keeps capacity in orphan review`() {
+        val starting = accepted(
+            BackgroundRuntimeProotLeaseCheckpointPolicy.beginStarting(
+                record(),
+                generation = 1L,
+                launchReason = "admitted",
+                updatedAtMs = 10L,
+            )
+        )
+
+        val orphan = BackgroundRuntimeProotLeaseCheckpointPolicy.transition(
+            starting,
+            expectedGeneration = 1L,
+            expectedPhase = LongLivedProotLeasePhase.STARTING,
+            nextPhase = LongLivedProotLeasePhase.ORPHAN_REVIEW,
+            updatedAtMs = 11L,
+        )
+
+        assertTrue(orphan.accepted)
+        assertEquals(
+            LongLivedProotLeasePhase.ORPHAN_REVIEW.name,
+            orphan.record?.longLivedProotLeasePhase,
+        )
+        assertTrue(requireNotNull(orphan.record).hasUnreleasedLongLivedProotLease())
+    }
+
+    @Test
     fun `definition refresh sources preserve the same lease fields`() {
         val source = java.io.File(
             "src/main/kotlin/com/kite/app/foundation/service/BackgroundRuntimeRegistry.kt"

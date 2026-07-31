@@ -66,10 +66,12 @@ class BackgroundRuntimeStrongIdentityWiringContractTest {
             source.indexOf("private fun reconcileLegacyContainerPid"),
         )
 
+        val leaseAt = body.indexOf("current.hasUnreleasedLongLivedProotLease()")
         val strongIdentityAt = body.indexOf("current.persistedProcessIdentityOrNull() != null")
         val delegatedRefreshAt = body.indexOf("BackgroundRuntimeHost.refreshRuntimeStatuses(")
         val terminalWriteAt = body.indexOf("status = nextStatus")
-        assertTrue(strongIdentityAt >= 0)
+        assertTrue(leaseAt >= 0)
+        assertTrue(strongIdentityAt > leaseAt)
         assertTrue(delegatedRefreshAt > strongIdentityAt)
         assertTrue(terminalWriteAt > delegatedRefreshAt)
     }

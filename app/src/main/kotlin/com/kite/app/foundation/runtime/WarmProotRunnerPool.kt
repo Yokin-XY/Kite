@@ -480,6 +480,7 @@ internal object WarmProotExecutionCoordinator {
     private val policyLock = Any()
     private val sequence = AtomicLong(0L)
     private val admission = ProotJobAdmissionController()
+    private val managedOwners = ManagedProotOwnerAdmissionRegistry(admission)
 
     @Volatile
     private var policyState = WarmProotPolicyState(
@@ -547,6 +548,39 @@ internal object WarmProotExecutionCoordinator {
             independentFallback = independentFallback,
         )
     }
+
+    /** 长期 owner 与短任务共用同一个 actual admission；这里只持有容量句柄。 */
+    fun acquireManagedOwnerBlocking(
+        context: Context,
+        request: ProotJobAdmissionRequest,
+        generation: Long,
+    ): ManagedProotOwnerAdmissionResult {
+        ensureBootstrapPolicy(context.applicationContext)
+        return managedOwners.acquireBlocking(request, generation)
+    }
+
+    /** 重建控制面时恢复持久 lease；允许形成 overcommitted，但不会驱逐既有 holder。 */
+    fun restoreManagedOwner(
+        context: Context,
+        request: ProotJobAdmissionRequest,
+        generation: Long,
+    ): ManagedProotOwnerAdmissionResult {
+        ensureBootstrapPolicy(context.applicationContext)
+        return managedOwners.restore(request, generation)
+    }
+
+    fun releaseManagedOwner(ownerId: String, generation: Long): Boolean =
+        managedOwners.release(ownerId, generation)
+
+    fun clearManagedOwnerAdmissionBlock(ownerId: String) {
+        admission.clearAdmissionBlock("managed-owner:${ownerId.trim()}")
+    }
+
+    fun reconcileManagedOwnerAdmissionBlocks(ownerIds: Set<String>) {
+        admission.replaceAdmissionBlocks("managed-owner:", ownerIds)
+    }
+
+    fun managedOwnerSnapshot(): ManagedProotOwnerAdmissionSnapshot = managedOwners.snapshot()
 
     fun invalidate(reason: String) {
         holder?.pool?.invalidate(reason)
