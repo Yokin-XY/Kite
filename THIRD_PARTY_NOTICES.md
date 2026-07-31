@@ -31,6 +31,19 @@ terms:
   `terminal-view-local/build.gradle.kts`, including AndroidX, Material,
   Shizuku, Kotlin/coroutines, and Apache Commons Compress, retain their
   own upstream license terms.
+- `com.agentclientprotocol:acp:0.26.0`: official Agent Client Protocol
+  Kotlin SDK, Apache License 2.0. The published POM, repository SPDX
+  metadata, and repository license file identify Apache-2.0; an older
+  README badge/paragraph still saying MIT is treated as stale documentation.
+- `blue.endless:jankson:1.2.3`: JSON5/HJSON parser and writer used to
+  preserve comments and field order in Agent-native JSONC configuration;
+  MIT License. The published POM identifies the upstream repository as
+  `falkreon/Jankson` and the developer as Isaac Ellingson.
+- `org.yaml:snakeyaml:2.2`: YAML parser and emitter used to validate and
+  update Hermes Agent native configuration; Apache License 2.0.
+- `org.tomlj:tomlj:1.1.1`: TOML parser used to validate Codex native
+  `config.toml` while Kite performs narrow text-preserving edits; Apache
+  License 2.0. Its declared runtime dependencies retain their own terms.
 - `AGENTS.md`: project coding-agent guidance adapted from Ponytail
   (https://github.com/DietrichGebert/ponytail), MIT License, copyright
   (c) 2026 DietrichGebert.

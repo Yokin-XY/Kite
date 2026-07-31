@@ -1,0 +1,101 @@
+KITE LICENSE AND BRAND NOTICE
+Effective date: 2026-07-31
+
+Copyright (c) 2026 Yokin-XY. All rights reserved except for rights
+expressly granted by an applicable license.
+
+1. Controlling software license
+
+Unless a file, directory, package, or bundled component states otherwise,
+the original Kite software made available by Yokin-XY is licensed under the
+PolyForm Noncommercial License 1.0.0 in the root LICENSE file.
+
+The unmodified PolyForm text in LICENSE is the controlling public software
+license. This NOTICE identifies project scope and rights that are not granted;
+it does not reduce any permission, fair-use right, or other legal right that
+LICENSE or applicable law already provides.
+
+Because PolyForm Noncommercial restricts use to noncommercial purposes, Kite
+is source-available software and must not be represented as OSI-approved open
+source software.
+
+2. Commercial licensing
+
+No commercial license is granted merely because source code, binaries, build
+artifacts, packages, or repository access are publicly available. Commercial
+rights require a separate written agreement from the licensor unless the use
+is already permitted by another applicable license or by law.
+
+Examples that ordinarily require advance commercial permission include, where
+not already permitted by LICENSE: internal use for a commercial business;
+integration into a paid product or service; hosted or software-as-a-service
+operation; paid deployment, support, or consulting based on Kite; OEM or
+device preinstallation; resale; and commercial app-store or marketplace
+distribution.
+
+A commercial agreement may grant only the rights, duration, products,
+organizations, territories, support obligations, and distribution channels
+stated in that signed agreement. Repository issues, pull requests, emails,
+downloads, forks, or prior silence do not create a commercial license.
+
+3. Names, logos, and official status
+
+The software license does not grant any trademark, trade-name, logo, domain,
+store-listing, endorsement, or certification right in the name Kite or in
+project branding. No one may use those identifiers in a way that falsely
+suggests an unofficial fork, modified build, service, or distribution is an
+official or endorsed Kite release.
+
+Truthful references to origin, compatibility, or unmodified redistribution
+remain subject to applicable law. Forks and materially modified distributions
+should use distinct names and branding sufficient to avoid confusion.
+
+Official signing keys, release accounts, update channels, hosted services,
+credentials, domains, and infrastructure are not software licensed by LICENSE.
+
+4. Third-party materials
+
+Third-party software, binary assets, packages, operating-system images,
+libraries, fonts, icons, and other materials remain under their own licenses
+and notices. The Kite license neither replaces nor expands those terms. See
+THIRD_PARTY_NOTICES.md and any file-specific notice before redistribution.
+
+5. Order of application
+
+For third-party or separately licensed material, its own license controls.
+For original Kite software, LICENSE controls the public noncommercial grant.
+A separately signed commercial agreement controls only for its parties and
+express scope. This NOTICE grants no additional copyright or patent license.
+
+Commercial licensing contact: the owner of the Yokin-XY/Kite repository.
+
+--------------------------------------------------------------------------
+
+Kite 许可证与品牌说明（中文便捷译文）
+
+版权所有 (c) 2026 Yokin-XY。除适用许可证明确授予的权利外，保留所有权利。
+
+除文件、目录、软件包或随附组件另有声明外，Yokin-XY 发布的 Kite 原创软件
+以根目录 LICENSE 中未经修改的 PolyForm Noncommercial License 1.0.0 为
+公共许可证。LICENSE 的英文标准文本具有控制效力；本说明只明确项目范围和
+未授予的权利，不缩减 LICENSE 或法律已经赋予的权利。
+
+由于 PolyForm Noncommercial 限制用途为非商业目的，Kite 属于源码可见
+（source-available）软件，不应被表述为经 OSI 认可的开源软件。
+
+公开提供源码、二进制、构建产物、软件包或仓库访问权限，本身不构成商业授权。
+除非 LICENSE、其他适用许可证或法律已经允许，商业使用必须事先取得许可人的
+独立书面授权。企业内部商业使用、集成到收费产品或服务、SaaS 托管、基于 Kite
+收费部署或支持、OEM 预装、转售以及商业应用商店分发，通常属于需要单独授权的
+场景。商业许可只覆盖已签署协议中明确写明的主体、范围、期限和渠道。
+
+软件许可证不授予 Kite 名称、标志、域名、商店页面、背书或认证等品牌权利。
+不得以可能造成混淆的方式，把非官方分支、修改版、服务或分发版本表示为 Kite
+官方版本或获得官方背书。官方签名密钥、发布账号、更新渠道、托管服务、凭据、
+域名和基础设施不属于 LICENSE 授权的软件。
+
+第三方软件与资产继续适用其各自许可证和声明，详见 THIRD_PARTY_NOTICES.md
+及文件级说明。发生冲突时，第三方材料适用其自身许可证，Kite 原创软件的公共
+非商业授权适用 LICENSE，另行签署的商业协议只在其当事人与明确范围内适用。
+
+中文部分仅为阅读便利；解释有差异时，以英文部分及 LICENSE 英文标准文本为准。
