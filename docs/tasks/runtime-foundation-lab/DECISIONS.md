@@ -294,3 +294,11 @@
 - 决定：`HostProcessSnapshot` 只有在 boot UUID、应用 UID 进程和 stat starttime 同时可用时才生成 `HostProcessIdentityObservation`。后台记录追加 boot/start ticks；PID 改变或清空时同步清身份，Registry 只对活动且 PID 精确匹配的记录原子写入。
 - 原因：分别读取或只校验 PID 会产生 TOCTOU/复用窗口；让旧 start ticks 跟随新 PID 会制造看似完整的假身份。`ps -A` fallback 和旧 JSON 都缺少足够证据，不能为了覆盖率填默认值。
 - 影响：现有 PID/token/statusCommand 链仍按原行为运行，但不能借 RF820 宣称已强恢复。RF830 必须用观察值与持久值精确比较，并把停止意图和退出确认顺序修正后，才可考虑长期 lease。
+
+## ADR-RF-038 后台恢复和停止必须共用同一强身份判定
+
+- 状态：已接受，RF831 已完成
+- 日期：2026-08-01
+- 决定：恢复 attach 与停止 signal 共用 `BackgroundRuntimeProcessIdentityPolicy`。只有 boot、PID 和 start ticks 精确一致才可操作现存进程；纯决策固定 `processStartsRequested=0`。同 PID 新代次或不同 boot 只能证明原代次不再存在，绝不向当前 PID 发信号；任一身份字段不可得则进入 review。
+- 原因：若恢复和停止各自解释 PID，可能出现恢复拒绝新代次、停止却仍按弱 token 杀死它的矛盾。把 statusCommand、端口或 command token 当身份也无法排除 PID 复用。
+- 影响：RF832/833 必须消费该合同，不能在 Host 内重新复制比较分支。RF831 本身没有生产装配；旧 PID 记录仍需 RF832 明确兼容显示和 no-attach 行为。

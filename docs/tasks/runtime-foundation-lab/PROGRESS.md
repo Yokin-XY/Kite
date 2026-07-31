@@ -43,6 +43,8 @@
 | RF810 | 已完成 | 定位 PID/token/停止窗口，确认持久强身份还需 boot ID + start ticks |
 | RF820 | 已完成 | boot+PID+start ticks 观察、JSON、PID 清理不变量和原子写入口通过 |
 | RF830 | 进行中 | 先落停止意图，精确身份恢复，退出确认后才清记录和容量 |
+| RF831 | 已完成 | 纯合同只允许精确代次 attach/发信号，所有决策均为零进程创建 |
+| RF832 | 进行中 | 创建后采集强身份，应用重启按同一身份合同精确探测 |
 
 ## RF110 开机与三问自检
 
@@ -149,6 +151,13 @@
 - `updateStatus` 通过统一 `withProcessPid` 保证同 PID 保留、换 PID/清 PID 同步清身份；内置定义刷新与 upsertDefinition 保留同一活动身份；新增 Registry 原子写入口只接受活动记录的精确 PID。
 - 目标回归 4 个 suite、18 tests、0 failure、0 error、0 skipped；首次新 JSON 测试因本地 JVM `org.json` stub 失败，改用项目既有 Robolectric 方式后原范围通过。Debug 构建成功。
 - RF820 尚未由生产 start/attach/stop 调用新身份入口，行为保持不变。下一恢复指针 RF830，先建立纯恢复/停止决策和退出确认，再接 Host。
+
+## RF831 验收
+
+- 新增纯 `BackgroundRuntimeProcessIdentityPolicy`，恢复与停止共用一份 boot/PID/start ticks 比较结果；不读取 `/proc`、Registry 或命令，不 attach、不发信号、不创建进程。
+- 只有 `EXACT_GENERATION` 可恢复既有实例或向目标 PID 发信号；同 PID 新代次、boot 变化、旧记录缺身份和 `ps -A` 观察缺代次均失败关闭。
+- PID 已不存在时可确认没有可恢复实例；PID 复用或 boot 变化时，显式停止只能确认原代次已退出，不向当前 PID 发信号。旧记录或观察身份不完整时保持 review，不伪造退出确认。
+- 目标 suite 8 tests 全部通过；本叶没有生产接线和用户可见行为，因此不构建/安装真机。下一恢复指针为 RF832。
 
 ## RF710 开机与三问自检
 
