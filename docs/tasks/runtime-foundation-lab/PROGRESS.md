@@ -23,8 +23,8 @@
 | RF400 | 已完成 | PRoot Provider、准入、温热短任务与可调性能档位完成闭环 |
 | RF500 | 进行中 | 进入 RF510，正式投影实际调度状态 |
 | RF510 | 已完成 | actual coordinator 状态已进入 RuntimeHealth，读取不创建 pool |
-| RF520 | 进行中 | 冷启动 UNKNOWN 压力导致均衡档暂时单并发 |
-| RF530 | 待开始 | 有界执行 route/result/latency 尚无正式低基数遥测 |
+| RF520 | 已完成 | 策略文件与 host 内存先接力，RuntimeHealth 到达后完全接管 |
+| RF530 | 进行中 | 有界执行 route/result/latency 尚无正式低基数遥测 |
 | RF540 | 待开始 | Supervisord 健康采集仍使用独立 PRoot 复杂 shell |
 | RF550 | 待开始 | RF500 父任务门 |
 | RF600 | 待研究 | 长生命周期 owner lease，禁止直接套用短任务 lease |
@@ -48,6 +48,12 @@
 - 完成标准是什么？正常内存为 2，缺信号/高压/临界仍为 1；正式 RuntimeHealth 到达后覆盖 bootstrap，真机能读到来源和有效上限。
 - 依赖是否满足？满足。RF510 已建立 actual 正式投影；现有 `RuntimePressureGuard` 已能从 `/proc/meminfo` 计算 hostAvailableLevel，无需新增传感器或状态源。
 
+## RF530 开机与三问自检
+
+- 目标是什么？从同一个 `BoundedProotTaskExecutor` 聚合低基数 route/result/lane 与 queue/execute/total 时延，补足仅凭 admission 总量无法判断真实收益和失败位置的问题。
+- 完成后拿什么证明？单测覆盖每条 route、结果分类、时延边界和并发更新；RuntimeHealth 只输出枚举与数字，读取不执行任务、不包含 argv/cwd/env/output/owner。
+- 依赖是否满足？满足。RF510 已提供 actual 正式投影；RF520 已确保首个任务前也有明确策略来源。现有执行结果已含 route 与 job duration，下一步只补统一计时和聚合，不改变任务结果拥有者。
+
 ## 倒序日志
 
 ### 2026-08-01 RF510 实际调度状态正式投影
@@ -56,6 +62,13 @@
 - 投影覆盖 profile、pressure、foreground、配置/有效上限、warm 上限/空闲时间、active/queued、session active/idle/stale 和最大空闲年龄；不包含 argv、cwd、owner、环境或输出。
 - 未创建 pool 时 `tuningSnapshot()` 返回零 session，诊断读取不会触发 holder、资产检查或 PRoot 进程创建。
 - 3 个相关 suite、13 项测试通过，Debug 构建成功；下一步 RF520 只修第一份 RuntimeHealth 前的 bootstrap policy，不改变正式快照接管规则。
+
+### 2026-08-01 RF520 冷启动策略接力
+
+- 冷启动在首个有界任务前复用现有 reclaimer/resident/workload 策略文件与 `/proc/meminfo`；正常内存按真实档位启动，信号缺失、高压或临界压力继续保持单并发。
+- bootstrap 与正式 RuntimeHealth 共用单一 `policyState` 和 admission；正式快照无条件接管，迟到的 bootstrap 结果不能反向覆盖。实际健康面和 Debug 探针新增低基数 `policySource`。
+- 4 个相关 suite、17 项测试零失败，Debug 构建成功。OnePlus 8T 覆盖安装后强停冷进程，首个固定探针为 `policySource=bootstrap_policy_files_host_memory pressure=normal configuredMax=2 effectiveMax=2`，成功走 `warm_runner`；无 ANR/FATAL。
+- 下一步 RF530 只增加低基数执行遥测，不保存任务 payload，也不扩大有界 Runner 的任务范围。
 
 ### 2026-08-01 RF500 启动
 

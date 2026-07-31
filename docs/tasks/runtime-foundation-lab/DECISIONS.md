@@ -158,3 +158,11 @@
 - 决定：`RuntimeProotPoolPlanDryRun` 继续表达规划/建议；实际 admission、queue 和 warm session 只从 `WarmProotExecutionCoordinator` 即时投影为 `proot_actual_*`，不建立第二份 Store。
 - 原因：规划出来的 slots、压力建议和容量动作不证明真实任务已准入或 Runner 已创建；把二者混在同一字段会导致性能诊断和自动策略读取错误事实。
 - 影响：正式健康输出可以同时比较 planned 与 actual。actual 只允许低基数枚举和数字，不记录任务身份、命令、路径、环境或输出，诊断读取也不能创建 PRoot。
+
+## ADR-RF-021 冷启动只做可被正式健康面覆盖的策略接力
+
+- 状态：已接受，RF520 已完成
+- 日期：2026-08-01
+- 决定：第一份 RuntimeHealth 到达前，从现有策略文件和 host `MemAvailable` 解析一次 bootstrap policy；正常内存使用所选档位，信号缺失或高压保持单并发。正式快照无条件接管，迟到的 bootstrap 不得覆盖它。
+- 原因：默认 `UNKNOWN` 虽安全，却把正常设备的均衡和高性能档都错误压成 1；另建 bootstrap Store 或独立控制器又会制造双事实源与竞态。
+- 影响：coordinator 仍是唯一实际策略持有者，admission 仍是唯一准入原语。策略来源显式投影为 `initial_conservative`、`bootstrap_policy_files_host_memory` 或 `runtime_health`；bootstrap 不创建 PRoot，不改变普通终端、Agent、任意 shell 和长期服务路径。

@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF500` PRoot 生产控制面扩展
-- 当前任务：`RF520` 冷启动策略接力
+- 当前任务：`RF530` 有界执行结果遥测
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -379,10 +379,10 @@
 - 问题证据：coordinator 在第一份 `RuntimeHealthSnapshot` 到达前使用 `pressure=UNKNOWN`，均衡/高性能档有效上限均为 1；OnePlus 8T 冷探针已复现 `configuredMax=2 effectiveMax=1`。
 - 解法：冷启动只复用现有 host MemAvailable 压力判定和默认 workload profile；内存信号可靠时按真实压力给出 1/2 起步值，信号缺失或高压仍保持 1，首份健康快照到达后由正式策略完全接管。
 - 验收标准：
-  - [ ] host 可用内存正常时，默认均衡冷启动不再假性单并发；
-  - [ ] host 信号缺失、高压和临界压力仍保守为 1；
-  - [ ] 正式快照可覆盖 bootstrap policy，不存在第二控制源；
-  - [ ] OnePlus 8T 冷进程探针显示来源、配置上限和有效上限。
+  - [x] host 可用内存正常时，默认均衡冷启动不再假性单并发；
+  - [x] host 信号缺失、高压和临界压力仍保守为 1；
+  - [x] 正式快照可覆盖 bootstrap policy，不存在第二控制源；
+  - [x] OnePlus 8T 冷进程探针显示来源、配置上限和有效上限。
 - 依赖：RF510。
 
 #### RF530 有界执行结果遥测

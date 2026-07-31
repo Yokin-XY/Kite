@@ -39,6 +39,62 @@ internal data class WarmProotRunnerPoolSnapshot(
     val oldestIdleAgeMs: Long,
 )
 
+internal enum class WarmProotPolicySource {
+    INITIAL_CONSERVATIVE,
+    BOOTSTRAP_POLICY_FILES_HOST_MEMORY,
+    RUNTIME_HEALTH,
+}
+
+internal data class WarmProotPolicyState(
+    val source: WarmProotPolicySource,
+    val policy: ProotJobAdmissionPolicy,
+)
+
+internal object WarmProotBootstrapPolicyResolver {
+    fun resolve(
+        profileGroup: RuntimeLifecyclePolicyProfileGroup,
+        lanes: List<RuntimeLanePolicy>,
+        pressure: RuntimePressureLevel,
+    ): ProotJobAdmissionPolicy = ProotJobAdmissionPolicy(
+        profileGroup = profileGroup,
+        lanes = lanes.ifEmpty { RuntimeWorkloadPolicy.defaultLanes() },
+        pressure = pressure,
+        foreground = true,
+    )
+
+    fun load(context: Context): ProotJobAdmissionPolicy {
+        val reclaimerPolicy = RuntimeReclaimerPolicyStore.load(context)
+        val residentPolicy = RuntimeResidentPolicyStore.load(context)
+        val workloadPolicy = RuntimeWorkloadPolicyStore.load(context)
+        return resolve(
+            profileGroup = inferRuntimeLifecyclePolicyProfileGroup(
+                reclaimerProfile = reclaimerPolicy.activeProfile,
+                residentProfile = residentPolicy.activeProfile,
+            ),
+            lanes = workloadPolicy.lanes,
+            pressure = RuntimePressureGuard.evaluate(
+                roots = emptyList(),
+                reclaimerPolicy = reclaimerPolicy,
+            ).level,
+        )
+    }
+}
+
+/** RuntimeHealth 永远可覆盖 bootstrap；迟到的 bootstrap 不得反向覆盖正式策略。 */
+internal fun transitionWarmProotPolicy(
+    current: WarmProotPolicyState,
+    source: WarmProotPolicySource,
+    policy: ProotJobAdmissionPolicy,
+): WarmProotPolicyState {
+    if (
+        source == WarmProotPolicySource.BOOTSTRAP_POLICY_FILES_HOST_MEMORY &&
+        current.source != WarmProotPolicySource.INITIAL_CONSERVATIVE
+    ) {
+        return current
+    }
+    return WarmProotPolicyState(source = source, policy = policy)
+}
+
 internal enum class WarmProotExecutionRoute {
     WARM_RUNNER,
     INDEPENDENT_FALLBACK,
@@ -374,16 +430,21 @@ internal object WarmProotExecutionCoordinator {
     )
 
     private val lock = Any()
+    private val policyLock = Any()
     private val sequence = AtomicLong(0L)
     private val admission = ProotJobAdmissionController()
 
     @Volatile
-    private var policy = ProotJobAdmissionPolicy()
+    private var policyState = WarmProotPolicyState(
+        source = WarmProotPolicySource.INITIAL_CONSERVATIVE,
+        policy = ProotJobAdmissionPolicy(),
+    )
 
     @Volatile
     private var holder: Holder? = null
 
     internal data class TuningSnapshot(
+        val policySource: WarmProotPolicySource,
         val profileGroup: RuntimeLifecyclePolicyProfileGroup,
         val pressure: RuntimePressureLevel,
         val foreground: Boolean,
@@ -405,14 +466,22 @@ internal object WarmProotExecutionCoordinator {
 
     fun updateFrom(snapshot: RuntimeHealthSnapshot) {
         val surface = snapshot.lifecyclePolicyProfileSurface
-        policy = ProotJobAdmissionPolicy(
+        val formalPolicy = ProotJobAdmissionPolicy(
             profileGroup = surface.activeProfileGroup,
             lanes = surface.activeLanes.ifEmpty { RuntimeWorkloadPolicy.defaultLanes() },
             pressure = snapshot.pressure.level,
             foreground = snapshot.backgroundDecay.lifecycleState == RuntimeAppVisibilityState.FOREGROUND,
         )
-        admission.updatePolicy(policy)
-        holder?.pool?.trimTo(admission.snapshot().effectiveGlobalMax)
+        val pool = synchronized(policyLock) {
+            policyState = transitionWarmProotPolicy(
+                current = policyState,
+                source = WarmProotPolicySource.RUNTIME_HEALTH,
+                policy = formalPolicy,
+            )
+            admission.updatePolicy(policyState.policy)
+            holder?.pool
+        }
+        pool?.trimTo(admission.snapshot().effectiveGlobalMax)
     }
 
     fun executeBlocking(
@@ -421,12 +490,16 @@ internal object WarmProotExecutionCoordinator {
         jobRequest: WarmProotJobRequest,
         onOutput: (WarmProotOutputStream, ByteArray) -> Unit = { _, _ -> },
         independentFallback: (() -> WarmProotJobExecution)? = null,
-    ): WarmProotPoolExecution = holder(context.applicationContext).pool.executeBlocking(
-        admissionRequest = admissionRequest,
-        jobRequest = jobRequest,
-        onOutput = onOutput,
-        independentFallback = independentFallback,
-    )
+    ): WarmProotPoolExecution {
+        val appContext = context.applicationContext
+        ensureBootstrapPolicy(appContext)
+        return holder(appContext).pool.executeBlocking(
+            admissionRequest = admissionRequest,
+            jobRequest = jobRequest,
+            onOutput = onOutput,
+            independentFallback = independentFallback,
+        )
+    }
 
     fun invalidate(reason: String) {
         holder?.pool?.invalidate(reason)
@@ -436,11 +509,13 @@ internal object WarmProotExecutionCoordinator {
 
     /** 从现有 policy、admission 和 pool 即时投影，不建立第二份状态。 */
     fun tuningSnapshot(): TuningSnapshot {
-        val currentPolicy = policy
+        val currentState = policyState
+        val currentPolicy = currentState.policy
         val tuning = ProotPerformanceTunings.resolve(currentPolicy.profileGroup, currentPolicy.lanes)
         val admissionSnapshot = admission.snapshot()
         val poolSnapshot = holder?.pool?.snapshot() ?: WarmProotRunnerPoolSnapshot(0, 0, 0, 0, 0L)
         return TuningSnapshot(
+            policySource = currentState.source,
             profileGroup = currentPolicy.profileGroup,
             pressure = currentPolicy.pressure,
             foreground = currentPolicy.foreground,
@@ -456,6 +531,23 @@ internal object WarmProotExecutionCoordinator {
             staleWarmSessions = poolSnapshot.staleSessions,
             oldestIdleAgeMs = poolSnapshot.oldestIdleAgeMs,
         )
+    }
+
+    private fun ensureBootstrapPolicy(context: Context) {
+        if (policyState.source != WarmProotPolicySource.INITIAL_CONSERVATIVE) return
+        val bootstrapPolicy = WarmProotBootstrapPolicyResolver.load(context)
+        val pool = synchronized(policyLock) {
+            val updated = transitionWarmProotPolicy(
+                current = policyState,
+                source = WarmProotPolicySource.BOOTSTRAP_POLICY_FILES_HOST_MEMORY,
+                policy = bootstrapPolicy,
+            )
+            if (updated === policyState) return@synchronized null
+            policyState = updated
+            admission.updatePolicy(updated.policy)
+            holder?.pool
+        }
+        pool?.trimTo(admission.snapshot().effectiveGlobalMax)
     }
 
     private fun holder(context: Context): Holder {
@@ -474,7 +566,12 @@ internal object WarmProotExecutionCoordinator {
                         )
                     },
                     tuningProvider = {
-                        WarmProotRunnerPoolTuning.forPolicy(policy.profileGroup, policy.lanes)
+                        policyState.policy.let { currentPolicy ->
+                            WarmProotRunnerPoolTuning.forPolicy(
+                                currentPolicy.profileGroup,
+                                currentPolicy.lanes,
+                            )
+                        }
                     },
                 )
             ).also { holder = it }
@@ -501,6 +598,7 @@ internal fun WarmProotExecutionCoordinator.TuningSnapshot.toRuntimeHealthEnvText
     appendLine("proot_actual_scheduler_schema=bounded_proot_scheduler_v1")
     appendLine("proot_actual_scheduler_source=warm_proot_execution_coordinator")
     appendLine("proot_actual_scheduler_scope=actual_not_planned")
+    appendLine("proot_actual_policy_source=${policySource.name}")
     appendLine("proot_actual_profile=${profileGroup.name}")
     appendLine("proot_actual_pressure=${pressure.name}")
     appendLine("proot_actual_foreground=$foreground")

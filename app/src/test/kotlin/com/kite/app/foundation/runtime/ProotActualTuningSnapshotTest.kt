@@ -9,6 +9,7 @@ class ProotActualTuningSnapshotTest {
     @Test
     fun `actual scheduler projection is explicit and contains no task payload`() {
         val text = WarmProotExecutionCoordinator.TuningSnapshot(
+            policySource = WarmProotPolicySource.RUNTIME_HEALTH,
             profileGroup = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED,
             pressure = RuntimePressureLevel.NORMAL,
             foreground = true,
@@ -26,6 +27,7 @@ class ProotActualTuningSnapshotTest {
         ).toRuntimeHealthEnvText()
 
         assertTrue(text.contains("proot_actual_scheduler_scope=actual_not_planned"))
+        assertTrue(text.contains("proot_actual_policy_source=RUNTIME_HEALTH"))
         assertTrue(text.contains("proot_actual_effective_global_max=2"))
         assertTrue(text.contains("proot_actual_queued_jobs=3"))
         assertTrue(text.contains("proot_actual_oldest_idle_age_ms=125"))

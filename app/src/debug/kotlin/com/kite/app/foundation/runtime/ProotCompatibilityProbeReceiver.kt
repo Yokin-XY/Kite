@@ -160,6 +160,7 @@ private object ProotCompatibilityProbe {
             "elapsedMs=$directMs parsed=$parsed stdoutBytes=${completed.stdoutTail.size} " +
             "stdoutDropped=${completed.stdoutDroppedBytes} storeSource=${snapshot.collectionSource} " +
             "storeProcesses=${snapshot.processes.size} " +
+            "policySource=${afterTuning.policySource.name.lowercase()} " +
             "profile=${afterTuning.profileGroup.name.lowercase()} pressure=${afterTuning.pressure.name.lowercase()} " +
             "foreground=${afterTuning.foreground} configuredMax=${afterTuning.configuredGlobalMax} " +
             "effectiveMax=${afterTuning.effectiveGlobalMax} warmMax=${afterTuning.maxWarmRunners} " +

@@ -267,7 +267,7 @@ object RuntimeLifecyclePolicyProfileSurfaceDryRun {
         lifecyclePolicySurface: RuntimeLifecyclePolicySurfaceDryRunSnapshot,
         now: Long = System.currentTimeMillis()
     ): RuntimeLifecyclePolicyProfileSurfaceDryRunSnapshot {
-        val activeGroup = inferProfileGroup(
+        val activeGroup = inferRuntimeLifecyclePolicyProfileGroup(
             reclaimerProfile = reclaimerPolicy.activeProfile,
             residentProfile = residentPolicy.activeProfile
         )
@@ -337,24 +337,6 @@ object RuntimeLifecyclePolicyProfileSurfaceDryRun {
         )
     }
 
-    private fun inferProfileGroup(
-        reclaimerProfile: RuntimeReclaimerProfile,
-        residentProfile: RuntimeResidentProfile
-    ): RuntimeLifecyclePolicyProfileGroup {
-        return when {
-            reclaimerProfile == RuntimeReclaimerProfile.BALANCED &&
-                residentProfile == RuntimeResidentProfile.BALANCED ->
-                RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED
-            reclaimerProfile == RuntimeReclaimerProfile.CONSERVATIVE &&
-                residentProfile == RuntimeResidentProfile.CORE_ONLY ->
-                RuntimeLifecyclePolicyProfileGroup.LOW_POWER
-            reclaimerProfile == RuntimeReclaimerProfile.AGGRESSIVE &&
-                residentProfile == RuntimeResidentProfile.AGGRESSIVE ->
-                RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE
-            else -> RuntimeLifecyclePolicyProfileGroup.CUSTOM
-        }
-    }
-
     private fun recommendationFor(
         state: RuntimeLifecyclePolicyProfileSurfaceState
     ): RuntimeLifecyclePolicyProfileSurfaceRecommendation {
@@ -370,6 +352,25 @@ object RuntimeLifecyclePolicyProfileSurfaceDryRun {
             RuntimeLifecyclePolicyProfileSurfaceState.POLICY_ERROR_DEFAULT ->
                 RuntimeLifecyclePolicyProfileSurfaceRecommendation.REPAIR_POLICY_JSON
         }
+    }
+}
+
+/** 策略组合到产品档位的唯一映射，健康面与冷启动接力必须复用同一规则。 */
+internal fun inferRuntimeLifecyclePolicyProfileGroup(
+    reclaimerProfile: RuntimeReclaimerProfile,
+    residentProfile: RuntimeResidentProfile,
+): RuntimeLifecyclePolicyProfileGroup {
+    return when {
+        reclaimerProfile == RuntimeReclaimerProfile.BALANCED &&
+            residentProfile == RuntimeResidentProfile.BALANCED ->
+            RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED
+        reclaimerProfile == RuntimeReclaimerProfile.CONSERVATIVE &&
+            residentProfile == RuntimeResidentProfile.CORE_ONLY ->
+            RuntimeLifecyclePolicyProfileGroup.LOW_POWER
+        reclaimerProfile == RuntimeReclaimerProfile.AGGRESSIVE &&
+            residentProfile == RuntimeResidentProfile.AGGRESSIVE ->
+            RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE
+        else -> RuntimeLifecyclePolicyProfileGroup.CUSTOM
     }
 }
 
