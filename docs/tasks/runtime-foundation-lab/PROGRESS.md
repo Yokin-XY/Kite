@@ -28,6 +28,8 @@
 | RF540 | 已完成 | 版本化固定 helper 已进入 SERVICE/SHARED_WRITE 有界 Runner |
 | RF550 | 已完成 | 1341 项全量回归、强制构建和 OnePlus 8T 联合门通过 |
 | RF600 | 进行中 | 只先做 owner lease 合同与模拟器，不迁移终端/Agent |
+| RF610 | 已完成 | 长期 owner 状态机保持进程身份、停止意图与容量直到确认释放 |
+| RF620 | 进行中 | 纯模拟容量、压力、维护屏障、去重和公平性，不接生产入口 |
 | RF700 | 待研究 | 固定 1/2/4 之上的设备自适应校准 |
 
 ## RF110 开机与三问自检
@@ -66,6 +68,12 @@
 - 完成后拿什么证明？相关回归、强制全量单测、强制 Debug 构建、OnePlus 8T 冷启动/温复用/压力收缩/空闲行为/服务健康链与 ANR/FATAL 检查；Git 工作树干净、每个叶子提交可独立回退。
 - 依赖是否满足？满足。RF510～RF540 均已独立实现和验证；Node/Python 历史矩阵仍冻结，本门只验证本阶段新增合同和跨模块回归。
 
+## RF620 开机与三问自检
+
+- 目标是什么？以 RF610 状态机为唯一 lease 记录，模拟长期 owner 的容量、压力准入、同 owner 去重、独占维护屏障与 lane 优先级/FIFO 公平性。
+- 完成后拿什么证明？纯 JVM 测试证明既有 owner 不因压力变化被强杀、重复请求不多占容量、维护请求最终获得屏障、满 lane 不阻塞其他可运行 lane；不创建进程、不持久化、不接生产 Store。
+- 依赖是否满足？满足。RF610 已把长期 owner 的容量寿命、进程代次、停止意图与显式释放固定为纯状态机；短任务 `SHARED_WRITE` 没有被错误复用于常驻进程。
+
 ## RF610 开机与三问自检
 
 - 目标是什么？定义长期 runtime owner 与准入 lease 的同寿命状态机，明确 acquire、attach、running、stopping、released、orphan reconciliation，避免把短任务 `use {}` lease 直接套给服务/终端/Agent。
@@ -73,6 +81,13 @@
 - 依赖是否满足？满足。RF500 已提供 actual admission/telemetry，但其 lease 仍以调用栈为寿命；现有 `CardRunStore`、`BackgroundRuntimeRegistry` 和 Agent binding 可作为未来 owner 事实源，本任务只定义桥接合同，不复制状态。
 
 ## 倒序日志
+
+### 2026-08-01 RF610 长期 owner lease 状态机
+
+- 新增纯 `LongLivedProotOwnerLeaseTransitions`，把 owner kind、lane、文件系统姿态、lease phase 与 `(hostPid, processStartTicks)` 进程代次分离；没有集合、Store、线程、进程或生产装配。
+- 容量从 `ADMITTED` 持续到 `STOPPING/ORPHAN_REVIEW`，只有启动前取消/失败、停止确认或死亡确认才释放。相同进程 attach 幂等，不同身份拒绝；失联前为 `STOPPING` 时，重新确认存活仍恢复停止意图，不会误转回运行。
+- 长期文件系统姿态使用 `SHARED_RUNTIME/ISOLATED_RUNTIME/EXCLUSIVE_MAINTENANCE`，没有复用短任务调用期 `SHARED_WRITE` 锁；状态转换时间单调，陈旧事件不能倒推状态。
+- 目标 2 个 suite、23 项测试零失败，Debug 构建成功。RF620 继续只做容量/公平性纯模拟，不接 `CardRunStore`、后台 Registry、终端、Agent 或任何真实进程。
 
 ### 2026-08-01 RF510 实际调度状态正式投影
 

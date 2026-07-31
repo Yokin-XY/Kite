@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF600` 长生命周期 owner lease 预研
-- 当前任务：`RF610` 长短任务合同与状态机
+- 当前任务：`RF620` 容量、互斥与公平性模拟器
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -416,6 +416,41 @@
 ### RF600 [P1 预研] 长生命周期 owner lease
 
 父任务方向：让长期服务的准入 lease 与真实 runtime owner 同寿命，先建立合同与模拟器，再决定是否迁移一个后台服务；终端和 Agent 必须各自通过独立生命周期门。
+
+#### RF610 长短任务合同与状态机
+
+- 问题证据：短任务 lease 随调用栈释放；长期 owner 在调用返回后仍运行，还会经历重连、停止、进程外死亡和应用恢复。短任务 `SHARED_WRITE` 若直接套给服务，还会让常驻进程永久占住互斥写锁。
+- 解法：建立不创建进程的纯状态机，分离 owner kind、lane、文件系统姿态、进程身份和 lease phase；所有非法/重复转换显式返回结果，不抛出隐藏控制流。
+- 验收标准：
+  - [x] request→admitted→starting→running→stopping→released 正常链完整；
+  - [x] 相同进程 attach 幂等，不同进程身份拒绝；
+  - [x] 启动前失败可释放，运行后丢失先进入 orphan review 并继续占容量；
+  - [x] 只有停止确认或死亡确认释放容量，不接生产 Store、不创建进程。
+- 依赖：RF550。
+
+#### RF620 容量、互斥与公平性模拟器
+
+- 解法：以 lease state machine 为唯一记录，模拟容量、压力只约束新准入、exclusive maintenance 屏障、同 owner 去重和优先级/FIFO 排队。
+- 验收标准：既有 owner 不因压力被强杀；重复请求不多占容量；写维护不饥饿；队首满 lane 不阻塞可运行 lane。
+- 依赖：RF610。
+
+#### RF630 重启恢复与 orphan reconciliation
+
+- 解法：模拟应用重启后的记录恢复、同进程重连、PID 复用防护、无进程进入 orphan review、死亡确认释放和 owner 主动停止竞争。
+- 验收标准：恢复不创建第二进程、不复制 owner；PID 相同但启动代次不同拒绝；恢复与停止竞态确定化。
+- 依赖：RF620。
+
+#### RF640 长期 lease 规划态可观测性
+
+- 解法：只投影纯模拟器的低基数 phase/kind/lane/容量数字，明确 `planned_not_production`；不写入 RF510 的 actual 字段。
+- 验收标准：不含 ownerId、PID、路径、命令或 Agent/session 身份；读取无副作用。
+- 依赖：RF630。
+
+#### RF650 RF600 父任务门
+
+- [ ] 合同、容量、恢复、停止和可观测性模拟器联合回归通过；
+- [ ] 对后台服务样板给出生产迁移 go/no-go；
+- [ ] 终端和 Agent 继续保持 no-go，除非分别新增生命周期证据。
 
 ### RF700 [P2 预研] 设备自适应校准
 
