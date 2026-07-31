@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF900` 短任务与长期 owner 统一容量仲裁
-- 当前任务：`RF940` actual 健康与迁移门
+- 当前任务：`RF950` 真机故障矩阵与生产开关
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -597,8 +597,11 @@
 
 #### RF940 actual 健康与迁移门
 
-- 新增独立 `proot_long_actual_*` 低基数 schema，并与短任务 actual 输出统一总量；planned 字段继续保留原名和未生效声明。
-- 终端、Agent、资源 ID 和命令名不得参与类别选择。
+- 状态：已完成，正式健康面直接读取同一 admission 的同锁快照。
+- [x] 独立 `proot_long_actual_*` 输出长期 owner 活动、排队、恢复累计和合同阻断计数；
+- [x] `proot_unified_actual_*` 输出短任务、长期 owner、短长总量、状态与剩余容量；
+- [x] 旧 `proot_actual_active_jobs/queued_jobs` 保持短任务语义，planned 字段继续保留原名和未生效声明；
+- [x] 字段固定低基数，不含 owner、lease、PID、命令、路径、资源、Agent 或 session 身份，读取不创建 pool/进程。
 
 #### RF950 真机故障矩阵与生产开关
 

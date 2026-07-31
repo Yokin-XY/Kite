@@ -52,7 +52,7 @@
 | RF910 | 已完成 | 同锁 lane 事实与统一只读容量合同完成，仍标记未生产 |
 | RF920 | 已完成 | 同一后台记录原子持久化 PRoot route + STARTING，尚未接生产 |
 | RF930 | 已完成 | 后台 PRoot PROCESS 已桥接同一 actual controller 与强身份停止链 |
-| RF940 | 待开始 | 下一恢复点：独立长期 actual schema 与短长统一总量 |
+| RF940 | 已完成 | 长期 actual 与短长统一总量已进入正式 RuntimeHealth |
 | RF950 | 待开始 | 完整故障矩阵与后台 PROCESS 生产开关门 |
 
 ## RF110 开机与三问自检
@@ -238,6 +238,16 @@
 - 目标回归先覆盖 6 suites、35 tests，补漏后再强制执行 4 个核心 suites、30 tests；两轮均为 0 failure、0 error、0 skipped。补漏后强制 Debug 构建通过，本地 APK 241,284,208 bytes，SHA-256 `5C4929F6F2647D8C575CA391238FCFDC24A5E902FB18D58A50DAE26BA80B4247`，已覆盖安装到 OnePlus 8T，构建物未进入 Git。
 - OnePlus 8T 首轮通用受控 PRoot PROCESS 以 PID 24042、boot identity 和 start ticks 55954167 进入 generation 1/RUNNING；重复 start 的 PID、generation、start ticks 和进程数均不变。补漏后的最终 APK 再次从 RELEASED 启动为 PID 24741、generation 2、start ticks 56000069/RUNNING，并显式停止为 STOPPED/RELEASED；两轮均得到 `CONFIRMED/owner_stably_silent_after_identity_probe` 与 `trackedBefore=2 remaining=0 orphan=0 zombie=0`，强身份清空且无匹配 FATAL/ANR。
 - RF930 完成，下一恢复点 RF940。Node/Python 冻结性能矩阵未运行，终端和 Agent 未迁移。
+
+## RF940 actual 健康与迁移门
+
+- `ProotJobAdmissionSnapshot` 在 controller 同一把锁内区分 `MANAGED_OWNER` 活动/排队数，避免读取 managed registry 与 admission 两份快照后再相减产生瞬时矛盾；`restoreActive` 也只接受 managed owner，因此恢复累计的含义稳定。
+- 现有 `proot_actual_active_jobs/queued_jobs` 恢复为只表示有界短任务。新增 `proot_long_actual_*` 表示长期 owner actual，`proot_unified_actual_*` 表示短、长、总量、有效上限、剩余容量与 READY/FULL/OVERCOMMITTED/CONTRACT_MISMATCH。
+- actual 投影只消费不可变 admission snapshot；字段只含固定 schema/source/scope、枚举和数字，不输出 ownerId、leaseId、PID、代次、命令、路径、资源、Agent 或 session。`proot_long_planned_*` 不改名、不接入该投影。
+- 首轮目标回归 31 项中 1 项失败，原因是隐私断言把旧合法聚合字段 `warm_session_total` 的单词 session 整体禁止；修正为禁止真实动态身份值后，同一 5 suites、31 tests 全部通过，0 failure、0 error、0 skipped。
+- 强制 Debug 构建通过。本地 APK 241,284,208 bytes，SHA-256 `2DDD5D2ED577F35F022806BD2AE32B28EA57498332CE093AA972B5660E54DCAA`，已覆盖安装 OnePlus 8T，构建物未进入 Git。
+- 真机空闲输出：短任务 0、长期 0、统一总量 0、有效上限 2、剩余 2。受控 PRoot PROCESS generation 3/RUNNING 时：短任务仍为 0、长期 1、统一总量 1、剩余 1；停止为 RELEASED 并经过既有 10 秒健康面写入节流后，长期/总量回 0、剩余回 2。Crash buffer 为空。
+- RF940 完成，下一恢复点 RF950。没有迁移终端、Agent、资源或命令分类，也没有重复 Node/Python 性能矩阵。
 
 ## RF710 开机与三问自检
 

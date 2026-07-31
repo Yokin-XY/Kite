@@ -64,6 +64,8 @@ internal data class ProotJobAdmissionSnapshot(
     val maxObservedActive: Int,
     val restoredCount: Long = 0L,
     val contractBlockCount: Int = 0,
+    val managedOwnerActiveCount: Int = 0,
+    val managedOwnerQueuedCount: Int = 0,
 )
 
 internal sealed interface ProotJobAdmissionResult {
@@ -222,6 +224,9 @@ internal class ProotJobAdmissionController(
      */
     fun restoreActive(request: ProotJobAdmissionRequest): ProotJobAdmissionResult = lock.withLock {
         validate(request)
+        require(request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER) {
+            "restored_admission_managed_owner_required"
+        }
         if (closed) return@withLock ProotJobAdmissionResult.Rejected("admission_closed")
         if (pending.any { it.request.jobId == request.jobId } || active.values.any {
                 it.request.jobId == request.jobId
@@ -269,6 +274,12 @@ internal class ProotJobAdmissionController(
             maxObservedActive = maxObservedActive,
             restoredCount = restoredCount,
             contractBlockCount = contractBlocks.size,
+            managedOwnerActiveCount = active.values.count {
+                it.request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER
+            },
+            managedOwnerQueuedCount = pending.count {
+                it.request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER
+            },
         )
     }
 

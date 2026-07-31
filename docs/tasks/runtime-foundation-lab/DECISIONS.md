@@ -358,3 +358,11 @@
 - 决定：后台通用 PRoot PROCESS 通过 `WarmProotExecutionCoordinator` 持有与有界短任务相同的 `ProotJobAdmissionController` lease。长期句柄 registry 只保存 owner、generation 和关闭句柄；运行状态、路由、命令和强身份继续只属于 `BackgroundRuntimeRegistry`。实际准入和 STARTING 检查点必须先于唯一进程创建；恢复导入既有 holder，停止只有 owner 树与强身份共同确认后才释放。
 - 原因：另建长期 controller 会让 1/2/4 档超售；只从 RUNNING 反推会漏掉 STARTING；进程根 PID 消失也不能证明 PRoot 子树已经退出。共享 actual controller、同记录检查点和既有 owner 终止器分别关闭这三个窗口。
 - 影响：压力收缩只阻止新准入，不驱逐恢复 holder。损坏/冲突检查点会在 actual controller 上建立低基数合同阻断。进程创建后在强身份前快速退出进入 ORPHAN_REVIEW，不以 STARTING 或普通 ERROR 冒充已释放。RF940 可以投影实际长期计数和短长总量，但不得复用 `proot_long_planned_*` 名称或迁移终端、Agent。
+
+## ADR-RF-046 actual 健康必须来自 admission 同锁分类而非记录反推
+
+- 状态：已接受，RF940 已完成
+- 日期：2026-08-01
+- 决定：唯一 admission snapshot 在持锁期间按 `MANAGED_OWNER` 分类长期活动/排队 holder；正式健康面据此输出独立 `proot_long_actual_*` 和 `proot_unified_actual_*`。旧 `proot_actual_active_jobs/queued_jobs` 继续只代表有界短任务，规划态继续使用 `proot_long_planned_*`。
+- 原因：分别读取长期句柄表和 admission 会在 acquire/release 窗口出现瞬时错配；扫描 `BackgroundRuntimeRecord` 又会把未实际准入的记录冒充容量。请求取消模式已经是 controller 内的通用生命周期声明，可以在同一原子快照中稳定分类。
+- 影响：读取健康面不创建 pool、进程或 Store。合同阻断、计数矛盾和缩档超售分别输出 CONTRACT_MISMATCH/OVERCOMMITTED，不隐藏既有 holder。RF950 只需验证故障矩阵和最终开关边界，不再新增第三份容量事实。

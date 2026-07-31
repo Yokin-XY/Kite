@@ -53,4 +53,6 @@ RF930 已完成生产桥接。`WarmProotExecutionCoordinator` 内唯一的 `Proo
 
 恢复时，持久化 holder 直接导入同一 controller；若当前档位已缩小，可呈现 overcommitted，但不会驱逐既有任务。损坏或冲突检查点会阻断新准入。创建后取得强身份才进入 RUNNING；快速退出和外死进入 ORPHAN_REVIEW。STOPPING 只有在 PRoot owner 树 settled 且强身份终态成立后才转 RELEASED 并关闭 actual lease。
 
-当前剩余边界是 RF940/RF950：正式健康面尚未输出独立 `proot_long_actual_*` 与短长统一总量，完整的 1/2/4、竞争、压力和恢复故障矩阵也尚未关闭。RF910 的纯投影仍保留 `unified_contract_not_production` 原名，不能改名冒充 RF930 的 actual controller 状态。
+RF940 已把 actual 健康接到该唯一 controller 的同锁快照。`proot_actual_active_jobs/queued_jobs` 继续表示有界短任务；`proot_long_actual_*` 表示 managed owner 活动、排队、恢复累计和合同阻断；`proot_unified_actual_*` 表示短、长、总量、状态与剩余容量。它们不扫描后台记录，也不读取 managed owner 身份表。
+
+`proot_long_planned_*` 和 RF910 的 `unified_contract_not_production` 纯投影继续保留原名，不能冒充 actual。当前剩余边界只有 RF950：完整的 1/2/4、短长竞争、压力收缩、恢复反例和生产开关故障矩阵尚未关闭。

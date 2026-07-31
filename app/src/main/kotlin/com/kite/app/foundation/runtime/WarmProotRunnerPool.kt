@@ -507,6 +507,8 @@ internal object WarmProotExecutionCoordinator {
         val idleWarmSessions: Int,
         val staleWarmSessions: Int,
         val oldestIdleAgeMs: Long,
+        val unifiedActualCapacity: ProotUnifiedActualHealthSnapshot =
+            ProotUnifiedActualHealthSnapshot.empty(),
     )
 
     fun nextJobId(prefix: String): String =
@@ -604,13 +606,14 @@ internal object WarmProotExecutionCoordinator {
             effectiveGlobalMax = admissionSnapshot.effectiveGlobalMax,
             maxWarmRunners = tuning.maxWarmRunners,
             idleTimeoutMs = tuning.idleTimeoutMs,
-            activeJobs = admissionSnapshot.activeCount,
-            queuedJobs = admissionSnapshot.queuedCount,
+            activeJobs = admissionSnapshot.activeCount - admissionSnapshot.managedOwnerActiveCount,
+            queuedJobs = admissionSnapshot.queuedCount - admissionSnapshot.managedOwnerQueuedCount,
             totalWarmSessions = poolSnapshot.totalSessions,
             activeWarmSessions = poolSnapshot.activeSessions,
             idleWarmSessions = poolSnapshot.idleSessions,
             staleWarmSessions = poolSnapshot.staleSessions,
             oldestIdleAgeMs = poolSnapshot.oldestIdleAgeMs,
+            unifiedActualCapacity = ProotUnifiedActualHealthProjection.project(admissionSnapshot),
         )
     }
 
@@ -694,4 +697,5 @@ internal fun WarmProotExecutionCoordinator.TuningSnapshot.toRuntimeHealthEnvText
     appendLine("proot_actual_warm_session_idle=$idleWarmSessions")
     appendLine("proot_actual_warm_session_stale=$staleWarmSessions")
     appendLine("proot_actual_oldest_idle_age_ms=$oldestIdleAgeMs")
+    append(unifiedActualCapacity.toRuntimeHealthEnvText())
 }

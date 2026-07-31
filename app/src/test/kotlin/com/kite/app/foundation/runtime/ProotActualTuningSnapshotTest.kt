@@ -24,6 +24,19 @@ class ProotActualTuningSnapshotTest {
             idleWarmSessions = 1,
             staleWarmSessions = 0,
             oldestIdleAgeMs = 125L,
+            unifiedActualCapacity = ProotUnifiedActualHealthSnapshot(
+                state = UnifiedProotCapacityState.FULL,
+                effectiveGlobalMax = 2,
+                shortActiveCount = 1,
+                longActiveCount = 1,
+                totalActiveCount = 2,
+                shortQueuedCount = 3,
+                longQueuedCount = 0,
+                totalQueuedCount = 3,
+                remainingCapacity = 0,
+                restoredLongOwnerTotal = 1L,
+                contractBlockCount = 0,
+            ),
         ).toRuntimeHealthEnvText()
 
         assertTrue(text.contains("proot_actual_scheduler_scope=actual_not_planned"))
@@ -31,7 +44,18 @@ class ProotActualTuningSnapshotTest {
         assertTrue(text.contains("proot_actual_effective_global_max=2"))
         assertTrue(text.contains("proot_actual_queued_jobs=3"))
         assertTrue(text.contains("proot_actual_oldest_idle_age_ms=125"))
-        listOf("argv", "cwd", "owner", "command", "environment", "output").forEach { forbidden ->
+        assertTrue(text.contains("proot_long_actual_scope=actual_not_planned"))
+        assertTrue(text.contains("proot_long_actual_active_owner_count=1"))
+        assertTrue(text.contains("proot_unified_actual_total_active_count=2"))
+        assertTrue(text.contains("proot_unified_actual_state=FULL"))
+        listOf(
+            "private-owner-527",
+            "private-lease-913",
+            "/workspace/private",
+            "openclaw acp",
+            "agent-session-secret",
+            "resource-id-secret",
+        ).forEach { forbidden ->
             assertFalse("projection must not contain $forbidden", text.contains(forbidden, ignoreCase = true))
         }
     }

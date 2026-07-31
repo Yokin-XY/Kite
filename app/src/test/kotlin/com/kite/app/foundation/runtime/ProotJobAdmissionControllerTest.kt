@@ -421,13 +421,14 @@ class ProotJobAdmissionControllerTest {
     @Test
     fun `restored holder may exceed a shrunken limit and blocks only new admission`() {
         val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
-        val first = granted(controller.restoreActive(request("restored-one", RuntimeLaneKind.SERVICE))).lease
-        val second = granted(controller.restoreActive(request("restored-two", RuntimeLaneKind.SERVICE))).lease
+        val first = granted(controller.restoreActive(managedRequest("restored-one"))).lease
+        val second = granted(controller.restoreActive(managedRequest("restored-two"))).lease
 
         val snapshot = controller.snapshot()
         assertEquals(1, snapshot.effectiveGlobalMax)
         assertEquals(2, snapshot.activeCount)
         assertEquals(2L, snapshot.restoredCount)
+        assertEquals(2, snapshot.managedOwnerActiveCount)
         val rejected = controller.acquireBlocking(
             request("new", RuntimeLaneKind.INTERACTIVE, waitTimeoutMs = 5L)
         ) as ProotJobAdmissionResult.Rejected
@@ -489,6 +490,11 @@ class ProotJobAdmissionControllerTest {
         resultMode = ProotJobResultMode.CAPTURED_STDIO,
         pressureEssential = pressureEssential,
         waitTimeoutMs = waitTimeoutMs,
+    )
+
+    private fun managedRequest(id: String) = request(id, RuntimeLaneKind.SERVICE).copy(
+        cancellationMode = ProotJobCancellationMode.MANAGED_OWNER,
+        resultMode = ProotJobResultMode.DETACHED_BINDING,
     )
 
     private fun granted(result: ProotJobAdmissionResult) = result as ProotJobAdmissionResult.Granted

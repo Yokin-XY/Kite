@@ -20,6 +20,7 @@ class ManagedProotOwnerAdmissionRegistryTest {
 
         assertEquals("admission_global_capacity_timeout", blocked.reason)
         assertEquals(2, controller.snapshot().activeCount)
+        assertEquals(1, controller.snapshot().managedOwnerActiveCount)
         assertTrue(owners.release("service", 1L))
         short.lease.close()
         controller.close()
