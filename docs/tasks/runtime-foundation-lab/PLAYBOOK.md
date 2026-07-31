@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF700` 设备自适应校准预研
-- 当前任务：`RF750` RF700 父任务门
+- 当前阶段：`RF800` 后台长期 owner 强身份桥接
+- 当前任务：`RF810` 后台运行身份与停止链审计
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -468,6 +468,8 @@
 
 父任务方向：在 1/2/4 固定安全档上研究可回滚的设备级校准，只消费可信内存、前后台和失败率信号；热状态没有可靠来源前不伪造自动升档。
 
+状态：已完成。规划合同闭环；内存压力收缩已由现有 actual admission 生产实现，失败率调档与自动升档保持 no-go。
+
 #### RF710 既有校准合同与实际策略对齐审计
 
 - 问题证据：仓库已有 observe-only 的 `RuntimeProotDeviceCalibrationDryRun` 与 overlay，但 RF400 的正式 admission/pool 已统一到 `ProotPerformanceTunings` 1/2/4；不能另写第二套校准器或把历史 tracee 上限直接当并发上限。
@@ -512,9 +514,43 @@
 
 #### RF750 RF700 父任务门
 
-- [ ] 对齐、信号、迟滞、回滚和观测合同联合回归通过；
-- [ ] 给出自动降级与自动升档分别的生产 go/no-go；
-- [ ] 没有可信 thermal 信号时自动升档保持 no-go。
+- [x] 对齐、信号、迟滞、回滚和观测合同联合回归通过；
+- [x] 内存压力自动收缩沿用现有 actual admission；失败率调档因缺少并发因果证据保持 no-go；
+- [x] 没有可信 thermal 信号时自动升档保持 no-go；RF700 新代码全部无生产装配。
+
+### RF800 [P1 生产准备] 后台长期 owner 强身份桥接
+
+父任务方向：沿 RF650 的唯一 go 方向，只为 `BackgroundRuntimeRegistry` 补齐 PID 启动代次、停止确认和恢复证据，使后台服务未来可接长期 owner lease；不顺带迁移终端或 Agent，不创建第二实例。
+
+#### RF810 后台运行身份与停止链审计
+
+- 解法：核清 `BackgroundRuntimeRecord`、`HostProcessRecord`、真实进程创建/attach/stop、JSON 恢复和 `/proc/<pid>/stat` 读取边界，形成最小字段与迁移顺序。
+- 验收标准：生产读写图可复核；PID-only、token/command 匹配和停止确认缺口分别定位；不修改生产行为。
+- 依赖：RF650、RF750。
+
+#### RF820 强进程身份值对象与持久化
+
+- 解法：为后台 runtime owner 增加 `(hostPid, processStartTicks)` 强身份，旧记录缺失时保持 review/no-attach；只由真实进程观察器生成。
+- 验收标准：PID 复用拒绝、旧 JSON 兼容、同 owner 代次、序列化恢复和敏感字段边界通过。
+- 依赖：RF810。
+
+#### RF830 停止确认与单实例恢复桥
+
+- 解法：先恢复 owner，再按强身份 attach；停止意图优先，未找到或不确定时不启动替代进程、不释放容量。
+- 验收标准：启动/停止竞态、应用重启、进程外死亡、PID 复用和重复 attach 通过；终端/Agent 无净变化。
+- 依赖：RF820。
+
+#### RF840 后台类别生产试接
+
+- 解法：仅当 RF830 的真实证据完整时，把后台服务接入 RF610～RF640 长期 lease；否则形成明确 no-go 报告。
+- 验收标准：唯一 owner/进程、容量寿命、压力只影响新准入、停止确认、恢复和 actual 观测均通过真机门。
+- 依赖：RF830。
+
+#### RF850 RF800 父任务门
+
+- [ ] 强身份、停止和恢复联合回归通过；
+- [ ] 后台服务生产接入形成 go/no-go 与 OnePlus 8T 证据；
+- [ ] 终端和 Agent 保持 no-go，Node/Python 冻结矩阵不重跑。
 
 ## 每个叶子任务的固定闭环
 

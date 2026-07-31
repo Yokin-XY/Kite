@@ -270,3 +270,11 @@
 - 决定：自适应诊断同时输出 RF510 actual reference 和 RF730 planned suggestion，但二者使用不同 scope；planned 固定声明 `changesCoordinator=false` 和 recommendation 非 actual policy。投影只接收不可变参数，不主动读取任何正式状态源。
 - 原因：若建议字段与 actual 共用命名或在投影时回读 coordinator，会让观察面看起来像策略已经切换，并可能因读取创建 pool 或产生时序不一致。动态 owner/进程字段还会扩大基数并泄漏运行身份。
 - 影响：合同矛盾时 relation 固定为 `CONTRACT_MISMATCH`，planned target 回到 actual 且 recommendation 清空。该 schema 尚未接入正式 RuntimeHealth；RF750 只能在证明信号来源与应用事务后另给生产结论，不能用“能输出文本”代替生产接线。
+
+## ADR-RF-035 RF700 不新增自动调档生产状态
+
+- 状态：已接受，RF750 已完成
+- 日期：2026-08-01
+- 决定：RF700 以规划合同结束，不接生产 Store、定时器或 coordinator override。HIGH/CRITICAL 内存压力继续由现有 admission 的 effective max 自动收缩；失败率调档与自动升档均保持 no-go。
+- 原因：内存压力与收缩准入存在直接安全关系，且生产机制已经生效；任务失败可能来自命令、依赖、网络或环境，尚不能归因于并发。仓库也没有可靠 thermal source，无法满足升档门。再建自适应 override 会复制正式档位事实并可能形成抖动。
+- 影响：RF710～RF740 代码只作为纯评估/模拟/投影合同保留，不接 `RuntimeHealthStore`。下一优化阶段转向 RF650 已证明的后台强身份桥接，避免为了“继续优化”重复实现已有内存收缩。

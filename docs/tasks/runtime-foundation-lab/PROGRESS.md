@@ -33,12 +33,14 @@
 | RF630 | 已完成 | 恢复去重、PID 代次、孤儿容量与停止优先合同通过 |
 | RF640 | 已完成 | 固定规划态 schema 通过隐私、基数与无副作用护栏 |
 | RF650 | 已完成 | 1374 项全量回归通过；后台身份桥接准备 go、生产迁移 no-go |
-| RF700 | 进行中 | 在既有校准 dry-run 上对齐正式 1/2/4 策略，不另建平行体系 |
+| RF700 | 已完成 | 自适应规划合同闭环；现有内存收缩保留，失败率调档/自动升档 no-go |
 | RF710 | 已完成 | overlay schema 失败关闭，tracee guard 与正式 1/2/4 档位彻底分离 |
 | RF720 | 已完成 | actual 差量窗口失败关闭；高压/失败只降一级，无可信 thermal 永不升档 |
 | RF730 | 已完成 | 三窗升档、两窗失败、紧急降档、冷却与重启 rebase 纯状态机通过 |
 | RF740 | 已完成 | planned/actual 固定投影、合同复核和敏感字段护栏通过 |
-| RF750 | 进行中 | 联合回归并给自动升降档分别形成生产 go/no-go |
+| RF750 | 已完成 | 1404 项全量回归与强制构建通过；RF700 无生产装配，不覆盖安装 |
+| RF800 | 进行中 | 只沿 RF650 go 方向补后台长期 owner 强身份，不迁移终端/Agent |
+| RF810 | 进行中 | 审计后台记录、Host 进程、停止确认、恢复和 `/proc` 身份链 |
 
 ## RF110 开机与三问自检
 
@@ -114,6 +116,20 @@
 - 健康文本只含固定枚举、布尔和数字；测试明确拒绝 owner/lease/PID/process start/argv/cwd/command/session/resource 身份字段。
 - RF740 目标 suite 5 tests、0 failure、0 error、0 skipped；第一次编译发现投影对象缺少机器可断言的 `changesCoordinator` 字段，补齐后原命令通过。
 - 下一恢复指针进入 RF750，执行 RF700 联合回归与构建，分别给自动降档、自动升档生产结论；无可靠 thermal 时不得把升档改成 go。
+
+## RF750 验收
+
+- 强制 `:app:testDebugUnitTest --rerun-tasks` 第二次完整执行成功；JUnit XML 汇总 262 个 suite、1404 tests、0 failure、0 error、2 skipped。第一次重跑被前一条超时中断的 Gradle 进程锁住 `terminal-view-local` classes.jar，正常 `gradlew --stop` 后原命令通过，不计为代码失败。
+- 强制 `:app:assembleDebug --rerun-tasks` 成功。本地 APK 241169520 bytes，SHA-256 `BF532BEFDE98FBC18F5446E23E57090622407CE7A585912A1D5482A75026CA53`；构建物未进入 Git。
+- 静态引用确认 RF710～RF740 新类型只在四个自适应实现文件及目标测试内互相引用，没有接入 `RuntimeHealthStore`、正式 coordinator、页面、资源或后台调度；本阶段没有用户可见/生产行为变化，因此未覆盖安装 OnePlus 8T。
+- 生产结论分开：现有 `ProotJobAdmissionController` 已按 HIGH/CRITICAL 压力把 effective max 收缩为 1，这条实际安全降档继续 go；按任务失败率修改档位缺少“失败由并发造成”的因果证据，no-go；自动升档缺少可信 thermal source，no-go。
+- RF700 完成。下一阶段 RF800 只沿 RF650 已允许的后台强身份桥接推进；不借机迁移终端/Agent，不重跑冻结的 Node/Python 性能矩阵。
+
+## RF810 开机与三问自检
+
+- 目标是什么？把后台 runtime 从 PID-only 恢复推进到可证明的 `(hostPid, processStartTicks)` 身份前，完整核清记录、真实创建/attach/stop、持久化和观察链。
+- 完成后拿什么证明？生产引用图、字段来源、旧记录兼容、停止确认和重复实例风险逐项落到代码位置；本叶只审计与定合同，不改生产行为。
+- 依赖是否满足？满足。RF650 已明确后台是唯一可继续准备的长期 owner 类别，RF750 已完成且没有把自适应预研接入生产；终端和 Agent 继续 no-go。
 
 ## RF710 开机与三问自检
 
