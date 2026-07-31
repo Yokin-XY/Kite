@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF800` 后台长期 owner 强身份桥接
-- 当前任务：`RF834` 强身份链路回归与 OnePlus 8T 验证
+- 当前任务：`RF840` 后台类别生产试接
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -550,7 +550,7 @@
   - [x] `RF831` 纯决策合同：只有 boot+PID+start ticks 精确一致才允许 attach/发信号，决策本身永不创建进程；
   - [x] `RF832` 创建后采集强身份，应用重启时用同一合同精确探测；
   - [x] `RF833` expected stop 先落盘，确认原代次退出后才写 STOPPED 和释放容量；
-  - [ ] `RF834` 启动/停止竞态、重启、外死、PID 复用、重复 attach 的回归与 OnePlus 8T 证据。
+  - [x] `RF834` 启动/停止竞态、重启、外死、PID 复用、重复 attach 的回归与 OnePlus 8T 证据；PRoot 停止同时收敛完整 owner 树。
 - 验收标准：四个子任务全部通过；终端/Agent 无净变化。
 - 依赖：RF820。
 

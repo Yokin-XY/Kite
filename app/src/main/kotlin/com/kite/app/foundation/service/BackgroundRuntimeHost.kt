@@ -7,6 +7,7 @@ import com.kite.app.foundation.runtime.HostProcessInspector
 import com.kite.app.foundation.runtime.HostProcessRecord
 import com.kite.app.foundation.runtime.HostStopAuditor
 import com.kite.app.foundation.runtime.HostProcessTerminator
+import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
@@ -1499,7 +1500,28 @@ object BackgroundRuntimeHost {
         var stopConfirmed = false
         val hostPid = handle?.process?.safePid() ?: stoppingRecord.pid
         val stopAuditSeed = HostStopAuditor.capture(hostPid ?: -1, LOG_TAG)
-        if (handle != null) {
+        val isProotOwner = stoppingRecord.lastLaunchLane == "proot_shell"
+        if (isProotOwner) {
+            val ownerTermination = runCatching {
+                ProotOwnerProcessTerminator.terminate(appContext, stoppingRecord.id)
+            }.onFailure { error ->
+                Logger.i(
+                    LOG_TAG,
+                    "后台 PRoot owner 停止失败: runtime=${record.id} ${error.message}"
+                )
+            }.getOrNull()
+            stopConfirmed = ownerTermination?.settled == true
+            identityReview = !stopConfirmed
+            writeLog(
+                logFile,
+                "== PRoot owner 停止 outcome=${ownerTermination?.outcome?.name ?: "FAILED"} " +
+                    "reason=${ownerTermination?.reason ?: "exception"} ==\n"
+            )
+            if (handle != null && stopConfirmed) {
+                runCatching { handle.process.waitFor(500L, TimeUnit.MILLISECONDS) }
+                stopConfirmed = !handle.process.isAlive
+            }
+        } else if (handle != null) {
             handle.process.destroy()
             if (handle.process.isAlive) {
                 runCatching { handle.process.waitFor(900L, TimeUnit.MILLISECONDS) }

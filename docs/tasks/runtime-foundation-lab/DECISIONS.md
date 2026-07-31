@@ -318,3 +318,11 @@
 - 决定：后台 PROCESS 的显式停止先写现有 `lastStopReconciliation*`，再操作本地 handle 或强身份命中的 detached PID；只有原代次确认退出才写 STOPPED、清身份和释放容量。活动刷新必须保留同 PID 的 expected stop，且 expected stop 优先于 core 自动恢复。
 - 原因：先发信号再落盘会在应用死亡时丢失意图；只看 terminate 返回日志后无条件写 STOPPED 会释放仍在运行的 owner 容量；core 恢复若压过显式停止则会造成“停止后又拉起”。
 - 影响：身份不完整和观察不可用显示 review 而不是伪终态；普通 stale reconciler 不再处置带强身份的后台记录。detached 信号仍受无 pidfd 的最终 TOCTOU 限制，RF840 不能把用户态重验描述成内核原子身份持有。
+
+## ADR-RF-041 PRoot 后台停止是 owner 树事务
+
+- 状态：已接受，RF834 已完成
+- 日期：2026-08-01
+- 决定：后台 PROCESS 的实际车道为 `proot_shell` 时，必须先由既有 `ProotOwnerProcessTerminator` 按 runtimeId 收敛完整 owner 树；只有 owner 结果 settled 且本地 wrapper 已退出才确认 STOPPED。终止失败时保留 expected stop 和活动身份，不补杀单个 wrapper。
+- 原因：真机反例证明 wrapper 根 PID 退出后，PRoot 内的 shell 与 sleep 子进程仍会存活，并可因继承日志管道阻塞 monitor；根 PID 消失不能代表业务和 owner 容量已经退出。
+- 影响：Host 通道继续使用本地 handle 或强身份 detached 终止路径；PRoot 路径只按实际车道和通用 owner identity 选择，不识别资源 ID、命令名或 runtime kind。RF840 释放长期 lease 必须消费同一 owner 树 settled 证据。

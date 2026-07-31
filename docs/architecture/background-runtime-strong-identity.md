@@ -4,12 +4,12 @@
 
 本文固定 `BackgroundRuntimeRegistry` 进入长期 PRoot owner lease 前的生产事实、缺口和迁移顺序。
 
-只覆盖 `BackgroundRuntimeMode.PROCESS` 且实际运行通道为 PRoot 的后台运行项。以下对象不在本阶段顺带迁移：
+强身份采集、恢复和停止安全规则覆盖 `BackgroundRuntimeMode.PROCESS` 后台运行项；RF840 的长期 owner lease 生产试接只覆盖实际运行通道为 PRoot 的记录。以下对象不在 RF840 顺带迁移：
 
 - `SERVICE` 模式的一次性服务命令；
 - 终端会话；
 - Agent/ACP 进程；
-- Host Node/Host Python 后台进程；
+- Host Node/Host Python 后台进程的长期 PRoot lease；
 - 普通未登记 Ubuntu 进程。
 
 长期 lease 不能用命令名、资源 ID 或 runtime kind 特判选择。只有真实运行结果为 PRoot，且已取得可恢复强身份的后台 owner，才可能进入后续类别门。
@@ -121,6 +121,12 @@ processStartTicks: Long?
 
 创建链中的 `Process` handle 本身是归属证据，因此用目标 PID 的应用 UID + boot/start ticks 捕获；应用重启后没有 handle，必须在强身份之外继续通过原有 container/owner token 门。两条链都不使用 statusCommand 生成或补全进程身份。
 
+### PRoot owner 树停止
+
+PRoot 通道返回的本地 `Process` 只是 owner 树的宿主根。它退出后，内部 shell、任务子进程或继承 stdout/stderr 管道的子进程仍可能存活；此时只 `destroy()` 根进程既不能证明业务已经停止，也会令 monitor 卡在日志 reader 收尾，形成“PID 已消失但记录一直 RUNNING”的半状态。
+
+因此实际车道为 `proot_shell` 时，停止必须先调用既有 `ProotOwnerProcessTerminator`，以 runtimeId 作为通用 owner identity 收敛完整树；只有 owner 终止结果 `settled` 且本地 wrapper 已退出，才允许确认 STOPPED。owner 仍有残余、身份遥测不足或终止器异常时，不补杀单个 wrapper，不释放容量，继续保持 pending/review。Host 通道仍直接使用其本地 handle 或受强身份保护的 detached PID 路径。此规则只看实际车道与 owner，不识别资源 ID、命令名或 runtime kind。
+
 ### 外部 PID 信号的内核边界
 
 当前 JNI 终止能力最终仍是 `kill(pid, signal)`，没有持有 `pidfd`。RF833 已在 TERM、等待轮询和 KILL 前窄读 boot/PID/start ticks；一旦代次变化就把原进程视为已退出，绝不向当前 PID 继续发信号。这关闭了 TERM 等待期间 PID 被复用后再误发 KILL 的主要窗口。
@@ -131,6 +137,7 @@ processStartTicks: Long?
 
 - 只消费 `lastLaunchLane=proot_shell` 且强身份 ready 的 PROCESS 记录。
 - 同一 runtimeId 映射唯一 `LongLivedProotOwnerIdentity`；Host 快速通道不占 PRoot lease。
+- 停止释放 lease 前必须同时取得 PRoot owner 树 `settled` 和强身份终态；只退出 wrapper 不算停止完成。
 - 生产接入前必须在 OnePlus 8T 覆盖应用重启、PID 复用反例、设备 reboot identity 失效、停止竞态、进程外死亡和重复 start。
 
 ## 禁止方案

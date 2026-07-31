@@ -73,4 +73,24 @@ class BackgroundRuntimeStrongIdentityWiringContractTest {
         assertTrue(delegatedRefreshAt > strongIdentityAt)
         assertTrue(terminalWriteAt > delegatedRefreshAt)
     }
+
+    @Test
+    fun `proot background stop settles the registered owner before touching a local wrapper`() {
+        val source = File(
+            "src/main/kotlin/com/kite/app/foundation/service/BackgroundRuntimeHost.kt"
+        ).readText()
+        val stopBody = source.substring(
+            source.indexOf("private fun stopProcessRuntime"),
+            source.indexOf("private fun confirmProcessRuntimeStopped"),
+        )
+
+        val laneAt = stopBody.indexOf("stoppingRecord.lastLaunchLane == \"proot_shell\"")
+        val ownerStopAt = stopBody.indexOf("ProotOwnerProcessTerminator.terminate(")
+        val wrapperDestroyAt = stopBody.indexOf("handle.process.destroy()")
+        assertTrue(laneAt >= 0)
+        assertTrue(ownerStopAt > laneAt)
+        assertTrue(wrapperDestroyAt > ownerStopAt)
+        assertFalse(stopBody.contains("proot-capacity-worker"))
+        assertFalse(stopBody.contains("OPENCLAW"))
+    }
 }

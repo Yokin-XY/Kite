@@ -46,7 +46,8 @@
 | RF831 | 已完成 | 纯合同只允许精确代次 attach/发信号，所有决策均为零进程创建 |
 | RF832 | 已完成 | 窄读新进程身份；重启恢复强校验；健康命令不再保留失效 PID |
 | RF833 | 已完成 | 停止意图优先；逐信号重验代次；确认退出前不写终态、不释放容量 |
-| RF834 | 进行中 | 联合回归并在 OnePlus 8T 验证创建、重启、停止和反例边界 |
+| RF834 | 已完成 | 1429 项全量门通过；真机创建、外死、重复启动与 PRoot owner 树停止已闭环 |
+| RF840 | 进行中 | 评估并试接仅限 PRoot 后台 PROCESS 的长期 owner lease |
 
 ## RF110 开机与三问自检
 
@@ -177,6 +178,15 @@
 - 活动状态刷新在同 PID 下保留已持久化停止意图；显式 expected stop 优先于 core 自动恢复。新一轮 STARTING/换 PID 仍清旧意图与身份，不把 review 变成平行状态源。
 - 目标 6 suites、23 tests、0 failure、0 error、0 skipped；Debug 构建通过。终端和 Agent 无改动。
 - 已记录内核边界：detached 路径没有 pidfd，虽在每次信号前重验 start ticks，最终 `/proc` 复核到 `kill(pid)` 之间仍有极小 TOCTOU；RF840 必须据设备能力给严格 go 或 best-effort/no-go。
+
+## RF834 验收
+
+- 联合回归前的 OnePlus 8T 正式链证明 OpenClaw Host Node 后台进程持久化的 boot ID 与 `/proc/sys/kernel/random/boot_id` 一致，PID 18963 的 start ticks 与 `/proc/18963/stat` 第 22 字段精确一致；应用进程被外部结束后旧代次返回 `PROCESS_NOT_FOUND`，只创建一个替代实例。
+- 显式停止 OpenClaw 后，记录进入 `STOPPED_EXPECTED`，PID/boot/start ticks 同步清空；随后重复启动同一 runtimeId 保持同一 PID 19613 和同一代次 55454791，没有第二实例。
+- 首轮 PRoot worker 反例发现只销毁 wrapper 根 PID 会残留 `proot -> bash -> sleep` 三层 owner 树，并因子进程继承日志管道阻塞 monitor。修复改为按实际 `proot_shell` 车道先调用通用 `ProotOwnerProcessTerminator`；不读取资源 ID、应用名或 worker kind。
+- 首次修复 APK 上 worker2 从 PID 20502、start ticks 55482454 启动并健康；停止结果为 `CONFIRMED/owner_stably_silent_after_identity_probe`，诊断 `trackedBefore=3 remaining=0 orphan=0 zombie=0`，记录确认 STOPPED 后才清身份与容量。
+- 强制全量回归为 268 个 suite、1429 tests、0 failure、0 error、2 skipped；最终强制 Debug 构建通过。本地 APK 为 241,218,672 bytes，SHA-256 `FBC4AC8B1F49E75F3D6BD58788086C45A5D7F7D446DF40BC78CC36803FD60B79`，构建物未进入 Git。
+- 最终 APK 覆盖安装后再次走生产 start/stop：worker2 以 PID 21399、start ticks 55557872、`proot_shell` 健康启动；停止再次得到 `CONFIRMED` 与 `trackedBefore=3 remaining=0 orphan=0 zombie=0`，记录强身份清空并进入 `STOPPED_EXPECTED`。本轮无匹配 FATAL/ANR。Node/Python 冻结性能矩阵未运行。
 
 ## RF710 开机与三问自检
 
