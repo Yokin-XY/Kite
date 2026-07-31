@@ -135,10 +135,15 @@ PRoot 通道返回的本地 `Process` 只是 owner 树的宿主根。它退出�
 
 ### RF840：后台 PRoot 类别门
 
-- 只消费 `lastLaunchLane=proot_shell` 且强身份 ready 的 PROCESS 记录。
-- 同一 runtimeId 映射唯一 `LongLivedProotOwnerIdentity`；Host 快速通道不占 PRoot lease。
-- 停止释放 lease 前必须同时取得 PRoot owner 树 `settled` 和强身份终态；只退出 wrapper 不算停止完成。
-- 生产接入前必须在 OnePlus 8T 覆盖应用重启、PID 复用反例、设备 reboot identity 失效、停止竞态、进程外死亡和重复 start。
+RF840 的生产接入结论为 **no-go**，不是强身份链失败，而是统一容量事实尚未闭环：
+
+- `LongLivedProotAdmissionSimulator`、恢复规划器和 `proot_long_planned_*` 仍只有相互引用，没有任何生产调用方；它们明确标记 `planned_not_production`。
+- 短任务实际容量由 `WarmProotExecutionCoordinator` 内的 `ProotJobAdmissionController` 持有；若另建长期 controller，两边不会互相计数，实际同时运行数可以超过同一 1/2/4 档位。
+- `BackgroundRuntimeRegistry` 目前只持有运行状态、实际车道和强进程身份，没有“已准入但尚未创建 PID”的长期 lease generation/phase。只从 RUNNING 记录反推会漏掉 STARTING 容量，应用重启也无法区分旧准入和新请求。
+- 正式健康面只有短任务 `proot_actual_*`；长期字段仍是规划 schema。此时改名或投影后台 RUNNING 数会把未受统一准入控制的进程冒充 actual lease。
+- OnePlus 8T 已覆盖进程外死亡、重复 start、强身份失效和完整 owner 树停止，但应用进程被系统结束时 PRoot 子树也随 UID 退出，尚未形成“控制面重启而 owner 存活”的真实 reattach 样本；设备 reboot 也不应拿运行中的用户设备强行取证。detached PID 路径另受无 pidfd 的内核边界限制。
+
+因此 RF840 不修改生产准入。下一阶段必须先把短任务和长期 owner 放入同一实际容量仲裁器；后台记录仍是 owner/身份事实源，仲裁器只持有容量序列和 lease，不复制命令、状态或进程身份。生产试接仍只消费 `lastLaunchLane=proot_shell` 且强身份 ready 的 PROCESS 记录；Host 快速通道不占 PRoot lease。停止释放 lease 前必须同时取得 PRoot owner 树 `settled` 和强身份终态，只退出 wrapper 不算停止完成。
 
 ## 禁止方案
 

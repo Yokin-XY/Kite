@@ -326,3 +326,11 @@
 - 决定：后台 PROCESS 的实际车道为 `proot_shell` 时，必须先由既有 `ProotOwnerProcessTerminator` 按 runtimeId 收敛完整 owner 树；只有 owner 结果 settled 且本地 wrapper 已退出才确认 STOPPED。终止失败时保留 expected stop 和活动身份，不补杀单个 wrapper。
 - 原因：真机反例证明 wrapper 根 PID 退出后，PRoot 内的 shell 与 sleep 子进程仍会存活，并可因继承日志管道阻塞 monitor；根 PID 消失不能代表业务和 owner 容量已经退出。
 - 影响：Host 通道继续使用本地 handle 或强身份 detached 终止路径；PRoot 路径只按实际车道和通用 owner identity 选择，不识别资源 ID、命令名或 runtime kind。RF840 释放长期 lease 必须消费同一 owner 树 settled 证据。
+
+## ADR-RF-042 后台长期 lease 不在双容量事实源下生产接入
+
+- 状态：已接受，RF840 已完成
+- 日期：2026-08-01
+- 决定：RF840 保持生产 no-go。不能把 `LongLivedProotAdmissionSimulator` 直接实例化后接到后台，也不能仅从 RUNNING 记录反推长期容量；必须先让短任务和长期 owner 共用一个实际容量仲裁器，并在 `BackgroundRuntimeRecord` 内持久化进程创建前的 provisional lease generation/phase。
+- 原因：当前短任务 actual controller 和长期 planned simulator 彼此不计数，直接并行会超售 1/2/4 档；后台现有状态也不能表达“已占容量、尚无 PID”的 STARTING 窗口。两者都会在并发启动或控制面重启时产生假空闲、重复准入或第二实例。
+- 影响：RF834 的强身份与 owner 树停止继续作为必要地基，但不等于容量生产接入完成。解阻任务固定为 RF910～RF950；实际健康字段必须来自统一仲裁器，后台身份仍由 `BackgroundRuntimeRegistry` 唯一持有，终端和 Agent 不借机迁移。

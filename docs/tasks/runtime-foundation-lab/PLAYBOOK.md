@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF800` 后台长期 owner 强身份桥接
-- 当前任务：`RF840` 后台类别生产试接
+- 当前任务：`RF850` RF800 父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -557,7 +557,8 @@
 #### RF840 后台类别生产试接
 
 - 解法：仅当 RF830 的真实证据完整时，把后台服务接入 RF610～RF640 长期 lease；否则形成明确 no-go 报告。
-- 验收标准：唯一 owner/进程、容量寿命、压力只影响新准入、停止确认、恢复和 actual 观测均通过真机门。
+- 状态：已完成，结论为 no-go。强身份、单实例和停止证据通过；统一容量、STARTING lease 持久化、actual 观测与 detached/reboot 证据未闭环，因此未修改生产准入。
+- 验收标准：唯一 owner/进程、容量寿命、压力只影响新准入、停止确认、恢复和 actual 观测均通过真机门；任一缺失即保持 no-go。
 - 依赖：RF830。
 
 #### RF850 RF800 父任务门
@@ -565,6 +566,35 @@
 - [ ] 强身份、停止和恢复联合回归通过；
 - [ ] 后台服务生产接入形成 go/no-go 与 OnePlus 8T 证据；
 - [ ] 终端和 Agent 保持 no-go，Node/Python 冻结矩阵不重跑。
+
+### RF900 [P1 后续] 短任务与长期 owner 统一容量仲裁
+
+父任务方向：解开 RF840 的唯一生产阻断，让短任务 lease 和后台 PRoot owner lease 共享同一 1/2/4 实际容量、压力与维护屏障；`BackgroundRuntimeRegistry` 继续拥有后台身份和运行状态，不迁移终端或 Agent。
+
+#### RF910 统一容量快照与不变量
+
+- 把短任务 active/queue 与外部长持有量放入同一仲裁快照，固定总量不超 effective max、压力只影响新准入、读取不创建进程。
+- 长期 owner 只向仲裁器提交 owner key、lane、posture、必要性和 lease generation，不提交命令、路径或业务状态。
+
+#### RF920 后台 provisional lease 持久化
+
+- 在同一 `BackgroundRuntimeRecord` 保存最小 lease generation/phase；路由选择为 `proot_shell` 后、进程创建前原子持有 STARTING 容量。
+- Host 路径、旧 JSON、身份缺失和 spec 冲突失败关闭；不新增平行 Store。
+
+#### RF930 启动、恢复与停止桥
+
+- STARTING 创建成功后附着 boot/PID/start ticks；失败释放，外死进入 orphan review，停止只有 owner 树 settled 与强身份终态同时成立才释放。
+- 重复 start 复用同 owner/generation，不形成第二进程或第二容量。
+
+#### RF940 actual 健康与迁移门
+
+- 新增独立 `proot_long_actual_*` 低基数 schema，并与短任务 actual 输出统一总量；planned 字段继续保留原名和未生效声明。
+- 终端、Agent、资源 ID 和命令名不得参与类别选择。
+
+#### RF950 真机故障矩阵与生产开关
+
+- OnePlus 8T 覆盖 1/2/4 容量边界、短长任务竞争、压力收缩、应用重启、PID/boot 反例、外死、重复启动和 owner 树停止。
+- 只有完整矩阵通过才打开后台 PROCESS 类别；否则保持关闭并输出稳定阻断原因。
 
 ## 每个叶子任务的固定闭环
 

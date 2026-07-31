@@ -47,7 +47,8 @@
 | RF832 | 已完成 | 窄读新进程身份；重启恢复强校验；健康命令不再保留失效 PID |
 | RF833 | 已完成 | 停止意图优先；逐信号重验代次；确认退出前不写终态、不释放容量 |
 | RF834 | 已完成 | 1429 项全量门通过；真机创建、外死、重复启动与 PRoot owner 树停止已闭环 |
-| RF840 | 进行中 | 评估并试接仅限 PRoot 后台 PROCESS 的长期 owner lease |
+| RF840 | 已完成 | 生产接入 no-go：强身份已过门，统一容量/STARTING 持久化/actual 观测仍缺失 |
+| RF850 | 进行中 | RF800 父任务全量回归、范围核对与最终 Git 门 |
 
 ## RF110 开机与三问自检
 
@@ -187,6 +188,15 @@
 - 首次修复 APK 上 worker2 从 PID 20502、start ticks 55482454 启动并健康；停止结果为 `CONFIRMED/owner_stably_silent_after_identity_probe`，诊断 `trackedBefore=3 remaining=0 orphan=0 zombie=0`，记录确认 STOPPED 后才清身份与容量。
 - 强制全量回归为 268 个 suite、1429 tests、0 failure、0 error、2 skipped；最终强制 Debug 构建通过。本地 APK 为 241,218,672 bytes，SHA-256 `FBC4AC8B1F49E75F3D6BD58788086C45A5D7F7D446DF40BC78CC36803FD60B79`，构建物未进入 Git。
 - 最终 APK 覆盖安装后再次走生产 start/stop：worker2 以 PID 21399、start ticks 55557872、`proot_shell` 健康启动；停止再次得到 `CONFIRMED` 与 `trackedBefore=3 remaining=0 orphan=0 zombie=0`，记录强身份清空并进入 `STOPPED_EXPECTED`。本轮无匹配 FATAL/ANR。Node/Python 冻结性能矩阵未运行。
+
+## RF840 生产类别门
+
+- 只读引用图确认 RF610～RF640 的 owner transition、admission simulator、recovery planner 和 planning health 只在该组模型内互相引用；没有生产调用方，scope 仍为 `planned_not_production`。
+- 短任务实际准入只由 `WarmProotExecutionCoordinator` 内的 `ProotJobAdmissionController` 计数。把模拟器另行实例化为长期 controller 会形成两个容量事实源，总 PRoot 运行数可超过同一 1/2/4 档位，违反父任务的“不崩溃前提下榨干性能”。
+- 后台记录已能持久化 actual lane 和 boot/PID/start ticks，但没有进程创建前的 lease generation/phase；从 RUNNING 反推会漏算 STARTING，从 `lastLaunchLane` 预判又会把上一次实际车道当本次选择。
+- 正式健康面只有短任务 `proot_actual_*`，长期 `proot_long_planned_*` 仍明确未生产。当前若直接输出 actual，会把未受统一仲裁的后台数冒充生产容量事实。
+- 结论为 no-go，RF840 不修改生产准入。解阻工作拆为 RF910～RF950：统一容量快照、同记录 provisional lease、生命周期桥、actual schema、真机故障矩阵；终端和 Agent 继续不迁移。
+- 新增 RF840 边界合同，禁止后台 Host 或短任务 coordinator 偷接 planned simulator、禁止在缺 lease 字段时冒充生产接入；长期状态机、容量、恢复、投影和边界共 5 suites、35 tests 全部通过。因无生产代码变化，本叶不重复构建或真机安装。
 
 ## RF710 开机与三问自检
 
