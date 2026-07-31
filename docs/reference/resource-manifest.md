@@ -137,6 +137,29 @@ assets/resources/<resource-id>/
 
 `actions.open.recipe` 是资源打开时执行的 Recipe。`homeCards` 提供用户创建首页卡片时使用的模板。两者都遵守首页卡片协议，不拥有额外执行权限。
 
+## Agent 与后台运行保证
+
+Managed Agent 的 `launch` 以及其中的 `runtimeDependencies` 可以声明 `runtimeGuarantees`。它不是性能开关，而是调用方对任务闭包
+能够在启动前证明的事实；未知值会使该 Agent 声明失效，旧清单缺省为空并继续走 PRoot。
+
+```json
+{
+  "argv": ["python3", "agent.py"],
+  "runtimeGuarantees": [
+    "no_child_process",
+    "verified_native_imports"
+  ]
+}
+```
+
+当前只接受：
+
+- `no_child_process`：脚本及其导入闭包不会创建、替换或通过 shell 启动子进程；
+- `verified_native_imports`：脚本的原生导入闭包只包含当前 Host 兼容矩阵已验证的模块。
+
+两项同时存在时，受管 Python 才有资格进入 Host Provider；这只是候选资格，解释器身份、ABI、网络、cwd、环境和资产门仍须全部
+通过。不得根据资源 ID、应用名、脚本名或包名自动补上保证。
+
 ## 卸载
 
 卸载应删除该资源拥有的安装目录和受管命令，只处理清单明确拥有的文件。共享依赖和其他资源拥有的命令不能被顺带删除。

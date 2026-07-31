@@ -10,6 +10,7 @@ import android.util.Log
 import com.kite.app.foundation.contracts.ContainerLaunchConfig
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.resources.KiteResourceManifestLoader
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
@@ -228,6 +229,12 @@ private object PythonRuntimeBenchmark {
     )
 
     private fun productionProviderReport(context: Context, host: HostPythonLayout): String {
+        val declaration = KiteResourceManifestLoader(context).parseManifestJson(
+            PYTHON_PROVIDER_DECLARATION,
+        ).agentProfiles.single()
+        val guarantees = checkNotNull(
+            RuntimeExecutionGuaranteeCodec.decode(declaration.runtimeGuarantees)
+        ) { "python_provider_fixture_guarantees_invalid" }
         val decision = HostPythonRuntimeProvider.prepare(
             context = HostPythonProviderContext(context, host.container, host.workspaceDirectory),
             request = RuntimeExecutionRequest(
@@ -237,10 +244,7 @@ private object PythonRuntimeBenchmark {
                 ),
                 workingDirectory = "/workspace",
                 environment = mapOf("KITE_PYTHON_PROVIDER_PROBE" to "1"),
-                guarantees = setOf(
-                    RuntimeExecutionGuarantee.NO_CHILD_PROCESS,
-                    RuntimeExecutionGuarantee.VERIFIED_NATIVE_IMPORTS,
-                ),
+                guarantees = guarantees,
             ),
         )
         val execution = when (decision) {
@@ -256,7 +260,7 @@ private object PythonRuntimeBenchmark {
                 stderr = "blocked_${decision.reason}",
             )
         }
-        return "status=compatibility capability=production_provider host=${execution.succeeded} " +
+        return "status=compatibility capability=production_manifest_provider host=${execution.succeeded} " +
             "hostExit=${execution.exitCode} hostReason=${safe(execution.stderr)} " +
             "proot=not_run prootExit=not_run prootReason=provider_host_only"
     }
@@ -576,5 +580,24 @@ private object PythonRuntimeBenchmark {
                 raise
         finally:
             shutil.rmtree(root, ignore_errors=True)
+    """.trimIndent()
+
+    private val PYTHON_PROVIDER_DECLARATION = """
+        {
+          "id": "kite.python-provider-probe",
+          "base": {"name": "Python Provider Probe"},
+          "agents": [{
+            "id": "python-provider-probe",
+            "name": "Python Provider Probe",
+            "launch": {
+              "mode": "managed",
+              "providerId": "python-provider-probe",
+              "protocol": "acp",
+              "transport": "stdio",
+              "argv": ["python3", "-c", "print('KITE_PY_OK')"],
+              "runtimeGuarantees": ["no_child_process", "verified_native_imports"]
+            }
+          }]
+        }
     """.trimIndent()
 }

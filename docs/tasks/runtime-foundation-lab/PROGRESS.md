@@ -14,7 +14,7 @@
 | RF220 | 已完成 | HN-001～HN-011 已完成证据和开放门映射 |
 | RF230 | 已完成 | 纯 Python go；subprocess/venv child/第三方扩展保持 PRoot |
 | RF240 | 已完成 | 通用 glibc 资产与纯 Python 结构化 Provider 已通过真机门 |
-| RF250 | 进行中 | RF251/RF253 已完成，下一步 RF252；第三方扩展 RF254 待验 |
+| RF250 | 进行中 | RF251～RF253 已完成，进入 RF254 第三方扩展与包生命周期 |
 | RF300～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
@@ -24,6 +24,15 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF252 验收
+
+- `runtimeGuarantees` 使用固定 wire enum 接入资源 Agent、资源后台依赖、自定义 Agent 和 `BackgroundRuntimeRecord`；未知值拒绝，缺省空集合向后兼容。
+- Agent 登记、JSON 持久化、后台记录和两条 Planner 请求均透传同一事实，没有从环境变量、命令名或资源 ID 旁路推断。
+- 7 个目标 suite、43 项测试零失败；新增未知自定义保证拒绝测试单独通过。
+- Debug 构建与一加 8T 覆盖安装成功；真机固定清单夹具经正式 Manifest Loader 解码保证，再由生产 `HostPythonRuntimeProvider` 启动，`production_manifest_provider` 退出 0。
+- 旧 Node 清单未添加无关字段，Node Provider 不读取保证；本阶段没有重复 Node 性能矩阵。
+- 下一恢复指针进入 RF254；未验证的第三方扩展仍整条 PRoot。
 
 ### 2026-07-31 RF251 / RF253 验收
 

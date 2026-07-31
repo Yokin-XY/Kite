@@ -73,6 +73,7 @@ data class BackgroundRuntimeRecord(
     val startExecutable: String? = null,
     val startArguments: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
+    val runtimeGuarantees: Set<String> = emptySet(),
     /** 环境变量名 -> 容器可见私有文件；只持久化路径，运行时才读取值。 */
     val environmentFiles: Map<String, String> = emptyMap(),
     val bindAddress: String? = null,
@@ -137,6 +138,10 @@ data class BackgroundRuntimeRecord(
             .put(
                 "environment",
                 JSONObject().apply { environment.forEach { (key, value) -> put(key, value) } }
+            )
+            .put(
+                "runtimeGuarantees",
+                JSONArray().apply { runtimeGuarantees.sorted().forEach(::put) }
             )
             .put(
                 "environmentFiles",
@@ -229,6 +234,15 @@ data class BackgroundRuntimeRecord(
                         }
                     }
                     ?: emptyMap(),
+                runtimeGuarantees = json.optJSONArray("runtimeGuarantees")
+                    ?.let { array ->
+                        buildSet {
+                            for (index in 0 until array.length()) {
+                                array.optString(index).trim().takeIf(String::isNotBlank)?.let(::add)
+                            }
+                        }
+                    }
+                    ?: emptySet(),
                 environmentFiles = json.optJSONObject("environmentFiles")
                     ?.let { environmentFilesJson ->
                         buildMap {

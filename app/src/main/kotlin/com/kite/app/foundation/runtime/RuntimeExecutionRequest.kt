@@ -52,9 +52,21 @@ internal enum class RuntimeExecutionRequirement {
 }
 
 /** 调用方在业务进程创建前能够证明的封闭属性；缺省表示未知，不能把未声明需求当成安全证明。 */
-internal enum class RuntimeExecutionGuarantee {
-    NO_CHILD_PROCESS,
-    VERIFIED_NATIVE_IMPORTS,
+internal enum class RuntimeExecutionGuarantee(val wireValue: String) {
+    NO_CHILD_PROCESS("no_child_process"),
+    VERIFIED_NATIVE_IMPORTS("verified_native_imports"),
+}
+
+internal object RuntimeExecutionGuaranteeCodec {
+    private val byWireValue = RuntimeExecutionGuarantee.entries.associateBy { it.wireValue }
+
+    fun normalize(values: Collection<String>): Set<String>? {
+        val normalized = values.map { it.trim().lowercase() }.filter(String::isNotBlank).toSet()
+        return normalized.takeIf { candidates -> candidates.all(byWireValue::containsKey) }
+    }
+
+    fun decode(values: Collection<String>): Set<RuntimeExecutionGuarantee>? = normalize(values)
+        ?.mapTo(linkedSetOf()) { value -> checkNotNull(byWireValue[value]) }
 }
 
 internal enum class RuntimeFallbackPolicy {

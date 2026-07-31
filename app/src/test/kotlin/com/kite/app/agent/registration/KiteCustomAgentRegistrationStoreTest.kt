@@ -26,7 +26,13 @@ class KiteCustomAgentRegistrationStoreTest {
         val managed = registration(
             agentId = "my-agent",
             displayName = "我的 Agent",
-            launch = AgentLaunchSpec.Managed("my-provider", "acp", "stdio", listOf("my-agent", "acp")),
+            launch = AgentLaunchSpec.Managed(
+                "my-provider",
+                "acp",
+                "stdio",
+                listOf("my-agent", "acp"),
+                setOf("no_child_process", "verified_native_imports"),
+            ),
             configAdapterId = "custom-config",
             sessionAdapterId = "custom-sessions"
         )
@@ -44,6 +50,10 @@ class KiteCustomAgentRegistrationStoreTest {
         assertTrue(restored.last().launch is AgentLaunchSpec.Attach)
         assertEquals("custom-config", restored.first().configAdapterId)
         assertEquals("custom-sessions", restored.first().sessionAdapterId)
+        assertEquals(
+            setOf("no_child_process", "verified_native_imports"),
+            (restored.first().launch as AgentLaunchSpec.Managed).runtimeGuarantees,
+        )
     }
 
     @Test
@@ -67,6 +77,25 @@ class KiteCustomAgentRegistrationStoreTest {
             store.register(resourceConflict, reservedAgentIds = setOf("opencode"))
                 is AgentRegistrationWriteResult.Rejected
         )
+    }
+
+    @Test
+    fun unknownRuntimeGuaranteeIsRejectedInsteadOfDowngradedToEmpty() {
+        val store = KiteCustomAgentRegistrationStore(context)
+        val registration = registration(
+            agentId = "unsafe-agent",
+            displayName = "Unsafe",
+            launch = AgentLaunchSpec.Managed(
+                "unsafe-provider",
+                "acp",
+                "stdio",
+                listOf("python3", "agent.py"),
+                setOf("trust_me"),
+            ),
+        )
+
+        assertTrue(store.register(registration) is AgentRegistrationWriteResult.Rejected)
+        assertTrue(store.snapshot().isEmpty())
     }
 
     private fun registration(

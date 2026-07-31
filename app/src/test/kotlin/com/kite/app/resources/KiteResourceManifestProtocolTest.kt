@@ -145,6 +145,66 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
+    fun runtimeGuaranteesAreClosedEnumsForAgentAndBackgroundDeclarations() {
+        val loader = KiteResourceManifestLoader(context)
+        val valid = loader.parseManifestJson(
+            """
+                {
+                  "id": "kite.python-fixture",
+                  "base": {"name": "Python Fixture"},
+                  "agents": [{
+                    "id": "python-fixture",
+                    "name": "Python Fixture",
+                    "launch": {
+                      "mode": "managed",
+                      "providerId": "python-fixture",
+                      "protocol": "acp",
+                      "transport": "stdio",
+                      "argv": ["python3", "fixture.py"],
+                      "runtimeGuarantees": ["NO_CHILD_PROCESS", "verified_native_imports"],
+                      "runtimeDependencies": [{
+                        "id": "python-background",
+                        "argv": ["python3", "background.py"],
+                        "runtimeGuarantees": ["no_child_process", "verified_native_imports"]
+                      }]
+                    }
+                  }]
+                }
+            """.trimIndent()
+        )
+        val invalid = loader.parseManifestJson(
+            """
+                {
+                  "id": "kite.python-invalid",
+                  "base": {"name": "Python Invalid"},
+                  "agents": [{
+                    "id": "python-invalid",
+                    "name": "Python Invalid",
+                    "launch": {
+                      "mode": "managed",
+                      "providerId": "python-invalid",
+                      "protocol": "acp",
+                      "transport": "stdio",
+                      "argv": ["python3", "fixture.py"],
+                      "runtimeGuarantees": ["trust_me"]
+                    }
+                  }]
+                }
+            """.trimIndent()
+        )
+
+        val profile = valid.agentProfiles.single()
+        assertEquals(setOf("no_child_process", "verified_native_imports"), profile.runtimeGuarantees)
+        assertEquals(profile.runtimeGuarantees, profile.runtimeDependencies.single().runtimeGuarantees)
+        assertEquals(
+            profile.runtimeGuarantees,
+            (AgentResourceRegistrationMapper.registrations(valid).single().launch as AgentLaunchSpec.Managed)
+                .runtimeGuarantees,
+        )
+        assertTrue(invalid.agentProfiles.isEmpty())
+    }
+
+    @Test
     fun codexUsesOfficialNpmPackageWithDeclaredDependencies() {
         val manifestFile = File(resourceRoot(), "kite.codex.cli/manifest.json")
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
