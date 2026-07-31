@@ -199,9 +199,12 @@ class AndroidRecipeExecutorTest {
         assertTrue(terminalBody.contains("readyLease.spaceFor(request) ?: KFWorkspaceManager.ensureActiveSpace(appContext)"))
         assertTrue(terminalBody.contains("ManagedRuntimeLaunchPlanner.plan("))
         assertTrue(terminalBody.contains("RuntimeExecutionPayload.CommandLine(command)"))
+        assertTrue(terminalBody.contains("RuntimeExecutionRequirement.INTERACTIVE_PTY"))
+        assertTrue(terminalBody.contains("RuntimeExecutionRequirement.FILESYSTEM_VIEW"))
+        assertTrue(terminalBody.contains("WorkSurfaceRuntimeBridge.buildProotTerminalLaunchConfig"))
         assertEquals(false, terminalBody.contains("HostNodeChildProcessContract.from("))
         assertTrue(terminalBody.contains("TerminalRuntimeHost.setLaunchConfigOverride"))
-        assertTrue(terminalBody.contains("prepared.runtimeConfig == null && command.isNotBlank()"))
+        assertTrue(terminalBody.contains("prepared.runtimeLane == \"proot_shell\" && command.isNotBlank()"))
         assertEquals(false, terminalBody.contains("TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)"))
         assertEquals(false, terminalBody.contains("TerminalSessionStore.refresh"))
     }

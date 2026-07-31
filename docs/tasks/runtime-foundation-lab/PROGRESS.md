@@ -20,7 +20,7 @@
 | RF320 | 已完成 | 文件 Provider、Recipe/Run、权限边界和真机门通过 |
 | RF330 | 已完成 | 安全 ZIP 正确性通过，但真机慢于 PRoot，不进入资源快速车道 |
 | RF340 | 已完成 | 真实能力目录、薄适配、失败关闭和父任务门通过 |
-| RF400 | 进行中 | RF410a 兼容 Provider 合同完成，进入 RF410b 正式入口适配 |
+| RF400 | 进行中 | RF410b 正式入口适配完成，进入 RF410c 等价回归与真机门 |
 
 ## RF110 开机与三问自检
 
@@ -29,6 +29,15 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-08-01 RF410b 正式入口等价适配
+
+- `ManagedRuntimeLaunchPlan.Fallback` 已替换为带 `ProotCompatibilityPlan` 的明确 `Proot` 结果；快速 Provider 的 `Unsupported` 只有在允许启动前换道时才生成最终 PRoot 计划，`Blocked` 与禁用回退继续失败关闭。
+- `WorkSurfaceRuntimeBridge` 只负责把逻辑计划交给原有 shell/argv/终端物理构造器；工作目录、附加环境、login/non-login shell 与显式 View ID 均从同一计划传递，没有复制 rootfs、bind、网络或遥测规则。
+- 普通/Recipe 终端、资源 attached/detached shell、Agent 主进程、Agent 配置与会话管理、后台主进程/one-shot、supervisord 健康入口均消费标准计划；架构护栏禁止这些正式入口再直接调用旧 PRoot 构造器。
+- PRoot 终端即使已有显式配置，Recipe 命令仍按真实 `proot_shell` 车道在终端打开后发送；Host Node/Python 配置内命令不会再发送第二次。
+- Agent 的 Host Ready 不构造 PRoot；Proot 计划只物化一份 `ContainerExecConfig`；后台进程仍只有原来的唯一 `ProcessBuilder` 创建点，运行 lane/reason 继续由原 Registry 持久化。
+- 10 个相关 suite、52 项测试全部通过，覆盖 Provider/Planner、入口护栏、终端、Agent、后台、detached 接受条件和停止派发；下一步 RF410c 做 Debug 与 OnePlus 8T 等价真机门，不重跑 Node 性能矩阵。
 
 ### 2026-08-01 RF410a PRoot 兼容 Provider 合同
 

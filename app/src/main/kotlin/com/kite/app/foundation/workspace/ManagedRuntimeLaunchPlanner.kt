@@ -9,6 +9,9 @@ import com.kite.app.foundation.runtime.HostNodeRuntimeProvider
 import com.kite.app.foundation.runtime.HostPythonCommandResolver
 import com.kite.app.foundation.runtime.HostPythonProviderContext
 import com.kite.app.foundation.runtime.HostPythonRuntimeProvider
+import com.kite.app.foundation.runtime.ProotCompatibilityPlan
+import com.kite.app.foundation.runtime.ProotCompatibilityProviderContext
+import com.kite.app.foundation.runtime.ProotCompatibilityRuntimeProvider
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeProviderDecision
 import com.kite.app.foundation.runtime.allowsProviderFallback
@@ -27,7 +30,10 @@ internal sealed interface ManagedRuntimeLaunchPlan {
         val reason: String,
     ) : ManagedRuntimeLaunchPlan
 
-    data class Fallback(val reason: String) : ManagedRuntimeLaunchPlan
+    data class Proot(
+        val plan: ProotCompatibilityPlan,
+        val reason: String,
+    ) : ManagedRuntimeLaunchPlan
     data class Blocked(val reason: String) : ManagedRuntimeLaunchPlan
 }
 
@@ -96,12 +102,25 @@ internal object ManagedRuntimeLaunchPlanner {
         }
     }
 
-    private fun fallbackOrBlocked(
+    internal fun fallbackOrBlocked(
         request: RuntimeExecutionRequest,
         reason: String,
-    ): ManagedRuntimeLaunchPlan = if (request.fallbackPolicy.allowsProviderFallback()) {
-        ManagedRuntimeLaunchPlan.Fallback(reason)
-    } else {
-        ManagedRuntimeLaunchPlan.Blocked("fallback_disabled:$reason")
+    ): ManagedRuntimeLaunchPlan {
+        if (!request.fallbackPolicy.allowsProviderFallback()) {
+            return ManagedRuntimeLaunchPlan.Blocked("fallback_disabled:$reason")
+        }
+        return when (val decision = ProotCompatibilityRuntimeProvider.prepare(
+            context = ProotCompatibilityProviderContext(reason),
+            request = request,
+        )) {
+            is RuntimeProviderDecision.Ready -> ManagedRuntimeLaunchPlan.Proot(
+                plan = decision.plan,
+                reason = decision.reason,
+            )
+            is RuntimeProviderDecision.Unsupported -> ManagedRuntimeLaunchPlan.Blocked(
+                "proot_provider_unsupported:${decision.reason}"
+            )
+            is RuntimeProviderDecision.Blocked -> ManagedRuntimeLaunchPlan.Blocked(decision.reason)
+        }
     }
 }

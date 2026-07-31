@@ -9,6 +9,7 @@ import com.kite.app.foundation.runtime.HostStopAuditor
 import com.kite.app.foundation.runtime.HostProcessTerminator
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
 import com.kite.app.foundation.runtime.KFContainerManager
@@ -1358,7 +1359,6 @@ object BackgroundRuntimeHost {
     ): RuntimeProcessLaunchConfig {
         val executable = record.startExecutable?.trim().orEmpty()
         val resolvedEnvironment = resolveRuntimeEnvironment(appContext, record)
-        var hostFallbackReason: String? = null
         if (executable.isNotBlank()) {
             val runtimeGuarantees = RuntimeExecutionGuaranteeCodec.decode(record.runtimeGuarantees)
                 ?: error("background_runtime_guarantees_invalid")
@@ -1388,11 +1388,14 @@ object BackgroundRuntimeHost {
                     route = plan.lane.value,
                     reason = plan.reason,
                 )
-                is ManagedRuntimeLaunchPlan.Fallback -> {
-                    hostFallbackReason = plan.reason
-                    Logger.i(
-                        LOG_TAG,
-                        "结构化后台命令回退 PRoot: ${record.id}, reason=${plan.reason}"
+                is ManagedRuntimeLaunchPlan.Proot -> {
+                    val config = WorkSurfaceRuntimeBridge.buildProotExecConfig(appContext, plan.plan)
+                    Logger.i(LOG_TAG, "结构化后台命令进入 PRoot: ${record.id}, reason=${plan.reason}")
+                    return RuntimeProcessLaunchConfig(
+                        command = config.command,
+                        environment = config.env,
+                        route = "proot_fallback",
+                        reason = plan.reason,
                     )
                 }
                 is ManagedRuntimeLaunchPlan.Blocked -> {
@@ -1402,23 +1405,27 @@ object BackgroundRuntimeHost {
         }
 
         // 旧记录、复杂 shell 和 Host Node 能力不满足时保持原 PRoot 语义；只创建这一条业务进程。
-        val prootConfig = WorkSurfaceRuntimeBridge.buildShellExecConfig(
-            context = appContext,
+        val legacyRequest = RuntimeExecutionRequest(
+            payload = record.startCommand.takeIf(String::isNotBlank)
+                ?.let(RuntimeExecutionPayload::CommandLine)
+                ?: RuntimeExecutionPayload.Argv("/bin/bash", listOf("-lc", "")),
             workingDirectory = record.workingDirectory,
-            payload = record.startCommand,
+            environment = resolvedEnvironment,
         )
+        val legacyPlan = when (val plan = ManagedRuntimeLaunchPlanner.fallbackOrBlocked(
+            request = legacyRequest,
+            reason = "structured_request_absent",
+        )) {
+            is ManagedRuntimeLaunchPlan.Proot -> plan
+            is ManagedRuntimeLaunchPlan.Blocked -> error("runtime_provider_blocked:${plan.reason}")
+            is ManagedRuntimeLaunchPlan.Ready -> error("proot_compatibility_plan_expected")
+        }
+        val prootConfig = WorkSurfaceRuntimeBridge.buildProotExecConfig(appContext, legacyPlan.plan)
         return RuntimeProcessLaunchConfig(
             command = prootConfig.command,
-            environment = buildMap {
-                putAll(prootConfig.env)
-                putAll(resolvedEnvironment)
-            },
-            route = if (executable.isBlank()) "proot_shell" else "proot_fallback",
-            reason = if (executable.isBlank()) {
-                "structured_request_absent"
-            } else {
-                hostFallbackReason ?: "managed_runtime_unavailable"
-            },
+            environment = prootConfig.env,
+            route = "proot_shell",
+            reason = legacyPlan.reason,
         )
     }
 
@@ -2171,19 +2178,20 @@ object BackgroundRuntimeHost {
         timeoutSeconds: Long = SERVICE_COMMAND_TIMEOUT_SECONDS
     ): CommandResult {
         return runCatching {
-            // one-shot 统一经 work-surface bridge 进入建房层，不在这里重写 PRoot 细节。
-            val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+            val config = WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig(
                 context = appContext,
-                workingDirectory = record.workingDirectory,
-                payload = command,
-                loginShell = false
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.CommandLine(command),
+                    workingDirectory = record.workingDirectory,
+                    environment = record.processIdentityEnvironment(),
+                    requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
+                ),
+                selectionReason = "background_one_shot_requires_proot",
+                loginShell = false,
             )
             val process = ProcessBuilder(config.command)
                 .redirectErrorStream(true)
-                .apply {
-                    environment().putAll(config.env)
-                    environment().putAll(record.processIdentityEnvironment())
-                }
+                .apply { environment().putAll(config.env) }
                 .start()
             val outputBuffer = BoundedProcessOutput(ONE_SHOT_OUTPUT_MAX_CHARS)
             val readerThread = thread(start = true, isDaemon = true, name = "BackgroundRuntimeReader") {

@@ -34,6 +34,8 @@ import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.foundation.contracts.ContainerExecConfig
 import com.kite.app.foundation.contracts.ContainerLaunchConfig
 import com.kite.app.foundation.contracts.ContainerRecord
+import com.kite.app.foundation.runtime.ProotCompatibilityPlan
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.workspace.ManagedRuntimeLane
 import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlan
 import com.kite.app.recipe.KiteExecution
@@ -303,8 +305,7 @@ class AndroidAgentRecipeRuntimeTest {
                 lane = ManagedRuntimeLane.HOST_NODE,
                 reason = "host_node_ready",
             ),
-            additionalEnvironment = mapOf("OPENCLAW_GATEWAY_TOKEN" to "private"),
-        ) {
+        ) { _ ->
             prootBuilds.incrementAndGet()
             prootConfig()
         }
@@ -331,8 +332,7 @@ class AndroidAgentRecipeRuntimeTest {
                 lane = ManagedRuntimeLane.HOST_PYTHON,
                 reason = "host_python_ready",
             ),
-            additionalEnvironment = emptyMap(),
-        ) {
+        ) { _ ->
             prootBuilds.incrementAndGet()
             prootConfig()
         }
@@ -346,11 +346,13 @@ class AndroidAgentRecipeRuntimeTest {
     fun fallbackBuildsExactlyOneProotLaunchAndKeepsReason() {
         val prootBuilds = AtomicInteger(0)
         val selected = ManagedAgentProcessLaunchSelector.select(
-            runtimePlan = ManagedRuntimeLaunchPlan.Fallback("host_node_not_ready"),
-            additionalEnvironment = mapOf("OPENCLAW_GATEWAY_TOKEN" to "private"),
-        ) {
+            runtimePlan = ManagedRuntimeLaunchPlan.Proot(
+                plan = prootPlan(mapOf("OPENCLAW_GATEWAY_TOKEN" to "private")),
+                reason = "host_node_not_ready",
+            ),
+        ) { plan ->
             prootBuilds.incrementAndGet()
-            prootConfig()
+            prootConfig().copy(env = prootConfig().env + plan.environment)
         }
 
         assertEquals(1, prootBuilds.get())
@@ -368,8 +370,7 @@ class AndroidAgentRecipeRuntimeTest {
         val failure = assertThrows(IllegalStateException::class.java) {
             ManagedAgentProcessLaunchSelector.select(
                 runtimePlan = ManagedRuntimeLaunchPlan.Blocked("runtime_identity_invalid"),
-                additionalEnvironment = emptyMap(),
-            ) {
+            ) { _ ->
                 prootBuilds.incrementAndGet()
                 prootConfig()
             }
@@ -394,6 +395,17 @@ class AndroidAgentRecipeRuntimeTest {
         command = listOf("openclaw", "acp"),
         env = mapOf("PATH" to "/usr/bin"),
     )
+
+    private fun prootPlan(environment: Map<String, String>): ProotCompatibilityPlan =
+        ProotCompatibilityPlan(
+            payload = RuntimeExecutionPayload.Argv("openclaw", listOf("acp")),
+            workingDirectory = "/workspace",
+            environment = environment,
+            interactivePty = false,
+            loginShell = true,
+            requestedProotViewId = null,
+            requestedProotEnvironmentId = null,
+        )
 
     private fun runtime(registrations: List<AgentRegistration>): AndroidAgentRecipeRuntime {
         val registry = KiteAgentRegistry(

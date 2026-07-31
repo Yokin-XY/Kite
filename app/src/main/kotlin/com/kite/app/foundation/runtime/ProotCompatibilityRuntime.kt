@@ -3,6 +3,7 @@ package com.kite.app.foundation.runtime
 /** PRoot 是最终兼容 Provider；选择原因由上游 Planner 显式传入，不从命令名反推。 */
 internal data class ProotCompatibilityProviderContext(
     val selectionReason: String,
+    val loginShell: Boolean = true,
 ) {
     init {
         require(selectionReason.isNotBlank()) { "proot_selection_reason_missing" }
@@ -18,6 +19,7 @@ internal data class ProotCompatibilityPlan(
     val workingDirectory: String,
     val environment: Map<String, String>,
     val interactivePty: Boolean,
+    val loginShell: Boolean,
     val requestedProotViewId: String?,
     val requestedProotEnvironmentId: String?,
 )
@@ -46,6 +48,7 @@ internal object ProotCompatibilityRuntimeProvider :
                 workingDirectory = request.workingDirectory?.trim().orEmpty().ifBlank { "/workspace" },
                 environment = request.environment.toMap(),
                 interactivePty = RuntimeExecutionRequirement.INTERACTIVE_PTY in request.requirements,
+                loginShell = context.loginShell,
                 requestedProotViewId = request.environment[ProotViewBinding.ENV_VIEW_ID]
                     ?.trim()
                     ?.takeIf(String::isNotBlank),
@@ -55,5 +58,19 @@ internal object ProotCompatibilityRuntimeProvider :
             ),
             reason = context.selectionReason,
         )
+    }
+
+    /** 显式 PRoot 入口使用；Provider 拒绝时保持失败关闭，不再创建旁路计划。 */
+    fun requirePlan(
+        request: RuntimeExecutionRequest,
+        selectionReason: String,
+        loginShell: Boolean = true,
+    ): ProotCompatibilityPlan = when (val decision = prepare(
+        ProotCompatibilityProviderContext(selectionReason, loginShell),
+        request,
+    )) {
+        is RuntimeProviderDecision.Ready -> decision.plan
+        is RuntimeProviderDecision.Unsupported -> error("proot_provider_unsupported:${decision.reason}")
+        is RuntimeProviderDecision.Blocked -> error("runtime_provider_blocked:${decision.reason}")
     }
 }

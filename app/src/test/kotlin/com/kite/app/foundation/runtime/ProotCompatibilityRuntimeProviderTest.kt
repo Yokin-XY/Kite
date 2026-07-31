@@ -24,6 +24,7 @@ class ProotCompatibilityRuntimeProviderTest {
         assertEquals(request.payload, decision.plan.payload)
         assertEquals("/workspace/project", decision.plan.workingDirectory)
         assertEquals(mapOf("TOKEN" to "private"), decision.plan.environment)
+        assertTrue(decision.plan.loginShell)
     }
 
     @Test

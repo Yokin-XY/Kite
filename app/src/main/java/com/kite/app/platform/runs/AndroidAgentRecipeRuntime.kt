@@ -28,6 +28,7 @@ import com.kite.app.agent.runtime.AgentRuntimeStartRequest
 import com.kite.app.foundation.runtime.AndroidSharedStorageManager
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
 import com.kite.app.foundation.runtime.RuntimeExposureScope
@@ -200,23 +201,18 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
                 guaranteeEvidence = guaranteeEvidence,
             ),
         )
-        return ManagedAgentProcessLaunchSelector.select(runtimePlan, environment) {
-            WorkSurfaceRuntimeBridge.buildArgvExecConfig(
-                context = appContext,
-                workingDirectory = workingDirectory,
-                argv = argv,
-            )
+        return ManagedAgentProcessLaunchSelector.select(runtimePlan) { plan ->
+            WorkSurfaceRuntimeBridge.buildProotExecConfig(appContext, plan)
         }
     }
 
 }
 
-/** Host 已就绪时绝不构建第二条 PRoot 进程；Fallback 也只生成一份 PRoot 配置。 */
+/** Host 已就绪时绝不构建第二条 PRoot 进程；Proot 计划也只物化一份配置。 */
 internal object ManagedAgentProcessLaunchSelector {
     fun select(
         runtimePlan: ManagedRuntimeLaunchPlan,
-        additionalEnvironment: Map<String, String>,
-        prootConfig: () -> ContainerExecConfig,
+        prootConfig: (com.kite.app.foundation.runtime.ProotCompatibilityPlan) -> ContainerExecConfig,
     ): ManagedAgentProcessLaunch = when (runtimePlan) {
         is ManagedRuntimeLaunchPlan.Ready -> ManagedAgentProcessLaunch(
             process = AgentProcessLaunch(
@@ -228,11 +224,11 @@ internal object ManagedAgentProcessLaunchSelector {
             runtimeLane = runtimePlan.lane.value,
             fallbackReason = "none",
         )
-        is ManagedRuntimeLaunchPlan.Fallback -> prootConfig().let { config ->
+        is ManagedRuntimeLaunchPlan.Proot -> prootConfig(runtimePlan.plan).let { config ->
             ManagedAgentProcessLaunch(
                 process = AgentProcessLaunch(
                     command = config.command,
-                    environment = config.env + additionalEnvironment,
+                    environment = config.env,
                 ),
                 runtimeLane = "proot_shell",
                 fallbackReason = runtimePlan.reason,
@@ -822,10 +818,15 @@ internal class AndroidAgentRecipeRuntime(
         cwd: String
     ): AgentOperationResult<Unit> = withContext(Dispatchers.IO) {
         val config = runCatching {
-            WorkSurfaceRuntimeBridge.buildArgvExecConfig(
+            require(argv.isNotEmpty()) { "agent_session_command_empty" }
+            WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig(
                 context = appContext,
-                workingDirectory = cwd,
-                argv = argv
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.Argv(argv.first(), argv.drop(1)),
+                    workingDirectory = cwd,
+                    requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
+                ),
+                selectionReason = "agent_session_command_requires_proot",
             )
         }.getOrElse { error ->
             return@withContext AgentOperationResult.Failure("会话管理命令准备失败：${error.message}", error)

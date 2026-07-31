@@ -276,9 +276,9 @@
 
 ##### RF410b 正式入口等价适配
 
-- [ ] Managed Planner 的 `Unsupported` 在启动前生成唯一 PRoot 计划，`Blocked` 和禁用回退仍失败关闭；
-- [ ] 普通终端、资源 shell、Agent 与后台入口消费同一逻辑计划，继续只创建一条业务进程；
-- [ ] 显式 View、运行 owner、结果出口和停止链保持原拥有者。
+- [x] Managed Planner 的 `Unsupported` 在启动前生成唯一 PRoot 计划，`Blocked` 和禁用回退仍失败关闭；
+- [x] 普通终端、资源 shell、Agent 与后台入口消费同一逻辑计划，继续只创建一条业务进程；
+- [x] 显式 View、运行 owner、结果出口和停止链保持原拥有者。
 
 ##### RF410c 回归与父任务门
 

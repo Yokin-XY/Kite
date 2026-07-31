@@ -27,6 +27,7 @@ import com.kite.app.foundation.capability.CapabilityCatalog
 import com.kite.app.foundation.capability.CapabilityInvocationKind
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.ProotOwnerTerminationOutcome
@@ -92,6 +93,7 @@ internal class AndroidRecipeExecutor(
         val runtimeConfig: com.kite.app.foundation.contracts.ContainerLaunchConfig?,
         val runtimeLane: String,
         val fallbackReason: String,
+        val environment: Map<String, String>,
     )
 
     private val appContext = context.applicationContext
@@ -425,33 +427,44 @@ internal class AndroidRecipeExecutor(
                 val space = readyLease.spaceFor(request) ?: KFWorkspaceManager.ensureActiveSpace(appContext)
                 val container = readyLease.containerFor(request)
                 RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.RUNTIME_LEASE_CONSUMED)
-                val runtimeLaunch = if (readyLease.preparedSpace != null && command.isNotBlank()) {
-                    ManagedRuntimeLaunchPlanner.plan(
-                        context = appContext,
-                        container = container,
-                        workspaceDirectory = File(space.workspacePath),
-                        request = RuntimeExecutionRequest(
-                            payload = RuntimeExecutionPayload.CommandLine(command),
-                            workingDirectory = request.step.workdir,
-                        ),
-                    )
-                } else {
-                    ManagedRuntimeLaunchPlan.Fallback("explicit_runtime_or_command_missing")
-                }
+                val runtimeEnvironment = browserEnvironment(request, "terminal_step")
+                val requestedView = runtimeEnvironment[ProotViewBinding.ENV_VIEW_ID].orEmpty().isNotBlank()
+                val runtimeLaunch = ManagedRuntimeLaunchPlanner.plan(
+                    context = appContext,
+                    container = container,
+                    workspaceDirectory = File(space.workspacePath),
+                    request = RuntimeExecutionRequest(
+                        payload = if (command.isNotBlank()) {
+                            RuntimeExecutionPayload.CommandLine(command)
+                        } else {
+                            RuntimeExecutionPayload.Argv("/bin/bash", listOf("--login"))
+                        },
+                        workingDirectory = request.step.workdir,
+                        environment = runtimeEnvironment,
+                        requirements = buildSet {
+                            add(RuntimeExecutionRequirement.INTERACTIVE_PTY)
+                            if (command.isBlank()) add(RuntimeExecutionRequirement.FULL_LINUX)
+                            if (requestedView) add(RuntimeExecutionRequirement.FILESYSTEM_VIEW)
+                        },
+                    ),
+                )
                 if (runtimeLaunch is ManagedRuntimeLaunchPlan.Blocked) {
                     error("runtime_provider_blocked:${runtimeLaunch.reason}")
                 }
-                val fallbackReason = (runtimeLaunch as? ManagedRuntimeLaunchPlan.Fallback)?.reason ?: "none"
                 val readyRuntime = runtimeLaunch as? ManagedRuntimeLaunchPlan.Ready
+                val prootRuntime = runtimeLaunch as? ManagedRuntimeLaunchPlan.Proot
                 PreparedTerminalLaunch(
                     record = KFWorkspaceManager.createEmbeddedShellSession(
                         spaceId = space.id,
                         title = terminalTitle(request.recipe, request.stepIndex),
                         sourceLabel = request.recipe.name,
                     ),
-                    runtimeConfig = readyRuntime?.config,
+                    runtimeConfig = readyRuntime?.config ?: prootRuntime?.let { selected ->
+                        WorkSurfaceRuntimeBridge.buildProotTerminalLaunchConfig(appContext, selected.plan)
+                    },
                     runtimeLane = readyRuntime?.lane?.value ?: "proot_shell",
-                    fallbackReason = fallbackReason,
+                    fallbackReason = prootRuntime?.reason ?: "none",
+                    environment = runtimeEnvironment,
                 )
             }.onSuccess { prepared ->
                 val record = prepared.record
@@ -469,7 +482,7 @@ internal class AndroidRecipeExecutor(
                 TerminalRuntimeHost.setLaunchEnvironmentOverrides(
                     appContext = appContext,
                     sessionId = record.id,
-                    overrides = browserEnvironment(request, "terminal_step") + terminalOwner.environment()
+                    overrides = prepared.environment + terminalOwner.environment()
                 )
                 prepared.runtimeConfig?.let { config ->
                     TerminalRuntimeHost.setLaunchConfigOverride(appContext, record.id, config)
@@ -504,7 +517,7 @@ internal class AndroidRecipeExecutor(
                 )
                 RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.TERMINAL_OPEN_REQUESTED)
                 TerminalRuntimeHost.openEmbeddedSession(appContext, record)
-                if (prepared.runtimeConfig == null && command.isNotBlank()) {
+                if (prepared.runtimeLane == "proot_shell" && command.isNotBlank()) {
                     diagnostics.logRecipeAction(
                         request.recipe,
                         "terminal_step_command_scheduled",

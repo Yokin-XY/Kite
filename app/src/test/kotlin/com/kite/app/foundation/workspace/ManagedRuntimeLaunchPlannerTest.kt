@@ -31,7 +31,7 @@ class ManagedRuntimeLaunchPlannerTest {
 
         assertEquals(
             "python_child_process_required",
-            (plan as ManagedRuntimeLaunchPlan.Fallback).reason,
+            (plan as ManagedRuntimeLaunchPlan.Proot).reason,
         )
     }
 
@@ -70,8 +70,9 @@ class ManagedRuntimeLaunchPlannerTest {
 
         assertEquals(
             "python_no_child_process_guarantee_missing",
-            (plan as ManagedRuntimeLaunchPlan.Fallback).reason,
+            (plan as ManagedRuntimeLaunchPlan.Proot).reason,
         )
+        assertEquals("python3", (plan.plan.payload as RuntimeExecutionPayload.Argv).executable)
     }
 
     private fun fixture(): Fixture {

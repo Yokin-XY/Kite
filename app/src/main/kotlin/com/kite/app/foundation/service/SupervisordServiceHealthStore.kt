@@ -4,6 +4,9 @@ import android.content.Context
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -272,11 +275,15 @@ object SupervisordServiceHealthStore {
         payload: String
     ): CommandResult {
         return runCatching {
-            val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+            val config = WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig(
                 context = context,
-                workingDirectory = workingDirectory,
-                payload = payload,
-                loginShell = false
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.CommandLine(payload),
+                    workingDirectory = workingDirectory,
+                    requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
+                ),
+                selectionReason = "supervisord_health_requires_proot",
+                loginShell = false,
             )
             val process = ProcessBuilder(config.command)
                 .redirectErrorStream(true)
