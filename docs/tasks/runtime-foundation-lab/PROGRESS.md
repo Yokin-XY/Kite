@@ -54,11 +54,11 @@
 | RF930 | 已完成 | 后台 PRoot PROCESS 已桥接同一 actual controller 与强身份停止链 |
 | RF940 | 已完成 | 长期 actual 与短长统一总量已进入正式 RuntimeHealth |
 | RF950 | 已完成 | 1460 项全量门与 OnePlus 8T 故障矩阵通过，后台通用 PRoot PROCESS 生产门已打开 |
-| RF1000 | 进行中 | 解决长期 owner 占满总容量后的短任务饥饿 |
+| RF1000 | 已完成 | 长期 owner 保留短任务余量，actual 健康与父任务门通过 |
 | RF1010 | 已完成 | 固定 1/2/4 档长期上限 1/1/3，低功耗不伪造第二容量 |
 | RF1020 | 已完成 | actual controller 已限制 managed owner，并允许短任务绕过其等待项 |
 | RF1030 | 已完成 | actual v2 健康与 OnePlus 8T 六项固定矩阵通过 |
-| RF1040 | 进行中 | 全量回归、类别复核与父任务门 |
+| RF1040 | 已完成 | 1464 项全量回归、强制构建、连续三轮真机矩阵与范围审查通过 |
 
 ## RF110 开机与三问自检
 
@@ -285,6 +285,15 @@
 - 目标回归 4 suites、34 tests，0 failure、0 error、0 skipped；强制 Debug 构建成功。APK 241,317,216 bytes，SHA-256 `A3217ABCDAA17B97402A110A2E603EE78E427EFCCE338F3941384205DED872AE`，已覆盖安装 OnePlus 8T，构建物未进入 Git。
 - 真机生命周期探针在均衡档观测 `max=2 long_max=1 headroom=1 protected=true`；显式停止后 `long=0 total=0 protected=false`。正式 health 文件发布 `managed_proot_owner_v2` 与 `shared_proot_capacity_v2`，未见匹配 FATAL/ANR。
 - RF1030 完成，下一恢复点 RF1040：只做全量回归、范围审查和下一类别 go/no-go，不重跑 Node/Python 性能矩阵。
+
+## RF1040 父任务门
+
+- 第一轮强制全量回归在 1464 tests 中发现 `ResourceRunCoordinatorTest` 一项 `ConcurrentModificationException`。栈只进入测试 `FakeResourceRunGateway`：后台结算写普通 `ArrayList`，测试线程同时遍历；生产 Gateway 不在异常栈。测试夹具改为并发集合、原子代次和可见字段后，目标类 12/12 通过。
+- 修复后两轮完整强制回归均通过；最终 JUnit XML 为 275 suites、1464 tests、0 failure、0 error、2 skipped。强制 Debug 构建成功，APK 241,317,216 bytes，最终 SHA-256 `67BB8165338D15956F0D9DBCDDD8E836327B57A3BF5C2B579C0005A16D93DA28`，已覆盖安装 OnePlus 8T，构建物未进入 Git。
+- 最终真机第一次矩阵揭示 RuntimeHealth 可在固定矩阵中途重新接管 policy，使同一 case 的快照和拒绝来自不同档位。固定 Debug 矩阵现通过 coordinator policy 更新屏障短暂串行化；屏障不选择策略，退出后等待中的正式更新继续接管。修复后含冷启动的连续三轮均 6/6 通过，无匹配 FATAL/ANR。
+- 从 RF1000 起点 `e0d2125` 到父任务门的净路径只涉及 PRoot admission/actual health/warm coordinator、Debug 探针、目标测试和文档；Node、Python、终端、Agent 均无净修改，冻结性能矩阵没有重跑。
+- 类别复核结论：终端和 Agent 直接复用 `MANAGED_OWNER` 为 no-go。二者可长期空闲，若按会话存活永久占用 1/2/4 槽，会把吞吐保护变成会话数量限制；下一阶段只值得研究入口无关的“进程启动窗口协调”，不得借机接管会话全生命周期。
+- RF1000 完成。
 
 ## RF710 开机与三问自检
 
