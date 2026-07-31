@@ -33,6 +33,7 @@
 - [状态与生命周期](architecture/state-and-lifecycle.md)：状态拥有者、局部更新、显示面与运行生命周期。
 - [混合运行路由](architecture/runtime-provider-routing.md)：原生能力、通用依赖快速通道与 Ubuntu/PRoot 的统一选择合同。
 - [通用依赖快速通道](architecture/managed-runtime-fast-path.md)：Node 已验证基线、Python 候选和运行时版本租约。
+- [宿主 Python 性能矩阵](architecture/host-python-performance-matrix.md)：Python go/no-go、Host/PRoot 对照和兼容分层。
 - [Android/NDK 原生能力](architecture/native-capability-provider.md)：结构化原生能力、下载校验样板和安全边界。
 - [Ubuntu/PRoot 兼容 Provider](architecture/proot-compatibility-provider.md)：最终 Linux 回退、温热 Runner 和可调调度档位。
 - [宿主 Node 快速运行时](architecture/host-node-runtime.md)：当前合同、HN-001～HN-009 风险索引和增量回归规则。

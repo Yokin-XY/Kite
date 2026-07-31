@@ -18,5 +18,16 @@
         <service
             android:name="com.kite.app.foundation.runtime.ProotAdmissionBenchmarkService"
             android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.PythonRuntimeBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PYTHON_RUNTIME_BENCHMARK" />
+                <action android:name="com.kite.app.debug.PYTHON_RUNTIME_COMPATIBILITY" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.PythonRuntimeBenchmarkService"
+            android:exported="false" />
     </application>
 </manifest>

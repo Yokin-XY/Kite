@@ -18,10 +18,11 @@
 
 ## ADR-RF-003 Python 是首个新增快速通道候选
 
-- 状态：已接受，实施取决于 RF230 go/no-go
+- 状态：已接受，RF230 已给出分层 go/no-go
 - 日期：2026-07-31
-- 决定：先测量 Python，再从纯 Python 结构化命令开始；subprocess、venv/pip、wheel 和 C 扩展分层开放。
+- 决定：RF240 只实现纯 Python 结构化命令；subprocess 与 venv 子解释器在启动前回 PRoot，pip/wheel 生命周期和第三方 C 扩展继续由 RF250 分层开放。
 - 原因：Python 通用价值高，但轻量与重型负载、纯代码与原生扩展的兼容边界差异很大，不能一次性宣称支持。
+- 证据：OnePlus 8T 的 20 组 Host/PRoot 性能对照零失败，Host p50 降低 37.1%～86.6%；兼容探针证明 Host 子进程边界失败而 PRoot 成功。
 
 ## ADR-RF-004 原生 Provider 首个样板为下载与摘要
 

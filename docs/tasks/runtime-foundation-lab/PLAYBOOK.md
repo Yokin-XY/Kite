@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF200` 通用依赖快速通道
-- 当前任务：`RF230` Python 可行性与性能基线
+- 当前任务：`RF240` 纯 Python 结构化命令快速通道
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -99,9 +99,9 @@
 - 问题证据：Python 是候选通用依赖，但尚未证明 Android 应用域下的解释器、路径、stdlib、subprocess、wheel 与 C 扩展边界。
 - 解法：先做只读/实验性矩阵，与相同 Python 的独立 PRoot 路径对照。
 - 验收标准：
-  - [ ] 覆盖冷启动、import、小文件、CPU、I/O、1/4/8/16 并发；
-  - [ ] 覆盖 subprocess、venv、pip、纯 Python wheel、代表性 C 扩展；
-  - [ ] 形成 go/no-go 结论，不以单个脚本成功代替兼容结论。
+  - [x] 覆盖独立进程启动、import、小文件、CPU、I/O、1/4/8/16 并发；
+  - [x] 覆盖 subprocess、venv、pip、纯 Python wheel、代表性内置 C 扩展；
+  - [x] 形成 go/no-go 结论，不以单个脚本成功代替兼容结论。
 - 依赖：RF210。
 
 #### RF240 纯 Python 结构化命令快速通道

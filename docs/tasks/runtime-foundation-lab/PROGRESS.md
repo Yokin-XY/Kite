@@ -9,10 +9,11 @@
 | RF110 | 已完成 | 总架构、三份 Provider 文档、Node 风险索引与性能证据已固化 |
 | RF120 | 已完成 | 三个 Node 入口已迁移到统一结构化请求，行为等价 |
 | RF130 | 已完成 | Ready/Unsupported/Blocked 已接入三条正式 Node 入口 |
-| RF200 | 进行中 | RF210、RF220 已完成，进入 RF230 Python 基线 |
+| RF200 | 进行中 | RF210～RF230 已完成，进入 RF240 纯 Python Provider |
 | RF210 | 已完成 | Node 显式实现标准 Provider，既有行为等价 |
 | RF220 | 已完成 | HN-001～HN-011 已完成证据和开放门映射 |
-| RF230～RF440 | 待开始 | 按任务树依赖推进 |
+| RF230 | 已完成 | 纯 Python go；subprocess/venv child/第三方扩展保持 PRoot |
+| RF240～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
 
@@ -21,6 +22,15 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF230 验收
+
+- OnePlus 8T 上复用同一份 Python 3.14.6，完成 5 类负载、1/4/8/16 并发、Host/PRoot 各 3 轮；20 组对照、40 个通道测点零失败。
+- Host p50 相对 PRoot 降低 37.1%～86.6%；独立进程启动、import、小文件、CPU 和 I/O 均未出现反向退化。
+- stdlib、内置 C 扩展、pip 入口、纯 Python wheel 安装和 venv 创建两条车道均通过。
+- Host 的 Python subprocess 与 venv 子解释器失败，PRoot 通过；第三方 C 扩展未外推为兼容，三者固定为启动前 PRoot 能力门。
+- Debug 基准入口只接受固定 Benchmark/Compatibility 动作；后台启动被系统拒绝时记录 trigger_rejected，不再让应用崩溃。
+- RF230 给 RF240 的 go 只覆盖纯 Python 结构化 argv；下一恢复指针进入 RF240，不重复 Node 历史矩阵。
 
 ### 2026-07-31 RF220 验收
 

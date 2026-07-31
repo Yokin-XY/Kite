@@ -41,6 +41,10 @@ Python 不能因为“也是解释器”直接复制 Node 结论。它需要独�
 RF230 先形成 Host/PRoot 同版本对照和 go/no-go。没有达到预先固定的收益、稳定性或回退可证明性时，Python 保持 PRoot，
 不为了完成路线而强行上线。
 
+RF230 已在 OnePlus 8T 上形成 go/no-go：纯 Python、标准库、内置 C 扩展和纯 Python wheel 可在 Host 启动；Python
+`subprocess` 与 venv 子解释器不能直接执行 Linux ELF，必须在进程创建前回到 PRoot。完整数据和证据边界见
+[宿主 Python 性能矩阵](host-python-performance-matrix.md)。
+
 ## Python 第一阶段边界
 
 若 RF230 给出 go，RF240 只开放：
@@ -81,4 +85,3 @@ shell、Git、编译器、Linux ELF 或不满足能力门
 - 每个解释器分别覆盖真实首个可消费结果，而非只测 `--version`；
 - 插件、包管理器、子进程、原生扩展和升级按层验收；
 - 每次运行可从状态拥有者证明实际 Provider 与回退原因。
-
