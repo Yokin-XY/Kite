@@ -5,9 +5,17 @@ import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.foundation.runtime.AndroidNativeCapabilityContext
 import com.kite.app.foundation.runtime.AndroidNativeDownloadCapabilityProvider
 import com.kite.app.foundation.runtime.AndroidNativeDownloadExecutor
+import com.kite.app.foundation.runtime.AndroidNativeFileCapabilityContext
+import com.kite.app.foundation.runtime.AndroidNativeFileCapabilityProvider
+import com.kite.app.foundation.runtime.AndroidNativeFilePlan
 import com.kite.app.foundation.runtime.NativeCapabilityDestinationRoot
 import com.kite.app.foundation.runtime.NativeDownloadConnection
 import com.kite.app.foundation.runtime.NativeDownloadConnectionFactory
+import com.kite.app.foundation.runtime.NativeFileCancellation
+import com.kite.app.foundation.runtime.NativeFileCapabilityRoot
+import com.kite.app.foundation.runtime.NativeFileExecutionResult
+import com.kite.app.foundation.runtime.NativeFilePermission
+import com.kite.app.foundation.runtime.NativeFileProgressListener
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeStep
@@ -86,9 +94,68 @@ class AndroidNativeCapabilityRecipeRuntimeTest {
         assertFalse(root.listFiles().orEmpty().any { it.name.contains(".kite-download-") })
     }
 
+    @Test
+    fun `native file step writes the same run without terminal or process binding`() {
+        val root = Files.createTempDirectory("kite-native-file-recipe").toFile()
+        File(root, "source.txt").writeText("native-file")
+        val runtime = runtime(root, NativeDownloadConnectionFactory { _, _, _ -> error("download_not_expected") })
+        val events = Collections.synchronizedList(mutableListOf<RecipeExecutionEvent>())
+        val completed = CountDownLatch(1)
+
+        runtime.execute(fileRequest()) { event ->
+            events += event
+            if (event is RecipeExecutionEvent.Completed || event is RecipeExecutionEvent.Failed) {
+                completed.countDown()
+            }
+        }
+
+        assertTrue(completed.await(5, TimeUnit.SECONDS))
+        val result = events.filterIsInstance<RecipeExecutionEvent.Completed>().single()
+        assertEquals("android_native", result.mutation.runtimeLane)
+        assertEquals("native_file_copy_ready", result.mutation.runtimeFallbackReason)
+        assertEquals(null, result.mutation.runId)
+        assertEquals(null, result.mutation.terminalSessionId)
+        assertEquals("native-file", File(root, "copied.txt").readText())
+        assertFalse(runtime.owns("native-file-instance", 200L))
+    }
+
+    @Test
+    fun `stop cancels a blocking native file operation and waits for ownership release`() {
+        val root = Files.createTempDirectory("kite-native-file-stop").toFile()
+        File(root, "source.txt").writeText("native-file")
+        val started = CountDownLatch(1)
+        val failed = CountDownLatch(1)
+        val stopped = CountDownLatch(1)
+        val confirmed = AtomicReference<Boolean>()
+        val runtime = runtime(
+            root,
+            NativeDownloadConnectionFactory { _, _, _ -> error("download_not_expected") },
+            fileGateway = NativeFileExecutionGateway { _, cancellation, _ ->
+                started.countDown()
+                while (!cancellation.isCancelled()) Thread.sleep(10L)
+                NativeFileExecutionResult.Cancelled(0L)
+            },
+        )
+        runtime.execute(fileRequest()) { event ->
+            if (event is RecipeExecutionEvent.Failed) failed.countDown()
+        }
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+
+        runtime.stop("native-file-instance", 200L) { result ->
+            confirmed.set(result)
+            stopped.countDown()
+        }
+
+        assertTrue(failed.await(5, TimeUnit.SECONDS))
+        assertTrue(stopped.await(5, TimeUnit.SECONDS))
+        assertEquals(true, confirmed.get())
+        assertFalse(File(root, "copied.txt").exists())
+    }
+
     private fun runtime(
         root: File,
         factory: NativeDownloadConnectionFactory,
+        fileGateway: NativeFileExecutionGateway? = null,
     ) = AndroidNativeCapabilityRecipeRuntime(
         context = RuntimeEnvironment.getApplication(),
         downloadExecutor = AndroidNativeDownloadExecutor(factory),
@@ -97,7 +164,60 @@ class AndroidNativeCapabilityRecipeRuntimeTest {
                 listOf(NativeCapabilityDestinationRoot("/workspace", root))
             )
         },
+        fileCapabilityContextProvider = {
+            AndroidNativeFileCapabilityContext(
+                listOf(
+                    NativeFileCapabilityRoot(
+                        "/workspace",
+                        root,
+                        NativeFilePermission.entries.toSet(),
+                    )
+                )
+            )
+        },
+        fileExecutionGateway = fileGateway ?: NativeFileExecutionGateway { plan, cancellation, progress ->
+            com.kite.app.foundation.runtime.AndroidNativeFileExecutor().execute(plan, cancellation, progress)
+        },
     )
+
+    private fun fileRequest(): RecipeStepExecutionRequest {
+        val params = JSONObject()
+            .put(AndroidNativeFileCapabilityProvider.PARAM_SOURCE, "/workspace/source.txt")
+            .put(AndroidNativeFileCapabilityProvider.PARAM_DESTINATION, "/workspace/copied.txt")
+            .put(AndroidNativeFileCapabilityProvider.PARAM_MAX_BYTES, "1048576")
+        val step = KiteRecipeStep(
+            id = "native-file-copy",
+            type = KiteRecipe.STEP_NATIVE_CAPABILITY,
+            action = AndroidNativeFileCapabilityProvider.CAPABILITY_COPY_FILE,
+            params = params,
+        )
+        val recipe = KiteRecipe(
+            id = "native-file-recipe",
+            name = "Native File Recipe",
+            description = "",
+            type = KiteRecipe.TYPE_TEMPLATE,
+            defaultUrl = "",
+            shortcut = false,
+            execution = KiteExecution.steps(listOf(step)),
+        )
+        val state = CardRunState(
+            instanceId = "native-file-instance",
+            recipeId = recipe.id,
+            recipeName = recipe.name,
+            status = CardRunStatus.Running,
+            currentStepIndex = 0,
+            createdAt = 200L,
+            updatedAt = 200L,
+        )
+        return RecipeStepExecutionRequest(
+            recipe = recipe,
+            instanceId = state.instanceId,
+            generation = state.createdAt,
+            stepIndex = 0,
+            step = step,
+            previousState = state,
+        )
+    }
 
     private fun request(root: File, expectedSha256: String): RecipeStepExecutionRequest {
         val params = JSONObject()

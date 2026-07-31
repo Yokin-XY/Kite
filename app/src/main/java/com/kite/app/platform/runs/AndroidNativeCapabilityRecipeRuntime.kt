@@ -7,10 +7,20 @@ import com.kite.app.application.runs.RunStateMutation
 import com.kite.app.foundation.runtime.AndroidNativeCapabilityContext
 import com.kite.app.foundation.runtime.AndroidNativeDownloadCapabilityProvider
 import com.kite.app.foundation.runtime.AndroidNativeDownloadExecutor
+import com.kite.app.foundation.runtime.AndroidNativeFileCapabilityContext
+import com.kite.app.foundation.runtime.AndroidNativeFileCapabilityProvider
+import com.kite.app.foundation.runtime.AndroidNativeFileExecutor
+import com.kite.app.foundation.runtime.AndroidNativeFilePlan
 import com.kite.app.foundation.runtime.NativeCapabilityDestinationRoot
 import com.kite.app.foundation.runtime.NativeDownloadCancellationSignal
 import com.kite.app.foundation.runtime.NativeDownloadExecutionResult
 import com.kite.app.foundation.runtime.NativeDownloadProgressListener
+import com.kite.app.foundation.runtime.NativeFileCancellation
+import com.kite.app.foundation.runtime.NativeFileCancellationSignal
+import com.kite.app.foundation.runtime.NativeFileCapabilityRoot
+import com.kite.app.foundation.runtime.NativeFileExecutionResult
+import com.kite.app.foundation.runtime.NativeFilePermission
+import com.kite.app.foundation.runtime.NativeFileProgressListener
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
@@ -34,11 +44,22 @@ internal interface NativeCapabilityRecipeRuntime {
     fun stop(instanceId: String, generation: Long, callback: (Boolean) -> Unit)
 }
 
+internal fun interface NativeFileExecutionGateway {
+    fun execute(
+        plan: AndroidNativeFilePlan,
+        cancellation: NativeFileCancellation,
+        progress: NativeFileProgressListener,
+    ): NativeFileExecutionResult
+}
+
 /** 把结构化原生能力接入同一 Run；不持有页面或 CardRunStore。 */
 internal class AndroidNativeCapabilityRecipeRuntime(
     context: Context,
     private val downloadExecutor: AndroidNativeDownloadExecutor = AndroidNativeDownloadExecutor(),
     capabilityContextProvider: (() -> AndroidNativeCapabilityContext)? = null,
+    fileExecutor: AndroidNativeFileExecutor = AndroidNativeFileExecutor(),
+    fileCapabilityContextProvider: (() -> AndroidNativeFileCapabilityContext)? = null,
+    private val fileExecutionGateway: NativeFileExecutionGateway = NativeFileExecutionGateway(fileExecutor::execute),
 ) : NativeCapabilityRecipeRuntime {
     private data class ExecutionKey(
         val instanceId: String,
@@ -47,8 +68,14 @@ internal class AndroidNativeCapabilityRecipeRuntime(
     )
 
     private data class PendingExecution(
-        val cancellation: NativeDownloadCancellationSignal,
-    )
+        val downloadCancellation: NativeDownloadCancellationSignal = NativeDownloadCancellationSignal(),
+        val fileCancellation: NativeFileCancellationSignal = NativeFileCancellationSignal(),
+    ) {
+        fun cancel() {
+            downloadCancellation.cancel()
+            fileCancellation.cancel()
+        }
+    }
 
     private val appContext = context.applicationContext
     private val capabilityContextProvider = capabilityContextProvider ?: {
@@ -58,6 +85,28 @@ internal class AndroidNativeCapabilityRecipeRuntime(
                     containerPath = "/workspace",
                     directory = KFContainerManager.resolveWorkspaceDirectory(appContext),
                 )
+            )
+        )
+    }
+    private val fileCapabilityContextProvider = fileCapabilityContextProvider ?: {
+        val workspace = KFContainerManager.resolveWorkspaceDirectory(appContext)
+        val cache = java.io.File(workspace, ".kf/cache")
+        AndroidNativeFileCapabilityContext(
+            listOf(
+                NativeFileCapabilityRoot(
+                    containerPath = "/workspace/.kf/cache",
+                    directory = cache,
+                    permissions = NativeFilePermission.entries.toSet(),
+                ),
+                NativeFileCapabilityRoot(
+                    containerPath = "/workspace",
+                    directory = workspace,
+                    permissions = setOf(
+                        NativeFilePermission.READ,
+                        NativeFilePermission.CREATE,
+                        NativeFilePermission.REPLACE,
+                    ),
+                ),
             )
         )
     }
@@ -87,7 +136,7 @@ internal class AndroidNativeCapabilityRecipeRuntime(
             return
         }
         val key = ExecutionKey(request.instanceId, request.generation, request.stepIndex)
-        val execution = PendingExecution(NativeDownloadCancellationSignal())
+        val execution = PendingExecution()
         if (pending.putIfAbsent(key, execution) != null) {
             callback(request.failed("native_capability_already_running"))
             return
@@ -111,11 +160,11 @@ internal class AndroidNativeCapabilityRecipeRuntime(
                         decision.reason,
                         callback,
                     )
-                    is RuntimeProviderDecision.Unsupported -> callback(
-                        request.failed(
-                            message = decision.reason,
-                            reason = "fallback_disabled:${decision.reason}",
-                        )
+                    is RuntimeProviderDecision.Unsupported -> executeFileCapability(
+                        request,
+                        execution,
+                        runtimeRequest,
+                        callback,
                     )
                     is RuntimeProviderDecision.Blocked -> callback(
                         request.failed(decision.reason, decision.reason)
@@ -140,7 +189,7 @@ internal class AndroidNativeCapabilityRecipeRuntime(
             callback(true)
             return
         }
-        matches.forEach { (_, execution) -> execution.cancellation.cancel() }
+        matches.forEach { (_, execution) -> execution.cancel() }
         thread(name = "KiteNativeCapabilityStop-${instanceId.take(20)}", isDaemon = true) {
             val deadline = System.nanoTime() + STOP_CONFIRMATION_TIMEOUT_MS * 1_000_000L
             while (owns(instanceId, generation) && System.nanoTime() < deadline) {
@@ -161,7 +210,7 @@ internal class AndroidNativeCapabilityRecipeRuntime(
         var lastPublishedAt = 0L
         val result = downloadExecutor.execute(
             plan = plan,
-            cancellation = execution.cancellation,
+            cancellation = execution.downloadCancellation,
             progress = NativeDownloadProgressListener { written, total ->
                 val now = System.currentTimeMillis()
                 if (
@@ -208,6 +257,96 @@ internal class AndroidNativeCapabilityRecipeRuntime(
             )
             is NativeDownloadExecutionResult.Cancelled -> callback(
                 request.failed("native_download_cancelled", "native_download_cancelled")
+            )
+        }
+    }
+
+    private fun executeFileCapability(
+        request: RecipeStepExecutionRequest,
+        execution: PendingExecution,
+        runtimeRequest: RuntimeExecutionRequest,
+        callback: (RecipeExecutionEvent) -> Unit,
+    ) {
+        when (val decision = AndroidNativeFileCapabilityProvider.prepare(
+            fileCapabilityContextProvider(),
+            runtimeRequest,
+        )) {
+            is RuntimeProviderDecision.Ready -> executeFile(
+                request,
+                execution,
+                decision.plan,
+                decision.reason,
+                callback,
+            )
+            is RuntimeProviderDecision.Unsupported -> callback(
+                request.failed(
+                    message = decision.reason,
+                    reason = "fallback_disabled:${decision.reason}",
+                )
+            )
+            is RuntimeProviderDecision.Blocked -> callback(
+                request.failed(decision.reason, decision.reason)
+            )
+        }
+    }
+
+    private fun executeFile(
+        request: RecipeStepExecutionRequest,
+        execution: PendingExecution,
+        plan: AndroidNativeFilePlan,
+        readyReason: String,
+        callback: (RecipeExecutionEvent) -> Unit,
+    ) {
+        var lastPublishedBytes = 0L
+        var lastPublishedAt = 0L
+        val result = fileExecutionGateway.execute(
+            plan,
+            execution.fileCancellation,
+            NativeFileProgressListener { copied, total ->
+                val now = System.currentTimeMillis()
+                if (
+                    lastPublishedAt == 0L ||
+                    copied - lastPublishedBytes >= PROGRESS_BYTES ||
+                    now - lastPublishedAt >= PROGRESS_INTERVAL_MS
+                ) {
+                    lastPublishedBytes = copied
+                    lastPublishedAt = now
+                    callback(
+                        request.progress(
+                            message = "原生文件复制中：$copied/$total 字节",
+                            lane = "android_native",
+                            reason = readyReason,
+                        )
+                    )
+                }
+            },
+        )
+        when (result) {
+            is NativeFileExecutionResult.Success -> {
+                val summary = "原生文件操作完成：${result.capabilityId}，${result.bytesAffected} 字节"
+                callback(
+                    RecipeExecutionEvent.Completed(
+                        request.instanceId,
+                        request.generation,
+                        request.stepIndex,
+                        RunStateMutation(
+                            status = CardRunStatus.Running,
+                            surface = CardRunSurface.Report,
+                            currentStepIndex = request.stepIndex,
+                            runtimeLane = "android_native",
+                            runtimeFallbackReason = readyReason,
+                            lastMeaningfulOutput = summary,
+                            shellReportText = summary,
+                            clearNextActionUrl = true,
+                        ),
+                    )
+                )
+            }
+            is NativeFileExecutionResult.Failure -> callback(
+                request.failed(result.reason, result.reason)
+            )
+            is NativeFileExecutionResult.Cancelled -> callback(
+                request.failed("native_file_cancelled", "native_file_cancelled")
             )
         }
     }

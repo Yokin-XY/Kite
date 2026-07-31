@@ -15,9 +15,9 @@
 | RF230 | 已完成 | 纯 Python go；subprocess/venv child/第三方扩展保持 PRoot |
 | RF240 | 已完成 | 通用 glibc 资产与纯 Python 结构化 Provider 已通过真机门 |
 | RF250 | 已完成 | 子进程保持 PRoot；扩展按精确 ABI 与不可变代次开放 |
-| RF300 | 进行中 | RF320a 封闭文件 Provider 已完成，进入 RF320b Recipe/Run |
+| RF300 | 进行中 | RF320b Recipe/Run 已完成，进入 RF320c 资源事务边界 |
 | RF310 | 已完成 | 原生下载、Recipe/Run、资源预取及对照压力门通过 |
-| RF320 | 进行中 | copy/move/delete 已封闭为结构化能力，尚未接入 Run |
+| RF320 | 进行中 | copy/move/delete 已接入同一 Run，待资源边界与真机门 |
 | RF330～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
@@ -27,6 +27,15 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF320b Recipe/Run 与取消
+
+- 现有 `AndroidNativeCapabilityRecipeRuntime` 在下载 Provider 返回 Unsupported 后继续选择文件 Provider；下载参数受阻时不会误投文件能力，未知能力也不会回退执行 shell。
+- 生产文件上下文把 `/workspace` 限定为读、创建和替换，把 `REMOVE` 只授予更具体的 `/workspace/.kf/cache`，从同一通用机制阻止工作区任意移动源和删除。
+- 文件复制进度、完成、失败和取消继续写入同一 `CardRun` 的 `android_native` 车道和报告显示面；不创建终端、`runId`、`terminalSessionId` 或进程 owner。
+- 停止入口同时取消下载与文件信号，并等待原生执行线程释放同一个 instance/generation/step 所有权；不存在 Host 已开始后再补跑 PRoot 的路径。
+- 三个目标 suite、20 项测试全部通过，覆盖文件复制正式 Run、无终端绑定、阻塞操作停止确认以及既有下载和 Recipe executor 回归。
+- 下一步 RF320c 只审计可迁移的缓存操作并做真机门；活动安装根仍归既有资源事务。
 
 ### 2026-07-31 RF320a 封闭文件 Provider
 
@@ -180,6 +189,5 @@
 
 ## 待验证
 
-- RF320b 将受控复制、移动与删除接入 Recipe/Run，并验证取消和唯一状态事实。
-- RF320c 只评估资源缓存内操作；活动安装根必须继续复用现有更新锁、备份和回滚，不能由原生文件能力旁路。
+- RF320c 只评估资源缓存内操作并完成真机门；活动安装根必须继续复用现有更新锁、备份和回滚，不能由原生文件能力旁路。
 - 动态 URL、多镜像和无尺寸上限下载不属于 RF310 已开放范围；将来只有形成可验证的结构化合同后才单独立项。

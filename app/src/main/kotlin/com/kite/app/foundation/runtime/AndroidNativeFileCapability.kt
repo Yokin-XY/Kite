@@ -12,6 +12,7 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal enum class NativeFilePermission {
     READ,
@@ -259,6 +260,14 @@ internal fun interface NativeFileCancellation {
     companion object {
         val NONE = NativeFileCancellation { false }
     }
+}
+
+internal class NativeFileCancellationSignal : NativeFileCancellation {
+    private val cancelled = AtomicBoolean(false)
+
+    override fun isCancelled(): Boolean = cancelled.get()
+
+    fun cancel(): Boolean = cancelled.compareAndSet(false, true)
 }
 
 internal fun interface NativeFileProgressListener {
