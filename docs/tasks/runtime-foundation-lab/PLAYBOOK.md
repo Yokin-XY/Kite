@@ -331,8 +331,8 @@
 
 ##### RF430c 父任务门
 
-- [ ] STARTED 前可回退、STARTED 后不重放、timeout/取消/崩溃/身份失效合同通过；
-- [ ] Debug 构建和目标真机对照通过，收益与 no-go 边界分别记录。
+- [x] STARTED 前可回退、STARTED 后不重放、timeout/取消/崩溃/身份失效合同通过；
+- [x] Debug 构建和目标真机对照通过，收益与 no-go 边界分别记录。
 
 #### RF440 可调性能档位
 

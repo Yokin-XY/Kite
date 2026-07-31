@@ -76,18 +76,22 @@ private object ProotAdmissionBenchmark {
     private val LEVELS = listOf(1, 2, 4, 8)
 
     fun run(context: Context): List<String> {
-        val prepared = executeIndependent(
-            context,
-            listOf(
-                "/bin/dd", "if=/dev/zero", "of=$BENCH_FILE", "bs=1048576", "count=32", "status=none"
+        try {
+            val prepared = executeIndependent(
+                context,
+                listOf(
+                    "/bin/dd", "if=/dev/zero", "of=$BENCH_FILE", "bs=1048576", "count=32", "status=none"
+                )
             )
-        )
-        check(prepared.succeeded) { "benchmark_file_prepare_failed_${prepared.exitCode}" }
-        val reference = executeIndependent(context, listOf("/usr/bin/sha256sum", BENCH_FILE))
-        check(reference.succeeded && reference.stdout.isNotBlank()) { "benchmark_reference_failed" }
-        val expected = reference.stdout.substringBefore(' ').trim()
+            check(prepared.succeeded) { "benchmark_file_prepare_failed_${prepared.exitCode}" }
+            val reference = executeIndependent(context, listOf("/usr/bin/sha256sum", BENCH_FILE))
+            check(reference.succeeded && reference.stdout.isNotBlank()) { "benchmark_reference_failed" }
+            val expected = reference.stdout.substringBefore(' ').trim()
 
-        return LEVELS.map { concurrency -> benchmarkLevel(context, concurrency, expected) }
+            return LEVELS.map { concurrency -> benchmarkLevel(context, concurrency, expected) }
+        } finally {
+            runCatching { executeIndependent(context, listOf("/bin/rm", "-f", BENCH_FILE)) }
+        }
     }
 
     private fun benchmarkLevel(context: Context, concurrency: Int, expected: String): String {
