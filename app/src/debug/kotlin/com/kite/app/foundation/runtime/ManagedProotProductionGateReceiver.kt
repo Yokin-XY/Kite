@@ -43,7 +43,9 @@ class ManagedProotProductionGateService : Service() {
             try {
                 // 等待应用启动期 RuntimeHealth 首次接管完成，避免它覆盖固定矩阵的临时档位。
                 delay(5_000L)
-                val reports = ManagedProotProductionGateMatrix.run(applicationContext)
+                val reports = WarmProotExecutionCoordinator.withPolicyUpdateBarrier {
+                    ManagedProotProductionGateMatrix.run(applicationContext)
+                }
                 Log.i(
                     ManagedProotProductionGateReceiver.LOG_TAG,
                     "status=ok suite=rf950_production_gate cases=${reports.size}",
@@ -122,7 +124,10 @@ private object ManagedProotProductionGateMatrix {
                     } else {
                         "admission_managed_owner_headroom_timeout"
                     }
-                    check(overflow.reason == expectedReason)
+                    check(overflow.reason == expectedReason) {
+                        "rf950_unexpected_rejection_${profile.name.lowercase()}_" +
+                            "expected_${expectedReason}_actual_${overflow.reason}"
+                    }
                     val observed = if (expectedMax > 1) {
                         val executor = Executors.newSingleThreadExecutor()
                         try {

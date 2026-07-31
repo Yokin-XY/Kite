@@ -534,6 +534,13 @@ internal object WarmProotExecutionCoordinator {
         pool?.trimTo(admission.snapshot().effectiveGlobalMax)
     }
 
+    /**
+     * 只供固定诊断矩阵在短时间内串行化 policy 更新；不选择策略，也不改变正式状态源。
+     * block 内仍可调用 [updateFrom]（JVM monitor 可重入），退出后等待中的正式更新会继续接管。
+     */
+    internal fun <T> withPolicyUpdateBarrier(block: () -> T): T =
+        synchronized(policyLock) { block() }
+
     fun executeBlocking(
         context: Context,
         admissionRequest: ProotJobAdmissionRequest,
