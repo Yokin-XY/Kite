@@ -8,6 +8,8 @@ import com.kite.app.application.runs.StopExecutionOutcome
 import com.kite.app.application.runs.StopExecutionResult
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.diagnostics.KiteDiagnostics
+import com.kite.app.foundation.capability.CapabilityCatalog
+import com.kite.app.foundation.runtime.KFContainerManager
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeStep
@@ -86,6 +88,38 @@ class AndroidRecipeExecutorTest {
         val failed = event as RecipeExecutionEvent.Failed
         assertEquals("unsupported_step:unknown_step", failed.message)
         assertEquals(false, failed.bridgeUnavailable)
+    }
+
+    @Test
+    fun `APK 安装动作通过目录映射稳定能力并只报告系统交接`() {
+        val context = RuntimeEnvironment.getApplication()
+        val apk = File(KFContainerManager.resolveWorkspaceDirectory(context), "catalog-handoff.apk")
+        apk.parentFile?.mkdirs()
+        apk.writeBytes(byteArrayOf(1, 2, 3))
+        val request = request(
+            KiteRecipeStep(
+                id = "install",
+                type = KiteRecipe.STEP_ANDROID_ACTION,
+                action = KiteRecipe.ANDROID_ACTION_INSTALL_APK,
+                cmd = "/workspace/${apk.name}",
+            )
+        )
+        var event: RecipeExecutionEvent? = null
+
+        try {
+            executor.execute(request) { event = it }
+        } finally {
+            apk.delete()
+        }
+
+        val completed = event as RecipeExecutionEvent.Completed
+        assertEquals("android_native", completed.mutation.runtimeLane)
+        assertEquals(
+            "android_capability:${CapabilityCatalog.CAPABILITY_OPEN_APK_INSTALLER}",
+            completed.mutation.runtimeFallbackReason,
+        )
+        assertTrue(completed.mutation.lastMeaningfulOutput.orEmpty().startsWith("已打开安装器："))
+        assertEquals(CardRunStatus.Running, completed.mutation.status)
     }
 
     @Test

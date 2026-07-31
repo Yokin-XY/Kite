@@ -4,6 +4,8 @@ import android.content.Context
 import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.application.runs.RunStateMutation
+import com.kite.app.foundation.capability.CapabilityCatalog
+import com.kite.app.foundation.capability.CapabilityInvocationKind
 import com.kite.app.foundation.runtime.AndroidNativeCapabilityContext
 import com.kite.app.foundation.runtime.AndroidNativeArchiveCapabilityProvider
 import com.kite.app.foundation.runtime.AndroidNativeArchiveExecutor
@@ -135,6 +137,11 @@ internal class AndroidNativeCapabilityRecipeRuntime(
         val capabilityId = request.step.action?.trim().orEmpty()
         if (capabilityId.isBlank()) {
             callback(request.failed("native_capability_id_missing"))
+            return
+        }
+        val catalogEntry = CapabilityCatalog.routableEntryFor(capabilityId)
+        if (catalogEntry?.invocation != CapabilityInvocationKind.NATIVE_RECIPE) {
+            callback(request.failed("native_capability_not_catalogued:$capabilityId"))
             return
         }
         val parameters = runCatching {

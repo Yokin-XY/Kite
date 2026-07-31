@@ -15,11 +15,11 @@
 | RF230 | 已完成 | 纯 Python go；subprocess/venv child/第三方扩展保持 PRoot |
 | RF240 | 已完成 | 通用 glibc 资产与纯 Python 结构化 Provider 已通过真机门 |
 | RF250 | 已完成 | 子进程保持 PRoot；扩展按精确 ABI 与不可变代次开放 |
-| RF300 | 进行中 | RF340a 真实能力目录已完成，进入 RF340b 薄适配 |
+| RF300 | 进行中 | RF340b 薄适配已完成，进入 RF340c 回归与父任务门 |
 | RF310 | 已完成 | 原生下载、Recipe/Run、资源预取及对照压力门通过 |
 | RF320 | 已完成 | 文件 Provider、Recipe/Run、权限边界和真机门通过 |
 | RF330 | 已完成 | 安全 ZIP 正确性通过，但真机慢于 PRoot，不进入资源快速车道 |
-| RF340 | 进行中 | 已固定真实入口、权限门、完成语义和状态拥有者 |
+| RF340 | 进行中 | 目录白名单、稳定能力 ID 和同 Run 运行事实已接入 |
 | RF330～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
@@ -29,6 +29,14 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF340b 薄适配与运行证据
+
+- 现有 `install_apk` Android action 仍复用原来的路径校验、`FileProvider` 与系统安装器 Intent；执行前只通过 `CapabilityCatalog` 将旧 action 映射为稳定的 `android.apk.open_installer`，没有复制安装逻辑。
+- 同一 `CardRun` 写入 `android_native` 与稳定能力 ID，同时保持 `Running` 和“已打开安装器”文案；这只表示外部系统交接，不把用户确认后的安装结果冒充为应用内成功。
+- `native_capability` Recipe 现在先检查目录条目及调用形态；未登记能力或把 Android action 塞进原生 Recipe 都会在建立线程和运行所有权前失败关闭，不隐式落回 shell/PRoot。
+- 运行进度和结果仍由既有 `RunStateMutation` / `CardRunStore` 持有，目录不保存运行状态，也没有新增执行器或平行 Store。
+- `CapabilityCatalogRoutingTest`、`AndroidNativeCapabilityRecipeRuntimeTest` 和 `AndroidRecipeExecutorTest` 共 24 项测试通过，零失败、零错误、零跳过；下一步 RF340c 只做目录合同、Debug 构建和必要入口回归，不重跑 Node 性能矩阵。
 
 ### 2026-07-31 RF340a 真实能力与所有者目录
 

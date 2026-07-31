@@ -23,6 +23,8 @@ import com.kite.app.bridge.OwnerStopOutputEvidence
 import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
+import com.kite.app.foundation.capability.CapabilityCatalog
+import com.kite.app.foundation.capability.CapabilityInvocationKind
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
@@ -75,6 +77,11 @@ internal class AndroidRecipeExecutor(
     private val nativeCapabilityRuntime: NativeCapabilityRecipeRuntime =
         AndroidNativeCapabilityRecipeRuntime(context),
 ) : RecipeExecutor {
+    private data class AndroidActionResult(
+        val output: String,
+        val capabilityId: String? = null,
+    )
+
     private data class PendingTerminal(
         val request: RecipeStepExecutionRequest,
         val callback: (RecipeExecutionEvent) -> Unit
@@ -718,16 +725,24 @@ internal class AndroidRecipeExecutor(
             when (request.step.action) {
                 KiteRecipe.ANDROID_ACTION_PREPARE_AI_ENV -> {
                     ToolchainPackInstaller.prepareAiEnv(appContext)
-                    "安卓动作完成：prepare_ai_env"
+                    AndroidActionResult("安卓动作完成：prepare_ai_env")
                 }
                 KiteRecipe.ANDROID_ACTION_TOOLCHAIN_DOCTOR -> {
                     ToolchainPackInstaller.doctor(appContext)
-                    "安卓动作完成：toolchain_doctor"
+                    AndroidActionResult("安卓动作完成：toolchain_doctor")
                 }
-                KiteRecipe.ANDROID_ACTION_INSTALL_APK -> installApk(request.step)
+                KiteRecipe.ANDROID_ACTION_INSTALL_APK -> {
+                    val entry = CapabilityCatalog.routableEntryForLegacyAction(request.step.action)
+                        ?.takeIf { it.invocation == CapabilityInvocationKind.ANDROID_ACTION }
+                        ?: error("android_action_capability_not_catalogued:${request.step.action}")
+                    AndroidActionResult(
+                        output = installApk(request.step),
+                        capabilityId = entry.id,
+                    )
+                }
                 else -> error("unsupported_android_action")
             }
-        }.onSuccess { output ->
+        }.onSuccess { result ->
             callback(
                 RecipeExecutionEvent.Completed(
                     request.instanceId,
@@ -737,7 +752,9 @@ internal class AndroidRecipeExecutor(
                         status = CardRunStatus.Running,
                         surface = CardRunSurface.Report,
                         currentStepIndex = request.stepIndex,
-                        lastMeaningfulOutput = output,
+                        runtimeLane = result.capabilityId?.let { "android_native" },
+                        runtimeFallbackReason = result.capabilityId?.let { "android_capability:$it" },
+                        lastMeaningfulOutput = result.output,
                         clearNextActionUrl = true
                     )
                 )

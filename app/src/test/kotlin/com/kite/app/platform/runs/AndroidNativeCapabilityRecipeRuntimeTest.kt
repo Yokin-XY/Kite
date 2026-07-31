@@ -48,6 +48,19 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class AndroidNativeCapabilityRecipeRuntimeTest {
     @Test
+    fun `uncatalogued native capability fails closed before taking runtime ownership`() {
+        val root = Files.createTempDirectory("kite-native-unknown").toFile()
+        val runtime = runtime(root, NativeDownloadConnectionFactory { _, _, _ -> error("download_not_expected") })
+        var event: RecipeExecutionEvent? = null
+
+        runtime.execute(unknownRequest()) { event = it }
+
+        val failed = event as RecipeExecutionEvent.Failed
+        assertEquals("native_capability_not_catalogued:native.unknown", failed.message)
+        assertFalse(runtime.owns("native-unknown-instance", 400L))
+    }
+
+    @Test
     fun `native step publishes lane and result into the same run without terminal binding`() {
         val root = Files.createTempDirectory("kite-native-recipe").toFile()
         val bytes = "recipe-native-download".toByteArray()
@@ -365,6 +378,40 @@ class AndroidNativeCapabilityRecipeRuntimeTest {
             currentStepIndex = 0,
             createdAt = 100L,
             updatedAt = 100L,
+        )
+        return RecipeStepExecutionRequest(
+            recipe = recipe,
+            instanceId = state.instanceId,
+            generation = state.createdAt,
+            stepIndex = 0,
+            step = step,
+            previousState = state,
+        )
+    }
+
+    private fun unknownRequest(): RecipeStepExecutionRequest {
+        val step = KiteRecipeStep(
+            id = "native-unknown",
+            type = KiteRecipe.STEP_NATIVE_CAPABILITY,
+            action = "native.unknown",
+        )
+        val recipe = KiteRecipe(
+            id = "native-unknown-recipe",
+            name = "Native Unknown Recipe",
+            description = "",
+            type = KiteRecipe.TYPE_TEMPLATE,
+            defaultUrl = "",
+            shortcut = false,
+            execution = KiteExecution.steps(listOf(step)),
+        )
+        val state = CardRunState(
+            instanceId = "native-unknown-instance",
+            recipeId = recipe.id,
+            recipeName = recipe.name,
+            status = CardRunStatus.Running,
+            currentStepIndex = 0,
+            createdAt = 400L,
+            updatedAt = 400L,
         )
         return RecipeStepExecutionRequest(
             recipe = recipe,
