@@ -37,7 +37,8 @@
 | RF710 | 已完成 | overlay schema 失败关闭，tracee guard 与正式 1/2/4 档位彻底分离 |
 | RF720 | 已完成 | actual 差量窗口失败关闭；高压/失败只降一级，无可信 thermal 永不升档 |
 | RF730 | 已完成 | 三窗升档、两窗失败、紧急降档、冷却与重启 rebase 纯状态机通过 |
-| RF740 | 进行中 | 固定 planned 建议与 actual coordinator 的低基数投影边界 |
+| RF740 | 已完成 | planned/actual 固定投影、合同复核和敏感字段护栏通过 |
+| RF750 | 进行中 | 联合回归并给自动升降档分别形成生产 go/no-go |
 
 ## RF110 开机与三问自检
 
@@ -104,6 +105,15 @@
 - 恢复时 schema 损坏、actual 与 checkpoint 不同、pending 已被外部应用，均只 reset/rebase 并启动冷却；不会根据旧 streak 或 pending 再跳一级。所有输入窗口还要再次验证 scope、actual 和相邻目标。
 - 目标回归覆盖 RF720/RF730：2 个 suite、18 tests、0 failure、0 error、0 skipped；Debug 编译随测试成功。
 - 下一恢复指针进入 RF740，只投影固定低基数 planned/actual 差异，不能把 recommendation 冒充已生效策略。
+
+## RF740 验收
+
+- 新增 `RuntimeProotAdaptivePlanningProjector`，只消费调用方提供的 actual tuning、校准、thermal、窗口和迟滞结果；没有回读 coordinator/collector、文件扫描、Store、线程或计时器。
+- 固定输出 actual reference 与 planned 两个明确 scope。actual 仍是 `mirror_of_proot_actual_scheduler`，建议始终是 `planned_not_production`，并输出 `changes_coordinator=false` 与 `recommendation_is_not_actual_policy`。
+- actual、窗口和迟滞档位必须一致；窗口/建议只能相邻移动，计数、失败率、state schema、rollback target 和 pending target 都再次校验。任何矛盾只输出 `CONTRACT_MISMATCH`，target 回到 actual。
+- 健康文本只含固定枚举、布尔和数字；测试明确拒绝 owner/lease/PID/process start/argv/cwd/command/session/resource 身份字段。
+- RF740 目标 suite 5 tests、0 failure、0 error、0 skipped；第一次编译发现投影对象缺少机器可断言的 `changesCoordinator` 字段，补齐后原命令通过。
+- 下一恢复指针进入 RF750，执行 RF700 联合回归与构建，分别给自动降档、自动升档生产结论；无可靠 thermal 时不得把升档改成 go。
 
 ## RF710 开机与三问自检
 

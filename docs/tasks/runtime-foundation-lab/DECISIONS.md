@@ -262,3 +262,11 @@
 - 决定：迟滞状态只保存窗口 streak、待应用相邻目标、冷却和 rollback target；每次推进都由调用方提供 actual 1/2/4。升档需三个连续 RF720 健康窗口，失败率降档需两个连续坏窗口，内存/thermal 紧急压力可直接建议降一级并绕过升档冷却。
 - 原因：把候选档写进独立 Store 会复制 coordinator 事实；让单个好样本升档会抖动，而让冷却压住高压降档又会把性能稳定性置于设备存活之前。重启时旧 pending/streak 也不能证明当前 actual 已按同一路径变化。
 - 影响：建议发出后等待外部 actual 确认，不重复发出；actual 变化、状态损坏或输入不相邻时 reset/rebase 并重新冷却。RF740 只能投影这份规划状态和 RF510 actual 的差异，正式应用仍为 no-go。
+
+## ADR-RF-034 planned 只能镜像 actual 引用且必须显式声明未生效
+
+- 状态：已接受，RF740 已完成
+- 日期：2026-08-01
+- 决定：自适应诊断同时输出 RF510 actual reference 和 RF730 planned suggestion，但二者使用不同 scope；planned 固定声明 `changesCoordinator=false` 和 recommendation 非 actual policy。投影只接收不可变参数，不主动读取任何正式状态源。
+- 原因：若建议字段与 actual 共用命名或在投影时回读 coordinator，会让观察面看起来像策略已经切换，并可能因读取创建 pool 或产生时序不一致。动态 owner/进程字段还会扩大基数并泄漏运行身份。
+- 影响：合同矛盾时 relation 固定为 `CONTRACT_MISMATCH`，planned target 回到 actual 且 recommendation 清空。该 schema 尚未接入正式 RuntimeHealth；RF750 只能在证明信号来源与应用事务后另给生产结论，不能用“能输出文本”代替生产接线。

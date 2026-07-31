@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF700` 设备自适应校准预研
-- 当前任务：`RF740` 规划建议与 actual 边界
+- 当前任务：`RF750` RF700 父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -503,7 +503,11 @@
 #### RF740 规划建议与 actual 边界
 
 - 解法：输出独立 planned 建议与证据计数；实际档位仍只来自 RF510 coordinator，应用动作另立生产门。
-- 验收标准：读取无副作用、低基数、无设备/任务身份；planned 不冒充 actual。
+- 验收标准：
+  - [x] actual 只作为 RF510 不可变快照引用，planned 固定标记 `planned_not_production`；
+  - [x] actual、窗口、迟滞 state/target 不一致或非相邻时投影失败关闭为 `CONTRACT_MISMATCH`；
+  - [x] 固定 schema 只输出枚举、布尔和数字，不含 owner、PID、路径、命令、session 或资源身份；
+  - [x] 投影只消费调用方参数，不回读 coordinator、collector、文件或页面，不产生应用动作。
 - 依赖：RF730。
 
 #### RF750 RF700 父任务门
