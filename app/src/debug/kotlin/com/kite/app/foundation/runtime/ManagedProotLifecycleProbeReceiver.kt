@@ -44,7 +44,9 @@ class ManagedProotLifecycleProbeReceiver : BroadcastReceiver() {
         return "action=snapshot status=${record.status.name.lowercase()} pid=${record.pid ?: 0} " +
             "boot=${record.processBootId?.take(12) ?: "none"} ticks=${record.processStartTicks ?: 0} " +
             "lease=$lease short=${actual.shortActiveCount} long=${actual.longActiveCount} " +
-            "total=${actual.totalActiveCount} max=${actual.effectiveGlobalMax}"
+            "total=${actual.totalActiveCount} max=${actual.effectiveGlobalMax} " +
+            "long_max=${actual.longAdmissionMax} headroom=${actual.shortHeadroomCapacity} " +
+            "protected=${actual.shortHeadroomProtected}"
     }
 
     private companion object {

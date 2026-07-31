@@ -64,6 +64,7 @@ internal data class ProotJobAdmissionSnapshot(
     val maxObservedActive: Int,
     val restoredCount: Long = 0L,
     val contractBlockCount: Int = 0,
+    val managedOwnerAdmissionMax: Int,
     val managedOwnerActiveCount: Int = 0,
     val managedOwnerQueuedCount: Int = 0,
 )
@@ -274,6 +275,7 @@ internal class ProotJobAdmissionController(
             maxObservedActive = maxObservedActive,
             restoredCount = restoredCount,
             contractBlockCount = contractBlocks.size,
+            managedOwnerAdmissionMax = policy.managedOwnerMax(),
             managedOwnerActiveCount = active.values.count {
                 it.request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER
             },

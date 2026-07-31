@@ -20,6 +20,10 @@ class ProotUnifiedActualHealthProjectionTest {
         assertEquals(1, projection.longQueuedCount)
         assertEquals(2, projection.totalQueuedCount)
         assertEquals(1, projection.remainingCapacity)
+        assertEquals(3, projection.longAdmissionMax)
+        assertEquals(2, projection.longAdmissionRemaining)
+        assertEquals(1, projection.shortHeadroomCapacity)
+        assertFalse(projection.shortHeadroomProtected)
     }
 
     @Test
@@ -45,8 +49,11 @@ class ProotUnifiedActualHealthProjectionTest {
             snapshot(active = 1, managedActive = 1, max = 2, restored = 7L)
         ).toRuntimeHealthEnvText()
 
-        assertTrue(fields.contains("proot_long_actual_schema=managed_proot_owner_v1"))
-        assertTrue(fields.contains("proot_unified_actual_schema=shared_proot_capacity_v1"))
+        assertTrue(fields.contains("proot_long_actual_schema=managed_proot_owner_v2"))
+        assertTrue(fields.contains("proot_long_actual_admission_max=1"))
+        assertTrue(fields.contains("proot_unified_actual_schema=shared_proot_capacity_v2"))
+        assertTrue(fields.contains("proot_unified_actual_short_headroom_capacity=1"))
+        assertTrue(fields.contains("proot_unified_actual_short_headroom_protected=true"))
         assertFalse(fields.contains("proot_long_planned_"))
         listOf(
             "private-owner-527",
@@ -73,6 +80,18 @@ class ProotUnifiedActualHealthProjectionTest {
         assertEquals(0, projection.remainingCapacity)
     }
 
+    @Test
+    fun `low power exposes no fictional short task headroom`() {
+        val projection = ProotUnifiedActualHealthProjection.project(
+            snapshot(active = 1, managedActive = 1, max = 1)
+        )
+
+        assertEquals(1, projection.longAdmissionMax)
+        assertEquals(0, projection.longAdmissionRemaining)
+        assertEquals(0, projection.shortHeadroomCapacity)
+        assertFalse(projection.shortHeadroomProtected)
+    }
+
     private fun snapshot(
         active: Int,
         queued: Int = 0,
@@ -81,6 +100,7 @@ class ProotUnifiedActualHealthProjectionTest {
         max: Int,
         restored: Long = 0L,
         contractBlocks: Int = 0,
+        managedMax: Int = if (max <= 1) 1 else max - 1,
     ) = ProotJobAdmissionSnapshot(
         profileGroup = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED,
         pressure = RuntimePressureLevel.NORMAL,
@@ -100,6 +120,7 @@ class ProotUnifiedActualHealthProjectionTest {
         maxObservedActive = active,
         restoredCount = restored,
         contractBlockCount = contractBlocks,
+        managedOwnerAdmissionMax = managedMax,
         managedOwnerActiveCount = managedActive,
         managedOwnerQueuedCount = managedQueued,
     )

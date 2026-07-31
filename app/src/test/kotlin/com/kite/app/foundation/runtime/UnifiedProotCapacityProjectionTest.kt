@@ -156,6 +156,7 @@ class UnifiedProotCapacityProjectionTest {
             cancelledCount = 0L,
             timedOutCount = 0L,
             maxObservedActive = active.values.sum(),
+            managedOwnerAdmissionMax = if (effectiveMax <= 1) 1 else effectiveMax - 1,
         )
     }
 

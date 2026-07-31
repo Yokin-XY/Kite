@@ -89,13 +89,23 @@ private object ManagedProotProductionGateMatrix {
                     RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE to 4,
                 ).forEach { (profile, expectedMax) ->
                     applyPolicy(baseline, profile, RuntimePressureLevel.NORMAL)
-                    repeat(expectedMax) { index ->
+                    val managedMax = if (expectedMax == 1) 1 else expectedMax - 1
+                    repeat(managedMax) { index ->
                         held += acquire(context, "profile-${profile.name.lowercase()}-$index", 1L)
                     }
-                    val full = WarmProotExecutionCoordinator.tuningSnapshot().unifiedActualCapacity
-                    check(full.effectiveGlobalMax == expectedMax)
-                    check(full.totalActiveCount == expectedMax)
-                    check(full.state == UnifiedProotCapacityState.FULL)
+                    val reserved = WarmProotExecutionCoordinator.tuningSnapshot().unifiedActualCapacity
+                    check(reserved.effectiveGlobalMax == expectedMax)
+                    check(reserved.longAdmissionMax == managedMax)
+                    check(reserved.longActiveCount == managedMax)
+                    check(reserved.shortHeadroomCapacity == expectedMax - managedMax)
+                    check(reserved.shortHeadroomProtected == (expectedMax > 1))
+                    check(
+                        reserved.state == if (expectedMax == 1) {
+                            UnifiedProotCapacityState.FULL
+                        } else {
+                            UnifiedProotCapacityState.READY
+                        }
+                    )
                     val overflow = requireRejected(
                         result = acquireResult(
                             context,
@@ -107,11 +117,39 @@ private object ManagedProotProductionGateMatrix {
                         generation = 1L,
                         case = "profile_${profile.name.lowercase()}",
                     )
+                    val expectedReason = if (expectedMax == 1) {
+                        "admission_global_capacity_timeout"
+                    } else {
+                        "admission_managed_owner_headroom_timeout"
+                    }
+                    check(overflow.reason == expectedReason)
+                    val observed = if (expectedMax > 1) {
+                        val executor = Executors.newSingleThreadExecutor()
+                        try {
+                            val suffix = "profile-${profile.name.lowercase()}-short"
+                            val short = executor.submit(Callable {
+                                executeShort(context, suffix, sleepSeconds = 1)
+                            })
+                            val full = waitForCapacity(5_000L) { snapshot ->
+                                snapshot.shortActiveCount == 1 &&
+                                    snapshot.longActiveCount == managedMax &&
+                                    snapshot.totalActiveCount == expectedMax
+                            }
+                            check(full.state == UnifiedProotCapacityState.FULL)
+                            check(short.get(5, TimeUnit.SECONDS).succeeded)
+                            full
+                        } finally {
+                            executor.shutdownNow()
+                        }
+                    } else {
+                        reserved
+                    }
                     releaseAll(held)
                     add(report(
                         "status=ok case=profile_${profile.name.lowercase()} " +
-                            "max=$expectedMax active=${full.totalActiveCount} " +
-                            "overflow=${overflow.reason}"
+                            "max=$expectedMax long_max=$managedMax " +
+                            "headroom=${reserved.shortHeadroomCapacity} " +
+                            "observed=${observed.totalActiveCount} overflow=${overflow.reason}"
                     ))
                 }
 
@@ -120,39 +158,42 @@ private object ManagedProotProductionGateMatrix {
                     RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED,
                     RuntimePressureLevel.NORMAL,
                 )
-                held += acquire(context, "mixed-long", 1L)
-                val executor = Executors.newSingleThreadExecutor()
+                held += acquire(context, "queued-bypass-long", 1L)
+                val executor = Executors.newFixedThreadPool(2)
                 try {
-                    val shortJobId = "rf950-short-mixed-short"
-                    val short = executor.submit(Callable {
-                        WarmProotExecutionCoordinator.executeBlocking(
-                            context = context,
-                            admissionRequest = shortRequest("mixed-short", 2_000L),
-                            jobRequest = WarmProotJobRequest(
-                                jobId = shortJobId,
-                                argv = listOf("/bin/sleep", "2"),
-                                timeoutMs = 5_000L,
-                                maxOutputBytesPerStream = 1_024,
-                            ),
+                    val queuedManaged = executor.submit(Callable {
+                        acquireResult(
+                            context,
+                            "queued-bypass-managed",
+                            1L,
+                            waitTimeoutMs = 1_500L,
                         )
+                    })
+                    waitForCapacity(2_000L) { snapshot -> snapshot.longQueuedCount == 1 }
+                    val short = executor.submit(Callable {
+                        executeShort(context, "queued-bypass-short", sleepSeconds = 1)
                     })
                     val mixed = waitForCapacity(
                         timeoutMs = 5_000L,
                         predicate = { snapshot ->
-                            snapshot.shortActiveCount == 1 && snapshot.longActiveCount == 1
+                            snapshot.shortActiveCount == 1 &&
+                                snapshot.longActiveCount == 1 &&
+                                snapshot.longQueuedCount == 1
                         },
                     )
-                    val overflow = requireRejected(
-                        acquireResult(context, "mixed-overflow", 1L, 80L),
-                        "mixed-overflow",
+                    check(short.get(5, TimeUnit.SECONDS).succeeded)
+                    val rejected = requireRejected(
+                        queuedManaged.get(3, TimeUnit.SECONDS),
+                        "queued-bypass-managed",
                         1L,
-                        "short_long_competition",
+                        "queued_managed_short_bypass",
                     )
-                    check(short.get(6, TimeUnit.SECONDS).succeeded)
+                    check(rejected.reason == "admission_managed_owner_headroom_timeout")
                     add(report(
-                        "status=ok case=short_long_competition short=${mixed.shortActiveCount} " +
-                            "long=${mixed.longActiveCount} total=${mixed.totalActiveCount} " +
-                            "overflow=${overflow.reason}"
+                        "status=ok case=queued_managed_short_bypass " +
+                            "short=${mixed.shortActiveCount} long=${mixed.longActiveCount} " +
+                            "queued_long=${mixed.longQueuedCount} total=${mixed.totalActiveCount} " +
+                            "queued_result=${rejected.reason}"
                     ))
                 } finally {
                     executor.shutdownNow()
@@ -166,6 +207,7 @@ private object ManagedProotProductionGateMatrix {
                 )
                 held += acquire(context, "pressure-one", 1L)
                 held += acquire(context, "pressure-two", 1L)
+                held += acquire(context, "pressure-three", 1L)
                 applyPolicy(
                     baseline,
                     RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE,
@@ -174,16 +216,19 @@ private object ManagedProotProductionGateMatrix {
                 val pressured = WarmProotExecutionCoordinator.tuningSnapshot().unifiedActualCapacity
                 check(pressured.state == UnifiedProotCapacityState.OVERCOMMITTED)
                 check(pressured.effectiveGlobalMax == 1)
-                check(pressured.totalActiveCount == 2)
+                check(pressured.longAdmissionMax == 1)
+                check(pressured.totalActiveCount == 3)
                 val rejected = requireRejected(
                     acquireResult(context, "pressure-new", 1L, 80L),
                     "pressure-new",
                     1L,
                     "pressure_contraction",
                 )
+                check(rejected.reason == "admission_global_capacity_timeout")
                 add(report(
                     "status=ok case=pressure_contraction effective=${pressured.effectiveGlobalMax} " +
-                        "active=${pressured.totalActiveCount} state=${pressured.state.name} " +
+                        "long_max=${pressured.longAdmissionMax} active=${pressured.totalActiveCount} " +
+                        "state=${pressured.state.name} " +
                         "new=${rejected.reason}"
                 ))
             }
@@ -314,6 +359,24 @@ private object ManagedProotProductionGateMatrix {
         resultMode = ProotJobResultMode.CAPTURED_STDIO,
         waitTimeoutMs = waitTimeoutMs,
     )
+
+    private fun executeShort(
+        context: Context,
+        suffix: String,
+        sleepSeconds: Int,
+    ): WarmProotPoolExecution {
+        val jobId = "rf950-short-$suffix"
+        return WarmProotExecutionCoordinator.executeBlocking(
+            context = context,
+            admissionRequest = shortRequest(suffix, waitTimeoutMs = 2_000L),
+            jobRequest = WarmProotJobRequest(
+                jobId = jobId,
+                argv = listOf("/bin/sleep", sleepSeconds.toString()),
+                timeoutMs = 5_000L,
+                maxOutputBytesPerStream = 1_024,
+            ),
+        )
+    }
 
     private fun ownerId(suffix: String) = "debug:rf950:managed:$suffix"
 

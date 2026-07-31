@@ -50,3 +50,7 @@ effectiveGlobalMax >= 2: managedOwnerMax = effectiveGlobalMax - 1
 ## RF1020 实施状态
 
 actual controller 已在同一锁内落实长期上限与 waiter 绕行。阻断原因固定为 `admission_managed_owner_headroom_timeout`；恢复入口继续绕过新准入限制，以便如实恢复并呈现 overcommitted，而不是驱逐或遗忘既有 owner。正式健康字段和 OnePlus 8T 固定矩阵由 RF1030 补齐。
+
+## RF1030 验证状态
+
+正式 actual v2 健康已经从同一 admission snapshot 发布 `longAdmissionMax`、`longAdmissionRemaining`、`shortHeadroomCapacity` 与 `shortHeadroomProtected`。OnePlus 8T 固定矩阵已验证 1/2/4 三档真实容量、后到短任务绕过长期 waiter、三个长期 holder 压力收缩不驱逐，以及正式生命周期停止后容量归零。该结论不扩展到普通终端或 Agent；二者仍需独立证明取消、交互、会话与进程树生命周期后才能声明为 `MANAGED_OWNER`。

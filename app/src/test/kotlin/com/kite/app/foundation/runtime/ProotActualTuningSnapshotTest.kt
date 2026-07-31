@@ -34,6 +34,10 @@ class ProotActualTuningSnapshotTest {
                 longQueuedCount = 0,
                 totalQueuedCount = 3,
                 remainingCapacity = 0,
+                longAdmissionMax = 1,
+                longAdmissionRemaining = 0,
+                shortHeadroomCapacity = 1,
+                shortHeadroomProtected = true,
                 restoredLongOwnerTotal = 1L,
                 contractBlockCount = 0,
             ),
@@ -46,7 +50,9 @@ class ProotActualTuningSnapshotTest {
         assertTrue(text.contains("proot_actual_oldest_idle_age_ms=125"))
         assertTrue(text.contains("proot_long_actual_scope=actual_not_planned"))
         assertTrue(text.contains("proot_long_actual_active_owner_count=1"))
+        assertTrue(text.contains("proot_long_actual_admission_max=1"))
         assertTrue(text.contains("proot_unified_actual_total_active_count=2"))
+        assertTrue(text.contains("proot_unified_actual_short_headroom_protected=true"))
         assertTrue(text.contains("proot_unified_actual_state=FULL"))
         listOf(
             "private-owner-527",

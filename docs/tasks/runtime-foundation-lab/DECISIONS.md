@@ -382,3 +382,11 @@
 - 决定：effective global max 大于 1 时，新 `MANAGED_OWNER` 最多占 `globalMax-1`；global max 为 1 时仍允许一个长期 owner，不伪造并发。该限制在唯一 admission 的同一把锁内判断，只影响新准入，不驱逐恢复或正在运行的 holder。
 - 原因：lane priority 只能排序 waiter，无法抢占已经无限期持有容量的后台进程。让长期 owner 占满 2/4 会使后到交互短任务永久超时；另建短任务 controller 又会重新引入 RF840 已禁止的总量超售。
 - 影响：达到长期上限的 waiter 必须让可运行短任务绕行，但共享写任务继续充当队首屏障。低功耗档无法同时满足长期运行和短任务并发，产品只能通过切换均衡/高性能取得余量。健康面后续只输出上限与计数，不暴露业务身份；终端和 Agent 不自动继承该类别。
+
+## ADR-RF-049 短任务余量必须由 actual 同锁事实发布并用真实命令过门
+
+- 状态：已接受，RF1030 已完成
+- 日期：2026-08-01
+- 决定：长期上限必须由 `ProotJobAdmissionController` 的同锁 snapshot 发布，正式 health 只投影长期上限、剩余长期名额、短任务余量和保护状态。发布 schema 升为 `managed_proot_owner_v2` 与 `shared_proot_capacity_v2`。生产门必须让真实有界短命令占用保留位，并验证排在前面的长期 waiter 不阻塞它。
+- 原因：从档位配置或后台记录反推上限，会与实际 policy/压力/恢复 holder 产生时序差异；只构造纯内存 lease 又不能证明 Warm PRoot 执行链真正拿到保留位。低基数同锁事实和真机真实命令分别关闭观测与执行两个证据缺口。
+- 影响：低功耗仍明确没有短任务并发余量；均衡/高性能只保护一个非长期位置而不预启动进程。压力缩档可如实显示 overcommitted，不释放既有 holder。类别边界仍仅为 `MANAGED_OWNER`，终端与 Agent 是否迁移必须另立生命周期门。

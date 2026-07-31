@@ -57,8 +57,8 @@
 | RF1000 | 进行中 | 解决长期 owner 占满总容量后的短任务饥饿 |
 | RF1010 | 已完成 | 固定 1/2/4 档长期上限 1/1/3，低功耗不伪造第二容量 |
 | RF1020 | 已完成 | actual controller 已限制 managed owner，并允许短任务绕过其等待项 |
-| RF1030 | 进行中 | actual 健康与 OnePlus 8T 固定矩阵 |
-| RF1040 | 待开始 | 全量回归、类别复核与父任务门 |
+| RF1030 | 已完成 | actual v2 健康与 OnePlus 8T 六项固定矩阵通过 |
+| RF1040 | 进行中 | 全量回归、类别复核与父任务门 |
 
 ## RF110 开机与三问自检
 
@@ -275,6 +275,16 @@
 - waiter 选择保留共享写队首屏障；普通 managed owner 达上限时不再阻塞后面的可运行短任务。没有建立第二个 controller、队列或状态源，恢复导入仍可 overcommit 且不驱逐 holder。
 - 新增三个反例：均衡档第二长期 owner 先排队、后到 INTERACTIVE 仍准入；高性能三个长期 owner 后第四个被拒、短任务占第 4 位；低功耗一个长期 owner 后短任务仍按全局容量拒绝，不伪造第二名额。
 - 强制目标 suite `ProotJobAdmissionControllerTest` 共 21 tests，0 failure、0 error、0 skipped。下一恢复点 RF1030，更新 actual 低基数健康与固定真机矩阵。
+
+## RF1030 actual 健康与固定矩阵
+
+- `ProotJobAdmissionSnapshot` 从唯一 admission 同锁发布 `managedOwnerAdmissionMax`；正式 actual v2 健康据此输出长期上限、剩余长期名额、短任务余量容量和余量保护状态。字段仍只含固定 schema、枚举、布尔和数字，不含 owner、PID、命令、路径或业务身份。
+- Debug 固定矩阵已改成余量合同：低功耗实际 1/1；均衡长期 1 + 真实短任务 1；高性能长期 3 + 真实短任务 1；额外长期 owner 分别按全局容量或余量上限拒绝。
+- 并发反例在一个长期 owner 持有均衡档时先排入第二个长期 owner，再让后到的真实 `/bin/sleep 1` 短任务绕行；观测到 short=1、long=1、queued-long=1，总量仍为 2，排队长期 owner 最终以 `admission_managed_owner_headroom_timeout` 关闭。
+- 压力收缩从高性能的三个长期 holder 收缩到全局 1，实际状态为 OVERCOMMITTED、既有 holder 不驱逐、新准入按全局容量拒绝。固定矩阵 6/6 通过。
+- 目标回归 4 suites、34 tests，0 failure、0 error、0 skipped；强制 Debug 构建成功。APK 241,317,216 bytes，SHA-256 `A3217ABCDAA17B97402A110A2E603EE78E427EFCCE338F3941384205DED872AE`，已覆盖安装 OnePlus 8T，构建物未进入 Git。
+- 真机生命周期探针在均衡档观测 `max=2 long_max=1 headroom=1 protected=true`；显式停止后 `long=0 total=0 protected=false`。正式 health 文件发布 `managed_proot_owner_v2` 与 `shared_proot_capacity_v2`，未见匹配 FATAL/ANR。
+- RF1030 完成，下一恢复点 RF1040：只做全量回归、范围审查和下一类别 go/no-go，不重跑 Node/Python 性能矩阵。
 
 ## RF710 开机与三问自检
 

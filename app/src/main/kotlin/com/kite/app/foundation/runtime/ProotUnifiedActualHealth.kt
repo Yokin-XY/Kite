@@ -10,6 +10,10 @@ internal data class ProotUnifiedActualHealthSnapshot(
     val longQueuedCount: Int,
     val totalQueuedCount: Int,
     val remainingCapacity: Int,
+    val longAdmissionMax: Int,
+    val longAdmissionRemaining: Int,
+    val shortHeadroomCapacity: Int,
+    val shortHeadroomProtected: Boolean,
     val restoredLongOwnerTotal: Long,
     val contractBlockCount: Int,
 ) {
@@ -24,6 +28,10 @@ internal data class ProotUnifiedActualHealthSnapshot(
             longQueuedCount = 0,
             totalQueuedCount = 0,
             remainingCapacity = 1,
+            longAdmissionMax = 1,
+            longAdmissionRemaining = 1,
+            shortHeadroomCapacity = 0,
+            shortHeadroomProtected = false,
             restoredLongOwnerTotal = 0L,
             contractBlockCount = 0,
         )
@@ -41,6 +49,7 @@ internal object ProotUnifiedActualHealthProjection {
             admission.queuedByLane.values.sum() == admission.queuedCount &&
             admission.activeByLane.keys.containsAll(RuntimeLaneKind.entries) &&
             admission.queuedByLane.keys.containsAll(RuntimeLaneKind.entries) &&
+            admission.managedOwnerAdmissionMax in 1..admission.effectiveGlobalMax &&
             admission.restoredCount >= 0L && admission.contractBlockCount >= 0
         val state = when {
             !countsValid || admission.contractBlockCount > 0 ->
@@ -69,6 +78,20 @@ internal object ProotUnifiedActualHealthProjection {
             } else {
                 0
             },
+            longAdmissionMax = admission.managedOwnerAdmissionMax.coerceAtLeast(0),
+            longAdmissionRemaining = if (countsValid) {
+                (admission.managedOwnerAdmissionMax - longActive).coerceAtLeast(0)
+            } else {
+                0
+            },
+            shortHeadroomCapacity = if (countsValid) {
+                (admission.effectiveGlobalMax - admission.managedOwnerAdmissionMax).coerceAtLeast(0)
+            } else {
+                0
+            },
+            shortHeadroomProtected = countsValid &&
+                admission.effectiveGlobalMax > admission.managedOwnerAdmissionMax &&
+                longActive >= admission.managedOwnerAdmissionMax,
             restoredLongOwnerTotal = admission.restoredCount,
             contractBlockCount = admission.contractBlockCount,
         )
@@ -76,14 +99,16 @@ internal object ProotUnifiedActualHealthProjection {
 }
 
 internal fun ProotUnifiedActualHealthSnapshot.toRuntimeHealthEnvText(): String = buildString {
-    appendLine("proot_long_actual_schema=managed_proot_owner_v1")
+    appendLine("proot_long_actual_schema=managed_proot_owner_v2")
     appendLine("proot_long_actual_source=shared_proot_admission_controller")
     appendLine("proot_long_actual_scope=actual_not_planned")
     appendLine("proot_long_actual_active_owner_count=$longActiveCount")
     appendLine("proot_long_actual_queued_owner_count=$longQueuedCount")
+    appendLine("proot_long_actual_admission_max=$longAdmissionMax")
+    appendLine("proot_long_actual_admission_remaining=$longAdmissionRemaining")
     appendLine("proot_long_actual_restored_owner_total=$restoredLongOwnerTotal")
     appendLine("proot_long_actual_contract_block_count=$contractBlockCount")
-    appendLine("proot_unified_actual_schema=shared_proot_capacity_v1")
+    appendLine("proot_unified_actual_schema=shared_proot_capacity_v2")
     appendLine("proot_unified_actual_source=shared_proot_admission_controller")
     appendLine("proot_unified_actual_scope=actual_not_planned")
     appendLine("proot_unified_actual_state=${state.name}")
@@ -95,4 +120,6 @@ internal fun ProotUnifiedActualHealthSnapshot.toRuntimeHealthEnvText(): String =
     appendLine("proot_unified_actual_long_queued_count=$longQueuedCount")
     appendLine("proot_unified_actual_total_queued_count=$totalQueuedCount")
     appendLine("proot_unified_actual_remaining_capacity=$remainingCapacity")
+    appendLine("proot_unified_actual_short_headroom_capacity=$shortHeadroomCapacity")
+    appendLine("proot_unified_actual_short_headroom_protected=$shortHeadroomProtected")
 }
