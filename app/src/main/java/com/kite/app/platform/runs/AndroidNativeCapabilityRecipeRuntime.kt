@@ -5,6 +5,9 @@ import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.application.runs.RunStateMutation
 import com.kite.app.foundation.runtime.AndroidNativeCapabilityContext
+import com.kite.app.foundation.runtime.AndroidNativeArchiveCapabilityProvider
+import com.kite.app.foundation.runtime.AndroidNativeArchiveExecutor
+import com.kite.app.foundation.runtime.AndroidNativeArchivePlan
 import com.kite.app.foundation.runtime.AndroidNativeDownloadCapabilityProvider
 import com.kite.app.foundation.runtime.AndroidNativeDownloadExecutor
 import com.kite.app.foundation.runtime.AndroidNativeFileCapabilityContext
@@ -12,6 +15,8 @@ import com.kite.app.foundation.runtime.AndroidNativeFileCapabilityProvider
 import com.kite.app.foundation.runtime.AndroidNativeFileExecutor
 import com.kite.app.foundation.runtime.AndroidNativeFilePlan
 import com.kite.app.foundation.runtime.NativeCapabilityDestinationRoot
+import com.kite.app.foundation.runtime.NativeArchiveExecutionResult
+import com.kite.app.foundation.runtime.NativeArchiveProgressListener
 import com.kite.app.foundation.runtime.NativeDownloadCancellationSignal
 import com.kite.app.foundation.runtime.NativeDownloadExecutionResult
 import com.kite.app.foundation.runtime.NativeDownloadProgressListener
@@ -52,6 +57,14 @@ internal fun interface NativeFileExecutionGateway {
     ): NativeFileExecutionResult
 }
 
+internal fun interface NativeArchiveExecutionGateway {
+    fun execute(
+        plan: AndroidNativeArchivePlan,
+        cancellation: NativeFileCancellation,
+        progress: NativeArchiveProgressListener,
+    ): NativeArchiveExecutionResult
+}
+
 /** 把结构化原生能力接入同一 Run；不持有页面或 CardRunStore。 */
 internal class AndroidNativeCapabilityRecipeRuntime(
     context: Context,
@@ -60,6 +73,9 @@ internal class AndroidNativeCapabilityRecipeRuntime(
     fileExecutor: AndroidNativeFileExecutor = AndroidNativeFileExecutor(),
     fileCapabilityContextProvider: (() -> AndroidNativeFileCapabilityContext)? = null,
     private val fileExecutionGateway: NativeFileExecutionGateway = NativeFileExecutionGateway(fileExecutor::execute),
+    archiveExecutor: AndroidNativeArchiveExecutor = AndroidNativeArchiveExecutor(),
+    private val archiveExecutionGateway: NativeArchiveExecutionGateway =
+        NativeArchiveExecutionGateway(archiveExecutor::execute),
 ) : NativeCapabilityRecipeRuntime {
     private data class ExecutionKey(
         val instanceId: String,
@@ -278,6 +294,35 @@ internal class AndroidNativeCapabilityRecipeRuntime(
                 decision.reason,
                 callback,
             )
+            is RuntimeProviderDecision.Unsupported -> executeArchiveCapability(
+                request,
+                execution,
+                runtimeRequest,
+                callback,
+            )
+            is RuntimeProviderDecision.Blocked -> callback(
+                request.failed(decision.reason, decision.reason)
+            )
+        }
+    }
+
+    private fun executeArchiveCapability(
+        request: RecipeStepExecutionRequest,
+        execution: PendingExecution,
+        runtimeRequest: RuntimeExecutionRequest,
+        callback: (RecipeExecutionEvent) -> Unit,
+    ) {
+        when (val decision = AndroidNativeArchiveCapabilityProvider.prepare(
+            fileCapabilityContextProvider(),
+            runtimeRequest,
+        )) {
+            is RuntimeProviderDecision.Ready -> executeArchive(
+                request,
+                execution,
+                decision.plan,
+                decision.reason,
+                callback,
+            )
             is RuntimeProviderDecision.Unsupported -> callback(
                 request.failed(
                     message = decision.reason,
@@ -286,6 +331,67 @@ internal class AndroidNativeCapabilityRecipeRuntime(
             )
             is RuntimeProviderDecision.Blocked -> callback(
                 request.failed(decision.reason, decision.reason)
+            )
+        }
+    }
+
+    private fun executeArchive(
+        request: RecipeStepExecutionRequest,
+        execution: PendingExecution,
+        plan: AndroidNativeArchivePlan,
+        readyReason: String,
+        callback: (RecipeExecutionEvent) -> Unit,
+    ) {
+        var lastPublishedBytes = 0L
+        var lastPublishedAt = 0L
+        val result = archiveExecutionGateway.execute(
+            plan,
+            execution.fileCancellation,
+            NativeArchiveProgressListener { entries, bytes ->
+                val now = System.currentTimeMillis()
+                if (
+                    lastPublishedAt == 0L ||
+                    bytes - lastPublishedBytes >= PROGRESS_BYTES ||
+                    now - lastPublishedAt >= PROGRESS_INTERVAL_MS
+                ) {
+                    lastPublishedBytes = bytes
+                    lastPublishedAt = now
+                    callback(
+                        request.progress(
+                            message = "原生 ZIP 解包中：$entries 项，$bytes 字节",
+                            lane = "android_native",
+                            reason = readyReason,
+                        )
+                    )
+                }
+            },
+        )
+        when (result) {
+            is NativeArchiveExecutionResult.Success -> {
+                val summary = "原生 ZIP 解包完成：${result.entriesExtracted} 项，${result.bytesExtracted} 字节"
+                callback(
+                    RecipeExecutionEvent.Completed(
+                        request.instanceId,
+                        request.generation,
+                        request.stepIndex,
+                        RunStateMutation(
+                            status = CardRunStatus.Running,
+                            surface = CardRunSurface.Report,
+                            currentStepIndex = request.stepIndex,
+                            runtimeLane = "android_native",
+                            runtimeFallbackReason = readyReason,
+                            lastMeaningfulOutput = summary,
+                            shellReportText = summary,
+                            clearNextActionUrl = true,
+                        ),
+                    )
+                )
+            }
+            is NativeArchiveExecutionResult.Failure -> callback(
+                request.failed(result.reason, result.reason)
+            )
+            is NativeArchiveExecutionResult.Cancelled -> callback(
+                request.failed("native_archive_cancelled", "native_archive_cancelled")
             )
         }
     }

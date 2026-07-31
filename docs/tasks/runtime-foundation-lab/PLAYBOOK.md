@@ -223,8 +223,8 @@
 
 ##### RF330b Recipe/Run 与取消
 
-- [ ] 接入现有 `native_capability` 与同一 `CardRun`；
-- [ ] 进度、失败、取消和清理沿用原生运行链，不创建终端或进程。
+- [x] 接入现有 `native_capability` 与同一 `CardRun`；
+- [x] 进度、失败、取消和清理沿用原生运行链，不创建终端或进程。
 
 ##### RF330c 资源与真机门
 

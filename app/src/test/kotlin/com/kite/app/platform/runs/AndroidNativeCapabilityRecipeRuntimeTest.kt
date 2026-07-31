@@ -3,12 +3,14 @@ package com.kite.app.platform.runs
 import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.foundation.runtime.AndroidNativeCapabilityContext
+import com.kite.app.foundation.runtime.AndroidNativeArchiveCapabilityProvider
 import com.kite.app.foundation.runtime.AndroidNativeDownloadCapabilityProvider
 import com.kite.app.foundation.runtime.AndroidNativeDownloadExecutor
 import com.kite.app.foundation.runtime.AndroidNativeFileCapabilityContext
 import com.kite.app.foundation.runtime.AndroidNativeFileCapabilityProvider
 import com.kite.app.foundation.runtime.AndroidNativeFilePlan
 import com.kite.app.foundation.runtime.NativeCapabilityDestinationRoot
+import com.kite.app.foundation.runtime.NativeArchiveExecutionResult
 import com.kite.app.foundation.runtime.NativeDownloadConnection
 import com.kite.app.foundation.runtime.NativeDownloadConnectionFactory
 import com.kite.app.foundation.runtime.NativeFileCancellation
@@ -32,6 +34,8 @@ import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
+import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -152,10 +156,74 @@ class AndroidNativeCapabilityRecipeRuntimeTest {
         assertFalse(File(root, "copied.txt").exists())
     }
 
+    @Test
+    fun `native archive step publishes report on the same run without terminal`() {
+        val root = Files.createTempDirectory("kite-native-archive-recipe").toFile()
+        ZipArchiveOutputStream(File(root, "source.zip")).use { output ->
+            output.putArchiveEntry(ZipArchiveEntry("dir/file.txt"))
+            output.write("archive".toByteArray())
+            output.closeArchiveEntry()
+            output.finish()
+        }
+        val runtime = runtime(root, NativeDownloadConnectionFactory { _, _, _ -> error("download_not_expected") })
+        val events = Collections.synchronizedList(mutableListOf<RecipeExecutionEvent>())
+        val completed = CountDownLatch(1)
+
+        runtime.execute(archiveRequest()) { event ->
+            events += event
+            if (event is RecipeExecutionEvent.Completed || event is RecipeExecutionEvent.Failed) {
+                completed.countDown()
+            }
+        }
+
+        assertTrue(completed.await(5, TimeUnit.SECONDS))
+        val result = events.filterIsInstance<RecipeExecutionEvent.Completed>().single()
+        assertEquals("android_native", result.mutation.runtimeLane)
+        assertEquals("native_archive_zip_ready", result.mutation.runtimeFallbackReason)
+        assertEquals(null, result.mutation.runId)
+        assertEquals(null, result.mutation.terminalSessionId)
+        assertEquals("archive", File(root, "output/dir/file.txt").readText())
+        assertFalse(runtime.owns("native-archive-instance", 300L))
+    }
+
+    @Test
+    fun `stop cancels blocking archive and releases native ownership`() {
+        val root = Files.createTempDirectory("kite-native-archive-stop").toFile()
+        File(root, "source.zip").writeBytes(byteArrayOf(1))
+        val started = CountDownLatch(1)
+        val failed = CountDownLatch(1)
+        val stopped = CountDownLatch(1)
+        val confirmed = AtomicReference<Boolean>()
+        val runtime = runtime(
+            root,
+            NativeDownloadConnectionFactory { _, _, _ -> error("download_not_expected") },
+            archiveGateway = NativeArchiveExecutionGateway { _, cancellation, _ ->
+                started.countDown()
+                while (!cancellation.isCancelled()) Thread.sleep(10L)
+                NativeArchiveExecutionResult.Cancelled(0, 0L)
+            },
+        )
+        runtime.execute(archiveRequest()) { event ->
+            if (event is RecipeExecutionEvent.Failed) failed.countDown()
+        }
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+
+        runtime.stop("native-archive-instance", 300L) { result ->
+            confirmed.set(result)
+            stopped.countDown()
+        }
+
+        assertTrue(failed.await(5, TimeUnit.SECONDS))
+        assertTrue(stopped.await(5, TimeUnit.SECONDS))
+        assertEquals(true, confirmed.get())
+        assertFalse(File(root, "output").exists())
+    }
+
     private fun runtime(
         root: File,
         factory: NativeDownloadConnectionFactory,
         fileGateway: NativeFileExecutionGateway? = null,
+        archiveGateway: NativeArchiveExecutionGateway? = null,
     ) = AndroidNativeCapabilityRecipeRuntime(
         context = RuntimeEnvironment.getApplication(),
         downloadExecutor = AndroidNativeDownloadExecutor(factory),
@@ -178,7 +246,55 @@ class AndroidNativeCapabilityRecipeRuntimeTest {
         fileExecutionGateway = fileGateway ?: NativeFileExecutionGateway { plan, cancellation, progress ->
             com.kite.app.foundation.runtime.AndroidNativeFileExecutor().execute(plan, cancellation, progress)
         },
+        archiveExecutionGateway = archiveGateway ?: NativeArchiveExecutionGateway { plan, cancellation, progress ->
+            com.kite.app.foundation.runtime.AndroidNativeArchiveExecutor().execute(plan, cancellation, progress)
+        },
     )
+
+    private fun archiveRequest(): RecipeStepExecutionRequest {
+        val params = JSONObject()
+            .put(AndroidNativeArchiveCapabilityProvider.PARAM_SOURCE, "/workspace/source.zip")
+            .put(AndroidNativeArchiveCapabilityProvider.PARAM_DESTINATION, "/workspace/output")
+            .put(AndroidNativeArchiveCapabilityProvider.PARAM_FORMAT, "zip")
+            .put(AndroidNativeArchiveCapabilityProvider.PARAM_MAX_ARCHIVE_BYTES, "1048576")
+            .put(AndroidNativeArchiveCapabilityProvider.PARAM_MAX_ENTRIES, "100")
+            .put(AndroidNativeArchiveCapabilityProvider.PARAM_MAX_TOTAL_BYTES, "1048576")
+            .put(AndroidNativeArchiveCapabilityProvider.PARAM_MAX_FILE_BYTES, "1048576")
+            .put(AndroidNativeArchiveCapabilityProvider.PARAM_MAX_DEPTH, "8")
+            .put(AndroidNativeArchiveCapabilityProvider.PARAM_MAX_EXPANSION_RATIO, "100")
+        val step = KiteRecipeStep(
+            id = "native-archive",
+            type = KiteRecipe.STEP_NATIVE_CAPABILITY,
+            action = AndroidNativeArchiveCapabilityProvider.CAPABILITY_ID,
+            params = params,
+        )
+        val recipe = KiteRecipe(
+            id = "native-archive-recipe",
+            name = "Native Archive Recipe",
+            description = "",
+            type = KiteRecipe.TYPE_TEMPLATE,
+            defaultUrl = "",
+            shortcut = false,
+            execution = KiteExecution.steps(listOf(step)),
+        )
+        val state = CardRunState(
+            instanceId = "native-archive-instance",
+            recipeId = recipe.id,
+            recipeName = recipe.name,
+            status = CardRunStatus.Running,
+            currentStepIndex = 0,
+            createdAt = 300L,
+            updatedAt = 300L,
+        )
+        return RecipeStepExecutionRequest(
+            recipe = recipe,
+            instanceId = state.instanceId,
+            generation = state.createdAt,
+            stepIndex = 0,
+            step = step,
+            previousState = state,
+        )
+    }
 
     private fun fileRequest(): RecipeStepExecutionRequest {
         val params = JSONObject()

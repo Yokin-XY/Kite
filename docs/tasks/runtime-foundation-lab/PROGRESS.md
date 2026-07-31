@@ -15,10 +15,10 @@
 | RF230 | 已完成 | 纯 Python go；subprocess/venv child/第三方扩展保持 PRoot |
 | RF240 | 已完成 | 通用 glibc 资产与纯 Python 结构化 Provider 已通过真机门 |
 | RF250 | 已完成 | 子进程保持 PRoot；扩展按精确 ABI 与不可变代次开放 |
-| RF300 | 进行中 | RF330a ZIP 安全 Provider 已完成，进入 RF330b Recipe/Run |
+| RF300 | 进行中 | RF330b Recipe/Run 已完成，进入 RF330c 资源与真机门 |
 | RF310 | 已完成 | 原生下载、Recipe/Run、资源预取及对照压力门通过 |
 | RF320 | 已完成 | 文件 Provider、Recipe/Run、权限边界和真机门通过 |
-| RF330 | 进行中 | 普通文件/目录 ZIP 已封闭，tar 与 Linux 元数据保持 PRoot |
+| RF330 | 进行中 | 安全 ZIP 已接入同一 Run，待资源边界与真机压力门 |
 | RF330～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
@@ -28,6 +28,14 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF330b Recipe/Run 与取消
+
+- 原生分发顺序扩展为下载→文件→安全归档；只有前一 Provider 明确 Unsupported 才继续，Blocked 和执行失败不会投向下一 Provider 或 PRoot。
+- `archive.extract_safe` 的进度、完成、失败和取消继续写入同一 `CardRun` 的 `android_native` 车道与报告显示面；不创建 `runId`、终端会话或进程 owner。
+- 归档执行复用文件能力的取消信号；停止入口等待同一个 instance/generation/step 释放，阻塞测试证明取消后不会残留目标目录。
+- 四个目标 suite、27 项测试全部通过，包含真实 ZIP Recipe、中央目录安全测试、无终端绑定、阻塞停止以及既有文件/Recipe executor 回归。
+- 下一步 RF330c 审计资源 ZIP 合同并完成真机恶意样本、压力和 PRoot 对照；tar/tar.gz 保持原行为。
 
 ### 2026-07-31 RF330a ZIP 安全 Provider
 
@@ -209,6 +217,5 @@
 
 ## 待验证
 
-- RF330b 将 ZIP 安全 Provider 接入同一 Recipe/Run，并验证取消、进度和唯一状态事实。
-- RF330c 只评估静态 ZIP 缓存步骤；tar/tar.gz、动态路径和 Linux 元数据仍保持 PRoot。
+- RF330c 只评估静态 ZIP 缓存步骤，并完成恶意样本、压力和 PRoot 真机对照；tar/tar.gz、动态路径和 Linux 元数据仍保持 PRoot。
 - 动态 URL、多镜像和无尺寸上限下载不属于 RF310 已开放范围；将来只有形成可验证的结构化合同后才单独立项。
