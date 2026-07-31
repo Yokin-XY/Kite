@@ -30,6 +30,13 @@
 
 ## 倒序日志
 
+### 2026-08-01 RF420b 队列生命周期闭环
+
+- controller 在排队前检查活动和等待集合；同一 `jobId` 的第二份请求立即以 `admission_job_id_conflict` 失败，原 lease 释放或等待项取消后该身份可安全复用。
+- 新增 `cancelQueued(jobId)` 只移除尚未准入的等待项并唤醒其线程，返回 `admission_cancelled`；活动 job 返回 false，必须继续由声明的 owner/timeout 回收，准入器不杀进程。
+- snapshot 新增累计 `cancelledCount`，与现有 active、queued、admitted 和 timedOut 分开；取消不会消耗容量或计为超时。
+- 准入器与 warm pool 两个 suite、18 项测试通过，零失败、零错误、零跳过；下一步 RF420c 补同优先级 FIFO、关闭唤醒和固定调用方回退合同，并完成 Debug 门。
+
 ### 2026-08-01 RF420a 完整任务身份合同
 
 - `ProotJobAdmissionRequest` 现在强制声明 owner、取消模式和结果模式；它与既有 jobId、lane、读写属性、压力必要性和等待上限共同构成完整准入身份，缺失 owner 在排队前失败关闭。

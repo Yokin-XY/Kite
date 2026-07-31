@@ -57,6 +57,7 @@ internal data class ProotJobAdmissionSnapshot(
     val queuedCount: Int,
     val activeSharedWrite: Boolean,
     val admittedCount: Long,
+    val cancelledCount: Long,
     val timedOutCount: Long,
     val maxObservedActive: Int,
 )
@@ -91,6 +92,7 @@ internal class ProotJobAdmissionController(
         val sequence: Long,
         val enqueuedAtNanos: Long,
         val request: ProotJobAdmissionRequest,
+        var cancelled: Boolean = false,
     )
 
     private data class Active(
@@ -108,6 +110,7 @@ internal class ProotJobAdmissionController(
 
     private var nextSequence = 0L
     private var admittedCount = 0L
+    private var cancelledCount = 0L
     private var timedOutCount = 0L
     private var maxObservedActive = 0
     private var closed = false
@@ -123,12 +126,21 @@ internal class ProotJobAdmissionController(
         validate(request)
         val waiter = lock.withLock {
             if (closed) return ProotJobAdmissionResult.Rejected("admission_closed")
+            if (pending.any { it.request.jobId == request.jobId } || active.values.any {
+                    it.request.jobId == request.jobId
+                }
+            ) {
+                return ProotJobAdmissionResult.Rejected("admission_job_id_conflict")
+            }
             Waiter(++nextSequence, monotonicNanos(), request).also(pending::add)
         }
         val deadline = waiter.enqueuedAtNanos + TimeUnit.MILLISECONDS.toNanos(request.waitTimeoutMs)
 
         return lock.withLock {
             while (true) {
+                if (waiter.cancelled) {
+                    return@withLock ProotJobAdmissionResult.Rejected("admission_cancelled")
+                }
                 if (closed) {
                     pending.remove(waiter)
                     return@withLock ProotJobAdmissionResult.Rejected("admission_closed")
@@ -163,6 +175,16 @@ internal class ProotJobAdmissionController(
         }
     }
 
+    /** 只取消尚未准入的任务；已经开始的任务必须交回其声明的运行 owner。 */
+    fun cancelQueued(jobId: String): Boolean = lock.withLock {
+        val waiter = pending.firstOrNull { it.request.jobId == jobId } ?: return@withLock false
+        pending.remove(waiter)
+        waiter.cancelled = true
+        cancelledCount += 1L
+        changed.signalAll()
+        true
+    }
+
     fun snapshot(): ProotJobAdmissionSnapshot = lock.withLock {
         ProotJobAdmissionSnapshot(
             profileGroup = policy.profileGroup,
@@ -172,6 +194,7 @@ internal class ProotJobAdmissionController(
             queuedCount = pending.size,
             activeSharedWrite = active.values.any { it.request.access == ProotJobAccess.SHARED_WRITE },
             admittedCount = admittedCount,
+            cancelledCount = cancelledCount,
             timedOutCount = timedOutCount,
             maxObservedActive = maxObservedActive,
         )

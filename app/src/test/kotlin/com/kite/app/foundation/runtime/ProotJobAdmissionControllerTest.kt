@@ -22,6 +22,53 @@ class ProotJobAdmissionControllerTest {
     }
 
     @Test
+    fun `active job id cannot be admitted twice and becomes reusable after release`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED)
+        val first = granted(
+            controller.acquireBlocking(request("same-job", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+
+        val conflict = controller.acquireBlocking(
+            request("same-job", RuntimeLaneKind.SERVICE)
+        ) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_job_id_conflict", conflict.reason)
+        first.close()
+        granted(controller.acquireBlocking(request("same-job", RuntimeLaneKind.SERVICE))).lease.close()
+        controller.close()
+    }
+
+    @Test
+    fun `queued cancellation wakes waiter without stopping active owner`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val active = granted(
+            controller.acquireBlocking(request("active", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val executor = Executors.newSingleThreadExecutor()
+        val queued = executor.submit<ProotJobAdmissionResult> {
+            controller.acquireBlocking(request("queued", RuntimeLaneKind.SERVICE, waitTimeoutMs = 5_000L))
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+
+        val conflict = controller.acquireBlocking(
+            request("queued", RuntimeLaneKind.PROBE)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_job_id_conflict", conflict.reason)
+        assertTrue(controller.cancelQueued("queued"))
+        val cancelled = queued.get(1, TimeUnit.SECONDS) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_cancelled", cancelled.reason)
+        assertEquals(0, controller.snapshot().queuedCount)
+        assertEquals(1, controller.snapshot().activeCount)
+        assertEquals(1L, controller.snapshot().cancelledCount)
+        assertTrue(!controller.cancelQueued("active"))
+        active.close()
+        granted(controller.acquireBlocking(request("queued", RuntimeLaneKind.SERVICE))).lease.close()
+        executor.shutdownNow()
+        controller.close()
+    }
+
+    @Test
     fun `profiles enforce one two and four active jobs`() {
         val expected = mapOf(
             RuntimeLifecyclePolicyProfileGroup.LOW_POWER to 1,
