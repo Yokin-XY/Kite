@@ -36,7 +36,8 @@
 | RF700 | 进行中 | 在既有校准 dry-run 上对齐正式 1/2/4 策略，不另建平行体系 |
 | RF710 | 已完成 | overlay schema 失败关闭，tracee guard 与正式 1/2/4 档位彻底分离 |
 | RF720 | 已完成 | actual 差量窗口失败关闭；高压/失败只降一级，无可信 thermal 永不升档 |
-| RF730 | 进行中 | 建立连续窗口、冷却、回滚和重启恢复纯状态机 |
+| RF730 | 已完成 | 三窗升档、两窗失败、紧急降档、冷却与重启 rebase 纯状态机通过 |
+| RF740 | 进行中 | 固定 planned 建议与 actual coordinator 的低基数投影边界 |
 
 ## RF110 开机与三问自检
 
@@ -94,6 +95,15 @@
 - 自动升档候选要求：正式 RuntimeHealth source、NORMAL 内存、前台、20 个以上差量样本、失败率低、P95 不超过 1 秒、RF710 guard ready、60 秒内可信 thermal normal。当前仓库没有可靠 thermal source，因此真实生产环境仍然不可能自动升档。
 - 目标回归覆盖 `RuntimeProotAdaptiveSignalGateTest`、`RuntimeProotCalibrationAlignmentTest`、`BoundedProotTaskTelemetryTest`：3 个 suite、21 tests、0 failure、0 error、0 skipped；Debug 编译随测试成功。
 - 下一恢复指针进入 RF730；它只能消费 RF720 的窗口 action，建立连续确认/冷却/回滚模拟器，不能写正式策略文件。
+
+## RF730 验收
+
+- 新增 `RuntimeProotAdaptiveHysteresis` 纯状态机，actual 档位始终由调用方传入；状态只保存连续窗口数、待应用相邻目标、冷却期限和相邻 rollback target，不成为第二个正式策略源。
+- 默认三次连续健康窗口才发出一次升一级建议；HOLD 清空连续证据，待应用升档遇到坏窗口可取消。正式应用由 actual 后续变化确认，状态机本身不写档位。
+- 升档确认后进入 10 分钟冷却。内存 HIGH/CRITICAL 或可信 thermal hot 仍可立即建议降一级；失败率坏窗口使用两个连续窗口预算，健康/HOLD 会打断预算。
+- 恢复时 schema 损坏、actual 与 checkpoint 不同、pending 已被外部应用，均只 reset/rebase 并启动冷却；不会根据旧 streak 或 pending 再跳一级。所有输入窗口还要再次验证 scope、actual 和相邻目标。
+- 目标回归覆盖 RF720/RF730：2 个 suite、18 tests、0 failure、0 error、0 skipped；Debug 编译随测试成功。
+- 下一恢复指针进入 RF740，只投影固定低基数 planned/actual 差异，不能把 recommendation 冒充已生效策略。
 
 ## RF710 开机与三问自检
 

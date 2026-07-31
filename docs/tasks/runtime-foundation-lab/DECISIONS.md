@@ -254,3 +254,11 @@
 - 决定：自适应评估只接受正式 RuntimeHealth policy source、RF530 累计遥测的单调差量窗口、内存/前后台、RF710 guard 与显式 thermal evidence。高压、可信过热或显著失败可以建议降一级；升档必须同时满足可信 normal thermal、足量低失败样本、P95、前台与 guard，且只标记一个健康窗口。
 - 原因：累计计数不能直接代表当前窗口，单个好样本也不能证明更高并发稳定；另一方面，高内存压力是无需等待任务样本即可收缩后续准入的安全事实。当前代码没有可靠 thermal 来源，若把 unavailable 当 normal 会让预研合同伪造生产能力。
 - 影响：RF720 永不修改 coordinator，所有结果都标记 `planned_not_production` 和 `changesCoordinator=false`。未知、陈旧、计数回退、桶矛盾、CUSTOM 档或非正式 source 均失败关闭；RF730 只能在这些窗口结果之上增加迟滞，不能降低本门要求。
+
+## ADR-RF-033 自适应迟滞不拥有 actual 且安全降档不受冷却阻断
+
+- 状态：已接受，RF730 已完成
+- 日期：2026-08-01
+- 决定：迟滞状态只保存窗口 streak、待应用相邻目标、冷却和 rollback target；每次推进都由调用方提供 actual 1/2/4。升档需三个连续 RF720 健康窗口，失败率降档需两个连续坏窗口，内存/thermal 紧急压力可直接建议降一级并绕过升档冷却。
+- 原因：把候选档写进独立 Store 会复制 coordinator 事实；让单个好样本升档会抖动，而让冷却压住高压降档又会把性能稳定性置于设备存活之前。重启时旧 pending/streak 也不能证明当前 actual 已按同一路径变化。
+- 影响：建议发出后等待外部 actual 确认，不重复发出；actual 变化、状态损坏或输入不相邻时 reset/rebase 并重新冷却。RF740 只能投影这份规划状态和 RF510 actual 的差异，正式应用仍为 no-go。
