@@ -4,8 +4,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$source = Join-Path $repoRoot "native\kite-node-host\kite-node-glibc-compat.c"
-$syscallSource = Join-Path $repoRoot "native\kite-node-host\kite-node-glibc-syscall-arm64.S"
+$source = Join-Path $repoRoot "native\kite-glibc-host\kite-glibc-compat.c"
+$syscallSource = Join-Path $repoRoot "native\kite-glibc-host\kite-glibc-syscall-arm64.S"
 $outputDir = Join-Path $repoRoot "assets\node-runtime"
 $output = Join-Path $outputDir "libkite-node-glibc-compat.so"
 
