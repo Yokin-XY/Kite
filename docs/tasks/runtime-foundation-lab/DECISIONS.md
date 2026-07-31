@@ -150,3 +150,11 @@
 - 决定：低负载、均衡、高性能的准入/温热上限固定为 1/2/4，空闲回收为 2/30/120 秒；CUSTOM 从 lane 配置推导，但生产同样封顶 4。准入与 pool 只能消费 `ProotPerformanceTunings`。
 - 原因：OnePlus 8T 的 8 并发虽提高总吞吐，但温热 P95 从 114 ms 上升到 130 ms；继续扩大默认并发不能保证用户感知更快。重复映射还会令 CUSTOM 准入和实际池容量漂移。
 - 影响：8 只保留 debug 校准覆盖。压力变化可继续收缩有效上限，但不改变配置档，也不强杀已开始任务；当前继续采用 1/2/4，均衡档空闲 30 秒后回收，后续若要提高生产上限，必须重新提供目标设备 P95、内存、失败率和 ANR 证据。
+
+## ADR-RF-020 规划态与实际 PRoot 调度态分开投影
+
+- 状态：已接受，RF510 已完成
+- 日期：2026-08-01
+- 决定：`RuntimeProotPoolPlanDryRun` 继续表达规划/建议；实际 admission、queue 和 warm session 只从 `WarmProotExecutionCoordinator` 即时投影为 `proot_actual_*`，不建立第二份 Store。
+- 原因：规划出来的 slots、压力建议和容量动作不证明真实任务已准入或 Runner 已创建；把二者混在同一字段会导致性能诊断和自动策略读取错误事实。
+- 影响：正式健康输出可以同时比较 planned 与 actual。actual 只允许低基数枚举和数字，不记录任务身份、命令、路径、环境或输出，诊断读取也不能创建 PRoot。

@@ -495,3 +495,24 @@ internal object WarmProotExecutionCoordinator {
         )
     }
 }
+
+/** 正式健康面只投影低基数调度事实，不暴露任务身份、命令、路径、环境或输出。 */
+internal fun WarmProotExecutionCoordinator.TuningSnapshot.toRuntimeHealthEnvText(): String = buildString {
+    appendLine("proot_actual_scheduler_schema=bounded_proot_scheduler_v1")
+    appendLine("proot_actual_scheduler_source=warm_proot_execution_coordinator")
+    appendLine("proot_actual_scheduler_scope=actual_not_planned")
+    appendLine("proot_actual_profile=${profileGroup.name}")
+    appendLine("proot_actual_pressure=${pressure.name}")
+    appendLine("proot_actual_foreground=$foreground")
+    appendLine("proot_actual_configured_global_max=$configuredGlobalMax")
+    appendLine("proot_actual_effective_global_max=$effectiveGlobalMax")
+    appendLine("proot_actual_warm_runner_max=$maxWarmRunners")
+    appendLine("proot_actual_idle_timeout_ms=$idleTimeoutMs")
+    appendLine("proot_actual_active_jobs=$activeJobs")
+    appendLine("proot_actual_queued_jobs=$queuedJobs")
+    appendLine("proot_actual_warm_session_total=$totalWarmSessions")
+    appendLine("proot_actual_warm_session_active=$activeWarmSessions")
+    appendLine("proot_actual_warm_session_idle=$idleWarmSessions")
+    appendLine("proot_actual_warm_session_stale=$staleWarmSessions")
+    appendLine("proot_actual_oldest_idle_age_ms=$oldestIdleAgeMs")
+}

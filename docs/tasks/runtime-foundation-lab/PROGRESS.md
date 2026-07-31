@@ -21,6 +21,14 @@
 | RF330 | 已完成 | 安全 ZIP 正确性通过，但真机慢于 PRoot，不进入资源快速车道 |
 | RF340 | 已完成 | 真实能力目录、薄适配、失败关闭和父任务门通过 |
 | RF400 | 已完成 | PRoot Provider、准入、温热短任务与可调性能档位完成闭环 |
+| RF500 | 进行中 | 进入 RF510，正式投影实际调度状态 |
+| RF510 | 已完成 | actual coordinator 状态已进入 RuntimeHealth，读取不创建 pool |
+| RF520 | 进行中 | 冷启动 UNKNOWN 压力导致均衡档暂时单并发 |
+| RF530 | 待开始 | 有界执行 route/result/latency 尚无正式低基数遥测 |
+| RF540 | 待开始 | Supervisord 健康采集仍使用独立 PRoot 复杂 shell |
+| RF550 | 待开始 | RF500 父任务门 |
+| RF600 | 待研究 | 长生命周期 owner lease，禁止直接套用短任务 lease |
+| RF700 | 待研究 | 固定 1/2/4 之上的设备自适应校准 |
 
 ## RF110 开机与三问自检
 
@@ -28,7 +36,32 @@
 - 完成标准是什么？文档互链、已验证与待验证事实分离、首个特例和回退门明确，不冒充 Python/原生能力已实现。
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
+## RF510 开机与三问自检
+
+- 目标是什么？按 `PLAYBOOK.md` 把实际 coordinator/admission/warm pool 状态投影到正式 RuntimeHealth，明确区别现有规划推演结果。
+- 完成标准是什么？字段来自同一实际状态源，读取不创建 PRoot，不记录命令/路径/用户输入，并有单测与 Debug 构建证据。
+- 依赖是否满足？满足。RF440 已完成；分支工作树干净，实际快照已存在且当前仅由 Debug 探针消费。
+
+## RF520 开机与三问自检
+
+- 目标是什么？按 `PLAYBOOK.md` 让第一份健康快照前的 admission 使用已有 host 可用内存压力事实，关闭默认均衡档的假性单并发。
+- 完成标准是什么？正常内存为 2，缺信号/高压/临界仍为 1；正式 RuntimeHealth 到达后覆盖 bootstrap，真机能读到来源和有效上限。
+- 依赖是否满足？满足。RF510 已建立 actual 正式投影；现有 `RuntimePressureGuard` 已能从 `/proc/meminfo` 计算 hostAvailableLevel，无需新增传感器或状态源。
+
 ## 倒序日志
+
+### 2026-08-01 RF510 实际调度状态正式投影
+
+- 正式 RuntimeHealth 新增 `proot_actual_*` 组，明确 `scope=actual_not_planned`；字段即时来自 `WarmProotExecutionCoordinator` 的 policy、admission 与 pool，不复用规划态 `prootPoolPlan` 冒充实际执行。
+- 投影覆盖 profile、pressure、foreground、配置/有效上限、warm 上限/空闲时间、active/queued、session active/idle/stale 和最大空闲年龄；不包含 argv、cwd、owner、环境或输出。
+- 未创建 pool 时 `tuningSnapshot()` 返回零 session，诊断读取不会触发 holder、资产检查或 PRoot 进程创建。
+- 3 个相关 suite、13 项测试通过，Debug 构建成功；下一步 RF520 只修第一份 RuntimeHealth 前的 bootstrap policy，不改变正式快照接管规则。
+
+### 2026-08-01 RF500 启动
+
+- RF000 完成后按用户授权继续自主推进，不重跑冻结的 Node/Python 矩阵，不推送远端；每个叶子任务继续独立 Git 提交。
+- 代码审计确认下一批真实缺口：实际 coordinator 状态没有进入正式健康面；冷启动首份健康快照前有效并发固定为 1；Supervisord 健康采集每次新建独立 PRoot 且不能直接把复杂 shell 伪装成 argv。
+- RF500 先做控制面和第二个高频有界生产样板。普通终端、任意 Recipe shell、Agent、detached 和长期服务保持原路径；RF600 只在 RF500 父任务门后进入合同研究。
 
 ### 2026-08-01 RF440c / RF440 / RF400 / RF000 父任务验收
 

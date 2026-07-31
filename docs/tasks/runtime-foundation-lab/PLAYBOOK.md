@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF000` 三车道底座闭环
-- 当前任务：全部父任务门已完成，等待后续集成决策
+- 当前阶段：`RF500` PRoot 生产控制面扩展
+- 当前任务：`RF520` 冷启动策略接力
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -358,6 +358,68 @@
 - [x] 三档、CUSTOM、压力收缩、前后台 lane、动态 trim 和不强杀活动任务回归通过；
 - [x] OnePlus 8T 复算吞吐、P95、内存、失败率和空闲回收，形成保留/调整结论；
 - [x] RF400 完成，普通 PRoot 兼容路径与 View 边界不变。
+
+### RF500 [P0 生产扩展] PRoot 实际控制面与第二生产样板
+
+父任务验收：不扩大任意 shell、终端、Agent 和长期服务准入范围的前提下，让正式健康面能看到真实 admission/warm 状态，关闭冷启动假性单并发，并把一个高频代码自有任务迁入有界 Runner。
+
+#### RF510 实际调度状态正式投影
+
+- 问题证据：`WarmProotExecutionCoordinator.TuningSnapshot` 只被 Debug 探针读取；`RuntimeHealthStore` 的 `prootPoolPlan` 是规划/推演结果，不等于实际 admission、queue 和 warm session。
+- 解法：从现有 coordinator 即时投影实际档位、配置/有效上限、压力、前后台、active/queued、warm active/idle/stale 和空闲年龄到正式 RuntimeHealth 文本，不新增 Store，不记录 argv、路径或用户输入。
+- 验收标准：
+  - [x] 正式 RuntimeHealth 输出明确区分 `planned` 与 `actual`；
+  - [x] actual 字段只来自 coordinator 当前 policy、admission 和 pool；
+  - [x] 未创建 pool 时可安全输出零会话，不因诊断读取创建 PRoot；
+  - [x] 单测证明字段、来源和无敏感 payload，Debug 构建通过。
+- 依赖：RF440。
+
+#### RF520 冷启动策略接力
+
+- 问题证据：coordinator 在第一份 `RuntimeHealthSnapshot` 到达前使用 `pressure=UNKNOWN`，均衡/高性能档有效上限均为 1；OnePlus 8T 冷探针已复现 `configuredMax=2 effectiveMax=1`。
+- 解法：冷启动只复用现有 host MemAvailable 压力判定和默认 workload profile；内存信号可靠时按真实压力给出 1/2 起步值，信号缺失或高压仍保持 1，首份健康快照到达后由正式策略完全接管。
+- 验收标准：
+  - [ ] host 可用内存正常时，默认均衡冷启动不再假性单并发；
+  - [ ] host 信号缺失、高压和临界压力仍保守为 1；
+  - [ ] 正式快照可覆盖 bootstrap policy，不存在第二控制源；
+  - [ ] OnePlus 8T 冷进程探针显示来源、配置上限和有效上限。
+- 依赖：RF510。
+
+#### RF530 有界执行结果遥测
+
+- 问题证据：现有 snapshot 只有 admitted/timedOut/cancelled 和队列数量，无法区分 warm、独立回退、拒绝、STARTED 后失败及实际等待/执行耗时。
+- 解法：为 `BoundedProotTaskExecutor` 增加固定低基数聚合，按 route/result/lane 记录累计次数与有界时延桶；只保留数字和枚举，不保存 argv、cwd、env、输出或 owner 原文，并投影到 RF510 的同一健康面。
+- 验收标准：
+  - [ ] warm、独立回退、准入拒绝、STARTED 后失败和 fallback 失败可区分；
+  - [ ] 记录 queue/execute/total 的计数与有界时延，不引入高基数标签；
+  - [ ] 并发更新不丢计数，清零仅限测试；
+  - [ ] RuntimeHealth 读取不触发执行或扫描。
+- 依赖：RF510。
+
+#### RF540 Supervisord 健康采集有界 Runner 样板
+
+- 问题证据：`SupervisordServiceHealthStore` 的健康刷新是高频内部任务，但当前用复杂 shell 每次新建独立 PRoot；它同时包含 `supervisorctl update/status` 和固定日志尾部，不能把 shell 文本伪装成结构化 argv。
+- 解法：由 Android 控制面生成固定版本的容器 helper，调用方只执行结构化 helper argv；声明稳定 owner、`SERVICE/SHARED_WRITE`、timeout、输出和结果合同，STARTED 前可独立回退，STARTED 后不重放。
+- 验收标准：
+  - [ ] helper 内容、路径和版本由代码拥有，不接受外部命令参数；
+  - [ ] 既有 update/status、日志 marker、退出码和解析语义保持；
+  - [ ] 调用方不再直接 `ProcessBuilder` PRoot，失败仍返回原 `CommandResult` 边界；
+  - [ ] 单测、Debug 构建和 OnePlus 8T 冷/温对照通过，无残留任务。
+- 依赖：RF530。
+
+#### RF550 RF500 父任务门
+
+- [ ] RF510～RF540 联合回归通过，实际/规划状态边界清楚；
+- [ ] 冷启动、温热复用、空闲回收、压力收缩和服务健康链真机通过；
+- [ ] 形成下一阶段长生命周期 owner lease 的 go/no-go，不直接迁移终端或 Agent。
+
+### RF600 [P1 预研] 长生命周期 owner lease
+
+父任务方向：让长期服务的准入 lease 与真实 runtime owner 同寿命，先建立合同与模拟器，再决定是否迁移一个后台服务；终端和 Agent 必须各自通过独立生命周期门。
+
+### RF700 [P2 预研] 设备自适应校准
+
+父任务方向：在 1/2/4 固定安全档上研究可回滚的设备级校准，只消费可信内存、前后台和失败率信号；热状态没有可靠来源前不伪造自动升档。
 
 ## 每个叶子任务的固定闭环
 

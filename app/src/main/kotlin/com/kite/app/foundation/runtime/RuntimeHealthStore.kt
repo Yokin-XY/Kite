@@ -2723,6 +2723,7 @@ object RuntimeHealthStore {
         builder.append(prootTelemetryRepairPlan.toEnvText())
         builder.append(pressureConsumer.toEnvText())
         builder.append(pressureStability.toEnvText())
+        builder.append(WarmProotExecutionCoordinator.tuningSnapshot().toRuntimeHealthEnvText())
         builder.append(prootPoolPlan.toEnvText())
         builder.append(prootManagementMainline.toEnvText())
         builder.append(prootDeviceCalibration.toEnvText())
