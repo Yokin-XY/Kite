@@ -51,6 +51,19 @@ class BackgroundRuntimeManagedProotBridgeContractTest {
     }
 
     @Test
+    fun `terminal runtime still enters stop path while a managed proot lease is unreleased`() {
+        val stopEntry = source.substringAfter("private suspend fun stopRuntimeInternal(")
+            .substringBefore("private fun ensureRuntimePrerequisites(")
+
+        assertTrue(
+            stopEntry.contains(
+                "record.status.isTerminalStatus() && !record.hasUnreleasedLongLivedProotLease()"
+            )
+        )
+        assertTrue(stopEntry.contains("BackgroundRuntimeMode.PROCESS -> stopProcessRuntime"))
+    }
+
+    @Test
     fun `all compatibility fallbacks use the generic proot lane without product special cases`() {
         val launchBody = source.substringAfter("private fun buildRuntimeProcessLaunchConfig(")
             .substringBefore("private fun resolveRuntimeEnvironment(")

@@ -19,6 +19,25 @@
             android:name="com.kite.app.foundation.runtime.ProotAdmissionBenchmarkService"
             android:exported="false" />
         <receiver
+            android:name="com.kite.app.foundation.runtime.ManagedProotProductionGateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.MANAGED_PROOT_PRODUCTION_GATE" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.ManagedProotProductionGateService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ManagedProotLifecycleProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.MANAGED_PROOT_LIFECYCLE_START" />
+                <action android:name="com.kite.app.debug.MANAGED_PROOT_LIFECYCLE_STOP" />
+                <action android:name="com.kite.app.debug.MANAGED_PROOT_LIFECYCLE_SNAPSHOT" />
+            </intent-filter>
+        </receiver>
+        <receiver
             android:name="com.kite.app.foundation.runtime.PythonRuntimeBenchmarkReceiver"
             android:exported="true">
             <intent-filter>

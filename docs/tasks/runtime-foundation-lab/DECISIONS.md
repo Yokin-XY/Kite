@@ -366,3 +366,11 @@
 - 决定：唯一 admission snapshot 在持锁期间按 `MANAGED_OWNER` 分类长期活动/排队 holder；正式健康面据此输出独立 `proot_long_actual_*` 和 `proot_unified_actual_*`。旧 `proot_actual_active_jobs/queued_jobs` 继续只代表有界短任务，规划态继续使用 `proot_long_planned_*`。
 - 原因：分别读取长期句柄表和 admission 会在 acquire/release 窗口出现瞬时错配；扫描 `BackgroundRuntimeRecord` 又会把未实际准入的记录冒充容量。请求取消模式已经是 controller 内的通用生命周期声明，可以在同一原子快照中稳定分类。
 - 影响：读取健康面不创建 pool、进程或 Store。合同阻断、计数矛盾和缩档超售分别输出 CONTRACT_MISMATCH/OVERCOMMITTED，不隐藏既有 holder。RF950 只需验证故障矩阵和最终开关边界，不再新增第三份容量事实。
+
+## ADR-RF-047 后台通用 PRoot PROCESS 通过固定矩阵后打开生产门
+
+- 状态：已接受，RF950 已完成
+- 日期：2026-08-01
+- 决定：后台实际路由为 `proot_shell` 的通用 PROCESS 在进程创建前必须通过单一类别开关、同一 actual admission 与同记录 STARTING 检查点。生产门不识别产品、资源、命令、runtime id 或 Agent。1/2/4、短长竞争、压力收缩、PID/boot 反例、重启、外死、重复启动和 owner 树停止全部通过后，开关固定为 ENABLED，并在正式健康面发布稳定原因 `rf950_matrix_passed`。
+- 原因：仅凭目标单测无法证明 Android 进程重启、应用 UID 进程树和真实 RuntimeHealth 接力下仍不超售；反过来，为调试矩阵在生产 controller 上加永久测试锁也会污染正式机制。固定 Debug 服务只等待启动期策略接力稳定，随后使用同一个 controller 做无参数矩阵，生产代码只保留类别门。
+- 影响：STOPPED/ERROR 只在没有未释放长期 lease 时才可幂等跳过停止；ORPHAN_REVIEW 即使记录已是终态，也必须继续走 owner settled、强身份终态和 RELEASED。后台通用 PRoot PROCESS 由此正式进入统一容量；终端和 Agent 仍未迁移，未来类别扩展必须另过自己的生命周期与真机门。

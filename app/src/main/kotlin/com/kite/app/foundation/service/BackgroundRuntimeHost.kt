@@ -968,8 +968,8 @@ object BackgroundRuntimeHost {
 
     private suspend fun stopRuntimeInternal(appContext: Context, runtimeId: String) {
         val record = BackgroundRuntimeRegistry.get(appContext, runtimeId) ?: return
-        // 已在终态（停止或错误）则跳过，避免重复停止
-        if (record.status.isTerminalStatus()) {
+        // 普通终态可以幂等跳过；仍持有长期 PRoot 容量的 ORPHAN_REVIEW 必须继续完成停止确认与释放。
+        if (record.status.isTerminalStatus() && !record.hasUnreleasedLongLivedProotLease()) {
             return
         }
         if (record.isCoreSupervisorRuntime()) {
@@ -1205,6 +1205,7 @@ object BackgroundRuntimeHost {
             Logger.i(LOG_TAG, "开始构建运行命令: ${record.id}")
             val config = buildRuntimeProcessLaunchConfig(appContext, record)
             if (config.route == "proot_shell") {
+                BackgroundManagedProotProductionGate.requireEnabled()
                 startingProotGeneration = acquireAndPersistManagedProotLease(
                     appContext = appContext,
                     record = record,

@@ -55,4 +55,8 @@ RF930 已完成生产桥接。`WarmProotExecutionCoordinator` 内唯一的 `Proo
 
 RF940 已把 actual 健康接到该唯一 controller 的同锁快照。`proot_actual_active_jobs/queued_jobs` 继续表示有界短任务；`proot_long_actual_*` 表示 managed owner 活动、排队、恢复累计和合同阻断；`proot_unified_actual_*` 表示短、长、总量、状态与剩余容量。它们不扫描后台记录，也不读取 managed owner 身份表。
 
-`proot_long_planned_*` 和 RF910 的 `unified_contract_not_production` 纯投影继续保留原名，不能冒充 actual。当前剩余边界只有 RF950：完整的 1/2/4、短长竞争、压力收缩、恢复反例和生产开关故障矩阵尚未关闭。
+`proot_long_planned_*` 和 RF910 的 `unified_contract_not_production` 纯投影继续保留原名，不能冒充 actual。
+
+RF950 已关闭后台通用 PRoot PROCESS 的生产门。OnePlus 8T 固定矩阵证明 1/2/4、短长竞争、压力收缩、PID/boot 反例、应用重启、外死、重复启动和 owner 树停止；类别门在 actual 准入与唯一进程创建前检查，并通过 `proot_long_actual_production_gate_*` 发布固定低基数状态。记录已进入 STOPPED/ERROR 但仍持有 ORPHAN_REVIEW 等未释放 lease 时，显式停止不得按普通终态跳过，仍须取得 owner settled 与强身份终态后才能 RELEASED。
+
+该生产结论只覆盖后台实际 `proot_shell` 的通用 PROCESS。Host Node 不占 PRoot 容量；终端和 Agent 仍未迁移，也不能因为共享某些进程工具便自动继承此门。

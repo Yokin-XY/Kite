@@ -53,7 +53,7 @@
 | RF920 | 已完成 | 同一后台记录原子持久化 PRoot route + STARTING，尚未接生产 |
 | RF930 | 已完成 | 后台 PRoot PROCESS 已桥接同一 actual controller 与强身份停止链 |
 | RF940 | 已完成 | 长期 actual 与短长统一总量已进入正式 RuntimeHealth |
-| RF950 | 待开始 | 完整故障矩阵与后台 PROCESS 生产开关门 |
+| RF950 | 已完成 | 1460 项全量门与 OnePlus 8T 故障矩阵通过，后台通用 PRoot PROCESS 生产门已打开 |
 
 ## RF110 开机与三问自检
 
@@ -248,6 +248,15 @@
 - 强制 Debug 构建通过。本地 APK 241,284,208 bytes，SHA-256 `2DDD5D2ED577F35F022806BD2AE32B28EA57498332CE093AA972B5660E54DCAA`，已覆盖安装 OnePlus 8T，构建物未进入 Git。
 - 真机空闲输出：短任务 0、长期 0、统一总量 0、有效上限 2、剩余 2。受控 PRoot PROCESS generation 3/RUNNING 时：短任务仍为 0、长期 1、统一总量 1、剩余 1；停止为 RELEASED 并经过既有 10 秒健康面写入节流后，长期/总量回 0、剩余回 2。Crash buffer 为空。
 - RF940 完成，下一恢复点 RF950。没有迁移终端、Agent、资源或命令分类，也没有重复 Node/Python 性能矩阵。
+
+## RF950 真机故障矩阵与生产开关
+
+- 新增单一 `BackgroundManagedProotProductionGate`，在 actual 准入和唯一 `ProcessBuilder.start()` 前检查；开关只表达后台通用 PRoot PROCESS 类别，不读取资源、命令、应用、Agent 或 runtime id。正式健康面输出固定 schema/state/reason。
+- Debug 固定矩阵不接收命令、路径、档位或并发参数。OnePlus 8T 实际通过 6 个 case：PID 复用与 boot 改变均 review 且零进程创建；低功耗/均衡/高性能分别封顶 1/2/4；均衡档短任务 1 + 长期 owner 1 共享总容量 2；高性能档在 HIGH 压力下收缩到 1，已有 2 个 holder 保留为 OVERCOMMITTED，新准入被拒绝。
+- 应用 force-stop 后原 PRoot 树消失；重启恢复 generation 1 为 ORPHAN_REVIEW、长期 actual=1，重复 START 不创建第二进程或第二 lease。定位并修复终态 STOPPED 记录因幂等短路无法显式释放孤儿 lease 的通用缺口；修复后显式 STOP 转为 RELEASED、actual=0。
+- 正常恢复再次启动 generation 2，PID 28832 与子进程 28835 形成两层 owner 树；停止诊断为 `trackedBefore=2 remaining=0 orphan=0 zombie=0`，记录清 PID/强身份并转 RELEASED。同 UID 精确外死 generation 4 后转 ORPHAN_REVIEW、actual 保持 1，显式 STOP 后同样 RELEASED/actual=0。普通 shell UID 的无权限 kill 明确未计入证据。
+- 强制全量命令首轮外层等待超时后仍在后台完成；误并发的第二轮只因争用 `processDebugResources/R.jar` 失败，不计为代码失败。最终 JUnit XML 汇总 275 suites、1460 tests、0 failure、0 error、2 skipped；随后独立 Debug 构建 exitCode=0。最终 APK 248,084,172 bytes，SHA-256 `DF5D147AE0BC9BFDE8929C9669823E46268CD657F17B944E72EAAF8FBD8B0D40`，已覆盖安装 OnePlus 8T，构建物未进入 Git。
+- 最终 APK 上固定矩阵 6/6 通过，日志无匹配 FATAL/ANR。RF900 完成；Node/Python 冻结性能矩阵未重跑，终端与 Agent 未迁移。
 
 ## RF710 开机与三问自检
 

@@ -157,6 +157,12 @@ RF930 已让后台通用 PRoot PROCESS 与有界短任务共用 `WarmProotExecut
 
 停止顺序固定为：expected stop → lease STOPPING → PRoot owner 树终止 → 强身份终态 → 后台 STOPPED/身份清理 → lease RELEASED。控制面恢复先导入所有未释放检查点；缩档不驱逐 holder，损坏检查点阻断新准入。Host Node 不占 PRoot lease，且该桥不识别资源 ID、应用名、命令名、终端或 Agent。
 
+### RF950：类别生产门
+
+RF950 已在 OnePlus 8T 关闭完整故障矩阵并打开后台通用 PRoot PROCESS 类别。生产门位于 actual 准入和唯一进程创建之前，只发布固定 state/reason，不识别资源、命令、应用或 runtime id。应用进程退出后，持久 RUNNING lease 会先恢复容量，再以强身份确认原进程消失并进入 ORPHAN_REVIEW；重复启动不补跑第二实例。
+
+真机同时发现一个终态短路缺口：记录可先显示 STOPPED，但 ORPHAN_REVIEW 仍合法占用 actual 容量。停止入口现在只有在“终态且没有未释放长期 lease”时才跳过；否则继续执行 owner 树 settled、强身份终态与 RELEASED。该规则同样覆盖应用重启后的孤儿和运行中同 UID 外死，不依赖受控探针名称。
+
 ## 禁止方案
 
 - 不把 command token、statusCommand、端口健康或 PID-only 当强身份。
