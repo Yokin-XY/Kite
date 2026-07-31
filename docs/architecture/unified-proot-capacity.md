@@ -60,3 +60,5 @@ RF940 已把 actual 健康接到该唯一 controller 的同锁快照。`proot_ac
 RF950 已关闭后台通用 PRoot PROCESS 的生产门。OnePlus 8T 固定矩阵证明 1/2/4、短长竞争、压力收缩、PID/boot 反例、应用重启、外死、重复启动和 owner 树停止；类别门在 actual 准入与唯一进程创建前检查，并通过 `proot_long_actual_production_gate_*` 发布固定低基数状态。记录已进入 STOPPED/ERROR 但仍持有 ORPHAN_REVIEW 等未释放 lease 时，显式停止不得按普通终态跳过，仍须取得 owner settled 与强身份终态后才能 RELEASED。
 
 该生产结论只覆盖后台实际 `proot_shell` 的通用 PROCESS。Host Node 不占 PRoot 容量；终端和 Agent 仍未迁移，也不能因为共享某些进程工具便自动继承此门。
+
+长期 owner 对短任务的保底边界见 [PRoot 长期 owner 与短任务余量合同](proot-short-task-headroom.md)。

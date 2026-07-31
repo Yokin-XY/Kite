@@ -54,6 +54,11 @@
 | RF930 | 已完成 | 后台 PRoot PROCESS 已桥接同一 actual controller 与强身份停止链 |
 | RF940 | 已完成 | 长期 actual 与短长统一总量已进入正式 RuntimeHealth |
 | RF950 | 已完成 | 1460 项全量门与 OnePlus 8T 故障矩阵通过，后台通用 PRoot PROCESS 生产门已打开 |
+| RF1000 | 进行中 | 解决长期 owner 占满总容量后的短任务饥饿 |
+| RF1010 | 已完成 | 固定 1/2/4 档长期上限 1/1/3，低功耗不伪造第二容量 |
+| RF1020 | 进行中 | actual controller 增加 managed owner 余量与队列绕行 |
+| RF1030 | 待开始 | actual 健康与 OnePlus 8T 固定矩阵 |
+| RF1040 | 待开始 | 全量回归、类别复核与父任务门 |
 
 ## RF110 开机与三问自检
 
@@ -257,6 +262,12 @@
 - 正常恢复再次启动 generation 2，PID 28832 与子进程 28835 形成两层 owner 树；停止诊断为 `trackedBefore=2 remaining=0 orphan=0 zombie=0`，记录清 PID/强身份并转 RELEASED。同 UID 精确外死 generation 4 后转 ORPHAN_REVIEW、actual 保持 1，显式 STOP 后同样 RELEASED/actual=0。普通 shell UID 的无权限 kill 明确未计入证据。
 - 强制全量命令首轮外层等待超时后仍在后台完成；误并发的第二轮只因争用 `processDebugResources/R.jar` 失败，不计为代码失败。最终 JUnit XML 汇总 275 suites、1460 tests、0 failure、0 error、2 skipped；随后独立 Debug 构建 exitCode=0。最终 APK 248,084,172 bytes，SHA-256 `DF5D147AE0BC9BFDE8929C9669823E46268CD657F17B944E72EAAF8FBD8B0D40`，已覆盖安装 OnePlus 8T，构建物未进入 Git。
 - 最终 APK 上固定矩阵 6/6 通过，日志无匹配 FATAL/ANR。RF900 完成；Node/Python 冻结性能矩阵未重跑，终端与 Agent 未迁移。
+
+## RF1010 饥饿反例与余量合同
+
+- 审计 actual controller 后确认：优先级只选择当前可推进的 waiter，不能从长期 holder 手中产生空位。均衡档两个 managed owner 或高性能档四个 managed owner 可以无限期占满总量，后到交互任务只能超时。
+- 新合同只限制新 `MANAGED_OWNER`：低功耗 1/1、均衡 1/2、高性能 3/4，给非长期任务保留至多一个可用位置；低功耗只有一个物理名额，明确不承诺并发。恢复和压力缩档不驱逐 holder，共享写屏障保持原语义。
+- 下一恢复点 RF1020：在同一 controller/同一锁内实现上限、blocked reason 与 waiter 绕行，并先用并发反例证明，不接新类别。
 
 ## RF710 开机与三问自检
 

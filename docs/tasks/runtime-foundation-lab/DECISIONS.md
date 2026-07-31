@@ -374,3 +374,11 @@
 - 决定：后台实际路由为 `proot_shell` 的通用 PROCESS 在进程创建前必须通过单一类别开关、同一 actual admission 与同记录 STARTING 检查点。生产门不识别产品、资源、命令、runtime id 或 Agent。1/2/4、短长竞争、压力收缩、PID/boot 反例、重启、外死、重复启动和 owner 树停止全部通过后，开关固定为 ENABLED，并在正式健康面发布稳定原因 `rf950_matrix_passed`。
 - 原因：仅凭目标单测无法证明 Android 进程重启、应用 UID 进程树和真实 RuntimeHealth 接力下仍不超售；反过来，为调试矩阵在生产 controller 上加永久测试锁也会污染正式机制。固定 Debug 服务只等待启动期策略接力稳定，随后使用同一个 controller 做无参数矩阵，生产代码只保留类别门。
 - 影响：STOPPED/ERROR 只在没有未释放长期 lease 时才可幂等跳过停止；ORPHAN_REVIEW 即使记录已是终态，也必须继续走 owner settled、强身份终态和 RELEASED。后台通用 PRoot PROCESS 由此正式进入统一容量；终端和 Agent 仍未迁移，未来类别扩展必须另过自己的生命周期与真机门。
+
+## ADR-RF-048 长期 owner 不得占满可并发档位的全部容量
+
+- 状态：已接受，RF1010 已完成
+- 日期：2026-08-01
+- 决定：effective global max 大于 1 时，新 `MANAGED_OWNER` 最多占 `globalMax-1`；global max 为 1 时仍允许一个长期 owner，不伪造并发。该限制在唯一 admission 的同一把锁内判断，只影响新准入，不驱逐恢复或正在运行的 holder。
+- 原因：lane priority 只能排序 waiter，无法抢占已经无限期持有容量的后台进程。让长期 owner 占满 2/4 会使后到交互短任务永久超时；另建短任务 controller 又会重新引入 RF840 已禁止的总量超售。
+- 影响：达到长期上限的 waiter 必须让可运行短任务绕行，但共享写任务继续充当队首屏障。低功耗档无法同时满足长期运行和短任务并发，产品只能通过切换均衡/高性能取得余量。健康面后续只输出上限与计数，不暴露业务身份；终端和 Agent 不自动继承该类别。
