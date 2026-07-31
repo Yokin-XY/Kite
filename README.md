@@ -45,4 +45,4 @@ Kite 会在本地 Linux 环境中执行卡片、资源清单和第三方脚本�
 
 ## 许可证
 
-Kite 原创代码和文档使用 [PolyForm Noncommercial License 1.0.0](LICENSE)。仓库中的 Ubuntu、PRoot、Termux、Node.js、Python、uv、AndroidX、Shizuku 等第三方组件继续遵守各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+Kite 原创代码和文档使用 [PolyForm Strict License 1.0.0](LICENSE)：允许符合条款的非商业使用，但不授权修改、衍生或分发。仓库中的 Ubuntu、PRoot、Termux、Node.js、Python、uv、AndroidX、Shizuku 等第三方组件继续遵守各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -54,6 +54,7 @@ boundaries. These components are intended for local development devices
 and controlled runtime environments. Do not expose local bridge endpoints
 or packaged runtime control surfaces to untrusted networks.
 
-For commercial use of the original Kite project code, contact the
-repository owner. For third-party components, review and comply with the
-corresponding upstream licenses separately.
+For commercial use, modification, redistribution, derivative works, or
+incorporation of original Kite project code into another project, contact
+the repository owner for written authorization. For third-party components,
+review and comply with the corresponding upstream licenses separately.

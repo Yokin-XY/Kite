@@ -123,7 +123,7 @@
     <string name="settings_about_issues_summary">Open GitHub Issues</string>
     <string name="settings_about_legal_section">Licenses &amp; notices</string>
     <string name="settings_about_license_title">Kite license</string>
-    <string name="settings_about_license_summary">PolyForm Noncommercial 1.0.0</string>
+    <string name="settings_about_license_summary">PolyForm Strict 1.0.0</string>
     <string name="settings_about_open_source_title">Open-source components &amp; third-party notices</string>
     <string name="settings_about_open_source_summary">Projects, roles, licenses, and upstream sources</string>
     <string name="settings_about_diagnostics_title">Diagnostic data</string>

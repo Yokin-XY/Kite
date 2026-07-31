@@ -122,7 +122,7 @@
     <string name="settings_about_issues_summary">前往 GitHub Issues</string>
     <string name="settings_about_legal_section">许可与说明</string>
     <string name="settings_about_license_title">Kite 许可证</string>
-    <string name="settings_about_license_summary">PolyForm Noncommercial 1.0.0</string>
+    <string name="settings_about_license_summary">PolyForm Strict 1.0.0</string>
     <string name="settings_about_open_source_title">开源组件与第三方声明</string>
     <string name="settings_about_open_source_summary">项目、用途、许可证与上游来源</string>
     <string name="settings_about_diagnostics_title">诊断数据说明</string>
