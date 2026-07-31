@@ -38,6 +38,26 @@ Provider 不接受任意 shell 文本，也不从 `curl`、`sha256sum` 等命令
 
 断点续传和重试必须显式设计：只有服务器能力、临时文件身份和 Range 响应可验证时才续传；不能把不确定响应追加到旧文件。
 
+## RF310a 已实现边界
+
+`network.download_sha256` 已作为标准 `ANDROID_NATIVE` Provider 落地。请求字段为：
+
+- `url`：只接受无用户信息、无 fragment 的 HTTPS URL；
+- `destination`：只映射调用方显式提供的受控容器根，不接受 Android 物理路径；
+- `maxBytes`：必填，下载前和流式写入时双重限制；
+- `expectedSha256`：可选 64 位十六进制摘要；
+- `connectTimeoutMs`、`readTimeoutMs`、`maxAttempts`、`retryDelayMs`、`replaceExisting`：有界可选参数。
+
+Provider 只生成计划，不联网、不建目录、不写 Store。执行器使用 Android `HttpURLConnection`，临时文件与目标位于同一目录，流式
+计算 SHA-256，`fd.sync()` 后优先 `ATOMIC_MOVE`；平台不支持时才显式记录非原子降级。摘要失败、取消、HTTP 失败和空间不足都不
+替换正式目标，并要求临时文件清理成功。
+
+第一版不发送 Range，每次重试从空临时文件开始；意外 206、重定向降级到 HTTP、未知参数和目录逃逸均失败关闭。进度回调只是
+运行层信号，正式 RF310b 调用方必须节流后写入原 `CardRun`，不得直接驱动页面刷新。
+
+RF310a 的 Debug 真机入口固定下载 RFC Editor 的 18,504 字节样本，不接受外部 URL/路径。它证明 Android 应用网络栈、摘要、
+原子发布、错误摘要保留旧文件和取消清理；不等于资源安装链已经迁移，正式接线归 RF310b/RF310c。
+
 ## 文件与归档能力
 
 文件复制、移动、权限和受控删除必须接入现有文件保护、更新锁和备份边界，不建立第二套资源安装事务。
@@ -73,4 +93,3 @@ PackageInstaller、网络状态、Android 权限、Keystore 等现有实现应�
 - 覆盖失败清理、取消、进程/线程泄漏和大文件压力；
 - 用户网络环境由 Android 正常决定，不硬编码公共 DNS 或绕过 VPN；
 - 没有资源 ID、应用名或当前样例特判。
-

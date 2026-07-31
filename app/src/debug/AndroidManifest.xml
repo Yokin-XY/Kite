@@ -31,5 +31,12 @@
         <service
             android:name="com.kite.app.foundation.runtime.PythonRuntimeBenchmarkService"
             android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.NativeDownloadCapabilityProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.NATIVE_DOWNLOAD_CAPABILITY_PROBE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

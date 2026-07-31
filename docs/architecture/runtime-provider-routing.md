@@ -22,14 +22,16 @@ Kite 同时保留三种执行能力，但不让资源卡、页面或最终应用
 
 当前已经具备：
 
+- `AndroidNativeDownloadCapabilityProvider` 与流式执行器，已能把封闭的 HTTPS 下载＋SHA-256 请求编译为原生计划；
 - `HostNodeRuntimeProvider`、`HostPythonRuntimeProvider` 与 `ManagedRuntimeLaunchPlanner`，可在创建进程前选择 Host Node、Host Python 或 PRoot；
 - 终端、Agent、后台运行共用的受管运行时准备入口；终端命令文本仍保持 PRoot，结构化 Node/Python argv 才参与快速选择；
 - `runtimeLane`、`runtimeFallbackReason` 在 `CardRunStore` 与后台运行记录中的事实保存；
 - `ProotJobAdmissionController`、温热 Runner 协议和固定维护任务的第一条生产接线；
 - PackageInstaller、网络、文件保护、Keystore 等分散的 Android 原生实现。
 
-当前缺口不是重新实现 Node、Python 或 PRoot，而是原生能力尚未作为统一运行选择的一等参与者。Python 的 subprocess 与 venv
-子解释器继续整条进入 PRoot；第三方扩展只在肯定式保证、精确 ABI 证据和不可变包代次同时满足时进入 Host，不能从单个样本外推。
+当前缺口不是重新实现 Node、Python 或 PRoot。原生下载 Provider 已有封闭计划和真机证据，但尚未接入 Recipe/Run 与资源安装；
+Python 的 subprocess 与 venv 子解释器继续整条进入 PRoot，第三方扩展只在肯定式保证、精确 ABI 证据和不可变包代次同时满足时
+进入 Host，不能从单个样本外推。
 
 ## 术语
 
