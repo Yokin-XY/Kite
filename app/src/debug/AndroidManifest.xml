@@ -46,6 +46,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.kite.app.debug.PROOT_COMPATIBILITY_PROBE" />
+                <action android:name="com.kite.app.debug.BOUNDED_PROOT_PROCESS_LIST_PROBE" />
             </intent-filter>
         </receiver>
         <service

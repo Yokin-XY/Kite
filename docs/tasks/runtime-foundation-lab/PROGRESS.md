@@ -30,6 +30,14 @@
 
 ## 倒序日志
 
+### 2026-08-01 RF430b 首个新增生产调用方
+
+- `ContainerProcessStore` 仅把容器进程表结构化 `ps` 查询迁入 `BoundedProotTaskExecutor`：每次生成唯一 jobId，owner 为 `system:container-process-store`，lane/access 为 `PROBE/READ_ONLY`，等待 1 秒、运行 12 秒、每流最多 1 MiB。
+- `kill -0`、TERM/KILL、任意 shell、Agent、终端、detached 和长期服务保持原路径；没有按 `/usr/bin/ps` 名称在公共 Planner 中分流，迁移决定属于代码 owner 的显式调用合同。
+- 3 个直接相关 suite、10 项测试通过，零失败、零错误、零跳过；Debug 构建与 OnePlus 8T 覆盖安装成功。
+- 固定真机探针首轮（含建池）345 ms，第二轮温热复用 101 ms；两轮均为 `warm_runner`，解析 4 条记录、691 bytes、零截断，正式 Store 来源 `host_proc+container_ps`，可见进程 2 条。
+- 查询子进程结束后无残留，均衡档空闲 Runner 按 30 秒策略回收，日志无新增 ANR/FATAL。该时间只证明此调用方的复用链可用，独立 PRoot 对照和百分比留到 RF430c。
+
 ### 2026-08-01 RF430a 通用有界短任务执行器
 
 - 新增 `BoundedProotTaskExecutor`：输入只有代码 owner 提交的结构化 argv、cwd、env、lane、读写属性、wait/runtime timeout 和双流上限；交互 lane、shell 文本形态、超过 120 秒或超过 1 MiB/流的请求在准入前失败关闭。

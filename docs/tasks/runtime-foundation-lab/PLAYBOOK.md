@@ -325,9 +325,9 @@
 
 ##### RF430b 首个新增生产调用方
 
-- [ ] 仅迁移容器进程表只读查询；kill、任意 shell、Agent、终端和长期服务保持原路径；
-- [ ] 查询声明稳定 owner、唯一 jobId、`PROBE/READ_ONLY`、有界 stdio 和 timeout；
-- [ ] 真机验证 warm、独立回退、结果解析与无残留进程，不从命令名外推其他任务。
+- [x] 仅迁移容器进程表只读查询；kill、任意 shell、Agent、终端和长期服务保持原路径；
+- [x] 查询声明稳定 owner、唯一 jobId、`PROBE/READ_ONLY`、有界 stdio 和 timeout；
+- [x] 真机验证 warm、结果解析与无残留子进程；独立回退对照留在 RF430c，不从命令名外推其他任务。
 
 ##### RF430c 父任务门
 

@@ -25,11 +25,16 @@ import kotlin.concurrent.thread
 /** Debug-only 固定 PRoot 等价探针；不接收外部命令、路径或 View 标识。 */
 class ProotCompatibilityProbeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ACTION) return
+        if (intent.action != ACTION && intent.action != ACTION_BOUNDED_PROCESS_LIST) return
         val pending = goAsync()
         thread(name = "KiteProotCompatibilityProbe", isDaemon = true) {
             try {
-                Log.i(LOG_TAG, ProotCompatibilityProbe.run(context.applicationContext))
+                val result = if (intent.action == ACTION_BOUNDED_PROCESS_LIST) {
+                    ProotCompatibilityProbe.runBoundedProcessList(context.applicationContext)
+                } else {
+                    ProotCompatibilityProbe.run(context.applicationContext)
+                }
+                Log.i(LOG_TAG, result)
             } catch (error: Throwable) {
                 Log.e(LOG_TAG, "status=failed reason=${safe(error.message ?: error.javaClass.simpleName)}", error)
             } finally {
@@ -40,6 +45,7 @@ class ProotCompatibilityProbeReceiver : BroadcastReceiver() {
 
     internal companion object {
         const val ACTION = "com.kite.app.debug.PROOT_COMPATIBILITY_PROBE"
+        const val ACTION_BOUNDED_PROCESS_LIST = "com.kite.app.debug.BOUNDED_PROOT_PROCESS_LIST_PROBE"
         const val LOG_TAG = "[KFShell]ProotCompatibilityProbe"
 
         fun safe(value: String): String = value.take(240).map { character ->
@@ -111,6 +117,47 @@ private object ProotCompatibilityProbe {
             "orchestratedMs=${orchestrated.durationMs} orchestratedLane=${orchestrated.lane} " +
             "orchestratedReason=${orchestrated.reason} viewPlan=true viewExecuted=false " +
             "totalMs=${SystemClock.elapsedRealtime() - startedAt}"
+    }
+
+    fun runBoundedProcessList(context: Context): String {
+        val directStartedAt = SystemClock.elapsedRealtime()
+        val execution = BoundedProotTaskExecutor.executeBlocking(
+            context = context,
+            request = ContainerProcessStore.containerProcessListTaskRequest(
+                WarmProotExecutionCoordinator.nextJobId("debug-container-process-list")
+            ),
+        )
+        val completed = checkNotNull(execution.execution) {
+            "bounded_process_list_missing:${execution.route}:${execution.reason}"
+        }
+        check(completed.succeeded) {
+            "bounded_process_list_failed:${execution.route}:${completed.failureReason}:${completed.exitCode}"
+        }
+        val output = completed.stdoutTail.toString(Charsets.UTF_8)
+        val parsed = output.lineSequence().count { line ->
+            ContainerProcessStore.parseContainerPsLineForTesting(line) != null
+        }
+        check(parsed > 0) { "bounded_process_list_empty" }
+        val directMs = SystemClock.elapsedRealtime() - directStartedAt
+
+        val beforeRefresh = ContainerProcessStore.snapshot.value.refreshedAt
+        ContainerProcessStore.refresh(context)
+        val refreshDeadline = SystemClock.elapsedRealtime() + 30_000L
+        while (
+            ContainerProcessStore.snapshot.value.refreshedAt <= beforeRefresh &&
+            SystemClock.elapsedRealtime() < refreshDeadline
+        ) {
+            Thread.sleep(25L)
+        }
+        val snapshot = ContainerProcessStore.snapshot.value
+        check(snapshot.refreshedAt > beforeRefresh) { "container_process_store_refresh_timeout" }
+        check(snapshot.collectionSource.contains("container_ps")) {
+            "container_process_store_source:${snapshot.collectionSource}"
+        }
+        return "status=bounded_process_list_ok route=${execution.route.name.lowercase()} " +
+            "elapsedMs=$directMs parsed=$parsed stdoutBytes=${completed.stdoutTail.size} " +
+            "stdoutDropped=${completed.stdoutDroppedBytes} storeSource=${snapshot.collectionSource} " +
+            "storeProcesses=${snapshot.processes.size}"
     }
 
     private data class OrchestratedExecution(
