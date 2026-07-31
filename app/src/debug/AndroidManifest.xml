@@ -36,7 +36,11 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.kite.app.debug.NATIVE_DOWNLOAD_CAPABILITY_PROBE" />
+                <action android:name="com.kite.app.debug.NATIVE_DOWNLOAD_CAPABILITY_BENCHMARK" />
             </intent-filter>
         </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.NativeDownloadCapabilityBenchmarkService"
+            android:exported="false" />
     </application>
 </manifest>

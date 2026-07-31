@@ -28,6 +28,18 @@ import org.json.JSONObject
 /** Debug-only 固定 HTTPS 真机探针；不接受外部 URL、路径或摘要参数。 */
 class NativeDownloadCapabilityProbeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_BENCHMARK) {
+            runCatching {
+                context.startService(Intent(context, NativeDownloadCapabilityBenchmarkService::class.java))
+            }.onFailure { error ->
+                Log.e(
+                    BENCHMARK_LOG_TAG,
+                    "status=trigger_rejected reason=${safe(error.message ?: error.javaClass.simpleName)}",
+                    error,
+                )
+            }
+            return
+        }
         if (intent.action != ACTION_PROBE) return
         val pending = goAsync()
         thread(name = "KiteNativeDownloadProbe", isDaemon = true) {
@@ -276,9 +288,11 @@ class NativeDownloadCapabilityProbeReceiver : BroadcastReceiver() {
         if (character.isLetterOrDigit() || character in "._-:=") character else '_'
     }.joinToString("")
 
-    private companion object {
+    internal companion object {
         const val ACTION_PROBE = "com.kite.app.debug.NATIVE_DOWNLOAD_CAPABILITY_PROBE"
+        const val ACTION_BENCHMARK = "com.kite.app.debug.NATIVE_DOWNLOAD_CAPABILITY_BENCHMARK"
         const val LOG_TAG = "[KFShell]NativeDownload"
+        const val BENCHMARK_LOG_TAG = "[KFShell]NativeDownloadBenchmark"
         const val CONTAINER_ROOT = "/probe"
         const val RECIPE_RESOURCE_ID = "kite.debug.native-recipe-probe"
         const val SOURCE_URL = "https://www.rfc-editor.org/rfc/rfc20.txt"

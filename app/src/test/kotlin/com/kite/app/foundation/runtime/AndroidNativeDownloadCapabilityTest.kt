@@ -100,6 +100,22 @@ class AndroidNativeDownloadCapabilityTest {
     }
 
     @Test
+    fun `midstream network interruption discards partial bytes before retry`() {
+        val root = Files.createTempDirectory("kite-native-download-midstream").toFile()
+        val bytes = "complete-after-interruption".toByteArray()
+        val plan = plan(root, expectedSha256 = bytes.sha256(), maximumAttempts = 2)
+        val result = AndroidNativeDownloadExecutor(
+            queueFactory(InterruptedResponse(), Response(200, bytes)),
+        ).execute(plan)
+
+        result as NativeDownloadExecutionResult.Success
+        assertEquals(2, result.attempts)
+        assertEquals(bytes.toList(), plan.destination.readBytes().toList())
+        assertEquals(bytes.sha256(), result.actualSha256)
+        assertFalse(plan.temporaryFile.exists())
+    }
+
+    @Test
     fun `cancellation and size limit leave no target or temporary file`() {
         val root = Files.createTempDirectory("kite-native-download-cancel").toFile()
         val cancelled = NativeDownloadCancellationSignal()
@@ -261,6 +277,26 @@ class AndroidNativeDownloadCapabilityTest {
                 val count = minOf(length.toLong(), remaining).toInt()
                 buffer.fill(value.toByte(), offset, offset + count)
                 remaining -= count
+                return count
+            }
+        }
+        override fun close() = Unit
+    }
+
+    private class InterruptedResponse : NativeDownloadConnection {
+        override val responseCode: Int = 200
+        override val contentLength: Long = -1L
+        override fun header(name: String): String? = null
+        override fun inputStream(): InputStream = object : InputStream() {
+            private var emitted = false
+
+            override fun read(): Int = error("single_byte_read_not_supported")
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (emitted) throw IOException("connection reset midstream")
+                emitted = true
+                val count = minOf(length, 4096)
+                buffer.fill(23.toByte(), offset, offset + count)
                 return count
             }
         }
