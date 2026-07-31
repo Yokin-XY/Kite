@@ -135,6 +135,7 @@ data class KiteRecipe(
         const val STEP_X11 = "x11"
         const val STEP_AGENT = "agent"
         const val STEP_ANDROID_ACTION = "android_action"
+        const val STEP_NATIVE_CAPABILITY = "native_capability"
 
         const val ANDROID_ACTION_PREPARE_AI_ENV = "prepare_ai_env"
         const val ANDROID_ACTION_TOOLCHAIN_DOCTOR = "toolchain_doctor"

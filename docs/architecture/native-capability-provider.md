@@ -56,7 +56,33 @@ Provider 只生成计划，不联网、不建目录、不写 Store。执行器�
 运行层信号，正式 RF310b 调用方必须节流后写入原 `CardRun`，不得直接驱动页面刷新。
 
 RF310a 的 Debug 真机入口固定下载 RFC Editor 的 18,504 字节样本，不接受外部 URL/路径。它证明 Android 应用网络栈、摘要、
-原子发布、错误摘要保留旧文件和取消清理；不等于资源安装链已经迁移，正式接线归 RF310b/RF310c。
+原子发布、错误摘要保留旧文件和取消清理；不等于资源安装链已经迁移，资源迁移归 RF310c。
+
+## RF310b Recipe 与 Run 合同
+
+正式 Recipe 使用显式步骤，不把 `curl` 文本或资源身份翻译成原生能力：
+
+```json
+{
+  "type": "native_capability",
+  "action": "network.download_sha256",
+  "params": {
+    "url": "https://example.com/archive.tar.zst",
+    "destination": "/workspace/cache/archive.tar.zst",
+    "maxBytes": "536870912",
+    "expectedSha256": "64位十六进制摘要"
+  }
+}
+```
+
+第一版参数值全部是字符串，由对应 Provider 做类型、范围和未知字段校验。运行端把请求声明为 `ANDROID_NATIVE`，并关闭隐式
+PRoot 回退；不支持或受阻时直接写可解释失败，不能执行另一份 shell 任务。
+
+能力在既有 `RunOrchestrator -> AndroidRecipeExecutor` 链中执行。进度按 1 MiB 或 500 ms 节流，经运行事件写回同一个
+`CardRunStore`；结果使用报告显示面，不创建 `runId`、`terminalSessionId` 或进程 owner。停止和重启即使没有进程绑定也会
+调用原生运行端，取消阻塞 I/O，并在清理临时文件后确认。
+
+RF310b 只建立通用 Recipe/Run 接口。资源获取尚未自动转换，更新锁、备份和安装状态拥有者也没有改变；这些属于 RF310c。
 
 ## 文件与归档能力
 

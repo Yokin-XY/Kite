@@ -134,6 +134,24 @@
 
 Android 动作名称必须由应用注册；卡片不能任意声明新的系统能力。
 
+### Android 原生能力
+
+```json
+{
+  "type": "native_capability",
+  "action": "network.download_sha256",
+  "params": {
+    "url": "https://example.com/file",
+    "destination": "/workspace/cache/file",
+    "maxBytes": "104857600",
+    "expectedSha256": "可选的 64 位十六进制摘要"
+  }
+}
+```
+
+`native_capability` 只调用应用已经注册的封闭能力，参数值目前必须是字符串。它不接受任意 shell，也不会根据命令文本或资源
+名称猜测能力。没有注册、参数越界或权限不足时应直接失败，不会静默执行另一份 PRoot 任务。该步骤使用报告显示面，不创建终端。
+
 ### X11
 
 `x11` 步骤仍可被实验代码解析，但不属于稳定卡片协议。正式卡片不要依赖它。

@@ -71,7 +71,9 @@ internal class AndroidRecipeExecutor(
     private val diagnostics: KiteDiagnostics,
     private val executionEnvironmentProvider: RunExecutionEnvironmentProvider =
         RunExecutionEnvironmentProvider.None,
-    private val agentRuntime: AgentRecipeRuntime = AndroidAgentRecipeRuntime(context)
+    private val agentRuntime: AgentRecipeRuntime = AndroidAgentRecipeRuntime(context),
+    private val nativeCapabilityRuntime: NativeCapabilityRecipeRuntime =
+        AndroidNativeCapabilityRecipeRuntime(context),
 ) : RecipeExecutor {
     private data class PendingTerminal(
         val request: RecipeStepExecutionRequest,
@@ -136,6 +138,7 @@ internal class AndroidRecipeExecutor(
             KiteRecipe.STEP_AGENT -> executeAgent(request, callback)
             KiteRecipe.STEP_OPEN_WEB -> executeWeb(request, callback)
             KiteRecipe.STEP_ANDROID_ACTION -> executeAndroidAction(request, callback)
+            KiteRecipe.STEP_NATIVE_CAPABILITY -> nativeCapabilityRuntime.execute(request, callback)
             else -> callback(request.failed("unsupported_step:${request.step.type}"))
         }
     }
@@ -171,6 +174,23 @@ internal class AndroidRecipeExecutor(
                     StopExecutionResult(StopExecutionOutcome.Confirmed, "Agent 会话已关闭")
                 }
                 deliverStopResult(request, result, callback)
+            }
+            return
+        }
+        if (nativeCapabilityRuntime.owns(request.instanceId, request.generation)) {
+            nativeCapabilityRuntime.stop(request.instanceId, request.generation) { stopped ->
+                if (!stopped) {
+                    callback(
+                        StopExecutionResult(
+                            StopExecutionOutcome.StillRunning,
+                            "原生能力仍在停止中",
+                        )
+                    )
+                } else if (request.hasBridgeProcessBinding()) {
+                    stopRuntime(request, callback)
+                } else {
+                    callback(StopExecutionResult(StopExecutionOutcome.Confirmed, "原生能力已停止"))
+                }
             }
             return
         }
