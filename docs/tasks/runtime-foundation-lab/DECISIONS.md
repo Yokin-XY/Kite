@@ -302,3 +302,11 @@
 - 决定：恢复 attach 与停止 signal 共用 `BackgroundRuntimeProcessIdentityPolicy`。只有 boot、PID 和 start ticks 精确一致才可操作现存进程；纯决策固定 `processStartsRequested=0`。同 PID 新代次或不同 boot 只能证明原代次不再存在，绝不向当前 PID 发信号；任一身份字段不可得则进入 review。
 - 原因：若恢复和停止各自解释 PID，可能出现恢复拒绝新代次、停止却仍按弱 token 杀死它的矛盾。把 statusCommand、端口或 command token 当身份也无法排除 PID 复用。
 - 影响：RF832/833 必须消费该合同，不能在 Host 内重新复制比较分支。RF831 本身没有生产装配；旧 PID 记录仍需 RF832 明确兼容显示和 no-attach 行为。
+
+## ADR-RF-039 本地 handle 与重启恢复使用不同归属证据但同一进程身份
+
+- 状态：已接受，RF832 已完成
+- 日期：2026-08-01
+- 决定：`ProcessBuilder.start()` 返回的本地 handle 是创建归属证据，身份捕获只需目标 PID 属于应用 UID并具备 boot/start ticks；应用重启后 handle 消失，外部 attach 必须同时满足 RF831 精确身份和既有 container/owner token 门。两者都不得由 statusCommand 或健康端点补全 PID。
+- 原因：创建后为取一个 start ticks 扫描整棵 `/proc` 会给高频启动增加无谓成本；重启后只看命令 token 又无法排除 PID 复用。健康成功代表服务可响应，不代表持久 owner PID 是同一进程代次。
+- 影响：新建/复用本地 handle 会原子补强身份；旧记录仍可显示服务健康，但没有强身份就不 attach 且 PID 会被清理。RF833 可据此安全决定是否发停止信号，不能回退到弱 PID 补偿。

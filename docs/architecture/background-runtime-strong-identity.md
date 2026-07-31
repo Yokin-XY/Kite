@@ -113,10 +113,12 @@ processStartTicks: Long?
 
 ### RF830：停止与恢复桥
 
-- 创建成功后从同轮 snapshot 捕获强身份；捕获失败仍允许现有运行，但长期 lease 保持 no-go。
-- 应用重启只按 boot+PID+startTicks 精确 attach；PID 复用、boot 变化和未知观察进入 review。
+- [x] 创建成功后窄读目标 `/proc/<pid>` 与 boot ID 捕获强身份；该 PID 必须属于当前应用 UID。捕获失败仍允许本地 handle 运行，但长期 lease 保持 no-go。
+- [x] 应用重启只按 boot+PID+startTicks 精确 attach，并追加 container/owner token 归属门；PID 复用、boot 变化和未知观察进入 review。
+- [x] statusCommand/健康端点只证明服务响应；未得到精确外部 PID 时必须清理旧 PID，不能恢复 owner 身份。
 - expected stop 在信号前持久化；只有观察到同一代次退出才确认 STOPPED 和释放容量。
-- statusCommand/健康端点继续证明服务健康，不再证明 owner 进程身份。
+
+创建链中的 `Process` handle 本身是归属证据，因此用目标 PID 的应用 UID + boot/start ticks 捕获；应用重启后没有 handle，必须在强身份之外继续通过原有 container/owner token 门。两条链都不使用 statusCommand 生成或补全进程身份。
 
 ### RF840：后台 PRoot 类别门
 

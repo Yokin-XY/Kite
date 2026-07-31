@@ -44,7 +44,8 @@
 | RF820 | 已完成 | boot+PID+start ticks 观察、JSON、PID 清理不变量和原子写入口通过 |
 | RF830 | 进行中 | 先落停止意图，精确身份恢复，退出确认后才清记录和容量 |
 | RF831 | 已完成 | 纯合同只允许精确代次 attach/发信号，所有决策均为零进程创建 |
-| RF832 | 进行中 | 创建后采集强身份，应用重启按同一身份合同精确探测 |
+| RF832 | 已完成 | 窄读新进程身份；重启恢复强校验；健康命令不再保留失效 PID |
+| RF833 | 进行中 | expected stop 先落盘，确认原代次退出后才写终态与释放容量 |
 
 ## RF110 开机与三问自检
 
@@ -158,6 +159,14 @@
 - 只有 `EXACT_GENERATION` 可恢复既有实例或向目标 PID 发信号；同 PID 新代次、boot 变化、旧记录缺身份和 `ps -A` 观察缺代次均失败关闭。
 - PID 已不存在时可确认没有可恢复实例；PID 复用或 boot 变化时，显式停止只能确认原代次已退出，不向当前 PID 发信号。旧记录或观察身份不完整时保持 review，不伪造退出确认。
 - 目标 suite 8 tests 全部通过；本叶没有生产接线和用户可见行为，因此不构建/安装真机。下一恢复指针为 RF832。
+
+## RF832 验收
+
+- `HostProcessInspector.readAppProcessIdentity` 在创建后只读目标 `/proc/<pid>`、当前应用 UID、stat start ticks 与 boot ID，不为了捕获单个身份扫描整棵 `/proc`；任一字段不可得就不生成部分身份。
+- `startProcessRuntime` 在 `RUNNING/pid` 发布后通过 Registry 原子入口写身份；现有本地 handle 复用路径也会补采集。快速退出仍由既有 lazy monitor 顺序收敛。
+- 应用重启后的 `resolveRuntimeHostPid` 先用 RF831 比较 persisted/observed 强身份，只有 `ATTACH_EXACT_PROCESS` 才继续通过 container/owner token 门；旧 PID、boot 变化、PID 复用与 fallback 观察均不 attach。
+- statusCommand 仍可说明服务响应，但没有精确 external PID 时不再保留 `record.pid`，因此不会把服务健康冒充为 owner 进程身份。
+- 目标 4 suites、18 tests、0 failure、0 error、0 skipped；Debug 构建通过。RF832 尚未改变停止顺序，下一恢复指针 RF833。
 
 ## RF710 开机与三问自检
 

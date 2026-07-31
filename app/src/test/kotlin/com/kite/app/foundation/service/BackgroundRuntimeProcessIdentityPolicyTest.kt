@@ -99,6 +99,32 @@ class BackgroundRuntimeProcessIdentityPolicyTest {
         assertEquals(0, decision.processStartsRequested)
     }
 
+    @Test
+    fun `health response without exact external identity cannot retain a stale pid`() {
+        assertEquals(
+            null,
+            selectRefreshedBackgroundRuntimePid(
+                localHandleAlive = false,
+                localHandlePid = null,
+                exactExternalProcessAlive = true,
+                exactExternalPid = null,
+                withinStartingGrace = false,
+                persistedPid = PID,
+            ),
+        )
+        assertEquals(
+            PID,
+            selectRefreshedBackgroundRuntimePid(
+                localHandleAlive = false,
+                localHandlePid = null,
+                exactExternalProcessAlive = true,
+                exactExternalPid = PID,
+                withinStartingGrace = false,
+                persistedPid = PID + 1,
+            ),
+        )
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `observation for another pid is rejected before a decision is made`() {
         BackgroundRuntimeProcessIdentityPolicy.decide(

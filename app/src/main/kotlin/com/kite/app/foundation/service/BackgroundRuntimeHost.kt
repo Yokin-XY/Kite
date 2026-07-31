@@ -1106,13 +1106,15 @@ object BackgroundRuntimeHost {
         )
         val existingHandle = handles[record.id]
         if (existingHandle != null && existingHandle.process.isAlive) {
+            val existingPid = existingHandle.process.safePid()
             BackgroundRuntimeRegistry.updateStatus(
                 context = appContext,
                 runtimeId = record.id,
                 status = BackgroundRuntimeStatus.RUNNING,
-                pid = existingHandle.process.safePid(),
+                pid = existingPid,
                 lastError = null
             )
+            captureRuntimeProcessIdentity(appContext, record.id, existingPid)
             BackgroundRuntimeRegistry.updateHealth(
                 context = appContext,
                 runtimeId = record.id,
@@ -1301,6 +1303,7 @@ object BackgroundRuntimeHost {
                     pid = launchedPid,
                     lastError = null
                 )
+                captureRuntimeProcessIdentity(appContext, record.id, launchedPid)
                 BackgroundRuntimeRegistry.updateHealth(
                     context = appContext,
                     runtimeId = record.id,
@@ -1563,12 +1566,14 @@ object BackgroundRuntimeHost {
             context = appContext,
             runtimeId = record.id,
             status = nextStatus,
-            pid = when {
-                isAlive -> handlePid ?: externalPid ?: record.pid
-                externalAlive -> externalPid ?: record.pid
-                withinStartingGrace -> handlePid ?: record.pid
-                else -> null
-            },
+            pid = selectRefreshedBackgroundRuntimePid(
+                localHandleAlive = isAlive,
+                localHandlePid = handlePid,
+                exactExternalProcessAlive = externalAlive,
+                exactExternalPid = externalPid,
+                withinStartingGrace = withinStartingGrace,
+                persistedPid = record.pid,
+            ),
             lastError = resolvedRuntimeRefreshError(
                 record = record,
                 nextStatus = nextStatus,
@@ -1753,7 +1758,48 @@ object BackgroundRuntimeHost {
         hostSnapshot: com.kite.app.foundation.runtime.HostProcessSnapshot
     ): Int? {
         val persistedPid = record.pid?.takeIf { it > 0 } ?: return null
+        val observedIdentity = hostSnapshot.strongIdentity(persistedPid)
+        val observation = when {
+            hostSnapshot.appProcess(persistedPid) == null ->
+                BackgroundRuntimeProcessObservation.processNotFound(persistedPid)
+            observedIdentity == null ->
+                BackgroundRuntimeProcessObservation.identityUnavailable(persistedPid)
+            else -> BackgroundRuntimeProcessObservation.identityReady(observedIdentity)
+        }
+        val decision = BackgroundRuntimeProcessIdentityPolicy.decide(
+            persistedPid = persistedPid,
+            persistedIdentity = record.persistedProcessIdentityOrNull(),
+            observation = observation,
+        )
+        if (decision.recoveryAction != BackgroundRuntimeRecoveryAction.ATTACH_EXACT_PROCESS) {
+            Logger.i(
+                LOG_TAG,
+                "后台宿主进程拒绝恢复: runtime=${record.id} match=${decision.processMatch.name}"
+            )
+            return null
+        }
         return persistedPid.takeIf { isRuntimeHostPidAlive(appContext, record, it, hostSnapshot) }
+    }
+
+    private fun captureRuntimeProcessIdentity(
+        appContext: Context,
+        runtimeId: String,
+        pid: Int?,
+    ) {
+        val targetPid = pid?.takeIf { it > 0 } ?: return
+        val identity = HostProcessInspector.readAppProcessIdentity(targetPid, LOG_TAG)
+        if (identity == null) {
+            Logger.i(LOG_TAG, "后台进程强身份暂不可用: runtime=$runtimeId pid=$targetPid")
+            return
+        }
+        val updated = BackgroundRuntimeRegistry.updateProcessIdentity(
+            context = appContext,
+            runtimeId = runtimeId,
+            identity = identity,
+        )
+        if (updated == null) {
+            Logger.i(LOG_TAG, "后台进程强身份写入被拒绝: runtime=$runtimeId pid=$targetPid")
+        }
     }
 
     private fun isRuntimeHostPidAlive(

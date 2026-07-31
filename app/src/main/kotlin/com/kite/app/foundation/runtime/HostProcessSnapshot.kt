@@ -168,6 +168,30 @@ object HostProcessInspector {
         )
     }
 
+    /**
+     * 新建进程后的窄读取：只访问目标 PID 与 boot ID，不为捕获身份扫描整棵 `/proc`。
+     * 目标必须仍属于当前应用 UID；任一字段读取失败都不生成部分身份。
+     */
+    fun readAppProcessIdentity(
+        pid: Int,
+        logTag: String,
+    ): HostProcessIdentityObservation? {
+        if (pid <= 0) return null
+        return runCatching {
+            val process = readProcProcess(File("/proc/$pid")) ?: return@runCatching null
+            if (process.user != AndroidProcess.myUid().toString()) return@runCatching null
+            val bootId = readHostBootId() ?: return@runCatching null
+            val startTicks = process.processStartTicks?.takeIf { it > 0L } ?: return@runCatching null
+            HostProcessIdentityObservation(
+                bootId = bootId,
+                hostPid = process.pid,
+                processStartTicks = startTicks,
+            )
+        }.onFailure { error ->
+            Logger.i(logTag, "读取宿主进程强身份失败: pid=$pid ${error.message}")
+        }.getOrNull()
+    }
+
     private fun readProcSnapshot(): List<HostProcessRecord> {
         val procRoot = File("/proc")
         val processDirs = procRoot.listFiles { file ->

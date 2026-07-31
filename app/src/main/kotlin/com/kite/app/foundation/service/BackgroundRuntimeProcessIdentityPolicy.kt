@@ -153,3 +153,18 @@ internal object BackgroundRuntimeProcessIdentityPolicy {
         )
     }
 }
+
+/** 健康命令只能证明服务响应，不能让失效的 owner PID 重新进入记录。 */
+internal fun selectRefreshedBackgroundRuntimePid(
+    localHandleAlive: Boolean,
+    localHandlePid: Int?,
+    exactExternalProcessAlive: Boolean,
+    exactExternalPid: Int?,
+    withinStartingGrace: Boolean,
+    persistedPid: Int?,
+): Int? = when {
+    localHandleAlive -> localHandlePid ?: exactExternalPid ?: persistedPid
+    exactExternalProcessAlive -> exactExternalPid
+    withinStartingGrace -> localHandlePid ?: persistedPid
+    else -> null
+}
