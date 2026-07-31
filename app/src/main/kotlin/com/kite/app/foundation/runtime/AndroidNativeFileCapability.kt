@@ -45,6 +45,46 @@ internal data class AndroidNativeFileCapabilityContext(
     }
 }
 
+internal data class ResolvedNativeFilePath(
+    val root: NativeFileCapabilityRoot,
+    val file: File,
+)
+
+internal object NativeFilePathResolver {
+    fun resolve(
+        context: AndroidNativeFileCapabilityContext,
+        rawPath: String?,
+        permission: NativeFilePermission,
+    ): ResolvedNativeFilePath? {
+        val containerPath = rawPath?.takeIf { it.startsWith('/') && !it.endsWith('/') } ?: return null
+        return context.roots
+            .sortedByDescending { it.containerPath.length }
+            .firstNotNullOfOrNull { root ->
+                if (permission !in root.permissions) return@firstNotNullOfOrNull null
+                val prefix = root.containerPath
+                if (!containerPath.startsWith("$prefix/")) return@firstNotNullOfOrNull null
+                val segments = containerPath.removePrefix("$prefix/").split('/')
+                if (segments.isEmpty() || segments.any { it.isBlank() || it == "." || it == ".." }) {
+                    return@firstNotNullOfOrNull null
+                }
+                val rootPath = root.directory.toPath().toAbsolutePath().normalize()
+                val candidate = segments.fold(rootPath) { path, segment -> path.resolve(segment) }.normalize()
+                if (candidate == rootPath || !candidate.startsWith(rootPath)) return@firstNotNullOfOrNull null
+                if (containsExistingSymlink(rootPath, candidate)) return@firstNotNullOfOrNull null
+                ResolvedNativeFilePath(root, candidate.toFile())
+            }
+    }
+
+    private fun containsExistingSymlink(root: Path, candidate: Path): Boolean {
+        var cursor = root
+        for (segment in root.relativize(candidate)) {
+            cursor = cursor.resolve(segment)
+            if (Files.exists(cursor, LinkOption.NOFOLLOW_LINKS) && Files.isSymbolicLink(cursor)) return true
+        }
+        return false
+    }
+}
+
 internal sealed interface AndroidNativeFilePlan {
     val capabilityId: String
 
@@ -113,9 +153,9 @@ internal object AndroidNativeFileCapabilityProvider :
         if (parameters.keys.any { it !in COPY_PARAMETERS }) {
             return blocked("native_file_parameter_unknown")
         }
-        val source = resolve(context, parameters[PARAM_SOURCE], NativeFilePermission.READ)
+        val source = NativeFilePathResolver.resolve(context, parameters[PARAM_SOURCE], NativeFilePermission.READ)
             ?: return blocked("native_file_source_invalid")
-        val destination = resolve(context, parameters[PARAM_DESTINATION], NativeFilePermission.CREATE)
+        val destination = NativeFilePathResolver.resolve(context, parameters[PARAM_DESTINATION], NativeFilePermission.CREATE)
             ?: return blocked("native_file_destination_invalid")
         if (source.file == destination.file) return blocked("native_file_same_path")
         val maximumBytes = parameters[PARAM_MAX_BYTES]
@@ -148,9 +188,9 @@ internal object AndroidNativeFileCapabilityProvider :
         if (parameters.keys.any { it !in MOVE_PARAMETERS }) {
             return blocked("native_file_parameter_unknown")
         }
-        val source = resolve(context, parameters[PARAM_SOURCE], NativeFilePermission.REMOVE)
+        val source = NativeFilePathResolver.resolve(context, parameters[PARAM_SOURCE], NativeFilePermission.REMOVE)
             ?: return blocked("native_file_source_remove_not_authorized")
-        val destination = resolve(context, parameters[PARAM_DESTINATION], NativeFilePermission.CREATE)
+        val destination = NativeFilePathResolver.resolve(context, parameters[PARAM_DESTINATION], NativeFilePermission.CREATE)
             ?: return blocked("native_file_destination_invalid")
         if (source.file == destination.file) return blocked("native_file_same_path")
         val replaceExisting = parseBoolean(parameters[PARAM_REPLACE_EXISTING])
@@ -177,51 +217,13 @@ internal object AndroidNativeFileCapabilityProvider :
         if (parameters.keys.any { it !in DELETE_PARAMETERS }) {
             return blocked("native_file_parameter_unknown")
         }
-        val target = resolve(context, parameters[PARAM_TARGET], NativeFilePermission.REMOVE)
+        val target = NativeFilePathResolver.resolve(context, parameters[PARAM_TARGET], NativeFilePermission.REMOVE)
             ?: return blocked("native_file_delete_not_authorized")
         return RuntimeProviderDecision.Ready(
             provider = kind,
             plan = AndroidNativeFilePlan.DeleteFile(target.file),
             reason = "native_file_delete_ready",
         )
-    }
-
-    private data class ResolvedPath(
-        val root: NativeFileCapabilityRoot,
-        val file: File,
-    )
-
-    private fun resolve(
-        context: AndroidNativeFileCapabilityContext,
-        rawPath: String?,
-        permission: NativeFilePermission,
-    ): ResolvedPath? {
-        val containerPath = rawPath?.takeIf { it.startsWith('/') && !it.endsWith('/') } ?: return null
-        return context.roots
-            .sortedByDescending { it.containerPath.length }
-            .firstNotNullOfOrNull { root ->
-                if (permission !in root.permissions) return@firstNotNullOfOrNull null
-                val prefix = root.containerPath
-                if (!containerPath.startsWith("$prefix/")) return@firstNotNullOfOrNull null
-                val segments = containerPath.removePrefix("$prefix/").split('/')
-                if (segments.isEmpty() || segments.any { it.isBlank() || it == "." || it == ".." }) {
-                    return@firstNotNullOfOrNull null
-                }
-                val rootPath = root.directory.toPath().toAbsolutePath().normalize()
-                val candidate = segments.fold(rootPath) { path, segment -> path.resolve(segment) }.normalize()
-                if (candidate == rootPath || !candidate.startsWith(rootPath)) return@firstNotNullOfOrNull null
-                if (containsExistingSymlink(rootPath, candidate)) return@firstNotNullOfOrNull null
-                ResolvedPath(root, candidate.toFile())
-            }
-    }
-
-    private fun containsExistingSymlink(root: Path, candidate: Path): Boolean {
-        var cursor = root
-        for (segment in root.relativize(candidate)) {
-            cursor = cursor.resolve(segment)
-            if (Files.exists(cursor, LinkOption.NOFOLLOW_LINKS) && Files.isSymbolicLink(cursor)) return true
-        }
-        return false
     }
 
     private fun parseBoolean(value: String?): Boolean? = when (value?.lowercase().orEmpty()) {
