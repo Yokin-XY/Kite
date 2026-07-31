@@ -161,6 +161,38 @@ class ProotJobAdmissionControllerTest {
     }
 
     @Test
+    fun `same priority waiters remain fifo`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val active = granted(
+            controller.acquireBlocking(request("active", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val order = mutableListOf<String>()
+        val executor = Executors.newFixedThreadPool(2)
+        val done = CountDownLatch(2)
+        executor.execute {
+            granted(controller.acquireBlocking(request("first", RuntimeLaneKind.SERVICE))).lease.use {
+                synchronized(order) { order += "first" }
+            }
+            done.countDown()
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+        executor.execute {
+            granted(controller.acquireBlocking(request("second", RuntimeLaneKind.SERVICE))).lease.use {
+                synchronized(order) { order += "second" }
+            }
+            done.countDown()
+        }
+        waitUntil { controller.snapshot().queuedCount == 2 }
+
+        active.close()
+
+        assertTrue(done.await(2, TimeUnit.SECONDS))
+        assertEquals(listOf("first", "second"), order)
+        executor.shutdownNow()
+        controller.close()
+    }
+
+    @Test
     fun `saturated lane does not block another lane with free capacity`() {
         val lanes = RuntimeWorkloadPolicy.defaultLanes().map { lane ->
             when (lane.lane) {
@@ -274,6 +306,28 @@ class ProotJobAdmissionControllerTest {
         assertEquals(1L, controller.snapshot().timedOutCount)
         active.close()
         controller.close()
+    }
+
+    @Test
+    fun `closing admission wakes queued waiter without releasing active owner`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val active = granted(
+            controller.acquireBlocking(request("active", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val executor = Executors.newSingleThreadExecutor()
+        val queued = executor.submit<ProotJobAdmissionResult> {
+            controller.acquireBlocking(request("queued", RuntimeLaneKind.SERVICE, waitTimeoutMs = 5_000L))
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+
+        controller.close()
+        val rejected = queued.get(1, TimeUnit.SECONDS) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_closed", rejected.reason)
+        assertEquals(0, controller.snapshot().queuedCount)
+        assertEquals(1, controller.snapshot().activeCount)
+        active.close()
+        executor.shutdownNow()
     }
 
     private fun controller(
