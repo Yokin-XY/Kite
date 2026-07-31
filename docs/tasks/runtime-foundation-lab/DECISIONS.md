@@ -166,3 +166,11 @@
 - 决定：第一份 RuntimeHealth 到达前，从现有策略文件和 host `MemAvailable` 解析一次 bootstrap policy；正常内存使用所选档位，信号缺失或高压保持单并发。正式快照无条件接管，迟到的 bootstrap 不得覆盖它。
 - 原因：默认 `UNKNOWN` 虽安全，却把正常设备的均衡和高性能档都错误压成 1；另建 bootstrap Store 或独立控制器又会制造双事实源与竞态。
 - 影响：coordinator 仍是唯一实际策略持有者，admission 仍是唯一准入原语。策略来源显式投影为 `initial_conservative`、`bootstrap_policy_files_host_memory` 或 `runtime_health`；bootstrap 不创建 PRoot，不改变普通终端、Agent、任意 shell 和长期服务路径。
+
+## ADR-RF-022 有界任务遥测只聚合固定执行事实
+
+- 状态：已接受，RF530 已完成
+- 日期：2026-08-01
+- 决定：有界任务按 lane/route/result 固定枚举聚合完成次数，并记录 queue/execute/total 的固定时延桶、sum 和 max；只在 `BoundedProotTaskExecutor` 完成一次实际尝试后写入。
+- 原因：admission 的 admitted/timedOut 总量无法说明任务最终走 warm 还是 fallback，也无法区分慢在排队或执行；记录 job、owner 或命令又会造成高基数、隐私和健康输出膨胀。
+- 影响：RuntimeHealth 可直接读取内存快照且不触发任务或扫描。生产 collector 没有 reset 入口、键空间由 enum 上限固定；普通 PRoot 路径不自动纳入，也不能拿遥测存在当作准入证据。

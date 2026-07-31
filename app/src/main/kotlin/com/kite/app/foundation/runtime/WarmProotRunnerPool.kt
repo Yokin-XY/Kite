@@ -107,6 +107,9 @@ internal data class WarmProotPoolExecution(
     val route: WarmProotExecutionRoute,
     val execution: WarmProotJobExecution?,
     val reason: String,
+    val queueWaitMs: Long = 0L,
+    val executeMs: Long = 0L,
+    val totalMs: Long = 0L,
 ) {
     val succeeded: Boolean get() = execution?.succeeded == true
 }
@@ -170,20 +173,34 @@ internal class WarmProotRunnerPool(
         independentFallback: (() -> WarmProotJobExecution)? = null,
     ): WarmProotPoolExecution {
         require(admissionRequest.jobId == jobRequest.jobId) { "runner_pool_job_id_mismatch" }
+        val totalStartedNanos = monotonicNanos()
         val granted = when (val result = admission.acquireBlocking(admissionRequest)) {
             is ProotJobAdmissionResult.Granted -> result
-            is ProotJobAdmissionResult.Rejected -> return WarmProotPoolExecution(
-                WarmProotExecutionRoute.ADMISSION_REJECTED,
-                execution = null,
-                reason = result.reason,
+            is ProotJobAdmissionResult.Rejected -> return timed(
+                execution = WarmProotPoolExecution(
+                    WarmProotExecutionRoute.ADMISSION_REJECTED,
+                    execution = null,
+                    reason = result.reason,
+                ),
+                totalStartedNanos = totalStartedNanos,
+                executionStartedNanos = null,
             )
         }
 
         granted.lease.use {
             val identity = identityProvider()
-                ?: return runFallback(independentFallback, "runner_identity_unavailable")
+                ?: return timed(
+                    execution = runFallback(independentFallback, "runner_identity_unavailable"),
+                    totalStartedNanos = totalStartedNanos,
+                    executionStartedNanos = monotonicNanos(),
+                )
             val slot = acquireSlot(identity, admissionRequest.waitTimeoutMs)
-                ?: return runFallback(independentFallback, "runner_slot_unavailable")
+                ?: return timed(
+                    execution = runFallback(independentFallback, "runner_slot_unavailable"),
+                    totalStartedNanos = totalStartedNanos,
+                    executionStartedNanos = monotonicNanos(),
+                )
+            val executionStartedNanos = monotonicNanos()
             val execution = try {
                 slot.session.executeBlocking(jobRequest, onOutput)
             } catch (error: Throwable) {
@@ -198,16 +215,27 @@ internal class WarmProotRunnerPool(
             val keep = execution.completed && slot.session.isWarm()
             releaseSlot(slot, keep)
             if (execution.fallbackAllowed && !execution.completed) {
-                return runFallback(independentFallback, execution.failureReason.ifBlank { "runner_prestart_failed" })
+                return timed(
+                    execution = runFallback(
+                        independentFallback,
+                        execution.failureReason.ifBlank { "runner_prestart_failed" },
+                    ),
+                    totalStartedNanos = totalStartedNanos,
+                    executionStartedNanos = executionStartedNanos,
+                )
             }
-            return WarmProotPoolExecution(
-                route = if (execution.completed) {
-                    WarmProotExecutionRoute.WARM_RUNNER
-                } else {
-                    WarmProotExecutionRoute.RUNNER_FAILED_AFTER_START
-                },
-                execution = execution,
-                reason = execution.failureReason.ifBlank { "runner_completed" },
+            return timed(
+                execution = WarmProotPoolExecution(
+                    route = if (execution.completed) {
+                        WarmProotExecutionRoute.WARM_RUNNER
+                    } else {
+                        WarmProotExecutionRoute.RUNNER_FAILED_AFTER_START
+                    },
+                    execution = execution,
+                    reason = execution.failureReason.ifBlank { "runner_completed" },
+                ),
+                totalStartedNanos = totalStartedNanos,
+                executionStartedNanos = executionStartedNanos,
             )
         }
     }
@@ -419,6 +447,25 @@ internal class WarmProotRunnerPool(
             WarmProotExecutionRoute.INDEPENDENT_FALLBACK,
             execution = result,
             reason = reason,
+        )
+    }
+
+    private fun timed(
+        execution: WarmProotPoolExecution,
+        totalStartedNanos: Long,
+        executionStartedNanos: Long?,
+    ): WarmProotPoolExecution {
+        val completedNanos = monotonicNanos()
+        val totalMs = TimeUnit.NANOSECONDS.toMillis(
+            (completedNanos - totalStartedNanos).coerceAtLeast(0L)
+        )
+        val queueWaitMs = executionStartedNanos?.let { started ->
+            TimeUnit.NANOSECONDS.toMillis((started - totalStartedNanos).coerceAtLeast(0L))
+        } ?: totalMs
+        return execution.copy(
+            queueWaitMs = queueWaitMs.coerceAtMost(totalMs),
+            executeMs = (totalMs - queueWaitMs).coerceAtLeast(0L),
+            totalMs = totalMs,
         )
     }
 }

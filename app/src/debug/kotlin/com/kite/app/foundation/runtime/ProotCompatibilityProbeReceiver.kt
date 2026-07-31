@@ -156,6 +156,12 @@ private object ProotCompatibilityProbe {
             "container_process_store_source:${snapshot.collectionSource}"
         }
         val afterTuning = WarmProotExecutionCoordinator.tuningSnapshot()
+        val telemetry = BoundedProotTaskTelemetry.snapshot()
+        val currentMetric = telemetry.entries.firstOrNull {
+            it.key.lane == RuntimeLaneKind.PROBE &&
+                it.key.route == execution.route &&
+                it.key.result == execution.resultCategory()
+        }
         return "status=bounded_process_list_ok route=${execution.route.name.lowercase()} " +
             "elapsedMs=$directMs parsed=$parsed stdoutBytes=${completed.stdoutTail.size} " +
             "stdoutDropped=${completed.stdoutDroppedBytes} storeSource=${snapshot.collectionSource} " +
@@ -168,7 +174,11 @@ private object ProotCompatibilityProbe {
             "queued=${afterTuning.queuedJobs} beforeSessions=${beforeTuning.totalWarmSessions} " +
             "beforeOldestIdleMs=${beforeTuning.oldestIdleAgeMs} " +
             "afterSessions=${afterTuning.totalWarmSessions} afterIdle=${afterTuning.idleWarmSessions} " +
-            "afterStale=${afterTuning.staleWarmSessions} afterOldestIdleMs=${afterTuning.oldestIdleAgeMs}"
+            "afterStale=${afterTuning.staleWarmSessions} afterOldestIdleMs=${afterTuning.oldestIdleAgeMs} " +
+            "telemetrySamples=${telemetry.sampleCount} telemetryRouteCount=${currentMetric?.count ?: 0L} " +
+            "telemetryQueueMaxMs=${currentMetric?.queue?.maxMs ?: 0L} " +
+            "telemetryExecuteMaxMs=${currentMetric?.execute?.maxMs ?: 0L} " +
+            "telemetryTotalMaxMs=${currentMetric?.total?.maxMs ?: 0L}"
     }
 
     private data class OrchestratedExecution(

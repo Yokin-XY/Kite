@@ -11,6 +11,31 @@ import org.junit.Test
 
 class WarmProotRunnerPoolTest {
     @Test
+    fun `execution timing separates runner wait from business job`() {
+        var nowNanos = 0L
+        val pool = pool(
+            identityProvider = {
+                nowNanos = TimeUnit.MILLISECONDS.toNanos(10L)
+                identity("timed")
+            },
+            sessionFactory = {
+                FakeSession { request ->
+                    nowNanos = TimeUnit.MILLISECONDS.toNanos(35L)
+                    success(request.jobId)
+                }
+            },
+            monotonicNanos = { nowNanos },
+        )
+
+        val execution = pool.executeBlocking(admission("timed"), job("timed"))
+
+        assertEquals(10L, execution.queueWaitMs)
+        assertEquals(25L, execution.executeMs)
+        assertEquals(35L, execution.totalMs)
+        pool.close()
+    }
+
+    @Test
     fun `sequential jobs reuse one matching warm session`() {
         val factoryCount = AtomicInteger(0)
         val pool = pool(sessionFactory = {

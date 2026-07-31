@@ -2724,6 +2724,7 @@ object RuntimeHealthStore {
         builder.append(pressureConsumer.toEnvText())
         builder.append(pressureStability.toEnvText())
         builder.append(WarmProotExecutionCoordinator.tuningSnapshot().toRuntimeHealthEnvText())
+        builder.append(BoundedProotTaskTelemetry.snapshot().toRuntimeHealthEnvText())
         builder.append(prootPoolPlan.toEnvText())
         builder.append(prootManagementMainline.toEnvText())
         builder.append(prootDeviceCalibration.toEnvText())

@@ -72,12 +72,14 @@ internal object BoundedProotTaskExecutor {
         request: BoundedProotTaskRequest,
     ): WarmProotPoolExecution {
         val plan = plan(request)
-        return WarmProotExecutionCoordinator.executeBlocking(
+        val execution = WarmProotExecutionCoordinator.executeBlocking(
             context = context.applicationContext,
             admissionRequest = plan.admission,
             jobRequest = plan.job,
             independentFallback = { executeIndependent(context.applicationContext, plan.job) },
         )
+        BoundedProotTaskTelemetry.record(request.lane, execution)
+        return execution
     }
 
     private fun executeIndependent(

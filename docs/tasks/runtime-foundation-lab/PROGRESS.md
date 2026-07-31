@@ -24,8 +24,8 @@
 | RF500 | 进行中 | 进入 RF510，正式投影实际调度状态 |
 | RF510 | 已完成 | actual coordinator 状态已进入 RuntimeHealth，读取不创建 pool |
 | RF520 | 已完成 | 策略文件与 host 内存先接力，RuntimeHealth 到达后完全接管 |
-| RF530 | 进行中 | 有界执行 route/result/latency 尚无正式低基数遥测 |
-| RF540 | 待开始 | Supervisord 健康采集仍使用独立 PRoot 复杂 shell |
+| RF530 | 已完成 | route/result/lane 与 queue/execute/total 已进入低基数正式遥测 |
+| RF540 | 进行中 | Supervisord 健康采集仍使用独立 PRoot 复杂 shell |
 | RF550 | 待开始 | RF500 父任务门 |
 | RF600 | 待研究 | 长生命周期 owner lease，禁止直接套用短任务 lease |
 | RF700 | 待研究 | 固定 1/2/4 之上的设备自适应校准 |
@@ -54,6 +54,12 @@
 - 完成后拿什么证明？单测覆盖每条 route、结果分类、时延边界和并发更新；RuntimeHealth 只输出枚举与数字，读取不执行任务、不包含 argv/cwd/env/output/owner。
 - 依赖是否满足？满足。RF510 已提供 actual 正式投影；RF520 已确保首个任务前也有明确策略来源。现有执行结果已含 route 与 job duration，下一步只补统一计时和聚合，不改变任务结果拥有者。
 
+## RF540 开机与三问自检
+
+- 目标是什么？把高频、代码自有的 Supervisord update/status/日志尾部采集从每次独立 PRoot 迁入有界 Runner，同时保持原解析与错误边界。
+- 完成后拿什么证明？helper 内容和版本固定、无外部命令参数；调用方只传结构化 helper argv，声明 `SERVICE/SHARED_WRITE`、稳定 owner 和有界 timeout/output；单测与真机冷温结果语义一致且无残留任务。
+- 依赖是否满足？满足。RF530 已能观察 route/result/时延；现有 `WorkspaceBuildSupport` 已拥有受管 helper 写入位置，`SupervisordServiceHealthStore` 的 shell 内容完全由代码持有，可先固化为 helper 而不接收用户 payload。
+
 ## 倒序日志
 
 ### 2026-08-01 RF510 实际调度状态正式投影
@@ -69,6 +75,13 @@
 - bootstrap 与正式 RuntimeHealth 共用单一 `policyState` 和 admission；正式快照无条件接管，迟到的 bootstrap 结果不能反向覆盖。实际健康面和 Debug 探针新增低基数 `policySource`。
 - 4 个相关 suite、17 项测试零失败，Debug 构建成功。OnePlus 8T 覆盖安装后强停冷进程，首个固定探针为 `policySource=bootstrap_policy_files_host_memory pressure=normal configuredMax=2 effectiveMax=2`，成功走 `warm_runner`；无 ANR/FATAL。
 - 下一步 RF530 只增加低基数执行遥测，不保存任务 payload，也不扩大有界 Runner 的任务范围。
+
+### 2026-08-01 RF530 有界执行结果遥测
+
+- `WarmProotPoolExecution` 统一给出 queue/execute/total：queue 覆盖 admission 与 Runner 槽等待，execute 覆盖业务 job 或独立回退；route 继续区分 warm、独立回退、拒绝、STARTED 后失败和 fallback 失败。
+- `BoundedProotTaskTelemetry` 只按 lane/route/result 固定枚举聚合，时延使用 8 个固定桶及 sum/max；不保存 job、owner、argv、cwd、env 或输出，正式 RuntimeHealth 读取只复制内存快照。
+- 4 个相关 suite、18 项测试零失败，4000 次并发完成样本无丢计数，Debug 构建成功。OnePlus 8T 冷进程固定探针记录 `telemetrySamples=2 telemetryRouteCount=2 queueMaxMs=39 executeMaxMs=1434 totalMaxMs=1473`，无 ANR/FATAL。
+- 下一步 RF540 迁移第二个高频内部样板；不因遥测已经存在而扩大任意 shell、终端、Agent 或长期任务范围。
 
 ### 2026-08-01 RF500 启动
 

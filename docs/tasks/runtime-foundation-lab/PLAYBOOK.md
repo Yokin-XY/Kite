@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF500` PRoot 生产控制面扩展
-- 当前任务：`RF530` 有界执行结果遥测
+- 当前任务：`RF540` Supervisord 健康采集有界 Runner 样板
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -390,10 +390,10 @@
 - 问题证据：现有 snapshot 只有 admitted/timedOut/cancelled 和队列数量，无法区分 warm、独立回退、拒绝、STARTED 后失败及实际等待/执行耗时。
 - 解法：为 `BoundedProotTaskExecutor` 增加固定低基数聚合，按 route/result/lane 记录累计次数与有界时延桶；只保留数字和枚举，不保存 argv、cwd、env、输出或 owner 原文，并投影到 RF510 的同一健康面。
 - 验收标准：
-  - [ ] warm、独立回退、准入拒绝、STARTED 后失败和 fallback 失败可区分；
-  - [ ] 记录 queue/execute/total 的计数与有界时延，不引入高基数标签；
-  - [ ] 并发更新不丢计数，清零仅限测试；
-  - [ ] RuntimeHealth 读取不触发执行或扫描。
+  - [x] warm、独立回退、准入拒绝、STARTED 后失败和 fallback 失败可区分；
+  - [x] 记录 queue/execute/total 的计数与有界时延，不引入高基数标签；
+  - [x] 并发更新不丢计数，清零仅限测试；
+  - [x] RuntimeHealth 读取不触发执行或扫描。
 - 依赖：RF510。
 
 #### RF540 Supervisord 健康采集有界 Runner 样板
