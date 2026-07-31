@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF1100` PRoot 进程启动窗口协调
-- 当前任务：`RF1130` go/no-go 与生产合同
+- 当前阶段：`RF1100` PRoot 进程启动窗口协调（已完成，生产 no-go）
+- 当前任务：`RF1130` go/no-go 与生产合同（已完成）
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -651,6 +651,8 @@
 
 父任务方向：只协调多个 PRoot 业务进程从排队到“已有真实就绪证据”的短暂启动窗口；就绪后立即释放，不按终端或 Agent 会话存活期占用容量。是否生产接入完全由 OnePlus 8T 并发冷启动矩阵决定。
 
+状态：已完成，生产 no-go。Debug 矩阵保留，正式入口不接启动窗口。
+
 #### RF1110 真实入口与就绪边界审计
 
 - 状态：已完成，合同见 [PRoot 进程启动窗口协调](../../architecture/proot-launch-window-coordination.md)。
@@ -668,16 +670,17 @@
 
 #### RF1130 go/no-go 与生产合同
 
-- 状态：进行中。
-- 只有相同成功率下，至少一个真实并发档的 ready P95 或失败率稳定改善，且 batch wall 不出现不可接受退化，才可 go；
-- 无收益、只改善 Debug 抖动或需要业务特判时 no-go；
-- 给出窗口宽度、释放边界、等待上限和正式健康字段。
+- 状态：已完成，结论 no-go。
+- [x] 相同成功率下没有得到跨两套矩阵稳定的 ready P95 或失败率改善；
+- [x] READY 收窄稳定增加队列和 tail，start-return 只出现不稳定调度差异；
+- [x] 不新增窗口宽度、正式健康字段或生产状态。
 
 #### RF1140 条件生产接线与父任务门
 
-- 仅在 RF1130 go 时实现；否则只记录 no-go 并关闭父任务；
-- 接线复用 `ProotLaunchPlan` 的 lane/purpose 事实，不从命令或资源 ID 推断；
-- 强制全量回归、OnePlus 8T 重测、唯一进程与无 ANR/FATAL 后独立提交。
+- 状态：未触发；RF1130 no-go，因此不实施生产接线。
+- [x] 没有修改 `ContainerLaunchConfig`/`ContainerExecConfig`、终端、Agent、后台或 Bridge 生产入口；
+- [x] 没有新增生产队列、lease、健康字段或调度状态；
+- [x] RF1100 以 Debug 证据与 no-go 结论关闭。
 
 ## 每个叶子任务的固定闭环
 

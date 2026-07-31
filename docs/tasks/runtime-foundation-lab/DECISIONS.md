@@ -406,3 +406,11 @@
 - 决定：通用 launch lease 只负责进程创建前准入、等待、取消和超时；实际创建者必须在其已有 READY、明确失败或超时边界释放。`ProcessBuilder.start()` 返回不是通用 READY。协调器不得读取 PTY 内容、ACP 消息、健康端点或命令输出来替调用方判断业务状态。
 - 原因：终端、Agent、后台、exec 与 bootstrap 的可用性证据不同；集中解析会把协议和业务特判塞进底层。另一方面，只包围 `start()` 可能在 PRoot 真正加载 rootfs 前就释放，无法改变昂贵阶段的重叠。
 - 影响：RF1120 必须同时测无协调、start-return 释放和首个固定 READY 释放。未来若 go，`ProotLaunchPlan` 的 lane/purpose 要正向透传到物理配置；终端仍需补强 READY，Agent 可用 ACP initialize，既有完整任务 admission 不重复叠加。
+
+## ADR-RF-052 PRoot 启动窗口不进入生产
+
+- 状态：已接受，RF1130 已完成
+- 日期：2026-08-01
+- 决定：不实现 RF1140，不在终端、Agent、后台、Bridge 或通用 config 中接入 launch semaphore/lease。RF1120 Debug 固定矩阵作为可复算诊断保留，但不发布正式健康字段，也不形成第二个生产 admission。
+- 原因：两套 OnePlus 8T 矩阵中，READY 窗口收窄稳定恶化 tail 与 batch wall；start-return 只在一套出现偶发 P95 改善，另一套基本追平，失败率本来就是 0，无法证明确定收益。单固定 PRoot READY 只有几十毫秒，也不在真实重型应用几十秒启动的同一量级。
+- 影响：不能以“协调器代码容易写”为由生产化。下一阶段只研究通用依赖内部可证明的高频路径成本；任何快速通道仍以依赖 ABI/能力为条件，不识别使用端应用。
