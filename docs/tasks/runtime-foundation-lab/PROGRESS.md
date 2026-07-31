@@ -31,7 +31,8 @@
 | RF610 | 已完成 | 长期 owner 状态机保持进程身份、停止意图与容量直到确认释放 |
 | RF620 | 已完成 | 容量、压力、维护屏障、去重和跨 lane 公平性纯模拟通过 |
 | RF630 | 已完成 | 恢复去重、PID 代次、孤儿容量与停止优先合同通过 |
-| RF640 | 进行中 | 只投影低基数规划态数字，不混入 actual RuntimeHealth |
+| RF640 | 已完成 | 固定规划态 schema 通过隐私、基数与无副作用护栏 |
+| RF650 | 进行中 | 联合回归并给后台服务生产迁移 go/no-go |
 | RF700 | 待研究 | 固定 1/2/4 之上的设备自适应校准 |
 
 ## RF110 开机与三问自检
@@ -70,6 +71,12 @@
 - 完成后拿什么证明？相关回归、强制全量单测、强制 Debug 构建、OnePlus 8T 冷启动/温复用/压力收缩/空闲行为/服务健康链与 ANR/FATAL 检查；Git 工作树干净、每个叶子提交可独立回退。
 - 依赖是否满足？满足。RF510～RF540 均已独立实现和验证；Node/Python 历史矩阵仍冻结，本门只验证本阶段新增合同和跨模块回归。
 
+## RF650 开机与三问自检
+
+- 目标是什么？联合审查 RF610～RF640 是否真正构成长生命周期 owner 的合同闭环，并明确后台服务、终端、Agent 的生产迁移边界。
+- 完成后拿什么证明？强制联合测试、Debug 构建、静态生产引用与敏感字段检查、提交边界复核；形成后台服务样板 go/no-go 和下一任务入口。本门不重跑冻结的 Node/Python 性能矩阵，也不伪造真机长期进程证据。
+- 依赖是否满足？满足。四个叶子任务均已独立测试构建并提交前三项；RF640 等待本叶提交后进入父门，所有实现仍为无生产装配的合同/模拟器。
+
 ## RF640 开机与三问自检
 
 - 目标是什么？把 RF620/RF630 的纯规划结果投影为有界、低基数、明确标注 `planned_not_production` 的诊断字段，同时不污染 RF510 的 actual PRoot 调度事实。
@@ -95,6 +102,13 @@
 - 依赖是否满足？满足。RF500 已提供 actual admission/telemetry，但其 lease 仍以调用栈为寿命；现有 `CardRunStore`、`BackgroundRuntimeRegistry` 和 Agent binding 可作为未来 owner 事实源，本任务只定义桥接合同，不复制状态。
 
 ## 倒序日志
+
+### 2026-08-01 RF640 长期 owner 规划态健康投影
+
+- 新增独立 `proot_long_planned_*` 固定 schema，只消费 RF620 admission snapshot 与 RF630 recovery plan 的不可变值；scope 强制为 `planned_not_production`，没有写入或复用 RF510 的 `proot_actual_*` 字段。
+- 字段只含压力、容量、维护屏障，以及固定 phase/kind/lane/action/process-match 的计数。恢复不可用时仍输出相同枚举键和零值，owner 从 1 增到 8 时 schema 数量不增长。
+- 敏感值护栏以 ownerId、leaseId、PID、启动代次、路径、命令和 Agent/session 标识作为反例，投影结果均不包含；两次读取结果一致，模拟器快照和记录不变。
+- RF610～RF640 强制联合为 4 个 suite、33 项测试零失败；随后 Locale.ROOT 键稳定性微调的投影 suite 复验通过，Debug 构建成功。RF650 只做联合父门和生产引用审计。
 
 ### 2026-08-01 RF630 重启恢复与孤儿协调
 

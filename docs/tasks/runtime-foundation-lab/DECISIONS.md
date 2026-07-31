@@ -214,3 +214,11 @@
 - 决定：长期 owner 恢复用 `(hostPid, processStartTicks)` 作为最小进程身份；只在二者精确匹配时重连。同 PID 不同代次、未发现进程或身份不完整都不得启动替代进程。恢复开始前已有停止意图时，最终状态必须保持停止或孤儿停止审查。
 - 原因：Android/Linux 会复用 PID，仅按数字重连可能把无关新进程绑定到旧 owner；把“未发现”直接当死亡释放容量，又会在观察窗口或控制面重启时产生第二实例。恢复与用户停止并发时，运行优先会违背明确的停止请求。
 - 影响：未找到的已附着 owner 继续占容量直到死亡确认；`STARTING` 且未持久化身份的记录保持 review。持久化批次按 owner/generation 去重，同代次冲突不自动选择生产语义；多个 owner 声称同一进程代次时全部进入冲突审查，禁止双重绑定。该规划器不读取 `/proc`，未来每类生产 owner 必须提供可信观察与停止确认。
+
+## ADR-RF-028 长期 owner 规划态使用独立固定健康 schema
+
+- 状态：已接受，RF640 已完成
+- 日期：2026-08-01
+- 决定：RF600 的诊断字段统一使用 `proot_long_planned_*` 前缀和 `planned_not_production` scope，只从调用方传入的不可变 admission snapshot/recovery plan 计算固定枚举计数，不接入正式 RuntimeHealth。
+- 原因：把模拟结果写入 `proot_actual_*` 会让尚未接入生产的长期 owner 冒充真实调度事实；按 owner 动态生成字段又会泄漏身份并造成无界基数。投影时回读模拟器或扫描进程也会让诊断读取产生副作用。
+- 影响：ownerId、leaseId、PID/启动代次、路径、命令和 Agent/session 身份永不进入该 schema。未来生产迁移后，actual 字段必须来自唯一生产状态拥有者并另立迁移门，不能把 planned 字段简单改名。

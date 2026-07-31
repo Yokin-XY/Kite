@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF600` 长生命周期 owner lease 预研
-- 当前任务：`RF640` 长期 lease 规划态可观测性
+- 当前任务：`RF650` RF600 父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -451,7 +451,11 @@
 #### RF640 长期 lease 规划态可观测性
 
 - 解法：只投影纯模拟器的低基数 phase/kind/lane/容量数字，明确 `planned_not_production`；不写入 RF510 的 actual 字段。
-- 验收标准：不含 ownerId、PID、路径、命令或 Agent/session 身份；读取无副作用。
+- 验收标准：
+  - [x] 固定 `proot_long_planned_*` schema 与 `planned_not_production` scope；
+  - [x] 只输出 phase/kind/lane/action/process-match 枚举计数和容量数字；
+  - [x] 不含 ownerId、leaseId、PID/代次、路径、命令或 Agent/session 身份；
+  - [x] owner 数增长不扩张字段集合，读取不可变快照无副作用。
 - 依赖：RF630。
 
 #### RF650 RF600 父任务门
