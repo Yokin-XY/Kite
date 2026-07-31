@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF300` Android/NDK 原生 Provider
-- 当前任务：`RF330` 安全归档能力
+- 当前任务：`RF340` Android 系统能力目录
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -228,9 +228,9 @@
 
 ##### RF330c 资源与真机门
 
-- [ ] 只迁移静态 ZIP、缓存目标和不要求 Linux 元数据的资源步骤；
-- [ ] tar/tar.gz、动态路径、链接或权限保真继续 PRoot；
-- [ ] 真机覆盖 ZIP 压力、恶意条目、空间不足、取消和 PRoot 对照。
+- [x] 完成资源审计；当前没有静态 ZIP 安全迁移点，且真机性能 no-go，不强行迁移；
+- [x] tar/tar.gz、动态路径、链接或权限保真继续 PRoot；
+- [x] 真机覆盖 ZIP 压力、恶意条目、空间不足、取消和 PRoot 对照。
 
 #### RF340 Android 系统能力目录
 

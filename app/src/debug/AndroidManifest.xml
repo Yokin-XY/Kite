@@ -38,6 +38,7 @@
                 <action android:name="com.kite.app.debug.NATIVE_DOWNLOAD_CAPABILITY_PROBE" />
                 <action android:name="com.kite.app.debug.NATIVE_DOWNLOAD_CAPABILITY_BENCHMARK" />
                 <action android:name="com.kite.app.debug.NATIVE_FILE_CAPABILITY_BENCHMARK" />
+                <action android:name="com.kite.app.debug.NATIVE_ARCHIVE_CAPABILITY_BENCHMARK" />
             </intent-filter>
         </receiver>
         <service
@@ -45,6 +46,9 @@
             android:exported="false" />
         <service
             android:name="com.kite.app.foundation.runtime.NativeFileCapabilityBenchmarkService"
+            android:exported="false" />
+        <service
+            android:name="com.kite.app.foundation.runtime.NativeArchiveCapabilityBenchmarkService"
             android:exported="false" />
     </application>
 </manifest>

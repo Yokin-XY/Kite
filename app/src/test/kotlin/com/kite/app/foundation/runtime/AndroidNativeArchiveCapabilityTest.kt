@@ -113,6 +113,11 @@ class AndroidNativeArchiveCapabilityTest {
         )
         assertFalse(base.destination.exists())
         assertFalse(base.stagingDirectory.exists())
+
+        val noSpace = AndroidNativeArchiveExecutor(availableBytes = { 1_024L }).execute(base)
+        assertEquals(NativeArchiveExecutionResult.Failure("native_archive_insufficient_space"), noSpace)
+        assertFalse(base.destination.exists())
+        assertFalse(base.stagingDirectory.exists())
     }
 
     @Test

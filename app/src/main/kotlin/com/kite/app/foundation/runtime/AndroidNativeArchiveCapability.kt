@@ -1,6 +1,8 @@
 package com.kite.app.foundation.runtime
 
+import java.io.BufferedInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.AccessDeniedException
@@ -10,6 +12,7 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.util.UUID
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
+import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream
 import org.apache.commons.compress.archivers.zip.ZipFile
 
 internal data class AndroidNativeArchivePlan(
@@ -143,6 +146,7 @@ internal sealed interface NativeArchiveExecutionResult {
 
 internal class AndroidNativeArchiveExecutor(
     private val platform: NativeFilePlatform = JavaNativeFilePlatform,
+    private val availableBytes: (File) -> Long = File::getUsableSpace,
 ) {
     fun execute(
         plan: AndroidNativeArchivePlan,
@@ -151,6 +155,15 @@ internal class AndroidNativeArchiveExecutor(
     ): NativeArchiveExecutionResult {
         validateSource(plan)?.let { return it }
         if (plan.destination.exists()) return NativeArchiveExecutionResult.Failure("native_archive_destination_exists")
+        val destinationParent = plan.destination.parentFile
+            ?: return NativeArchiveExecutionResult.Failure("native_archive_destination_invalid")
+        if (!destinationParent.mkdirs() && !destinationParent.isDirectory) {
+            return NativeArchiveExecutionResult.Failure("native_archive_destination_parent_failed")
+        }
+        val usableSpace = availableBytes(destinationParent)
+        if (usableSpace > 0L && plan.maximumTotalBytes > usableSpace) {
+            return NativeArchiveExecutionResult.Failure("native_archive_insufficient_space")
+        }
         if (!deleteTree(plan.stagingDirectory.toPath())) {
             return NativeArchiveExecutionResult.Failure("native_archive_staging_cleanup_failed")
         }
@@ -178,61 +191,99 @@ internal class AndroidNativeArchiveExecutor(
     }
 
     private data class Extracted(val entries: Int, val bytes: Long)
+    private data class SafeZipEntry(
+        val name: String,
+        val relativePath: String,
+        val directory: Boolean,
+        val declaredSize: Long,
+    )
 
     private fun extractZip(
         plan: AndroidNativeArchivePlan,
         cancellation: NativeFileCancellation,
         progress: NativeArchiveProgressListener,
     ): Extracted {
+        val safeEntries = preflightZip(plan, cancellation)
         var entries = 0
         var totalBytes = 0L
-        val seen = hashSetOf<String>()
-        ZipFile(plan.source).use { archive ->
-            val archiveEntries = archive.entries
-            while (archiveEntries.hasMoreElements()) {
+        ZipArchiveInputStream(BufferedInputStream(FileInputStream(plan.source)), "UTF-8", true, true).use { input ->
+            while (true) {
                 if (cancellation.isCancelled()) throw ArchiveCancelled(entries, totalBytes)
-                val entry = archiveEntries.nextElement()
+                val entry = input.nextZipEntry ?: break
+                val expected = safeEntries.getOrNull(entries)
+                    ?: throw ArchiveFailure("native_archive_central_directory_mismatch")
+                if (entry.name != expected.name || entry.isDirectory != expected.directory) {
+                    throw ArchiveFailure("native_archive_central_directory_mismatch")
+                }
                 entries += 1
-                if (entries > plan.maximumEntries) throw ArchiveFailure("native_archive_entry_limit")
-                if (!archive.canReadEntryData(entry)) throw ArchiveFailure("native_archive_entry_unreadable")
-                val relative = safeRelativePath(entry.name, plan.maximumDepth)
-                if (!seen.add(relative)) throw ArchiveFailure("native_archive_duplicate_entry")
-                val output = resolveOutput(plan.stagingDirectory, relative)
-                if (entry.isDirectory) {
+                if (!input.canReadEntryData(entry)) throw ArchiveFailure("native_archive_entry_unreadable")
+                val output = resolveOutput(plan.stagingDirectory, expected.relativePath)
+                if (expected.directory) {
                     if (!output.mkdirs() && !output.isDirectory) throw IOException("directory_create_failed")
                     progress.onProgress(entries, totalBytes)
                     continue
                 }
-                if (!isRegularFile(entry)) throw ArchiveFailure("native_archive_special_entry")
-                val declaredSize = entry.size
-                if (declaredSize > plan.maximumFileBytes) throw ArchiveFailure("native_archive_file_size_limit")
                 val parent = output.parentFile ?: throw ArchiveFailure("native_archive_path_invalid")
                 if (!parent.mkdirs() && !parent.isDirectory) throw IOException("parent_create_failed")
                 var fileBytes = 0L
-                archive.getInputStream(entry).use { input ->
-                    FileOutputStream(output, false).use { stream ->
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        while (true) {
-                            if (cancellation.isCancelled()) throw ArchiveCancelled(entries, totalBytes)
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            if (count == 0) continue
-                            fileBytes += count
-                            totalBytes += count
-                            if (fileBytes > plan.maximumFileBytes) throw ArchiveFailure("native_archive_file_size_limit")
-                            if (totalBytes > plan.maximumTotalBytes) throw ArchiveFailure("native_archive_total_size_limit")
-                            if (totalBytes > plan.source.length() * plan.maximumExpansionRatio.toLong()) {
-                                throw ArchiveFailure("native_archive_expansion_ratio_limit")
-                            }
-                            stream.write(buffer, 0, count)
-                            progress.onProgress(entries, totalBytes)
+                FileOutputStream(output, false).use { stream ->
+                    val buffer = ByteArray(BUFFER_SIZE)
+                    while (true) {
+                        if (cancellation.isCancelled()) throw ArchiveCancelled(entries, totalBytes)
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        fileBytes += count
+                        totalBytes += count
+                        if (fileBytes > plan.maximumFileBytes) throw ArchiveFailure("native_archive_file_size_limit")
+                        if (totalBytes > plan.maximumTotalBytes) throw ArchiveFailure("native_archive_total_size_limit")
+                        if (totalBytes > plan.source.length() * plan.maximumExpansionRatio.toLong()) {
+                            throw ArchiveFailure("native_archive_expansion_ratio_limit")
                         }
-                        stream.fd.sync()
+                        stream.write(buffer, 0, count)
+                        progress.onProgress(entries, totalBytes)
                     }
+                }
+                if (expected.declaredSize >= 0L && fileBytes != expected.declaredSize) {
+                    throw ArchiveFailure("native_archive_central_directory_mismatch")
                 }
             }
         }
+        if (entries != safeEntries.size) throw ArchiveFailure("native_archive_central_directory_mismatch")
         return Extracted(entries, totalBytes)
+    }
+
+    private fun preflightZip(
+        plan: AndroidNativeArchivePlan,
+        cancellation: NativeFileCancellation,
+    ): List<SafeZipEntry> {
+        val result = ArrayList<SafeZipEntry>()
+        val seen = hashSetOf<String>()
+        var declaredTotal = 0L
+        ZipFile(plan.source).use { archive ->
+            val entries = archive.entries
+            while (entries.hasMoreElements()) {
+                if (cancellation.isCancelled()) throw ArchiveCancelled(result.size, 0L)
+                val entry = entries.nextElement()
+                if (result.size >= plan.maximumEntries) throw ArchiveFailure("native_archive_entry_limit")
+                if (!archive.canReadEntryData(entry)) throw ArchiveFailure("native_archive_entry_unreadable")
+                val relative = safeRelativePath(entry.name, plan.maximumDepth)
+                if (!seen.add(relative)) throw ArchiveFailure("native_archive_duplicate_entry")
+                if (!entry.isDirectory && !isRegularFile(entry)) {
+                    throw ArchiveFailure("native_archive_special_entry")
+                }
+                val declaredSize = entry.size
+                if (declaredSize > plan.maximumFileBytes) throw ArchiveFailure("native_archive_file_size_limit")
+                if (declaredSize > 0L) {
+                    declaredTotal += declaredSize
+                    if (declaredTotal > plan.maximumTotalBytes) {
+                        throw ArchiveFailure("native_archive_total_size_limit")
+                    }
+                }
+                result += SafeZipEntry(entry.name, relative, entry.isDirectory, declaredSize)
+            }
+        }
+        return result
     }
 
     private fun validateSource(plan: AndroidNativeArchivePlan): NativeArchiveExecutionResult.Failure? = when {
