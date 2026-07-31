@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF700` 设备自适应校准预研
-- 当前任务：`RF710` 既有校准合同与实际 1/2/4 策略对齐审计
+- 当前任务：`RF720` 可信信号归一与升降级门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -471,7 +471,11 @@
 #### RF710 既有校准合同与实际策略对齐审计
 
 - 问题证据：仓库已有 observe-only 的 `RuntimeProotDeviceCalibrationDryRun` 与 overlay，但 RF400 的正式 admission/pool 已统一到 `ProotPerformanceTunings` 1/2/4；不能另写第二套校准器或把历史 tracee 上限直接当并发上限。
-- 验收标准：列清 overlay/health/automation 的真实读写路径；证明哪些字段只描述 tracee 模型、哪些能映射 1/2/4；建立失败关闭的候选输入合同，不改变生产档位。
+- 验收标准：
+  - [x] overlay/health/automation 与 actual coordinator 的真实读写路径已核清；
+  - [x] loader 对 schema 与 declared valid 失败关闭，缺字段不再默认有效；
+  - [x] tracee 校准只作为安全 guard，不直接选择 1/2/4 或消费旧 profileLimits；
+  - [x] 显示档位从唯一 `ProotPerformanceTunings` 派生，不改变生产 coordinator。
 - 依赖：RF650。
 
 #### RF720 可信信号归一与升降级门

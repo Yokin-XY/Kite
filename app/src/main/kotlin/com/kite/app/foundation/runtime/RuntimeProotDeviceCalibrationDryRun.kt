@@ -19,6 +19,7 @@ enum class RuntimeProotDeviceCalibrationRecommendation {
 
 data class RuntimeProotDeviceCalibrationOverlay(
     val path: String = "/workspace/.kf/proot-device-calibration.json",
+    val schema: String = "none",
     val status: String = "not_measured_safe_defaults_active",
     val source: String = "safe_defaults",
     val calibrationMethod: String = "none",
@@ -55,6 +56,7 @@ data class RuntimeProotDeviceCalibrationOverlay(
     val balancedProfileLimit: Int = 1,
     val highPerformanceProfileLimit: Int = 2,
     val profileLimitPolicy: String = RuntimeProotDeviceCalibrationDefaults.PROFILE_LIMIT_POLICY,
+    val appliedAtMs: Long = 0L,
     val loadError: String = "none"
 )
 
@@ -125,6 +127,7 @@ data class RuntimeProotDeviceCalibrationResetResult(
 
 object RuntimeProotDeviceCalibrationOverlayStore {
     private const val RELATIVE_OVERLAY_PATH = ".kf/proot-device-calibration.json"
+    internal const val EXPECTED_SCHEMA = "proot_device_calibration_v0"
 
     fun load(workspacePath: String?): RuntimeProotDeviceCalibrationOverlay {
         if (workspacePath.isNullOrBlank()) {
@@ -142,6 +145,7 @@ object RuntimeProotDeviceCalibrationOverlayStore {
         }
         return runCatching {
             val json = JSONObject(file.readText())
+            val schema = json.optString("schema", "none")
             val queueStrategy = json.optJSONObject("queueStrategy")
                 ?: json.optJSONObject("strategy")
             val profileLimits = json.optJSONObject("profileLimits")
@@ -215,10 +219,11 @@ object RuntimeProotDeviceCalibrationOverlayStore {
             val safeOverflowHeadroomTracees = percentDerivedStrategy[3].coerceAtLeast(0)
             RuntimeProotDeviceCalibrationOverlay(
                 path = file.absolutePath,
+                schema = schema,
                 status = json.optString("status", "loaded"),
                 source = json.optString("source", "local_device_calibration_overlay"),
                 calibrationMethod = json.optString("calibrationMethod", "unknown"),
-                valid = json.optBoolean("valid", true),
+                valid = acceptsDeclaredOverlay(schema, json.optBoolean("valid", false)),
                 upperBoundMeasured = json.optBoolean("upperBoundMeasured", false),
                 healthyStableTraceeCap = healthyStableTraceeCap,
                 budgetKneeTracees = json.optPositiveInt("budgetKneeTracees", 0),
@@ -268,7 +273,8 @@ object RuntimeProotDeviceCalibrationOverlayStore {
                 profileLimitPolicy = json.optString(
                     "profileLimitPolicy",
                     RuntimeProotDeviceCalibrationDefaults.PROFILE_LIMIT_POLICY
-                )
+                ),
+                appliedAtMs = json.optLong("appliedAtMs", 0L).coerceAtLeast(0L),
             )
         }.getOrElse { error ->
             RuntimeProotDeviceCalibrationOverlay(
@@ -314,6 +320,9 @@ object RuntimeProotDeviceCalibrationOverlayStore {
             error = if (moved) "none" else "archive_rename_failed"
         )
     }
+
+    internal fun acceptsDeclaredOverlay(schema: String, declaredValid: Boolean): Boolean =
+        schema == EXPECTED_SCHEMA && declaredValid
 
     private fun nextArchiveFile(parent: File, now: Long): File {
         var index = 0
@@ -389,7 +398,7 @@ data class RuntimeProotDeviceCalibrationDryRunSnapshot(
     val conservativeTraceeHardCap: Int = 16,
     val conservativeMemoryWorkerRssKb: Long = 96L * 1024L,
     val conservativeSingleProotBalancedParallel: Int = 1,
-    val overlaySchema: String = "proot_device_calibration_v0",
+    val overlaySchema: String = "none",
     val overlaySource: String = "product_no_adb_calibration",
     val overlayStatus: String = "not_measured_safe_defaults_active",
     val overlayValid: Boolean = false,
@@ -576,6 +585,7 @@ object RuntimeProotDeviceCalibrationDryRun {
             RuntimeProotDeviceCalibrationState.RESULT_OVERLAY_READY ->
                 RuntimeProotDeviceCalibrationRecommendation.APPLY_LOCAL_OVERLAY
         }
+        val productionProfileLimits = RuntimeProotCalibrationAlignment.productionProfileLimits()
         return RuntimeProotDeviceCalibrationDryRunSnapshot(
             generatedAtMs = now,
             state = state,
@@ -603,6 +613,7 @@ object RuntimeProotDeviceCalibrationDryRun {
                 prootPoolPlan.adaptiveHardStopLiveTracees.coerceAtLeast(16)
             },
             conservativeMemoryWorkerRssKb = overlay.memoryWorkerRssKb,
+            overlaySchema = overlay.schema,
             overlaySource = overlay.source,
             overlayStatus = overlay.status,
             overlayValid = overlay.valid,
@@ -628,10 +639,10 @@ object RuntimeProotDeviceCalibrationDryRun {
             overflowPercentBase = overlay.overflowPercentBase,
             queueStrategyPercentBase = overlay.queueStrategyPercentBase,
             queueStrategyPolicy = overlay.queueStrategyPolicy,
-            lowPowerProfileLimit = overlay.lowPowerProfileLimit,
-            balancedProfileLimit = overlay.balancedProfileLimit,
-            highPerformanceProfileLimit = overlay.highPerformanceProfileLimit,
-            profileLimitPolicy = overlay.profileLimitPolicy,
+            lowPowerProfileLimit = productionProfileLimits.lowPower,
+            balancedProfileLimit = productionProfileLimits.balanced,
+            highPerformanceProfileLimit = productionProfileLimits.highPerformance,
+            profileLimitPolicy = "proot_performance_tunings_fixed_1_2_4_overlay_profile_limits_ignored",
             reason = "telemetry=$telemetryHealthy,budget=${budgetPressure.overallState.name}," +
                 "score=${pressureConsumer.prootPressureScore},live=${pressureConsumer.liveTraceeCount}," +
                 "risk=${prootPoolPlan.resourceEquationRiskPercent},blocker=$blocker," +

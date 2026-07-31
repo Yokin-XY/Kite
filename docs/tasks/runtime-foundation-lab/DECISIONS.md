@@ -238,3 +238,11 @@
 - 决定：RF700 不新建平行设备校准器；先审计既有 `RuntimeProotDeviceCalibrationDryRun`、overlay、RuntimeHealth 与 automation 路径，再把可信结果映射为 RF400 的 1/2/4 候选建议。生产 coordinator 仍是唯一实际档位拥有者。
 - 原因：仓库已有较完整的 tracee/内存校准模型，但历史 profile limit 与当前 `ProotPerformanceTunings` 不完全一致。直接新增实现会形成第二套事实源，直接套用又可能把 tracee 容量错当任务并发。
 - 影响：未知 thermal、旧 schema、缺实测上界或信号冲突时失败关闭；在 RF750 前只允许 planned 建议，不改正式策略文件、不自动升档。
+
+## ADR-RF-031 tracee 校准只作安全 guard 不直接选择任务并发档
+
+- 状态：已接受，RF710 已完成
+- 日期：2026-08-01
+- 决定：P0 overlay 只有 schema、显式 valid、当前 calibration method、applied time、实测上界和 tracee 数关系全部可信时，才能作为后续自适应的设备安全 guard；即使通过，也不能直接选择 LOW/DEFAULT/HIGH。正式档位数字始终从 `ProotPerformanceTunings` 派生为 1/2/4。
+- 原因：P0 测量的是单 PRoot 内标准 worker 的 tracee 吞吐峰值，不是有界任务在多个 warm runner 间的并发收益。旧 profileLimits 是已废弃分段，脚本当前也明确不再生成；把 tracee 数当任务并发会跨越没有证据的模型边界。
+- 影响：overlay loader 缺 schema/valid 时失败关闭；历史 profileLimits 只保留兼容读取，不进入新对齐结果和档位显示。RF720 的升降级必须使用实际任务遥测、内存和前后台证据，thermal 不可信时不得升档。

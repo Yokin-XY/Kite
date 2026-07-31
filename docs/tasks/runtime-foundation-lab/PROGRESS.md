@@ -34,7 +34,8 @@
 | RF640 | 已完成 | 固定规划态 schema 通过隐私、基数与无副作用护栏 |
 | RF650 | 已完成 | 1374 项全量回归通过；后台身份桥接准备 go、生产迁移 no-go |
 | RF700 | 进行中 | 在既有校准 dry-run 上对齐正式 1/2/4 策略，不另建平行体系 |
-| RF710 | 进行中 | 审计 overlay/health/automation 与正式 tunings 的真实边界 |
+| RF710 | 已完成 | overlay schema 失败关闭，tracee guard 与正式 1/2/4 档位彻底分离 |
+| RF720 | 进行中 | 归一 actual 遥测、内存、前后台与 thermal 缺失边界 |
 
 ## RF110 开机与三问自检
 
@@ -78,6 +79,12 @@
 - 完成后拿什么证明？强制联合测试、Debug 构建、静态生产引用与敏感字段检查、提交边界复核；形成后台服务样板 go/no-go 和下一任务入口。本门不重跑冻结的 Node/Python 性能矩阵，也不伪造真机长期进程证据。
 - 依赖是否满足？满足。四个叶子任务均已独立测试构建并提交前三项；RF640 等待本叶提交后进入父门，所有实现仍为无生产装配的合同/模拟器。
 
+## RF720 开机与三问自检
+
+- 目标是什么？把 RF510/RF530 的实际 coordinator 与有界任务遥测、可信内存压力、前后台和 thermal 可用性归一成一次评估输入，明确何时只能保持/降级、何时连候选升档都不能给。
+- 完成后拿什么证明？未知、陈旧、零样本和冲突信号失败关闭；HIGH/CRITICAL 或显著失败给降级建议但不强杀任务；没有可信 thermal 时永远不产生升档建议；纯函数不改 coordinator。
+- 依赖是否满足？满足。RF710 已证明 tracee overlay 只能当 guard，正式 1/2/4 来自单一 tunings；RF530 已有固定 lane/route/result 与 queue/execute/total 聚合，可作为实际任务证据。
+
 ## RF710 开机与三问自检
 
 - 目标是什么？复用而不是重写仓库已有设备校准 dry-run，找出历史 tracee/overlay 模型与 RF400 正式 1/2/4 admission/pool 档位之间可证明的映射和冲突。
@@ -109,6 +116,14 @@
 - 依赖是否满足？满足。RF500 已提供 actual admission/telemetry，但其 lease 仍以调用栈为寿命；现有 `CardRunStore`、`BackgroundRuntimeRegistry` 和 Agent binding 可作为未来 owner 事实源，本任务只定义桥接合同，不复制状态。
 
 ## 倒序日志
+
+### 2026-08-01 RF710 既有设备校准与正式 1/2/4 对齐
+
+- 真实链路为：packaged P0 Python 通过 automation 的 PRoot 命令写 `/workspace/.kf/proot-device-calibration.json`；`RuntimeHealthStore` 读取后只传给 `RuntimeProotPoolPlanDryRun` 与 `RuntimeProotDeviceCalibrationDryRun`。实际 `WarmProotExecutionCoordinator`、admission 与 pool 不读取 overlay，只消费 profile/workload/pressure 和唯一 `ProotPerformanceTunings`。
+- 修正 overlay loader：必须同时满足 `schema=proot_device_calibration_v0` 与显式 `valid=true` 才标记有效；缺 schema/valid 的任意 JSON 不再默认有效，并保留 `appliedAtMs` 供后续陈旧性判断。dry-run 输出真实 overlay schema。
+- 新增 `RuntimeProotCalibrationAlignment`：只接受当前 v4 方法、应用时间、实测上界和自洽 tracee 证据；通过后也仅为 `READY_TRACE_GUARD_ONLY`，`directProfileSelectionAllowed` 永远 false。旧 overlay 的 profileLimits 即使写成 64/96/128 也被忽略。
+- dry-run 展示的 low/balanced/high 改为从 `ProotPerformanceTunings` 派生的 1/2/4，不能再被 tracee 数覆盖。目标 2 个 suite、10 项测试零失败，Debug 构建成功。
+- 首轮临时文件测试暴露的是本地 JVM Android `org.json` stub 的 `RuntimeException`，并未执行真实 loader 规则；没有降低断言，而是把 loader 的 schema/valid 门抽为纯函数，让产品代码与 JVM 测试消费同一判断后复验通过。
 
 ### 2026-08-01 RF650 RF600 父任务门
 
