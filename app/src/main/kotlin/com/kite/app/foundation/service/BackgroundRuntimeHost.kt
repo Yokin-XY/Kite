@@ -10,6 +10,7 @@ import com.kite.app.foundation.runtime.HostProcessTerminator
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
+import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
 import com.kite.app.foundation.runtime.KFContainerManager
 import com.kite.app.foundation.runtime.ProcessExitSemantics
 import com.kite.app.foundation.runtime.RuntimeAdmissionGuard
@@ -1361,6 +1362,9 @@ object BackgroundRuntimeHost {
         if (executable.isNotBlank()) {
             val runtimeGuarantees = RuntimeExecutionGuaranteeCodec.decode(record.runtimeGuarantees)
                 ?: error("background_runtime_guarantees_invalid")
+            val guaranteeEvidence = RuntimeExecutionGuaranteeEvidenceCodec.normalize(
+                record.runtimeGuaranteeEvidence
+            ) ?: error("background_runtime_guarantee_evidence_invalid")
             val space = resolveSpace(appContext)
             check(space.id == record.spaceId) { "runtime_space_is_not_active" }
             val container = WorkSurfaceRuntimeBridge.resolveActiveContainer(appContext)
@@ -1373,6 +1377,7 @@ object BackgroundRuntimeHost {
                     workingDirectory = record.workingDirectory,
                     environment = resolvedEnvironment,
                     guarantees = runtimeGuarantees,
+                    guaranteeEvidence = guaranteeEvidence,
                 ),
             )) {
                 is ManagedRuntimeLaunchPlan.Ready -> return RuntimeProcessLaunchConfig(
@@ -1445,6 +1450,7 @@ object BackgroundRuntimeHost {
         current.startArguments != definition.startArguments ||
         current.environment != definition.environment ||
         current.runtimeGuarantees != definition.runtimeGuarantees ||
+        current.runtimeGuaranteeEvidence != definition.runtimeGuaranteeEvidence ||
         current.environmentFiles != definition.environmentFiles ||
         current.bindAddress != definition.bindAddress ||
         current.bindPort != definition.bindPort ||

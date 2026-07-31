@@ -29,7 +29,7 @@ import kotlinx.coroutines.launch
 /** Debug-only 固定 Python Host/PRoot 矩阵；不接受外部命令、路径、负载或并发参数。 */
 class PythonRuntimeBenchmarkReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action !in setOf(ACTION_BENCHMARK, ACTION_COMPATIBILITY, ACTION_LAYERED)) return
+        if (intent.action !in setOf(ACTION_BENCHMARK, ACTION_COMPATIBILITY, ACTION_LAYERED, ACTION_EXTENSION)) return
         runCatching {
             context.startService(
                 Intent(context, PythonRuntimeBenchmarkService::class.java).putExtra(
@@ -37,6 +37,7 @@ class PythonRuntimeBenchmarkReceiver : BroadcastReceiver() {
                     when (intent.action) {
                         ACTION_COMPATIBILITY -> MODE_COMPATIBILITY
                         ACTION_LAYERED -> MODE_LAYERED
+                        ACTION_EXTENSION -> MODE_EXTENSION
                         else -> MODE_BENCHMARK
                     },
                 )
@@ -54,10 +55,12 @@ class PythonRuntimeBenchmarkReceiver : BroadcastReceiver() {
         const val ACTION_BENCHMARK = "com.kite.app.debug.PYTHON_RUNTIME_BENCHMARK"
         const val ACTION_COMPATIBILITY = "com.kite.app.debug.PYTHON_RUNTIME_COMPATIBILITY"
         const val ACTION_LAYERED = "com.kite.app.debug.PYTHON_RUNTIME_LAYERED"
+        const val ACTION_EXTENSION = "com.kite.app.debug.PYTHON_RUNTIME_EXTENSION"
         const val EXTRA_MODE = "mode"
         const val MODE_BENCHMARK = "benchmark"
         const val MODE_COMPATIBILITY = "compatibility"
         const val MODE_LAYERED = "layered"
+        const val MODE_EXTENSION = "extension"
         const val LOG_TAG = "[KFShell]PythonRuntimeBenchmark"
 
         fun safe(value: String): String = value.take(240).map { character ->
@@ -80,6 +83,8 @@ class PythonRuntimeBenchmarkService : Service() {
                         PythonRuntimeBenchmark.runCompatibility(applicationContext)
                     PythonRuntimeBenchmarkReceiver.MODE_LAYERED ->
                         PythonRuntimeBenchmark.runLayeredCompatibility(applicationContext)
+                    PythonRuntimeBenchmarkReceiver.MODE_EXTENSION ->
+                        PythonRuntimeBenchmark.runExtensionCompatibility(applicationContext)
                     else -> PythonRuntimeBenchmark.run(applicationContext)
                 }
                 reports.forEach { report ->
@@ -177,6 +182,17 @@ private object PythonRuntimeBenchmark {
         }
     }
 
+    fun runExtensionCompatibility(context: Context): List<String> {
+        val host = resolveHost(context)
+        return buildList {
+            add("status=extension_started python=${safe(host.pythonBinary.absolutePath)} abi=cpython-314-aarch64-linux-gnu")
+            add(extensionReport(context, host))
+            add(extensionWheelLifecycleReport(context, host))
+            add(abiMismatchReport(context, host))
+            add("status=extension_complete")
+        }
+    }
+
     private fun functionalReports(context: Context, host: HostPythonLayout): List<String> = listOf(
         productionProviderReport(context, host),
         compatibilityReport(
@@ -228,6 +244,131 @@ private object PythonRuntimeBenchmark {
         compatibilityReport(context, host, "venv_with_pip", VENV_WITH_PIP_PROBE),
     )
 
+    private fun extensionReport(context: Context, host: HostPythonLayout): String {
+        val hostDirectory = File(host.workspaceDirectory, ".kf/tmp/rf254")
+        val extension = File(hostDirectory, "kite_probe_ext.cpython-314-aarch64-linux-gnu.so")
+        val declaration = KiteResourceManifestLoader(context).parseManifestJson(
+            PYTHON_PROVIDER_DECLARATION,
+        ).agentProfiles.single()
+        val hostDecision = HostPythonRuntimeProvider.prepare(
+            context = HostPythonProviderContext(context, host.container, host.workspaceDirectory),
+            request = RuntimeExecutionRequest(
+                payload = RuntimeExecutionPayload.Argv(
+                    "python3",
+                    listOf(
+                        "-c",
+                        "import kite_probe_ext;assert kite_probe_ext.answer()==42;" +
+                            "assert kite_probe_ext.runtime()=='kite-glibc-host';print('$TOKEN')",
+                    ),
+                ),
+                environment = mapOf("PYTHONPATH" to "/workspace/.kf/tmp/rf254"),
+                guarantees = checkNotNull(RuntimeExecutionGuaranteeCodec.decode(declaration.runtimeGuarantees)),
+                guaranteeEvidence = declaration.runtimeGuaranteeEvidence,
+            ),
+        )
+        val hostResult = if (extension.isFile && hostDecision is RuntimeProviderDecision.Ready) {
+            execute(hostDecision.plan)
+        } else {
+            Execution(
+                -1,
+                "",
+                if (!extension.isFile) "extension_fixture_missing" else "extension_provider_not_ready",
+            )
+        }
+        val prootResult = execute(
+            context,
+            host,
+            Lane.PROOT,
+            "import sys;sys.path.insert(0,'/workspace/.kf/tmp/rf254');" +
+                "import kite_probe_ext;assert kite_probe_ext.answer()==42;" +
+                "assert kite_probe_ext.runtime()=='kite-glibc-host';print('$TOKEN')",
+        )
+        return "status=compatibility capability=c_extension_cpython_314 host=${hostResult.succeeded} " +
+            "hostExit=${hostResult.exitCode} hostReason=${safe(hostResult.stderr)} " +
+            "proot=${prootResult.succeeded} prootExit=${prootResult.exitCode} " +
+            "prootReason=${safe(prootResult.stderr)}"
+    }
+
+    private fun abiMismatchReport(context: Context, host: HostPythonLayout): String {
+        val declaration = KiteResourceManifestLoader(context).parseManifestJson(
+            PYTHON_PROVIDER_DECLARATION.replace("cpython-314", "cpython-315"),
+        ).agentProfiles.single()
+        val decision = HostPythonRuntimeProvider.prepare(
+            context = HostPythonProviderContext(context, host.container, host.workspaceDirectory),
+            request = RuntimeExecutionRequest(
+                payload = RuntimeExecutionPayload.Argv("python3", listOf("-c", "print('$TOKEN')")),
+                guarantees = checkNotNull(RuntimeExecutionGuaranteeCodec.decode(declaration.runtimeGuarantees)),
+                guaranteeEvidence = declaration.runtimeGuaranteeEvidence,
+            ),
+        )
+        val passed = decision is RuntimeProviderDecision.Unsupported &&
+            decision.reason == "python_native_imports_abi_mismatch"
+        return "status=compatibility capability=extension_abi_invalidation host=$passed " +
+            "hostExit=${if (passed) 0 else -1} hostReason=${safe((decision as? RuntimeProviderDecision.Unsupported)?.reason.orEmpty())} " +
+            "proot=not_run prootExit=not_run prootReason=pre_start_fallback"
+    }
+
+    private fun extensionWheelLifecycleReport(context: Context, host: HostPythonLayout): String {
+        val fixtureDirectory = File(host.workspaceDirectory, ".kf/tmp/rf254")
+        val initialWheelName = "kite_probe_ext-0.0.1-cp314-cp314-manylinux_2_17_aarch64.whl"
+        val upgradeWheelName = "kite_probe_ext-0.0.2-cp314-cp314-manylinux_2_17_aarch64.whl"
+        val initialWheel = File(fixtureDirectory, initialWheelName)
+        val upgradeWheel = File(fixtureDirectory, upgradeWheelName)
+        val installDirectory = File(host.workspaceDirectory, ".kf/tmp/rf254-installed")
+        val upgradeGeneration = File(installDirectory, "generation-0.0.2")
+        installDirectory.deleteRecursively()
+        val prootInstall = if (initialWheel.isFile && upgradeWheel.isFile) {
+            execute(
+                context,
+                host,
+                Lane.PROOT,
+                "from pip._internal.cli.main import main;from importlib.metadata import distributions;" +
+                    "v1='/workspace/.kf/tmp/rf254-installed/generation-0.0.1';" +
+                    "v2='/workspace/.kf/tmp/rf254-installed/generation-0.0.2';" +
+                    "initial=main(['install','--no-index','--no-deps','--target',v1," +
+                    "'/workspace/.kf/tmp/rf254/$initialWheelName']);" +
+                    "upgrade=main(['install','--no-index','--no-deps','--target',v2," +
+                    "'/workspace/.kf/tmp/rf254/$upgradeWheelName']);" +
+                    "selected=lambda root:next(d.version for d in distributions(path=[root]) " +
+                    "if d.metadata['Name']=='kite-probe-ext');" +
+                    "before=selected(v1);after=selected(v2);" +
+                    "print(f'install={initial},upgrade={upgrade},before={before},after={after}');" +
+                    "assert initial==0 and upgrade==0 and before=='0.0.1' and after=='0.0.2';" +
+                    "print('$TOKEN')",
+            )
+        } else {
+            Execution(-1, "", "extension_wheel_fixture_missing")
+        }
+        val declaration = KiteResourceManifestLoader(context).parseManifestJson(
+            PYTHON_PROVIDER_DECLARATION,
+        ).agentProfiles.single()
+        val hostDecision = HostPythonRuntimeProvider.prepare(
+            context = HostPythonProviderContext(context, host.container, host.workspaceDirectory),
+            request = RuntimeExecutionRequest(
+                payload = RuntimeExecutionPayload.Argv(
+                    "python3",
+                    listOf("-c", "import kite_probe_ext;assert kite_probe_ext.answer()==42;print('$TOKEN')"),
+                ),
+                environment = mapOf(
+                    "PYTHONPATH" to "/workspace/.kf/tmp/rf254-installed/${upgradeGeneration.name}",
+                ),
+                guarantees = checkNotNull(RuntimeExecutionGuaranteeCodec.decode(declaration.runtimeGuarantees)),
+                guaranteeEvidence = declaration.runtimeGuaranteeEvidence,
+            ),
+        )
+        val hostImport = if (prootInstall.succeeded && hostDecision is RuntimeProviderDecision.Ready) {
+            execute(hostDecision.plan)
+        } else {
+            Execution(-1, "", "extension_wheel_install_or_provider_failed")
+        }
+        installDirectory.deleteRecursively()
+        return "status=compatibility capability=c_extension_wheel_generation_upgrade " +
+            "host=${hostImport.succeeded} hostExit=${hostImport.exitCode} hostReason=${safe(hostImport.stderr)} " +
+            "proot=${prootInstall.succeeded} prootExit=${prootInstall.exitCode} " +
+            "prootState=${safe(prootInstall.stdout.takeLast(240))} " +
+            "prootReason=${safe(prootInstall.stderr.takeLast(240))}"
+    }
+
     private fun productionProviderReport(context: Context, host: HostPythonLayout): String {
         val declaration = KiteResourceManifestLoader(context).parseManifestJson(
             PYTHON_PROVIDER_DECLARATION,
@@ -245,6 +386,7 @@ private object PythonRuntimeBenchmark {
                 workingDirectory = "/workspace",
                 environment = mapOf("KITE_PYTHON_PROVIDER_PROBE" to "1"),
                 guarantees = guarantees,
+                guaranteeEvidence = declaration.runtimeGuaranteeEvidence,
             ),
         )
         val execution = when (decision) {
@@ -595,7 +737,8 @@ private object PythonRuntimeBenchmark {
               "protocol": "acp",
               "transport": "stdio",
               "argv": ["python3", "-c", "print('KITE_PY_OK')"],
-              "runtimeGuarantees": ["no_child_process", "verified_native_imports"]
+              "runtimeGuarantees": ["no_child_process", "verified_native_imports"],
+              "runtimeGuaranteeEvidence": {"pythonAbi": "cpython-314-aarch64-linux-gnu"}
             }
           }]
         }

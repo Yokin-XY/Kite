@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Benchmark", "Compatibility", "Layered")]
+    [ValidateSet("Benchmark", "Compatibility", "Layered", "Extension")]
     [string]$Mode = "Benchmark",
     [string]$Serial = "3f8bbaad",
     [string]$AdbPath = "D:\KF\Android\Sdk\platform-tools\adb.exe",
@@ -13,11 +13,13 @@ $artifactPath = Join-Path $benchmarkRepoRoot $OutputPath
 $action = switch ($Mode) {
     "Compatibility" { "com.kite.app.debug.PYTHON_RUNTIME_COMPATIBILITY" }
     "Layered" { "com.kite.app.debug.PYTHON_RUNTIME_LAYERED" }
+    "Extension" { "com.kite.app.debug.PYTHON_RUNTIME_EXTENSION" }
     default { "com.kite.app.debug.PYTHON_RUNTIME_BENCHMARK" }
 }
 $completion = switch ($Mode) {
     "Compatibility" { "status=compatibility_complete" }
     "Layered" { "status=layered_complete" }
+    "Extension" { "status=extension_complete" }
     default { "status=complete" }
 }
 $tag = "[KFShell]PythonRuntimeBenchmark"

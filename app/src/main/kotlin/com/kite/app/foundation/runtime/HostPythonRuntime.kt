@@ -20,10 +20,14 @@ internal data class HostPythonRuntimeLayout(
     val workspaceControlDirectory: File,
     val pythonBinary: File,
     val pythonRoot: File,
+    val pythonVersion: String,
     val pythonLibraryDirectory: File,
     val glibcLibraryDirectories: List<File>,
     val assets: GlibcHostRuntimeAssets,
 ) {
+    val pythonAbi: String
+        get() = "cpython-${pythonVersion.replace(".", "")}-aarch64-linux-gnu"
+
     val libraryPath: String
         get() = buildList {
             add(assets.patchedLibc.parentFile)
@@ -147,6 +151,7 @@ internal object HostPythonCommandResolver {
                 workspaceControlDirectory = workspaceControlDirectory.absoluteFile.normalize(),
                 pythonBinary = pythonBinary.absoluteFile.normalize(),
                 pythonRoot = pythonRoot.absoluteFile.normalize(),
+                pythonVersion = version,
                 pythonLibraryDirectory = pythonLibraryDirectory.absoluteFile.normalize(),
                 glibcLibraryDirectories = glibcDirectories.map { it.absoluteFile.normalize() },
                 assets = assets,
@@ -321,6 +326,13 @@ internal object HostPythonRuntimeProvider :
             is HostPythonCommandResolution.Ready -> resolution
             is HostPythonCommandResolution.Unsupported -> return unsupported(resolution.reason)
             is HostPythonCommandResolution.Blocked -> return blocked(resolution.reason)
+        }
+        val normalizedEvidence = RuntimeExecutionGuaranteeEvidenceCodec.normalize(request.guaranteeEvidence)
+            ?: return blocked("python_guarantee_evidence_invalid")
+        val declaredPythonAbi = normalizedEvidence[RuntimeExecutionGuaranteeEvidenceCodec.PYTHON_ABI]
+            ?: return unsupported("python_native_imports_abi_missing")
+        if (declaredPythonAbi != ready.layout.pythonAbi) {
+            return unsupported("python_native_imports_abi_mismatch")
         }
         val workingDirectory = ready.layout.mapContainerPath(request.workingDirectory)
             ?.takeIf(File::isDirectory)

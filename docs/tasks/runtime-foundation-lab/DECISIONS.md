@@ -59,3 +59,11 @@
 - 决定：Python 请求只有同时声明 `NO_CHILD_PROCESS` 与 `VERIFIED_NATIVE_IMPORTS` 才能进入 Host；空声明表示未知并回退 PRoot。
 - 原因：Host 的 Linux 绝对路径可能命中 Android 同名程序并表面成功，无法依靠退出码或运行后回退识别语义漂移。
 - 影响：RF252 已通过稳定 wire enum 将保证从资源 Agent、后台依赖、自定义登记和持久化记录透传到统一请求；不得从应用名、脚本名、包名或资源 ID 推断保证。
+
+## ADR-RF-009 Python 原生导入绑定 ABI，包升级使用不可变代次
+
+- 状态：已接受，RF254 已落地
+- 日期：2026-07-31
+- 决定：声明 `verified_native_imports` 的 Python 请求还必须携带精确 `pythonAbi` 证据；第三方包安装到新代次目录，验证后由调用方选择新目录，不在当前目录执行原地覆盖。
+- 原因：扩展后缀和解释器 ABI 必须一致；真机反例证明 `pip --target --upgrade` 会留下旧 `.dist-info`，产生代码与元数据版本分裂。
+- 影响：缺少或不匹配 ABI 的请求在启动前回 PRoot，未知证据字段失败关闭；不建立包名白名单，旧代次可在无运行租约后回收。

@@ -29,6 +29,7 @@ import com.kite.app.foundation.runtime.AndroidSharedStorageManager
 import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
+import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
 import com.kite.app.foundation.runtime.RuntimeExposureScope
 import com.kite.app.foundation.contracts.ContainerExecConfig
 import com.kite.app.agent.runtime.AgentRuntimeStatusSink
@@ -96,6 +97,7 @@ internal fun interface ManagedAgentProcessLaunchPlanner {
         workingDirectory: String,
         environment: Map<String, String>,
         runtimeGuarantees: Set<String>,
+        runtimeGuaranteeEvidence: Map<String, String>,
     ): ManagedAgentProcessLaunch
 }
 
@@ -126,6 +128,7 @@ internal class AndroidManagedAgentRuntimeDependencyPreparer(context: Context) :
                 startArguments = dependency.argv.drop(1),
                 environment = dependency.environment,
                 runtimeGuarantees = dependency.runtimeGuarantees,
+                runtimeGuaranteeEvidence = dependency.runtimeGuaranteeEvidence,
                 environmentFiles = dependency.environmentFiles,
                 bindAddress = dependency.bindAddress.takeIf(String::isNotBlank),
                 bindPort = dependency.bindPort,
@@ -176,10 +179,13 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
         workingDirectory: String,
         environment: Map<String, String>,
         runtimeGuarantees: Set<String>,
+        runtimeGuaranteeEvidence: Map<String, String>,
     ): ManagedAgentProcessLaunch {
         require(argv.isNotEmpty()) { "agent_process_command_empty" }
         val guarantees = RuntimeExecutionGuaranteeCodec.decode(runtimeGuarantees)
             ?: error("agent_runtime_guarantees_invalid")
+        val guaranteeEvidence = RuntimeExecutionGuaranteeEvidenceCodec.normalize(runtimeGuaranteeEvidence)
+            ?: error("agent_runtime_guarantee_evidence_invalid")
         val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
         val activeEnvironment = WorkSurfaceRuntimeBridge.resolveActiveWorkspaceEnvironment(container)
         val runtimePlan = ManagedRuntimeLaunchPlanner.plan(
@@ -191,6 +197,7 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
                 workingDirectory = workingDirectory,
                 environment = environment,
                 guarantees = guarantees,
+                guaranteeEvidence = guaranteeEvidence,
             ),
         )
         return ManagedAgentProcessLaunchSelector.select(runtimePlan, environment) {
@@ -265,6 +272,7 @@ internal class AndroidAgentRecipeRuntime(
         val transport: String,
         val argv: List<String>,
         val runtimeGuarantees: Set<String>,
+        val runtimeGuaranteeEvidence: Map<String, String>,
         val environmentFiles: Map<String, String>,
         val runtimeDependencies: List<KiteResourceAgentRuntimeDependency>,
         val connectionReference: String?,
@@ -385,6 +393,7 @@ internal class AndroidAgentRecipeRuntime(
                     workingDirectory = cwd,
                     environment = resolvedEnvironment,
                     runtimeGuarantees = resolved.runtimeGuarantees,
+                    runtimeGuaranteeEvidence = resolved.runtimeGuaranteeEvidence,
                 )
             }.getOrElse { error ->
                 callback(
@@ -636,6 +645,7 @@ internal class AndroidAgentRecipeRuntime(
                     transport = launch.transport,
                     argv = launch.argv,
                     runtimeGuarantees = launch.runtimeGuarantees,
+                    runtimeGuaranteeEvidence = launch.runtimeGuaranteeEvidence,
                     environmentFiles = profile?.environmentFiles.orEmpty(),
                     runtimeDependencies = profile?.runtimeDependencies.orEmpty(),
                     connectionReference = null,
@@ -654,6 +664,7 @@ internal class AndroidAgentRecipeRuntime(
                 transport = launch.transport,
                 argv = emptyList(),
                 runtimeGuarantees = emptySet(),
+                runtimeGuaranteeEvidence = emptyMap(),
                 environmentFiles = emptyMap(),
                 runtimeDependencies = emptyList(),
                 connectionReference = launch.connectionReference,
@@ -676,6 +687,7 @@ internal class AndroidAgentRecipeRuntime(
             transport = transport,
             argv = argv,
             runtimeGuarantees = runtimeGuarantees,
+            runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
             environmentFiles = environmentFiles,
             runtimeDependencies = runtimeDependencies,
             connectionReference = connectionReference.takeIf(String::isNotBlank),

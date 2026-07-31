@@ -32,6 +32,7 @@ class KiteCustomAgentRegistrationStoreTest {
                 "stdio",
                 listOf("my-agent", "acp"),
                 setOf("no_child_process", "verified_native_imports"),
+                mapOf("pythonAbi" to "cpython-314-aarch64-linux-gnu"),
             ),
             configAdapterId = "custom-config",
             sessionAdapterId = "custom-sessions"
@@ -53,6 +54,10 @@ class KiteCustomAgentRegistrationStoreTest {
         assertEquals(
             setOf("no_child_process", "verified_native_imports"),
             (restored.first().launch as AgentLaunchSpec.Managed).runtimeGuarantees,
+        )
+        assertEquals(
+            mapOf("pythonAbi" to "cpython-314-aarch64-linux-gnu"),
+            (restored.first().launch as AgentLaunchSpec.Managed).runtimeGuaranteeEvidence,
         )
     }
 

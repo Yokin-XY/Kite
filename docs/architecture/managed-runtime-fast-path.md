@@ -52,6 +52,10 @@ RF251 进一步要求调用方同时给出“无子进程”和“原生导入�
 脚本闭包的调用方必须回到 PRoot。原因是 Android Host 的 `/bin` 可能表面执行成功却产生不同于 Ubuntu 的结果，单靠失败后
 补跑无法保证语义，也违反唯一执行原则。
 
+RF254 将原生导入保证绑定到精确的 `cpython-<ABI>-aarch64-linux-gnu`。代表性 CPython 3.14 ARM64 扩展在 Host/PRoot 直接导入、
+PRoot 离线安装后由 Host 导入均通过；这只开放声明并验证过的导入闭包，不外推到任意 wheel。包升级采用不可变代次目录，验证后
+切换所选目录；真机已经否决会残留旧 `.dist-info` 的原地 `pip --target --upgrade`。
+
 ## Python 第一阶段边界
 
 RF240 只开放：
@@ -59,8 +63,8 @@ RF240 只开放：
 - 结构化 `python` executable 与 argv；
 - 无 shell 展开；
 - cwd、env、stdin/stdout/stderr、退出码和取消可以完整映射；
-- 标准库和纯 Python 模块位于身份已验证的运行时布局；
-- 不要求完整 `/proc`、Linux mount 视图或未验证的 C 扩展。
+- 标准库、纯 Python 模块和已按当前 `pythonAbi` 验证的原生导入位于身份已验证的运行时布局；
+- 不要求完整 `/proc`、Linux mount 视图或未声明验证证据的 C 扩展。
 
 任一能力不满足时，必须在 Python 进程创建前整条进入 PRoot。Host Python 已经开始后发生的异常保留在同一个运行实例，不自动
 再运行一份 PRoot。

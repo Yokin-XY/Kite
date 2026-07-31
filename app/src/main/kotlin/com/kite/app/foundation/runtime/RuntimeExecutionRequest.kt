@@ -69,6 +69,20 @@ internal object RuntimeExecutionGuaranteeCodec {
         ?.mapTo(linkedSetOf()) { value -> checkNotNull(byWireValue[value]) }
 }
 
+internal object RuntimeExecutionGuaranteeEvidenceCodec {
+    private val pythonAbi = Regex("cpython-[0-9]+-aarch64-linux-gnu")
+
+    fun normalize(values: Map<String, String>): Map<String, String>? {
+        if (values.keys.any { it != PYTHON_ABI }) return null
+        val normalized = values.mapValues { (_, value) -> value.trim().lowercase() }
+        return normalized.takeIf { evidence ->
+            evidence[PYTHON_ABI]?.let(pythonAbi::matches) != false
+        }
+    }
+
+    const val PYTHON_ABI = "pythonAbi"
+}
+
 internal enum class RuntimeFallbackPolicy {
     /** 只允许在任何业务执行开始前换到后续 Provider。 */
     BEFORE_START_ONLY,
@@ -86,12 +100,19 @@ internal data class RuntimeExecutionRequest(
     val environment: Map<String, String> = emptyMap(),
     val requirements: Set<RuntimeExecutionRequirement> = emptySet(),
     val guarantees: Set<RuntimeExecutionGuarantee> = emptySet(),
+    val guaranteeEvidence: Map<String, String> = emptyMap(),
     val fallbackPolicy: RuntimeFallbackPolicy = RuntimeFallbackPolicy.BEFORE_START_ONLY,
 ) {
     init {
         require(workingDirectory?.contains('\u0000') != true) { "runtime_working_directory_contains_nul" }
         require(environment.keys.all(ENVIRONMENT_NAME::matches)) { "runtime_environment_name_invalid" }
         require(environment.values.none { '\u0000' in it }) { "runtime_environment_value_contains_nul" }
+        require(guaranteeEvidence.keys.all(ENVIRONMENT_NAME::matches)) {
+            "runtime_guarantee_evidence_name_invalid"
+        }
+        require(guaranteeEvidence.values.none { '\u0000' in it }) {
+            "runtime_guarantee_evidence_value_contains_nul"
+        }
     }
 
     companion object {

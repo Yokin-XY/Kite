@@ -162,10 +162,12 @@ class KiteResourceManifestProtocolTest {
                       "transport": "stdio",
                       "argv": ["python3", "fixture.py"],
                       "runtimeGuarantees": ["NO_CHILD_PROCESS", "verified_native_imports"],
+                      "runtimeGuaranteeEvidence": {"pythonAbi": "CPYTHON-314-AARCH64-LINUX-GNU"},
                       "runtimeDependencies": [{
                         "id": "python-background",
                         "argv": ["python3", "background.py"],
-                        "runtimeGuarantees": ["no_child_process", "verified_native_imports"]
+                        "runtimeGuarantees": ["no_child_process", "verified_native_imports"],
+                        "runtimeGuaranteeEvidence": {"pythonAbi": "cpython-314-aarch64-linux-gnu"}
                       }]
                     }
                   }]
@@ -192,16 +194,46 @@ class KiteResourceManifestProtocolTest {
                 }
             """.trimIndent()
         )
+        val invalidEvidence = loader.parseManifestJson(
+            """
+                {
+                  "id": "kite.python-invalid-evidence",
+                  "base": {"name": "Python Invalid Evidence"},
+                  "agents": [{
+                    "id": "python-invalid-evidence",
+                    "name": "Python Invalid Evidence",
+                    "launch": {
+                      "mode": "managed",
+                      "providerId": "python-invalid-evidence",
+                      "protocol": "acp",
+                      "transport": "stdio",
+                      "argv": ["python3", "fixture.py"],
+                      "runtimeGuarantees": ["no_child_process", "verified_native_imports"],
+                      "runtimeGuaranteeEvidence": {"package": "trusted"}
+                    }
+                  }]
+                }
+            """.trimIndent()
+        )
 
         val profile = valid.agentProfiles.single()
         assertEquals(setOf("no_child_process", "verified_native_imports"), profile.runtimeGuarantees)
+        assertEquals(
+            mapOf("pythonAbi" to "cpython-314-aarch64-linux-gnu"),
+            profile.runtimeGuaranteeEvidence,
+        )
         assertEquals(profile.runtimeGuarantees, profile.runtimeDependencies.single().runtimeGuarantees)
+        assertEquals(
+            profile.runtimeGuaranteeEvidence,
+            profile.runtimeDependencies.single().runtimeGuaranteeEvidence,
+        )
         assertEquals(
             profile.runtimeGuarantees,
             (AgentResourceRegistrationMapper.registrations(valid).single().launch as AgentLaunchSpec.Managed)
                 .runtimeGuarantees,
         )
         assertTrue(invalid.agentProfiles.isEmpty())
+        assertTrue(invalidEvidence.agentProfiles.isEmpty())
     }
 
     @Test

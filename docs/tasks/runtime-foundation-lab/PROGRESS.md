@@ -4,18 +4,19 @@
 
 | 任务 | 状态 | 当前结论 |
 | --- | --- | --- |
-| RF000 | 进行中 | RF100 已完成，进入 RF200 快速通道 |
+| RF000 | 进行中 | RF100、RF200 已完成，进入 RF300 原生能力 |
 | RF100 | 已完成 | 统一请求、Provider 结果和失败关闭通过全量回归 |
 | RF110 | 已完成 | 总架构、三份 Provider 文档、Node 风险索引与性能证据已固化 |
 | RF120 | 已完成 | 三个 Node 入口已迁移到统一结构化请求，行为等价 |
 | RF130 | 已完成 | Ready/Unsupported/Blocked 已接入三条正式 Node 入口 |
-| RF200 | 进行中 | RF210～RF240 已完成，RF250 进入生产保证透传 |
+| RF200 | 已完成 | Node 与 Python 通用快速通道均已按分层门收口 |
 | RF210 | 已完成 | Node 显式实现标准 Provider，既有行为等价 |
 | RF220 | 已完成 | HN-001～HN-011 已完成证据和开放门映射 |
 | RF230 | 已完成 | 纯 Python go；subprocess/venv child/第三方扩展保持 PRoot |
 | RF240 | 已完成 | 通用 glibc 资产与纯 Python 结构化 Provider 已通过真机门 |
-| RF250 | 进行中 | RF251～RF253 已完成，进入 RF254 第三方扩展与包生命周期 |
-| RF300～RF440 | 待开始 | 按任务树依赖推进 |
+| RF250 | 已完成 | 子进程保持 PRoot；扩展按精确 ABI 与不可变代次开放 |
+| RF300 | 进行中 | 下一任务 RF310：下载与 SHA-256 校验 |
+| RF310～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
 
@@ -24,6 +25,17 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF254 / RF250 父任务验收
+
+- 固定 CPython 3.14 ARM64 扩展源码以及 0.0.1、0.0.2 两代 wheel 元数据；编译二进制和 wheel 只作为本地证据，不进入 Git。
+- 生产 `HostPythonRuntimeProvider` 现在要求 `verified_native_imports` 同时携带规范化 `pythonAbi`；ABI 缺失或不匹配均在创建业务进程前回到 PRoot，未知证据键失败关闭。
+- 资源 Agent、后台依赖、自定义 Agent 和后台持久化记录都透传同一份保证证据；旧记录缺省为空，继续安全回退。
+- OnePlus 8T 真机证明同一 `cpython-314-aarch64-linux-gnu` 扩展在 Host 与 PRoot 均能直接导入；0.0.1、0.0.2 分别安装到不可变代次目录后，选择 0.0.2 的 Host 导入通过。
+- 原地 `pip --target --upgrade` 被反例否决：它会保留旧 `.dist-info`，导致代码已升级而元数据仍可能返回 0.0.1；正式边界固定为新代次安装、验证后切换，不做目录内覆盖。
+- 伪造 `cpython-315-aarch64-linux-gnu` 时 Provider 返回 `python_native_imports_abi_mismatch`，且 Host 业务进程创建数为 0；没有包名、资源 ID 或应用名白名单。
+- 强制全量回归为 240 个 suite、1267 tests、0 failure、0 error、2 skipped；强制 Debug 构建成功。最终本地 APK 为 240628388 bytes，SHA-256 `9B08814F770917BA728CFD10BF66F99C407434C95A09908B9114864F929664A4`，构建物未进入 Git。
+- 本阶段没有重跑 Node 性能矩阵；RF200 完成，下一恢复指针进入 RF310 原生下载与 SHA-256。
 
 ### 2026-07-31 RF252 验收
 
@@ -120,6 +132,5 @@
 
 ## 待验证
 
-- 三车道文档链接和术语一致性。
-- Node 风险索引与当前实现是否仍一一对应。
-- RF120 最小公共合同能否在不改变 Node 行为的情况下落地。
+- RF310 原生下载请求如何复用统一请求、取消和结果合同。
+- 断点/重试、摘要失败、临时文件清理与 Android 网络环境的真机边界。

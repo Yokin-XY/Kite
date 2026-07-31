@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
+import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -62,6 +63,7 @@ data class KiteResourceAgentProfile(
     val transport: String,
     val argv: List<String>,
     val runtimeGuarantees: Set<String> = emptySet(),
+    val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
     val environmentFiles: Map<String, String> = emptyMap(),
     val runtimeDependencies: List<KiteResourceAgentRuntimeDependency> = emptyList(),
     val connectionReference: String = "",
@@ -84,6 +86,7 @@ data class KiteResourceAgentRuntimeDependency(
     val workdir: String = "/workspace",
     val environment: Map<String, String> = emptyMap(),
     val runtimeGuarantees: Set<String> = emptySet(),
+    val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
     val environmentFiles: Map<String, String> = emptyMap(),
     val bindAddress: String = "",
     val bindPort: Int? = null,
@@ -713,6 +716,9 @@ class KiteResourceManifestLoader private constructor(
         val runtimeGuarantees = RuntimeExecutionGuaranteeCodec.normalize(
             launch.optJSONArray("runtimeGuarantees").toStringList()
         ) ?: return null
+        val runtimeGuaranteeEvidence = RuntimeExecutionGuaranteeEvidenceCodec.normalize(
+            launch.optJSONObject("runtimeGuaranteeEvidence").toStringMap()
+        ) ?: return null
         val runtimeDependencies = parseAgentRuntimeDependencies(
             launch.optJSONArray("runtimeDependencies")
         ) ?: return null
@@ -741,6 +747,7 @@ class KiteResourceManifestLoader private constructor(
             transport = transport,
             argv = argv,
             runtimeGuarantees = runtimeGuarantees,
+            runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
             environmentFiles = launch.optJSONObject("environmentFiles").toStringMap(),
             runtimeDependencies = runtimeDependencies,
             connectionReference = connectionReference,
@@ -764,6 +771,9 @@ class KiteResourceManifestLoader private constructor(
             val runtimeGuarantees = RuntimeExecutionGuaranteeCodec.normalize(
                 dependency.optJSONArray("runtimeGuarantees").toStringList()
             ) ?: return null
+            val runtimeGuaranteeEvidence = RuntimeExecutionGuaranteeEvidenceCodec.normalize(
+                dependency.optJSONObject("runtimeGuaranteeEvidence").toStringMap()
+            ) ?: return null
             val port = dependency.optInt("bindPort", 0).takeIf { it in 1..65_535 }
             parsed +=
                 KiteResourceAgentRuntimeDependency(
@@ -773,6 +783,7 @@ class KiteResourceManifestLoader private constructor(
                     workdir = dependency.optString("workdir").trim().ifBlank { "/workspace" },
                     environment = dependency.optJSONObject("environment").toStringMap(),
                     runtimeGuarantees = runtimeGuarantees,
+                    runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
                     environmentFiles = dependency.optJSONObject("environmentFiles").toStringMap(),
                     bindAddress = dependency.optString("bindAddress").trim(),
                     bindPort = port,

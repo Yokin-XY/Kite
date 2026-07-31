@@ -5,7 +5,7 @@
 RF230 对“纯 Python 结构化快速通道”给出 **go**，对“Python 全能力直接 Host 化”给出 **no-go**。
 
 - go：解释器启动、stdlib、内置 C 扩展、pip 模块入口、纯 Python wheel 安装、venv 创建，以及本矩阵五类纯 Python 负载。
-- no-go：Python `subprocess` 直接执行 Linux ELF、venv 子解释器直接启动、未验证的第三方 C 扩展和需要完整 Linux 视图的任务。
+- no-go：Python `subprocess` 直接执行 Linux ELF、venv 子解释器直接启动、缺少精确 ABI 证据的第三方 C 扩展和需要完整 Linux 视图的任务。
 - 路由要求：上述 no-go 能力必须在 Python 进程创建前整条进入 PRoot；Host 已开始后不得自动重放。
 
 这不是为某个资源或应用制作 Python 特版。候选 Provider 只允许依据解释器身份、ABI、argv、环境和能力声明选择。
@@ -69,7 +69,7 @@ Debug Receiver 不接受命令、路径、负载或并发度；外部只能选�
 | venv 创建 | 通过 | 通过 | 只证明环境文件可创建 |
 | Python `subprocess` 启动同一解释器 | 失败 | 通过 | Linux ELF 解释器路径在 Android 宿主不可直接解析 |
 | venv 子解释器启动 | 失败 | 通过 | 与 subprocess 属于同一执行边界 |
-| 第三方 C 扩展 wheel | 未开放 | 保持兼容底座 | 内置扩展成功不能外推到任意 manylinux wheel、`dlopen` 或直接 syscall |
+| 第三方 C 扩展 wheel | 精确 ABI 样本通过 | 通过 | 只按已验证导入闭包与 `pythonAbi` 开放，不外推任意 manylinux wheel、`dlopen` 或 syscall |
 
 Host 的两个失败均发生在 Python 主进程创建后，因此正式 RF240 不能“先试 Host、失败再跑 PRoot”。Planner 必须根据能力声明在
 创建任何 Python 进程前选择 PRoot。
@@ -133,10 +133,31 @@ PRoot。要求子进程、venv、pip 生命周期或未验证扩展时仍按原�
 `.kf` 下的 venv 或任意 Python 路径误认为基础运行时。`PYTHONPATH` 与 `PYTHONSTARTUP` 的容器路径在启动前映射，活动
 `VIRTUAL_ENV` 直接回 PRoot。
 
+## RF254 扩展 ABI 与包生命周期
+
+RF254 增加独立 `Extension` 模式，不重跑 RF230/RF240 性能矩阵：
+
+```powershell
+.\scripts\python-runtime-benchmark.ps1 -Mode Extension
+```
+
+固定源码为 `scripts/fixtures/python/kite_probe_ext.c`，wheel 元数据固定为 0.0.1 和 0.0.2 两代；ARM64 `.so` 与 wheel 是本地构建
+证据，不进入 Git。OnePlus 8T 的结果为：
+
+| 能力 | Host | PRoot | 决定 |
+| --- | --- | --- | --- |
+| `cpython-314-aarch64-linux-gnu` 直接导入 | 通过 | 通过 | 只证明该 ABI 和导入闭包 |
+| 0.0.1 安装、0.0.2 新代次安装并切换 | 通过 0.0.2 导入 | 两代安装与元数据验证通过 | 使用不可变代次，不原地覆盖 |
+| 声明 `cpython-315-aarch64-linux-gnu` | 启动前拒绝 | 未启动 | 原因固定为 `python_native_imports_abi_mismatch` |
+
+反例同样重要：在同一 `--target` 目录执行 `pip --target --upgrade` 后，0.0.2 文件虽已写入，旧 0.0.1 `.dist-info` 仍在，
+`importlib.metadata` 可能继续返回 0.0.1。因此包升级不得靠目录内覆盖；必须安装到新代次，验证通过后改变所选 `PYTHONPATH`，
+旧代次等待运行租约释放后再回收。
+
 ## 证据限制
 
 - 单设备、Debug 构建和三轮样本适合做 go/no-go，不是全机型容量承诺。
 - 未冷却 Linux page cache，因此“启动”表示独立进程启动，不表示首次安装后的物理冷盘启动。
-- 本矩阵没有宣称第三方 C 扩展、编译工具链、网络 pip 安装或长期 Python 服务兼容。
+- 本矩阵没有宣称任意第三方 C 扩展、编译工具链、网络 pip 安装或长期 Python 服务兼容；RF254 只证明固定 ARM64 样本与精确 ABI 门。
 - RF240 只复验 Python 生产链与通用 glibc 资产，没有重复 Node 历史矩阵。
-- RF251 的保证字段已进入统一请求，但正式资源/Agent/后台声明仍需 RF252 透传；在此之前旧调用方缺少肯定式保证，会安全回到 PRoot。
+- RF252/RF254 已把保证和 ABI 证据透传到资源 Agent、后台依赖、自定义登记与持久化；旧调用方缺少肯定式证据，会安全回到 PRoot。

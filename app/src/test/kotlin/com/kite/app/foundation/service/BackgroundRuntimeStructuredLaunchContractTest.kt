@@ -18,6 +18,7 @@ class BackgroundRuntimeStructuredLaunchContractTest {
             startArguments = listOf("gateway", "value with spaces"),
             environment = mapOf("DISABLE_DISCOVERY" to "1"),
             runtimeGuarantees = setOf("no_child_process", "verified_native_imports"),
+            runtimeGuaranteeEvidence = mapOf("pythonAbi" to "cpython-314-aarch64-linux-gnu"),
             environmentFiles = mapOf("RUNTIME_TOKEN" to "/workspace/.kf/secrets/runtime-token"),
             lastLaunchLane = "host_node",
             lastLaunchReason = "structured_node_ready",
@@ -30,6 +31,10 @@ class BackgroundRuntimeStructuredLaunchContractTest {
         assertEquals(mapOf("DISABLE_DISCOVERY" to "1"), restored.environment)
         assertEquals(setOf("no_child_process", "verified_native_imports"), restored.runtimeGuarantees)
         assertEquals(
+            mapOf("pythonAbi" to "cpython-314-aarch64-linux-gnu"),
+            restored.runtimeGuaranteeEvidence,
+        )
+        assertEquals(
             mapOf("RUNTIME_TOKEN" to "/workspace/.kf/secrets/runtime-token"),
             restored.environmentFiles,
         )
@@ -41,6 +46,7 @@ class BackgroundRuntimeStructuredLaunchContractTest {
             remove("startArguments")
             remove("environment")
             remove("runtimeGuarantees")
+            remove("runtimeGuaranteeEvidence")
             remove("environmentFiles")
             remove("lastLaunchLane")
             remove("lastLaunchReason")
@@ -50,6 +56,7 @@ class BackgroundRuntimeStructuredLaunchContractTest {
         assertTrue(restoredLegacy.startArguments.isEmpty())
         assertTrue(restoredLegacy.environment.isEmpty())
         assertTrue(restoredLegacy.runtimeGuarantees.isEmpty())
+        assertTrue(restoredLegacy.runtimeGuaranteeEvidence.isEmpty())
         assertTrue(restoredLegacy.environmentFiles.isEmpty())
         assertNull(restoredLegacy.lastLaunchLane)
         assertNull(restoredLegacy.lastLaunchReason)
@@ -68,6 +75,7 @@ class BackgroundRuntimeStructuredLaunchContractTest {
         assertTrue(body.contains("hostFallbackReason ?: \"managed_runtime_unavailable\""))
         assertFalse(body.contains("ProcessBuilder("))
         assertTrue(source.contains("current.runtimeGuarantees != definition.runtimeGuarantees"))
+        assertTrue(source.contains("current.runtimeGuaranteeEvidence != definition.runtimeGuaranteeEvidence"))
         val startBody = source.substringAfter("private fun startProcessRuntime(")
             .substringBefore("private fun buildRuntimeProcessLaunchConfig(")
         assertEquals(1, startBody.windowed("ProcessBuilder(".length).count { it == "ProcessBuilder(" })

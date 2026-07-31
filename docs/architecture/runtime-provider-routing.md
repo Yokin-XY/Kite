@@ -28,8 +28,8 @@ Kite 同时保留三种执行能力，但不让资源卡、页面或最终应用
 - `ProotJobAdmissionController`、温热 Runner 协议和固定维护任务的第一条生产接线；
 - PackageInstaller、网络、文件保护、Keystore 等分散的 Android 原生实现。
 
-当前缺口不是重新实现 Node、Python 或 PRoot，而是原生能力尚未作为统一运行选择的一等参与者；Python 的 subprocess、venv、
-pip 生命周期和第三方扩展也仍需按能力分层，不能从纯 Python 结论外推。
+当前缺口不是重新实现 Node、Python 或 PRoot，而是原生能力尚未作为统一运行选择的一等参与者。Python 的 subprocess 与 venv
+子解释器继续整条进入 PRoot；第三方扩展只在肯定式保证、精确 ABI 证据和不可变包代次同时满足时进入 Host，不能从单个样本外推。
 
 ## 术语
 

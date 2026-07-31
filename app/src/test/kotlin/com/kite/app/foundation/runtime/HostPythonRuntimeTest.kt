@@ -213,6 +213,22 @@ class HostPythonRuntimeTest {
     }
 
     @Test
+    fun `native import evidence is closed and bound to the resolved python abi`() {
+        val fixture = fixture()
+        val layout = fixture.layout()
+
+        assertEquals("cpython-314-aarch64-linux-gnu", layout.pythonAbi)
+        assertEquals(
+            mapOf("pythonAbi" to "cpython-314-aarch64-linux-gnu"),
+            RuntimeExecutionGuaranteeEvidenceCodec.normalize(
+                mapOf("pythonAbi" to " CPYTHON-314-AARCH64-LINUX-GNU ")
+            ),
+        )
+        assertEquals(null, RuntimeExecutionGuaranteeEvidenceCodec.normalize(mapOf("pythonAbi" to "any")))
+        assertEquals(null, RuntimeExecutionGuaranteeEvidenceCodec.normalize(mapOf("package" to "trusted")))
+    }
+
+    @Test
     fun `host config uses generic launcher contract and preserves additional env`() {
         val fixture = fixture()
         val layout = fixture.layout()
@@ -321,6 +337,7 @@ class HostPythonRuntimeTest {
             workspaceControlDirectory = control,
             pythonBinary = pythonBinary,
             pythonRoot = pythonRoot,
+            pythonVersion = "3.14",
             pythonLibraryDirectory = File(pythonRoot, "lib"),
             glibcLibraryDirectories = listOf(glibc),
             assets = assets,

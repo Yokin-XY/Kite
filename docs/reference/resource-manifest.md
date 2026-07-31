@@ -148,7 +148,10 @@ Managed Agent 的 `launch` 以及其中的 `runtimeDependencies` 可以声明 `r
   "runtimeGuarantees": [
     "no_child_process",
     "verified_native_imports"
-  ]
+  ],
+  "runtimeGuaranteeEvidence": {
+    "pythonAbi": "cpython-314-aarch64-linux-gnu"
+  }
 }
 ```
 
@@ -158,7 +161,8 @@ Managed Agent 的 `launch` 以及其中的 `runtimeDependencies` 可以声明 `r
 - `verified_native_imports`：脚本的原生导入闭包只包含当前 Host 兼容矩阵已验证的模块。
 
 两项同时存在时，受管 Python 才有资格进入 Host Provider；这只是候选资格，解释器身份、ABI、网络、cwd、环境和资产门仍须全部
-通过。不得根据资源 ID、应用名、脚本名或包名自动补上保证。
+通过。`verified_native_imports` 还必须提供与当前受管解释器精确一致的 `pythonAbi`；缺失或版本不一致会在进程创建前回到 PRoot，
+未知证据键会使清单失效。不得根据资源 ID、应用名、脚本名或包名自动补上保证。
 
 ## 卸载
 
