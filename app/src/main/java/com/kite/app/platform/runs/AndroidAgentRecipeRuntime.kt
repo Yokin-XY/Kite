@@ -224,6 +224,7 @@ internal object ManagedAgentProcessLaunchSelector {
                 fallbackReason = hostPlan.reason,
             )
         }
+        is HostNodeLaunchPlan.Blocked -> error("runtime_provider_blocked:${hostPlan.reason}")
     }
 }
 

@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF100` 通用路由地基
-- 当前任务：`RF130` Provider 选择、失败关闭与证据
+- 当前任务：`RF100` 父任务全量回归门；通过后进入 `RF210`
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -61,10 +61,10 @@
 - 问题证据：`runtimeLane`/`runtimeFallbackReason` 已存在，但选择原因尚未统一为可扩展 Provider 结果。
 - 解法：统一 Ready/Unsupported/Blocked 结果，在进程创建前完成选择，明确可回退阶段和实际车道证据。
 - 验收标准：
-  - [ ] Host Ready 不构造 PRoot；
-  - [ ] Host 不满足能力时只构造一次 PRoot；
-  - [ ] STARTED 后错误不自动重放；
-  - [ ] 卡片和后台状态保留实际车道与稳定原因。
+  - [x] Host Ready 不构造 PRoot；
+  - [x] Host 不满足能力时只构造一次 PRoot；
+  - [x] STARTED 后错误不自动重放；
+  - [x] 卡片和后台状态保留实际车道与稳定原因。
 - 依赖：RF120。
 
 ### RF200 [P1 快速通道] 通用依赖快速通道

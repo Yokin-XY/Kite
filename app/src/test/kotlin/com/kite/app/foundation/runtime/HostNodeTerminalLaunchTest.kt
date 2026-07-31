@@ -135,13 +135,18 @@ class HostNodeTerminalLaunchTest {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
 
         assertEquals(
-            HostNodeTerminalLaunchResult.Fallback("network_mode_requires_proot"),
-            HostNodeTerminalLaunchFactory.prepare(
+            RuntimeProviderDecision.Unsupported(
+                RuntimeProviderKind.MANAGED_RUNTIME,
+                "network_mode_requires_proot",
+            ),
+            HostNodeRuntimeProvider.prepare(
                 context = context,
                 container = container(File(root, "rootfs"), File(root, "workspace"), NetworkMode.NONE),
                 workspaceDirectory = File(root, "workspace"),
-                command = "node --version",
-                containerWorkingDirectory = "/workspace",
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.CommandLine("node --version"),
+                    workingDirectory = "/workspace",
+                ),
             ),
         )
     }
@@ -153,7 +158,10 @@ class HostNodeTerminalLaunchTest {
         val container = container(File(root, "missing-rootfs"), File(root, "missing-workspace"))
 
         assertEquals(
-            HostNodeTerminalLaunchResult.Fallback("android_native_required"),
+            RuntimeProviderDecision.Unsupported(
+                RuntimeProviderKind.MANAGED_RUNTIME,
+                "android_native_required",
+            ),
             HostNodeRuntimeProvider.prepare(
                 context = context,
                 container = container,
@@ -165,7 +173,10 @@ class HostNodeTerminalLaunchTest {
             ),
         )
         assertEquals(
-            HostNodeTerminalLaunchResult.Fallback("full_linux_required"),
+            RuntimeProviderDecision.Unsupported(
+                RuntimeProviderKind.MANAGED_RUNTIME,
+                "full_linux_required",
+            ),
             HostNodeRuntimeProvider.prepare(
                 context = context,
                 container = container,

@@ -1386,6 +1386,9 @@ object BackgroundRuntimeHost {
                         "结构化后台命令回退 PRoot: ${record.id}, reason=${plan.reason}"
                     )
                 }
+                is HostNodeLaunchPlan.Blocked -> {
+                    error("runtime_provider_blocked:${plan.reason}")
+                }
             }
         }
 

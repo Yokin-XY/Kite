@@ -47,6 +47,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -329,6 +330,24 @@ class AndroidAgentRecipeRuntimeTest {
         assertEquals(listOf("openclaw", "acp"), selected.process.command)
         assertEquals("private", selected.process.environment["OPENCLAW_GATEWAY_TOKEN"])
         assertEquals("/usr/bin", selected.process.environment["PATH"])
+    }
+
+    @Test
+    fun blockedProviderNeverBuildsProotFallback() {
+        val prootBuilds = AtomicInteger(0)
+
+        val failure = assertThrows(IllegalStateException::class.java) {
+            ManagedAgentProcessLaunchSelector.select(
+                hostPlan = HostNodeLaunchPlan.Blocked("runtime_identity_invalid"),
+                additionalEnvironment = emptyMap(),
+            ) {
+                prootBuilds.incrementAndGet()
+                prootConfig()
+            }
+        }
+
+        assertEquals(0, prootBuilds.get())
+        assertTrue(failure.message.orEmpty().contains("runtime_identity_invalid"))
     }
 
     private fun container(): ContainerRecord = ContainerRecord(

@@ -7,11 +7,6 @@ import com.kite.app.foundation.contracts.NetworkMode
 import java.io.File
 import java.util.TimeZone
 
-internal sealed interface HostNodeTerminalLaunchResult {
-    data class Ready(val config: ContainerLaunchConfig) : HostNodeTerminalLaunchResult
-    data class Fallback(val reason: String) : HostNodeTerminalLaunchResult
-}
-
 /** 入口无关的 Node Runtime Provider；只生成计划，不创建进程、不持有生命周期状态。 */
 internal object HostNodeRuntimeProvider {
     fun prepare(
@@ -19,18 +14,18 @@ internal object HostNodeRuntimeProvider {
         container: ContainerRecord,
         workspaceDirectory: File,
         request: RuntimeExecutionRequest,
-    ): HostNodeTerminalLaunchResult {
+    ): RuntimeProviderDecision<ContainerLaunchConfig> {
         if (RuntimeExecutionRequirement.ANDROID_NATIVE in request.requirements) {
-            return HostNodeTerminalLaunchResult.Fallback("android_native_required")
+            return unsupported("android_native_required")
         }
         if (RuntimeExecutionRequirement.FULL_LINUX in request.requirements) {
-            return HostNodeTerminalLaunchResult.Fallback("full_linux_required")
+            return unsupported("full_linux_required")
         }
         if (RuntimeExecutionRequirement.FILESYSTEM_VIEW in request.requirements) {
-            return HostNodeTerminalLaunchResult.Fallback("filesystem_view_required")
+            return unsupported("filesystem_view_required")
         }
         if (container.networkMode != NetworkMode.HOST) {
-            return HostNodeTerminalLaunchResult.Fallback("network_mode_requires_proot")
+            return unsupported("network_mode_requires_proot")
         }
         val workspaceControlDirectory = File(container.workspacePath, ".kf")
         val assets = when (val prepared = HostNodeRuntimePreparer.prepare(
@@ -40,7 +35,7 @@ internal object HostNodeRuntimeProvider {
             workspaceControlDirectory,
         )) {
             is HostNodeRuntimePreparation.Ready -> prepared.assets
-            is HostNodeRuntimePreparation.Fallback -> return HostNodeTerminalLaunchResult.Fallback(prepared.reason)
+            is HostNodeRuntimePreparation.Fallback -> return unsupported(prepared.reason)
         }
         val layout = when (val resolved = HostNodeRuntimeResolver.resolve(
             rootfsDirectory = File(container.rootfsPath),
@@ -49,7 +44,7 @@ internal object HostNodeRuntimeProvider {
             assets = assets,
         )) {
             is HostNodeRuntimeResolution.Ready -> resolved.layout
-            is HostNodeRuntimeResolution.Fallback -> return HostNodeTerminalLaunchResult.Fallback(resolved.reason)
+            is HostNodeRuntimeResolution.Fallback -> return unsupported(resolved.reason)
         }
         val invocation = when (val resolved = when (val payload = request.payload) {
             is RuntimeExecutionPayload.CommandLine -> HostNodeCommandResolver.resolve(payload.command, layout)
@@ -59,19 +54,26 @@ internal object HostNodeRuntimeProvider {
                 layout = layout,
             )
             is RuntimeExecutionPayload.NativeCapability -> {
-                return HostNodeTerminalLaunchResult.Fallback("native_capability_required")
+                return unsupported("native_capability_required")
             }
         }) {
             is HostNodeCommandResolution.Ready -> resolved.invocation
-            is HostNodeCommandResolution.Fallback -> return HostNodeTerminalLaunchResult.Fallback(resolved.reason)
+            is HostNodeCommandResolution.Fallback -> return unsupported(resolved.reason)
         }
         val workingDirectory = layout.mapContainerPath(request.workingDirectory)
             ?.takeIf(File::isDirectory)
-            ?: return HostNodeTerminalLaunchResult.Fallback("working_directory_invalid")
-        return HostNodeTerminalLaunchResult.Ready(
-            buildConfig(container, layout, invocation, workingDirectory, request.environment)
+            ?: return unsupported("working_directory_invalid")
+        return RuntimeProviderDecision.Ready(
+            provider = RuntimeProviderKind.MANAGED_RUNTIME,
+            plan = buildConfig(container, layout, invocation, workingDirectory, request.environment),
+            reason = "host_node_ready",
         )
     }
+
+    private fun unsupported(reason: String) = RuntimeProviderDecision.Unsupported(
+        provider = RuntimeProviderKind.MANAGED_RUNTIME,
+        reason = reason,
+    )
 
     internal fun buildConfig(
         container: ContainerRecord,
@@ -149,22 +151,6 @@ internal object HostNodeRuntimeProvider {
 
 /** 旧终端调用面的窄适配器；实际选择和配置均由统一 Provider 持有。 */
 internal object HostNodeTerminalLaunchFactory {
-    fun prepare(
-        context: Context,
-        container: ContainerRecord,
-        workspaceDirectory: File,
-        command: String,
-        containerWorkingDirectory: String?,
-    ): HostNodeTerminalLaunchResult = HostNodeRuntimeProvider.prepare(
-        context = context,
-        container = container,
-        workspaceDirectory = workspaceDirectory,
-        request = RuntimeExecutionRequest(
-            payload = RuntimeExecutionPayload.CommandLine(command),
-            workingDirectory = containerWorkingDirectory,
-        ),
-    )
-
     internal fun buildConfig(
         container: ContainerRecord,
         layout: HostNodeRuntimeLayout,

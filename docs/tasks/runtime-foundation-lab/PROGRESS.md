@@ -5,10 +5,10 @@
 | 任务 | 状态 | 当前结论 |
 | --- | --- | --- |
 | RF000 | 进行中 | 独立分支已从 `main@8223ba0` 建立 |
-| RF100 | 进行中 | RF110、RF120 已完成，进入统一 Provider 结果 |
+| RF100 | 进行中 | RF110～RF130 已完成，等待父任务全量回归 |
 | RF110 | 已完成 | 总架构、三份 Provider 文档、Node 风险索引与性能证据已固化 |
 | RF120 | 已完成 | 三个 Node 入口已迁移到统一结构化请求，行为等价 |
-| RF130 | 待开始 | 依赖已满足，下一任务 |
+| RF130 | 已完成 | Ready/Unsupported/Blocked 已接入三条正式 Node 入口 |
 | RF200～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
@@ -18,6 +18,14 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF130 验收
+
+- 新增统一 `RuntimeProviderDecision` 与 Provider 种类，明确 Ready、Unsupported、Blocked 三种结果。
+- `HostNodeRuntimeProvider` 保持既有能力判断，但只把 Unsupported 交给 PRoot；禁用回退或 Blocked 时直接停止。
+- 终端、Managed Agent 和后台入口均处理 Blocked；Agent 直接断言 Blocked 时 PRoot 构建次数为 0。
+- 定向回归覆盖 8 个测试套件、46 项测试，0 failure、0 error、0 skipped；`git diff --check` 通过。
+- 下一步先执行 RF100 全量单测与 Debug 构建，不能用定向测试直接宣布地基完成。
 
 ### 2026-07-31 RF120 验收
 

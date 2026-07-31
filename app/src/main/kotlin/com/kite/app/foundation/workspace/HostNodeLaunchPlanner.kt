@@ -5,14 +5,16 @@ import com.kite.app.foundation.contracts.ContainerLaunchConfig
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.runtime.HostNodeChildProcessContract
 import com.kite.app.foundation.runtime.HostNodeRuntimeProvider
-import com.kite.app.foundation.runtime.HostNodeTerminalLaunchResult
 import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeProviderDecision
+import com.kite.app.foundation.runtime.allowsProviderFallback
 import java.io.File
 import java.util.UUID
 
 internal sealed interface HostNodeLaunchPlan {
     data class Ready(val config: ContainerLaunchConfig) : HostNodeLaunchPlan
     data class Fallback(val reason: String) : HostNodeLaunchPlan
+    data class Blocked(val reason: String) : HostNodeLaunchPlan
 }
 
 /**
@@ -26,14 +28,15 @@ internal object HostNodeLaunchPlanner {
         workspaceDirectory: File,
         request: RuntimeExecutionRequest,
     ): HostNodeLaunchPlan {
-        val baseConfig = when (val result = HostNodeRuntimeProvider.prepare(
+        val baseConfig = when (val decision = HostNodeRuntimeProvider.prepare(
             context = context,
             container = container,
             workspaceDirectory = workspaceDirectory,
             request = request,
         )) {
-            is HostNodeTerminalLaunchResult.Ready -> result.config
-            is HostNodeTerminalLaunchResult.Fallback -> return HostNodeLaunchPlan.Fallback(result.reason)
+            is RuntimeProviderDecision.Ready -> decision.plan
+            is RuntimeProviderDecision.Unsupported -> return fallbackOrBlocked(request, decision.reason)
+            is RuntimeProviderDecision.Blocked -> return HostNodeLaunchPlan.Blocked(decision.reason)
         }
 
         return runCatching {
@@ -47,9 +50,19 @@ internal object HostNodeLaunchPlanner {
                 HostNodeChildProcessContract.from(childExecConfig, marker).attachTo(baseConfig)
             )
         }.getOrElse { error ->
-            HostNodeLaunchPlan.Fallback(
-                "child_process_contract_unavailable:${error.javaClass.simpleName}"
+            fallbackOrBlocked(
+                request,
+                "child_process_contract_unavailable:${error.javaClass.simpleName}",
             )
         }
+    }
+
+    private fun fallbackOrBlocked(
+        request: RuntimeExecutionRequest,
+        reason: String,
+    ): HostNodeLaunchPlan = if (request.fallbackPolicy.allowsProviderFallback()) {
+        HostNodeLaunchPlan.Fallback(reason)
+    } else {
+        HostNodeLaunchPlan.Blocked("fallback_disabled:$reason")
     }
 }

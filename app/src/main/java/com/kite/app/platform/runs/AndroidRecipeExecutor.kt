@@ -410,6 +410,9 @@ internal class AndroidRecipeExecutor(
                 } else {
                     HostNodeLaunchPlan.Fallback("explicit_runtime_or_command_missing")
                 }
+                if (hostLaunch is HostNodeLaunchPlan.Blocked) {
+                    error("runtime_provider_blocked:${hostLaunch.reason}")
+                }
                 val fallbackReason = (hostLaunch as? HostNodeLaunchPlan.Fallback)?.reason ?: "none"
                 val hostConfig = (hostLaunch as? HostNodeLaunchPlan.Ready)?.config
                 PreparedTerminalLaunch(

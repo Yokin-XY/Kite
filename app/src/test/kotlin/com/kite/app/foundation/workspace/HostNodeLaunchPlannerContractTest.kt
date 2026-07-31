@@ -11,6 +11,8 @@ class HostNodeLaunchPlannerContractTest {
         val source = sourceFile().readText()
 
         assertTrue(source.contains("HostNodeRuntimeProvider.prepare("))
+        assertTrue(source.contains("RuntimeProviderDecision.Unsupported"))
+        assertTrue(source.contains("HostNodeLaunchPlan.Blocked"))
         assertTrue(source.contains("HostNodeChildProcessContract.from(childExecConfig, marker).attachTo(baseConfig)"))
         assertTrue(source.contains("WorkSurfaceRuntimeBridge.buildArgvExecConfig("))
         assertFalse(source.contains("ProcessBuilder("))
