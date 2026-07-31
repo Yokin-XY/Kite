@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF100` 通用路由地基
-- 当前任务：`RF120` 统一 Execution Request 与能力声明
+- 当前任务：`RF130` Provider 选择、失败关闭与证据
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -50,10 +50,10 @@
 - 问题证据：Node 请求、Recipe 请求、Agent 启动和后台启动仍使用不同形状，入口容易复制选择逻辑。
 - 解法：建立入口无关的结构化请求、环境/ABI/解释器要求、允许车道和副作用阶段合同；先适配现有 Node 与 PRoot。
 - 验收标准：
-  - [ ] 普通 argv 与显式 shell 不能混淆；
-  - [ ] 请求不包含资源 ID 或应用名称路由字段；
-  - [ ] Node/PRoot 选择器可由既有入口调用；
-  - [ ] 现有 Node 行为无变化。
+  - [x] 普通 argv 与显式 shell 不能混淆；
+  - [x] 请求不包含资源 ID 或应用名称路由字段；
+  - [x] Node/PRoot 选择器可由既有入口调用；
+  - [x] 现有 Node 行为无变化。
 - 依赖：RF110。
 
 #### RF130 Provider 选择、失败关闭与证据

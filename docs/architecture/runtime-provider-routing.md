@@ -40,11 +40,11 @@ Kite 同时保留三种执行能力，但不让资源卡、页面或最终应用
   `BackgroundRuntimeRegistry`。
 - **调度 lane**：PRoot 内部的 `INTERACTIVE/SERVICE/BUILD/PROBE` 等准入类别。它与 Provider 选择是两个维度，不能混用。
 
-## 统一请求必须表达的事实
+## 统一选择上下文必须表达的事实
 
 正式类型由 RF120 落地，但合同至少需要表达：
 
-1. 请求与 owner 身份；
+1. Orchestrator 持有的请求与 owner 身份；Provider 请求只引用执行所需事实，不接管运行实例所有权；
 2. 结构化 executable/argv，或枚举化原生能力及参数；
 3. cwd、env、stdio 和交互要求；
 4. 所需平台语义，例如完整 Linux、Android API、解释器、ABI、网络和文件能力；
@@ -126,4 +126,3 @@ PRoot View 与三车道正交。普通 Node、Python、原生能力、终端和 
 
 分车道细则见：[通用依赖快速通道](managed-runtime-fast-path.md)、[Android/NDK 原生能力](native-capability-provider.md)和
 [Ubuntu/PRoot 兼容 Provider](proot-compatibility-provider.md)。
-

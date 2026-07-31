@@ -58,7 +58,7 @@ class BackgroundRuntimeStructuredLaunchContractTest {
             .substringBefore("private fun ", missingDelimiterValue = source)
 
         assertTrue(body.contains("HostNodeLaunchPlanner.plan("))
-        assertTrue(body.contains("HostNodeExecutionRequest.Argv(executable, record.startArguments)"))
+        assertTrue(body.contains("RuntimeExecutionPayload.Argv(executable, record.startArguments)"))
         assertTrue(body.contains("WorkSurfaceRuntimeBridge.buildShellExecConfig("))
         assertTrue(body.contains("hostFallbackReason ?: \"host_node_unavailable\""))
         assertFalse(body.contains("ProcessBuilder("))

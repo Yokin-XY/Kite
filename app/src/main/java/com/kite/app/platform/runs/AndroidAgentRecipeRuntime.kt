@@ -26,7 +26,8 @@ import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.runtime.AgentRuntimeRegistry
 import com.kite.app.agent.runtime.AgentRuntimeStartRequest
 import com.kite.app.foundation.runtime.AndroidSharedStorageManager
-import com.kite.app.foundation.runtime.HostNodeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExposureScope
 import com.kite.app.foundation.contracts.ContainerExecConfig
 import com.kite.app.agent.runtime.AgentRuntimeStatusSink
@@ -179,9 +180,11 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
             context = appContext,
             container = container,
             workspaceDirectory = File(activeEnvironment.workspacePath),
-            request = HostNodeExecutionRequest.Argv(argv.first(), argv.drop(1)),
-            containerWorkingDirectory = workingDirectory,
-            additionalEnvironment = environment,
+            request = RuntimeExecutionRequest(
+                payload = RuntimeExecutionPayload.Argv(argv.first(), argv.drop(1)),
+                workingDirectory = workingDirectory,
+                environment = environment,
+            ),
         )
         return ManagedAgentProcessLaunchSelector.select(hostPlan, environment) {
             WorkSurfaceRuntimeBridge.buildArgvExecConfig(

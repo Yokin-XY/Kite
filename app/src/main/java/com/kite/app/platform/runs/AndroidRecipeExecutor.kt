@@ -23,7 +23,8 @@ import com.kite.app.bridge.OwnerStopOutputEvidence
 import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
-import com.kite.app.foundation.runtime.HostNodeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.ProotOwnerTerminationOutcome
@@ -401,8 +402,10 @@ internal class AndroidRecipeExecutor(
                         context = appContext,
                         container = container,
                         workspaceDirectory = File(space.workspacePath),
-                        request = HostNodeExecutionRequest.CommandLine(command),
-                        containerWorkingDirectory = request.step.workdir,
+                        request = RuntimeExecutionRequest(
+                            payload = RuntimeExecutionPayload.CommandLine(command),
+                            workingDirectory = request.step.workdir,
+                        ),
                     )
                 } else {
                     HostNodeLaunchPlan.Fallback("explicit_runtime_or_command_missing")

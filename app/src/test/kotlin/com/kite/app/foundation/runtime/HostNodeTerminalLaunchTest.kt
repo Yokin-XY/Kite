@@ -146,6 +146,38 @@ class HostNodeTerminalLaunchTest {
         )
     }
 
+    @Test
+    fun `explicit native and full linux requirements reject host before asset preparation`() {
+        val root = temporaryFolder.newFolder()
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val container = container(File(root, "missing-rootfs"), File(root, "missing-workspace"))
+
+        assertEquals(
+            HostNodeTerminalLaunchResult.Fallback("android_native_required"),
+            HostNodeRuntimeProvider.prepare(
+                context = context,
+                container = container,
+                workspaceDirectory = File(root, "missing-workspace"),
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.NativeCapability("network.download_sha256"),
+                    requirements = setOf(RuntimeExecutionRequirement.ANDROID_NATIVE),
+                ),
+            ),
+        )
+        assertEquals(
+            HostNodeTerminalLaunchResult.Fallback("full_linux_required"),
+            HostNodeRuntimeProvider.prepare(
+                context = context,
+                container = container,
+                workspaceDirectory = File(root, "missing-workspace"),
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.Argv("node", listOf("--version")),
+                    requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
+                ),
+            ),
+        )
+    }
+
     private fun container(
         rootfs: File,
         workspace: File,

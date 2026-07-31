@@ -18,10 +18,17 @@ internal object HostNodeRuntimeProvider {
         context: Context,
         container: ContainerRecord,
         workspaceDirectory: File,
-        request: HostNodeExecutionRequest,
-        containerWorkingDirectory: String?,
-        additionalEnvironment: Map<String, String> = emptyMap(),
+        request: RuntimeExecutionRequest,
     ): HostNodeTerminalLaunchResult {
+        if (RuntimeExecutionRequirement.ANDROID_NATIVE in request.requirements) {
+            return HostNodeTerminalLaunchResult.Fallback("android_native_required")
+        }
+        if (RuntimeExecutionRequirement.FULL_LINUX in request.requirements) {
+            return HostNodeTerminalLaunchResult.Fallback("full_linux_required")
+        }
+        if (RuntimeExecutionRequirement.FILESYSTEM_VIEW in request.requirements) {
+            return HostNodeTerminalLaunchResult.Fallback("filesystem_view_required")
+        }
         if (container.networkMode != NetworkMode.HOST) {
             return HostNodeTerminalLaunchResult.Fallback("network_mode_requires_proot")
         }
@@ -44,22 +51,25 @@ internal object HostNodeRuntimeProvider {
             is HostNodeRuntimeResolution.Ready -> resolved.layout
             is HostNodeRuntimeResolution.Fallback -> return HostNodeTerminalLaunchResult.Fallback(resolved.reason)
         }
-        val invocation = when (val resolved = when (request) {
-            is HostNodeExecutionRequest.CommandLine -> HostNodeCommandResolver.resolve(request.command, layout)
-            is HostNodeExecutionRequest.Argv -> HostNodeCommandResolver.resolve(
-                executable = request.executable,
-                arguments = request.arguments,
+        val invocation = when (val resolved = when (val payload = request.payload) {
+            is RuntimeExecutionPayload.CommandLine -> HostNodeCommandResolver.resolve(payload.command, layout)
+            is RuntimeExecutionPayload.Argv -> HostNodeCommandResolver.resolve(
+                executable = payload.executable,
+                arguments = payload.arguments,
                 layout = layout,
             )
+            is RuntimeExecutionPayload.NativeCapability -> {
+                return HostNodeTerminalLaunchResult.Fallback("native_capability_required")
+            }
         }) {
             is HostNodeCommandResolution.Ready -> resolved.invocation
             is HostNodeCommandResolution.Fallback -> return HostNodeTerminalLaunchResult.Fallback(resolved.reason)
         }
-        val workingDirectory = layout.mapContainerPath(containerWorkingDirectory)
+        val workingDirectory = layout.mapContainerPath(request.workingDirectory)
             ?.takeIf(File::isDirectory)
             ?: return HostNodeTerminalLaunchResult.Fallback("working_directory_invalid")
         return HostNodeTerminalLaunchResult.Ready(
-            buildConfig(container, layout, invocation, workingDirectory, additionalEnvironment)
+            buildConfig(container, layout, invocation, workingDirectory, request.environment)
         )
     }
 
@@ -149,8 +159,10 @@ internal object HostNodeTerminalLaunchFactory {
         context = context,
         container = container,
         workspaceDirectory = workspaceDirectory,
-        request = HostNodeExecutionRequest.CommandLine(command),
-        containerWorkingDirectory = containerWorkingDirectory,
+        request = RuntimeExecutionRequest(
+            payload = RuntimeExecutionPayload.CommandLine(command),
+            workingDirectory = containerWorkingDirectory,
+        ),
     )
 
     internal fun buildConfig(

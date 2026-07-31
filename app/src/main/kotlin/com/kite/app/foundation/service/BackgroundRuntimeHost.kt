@@ -7,7 +7,8 @@ import com.kite.app.foundation.runtime.HostProcessInspector
 import com.kite.app.foundation.runtime.HostProcessRecord
 import com.kite.app.foundation.runtime.HostStopAuditor
 import com.kite.app.foundation.runtime.HostProcessTerminator
-import com.kite.app.foundation.runtime.HostNodeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import com.kite.app.foundation.runtime.KFContainerManager
 import com.kite.app.foundation.runtime.ProcessExitSemantics
 import com.kite.app.foundation.runtime.RuntimeAdmissionGuard
@@ -1364,9 +1365,11 @@ object BackgroundRuntimeHost {
                 context = appContext,
                 container = container,
                 workspaceDirectory = File(space.workspacePath),
-                request = HostNodeExecutionRequest.Argv(executable, record.startArguments),
-                containerWorkingDirectory = record.workingDirectory,
-                additionalEnvironment = resolvedEnvironment,
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.Argv(executable, record.startArguments),
+                    workingDirectory = record.workingDirectory,
+                    environment = resolvedEnvironment,
+                ),
             )) {
                 is HostNodeLaunchPlan.Ready -> return RuntimeProcessLaunchConfig(
                     command = plan.config.args.toList(),

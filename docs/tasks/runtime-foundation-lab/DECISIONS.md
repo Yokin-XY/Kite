@@ -44,3 +44,9 @@
 - 决定：实验分支本地跟踪正式架构和任务文档；是否推送文档或合并进 GitHub main 仍是独立发布决定。
 - 原因：用户此前要求 GitHub 发布只包含代码，本任务不能擅自改变外部发布边界。
 
+## ADR-RF-007 Provider 请求不拥有运行实例
+
+- 状态：已接受
+- 日期：2026-07-31
+- 决定：`RuntimeExecutionRequest` 只表达选择和执行所需事实；instance、run、owner 和显示面身份继续由 Orchestrator、`CardRunStore` 或后台 Registry 持有。
+- 原因：Provider 需要可复用于终端、Agent 和后台运行，但不能因此复制状态、接管生命周期或产生新的事实源。

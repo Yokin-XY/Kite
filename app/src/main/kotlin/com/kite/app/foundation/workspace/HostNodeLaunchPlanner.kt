@@ -4,9 +4,9 @@ import android.content.Context
 import com.kite.app.foundation.contracts.ContainerLaunchConfig
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.runtime.HostNodeChildProcessContract
-import com.kite.app.foundation.runtime.HostNodeExecutionRequest
 import com.kite.app.foundation.runtime.HostNodeRuntimeProvider
 import com.kite.app.foundation.runtime.HostNodeTerminalLaunchResult
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
 import java.io.File
 import java.util.UUID
 
@@ -24,17 +24,13 @@ internal object HostNodeLaunchPlanner {
         context: Context,
         container: ContainerRecord,
         workspaceDirectory: File,
-        request: HostNodeExecutionRequest,
-        containerWorkingDirectory: String?,
-        additionalEnvironment: Map<String, String> = emptyMap(),
+        request: RuntimeExecutionRequest,
     ): HostNodeLaunchPlan {
         val baseConfig = when (val result = HostNodeRuntimeProvider.prepare(
             context = context,
             container = container,
             workspaceDirectory = workspaceDirectory,
             request = request,
-            containerWorkingDirectory = containerWorkingDirectory,
-            additionalEnvironment = additionalEnvironment,
         )) {
             is HostNodeTerminalLaunchResult.Ready -> result.config
             is HostNodeTerminalLaunchResult.Fallback -> return HostNodeLaunchPlan.Fallback(result.reason)
@@ -44,7 +40,7 @@ internal object HostNodeLaunchPlanner {
             val marker = "__kite_host_node_child__${UUID.randomUUID()}"
             val childExecConfig = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
                 context = context,
-                workingDirectory = containerWorkingDirectory?.trim().orEmpty().ifBlank { "/workspace" },
+                workingDirectory = request.workingDirectory?.trim().orEmpty().ifBlank { "/workspace" },
                 argv = listOf(marker),
             )
             HostNodeLaunchPlan.Ready(
