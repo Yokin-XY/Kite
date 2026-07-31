@@ -174,3 +174,11 @@
 - 决定：有界任务按 lane/route/result 固定枚举聚合完成次数，并记录 queue/execute/total 的固定时延桶、sum 和 max；只在 `BoundedProotTaskExecutor` 完成一次实际尝试后写入。
 - 原因：admission 的 admitted/timedOut 总量无法说明任务最终走 warm 还是 fallback，也无法区分慢在排队或执行；记录 job、owner 或命令又会造成高基数、隐私和健康输出膨胀。
 - 影响：RuntimeHealth 可直接读取内存快照且不触发任务或扫描。生产 collector 没有 reset 入口、键空间由 enum 上限固定；普通 PRoot 路径不自动纳入，也不能拿遥测存在当作准入证据。
+
+## ADR-RF-023 复杂内部采集先固化 helper 再进入结构化 Runner
+
+- 状态：已接受，RF540 已完成
+- 日期：2026-08-01
+- 决定：`supervisorctl update/status` 与固定日志尾部由 Android 生成的无参数、版本化 helper 持有；调用方只执行唯一 helper argv，并因 `update` 明确声明 `SERVICE/SHARED_WRITE`。
+- 原因：把多行 shell 直接放进 `argv` 只是伪结构化；删除 `update` 又会改变 dropped-in 配置发现语义。代码自有 helper 能保留 Linux 组合语义，同时封闭外部命令、参数和路径输入。
+- 影响：Supervisord 健康刷新进入统一 admission、warm/fallback 和 RF530 遥测；输出有硬上限，截断失败关闭。当前 OnePlus 环境缺失 Supervisord 仍真实返回 exit 127，不属于迁移失败，也不能由本阶段偷偷安装依赖。

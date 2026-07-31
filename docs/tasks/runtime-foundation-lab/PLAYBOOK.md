@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF500` PRoot 生产控制面扩展
-- 当前任务：`RF540` Supervisord 健康采集有界 Runner 样板
+- 当前任务：`RF550` RF500 父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -401,10 +401,10 @@
 - 问题证据：`SupervisordServiceHealthStore` 的健康刷新是高频内部任务，但当前用复杂 shell 每次新建独立 PRoot；它同时包含 `supervisorctl update/status` 和固定日志尾部，不能把 shell 文本伪装成结构化 argv。
 - 解法：由 Android 控制面生成固定版本的容器 helper，调用方只执行结构化 helper argv；声明稳定 owner、`SERVICE/SHARED_WRITE`、timeout、输出和结果合同，STARTED 前可独立回退，STARTED 后不重放。
 - 验收标准：
-  - [ ] helper 内容、路径和版本由代码拥有，不接受外部命令参数；
-  - [ ] 既有 update/status、日志 marker、退出码和解析语义保持；
-  - [ ] 调用方不再直接 `ProcessBuilder` PRoot，失败仍返回原 `CommandResult` 边界；
-  - [ ] 单测、Debug 构建和 OnePlus 8T 冷/温对照通过，无残留任务。
+  - [x] helper 内容、路径和版本由代码拥有，不接受外部命令参数；
+  - [x] 既有 update/status、日志 marker、退出码和解析语义保持；
+  - [x] 调用方不再直接 `ProcessBuilder` PRoot，失败仍返回原 `CommandResult` 边界；
+  - [x] 单测、Debug 构建和 OnePlus 8T 冷/温对照通过，无残留任务。
 - 依赖：RF530。
 
 #### RF550 RF500 父任务门

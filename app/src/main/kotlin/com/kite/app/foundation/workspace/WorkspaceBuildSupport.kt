@@ -46,6 +46,7 @@ object WorkspaceBuildSupport {
     private const val SYSTEMCTL_SHIM_NAME = "systemctl"
     private const val SERVICE_SHIM_NAME = "service"
     private const val SUPERVISORCTL_WRAPPER_NAME = "supervisorctl"
+    private const val SUPERVISORD_HEALTH_SNAPSHOT_HELPER_NAME = "kf-supervisord-health-snapshot"
     private const val ADB_WRAPPER_NAME = "adb"
     private const val FASTBOOT_WRAPPER_NAME = "fastboot"
     private const val ADB_CHECK_SCRIPT_NAME = "kf-adb-check"
@@ -84,6 +85,8 @@ object WorkspaceBuildSupport {
     const val CONTAINER_HELPER_SYSTEM_BIN_PATH = "/workspace/.kf/system/bin"
     const val CONTAINER_HELPER_SYSTEM_WRAPPERS_PATH = "/workspace/.kf/system/wrappers"
     const val CONTAINER_KITE_RUNNER_PATH = "/workspace/.kf/system/bin/kf-runner"
+    const val CONTAINER_SUPERVISORD_HEALTH_SNAPSHOT_PATH =
+        "/workspace/.kf/system/bin/kf-supervisord-health-snapshot"
     const val CONTAINER_HELPER_SYSTEM_PROC_PATH = "/workspace/.kf/system/state/proc"
     const val CONTAINER_HELPER_SYSTEM_STATE_PATH = "/workspace/.kf/system/state"
     const val CONTAINER_HELPER_TOOLCHAIN_PATH = "/workspace/.kf/toolchains"
@@ -239,6 +242,8 @@ object WorkspaceBuildSupport {
         writeTextIfChanged(supervisorctlWrapper, buildSupervisorctlWrapperScript())
         supervisorctlWrapper.setExecutable(true, false)
 
+        ensureSupervisordHealthSnapshotHelper(workspaceDir)
+
         val adbWrapper = File(helperSystemBinDir, ADB_WRAPPER_NAME)
         writeTextIfChanged(adbWrapper, buildAdbClientWrapperScript())
         adbWrapper.setExecutable(true, false)
@@ -336,6 +341,17 @@ object WorkspaceBuildSupport {
         syncToolchainCommandWrappers(workspaceDir, helperSystemWrappersDir)
         chmodIfPossible(helperSystemBinDir, 0b101101101)
         chmodIfPossible(helperSystemWrappersDir, 0b101101101)
+    }
+
+    /** 只校准 Supervisord 健康采集 helper，供高频刷新避免重跑整套 Workspace ensure。 */
+    @Synchronized
+    fun ensureSupervisordHealthSnapshotHelper(workspaceDir: File): File {
+        val systemBin = helperSystemBinDir(workspaceDir)
+        if (!systemBin.exists()) systemBin.mkdirs()
+        val helper = File(systemBin, SUPERVISORD_HEALTH_SNAPSHOT_HELPER_NAME)
+        writeTextIfChanged(helper, buildSupervisordHealthSnapshotScript())
+        helper.setExecutable(true, false)
+        return helper
     }
 
     fun installSystemComponents(
@@ -899,6 +915,34 @@ object WorkspaceBuildSupport {
             |done
             |
             |exec /usr/bin/supervisorctl "${'$'}@"
+        """.trimMargin() + "\n"
+    }
+
+    internal fun buildSupervisordHealthSnapshotScript(): String {
+        return """
+            |#!/usr/bin/env sh
+            |# KF_GENERATED_SUPERVISORD_HEALTH_SNAPSHOT_VERSION=1
+            |set +e
+            |
+            |if [ "${'$'}#" -ne 0 ]; then
+            |  echo "kf-supervisord-health-snapshot accepts no arguments" >&2
+            |  exit 64
+            |fi
+            |if [ ! -x /usr/bin/supervisorctl ]; then
+            |  echo "supervisorctl missing"
+            |  exit 127
+            |fi
+            |
+            |/usr/bin/supervisorctl -c /etc/supervisor/supervisord.conf -s "http://127.0.0.1:19001" update >/dev/null 2>&1 || true
+            |/usr/bin/supervisorctl -c /etc/supervisor/supervisord.conf -s "http://127.0.0.1:19001" status 2>&1
+            |status_exit=${'$'}?
+            |echo "__KF_SUPERVISOR_LOGS__"
+            |for f in /var/log/supervisor/*.log; do
+            |  [ -f "${'$'}f" ] || continue
+            |  echo "__KF_LOG_FILE__:${'$'}f"
+            |  /usr/bin/tail -n 8 "${'$'}f" 2>/dev/null
+            |done
+            |exit "${'$'}status_exit"
         """.trimMargin() + "\n"
     }
 

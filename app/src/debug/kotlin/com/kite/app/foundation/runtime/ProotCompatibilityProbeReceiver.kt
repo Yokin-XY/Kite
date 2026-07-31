@@ -9,6 +9,14 @@ import com.kite.app.application.runs.RunCommandResult
 import com.kite.app.application.runs.RunLifecycleSink
 import com.kite.app.application.runs.RunStartRequest
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.foundation.service.SupervisordServiceHealthStore
+import com.kite.app.foundation.service.BackgroundRuntimeRegistry
+import com.kite.app.foundation.service.BackgroundRuntimeStatus
+import com.kite.app.foundation.service.buildSupervisordHealthTaskRequest
+import com.kite.app.foundation.service.toSupervisordHealthCommandResult
+import com.kite.app.foundation.workspace.KFWorkspaceManager
+import com.kite.app.foundation.workspace.WorkspaceBuildSupport
+import java.io.File
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeStep
@@ -25,14 +33,20 @@ import kotlin.concurrent.thread
 /** Debug-only 固定 PRoot 等价探针；不接收外部命令、路径或 View 标识。 */
 class ProotCompatibilityProbeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ACTION && intent.action != ACTION_BOUNDED_PROCESS_LIST) return
+        if (
+            intent.action != ACTION &&
+            intent.action != ACTION_BOUNDED_PROCESS_LIST &&
+            intent.action != ACTION_SUPERVISORD_HEALTH
+        ) return
         val pending = goAsync()
         thread(name = "KiteProotCompatibilityProbe", isDaemon = true) {
             try {
-                val result = if (intent.action == ACTION_BOUNDED_PROCESS_LIST) {
-                    ProotCompatibilityProbe.runBoundedProcessList(context.applicationContext)
-                } else {
-                    ProotCompatibilityProbe.run(context.applicationContext)
+                val result = when (intent.action) {
+                    ACTION_BOUNDED_PROCESS_LIST ->
+                        ProotCompatibilityProbe.runBoundedProcessList(context.applicationContext)
+                    ACTION_SUPERVISORD_HEALTH ->
+                        ProotCompatibilityProbe.runSupervisordHealth(context.applicationContext)
+                    else -> ProotCompatibilityProbe.run(context.applicationContext)
                 }
                 Log.i(LOG_TAG, result)
             } catch (error: Throwable) {
@@ -46,6 +60,7 @@ class ProotCompatibilityProbeReceiver : BroadcastReceiver() {
     internal companion object {
         const val ACTION = "com.kite.app.debug.PROOT_COMPATIBILITY_PROBE"
         const val ACTION_BOUNDED_PROCESS_LIST = "com.kite.app.debug.BOUNDED_PROOT_PROCESS_LIST_PROBE"
+        const val ACTION_SUPERVISORD_HEALTH = "com.kite.app.debug.SUPERVISORD_HEALTH_PROBE"
         const val LOG_TAG = "[KFShell]ProotCompatibilityProbe"
 
         fun safe(value: String): String = value.take(240).map { character ->
@@ -179,6 +194,55 @@ private object ProotCompatibilityProbe {
             "telemetryQueueMaxMs=${currentMetric?.queue?.maxMs ?: 0L} " +
             "telemetryExecuteMaxMs=${currentMetric?.execute?.maxMs ?: 0L} " +
             "telemetryTotalMaxMs=${currentMetric?.total?.maxMs ?: 0L}"
+    }
+
+    fun runSupervisordHealth(context: Context): String {
+        val space = KFWorkspaceManager.getCurrentSpace(context)
+            ?: KFWorkspaceManager.listSpaces(context).firstOrNull()
+            ?: KFWorkspaceManager.ensureActiveSpace(context)
+        val supervisorId = BackgroundRuntimeRegistry.builtinContainerSupervisorId(space.id)
+        val runtimeStatus = BackgroundRuntimeRegistry.get(context, supervisorId)?.status
+        if (runtimeStatus != BackgroundRuntimeStatus.RUNNING) {
+            WorkspaceBuildSupport.ensureSupervisordHealthSnapshotHelper(File(space.workspacePath))
+            val execution = BoundedProotTaskExecutor.executeBlocking(
+                context = context,
+                request = buildSupervisordHealthTaskRequest(
+                    jobId = WarmProotExecutionCoordinator.nextJobId("debug-supervisord-health"),
+                    workingDirectory = "/workspace",
+                ),
+            )
+            val result = execution.toSupervisordHealthCommandResult()
+            val telemetry = BoundedProotTaskTelemetry.snapshot()
+            val serviceEntries = telemetry.entries.filter { it.key.lane == RuntimeLaneKind.SERVICE }
+            return "status=supervisord_health_probe runtime=${runtimeStatus?.name?.lowercase() ?: "missing"} " +
+                "overall=unavailable source=bounded_helper_direct exit=${result.exitCode} " +
+                "route=${execution.route.name.lowercase()} totalMs=${execution.totalMs} " +
+                "serviceSamples=${serviceEntries.sumOf { it.count }} " +
+                "serviceWarm=${serviceEntries.filter { it.key.route == WarmProotExecutionRoute.WARM_RUNNER }.sumOf { it.count }} " +
+                "serviceFallback=${serviceEntries.filter { it.key.route == WarmProotExecutionRoute.INDEPENDENT_FALLBACK }.sumOf { it.count }} " +
+                "serviceRejected=${serviceEntries.filter { it.key.route == WarmProotExecutionRoute.ADMISSION_REJECTED }.sumOf { it.count }}"
+        }
+        val beforeRefresh = SupervisordServiceHealthStore.snapshot.value.refreshedAt
+        SupervisordServiceHealthStore.refresh(context, reason = "debug-fixed-health-probe")
+        val deadline = SystemClock.elapsedRealtime() + 30_000L
+        while (
+            SupervisordServiceHealthStore.snapshot.value.refreshedAt <= beforeRefresh &&
+            SystemClock.elapsedRealtime() < deadline
+        ) {
+            Thread.sleep(25L)
+        }
+        val snapshot = SupervisordServiceHealthStore.snapshot.value
+        check(snapshot.refreshedAt > beforeRefresh) { "supervisord_health_refresh_timeout" }
+        val telemetry = BoundedProotTaskTelemetry.snapshot()
+        val serviceEntries = telemetry.entries.filter { it.key.lane == RuntimeLaneKind.SERVICE }
+        return "status=supervisord_health_probe overall=${snapshot.overallHealth.name.lowercase()} " +
+            "source=${ProotCompatibilityProbeReceiver.safe(snapshot.collectionSource)} " +
+            "exit=${snapshot.commandExitCode ?: -1} " +
+            "services=${snapshot.services.size} failed=${snapshot.failedServiceCount} " +
+            "serviceSamples=${serviceEntries.sumOf { it.count }} " +
+            "serviceWarm=${serviceEntries.filter { it.key.route == WarmProotExecutionRoute.WARM_RUNNER }.sumOf { it.count }} " +
+            "serviceFallback=${serviceEntries.filter { it.key.route == WarmProotExecutionRoute.INDEPENDENT_FALLBACK }.sumOf { it.count }} " +
+            "serviceRejected=${serviceEntries.filter { it.key.route == WarmProotExecutionRoute.ADMISSION_REJECTED }.sumOf { it.count }}"
     }
 
     private data class OrchestratedExecution(

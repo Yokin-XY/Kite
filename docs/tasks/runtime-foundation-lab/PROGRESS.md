@@ -25,8 +25,8 @@
 | RF510 | 已完成 | actual coordinator 状态已进入 RuntimeHealth，读取不创建 pool |
 | RF520 | 已完成 | 策略文件与 host 内存先接力，RuntimeHealth 到达后完全接管 |
 | RF530 | 已完成 | route/result/lane 与 queue/execute/total 已进入低基数正式遥测 |
-| RF540 | 进行中 | Supervisord 健康采集仍使用独立 PRoot 复杂 shell |
-| RF550 | 待开始 | RF500 父任务门 |
+| RF540 | 已完成 | 版本化固定 helper 已进入 SERVICE/SHARED_WRITE 有界 Runner |
+| RF550 | 进行中 | RF500 联合回归、真机门与下一阶段 go/no-go |
 | RF600 | 待研究 | 长生命周期 owner lease，禁止直接套用短任务 lease |
 | RF700 | 待研究 | 固定 1/2/4 之上的设备自适应校准 |
 
@@ -60,6 +60,12 @@
 - 完成后拿什么证明？helper 内容和版本固定、无外部命令参数；调用方只传结构化 helper argv，声明 `SERVICE/SHARED_WRITE`、稳定 owner 和有界 timeout/output；单测与真机冷温结果语义一致且无残留任务。
 - 依赖是否满足？满足。RF530 已能观察 route/result/时延；现有 `WorkspaceBuildSupport` 已拥有受管 helper 写入位置，`SupervisordServiceHealthStore` 的 shell 内容完全由代码持有，可先固化为 helper 而不接收用户 payload。
 
+## RF550 开机与三问自检
+
+- 目标是什么？联合证明 RF510～RF540 没有破坏既有 PRoot/资源/Agent/运行状态合同，并给 RF600 长生命周期 lease 明确 go/no-go，而不是顺手迁移长期进程。
+- 完成后拿什么证明？相关回归、强制全量单测、强制 Debug 构建、OnePlus 8T 冷启动/温复用/压力收缩/空闲行为/服务健康链与 ANR/FATAL 检查；Git 工作树干净、每个叶子提交可独立回退。
+- 依赖是否满足？满足。RF510～RF540 均已独立实现和验证；Node/Python 历史矩阵仍冻结，本门只验证本阶段新增合同和跨模块回归。
+
 ## 倒序日志
 
 ### 2026-08-01 RF510 实际调度状态正式投影
@@ -82,6 +88,14 @@
 - `BoundedProotTaskTelemetry` 只按 lane/route/result 固定枚举聚合，时延使用 8 个固定桶及 sum/max；不保存 job、owner、argv、cwd、env 或输出，正式 RuntimeHealth 读取只复制内存快照。
 - 4 个相关 suite、18 项测试零失败，4000 次并发完成样本无丢计数，Debug 构建成功。OnePlus 8T 冷进程固定探针记录 `telemetrySamples=2 telemetryRouteCount=2 queueMaxMs=39 executeMaxMs=1434 totalMaxMs=1473`，无 ANR/FATAL。
 - 下一步 RF540 迁移第二个高频内部样板；不因遥测已经存在而扩大任意 shell、终端、Agent 或长期任务范围。
+
+### 2026-08-01 RF540 Supervisord 健康采集有界 Runner 样板
+
+- 新增 `/workspace/.kf/system/bin/kf-supervisord-health-snapshot`：稳定路径、内容版本 1、拒绝任何参数，固定执行 `update/status`、日志 marker 和每文件 8 行尾部；高频刷新只校准该 helper，不重跑整套 Workspace ensure。
+- `SupervisordServiceHealthStore` 改为单一结构化 helper argv，声明稳定 owner、`SERVICE/SHARED_WRITE`、5 秒准入等待、10 秒运行和每流 256 KiB 上限；STARTED 前沿用统一独立回退，STARTED 后不重放。截断、超时、拒绝和 exit code 继续映射为原健康失败边界。
+- 5 个相关 suite、23 项测试最终零失败、1 项环境跳过；首次强制轮只有既有并发池测试在编译高负载下 1 秒 latch 抖动，原范围无代码改动重跑通过。Debug 构建成功。
+- OnePlus 8T 当前 Supervisord 运行记录本身为 ERROR、启动命令 exit 127；没有安装包或伪造健康。固定 helper 冷/温两次都走 `warm_runner`，真实保持 exit 127，total 1490ms→68ms，service sample 1→2，无 fallback/reject、无 helper 残留、无 ANR/FATAL。
+- 35 秒后的共享 `kf-runner` 并非泄漏：随后固定采样显示其执行前 idle age 仅 1195ms，证明被现有容器进程采样复用；RF550 继续核对整体空闲与共享任务边界。
 
 ### 2026-08-01 RF500 启动
 

@@ -25,7 +25,10 @@ class ProotCompatibilityEntryContractTest {
         assertTrue(agentConfig.contains("WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig("))
         assertTrue(background.contains("ManagedRuntimeLaunchPlan.Proot"))
         assertTrue(background.contains("WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig("))
-        assertTrue(supervisor.contains("WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig("))
+        assertTrue(supervisor.contains("BoundedProotTaskExecutor.executeBlocking("))
+        assertTrue(supervisor.contains("WorkspaceBuildSupport.ensureSupervisordHealthSnapshotHelper("))
+        assertFalse(supervisor.contains("WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig("))
+        assertFalse(supervisor.contains("ProcessBuilder("))
     }
 
     @Test

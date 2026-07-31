@@ -2,14 +2,15 @@ package com.kite.app.foundation.service
 
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
+import com.kite.app.foundation.runtime.BoundedProotTaskExecutor
+import com.kite.app.foundation.runtime.BoundedProotTaskRequest
+import com.kite.app.foundation.runtime.ProotJobAccess
+import com.kite.app.foundation.runtime.RuntimeLaneKind
+import com.kite.app.foundation.runtime.WarmProotExecutionCoordinator
+import com.kite.app.foundation.runtime.WarmProotPoolExecution
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
-import com.kite.app.foundation.runtime.RuntimeExecutionPayload
-import com.kite.app.foundation.runtime.RuntimeExecutionRequest
-import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
+import com.kite.app.foundation.workspace.WorkspaceBuildSupport
 import java.io.File
-import java.util.concurrent.TimeUnit
-import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,10 +74,59 @@ data class SupervisordServiceHealthSnapshot(
     val refreshedAt: Long = 0L
 )
 
+internal data class SupervisordHealthCommandResult(
+    val exitCode: Int,
+    val output: String,
+)
+
+internal fun buildSupervisordHealthTaskRequest(
+    jobId: String,
+    workingDirectory: String,
+): BoundedProotTaskRequest = BoundedProotTaskRequest(
+    jobId = jobId,
+    ownerId = "system:supervisord-health",
+    argv = listOf(WorkspaceBuildSupport.CONTAINER_SUPERVISORD_HEALTH_SNAPSHOT_PATH),
+    workingDirectory = workingDirectory,
+    lane = RuntimeLaneKind.SERVICE,
+    access = ProotJobAccess.SHARED_WRITE,
+    waitTimeoutMs = 5_000L,
+    timeoutMs = 10_000L,
+    maxOutputBytesPerStream = 256 * 1024,
+)
+
+internal fun WarmProotPoolExecution.toSupervisordHealthCommandResult(): SupervisordHealthCommandResult {
+    val result = execution
+    if (result == null) {
+        return SupervisordHealthCommandResult(-1, reason.ifBlank { route.name.lowercase() })
+    }
+    if (result.stdoutDroppedBytes > 0L || result.stderrDroppedBytes > 0L) {
+        return SupervisordHealthCommandResult(
+            -1,
+            "supervisor status output truncated: stdout=${result.stdoutDroppedBytes} stderr=${result.stderrDroppedBytes}",
+        )
+    }
+    val combined = buildString {
+        append(result.stdoutTail.toString(Charsets.UTF_8))
+        val stderr = result.stderrTail.toString(Charsets.UTF_8)
+        if (stderr.isNotBlank()) {
+            if (isNotEmpty() && last() != '\n') append('\n')
+            append(stderr)
+        }
+    }
+    val exitCode = result.exitCode?.takeIf { result.completed } ?: -1
+    val output = combined.ifBlank {
+        when {
+            result.timedOut -> "supervisor status command timed out"
+            result.cancelled -> "supervisor status command cancelled"
+            else -> result.failureReason.ifBlank { reason.ifBlank { route.name.lowercase() } }
+        }
+    }
+    return SupervisordHealthCommandResult(exitCode, output)
+}
+
 object SupervisordServiceHealthStore {
 
     private const val LOG_TAG = "SupervisordServiceHealthStore"
-    private const val COMMAND_TIMEOUT_SECONDS = 10L
     private const val MIN_REFRESH_INTERVAL_MS = 2_500L
     private const val SUPERVISOR_CONFIG = "/etc/supervisor/supervisord.conf"
     private const val SUPERVISOR_HTTP_SERVER = "http://127.0.0.1:19001"
@@ -151,7 +201,11 @@ object SupervisordServiceHealthStore {
             reason = "supervisord runtime record missing"
         )
 
-        val result = runSupervisorStatusCommand(context, runningSupervisor)
+        val result = runSupervisorStatusCommand(
+            context = context,
+            record = runningSupervisor,
+            workspaceDir = File(space.workspacePath),
+        )
         if (result.exitCode != 0) {
             Logger.i(
                 LOG_TAG,
@@ -242,71 +296,20 @@ object SupervisordServiceHealthStore {
 
     private fun runSupervisorStatusCommand(
         context: Context,
-        record: BackgroundRuntimeRecord
-    ): CommandResult {
-        val payload = """
-            if ! command -v supervisorctl >/dev/null 2>&1; then
-              echo "supervisorctl missing"
-              exit 127
-            fi
-            # Make dropped-in /etc/supervisor/conf.d/*.conf visible without requiring manual reread/add.
-            # `update` performs reread + add/remove changed groups; status remains the parseable output.
-            supervisorctl -c $SUPERVISOR_CONFIG -s "$SUPERVISOR_HTTP_SERVER" update >/dev/null 2>&1 || true
-            supervisorctl -c $SUPERVISOR_CONFIG -s "$SUPERVISOR_HTTP_SERVER" status 2>&1
-            status_exit=${'$'}?
-            echo "$LOG_MARKER"
-            for f in /var/log/supervisor/*.log; do
-              [ -f "${'$'}f" ] || continue
-              echo "__KF_LOG_FILE__:${'$'}f"
-              tail -n 8 "${'$'}f" 2>/dev/null
-            done
-            exit ${'$'}status_exit
-        """.trimIndent()
-        return executeContainerCommand(
-            context = context,
-            workingDirectory = record.workingDirectory,
-            payload = payload
-        )
-    }
-
-    private fun executeContainerCommand(
-        context: Context,
-        workingDirectory: String,
-        payload: String
-    ): CommandResult {
+        record: BackgroundRuntimeRecord,
+        workspaceDir: File,
+    ): SupervisordHealthCommandResult {
         return runCatching {
-            val config = WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig(
+            WorkspaceBuildSupport.ensureSupervisordHealthSnapshotHelper(workspaceDir)
+            BoundedProotTaskExecutor.executeBlocking(
                 context = context,
-                request = RuntimeExecutionRequest(
-                    payload = RuntimeExecutionPayload.CommandLine(payload),
-                    workingDirectory = workingDirectory,
-                    requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
+                request = buildSupervisordHealthTaskRequest(
+                    jobId = WarmProotExecutionCoordinator.nextJobId("supervisord-health"),
+                    workingDirectory = record.workingDirectory,
                 ),
-                selectionReason = "supervisord_health_requires_proot",
-                loginShell = false,
-            )
-            val process = ProcessBuilder(config.command)
-                .redirectErrorStream(true)
-                .apply { environment().putAll(config.env) }
-                .start()
-            val output = StringBuilder()
-            val reader = thread(start = true, isDaemon = true, name = "SupervisorStatusReader") {
-                runCatching {
-                    process.inputStream.bufferedReader().useLines { lines ->
-                        lines.forEach { output.append(it).append('\n') }
-                    }
-                }
-            }
-            val finished = process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            reader.join(1200L)
-            if (!finished) {
-                process.destroyForcibly()
-                CommandResult(-1, output.toString())
-            } else {
-                CommandResult(process.exitValue(), output.toString())
-            }
+            ).toSupervisordHealthCommandResult()
         }.getOrElse { error ->
-            CommandResult(-1, error.message ?: "supervisor status command failed")
+            SupervisordHealthCommandResult(-1, error.message ?: "supervisor status command failed")
         }
     }
 
@@ -435,8 +438,4 @@ object SupervisordServiceHealthStore {
         return shouldRun
     }
 
-    private data class CommandResult(
-        val exitCode: Int,
-        val output: String
-    )
 }
