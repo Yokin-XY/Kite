@@ -30,6 +30,13 @@
 
 ## 倒序日志
 
+### 2026-08-01 RF430a 通用有界短任务执行器
+
+- 新增 `BoundedProotTaskExecutor`：输入只有代码 owner 提交的结构化 argv、cwd、env、lane、读写属性、wait/runtime timeout 和双流上限；交互 lane、shell 文本形态、超过 120 秒或超过 1 MiB/流的请求在准入前失败关闭。
+- warm runner 与独立 PRoot 回退由执行器生成同一 job/admission 合同并持有同一 lease；独立路径并发排水 stdout/stderr，记录截断字节，timeout 后回收进程。只有 warm job 尚未 STARTED 才由既有 pool 调用该回退。
+- 固定资源采样已迁移到通用执行器，删除原来私有的 `ProcessBuilder`、双 reader 和 timeout 复制实现；任务 owner、共享写、压力必要性和结果分类不变。
+- 与本阶段直接相关的 6 个 suite、38 项测试通过，零失败、零错误、零跳过；下一步 RF430b 只迁移容器进程表的结构化只读 `ps` 查询，信号与其他 PRoot 类别不迁移。
+
 ### 2026-08-01 RF420c / RF420 父任务验收
 
 - 新增同优先级 FIFO 与关闭唤醒回归；关闭 controller 会令排队项返回 `admission_closed`，活动 lease 仍保持到业务 owner 主动释放，证明关闭不是强杀入口。

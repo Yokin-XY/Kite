@@ -2,12 +2,9 @@ package com.kite.app.foundation.runtime
 
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
-import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import java.util.LinkedHashMap
-import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -720,12 +717,9 @@ object RuntimeProcessTableResourceSampler : RuntimeProcessResourceSampler {
     ) {
         val result = runCatching {
             val jobId = WarmProotExecutionCoordinator.nextJobId("resource-sampler")
-            val plan = executionPlan(reason, jobId)
-            val execution = WarmProotExecutionCoordinator.executeBlocking(
+            val execution = BoundedProotTaskExecutor.executeBlocking(
                 context = context,
-                admissionRequest = plan.admission,
-                jobRequest = plan.job,
-                independentFallback = { executeIndependent(context, jobId) },
+                request = boundedTaskRequest(reason, jobId),
             )
             execution.toSamplerResult()
         }.getOrElse { error ->
@@ -753,72 +747,26 @@ object RuntimeProcessTableResourceSampler : RuntimeProcessResourceSampler {
         if (result.result == "executed") ContainerProcessStore.refresh(context)
     }
 
-    private fun executionPlan(reason: String, jobId: String) = RuntimeProcessTableSamplerExecutionPlan(
-        admission = ProotJobAdmissionRequest(
-            jobId = jobId,
-            ownerId = "system:runtime-process-resource-sampler",
-            lane = RuntimeLaneKind.PROBE,
-            access = ProotJobAccess.SHARED_WRITE,
-            cancellationMode = ProotJobCancellationMode.TIMEOUT_AND_OWNER,
-            resultMode = ProotJobResultMode.CAPTURED_STDIO,
-            pressureEssential = reason == "memory_pressure_resource_sample",
-            waitTimeoutMs = 5_000L,
-        ),
-        job = WarmProotJobRequest(
-            jobId = jobId,
-            argv = RESOURCE_SAMPLER_ARGV,
-            workingDirectory = "/workspace",
-            timeoutMs = TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS),
-            maxOutputBytesPerStream = MAX_OUTPUT_BYTES,
-        ),
+    private fun executionPlan(reason: String, jobId: String): RuntimeProcessTableSamplerExecutionPlan {
+        val plan = BoundedProotTaskExecutor.plan(boundedTaskRequest(reason, jobId))
+        return RuntimeProcessTableSamplerExecutionPlan(
+            admission = plan.admission,
+            job = plan.job,
+        )
+    }
+
+    private fun boundedTaskRequest(reason: String, jobId: String) = BoundedProotTaskRequest(
+        jobId = jobId,
+        ownerId = "system:runtime-process-resource-sampler",
+        argv = RESOURCE_SAMPLER_ARGV,
+        workingDirectory = "/workspace",
+        lane = RuntimeLaneKind.PROBE,
+        access = ProotJobAccess.SHARED_WRITE,
+        pressureEssential = reason == "memory_pressure_resource_sample",
+        waitTimeoutMs = 5_000L,
+        timeoutMs = TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS),
+        maxOutputBytesPerStream = MAX_OUTPUT_BYTES,
     )
-
-    private fun executeIndependent(context: Context, jobId: String): WarmProotJobExecution {
-        val config = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
-            context = context,
-            workingDirectory = "/workspace",
-            argv = RESOURCE_SAMPLER_ARGV,
-        )
-        val process = ProcessBuilder(config.command)
-            .redirectErrorStream(false)
-            .apply { environment().putAll(config.env) }
-            .start()
-        val stdout = ByteArrayOutputStream()
-        val stderr = ByteArrayOutputStream()
-        val stdoutReader = boundedReader(process.inputStream, stdout)
-        val stderrReader = boundedReader(process.errorStream, stderr)
-        val finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        if (!finished) {
-            process.destroy()
-            if (!process.waitFor(500L, TimeUnit.MILLISECONDS)) process.destroyForcibly()
-        }
-        stdoutReader.join(1_000L)
-        stderrReader.join(1_000L)
-        return WarmProotJobExecution(
-            jobId = jobId,
-            started = true,
-            exitCode = if (finished) process.exitValue() else -1,
-            termSignal = 0,
-            timedOut = !finished,
-            stdoutTail = stdout.toByteArray(),
-            stderrTail = stderr.toByteArray(),
-        )
-    }
-
-    private fun boundedReader(
-        input: java.io.InputStream,
-        output: ByteArrayOutputStream,
-    ) = thread(start = true, isDaemon = true, name = "RuntimeResourceSamplerReader") {
-        input.use { source ->
-            val buffer = ByteArray(2_048)
-            while (true) {
-                val count = source.read(buffer)
-                if (count < 0) break
-                val remaining = MAX_OUTPUT_BYTES - output.size()
-                if (remaining > 0) output.write(buffer, 0, minOf(count, remaining))
-            }
-        }
-    }
 
     private fun WarmProotPoolExecution.toSamplerResult(): RuntimeProcessTableSamplerRunResult {
         val completed = execution

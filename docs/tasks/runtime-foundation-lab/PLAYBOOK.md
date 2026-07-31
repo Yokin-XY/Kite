@@ -317,6 +317,23 @@
 - 验收标准：stdio、取消、timeout、进程树回收、身份失效、STARTED 边界和独立 PRoot 对照通过。
 - 依赖：RF420。
 
+##### RF430a 通用有界短任务执行器
+
+- [x] 只接收代码 owner 声明的结构化 argv，限制 wait、runtime 和双流输出，不接受 shell 文本或交互 lane；
+- [x] warm 与独立 PRoot 共享同一 admission lease，独立路径复用同一 argv/cwd/env/timeout/output 合同；
+- [x] 固定资源采样迁移到通用执行器，删除其私有独立进程实现。
+
+##### RF430b 首个新增生产调用方
+
+- [ ] 仅迁移容器进程表只读查询；kill、任意 shell、Agent、终端和长期服务保持原路径；
+- [ ] 查询声明稳定 owner、唯一 jobId、`PROBE/READ_ONLY`、有界 stdio 和 timeout；
+- [ ] 真机验证 warm、独立回退、结果解析与无残留进程，不从命令名外推其他任务。
+
+##### RF430c 父任务门
+
+- [ ] STARTED 前可回退、STARTED 后不重放、timeout/取消/崩溃/身份失效合同通过；
+- [ ] Debug 构建和目标真机对照通过，收益与 no-go 边界分别记录。
+
 #### RF440 可调性能档位
 
 - 问题证据：占满核心不等于吞吐最优，固定并发会在不同手机和压力状态下失真。
