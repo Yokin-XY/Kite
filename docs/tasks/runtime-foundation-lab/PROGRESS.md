@@ -15,10 +15,11 @@
 | RF230 | 已完成 | 纯 Python go；subprocess/venv child/第三方扩展保持 PRoot |
 | RF240 | 已完成 | 通用 glibc 资产与纯 Python 结构化 Provider 已通过真机门 |
 | RF250 | 已完成 | 子进程保持 PRoot；扩展按精确 ABI 与不可变代次开放 |
-| RF300 | 进行中 | RF330 已完成但性能 no-go，进入 RF340 Android 系统能力目录 |
+| RF300 | 进行中 | RF340a 真实能力目录已完成，进入 RF340b 薄适配 |
 | RF310 | 已完成 | 原生下载、Recipe/Run、资源预取及对照压力门通过 |
 | RF320 | 已完成 | 文件 Provider、Recipe/Run、权限边界和真机门通过 |
 | RF330 | 已完成 | 安全 ZIP 正确性通过，但真机慢于 PRoot，不进入资源快速车道 |
+| RF340 | 进行中 | 已固定真实入口、权限门、完成语义和状态拥有者 |
 | RF330～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
@@ -28,6 +29,15 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF340a 真实能力与所有者目录
+
+- 在既有 `CapabilityCatalog` 内扩展可路由条目，没有新建平行目录；登记下载、文件、ZIP、APK 系统安装器交接、默认网络对齐和运行时权限快照。
+- 每项固定 `NATIVE_RECIPE`、`ANDROID_ACTION`、`LIFECYCLE_SERVICE` 或 `QUERY_ONLY` 调用形态，以及权限门、结果拥有者、完成语义和自动回退边界。
+- APK 真实入口是受控路径校验后打开系统安装器，不是静默 `PackageInstaller`；目录将其标记为 `EXTERNAL_HANDOFF`，不宣称安装成功。
+- 默认网络继续由 `AndroidDefaultNetworkAlignment` 持续校准，权限快照继续由 `RuntimeBootstrapGateway` 持有；目录查询不读取或复制这些状态。
+- 当前源码未发现正式 Android Keystore Provider，因此不登记 `android.keystore.*`，不把架构设想冒充已实现能力。
+- 目录、文件与归档共 15 项目标测试全部通过；下一步 RF340b 让既有 Android action 和原生分发器只消费目录事实，不复制执行逻辑。
 
 ### 2026-07-31 RF330c / RF330 父任务验收
 
@@ -227,6 +237,7 @@
 
 ## 待验证
 
-- RF340 盘点现有 PackageInstaller、网络、权限与 Keystore 实现，只做薄 Provider 目录，不复制既有状态拥有者。
+- RF340b 将 APK Android action 与原生分发器接入目录，保持原执行器和状态拥有者。
+- RF340c 做目录、禁止回退和无副作用查询回归；不为缺失 Keystore 实现补假入口。
 - RF330 若未来更换归档引擎或出现单大文件 ZIP 样本，可按新证据重开性能门；当前多文件资源自动路由保持 PRoot。
 - 动态 URL、多镜像和无尺寸上限下载不属于 RF310 已开放范围；将来只有形成可验证的结构化合同后才单独立项。

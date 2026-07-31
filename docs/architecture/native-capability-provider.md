@@ -165,6 +165,15 @@ OnePlus 8T 固定 16 MiB、128 文件 ZIP 的最终对照中，安全原生实�
 安全 ZIP Provider 仍可供显式、受控、重视无半成品语义的调用使用；自动资源编译器不生成该步骤。当前 OpenCode 是动态 tar.gz，
 既不满足格式边界，也没有性能依据，继续保持 PRoot。只有归档引擎或真实负载前提变化时才重开专项验证。
 
+## RF340a Android 系统能力目录
+
+既有 `CapabilityCatalog` 现在同时描述可路由能力，但不执行能力、不读取业务状态。每个条目固定调用形态、权限门、结果拥有者、完成
+语义和回退边界。原生下载、文件和安全 ZIP 结果属于 `CardRunStore`；APK 只表示已交给外部系统安装器；默认网络对齐仍由
+`AndroidDefaultNetworkAlignment` 持有；权限快照仍由 `RuntimeBootstrapGateway` 持有。
+
+目录只登记当前真实代码入口。源码中没有正式 Android Keystore Provider，也没有静默 PackageInstaller 成功回执，因此两者都不能
+作为现有能力对外宣称。目录查询是纯数据操作，不应触发权限请求、网络刷新、安装 UI 或任何系统副作用。
+
 ## 文件与归档能力
 
 文件复制、移动、权限和受控删除必须接入现有文件保护、更新锁和备份边界，不建立第二套资源安装事务。
