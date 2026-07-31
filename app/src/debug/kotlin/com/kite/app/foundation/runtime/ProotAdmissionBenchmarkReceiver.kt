@@ -166,8 +166,11 @@ private object ProotAdmissionBenchmark {
 
     private fun admission(id: String) = ProotJobAdmissionRequest(
         jobId = id,
+        ownerId = "debug:proot-admission-benchmark",
         lane = RuntimeLaneKind.SERVICE,
         access = ProotJobAccess.READ_ONLY,
+        cancellationMode = ProotJobCancellationMode.TIMEOUT_AND_OWNER,
+        resultMode = ProotJobResultMode.CAPTURED_STDIO,
         waitTimeoutMs = TIMEOUT_MS,
     )
 

@@ -14,8 +14,11 @@ class RuntimeProcessTableResourceSamplerPlanTest {
         )
 
         assertEquals("sampler-1", plan.admission.jobId)
+        assertEquals("system:runtime-process-resource-sampler", plan.admission.ownerId)
         assertEquals(RuntimeLaneKind.PROBE, plan.admission.lane)
         assertEquals(ProotJobAccess.SHARED_WRITE, plan.admission.access)
+        assertEquals(ProotJobCancellationMode.TIMEOUT_AND_OWNER, plan.admission.cancellationMode)
+        assertEquals(ProotJobResultMode.CAPTURED_STDIO, plan.admission.resultMode)
         assertFalse(plan.admission.pressureEssential)
         assertEquals(plan.admission.jobId, plan.job.jobId)
         assertEquals(

@@ -30,6 +30,14 @@
 
 ## 倒序日志
 
+### 2026-08-01 RF420a 完整任务身份合同
+
+- `ProotJobAdmissionRequest` 现在强制声明 owner、取消模式和结果模式；它与既有 jobId、lane、读写属性、压力必要性和等待上限共同构成完整准入身份，缺失 owner 在排队前失败关闭。
+- 唯一生产调用方——固定资源采样任务——声明 `system:runtime-process-resource-sampler`、`PROBE`、共享写、timeout/owner 回收和有界 stdio；debug 基准与测试夹具也显式声明，不留默认值掩盖遗漏。
+- 架构矩阵明确普通终端、任意 Recipe shell、Agent、长期服务和 detached shell 尚未进入准入；它们继续独立 PRoot，不因 RF420a 被限流，也不能被宣称为统一调度。
+- 首次编译发现 debug 准入基准仍使用旧请求，补齐合同后原命令重跑成功。3 个相关 suite、18 项测试通过，零失败、零错误、零跳过。
+- 下一步 RF420b 只补队列身份冲突、排队取消和统计闭环；控制器仍不杀死已经开始的业务任务。
+
 ### 2026-08-01 RF410c / RF410 父任务验收
 
 - RF410b 已完成的 10 个相关 suite、52 项回归继续覆盖 Provider/Planner、普通终端、Agent、后台、资源 shell、停止派发和显式 View 传递；RF410c 仅新增 debug 真机探针，没有重复执行这些未受影响的测试，也没有重跑 Node 性能矩阵。

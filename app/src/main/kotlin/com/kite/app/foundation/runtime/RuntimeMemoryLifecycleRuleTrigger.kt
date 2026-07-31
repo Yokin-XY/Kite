@@ -756,8 +756,11 @@ object RuntimeProcessTableResourceSampler : RuntimeProcessResourceSampler {
     private fun executionPlan(reason: String, jobId: String) = RuntimeProcessTableSamplerExecutionPlan(
         admission = ProotJobAdmissionRequest(
             jobId = jobId,
+            ownerId = "system:runtime-process-resource-sampler",
             lane = RuntimeLaneKind.PROBE,
             access = ProotJobAccess.SHARED_WRITE,
+            cancellationMode = ProotJobCancellationMode.TIMEOUT_AND_OWNER,
+            resultMode = ProotJobResultMode.CAPTURED_STDIO,
             pressureEssential = reason == "memory_pressure_resource_sample",
             waitTimeoutMs = 5_000L,
         ),

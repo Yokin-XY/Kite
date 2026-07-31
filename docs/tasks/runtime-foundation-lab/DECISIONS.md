@@ -126,3 +126,11 @@
 - 决定：最终 PRoot Provider 归一 payload、工作目录、环境、PTY、View 与选择原因；物理启动配置继续由既有 `KFContainerManager` 在执行入口生成。
 - 原因：把 PRoot argv、bind、网络和遥测复制进新 Provider 会形成第二套兼容实现；只返回字符串 `Fallback` 又不足以约束各入口使用同一计划。
 - 影响：正式终端、资源 shell、Agent 与后台入口把逻辑计划交给现有物理构造器，不能重写 rootfs 或 View 规则；Android 原生能力在此边界失败关闭。Host `Unsupported` 变成明确 `Proot` 计划，`Blocked` 不得换道。
+
+## ADR-RF-017 PRoot 准入按完整任务合同逐类开放
+
+- 状态：已接受，RF420a 已落地
+- 日期：2026-08-01
+- 决定：进入 `ProotJobAdmissionController` 的调用方必须显式声明 job、owner、lane、读写属性、取消出口和结果出口；没有完整生命周期证据的 PRoot 类别保持独立兼容路径。
+- 原因：只包住进程创建不能代表长期服务的真实占用，按命令字符串猜只读/写属性也会破坏副作用和公平性；“所有 PRoot 都统一调度”目前不是事实。
+- 影响：当前正式准入仅覆盖固定资源采样。普通终端、任意 shell、Agent、detached 与长期服务以后逐类迁移；控制器只管开始顺序，不接管业务结果或强杀已开始任务。

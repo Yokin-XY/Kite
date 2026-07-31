@@ -10,10 +10,31 @@ internal enum class ProotJobAccess {
     SHARED_WRITE,
 }
 
+internal enum class ProotJobCancellationMode {
+    /** 任务没有独立交互入口，由调用方的 timeout 和运行 owner 完成回收。 */
+    TIMEOUT_AND_OWNER,
+
+    /** 用户通过终端会话发起取消，终端 owner 负责回收进程树。 */
+    TERMINAL_SESSION,
+
+    /** 长期进程通过受管服务或 Agent owner 停止。 */
+    MANAGED_OWNER,
+}
+
+internal enum class ProotJobResultMode {
+    CAPTURED_STDIO,
+    TERMINAL_SESSION,
+    DETACHED_BINDING,
+    MANAGED_CHANNEL,
+}
+
 internal data class ProotJobAdmissionRequest(
     val jobId: String,
+    val ownerId: String,
     val lane: RuntimeLaneKind,
     val access: ProotJobAccess = ProotJobAccess.READ_ONLY,
+    val cancellationMode: ProotJobCancellationMode,
+    val resultMode: ProotJobResultMode,
     val pressureEssential: Boolean = false,
     val waitTimeoutMs: Long = 10_000L,
 )
@@ -288,6 +309,7 @@ internal class ProotJobAdmissionController(
 
     private fun validate(request: ProotJobAdmissionRequest) {
         require(request.jobId.isNotBlank() && request.jobId.length <= 96) { "admission_job_id_invalid" }
+        require(request.ownerId.isNotBlank() && request.ownerId.length <= 160) { "admission_owner_id_invalid" }
         require(request.waitTimeoutMs in 1L..600_000L) { "admission_wait_timeout_invalid" }
     }
 }

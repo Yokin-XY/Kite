@@ -4,10 +4,23 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProotJobAdmissionControllerTest {
+    @Test
+    fun `job contract requires an explicit owner`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED)
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            controller.acquireBlocking(request("missing-owner", RuntimeLaneKind.PROBE).copy(ownerId = ""))
+        }
+
+        assertEquals("admission_owner_id_invalid", error.message)
+        controller.close()
+    }
+
     @Test
     fun `profiles enforce one two and four active jobs`() {
         val expected = mapOf(
@@ -241,8 +254,11 @@ class ProotJobAdmissionControllerTest {
         waitTimeoutMs: Long = 1_000L,
     ) = ProotJobAdmissionRequest(
         jobId = id,
+        ownerId = "test:$id",
         lane = lane,
         access = access,
+        cancellationMode = ProotJobCancellationMode.TIMEOUT_AND_OWNER,
+        resultMode = ProotJobResultMode.CAPTURED_STDIO,
         pressureEssential = pressureEssential,
         waitTimeoutMs = waitTimeoutMs,
     )

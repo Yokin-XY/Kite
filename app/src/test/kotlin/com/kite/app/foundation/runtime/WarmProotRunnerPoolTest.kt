@@ -225,7 +225,10 @@ class WarmProotRunnerPoolTest {
 
     private fun admission(id: String) = ProotJobAdmissionRequest(
         jobId = id,
+        ownerId = "test:$id",
         lane = RuntimeLaneKind.INTERACTIVE,
+        cancellationMode = ProotJobCancellationMode.TIMEOUT_AND_OWNER,
+        resultMode = ProotJobResultMode.CAPTURED_STDIO,
         waitTimeoutMs = 1_000L,
     )
 
