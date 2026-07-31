@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF300` Android/NDK 原生 Provider
-- 当前任务：`RF320` 受控文件操作
+- 当前任务：`RF330` 安全归档能力
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -203,9 +203,9 @@
 
 ##### RF320c 资源事务边界
 
-- [ ] 只迁移不修改活动安装根、且能由结构化权限完整表达的文件步骤；
-- [ ] 活动安装根继续由资源级锁、单份备份、验证和回滚事务持有；
-- [ ] 不重新接入已退出正式链的 View/`ResourceTransactionCoordinator`。
+- [x] 完成资源步骤审计；当前没有脱离活动安装事务的安全迁移点，不强行迁移；
+- [x] 活动安装根继续由资源级锁、单份备份、验证和回滚事务持有；
+- [x] 不重新接入已退出正式链的 View/`ResourceTransactionCoordinator`。
 
 #### RF330 安全归档能力
 
