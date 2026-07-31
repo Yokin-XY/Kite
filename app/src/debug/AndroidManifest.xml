@@ -24,6 +24,7 @@
             <intent-filter>
                 <action android:name="com.kite.app.debug.PYTHON_RUNTIME_BENCHMARK" />
                 <action android:name="com.kite.app.debug.PYTHON_RUNTIME_COMPATIBILITY" />
+                <action android:name="com.kite.app.debug.PYTHON_RUNTIME_LAYERED" />
             </intent-filter>
         </receiver>
         <service

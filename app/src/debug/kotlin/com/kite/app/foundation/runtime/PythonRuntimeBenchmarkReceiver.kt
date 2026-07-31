@@ -28,12 +28,16 @@ import kotlinx.coroutines.launch
 /** Debug-only 固定 Python Host/PRoot 矩阵；不接受外部命令、路径、负载或并发参数。 */
 class PythonRuntimeBenchmarkReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action !in setOf(ACTION_BENCHMARK, ACTION_COMPATIBILITY)) return
+        if (intent.action !in setOf(ACTION_BENCHMARK, ACTION_COMPATIBILITY, ACTION_LAYERED)) return
         runCatching {
             context.startService(
                 Intent(context, PythonRuntimeBenchmarkService::class.java).putExtra(
                     EXTRA_MODE,
-                    if (intent.action == ACTION_COMPATIBILITY) MODE_COMPATIBILITY else MODE_BENCHMARK,
+                    when (intent.action) {
+                        ACTION_COMPATIBILITY -> MODE_COMPATIBILITY
+                        ACTION_LAYERED -> MODE_LAYERED
+                        else -> MODE_BENCHMARK
+                    },
                 )
             )
         }.onFailure { error ->
@@ -48,9 +52,11 @@ class PythonRuntimeBenchmarkReceiver : BroadcastReceiver() {
     internal companion object {
         const val ACTION_BENCHMARK = "com.kite.app.debug.PYTHON_RUNTIME_BENCHMARK"
         const val ACTION_COMPATIBILITY = "com.kite.app.debug.PYTHON_RUNTIME_COMPATIBILITY"
+        const val ACTION_LAYERED = "com.kite.app.debug.PYTHON_RUNTIME_LAYERED"
         const val EXTRA_MODE = "mode"
         const val MODE_BENCHMARK = "benchmark"
         const val MODE_COMPATIBILITY = "compatibility"
+        const val MODE_LAYERED = "layered"
         const val LOG_TAG = "[KFShell]PythonRuntimeBenchmark"
 
         fun safe(value: String): String = value.take(240).map { character ->
@@ -68,10 +74,12 @@ class PythonRuntimeBenchmarkService : Service() {
         scope.launch {
             try {
                 val mode = intent?.getStringExtra(PythonRuntimeBenchmarkReceiver.EXTRA_MODE)
-                val reports = if (mode == PythonRuntimeBenchmarkReceiver.MODE_COMPATIBILITY) {
-                    PythonRuntimeBenchmark.runCompatibility(applicationContext)
-                } else {
-                    PythonRuntimeBenchmark.run(applicationContext)
+                val reports = when (mode) {
+                    PythonRuntimeBenchmarkReceiver.MODE_COMPATIBILITY ->
+                        PythonRuntimeBenchmark.runCompatibility(applicationContext)
+                    PythonRuntimeBenchmarkReceiver.MODE_LAYERED ->
+                        PythonRuntimeBenchmark.runLayeredCompatibility(applicationContext)
+                    else -> PythonRuntimeBenchmark.run(applicationContext)
                 }
                 reports.forEach { report ->
                     Log.i(PythonRuntimeBenchmarkReceiver.LOG_TAG, report)
@@ -159,6 +167,15 @@ private object PythonRuntimeBenchmark {
         }
     }
 
+    fun runLayeredCompatibility(context: Context): List<String> {
+        val host = resolveHost(context)
+        return buildList {
+            add("status=layered_started python=${safe(host.pythonBinary.absolutePath)}")
+            addAll(layeredReports(context, host))
+            add("status=layered_complete")
+        }
+    }
+
     private fun functionalReports(context: Context, host: HostPythonLayout): List<String> = listOf(
         productionProviderReport(context, host),
         compatibilityReport(
@@ -186,6 +203,30 @@ private object PythonRuntimeBenchmark {
         compatibilityReport(context, host, "venv_child", VENV_CHILD_PROBE),
     )
 
+    private fun layeredReports(context: Context, host: HostPythonLayout): List<String> = listOf(
+        compatibilityReport(
+            context,
+            host,
+            "subprocess_linux_identity",
+            "import subprocess;value=subprocess.check_output([\"/bin/uname\",\"-o\"],text=True).strip();" +
+                "assert value==\"GNU/Linux\",value;print(\"$TOKEN\")",
+        ),
+        compatibilityReport(
+            context,
+            host,
+            "os_system_linux_view",
+            "import os;assert os.system(\"/bin/sh -c 'grep -q Ubuntu /etc/os-release'\") == 0;" +
+                "print(\"$TOKEN\")",
+        ),
+        compatibilityReport(
+            context,
+            host,
+            "os_exec_python",
+            "import os,sys;os.execve(sys.executable,[sys.executable,\"-c\",\"print('$TOKEN')\"],os.environ.copy())",
+        ),
+        compatibilityReport(context, host, "venv_with_pip", VENV_WITH_PIP_PROBE),
+    )
+
     private fun productionProviderReport(context: Context, host: HostPythonLayout): String {
         val decision = HostPythonRuntimeProvider.prepare(
             context = HostPythonProviderContext(context, host.container, host.workspaceDirectory),
@@ -196,6 +237,10 @@ private object PythonRuntimeBenchmark {
                 ),
                 workingDirectory = "/workspace",
                 environment = mapOf("KITE_PYTHON_PROVIDER_PROBE" to "1"),
+                guarantees = setOf(
+                    RuntimeExecutionGuarantee.NO_CHILD_PROCESS,
+                    RuntimeExecutionGuarantee.VERIFIED_NATIVE_IMPORTS,
+                ),
             ),
         )
         val execution = when (decision) {
@@ -514,6 +559,21 @@ private object PythonRuntimeBenchmark {
             venv.EnvBuilder(with_pip=False).create(root)
             assert (root / "pyvenv.cfg").is_file()
             print("$TOKEN")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+    """.trimIndent()
+
+    private val VENV_WITH_PIP_PROBE = """
+        import pathlib, shutil, sys, tempfile, venv
+        root = pathlib.Path(tempfile.mkdtemp(prefix="kite-py-venv-pip-"))
+        try:
+            try:
+                venv.EnvBuilder(with_pip=True).create(root)
+                assert (root / "bin/pip").is_file()
+                print("$TOKEN")
+            except Exception as error:
+                print(type(error).__name__ + ":" + str(error), file=sys.stderr)
+                raise
         finally:
             shutil.rmtree(root, ignore_errors=True)
     """.trimIndent()

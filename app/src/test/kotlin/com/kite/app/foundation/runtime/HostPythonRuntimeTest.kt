@@ -20,6 +20,12 @@ class HostPythonRuntimeTest {
     fun `candidate only accepts structured managed python commands`() {
         assertTrue(HostPythonCommandResolver.isCandidate(request("python3", listOf("--version"))))
         assertTrue(HostPythonCommandResolver.isCandidate(request("/workspace/.kf/bin/python3")))
+        assertFalse(HostPythonCommandResolver.isCandidate(request("/workspace/.kf/venv/bin/python3")))
+        assertFalse(
+            HostPythonCommandResolver.isCandidate(
+                request("/workspace/.kf/software/kite.python/python-3.14.6/bin/python3")
+            )
+        )
         assertFalse(HostPythonCommandResolver.isCandidate(request("/usr/bin/python3")))
         assertFalse(HostPythonCommandResolver.isCandidate(request("node")))
         assertFalse(
@@ -114,6 +120,35 @@ class HostPythonRuntimeTest {
     }
 
     @Test
+    fun `resolver follows the current managed interpreter target after an upgrade`() {
+        val fixture = fixture()
+        val upgradedRoot = File(fixture.control, "software/runtime-next/python-3.15.0")
+        val upgradedBinary = arm64Elf(File(upgradedRoot, "bin/python3.15"))
+        File(upgradedRoot, "lib/python3.15/os.py").apply {
+            checkNotNull(parentFile).mkdirs()
+            writeText("# upgraded stdlib marker")
+        }
+        File(upgradedRoot, "lib/libpython3.15.so.1.0").writeText("shared")
+        var target = "/workspace/.kf/software/kite.python/python-3.14.6/bin/python3.14"
+        val resolveCurrent = {
+            HostPythonCommandResolver.resolve(
+                executable = "python3",
+                arguments = listOf("--version"),
+                rootfsDirectory = fixture.rootfs,
+                workspaceDirectory = fixture.workspace,
+                assets = fixture.assets,
+                linkTargetReader = { file ->
+                    if (file == File(fixture.control, "bin/python3").absoluteFile.normalize()) target else null
+                },
+            ) as HostPythonCommandResolution.Ready
+        }
+
+        assertEquals(fixture.pythonBinary.canonicalFile, resolveCurrent().layout.pythonBinary.canonicalFile)
+        target = "/workspace/.kf/software/runtime-next/python-3.15.0/bin/python3.15"
+        assertEquals(upgradedBinary.canonicalFile, resolveCurrent().layout.pythonBinary.canonicalFile)
+    }
+
+    @Test
     fun `provider rejects unproven child and package lifecycle before asset preparation`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val fixture = fixture()
@@ -131,10 +166,50 @@ class HostPythonRuntimeTest {
             providerContext,
             request("python3", listOf("-m", "venv", "/tmp/test")),
         ) as RuntimeProviderDecision.Unsupported
+        val activeVenv = HostPythonRuntimeProvider.prepare(
+            providerContext,
+            request("python3", environment = mapOf("VIRTUAL_ENV" to "/workspace/venv")),
+        ) as RuntimeProviderDecision.Unsupported
+        val unknownCapabilities = HostPythonRuntimeProvider.prepare(
+            providerContext,
+            request("python3"),
+        ) as RuntimeProviderDecision.Unsupported
+        val unknownImports = HostPythonRuntimeProvider.prepare(
+            providerContext,
+            request(
+                "python3",
+                guarantees = setOf(RuntimeExecutionGuarantee.NO_CHILD_PROCESS),
+            ),
+        ) as RuntimeProviderDecision.Unsupported
 
         assertEquals("python_child_process_required", child.reason)
         assertEquals("python_package_lifecycle_requires_proot", pip.reason)
         assertEquals("python_venv_requires_proot", venv.reason)
+        assertEquals("python_virtual_environment_requires_proot", activeVenv.reason)
+        assertEquals("python_no_child_process_guarantee_missing", unknownCapabilities.reason)
+        assertEquals("python_verified_native_imports_guarantee_missing", unknownImports.reason)
+    }
+
+    @Test
+    fun `provider maps declared python environment paths without changing ordinary values`() {
+        val fixture = fixture()
+        val library = File(fixture.workspace, "python-libs").apply { mkdirs() }
+        val startup = File(fixture.workspace, "startup.py").apply { writeText("pass") }
+
+        val mapped = checkNotNull(
+            HostPythonRuntimeProvider.mapEnvironment(
+                environment = mapOf(
+                    "PYTHONPATH" to "/workspace/python-libs:relative-libs",
+                    "PYTHONSTARTUP" to "/workspace/startup.py",
+                    "KITE_VALUE" to "/workspace/remains-a-value",
+                ),
+                layout = fixture.layout(),
+            )
+        )
+
+        assertEquals("${library.absolutePath}:relative-libs", mapped["PYTHONPATH"])
+        assertEquals(startup.absolutePath, mapped["PYTHONSTARTUP"])
+        assertEquals("/workspace/remains-a-value", mapped["KITE_VALUE"])
     }
 
     @Test
@@ -165,9 +240,13 @@ class HostPythonRuntimeTest {
         executable: String,
         arguments: List<String> = emptyList(),
         requirements: Set<RuntimeExecutionRequirement> = emptySet(),
+        environment: Map<String, String> = emptyMap(),
+        guarantees: Set<RuntimeExecutionGuarantee> = emptySet(),
     ) = RuntimeExecutionRequest(
         payload = RuntimeExecutionPayload.Argv(executable, arguments),
         requirements = requirements,
+        environment = environment,
+        guarantees = guarantees,
     )
 
     private fun fixture(): Fixture {

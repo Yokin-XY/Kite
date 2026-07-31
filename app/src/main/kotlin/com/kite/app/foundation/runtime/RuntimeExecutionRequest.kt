@@ -51,6 +51,12 @@ internal enum class RuntimeExecutionRequirement {
     UNVERIFIED_NATIVE_EXTENSION,
 }
 
+/** 调用方在业务进程创建前能够证明的封闭属性；缺省表示未知，不能把未声明需求当成安全证明。 */
+internal enum class RuntimeExecutionGuarantee {
+    NO_CHILD_PROCESS,
+    VERIFIED_NATIVE_IMPORTS,
+}
+
 internal enum class RuntimeFallbackPolicy {
     /** 只允许在任何业务执行开始前换到后续 Provider。 */
     BEFORE_START_ONLY,
@@ -67,6 +73,7 @@ internal data class RuntimeExecutionRequest(
     val workingDirectory: String? = null,
     val environment: Map<String, String> = emptyMap(),
     val requirements: Set<RuntimeExecutionRequirement> = emptySet(),
+    val guarantees: Set<RuntimeExecutionGuarantee> = emptySet(),
     val fallbackPolicy: RuntimeFallbackPolicy = RuntimeFallbackPolicy.BEFORE_START_ONLY,
 ) {
     init {

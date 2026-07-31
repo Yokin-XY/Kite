@@ -109,9 +109,34 @@ Python 特例；后续消费者必须显式进入统一 Planner。
 4. OnePlus 8T 的启动、import、小文件在并发 1 和 8 时，Host p50 相对 PRoot 至少降低 20%，三轮零失败。
 5. 真机无新增 ANR/FATAL；Provider 抽象不得改变已冻结 Node 入口、glibc 资产身份或子进程语义。
 
+## RF250 能力分层发现
+
+RF250 使用独立 `Layered` 模式，只增加新测点，不重跑 RF230 性能矩阵：
+
+```powershell
+.\scripts\python-runtime-benchmark.ps1 -Mode Layered
+```
+
+| 能力 | Host | PRoot | 决定 |
+| --- | --- | --- | --- |
+| `subprocess` 的 GNU/Linux 身份 | 失败 | 通过 | 声明子进程的任务整条进入 PRoot |
+| `os.system` 的 Ubuntu 文件视图 | 失败 | 通过 | shell/完整 Linux 视图整条进入 PRoot |
+| `os.execve(sys.executable)` | 失败 | 通过 | 进程替换任务整条进入 PRoot |
+| `venv(with_pip=True)` | 失败 | 失败 | 当前 Python 包不能靠切换车道获得该能力，保持关闭并优先研究受管 `uv` 生命周期 |
+
+最重要的反例是：Host 上执行 `/bin/echo` 曾表面成功，因为它命中了 Android `/bin`，不是 Ubuntu `/bin`。因此“请求没有声明
+子进程”不能被解释为“脚本确定不产生子进程”。RF251 增加两项肯定式保证：`NO_CHILD_PROCESS` 与
+`VERIFIED_NATIVE_IMPORTS`。只有调用方在创建进程前同时提供两项保证，Python Provider 才能进入 Host；缺少任一保证就回退
+PRoot。要求子进程、venv、pip 生命周期或未验证扩展时仍按原原因回退。
+
+受管解释器身份也改为只接受裸 `python*` 或稳定 `/workspace/.kf/bin/python*` 入口，并在每次计划时重新追踪当前目标；不能把
+`.kf` 下的 venv 或任意 Python 路径误认为基础运行时。`PYTHONPATH` 与 `PYTHONSTARTUP` 的容器路径在启动前映射，活动
+`VIRTUAL_ENV` 直接回 PRoot。
+
 ## 证据限制
 
 - 单设备、Debug 构建和三轮样本适合做 go/no-go，不是全机型容量承诺。
 - 未冷却 Linux page cache，因此“启动”表示独立进程启动，不表示首次安装后的物理冷盘启动。
 - 本矩阵没有宣称第三方 C 扩展、编译工具链、网络 pip 安装或长期 Python 服务兼容。
 - RF240 只复验 Python 生产链与通用 glibc 资产，没有重复 Node 历史矩阵。
+- RF251 的保证字段已进入统一请求，但正式资源/Agent/后台声明仍需 RF252 透传；在此之前旧调用方缺少肯定式保证，会安全回到 PRoot。

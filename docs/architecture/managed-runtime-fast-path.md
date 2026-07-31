@@ -48,6 +48,10 @@ RF240 已把入口无关的 `GlibcHostRuntimePreparer`、`HostPythonRuntimeProvi
 `ManagedRuntimeLaunchPlanner` 接入终端、Agent 与后台运行的共同准备链。Provider 不创建进程、不读取资源 ID，也不新增状态源；
 实际车道继续写回原有运行事实。终端的普通命令文本仍走 PRoot，只有已经结构化为 argv 的受管 Python 请求可进入快速通道。
 
+RF251 进一步要求调用方同时给出“无子进程”和“原生导入已验证”两项肯定式保证。空集合表示未知，不表示安全；旧协议或不能证明
+脚本闭包的调用方必须回到 PRoot。原因是 Android Host 的 `/bin` 可能表面执行成功却产生不同于 Ubuntu 的结果，单靠失败后
+补跑无法保证语义，也违反唯一执行原则。
+
 ## Python 第一阶段边界
 
 RF240 只开放：

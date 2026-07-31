@@ -55,6 +55,25 @@ class ManagedRuntimeLaunchPlannerTest {
         )
     }
 
+    @Test
+    fun `python without affirmative host guarantees falls back before asset preparation`() {
+        val fixture = fixture()
+
+        val plan = ManagedRuntimeLaunchPlanner.plan(
+            context = ApplicationProvider.getApplicationContext<Context>(),
+            container = fixture.container,
+            workspaceDirectory = fixture.workspace,
+            request = RuntimeExecutionRequest(
+                payload = RuntimeExecutionPayload.Argv("python3", listOf("task.py")),
+            ),
+        )
+
+        assertEquals(
+            "python_no_child_process_guarantee_missing",
+            (plan as ManagedRuntimeLaunchPlan.Fallback).reason,
+        )
+    }
+
     private fun fixture(): Fixture {
         val root = Files.createTempDirectory("kite-managed-planner-test").toFile()
         val rootfs = root.resolve("rootfs").apply { mkdirs() }

@@ -76,8 +76,8 @@ internal object HostPythonCommandResolver {
     fun isCandidate(request: RuntimeExecutionRequest): Boolean {
         val payload = request.payload as? RuntimeExecutionPayload.Argv ?: return false
         val executable = payload.executable.trim()
-        return candidateName(executable)?.matches(safePythonCommand) == true &&
-            (!executable.contains('/') || executable.startsWith("/workspace/.kf/"))
+        val commandName = candidateName(executable)?.takeIf(safePythonCommand::matches) ?: return false
+        return !executable.contains('/') || executable == "/workspace/.kf/bin/$commandName"
     }
 
     fun resolve(
@@ -111,8 +111,12 @@ internal object HostPythonCommandResolver {
         ) ?: return blocked("python_command_link_invalid")
         if (!pythonBinary.isFile || !pythonBinary.canExecute()) return unsupported("python_binary_missing")
         if (!isArm64Elf(pythonBinary)) return blocked("python_binary_abi_mismatch")
+        val managedSoftwareDirectory = File(workspaceControlDirectory, "software").absoluteFile.normalize()
         val pythonRoot = pythonBinary.parentFile?.parentFile
-            ?.takeIf { it.isDirectory && it.toPath().startsWith(workspaceControlDirectory.toPath()) }
+            ?.takeIf {
+                it.isDirectory &&
+                    it.parentFile?.parentFile?.absoluteFile?.normalize() == managedSoftwareDirectory
+            }
             ?: return blocked("python_root_invalid")
         val pythonLibraryDirectory = File(pythonRoot, "lib")
         if (!pythonLibraryDirectory.isDirectory) return unsupported("python_libraries_missing")
@@ -283,6 +287,15 @@ internal object HostPythonRuntimeProvider :
         if (payload.arguments.take(2) == listOf("-m", "venv")) {
             return unsupported("python_venv_requires_proot")
         }
+        if (!request.environment["VIRTUAL_ENV"].isNullOrBlank()) {
+            return unsupported("python_virtual_environment_requires_proot")
+        }
+        if (RuntimeExecutionGuarantee.NO_CHILD_PROCESS !in request.guarantees) {
+            return unsupported("python_no_child_process_guarantee_missing")
+        }
+        if (RuntimeExecutionGuarantee.VERIFIED_NATIVE_IMPORTS !in request.guarantees) {
+            return unsupported("python_verified_native_imports_guarantee_missing")
+        }
         if (context.container.networkMode != NetworkMode.HOST) {
             return unsupported("network_mode_requires_proot")
         }
@@ -312,6 +325,8 @@ internal object HostPythonRuntimeProvider :
         val workingDirectory = ready.layout.mapContainerPath(request.workingDirectory)
             ?.takeIf(File::isDirectory)
             ?: return unsupported("working_directory_invalid")
+        val mappedEnvironment = mapEnvironment(request.environment, ready.layout)
+            ?: return unsupported("python_environment_path_invalid")
         return RuntimeProviderDecision.Ready(
             provider = kind,
             plan = buildConfig(
@@ -319,7 +334,7 @@ internal object HostPythonRuntimeProvider :
                 ready.layout,
                 ready.invocation,
                 workingDirectory,
-                request.environment,
+                mappedEnvironment,
             ),
             reason = "host_python_ready",
         )
@@ -370,6 +385,35 @@ internal object HostPythonRuntimeProvider :
             args = (listOf(layout.assets.launcher.absolutePath) + invocation.arguments).toTypedArray(),
             env = environment.map { (key, value) -> "$key=$value" }.toTypedArray(),
         )
+    }
+
+    internal fun mapEnvironment(
+        environment: Map<String, String>,
+        layout: HostPythonRuntimeLayout,
+    ): Map<String, String>? {
+        val mapped = linkedMapOf<String, String>()
+        environment.forEach { (key, value) ->
+            mapped[key] = when (key) {
+                "PYTHONPATH" -> {
+                    val entries = mutableListOf<String>()
+                    for (entry in value.split(':')) {
+                        entries += if (entry.isBlank() || !entry.startsWith('/')) {
+                            entry
+                        } else {
+                            layout.mapContainerPath(entry)?.absolutePath ?: return null
+                        }
+                    }
+                    entries.joinToString(":")
+                }
+                "PYTHONSTARTUP" -> if (!value.startsWith('/')) {
+                    value
+                } else {
+                    layout.mapContainerPath(value)?.absolutePath ?: return null
+                }
+                else -> value
+            }
+        }
+        return mapped
     }
 
     private fun unsupported(reason: String) = RuntimeProviderDecision.Unsupported(kind, reason)

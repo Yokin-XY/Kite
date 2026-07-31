@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF200` 通用依赖快速通道
-- 当前任务：`RF250` Python subprocess、venv、pip 与扩展分层
+- 当前任务：`RF252` Python 保证字段的生产声明与透传
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -121,6 +121,32 @@
 - 解法：按 subprocess、venv/pip、纯 wheel、C 扩展分别建立能力门；无法安全表达的任务整条回 PRoot。
 - 验收标准：每一层都有独立兼容矩阵、回退证明和升级失效测试。
 - 依赖：RF240。
+
+##### RF251 肯定式 Host 安全门
+
+- [x] 空能力声明不再被当成无子进程证明；
+- [x] 受管 Python 身份不接受 `.kf` 下的 venv/任意路径；
+- [x] 解释器升级后每次重新解析当前目标，不复用旧版本；
+- [x] `PYTHONPATH`/`PYTHONSTARTUP` 映射，活动 `VIRTUAL_ENV` 回退。
+
+##### RF252 保证字段的生产声明与透传
+
+- [ ] Agent 与后台结构化启动可以声明固定枚举保证；
+- [ ] 清单、自定义登记和持久化均拒绝未知值；
+- [ ] 旧记录缺省为空并保持 PRoot，不改变 Node；
+- [ ] 至少一个通用测试夹具从清单走到 `host_python`，不是资源 ID 特判。
+
+##### RF253 subprocess、shell、exec 与 venv/pip 矩阵
+
+- [x] 独立 Layered 真机模式覆盖 Linux 身份、shell 视图、`execve` 与带 pip venv；
+- [x] Host/PRoot 结果按语义判定，不以进程退出 0 冒充等价；
+- [x] `venv(with_pip=True)` 两车道均失败，未强行开放。
+
+##### RF254 第三方 C 扩展与包生命周期
+
+- [ ] 固定可复现的纯 wheel 与代表性 ARM64 扩展样本；
+- [ ] 安装、升级、解释器换代和失效路径分别验证；
+- [ ] 未验证扩展保持 PRoot，不建立包名白名单。
 
 ### RF300 [P2 原生能力] Android/NDK 原生 Provider
 

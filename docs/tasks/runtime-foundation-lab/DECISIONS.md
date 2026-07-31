@@ -51,3 +51,11 @@
 - 日期：2026-07-31
 - 决定：`RuntimeExecutionRequest` 只表达选择和执行所需事实；instance、run、owner 和显示面身份继续由 Orchestrator、`CardRunStore` 或后台 Registry 持有。
 - 原因：Provider 需要可复用于终端、Agent 和后台运行，但不能因此复制状态、接管生命周期或产生新的事实源。
+
+## ADR-RF-008 Python Host 必须使用肯定式安全保证
+
+- 状态：已接受，RF251 已落地请求与 Provider 门
+- 日期：2026-07-31
+- 决定：Python 请求只有同时声明 `NO_CHILD_PROCESS` 与 `VERIFIED_NATIVE_IMPORTS` 才能进入 Host；空声明表示未知并回退 PRoot。
+- 原因：Host 的 Linux 绝对路径可能命中 Android 同名程序并表面成功，无法依靠退出码或运行后回退识别语义漂移。
+- 影响：RF252 必须通过稳定枚举把保证从生产声明透传到统一请求；不得从应用名、脚本名、包名或资源 ID 推断保证。
