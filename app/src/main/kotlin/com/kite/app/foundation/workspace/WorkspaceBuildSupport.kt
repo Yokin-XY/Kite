@@ -2,7 +2,6 @@ package com.kite.app.foundation.workspace
 
 import android.content.Context
 import android.system.Os
-import com.kite.app.foundation.runtime.ExternalExchangeManager
 import com.kite.app.foundation.runtime.RuntimeControlledLeaseProbeRegistration
 import com.kite.app.foundation.runtime.RuntimeControlledLeaseProbeRegistrationReceiver
 import java.io.File
@@ -24,6 +23,7 @@ object WorkspaceBuildSupport {
     const val HELPER_BIN_DIR_NAME = ".kf/bin"
     const val HELPER_SYSTEM_DIR_NAME = ".kf/system"
     const val HELPER_SYSTEM_BIN_DIR_NAME = ".kf/system/bin"
+    const val HELPER_SYSTEM_WRAPPERS_DIR_NAME = ".kf/system/wrappers"
     const val HELPER_SYSTEM_PROC_DIR_NAME = ".kf/system/state/proc"
     const val HELPER_SYSTEM_STATE_DIR_NAME = ".kf/system/state"
     const val HELPER_TOOLCHAIN_DIR_NAME = ".kf/toolchains"
@@ -82,6 +82,7 @@ object WorkspaceBuildSupport {
     const val ANDROID_DATA_DIR_NAME = ".android-data"
     const val CONTAINER_HELPER_BIN_PATH = "/workspace/.kf/bin"
     const val CONTAINER_HELPER_SYSTEM_BIN_PATH = "/workspace/.kf/system/bin"
+    const val CONTAINER_HELPER_SYSTEM_WRAPPERS_PATH = "/workspace/.kf/system/wrappers"
     const val CONTAINER_KITE_RUNNER_PATH = "/workspace/.kf/system/bin/kf-runner"
     const val CONTAINER_HELPER_SYSTEM_PROC_PATH = "/workspace/.kf/system/state/proc"
     const val CONTAINER_HELPER_SYSTEM_STATE_PATH = "/workspace/.kf/system/state"
@@ -112,8 +113,9 @@ object WorkspaceBuildSupport {
     const val CONTAINER_PROOT_CAPACITY_EXECUTOR_POLICY_PATH =
         "/workspace/.kf/proot-capacity-executor-policy.json"
     const val CONTAINER_PROOT_POOL_TUNING_LOG_PATH = "/workspace/.kf/proot-pool-tuning.jsonl"
-    const val CONTAINER_GRADLE_HELPER_PATH = "/workspace/.kf/bin/kf-gradle"
-    const val CONTAINER_RUNTIME_SURFACE_PATH = "/workspace/.kf/bin/kf-runtime"
+    // T014b：Android helper 已迁到共享 .kf/system/bin；这两个路径供 env 注入，指向共享目录。
+    const val CONTAINER_GRADLE_HELPER_PATH = "/workspace/.kf/system/bin/kf-gradle"
+    const val CONTAINER_RUNTIME_SURFACE_PATH = "/workspace/.kf/system/bin/kf-runtime"
     const val CONTAINER_CONTROLLED_LEASE_PROBE_PATH = "/workspace/.kf/hermes-controlled-lease-probe.py"
     const val CONTAINER_GRADLE_USER_HOME = "/workspace/.gradle-user"
     const val CONTAINER_ANDROID_USER_HOME = "/workspace/.android-user"
@@ -123,6 +125,8 @@ object WorkspaceBuildSupport {
     internal fun helperBinDir(workspaceDir: File): File = File(workspaceDir, HELPER_BIN_DIR_NAME)
     internal fun helperSystemDir(workspaceDir: File): File = File(workspaceDir, HELPER_SYSTEM_DIR_NAME)
     internal fun helperSystemBinDir(workspaceDir: File): File = File(workspaceDir, HELPER_SYSTEM_BIN_DIR_NAME)
+    internal fun helperSystemWrappersDir(workspaceDir: File): File =
+        File(workspaceDir, HELPER_SYSTEM_WRAPPERS_DIR_NAME)
     fun helperSystemProcDir(workspaceDir: File): File = File(workspaceDir, HELPER_SYSTEM_PROC_DIR_NAME)
     internal fun helperSystemStateDir(workspaceDir: File): File = File(workspaceDir, HELPER_SYSTEM_STATE_DIR_NAME)
     internal fun helperToolchainDir(workspaceDir: File): File = File(workspaceDir, HELPER_TOOLCHAIN_DIR_NAME)
@@ -164,15 +168,16 @@ object WorkspaceBuildSupport {
     fun prootLaunchRequestFile(workspaceDir: File): File =
         File(helperRootDir(workspaceDir), PROOT_LAUNCH_REQUEST_FILE_NAME)
 
+    @Synchronized
     fun writeProotLaunchContract(workspaceDir: File, content: String) {
         writeTextIfChanged(prootLaunchContractFile(workspaceDir), content)
     }
 
     fun ensure(workspaceDir: File) {
         val helperRoot = helperRootDir(workspaceDir)
-        val helperBinDir = helperBinDir(workspaceDir)
         val helperSystemDir = helperSystemDir(workspaceDir)
         val helperSystemBinDir = helperSystemBinDir(workspaceDir)
+        val helperSystemWrappersDir = helperSystemWrappersDir(workspaceDir)
         val helperSystemProcDir = helperSystemProcDir(workspaceDir)
         val helperSystemStateDir = helperSystemStateDir(workspaceDir)
         val helperToolchainDir = helperToolchainDir(workspaceDir)
@@ -180,11 +185,13 @@ object WorkspaceBuildSupport {
         val androidUserHomeDir = androidUserHomeDir(workspaceDir)
         val androidDataDir = androidDataDir(workspaceDir)
 
+        // T014g：ensure 只准备 Android 持有的共享目录；绝不创建/删除/写 .kf/bin（环境变化层）。
+        // .kf/bin 由 Base 封存前或经绑定 View 的 PRoot 进程创建。
         listOf(
             helperRoot,
-            helperBinDir,
             helperSystemDir,
             helperSystemBinDir,
+            helperSystemWrappersDir,
             helperSystemProcDir,
             helperSystemStateDir,
             helperToolchainDir,
@@ -198,6 +205,7 @@ object WorkspaceBuildSupport {
         }
         chmodIfPossible(helperSystemDir, 0b111101101)
         chmodIfPossible(helperSystemBinDir, 0b111101101)
+        chmodIfPossible(helperSystemWrappersDir, 0b111101101)
         chmodIfPossible(helperSystemStateDir, 0b111101101)
 
         writeTextIfChanged(
@@ -211,25 +219,23 @@ object WorkspaceBuildSupport {
         )
         writeWorkspaceRootReadme(workspaceDir)
 
-        val helperScript = File(helperBinDir, HELPER_SCRIPT_NAME)
+        val helperScript = File(helperSystemBinDir, HELPER_SCRIPT_NAME)
         writeTextIfChanged(helperScript, buildWorkspaceGradleHelperScript())
         helperScript.setExecutable(true, false)
 
-        val fdWrapper = File(helperBinDir, FD_WRAPPER_NAME)
+        val fdWrapper = File(helperSystemBinDir, FD_WRAPPER_NAME)
         writeTextIfChanged(fdWrapper, buildFdWrapperScript())
         fdWrapper.setExecutable(true, false)
 
-        val ssShim = File(helperBinDir, SS_SHIM_NAME)
+        val ssShim = File(helperSystemBinDir, SS_SHIM_NAME)
         writeTextIfChanged(ssShim, buildNetlinkToolShimScript(SS_SHIM_NAME))
         ssShim.setExecutable(true, false)
 
-        removeLegacyProcessShimScripts(helperBinDir)
-
-        val prootShim = File(helperBinDir, PROOT_SHIM_NAME)
+        val prootShim = File(helperSystemBinDir, PROOT_SHIM_NAME)
         writeTextIfChanged(prootShim, buildProotBoundaryShimScript())
         prootShim.setExecutable(true, false)
 
-        val supervisorctlWrapper = File(helperBinDir, SUPERVISORCTL_WRAPPER_NAME)
+        val supervisorctlWrapper = File(helperSystemBinDir, SUPERVISORCTL_WRAPPER_NAME)
         writeTextIfChanged(supervisorctlWrapper, buildSupervisorctlWrapperScript())
         supervisorctlWrapper.setExecutable(true, false)
 
@@ -248,21 +254,20 @@ object WorkspaceBuildSupport {
         val fastbootWrapper = File(helperSystemBinDir, FASTBOOT_WRAPPER_NAME)
         writeTextIfChanged(fastbootWrapper, buildFastbootClientWrapperScript())
         fastbootWrapper.setExecutable(true, false)
-        removeLegacyAdbScripts(helperBinDir)
 
-        val androidShellBridgeScript = File(helperBinDir, ANDROID_SHELL_BRIDGE_SCRIPT_NAME)
+        val androidShellBridgeScript = File(helperSystemBinDir, ANDROID_SHELL_BRIDGE_SCRIPT_NAME)
         writeTextIfChanged(androidShellBridgeScript, buildAndroidShellBridgeScript())
         androidShellBridgeScript.setExecutable(true, false)
 
-        val hostSurfaceScript = File(helperBinDir, HOST_SURFACE_SCRIPT_NAME)
+        val hostSurfaceScript = File(helperSystemBinDir, HOST_SURFACE_SCRIPT_NAME)
         writeTextIfChanged(hostSurfaceScript, buildHostSurfaceScript())
         hostSurfaceScript.setExecutable(true, false)
 
-        val envSurfaceScript = File(helperBinDir, ENV_SURFACE_SCRIPT_NAME)
+        val envSurfaceScript = File(helperSystemBinDir, ENV_SURFACE_SCRIPT_NAME)
         writeTextIfChanged(envSurfaceScript, buildEnvSurfaceScript())
         envSurfaceScript.setExecutable(true, false)
 
-        val runtimeSurfaceScript = File(helperBinDir, RUNTIME_SURFACE_SCRIPT_NAME)
+        val runtimeSurfaceScript = File(helperSystemBinDir, RUNTIME_SURFACE_SCRIPT_NAME)
         writeTextIfChanged(runtimeSurfaceScript, buildRuntimeSurfaceScript())
         runtimeSurfaceScript.setExecutable(true, false)
 
@@ -326,11 +331,21 @@ object WorkspaceBuildSupport {
         }
 
         writeTextIfChanged(File(helperRoot, HOST_CONTRACT_FILE_NAME), buildHostContractJson())
-        syncToolchainCommandWrappers(workspaceDir, helperBinDir)
+        // T014g：工具链 wrapper 写入共享 .kf/system/wrappers，不再触碰环境变化目录 .kf/bin。
+        // PATH 让 .kf/bin（环境命令）排在 wrappers 之前，用户安装的同名命令优先。
+        syncToolchainCommandWrappers(workspaceDir, helperSystemWrappersDir)
         chmodIfPossible(helperSystemBinDir, 0b101101101)
+        chmodIfPossible(helperSystemWrappersDir, 0b101101101)
     }
 
-    fun installSystemComponents(context: Context, workspaceDir: File) {
+    fun installSystemComponents(
+        context: Context,
+        workspaceDir: File,
+        // T014h：迁移清理是否允许，必须由调用方查询 ProotViewStore 真实封存状态提供。
+        // 默认 false（未封存）仅适用于 bootstrap 期；普通启动路径必须传入真实 checker。
+        // versionCode/layout marker 不能作为封存依据——App 升级后 View 可能早已封存。
+        sealedChecker: () -> Boolean = { false },
+    ) {
         synchronized(systemComponentsInstallLock) {
             ensure(workspaceDir)
             val systemDir = helperSystemDir(workspaceDir)
@@ -389,6 +404,8 @@ object WorkspaceBuildSupport {
                 runnerDestination.setWritable(true, false)
                 runnerDestination.delete()
             }
+            // T014h：迁移清理门禁由 sealedChecker 真实封存状态决定。
+            migrateLegacyEnvBinIfNeeded(workspaceDir, sealedChecker())
             writeTextIfChanged(installMarker, installVersion)
             chmodIfPossible(systemDir, 0b101101101)
             chmodIfPossible(systemBinDir, 0b101101101)
@@ -403,7 +420,7 @@ object WorkspaceBuildSupport {
             context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
         }.getOrDefault(-1L)
         val runnerState = if (assetExists(context, KITE_RUNNER_ASSET_PATH)) "present" else "absent"
-        return "versionCode=$versionCode\nasset=$SYSTEM_PROCESS_APPLET_ASSET_PATH\nrunner=$KITE_RUNNER_ASSET_PATH:$runnerState\nlayout=v10_optional_kf_runner\n"
+        return "versionCode=$versionCode\nasset=$SYSTEM_PROCESS_APPLET_ASSET_PATH\nrunner=$KITE_RUNNER_ASSET_PATH:$runnerState\nlayout=v11_kf_runner_protocol_v1\n"
     }
 
     private fun processAppletCommandNames(): List<String> {
@@ -494,6 +511,65 @@ object WorkspaceBuildSupport {
                 file.delete()
             }
         }
+    }
+
+    /**
+     * T014b：Android helper 已迁到共享 .kf/system/bin。这里清理旧版本留在环境变化目录
+     * .kf/bin 的残留，避免幽灵文件污染 View Upper。KF 专有名直接删；通用名（fd/ss/proot/
+     * supervisorctl）只有内容确认是 KF 生成的 helper 才删，绝不误删用户/资源安装的同名命令。
+     */
+    private fun removeLegacyAndroidHelpersFromEnvBin(helperBinDir: File) {
+        // KF 专有名：不可能来自用户/资源，直接删。
+        listOf(HELPER_SCRIPT_NAME, ANDROID_SHELL_BRIDGE_SCRIPT_NAME, HOST_SURFACE_SCRIPT_NAME,
+            ENV_SURFACE_SCRIPT_NAME, RUNTIME_SURFACE_SCRIPT_NAME).forEach { name ->
+            File(helperBinDir, name).takeIf { it.isFile }?.delete()
+        }
+        // 通用名：内容校验确认是 KF helper 才删。
+        listOf(
+            FD_WRAPPER_NAME to "exec fdfind",
+            SS_SHIM_NAME to "KFShell runs Ubuntu",
+            PROOT_SHIM_NAME to "KFSHELL_PROOT_SHIM_BEGIN",
+            SUPERVISORCTL_WRAPPER_NAME to "supervisor daemon shutdown is blocked"
+        ).forEach { (name, marker) ->
+            val file = File(helperBinDir, name)
+            if (!file.isFile) return@forEach
+            val text = runCatching { file.readText() }.getOrDefault("")
+            if (text.contains(marker)) file.delete()
+        }
+    }
+
+    /**
+     * T014g：清理旧版本写到环境变化目录 .kf/bin 的工具链 wrapper（内容以
+     * GENERATED_TOOL_WRAPPER_MARKER 开头）。只在迁移（installSystemComponents 版本变化）时调用，
+     * 不在 ensure 里调用；用户手写或资源安装的同名命令不含该标记，不会被误删。
+     */
+    private fun removeLegacyToolWrappersFromEnvBin(helperBinDir: File) {
+        helperBinDir.listFiles()?.forEach { file ->
+            if (!file.isFile) return@forEach
+            val text = runCatching { file.readText() }.getOrDefault("")
+            if (text.startsWith(GENERATED_TOOL_WRAPPER_MARKER)) {
+                file.delete()
+            }
+        }
+    }
+
+    /**
+     * T014h：迁移清理旧版本残留在环境变化目录 .kf/bin 的 Android helper/wrapper。
+     *
+     * 门禁：sealed 必须由 ProotViewStore 真实封存状态提供。
+     *   - 未封存（首次创建/Base 准备期）：允许一次性清理内容标记确认的 Kite 遗留。
+     *   - 已封存：绝不直接清理 .kf/bin；如需清理必须经绑定当前 View 的 PRoot 执行。
+     * versionCode/installMarker 变化不代表 Base 未封存（App 升级后 View 可能早已封存）。
+     * internal 以便审计测试直接覆盖迁移门，而不必依赖 Context/assets。
+     */
+    internal fun migrateLegacyEnvBinIfNeeded(workspaceDir: File, sealed: Boolean) {
+        if (sealed) return
+        val envBinDir = helperBinDir(workspaceDir)
+        if (!envBinDir.isDirectory) return
+        removeLegacyProcessShimScripts(envBinDir)
+        removeLegacyAdbScripts(envBinDir)
+        removeLegacyAndroidHelpersFromEnvBin(envBinDir)
+        removeLegacyToolWrappersFromEnvBin(envBinDir)
     }
 
     fun buildWorkSurfaceEnvironment(): LinkedHashMap<String, String> {
@@ -613,10 +689,10 @@ object WorkspaceBuildSupport {
             |EOF
             |}
             |
-            |warn_exchange() {
+            |warn_android_storage() {
             |  case "${'$'}{PROJECT_DIR:-${'$'}PWD}" in
-            |    /exchange/*|/chuan/*)
-            |      echo "警告: 当前项目位于 ${ExternalExchangeManager.CONTAINER_MOUNT_PATH}，正式构建请迁移到 ${CONTAINER_WORKSPACE_ROOT} 后再执行。" >&2
+            |    /storage/*|/sdcard/*)
+            |      echo "警告: 当前项目位于安卓共享存储，正式构建请迁移到 ${CONTAINER_WORKSPACE_ROOT} 后再执行。" >&2
             |      ;;
             |  esac
             |}
@@ -639,7 +715,7 @@ object WorkspaceBuildSupport {
             |  echo "ANDROID_USER_HOME=${'$'}ANDROID_USER_HOME"
             |  echo "ANDROID_DATA=${'$'}ANDROID_DATA"
             |  echo "PWD=${'$'}PWD"
-            |  warn_exchange
+            |  warn_android_storage
             |  if [[ -n "${'$'}PROJECT_DIR" ]]; then
             |    run_gradle --status || true
             |  fi
@@ -657,15 +733,15 @@ object WorkspaceBuildSupport {
             |    doctor
             |    ;;
             |  compile)
-            |    warn_exchange
+            |    warn_android_storage
             |    run_gradle :app:compileDebugKotlin "${'$'}@"
             |    ;;
             |  assemble)
-            |    warn_exchange
+            |    warn_android_storage
             |    run_gradle :app:assembleDebug "${'$'}@"
             |    ;;
             |  prod)
-            |    warn_exchange
+            |    warn_android_storage
             |    run_gradle :app:assembleProdDebug "${'$'}@"
             |    ;;
             |  status)
@@ -675,7 +751,7 @@ object WorkspaceBuildSupport {
             |    usage
             |    ;;
             |  *)
-            |    warn_exchange
+            |    warn_android_storage
             |    run_gradle "${'$'}COMMAND" "${'$'}@"
             |    ;;
             |esac
@@ -1408,7 +1484,7 @@ object WorkspaceBuildSupport {
             |  cat <<'EOF'
             |Usage:
             |  kf-android-sh [-e KEY=VALUE] '<android shell command>'
-            |  kf-android-sh [-e KEY=VALUE] /exchange/script.sh
+            |  kf-android-sh [-e KEY=VALUE] /storage/emulated/0/Download/script.sh
             |
             |Runs the command or script with Android /system/bin/sh as the Kite APK user.
             |It is not ADB, root, or Shizuku.
@@ -1656,7 +1732,7 @@ object WorkspaceBuildSupport {
             |install_apk() {
             |  apk_path="${'$'}1"
             |  if [ -z "${'$'}apk_path" ]; then
-            |    echo "hint: usage: kf-host install-apk /exchange/downloads/app.apk" >&2
+            |    echo "hint: usage: kf-host install-apk /workspace/project/app.apk" >&2
             |    return 2
             |  fi
             |  post_local_server "/install-apk" "${'$'}apk_path"
@@ -1938,8 +2014,8 @@ object WorkspaceBuildSupport {
             |{
             |  "version": 1,
             |  "authority": "android_control_plane",
-            |  "mode": "guarded_auto_bound_workers",
-            |  "enabled": true,
+            |  "mode": "disabled_until_task_dispatch",
+            |  "enabled": false,
             |  "maxProots": 3,
             |  "baseProotMemoryKb": 65536,
             |  "estimatedTaskMemoryKb": null,
@@ -1956,7 +2032,7 @@ object WorkspaceBuildSupport {
             |    "Every additional PRoot target must be a dedicated PROOT_CAPACITY_WORKER runtime, not a normal background task.",
             |    "Ubuntu may read this policy, but must not start, stop, resize or downline PRoot capacity directly."
             |  ],
-            |  "note": "Default target selection uses the first inactive Android-registered PROOT_CAPACITY_WORKER. Execution is guarded by MemoryAdmission, maxProots, minLifetime, idleGrace and actuator cooldown."
+            |  "note": "Capacity workers are diagnostic registrations only. Keep disabled until command dispatch, output, cancellation, ownership and cleanup are implemented."
             |}
         """.trimMargin() + "\n"
     }
@@ -1983,15 +2059,22 @@ object WorkspaceBuildSupport {
             "capacityRuntimeIds",
             "secondProotRuntimeId"
         ).any { !json.has(it) }
-        val legacyDefault = !enabled &&
+        val legacyReviewDefault = !enabled &&
             mode == "manual_binding_required" &&
             usesAutoCapacityWorker &&
             (missingGuardedDefaults || note.contains("Keep enabled=false until manual review", ignoreCase = true))
-        if (!legacyDefault) {
+        val generatedAutoDefault = enabled &&
+            mode == "guarded_auto_bound_workers" &&
+            usesAutoCapacityWorker &&
+            (
+                note.contains("Default target selection uses", ignoreCase = true) ||
+                    note.contains("Migrated from the old review-only default", ignoreCase = true)
+                )
+        if (!legacyReviewDefault && !generatedAutoDefault) {
             return
         }
-        json.put("mode", "guarded_auto_bound_workers")
-        json.put("enabled", true)
+        json.put("mode", "disabled_until_task_dispatch")
+        json.put("enabled", false)
         putIfMissing(json, "maxProots", 3)
         putIfMissing(json, "baseProotMemoryKb", 65_536)
         if (!json.has("estimatedTaskMemoryKb")) {
@@ -2011,8 +2094,8 @@ object WorkspaceBuildSupport {
         putIfMissing(json, "allowQueueCreation", false)
         json.put(
             "note",
-            "Migrated from the old review-only default. Execution is guarded by MemoryAdmission, " +
-                "maxProots, minLifetime, idleGrace and actuator cooldown."
+            "Capacity workers are diagnostic registrations only. Keep disabled until command dispatch, " +
+                "output, cancellation, ownership and cleanup are implemented."
         )
         writeTextIfChanged(file, json.toString(2) + "\n")
     }

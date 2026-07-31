@@ -2,6 +2,7 @@ package com.kite.app.foundation.terminal
 
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
+import com.kite.app.foundation.contracts.ContainerLaunchConfig
 import com.kite.app.foundation.contracts.ManagedTerminalRecord
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
@@ -29,6 +30,8 @@ object TerminalRuntimeHost {
     private var controller: TerminalSessionController? = null
     @Volatile
     private var reconcileJob: Job? = null
+    @Volatile
+    private var preparedRegistrySpaceId: String? = null
 
     @Synchronized
     fun ensureController(appContext: Context): TerminalSessionController {
@@ -39,7 +42,13 @@ object TerminalRuntimeHost {
             uiCallbacks = callbackProxy
         ).also {
             controller = it
-            schedulePersistedSessionsReconcile(context)
+            val preparedSpaceId = preparedRegistrySpaceId
+            preparedRegistrySpaceId = null
+            if (preparedSpaceId == null) {
+                schedulePersistedSessionsReconcile(context)
+            } else {
+                Logger.i("TerminalRuntimeHost", "复用已准备终端快照: space=$preparedSpaceId")
+            }
         }
     }
 
@@ -91,6 +100,14 @@ object TerminalRuntimeHost {
         ensureController(appContext).setLaunchEnvironmentOverrides(sessionId, overrides)
     }
 
+    fun setLaunchConfigOverride(
+        appContext: Context,
+        sessionId: String,
+        config: ContainerLaunchConfig,
+    ) {
+        ensureController(appContext).setLaunchConfigOverride(sessionId, config)
+    }
+
     fun sendCommand(appContext: Context, command: String, sessionId: String? = null) {
         ensureController(appContext).sendCommandToSession(sessionId, command)
     }
@@ -112,7 +129,8 @@ object TerminalRuntimeHost {
         ensureController(appContext).deleteSession(sessionId)
     }
 
-    fun refreshRuntimeSnapshot(appContext: Context) {
+    @Synchronized
+    fun refreshRuntimeSnapshot(appContext: Context, preparedSpace: com.kite.app.foundation.contracts.SpaceRecord? = null) {
         val context = appContext.applicationContext
         val existingController = controller
         if (existingController != null) {
@@ -120,7 +138,7 @@ object TerminalRuntimeHost {
             return
         }
 
-        val space = KFWorkspaceManager.ensureDefaultSpace(context)
+        val space = preparedSpace ?: KFWorkspaceManager.ensureActiveSpace(context)
         val records = KFWorkspaceManager.freezeRecoverableTerminalSessions(context)
             .filter { it.spaceId == space.id }
         val transcriptDir = File(
@@ -132,6 +150,20 @@ object TerminalRuntimeHost {
             transcriptDir = transcriptDir,
             currentViewedSessionId = space.currentTerminalSessionId
         )
+        preparedRegistrySpaceId = space.id
+    }
+
+    /**
+     * 环境切换已由 View 守卫确认旧进程退出。丢弃旧 controller 的内存句柄，
+     * 但保留 UI 回调绑定，让页面回到前台时能直接附着目标 Space。
+     */
+    @Synchronized
+    fun releaseForEnvironmentSwitch(reason: String) {
+        controller?.stopCurrentSession(reason)
+        controller = null
+        preparedRegistrySpaceId = null
+        reconcileJob?.cancel()
+        reconcileJob = null
     }
 
     @Synchronized
@@ -145,6 +177,7 @@ object TerminalRuntimeHost {
         controller?.flushTranscriptMirrors("release:$reason")
         controller?.stopCurrentSession(reason)
         controller = null
+        preparedRegistrySpaceId = null
         reconcileJob?.cancel()
         reconcileJob = null
         callbackProxy.detach()
@@ -168,7 +201,7 @@ object TerminalRuntimeHost {
     }
 
     private fun reconcilePersistedSessions(appContext: Context) {
-        val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
+        val space = KFWorkspaceManager.ensureActiveSpace(appContext)
         val records = KFWorkspaceManager.freezeRecoverableTerminalSessions(appContext)
             .filter { it.spaceId == space.id }
         val transcriptDir = File(

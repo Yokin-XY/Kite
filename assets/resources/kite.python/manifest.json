@@ -11,10 +11,15 @@
       "fallbackText": "Py"
     }
   },
+  "management": {
+    "mode": "system_component",
+    "managedCommands": ["python", "python3", "pip", "pip3"]
+  },
   "display": {
     "sections": [
-      "more"
+      "foundation"
     ],
+    "order": 140,
     "category": "Python",
     "accent": "blue",
     "sizeLabel": "内置底座",

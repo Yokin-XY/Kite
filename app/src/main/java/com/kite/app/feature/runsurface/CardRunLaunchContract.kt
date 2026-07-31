@@ -42,9 +42,9 @@ internal class CardRunLaunchResolver(
     fun resolve(request: CardRunLaunchRequest): CardRunLaunchResolution {
         val recipeId = request.recipeId.trim()
         if (recipeId.isBlank()) return CardRunLaunchResolution.Rejected("missing_recipe_id")
-        val recipe = catalogRecipes().firstOrNull { it.id == recipeId }
+        val recipe = specialRecipe(request)
+            ?: catalogRecipes().firstOrNull { it.id == recipeId }
             ?: registeredRecipe(recipeId)
-            ?: specialRecipe(request)
             ?: return CardRunLaunchResolution.Rejected("missing_recipe:$recipeId")
         if (recipe.id != recipeId) {
             return CardRunLaunchResolution.Rejected("recipe_id_mismatch:${recipe.id}:$recipeId")

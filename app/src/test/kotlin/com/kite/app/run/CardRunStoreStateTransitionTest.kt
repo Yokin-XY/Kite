@@ -30,6 +30,19 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class CardRunStoreStateTransitionTest {
 
+    @Test
+    fun `environment instance id is stable when normalized more than once`() {
+        assertEquals("recipe", CardRunState.instanceIdForEnvironment("recipe", "default"))
+        assertEquals(
+            "recipe@environment:profile_2",
+            CardRunState.instanceIdForEnvironment("recipe", "profile_2")
+        )
+        assertEquals(
+            "recipe@environment:profile_2",
+            CardRunState.instanceIdForEnvironment("recipe@environment:profile_2", "profile_2")
+        )
+    }
+
     private val context by lazy { ApplicationProvider.getApplicationContext<android.content.Context>() }
 
     @Before
@@ -423,6 +436,82 @@ class CardRunStoreStateTransitionTest {
     }
 
     @Test
+    fun `currentForRecipe 只返回指定环境的运行`() {
+        val recipe = TestRecipes.serviceRecipe(id = "environment-current")
+        CardRunStore.start(recipe, instanceId = "default-run", environmentId = "default")
+        CardRunStore.update(
+            recipe,
+            status = CardRunStatus.Running,
+            instanceId = "default-run",
+            environmentId = "default"
+        )
+        CardRunStore.start(recipe, instanceId = "profile-run", environmentId = "profile_2")
+
+        assertEquals(
+            "default-run",
+            CardRunStore.currentForRecipe(recipe.id, "default")?.instanceId
+        )
+        assertEquals(
+            "profile-run",
+            CardRunStore.currentForRecipe(recipe.id, "profile_2")?.instanceId
+        )
+    }
+
+    @Test
+    fun `同实例名切换环境会开启新代次而不复用旧环境状态`() {
+        val recipe = TestRecipes.serviceRecipe(id = "environment-replace")
+        CardRunStore.start(recipe, instanceId = recipe.id, environmentId = "default")
+        CardRunStore.update(
+            recipe,
+            status = CardRunStatus.Running,
+            instanceId = recipe.id,
+            runId = "default-run",
+            environmentId = "default"
+        )
+
+        val profileRun = CardRunStore.start(
+            recipe,
+            instanceId = recipe.id,
+            environmentId = "profile_2"
+        )
+
+        assertEquals("profile_2", profileRun.environmentId)
+        assertEquals(CardRunStatus.Starting, profileRun.status)
+        assertNull(profileRun.runId)
+        assertNull(CardRunStore.get(recipe.id, "default"))
+        assertEquals(profileRun, CardRunStore.get(recipe.id, "profile_2"))
+    }
+
+    @Test
+    fun `环境切换只收敛旧环境运行`() {
+        val recipe = TestRecipes.serviceRecipe(id = "environment-settle")
+        CardRunStore.start(recipe, instanceId = "default-active", environmentId = "default")
+        CardRunStore.update(
+            recipe,
+            status = CardRunStatus.Running,
+            instanceId = "default-active",
+            runId = "default-runtime",
+            environmentId = "default"
+        )
+        CardRunStore.start(recipe, instanceId = "profile-active", environmentId = "profile_2")
+        CardRunStore.update(
+            recipe,
+            status = CardRunStatus.Running,
+            instanceId = "profile-active",
+            runId = "profile-runtime",
+            environmentId = "profile_2"
+        )
+
+        val settled = CardRunStore.confirmEnvironmentStopped("default")
+
+        assertEquals(setOf("default-active"), settled)
+        assertEquals(CardRunStatus.Stopped, CardRunStore.get("default-active")?.status)
+        assertNull(CardRunStore.get("default-active")?.runId)
+        assertEquals(CardRunStatus.Running, CardRunStore.get("profile-active")?.status)
+        assertEquals("profile-runtime", CardRunStore.get("profile-active")?.runId)
+    }
+
+    @Test
     fun `childrenOf 返回指定 parent 的子 run`() {
         val parent = TestRecipes.serviceRecipe(id = "parent-r19")
         CardRunStore.start(parent)
@@ -438,6 +527,31 @@ class CardRunStoreStateTransitionTest {
     @Test
     fun `get 对未知 instanceId 返回 null`() {
         assertNull(CardRunStore.get("nope"))
+    }
+
+    @Test
+    fun `旧版持久化运行缺少环境字段时迁移到 default`() {
+        val startedAt = System.currentTimeMillis()
+        val history = org.json.JSONObject()
+            .put("historyId", "legacy-environment@$startedAt")
+            .put("recipeId", "legacy-environment")
+            .put("recipeName", "legacy")
+            .put("instanceId", "legacy-environment")
+            .put("status", "Completed")
+            .put("startedAt", startedAt)
+            .put("endedAt", startedAt)
+            .put("updatedAt", startedAt)
+        context.getSharedPreferences("kite_card_run_store", android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putString("history_v1", org.json.JSONArray().put(history).toString())
+            .commit()
+        CardRunStore.resetForTest()
+        CardRunStore.initialize(context)
+
+        assertEquals(
+            CardRunState.DEFAULT_ENVIRONMENT_ID,
+            CardRunStore.historyForRecipe("legacy-environment").single().environmentId
+        )
     }
 
     // ------------------------------------------------------------------

@@ -11,19 +11,20 @@
       "fallbackText": "JS"
     }
   },
+  "management": {
+    "mode": "system_component",
+    "managedCommands": ["node", "npm", "npx"]
+  },
   "display": {
     "sections": [
-      "featured"
+      "foundation"
     ],
+    "order": 130,
     "category": "JavaScript",
     "accent": "green",
     "sizeLabel": "内置包",
-    "longDescription": "Node.js 是 Kite 离线基础层的一部分。资源卡只把内置 Node.js 26.4.0 暴露到 /workspace/.kf/bin，供后续 Hermes WebUI、网页工具和卡片脚本使用。",
+    "longDescription": "Node.js 是 Kite 离线基础层的一部分。资源卡只把内置 Node.js 26.4.0 暴露到 /workspace/.kf/bin，供后续 Agent、网页工具和卡片脚本使用。",
     "recommendations": [
-      {
-        "resourceId": "kite.hermes.webui",
-        "label": "上层应用"
-      },
       {
         "resourceId": "kite.reasonix",
         "label": "编码 Agent"

@@ -11,14 +11,21 @@
       "fallbackText": "H"
     }
   },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["hermes"],
+    "preservePaths": ["home"]
+  },
   "display": {
     "sections": [
-      "featured"
+      "ai-community"
     ],
+    "tabs": ["angel-cli"],
+    "order": 40,
     "category": "AI",
     "accent": "teal",
     "sizeLabel": "网络包",
-    "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。它只负责本体安装和卸载；面向普通人的配置网页、WebUI 和首页启动卡会作为上层方案或配套卡组织。",
+    "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。它负责本体安装、卸载和终端启动；配置与运行状态仍由 Hermes 自己管理。",
     "recommendations": [
       {
         "resourceId": "kite.python",
@@ -58,9 +65,7 @@
       "kite.uv"
     ],
     "defaults": [],
-    "extensions": [
-      "kite.hermes.webui"
-    ]
+    "extensions": []
   },
   "source": {
     "type": "official_script",
@@ -78,6 +83,25 @@
     "binRoot": "/workspace/.kf/bin",
     "configRoot": "/workspace/.kf/software/kite.hermes.core/home"
   },
+  "agents": [
+    {
+      "id": "hermes",
+      "name": "Hermes",
+      "description": "Hermes 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "hermes"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "hermes",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["hermes", "acp"],
+        "title": "Hermes"
+      }
+    }
+  ],
   "actions": {
     "install": [
       {
@@ -117,6 +141,11 @@
             "id": "write-hermes-launcher",
             "type": "shell",
             "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\nif [ ! -x \"$agent_python\" ]; then echo 'Hermes Agent Python missing'; exit 127; fi\nif ! \"$agent_python\" -m pip --version >/dev/null 2>&1; then\n  \"$agent_python\" -m ensurepip --upgrade || python3 -m pip --python \"$agent_python\" install --upgrade pip\nfi\nmkdir -p \"$install_root/bin\"\ncat > \"$install_root/bin/hermes\" <<EOF\n#!/usr/bin/env bash\nexport HERMES_HOME=\"$install_root/home\"\nexport PATH=\"/workspace/.kf/bin:/root/.local/bin:\\$PATH\"\nunset PYTHONPATH\nunset PYTHONHOME\nexec \"$install_root/hermes-agent/venv/bin/hermes\" \"\\$@\"\nEOF\nchmod +x \"$install_root/bin/hermes\""
+          },
+          {
+            "id": "install-hermes-acp-extra",
+            "type": "shell",
+            "cmd": "agent_python=\"$install_root/hermes-agent/venv/bin/python\"\n\"$agent_python\" -m pip install -e \"$install_root/hermes-agent[acp]\""
           }
         ],
         "managedCommands": [
@@ -127,6 +156,10 @@
           {
             "id": "hermes-command",
             "cmd": "hermes --help >/dev/null"
+          },
+          {
+            "id": "hermes-acp-command",
+            "cmd": "hermes acp --help >/dev/null"
           }
         ],
         "timeoutMs": 1800000
@@ -138,7 +171,7 @@
         "base": {
           "id": "",
           "name": "Hermes",
-          "description": "在终端启动 Hermes",
+          "description": "启动 Hermes Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -149,8 +182,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "cmd": "hermes"
+            "type": "agent",
+            "agentId": "hermes",
+            "workdir": "/workspace"
           }
         ]
       }
@@ -158,7 +192,11 @@
     "uninstall": [
       {
         "type": "shell",
-        "cmd": "remove /workspace/.kf/software/kite.hermes.core and /workspace/.kf/bin/hermes"
+        "cmd": ":",
+        "managedCommands": [
+          "hermes"
+        ],
+        "timeoutMs": 180000
       }
     ]
   },
@@ -170,7 +208,7 @@
         "base": {
           "id": "",
           "name": "Hermes",
-          "description": "在终端启动 Hermes",
+          "description": "启动 Hermes Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -181,8 +219,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "cmd": "hermes"
+            "type": "agent",
+            "agentId": "hermes",
+            "workdir": "/workspace"
           }
         ]
       }

@@ -4,6 +4,10 @@ import android.content.Context
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.resources.ResourceActionEffect
 import com.kite.app.application.resources.ResourceActionGateway
+import com.kite.app.application.resources.ResourceDependencyGuard
+import com.kite.app.application.resources.ResourceVersionCheckResult
+import com.kite.app.application.resources.ResourceVersionCoordinator
+import com.kite.app.application.resources.ResourceUpdateBatchPolicy
 import com.kite.app.application.resources.ResourceRunContinuation
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceRunLaunchRequest
@@ -15,9 +19,10 @@ import com.kite.app.application.runs.RunStartRequest
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.application.runs.CardRunSpecialRecipes
-import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
+import com.kite.app.foundation.runtime.RuntimeLaunchTrace
+import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
 import com.kite.app.recipe.KiteRecipe
@@ -26,9 +31,11 @@ import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceManagementMode
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.resources.KiteResourceRequestPolicy
+import com.kite.app.resources.KiteResourceSourcePlanFactory
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
@@ -51,24 +58,34 @@ internal class AndroidResourceActionGateway(
     private val recipeLoader: KiteRecipeLoader,
     private val recipeFeatureGateway: RecipeFeatureGateway,
     private val bridgeClient: KiteBridgeClient,
-    private val diagnostics: KiteDiagnostics
+    private val diagnostics: KiteDiagnostics,
+    private val versionCoordinator: ResourceVersionCoordinator,
+    private val environmentFor: (String) -> Map<String, String> = { emptyMap() },
+    private val installedStateProbe: ResourceInstalledStateProbe =
+        AndroidResourceInstalledStateProbe(bridgeClient),
+    private val managedCommandEvidence: ResourceManagedCommandEvidenceCoordinator =
+        ResourceManagedCommandEvidenceCoordinator(),
 ) : ResourceActionGateway {
     private val appContext = context.applicationContext
 
     override suspend fun install(resourceId: String): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
         val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
-        if (installStore.isFailed(target.id) &&
-            installStore.failedOperation(target.id) != KiteResourceInstallStore.OP_UNINSTALL
-        ) {
-            return uninstall(target, ResourceRunContinuation.Reinstall)
+        if (!target.manifest.management.userLifecycleEnabled) {
+            return message("${target.name} 是 Kite 管理的系统组件，无需单独获取")
         }
-        installStore.markPreparing(target.id)
-        return runCatching { withContext(Dispatchers.IO) { buildInstallPlan(target) } }
+        if (installStore.isFailed(target.id, environmentId) &&
+            installStore.failedOperation(target.id, environmentId) != KiteResourceInstallStore.OP_UNINSTALL
+        ) {
+            return uninstall(target, ResourceRunContinuation.Reinstall, environmentId)
+        }
+        installStore.markPreparing(target.id, environmentId)
+        return runCatching { withContext(Dispatchers.IO) { buildInstallPlan(target, environmentId) } }
             .fold(
-                onSuccess = { plan -> acceptInstallPlan(target, plan) },
+                onSuccess = { plan -> acceptInstallPlan(target, plan, environmentId) },
                 onFailure = { error ->
                     val reason = error.message ?: error.javaClass.simpleName
-                    installStore.markFailed(target.id, KiteResourceInstallStore.OP_INSTALL, null, reason)
+                    installStore.markFailed(target.id, KiteResourceInstallStore.OP_INSTALL, null, reason, environmentId)
                     message("执行队列准备失败：$reason")
                 }
             )
@@ -90,20 +107,35 @@ internal class AndroidResourceActionGateway(
     }
 
     override suspend fun open(resourceId: String): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
         val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
         val recipe = openRecipe(target) ?: return message("${target.name} 的打开动作稍后接入")
         CardRunStore.registerRecipe(recipe)
-        val existing = CardRunStore.currentForRecipe(recipe.id)
+        val existing = CardRunStore.currentForRecipe(recipe.id, environmentId)
+        val instanceId = existing?.instanceId
+            ?: CardRunState.instanceIdForEnvironment(recipe.id, environmentId)
+        RuntimeLaunchTrace.begin(instanceId, RuntimeLaunchTrace.ACTION_RECEIVED)
         if (existing?.status == CardRunStatus.Stopping) {
             return message("${target.name} 正在停止，请稍后再启动")
         }
         if (existing != null && existing.isReusableOpenRun()) {
+            RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.EXISTING_RUN_REUSED)
             return listOf(
                 ResourceActionEffect.OpenRun(recipe.id, existing.instanceId, autoStart = false),
                 ResourceActionEffect.Message("${target.name} 已在运行，正在打开原实例")
             )
         }
-        val instanceId = recipe.id
+        RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.RESOURCE_PREFLIGHT_STARTED)
+        val invalidated = withContext(Dispatchers.IO) {
+            reconcileInstalledResources(listOf(target.manifest), environmentId)
+        }
+        RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.RESOURCE_PREFLIGHT_COMPLETED)
+        if (target.id in invalidated) {
+            RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.RESOURCE_PREFLIGHT_INVALIDATED)
+            return listOf(ResourceActionEffect.Message("检测到 ${target.name} 的安装内容缺失，正在准备修复")) +
+                install(target.id)
+        }
+        RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.ACTION_DISPATCHED)
         return if (shouldOpenRunTask(recipe)) {
             listOf(
                 ResourceActionEffect.OpenRun(recipe.id, instanceId, autoStart = true),
@@ -115,7 +147,8 @@ internal class AndroidResourceActionGateway(
                     recipe = recipe,
                     instanceId = instanceId,
                     ownerKind = CardRunState.OWNER_KIND_RESOURCE,
-                    stepId = target.id
+                    stepId = target.id,
+                    environmentId = environmentId
                 )
             )) {
                 is RunCommandResult.Accepted -> message("正在打开 ${target.name}")
@@ -125,10 +158,11 @@ internal class AndroidResourceActionGateway(
     }
 
     override suspend fun stop(resourceId: String): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
         val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
         val recipe = openRecipe(target) ?: return message("${target.name} 的运行入口不存在")
         CardRunStore.registerRecipe(recipe)
-        val state = CardRunStore.currentForRecipe(recipe.id)?.takeIf { it.isReusableOpenRun() }
+        val state = CardRunStore.currentForRecipe(recipe.id, environmentId)?.takeIf { it.isReusableOpenRun() }
             ?: return message("${target.name} 没有运行中的实例")
         return when (val result = runOrchestrator.stop(state.instanceId)) {
             is RunCommandResult.Accepted -> message("正在中止 ${target.name}")
@@ -138,44 +172,182 @@ internal class AndroidResourceActionGateway(
 
     override suspend fun uninstall(resourceId: String): List<ResourceActionEffect> {
         val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
+        if (target.manifest.management.mode == KiteResourceManagementMode.SYSTEM_COMPONENT) {
+            return message("${target.name} 是 Kite 管理的系统组件，不能单独卸载")
+        }
+        val blockers = uninstallBlockers(target.id)
+        if (blockers.isNotEmpty()) {
+            val names = blockers.map { it.resourceName }.distinct().joinToString("、")
+            return message("${target.name} 正被 $names 使用，请先卸载这些资源")
+        }
         return uninstall(target, ResourceRunContinuation.None)
     }
 
+    override suspend fun checkUpdate(resourceId: String): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
+        val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
+        if (!target.manifest.management.userLifecycleEnabled) {
+            return message("${target.name} 是 Kite 管理的系统组件")
+        }
+        if (!installStore.isInstalled(target.id, environmentId)) return message("请先获取 ${target.name}")
+        installStore.markUpdateChecking(target.id, environmentId)
+        val result = withContext(Dispatchers.IO) {
+            versionCoordinator.check(target.manifest, environmentId)
+        }
+        return message(applyUpdateCheckResult(target, result, environmentId).message)
+    }
+
+    override suspend fun checkUpdates(resourceIds: List<String>): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
+        val targets = resourceIds.asSequence()
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+            .mapNotNull(::target)
+            .filter { target ->
+                ResourceUpdateBatchPolicy.isEligible(
+                    target.manifest,
+                    installStore.isInstalled(target.id, environmentId)
+                )
+            }
+            .toList()
+        if (targets.isEmpty()) return message("已获取资源中暂无可检查更新的项目")
+
+        // 先一次性写入所有目标的乐观状态，再开始任何网络或命令探测。
+        targets.forEach { target -> installStore.markUpdateChecking(target.id, environmentId) }
+        val results = withContext(Dispatchers.IO) {
+            targets.map { target ->
+                target to versionCoordinator.check(target.manifest, environmentId)
+            }
+        }.map { (target, result) -> applyUpdateCheckResult(target, result, environmentId) }
+
+        val available = results.count { it.outcome == UpdateCheckOutcome.Available }
+        val current = results.count { it.outcome == UpdateCheckOutcome.Current }
+        val failed = results.size - available - current
+        val summary = buildList {
+            add("已检查 ${results.size} 项")
+            if (available > 0) add("$available 项可更新")
+            if (current > 0) add("$current 项已是最新")
+            if (failed > 0) add("$failed 项未完成")
+        }.joinToString("，")
+        return message(summary)
+    }
+
+    private fun applyUpdateCheckResult(
+        target: ResourceTarget,
+        result: ResourceVersionCheckResult,
+        environmentId: String
+    ): AppliedUpdateCheckResult = when (result) {
+            is ResourceVersionCheckResult.UpdateAvailable -> {
+                installStore.markUpdateAvailable(target.id, result.installedVersion, result.latestVersion, environmentId)
+                AppliedUpdateCheckResult(
+                    UpdateCheckOutcome.Available,
+                    "${target.name} 可更新：${result.installedVersion} → ${result.latestVersion}"
+                )
+            }
+            is ResourceVersionCheckResult.Current -> {
+                installStore.markUpdateCurrent(target.id, result.installedVersion, result.latestVersion, environmentId)
+                AppliedUpdateCheckResult(
+                    UpdateCheckOutcome.Current,
+                    if (result.locallyAhead) "${target.name} 当前版本高于发布版本" else "${target.name} 已是最新版本"
+                )
+            }
+            is ResourceVersionCheckResult.Unsupported -> {
+                installStore.markUpdateUnsupported(target.id, result.reason, environmentId)
+                AppliedUpdateCheckResult(
+                    UpdateCheckOutcome.Unsupported,
+                    "${target.name} 暂不支持自动检查更新"
+                )
+            }
+            is ResourceVersionCheckResult.Failed -> {
+                installStore.markUpdateCheckFailed(target.id, result.reason, environmentId)
+                AppliedUpdateCheckResult(
+                    UpdateCheckOutcome.Failed,
+                    "${target.name} 更新检查失败：${result.reason}"
+                )
+            }
+        }
+
+    override suspend fun update(resourceId: String): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
+        val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
+        if (!target.manifest.management.userLifecycleEnabled) return message("${target.name} 是 Kite 管理的系统组件")
+        if (!installStore.isInstalled(target.id, environmentId)) return message("请先获取 ${target.name}")
+        val entry = installStore.registryEntry(target.id, environmentId)
+        val targetVersion = entry?.latestVersion.orEmpty()
+        if (entry?.updateStatus != KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE || targetVersion.isBlank()) {
+            return message("请先检查 ${target.name} 的可用更新")
+        }
+        if (!KiteResourceSourcePlanFactory.plan(target.manifest, targetVersion).capabilities.update) {
+            return message("${target.name} 的来源暂不支持确定性更新")
+        }
+        val recipe = runCoordinator.recipe(target.id, KiteResourceInstallRecipes.OP_UPDATE, targetVersion)
+            ?: return message("${target.name} 的更新入口不存在")
+        return startManagedOperation(target, recipe, KiteResourceInstallRecipes.OP_UPDATE, targetVersion, environmentId)
+    }
+
+    override suspend fun reinstall(resourceId: String): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
+        val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
+        if (!target.manifest.management.userLifecycleEnabled) return message("${target.name} 是 Kite 管理的系统组件")
+        if (!installStore.isInstalled(target.id, environmentId)) return message("请先获取 ${target.name}")
+        val capabilities = KiteResourceSourcePlanFactory.plan(target.manifest).capabilities
+        if (!capabilities.install || !capabilities.uninstall) return message("${target.name} 暂不支持重新安装")
+        val recipe = runCoordinator.recipe(target.id, KiteResourceInstallRecipes.OP_REINSTALL)
+            ?: return message("${target.name} 的重新安装入口不存在")
+        return startManagedOperation(target, recipe, KiteResourceInstallRecipes.OP_REINSTALL, environmentId = environmentId)
+    }
+
     override suspend fun cancelInstall(resourceId: String): List<ResourceActionEffect> {
-        val plan = installStore.planSnapshot()
+        val environmentId = installStore.currentEnvironmentId()
+        val plan = installStore.planSnapshot(environmentId)
         val planIds = plan.resourceIds.takeIf { resourceId in it || resourceId == plan.targetResourceId }.orEmpty()
             .ifEmpty { listOf(resourceId) }
         val targetId = plan.targetResourceId.takeIf(String::isNotBlank) ?: resourceId
-        return cancelPlan(targetId, planIds)
+        return cancelPlanForEnvironment(targetId, planIds, environmentId)
     }
 
     override suspend fun cancelFailedInstall(resourceId: String): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
         val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
-        return uninstall(target, ResourceRunContinuation.CancelFailedInstall)
+        return uninstall(target, ResourceRunContinuation.CancelFailedInstall, environmentId)
     }
 
     override suspend fun cancelPlan(
         targetResourceId: String,
         planResourceIds: List<String>
+    ): List<ResourceActionEffect> = cancelPlanForEnvironment(
+        targetResourceId,
+        planResourceIds,
+        installStore.currentEnvironmentId()
+    )
+
+    private suspend fun cancelPlanForEnvironment(
+        targetResourceId: String,
+        planResourceIds: List<String>,
+        environmentId: String
     ): List<ResourceActionEffect> {
         val resourceIds = planResourceIds.filter(String::isNotBlank)
-            .ifEmpty { installStore.planResourceIds() }
+            .ifEmpty { installStore.planResourceIds(environmentId) }
             .ifEmpty { listOfNotNull(targetResourceId.takeIf(String::isNotBlank)) }
             .distinct()
-        val unfinished = resourceIds.filterNot(installStore::isInstalled)
+        val unfinished = resourceIds.filterNot { installStore.isInstalled(it, environmentId) }
         unfinished.forEach { resourceId ->
             listOf(KiteResourceInstallRecipes.OP_INSTALL, KiteResourceInstallRecipes.OP_UNINSTALL)
                 .mapNotNull { operation ->
-                    CardRunStore.currentForRecipe(KiteResourceInstallRecipes.recipeId(resourceId, operation))
+                    CardRunStore.currentForRecipe(
+                        KiteResourceInstallRecipes.recipeId(resourceId, operation),
+                        environmentId
+                    )
                 }
                 .filter { state -> state.isBusy() || state.isActive() || state.hasRunBinding() }
                 .forEach { state -> runOrchestrator.stop(state.instanceId) }
         }
         val cleanupComplete = if (unfinished.isNotEmpty()) {
             delay(CANCEL_SETTLE_MS)
-            cleanupCancelledResources(unfinished)
+            cleanupCancelledResources(unfinished, environmentId)
         } else true
-        clearInstallTask(targetResourceId, resourceIds)
+        clearInstallTask(targetResourceId, resourceIds, environmentId)
         return if (unfinished.isEmpty()) {
             message("获取任务已取消")
         } else if (cleanupComplete) {
@@ -190,9 +362,14 @@ internal class AndroidResourceActionGateway(
             val target = target(resourceId) ?: return@withContext message("资源目录正在更新，请稍后重试")
             val template = homeCardTemplate(target) ?: return@withContext message("${target.name} 暂无首页卡片模板")
             runCatching {
-                recipeLoader.addSharedRecipeTemplate(
-                    template,
-                    "${KiteResourceInstallRecipes.safeId(target.id)}-home"
+                val managedRecipeId = KiteResourceInstallRecipes.recipeId(target.id, "open")
+                val base = template.optJSONObject("base") ?: JSONObject().also { template.put("base", it) }
+                base.put("id", managedRecipeId)
+                recipeLoader.addManagedSharedRecipeTemplate(
+                    template = template,
+                    fileStem = "${KiteResourceInstallRecipes.safeId(target.id)}-home",
+                    ownerKind = MANAGED_OWNER_RESOURCE_HOME,
+                    ownerId = target.id
                 )
                 recipeFeatureGateway.invalidateCatalog("resource_home_card_added")
             }.fold(
@@ -225,28 +402,30 @@ internal class AndroidResourceActionGateway(
 
     private fun acceptInstallPlan(
         target: ResourceTarget,
-        plan: PreparedInstallPlan
+        plan: PreparedInstallPlan,
+        environmentId: String
     ): List<ResourceActionEffect> {
         if (plan.missing.isNotEmpty()) {
-            installStore.clear(target.id)
+            installStore.clear(target.id, environmentId)
             return message("缺少可获取的基础层：${plan.missing.distinct().joinToString("、")}")
         }
         if (plan.resourceIds.isEmpty()) {
-            installStore.clear(target.id)
+            installStore.clear(target.id, environmentId)
             return message("${target.name} 已经就绪")
         }
-        resetPlanTransientState(plan.resourceIds)
-        installStore.beginPlan(target.id, plan.resourceIds)
-        return listOf(installWizardEffect(target, plan.resourceIds))
+        resetPlanTransientState(plan.resourceIds, environmentId)
+        installStore.beginPlan(target.id, plan.resourceIds, environmentId)
+        return listOf(installWizardEffect(target, plan.resourceIds, environmentId))
     }
 
     private fun installWizardEffect(
         target: ResourceTarget,
-        planResourceIds: List<String>
+        planResourceIds: List<String>,
+        environmentId: String = installStore.currentEnvironmentId()
     ): ResourceActionEffect.OpenInstallWizard {
         val recipe = CardRunSpecialRecipes.installWizard(target.id, target.name)
         CardRunStore.registerRecipe(recipe)
-        val current = CardRunStore.currentForRecipe(recipe.id)
+        val current = CardRunStore.currentForRecipe(recipe.id, environmentId)
             ?.takeIf { state ->
                 state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD &&
                     state.stepId == target.id &&
@@ -263,7 +442,8 @@ internal class AndroidResourceActionGateway(
                 stepId = target.id,
                 surface = com.kite.app.run.CardRunSurface.InstallWizard,
                 currentStepIndex = 0,
-                lastMeaningfulOutput = "等待获取确认"
+                lastMeaningfulOutput = "等待获取确认",
+                environmentId = environmentId
             )
         }
         return ResourceActionEffect.OpenInstallWizard(
@@ -276,15 +456,16 @@ internal class AndroidResourceActionGateway(
 
     private suspend fun uninstall(
         target: ResourceTarget,
-        continuation: ResourceRunContinuation
+        continuation: ResourceRunContinuation,
+        environmentId: String = installStore.currentEnvironmentId()
     ): List<ResourceActionEffect> {
         val recipe = runCoordinator.recipe(target.id, KiteResourceInstallRecipes.OP_UNINSTALL)
         if (recipe == null) {
-            installStore.clear(target.id)
+            installStore.clear(target.id, environmentId)
             return when (continuation) {
                 ResourceRunContinuation.Reinstall -> install(target.id)
                 ResourceRunContinuation.CancelFailedInstall -> {
-                    installStore.clearPlan()
+                    installStore.clearPlan(environmentId)
                     message("已取消 ${target.name} 的失败获取")
                 }
                 else -> message("已移除 ${target.name} 的获取记录")
@@ -295,7 +476,8 @@ internal class AndroidResourceActionGateway(
                 resourceId = target.id,
                 recipe = recipe,
                 operation = KiteResourceInstallRecipes.OP_UNINSTALL,
-                continuation = continuation
+                continuation = continuation,
+                environmentId = environmentId
             )
         )) {
             is ResourceRunLaunchResult.Accepted -> message("正在卸载 ${target.name}")
@@ -303,11 +485,40 @@ internal class AndroidResourceActionGateway(
         }
     }
 
-    private fun buildInstallPlan(target: ResourceTarget): PreparedInstallPlan {
+    private fun startManagedOperation(
+        target: ResourceTarget,
+        recipe: KiteRecipe,
+        operation: String,
+        targetVersion: String? = null,
+        environmentId: String = installStore.currentEnvironmentId()
+    ): List<ResourceActionEffect> = when (val result = runCoordinator.start(
+        ResourceRunLaunchRequest(
+            resourceId = target.id,
+            recipe = recipe,
+            operation = operation,
+            targetVersion = targetVersion,
+            stageBundledResource = runCoordinator.isBundled(target.id),
+            environmentId = environmentId
+        )
+    )) {
+        is ResourceRunLaunchResult.Accepted -> message("正在${operationLabel(operation)} ${target.name}")
+        is ResourceRunLaunchResult.Rejected -> result.asResourceStartEffect("资源${operationLabel(operation)}未启动")
+    }
+
+    private fun operationLabel(operation: String): String = when (operation) {
+        KiteResourceInstallRecipes.OP_UPDATE -> "更新"
+        KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装"
+        KiteResourceInstallRecipes.OP_UNINSTALL -> "卸载"
+        else -> "获取"
+    }
+
+    private suspend fun buildInstallPlan(target: ResourceTarget, environmentId: String): PreparedInstallPlan {
         manifestLoader.invalidate()
         val manifests = manifestLoader.manifests().values.filter { it.sections.isNotEmpty() }
+        reconcileInstalledResources(manifests, environmentId)
         val byId = manifests.associateBy(KiteResourceManifest::id)
-        val installedIds = manifests.filter(::isInstalled).mapTo(linkedSetOf(), KiteResourceManifest::id)
+        val installedIds = manifests.filter { isInstalled(it, environmentId) }
+            .mapTo(linkedSetOf(), KiteResourceManifest::id)
         val capabilities = installedIds.flatMap { byId[it]?.provides.orEmpty() }.toSet()
         val serverPlan = manifestLoader.requestInstallPlan(target.id, installedIds, capabilities)
         if (serverPlan != null) {
@@ -317,7 +528,9 @@ internal class AndroidResourceActionGateway(
                 KiteResourceRequestPolicy.INSTALL_PLAN_CACHE_MS
             )
             val unknown = serverPlan.resourceIds.filterNot(byId::containsKey)
-            val ids = serverPlan.resourceIds.filter { id -> byId[id]?.let { !isInstalled(it) || id == target.id } == true }
+            val ids = serverPlan.resourceIds.filter { id ->
+                byId[id]?.let { !isInstalled(it, environmentId) || id == target.id } == true
+            }
             return PreparedInstallPlan(ids, serverPlan.missing.map { it.requirement } + unknown)
         }
         val ordered = linkedSetOf<String>()
@@ -328,53 +541,118 @@ internal class AndroidResourceActionGateway(
             manifestLoader.requestRelationTargets(id).let { relations ->
                 (relations.base + relations.defaults).forEach { requirement ->
                     val providers = requirement.providerIds.mapNotNull(byId::get)
-                    if (providers.any(::isInstalled)) return@forEach
+                    if (providers.any { isInstalled(it, environmentId) }) return@forEach
                     val provider = providers.firstOrNull()
                     if (provider == null) missing += requirement.requirement else visit(provider.id)
                 }
             }
             visiting.remove(id)
             val manifest = byId[id]
-            if (manifest != null && (!isInstalled(manifest) || id == target.id)) ordered += id
+            if (manifest != null && (!isInstalled(manifest, environmentId) || id == target.id)) ordered += id
         }
         visit(target.id)
         return PreparedInstallPlan(ordered.toList(), missing)
     }
 
-    private fun isInstalled(manifest: KiteResourceManifest): Boolean =
-        installStore.isInstalled(manifest.id) ||
-            (manifest.provides.any { it.startsWith("runtime.node") } &&
-                ToolchainPackInstaller.isNodeRuntimeInstalled(appContext))
+    private suspend fun reconcileInstalledResources(
+        manifests: Collection<KiteResourceManifest>,
+        environmentId: String
+    ): Set<String> {
+        val requirements = ResourceManagedCommandProbeProtocol.normalize(
+            manifests
+                .asSequence()
+                .filter { manifest -> installStore.isInstalled(manifest.id, environmentId) }
+                .map { manifest ->
+                    ResourceManagedCommandRequirement(
+                        resourceId = manifest.id,
+                        commands = manifest.management.managedCommands
+                    )
+                }
+                .filter { requirement -> requirement.commands.isNotEmpty() }
+                .toList()
+        )
+        if (requirements.isEmpty()) return emptySet()
 
-    private fun resetPlanTransientState(resourceIds: List<String>) {
-        val recipeIds = resourceIds.distinct().map { resourceId ->
-            if (installStore.status(resourceId) != null &&
-                installStore.status(resourceId) != KiteResourceInstallStore.STATUS_PREPARING &&
-                !installStore.isInstalled(resourceId)
-            ) installStore.clear(resourceId)
-            KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
+        val verificationBasis = WorkSurfaceRuntimeBridge.managedCommandVerificationBasis(
+            context = appContext,
+            commands = requirements.flatMap(ResourceManagedCommandRequirement::commands),
+        )
+        val requests = requirements.map { requirement ->
+            val entry = installStore.registryEntry(requirement.resourceId, environmentId)
+            val identity = buildResourceManagedCommandEvidenceIdentity(
+                environmentId = environmentId,
+                requirement = requirement,
+                installedVersion = entry?.version.orEmpty(),
+                installedAtMs = entry?.installedAt ?: 0L,
+                installRunId = entry?.runId.orEmpty(),
+                isInstalled = entry?.installed == true,
+                verificationBasis = verificationBasis,
+            )
+            ResourceManagedCommandEvidenceRequest(requirement, identity)
         }
-        CardRunStore.removeRunStatesForRecipes(recipeIds, removeOpenHistory = true)
+        val missing = managedCommandEvidence.missingResourceIds(requests) { pendingRequirements ->
+            installedStateProbe.missingResourceIds(pendingRequirements)
+        }.getOrElse { return emptySet() }
+        if (missing.isNotEmpty()) {
+            installStore.invalidateMissingInstallations(missing, environmentId)
+        }
+        return missing
     }
 
-    private fun clearInstallTask(targetId: String, resourceIds: List<String>) {
-        resourceIds.forEach { resourceId ->
-            if (installStore.status(resourceId) != null &&
-                !installStore.isInstalled(resourceId) &&
-                !installStore.isFailed(resourceId)
-            ) installStore.clear(resourceId)
+    private fun isInstalled(
+        manifest: KiteResourceManifest,
+        environmentId: String = installStore.currentEnvironmentId()
+    ): Boolean = installStore.isInstalled(manifest.id, environmentId)
+
+    private fun uninstallBlockers(resourceId: String) =
+        manifestLoader.manifests().values.let { manifests ->
+            ResourceDependencyGuard(manifestLoader::providerIdsFor).blockers(
+                targetResourceId = resourceId,
+                manifests = manifests,
+                installedResourceIds = manifests.filter(::isInstalled).mapTo(linkedSetOf(), KiteResourceManifest::id)
+            )
         }
-        installStore.clearPlan()
+
+    private fun resetPlanTransientState(resourceIds: List<String>, environmentId: String) {
+        val recipeIds = resourceIds.distinct().map { resourceId ->
+            if (installStore.status(resourceId, environmentId) != null &&
+                installStore.status(resourceId, environmentId) != KiteResourceInstallStore.STATUS_PREPARING &&
+                !installStore.isInstalled(resourceId, environmentId)
+            ) installStore.clear(resourceId, environmentId)
+            KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
+        }
+        CardRunStore.removeRunStatesForRecipes(
+            recipeIds,
+            removeOpenHistory = true,
+            environmentId = environmentId
+        )
+    }
+
+    private fun clearInstallTask(targetId: String, resourceIds: List<String>, environmentId: String) {
+        resourceIds.forEach { resourceId ->
+            if (installStore.status(resourceId, environmentId) != null &&
+                !installStore.isInstalled(resourceId, environmentId) &&
+                !installStore.isFailed(resourceId, environmentId)
+            ) installStore.clear(resourceId, environmentId)
+        }
+        installStore.clearPlan(environmentId)
         val recipeIds = resourceIds.flatMap { resourceId ->
             listOf(
                 KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL),
                 KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_UNINSTALL)
             )
         } + CardRunSpecialRecipes.installWizard(targetId, targetId).id
-        CardRunStore.removeRunStatesForRecipes(recipeIds.distinct(), removeOpenHistory = true)
+        CardRunStore.removeRunStatesForRecipes(
+            recipeIds.distinct(),
+            removeOpenHistory = true,
+            environmentId = environmentId
+        )
     }
 
-    private suspend fun cleanupCancelledResources(resourceIds: List<String>): Boolean {
+    private suspend fun cleanupCancelledResources(
+        resourceIds: List<String>,
+        environmentId: String
+    ): Boolean {
         val recipe = cancelCleanupRecipe(resourceIds)
         val runtimeOwner = RuntimeOwnerIdentity.operation(
             namespace = RuntimeOwnerNamespace.Resource,
@@ -382,9 +660,13 @@ internal class AndroidResourceActionGateway(
             generation = System.currentTimeMillis(),
             operationId = "cancel-cleanup"
         )
+        val commandEnvironment = runCatching { environmentFor(environmentId) }.getOrElse { return false }
         return withTimeoutOrNull(CLEANUP_TIMEOUT_MS) {
             suspendCancellableCoroutine { continuation ->
-                bridgeClient.runRecipe(recipe, extraEnv = runtimeOwner.environment()) { result ->
+                bridgeClient.runRecipe(
+                    recipe,
+                    extraEnv = commandEnvironment + runtimeOwner.environment()
+                ) { result ->
                     if (continuation.isActive) continuation.resume(result.ok || result.accepted)
                 }
             }
@@ -460,6 +742,7 @@ internal class AndroidResourceActionGateway(
                 KiteRecipe.STEP_OPEN_WEB,
                 KiteRecipe.STEP_TERMINAL,
                 KiteRecipe.STEP_X11,
+                KiteRecipe.STEP_AGENT,
                 KiteRecipe.STEP_SHELL
             )
         }
@@ -500,7 +783,20 @@ internal class AndroidResourceActionGateway(
         val missing: List<String>
     )
 
+    private data class AppliedUpdateCheckResult(
+        val outcome: UpdateCheckOutcome,
+        val message: String
+    )
+
+    private enum class UpdateCheckOutcome {
+        Available,
+        Current,
+        Unsupported,
+        Failed
+    }
+
     companion object {
+        private const val MANAGED_OWNER_RESOURCE_HOME = "resource_home"
         private const val RESOURCE_OPEN_RUNTIME_SOURCE = "resource_open"
         private const val CANCEL_SETTLE_MS = 800L
         private const val CLEANUP_TIMEOUT_MS = 130_000L

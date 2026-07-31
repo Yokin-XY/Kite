@@ -22,9 +22,6 @@ object RuntimeBoundary {
 
     const val CONTAINER_ROOT_HOME = "/root"
     const val CONTAINER_WORKSPACE_PATH = "/workspace"
-    const val CONTAINER_EXCHANGE_PATH = ExternalExchangeManager.CONTAINER_MOUNT_PATH
-    const val CONTAINER_DELIVERY_PATH = ExternalExchangeManager.CONTAINER_DELIVERY_PATH
-    const val CONTAINER_ALBUM_PATH = ExternalExchangeManager.CONTAINER_ALBUM_PATH
     const val WORKSPACE_HELPER_ROOT_DIR = ".kf"
     const val WORKSPACE_HELPER_BIN_DIR = ".kf/bin"
     const val WORKSPACE_GRADLE_HELPER_NAME = "kf-gradle"
@@ -32,7 +29,9 @@ object RuntimeBoundary {
     const val WORKSPACE_ANDROID_USER_HOME_DIR = ".android-user"
     const val WORKSPACE_ANDROID_DATA_DIR = ".android-data"
     const val CONTAINER_HELPER_BIN_PATH = "/workspace/.kf/bin"
-    const val CONTAINER_GRADLE_HELPER_PATH = "/workspace/.kf/bin/kf-gradle"
+    // T014b：Android helper（kf-gradle 等）已迁到共享 .kf/system/bin；.kf/bin 只保留环境内资源/用户命令。
+    const val CONTAINER_HELPER_SYSTEM_BIN_PATH = "/workspace/.kf/system/bin"
+    const val CONTAINER_GRADLE_HELPER_PATH = "/workspace/.kf/system/bin/kf-gradle"
     const val CONTAINER_GRADLE_USER_HOME = "/workspace/.gradle-user"
     const val CONTAINER_ANDROID_USER_HOME = "/workspace/.android-user"
     const val CONTAINER_ANDROID_DATA = "/workspace/.android-data"
@@ -49,7 +48,6 @@ object RuntimeBoundary {
             RuntimeActionKind.WORKSPACE_BROWSE,
             RuntimeActionKind.LOG_VIEW -> RuntimeActionRoute.NATIVE
 
-            RuntimeActionKind.EXCHANGE_TRANSFER -> RuntimeActionRoute.BRIDGE
             RuntimeActionKind.TOOL_ENTRY -> RuntimeActionRoute.DUAL
         }
     }
@@ -60,7 +58,9 @@ object RuntimeBoundary {
     ): RuntimeBoundarySnapshot {
         val appContext = context.applicationContext
         val layout = AssetExtractor.getRuntimeLayout(appContext)
-        val exchangeDir = ExternalExchangeManager.ensureExchangeDir(appContext)
+        val androidSharedStorageDirs = AndroidSharedStorageManager.snapshot(appContext)
+            .volumes
+            .map { File(it.hostPath) }
         val workspaceDir = container?.workspacePath?.let(::File)
         val rootfsDir = container?.rootfsPath?.let(::File)
         val buildSupportDir = workspaceDir?.let { File(it, WORKSPACE_HELPER_ROOT_DIR) }
@@ -70,7 +70,7 @@ object RuntimeBoundary {
             containerRootfsDir = rootfsDir,
             workspaceDir = workspaceDir,
             workspaceBuildSupportDir = buildSupportDir,
-            exchangeDir = exchangeDir,
+            androidSharedStorageDirs = androidSharedStorageDirs,
             logsDir = layout.logsDir,
             tmpDir = layout.tmpDir
         )
@@ -93,8 +93,8 @@ object RuntimeBoundary {
             isSameOrDescendant(target, snapshot.workspaceDir) ->
                 RuntimePathRole.WORKSPACE
 
-            isSameOrDescendant(target, snapshot.exchangeDir) ->
-                RuntimePathRole.EXCHANGE
+            snapshot.androidSharedStorageDirs.any { isSameOrDescendant(target, it) } ->
+                RuntimePathRole.ANDROID_SHARED_STORAGE
 
             isSameOrDescendant(target, snapshot.logsDir) ->
                 RuntimePathRole.LOGS
@@ -129,9 +129,8 @@ object RuntimeBoundary {
             }
 
             isSameOrDescendant(normalizedPath, CONTAINER_WORKSPACE_PATH) -> RuntimePathRole.WORKSPACE
-            isSameOrDescendant(normalizedPath, CONTAINER_EXCHANGE_PATH) ||
-                isSameOrDescendant(normalizedPath, CONTAINER_DELIVERY_PATH) ||
-                isSameOrDescendant(normalizedPath, CONTAINER_ALBUM_PATH) -> RuntimePathRole.EXCHANGE
+            isSameOrDescendant(normalizedPath, "/storage") ||
+                isSameOrDescendant(normalizedPath, "/sdcard") -> RuntimePathRole.ANDROID_SHARED_STORAGE
             isSameOrDescendant(normalizedPath, "/tmp") -> RuntimePathRole.TMP
             normalizedPath.startsWith("/") -> RuntimePathRole.CONTAINER_ROOTFS
             else -> RuntimePathRole.UNKNOWN
@@ -172,9 +171,8 @@ object RuntimeBoundary {
     fun containerPathAliases(): Set<String> {
         return setOf(
             CONTAINER_WORKSPACE_PATH,
-            CONTAINER_DELIVERY_PATH,
-            CONTAINER_ALBUM_PATH,
-            CONTAINER_EXCHANGE_PATH,
+            "/storage",
+            "/sdcard",
             CONTAINER_DEFAULT_PROJECT_PATH
         )
     }

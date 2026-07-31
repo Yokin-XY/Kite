@@ -4,6 +4,10 @@ import android.content.Context
 import com.kite.app.CardRunTaskCloser
 import com.kite.app.action.KiteActionRouter
 import com.kite.app.action.KiteRecipeActionCoordinator
+import com.kite.app.agent.registration.KiteAgentRegistry
+import com.kite.app.agent.registration.KiteCustomAgentRegistrationStore
+import com.kite.app.agent.config.AgentConfigAdapterRegistry
+import com.kite.app.agent.config.defaultAgentConfigAdapters
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.application.resources.ResourceFeatureGateway
 import com.kite.app.application.browser.BrowserHandoffCoordinator
@@ -12,8 +16,10 @@ import com.kite.app.application.browser.BrowserOpenCoordinator
 import com.kite.app.application.packages.InstallApkCoordinator
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceActionWorkflowCoordinator
+import com.kite.app.application.resources.ResourceVersionCoordinator
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runs.RunExecutionEffectBus
+import com.kite.app.application.runs.RunExecutionEnvironmentProvider
 import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunHistoryGateway
 import com.kite.app.application.runs.RunOrchestrator
@@ -48,7 +54,9 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.platform.resources.AndroidResourceRecipeFactory
 import com.kite.app.platform.resources.AndroidResourceRunGateway
 import com.kite.app.platform.resources.AndroidResourceActionGateway
+import com.kite.app.platform.resources.AndroidResourceVersionGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
+import com.kite.app.platform.runs.AndroidAgentConfigCommandExecutor
 import com.kite.app.platform.runs.AndroidRecipeExecutor
 import com.kite.app.platform.runs.AndroidRecipeActionGateway
 import com.kite.app.platform.runs.AndroidDesktopOpenGateway
@@ -95,30 +103,69 @@ internal class KiteAppGraph private constructor(context: Context) {
         )
     }
     val browserOpenCoordinator: BrowserOpenCoordinator by lazy {
-        BrowserOpenCoordinator(AndroidBrowserOpenGateway(diagnostics, ::resolveRecipe))
+        BrowserOpenCoordinator(
+            AndroidBrowserOpenGateway(
+                diagnostics,
+                ::resolveRecipe,
+                resourceInstallStore::currentEnvironmentId
+            )
+        )
     }
     val installApkCoordinator: InstallApkCoordinator by lazy {
         InstallApkCoordinator(AndroidInstallApkGateway(appContext))
     }
-    val resourceInstallStore: KiteResourceInstallStore by lazy { KiteResourceInstallStore(appContext) }
+    val resourceInstallStore: KiteResourceInstallStore by lazy {
+        // 正式资源事实固定归属原生 PRoot。View 只服务显式事务，不能再切换资源状态域。
+        KiteResourceInstallStore(appContext)
+    }
     val resourceManifestLoader: KiteResourceManifestLoader by lazy { KiteResourceManifestLoader(appContext) }
+    val customAgentRegistrationStore: KiteCustomAgentRegistrationStore by lazy {
+        KiteCustomAgentRegistrationStore(appContext)
+    }
+    val agentConfigAdapterRegistry: AgentConfigAdapterRegistry by lazy {
+        AgentConfigAdapterRegistry(
+            defaultAgentConfigAdapters(
+                appContext,
+                commandExecutor = AndroidAgentConfigCommandExecutor(appContext)
+            )
+        )
+    }
+    val agentRegistry: KiteAgentRegistry by lazy {
+        KiteAgentRegistry(
+            context = appContext,
+            manifestLoader = resourceManifestLoader,
+            installStore = resourceInstallStore,
+            customStore = customAgentRegistrationStore
+        )
+    }
     val recipeLoader: KiteRecipeLoader by lazy { KiteRecipeLoader(appContext, diagnostics) }
     val cardGroupStore: KiteCardGroupStore by lazy { KiteCardGroupStore(appContext) }
     val resourceFeatureGateway: ResourceFeatureGateway by lazy {
         AndroidResourceFeatureGateway.create(
             manifestLoader = resourceManifestLoader,
             installStore = resourceInstallStore,
-            nodeRuntimeInstalled = { ToolchainPackInstaller.isNodeRuntimeInstalled(appContext) }
+            nodeRuntimeInstalled = {
+                resourceInstallStore.isInstalled(ToolchainPackInstaller.RESOURCE_NODEJS)
+            }
         )
     }
     val recipeFeatureGateway: RecipeFeatureGateway by lazy {
-        AndroidRecipeFeatureGateway.create(appContext, recipeLoader, cardGroupStore, createDropZoneManager())
+        AndroidRecipeFeatureGateway.create(
+            appContext,
+            recipeLoader,
+            cardGroupStore,
+            createDropZoneManager(),
+            resourceInstallStore::currentEnvironmentId
+        )
     }
     val runtimeManagementGateway: RuntimeManagementGateway by lazy {
-        AndroidRuntimeManagementGateway(appContext)
+        AndroidRuntimeManagementGateway(appContext, resourceInstallStore::currentEnvironmentId)
     }
     val runtimeBootstrapGateway: RuntimeBootstrapGateway by lazy {
         AndroidRuntimeBootstrapGateway(appContext)
+    }
+    val prootViewInspectionGateway: com.kite.app.application.runtimemanagement.ProotViewInspectionGateway by lazy {
+        com.kite.app.platform.runtimemanagement.AndroidProotViewInspectionGateway(appContext)
     }
     val firstRunOnboardingCoordinator: FirstRunOnboardingCoordinator by lazy {
         FirstRunOnboardingCoordinator(AndroidFirstRunOnboardingStore(appContext))
@@ -136,9 +183,18 @@ internal class KiteAppGraph private constructor(context: Context) {
         )
     }
     val runExecutionEffectBus: RunExecutionEffectBus by lazy { RunExecutionEffectBus() }
-    val runHistoryGateway: RunHistoryGateway by lazy { AndroidRunHistoryGateway() }
+    val runHistoryGateway: RunHistoryGateway by lazy {
+        AndroidRunHistoryGateway(resourceInstallStore::currentEnvironmentId)
+    }
     private val recipeExecutor: AndroidRecipeExecutor by lazy {
-        AndroidRecipeExecutor(appContext, bridgeClient, diagnostics)
+        AndroidRecipeExecutor(
+            appContext,
+            bridgeClient,
+            diagnostics,
+            // 普通卡片、终端与资源运行固定走原生 PRoot。View 环境只能由更新事务等
+            // 显式调用方逐次注入，不能因运行实例带有 environmentId 就全局回到 View。
+            RunExecutionEnvironmentProvider.None
+        )
     }
     val runWindowSurfaceGateway: AndroidRunWindowSurfaceGateway by lazy {
         AndroidRunWindowSurfaceGateway(
@@ -150,7 +206,11 @@ internal class KiteAppGraph private constructor(context: Context) {
     }
     val runLifecycleEventHub: RunLifecycleEventHub by lazy { RunLifecycleEventHub() }
     val recipeActionGateway: AndroidRecipeActionGateway by lazy {
-        AndroidRecipeActionGateway(runOrchestrator, diagnostics)
+        AndroidRecipeActionGateway(
+            runOrchestrator,
+            diagnostics,
+            resourceInstallStore::currentEnvironmentId
+        )
     }
     val runNotificationCoordinator: AndroidRunNotificationCoordinator by lazy {
         AndroidRunNotificationCoordinator(
@@ -163,12 +223,13 @@ internal class KiteAppGraph private constructor(context: Context) {
                 recipeActionGateway.start(recipe, state, state.instanceId).command
             },
             closeRunTask = { instanceId -> CardRunTaskCloser.close(instanceId) },
-            viewBinder = AndroidRunNotificationViewBinder(appContext)
+            viewBinder = AndroidRunNotificationViewBinder(appContext),
+            environmentIdProvider = resourceInstallStore::currentEnvironmentId
         )
     }
     val runOrchestrator: RunOrchestrator by lazy {
         RunOrchestrator(
-            stateGateway = AndroidRunStateGateway(),
+            stateGateway = AndroidRunStateGateway(resourceInstallStore::currentEnvironmentId),
             executor = recipeExecutor,
             effectSink = runExecutionEffectBus,
             lifecycleSink = runLifecycleEventHub,
@@ -184,12 +245,21 @@ internal class KiteAppGraph private constructor(context: Context) {
     }
     val desktopOpenCoordinator: DesktopOpenCoordinator by lazy {
         DesktopOpenCoordinator(
-            AndroidDesktopOpenGateway(appContext, diagnostics, ::resolveRecipe)
+            AndroidDesktopOpenGateway(
+                appContext,
+                diagnostics,
+                ::resolveRecipe,
+                resourceInstallStore::currentEnvironmentId
+            )
         )
     }
     val runtimeOwnerProbeCoordinator: RuntimeOwnerProbeCoordinator by lazy {
         RuntimeOwnerProbeCoordinator(
-            AndroidRuntimeOwnerProbeGateway(runOrchestrator, diagnostics)
+            AndroidRuntimeOwnerProbeGateway(
+                runOrchestrator,
+                diagnostics,
+                resourceInstallStore::currentEnvironmentId
+            )
         )
     }
     val runtimeManagementCoordinator: RuntimeManagementCoordinator by lazy {
@@ -232,7 +302,10 @@ internal class KiteAppGraph private constructor(context: Context) {
                 recipeLoader = recipeLoader,
                 recipeFeatureGateway = recipeFeatureGateway,
                 bridgeClient = bridgeClient,
-                diagnostics = diagnostics
+                diagnostics = diagnostics,
+                versionCoordinator = ResourceVersionCoordinator(
+                    AndroidResourceVersionGateway(bridgeClient)
+                )
             )
         )
     }

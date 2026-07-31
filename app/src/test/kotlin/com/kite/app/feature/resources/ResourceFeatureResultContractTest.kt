@@ -34,11 +34,16 @@ class ResourceFeatureResultContractTest {
                 resourceIds = listOf("base", "target")
             )
         )
+        ResourceFeatureResultContract.send(
+            fragment,
+            ResourceFeatureRequest.CheckInstalledUpdates(listOf("base", "target", "base"))
+        )
 
         assertEquals(
             listOf(
                 ResourceFeatureRequest.OpenInstallPlan("target"),
-                ResourceFeatureRequest.CancelInstallPlan("target", listOf("base", "target"))
+                ResourceFeatureRequest.CancelInstallPlan("target", listOf("base", "target")),
+                ResourceFeatureRequest.CheckInstalledUpdates(listOf("base", "target"))
             ),
             received
         )

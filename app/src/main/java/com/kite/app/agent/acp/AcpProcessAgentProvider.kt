@@ -1,0 +1,528 @@
+package com.kite.app.agent.acp
+
+import com.agentclientprotocol.annotations.UnstableApi
+import com.agentclientprotocol.client.Client
+import com.agentclientprotocol.client.ClientInfo as AcpClientInfo
+import com.agentclientprotocol.client.ClientSession
+import com.agentclientprotocol.common.ClientSessionOperations
+import com.agentclientprotocol.common.Event
+import com.agentclientprotocol.common.SessionCreationParameters
+import com.agentclientprotocol.model.ClientCapabilities as AcpClientCapabilities
+import com.agentclientprotocol.model.AuthCapabilities
+import com.agentclientprotocol.model.AuthMethodId
+import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.EmbeddedResourceResource
+import com.agentclientprotocol.model.FileSystemCapability
+import com.agentclientprotocol.model.Implementation
+import com.agentclientprotocol.model.LATEST_PROTOCOL_VERSION
+import com.agentclientprotocol.model.ModelId
+import com.agentclientprotocol.model.RequestPermissionResponse
+import com.agentclientprotocol.model.SessionConfigId
+import com.agentclientprotocol.model.SessionConfigOptionValue
+import com.agentclientprotocol.model.SessionId
+import com.agentclientprotocol.model.SessionModeId
+import com.agentclientprotocol.model.SessionUpdate
+import com.agentclientprotocol.protocol.Protocol
+import com.agentclientprotocol.transport.StdioTransport
+import com.kite.app.agent.contract.AgentCapabilities
+import com.kite.app.agent.contract.AgentClientEndpoint
+import com.kite.app.agent.contract.AgentConfigValue
+import com.kite.app.agent.contract.AgentConnectionRequest
+import com.kite.app.agent.contract.AgentContent
+import com.kite.app.agent.contract.AgentExistingSessionRequest
+import com.kite.app.agent.contract.AgentMode
+import com.kite.app.agent.contract.AgentNewSessionRequest
+import com.kite.app.agent.contract.AgentOperationResult
+import com.kite.app.agent.contract.AgentProviderInfo
+import com.kite.app.agent.contract.AgentPromptRequest
+import com.kite.app.agent.contract.AgentSessionEvent
+import com.kite.app.agent.contract.AgentSessionListRequest
+import com.kite.app.agent.contract.AgentSessionPage
+import com.kite.app.agent.contract.AgentSessionPhase
+import com.kite.app.agent.contract.AgentSessionSnapshot
+import com.kite.app.agent.contract.AgentTurnResult
+import com.kite.app.agent.contract.AgentTurnUsage
+import com.kite.app.agent.contract.KiteAgentConnection
+import com.kite.app.agent.contract.KiteAgentProvider
+import com.kite.app.agent.process.AgentProcessChannel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+
+/** 一份 ACP stdio provider 的启动描述。产品差异只能停留在这里或更窄的 adapter。 */
+data class AcpProcessProviderDescriptor(
+    val id: String,
+    val name: String,
+    val title: String? = null,
+    val version: String? = null
+)
+
+fun interface AcpProcessChannelLauncher {
+    suspend fun launch(): AgentProcessChannel
+}
+
+/**
+ * 使用官方 ACP SDK 驱动任意 stdio Agent。这里不知道 OpenCode、资源卡或 Android 页面。
+ */
+@OptIn(UnstableApi::class)
+class AcpProcessAgentProvider(
+    private val descriptor: AcpProcessProviderDescriptor,
+    private val launcher: AcpProcessChannelLauncher,
+    private val initializeTimeoutMs: Long = DEFAULT_INITIALIZE_TIMEOUT_MS,
+    private val diagnosticSink: (String) -> Unit = {},
+    private val sessionDelete: (suspend (sessionId: String) -> AgentOperationResult<Unit>)? = null
+) : KiteAgentProvider {
+    override val id: String = descriptor.id
+
+    override suspend fun connect(
+        request: AgentConnectionRequest,
+        client: AgentClientEndpoint
+    ): AgentOperationResult<KiteAgentConnection> {
+        val process = try {
+            launcher.launch()
+        } catch (error: Throwable) {
+            return AgentOperationResult.Failure("无法启动 ${descriptor.name}: ${error.message}", error)
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineName("Acp-${descriptor.id}"))
+        val transport = StdioTransport(
+            parentScope = scope,
+            ioDispatcher = Dispatchers.IO,
+            input = process.stdoutLines,
+            output = process::writeLine,
+            name = "${descriptor.id}-stdio"
+        )
+        val protocol = Protocol(scope, transport)
+        val acpClient = Client(protocol)
+
+        scope.launch(Dispatchers.IO + CoroutineName("${descriptor.id}-stderr")) {
+            process.stderrLines.collect(diagnosticSink)
+        }
+
+        return try {
+            protocol.start()
+            val agentInfo = withTimeout(initializeTimeoutMs) {
+                acpClient.initialize(
+                    AcpClientInfo(
+                        protocolVersion = LATEST_PROTOCOL_VERSION,
+                        capabilities = request.capabilities.toAcp(),
+                        implementation = Implementation(
+                            name = request.client.name,
+                            version = request.client.version,
+                            title = request.client.title
+                        )
+                    )
+                )
+            }
+            val mappedCapabilities = AcpAgentMapper.capabilities(
+                agentInfo.capabilities,
+                agentInfo.authMethods
+            ).let { capabilities ->
+                if (sessionDelete == null) capabilities else capabilities.copy(
+                    sessions = capabilities.sessions.copy(delete = true)
+                )
+            }
+            AgentOperationResult.Success(
+                AcpProcessAgentConnection(
+                    descriptor = descriptor,
+                    process = process,
+                    scope = scope,
+                    protocol = protocol,
+                    client = acpClient,
+                    endpoint = client,
+                    provider = AgentProviderInfo(
+                        id = descriptor.id,
+                        name = agentInfo.implementation?.name ?: descriptor.name,
+                        version = agentInfo.implementation?.version ?: descriptor.version,
+                        title = agentInfo.implementation?.title ?: descriptor.title
+                    ),
+                    capabilities = mappedCapabilities,
+                    sessionDelete = sessionDelete
+                )
+            )
+        } catch (error: Throwable) {
+            protocol.close()
+            runCatching { process.stop() }
+            scope.cancel("ACP initialize failed", error)
+            AgentOperationResult.Failure("${descriptor.name} ACP 初始化失败: ${error.message}", error)
+        }
+    }
+
+    private fun com.kite.app.agent.contract.AgentClientCapabilities.toAcp(): AcpClientCapabilities =
+        AcpClientCapabilities(
+            fs = if (readTextFiles || writeTextFiles) {
+                FileSystemCapability(readTextFile = readTextFiles, writeTextFile = writeTextFiles)
+            } else {
+                null
+            },
+            terminal = terminals,
+            auth = if (authentication) AuthCapabilities() else null
+        )
+
+    companion object {
+        const val DEFAULT_INITIALIZE_TIMEOUT_MS = 20_000L
+    }
+}
+
+@OptIn(UnstableApi::class)
+private class AcpProcessAgentConnection(
+    private val descriptor: AcpProcessProviderDescriptor,
+    private val process: AgentProcessChannel,
+    private val scope: CoroutineScope,
+    private val protocol: Protocol,
+    private val client: Client,
+    private val endpoint: AgentClientEndpoint,
+    override val provider: AgentProviderInfo,
+    override val capabilities: AgentCapabilities,
+    private val sessionDelete: (suspend (sessionId: String) -> AgentOperationResult<Unit>)?
+) : KiteAgentConnection {
+    private val sessions = ConcurrentHashMap<String, ClientSession>()
+    private val disconnecting = AtomicBoolean(false)
+
+    init {
+        scope.launch(Dispatchers.IO + CoroutineName("${descriptor.id}-process-exit")) {
+            val exitCode = process.awaitExit()
+            if (!disconnecting.get()) {
+                sessions.keys.forEach { sessionId ->
+                    endpoint.eventSink.onEvent(
+                        sessionId,
+                        AgentSessionEvent.LifecycleChanged(
+                            AgentSessionPhase.Failed,
+                            "${descriptor.name} ACP 进程已退出，exitCode=$exitCode"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    override suspend fun newSession(request: AgentNewSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
+        createSession(request.cwd, request.additionalDirectories) {
+            client.newSession(SessionCreationParameters(request.cwd, emptyList(), request.additionalDirectories)) {
+                    sessionId, response ->
+                AcpClientOperations(sessionId.value, endpoint)
+            }
+        }
+
+    override suspend fun loadSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> {
+        if (!capabilities.sessions.load) return AgentOperationResult.Unsupported("session/load")
+        return createSession(request.cwd, request.additionalDirectories, request.sessionId) {
+            client.loadSession(
+                SessionId(request.sessionId),
+                SessionCreationParameters(request.cwd, emptyList(), request.additionalDirectories)
+            ) { sessionId, _ -> AcpClientOperations(sessionId.value, endpoint) }
+        }
+    }
+
+    override suspend fun listSessions(request: AgentSessionListRequest): AgentOperationResult<AgentSessionPage> {
+        if (!capabilities.sessions.list) return AgentOperationResult.Unsupported("session/list")
+        return operation("列出会话") {
+            val sessions = client.listSessions(request.cwd, emptyList()).toList()
+            AgentSessionPage(sessions = sessions.map(AcpAgentMapper::sessionSummary))
+        }
+    }
+
+    override suspend fun resumeSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> {
+        if (!capabilities.sessions.resume) return AgentOperationResult.Unsupported("session/resume")
+        return createSession(request.cwd, request.additionalDirectories, request.sessionId) {
+            client.resumeSession(
+                SessionId(request.sessionId),
+                SessionCreationParameters(request.cwd, emptyList(), request.additionalDirectories)
+            ) { sessionId, _ -> AcpClientOperations(sessionId.value, endpoint) }
+        }
+    }
+
+    override suspend fun forkSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> {
+        if (!capabilities.sessions.fork) return AgentOperationResult.Unsupported("session/fork")
+        return createSession(request.cwd, request.additionalDirectories) {
+            client.forkSession(
+                SessionId(request.sessionId),
+                SessionCreationParameters(request.cwd, emptyList(), request.additionalDirectories)
+            ) { sessionId, _ -> AcpClientOperations(sessionId.value, endpoint) }
+        }
+    }
+
+    override suspend fun closeSession(sessionId: String): AgentOperationResult<Unit> {
+        if (!capabilities.sessions.close) return AgentOperationResult.Unsupported("session/close")
+        val session = sessions[sessionId] ?: return AgentOperationResult.Failure("会话不存在: $sessionId")
+        return operation("关闭会话") {
+            session.close()
+            sessions.remove(sessionId)
+            endpoint.eventSink.onEvent(
+                sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Closed)
+            )
+        }
+    }
+
+    override suspend fun deleteSession(sessionId: String): AgentOperationResult<Unit> {
+        val delete = sessionDelete ?: return AgentOperationResult.Unsupported("session/delete")
+        return when (val deleted = delete(sessionId)) {
+            is AgentOperationResult.Success -> {
+                sessions.remove(sessionId)
+                endpoint.eventSink.onEvent(
+                    sessionId,
+                    AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Closed, "Agent 会话已删除")
+                )
+                deleted
+            }
+            is AgentOperationResult.Failure -> deleted
+            is AgentOperationResult.Unsupported -> deleted
+        }
+    }
+
+    override suspend fun setMode(sessionId: String, modeId: String): AgentOperationResult<Unit> {
+        val session = sessions[sessionId] ?: return AgentOperationResult.Failure("会话不存在: $sessionId")
+        if (!session.modesSupported) return AgentOperationResult.Unsupported("session/set_mode")
+        if (session.availableModes.none { it.id.value == modeId }) {
+            return AgentOperationResult.Failure("Agent 未提供该工作模式")
+        }
+        return operation("切换工作模式") {
+            session.setMode(SessionModeId(modeId))
+            endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.CurrentModeChanged(modeId))
+            Unit
+        }
+    }
+
+    override suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult> {
+        val session = sessions[request.sessionId]
+            ?: return AgentOperationResult.Failure("会话不存在: ${request.sessionId}")
+        endpoint.eventSink.onEvent(
+            request.sessionId,
+            AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting)
+        )
+        return try {
+            var result: AgentTurnResult? = null
+            session.prompt(request.content.map(AgentContent::toAcp)).collect { event ->
+                when (event) {
+                    is Event.SessionUpdateEvent -> endpoint.eventSink.onEvent(
+                        request.sessionId,
+                        AcpAgentMapper.sessionEvent(event.update)
+                    )
+                    is Event.PromptResponseEvent -> result = AgentTurnResult(
+                        stopReason = AcpAgentMapper.stopReason(event.response.stopReason),
+                        userMessageId = event.response.userMessageId?.value,
+                        usage = event.response.usage?.let { usage ->
+                            AgentTurnUsage(
+                                inputTokens = usage.inputTokens,
+                                outputTokens = usage.outputTokens,
+                                totalTokens = usage.totalTokens,
+                                thoughtTokens = usage.thoughtTokens,
+                                cachedReadTokens = usage.cachedReadTokens,
+                                cachedWriteTokens = usage.cachedWriteTokens
+                            )
+                        }
+                    )
+                }
+            }
+            val resolved = result ?: error("ACP prompt 没有返回 stop reason")
+            endpoint.eventSink.onEvent(
+                request.sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready)
+            )
+            AgentOperationResult.Success(resolved)
+        } catch (cancelled: CancellationException) {
+            endpoint.eventSink.onEvent(
+                request.sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Cancelled)
+            )
+            throw cancelled
+        } catch (error: Throwable) {
+            endpoint.eventSink.onEvent(
+                request.sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Failed, error.message)
+            )
+            AcpAgentMapper.failure("发送消息", error)
+        }
+    }
+
+    override suspend fun setConfiguration(
+        sessionId: String,
+        configId: String,
+        value: AgentConfigValue
+    ): AgentOperationResult<List<com.kite.app.agent.contract.AgentConfigOption>> {
+        val session = sessions[sessionId] ?: return AgentOperationResult.Failure("会话不存在: $sessionId")
+        if (configId == ACP_SESSION_MODEL_CONFIG_ID) {
+            if (!session.modelsSupported) return AgentOperationResult.Unsupported("session/set_model")
+            val modelId = (value as? AgentConfigValue.Select)?.value
+                ?: return AgentOperationResult.Failure("模型配置必须是单选值")
+            if (session.availableModels.none { it.modelId.value == modelId }) {
+                return AgentOperationResult.Failure("Agent 未提供该模型")
+            }
+            return operation("切换模型") {
+                session.setModel(ModelId(modelId))
+                session.configuration(modelId)
+            }
+        }
+        if (!session.configOptionsSupported) return AgentOperationResult.Unsupported("session/set_config_option")
+        return operation("更新会话配置") {
+            val acpValue = when (value) {
+                is AgentConfigValue.Select -> SessionConfigOptionValue.StringValue(value.value)
+                is AgentConfigValue.Toggle -> SessionConfigOptionValue.BoolValue(value.value)
+            }
+            val response = session.setConfigOption(SessionConfigId(configId), acpValue)
+            session.configuration(configOptions = AcpAgentMapper.configOptions(response.configOptions))
+        }
+    }
+
+    override suspend fun authenticate(methodId: String): AgentOperationResult<Unit> {
+        if (capabilities.authentication.methods.none { it.id == methodId }) {
+            return AgentOperationResult.Unsupported("authenticate:$methodId")
+        }
+        return operation("Agent 认证") {
+            client.authenticate(AuthMethodId(methodId))
+            Unit
+        }
+    }
+
+    override suspend fun logout(): AgentOperationResult<Unit> {
+        if (!capabilities.authentication.logout) return AgentOperationResult.Unsupported("logout")
+        return operation("Agent 退出登录") {
+            client.logout()
+            Unit
+        }
+    }
+
+    override suspend fun cancel(sessionId: String): AgentOperationResult<Unit> {
+        val session = sessions[sessionId] ?: return AgentOperationResult.Failure("会话不存在: $sessionId")
+        endpoint.eventSink.onEvent(
+            sessionId,
+            AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Cancelling)
+        )
+        return operation("取消生成") {
+            session.cancel()
+            endpoint.eventSink.onEvent(
+                sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Cancelled)
+            )
+        }
+    }
+
+    override suspend fun disconnect() {
+        if (!disconnecting.compareAndSet(false, true)) return
+        sessions.keys.forEach { sessionId ->
+            endpoint.eventSink.onEvent(
+                sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Closed)
+            )
+        }
+        sessions.clear()
+        protocol.close()
+        process.stop()
+        scope.cancel("ACP disconnected")
+    }
+
+    private suspend fun createSession(
+        cwd: String,
+        additionalDirectories: List<String>,
+        requestedSessionId: String? = null,
+        create: suspend () -> ClientSession
+    ): AgentOperationResult<AgentSessionSnapshot> {
+        requestedSessionId?.let { sessionId ->
+            endpoint.eventSink.onEvent(
+                sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Preparing)
+            )
+        }
+        return operation("创建会话") {
+            val session = create()
+            val sessionId = session.sessionId.value
+            sessions[sessionId] = session
+            val snapshot = session.snapshot()
+            endpoint.eventSink.onEvent(
+                sessionId,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready, "准备就绪")
+            )
+            snapshot
+        }
+    }
+
+    private fun ClientSession.snapshot(): AgentSessionSnapshot = AgentSessionSnapshot(
+        id = sessionId.value,
+        configuration = configuration(),
+        modes = if (modesSupported) {
+            availableModes.map { mode -> AgentMode(mode.id.value, mode.name, mode.description) }
+        } else {
+            emptyList()
+        },
+        currentModeId = if (modesSupported) currentMode.value.value else null
+    )
+
+    private fun ClientSession.configuration(
+        modelId: String? = null,
+        configOptions: List<com.kite.app.agent.contract.AgentConfigOption> =
+            if (configOptionsSupported) AcpAgentMapper.configOptions(this.configOptions.value) else emptyList()
+    ): List<com.kite.app.agent.contract.AgentConfigOption> {
+        if (!modelsSupported) return configOptions
+        val current = modelId ?: currentModel.value.value
+        return listOf(AcpAgentMapper.modelOption(current, availableModels)) +
+            configOptions.filterNot { it.category == com.kite.app.agent.contract.AgentConfigCategory.Model }
+    }
+
+    private suspend fun <T> operation(label: String, block: suspend () -> T): AgentOperationResult<T> = try {
+        AgentOperationResult.Success(block())
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        AcpAgentMapper.failure(label, error)
+    }
+}
+
+internal const val ACP_SESSION_MODEL_CONFIG_ID = "acp.session.model"
+
+@OptIn(UnstableApi::class)
+private class AcpClientOperations(
+    private val sessionId: String,
+    private val endpoint: AgentClientEndpoint
+) : ClientSessionOperations {
+    override suspend fun requestPermissions(
+        toolCall: SessionUpdate.ToolCallUpdate,
+        permissions: List<com.agentclientprotocol.model.PermissionOption>,
+        _meta: kotlinx.serialization.json.JsonElement?
+    ): RequestPermissionResponse {
+        val request = com.agentclientprotocol.model.RequestPermissionRequest(
+            sessionId = SessionId(sessionId),
+            toolCall = toolCall,
+            options = permissions,
+            _meta = _meta
+        )
+        val outcome = endpoint.permissionHandler.request(AcpAgentMapper.permissionRequest(request))
+        return RequestPermissionResponse(AcpAgentMapper.permissionOutcome(outcome), _meta)
+    }
+
+    override suspend fun notify(
+        notification: SessionUpdate,
+        _meta: kotlinx.serialization.json.JsonElement?
+    ) {
+        endpoint.eventSink.onEvent(sessionId, AcpAgentMapper.sessionEvent(notification))
+    }
+}
+
+@OptIn(UnstableApi::class)
+private fun AgentContent.toAcp(): ContentBlock = when (this) {
+    is AgentContent.Text -> ContentBlock.Text(text = text)
+    is AgentContent.Image -> ContentBlock.Image(data = data, mimeType = mimeType, uri = uri)
+    is AgentContent.Audio -> ContentBlock.Audio(data = data, mimeType = mimeType)
+    is AgentContent.ResourceLink -> ContentBlock.ResourceLink(
+        name = name,
+        uri = uri,
+        description = description,
+        mimeType = mimeType,
+        size = size,
+        title = title
+    )
+    is AgentContent.EmbeddedText -> ContentBlock.Resource(
+        EmbeddedResourceResource.TextResourceContents(text = text, uri = uri, mimeType = mimeType)
+    )
+    is AgentContent.EmbeddedBlob -> ContentBlock.Resource(
+        EmbeddedResourceResource.BlobResourceContents(blob = data, uri = uri, mimeType = mimeType)
+    )
+}

@@ -366,13 +366,13 @@ object AssetExtractor {
         val rootfsAsset = findFirstExistingAsset(context, profile.rootfsAssetCandidates)
 
         if (rootfsAsset == null) {
-            Logger.i("AssetExtractor", "APK 中未找到 ${profile.label} 的 rootfs 资源，尝试从 exchange 导入")
-            val exchangeSource = resolveExchangeRootfsSource(context, profile)
-            if (exchangeSource != null) {
-                importRootfsFromExchange(exchangeSource, destinationDir, readyMarker, profile, startedAt)
+            Logger.i("AssetExtractor", "APK 中未找到 ${profile.label} 的 rootfs 资源，尝试从安卓下载目录导入")
+            val importSource = resolveDownloadedRootfsSource(profile)
+            if (importSource != null) {
+                importDownloadedRootfs(importSource, destinationDir, readyMarker, profile, startedAt)
                 return
             }
-            val message = "APK 中未找到 ${profile.label} 的 rootfs 资源，且 exchange 中无可用源"
+            val message = "APK 中未找到 ${profile.label} 的 rootfs 资源，且安卓下载目录中无可用源"
             publishRootfsProgress(
                 phase = RootfsExtractionPhase.FAILED,
                 sourceLabel = profile.label,
@@ -722,25 +722,18 @@ object AssetExtractor {
         """.trimIndent()
     }
 
-    private fun resolveExchangeRootfsSource(context: Context, profile: BaseImageProfile): File? {
-        val exchangeDir = ExternalExchangeManager.ensureExchangeDir(context)
-        val candidateTgz = File(exchangeDir, "${profile.imageDirName}-rootfs.tgz")
-        if (candidateTgz.exists() && candidateTgz.length() > 0) return candidateTgz
-        val candidate = File(exchangeDir, "${profile.imageDirName}-rootfs.tar.gz")
-        if (candidate.exists() && candidate.length() > 0) return candidate
-        val candidateTar = File(exchangeDir, "${profile.imageDirName}-rootfs.tar")
-        if (candidateTar.exists() && candidateTar.length() > 0) return candidateTar
-        return null
-    }
+    private fun resolveDownloadedRootfsSource(profile: BaseImageProfile): File? =
+        com.kite.app.foundation.storage.KiteManagedStorage.rootfsImportCandidates(profile.imageDirName)
+            .firstOrNull { it.exists() && it.length() > 0 }
 
-    private fun importRootfsFromExchange(
+    private fun importDownloadedRootfs(
         source: File,
         destinationDir: File,
         readyMarker: File,
         profile: BaseImageProfile,
         startedAt: Long
     ) {
-        Logger.i("AssetExtractor", "从 exchange 导入 rootfs: ${source.absolutePath} -> ${destinationDir.absolutePath}")
+        Logger.i("AssetExtractor", "从安卓下载目录导入 rootfs: ${source.absolutePath} -> ${destinationDir.absolutePath}")
         deleteRecursively(destinationDir)
         destinationDir.mkdirs()
         try {

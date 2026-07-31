@@ -5,6 +5,8 @@ import com.kite.app.R
 
 /** 设置首页的稳定分组。分组表达用户目标，不表达底层实现模块。 */
 internal enum class SettingsSection {
+    // Engineering 保留给内部直达与验收实现，不进入设置首页目录。
+    Engineering,
     Personalization,
     Usage,
     System,
@@ -30,6 +32,7 @@ internal enum class SettingsMaturity {
 
 /** Feature 层的类型化目标，由 Shell 映射到具体 AppDestination。 */
 internal enum class SettingsCategoryDestination {
+    Engineering,
     AppearanceAndLanguage,
     AppBehavior,
     TerminalAndWorkbench,
@@ -48,6 +51,7 @@ internal data class SettingsCategorySpec(
     @StringRes val titleRes: Int,
     @StringRes val summaryRes: Int,
     val destination: SettingsCategoryDestination,
+    val showOnSettingsHome: Boolean = true,
 )
 
 internal object SettingsVisibilityPolicy {
@@ -63,6 +67,16 @@ internal object SettingsVisibilityPolicy {
  */
 internal object SettingsCatalog {
     val categories: List<SettingsCategorySpec> = listOf(
+        SettingsCategorySpec(
+            id = "engineering_runtime",
+            section = SettingsSection.Engineering,
+            kind = SettingsEntryKind.Navigation,
+            maturity = SettingsMaturity.DebugOnly,
+            titleRes = R.string.settings_category_engineering_title,
+            summaryRes = R.string.settings_category_engineering_summary,
+            destination = SettingsCategoryDestination.Engineering,
+            showOnSettingsHome = false,
+        ),
         SettingsCategorySpec(
             id = "appearance_language",
             section = SettingsSection.Personalization,
@@ -138,6 +152,6 @@ internal object SettingsCatalog {
     )
 
     fun visibleCategories(isDebugBuild: Boolean): List<SettingsCategorySpec> = categories.filter {
-        SettingsVisibilityPolicy.isVisible(it.maturity, isDebugBuild)
+        it.showOnSettingsHome && SettingsVisibilityPolicy.isVisible(it.maturity, isDebugBuild)
     }
 }

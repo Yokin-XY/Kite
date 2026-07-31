@@ -5,6 +5,7 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
+import com.kite.app.run.CardRunAgentConnectionStatus
 import com.kite.app.run.CardRunWindowIds
 import java.net.URI
 
@@ -26,6 +27,13 @@ internal sealed interface RunSurfaceContent {
     data class Terminal(val sessionId: String?) : RunSurfaceContent
     data class Web(val url: String?) : RunSurfaceContent
     data class X11(val display: String?, val socketPath: String?) : RunSurfaceContent
+    data class Agent(
+        val agentId: String? = null,
+        val providerId: String?,
+        val sessionId: String?,
+        val connectionStatus: CardRunAgentConnectionStatus?,
+        val statusMessage: String?
+    ) : RunSurfaceContent
     data object InstallWizard : RunSurfaceContent
 }
 
@@ -34,6 +42,7 @@ internal enum class RunSurfaceWindowKind {
     Terminal,
     Web,
     X11,
+    Agent,
     InstallWizard
 }
 
@@ -102,6 +111,13 @@ internal object RunSurfaceProjector {
             CardRunSurface.Terminal -> RunSurfaceContent.Terminal(contentState.terminalSessionId)
             CardRunSurface.Web -> RunSurfaceContent.Web(contentState.nextActionUrl)
             CardRunSurface.X11 -> RunSurfaceContent.X11(contentState.x11Display, contentState.x11SocketPath)
+            CardRunSurface.Agent -> RunSurfaceContent.Agent(
+                agentId = contentState.agentId,
+                providerId = contentState.agentBinding?.providerId,
+                sessionId = contentState.agentBinding?.sessionId,
+                connectionStatus = contentState.agentBinding?.status,
+                statusMessage = contentState.agentBinding?.statusMessage
+            )
             CardRunSurface.InstallWizard -> RunSurfaceContent.InstallWizard
             CardRunSurface.Summary -> RunReportPresenter.project(recipe, contentState)
         }
@@ -202,6 +218,19 @@ internal object RunSurfaceProjector {
                 surface = CardRunSurface.X11
             )
         }
+        if (parent.agentBinding != null ||
+            (parent.surface == CardRunSurface.Agent && !selectedManualWindow)
+        ) {
+            val stepIndex = stepIndexFor(recipe, parent, KiteRecipe.STEP_AGENT)
+            val source = replayByStep[stepIndex]?.takeIf { it.surface == CardRunSurface.Agent } ?: parent
+            fixed[CardRunWindowIds.workflow(stepIndex, CardRunSurface.Agent)] = workflowSource(
+                recipe = recipe,
+                parent = parent,
+                source = source,
+                stepIndex = stepIndex,
+                surface = CardRunSurface.Agent
+            )
+        }
         if (parent.surface == CardRunSurface.InstallWizard && !selectedManualWindow) {
             fixed[INSTALL_WIZARD_WINDOW_ID] = WindowSource(
                 windowId = INSTALL_WIZARD_WINDOW_ID,
@@ -260,6 +289,7 @@ internal object RunSurfaceProjector {
                 title = when (parent.surface) {
                     CardRunSurface.Report,
                     CardRunSurface.Summary -> "执行摘要"
+                    CardRunSurface.Agent -> "Agent 会话"
                     else -> parent.surface.label
                 },
                 subtitle = parent.status.label,
@@ -293,6 +323,7 @@ internal object RunSurfaceProjector {
                 CardRunSurface.Terminal -> "终端"
                 CardRunSurface.Web -> "网页"
                 CardRunSurface.X11 -> "X11"
+                CardRunSurface.Agent -> "Agent 会话"
                 CardRunSurface.InstallWizard -> "安装向导"
                 CardRunSurface.Summary -> "执行摘要"
             },
@@ -304,6 +335,9 @@ internal object RunSurfaceProjector {
                     "终端会话"
                 }
                 CardRunSurface.X11 -> contentState.x11Display?.let { "DISPLAY=$it" } ?: contentState.status.label
+                CardRunSurface.Agent -> contentState.agentBinding?.statusMessage
+                    ?: contentState.agentBinding?.status?.name
+                    ?: contentState.status.label
                 else -> contentState.status.label
             },
             state = source,
@@ -348,6 +382,8 @@ internal object RunSurfaceProjector {
             nextActionUrl = nextActionUrl,
             x11Display = x11Display,
             x11SocketPath = x11SocketPath,
+            agentId = agentId,
+            agentBinding = agentBinding,
             createdAt = createdAt,
             updatedAt = updatedAt
         )
@@ -395,6 +431,7 @@ internal object RunSurfaceProjector {
         CardRunSurface.Terminal -> RunSurfaceWindowKind.Terminal
         CardRunSurface.Web -> RunSurfaceWindowKind.Web
         CardRunSurface.X11 -> RunSurfaceWindowKind.X11
+        CardRunSurface.Agent -> RunSurfaceWindowKind.Agent
         CardRunSurface.InstallWizard -> RunSurfaceWindowKind.InstallWizard
         CardRunSurface.Report,
         CardRunSurface.Summary -> RunSurfaceWindowKind.Report

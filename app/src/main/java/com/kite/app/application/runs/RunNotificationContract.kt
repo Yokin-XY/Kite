@@ -121,6 +121,7 @@ internal object RunNotificationProjector {
         KiteRecipe.STEP_TERMINAL -> "终端"
         KiteRecipe.STEP_OPEN_WEB -> "网页"
         KiteRecipe.STEP_X11 -> "X11"
+        KiteRecipe.STEP_AGENT -> "Agent 会话"
         KiteRecipe.STEP_ANDROID_ACTION -> "安卓动作"
         else -> "执行"
     }

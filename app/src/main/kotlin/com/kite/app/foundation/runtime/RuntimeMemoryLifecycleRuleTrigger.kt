@@ -4,8 +4,10 @@ import android.content.Context
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import java.util.LinkedHashMap
+import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -112,6 +114,7 @@ object RuntimeMemoryLifecycleRuleTrigger {
         now: Long = System.currentTimeMillis()
     ): RuntimeMemoryLifecycleRuleSnapshot {
         val appContext = context.applicationContext
+        WarmProotExecutionCoordinator.updateFrom(snapshot)
         if (!config.enabled) {
             val records = mutableListOf(
                 RuntimeMemoryLifecycleRuleRecord(
@@ -577,6 +580,11 @@ data class RuntimeProcessTableResourceSamplerDecision(
     val reason: String
 )
 
+internal data class RuntimeProcessTableSamplerExecutionPlan(
+    val admission: ProotJobAdmissionRequest,
+    val job: WarmProotJobRequest,
+)
+
 data class RuntimeProcessTableResourceSamplerSnapshot(
     val enabled: Boolean = true,
     val mode: String = "standard_command_on_read_plus_low_density_timer_and_pressure",
@@ -638,6 +646,9 @@ object RuntimeProcessTableResourceSampler : RuntimeProcessResourceSampler {
     ): String? {
         return resourceSamplingReason(snapshot, policy, now, lastRequestAtMs)
     }
+
+    internal fun executionPlanForTests(reason: String, jobId: String): RuntimeProcessTableSamplerExecutionPlan =
+        executionPlan(reason, jobId)
 
     override fun requestIfNeeded(
         context: Context,
@@ -708,31 +719,15 @@ object RuntimeProcessTableResourceSampler : RuntimeProcessResourceSampler {
         requestedAt: Long
     ) {
         val result = runCatching {
-            val config = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
+            val jobId = WarmProotExecutionCoordinator.nextJobId("resource-sampler")
+            val plan = executionPlan(reason, jobId)
+            val execution = WarmProotExecutionCoordinator.executeBlocking(
                 context = context,
-                workingDirectory = "/workspace",
-                argv = listOf("/workspace/.kf/system/bin/kf-resource-sampler", "--update-table")
+                admissionRequest = plan.admission,
+                jobRequest = plan.job,
+                independentFallback = { executeIndependent(context, jobId) },
             )
-            val process = ProcessBuilder(config.command)
-                .redirectErrorStream(true)
-                .apply { environment().putAll(config.env) }
-                .start()
-            val output = process.inputStream.bufferedReader().use { it.readText() }
-            val finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            if (!finished) {
-                process.destroy()
-                RuntimeProcessTableSamplerRunResult(
-                    exitCode = -1,
-                    result = "timeout",
-                    output = output
-                )
-            } else {
-                RuntimeProcessTableSamplerRunResult(
-                    exitCode = process.exitValue(),
-                    result = if (process.exitValue() == 0) "executed" else "failed",
-                    output = output
-                )
-            }
+            execution.toSamplerResult()
         }.getOrElse { error ->
             RuntimeProcessTableSamplerRunResult(
                 exitCode = -1,
@@ -751,11 +746,94 @@ object RuntimeProcessTableResourceSampler : RuntimeProcessResourceSampler {
                 lastOutputPreview = result.output.take(180)
             )
         }
-        if (result.result == "executed") {
-            ContainerProcessStore.refresh(context)
-        } else {
-            Logger.i(LOG_TAG, "resource sampler ${result.result}: reason=$reason exit=${result.exitCode} output=${result.output.take(180)}")
+        Logger.i(
+            LOG_TAG,
+            "resource sampler ${result.result}: reason=$reason exit=${result.exitCode} output=${result.output.take(180)}"
+        )
+        if (result.result == "executed") ContainerProcessStore.refresh(context)
+    }
+
+    private fun executionPlan(reason: String, jobId: String) = RuntimeProcessTableSamplerExecutionPlan(
+        admission = ProotJobAdmissionRequest(
+            jobId = jobId,
+            lane = RuntimeLaneKind.PROBE,
+            access = ProotJobAccess.SHARED_WRITE,
+            pressureEssential = reason == "memory_pressure_resource_sample",
+            waitTimeoutMs = 5_000L,
+        ),
+        job = WarmProotJobRequest(
+            jobId = jobId,
+            argv = RESOURCE_SAMPLER_ARGV,
+            workingDirectory = "/workspace",
+            timeoutMs = TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS),
+            maxOutputBytesPerStream = MAX_OUTPUT_BYTES,
+        ),
+    )
+
+    private fun executeIndependent(context: Context, jobId: String): WarmProotJobExecution {
+        val config = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
+            context = context,
+            workingDirectory = "/workspace",
+            argv = RESOURCE_SAMPLER_ARGV,
+        )
+        val process = ProcessBuilder(config.command)
+            .redirectErrorStream(false)
+            .apply { environment().putAll(config.env) }
+            .start()
+        val stdout = ByteArrayOutputStream()
+        val stderr = ByteArrayOutputStream()
+        val stdoutReader = boundedReader(process.inputStream, stdout)
+        val stderrReader = boundedReader(process.errorStream, stderr)
+        val finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroy()
+            if (!process.waitFor(500L, TimeUnit.MILLISECONDS)) process.destroyForcibly()
         }
+        stdoutReader.join(1_000L)
+        stderrReader.join(1_000L)
+        return WarmProotJobExecution(
+            jobId = jobId,
+            started = true,
+            exitCode = if (finished) process.exitValue() else -1,
+            termSignal = 0,
+            timedOut = !finished,
+            stdoutTail = stdout.toByteArray(),
+            stderrTail = stderr.toByteArray(),
+        )
+    }
+
+    private fun boundedReader(
+        input: java.io.InputStream,
+        output: ByteArrayOutputStream,
+    ) = thread(start = true, isDaemon = true, name = "RuntimeResourceSamplerReader") {
+        input.use { source ->
+            val buffer = ByteArray(2_048)
+            while (true) {
+                val count = source.read(buffer)
+                if (count < 0) break
+                val remaining = MAX_OUTPUT_BYTES - output.size()
+                if (remaining > 0) output.write(buffer, 0, minOf(count, remaining))
+            }
+        }
+    }
+
+    private fun WarmProotPoolExecution.toSamplerResult(): RuntimeProcessTableSamplerRunResult {
+        val completed = execution
+        val output = if (completed == null) {
+            reason
+        } else {
+            (completed.stdoutTail + completed.stderrTail).toString(Charsets.UTF_8)
+        }
+        return RuntimeProcessTableSamplerRunResult(
+            exitCode = completed?.exitCode ?: -1,
+            result = when {
+                route == WarmProotExecutionRoute.ADMISSION_REJECTED -> "deferred"
+                completed?.timedOut == true -> "timeout"
+                completed?.succeeded == true -> "executed"
+                else -> "failed"
+            },
+            output = "route=${route.name.lowercase()} $output".take(MAX_OUTPUT_BYTES),
+        )
     }
 
     private fun recordSkipped(
@@ -778,6 +856,10 @@ object RuntimeProcessTableResourceSampler : RuntimeProcessResourceSampler {
         val result: String,
         val output: String
     )
+
+    private val RESOURCE_SAMPLER_ARGV =
+        listOf("/workspace/.kf/system/bin/kf-resource-sampler", "--update-table")
+    private const val MAX_OUTPUT_BYTES = 64 * 1024
 }
 
 private fun RuntimeHealthSnapshot.hasResourceSamplingTargets(): Boolean {

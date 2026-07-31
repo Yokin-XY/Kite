@@ -90,6 +90,23 @@ internal abstract class ResourceFeatureFragment : Fragment() {
         }
     }
 
+    protected fun submitExplicit(
+        resourceId: String,
+        intent: KiteResourceActionIntent,
+        source: KiteResourceActionSource,
+        onAccepted: (KiteResourceActionIntent) -> Unit,
+        onUnavailable: () -> Unit
+    ) {
+        onAccepted(intent)
+        viewLifecycleOwner.lifecycleScope.launch {
+            when (val effect = controller.dispatch(ResourceFeatureAction.Explicit(resourceId, intent, source))) {
+                is ResourceFeatureEffect.ActionRequested -> send(ResourceFeatureRequest.SubmitAction(effect.request))
+                is ResourceFeatureEffect.ActionUnavailable -> onUnavailable()
+                null -> Unit
+            }
+        }
+    }
+
     protected fun send(request: ResourceFeatureRequest) {
         ResourceFeatureResultContract.send(this, request)
     }

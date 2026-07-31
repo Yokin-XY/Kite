@@ -60,6 +60,7 @@ data class ProotLaunchPlan(
     val loaderPath: String,
     val loader32Path: String,
     val prootRuntime: JSONObject = JSONObject(),
+    val filesystemView: ProotViewBinding? = null,
     val telemetryMode: String = TELEMETRY_DEBUG_JSONL_LIFECYCLE_V0,
     val telemetryFuture: String = TELEMETRY_OUTLET_FUTURE,
     val createdAtUnixMs: Long = System.currentTimeMillis()
@@ -111,6 +112,7 @@ data class ProotLaunchPlan(
                 .put("loader32Path", loader32Path)
                 .put("proot", prootRuntime)
             )
+            .put("filesystemView", filesystemView?.toJson() ?: JSONObject.NULL)
             .put("telemetry", JSONObject()
                 .put("mode", telemetryMode)
                 .put("requestedMode", TELEMETRY_DEBUG_JSONL_LIFECYCLE_V0)

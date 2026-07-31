@@ -31,18 +31,42 @@ internal class RunOrchestrator(
     fun start(request: RunStartRequest): RunCommandResult {
         startRejection()?.let { return it }
         val dispatch = synchronized(lock) {
-            stateGateway.register(request.recipe)
             val existing = stateGateway.state(request.instanceId)
             if (existing != null && existing.recipeId != request.recipe.id) {
                 return RunCommandResult.Ignored("instance_recipe_conflict")
             }
+            val requestedAgentIds = request.recipe.stableAgentIds()
+            if (requestedAgentIds.size > 1) {
+                return RunCommandResult.Ignored("instance_multiple_agent_identities")
+            }
+            val requestedAgentId = request.agentId.normalizedAgentId()
+                ?: requestedAgentIds.singleOrNull()
+            if (
+                request.agentId.normalizedAgentId() != null &&
+                requestedAgentIds.singleOrNull() != null &&
+                request.agentId.normalizedAgentId() != requestedAgentIds.single()
+            ) {
+                return RunCommandResult.Ignored("instance_agent_conflict")
+            }
+            if (
+                existing?.agentId != null &&
+                requestedAgentId != null &&
+                existing.agentId != requestedAgentId
+            ) {
+                return RunCommandResult.Ignored("instance_agent_conflict")
+            }
+            stateGateway.register(request.recipe)
             if (existing != null && existing.status.endsExecutionGeneration()) {
                 clearFlights(existing.instanceId)
             }
             if (existing != null && existing.status.preventsDuplicateStart()) {
                 return RunCommandResult.Ignored("instance_already_active")
             }
-            val started = stateGateway.start(request)
+            val started = stateGateway.start(
+                request.copy(agentId = existing?.agentId ?: requestedAgentId)
+            )
+            // 同一实例名可以在另一个 PRoot 环境开启新代次；旧环境 flight 不能阻塞新环境调度。
+            clearFlights(started.instanceId)
             val firstStep = request.recipe.steps.firstOrNull()
             if (firstStep == null) {
                 commit(
@@ -92,6 +116,9 @@ internal class RunOrchestrator(
             }
             if (step.id != command.expectedStepId) {
                 return RunCommandResult.Ignored("step_id_mismatch")
+            }
+            if (!state.acceptsAgentStep(step.type, step.agentId)) {
+                return RunCommandResult.Ignored("instance_agent_conflict")
             }
             if (!RunStepActionPolicy.canComplete(recipe, state)) {
                 return RunCommandResult.Ignored("step_not_waiting")
@@ -298,6 +325,7 @@ internal class RunOrchestrator(
                 stepId = step.id,
                 attemptId = flight.attemptId
             )
+            val publishesProcessOwnership = step.type != KiteRecipe.STEP_AGENT
             val running = commit(
                 recipe,
                 state.instanceId,
@@ -305,9 +333,9 @@ internal class RunOrchestrator(
                     status = CardRunStatus.Running,
                     surface = surfaceFor(step.type),
                     currentStepIndex = dispatch.stepIndex,
-                    runtimeRootOwnerId = runtimeOwner.rootOwnerId,
-                    runtimeOwnerId = runtimeOwner.ownerId,
-                    runtimeUnitId = runtimeOwner.unitId,
+                    runtimeRootOwnerId = runtimeOwner.rootOwnerId.takeIf { publishesProcessOwnership },
+                    runtimeOwnerId = runtimeOwner.ownerId.takeIf { publishesProcessOwnership },
+                    runtimeUnitId = runtimeOwner.unitId.takeIf { publishesProcessOwnership },
                     lastMeaningfulOutput = stepStartingMessage(step.type),
                     clearNextActionUrl = true
                 )
@@ -540,6 +568,7 @@ internal class RunOrchestrator(
             KiteRecipe.STEP_TERMINAL -> CardRunSurface.Terminal
             KiteRecipe.STEP_OPEN_WEB -> CardRunSurface.Web
             KiteRecipe.STEP_X11 -> CardRunSurface.X11
+            KiteRecipe.STEP_AGENT -> CardRunSurface.Agent
             else -> CardRunSurface.Summary
         }
 
@@ -548,6 +577,7 @@ internal class RunOrchestrator(
             KiteRecipe.STEP_TERMINAL -> "正在创建终端"
             KiteRecipe.STEP_OPEN_WEB -> "正在打开网页"
             KiteRecipe.STEP_X11 -> "正在准备 X11"
+            KiteRecipe.STEP_AGENT -> "正在准备 Agent 会话"
             KiteRecipe.STEP_ANDROID_ACTION -> "正在执行安卓动作"
             else -> "正在执行步骤"
         }
@@ -557,6 +587,7 @@ internal class RunOrchestrator(
             KiteRecipe.STEP_TERMINAL -> "正在关闭旧终端并创建新终端"
             KiteRecipe.STEP_OPEN_WEB -> "正在重新打开流程网页"
             KiteRecipe.STEP_X11 -> "正在重置 X11 窗口"
+            KiteRecipe.STEP_AGENT -> "正在关闭旧会话并重新连接 Agent"
             KiteRecipe.STEP_ANDROID_ACTION -> "正在重新执行安卓动作"
             else -> "正在重新执行步骤"
         }
@@ -596,6 +627,16 @@ internal class RunOrchestrator(
             } else {
                 null
             }
+            KiteRecipe.STEP_AGENT -> if (state.agentBinding != null || state.hasRuntimeOwnership()) {
+                RecipeStopRequest(
+                    recipe = recipe,
+                    instanceId = state.instanceId,
+                    generation = state.createdAt,
+                    runtimeOwnerIds = state.runtimeOwnerIdsForStop()
+                )
+            } else {
+                null
+            }
             else -> null
         }
 
@@ -617,6 +658,22 @@ internal class RunOrchestrator(
                 this == CardRunStatus.Opened ||
                 this == CardRunStatus.Stopping ||
                 this == CardRunStatus.CleanupPending
+
+        private fun KiteRecipe.stableAgentIds(): List<String> = steps
+            .asSequence()
+            .filter { it.type == KiteRecipe.STEP_AGENT }
+            .mapNotNull { it.agentId.normalizedAgentId() }
+            .distinct()
+            .toList()
+
+        private fun CardRunState.acceptsAgentStep(stepType: String, stepAgentId: String?): Boolean {
+            if (stepType != KiteRecipe.STEP_AGENT || agentId == null) return true
+            val requestedAgentId = stepAgentId.normalizedAgentId() ?: return true
+            return requestedAgentId == agentId
+        }
+
+        private fun String?.normalizedAgentId(): String? =
+            this?.trim()?.takeIf(String::isNotBlank)
 
         private fun CardRunStatus.endsExecutionGeneration(): Boolean =
             this == CardRunStatus.Stopped ||

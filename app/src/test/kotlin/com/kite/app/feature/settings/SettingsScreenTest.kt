@@ -1,6 +1,7 @@
 package com.kite.app.feature.settings
 
 import android.app.Activity
+import android.content.pm.ApplicationInfo
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
@@ -10,6 +11,11 @@ import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapSnapshot
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapStage
 import com.kite.app.application.runtimebootstrap.RuntimePermissionSnapshot
+import com.kite.app.application.runtimemanagement.ProotEnvironmentInspection
+import com.kite.app.application.runtimemanagement.ProotEnvironmentOperation
+import com.kite.app.application.runtimemanagement.ProotViewAcceptanceCheck
+import com.kite.app.application.runtimemanagement.ProotViewAcceptanceResult
+import com.kite.app.application.runtimemanagement.ProotViewInspectionSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
 import com.kite.app.theme.ThemeColorSeed
@@ -24,6 +30,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows
+import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
 class SettingsScreenTest {
@@ -48,7 +55,8 @@ class SettingsScreenTest {
         assertTrue(texts.contains(activity.getString(R.string.settings_section_usage)))
         assertTrue(texts.contains(activity.getString(R.string.settings_section_system)))
         assertTrue(texts.contains(activity.getString(R.string.settings_section_other)))
-        SettingsCatalog.categories.forEach { category ->
+        val isDebugBuild = activity.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        SettingsCatalog.visibleCategories(isDebugBuild).forEach { category ->
             assertTrue(texts.contains(activity.getString(category.titleRes)))
             assertTrue(texts.contains(activity.getString(category.summaryRes)))
         }
@@ -213,6 +221,107 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun `工程页局部投影环境列表并把创建与切换意图交给网关`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        var createCount = 0
+        val switched = mutableListOf<String>()
+        val initial = engineeringSnapshot()
+        val screen = SettingsCategoryScreen(
+            context = activity,
+            destination = SettingsCategoryDestination.Engineering,
+            initialState = state(),
+            initialProotViewSnapshot = initial,
+            onBack = {},
+            onCreateViewEnvironment = { createCount += 1 },
+            onSwitchViewEnvironment = switched::add,
+        )
+        activity.setContentView(screen.root)
+        val firstChild = (screen.root as ViewGroup).getChildAt(0)
+
+        val texts = screen.root.allTexts()
+        assertTrue(texts.contains(activity.getString(R.string.settings_engineering_environments_title)))
+        assertTrue(texts.any { it.contains("default") && it.contains("view-default") })
+        assertTrue(texts.any { it.contains("profile_2") && it.contains("view-profile") })
+        assertTrue(texts.any { it.contains("space-main") && it.contains("/workspace/default") })
+
+        screen.root.findTextView(activity.getString(R.string.settings_engineering_environment_create_title))
+            ?.clickableAncestor()
+            ?.performClick()
+        assertEquals(1, createCount)
+
+        screen.root.findTextView(activity.getString(R.string.settings_engineering_environment_switch_title))
+            ?.clickableAncestor()
+            ?.performClick()
+        val dialog = ShadowDialog.getLatestDialog()
+        dialog.findViewById<ViewGroup>(android.R.id.content)
+            .findTextView(activity.getString(R.string.settings_engineering_environment_choice, "profile_2"))
+            ?.clickableAncestor()
+            ?.performClick()
+        assertEquals(listOf("profile_2"), switched)
+
+        screen.renderProotViewSnapshot(initial.copy(
+            environmentOperation = ProotEnvironmentOperation.Switching,
+            environmentOperationTarget = "profile_2",
+        ))
+        assertSame(firstChild, (screen.root as ViewGroup).getChildAt(0))
+        assertTrue(screen.root.allTexts().any { it.contains("profile_2") && it.contains("…") })
+        assertFalse(
+            screen.root.findTextView(activity.getString(R.string.settings_engineering_environment_create_title))
+                ?.clickableAncestor()
+                ?.isEnabled ?: true,
+        )
+    }
+
+    @Test
+    fun `工程验收台一键提交通用验收意图并局部呈现逐项结果`() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        var acceptanceCount = 0
+        val screen = SettingsCategoryScreen(
+            context = activity,
+            destination = SettingsCategoryDestination.Engineering,
+            initialState = state(),
+            initialProotViewSnapshot = engineeringSnapshot(),
+            onBack = {},
+            onRunViewAcceptance = { acceptanceCount += 1 },
+        )
+        activity.setContentView(screen.root)
+        val topBar = (screen.root as ViewGroup).getChildAt(0)
+
+        screen.root.findTextView(activity.getString(R.string.settings_engineering_acceptance_action_title))
+            ?.clickableAncestor()
+            ?.performClick()
+        assertEquals(1, acceptanceCount)
+
+        screen.renderProotViewSnapshot(engineeringSnapshot().copy(
+            environmentOperation = ProotEnvironmentOperation.VerifyingAcceptance,
+        ))
+        assertSame(topBar, (screen.root as ViewGroup).getChildAt(0))
+        assertTrue(screen.root.allTexts().contains(
+            activity.getString(R.string.settings_engineering_acceptance_running),
+        ))
+        assertFalse(
+            screen.root.findTextView(activity.getString(R.string.settings_engineering_acceptance_action_title))
+                ?.clickableAncestor()
+                ?.isEnabled ?: true,
+        )
+
+        screen.renderProotViewSnapshot(engineeringSnapshot().copy(
+            lastAcceptance = ProotViewAcceptanceResult(
+                checks = listOf(
+                    ProotViewAcceptanceCheck("ordinary_view", "普通启动", true, "default"),
+                    ProotViewAcceptanceCheck("base_immutable", "Base 未污染", false, "发现变化"),
+                ),
+                environmentId = "default",
+                viewId = "view-default",
+                totalMs = 88L,
+            ),
+        ))
+        val texts = screen.root.allTexts()
+        assertTrue(texts.any { it.contains("1/2") && it.contains("88ms") })
+        assertTrue(texts.any { it.contains("✓ 普通启动") && it.contains("✕ Base 未污染") })
+    }
+
+    @Test
     fun `帮助页显示真实版本项目信息和声明入口`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val screen = SettingsCategoryScreen(
@@ -293,6 +402,33 @@ class SettingsScreenTest {
         revision = 1L
     )
 
+    private fun engineeringSnapshot() = ProotViewInspectionSnapshot(
+        available = true,
+        enabled = true,
+        runtimeSupported = true,
+        containerReady = true,
+        currentViewId = "view-default",
+        environmentId = "default",
+        spaceId = "space-main",
+        workspacePath = "/workspace/default",
+        environments = listOf(
+            ProotEnvironmentInspection(
+                environmentId = "default",
+                viewId = "view-default",
+                active = true,
+                parentDepth = 0,
+                workspacePath = "/workspace/default",
+            ),
+            ProotEnvironmentInspection(
+                environmentId = "profile_2",
+                viewId = "view-profile",
+                active = false,
+                parentDepth = 0,
+                workspacePath = "/workspace/profile_2",
+            ),
+        ),
+    )
+
     private fun View.allTexts(): List<String> = buildList {
         if (this@allTexts is TextView) add(text.toString())
         if (this@allTexts is ViewGroup) {
@@ -306,6 +442,15 @@ class SettingsScreenTest {
             repeat(childCount) { index ->
                 getChildAt(index).findTextView(value)?.let { return it }
             }
+        }
+        return null
+    }
+
+    private fun View.clickableAncestor(): View? {
+        var current: View? = this
+        while (current != null) {
+            if (current.isClickable) return current
+            current = current.parent as? View
         }
         return null
     }

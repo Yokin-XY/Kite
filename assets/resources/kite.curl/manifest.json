@@ -12,10 +12,15 @@
       "fit": "fullBleed"
     }
   },
+  "management": {
+    "mode": "system_component",
+    "managedCommands": ["curl"]
+  },
   "display": {
     "sections": [
-      "more"
+      "foundation"
     ],
+    "order": 170,
     "category": "系统工具",
     "accent": "orange",
     "sizeLabel": "内置底座",

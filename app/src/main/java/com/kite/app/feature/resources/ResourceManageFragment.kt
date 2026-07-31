@@ -33,6 +33,10 @@ internal class ResourceManageFragment : ResourceFeatureFragment() {
             onCancelPlan = { targetResourceId, resourceIds ->
                 send(ResourceFeatureRequest.CancelInstallPlan(targetResourceId, resourceIds))
             },
+            onCheckInstalledUpdates = { resourceIds ->
+                screen?.acknowledgeUpdateCheck()
+                send(ResourceFeatureRequest.CheckInstalledUpdates(resourceIds))
+            },
             onRetry = { refreshResources(force = true) }
         ).also { screen = it }.root
     }

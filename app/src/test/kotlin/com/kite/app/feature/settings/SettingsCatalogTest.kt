@@ -19,6 +19,7 @@ class SettingsCatalogTest {
 
     @Test
     fun `稳定首页分组顺序保持用户目标层级`() {
+        // 工程入口不进入设置首页，稳定 8 条保持原序。
         assertEquals(
             listOf(
                 SettingsSection.Personalization,
@@ -30,8 +31,20 @@ class SettingsCatalogTest {
                 SettingsSection.Other,
                 SettingsSection.Other,
             ),
-            SettingsCatalog.categories.map { it.section },
+            SettingsCatalog.visibleCategories(isDebugBuild = false).map { it.section },
         )
+    }
+
+    @Test
+    fun `工程验收台保留内部目标但不进入设置首页`() {
+        val engineering = SettingsCatalog.categories.single {
+            it.destination == SettingsCategoryDestination.Engineering
+        }
+
+        assertEquals(SettingsMaturity.DebugOnly, engineering.maturity)
+        assertFalse(engineering.showOnSettingsHome)
+        assertFalse(SettingsCatalog.visibleCategories(isDebugBuild = true).contains(engineering))
+        assertFalse(SettingsCatalog.visibleCategories(isDebugBuild = false).contains(engineering))
     }
 
     @Test

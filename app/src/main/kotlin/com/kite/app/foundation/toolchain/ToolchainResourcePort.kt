@@ -17,17 +17,29 @@ import android.content.Context
  * 使 foundation 不依赖业务层常量。
  */
 interface ToolchainResourcePort {
+    fun currentEnvironmentId(context: Context): String
+
     /** 查询指定资源的登记状态(STATUS_* 之一),不存在返回空串。 */
-    fun statusOf(context: Context, resourceId: String): String
+    fun statusOf(context: Context, resourceId: String, environmentId: String): String
+
+    /** 查询当前环境中指定资源的登记版本。 */
+    fun versionOf(context: Context, resourceId: String, environmentId: String): String
 
     /** 标记资源为安装中。 */
-    fun markInstalling(context: Context, resourceId: String, runId: String?)
+    fun markInstalling(context: Context, resourceId: String, runId: String?, environmentId: String)
 
     /** 标记资源为已安装。 */
-    fun markInstalled(context: Context, resourceId: String, version: String?, runId: String?, summary: String?)
+    fun markInstalled(
+        context: Context,
+        resourceId: String,
+        version: String?,
+        runId: String?,
+        summary: String?,
+        environmentId: String
+    )
 
     /** 标记资源为安装失败。 */
-    fun markFailed(context: Context, resourceId: String, runId: String?, reason: String?)
+    fun markFailed(context: Context, resourceId: String, runId: String?, reason: String?, environmentId: String)
 
     companion object {
         const val STATUS_INSTALLED = "installed"

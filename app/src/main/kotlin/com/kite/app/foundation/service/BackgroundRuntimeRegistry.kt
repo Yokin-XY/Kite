@@ -36,6 +36,17 @@ object BackgroundRuntimeRegistry {
         return "background-$spaceId-proot-capacity-worker-${index.coerceAtLeast(1)}"
     }
 
+    internal fun builtinContainerSupervisorStartCommand(): String {
+        return "test -x /usr/bin/supervisord || " +
+            "{ printf 'supervisord is unavailable\\n' >&2; exit 127; }; " +
+            "test -f /etc/supervisor/supervisord.conf || " +
+            "{ printf 'supervisord.conf is unavailable\\n' >&2; exit 127; }; " +
+            "mkdir -p /run /run/supervisor /var/log/supervisor && " +
+            "if ! grep -q '^\\[inet_http_server\\]' /etc/supervisor/supervisord.conf; then " +
+            "printf '\\n[inet_http_server]\\nport=127.0.0.1:19001\\n' >> /etc/supervisor/supervisord.conf; " +
+            "fi && exec /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf"
+    }
+
     fun list(context: Context, spaceId: String? = null): List<BackgroundRuntimeRecord> {
         val records = readAll(WorkSurfaceRuntimeBridge.getRuntimeRoot(context))
             .sortedBy { it.createdAt }
@@ -80,7 +91,6 @@ object BackgroundRuntimeRegistry {
         val runtimeRoot = WorkSurfaceRuntimeBridge.getRuntimeRoot(context)
         val existing = normalizeAndPruneProotCapacityWorkerRecords(spaceId, readAll(runtimeRoot))
         val supervisorId = builtinContainerSupervisorId(spaceId)
-        val openClawId = "background-$spaceId-openclaw-gateway"
         val now = System.currentTimeMillis()
         val prootCapacityWorkers = (1..desiredProotCapacityWorkerCount(existing, spaceId)).map { index ->
             buildProotCapacityWorker(context, spaceId, index, now + index)
@@ -94,10 +104,7 @@ object BackgroundRuntimeRegistry {
                 mode = BackgroundRuntimeMode.PROCESS,
                 title = "容器骨架",
                 workingDirectory = WorkSurfaceRuntimeBridge.defaults.rootHomeDir,
-                startCommand = "mkdir -p /run /run/supervisor /var/log/supervisor && " +
-                    "if ! grep -q '^\\[inet_http_server\\]' /etc/supervisor/supervisord.conf; then " +
-                    "printf '\\n[inet_http_server]\\nport=127.0.0.1:19001\\n' >> /etc/supervisor/supervisord.conf; " +
-                    "fi && exec /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf",
+                startCommand = builtinContainerSupervisorStartCommand(),
                 bindAddress = "127.0.0.1",
                 bindPort = 19001,
                 exposureScope = RuntimeExposureScope.LOOPBACK_ONLY,
@@ -106,25 +113,6 @@ object BackgroundRuntimeRegistry {
                 restartPolicy = BackgroundRuntimeRestartPolicy.ALWAYS_CORE,
                 retentionClass = RuntimeRetentionClass.CRITICAL_CORE
             ),
-            BackgroundRuntimeRecord(
-                id = openClawId,
-                spaceId = spaceId,
-                kind = BackgroundRuntimeKind.OPENCLAW_GATEWAY,
-                mode = BackgroundRuntimeMode.PROCESS,
-                title = "OpenClaw 网关",
-                workingDirectory = WorkSurfaceRuntimeBridge.defaults.workspaceDir,
-                startCommand = "exec openclaw gateway run --bind loopback --port 18789",
-                bindAddress = "127.0.0.1",
-                bindPort = 18789,
-                exposureScope = RuntimeExposureScope.LOOPBACK_ONLY,
-                requiredCapabilities = listOf(BackgroundRuntimeCapability.MDNS),
-                healthCommand = "openclaw gateway health",
-                healthCheckStartupDelayMs = 6_000L,
-                logPath = buildLogFile(context, openClawId).absolutePath,
-                createdAt = now,
-                restartPolicy = BackgroundRuntimeRestartPolicy.ON_FAILURE,
-                retentionClass = RuntimeRetentionClass.RESIDENT
-            )
         ) + prootCapacityWorkers
 
         val merged = LinkedHashMap<String, BackgroundRuntimeRecord>()
@@ -157,6 +145,8 @@ object BackgroundRuntimeRegistry {
                     lastHealthCheckedAt = previous.lastHealthCheckedAt,
                     lastExitCode = previous.lastExitCode,
                     lastError = previous.lastError,
+                    lastLaunchLane = previous.lastLaunchLane,
+                    lastLaunchReason = previous.lastLaunchReason,
                     restartPolicy = builtin.restartPolicy,
                     restartFailureCount = previous.restartFailureCount,
                     lastRestartAt = previous.lastRestartAt,
@@ -305,12 +295,9 @@ object BackgroundRuntimeRegistry {
         }
     }
 
-    private fun prootCapacityWorkerRetentionClass(index: Int): RuntimeRetentionClass {
-        return if (index <= 1) {
-            RuntimeRetentionClass.RESIDENT
-        } else {
-            RuntimeRetentionClass.EPHEMERAL
-        }
+    internal fun prootCapacityWorkerRetentionClass(@Suppress("UNUSED_PARAMETER") index: Int): RuntimeRetentionClass {
+        // 当前 worker 只有 bash + sleep 存活探针，不具备真实任务执行协议，不能作为常驻容量。
+        return RuntimeRetentionClass.EPHEMERAL
     }
 
     @Synchronized
@@ -322,6 +309,47 @@ object BackgroundRuntimeRegistry {
             .apply { add(record) }
         saveRecords(runtimeRoot, updated)
         return record
+    }
+
+    /** 更新声明字段时保留同一运行项的进程、健康和恢复事实。 */
+    @Synchronized
+    fun upsertDefinition(context: Context, definition: BackgroundRuntimeRecord): BackgroundRuntimeRecord {
+        val existing = get(context, definition.id)
+        val merged = existing?.let { current ->
+            definition.copy(
+                createdAt = current.createdAt,
+                lastStartedAt = current.lastStartedAt,
+                lastStoppedAt = current.lastStoppedAt,
+                status = current.status,
+                healthStatus = current.healthStatus,
+                pid = current.pid,
+                lastHealthSummary = current.lastHealthSummary,
+                lastHealthCheckedAt = current.lastHealthCheckedAt,
+                lastExitCode = current.lastExitCode,
+                lastError = current.lastError,
+                lastLaunchLane = current.lastLaunchLane,
+                lastLaunchReason = current.lastLaunchReason,
+                restartFailureCount = current.restartFailureCount,
+                lastRestartAt = current.lastRestartAt,
+                nextRestartAllowedAt = current.nextRestartAllowedAt,
+                lastRestartReason = current.lastRestartReason,
+                lastRecoveredAt = current.lastRecoveredAt,
+                lastRecoverySource = current.lastRecoverySource,
+                lastRecoveryReason = current.lastRecoveryReason,
+                lastAdmissionDeferredAt = current.lastAdmissionDeferredAt,
+                lastAdmissionSource = current.lastAdmissionSource,
+                lastAdmissionReason = current.lastAdmissionReason,
+                lastReclaimedAt = current.lastReclaimedAt,
+                lastReclaimSource = current.lastReclaimSource,
+                lastReclaimReason = current.lastReclaimReason,
+                lastStopReconciliationState = current.lastStopReconciliationState,
+                lastStopReconciliationReason = current.lastStopReconciliationReason,
+                lastStopReconciliationAt = current.lastStopReconciliationAt,
+                lastStopReconciliationAutoRecoverySuppressed =
+                    current.lastStopReconciliationAutoRecoverySuppressed,
+            )
+        } ?: definition
+        return upsert(context, merged)
     }
 
     @Synchronized
@@ -404,6 +432,25 @@ object BackgroundRuntimeRegistry {
                     lastHealthSummary = lastHealthSummary,
                     lastHealthCheckedAt = lastHealthCheckedAt
                 )
+            } else {
+                record
+            }
+        }
+        saveRecords(runtimeRoot, updated)
+        return updated.firstOrNull { it.id == runtimeId }
+    }
+
+    @Synchronized
+    fun updateLaunchRoute(
+        context: Context,
+        runtimeId: String,
+        lane: String,
+        reason: String,
+    ): BackgroundRuntimeRecord? {
+        val runtimeRoot = WorkSurfaceRuntimeBridge.getRuntimeRoot(context)
+        val updated = readAll(runtimeRoot).map { record ->
+            if (record.id == runtimeId) {
+                record.copy(lastLaunchLane = lane, lastLaunchReason = reason)
             } else {
                 record
             }
@@ -575,6 +622,23 @@ object BackgroundRuntimeRegistry {
             _entries.value
         } else {
             _entries.value.filter { it.spaceId == spaceId }
+        }
+    }
+
+    /** 单活跃环境切换已确认旧 View 进程全部退出，一次性收口该 Space 的运行事实。 */
+    @Synchronized
+    fun confirmSpaceStopped(context: Context, spaceId: String, stoppedAt: Long = System.currentTimeMillis()) {
+        val runtimeRoot = WorkSurfaceRuntimeBridge.getRuntimeRoot(context)
+        val current = readAll(runtimeRoot)
+        val updated = current.map { record ->
+            if (record.spaceId == spaceId) {
+                BackgroundRuntimeSpacePolicy.confirmedStopped(record, stoppedAt)
+            } else {
+                record
+            }
+        }
+        if (updated != current) {
+            saveRecords(runtimeRoot, updated)
         }
     }
 

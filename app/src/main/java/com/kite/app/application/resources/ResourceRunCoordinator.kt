@@ -24,10 +24,12 @@ internal data class ResourceRunLaunchRequest(
     val resourceId: String,
     val recipe: KiteRecipe,
     val operation: String,
+    val targetVersion: String? = null,
     val stageBundledResource: Boolean = false,
     val parentInstanceId: String? = null,
     val preferredInstanceId: String? = null,
-    val continuation: ResourceRunContinuation = ResourceRunContinuation.None
+    val continuation: ResourceRunContinuation = ResourceRunContinuation.None,
+    val environmentId: String = ""
 )
 
 internal sealed interface ResourceRunLaunchResult {
@@ -36,24 +38,42 @@ internal sealed interface ResourceRunLaunchResult {
 }
 
 internal interface ResourceRunGateway {
-    fun recipe(resourceId: String, operation: String): KiteRecipe?
+    fun recipe(resourceId: String, operation: String, targetVersion: String? = null): KiteRecipe?
     fun isBundled(resourceId: String): Boolean
+    fun currentEnvironmentId(): String
     fun beginRun(request: ResourceRunLaunchRequest): CardRunState
-    fun prepare(request: ResourceRunLaunchRequest, callback: (Result<Unit>) -> Unit)
+    fun prepare(
+        request: ResourceRunLaunchRequest,
+        instanceId: String,
+        callback: (Result<Unit>) -> Unit
+    )
+    fun commitMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        Result.success(Unit)
+    fun finalizeMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        Result.success(Unit)
+    fun rollbackMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> =
+        Result.success(Unit)
     fun failRunPreparation(request: ResourceRunLaunchRequest, instanceId: String, message: String)
-    fun markOperationStarted(resourceId: String, operation: String)
-    fun markInstalled(resourceId: String, runId: String?, summary: String?)
-    fun saveInstalledSnapshot(resourceId: String)
-    fun markFailed(resourceId: String, operation: String, runId: String?, reason: String)
-    fun clearResource(resourceId: String)
-    fun advancePlanAfter(resourceId: String): List<String>
-    fun failPlanAt(resourceId: String)
-    fun clearPlan()
-    fun resumePlanFrom(resourceId: String): Boolean
-    fun isInstalled(resourceId: String): Boolean
-    fun markPlanStepRunning(resourceId: String): Boolean
-    fun pendingPlanResourceIds(): List<String>
-    fun plannedInstall(resourceId: String, parentInstanceId: String?): ResourceRunLaunchRequest?
+    fun markOperationStarted(resourceId: String, operation: String, environmentId: String)
+    fun markInstalled(
+        resourceId: String,
+        versionHint: String?,
+        runId: String?,
+        summary: String?,
+        evidence: String?,
+        environmentId: String
+    )
+    fun saveInstalledSnapshot(resourceId: String, environmentId: String)
+    fun markFailed(resourceId: String, operation: String, runId: String?, reason: String, environmentId: String)
+    fun clearResource(resourceId: String, environmentId: String)
+    fun advancePlanAfter(resourceId: String, environmentId: String): List<String>
+    fun failPlanAt(resourceId: String, environmentId: String)
+    fun clearPlan(environmentId: String)
+    fun resumePlanFrom(resourceId: String, environmentId: String): Boolean
+    fun isInstalled(resourceId: String, environmentId: String): Boolean
+    fun markPlanStepRunning(resourceId: String, environmentId: String): Boolean
+    fun pendingPlanResourceIds(environmentId: String): List<String>
+    fun plannedInstall(resourceId: String, parentInstanceId: String?, environmentId: String): ResourceRunLaunchRequest?
 }
 
 /**
@@ -79,8 +99,8 @@ internal class ResourceRunCoordinator(
         lifecycleHub.register(this)
     }
 
-    fun recipe(resourceId: String, operation: String): KiteRecipe? =
-        gateway.recipe(resourceId, operation)
+    fun recipe(resourceId: String, operation: String, targetVersion: String? = null): KiteRecipe? =
+        gateway.recipe(resourceId, operation, targetVersion)
 
     fun isBundled(resourceId: String): Boolean = gateway.isBundled(resourceId)
 
@@ -92,10 +112,13 @@ internal class ResourceRunCoordinator(
             return ResourceRunLaunchResult.Rejected("unsupported_operation:${request.operation}")
         }
         startRejectionReason()?.let { return ResourceRunLaunchResult.Rejected(it) }
-        gateway.markOperationStarted(request.resourceId, request.operation)
-        val state = gateway.beginRun(request)
-        activeRuns[state.instanceId] = ActiveRun(request)
-        gateway.prepare(request) { result ->
+        val boundRequest = request.copy(
+            environmentId = request.environmentId.ifBlank(gateway::currentEnvironmentId)
+        )
+        gateway.markOperationStarted(boundRequest.resourceId, boundRequest.operation, boundRequest.environmentId)
+        val state = gateway.beginRun(boundRequest)
+        activeRuns[state.instanceId] = ActiveRun(boundRequest)
+        gateway.prepare(boundRequest, state.instanceId) { result ->
             serialExecutor.execute {
                 result.onSuccess {
                     val current = activeRuns[state.instanceId] ?: return@onSuccess
@@ -105,7 +128,8 @@ internal class ResourceRunCoordinator(
                             instanceId = state.instanceId,
                             parentInstanceId = current.request.parentInstanceId,
                             ownerKind = CardRunState.OWNER_KIND_RESOURCE,
-                            stepId = current.request.resourceId
+                            stepId = current.request.resourceId,
+                            environmentId = current.request.environmentId
                         )
                     )
                     if (startResult is RunCommandResult.Ignored && startResult.reason != "instance_already_active") {
@@ -126,8 +150,29 @@ internal class ResourceRunCoordinator(
 
     fun owns(instanceId: String): Boolean = activeRuns.containsKey(instanceId)
 
-    fun startNextPlannedInstall(parentInstanceId: String?): Boolean =
-        startNextPlannedInstall(gateway.pendingPlanResourceIds(), parentInstanceId)
+    /** PRoot 已确认旧环境进程退出后，终结仍登记中的资源事务，避免后台队列跨环境续跑。 */
+    fun onEnvironmentStopped(environmentId: String) {
+        val target = environmentId.trim()
+        if (target.isBlank()) return
+        serialExecutor.execute {
+            activeRuns.entries
+                .filter { (_, active) -> active.request.environmentId == target }
+                .forEach { (instanceId, active) ->
+                    if (activeRuns.remove(instanceId, active)) {
+                        settleFailure(active, instanceId, "环境已切换，原环境资源任务已结束")
+                    }
+                }
+        }
+    }
+
+    fun startNextPlannedInstall(parentInstanceId: String?): Boolean {
+        val environmentId = gateway.currentEnvironmentId()
+        return startNextPlannedInstall(
+            gateway.pendingPlanResourceIds(environmentId),
+            parentInstanceId,
+            environmentId
+        )
+    }
 
     override fun onStateCommitted(event: RunLifecycleEvent) {
         val active = activeRuns[event.state.instanceId] ?: return
@@ -140,15 +185,17 @@ internal class ResourceRunCoordinator(
 
     private fun settlePreparationFailure(active: ActiveRun, instanceId: String, message: String) {
         if (activeRuns.remove(instanceId, active)) {
-            gateway.failRunPreparation(active.request, instanceId, message)
+            val finalMessage = rollbackFailureMessage(active.request, instanceId, message)
+            gateway.failRunPreparation(active.request, instanceId, finalMessage)
             gateway.markFailed(
                 active.request.resourceId,
                 active.request.operation,
                 active.lastRunId,
-                message
+                finalMessage,
+                active.request.environmentId
             )
             if (active.request.operation == KiteResourceInstallRecipes.OP_INSTALL) {
-                gateway.failPlanAt(active.request.resourceId)
+                gateway.failPlanAt(active.request.resourceId, active.request.environmentId)
             }
         }
     }
@@ -157,10 +204,15 @@ internal class ResourceRunCoordinator(
         if (!activeRuns.remove(state.instanceId, active)) return
         when (state.status) {
             CardRunStatus.Completed -> settleSuccess(active, state)
-            CardRunStatus.Stopped -> settleFailure(active, "${operationLabel(active.request.operation)}已取消")
+            CardRunStatus.Stopped -> settleFailure(
+                active,
+                state.instanceId,
+                "${operationLabel(active.request.operation)}已取消"
+            )
             CardRunStatus.BridgeUnavailable,
             CardRunStatus.Failed -> settleFailure(
                 active,
+                state.instanceId,
                 state.lastError ?: state.lastMeaningfulOutput ?: "${operationLabel(active.request.operation)}失败"
             )
             else -> Unit
@@ -169,68 +221,119 @@ internal class ResourceRunCoordinator(
 
     private fun settleSuccess(active: ActiveRun, state: CardRunState) {
         val request = active.request
+        val commit = gateway.commitMutation(request, state.instanceId)
+        if (commit.isFailure) {
+            settleFailure(
+                active,
+                state.instanceId,
+                "${operationLabel(request.operation)}保护点提交失败：${commit.exceptionOrNull()?.message ?: "未知错误"}"
+            )
+            return
+        }
         when (request.operation) {
-            KiteResourceInstallRecipes.OP_INSTALL -> {
+            KiteResourceInstallRecipes.OP_INSTALL,
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL -> {
                 gateway.markInstalled(
                     request.resourceId,
+                    request.targetVersion,
                     active.lastRunId,
-                    state.lastMeaningfulOutput
+                    state.lastMeaningfulOutput,
+                    state.shellReportText,
+                    request.environmentId
                 )
-                gateway.saveInstalledSnapshot(request.resourceId)
-                startNextPlannedInstall(
-                    gateway.advancePlanAfter(request.resourceId),
-                    request.parentInstanceId
-                )
+                gateway.saveInstalledSnapshot(request.resourceId, request.environmentId)
+                // View 已经原子切换，资源登记也已经落盘；收尾失败只留给启动恢复补齐，
+                // 不能把已成功的更新重新解释成失败并触发回滚。
+                gateway.finalizeMutation(request, state.instanceId)
+                if (request.operation == KiteResourceInstallRecipes.OP_INSTALL) {
+                    startNextPlannedInstall(
+                        gateway.advancePlanAfter(request.resourceId, request.environmentId),
+                        request.parentInstanceId,
+                        request.environmentId
+                    )
+                }
             }
             KiteResourceInstallRecipes.OP_UNINSTALL -> {
-                gateway.clearResource(request.resourceId)
+                gateway.clearResource(request.resourceId, request.environmentId)
+                // 卸载也在独立 View 中提交。先收尾释放 writer，再续接重新安装，
+                // 否则下一次资源变更会被仍处于 VIEW_COMMITTED 的事务正确拒绝。
+                gateway.finalizeMutation(request, state.instanceId)
                 when (request.continuation) {
                     ResourceRunContinuation.Reinstall -> {
-                        gateway.plannedInstall(request.resourceId, request.parentInstanceId)?.let(::start)
+                        gateway.plannedInstall(
+                            request.resourceId,
+                            request.parentInstanceId,
+                            request.environmentId
+                        )?.let(::start)
                             ?: gateway.markFailed(
                                 request.resourceId,
                                 KiteResourceInstallRecipes.OP_INSTALL,
                                 null,
-                                "卸载完成，但获取目标缺少资源定义"
+                                "卸载完成，但获取目标缺少资源定义",
+                                request.environmentId
                             )
                     }
-                    ResourceRunContinuation.CancelFailedInstall -> gateway.clearPlan()
-                    ResourceRunContinuation.ResumeInstallWizard -> gateway.resumePlanFrom(request.resourceId)
+                    ResourceRunContinuation.CancelFailedInstall -> gateway.clearPlan(request.environmentId)
+                    ResourceRunContinuation.ResumeInstallWizard ->
+                        gateway.resumePlanFrom(request.resourceId, request.environmentId)
                     ResourceRunContinuation.None -> Unit
                 }
             }
         }
     }
 
-    private fun settleFailure(active: ActiveRun, reason: String) {
+    private fun settleFailure(active: ActiveRun, instanceId: String, reason: String) {
         val request = active.request
-        gateway.markFailed(request.resourceId, request.operation, active.lastRunId, reason)
+        gateway.markFailed(
+            request.resourceId,
+            request.operation,
+            active.lastRunId,
+            rollbackFailureMessage(request, instanceId, reason),
+            request.environmentId
+        )
         if (request.operation == KiteResourceInstallRecipes.OP_INSTALL) {
-            gateway.failPlanAt(request.resourceId)
+            gateway.failPlanAt(request.resourceId, request.environmentId)
         }
     }
 
-    private fun startNextPlannedInstall(resourceIds: List<String>, parentInstanceId: String?): Boolean {
+    private fun rollbackFailureMessage(
+        request: ResourceRunLaunchRequest,
+        instanceId: String,
+        reason: String
+    ): String {
+        val rollback = gateway.rollbackMutation(request, instanceId)
+        return rollback.exceptionOrNull()?.let { error ->
+            "$reason；自动恢复失败：${error.message ?: error.javaClass.simpleName}"
+        } ?: reason
+    }
+
+    private fun startNextPlannedInstall(
+        resourceIds: List<String>,
+        parentInstanceId: String?,
+        environmentId: String
+    ): Boolean {
         if (startRejectionReason() != null) return false
         var remaining = resourceIds
         while (remaining.isNotEmpty()) {
             val resourceId = remaining.first()
-            if (gateway.isInstalled(resourceId)) {
-                remaining = gateway.advancePlanAfter(resourceId)
+            if (gateway.isInstalled(resourceId, environmentId)) {
+                remaining = gateway.advancePlanAfter(resourceId, environmentId)
                 continue
             }
-            val request = gateway.plannedInstall(resourceId, parentInstanceId)
+            val request = gateway.plannedInstall(resourceId, parentInstanceId, environmentId)
             if (request == null) {
                 gateway.markFailed(
                     resourceId,
                     KiteResourceInstallRecipes.OP_INSTALL,
                     null,
-                    "执行队列缺少资源定义"
+                    "执行队列缺少资源定义",
+                    environmentId
                 )
-                gateway.failPlanAt(resourceId)
+                gateway.failPlanAt(resourceId, environmentId)
                 return false
             }
-            if (!gateway.markPlanStepRunning(resourceId)) return false
+            if (!gateway.markPlanStepRunning(resourceId, environmentId)) return false
             start(request)
             return true
         }
@@ -239,12 +342,16 @@ internal class ResourceRunCoordinator(
 
     private fun operationLabel(operation: String): String = when (operation) {
         KiteResourceInstallRecipes.OP_UNINSTALL -> "卸载"
+        KiteResourceInstallRecipes.OP_UPDATE -> "更新"
+        KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装"
         else -> "获取"
     }
 
     companion object {
         private val SUPPORTED_OPERATIONS = setOf(
             KiteResourceInstallRecipes.OP_INSTALL,
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL,
             KiteResourceInstallRecipes.OP_UNINSTALL
         )
         private val TERMINAL_STATUSES = setOf(

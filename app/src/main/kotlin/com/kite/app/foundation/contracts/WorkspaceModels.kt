@@ -48,6 +48,7 @@ enum class AgentLaunchMode(val label: String) {
 data class SpaceRecord(
     val id: String,
     val displayName: String,
+    val environmentId: String = "default",
     val containerId: String,
     val workspacePath: String,
     val createdAt: Long,
@@ -61,6 +62,7 @@ data class SpaceRecord(
         return JSONObject()
             .put("id", id)
             .put("displayName", displayName)
+            .put("environmentId", environmentId)
             .put("containerId", containerId)
             .put("workspacePath", workspacePath)
             .put("createdAt", createdAt)
@@ -76,6 +78,10 @@ data class SpaceRecord(
             return SpaceRecord(
                 id = json.getString("id"),
                 displayName = json.optString("displayName", json.getString("id")),
+                // 旧版只有一个 space-main，它只属于 default，不得复制到新环境。
+                environmentId = json.optString("environmentId", "default")
+                    .trim()
+                    .ifBlank { "default" },
                 containerId = json.optString("containerId", "ubuntu-main"),
                 workspacePath = json.optString("workspacePath", ""),
                 createdAt = json.getLong("createdAt"),

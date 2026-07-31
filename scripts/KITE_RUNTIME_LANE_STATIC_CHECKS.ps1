@@ -402,7 +402,11 @@ Assert-True ($runtimeOwnerProbeWorkflow -match 'class RuntimeOwnerProbeCoordinat
 Assert-True ($androidRuntimeOwnerProbeGateway -match 'CardRunSpecialRecipes\.resourceOwnerProbe' -and $androidRuntimeOwnerProbeGateway -match 'orchestrator\.start' -and $androidRuntimeOwnerProbeGateway -match 'OWNER_KIND_RESOURCE') 'resource owner probe adapter must use the shared recipe shape and RunOrchestrator owner path.'
 Assert-True ($main -notmatch 'runOrchestrator\.(start|stop)|fun\s+(startRecipeWithOrchestrator|stopRecipeWithOrchestrator|resourceOwnerProbeRecipe)\s*\(') 'MainActivity must not retain direct run orchestration or probe construction.'
 Assert-True ($main -notmatch 'legacyStartRecipe|executeRecipeStep|runUbuntuStepWhenReady|handleSequenceShellResult') 'MainActivity must not retain a second recipe execution engine.'
-Assert-True ($kiteAppGraph -match 'val runOrchestrator: RunOrchestrator by lazy' -and $kiteAppGraph -match 'AndroidRecipeExecutor\(appContext, bridgeClient, diagnostics\)') 'Run orchestration and execution adapter must be process composition-root dependencies.'
+Assert-True (
+    $kiteAppGraph -match 'val runOrchestrator: RunOrchestrator by lazy' -and
+    $kiteAppGraph -match '(?s)AndroidRecipeExecutor\(\s*appContext,\s*bridgeClient,\s*diagnostics,\s*RunExecutionEnvironmentProvider\s*\{' -and
+    $kiteAppGraph -match 'resourceTransactionCoordinator\.environmentForRun\(request\.instanceId\)'
+) 'Run orchestration, execution adapter, and per-run environment provider must be process composition-root dependencies.'
 Assert-True ($recipeActionWorkflow -match 'planner\.plan' -and $recipeActionWorkflow -match 'gateway\.start' -and $recipeActionWorkflow -match 'gateway\.stop') 'Recipe actions must be planned and handed to one application workflow.'
 Assert-True ($androidRecipeActionGateway -match 'orchestrator\.start' -and $androidRecipeActionGateway -match 'orchestrator\.stop' -and $androidRecipeActionGateway -notmatch '(?m)^import\s+(android\.app\.Activity|android\.view\.|android\.widget\.|androidx\.fragment\.|com\.kite\.app\.feature)') 'Recipe action runtime access must stay in the platform adapter without page ownership.'
 Assert-True ($main -match 'recipeActionWorkflowCoordinator\.dispatch' -and $main -match 'applyRecipeActionEffects' -and $main -notmatch 'recipeActionCoordinator|executeRecipeActionRoute|KiteRecipeActionPlan') 'MainActivity must only interpret recipe action effects.'

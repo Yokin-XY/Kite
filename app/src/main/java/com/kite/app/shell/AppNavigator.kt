@@ -15,6 +15,7 @@ internal enum class AppDestination {
     ResourceRawJson,
     Processes,
     Settings,
+    SettingsEngineering,
     SettingsAppearanceLanguage,
     SettingsAppBehavior,
     SettingsTerminalWorkbench,
@@ -68,24 +69,32 @@ internal sealed interface NavigationBackAction {
  */
 internal class AppNavigator(
     private val destinationSink: DestinationSink,
-    initialDestination: AppDestination = AppDestination.Console
+    initialDestination: AppDestination = AppDestination.Console,
+    private val isDebugBuild: Boolean = true
 ) {
     private var contextualBackAction: (() -> Unit)? = null
 
-    var currentDestination: AppDestination = initialDestination
+    var currentDestination: AppDestination = availableDestination(initialDestination)
         private set
 
     fun enter(destination: AppDestination, onBack: (() -> Unit)? = null) {
-        currentDestination = destination
+        currentDestination = availableDestination(destination)
         contextualBackAction = onBack
     }
 
     fun navigate(destination: AppDestination) {
-        destinationSink.navigate(destination)
+        destinationSink.navigate(availableDestination(destination))
     }
 
     fun contract(destination: AppDestination = currentDestination): DestinationContract =
-        contracts.getValue(destination)
+        contracts.getValue(availableDestination(destination))
+
+    private fun availableDestination(destination: AppDestination): AppDestination =
+        if (!isDebugBuild && destination == AppDestination.SettingsEngineering) {
+            AppDestination.Settings
+        } else {
+            destination
+        }
 
     fun resolveBack(): NavigationBackAction =
         when (val policy = contract().backPolicy) {
@@ -214,6 +223,12 @@ internal class AppNavigator(
             ),
             DestinationContract(
                 AppDestination.SettingsPermissionsFiles,
+                DestinationKind.Child,
+                BackPolicy.Parent(AppDestination.Settings),
+                RestorePolicy.Direct
+            ),
+            DestinationContract(
+                AppDestination.SettingsEngineering,
                 DestinationKind.Child,
                 BackPolicy.Parent(AppDestination.Settings),
                 RestorePolicy.Direct

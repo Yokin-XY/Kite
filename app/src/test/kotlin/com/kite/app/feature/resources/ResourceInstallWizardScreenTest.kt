@@ -129,8 +129,8 @@ class ResourceInstallWizardScreenTest {
                 context.getString(R.string.resource_state_installing)
             )
         }
-        assertFalse(row.isClickable)
-        assertFalse(row.isFocusable)
+        assertTrue(row.isClickable)
+        assertTrue(row.isFocusable)
     }
 
     @Test
@@ -174,8 +174,9 @@ class ResourceInstallWizardScreenTest {
     }
 
     @Test
-    fun `运行步骤不提供报告入口且队列行保持只读`() {
-        val screen = createScreen()
+    fun `运行步骤不增加显式按钮且队列行打开同一实例报告`() {
+        val requests = mutableListOf<ResourceInstallWizardRunRequest>()
+        val screen = createScreen(onOpenRun = requests::add)
         attach(screen)
         val context = screen.root.context
         screen.render(runningState(surface = CardRunSurface.Report))
@@ -189,8 +190,20 @@ class ResourceInstallWizardScreenTest {
                 context.getString(R.string.resource_state_installing),
             )
         }
-        assertFalse(row.isClickable)
-        assertFalse(row.isFocusable)
+        assertTrue(row.isClickable)
+        assertTrue(row.isFocusable)
+        row.performClick()
+        assertEquals(
+            listOf(
+                ResourceInstallWizardRunRequest(
+                    resourceId = "tool",
+                    operation = KiteResourceInstallStore.OP_INSTALL,
+                    instanceId = "install-instance",
+                    surface = CardRunSurface.Report,
+                )
+            ),
+            requests,
+        )
     }
 
     @Test
@@ -344,6 +357,7 @@ class ResourceInstallWizardScreenTest {
             (ResourceInstallWizardPlanActionResult) -> Unit,
         ) -> Unit = { _, acknowledge -> acknowledge(ResourceInstallWizardPlanActionResult.Accepted) },
         onUninstallFailedResource: (String) -> Unit = {},
+        onOpenRun: (ResourceInstallWizardRunRequest) -> Unit = {},
         onExit: () -> Unit = {},
         seedResourceIds: List<String> = listOf("tool"),
     ): ResourceInstallWizardScreen = ResourceInstallWizardScreen(
@@ -355,6 +369,7 @@ class ResourceInstallWizardScreenTest {
         seedResourceIds = seedResourceIds,
         onPlanAction = onPlanAction,
         onUninstallFailedResource = onUninstallFailedResource,
+        onOpenRun = onOpenRun,
         onExit = onExit,
         onRetry = {},
         onLiveTickRequired = {}

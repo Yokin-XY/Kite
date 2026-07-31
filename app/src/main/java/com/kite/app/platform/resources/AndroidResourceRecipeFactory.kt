@@ -9,28 +9,32 @@ import com.kite.app.resources.KiteResourceInstallSpec
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.resources.KiteResourceShellAction
+import com.kite.app.resources.KiteResourceSourcePlanFactory
 
 /** 把资源清单编译成有限运行配方，不读取页面模型。 */
 internal class AndroidResourceRecipeFactory(
     private val manifestLoader: KiteResourceManifestLoader
 ) {
-    fun recipe(resourceId: String, operation: String): KiteRecipe? {
+    fun recipe(resourceId: String, operation: String, targetVersion: String? = null): KiteRecipe? {
         val manifest = manifestLoader.requestManifest(resourceId) ?: return null
+        val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest, targetVersion)
         val actions = when (operation) {
-            KiteResourceInstallRecipes.OP_INSTALL -> manifest.installActions
-            KiteResourceInstallRecipes.OP_UNINSTALL -> manifest.uninstallActions
+            KiteResourceInstallRecipes.OP_INSTALL,
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL -> sourcePlan.installActions
+            KiteResourceInstallRecipes.OP_UNINSTALL -> sourcePlan.uninstallActions
             else -> return null
         }
         val steps = actions.mapIndexed { index, action ->
             KiteRecipeStep(
                 id = "${operation}_${KiteResourceInstallRecipes.safeId(resourceId)}_${index + 1}",
                 type = KiteRecipe.STEP_SHELL,
-                cmd = actionCommand(manifest, operation, action),
+                cmd = actionCommand(manifest, operation, action, targetVersion),
                 surfaceMode = action.surfaceMode.ifBlank { KiteRecipe.SURFACE_MODE_PANEL },
                 workdir = action.workdir.ifBlank { "/workspace" },
                 timeoutMs = action.timeoutMs.takeIf { it > 0L } ?: 1_800_000L
             )
-        }.ifEmpty { legacyStep(resourceId, operation)?.let(::listOf).orEmpty() }
+        }
         if (steps.isEmpty()) return null
         return KiteResourceInstallRecipes.toRecipe(
             KiteResourceInstallSpec(
@@ -52,9 +56,12 @@ internal class AndroidResourceRecipeFactory(
     private fun actionCommand(
         manifest: KiteResourceManifest,
         operation: String,
-        action: KiteResourceShellAction
+        action: KiteResourceShellAction,
+        targetVersion: String?
     ): String = when (operation) {
-        KiteResourceInstallRecipes.OP_INSTALL -> {
+        KiteResourceInstallRecipes.OP_INSTALL,
+        KiteResourceInstallRecipes.OP_UPDATE,
+        KiteResourceInstallRecipes.OP_REINSTALL -> {
             val bundled = if (manifest.sourceType == "bundled") {
                 KiteResourceInstallPlanCompiler.bundledCommand(action)
                     ?.let { localBundledCommand(manifest.id, it, cleanInstallRoot = false) }
@@ -69,14 +76,21 @@ internal class AndroidResourceRecipeFactory(
                 rawCommand = installCommand,
                 managedCommands = action.managedCommands,
                 cleanInstallRoot = action.cleanInstallRoot,
-                verificationCommand = KiteResourceInstallPlanCompiler.compileVerification(action)
+                verificationCommand = KiteResourceInstallPlanCompiler.compileVerification(action),
+                versionProbeCommand = KiteResourceSourcePlanFactory.versionCheckPlan(manifest).installed?.command.orEmpty(),
+                expectedVersion = targetVersion,
+                preservePaths = manifest.management.preservePaths,
+                recordOwnership = operation != KiteResourceInstallRecipes.OP_UPDATE,
+                protectExistingInstall = operation == KiteResourceInstallRecipes.OP_UPDATE ||
+                    operation == KiteResourceInstallRecipes.OP_REINSTALL
             )
         }
         KiteResourceInstallRecipes.OP_UNINSTALL -> KiteResourceInstallRecipes.manifestUninstallCommand(
             resourceId = manifest.id,
             rawCommand = action.cmd,
             managedCommands = action.managedCommands,
-            npmUninstallPackages = action.npmUninstallPackages
+            npmUninstallPackages = action.npmUninstallPackages,
+            preservePaths = manifest.management.preservePaths
         )
         else -> action.cmd
     }
@@ -93,66 +107,16 @@ internal class AndroidResourceRecipeFactory(
         return KiteResourceInstallRecipes.localToolchainCommand(resourceId, mode, cleanInstallRoot)
     }
 
-    private fun legacyStep(resourceId: String, operation: String): KiteRecipeStep? {
-        val command = when (operation) {
-            KiteResourceInstallRecipes.OP_INSTALL -> when (resourceId) {
-                RESOURCE_NODE_RUNTIME -> KiteResourceInstallRecipes.localToolchainCommand(resourceId, "--install-node")
-                RESOURCE_KF_TOOL_ENV -> KiteResourceInstallRecipes.localToolchainCommand(resourceId, "--install")
-                RESOURCE_HERMES_WEBUI -> KiteResourceInstallRecipes.hermesWebUiInstallCommand()
-                RESOURCE_GIT -> KiteResourceInstallRecipes.gitInstallCommand()
-                RESOURCE_CURL -> KiteResourceInstallRecipes.curlInstallCommand()
-                RESOURCE_PYTHON -> KiteResourceInstallRecipes.pythonInstallCommand()
-                RESOURCE_UV -> KiteResourceInstallRecipes.localToolchainCommand(resourceId, "--install-uv")
-                RESOURCE_HERMES_CORE -> KiteResourceInstallRecipes.hermesCoreInstallCommand()
-                else -> null
-            }
-            KiteResourceInstallRecipes.OP_UNINSTALL -> when (resourceId) {
-                RESOURCE_NODE_RUNTIME -> KiteResourceInstallRecipes.nodeUninstallCommand()
-                RESOURCE_KF_TOOL_ENV -> KiteResourceInstallRecipes.toolEnvUninstallCommand()
-                RESOURCE_HERMES_WEBUI -> KiteResourceInstallRecipes.hermesWebUiUninstallCommand()
-                RESOURCE_GIT -> KiteResourceInstallRecipes.gitUninstallCommand()
-                RESOURCE_CURL -> KiteResourceInstallRecipes.curlUninstallCommand()
-                RESOURCE_PYTHON -> KiteResourceInstallRecipes.pythonUninstallCommand()
-                RESOURCE_UV -> KiteResourceInstallRecipes.uvUninstallCommand()
-                RESOURCE_HERMES_CORE -> KiteResourceInstallRecipes.hermesCoreUninstallCommand()
-                else -> null
-            }
-            else -> null
-        } ?: return null
-        return KiteRecipeStep(
-            id = "${operation}_${KiteResourceInstallRecipes.safeId(resourceId)}_legacy",
-            type = KiteRecipe.STEP_SHELL,
-            cmd = command,
-            surfaceMode = KiteRecipe.SURFACE_MODE_PANEL,
-            workdir = "/workspace",
-            timeoutMs = if (resourceId == RESOURCE_HERMES_CORE && operation == KiteResourceInstallRecipes.OP_INSTALL) {
-                1_800_000L
-            } else {
-                900_000L
-            }
-        )
-    }
-
     private fun iconName(manifest: KiteResourceManifest): String = when {
-        manifest.id in setOf(RESOURCE_GIT, RESOURCE_CURL, RESOURCE_UV) -> KiteRecipeIcon.ICON_CODE
         manifest.displayCategory == "AI" -> KiteRecipeIcon.ICON_BOT
-        manifest.displayCategory in setOf("Node", "JavaScript", "Python") -> KiteRecipeIcon.ICON_CODE
+        manifest.displayCategory in setOf("Node", "JavaScript", "Python", "系统工具") -> KiteRecipeIcon.ICON_CODE
         else -> KiteRecipeIcon.ICON_TOOLS
     }
 
     private fun operationLabel(operation: String): String = when (operation) {
         KiteResourceInstallRecipes.OP_UNINSTALL -> "卸载"
+        KiteResourceInstallRecipes.OP_UPDATE -> "更新"
+        KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装"
         else -> "获取"
-    }
-
-    companion object {
-        private const val RESOURCE_NODE_RUNTIME = "kite.nodejs"
-        private const val RESOURCE_KF_TOOL_ENV = "kite.tool.env"
-        private const val RESOURCE_HERMES_CORE = "kite.hermes.core"
-        private const val RESOURCE_HERMES_WEBUI = "kite.hermes.webui"
-        private const val RESOURCE_GIT = "kite.git"
-        private const val RESOURCE_CURL = "kite.curl"
-        private const val RESOURCE_PYTHON = "kite.python"
-        private const val RESOURCE_UV = "kite.uv"
     }
 }

@@ -84,7 +84,7 @@ internal class AndroidRunWindowSurfaceGateway(
         CardRunStore.selectWindow(parent.instanceId, child.instanceId, CardRunSurface.Terminal)
         scope.launch {
             val result = runCatching {
-                val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
+                val space = KFWorkspaceManager.ensureActiveSpace(appContext)
                 val record = KFWorkspaceManager.createShellSession(
                     context = appContext,
                     spaceId = space.id,
@@ -455,15 +455,20 @@ internal class AndroidRunWindowSurfaceGateway(
             rootPid = mutation.rootPid,
             processGroupId = mutation.processGroupId,
             systemSessionId = mutation.systemSessionId,
+            runtimeLane = mutation.runtimeLane,
+            runtimeFallbackReason = mutation.runtimeFallbackReason,
             lastMeaningfulOutput = mutation.lastMeaningfulOutput,
             lastError = mutation.lastError,
             shellReportText = mutation.shellReportText,
             nextActionUrl = mutation.nextActionUrl,
             x11Display = mutation.x11Display,
             x11SocketPath = mutation.x11SocketPath,
+            agentId = mutation.agentId,
+            agentBinding = mutation.agentBinding,
             clearRunBinding = mutation.clearRunBinding,
             clearTerminalSession = mutation.clearTerminalSession,
-            clearNextActionUrl = mutation.clearNextActionUrl
+            clearNextActionUrl = mutation.clearNextActionUrl,
+            clearAgentBinding = mutation.clearAgentBinding
         )
     }
 
@@ -483,7 +488,9 @@ internal class AndroidRunWindowSurfaceGateway(
             instanceId = instanceId,
             parentInstanceId = parent.instanceId,
             ownerKind = ownerKind,
-            stepId = stepId
+            stepId = stepId,
+            agentId = parent.agentId,
+            environmentId = parent.environmentId
         )
         return CardRunStore.update(
             recipe = recipe,
@@ -497,7 +504,8 @@ internal class AndroidRunWindowSurfaceGateway(
             lastMeaningfulOutput = message,
             clearRunBinding = true,
             clearTerminalSession = true,
-            clearNextActionUrl = true
+            clearNextActionUrl = true,
+            environmentId = parent.environmentId
         )
     }
 
@@ -576,6 +584,7 @@ internal class AndroidRunWindowSurfaceGateway(
             KiteRecipe.STEP_TERMINAL -> CardRunSurface.Terminal
             KiteRecipe.STEP_OPEN_WEB -> CardRunSurface.Web
             KiteRecipe.STEP_X11 -> CardRunSurface.X11
+            KiteRecipe.STEP_AGENT -> CardRunSurface.Agent
             else -> CardRunSurface.Summary
         }
 

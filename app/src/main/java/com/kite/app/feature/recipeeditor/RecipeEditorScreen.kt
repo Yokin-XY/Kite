@@ -25,6 +25,11 @@ import android.widget.TextView
 import androidx.appcompat.content.res.AppCompatResources
 import com.kite.app.R
 import com.kite.app.action.KiteRecipeActionIntent
+import com.kite.app.agent.registration.AgentConfigurationStatus
+import com.kite.app.agent.registration.AgentInstallationStatus
+import com.kite.app.agent.registration.AgentLaunchStatus
+import com.kite.app.agent.registration.AgentRegistryEntry
+import com.kite.app.agent.registration.AgentRuntimeStatus
 import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeIcon
@@ -809,6 +814,7 @@ internal class RecipeEditorScreen(
         var command = initial?.command.orEmpty()
         var url = initial?.url.orEmpty()
         var workdir = initial?.workdir.orEmpty()
+        var agentId = initial?.agentId.orEmpty()
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(22), dp(18), dp(22), dp(24))
@@ -830,6 +836,43 @@ internal class RecipeEditorScreen(
                     fields.addView(stepDialogField(context.getString(R.string.recipe_editor_shell_command), "echo hello", command) { command = it })
                     fields.addView(stepDialogField(context.getString(R.string.recipe_editor_workdir), "/workspace", workdir) { workdir = it })
                 }
+                KiteRecipe.STEP_AGENT -> {
+                    fields.addView(TextView(context).apply {
+                        text = context.getString(R.string.recipe_editor_agent_choice)
+                        textSize = 12.5f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(tokens.textPrimary)
+                        setPadding(0, 0, 0, dp(8))
+                    })
+                    if (latestState.agents.isEmpty()) {
+                        fields.addView(TextView(context).apply {
+                            text = if (initial?.legacyProviderId.isNullOrBlank()) {
+                                context.getString(R.string.recipe_editor_agent_empty)
+                            } else {
+                                context.getString(
+                                    R.string.recipe_editor_agent_legacy_unresolved,
+                                    initial?.legacyProviderId.orEmpty()
+                                )
+                            }
+                            textSize = 13f
+                            setTextColor(tokens.textSecondary)
+                            setPadding(dp(14), dp(14), dp(14), dp(18))
+                            background = rounded(tokens.surface, tokens.border, dp(14).toFloat())
+                        })
+                    } else {
+                        latestState.agents.forEach { entry ->
+                            fields.addView(agentChoice(entry, entry.registration.definition.agentId == agentId) {
+                                agentId = entry.registration.definition.agentId
+                                renderFields()
+                            })
+                        }
+                    }
+                    fields.addView(stepDialogField(
+                        context.getString(R.string.recipe_editor_workdir),
+                        "/workspace",
+                        workdir,
+                    ) { workdir = it })
+                }
                 else -> fields.addView(stepDialogField(
                     context.getString(R.string.recipe_editor_web_address),
                     "http://127.0.0.1:8648",
@@ -843,7 +886,8 @@ internal class RecipeEditorScreen(
             listOf(
                 KiteRecipe.STEP_TERMINAL to ">_ ${context.getString(R.string.recipe_editor_step_terminal)}",
                 KiteRecipe.STEP_SHELL to context.getString(R.string.recipe_editor_shell_command),
-                KiteRecipe.STEP_OPEN_WEB to "◎ ${context.getString(R.string.recipe_editor_step_web)}"
+                KiteRecipe.STEP_OPEN_WEB to "◎ ${context.getString(R.string.recipe_editor_step_web)}",
+                KiteRecipe.STEP_AGENT to "✦ ${context.getString(R.string.recipe_editor_step_agent)}"
             ).forEach { (value, label) ->
                 tabs.addView(TextView(context).apply {
                     text = label
@@ -912,6 +956,10 @@ internal class RecipeEditorScreen(
                     if (command.isBlank()) return@dialogAction
                     RecipeEditorStepDraft.shell(command.trim(), workdir.trim())
                 }
+                KiteRecipe.STEP_AGENT -> {
+                    if (agentId.isBlank()) return@dialogAction
+                    RecipeEditorStepDraft.agent(agentId, workdir.trim().ifBlank { "/workspace" })
+                }
                 else -> {
                     if (url.isBlank()) return@dialogAction
                     RecipeEditorStepDraft.openWeb(url.trim())
@@ -951,9 +999,60 @@ internal class RecipeEditorScreen(
         })
     }
 
+    private fun agentChoice(
+        entry: AgentRegistryEntry,
+        selected: Boolean,
+        click: () -> Unit
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(14), dp(11), dp(14), dp(11))
+        contentDescription = context.getString(
+            R.string.recipe_editor_agent_choice_description,
+            entry.registration.definition.displayName
+        )
+        background = rounded(
+            if (selected) tokens.primarySubtle else tokens.surface,
+            if (selected) tokens.primaryStrong else tokens.border,
+            dp(14).toFloat()
+        )
+        addView(TextView(context).apply {
+            text = entry.registration.definition.displayName
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(if (selected) tokens.primaryStrong else tokens.textPrimary)
+        })
+        addView(TextView(context).apply {
+            text = "${entry.registration.definition.agentId} · ${agentStatus(entry)}"
+            textSize = 12f
+            setTextColor(tokens.textSecondary)
+        })
+        setOnClickListener { click() }
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(0, 0, 0, dp(8)) }
+    }
+
+    private fun agentStatus(entry: AgentRegistryEntry): String = when {
+        entry.installationStatus == AgentInstallationStatus.NotInstalled ->
+            context.getString(R.string.recipe_editor_agent_not_installed)
+        entry.configurationStatus == AgentConfigurationStatus.Required ->
+            context.getString(R.string.recipe_editor_agent_needs_configuration)
+        entry.launchStatus == AgentLaunchStatus.Unsupported ->
+            context.getString(R.string.recipe_editor_agent_unsupported)
+        entry.runtimeStatus == AgentRuntimeStatus.Running ->
+            context.getString(R.string.recipe_editor_agent_running)
+        else -> context.getString(R.string.recipe_editor_agent_ready)
+    }
+
     private fun stepIcon(step: RecipeEditorStepDraft): View = TextView(context).apply {
         val shell = step.type == KiteRecipe.STEP_SHELL || step.type == KiteRecipe.STEP_TERMINAL
-        text = if (shell) ">_" else "◎"
+        val agent = step.type == KiteRecipe.STEP_AGENT
+        text = when {
+            shell -> ">_"
+            agent -> "AI"
+            else -> "◎"
+        }
         textSize = 14f
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
@@ -984,6 +1083,7 @@ internal class RecipeEditorScreen(
     private fun stepTypeLabel(step: RecipeEditorStepDraft): String = when (step.type) {
         KiteRecipe.STEP_TERMINAL -> context.getString(R.string.recipe_editor_step_terminal)
         KiteRecipe.STEP_SHELL -> context.getString(R.string.recipe_editor_shell_command)
+        KiteRecipe.STEP_AGENT -> context.getString(R.string.recipe_editor_step_agent)
         else -> context.getString(R.string.recipe_editor_step_open_web)
     }
 
@@ -994,6 +1094,14 @@ internal class RecipeEditorScreen(
         KiteRecipe.STEP_SHELL -> step.command.ifBlank {
             context.getString(R.string.recipe_editor_step_missing_shell)
         }
+        KiteRecipe.STEP_AGENT -> latestState.agents
+            .firstOrNull { it.registration.definition.agentId == step.agentId }
+            ?.let { "${it.registration.definition.displayName} · ${agentStatus(it)}" }
+            ?: step.agentId.ifBlank {
+                step.legacyProviderId.takeIf(String::isNotBlank)
+                    ?.let { context.getString(R.string.recipe_editor_agent_legacy_unresolved, it) }
+                    ?: context.getString(R.string.recipe_editor_agent_missing)
+            }
         else -> step.url.ifBlank { context.getString(R.string.recipe_editor_step_missing_url) }
     }
 

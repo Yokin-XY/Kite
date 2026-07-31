@@ -12,10 +12,16 @@
       "fit": "fullBleed"
     }
   },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["mimo"]
+  },
   "display": {
     "sections": [
-      "featured"
+      "ai-vendor"
     ],
+    "tabs": ["angel-cli"],
+    "order": 120,
     "category": "AI",
     "accent": "orange",
     "sizeLabel": "网络包",
@@ -75,6 +81,25 @@
     "installRoot": "/workspace/.kf/software/kite.mimo.code",
     "binRoot": "/workspace/.kf/bin"
   },
+  "agents": [
+    {
+      "id": "mimo",
+      "name": "MiMo Code",
+      "description": "MiMo Code 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "mimo-code"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "mimo",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["mimo", "acp"],
+        "title": "MiMo Code"
+      }
+    }
+  ],
   "actions": {
     "install": [
       {
@@ -107,7 +132,7 @@
         "base": {
           "id": "",
           "name": "MiMo Code",
-          "description": "在终端里启动 MiMo Code 编码助手",
+          "description": "启动 MiMo Code Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -118,8 +143,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"MiMo Code 首次启动会引导配置：MiMo Auto、小米平台 OAuth、Claude Code 导入或自定义 OpenAI-compatible Provider。\"\nmimo\n"
+            "type": "agent",
+            "agentId": "mimo",
+            "workdir": "/workspace"
           }
         ]
       }
@@ -144,7 +170,7 @@
         "base": {
           "id": "",
           "name": "MiMo Code",
-          "description": "在终端里启动 MiMo Code 编码助手",
+          "description": "启动 MiMo Code Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -155,8 +181,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"MiMo Code 首次启动会引导配置：MiMo Auto、小米平台 OAuth、Claude Code 导入或自定义 OpenAI-compatible Provider。\"\nmimo\n"
+            "type": "agent",
+            "agentId": "mimo",
+            "workdir": "/workspace"
           }
         ]
       }

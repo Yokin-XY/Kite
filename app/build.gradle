@@ -1,15 +1,42 @@
+import groovy.json.JsonOutput
+
 plugins {
     id "com.android.application"
     id "org.jetbrains.kotlin.android"
 }
 
 def generatedLegalAssetsDir = layout.buildDirectory.dir("generated/legal-assets")
+def resourceDefinitionsDir = rootProject.file("assets/resources")
+def generatedResourceCatalogAssetsDir = layout.buildDirectory.dir("generated/resource-catalog-assets")
+def generatedNodeRuntimeAssetsDir = layout.buildDirectory.dir("generated/node-runtime-assets")
 def syncLegalDocuments = tasks.register("syncLegalDocuments", Sync) {
     from(rootProject.file("LICENSE")) {
         rename { "LICENSE.txt" }
     }
     from(rootProject.file("THIRD_PARTY_NOTICES.md"))
     into(generatedLegalAssetsDir.map { it.dir("legal") })
+}
+
+def generateResourceCatalogIndex = tasks.register("generateResourceCatalogIndex") {
+    inputs.dir(resourceDefinitionsDir)
+    outputs.file(generatedResourceCatalogAssetsDir.map { it.file("resources/index.json") })
+    doLast {
+        def resourceIds = resourceDefinitionsDir.listFiles()
+            ?.findAll { it.isDirectory() && new File(it, "manifest.json").isFile() }
+            ?.collect { it.name }
+            ?.sort() ?: []
+        def outputFile = generatedResourceCatalogAssetsDir.get().file("resources/index.json").asFile
+        outputFile.parentFile.mkdirs()
+        outputFile.setText(
+            JsonOutput.prettyPrint(JsonOutput.toJson([schemaVersion: 1, resources: resourceIds])) + System.lineSeparator(),
+            "UTF-8"
+        )
+    }
+}
+
+def syncNodeRuntimeAssets = tasks.register("syncNodeRuntimeAssets", Sync) {
+    from(rootProject.file("scripts/kite-node-host-runtime.cjs"))
+    into(generatedNodeRuntimeAssetsDir.map { it.dir("node-runtime") })
 }
 
 android {
@@ -41,6 +68,8 @@ android {
         main {
             assets.srcDir "../assets"
             assets.srcDir generatedLegalAssetsDir
+            assets.srcDir generatedResourceCatalogAssetsDir
+            assets.srcDir generatedNodeRuntimeAssetsDir
         }
     }
 
@@ -59,6 +88,8 @@ android {
 
 tasks.named("preBuild").configure {
     dependsOn(syncLegalDocuments)
+    dependsOn(generateResourceCatalogIndex)
+    dependsOn(syncNodeRuntimeAssets)
 }
 
 dependencies {
@@ -69,6 +100,15 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-service:2.7.0"
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+    implementation "com.agentclientprotocol:acp:0.26.0"
+    // 保留 Agent 原生 JSONC/JSON5 配置中的注释和字段顺序，避免整文件降级为普通 JSON。
+    implementation "blue.endless:jankson:1.2.3"
+    // Hermes 的原生配置是 YAML；只重写目标顶层区段，解析器用于安全读取和写后校验。
+    implementation "org.yaml:snakeyaml:2.2"
+    // Codex 的用户配置是 TOML；解析器只负责读取和写后校验，定点编辑仍保留未知字段与注释。
+    implementation "org.tomlj:tomlj:1.1.1"
+    // ACP 的 JVM transport 通过 kotlin-logging 调用 SLF4J；Android APK 必须显式携带 API。
+    implementation "org.slf4j:slf4j-api:2.0.16"
     implementation "org.apache.commons:commons-compress:1.21"
     implementation "androidx.recyclerview:recyclerview:1.3.2"
     implementation "androidx.cardview:cardview:1.0.0"
@@ -86,4 +126,6 @@ dependencies {
     testImplementation "androidx.test:core:1.5.0"
     testImplementation "androidx.test.ext:junit:1.1.5"
     testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3"
+    // JVM 单测提供实际日志后端；Android 运行时没有绑定时会安全退化为 NOP logger。
+    testRuntimeOnly "org.slf4j:slf4j-simple:2.0.16"
 }

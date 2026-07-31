@@ -14,7 +14,7 @@ enum class RuntimePathRole(val label: String) {
     CONTAINER_ROOTFS("容器系统层"),
     WORKSPACE("工作区热路径"),
     WORKSPACE_BUILD_SUPPORT("工作区构建辅助区"),
-    EXCHANGE("交换区"),
+    ANDROID_SHARED_STORAGE("安卓共享存储"),
     LOGS("日志区"),
     TMP("临时区"),
     UNKNOWN("未知区域")
@@ -27,7 +27,6 @@ enum class RuntimeActionKind(val label: String) {
     PROCESS_SAMPLING("真实进程采样"),
     WORKSPACE_BROWSE("工作区浏览"),
     LOG_VIEW("日志查看"),
-    EXCHANGE_TRANSFER("交换区传输"),
     MOBILE_BUILD("手机端构建"),
     TOOL_ENTRY("工具入口")
 }
@@ -45,7 +44,7 @@ data class RuntimeBoundarySnapshot(
     val containerRootfsDir: File?,
     val workspaceDir: File?,
     val workspaceBuildSupportDir: File?,
-    val exchangeDir: File,
+    val androidSharedStorageDirs: List<File>,
     val logsDir: File,
     val tmpDir: File
 )

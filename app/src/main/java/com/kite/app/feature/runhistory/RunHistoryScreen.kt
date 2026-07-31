@@ -462,6 +462,7 @@ internal class RunHistoryScreen(
             KiteRecipe.STEP_TERMINAL -> "打开交互终端"
             KiteRecipe.STEP_OPEN_WEB -> "未记录网址"
             KiteRecipe.STEP_SHELL -> "未记录命令"
+            KiteRecipe.STEP_AGENT -> "Agent 会话"
             else -> "无自动内容"
         }
     }

@@ -49,7 +49,7 @@ internal class RunActivityChrome(
     init {
         handle = sideHandle(
             onSingleTap = actions.onToggleSurfaceToolbar,
-            onDoubleTap = ::showOverview
+            onDoubleTap = ::showOverviewFromDoubleTap
         )
         root.addView(
             handle,
@@ -78,6 +78,7 @@ internal class RunActivityChrome(
     }
 
     fun render(state: RunSurfaceUiState) {
+        handle.visibility = View.VISIBLE
         overview.render(state)
     }
 
@@ -96,7 +97,11 @@ internal class RunActivityChrome(
 
     internal fun handleForTesting(): View = handle
 
-    private fun showOverview() {
+    internal fun showOverview() {
+        overview.show()
+    }
+
+    private fun showOverviewFromDoubleTap() {
         // 第一次抬手已经即时执行单击；双击成立时再切一次，恢复双击前的工具栏状态。
         actions.onToggleSurfaceToolbar()
         overview.show()

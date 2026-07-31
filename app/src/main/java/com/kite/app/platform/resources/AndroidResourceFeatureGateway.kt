@@ -17,6 +17,7 @@ import com.kite.app.run.CardRunStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.withContext
@@ -26,8 +27,14 @@ internal class AndroidResourceFeatureGateway(
     private val installStore: KiteResourceInstallStore,
     private val nodeRuntimeInstalled: () -> Boolean
 ) : ResourceFeatureGateway {
+    init {
+        reconcileTerminatedMaintenanceRuns()
+    }
+
     override val changes: Flow<ResourceFeatureChange> = merge(
-        installStore.signals.drop(1).map { signal ->
+        installStore.signals.drop(1)
+            .filter { signal -> signal.environmentId == installStore.currentEnvironmentId() }
+            .map { signal ->
             ResourceFeatureChange(
                 reason = signal.reason,
                 affectedResourceIds = (
@@ -68,7 +75,8 @@ internal class AndroidResourceFeatureGateway(
 
     override fun openRunStatus(resourceId: String): CardRunStatus? =
         CardRunStore.currentForRecipe(
-            KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_OPEN)
+            KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_OPEN),
+            installStore.currentEnvironmentId()
         )?.status
 
     override fun operationRunSnapshot(
@@ -76,7 +84,8 @@ internal class AndroidResourceFeatureGateway(
         operation: String
     ): ResourceFeatureRunSnapshot? =
         CardRunStore.currentForRecipe(
-            KiteResourceInstallRecipes.recipeId(resourceId, operation)
+            KiteResourceInstallRecipes.recipeId(resourceId, operation),
+            installStore.currentEnvironmentId()
         )?.let { run ->
             ResourceFeatureRunSnapshot(
                 instanceId = run.instanceId,
@@ -103,15 +112,64 @@ internal class AndroidResourceFeatureGateway(
             .mapNotNull(byId::get)
     }
 
+    private fun reconcileTerminatedMaintenanceRuns() {
+        installStore.registrySnapshot().values
+            .filter { entry ->
+                entry.installing && entry.operation in MAINTENANCE_OPERATIONS
+            }
+            .forEach { entry ->
+                val recipeId = KiteResourceInstallRecipes.recipeId(entry.resourceId, entry.operation)
+                val environmentId = installStore.currentEnvironmentId()
+                val latestCurrent = CardRunStore.currentForRecipe(recipeId, environmentId)
+                if (latestCurrent != null && latestCurrent.status !in TERMINATED_FAILURE_STATUSES) {
+                    return@forEach
+                }
+                val current = latestCurrent?.takeIf { run ->
+                    run.status in TERMINATED_FAILURE_STATUSES
+                }
+                val history = CardRunStore.historyForRecipe(recipeId, limit = 1, environmentId = environmentId)
+                    .firstOrNull()
+                    ?.takeIf { run ->
+                        run.status in TERMINATED_FAILURE_STATUSES
+                    }
+                val failure = current?.let { run ->
+                    run.lastError.orEmpty() to run.lastMeaningfulOutput.orEmpty()
+                } ?: history?.let { run ->
+                    run.error to run.summary
+                } ?: return@forEach
+                installStore.markMaintenanceFailed(
+                    entry.resourceId,
+                    entry.operation,
+                    failure.first.ifBlank {
+                        failure.second.ifBlank { "上次维护任务未完成，已恢复原有版本" }
+                    }
+                )
+            }
+    }
+
     private fun KiteResourceManifest.providesNodeRuntime(): Boolean =
         provides.any { it.startsWith("runtime.node") }
 
     companion object {
+        private val MAINTENANCE_OPERATIONS = setOf(
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL
+        )
+        private val TERMINATED_FAILURE_STATUSES = setOf(
+            CardRunStatus.Failed,
+            CardRunStatus.Stopped,
+            CardRunStatus.BridgeUnavailable
+        )
+
         fun create(
             manifestLoader: KiteResourceManifestLoader,
             installStore: KiteResourceInstallStore,
             nodeRuntimeInstalled: () -> Boolean
         ): AndroidResourceFeatureGateway =
-            AndroidResourceFeatureGateway(manifestLoader, installStore, nodeRuntimeInstalled)
+            AndroidResourceFeatureGateway(
+                manifestLoader,
+                installStore,
+                nodeRuntimeInstalled
+            )
     }
 }

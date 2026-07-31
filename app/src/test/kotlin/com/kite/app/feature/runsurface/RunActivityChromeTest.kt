@@ -45,6 +45,20 @@ class RunActivityChromeTest {
     }
 
     @Test
+    fun `Agent 显示面沿用实例侧边竖条并可双击进入窗口总览`() {
+        val fixture = fixture()
+        fixture.renderAgent()
+        val firstTapAt = SystemClock.uptimeMillis()
+
+        assertEquals(View.VISIBLE, fixture.chrome.handleForTesting().visibility)
+        dispatchTap(fixture.chrome.handleForTesting(), firstTapAt)
+        dispatchTap(fixture.chrome.handleForTesting(), firstTapAt + 100L)
+
+        assertEquals(listOf("toggle-toolbar", "toggle-toolbar"), fixture.actionLog)
+        assertTrue(fixture.chrome.overviewVisibleForTesting())
+    }
+
+    @Test
     fun `双击竖条恢复第一次显隐并进入实例窗口`() {
         val fixture = fixture()
         fixture.renderTerminal()
@@ -166,6 +180,18 @@ class RunActivityChromeTest {
                     surface = CardRunSurface.Terminal,
                     status = CardRunStatus.WaitingTerminal,
                     terminalSessionId = "terminal-1"
+                )
+            )
+        )
+    }
+
+    private fun Fixture.renderAgent() {
+        chrome.render(
+            RunSurfaceProjector.project(
+                recipe(KiteRecipeStep(id = "agent", type = KiteRecipe.STEP_AGENT, providerId = "opencode")),
+                state(
+                    surface = CardRunSurface.Agent,
+                    status = CardRunStatus.Running
                 )
             )
         )

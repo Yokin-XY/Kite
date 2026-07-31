@@ -11,7 +11,8 @@ import com.kite.app.run.CardRunState
 /** Debug-gated owner 探针适配器，复用正式 RunOrchestrator 路径。 */
 internal class AndroidRuntimeOwnerProbeGateway(
     private val orchestrator: RunOrchestrator,
-    private val diagnostics: KiteDiagnostics
+    private val diagnostics: KiteDiagnostics,
+    private val environmentIdProvider: () -> String = { CardRunState.DEFAULT_ENVIRONMENT_ID }
 ) : RuntimeOwnerProbeGateway {
     override fun start(resourceId: String, instanceId: String): RunCommandResult {
         val recipe = CardRunSpecialRecipes.resourceOwnerProbe(resourceId)
@@ -25,7 +26,8 @@ internal class AndroidRuntimeOwnerProbeGateway(
                 recipe = recipe,
                 instanceId = instanceId,
                 ownerKind = CardRunState.OWNER_KIND_RESOURCE,
-                stepId = resourceId
+                stepId = resourceId,
+                environmentId = environmentIdProvider()
             )
         )
     }

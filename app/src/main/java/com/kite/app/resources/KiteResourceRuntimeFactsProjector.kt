@@ -7,6 +7,7 @@ data class KiteResourceRuntimeFacts(
     val uninstalling: Boolean,
     val failed: Boolean,
     val failedOperation: String,
+    val currentOperation: String,
     val idleStateLabel: String,
     val extraBusy: Boolean = false
 )
@@ -50,6 +51,7 @@ object KiteResourceRuntimeFactsProjector {
             failed = failed,
             failedOperation = registryEntry?.operation.orEmpty()
                 .ifBlank { if (failed) KiteResourceInstallStore.OP_INSTALL else "" },
+            currentOperation = registryEntry?.operation.orEmpty(),
             idleStateLabel = idleStateLabel,
             extraBusy = extraBusy || registryEntry?.busy == true || planBusy
         )

@@ -13,6 +13,9 @@ import com.kite.app.application.settings.SettingsFeatureDependenciesOwner
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapDependenciesOwner
 import com.kite.app.R
 import com.kite.app.ui.terminal.TerminalUiPreferences
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** 设置二级页骨架。具体偏好迁移按类别分批接入，状态仍来自原 Owner。 */
@@ -32,6 +35,11 @@ internal class SettingsCategoryFragment : Fragment() {
             ?: error("Application 必须提供 RuntimeBootstrapGateway")
         owner.runtimeBootstrapGateway
     }
+    private val prootViewInspectionGateway by lazy(LazyThreadSafetyMode.NONE) {
+        val owner = requireContext().applicationContext as? com.kite.app.application.runtimemanagement.ProotViewInspectionDependenciesOwner
+            ?: error("Application 必须提供 ProotViewInspectionGateway")
+        owner.prootViewInspectionGateway
+    }
     private var screen: SettingsCategoryScreen? = null
 
     override fun onCreateView(
@@ -43,6 +51,7 @@ internal class SettingsCategoryFragment : Fragment() {
         destination = destination,
         initialState = controller.state.value,
         initialRuntimeSnapshot = runtimeGateway.currentSnapshot(),
+        initialProotViewSnapshot = prootViewInspectionGateway.currentSnapshot(),
         appInfo = readAppInfo(),
         initialTerminalFontSize = TerminalUiPreferences.loadFontSizeDp(requireContext()),
         initialTerminalTheme = TerminalUiPreferences.loadThemeMode(requireContext()),
@@ -84,6 +93,31 @@ internal class SettingsCategoryFragment : Fragment() {
         onOpenDropZone = { dispatch(SettingsFeatureAction.OpenDropZone) },
         onOpenAboutPage = { page -> send(SettingsFeatureRequest.OpenAboutPage(page)) },
         onOpenExternal = { url -> send(SettingsFeatureRequest.OpenExternalLink(url)) },
+        onRunViewAcceptance = {
+            if (destination == SettingsCategoryDestination.Engineering) {
+                prootViewInspectionGateway.runAcceptance()
+            }
+        },
+        onRunViewVerification = {
+            if (destination == SettingsCategoryDestination.Engineering) {
+                prootViewInspectionGateway.runVerification()
+            }
+        },
+        onCreateViewEnvironment = {
+            if (destination == SettingsCategoryDestination.Engineering) {
+                prootViewInspectionGateway.createEnvironment()
+            }
+        },
+        onSwitchViewEnvironment = { environmentId ->
+            if (destination == SettingsCategoryDestination.Engineering) {
+                prootViewInspectionGateway.switchEnvironment(environmentId)
+            }
+        },
+        onRunEnvironmentIsolationVerification = {
+            if (destination == SettingsCategoryDestination.Engineering) {
+                prootViewInspectionGateway.runEnvironmentIsolationVerification()
+            }
+        },
     ).also { screen = it }.root
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -104,6 +138,26 @@ internal class SettingsCategoryFragment : Fragment() {
                 }
             }
         }
+        if (destination == SettingsCategoryDestination.Engineering) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    prootViewInspectionGateway.snapshots.collect { snapshot ->
+                        screen?.renderProotViewSnapshot(snapshot)
+                    }
+                }
+            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    runtimeGateway.snapshots
+                        .map { snapshot -> snapshot.defaultContainerReady }
+                        .distinctUntilChanged()
+                        .filter { ready -> ready }
+                        .collect {
+                            prootViewInspectionGateway.refresh()
+                        }
+                }
+            }
+        }
     }
 
     override fun onDestroyView() {
@@ -121,6 +175,9 @@ internal class SettingsCategoryFragment : Fragment() {
             destination == SettingsCategoryDestination.RuntimeEnvironment
         ) {
             runtimeGateway.refresh()
+        }
+        if (destination == SettingsCategoryDestination.Engineering) {
+            prootViewInspectionGateway.refresh()
         }
         lifecycleScope.launch { controller.dispatch(SettingsFeatureAction.Refresh) }
     }

@@ -39,7 +39,9 @@ data class KiteRecipe(
         actionSteps(actionName).any { it.type == STEP_SHELL && !it.cmd.isNullOrBlank() }
 
     fun hasUbuntuStep(actionName: String = ACTION_START): Boolean =
-        actionSteps(actionName).any { it.type == STEP_SHELL || it.type == STEP_TERMINAL || it.type == STEP_X11 }
+        actionSteps(actionName).any {
+            it.type == STEP_SHELL || it.type == STEP_TERMINAL || it.type == STEP_X11 || it.type == STEP_AGENT
+        }
 
     fun openWebUrl(actionName: String = ACTION_START): String =
         openWebUrlFromSteps(actionSteps(actionName)).ifBlank { defaultUrl }
@@ -119,6 +121,7 @@ data class KiteRecipe(
         const val TYPE_START_SERVICE = "start_service"
         const val TYPE_COMMAND_WEB = "command_web"
         const val TYPE_SCRIPT_WEB = "script_web"
+        const val TYPE_AGENT = "agent"
         const val TYPE_TEMPLATE = "template"
         const val CATEGORY_UNCATEGORIZED = "uncategorized"
 
@@ -130,6 +133,7 @@ data class KiteRecipe(
         const val STEP_SHELL = "shell"
         const val STEP_TERMINAL = "terminal"
         const val STEP_X11 = "x11"
+        const val STEP_AGENT = "agent"
         const val STEP_ANDROID_ACTION = "android_action"
 
         const val ANDROID_ACTION_PREPARE_AI_ENV = "prepare_ai_env"
@@ -290,11 +294,15 @@ data class KiteRecipe(
             steps.firstOrNull { it.type == STEP_OPEN_WEB && !it.url.isNullOrBlank() }?.url.orEmpty()
 
         private fun inferTypeFromSteps(steps: List<KiteRecipeStep>): String {
-            val hasCommand = steps.any { it.type == STEP_SHELL || it.type == STEP_TERMINAL || it.type == STEP_X11 }
+            val hasAgent = steps.any { it.type == STEP_AGENT }
+            val hasCommand = steps.any {
+                it.type == STEP_SHELL || it.type == STEP_TERMINAL || it.type == STEP_X11
+            }
             val hasOpenWeb = steps.any { it.type == STEP_OPEN_WEB }
             return when {
+                hasAgent && !hasCommand && !hasOpenWeb -> TYPE_AGENT
                 hasCommand && hasOpenWeb -> TYPE_COMMAND_WEB
-                hasCommand -> TYPE_START_SERVICE
+                hasCommand || hasAgent -> TYPE_START_SERVICE
                 hasOpenWeb -> TYPE_OPEN_URL
                 else -> TYPE_TEMPLATE
             }
@@ -400,6 +408,7 @@ data class KiteRecipeIcon(
         fun defaultNameForType(recipeType: String): String = when (recipeType) {
             KiteRecipe.TYPE_OPEN_URL -> ICON_WEB
             KiteRecipe.TYPE_SCRIPT_WEB, KiteRecipe.TYPE_COMMAND_WEB -> ICON_TERMINAL
+            KiteRecipe.TYPE_AGENT -> ICON_BOT
             KiteRecipe.TYPE_START_SERVICE -> ICON_SERVER
             KiteRecipe.TYPE_TEMPLATE -> ICON_TOOLS
             else -> ICON_DEFAULT
@@ -572,6 +581,8 @@ data class KiteRecipeStep(
     val expected: KiteExpectedResult? = null,
     val outputPolicy: KiteOutputPolicy? = null,
     val url: String? = null,
+    val agentId: String? = null,
+    val providerId: String? = null,
     val wait: Boolean? = null
 ) {
     fun toJson(): JSONObject = JSONObject()
@@ -588,6 +599,12 @@ data class KiteRecipeStep(
             if (timeoutMs != null) put("timeoutMs", timeoutMs)
             if (delayAfterMs != null) put("delayAfterMs", delayAfterMs)
             if (!url.isNullOrBlank()) put("url", url)
+            if (!agentId.isNullOrBlank()) {
+                put("agentId", agentId)
+            } else if (!providerId.isNullOrBlank()) {
+                // 旧卡只读兼容；任何新写入都必须使用 agentId。
+                put("providerId", providerId)
+            }
         }
 
     companion object {
@@ -613,6 +630,8 @@ data class KiteRecipeStep(
                 outputPolicy = json.optJSONObject("outputPolicy")?.let { KiteOutputPolicy.fromJson(it) }
                     ?: if (type == KiteRecipe.STEP_SHELL) KiteOutputPolicy() else null,
                 url = json.optString("url").ifBlank { null },
+                agentId = json.optString("agentId").ifBlank { null },
+                providerId = json.optString("providerId").ifBlank { null },
                 wait = legacyWait
             )
         }

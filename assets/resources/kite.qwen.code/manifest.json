@@ -12,10 +12,16 @@
       "fit": "fullBleed"
     }
   },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["qwen"]
+  },
   "display": {
     "sections": [
-      "featured"
+      "ai-vendor"
     ],
+    "tabs": ["angel-cli"],
+    "order": 90,
     "category": "AI",
     "accent": "purple",
     "sizeLabel": "网络包",

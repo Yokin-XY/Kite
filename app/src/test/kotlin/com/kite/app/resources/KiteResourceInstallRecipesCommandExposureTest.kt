@@ -30,6 +30,8 @@ class KiteResourceInstallRecipesCommandExposureTest {
         assertTrue(script.contains("auto_commands="))
         assertTrue(script.contains(".kite-managed-commands"))
         assertTrue(script.contains("rollback_install_transaction"))
+        assertFalse(script.contains("KITE_RESOURCE_VIEW_TRANSACTION"))
+        assertFalse(script.contains("clean-view-install-root"))
         assertTrue(script.contains("cleanup_obsolete_command_links"))
         assertTrue(script.contains("export npm_config_prefix=\"${'$'}npm_prefix\""))
         assertTrue(script.contains("clear-build-apt-proxy"))
@@ -91,7 +93,8 @@ class KiteResourceInstallRecipesCommandExposureTest {
             resourceId = "kite.example",
             rawCommand = ":",
             managedCommands = listOf("example"),
-            npmUninstallPackages = emptyList()
+            npmUninstallPackages = emptyList(),
+            preservePaths = listOf("user-home", "user-home/.config/example", "../escape")
         )
 
         assertTrue(script.contains(".kite-managed-commands"))
@@ -101,6 +104,14 @@ class KiteResourceInstallRecipesCommandExposureTest {
         assertTrue(script.contains("legacy_kite_wrapper_target"))
         assertTrue(script.contains("[ \"${'$'}wrapper_target\" = \"${'$'}target_path\" ]"))
         assertTrue(script.contains("\"${'$'}install_root\"/*)"))
+        assertTrue(script.contains("kite.example.kite-retained"))
+        assertTrue(script.contains("KITE_RESOURCE_STEP retain-user-path ${'$'}preserved_relative"))
+        assertTrue(script.contains("preserved_relative='user-home'"))
+        assertFalse(script.contains("preserved_relative='user-home/.config/example'"))
+        assertFalse(script.contains("preserved_relative='../escape'"))
+        assertTrue(script.contains("kite-uninstall-staging-${'$'}${'$'}"))
+        assertTrue(script.contains("mv \"${'$'}install_root\" \"${'$'}uninstall_staging\""))
+        assertTrue(script.contains("KITE_RESOURCE_FAILURE stage=uninstall step=remove-install-root"))
     }
 
     @Test
@@ -120,5 +131,58 @@ class KiteResourceInstallRecipesCommandExposureTest {
                 "ln -sfn \"${'$'}target_path\" \"${KiteResourceInstallRecipes.WORKSPACE_BIN_ROOT}/${'$'}command_name\""
             )
         )
+    }
+
+    @Test
+    fun manifestUpdateCapturesActualVersionAndRejectsWrongTargetBeforeCommit() {
+        val script = KiteResourceInstallRecipes.manifestInstallCommand(
+            resourceId = "kite.example",
+            displayName = "Example",
+            rawCommand = ":",
+            managedCommands = listOf("example"),
+            cleanInstallRoot = true,
+            versionProbeCommand = "example --version",
+            expectedVersion = "v1.2.3",
+            preservePaths = listOf("user-home", "../escape")
+        )
+
+        val targetCheckIndex = script.indexOf("KITE_RESOURCE_FAILURE stage=verify step=target-version")
+        val commitIndex = script.indexOf("KITE_RESOURCE_STEP commit-install")
+
+        assertTrue(script.contains("example --version"))
+        assertTrue(script.contains("expected_version='v1.2.3'"))
+        assertTrue(script.contains("grep -Fxq \"${'$'}expected_version\""))
+        assertTrue(script.contains("KITE_RESOURCE_INSTALLED_VERSION ${'$'}installed_version_single_line"))
+        assertTrue(script.contains("KITE_RESOURCE_STEP replace-owned-command ${'$'}command_name"))
+        assertTrue(script.contains("KITE_RESOURCE_STEP restore-preserved-path ${'$'}preserved_relative"))
+        assertTrue(script.contains("KITE_RESOURCE_STEP restore-retained-path ${'$'}preserved_relative"))
+        assertTrue(script.contains("preserved_source_has_content \"${'$'}preserved_retained\""))
+        assertFalse(script.contains("view_transaction"))
+        assertTrue(script.contains("clear_preserved_source \"${'$'}retained_root/user-home\""))
+        assertTrue(script.contains("kite.example.kite-retained"))
+        assertTrue(script.contains("preserved_relative='user-home'"))
+        assertTrue(script.contains("cp -a --no-preserve=timestamps"))
+        assertFalse(script.contains("preserved_relative='../escape'"))
+        assertTrue(targetCheckIndex >= 0)
+        assertTrue(commitIndex > targetCheckIndex)
+        assertTrue(script.contains("ownership_tmp=\"${'$'}install_root/.ownership.tmp-${'$'}${'$'}\""))
+        assertTrue(script.contains("mv -f \"${'$'}ownership_tmp\" \"${'$'}install_root/ownership\""))
+        assertFalse(script.contains("'installed_by_kite' > \"${'$'}install_root/ownership\""))
+    }
+
+    @Test
+    fun manifestUpdateRetainsExistingOwnershipWithoutRewritingProtectedLowerFile() {
+        val script = KiteResourceInstallRecipes.manifestInstallCommand(
+            resourceId = "kite.example",
+            displayName = "Example",
+            rawCommand = ":",
+            managedCommands = emptyList(),
+            cleanInstallRoot = false,
+            recordOwnership = false
+        )
+
+        assertTrue(script.contains("KITE_RESOURCE_STEP retain-install-ownership kite.example"))
+        assertFalse(script.contains("ownership_tmp="))
+        assertFalse(script.contains("installed_by_kite"))
     }
 }

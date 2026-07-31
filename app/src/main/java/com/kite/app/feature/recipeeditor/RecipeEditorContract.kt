@@ -2,6 +2,7 @@ package com.kite.app.feature.recipeeditor
 
 import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.action.KiteRecipeActionRequest
+import com.kite.app.agent.registration.AgentRegistryEntry
 import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeIcon
@@ -17,19 +18,25 @@ internal data class RecipeEditorStepDraft(
     val type: String,
     val command: String = "",
     val url: String = "",
-    val workdir: String = ""
+    val workdir: String = "",
+    val agentId: String = "",
+    /** 只用于尚未完成 agentId 迁移的旧卡草稿，绝不写入新卡。 */
+    val legacyProviderId: String = ""
 ) {
     fun normalized(): RecipeEditorStepDraft = copy(
         command = command.trim(),
         url = url.trim(),
-        workdir = workdir.trim()
+        workdir = workdir.trim(),
+        agentId = agentId.trim(),
+        legacyProviderId = legacyProviderId.trim()
     )
 
     fun toInput(): NewRecipeStepInput = NewRecipeStepInput(
         type = type,
         command = command.trim(),
         url = url.trim(),
-        workdir = workdir.trim()
+        workdir = workdir.trim(),
+        agentId = agentId.trim()
     )
 
     companion object {
@@ -42,12 +49,35 @@ internal data class RecipeEditorStepDraft(
         fun openWeb(url: String = ""): RecipeEditorStepDraft =
             RecipeEditorStepDraft(KiteRecipe.STEP_OPEN_WEB, url = url)
 
-        fun fromStep(step: KiteRecipeStep): RecipeEditorStepDraft = RecipeEditorStepDraft(
-            type = step.type,
-            command = (step.cmd ?: step.text).orEmpty().trimEnd('\n'),
-            url = step.url.orEmpty(),
-            workdir = step.workdir.orEmpty()
-        )
+        fun agent(agentId: String, workdir: String = "/workspace"): RecipeEditorStepDraft =
+            RecipeEditorStepDraft(KiteRecipe.STEP_AGENT, workdir = workdir, agentId = agentId)
+
+        fun fromStep(
+            step: KiteRecipeStep,
+            agents: List<AgentRegistryEntry> = emptyList()
+        ): RecipeEditorStepDraft {
+            val explicitAgentId = step.agentId.orEmpty()
+            val legacyProviderId = step.providerId.orEmpty().takeIf { explicitAgentId.isBlank() }.orEmpty()
+            val migratedAgentId = if (legacyProviderId.isBlank()) {
+                explicitAgentId
+            } else {
+                agents
+                    .filter { it.registration.launch.providerId == legacyProviderId }
+                    .singleOrNull()
+                    ?.registration
+                    ?.definition
+                    ?.agentId
+                    .orEmpty()
+            }
+            return RecipeEditorStepDraft(
+                type = step.type,
+                command = (step.cmd ?: step.text).orEmpty().trimEnd('\n'),
+                url = step.url.orEmpty(),
+                workdir = step.workdir.orEmpty(),
+                agentId = migratedAgentId,
+                legacyProviderId = legacyProviderId.takeIf { migratedAgentId.isBlank() }.orEmpty()
+            )
+        }
     }
 }
 
@@ -84,11 +114,11 @@ internal data class RecipeEditorDraft(
         )
     }
 
-    fun validationErrors(): List<RecipeEditorValidationError> = buildList {
+    fun validationErrors(agents: List<AgentRegistryEntry> = emptyList()): List<RecipeEditorValidationError> = buildList {
         val value = normalized()
         if (value.name.isBlank()) add(RecipeEditorValidationError("name", "请输入名称"))
         if (value.steps.isEmpty()) {
-            add(RecipeEditorValidationError("steps", "请至少添加一个命令或打开网页步骤"))
+            add(RecipeEditorValidationError("steps", "请至少添加一个动作"))
         }
         value.steps.forEachIndexed { index, step ->
             when {
@@ -96,6 +126,26 @@ internal data class RecipeEditorDraft(
                     add(RecipeEditorValidationError("steps", "第 ${index + 1} 个打开网页步骤缺少地址", index))
                 step.type == KiteRecipe.STEP_SHELL && step.command.isBlank() ->
                     add(RecipeEditorValidationError("steps", "第 ${index + 1} 个 sh 命令步骤缺少命令", index))
+                step.type == KiteRecipe.STEP_AGENT && step.agentId.isBlank() -> add(
+                    RecipeEditorValidationError(
+                        "steps",
+                        if (step.legacyProviderId.isNotBlank()) {
+                            "第 ${index + 1} 个旧 Agent provider 无法唯一对应：${step.legacyProviderId}"
+                        } else {
+                            "第 ${index + 1} 个 Agent 步骤尚未选择 Agent"
+                        },
+                        index
+                    )
+                )
+                step.type == KiteRecipe.STEP_AGENT && agents.none {
+                    it.registration.definition.agentId == step.agentId
+                } -> add(
+                    RecipeEditorValidationError(
+                        "steps",
+                        "第 ${index + 1} 个 Agent 未登记或存在 ID 冲突：${step.agentId}",
+                        index
+                    )
+                )
             }
         }
     }
@@ -122,6 +172,26 @@ internal data class RecipeEditorDraft(
         )
     }
 
+    fun reconcileAgents(agents: List<AgentRegistryEntry>): RecipeEditorDraft = copy(
+        steps = steps.map { step ->
+            if (
+                step.type != KiteRecipe.STEP_AGENT || step.agentId.isNotBlank() ||
+                step.legacyProviderId.isBlank()
+            ) {
+                step
+            } else {
+                val agentId = agents
+                    .filter { it.registration.launch.providerId == step.legacyProviderId }
+                    .singleOrNull()
+                    ?.registration
+                    ?.definition
+                    ?.agentId
+                    .orEmpty()
+                if (agentId.isBlank()) step else step.copy(agentId = agentId, legacyProviderId = "")
+            }
+        }
+    ).normalized()
+
     fun toJson(): JSONObject = JSONObject()
         .put("editingRecipeId", editingRecipeId)
         .put("selectedType", selectedType)
@@ -140,17 +210,23 @@ internal data class RecipeEditorDraft(
                     .put("type", step.type)
                     .put("command", step.command)
                     .put("url", step.url)
-                    .put("workdir", step.workdir))
+                    .put("workdir", step.workdir)
+                    .put("agentId", step.agentId)
+                    .put("legacyProviderId", step.legacyProviderId))
             }
         })
 
     companion object {
         fun empty(): RecipeEditorDraft = RecipeEditorDraft()
 
-        fun fromRecipe(recipe: KiteRecipe): RecipeEditorDraft {
+        fun fromRecipe(
+            recipe: KiteRecipe,
+            agents: List<AgentRegistryEntry> = emptyList()
+        ): RecipeEditorDraft {
             val iconType = recipe.icon.type.takeIf { it == KiteRecipeIcon.TYPE_IMAGE && recipe.icon.source.isNotBlank() }
                 ?: KiteRecipeIcon.TYPE_BUILTIN
-            val inferred = inferType(recipe.steps.map(RecipeEditorStepDraft::fromStep))
+            val stepDrafts = recipe.steps.map { RecipeEditorStepDraft.fromStep(it, agents) }
+            val inferred = inferType(stepDrafts)
             return RecipeEditorDraft(
                 editingRecipeId = recipe.id,
                 selectedType = inferred,
@@ -166,7 +242,7 @@ internal data class RecipeEditorDraft(
                 description = recipe.description,
                 launchOpenInstance = recipe.launch.openInstance,
                 keepFinishedNotification = recipe.launch.keepFinishedNotification,
-                steps = recipe.steps.map(RecipeEditorStepDraft::fromStep)
+                steps = stepDrafts
             ).normalized()
         }
 
@@ -180,7 +256,9 @@ internal data class RecipeEditorDraft(
                         type = item.optString("type").ifBlank { KiteRecipe.STEP_SHELL },
                         command = item.optString("command"),
                         url = item.optString("url"),
-                        workdir = item.optString("workdir")
+                        workdir = item.optString("workdir"),
+                        agentId = item.optString("agentId"),
+                        legacyProviderId = item.optString("legacyProviderId")
                     ))
                 }
             }
@@ -203,11 +281,13 @@ internal data class RecipeEditorDraft(
         }.getOrNull()
 
         fun inferType(steps: List<RecipeEditorStepDraft>): String {
+            val hasAgent = steps.any { it.type == KiteRecipe.STEP_AGENT }
             val hasShell = steps.any { it.type == KiteRecipe.STEP_SHELL || it.type == KiteRecipe.STEP_TERMINAL }
             val hasWeb = steps.any { it.type == KiteRecipe.STEP_OPEN_WEB && it.url.isNotBlank() }
             return when {
+                hasAgent && !hasShell && !hasWeb -> KiteRecipe.TYPE_AGENT
                 hasShell && hasWeb -> KiteRecipe.TYPE_COMMAND_WEB
-                hasShell -> KiteRecipe.TYPE_START_SERVICE
+                hasShell || hasAgent -> KiteRecipe.TYPE_START_SERVICE
                 hasWeb -> KiteRecipe.TYPE_OPEN_URL
                 else -> KiteRecipe.TYPE_TEMPLATE
             }
@@ -236,6 +316,7 @@ internal data class RecipeEditorUiState(
     val baseline: RecipeEditorDraft = RecipeEditorDraft.empty(),
     val draft: RecipeEditorDraft = RecipeEditorDraft.empty(),
     val groups: List<KiteCardGroup> = emptyList(),
+    val agents: List<AgentRegistryEntry> = emptyList(),
     val run: CardRunState? = null,
     val runProjection: KiteCardRunUiProjection? = null,
     val runtimeBlocked: Boolean = true,
@@ -257,6 +338,7 @@ internal sealed interface RecipeEditorAction {
     data class SetLaunchOpenInstance(val enabled: Boolean) : RecipeEditorAction
     data class SetKeepFinishedNotification(val enabled: Boolean) : RecipeEditorAction
     data class SetShortcutRequested(val requested: Boolean) : RecipeEditorAction
+    data class ReconcileAgents(val agents: List<AgentRegistryEntry>) : RecipeEditorAction
     data class PutStep(val index: Int?, val step: RecipeEditorStepDraft) : RecipeEditorAction
     data class RemoveStep(val index: Int) : RecipeEditorAction
     data class MoveStep(val from: Int, val to: Int) : RecipeEditorAction

@@ -31,6 +31,18 @@ internal enum class ResourceItemPhase {
     Busy
 }
 
+internal data class ResourceMaintenanceUiState(
+    val userLifecycleEnabled: Boolean = false,
+    val installedVersion: String = "",
+    val latestVersion: String = "",
+    val updateStatus: String = "",
+    val statusSummary: String = "",
+    val checkUpdateEnabled: Boolean = false,
+    val updateEnabled: Boolean = false,
+    val reinstallEnabled: Boolean = false,
+    val uninstallEnabled: Boolean = false
+)
+
 internal data class ResourceItemUiState(
     val descriptor: ResourceFeatureDescriptor,
     val phase: ResourceItemPhase,
@@ -40,7 +52,8 @@ internal data class ResourceItemUiState(
     val operation: String = "",
     val operationRun: ResourceFeatureRunSnapshot? = null,
     val registrySummary: String = "",
-    val registryUpdatedAt: Long = 0L
+    val registryUpdatedAt: Long = 0L,
+    val maintenance: ResourceMaintenanceUiState = ResourceMaintenanceUiState()
 ) {
     val resourceId: String get() = descriptor.id
     val name: String get() = descriptor.name
@@ -82,6 +95,11 @@ internal sealed interface ResourceFeatureAction {
     ) : ResourceFeatureAction
     data class Secondary(
         val resourceId: String,
+        val source: KiteResourceActionSource
+    ) : ResourceFeatureAction
+    data class Explicit(
+        val resourceId: String,
+        val intent: KiteResourceActionIntent,
         val source: KiteResourceActionSource
     ) : ResourceFeatureAction
 }

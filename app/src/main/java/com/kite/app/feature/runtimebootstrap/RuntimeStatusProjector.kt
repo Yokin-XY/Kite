@@ -74,7 +74,7 @@ internal object RuntimeStatusProjector {
         return RuntimeStatusUiState(
             title = "需要完成首次授权",
             detail = listOf(
-                "首次部署 Ubuntu 前需要先完成文件访问授权，否则共享投放区、导入目录和部分系统准备步骤可能被系统拦截。",
+                "首次部署 Ubuntu 前需要先完成文件访问授权，否则 Agent 无法直接管理安卓共享存储中的真实文件。",
                 "未完成：${labels.joinToString("、")}。",
                 "点击下方按钮后，请按系统提示完成授权；返回 Kite 后会自动继续解压 Ubuntu。"
             ).joinToString("\n"),

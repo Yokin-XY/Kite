@@ -102,6 +102,7 @@ data class ContainerProcessTerminationResult(
 object ContainerProcessStore {
 
     private const val LOG_TAG = "ContainerProcessStore"
+    private const val CONTAINER_KILL_PATH = "/usr/bin/kill"
     private const val PROCESS_LIST_TIMEOUT_SECONDS = 12L
     private const val PROCESS_ACTION_LOG_FILE = "task-manager-process-actions.log"
     private const val MIN_REFRESH_INTERVAL_MS = 450L
@@ -464,9 +465,9 @@ object ContainerProcessStore {
         if (pid <= 1) return false
         if (signal != OsConstants.SIGTERM && signal != OsConstants.SIGKILL) return false
         return runCatching {
-            runContainerShellCommand(
+            runContainerArgvCommand(
                 context = context,
-                payload = "kill -$signal $pid >/dev/null 2>&1",
+                argv = buildContainerSignalArgv(pid, signal),
                 workingDirectory = "/root"
             ).exitCode == 0
         }.getOrElse { error ->
@@ -507,7 +508,7 @@ object ContainerProcessStore {
         val space = runCatching {
             KFWorkspaceManager.getCurrentSpace(context)
                 ?: KFWorkspaceManager.listSpaces(context).firstOrNull()
-                ?: KFWorkspaceManager.ensureDefaultSpace(context)
+                ?: KFWorkspaceManager.ensureActiveSpace(context)
         }.getOrNull()
         if (space == null) {
             return ContainerProcessSnapshot(refreshedAt = System.currentTimeMillis())
@@ -986,20 +987,6 @@ object ContainerProcessStore {
         )
     }
 
-    private fun runContainerShellCommand(
-        context: Context,
-        payload: String,
-        workingDirectory: String = "/root"
-    ): ShellCommandResult {
-        // 进程采样属于工作面观察面，真正进入容器执行时仍统一走 bridge。
-        val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
-            context = context,
-            workingDirectory = workingDirectory,
-            payload = payload
-        )
-        return executeCommand(config.command, config.env)
-    }
-
     private fun runContainerArgvCommand(
         context: Context,
         argv: List<String>,
@@ -1016,12 +1003,20 @@ object ContainerProcessStore {
     private fun isContainerProcessAlive(context: Context, pid: Int): Boolean {
         if (pid <= 0) return false
         return runCatching {
-            runContainerShellCommand(
+            runContainerArgvCommand(
                 context = context,
-                payload = "kill -0 $pid >/dev/null 2>&1",
+                argv = buildContainerSignalArgv(pid, 0),
                 workingDirectory = "/root"
             ).exitCode == 0
         }.getOrDefault(false)
+    }
+
+    internal fun buildContainerSignalArgv(pid: Int, signal: Int): List<String> {
+        require(pid > 1) { "容器进程 pid 必须大于 1" }
+        require(signal == 0 || signal == OsConstants.SIGTERM || signal == OsConstants.SIGKILL) {
+            "不支持的容器进程信号: $signal"
+        }
+        return listOf(CONTAINER_KILL_PATH, "-$signal", pid.toString())
     }
 
     private fun executeCommand(

@@ -1,7 +1,5 @@
 ﻿package com.kite.app.foundation.service
 
-import com.kite.app.foundation.contracts.RuntimeActionKind
-
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.contracts.ContainerRecord
@@ -9,6 +7,7 @@ import com.kite.app.foundation.runtime.HostProcessInspector
 import com.kite.app.foundation.runtime.HostProcessRecord
 import com.kite.app.foundation.runtime.HostStopAuditor
 import com.kite.app.foundation.runtime.HostProcessTerminator
+import com.kite.app.foundation.runtime.HostNodeExecutionRequest
 import com.kite.app.foundation.runtime.KFContainerManager
 import com.kite.app.foundation.runtime.ProcessExitSemantics
 import com.kite.app.foundation.runtime.RuntimeAdmissionGuard
@@ -24,8 +23,12 @@ import com.kite.app.foundation.runtime.RuntimeStartSource
 import com.kite.app.foundation.runtime.RuntimeResidentPolicyStore
 import com.kite.app.foundation.runtime.isContainerLikeProcess
 import com.kite.app.foundation.workspace.KFWorkspaceManager
+import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
+import com.kite.app.foundation.workspace.HostNodeLaunchPlan
+import com.kite.app.foundation.workspace.HostNodeLaunchPlanner
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -34,7 +37,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.io.InterruptedIOException
 import java.io.IOException
-import java.util.LinkedHashMap
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 import kotlin.math.min
@@ -58,6 +61,7 @@ object BackgroundRuntimeHost {
     private const val RUNTIME_HEALTH_REFRESH_MIN_INTERVAL_MS = 15_000L
     private const val EXTERNAL_RUNTIME_PROBE_MIN_INTERVAL_MS = 10_000L
     private const val RUNTIME_STATUS_SWEEP_MIN_INTERVAL_MS = 5_000L
+    private const val RUNTIME_DEPENDENCY_POLL_MS = 250L
     private const val PROOT_CAPACITY_STATUS_REFRESH_MAX_INDEX = 3
     private const val RESTART_BACKOFF_BASE_MS = 4_000L
     private const val RESTART_BACKOFF_MAX_MS = 5 * 60 * 1000L
@@ -66,6 +70,8 @@ object BackgroundRuntimeHost {
     private const val DEFERRED_RETRY_MIN_INTERVAL_MS = 10_000L
     private const val DEFERRED_RETRY_MAX_PER_PASS = 3
     private const val MANUAL_STOP_REASON = "manual-stop"
+    private const val ONE_SHOT_OUTPUT_MAX_CHARS = 256 * 1024
+    private val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
 
     private data class RuntimeHandle(
         val runtimeId: String,
@@ -78,6 +84,13 @@ object BackgroundRuntimeHost {
     private data class CommandResult(
         val exitCode: Int,
         val output: String
+    )
+
+    private data class RuntimeProcessLaunchConfig(
+        val command: List<String>,
+        val environment: Map<String, String>,
+        val route: String,
+        val reason: String,
     )
 
     private data class ExternalRuntimeProbe(
@@ -102,14 +115,13 @@ object BackgroundRuntimeHost {
     )
 
     private val hostScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val handles = LinkedHashMap<String, RuntimeHandle>()
-    private val startingRuntimeIds = LinkedHashMap<String, Long>()
-    private val stoppingRuntimeIds = LinkedHashMap<String, Long>()
-    private val runtimeHealthCheckedAt = LinkedHashMap<String, Long>()
-    private val externalRuntimeProbeCache = LinkedHashMap<String, CachedExternalRuntimeProbe>()
+    private val handles = ConcurrentHashMap<String, RuntimeHandle>()
+    private val startSingleFlight = BackgroundRuntimeStartSingleFlight()
+    private val stoppingRuntimeIds = ConcurrentHashMap<String, Long>()
+    private val runtimeHealthCheckedAt = ConcurrentHashMap<String, Long>()
+    private val externalRuntimeProbeCache = ConcurrentHashMap<String, CachedExternalRuntimeProbe>()
 
-    @Volatile
-    private var initialized = false
+    private val initializedSpaceIds = LinkedHashSet<String>()
     @Volatile
     private var runtimeStatusRefreshInFlight = false
     @Volatile
@@ -117,12 +129,12 @@ object BackgroundRuntimeHost {
 
     @Synchronized
     fun ensureInitialized(context: Context) {
-        if (initialized) {
+        val appContext = context.applicationContext
+        val space = resolveSpace(appContext)
+        if (space.id in initializedSpaceIds) {
             return
         }
-        val appContext = context.applicationContext
         Logger.i(LOG_TAG, "ensureInitialized: 开始解析空间")
-        val space = resolveSpace(appContext)
         Logger.i(LOG_TAG, "ensureInitialized: 当前空间=${space.id}")
         Logger.i(LOG_TAG, "ensureInitialized: 开始确保内置运行项")
         BackgroundRuntimeRegistry.ensureBuiltinRuntimes(appContext, space.id)
@@ -130,8 +142,29 @@ object BackgroundRuntimeHost {
         Logger.i(LOG_TAG, "ensureInitialized: 开始回放持久状态")
         reconcilePersistedStates(appContext)
         Logger.i(LOG_TAG, "ensureInitialized: 持久状态回放完成")
-        initialized = true
+        initializedSpaceIds += space.id
         Logger.i(LOG_TAG, "ensureInitialized: 初始化完成")
+    }
+
+    /**
+     * View 守卫已确认旧环境进程退出；这里只清理宿主句柄和持久运行投影，不再扫描进程。
+     */
+    @Synchronized
+    fun confirmSpaceStopped(context: Context, spaceId: String) {
+        val appContext = context.applicationContext
+        val runtimeIds = BackgroundRuntimeRegistry.list(appContext, spaceId).map { it.id }.toSet()
+        runtimeIds.forEach { runtimeId ->
+            handles.remove(runtimeId)?.let { handle ->
+                handle.readerJob.cancel()
+                handle.monitorJob.cancel()
+            }
+            startSingleFlight.forget(runtimeId)
+            stoppingRuntimeIds.remove(runtimeId)
+            runtimeHealthCheckedAt.remove(runtimeId)
+            externalRuntimeProbeCache.remove(runtimeId)
+        }
+        initializedSpaceIds.remove(spaceId)
+        BackgroundRuntimeRegistry.confirmSpaceStopped(appContext, spaceId)
     }
 
     fun listRuntimes(context: Context, spaceId: String? = null): List<BackgroundRuntimeRecord> {
@@ -157,10 +190,19 @@ object BackgroundRuntimeHost {
         }
     }
 
+    /** 环境所有权切换完成后异步恢复目标 Space 的后台能力，不阻塞切换成功反馈。 */
+    fun ensureEnvironmentRuntimes(context: Context, reason: String) {
+        val appContext = context.applicationContext
+        hostScope.launch {
+            ensureInitialized(appContext)
+            ensureResidentRuntimesInternal(appContext, reason)
+        }
+    }
+
     private fun resolveSpace(appContext: Context) =
         KFWorkspaceManager.getCurrentSpace(appContext)
             ?: KFWorkspaceManager.listSpaces(appContext).firstOrNull()
-            ?: KFWorkspaceManager.ensureDefaultSpace(appContext)
+            ?: KFWorkspaceManager.ensureActiveSpace(appContext)
 
     fun refreshRuntimeStatuses(context: Context, spaceId: String? = null) {
         val appContext = context.applicationContext
@@ -185,6 +227,59 @@ object BackgroundRuntimeHost {
         hostScope.launch {
             startRuntimeInternal(appContext, runtimeId)
         }
+    }
+
+    /**
+     * 用户触发的前置运行项门：登记声明、显式拉起并等待其真实就绪后才允许消费者启动。
+     * 同一 id 仍由 BackgroundRuntimeRegistry / BackgroundRuntimeHost 持有唯一进程事实。
+     */
+    internal suspend fun ensureRuntimeReady(
+        context: Context,
+        definition: BackgroundRuntimeRecord,
+        timeoutMs: Long,
+    ): Result<BackgroundRuntimeRecord> {
+        val appContext = context.applicationContext
+        ensureInitialized(appContext)
+        val existing = BackgroundRuntimeRegistry.get(appContext, definition.id)
+        if (
+            existing != null &&
+            runtimeDefinitionChanged(existing, definition) &&
+            existing.status.isActiveStatus()
+        ) {
+            stopRuntimeInternal(appContext, existing.id)
+        }
+        BackgroundRuntimeRegistry.upsertDefinition(appContext, definition)
+        startRuntimeInternal(appContext, definition.id)
+
+        val deadline = System.currentTimeMillis() + timeoutMs.coerceIn(1_000L, 120_000L)
+        while (System.currentTimeMillis() < deadline) {
+            var current = BackgroundRuntimeRegistry.get(appContext, definition.id)
+                ?: return Result.failure(IllegalStateException("runtime_dependency_missing:${definition.id}"))
+            if (current.status == BackgroundRuntimeStatus.ERROR) {
+                return Result.failure(
+                    IllegalStateException(current.lastError ?: "runtime_dependency_failed:${definition.id}")
+                )
+            }
+            if (current.status == BackgroundRuntimeStatus.RUNNING) {
+                val hasHealthProbe = BackgroundRuntimeLoopbackHealthProbeResolver.resolve(current) != null ||
+                    !current.healthCommand.isNullOrBlank()
+                if (!hasHealthProbe) return Result.success(current)
+                refreshRuntimeHealth(appContext, current, force = true)
+                current = BackgroundRuntimeRegistry.get(appContext, definition.id) ?: current
+                if (current.healthStatus == BackgroundRuntimeHealthStatus.HEALTHY) {
+                    return Result.success(current)
+                }
+            }
+            delay(RUNTIME_DEPENDENCY_POLL_MS)
+        }
+        val current = BackgroundRuntimeRegistry.get(appContext, definition.id)
+        return Result.failure(
+            IllegalStateException(
+                current?.lastHealthSummary
+                    ?: current?.lastError
+                    ?: "runtime_dependency_timeout:${definition.id}"
+            )
+        )
     }
 
     fun stopRuntime(context: Context, runtimeId: String) {
@@ -556,6 +651,15 @@ object BackgroundRuntimeHost {
             "== 自动恢复评估 ==\nreason=$reason policy=${latest.restartPolicy.name} decision=${decision.summary}\n"
         )
         if (!decision.shouldRestart) {
+            if (BackgroundRuntimeRestartGate.blocksAutomaticStart(latest)) {
+                BackgroundRuntimeRegistry.updateRestartState(
+                    context = appContext,
+                    runtimeId = latest.id,
+                    restartFailureCount = latest.restartFailureCount,
+                    lastRestartReason = "command-unavailable",
+                    clearBackoff = true
+                )
+            }
             Logger.i(LOG_TAG, "自动恢复跳过: runtime=${latest.id}, reason=$reason, ${decision.summary}")
             return
         }
@@ -626,6 +730,12 @@ object BackgroundRuntimeHost {
             if (stoppingRuntimeIds.containsKey(record.id)) {
                 return AutoRestartDecision(false, summary = "manual stop is in progress")
             }
+        }
+        if (BackgroundRuntimeRestartGate.blocksAutomaticStart(record)) {
+            return AutoRestartDecision(
+                false,
+                summary = "command unavailable exit=${record.lastExitCode}; explicit retry is required"
+            )
         }
         val now = System.currentTimeMillis()
         val nextAllowed = record.nextRestartAllowedAt
@@ -722,64 +832,87 @@ object BackgroundRuntimeHost {
         recoverySource: String? = null,
         recoveryReason: String? = null
     ) {
-        val record = BackgroundRuntimeRegistry.get(appContext, runtimeId) ?: return
-        // 已在激活中（启动中或运行中）则跳过，避免重复拉起
-        if (record.status.isActiveStatus()) {
+        val lease = startSingleFlight.tryAcquire(runtimeId)
+        if (lease == null) {
+            Logger.i(LOG_TAG, "后台运行项启动已合并: $runtimeId")
             return
         }
-        ensureRuntimePrerequisites(appContext, record)
-        if (!record.status.isActiveStatus()) {
-            resolveRuntimeCapabilityGate(record)?.let { gate ->
-                applyRuntimeCapabilityGate(appContext, record, gate)
+        try {
+            val record = BackgroundRuntimeRegistry.get(appContext, runtimeId) ?: return
+            val activeSpaceId = resolveSpace(appContext).id
+            if (!BackgroundRuntimeSpacePolicy.mayStart(record.spaceId, activeSpaceId)) {
+                Logger.i(
+                    LOG_TAG,
+                    "拒绝启动非活跃空间后台项: runtime=${record.id} recordSpace=${record.spaceId} activeSpace=$activeSpaceId"
+                )
                 return
             }
-        }
-        resolveRuntimeAdmissionDecision(appContext, record, recoverySource)?.let { decision ->
-            val logFile = BackgroundRuntimeRegistry.buildLogFile(appContext, record.id)
-            val admissionSource = recoverySource?.trim()?.takeIf { it.isNotBlank() }
-                ?: decision.startSource.label
-            writeLog(
-                logFile,
-                "== Runtime admission deferred ==\n${decision.summary}\nrecoverySource=${recoverySource.orEmpty()}\nrecoveryReason=${recoveryReason.orEmpty()}\n"
-            )
-            BackgroundRuntimeRegistry.updateAdmissionState(
-                context = appContext,
-                runtimeId = record.id,
-                deferredAt = System.currentTimeMillis(),
-                admissionSource = admissionSource,
-                admissionReason = decision.summary
-            )
-            BackgroundRuntimeRegistry.updateStatus(
-                context = appContext,
-                runtimeId = record.id,
-                status = record.status,
-                pid = record.pid,
-                lastError = decision.summary
-            )
-            BackgroundRuntimeRegistry.updateHealth(
-                context = appContext,
-                runtimeId = record.id,
-                healthStatus = BackgroundRuntimeHealthStatus.BLOCKED,
-                lastHealthSummary = decision.summary,
-                lastHealthCheckedAt = null
-            )
-            Logger.i(LOG_TAG, "runtime start deferred: runtime=${record.id} ${decision.summary}")
-            return
-        }
-        BackgroundRuntimeRegistry.clearAdmissionState(appContext, record.id)
-        when (record.mode) {
-            BackgroundRuntimeMode.PROCESS -> startProcessRuntime(
-                appContext = appContext,
-                record = record,
-                recoverySource = recoverySource,
-                recoveryReason = recoveryReason
-            )
-            BackgroundRuntimeMode.SERVICE -> startServiceRuntime(
-                appContext = appContext,
-                record = record,
-                recoverySource = recoverySource,
-                recoveryReason = recoveryReason
-            )
+            val isExplicitStart = recoverySource == null || recoverySource == "manual_restart"
+            if (!isExplicitStart && BackgroundRuntimeRestartGate.blocksAutomaticStart(record)) {
+                Logger.i(
+                    LOG_TAG,
+                    "后台运行项自动启动已阻止: runtime=${record.id} exit=${record.lastExitCode} source=$recoverySource"
+                )
+                return
+            }
+            // 已在激活中（启动中或运行中）则跳过，避免重复拉起
+            if (record.status.isActiveStatus()) return
+            ensureRuntimePrerequisites(appContext, record)
+            if (!record.status.isActiveStatus()) {
+                resolveRuntimeCapabilityGate(record)?.let { gate ->
+                    applyRuntimeCapabilityGate(appContext, record, gate)
+                    return
+                }
+            }
+            resolveRuntimeAdmissionDecision(appContext, record, recoverySource)?.let { decision ->
+                val logFile = BackgroundRuntimeRegistry.buildLogFile(appContext, record.id)
+                val admissionSource = recoverySource?.trim()?.takeIf { it.isNotBlank() }
+                    ?: decision.startSource.label
+                writeLog(
+                    logFile,
+                    "== Runtime admission deferred ==\n${decision.summary}\nrecoverySource=${recoverySource.orEmpty()}\nrecoveryReason=${recoveryReason.orEmpty()}\n"
+                )
+                BackgroundRuntimeRegistry.updateAdmissionState(
+                    context = appContext,
+                    runtimeId = record.id,
+                    deferredAt = System.currentTimeMillis(),
+                    admissionSource = admissionSource,
+                    admissionReason = decision.summary
+                )
+                BackgroundRuntimeRegistry.updateStatus(
+                    context = appContext,
+                    runtimeId = record.id,
+                    status = record.status,
+                    pid = record.pid,
+                    lastError = decision.summary
+                )
+                BackgroundRuntimeRegistry.updateHealth(
+                    context = appContext,
+                    runtimeId = record.id,
+                    healthStatus = BackgroundRuntimeHealthStatus.BLOCKED,
+                    lastHealthSummary = decision.summary,
+                    lastHealthCheckedAt = null
+                )
+                Logger.i(LOG_TAG, "runtime start deferred: runtime=${record.id} ${decision.summary}")
+                return
+            }
+            BackgroundRuntimeRegistry.clearAdmissionState(appContext, record.id)
+            when (record.mode) {
+                BackgroundRuntimeMode.PROCESS -> startProcessRuntime(
+                    appContext = appContext,
+                    record = record,
+                    recoverySource = recoverySource,
+                    recoveryReason = recoveryReason
+                )
+                BackgroundRuntimeMode.SERVICE -> startServiceRuntime(
+                    appContext = appContext,
+                    record = record,
+                    recoverySource = recoverySource,
+                    recoveryReason = recoveryReason
+                )
+            }
+        } finally {
+            lease.close()
         }
     }
 
@@ -798,22 +931,6 @@ object BackgroundRuntimeHost {
             )
             Logger.i(LOG_TAG, "blocked stop for core supervisor runtime=${record.id}")
             ensureCoreRuntimesStarted(appContext, record.spaceId)
-            return
-        }
-        if (record.isDefaultProotCapacityRuntime()) {
-            val logFile = BackgroundRuntimeRegistry.buildLogFile(appContext, record.id)
-            writeLog(
-                logFile,
-                "== Default PRoot stop blocked ==\n" +
-                    "reason=proot-1-is-resident-capacity-baseline\n"
-            )
-            Logger.i(LOG_TAG, "blocked stop for default PRoot capacity runtime=${record.id}")
-            startRuntimeInternal(
-                appContext = appContext,
-                runtimeId = record.id,
-                recoverySource = "resident_policy",
-                recoveryReason = "default-proot-1-stop-blocked"
-            )
             return
         }
         when (record.mode) {
@@ -979,16 +1096,9 @@ object BackgroundRuntimeHost {
         recoverySource: String? = null,
         recoveryReason: String? = null
     ) {
-        synchronized(startingRuntimeIds) {
-            if (startingRuntimeIds.containsKey(record.id)) {
-                Logger.i(LOG_TAG, "忽略重复启动请求: ${record.id}")
-                return
-            }
-            startingRuntimeIds[record.id] = System.currentTimeMillis()
-        }
         Logger.i(
             LOG_TAG,
-            "进入后台进程启动链: ${record.id}, route=${backgroundRuntimeRouteLabel()}, workdir=${runtimeWorkingDirectoryLabel(record)}"
+            "进入后台进程启动链: ${record.id}, route=pending, workdir=${runtimeWorkingDirectoryLabel(record)}"
         )
         val existingHandle = handles[record.id]
         if (existingHandle != null && existingHandle.process.isAlive) {
@@ -1009,9 +1119,6 @@ object BackgroundRuntimeHost {
             resetRuntimeRestartBackoff(appContext, record.id, "existing-process-alive")
             scheduleProcessRefreshBurst(appContext)
             scheduleRuntimeStatusRefreshBurst(appContext, record.id)
-            synchronized(startingRuntimeIds) {
-                startingRuntimeIds.remove(record.id)
-            }
             return
         }
 
@@ -1020,7 +1127,7 @@ object BackgroundRuntimeHost {
             LOG_TAG,
             "后台日志文件已定位: ${record.id}, path=${runtimeLogFileLabel(appContext, logFile)}"
         )
-        writeLog(logFile, buildRuntimeLogHeader("启动", record, record.startCommand))
+        writeLog(logFile, buildRuntimeLogHeader("启动", record, record.startDescription()))
         Logger.i(LOG_TAG, "后台启动日志已写入: ${record.id}")
         BackgroundRuntimeRegistry.updateStatus(
             context = appContext,
@@ -1041,17 +1148,22 @@ object BackgroundRuntimeHost {
 
         runCatching {
             Logger.i(LOG_TAG, "开始构建运行命令: ${record.id}")
-            // 进程型 runtime 仍由工作面层决策，但底层 exec 配置统一交给 bridge 向建房层取。
-            val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+            val config = buildRuntimeProcessLaunchConfig(appContext, record)
+            BackgroundRuntimeRegistry.updateLaunchRoute(
                 context = appContext,
-                workingDirectory = record.workingDirectory,
-                payload = record.startCommand
+                runtimeId = record.id,
+                lane = config.route,
+                reason = config.reason,
             )
-            Logger.i(LOG_TAG, "运行命令构建完成，准备启动进程: ${record.id}")
+            writeLog(logFile, "== 启动计划 ==\nlane=${config.route}\nreason=${config.reason}\n")
+            Logger.i(
+                LOG_TAG,
+                "运行命令构建完成，准备启动进程: ${record.id}, lane=${config.route}, reason=${config.reason}"
+            )
             ProcessBuilder(config.command)
                 .redirectErrorStream(true)
                 .apply {
-                    environment().putAll(config.env)
+                    environment().putAll(config.environment)
                     environment().putAll(record.processIdentityEnvironment())
                 }
                 .start()
@@ -1071,13 +1183,10 @@ object BackgroundRuntimeHost {
                     }
                 }
             }
-            val monitorJob = hostScope.launch {
+            val monitorJob = hostScope.launch(start = CoroutineStart.LAZY) {
                 val exitCode = process.waitFor()
                 readerJob.join()
                 handles.remove(record.id)
-                synchronized(startingRuntimeIds) {
-                    startingRuntimeIds.remove(record.id)
-                }
                 val stopRequested = synchronized(stoppingRuntimeIds) {
                     stoppingRuntimeIds.remove(record.id) != null
                 }
@@ -1180,34 +1289,36 @@ object BackgroundRuntimeHost {
                 readerJob = readerJob,
                 monitorJob = monitorJob
             )
-            BackgroundRuntimeRegistry.updateStatus(
-                context = appContext,
-                runtimeId = record.id,
-                status = BackgroundRuntimeStatus.RUNNING,
-                pid = launchedPid,
-                lastError = null
-            )
-            BackgroundRuntimeRegistry.updateHealth(
-                context = appContext,
-                runtimeId = record.id,
-                healthStatus = BackgroundRuntimeHealthStatus.UNKNOWN,
-                lastHealthSummary = BackgroundRuntimeHealthText.WAITING_FOR_PROBE,
-                lastHealthCheckedAt = null
-            )
-            recordRuntimeRecovery(
-                appContext = appContext,
-                runtimeId = record.id,
-                recoverySource = recoverySource,
-                recoveryReason = recoveryReason
-            )
-            RuntimeFrameCoordinator.refreshProcessSnapshot(
-                context = appContext,
-                reason = "background-runtime-started:${record.id}"
-            )
-            scheduleProcessRefreshBurst(appContext)
-            scheduleRuntimeStatusRefreshBurst(appContext, record.id)
-            synchronized(startingRuntimeIds) {
-                startingRuntimeIds.remove(record.id)
+            try {
+                BackgroundRuntimeRegistry.updateStatus(
+                    context = appContext,
+                    runtimeId = record.id,
+                    status = BackgroundRuntimeStatus.RUNNING,
+                    pid = launchedPid,
+                    lastError = null
+                )
+                BackgroundRuntimeRegistry.updateHealth(
+                    context = appContext,
+                    runtimeId = record.id,
+                    healthStatus = BackgroundRuntimeHealthStatus.UNKNOWN,
+                    lastHealthSummary = BackgroundRuntimeHealthText.WAITING_FOR_PROBE,
+                    lastHealthCheckedAt = null
+                )
+                recordRuntimeRecovery(
+                    appContext = appContext,
+                    runtimeId = record.id,
+                    recoverySource = recoverySource,
+                    recoveryReason = recoveryReason
+                )
+                RuntimeFrameCoordinator.refreshProcessSnapshot(
+                    context = appContext,
+                    reason = "background-runtime-started:${record.id}"
+                )
+                scheduleProcessRefreshBurst(appContext)
+                scheduleRuntimeStatusRefreshBurst(appContext, record.id)
+            } finally {
+                // 快速退出也必须在初始句柄/RUNNING 发布之后收敛，避免终态被迟到的启动写覆盖。
+                monitorJob.start()
             }
         }.onFailure { error ->
             Logger.e(LOG_TAG, "启动后台进程失败: ${record.id}, ${error.message}")
@@ -1235,16 +1346,108 @@ object BackgroundRuntimeHost {
                     reason = "start-failure"
                 )
             }
-            synchronized(startingRuntimeIds) {
-                startingRuntimeIds.remove(record.id)
-            }
         }
     }
 
-    private fun stopProcessRuntime(appContext: Context, record: BackgroundRuntimeRecord) {
-        synchronized(startingRuntimeIds) {
-            startingRuntimeIds.remove(record.id)
+    private fun buildRuntimeProcessLaunchConfig(
+        appContext: Context,
+        record: BackgroundRuntimeRecord,
+    ): RuntimeProcessLaunchConfig {
+        val executable = record.startExecutable?.trim().orEmpty()
+        val resolvedEnvironment = resolveRuntimeEnvironment(appContext, record)
+        var hostFallbackReason: String? = null
+        if (executable.isNotBlank()) {
+            val space = resolveSpace(appContext)
+            check(space.id == record.spaceId) { "runtime_space_is_not_active" }
+            val container = WorkSurfaceRuntimeBridge.resolveActiveContainer(appContext)
+            when (val plan = HostNodeLaunchPlanner.plan(
+                context = appContext,
+                container = container,
+                workspaceDirectory = File(space.workspacePath),
+                request = HostNodeExecutionRequest.Argv(executable, record.startArguments),
+                containerWorkingDirectory = record.workingDirectory,
+                additionalEnvironment = resolvedEnvironment,
+            )) {
+                is HostNodeLaunchPlan.Ready -> return RuntimeProcessLaunchConfig(
+                    command = plan.config.args.toList(),
+                    environment = plan.config.env.associateTo(linkedMapOf()) { entry ->
+                        entry.substringBefore('=') to entry.substringAfter('=', "")
+                    },
+                    route = "host_node",
+                    reason = "structured_node_ready",
+                )
+                is HostNodeLaunchPlan.Fallback -> {
+                    hostFallbackReason = plan.reason
+                    Logger.i(
+                        LOG_TAG,
+                        "结构化后台命令回退 PRoot: ${record.id}, reason=${plan.reason}"
+                    )
+                }
+            }
         }
+
+        // 旧记录、复杂 shell 和 Host Node 能力不满足时保持原 PRoot 语义；只创建这一条业务进程。
+        val prootConfig = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+            context = appContext,
+            workingDirectory = record.workingDirectory,
+            payload = record.startCommand,
+        )
+        return RuntimeProcessLaunchConfig(
+            command = prootConfig.command,
+            environment = buildMap {
+                putAll(prootConfig.env)
+                putAll(resolvedEnvironment)
+            },
+            route = if (executable.isBlank()) "proot_shell" else "proot_fallback",
+            reason = if (executable.isBlank()) {
+                "structured_request_absent"
+            } else {
+                hostFallbackReason ?: "host_node_unavailable"
+            },
+        )
+    }
+
+    private fun resolveRuntimeEnvironment(
+        appContext: Context,
+        record: BackgroundRuntimeRecord,
+    ): Map<String, String> = buildMap {
+        putAll(record.environment)
+        record.environmentFiles.forEach { (name, containerPath) ->
+            require(ENVIRONMENT_NAME.matches(name)) { "runtime_environment_name_invalid:$name" }
+            val file = ContainerVisibleFileResolver.resolve(appContext, containerPath)
+                ?.takeIf(File::isFile)
+                ?: error("runtime_environment_file_missing:$containerPath")
+            val value = file.readText().trim()
+            require(value.isNotBlank()) { "runtime_environment_file_empty:$containerPath" }
+            put(name, value)
+        }
+    }
+
+    private fun runtimeDefinitionChanged(
+        current: BackgroundRuntimeRecord,
+        definition: BackgroundRuntimeRecord,
+    ): Boolean = current.kind != definition.kind ||
+        current.mode != definition.mode ||
+        current.title != definition.title ||
+        current.workingDirectory != definition.workingDirectory ||
+        current.startCommand != definition.startCommand ||
+        current.startExecutable != definition.startExecutable ||
+        current.startArguments != definition.startArguments ||
+        current.environment != definition.environment ||
+        current.environmentFiles != definition.environmentFiles ||
+        current.bindAddress != definition.bindAddress ||
+        current.bindPort != definition.bindPort ||
+        current.exposureScope != definition.exposureScope ||
+        current.requiredCapabilities != definition.requiredCapabilities ||
+        current.stopCommand != definition.stopCommand ||
+        current.statusCommand != definition.statusCommand ||
+        current.healthCommand != definition.healthCommand ||
+        current.healthHttpPath != definition.healthHttpPath ||
+        current.healthCheckStartupDelayMs != definition.healthCheckStartupDelayMs ||
+        current.restartPolicy != definition.restartPolicy ||
+        current.retentionClass != definition.retentionClass
+
+    private fun stopProcessRuntime(appContext: Context, record: BackgroundRuntimeRecord) {
         synchronized(stoppingRuntimeIds) {
             stoppingRuntimeIds[record.id] = System.currentTimeMillis()
         }
@@ -1595,8 +1798,9 @@ object BackgroundRuntimeHost {
             return
         }
 
+        val loopbackEndpoint = BackgroundRuntimeLoopbackHealthProbeResolver.resolve(latestRecord)
         val healthCommand = latestRecord.healthCommand?.trim().orEmpty()
-        if (healthCommand.isBlank()) {
+        if (loopbackEndpoint == null && healthCommand.isBlank()) {
             BackgroundRuntimeRegistry.updateHealth(
                 context = appContext,
                 runtimeId = latestRecord.id,
@@ -1629,14 +1833,25 @@ object BackgroundRuntimeHost {
         }
 
         val logFile = BackgroundRuntimeRegistry.buildLogFile(appContext, latestRecord.id)
-        writeLog(logFile, buildRuntimeLogHeader("健康探测", latestRecord, healthCommand))
-        val result = executeOneShotCommand(
-            appContext = appContext,
-            record = latestRecord,
-            command = healthCommand,
-            logFile = logFile,
-            timeoutSeconds = PROCESS_STATUS_TIMEOUT_SECONDS
-        )
+        val result = if (loopbackEndpoint != null) {
+            val probeLabel = "http://${loopbackEndpoint.host}:${loopbackEndpoint.port}${loopbackEndpoint.path}"
+            writeLog(logFile, buildRuntimeLogHeader("轻量健康探测", latestRecord, probeLabel))
+            BackgroundRuntimeLoopbackHealthProbe.probe(loopbackEndpoint).let { probe ->
+                CommandResult(
+                    exitCode = if (probe.healthy) 0 else 1,
+                    output = probe.summary,
+                )
+            }
+        } else {
+            writeLog(logFile, buildRuntimeLogHeader("健康探测", latestRecord, healthCommand))
+            executeOneShotCommand(
+                appContext = appContext,
+                record = latestRecord,
+                command = healthCommand,
+                logFile = logFile,
+                timeoutSeconds = PROCESS_STATUS_TIMEOUT_SECONDS
+            )
+        }
         val currentRecord = BackgroundRuntimeRegistry.get(appContext, latestRecord.id) ?: latestRecord
         if (!isRuntimeReadyForHealthProbe(appContext, currentRecord)) {
             BackgroundRuntimeRegistry.updateHealth(
@@ -1953,21 +2168,38 @@ object BackgroundRuntimeHost {
                     environment().putAll(record.processIdentityEnvironment())
                 }
                 .start()
-            val outputBuffer = StringBuilder()
+            val outputBuffer = BoundedProcessOutput(ONE_SHOT_OUTPUT_MAX_CHARS)
             val readerThread = thread(start = true, isDaemon = true, name = "BackgroundRuntimeReader") {
                 runCatching {
-                    process.inputStream.bufferedReader().useLines { lines ->
-                        lines.forEach { line ->
-                            outputBuffer.append(line).append('\n')
+                    process.inputStream.bufferedReader().use { reader ->
+                        val chars = CharArray(4 * 1024)
+                        while (true) {
+                            val count = reader.read(chars)
+                            if (count < 0) break
+                            outputBuffer.append(chars, count)
                         }
                     }
                 }
             }
             val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
-            readerThread.join(2000L)
-            val output = outputBuffer.toString()
             if (!finished) {
-                process.destroyForcibly()
+                process.destroy()
+                if (!process.waitFor(500L, TimeUnit.MILLISECONDS)) {
+                    process.destroyForcibly()
+                    process.waitFor(500L, TimeUnit.MILLISECONDS)
+                }
+            }
+            readerThread.join(2000L)
+            if (readerThread.isAlive) {
+                runCatching { process.inputStream.close() }
+                readerThread.join(500L)
+            }
+            val snapshot = outputBuffer.snapshot()
+            val output = buildString {
+                append(snapshot.text)
+                if (snapshot.truncated) append("\n== 输出已截断到 ${ONE_SHOT_OUTPUT_MAX_CHARS} 字符 ==\n")
+            }
+            if (!finished) {
                 writeLog(logFile, "$output\n== 命令超时(${timeoutSeconds}s)，已强制终止 ==\n")
                 CommandResult(-1, output)
             } else {
@@ -1988,16 +2220,11 @@ object BackgroundRuntimeHost {
     ): String {
         return buildString {
             appendLine("== $actionLabel ${record.title} ==")
-            appendLine("路由: ${backgroundRuntimeRouteLabel()}")
+            appendLine("路由: ${record.lastLaunchLane ?: "pending"}")
+            appendLine("路由原因: ${record.lastLaunchReason ?: "not_selected"}")
             appendLine("工作目录: ${runtimeWorkingDirectoryLabel(record)}")
             appendLine("命令: ${command.orEmpty()}")
         }
-    }
-
-    private fun backgroundRuntimeRouteLabel(): String {
-        return WorkSurfaceRuntimeBridge.actionRouteLabel(
-            com.kite.app.foundation.contracts.RuntimeActionKind.BACKGROUND_RUNTIME
-        )
     }
 
     private fun runtimeWorkingDirectoryLabel(record: BackgroundRuntimeRecord): String {
@@ -2026,6 +2253,7 @@ object BackgroundRuntimeHost {
                 )
             else -> buildSet {
                 sequenceOf(
+                    startExecutable.orEmpty(),
                     startCommand.substringAfterLast("exec ", ""),
                     startCommand.substringAfterLast("/"),
                     title
@@ -2043,10 +2271,10 @@ object BackgroundRuntimeHost {
         }
     }
 
-    private fun BackgroundRuntimeRecord.isDefaultProotCapacityRuntime(): Boolean {
-        return kind == BackgroundRuntimeKind.PROOT_CAPACITY_WORKER &&
-            prootCapacityWorkerIndex() == 1
-    }
+    private fun BackgroundRuntimeRecord.startDescription(): String = startExecutable
+        ?.takeIf(String::isNotBlank)
+        ?.let { executable -> (listOf(executable) + startArguments).joinToString(" ") }
+        ?: startCommand
 
     private fun BackgroundRuntimeRecord.prootCapacityWorkerIndex(): Int {
         return id.substringAfterLast("-proot-capacity-worker-", "")

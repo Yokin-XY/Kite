@@ -1,0 +1,770 @@
+diff --git a/src/extension/kf_txn/kf_txn.c b/src/extension/kf_txn/kf_txn.c
+index 0fb9576..b020d5e 100644
+--- a/src/extension/kf_txn/kf_txn.c
++++ b/src/extension/kf_txn/kf_txn.c
+@@ -20,12 +20,20 @@
+ #include "tracee/mem.h"
+ #include "tracee/reg.h"
+ 
+-#define KF_TXN_CONTROL_SCHEMA "kf_resource_txn_v1"
+-#define KF_TXN_ENTRY_SCHEMA "kf_resource_txn_entry_v1"
++#define KF_TXN_CONTROL_SCHEMA "kf_file_protection_v1"
++#define KF_TXN_LEGACY_CONTROL_SCHEMA "kf_resource_txn_v1"
++#define KF_TXN_ENTRY_SCHEMA "kf_file_protection_entry_v1"
+ #define KF_TXN_META_FILE "meta"
+ #define KF_TXN_PAYLOAD_NAME "payload"
++#define KF_TXN_RANGES_DIR "ranges"
+ #define KF_TXN_CONTROL_MAX 8192
+ #define KF_TXN_COPY_BUFFER (64 * 1024)
++#define KF_TXN_RANGE_BLOCK (64 * 1024)
++
++typedef enum {
++	KF_BACKEND_WHOLE_OBJECT = 0,
++	KF_BACKEND_RANGE_UNDO = 1,
++} KfTxnBackend;
+ 
+ typedef struct {
+ 	char *control_path;
+@@ -38,6 +46,7 @@ typedef struct {
+ 	char root_path[PATH_MAX];
+ 	char entries_path[PATH_MAX];
+ 	uint64_t max_backup_bytes;
++	KfTxnBackend backend;
+ } KfTxnControl;
+ 
+ static FilteredSysnum filtered_sysnums[] = {
+@@ -84,6 +93,9 @@ static FilteredSysnum filtered_sysnums[] = {
+ 	{ PR_utimensat, 0 },
+ 	{ PR_mmap, 0 },
+ 	{ PR_mmap2, 0 },
++	{ PR_sendfile, 0 },
++	{ PR_splice, 0 },
++	{ PR_copy_file_range, 0 },
+ 	FILTERED_SYSNUM_END
+ };
+ 
+@@ -135,6 +147,9 @@ static bool mutation_sysnum(word_t sysnum)
+ 	case PR_utimensat:
+ 	case PR_mmap:
+ 	case PR_mmap2:
++	case PR_sendfile:
++	case PR_splice:
++	case PR_copy_file_range:
+ 		return true;
+ 	default:
+ 		return false;
+@@ -221,6 +236,7 @@ static int read_control(const char *path, KfTxnControl *control)
+ 	bool root = false;
+ 	bool entries = false;
+ 	bool max_bytes = false;
++	bool backend = false;
+ 
+ 	file = fopen(path, "r");
+ 	if (file == NULL)
+@@ -250,7 +266,8 @@ static int read_control(const char *path, KfTxnControl *control)
+ 		*separator = '\0';
+ 		value = separator + 1;
+ 		if (strcmp(line, "schema") == 0) {
+-			schema = strcmp(value, KF_TXN_CONTROL_SCHEMA) == 0;
++			schema = strcmp(value, KF_TXN_CONTROL_SCHEMA) == 0 ||
++				strcmp(value, KF_TXN_LEGACY_CONTROL_SCHEMA) == 0;
+ 		}
+ 		else if (strcmp(line, "generation") == 0) {
+ 			errno = 0;
+@@ -263,22 +280,37 @@ static int read_control(const char *path, KfTxnControl *control)
+ 			strcpy(control->root_path, value);
+ 			root = true;
+ 		}
+-		else if (strcmp(line, "entries_path") == 0) {
++		else if (strcmp(line, "entries_path") == 0 || strcmp(line, "journal_path") == 0) {
+ 			if (strlen(value) >= sizeof(control->entries_path))
+ 				return -ENAMETOOLONG;
+ 			strcpy(control->entries_path, value);
+ 			entries = true;
+ 		}
+-		else if (strcmp(line, "max_backup_bytes") == 0) {
++		else if (strcmp(line, "max_backup_bytes") == 0 || strcmp(line, "max_journal_bytes") == 0) {
+ 			errno = 0;
+ 			control->max_backup_bytes = strtoull(value, &end, 10);
+ 			max_bytes = errno == 0 && end != value && *end == '\0' &&
+ 				control->max_backup_bytes > 0;
+ 		}
++		else if (strcmp(line, "backend") == 0) {
++			if (strcmp(value, "whole_object_preimage") == 0) {
++				control->backend = KF_BACKEND_WHOLE_OBJECT;
++				backend = true;
++			}
++			else if (strcmp(value, "range_undo") == 0) {
++				control->backend = KF_BACKEND_RANGE_UNDO;
++				backend = true;
++			}
++			else {
++				return -EPROTO;
++			}
++		}
+ 	}
+ 
+ 	if (!schema || !generation || !root || !entries || !max_bytes)
+ 		return -EPROTO;
++	if (!backend)
++		control->backend = KF_BACKEND_WHOLE_OBJECT;
+ 	trim_trailing_slash(control->root_path);
+ 	trim_trailing_slash(control->entries_path);
+ 	if (!safe_absolute_path(control->root_path) ||
+@@ -501,7 +533,8 @@ static int remove_tree(const char *path)
+ }
+ 
+ static int write_meta(const char *entry_dir, const char *relative,
+-	const char *kind, mode_t mode, const char *link_target, bool complete)
++	const char *kind, mode_t mode, const char *link_target,
++	const char *storage_mode, int64_t original_size, bool complete)
+ {
+ 	char meta_path[PATH_MAX];
+ 	char temp_path[PATH_MAX];
+@@ -532,9 +565,12 @@ static int write_meta(const char *entry_dir, const char *relative,
+ 		"relative_path_hex=%s\n"
+ 		"before_kind=%s\n"
+ 		"mode=%u\n"
+-		"link_target_hex=%s\n",
++		"link_target_hex=%s\n"
++		"storage_mode=%s\n"
++		"original_size=%" PRId64 "\n",
+ 		KF_TXN_ENTRY_SCHEMA, complete ? "complete" : "copying", relative_hex,
+-		kind, (unsigned int) (mode & 07777), link_hex) < 0 ||
++		kind, (unsigned int) (mode & 07777), link_hex, storage_mode,
++		original_size) < 0 ||
+ 		fflush(file) != 0 || fsync(fileno(file)) != 0) {
+ 		result = -errno;
+ 		goto out;
+@@ -561,7 +597,8 @@ out:
+ 	return result;
+ }
+ 
+-static int existing_entry_matches(const char *entry_dir, const char *relative)
++static int existing_entry_is_range(const char *entry_dir, const char *relative,
++	bool *is_range, int64_t *original_size)
+ {
+ 	char meta_path[PATH_MAX];
+ 	char expected[PATH_MAX * 2 + 32];
+@@ -570,6 +607,9 @@ static int existing_entry_matches(const char *entry_dir, const char *relative)
+ 	FILE *file;
+ 	size_t size;
+ 	int result;
++	*is_range = false;
++	if (original_size != NULL)
++		*original_size = -1;
+ 	if (snprintf(meta_path, sizeof(meta_path), "%s/%s", entry_dir, KF_TXN_META_FILE) >=
+ 		(int) sizeof(meta_path))
+ 		return -ENAMETOOLONG;
+@@ -590,7 +630,23 @@ static int existing_entry_matches(const char *entry_dir, const char *relative)
+ 	buffer[size] = '\0';
+ 	if (strstr(buffer, "capture_state=complete\n") == NULL)
+ 		return -EAGAIN;
+-	return strstr(buffer, expected) != NULL ? 0 : -EEXIST;
++	if (strstr(buffer, expected) == NULL)
++		return -EEXIST;
++	*is_range = strstr(buffer, "storage_mode=range_undo\n") != NULL;
++	if (*is_range && original_size != NULL) {
++		char *size_line = strstr(buffer, "original_size=");
++		char *value;
++		char *end = NULL;
++		if (size_line == NULL)
++			return -EPROTO;
++		value = size_line + strlen("original_size=");
++		errno = 0;
++		*original_size = strtoll(value, &end, 10);
++		if (errno != 0 || end == value || (*end != '\n' && *end != '\0') ||
++			*original_size < 0)
++			return -EPROTO;
++	}
++	return 0;
+ }
+ 
+ static int measure_regular_bytes(const char *path, uint64_t *size)
+@@ -629,27 +685,8 @@ static int measure_regular_bytes(const char *path, uint64_t *size)
+ 
+ static int measure_existing_payloads(const char *entries_path, uint64_t *size)
+ {
+-	DIR *directory = opendir(entries_path);
+-	struct dirent *entry;
+-	int result = 0;
+ 	*size = 0;
+-	if (directory == NULL)
+-		return -errno;
+-	while ((entry = readdir(directory)) != NULL) {
+-		char payload[PATH_MAX];
+-		if (entry->d_name[0] == '.')
+-			continue;
+-		if (snprintf(payload, sizeof(payload), "%s/%s/%s", entries_path,
+-			entry->d_name, KF_TXN_PAYLOAD_NAME) >= (int) sizeof(payload)) {
+-			result = -ENAMETOOLONG;
+-			break;
+-		}
+-		result = measure_regular_bytes(payload, size);
+-		if (result < 0)
+-			break;
+-	}
+-	closedir(directory);
+-	return result;
++	return measure_regular_bytes(entries_path, size);
+ }
+ 
+ static int capture_path_impl(KfTxnConfig *config, const KfTxnControl *control, const char *path)
+@@ -679,8 +716,23 @@ static int capture_path_impl(KfTxnConfig *config, const KfTxnControl *control, c
+ 		control->entries_path, hash) >= (int) sizeof(entry_dir))
+ 		return -ENAMETOOLONG;
+ 	if (mkdir(entry_dir, 0700) != 0) {
+-		if (errno == EEXIST)
+-			return existing_entry_matches(entry_dir, relative);
++		if (errno == EEXIST) {
++			bool is_range;
++			result = existing_entry_is_range(entry_dir, relative, &is_range, NULL);
++			if (result < 0 || !is_range)
++				return result;
++			if (snprintf(payload, sizeof(payload), "%s/%s", entry_dir,
++				KF_TXN_PAYLOAD_NAME) >= (int) sizeof(payload))
++				return -ENAMETOOLONG;
++			if (access(payload, F_OK) == 0)
++				return 0;
++			if (lstat(path, &st) != 0)
++				return -errno;
++			if (!S_ISREG(st.st_mode))
++				return -ENOTSUP;
++			return copy_regular(path, payload, st.st_mode, &config->used_bytes,
++				control->max_backup_bytes);
++		}
+ 		return -errno;
+ 	}
+ 
+@@ -709,7 +761,8 @@ static int capture_path_impl(KfTxnConfig *config, const KfTxnControl *control, c
+ 		goto fail;
+ 	}
+ 
+-	result = write_meta(entry_dir, relative, kind, mode, link_target, false);
++	result = write_meta(entry_dir, relative, kind, mode, link_target,
++		"whole_object", S_ISREG(mode) ? (int64_t) st.st_size : -1, false);
+ 	if (result < 0)
+ 		goto fail;
+ 	if (strcmp(kind, "file") == 0 || strcmp(kind, "directory") == 0) {
+@@ -722,7 +775,171 @@ static int capture_path_impl(KfTxnConfig *config, const KfTxnControl *control, c
+ 		if (result < 0)
+ 			goto fail;
+ 	}
+-	result = write_meta(entry_dir, relative, kind, mode, link_target, true);
++	result = write_meta(entry_dir, relative, kind, mode, link_target,
++		"whole_object", S_ISREG(mode) ? (int64_t) st.st_size : -1, true);
++	if (result < 0)
++		goto fail;
++	return 0;
++
++fail:
++	remove_tree(entry_dir);
++	return result;
++}
++
++static int copy_range_block(const char *source, const char *destination,
++	uint64_t offset, uint64_t length, uint64_t *used_bytes, uint64_t limit)
++{
++	char temp[PATH_MAX];
++	char buffer[KF_TXN_COPY_BUFFER];
++	int input = -1;
++	int output = -1;
++	uint64_t copied = 0;
++	int result = 0;
++	if (access(destination, F_OK) == 0)
++		return 0;
++	if (length > limit || *used_bytes > limit - length)
++		return -ENOSPC;
++	if (snprintf(temp, sizeof(temp), "%s.tmp-%ld", destination, (long) getpid()) >=
++		(int) sizeof(temp))
++		return -ENAMETOOLONG;
++	input = open(source, O_RDONLY | O_CLOEXEC);
++	if (input < 0)
++		return -errno;
++	output = open(temp, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
++	if (output < 0) {
++		result = -errno;
++		goto out;
++	}
++	while (copied < length) {
++		size_t wanted = (size_t) ((length - copied) < sizeof(buffer) ?
++			(length - copied) : sizeof(buffer));
++		ssize_t count = pread(input, buffer, wanted, (off_t) (offset + copied));
++		ssize_t written = 0;
++		if (count < 0) {
++			if (errno == EINTR)
++				continue;
++			result = -errno;
++			goto out;
++		}
++		if (count == 0) {
++			result = -EIO;
++			goto out;
++		}
++		while (written < count) {
++			ssize_t step = write(output, buffer + written, (size_t) (count - written));
++			if (step < 0) {
++				if (errno == EINTR)
++					continue;
++				result = -errno;
++				goto out;
++			}
++			written += step;
++		}
++		copied += (uint64_t) count;
++	}
++	if (fsync(output) != 0) {
++		result = -errno;
++		goto out;
++	}
++	if (close(output) != 0) {
++		output = -1;
++		result = -errno;
++		goto out;
++	}
++	output = -1;
++	if (rename(temp, destination) != 0) {
++		result = -errno;
++		goto out;
++	}
++	*used_bytes += copied;
++
++out:
++	if (output >= 0)
++		close(output);
++	if (input >= 0)
++		close(input);
++	if (result < 0)
++		unlink(temp);
++	return result;
++}
++
++static int capture_range_blocks(KfTxnConfig *config, const KfTxnControl *control,
++	const char *path, const char *entry_dir, uint64_t offset, uint64_t length,
++	uint64_t original_size)
++{
++	char ranges_dir[PATH_MAX];
++	uint64_t first;
++	uint64_t end;
++	uint64_t block;
++	int result;
++	if (snprintf(ranges_dir, sizeof(ranges_dir), "%s/%s", entry_dir,
++		KF_TXN_RANGES_DIR) >= (int) sizeof(ranges_dir))
++		return -ENAMETOOLONG;
++	result = ensure_directory(ranges_dir);
++	if (result < 0)
++		return result;
++	if (length == 0 || offset >= original_size)
++		return 0;
++	end = length > UINT64_MAX - offset ? UINT64_MAX : offset + length;
++	if (end > original_size)
++		end = original_size;
++	first = offset - (offset % KF_TXN_RANGE_BLOCK);
++	for (block = first; block < end; block += KF_TXN_RANGE_BLOCK) {
++		char destination[PATH_MAX];
++		uint64_t block_length = original_size - block;
++		if (block_length > KF_TXN_RANGE_BLOCK)
++			block_length = KF_TXN_RANGE_BLOCK;
++		if (snprintf(destination, sizeof(destination), "%s/%016" PRIx64
++			"-%016" PRIx64, ranges_dir, block, block_length) >=
++			(int) sizeof(destination))
++			return -ENAMETOOLONG;
++		result = copy_range_block(path, destination, block, block_length,
++			&config->used_bytes, control->max_backup_bytes);
++		if (result < 0)
++			return result;
++		if (UINT64_MAX - block < KF_TXN_RANGE_BLOCK)
++			break;
++	}
++	return 0;
++}
++
++static int capture_range_impl(KfTxnConfig *config, const KfTxnControl *control,
++	const char *path, uint64_t offset, uint64_t length)
++{
++	const char *relative;
++	uint64_t hash;
++	char entry_dir[PATH_MAX];
++	struct stat st;
++	int result;
++	if (!path_inside_root(control->root_path, path, &relative))
++		return 0;
++	if (lstat(path, &st) != 0 || !S_ISREG(st.st_mode))
++		return capture_path_impl(config, control, path);
++	hash = fnv1a64(relative);
++	if (snprintf(entry_dir, sizeof(entry_dir), "%s/%016" PRIx64,
++		control->entries_path, hash) >= (int) sizeof(entry_dir))
++		return -ENAMETOOLONG;
++	if (mkdir(entry_dir, 0700) != 0) {
++		bool is_range;
++		int64_t original_size;
++		if (errno != EEXIST)
++			return -errno;
++		result = existing_entry_is_range(entry_dir, relative, &is_range, &original_size);
++		if (result < 0 || !is_range)
++			return result;
++		return capture_range_blocks(config, control, path, entry_dir, offset, length,
++			(uint64_t) original_size);
++	}
++	result = write_meta(entry_dir, relative, "file", st.st_mode, "",
++		"range_undo", (int64_t) st.st_size, false);
++	if (result < 0)
++		goto fail;
++	result = capture_range_blocks(config, control, path, entry_dir, offset, length,
++		(uint64_t) st.st_size);
++	if (result < 0)
++		goto fail;
++	result = write_meta(entry_dir, relative, "file", st.st_mode, "",
++		"range_undo", (int64_t) st.st_size, true);
+ 	if (result < 0)
+ 		goto fail;
+ 	return 0;
+@@ -732,6 +949,43 @@ fail:
+ 	return result;
+ }
+ 
++static int capture_range(KfTxnConfig *config, const KfTxnControl *control,
++	const char *path, uint64_t offset, uint64_t length)
++{
++	const char *relative;
++	char normalized[PATH_MAX];
++	char lock_path[PATH_MAX];
++	int lock_fd;
++	int result;
++	if (path == NULL || path[0] != '/')
++		return 0;
++	result = normalize_absolute_path(path, normalized);
++	if (result < 0)
++		return result;
++	if (!path_inside_root(control->root_path, normalized, &relative))
++		return 0;
++	result = ensure_directory(control->entries_path);
++	if (result < 0)
++		return result;
++	if (snprintf(lock_path, sizeof(lock_path), "%s/.capture.lock",
++		control->entries_path) >= (int) sizeof(lock_path))
++		return -ENAMETOOLONG;
++	lock_fd = open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
++	if (lock_fd < 0)
++		return -errno;
++	if (flock(lock_fd, LOCK_EX) != 0) {
++		result = -errno;
++		close(lock_fd);
++		return result;
++	}
++	result = measure_existing_payloads(control->entries_path, &config->used_bytes);
++	if (result == 0)
++		result = capture_range_impl(config, control, normalized, offset, length);
++	flock(lock_fd, LOCK_UN);
++	close(lock_fd);
++	return result;
++}
++
+ static int capture_path(KfTxnConfig *config, const KfTxnControl *control, const char *path)
+ {
+ 	const char *relative;
+@@ -788,6 +1042,173 @@ static int fd_path(Tracee *tracee, Reg fd_sysarg, char path[PATH_MAX])
+ 		(int) peek_reg(tracee, CURRENT, fd_sysarg), path);
+ }
+ 
++static int fd_info(Tracee *tracee, Reg fd_sysarg, uint64_t *position, uint64_t *flags)
++{
++	char path[PATH_MAX];
++	char line[256];
++	FILE *stream;
++	int fd = (int) peek_reg(tracee, CURRENT, fd_sysarg);
++	bool have_position = false;
++	bool have_flags = false;
++	*position = 0;
++	*flags = 0;
++	if (snprintf(path, sizeof(path), "/proc/%d/fdinfo/%d", tracee->pid, fd) >=
++		(int) sizeof(path))
++		return -ENAMETOOLONG;
++	stream = fopen(path, "r");
++	if (stream == NULL)
++		return -errno;
++	while (fgets(line, sizeof(line), stream) != NULL) {
++		if (!have_position && sscanf(line, "pos:\t%" SCNu64, position) == 1)
++			have_position = true;
++		if (!have_flags && sscanf(line, "flags:\t%" SCNo64, flags) == 1)
++			have_flags = true;
++	}
++	fclose(stream);
++	return have_position && have_flags ? 0 : -EPROTO;
++}
++
++static int iov_total_length(Tracee *tracee, Reg pointer_sysarg, Reg count_sysarg,
++	uint64_t *length)
++{
++	word_t pointer = peek_reg(tracee, CURRENT, pointer_sysarg);
++	word_t count = peek_reg(tracee, CURRENT, count_sysarg);
++	size_t word_size = sizeof_word(tracee);
++	word_t index;
++	*length = 0;
++	if (count > 1024)
++		return -E2BIG;
++	for (index = 0; index < count; index++) {
++		word_t item = pointer + index * word_size * 2;
++		word_t item_length;
++		errno = 0;
++		(void) peek_word(tracee, item);
++		if (errno != 0)
++			return -errno;
++		errno = 0;
++		item_length = peek_word(tracee, item + word_size);
++		if (errno != 0)
++			return -errno;
++		if ((uint64_t) item_length > UINT64_MAX - *length)
++			return -EOVERFLOW;
++		*length += (uint64_t) item_length;
++	}
++	return 0;
++}
++
++static int tracee_offset(Tracee *tracee, Reg pointer_sysarg, uint64_t fallback,
++	uint64_t *offset)
++{
++	word_t pointer = peek_reg(tracee, CURRENT, pointer_sysarg);
++	int64_t value;
++	if (pointer == 0) {
++		*offset = fallback;
++		return 0;
++	}
++	if (read_data(tracee, &value, pointer, sizeof(value)) < 0)
++		return -EFAULT;
++	if (value < 0)
++		return -EINVAL;
++	*offset = (uint64_t) value;
++	return 0;
++}
++
++static int capture_fd_range(Tracee *tracee, KfTxnConfig *config,
++	const KfTxnControl *control, Reg fd_sysarg, uint64_t requested_offset,
++	uint64_t length)
++{
++	char path[PATH_MAX];
++	struct stat st;
++	uint64_t position;
++	uint64_t flags;
++	uint64_t offset = requested_offset;
++	int status = fd_path(tracee, fd_sysarg, path);
++	if (status != 0)
++		return status < 0 ? status : 0;
++	status = fd_info(tracee, fd_sysarg, &position, &flags);
++	if (status < 0)
++		return status;
++	if ((flags & O_APPEND) != 0) {
++		if (lstat(path, &st) != 0)
++			return -errno;
++		offset = (uint64_t) st.st_size;
++	}
++	else if (offset == UINT64_MAX) {
++		offset = position;
++	}
++	return capture_range(config, control, path, offset, length);
++}
++
++static int capture_truncate_path(Tracee *tracee, KfTxnConfig *config,
++	const KfTxnControl *control, Reg path_sysarg, Reg length_sysarg)
++{
++	char path[PATH_MAX];
++	struct stat st;
++	uint64_t requested = (uint64_t) peek_reg(tracee, CURRENT, length_sysarg);
++	int status = current_path(tracee, path_sysarg, path);
++	if (status != 0)
++		return status < 0 ? status : 0;
++	if (lstat(path, &st) != 0 || !S_ISREG(st.st_mode))
++		return capture_path(config, control, path);
++	return capture_range(config, control, path,
++		requested < (uint64_t) st.st_size ? requested : (uint64_t) st.st_size,
++		requested < (uint64_t) st.st_size ? (uint64_t) st.st_size - requested : 0);
++}
++
++static int capture_truncate_fd(Tracee *tracee, KfTxnConfig *config,
++	const KfTxnControl *control, Reg fd_sysarg, Reg length_sysarg)
++{
++	char path[PATH_MAX];
++	struct stat st;
++	uint64_t requested = (uint64_t) peek_reg(tracee, CURRENT, length_sysarg);
++	int status = fd_path(tracee, fd_sysarg, path);
++	if (status != 0)
++		return status < 0 ? status : 0;
++	if (lstat(path, &st) != 0 || !S_ISREG(st.st_mode))
++		return capture_path(config, control, path);
++	return capture_range(config, control, path,
++		requested < (uint64_t) st.st_size ? requested : (uint64_t) st.st_size,
++		requested < (uint64_t) st.st_size ? (uint64_t) st.st_size - requested : 0);
++}
++
++static int capture_open_path(Tracee *tracee, KfTxnConfig *config,
++	const KfTxnControl *control, Reg path_sysarg, word_t flags)
++{
++	char path[PATH_MAX];
++	struct stat st;
++	int status = current_path(tracee, path_sysarg, path);
++	if (status != 0)
++		return status < 0 ? status : 0;
++	if ((flags & O_TRUNC) != 0)
++		return capture_path(config, control, path);
++	if ((flags & O_CREAT) == 0)
++		return 0;
++	if (lstat(path, &st) == 0)
++		return 0;
++	if (errno != ENOENT)
++		return -errno;
++	return capture_path(config, control, path);
++}
++
++static int openat2_flags(Tracee *tracee, word_t *flags)
++{
++	struct {
++		uint64_t flags;
++		uint64_t mode;
++		uint64_t resolve;
++	} how;
++	word_t pointer = peek_reg(tracee, CURRENT, SYSARG_3);
++	word_t size = peek_reg(tracee, CURRENT, SYSARG_4);
++	if (pointer == 0 || size < sizeof(uint64_t))
++		return -EINVAL;
++	memset(&how, 0, sizeof(how));
++	if (read_data(tracee, &how, pointer,
++		(size_t) (size < sizeof(how) ? size : sizeof(how))) < 0)
++		return -EFAULT;
++	*flags = (word_t) how.flags;
++	return 0;
++}
++
+ static int capture_path_arg(Tracee *tracee, KfTxnConfig *config,
+ 	const KfTxnControl *control, Reg path_sysarg)
+ {
+@@ -841,22 +1262,60 @@ static int capture_mutation(Tracee *tracee, KfTxnConfig *config,
+ {
+ 	word_t sysnum = get_sysnum(tracee, ORIGINAL);
+ 	word_t flags;
++	uint64_t length;
++	uint64_t position;
++	uint64_t fd_flags;
++	uint64_t offset;
+ 	int result;
++
++	if (control->backend == KF_BACKEND_WHOLE_OBJECT) {
++		switch (sysnum) {
++		case PR_sendfile:
++		case PR_write:
++		case PR_writev:
++		case PR_pwrite64:
++		case PR_pwritev:
++		case PR_pwritev2:
++		case PR_ftruncate:
++		case PR_ftruncate64:
++		case PR_fallocate:
++		case PR_fchmod:
++		case PR_fchown:
++		case PR_fchown32:
++			return capture_fd_arg(tracee, config, control, SYSARG_1);
++		case PR_splice:
++		case PR_copy_file_range:
++			return capture_fd_arg(tracee, config, control, SYSARG_3);
++		default:
++			break;
++		}
++	}
++
+ 	switch (sysnum) {
+ 	case PR_open:
+ 		flags = peek_reg(tracee, CURRENT, SYSARG_2);
+ 		if ((flags & O_ACCMODE) == O_RDONLY && (flags & (O_CREAT | O_TRUNC)) == 0)
+ 			return 0;
++		if (control->backend == KF_BACKEND_RANGE_UNDO)
++			return capture_open_path(tracee, config, control, SYSARG_1, flags);
+ 		return capture_path_arg(tracee, config, control, SYSARG_1);
+ 	case PR_openat:
+-	case PR_openat2:
+ 		flags = peek_reg(tracee, CURRENT, SYSARG_3);
+ 		if ((flags & O_ACCMODE) == O_RDONLY && (flags & (O_CREAT | O_TRUNC)) == 0)
+ 			return 0;
++		if (control->backend == KF_BACKEND_RANGE_UNDO)
++			return capture_open_path(tracee, config, control, SYSARG_2, flags);
++		return capture_path_arg(tracee, config, control, SYSARG_2);
++	case PR_openat2:
++		result = openat2_flags(tracee, &flags);
++		if (result < 0)
++			return result;
++		if ((flags & O_ACCMODE) == O_RDONLY && (flags & (O_CREAT | O_TRUNC)) == 0)
++			return 0;
++		if (control->backend == KF_BACKEND_RANGE_UNDO)
++			return capture_open_path(tracee, config, control, SYSARG_2, flags);
+ 		return capture_path_arg(tracee, config, control, SYSARG_2);
+ 	case PR_creat:
+-	case PR_truncate:
+-	case PR_truncate64:
+ 	case PR_unlink:
+ 	case PR_rmdir:
+ 	case PR_chmod:
+@@ -867,6 +1326,11 @@ static int capture_mutation(Tracee *tracee, KfTxnConfig *config,
+ 	case PR_utime:
+ 	case PR_utimes:
+ 		return capture_path_arg(tracee, config, control, SYSARG_1);
++	case PR_truncate:
++	case PR_truncate64:
++		return control->backend == KF_BACKEND_RANGE_UNDO ?
++			capture_truncate_path(tracee, config, control, SYSARG_1, SYSARG_2) :
++			capture_path_arg(tracee, config, control, SYSARG_1);
+ 	case PR_mkdir:
+ 	case PR_mknod:
+ 		return capture_creation_path_arg(tracee, config, control, SYSARG_1);
+@@ -892,23 +1356,47 @@ static int capture_mutation(Tracee *tracee, KfTxnConfig *config,
+ 		return capture_creation_path_arg(tracee, config, control, SYSARG_4);
+ 	case PR_symlinkat:
+ 		return capture_creation_path_arg(tracee, config, control, SYSARG_3);
+-	case PR_write:
+-	case PR_writev:
+-	case PR_pwrite64:
+-	case PR_pwritev:
+-	case PR_pwritev2:
+ 	case PR_ftruncate:
+ 	case PR_ftruncate64:
++		return control->backend == KF_BACKEND_RANGE_UNDO ?
++			capture_truncate_fd(tracee, config, control, SYSARG_1, SYSARG_2) :
++			capture_fd_arg(tracee, config, control, SYSARG_1);
+ 	case PR_fallocate:
+ 	case PR_fchmod:
+ 	case PR_fchown:
+ 	case PR_fchown32:
+ 		return capture_fd_arg(tracee, config, control, SYSARG_1);
++	case PR_write:
++		return capture_fd_range(tracee, config, control, SYSARG_1, UINT64_MAX,
++			(uint64_t) peek_reg(tracee, CURRENT, SYSARG_3));
++	case PR_pwrite64:
++		return capture_fd_range(tracee, config, control, SYSARG_1,
++			(uint64_t) peek_reg(tracee, CURRENT, SYSARG_4),
++			(uint64_t) peek_reg(tracee, CURRENT, SYSARG_3));
++	case PR_writev:
++		result = iov_total_length(tracee, SYSARG_2, SYSARG_3, &length);
++		return result < 0 ? result : capture_fd_range(tracee, config, control,
++			SYSARG_1, UINT64_MAX, length);
++	case PR_pwritev:
++	case PR_pwritev2:
++		result = iov_total_length(tracee, SYSARG_2, SYSARG_3, &length);
++		return result < 0 ? result : capture_fd_range(tracee, config, control,
++			SYSARG_1, (uint64_t) peek_reg(tracee, CURRENT, SYSARG_4), length);
++	case PR_sendfile:
++		return capture_fd_range(tracee, config, control, SYSARG_1, UINT64_MAX,
++			(uint64_t) peek_reg(tracee, CURRENT, SYSARG_4));
++	case PR_splice:
++	case PR_copy_file_range:
++		result = fd_info(tracee, SYSARG_3, &position, &fd_flags);
++		if (result < 0)
++			return result;
++		result = tracee_offset(tracee, SYSARG_4, position, &offset);
++		return result < 0 ? result : capture_fd_range(tracee, config, control,
++			SYSARG_3, offset, (uint64_t) peek_reg(tracee, CURRENT, SYSARG_5));
+ 	case PR_mmap:
+ 	case PR_mmap2:
+ 		flags = peek_reg(tracee, CURRENT, SYSARG_4);
+-		if ((peek_reg(tracee, CURRENT, SYSARG_3) & PROT_WRITE) == 0 ||
+-			(flags & MAP_SHARED) == 0)
++		if ((flags & MAP_SHARED) == 0 || (flags & MAP_ANONYMOUS) != 0)
+ 			return 0;
+ 		return capture_fd_arg(tracee, config, control, SYSARG_5);
+ 	default:

@@ -7,10 +7,14 @@ import android.database.sqlite.SQLiteOpenHelper
 import org.json.JSONArray
 
 data class KiteResourceRegistryEntry(
+    val environmentId: String = KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID,
     val resourceId: String,
     val status: String = "",
     val operation: String = "",
     val version: String = "",
+    val latestVersion: String = "",
+    val updateStatus: String = "",
+    val lastCheckedAt: Long = 0L,
     val runId: String = "",
     val summary: String = "",
     val installedAt: Long = 0L,
@@ -44,44 +48,59 @@ class KiteResourceRegistry(context: Context) {
         migrateLegacyPreferences()
     }
 
-    fun status(resourceId: String): String? =
-        registryString(resourceId, COL_STATUS).takeIf { it.isNotBlank() }
+    fun status(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): String? =
+        registryString(resourceId, environmentId, COL_STATUS).takeIf { it.isNotBlank() }
 
-    fun isInstalled(resourceId: String): Boolean =
-        status(resourceId) == STATUS_INSTALLED
+    fun isInstalled(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean =
+        status(resourceId, environmentId) == STATUS_INSTALLED
 
-    fun isFailed(resourceId: String): Boolean =
-        status(resourceId) == STATUS_FAILED
+    fun isFailed(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean =
+        status(resourceId, environmentId) == STATUS_FAILED
 
-    fun isInstalling(resourceId: String): Boolean =
-        status(resourceId) == STATUS_INSTALLING
+    fun isInstalling(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean =
+        status(resourceId, environmentId) == STATUS_INSTALLING
 
-    fun isPreparing(resourceId: String): Boolean =
-        status(resourceId) == STATUS_PREPARING
+    fun isPreparing(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean =
+        status(resourceId, environmentId) == STATUS_PREPARING
 
-    fun isUninstalling(resourceId: String): Boolean =
-        status(resourceId) == STATUS_UNINSTALLING
+    fun isUninstalling(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean =
+        status(resourceId, environmentId) == STATUS_UNINSTALLING
 
-    fun isBusy(resourceId: String): Boolean =
-        isPreparing(resourceId) || isInstalling(resourceId) || isUninstalling(resourceId)
+    fun isBusy(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean =
+        isPreparing(resourceId, environmentId) ||
+            isInstalling(resourceId, environmentId) ||
+            isUninstalling(resourceId, environmentId)
 
-    fun failedOperation(resourceId: String): String =
-        registryString(resourceId, COL_OPERATION)
+    fun failedOperation(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): String =
+        registryString(resourceId, environmentId, COL_OPERATION)
 
-    fun snapshot(resourceIds: Collection<String> = emptyList()): Map<String, KiteResourceRegistryEntry> {
+    fun snapshot(
+        resourceIds: Collection<String> = emptyList(),
+        environmentId: String = DEFAULT_ENVIRONMENT_ID
+    ): Map<String, KiteResourceRegistryEntry> {
+        val normalizedEnvironmentId = normalizeEnvironmentId(environmentId)
         val normalizedIds = resourceIds
             .map { normalizeResourceId(it) }
             .filter { it.isNotBlank() }
             .distinct()
-        val selection = if (normalizedIds.isEmpty()) null else "$COL_RESOURCE_ID IN (${normalizedIds.joinToString(",") { "?" }})"
-        val selectionArgs = normalizedIds.takeIf { it.isNotEmpty() }?.toTypedArray()
+        val selection = buildString {
+            append("$COL_ENVIRONMENT_ID = ?")
+            if (normalizedIds.isNotEmpty()) {
+                append(" AND $COL_RESOURCE_ID IN (${normalizedIds.joinToString(",") { "?" }})")
+            }
+        }
+        val selectionArgs = (listOf(normalizedEnvironmentId) + normalizedIds).toTypedArray()
         return database.readableDatabase.query(
             TABLE_REGISTRY,
             arrayOf(
+                COL_ENVIRONMENT_ID,
                 COL_RESOURCE_ID,
                 COL_STATUS,
                 COL_OPERATION,
                 COL_VERSION,
+                COL_LATEST_VERSION,
+                COL_UPDATE_STATUS,
+                COL_LAST_CHECKED_AT,
                 COL_RUN_ID,
                 COL_SUMMARY,
                 COL_INSTALLED_AT,
@@ -96,14 +115,18 @@ class KiteResourceRegistry(context: Context) {
             buildMap {
                 while (cursor.moveToNext()) {
                     val entry = KiteResourceRegistryEntry(
-                        resourceId = cursor.getString(0).orEmpty(),
-                        status = cursor.getString(1).orEmpty(),
-                        operation = cursor.getString(2).orEmpty(),
-                        version = cursor.getString(3).orEmpty(),
-                        runId = cursor.getString(4).orEmpty(),
-                        summary = cursor.getString(5).orEmpty(),
-                        installedAt = cursor.getLong(6),
-                        updatedAt = cursor.getLong(7)
+                        environmentId = cursor.getString(0).orEmpty(),
+                        resourceId = cursor.getString(1).orEmpty(),
+                        status = cursor.getString(2).orEmpty(),
+                        operation = cursor.getString(3).orEmpty(),
+                        version = cursor.getString(4).orEmpty(),
+                        latestVersion = cursor.getString(5).orEmpty(),
+                        updateStatus = cursor.getString(6).orEmpty(),
+                        lastCheckedAt = cursor.getLong(7),
+                        runId = cursor.getString(8).orEmpty(),
+                        summary = cursor.getString(9).orEmpty(),
+                        installedAt = cursor.getLong(10),
+                        updatedAt = cursor.getLong(11)
                     )
                     put(entry.resourceId, entry)
                 }
@@ -111,16 +134,17 @@ class KiteResourceRegistry(context: Context) {
         }
     }
 
-    fun entry(resourceId: String): KiteResourceRegistryEntry? =
-        snapshot(listOf(resourceId))[normalizeResourceId(resourceId)]
+    fun entry(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): KiteResourceRegistryEntry? =
+        snapshot(listOf(resourceId), environmentId)[normalizeResourceId(resourceId)]
 
-    fun planSnapshot(): KiteResourcePlanSnapshot {
+    fun planSnapshot(environmentId: String = DEFAULT_ENVIRONMENT_ID): KiteResourcePlanSnapshot {
+        val activePlanId = planId(environmentId)
         val db = database.readableDatabase
         val plan = db.query(
             TABLE_PLAN,
             arrayOf(COL_TARGET_RESOURCE_ID, COL_STATUS),
             "$COL_PLAN_ID = ?",
-            arrayOf(ACTIVE_PLAN_ID),
+            arrayOf(activePlanId),
             null,
             null,
             null,
@@ -140,7 +164,7 @@ class KiteResourceRegistry(context: Context) {
             TABLE_PLAN_STEP,
             arrayOf(COL_RESOURCE_ID, COL_STATUS),
             "$COL_PLAN_ID = ?",
-            arrayOf(ACTIVE_PLAN_ID),
+            arrayOf(activePlanId),
             null,
             null,
             "$COL_STEP_INDEX ASC"
@@ -170,18 +194,25 @@ class KiteResourceRegistry(context: Context) {
         )
     }
 
-    fun markInstalling(resourceId: String, runId: String? = null) {
+    fun markInstalling(
+        resourceId: String,
+        runId: String? = null,
+        operation: String = OP_INSTALL,
+        environmentId: String = DEFAULT_ENVIRONMENT_ID
+    ) {
         upsertRegistry(
+            environmentId = environmentId,
             resourceId = resourceId,
             status = STATUS_INSTALLING,
-            operation = OP_INSTALL,
+            operation = operation,
             runId = runId.orEmpty(),
             summary = "获取中"
         )
     }
 
-    fun markPreparing(resourceId: String) {
+    fun markPreparing(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID) {
         upsertRegistry(
+            environmentId = environmentId,
             resourceId = resourceId,
             status = STATUS_PREPARING,
             operation = OP_INSTALL,
@@ -190,8 +221,13 @@ class KiteResourceRegistry(context: Context) {
         )
     }
 
-    fun markUninstalling(resourceId: String, runId: String? = null) {
+    fun markUninstalling(
+        resourceId: String,
+        runId: String? = null,
+        environmentId: String = DEFAULT_ENVIRONMENT_ID
+    ) {
         upsertRegistry(
+            environmentId = environmentId,
             resourceId = resourceId,
             status = STATUS_UNINSTALLING,
             operation = OP_UNINSTALL,
@@ -200,8 +236,15 @@ class KiteResourceRegistry(context: Context) {
         )
     }
 
-    fun markInstalled(resourceId: String, version: String, runId: String?, summary: String?) {
+    fun markInstalled(
+        resourceId: String,
+        version: String,
+        runId: String?,
+        summary: String?,
+        environmentId: String = DEFAULT_ENVIRONMENT_ID
+    ) {
         upsertRegistry(
+            environmentId = environmentId,
             resourceId = resourceId,
             status = STATUS_INSTALLED,
             operation = OP_INSTALL,
@@ -212,8 +255,15 @@ class KiteResourceRegistry(context: Context) {
         )
     }
 
-    fun markFailed(resourceId: String, operation: String, runId: String?, reason: String?) {
+    fun markFailed(
+        resourceId: String,
+        operation: String,
+        runId: String?,
+        reason: String?,
+        environmentId: String = DEFAULT_ENVIRONMENT_ID
+    ) {
         upsertRegistry(
+            environmentId = environmentId,
             resourceId = resourceId,
             status = STATUS_FAILED,
             operation = operation,
@@ -222,23 +272,78 @@ class KiteResourceRegistry(context: Context) {
         )
     }
 
-    fun clear(resourceId: String) {
-        database.writableDatabase.delete(
+    fun markVersionCheck(
+        resourceId: String,
+        updateStatus: String,
+        installedVersion: String = "",
+        latestVersion: String = "",
+        summary: String? = null,
+        operation: String? = null,
+        status: String? = null,
+        checkedAt: Long = System.currentTimeMillis(),
+        environmentId: String = DEFAULT_ENVIRONMENT_ID
+    ) {
+        val normalizedEnvironmentId = normalizeEnvironmentId(environmentId)
+        val normalizedResourceId = normalizeResourceId(resourceId)
+        val existing = entry(normalizedResourceId, normalizedEnvironmentId) ?: return
+        database.writableDatabase.insertWithOnConflict(
             TABLE_REGISTRY,
-            "$COL_RESOURCE_ID = ?",
-            arrayOf(normalizeResourceId(resourceId))
+            null,
+            ContentValues().apply {
+                put(COL_ENVIRONMENT_ID, normalizedEnvironmentId)
+                put(COL_RESOURCE_ID, normalizedResourceId)
+                put(COL_STATUS, status ?: existing.status)
+                put(COL_OPERATION, operation ?: existing.operation)
+                put(COL_VERSION, installedVersion.ifBlank { existing.version })
+                put(COL_LATEST_VERSION, latestVersion.ifBlank { existing.latestVersion })
+                put(COL_UPDATE_STATUS, updateStatus)
+                put(COL_LAST_CHECKED_AT, checkedAt)
+                put(COL_RUN_ID, existing.runId)
+                put(COL_SUMMARY, summary ?: existing.summary)
+                put(COL_INSTALLED_AT, existing.installedAt)
+                put(COL_UPDATED_AT, System.currentTimeMillis())
+            },
+            SQLiteDatabase.CONFLICT_REPLACE
         )
     }
 
-    fun beginPlan(targetResourceId: String, resourceIds: List<String>) {
+    fun clear(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID) {
+        database.writableDatabase.delete(
+            TABLE_REGISTRY,
+            "$COL_ENVIRONMENT_ID = ? AND $COL_RESOURCE_ID = ?",
+            arrayOf(normalizeEnvironmentId(environmentId), normalizeResourceId(resourceId))
+        )
+    }
+
+    fun clear(resourceIds: Collection<String>, environmentId: String = DEFAULT_ENVIRONMENT_ID) {
+        val normalizedIds = resourceIds
+            .map(::normalizeResourceId)
+            .filter(String::isNotBlank)
+            .distinct()
+        if (normalizedIds.isEmpty()) return
+        val placeholders = normalizedIds.joinToString(",") { "?" }
+        val selectionArgs = (listOf(normalizeEnvironmentId(environmentId)) + normalizedIds).toTypedArray()
+        database.writableDatabase.delete(
+            TABLE_REGISTRY,
+            "$COL_ENVIRONMENT_ID = ? AND $COL_RESOURCE_ID IN ($placeholders)",
+            selectionArgs
+        )
+    }
+
+    fun beginPlan(
+        targetResourceId: String,
+        resourceIds: List<String>,
+        environmentId: String = DEFAULT_ENVIRONMENT_ID
+    ) {
+        val activePlanId = planId(environmentId)
         val now = System.currentTimeMillis()
         database.writableDatabase.runInTransaction {
-            clearPlanLocked(this)
+            clearPlanLocked(this, activePlanId)
             insertWithOnConflict(
                 TABLE_PLAN,
                 null,
                 ContentValues().apply {
-                    put(COL_PLAN_ID, ACTIVE_PLAN_ID)
+                    put(COL_PLAN_ID, activePlanId)
                     put(COL_TARGET_RESOURCE_ID, normalizeResourceId(targetResourceId))
                     put(COL_STATUS, PLAN_STATUS_ACTIVE)
                     put(COL_CREATED_AT, now)
@@ -254,7 +359,7 @@ class KiteResourceRegistry(context: Context) {
                         TABLE_PLAN_STEP,
                         null,
                         ContentValues().apply {
-                            put(COL_PLAN_ID, ACTIVE_PLAN_ID)
+                            put(COL_PLAN_ID, activePlanId)
                             put(COL_STEP_INDEX, index)
                             put(COL_RESOURCE_ID, resourceId)
                             put(COL_STATUS, PLAN_STEP_PENDING)
@@ -266,26 +371,27 @@ class KiteResourceRegistry(context: Context) {
         }
     }
 
-    fun pendingPlanResourceIds(): List<String> =
-        pendingPlanResourceIds(database.readableDatabase)
+    fun pendingPlanResourceIds(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> =
+        pendingPlanResourceIds(database.readableDatabase, planId(environmentId))
 
-    fun runningPlanResourceIds(): List<String> =
-        runningPlanResourceIds(database.readableDatabase)
+    fun runningPlanResourceIds(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> =
+        runningPlanResourceIds(database.readableDatabase, planId(environmentId))
 
-    fun planResourceIds(): List<String> =
-        planResourceIds(database.readableDatabase)
+    fun planResourceIds(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> =
+        planResourceIds(database.readableDatabase, planId(environmentId))
 
-    fun planStepStatus(resourceId: String): String =
-        planStepStatus(database.readableDatabase, normalizeResourceId(resourceId)).orEmpty()
+    fun planStepStatus(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): String =
+        planStepStatus(database.readableDatabase, planId(environmentId), normalizeResourceId(resourceId)).orEmpty()
 
-    fun markPlanStepRunning(resourceId: String): Boolean {
+    fun markPlanStepRunning(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean {
+        val activePlanId = planId(environmentId)
         val normalized = normalizeResourceId(resourceId)
         if (normalized.isBlank()) return false
         var marked = false
         val now = System.currentTimeMillis()
         database.writableDatabase.runInTransaction {
-            val running = runningPlanResourceIds(this)
-            val firstPending = pendingPlanResourceIds(this).firstOrNull()
+            val running = runningPlanResourceIds(this, activePlanId)
+            val firstPending = pendingPlanResourceIds(this, activePlanId).firstOrNull()
             when {
                 running.isNotEmpty() -> {
                     marked = running.first() == normalized
@@ -294,7 +400,7 @@ class KiteResourceRegistry(context: Context) {
                     marked = false
                 }
                 else -> {
-                    val stepIndex = firstPendingStepIndex(this, normalized)
+                    val stepIndex = firstPendingStepIndex(this, activePlanId, normalized)
                     if (stepIndex != null) {
                         update(
                             TABLE_PLAN_STEP,
@@ -303,13 +409,13 @@ class KiteResourceRegistry(context: Context) {
                                 put(COL_UPDATED_AT, now)
                             },
                             "$COL_PLAN_ID = ? AND $COL_STEP_INDEX = ?",
-                            arrayOf(ACTIVE_PLAN_ID, stepIndex.toString())
+                            arrayOf(activePlanId, stepIndex.toString())
                         )
                         update(
                             TABLE_PLAN,
                             ContentValues().apply { put(COL_UPDATED_AT, now) },
                             "$COL_PLAN_ID = ?",
-                            arrayOf(ACTIVE_PLAN_ID)
+                            arrayOf(activePlanId)
                         )
                         marked = true
                     }
@@ -319,11 +425,12 @@ class KiteResourceRegistry(context: Context) {
         return marked
     }
 
-    fun advancePlanAfter(resourceId: String): List<String> {
+    fun advancePlanAfter(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> {
+        val activePlanId = planId(environmentId)
         val normalized = normalizeResourceId(resourceId)
         var remaining = emptyList<String>()
         database.writableDatabase.runInTransaction {
-            val stepIndex = planStepIndex(this, normalized)
+            val stepIndex = planStepIndex(this, activePlanId, normalized)
             if (stepIndex == null) {
                 remaining = emptyList()
                 return@runInTransaction
@@ -336,28 +443,30 @@ class KiteResourceRegistry(context: Context) {
                     put(COL_UPDATED_AT, now)
                 },
                 "$COL_PLAN_ID = ? AND $COL_STEP_INDEX = ?",
-                arrayOf(ACTIVE_PLAN_ID, stepIndex.toString())
+                arrayOf(activePlanId, stepIndex.toString())
             )
-            remaining = pendingPlanResourceIds(this)
+            remaining = pendingPlanResourceIds(this, activePlanId)
             if (remaining.isEmpty()) {
-                clearPlanLocked(this)
+                clearPlanLocked(this, activePlanId)
             } else {
                 update(
                     TABLE_PLAN,
                     ContentValues().apply { put(COL_UPDATED_AT, now) },
                     "$COL_PLAN_ID = ?",
-                    arrayOf(ACTIVE_PLAN_ID)
+                    arrayOf(activePlanId)
                 )
             }
         }
         return remaining
     }
 
-    fun failPlanAt(resourceId: String) {
+    fun failPlanAt(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID) {
+        val activePlanId = planId(environmentId)
         val normalized = normalizeResourceId(resourceId)
         val now = System.currentTimeMillis()
         database.writableDatabase.runInTransaction {
-            val failedIndex = planStepIndex(this, normalized) ?: firstPendingStepIndex(this, normalized)
+            val failedIndex = planStepIndex(this, activePlanId, normalized)
+                ?: firstPendingStepIndex(this, activePlanId, normalized)
             if (failedIndex != null) {
                 update(
                     TABLE_PLAN_STEP,
@@ -366,7 +475,7 @@ class KiteResourceRegistry(context: Context) {
                         put(COL_UPDATED_AT, now)
                     },
                     "$COL_PLAN_ID = ? AND $COL_STEP_INDEX = ?",
-                    arrayOf(ACTIVE_PLAN_ID, failedIndex.toString())
+                    arrayOf(activePlanId, failedIndex.toString())
                 )
                 update(
                     TABLE_PLAN_STEP,
@@ -375,7 +484,7 @@ class KiteResourceRegistry(context: Context) {
                         put(COL_UPDATED_AT, now)
                     },
                     "$COL_PLAN_ID = ? AND $COL_STEP_INDEX > ? AND $COL_STATUS = ?",
-                    arrayOf(ACTIVE_PLAN_ID, failedIndex.toString(), PLAN_STEP_PENDING)
+                    arrayOf(activePlanId, failedIndex.toString(), PLAN_STEP_PENDING)
                 )
             }
             update(
@@ -385,18 +494,19 @@ class KiteResourceRegistry(context: Context) {
                     put(COL_UPDATED_AT, now)
                 },
                 "$COL_PLAN_ID = ?",
-                arrayOf(ACTIVE_PLAN_ID)
+                arrayOf(activePlanId)
             )
         }
     }
 
-    fun resumePlanFrom(resourceId: String): Boolean {
+    fun resumePlanFrom(resourceId: String, environmentId: String = DEFAULT_ENVIRONMENT_ID): Boolean {
+        val activePlanId = planId(environmentId)
         val normalized = normalizeResourceId(resourceId)
         if (normalized.isBlank()) return false
         val now = System.currentTimeMillis()
         var changed = false
         database.writableDatabase.runInTransaction {
-            val stepIndex = planStepIndex(this, normalized) ?: return@runInTransaction
+            val stepIndex = planStepIndex(this, activePlanId, normalized) ?: return@runInTransaction
             val rows = update(
                 TABLE_PLAN_STEP,
                 ContentValues().apply {
@@ -404,7 +514,7 @@ class KiteResourceRegistry(context: Context) {
                     put(COL_UPDATED_AT, now)
                 },
                 "$COL_PLAN_ID = ? AND $COL_STEP_INDEX >= ? AND $COL_STATUS IN (?, ?)",
-                arrayOf(ACTIVE_PLAN_ID, stepIndex.toString(), PLAN_STEP_FAILED, PLAN_STEP_BLOCKED)
+                arrayOf(activePlanId, stepIndex.toString(), PLAN_STEP_FAILED, PLAN_STEP_BLOCKED)
             )
             update(
                 TABLE_PLAN,
@@ -413,25 +523,26 @@ class KiteResourceRegistry(context: Context) {
                     put(COL_UPDATED_AT, now)
                 },
                 "$COL_PLAN_ID = ?",
-                arrayOf(ACTIVE_PLAN_ID)
+                arrayOf(activePlanId)
             )
             changed = rows > 0
         }
         return changed
     }
 
-    fun clearPlan() {
+    fun clearPlan(environmentId: String = DEFAULT_ENVIRONMENT_ID) {
+        val activePlanId = planId(environmentId)
         database.writableDatabase.runInTransaction {
-            clearPlanLocked(this)
+            clearPlanLocked(this, activePlanId)
         }
     }
 
-    private fun registryString(resourceId: String, column: String): String =
+    private fun registryString(resourceId: String, environmentId: String, column: String): String =
         database.readableDatabase.query(
             TABLE_REGISTRY,
             arrayOf(column),
-            "$COL_RESOURCE_ID = ?",
-            arrayOf(normalizeResourceId(resourceId)),
+            "$COL_ENVIRONMENT_ID = ? AND $COL_RESOURCE_ID = ?",
+            arrayOf(normalizeEnvironmentId(environmentId), normalizeResourceId(resourceId)),
             null,
             null,
             null,
@@ -440,21 +551,8 @@ class KiteResourceRegistry(context: Context) {
             if (cursor.moveToFirst()) cursor.getString(0).orEmpty() else ""
         }
 
-    private fun registryLong(resourceId: String, column: String): Long =
-        database.readableDatabase.query(
-            TABLE_REGISTRY,
-            arrayOf(column),
-            "$COL_RESOURCE_ID = ?",
-            arrayOf(normalizeResourceId(resourceId)),
-            null,
-            null,
-            null,
-            "1"
-        ).use { cursor ->
-            if (cursor.moveToFirst()) cursor.getLong(0) else 0L
-        }
-
     private fun upsertRegistry(
+        environmentId: String,
         resourceId: String,
         status: String,
         operation: String,
@@ -464,16 +562,23 @@ class KiteResourceRegistry(context: Context) {
         installedAt: Long? = null
     ) {
         val now = System.currentTimeMillis()
+        val normalizedEnvironmentId = normalizeEnvironmentId(environmentId)
         val normalizedResourceId = normalizeResourceId(resourceId)
-        val existing = if (version == null || installedAt == null) entry(normalizedResourceId) else null
+        val existing = if (version == null || installedAt == null) {
+            entry(normalizedResourceId, normalizedEnvironmentId)
+        } else null
         database.writableDatabase.insertWithOnConflict(
             TABLE_REGISTRY,
             null,
             ContentValues().apply {
+                put(COL_ENVIRONMENT_ID, normalizedEnvironmentId)
                 put(COL_RESOURCE_ID, normalizedResourceId)
                 put(COL_STATUS, status)
                 put(COL_OPERATION, operation)
                 put(COL_VERSION, version ?: existing?.version.orEmpty())
+                put(COL_LATEST_VERSION, existing?.latestVersion.orEmpty())
+                put(COL_UPDATE_STATUS, existing?.updateStatus.orEmpty())
+                put(COL_LAST_CHECKED_AT, existing?.lastCheckedAt ?: 0L)
                 put(COL_RUN_ID, runId)
                 put(COL_SUMMARY, summary)
                 put(COL_INSTALLED_AT, installedAt ?: existing?.installedAt ?: 0L)
@@ -483,12 +588,12 @@ class KiteResourceRegistry(context: Context) {
         )
     }
 
-    private fun pendingPlanResourceIds(db: SQLiteDatabase): List<String> {
+    private fun pendingPlanResourceIds(db: SQLiteDatabase, activePlanId: String): List<String> {
         val planActive = db.query(
             TABLE_PLAN,
             arrayOf(COL_STATUS),
             "$COL_PLAN_ID = ?",
-            arrayOf(ACTIVE_PLAN_ID),
+            arrayOf(activePlanId),
             null,
             null,
             null,
@@ -501,7 +606,7 @@ class KiteResourceRegistry(context: Context) {
             TABLE_PLAN_STEP,
             arrayOf(COL_RESOURCE_ID),
             "$COL_PLAN_ID = ? AND $COL_STATUS = ?",
-            arrayOf(ACTIVE_PLAN_ID, PLAN_STEP_PENDING),
+            arrayOf(activePlanId, PLAN_STEP_PENDING),
             null,
             null,
             "$COL_STEP_INDEX ASC"
@@ -512,12 +617,12 @@ class KiteResourceRegistry(context: Context) {
         }
     }
 
-    private fun runningPlanResourceIds(db: SQLiteDatabase): List<String> {
+    private fun runningPlanResourceIds(db: SQLiteDatabase, activePlanId: String): List<String> {
         val planActive = db.query(
             TABLE_PLAN,
             arrayOf(COL_STATUS),
             "$COL_PLAN_ID = ?",
-            arrayOf(ACTIVE_PLAN_ID),
+            arrayOf(activePlanId),
             null,
             null,
             null,
@@ -530,7 +635,7 @@ class KiteResourceRegistry(context: Context) {
             TABLE_PLAN_STEP,
             arrayOf(COL_RESOURCE_ID),
             "$COL_PLAN_ID = ? AND $COL_STATUS = ?",
-            arrayOf(ACTIVE_PLAN_ID, PLAN_STEP_RUNNING),
+            arrayOf(activePlanId, PLAN_STEP_RUNNING),
             null,
             null,
             "$COL_STEP_INDEX ASC"
@@ -541,12 +646,12 @@ class KiteResourceRegistry(context: Context) {
         }
     }
 
-    private fun planResourceIds(db: SQLiteDatabase): List<String> {
+    private fun planResourceIds(db: SQLiteDatabase, activePlanId: String): List<String> {
         val planExists = db.query(
             TABLE_PLAN,
             arrayOf(COL_PLAN_ID),
             "$COL_PLAN_ID = ?",
-            arrayOf(ACTIVE_PLAN_ID),
+            arrayOf(activePlanId),
             null,
             null,
             null,
@@ -557,7 +662,7 @@ class KiteResourceRegistry(context: Context) {
             TABLE_PLAN_STEP,
             arrayOf(COL_RESOURCE_ID),
             "$COL_PLAN_ID = ?",
-            arrayOf(ACTIVE_PLAN_ID),
+            arrayOf(activePlanId),
             null,
             null,
             "$COL_STEP_INDEX ASC"
@@ -568,12 +673,12 @@ class KiteResourceRegistry(context: Context) {
         }
     }
 
-    private fun firstPendingStepIndex(db: SQLiteDatabase, resourceId: String): Int? =
+    private fun firstPendingStepIndex(db: SQLiteDatabase, activePlanId: String, resourceId: String): Int? =
         db.query(
             TABLE_PLAN_STEP,
             arrayOf(COL_STEP_INDEX),
             "$COL_PLAN_ID = ? AND $COL_RESOURCE_ID = ? AND $COL_STATUS = ?",
-            arrayOf(ACTIVE_PLAN_ID, resourceId, PLAN_STEP_PENDING),
+            arrayOf(activePlanId, resourceId, PLAN_STEP_PENDING),
             null,
             null,
             "$COL_STEP_INDEX ASC",
@@ -582,12 +687,12 @@ class KiteResourceRegistry(context: Context) {
             if (cursor.moveToFirst()) cursor.getInt(0) else null
         }
 
-    private fun planStepIndex(db: SQLiteDatabase, resourceId: String): Int? =
+    private fun planStepIndex(db: SQLiteDatabase, activePlanId: String, resourceId: String): Int? =
         db.query(
             TABLE_PLAN_STEP,
             arrayOf(COL_STEP_INDEX),
             "$COL_PLAN_ID = ? AND $COL_RESOURCE_ID = ?",
-            arrayOf(ACTIVE_PLAN_ID, resourceId),
+            arrayOf(activePlanId, resourceId),
             null,
             null,
             "$COL_STEP_INDEX ASC",
@@ -596,12 +701,12 @@ class KiteResourceRegistry(context: Context) {
             if (cursor.moveToFirst()) cursor.getInt(0) else null
         }
 
-    private fun planStepStatus(db: SQLiteDatabase, resourceId: String): String? =
+    private fun planStepStatus(db: SQLiteDatabase, activePlanId: String, resourceId: String): String? =
         db.query(
             TABLE_PLAN_STEP,
             arrayOf(COL_STATUS),
             "$COL_PLAN_ID = ? AND $COL_RESOURCE_ID = ?",
-            arrayOf(ACTIVE_PLAN_ID, resourceId),
+            arrayOf(activePlanId, resourceId),
             null,
             null,
             "$COL_STEP_INDEX ASC",
@@ -610,9 +715,9 @@ class KiteResourceRegistry(context: Context) {
             if (cursor.moveToFirst()) cursor.getString(0) else null
         }
 
-    private fun clearPlanLocked(db: SQLiteDatabase) {
-        db.delete(TABLE_PLAN_STEP, "$COL_PLAN_ID = ?", arrayOf(ACTIVE_PLAN_ID))
-        db.delete(TABLE_PLAN, "$COL_PLAN_ID = ?", arrayOf(ACTIVE_PLAN_ID))
+    private fun clearPlanLocked(db: SQLiteDatabase, activePlanId: String) {
+        db.delete(TABLE_PLAN_STEP, "$COL_PLAN_ID = ?", arrayOf(activePlanId))
+        db.delete(TABLE_PLAN, "$COL_PLAN_ID = ?", arrayOf(activePlanId))
     }
 
     private fun migrateLegacyPreferences() {
@@ -631,6 +736,7 @@ class KiteResourceRegistry(context: Context) {
                         TABLE_REGISTRY,
                         null,
                         ContentValues().apply {
+                            put(COL_ENVIRONMENT_ID, DEFAULT_ENVIRONMENT_ID)
                             put(COL_RESOURCE_ID, resourceId)
                             put(COL_STATUS, status)
                             put(COL_OPERATION, (all["$resourceId.$COL_OPERATION"] as? String).orEmpty())
@@ -717,6 +823,14 @@ class KiteResourceRegistry(context: Context) {
     private fun normalizeResourceId(resourceId: String): String =
         resourceId.trim().ifBlank { "resource" }
 
+    private fun normalizeEnvironmentId(environmentId: String): String =
+        environmentId.trim().ifBlank { DEFAULT_ENVIRONMENT_ID }
+
+    private fun planId(environmentId: String): String =
+        normalizeEnvironmentId(environmentId).let { normalized ->
+            if (normalized == DEFAULT_ENVIRONMENT_ID) ACTIVE_PLAN_ID else "$ACTIVE_PLAN_ID:$normalized"
+        }
+
     private fun SQLiteDatabase.runInTransaction(block: SQLiteDatabase.() -> Unit) {
         beginTransaction()
         try {
@@ -743,6 +857,47 @@ class KiteResourceRegistry(context: Context) {
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            if (oldVersion < 3) {
+                db.execSQL("ALTER TABLE $TABLE_REGISTRY ADD COLUMN $COL_LATEST_VERSION TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE $TABLE_REGISTRY ADD COLUMN $COL_UPDATE_STATUS TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE $TABLE_REGISTRY ADD COLUMN $COL_LAST_CHECKED_AT INTEGER NOT NULL DEFAULT 0")
+            }
+            if (oldVersion < 4) {
+                db.execSQL(
+                    """
+                    CREATE TABLE ${TABLE_REGISTRY}_v4 (
+                        $COL_ENVIRONMENT_ID TEXT NOT NULL,
+                        $COL_RESOURCE_ID TEXT NOT NULL,
+                        $COL_STATUS TEXT NOT NULL,
+                        $COL_OPERATION TEXT NOT NULL DEFAULT '',
+                        $COL_VERSION TEXT NOT NULL DEFAULT '',
+                        $COL_LATEST_VERSION TEXT NOT NULL DEFAULT '',
+                        $COL_UPDATE_STATUS TEXT NOT NULL DEFAULT '',
+                        $COL_LAST_CHECKED_AT INTEGER NOT NULL DEFAULT 0,
+                        $COL_RUN_ID TEXT NOT NULL DEFAULT '',
+                        $COL_SUMMARY TEXT NOT NULL DEFAULT '',
+                        $COL_INSTALLED_AT INTEGER NOT NULL DEFAULT 0,
+                        $COL_UPDATED_AT INTEGER NOT NULL,
+                        PRIMARY KEY($COL_ENVIRONMENT_ID, $COL_RESOURCE_ID)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO ${TABLE_REGISTRY}_v4 (
+                        $COL_ENVIRONMENT_ID, $COL_RESOURCE_ID, $COL_STATUS, $COL_OPERATION,
+                        $COL_VERSION, $COL_LATEST_VERSION, $COL_UPDATE_STATUS, $COL_LAST_CHECKED_AT,
+                        $COL_RUN_ID, $COL_SUMMARY, $COL_INSTALLED_AT, $COL_UPDATED_AT
+                    ) SELECT ?, $COL_RESOURCE_ID, $COL_STATUS, $COL_OPERATION,
+                        $COL_VERSION, $COL_LATEST_VERSION, $COL_UPDATE_STATUS, $COL_LAST_CHECKED_AT,
+                        $COL_RUN_ID, $COL_SUMMARY, $COL_INSTALLED_AT, $COL_UPDATED_AT
+                    FROM $TABLE_REGISTRY
+                    """.trimIndent(),
+                    arrayOf(DEFAULT_ENVIRONMENT_ID)
+                )
+                db.execSQL("DROP TABLE $TABLE_REGISTRY")
+                db.execSQL("ALTER TABLE ${TABLE_REGISTRY}_v4 RENAME TO $TABLE_REGISTRY")
+            }
             createSchema(db)
         }
 
@@ -750,19 +905,24 @@ class KiteResourceRegistry(context: Context) {
             db.execSQL(
                 """
                 CREATE TABLE IF NOT EXISTS $TABLE_REGISTRY (
-                    $COL_RESOURCE_ID TEXT PRIMARY KEY NOT NULL,
+                    $COL_ENVIRONMENT_ID TEXT NOT NULL,
+                    $COL_RESOURCE_ID TEXT NOT NULL,
                     $COL_STATUS TEXT NOT NULL,
                     $COL_OPERATION TEXT NOT NULL DEFAULT '',
                     $COL_VERSION TEXT NOT NULL DEFAULT '',
+                    $COL_LATEST_VERSION TEXT NOT NULL DEFAULT '',
+                    $COL_UPDATE_STATUS TEXT NOT NULL DEFAULT '',
+                    $COL_LAST_CHECKED_AT INTEGER NOT NULL DEFAULT 0,
                     $COL_RUN_ID TEXT NOT NULL DEFAULT '',
                     $COL_SUMMARY TEXT NOT NULL DEFAULT '',
                     $COL_INSTALLED_AT INTEGER NOT NULL DEFAULT 0,
-                    $COL_UPDATED_AT INTEGER NOT NULL
+                    $COL_UPDATED_AT INTEGER NOT NULL,
+                    PRIMARY KEY($COL_ENVIRONMENT_ID, $COL_RESOURCE_ID)
                 )
                 """.trimIndent()
             )
-            db.execSQL("CREATE INDEX IF NOT EXISTS idx_resource_registry_status ON $TABLE_REGISTRY($COL_STATUS)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS idx_resource_registry_operation ON $TABLE_REGISTRY($COL_OPERATION)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_resource_registry_status ON $TABLE_REGISTRY($COL_ENVIRONMENT_ID, $COL_STATUS)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_resource_registry_operation ON $TABLE_REGISTRY($COL_ENVIRONMENT_ID, $COL_OPERATION)")
             db.execSQL(
                 """
                 CREATE TABLE IF NOT EXISTS $TABLE_PLAN (
@@ -809,7 +969,7 @@ class KiteResourceRegistry(context: Context) {
         const val OP_UNINSTALL = "uninstall"
 
         private const val DATABASE_NAME = "kite_system_registry.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 4
         private const val ACTIVE_PLAN_ID = "active"
 
         private const val TABLE_REGISTRY = "resource_registry"
@@ -817,10 +977,14 @@ class KiteResourceRegistry(context: Context) {
         private const val TABLE_PLAN_STEP = "resource_install_plan_step"
         private const val TABLE_META = "resource_meta"
 
+        private const val COL_ENVIRONMENT_ID = "environment_id"
         private const val COL_RESOURCE_ID = "resource_id"
         private const val COL_STATUS = "status"
         private const val COL_OPERATION = "operation"
         private const val COL_VERSION = "version"
+        private const val COL_LATEST_VERSION = "latest_version"
+        private const val COL_UPDATE_STATUS = "update_status"
+        private const val COL_LAST_CHECKED_AT = "last_checked_at"
         private const val COL_RUN_ID = "run_id"
         private const val COL_SUMMARY = "summary"
         private const val COL_INSTALLED_AT = "installed_at"
@@ -847,5 +1011,7 @@ class KiteResourceRegistry(context: Context) {
         const val PLAN_STEP_BLOCKED = "blocked"
 
         private const val PLAN_STATUS_FAILED = "failed"
+
+        const val DEFAULT_ENVIRONMENT_ID = "default"
     }
 }

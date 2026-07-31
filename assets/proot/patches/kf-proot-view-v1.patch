@@ -1,0 +1,2738 @@
+diff --git a/src/GNUmakefile b/src/GNUmakefile
+index 23997ca..adc56d9 100644
+--- a/src/GNUmakefile
++++ b/src/GNUmakefile
+@@ -80,6 +80,7 @@ OBJECTS += \
+ 	extension/mountinfo/mountinfo.o \
+ 	extension/kf_procfs/kf_procfs.o \
+ 	extension/kf_txn/kf_txn.o \
++	extension/kf_view/kf_view.o \
+ 	extension/port_switch/port_switch.o \
+ 	extension/sysvipc/sysvipc.o \
+ 	extension/sysvipc/sysvipc_msg.o \
+diff --git a/src/cli/cli.c b/src/cli/cli.c
+index f315e57..1f64bd5 100644
+--- a/src/cli/cli.c
++++ b/src/cli/cli.c
+@@ -491,6 +491,13 @@ int main(int argc, char *const argv[])
+ 		NULL == getenv("PROOT_NO_KF_TXN"))
+ 		initialize_extension(tracee, kf_txn_callback, NULL);
+ 
++	if (getenv("KF_PROOT_VIEW_CONTROL_PATH") != NULL &&
++		NULL == getenv("PROOT_NO_KF_VIEW")) {
++		int view_status = initialize_extension(tracee, kf_view_callback, NULL);
++		if (view_status < 0)
++			goto error;
++	}
++
+ 	/* Start the first tracee.  */
+ 	status = launch_process(tracee, &argv[status]);
+ 	if (status < 0) {
+diff --git a/src/extension/extension.c b/src/extension/extension.c
+index 1e52ee2..d08a30c 100644
+--- a/src/extension/extension.c
++++ b/src/extension/extension.c
+@@ -129,6 +129,7 @@ void inherit_extensions(Tracee *child, Tracee *parent, word_t clone_flags)
+ {
+ 	Extension *parent_extension;
+ 	Extension *child_extension;
++	Extension *child_extension_tail = NULL;
+ 	int status;
+ 
+ 	if (parent->extensions == NULL)
+@@ -155,6 +156,16 @@ void inherit_extensions(Tracee *child, Tracee *parent, word_t clone_flags)
+ 			continue;
+ 		}
+ 
++		/* new_extension() inserts at the head.  Move each inherited
++		 * extension behind the previous one so the child observes the
++		 * same callback order as its parent.  Reversing this order on every
++		 * fork makes cooperating path extensions non-deterministic. */
++		if (child_extension_tail != NULL) {
++			LIST_REMOVE(child_extension, link);
++			LIST_INSERT_AFTER(child_extension_tail, child_extension, link);
++		}
++		child_extension_tail = child_extension;
++
+ 		if (status == 0) {
+ 			/* ... with a shared config or ...  */
+ 			child_extension->config =
+diff --git a/src/extension/extension.h b/src/extension/extension.h
+index 2926446..91d475d 100644
+--- a/src/extension/extension.h
++++ b/src/extension/extension.h
+@@ -55,6 +55,13 @@ typedef enum {
+ 	 * 0, then PRoot reports this errno as-is.  */
+ 	TRANSLATED_PATH,
+ 
++	/* A host path is about to be converted back to the guest namespace.
++	 * "(char *) data1" is the mutable host path and "(char *) data2" is
++	 * the optional mutable symlink referrer.  View-like extensions may map
++	 * their physical storage paths back to the rootfs path before PRoot
++	 * applies bindings and strips the guest root. */
++	DETRANSLATE_PATH,
++
+ 	/* The tracee enters a syscall, and PRoot hasn't do anything
+ 	 * yet.  If the extension returns > 0, then PRoot skips its
+ 	 * own handling.  If the extension returns < 0, then PRoot
+@@ -214,5 +221,6 @@ extern int ashmem_memfd_callback(Extension *extension, ExtensionEvent event, int
+ extern int mountinfo_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ extern int kf_procfs_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ extern int kf_txn_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
++extern int kf_view_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ 
+ #endif /* EXTENSION_H */
+diff --git a/src/path/path.c b/src/path/path.c
+index d5c9ec6..798b2cb 100644
+--- a/src/path/path.c
++++ b/src/path/path.c
+@@ -403,6 +403,8 @@ int detranslate_path(Tracee *tracee, char path[PATH_MAX], const char t_referrer[
+ {
+ 	size_t prefix_length;
+ 	ssize_t new_length;
++	char mapped_referrer[PATH_MAX];
++	int extension_status;
+ 
+ 	bool sanity_check;
+ 	bool follow_binding;
+@@ -416,6 +418,17 @@ int detranslate_path(Tracee *tracee, char path[PATH_MAX], const char t_referrer[
+ 	if (path[0] != '/')
+ 		return 0;
+ 
++	if (t_referrer != NULL) {
++		if (snprintf(mapped_referrer, sizeof(mapped_referrer), "%s",
++			t_referrer) >= (int) sizeof(mapped_referrer))
++			return -ENAMETOOLONG;
++		t_referrer = mapped_referrer;
++	}
++	extension_status = notify_extensions(tracee, DETRANSLATE_PATH,
++		(intptr_t) path, (intptr_t) t_referrer);
++	if (extension_status < 0)
++		return extension_status;
++
+ 	/* Is it a symlink?  */
+ 	if (t_referrer != NULL) {
+ 		Comparison comparison;
+diff --git a/src/extension/kf_view/kf_view.c b/src/extension/kf_view/kf_view.c
+new file mode 100644
+index 0000000..35c6732
+--- /dev/null
++++ b/src/extension/kf_view/kf_view.c
+@@ -0,0 +1,2617 @@
++/* -*- c-set-style: "K&R"; c-basic-offset: 8 -*-
++ *
++ * PRoot user-space filesystem View prototype for Kite.
++ *
++ * The Android control plane writes one immutable control file before launch.
++ * Every tracee in the PRoot tree shares the parsed configuration.  When the
++ * upper and whiteout trees are empty, the hot path is only a pair of booleans
++ * and a root-prefix check; it performs no additional host filesystem syscall.
++ */
++
++#include "extension/extension.h"
++
++#include <dirent.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stddef.h>
++#include <limits.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/file.h>
++#include <sys/mman.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <sys/un.h>
++#include <sys/xattr.h>
++#include <talloc.h>
++#include <unistd.h>
++
++#include "cli/note.h"
++#include "path/path.h"
++#include "syscall/chain.h"
++#include "syscall/syscall.h"
++#include "tracee/mem.h"
++#include "tracee/reg.h"
++#include "tracee/tracee.h"
++
++#define KF_VIEW_CONTROL_SCHEMA "kf_proot_view_v1"
++#define KF_VIEW_CONTROL_MAX (16 * 1024)
++#define KF_VIEW_COPY_BUFFER (64 * 1024)
++#define KF_VIEW_INDEX_BUCKETS 4096
++#define KF_VIEW_MAX_PARENT_LAYERS 32
++#define KF_VIEW_MAX_SCOPE_ROOTS 16
++#define KF_VIEW_INTERNAL_DIRECTORY ".kite-proot-view"
++#ifndef RENAME_NOREPLACE
++#define RENAME_NOREPLACE (1 << 0)
++#endif
++
++typedef struct KfViewIndexEntry {
++	char *relative;
++	unsigned char flags;
++	struct KfViewIndexEntry *next;
++} KfViewIndexEntry;
++
++typedef struct {
++	KfViewIndexEntry *buckets[KF_VIEW_INDEX_BUCKETS];
++	size_t count;
++} KfViewIndex;
++
++typedef struct KfViewPrefixNode {
++	char *component;
++	bool terminal;
++	struct KfViewPrefixNode *children;
++	struct KfViewPrefixNode *next;
++} KfViewPrefixNode;
++
++typedef struct {
++	char upper_root[PATH_MAX];
++	char whiteout_root[PATH_MAX];
++	size_t upper_root_length;
++	KfViewIndex upper_index;
++	KfViewIndex whiteout_index;
++	KfViewPrefixNode *whiteout_prefix_root;
++	bool upper_empty;
++	bool whiteout_empty;
++} KfViewParentLayer;
++
++typedef struct {
++	char control_path[PATH_MAX];
++	char base_root[PATH_MAX];
++	char upper_root[PATH_MAX];
++	char whiteout_root[PATH_MAX];
++	size_t base_root_length;
++	size_t upper_root_length;
++	char scope_roots[KF_VIEW_MAX_SCOPE_ROOTS][PATH_MAX];
++	size_t scope_root_lengths[KF_VIEW_MAX_SCOPE_ROOTS];
++	size_t scope_root_count;
++	KfViewIndex upper_index;
++	KfViewIndex whiteout_index;
++	KfViewIndex directory_merge_index;
++	KfViewIndex parent_upper_union_index;
++	KfViewPrefixNode *whiteout_prefix_root;
++	KfViewPrefixNode *parent_whiteout_union_root;
++	bool upper_empty;
++	bool whiteout_empty;
++	KfViewParentLayer parent_layers[KF_VIEW_MAX_PARENT_LAYERS];
++	size_t parent_layer_count;
++	int generation_fd;
++	uint64_t *generation;
++	uint64_t observed_generation;
++	int mutation_lock_fd;
++	size_t mutation_count;
++	bool mutation_failed;
++} KfViewShared;
++
++typedef struct KfViewDirState {
++	int fd;
++	char host_path[PATH_MAX];
++	char relative[PATH_MAX];
++	DIR *merge_directory;
++	int source_index;
++	int merge_source_index;
++	bool completed;
++	struct KfViewDirState *next;
++} KfViewDirState;
++
++typedef struct {
++	KfViewShared *shared;
++	KfViewDirState *directory_states;
++	char pending_whiteout[PATH_MAX];
++	bool pending_whiteout_active;
++	bool pending_whiteout_needed;
++	char pending_upper[PATH_MAX];
++	bool pending_upper_active;
++	char pending_remove_whiteout[PATH_MAX];
++	bool pending_remove_whiteout_active;
++	bool pending_rebuild_indexes;
++	bool mutation_active;
++} KfViewConfig;
++
++static const char *relative_to_root(const char *root, size_t root_length,
++	const char *path);
++
++static FilteredSysnum filtered_sysnums[] = {
++	{ PR_creat, FILTER_SYSEXIT },
++	{ PR_unlink, FILTER_SYSEXIT },
++	{ PR_unlinkat, FILTER_SYSEXIT },
++	{ PR_rmdir, FILTER_SYSEXIT },
++	{ PR_mkdir, FILTER_SYSEXIT },
++	{ PR_mkdirat, FILTER_SYSEXIT },
++	{ PR_mknod, FILTER_SYSEXIT },
++	{ PR_mknodat, FILTER_SYSEXIT },
++	{ PR_rename, FILTER_SYSEXIT },
++	{ PR_renameat, FILTER_SYSEXIT },
++	{ PR_renameat2, FILTER_SYSEXIT },
++	{ PR_link, FILTER_SYSEXIT },
++	{ PR_linkat, FILTER_SYSEXIT },
++	{ PR_symlink, FILTER_SYSEXIT },
++	{ PR_symlinkat, FILTER_SYSEXIT },
++	{ PR_truncate, FILTER_SYSEXIT },
++	{ PR_truncate64, FILTER_SYSEXIT },
++	{ PR_chmod, FILTER_SYSEXIT },
++	{ PR_fchmodat, FILTER_SYSEXIT },
++	{ PR_chown, FILTER_SYSEXIT },
++	{ PR_chown32, FILTER_SYSEXIT },
++	{ PR_lchown, FILTER_SYSEXIT },
++	{ PR_lchown32, FILTER_SYSEXIT },
++	{ PR_fchownat, FILTER_SYSEXIT },
++	{ PR_utime, FILTER_SYSEXIT },
++	{ PR_utimes, FILTER_SYSEXIT },
++	{ PR_futimesat, FILTER_SYSEXIT },
++	{ PR_utimensat, FILTER_SYSEXIT },
++	{ PR_setxattr, FILTER_SYSEXIT },
++	{ PR_lsetxattr, FILTER_SYSEXIT },
++	{ PR_fsetxattr, FILTER_SYSEXIT },
++	{ PR_removexattr, FILTER_SYSEXIT },
++	{ PR_lremovexattr, FILTER_SYSEXIT },
++	{ PR_fremovexattr, FILTER_SYSEXIT },
++	{ PR_fchmod, FILTER_SYSEXIT },
++	{ PR_fchown, FILTER_SYSEXIT },
++	{ PR_fchown32, FILTER_SYSEXIT },
++	{ PR_ftruncate, FILTER_SYSEXIT },
++	{ PR_ftruncate64, FILTER_SYSEXIT },
++	{ PR_fallocate, FILTER_SYSEXIT },
++	{ PR_bind, FILTER_SYSEXIT },
++	{ PR_getdents, FILTER_SYSEXIT },
++	{ PR_getdents64, FILTER_SYSEXIT },
++	FILTERED_SYSNUM_END
++};
++
++struct kf_linux_dirent {
++	unsigned long d_ino;
++	unsigned long d_off;
++	unsigned short d_reclen;
++	char d_name[];
++};
++
++struct kf_linux_dirent64 {
++	unsigned long long d_ino;
++	long long d_off;
++	unsigned short d_reclen;
++	unsigned char d_type;
++	char d_name[];
++};
++
++static int join_view_path(char output[PATH_MAX], const char *root,
++	const char *relative);
++static int child_relative_path(char output[PATH_MAX], const char *relative,
++	const char *name);
++static bool path_exists(const char *path);
++static int lock_view(const KfViewShared *shared);
++static void unlock_view(int descriptor);
++static int cleanup_internal_storage(KfViewShared *shared);
++static int ensure_mutation_lock(KfViewConfig *config);
++static int finish_mutation(KfViewConfig *config, int status);
++
++static bool debug_enabled(void)
++{
++	const char *value = getenv("KF_PROOT_VIEW_DEBUG");
++	return value != NULL && strcmp(value, "0") != 0;
++}
++
++static bool safe_absolute_path(const char *path)
++{
++	size_t length;
++	if (path == NULL || path[0] != '/')
++		return false;
++	length = strnlen(path, PATH_MAX);
++	return length > 1 && length < PATH_MAX;
++}
++
++static void trim_line(char *line)
++{
++	size_t length = strlen(line);
++	while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r' ||
++		line[length - 1] == ' ' || line[length - 1] == '\t')) {
++		line[length - 1] = '\0';
++		length--;
++	}
++}
++
++static int canonical_directory(const char *input, char output[PATH_MAX])
++{
++	char *resolved;
++	struct stat statl;
++
++	if (!safe_absolute_path(input))
++		return -EINVAL;
++	resolved = realpath(input, output);
++	if (resolved == NULL)
++		return -errno;
++	if (lstat(output, &statl) < 0)
++		return -errno;
++	if (!S_ISDIR(statl.st_mode))
++		return -ENOTDIR;
++	return 0;
++}
++
++static unsigned long index_hash(const char *relative)
++{
++	unsigned long hash = 2166136261u;
++	const unsigned char *cursor = (const unsigned char *) relative;
++	while (*cursor != '\0') {
++		hash ^= *cursor++;
++		hash *= 16777619u;
++	}
++	return hash % KF_VIEW_INDEX_BUCKETS;
++}
++
++static bool index_contains(const KfViewIndex *index, const char *relative)
++{
++	KfViewIndexEntry *entry = index->buckets[index_hash(relative)];
++	while (entry != NULL) {
++		if (strcmp(entry->relative, relative) == 0)
++			return true;
++		entry = entry->next;
++	}
++	return false;
++}
++
++static int index_add_raw(KfViewShared *shared, KfViewIndex *index,
++	const char *relative, unsigned char flags, bool allow_empty)
++{
++	unsigned long bucket;
++	KfViewIndexEntry *entry;
++	if (relative == NULL || (!allow_empty && relative[0] == '\0'))
++		return 0;
++	if (index_contains(index, relative))
++		return 0;
++	bucket = index_hash(relative);
++	entry = talloc_zero(shared, KfViewIndexEntry);
++	if (entry == NULL)
++		return -ENOMEM;
++	entry->relative = talloc_strdup(entry, relative);
++	if (entry->relative == NULL) {
++		TALLOC_FREE(entry);
++		return -ENOMEM;
++	}
++	entry->flags = flags;
++	entry->next = index->buckets[bucket];
++	index->buckets[bucket] = entry;
++	index->count++;
++	return 0;
++}
++
++static int mark_parent_for_directory_merge(KfViewShared *shared,
++	const char *relative)
++{
++	char parent[PATH_MAX];
++	char *separator;
++	if (relative == NULL || relative[0] == '\0')
++		return 0;
++	if (snprintf(parent, sizeof(parent), "%s", relative) >=
++		(int) sizeof(parent))
++		return -ENAMETOOLONG;
++	separator = strrchr(parent, '/');
++	if (separator == NULL)
++		parent[0] = '\0';
++	else
++		*separator = '\0';
++	return index_add_raw(shared, &shared->directory_merge_index, parent, 0, true);
++}
++
++static KfViewPrefixNode *prefix_child(KfViewPrefixNode *parent,
++	const char *component, size_t length)
++{
++	KfViewPrefixNode *child = parent->children;
++	while (child != NULL) {
++		if (strlen(child->component) == length &&
++			strncmp(child->component, component, length) == 0)
++			return child;
++		child = child->next;
++	}
++	return NULL;
++}
++
++static int whiteout_prefix_add(KfViewShared *shared,
++	KfViewPrefixNode **prefix_root, const char *relative)
++{
++	KfViewPrefixNode *node;
++	const char *cursor;
++	if (relative == NULL || relative[0] == '\0')
++		return 0;
++	if (*prefix_root == NULL) {
++		*prefix_root = talloc_zero(shared, KfViewPrefixNode);
++		if (*prefix_root == NULL)
++			return -ENOMEM;
++	}
++	node = *prefix_root;
++	for (cursor = relative; *cursor != '\0'; ) {
++		const char *separator = strchr(cursor, '/');
++		size_t length = separator == NULL ? strlen(cursor) :
++			(size_t) (separator - cursor);
++		KfViewPrefixNode *child = prefix_child(node, cursor, length);
++		if (child == NULL) {
++			child = talloc_zero(node, KfViewPrefixNode);
++			if (child == NULL)
++				return -ENOMEM;
++			child->component = talloc_strndup(child, cursor, length);
++			if (child->component == NULL) {
++				TALLOC_FREE(child);
++				return -ENOMEM;
++			}
++			child->next = node->children;
++			node->children = child;
++		}
++		node = child;
++		if (separator == NULL)
++			break;
++		cursor = separator + 1;
++	}
++	node->terminal = true;
++	return 0;
++}
++
++static void whiteout_prefix_remove(KfViewPrefixNode *prefix_root,
++	const char *relative)
++{
++	KfViewPrefixNode *node = prefix_root;
++	const char *cursor;
++	if (node == NULL || relative == NULL || relative[0] == '\0')
++		return;
++	for (cursor = relative; *cursor != '\0'; ) {
++		const char *separator = strchr(cursor, '/');
++		size_t length = separator == NULL ? strlen(cursor) :
++			(size_t) (separator - cursor);
++		node = prefix_child(node, cursor, length);
++		if (node == NULL)
++			return;
++		if (separator == NULL)
++			break;
++		cursor = separator + 1;
++	}
++	node->terminal = false;
++}
++
++static bool whiteout_prefix_contains_path_or_ancestor(
++	const KfViewPrefixNode *prefix_root, const char *relative)
++{
++	KfViewPrefixNode *node = (KfViewPrefixNode *) prefix_root;
++	const char *cursor;
++	if (node == NULL || relative == NULL || relative[0] == '\0')
++		return false;
++	for (cursor = relative; *cursor != '\0'; ) {
++		const char *separator = strchr(cursor, '/');
++		size_t length = separator == NULL ? strlen(cursor) :
++			(size_t) (separator - cursor);
++		node = prefix_child(node, cursor, length);
++		if (node == NULL)
++			return false;
++		if (node->terminal)
++			return true;
++		if (separator == NULL)
++			return false;
++		cursor = separator + 1;
++	}
++	return false;
++}
++
++static int index_add(KfViewShared *shared, KfViewIndex *index,
++	const char *relative)
++{
++	int status;
++	if (relative == NULL || relative[0] == '\0')
++		return 0;
++	if (index_contains(index, relative))
++		return 0;
++	status = index_add_raw(shared, index, relative, 0, false);
++	if (status < 0)
++		return status;
++	if (index == &shared->whiteout_index) {
++		status = whiteout_prefix_add(shared,
++			&shared->whiteout_prefix_root, relative);
++		if (status < 0)
++			return status;
++	}
++	else {
++		size_t layer;
++		for (layer = 0; layer < shared->parent_layer_count; layer++) {
++			KfViewParentLayer *parent = &shared->parent_layers[layer];
++			if (index == &parent->upper_index) {
++				status = index_add_raw(shared,
++					&shared->parent_upper_union_index, relative, 0, false);
++				if (status < 0)
++					return status;
++			}
++			if (index == &parent->whiteout_index) {
++				status = whiteout_prefix_add(shared,
++					&parent->whiteout_prefix_root, relative);
++				if (status < 0)
++					return status;
++				status = whiteout_prefix_add(shared,
++					&shared->parent_whiteout_union_root, relative);
++				if (status < 0)
++					return status;
++				break;
++			}
++		}
++	}
++	if (index == &shared->whiteout_index || index == &shared->upper_index)
++		return mark_parent_for_directory_merge(shared, relative);
++	{
++		size_t layer;
++		for (layer = 0; layer < shared->parent_layer_count; layer++) {
++			KfViewParentLayer *parent = &shared->parent_layers[layer];
++			if (index == &parent->whiteout_index ||
++				index == &parent->upper_index)
++				return mark_parent_for_directory_merge(shared, relative);
++		}
++	}
++	return 0;
++}
++
++static void index_remove(KfViewIndex *index, const char *relative)
++{
++	unsigned long bucket = index_hash(relative);
++	KfViewIndexEntry **cursor = &index->buckets[bucket];
++	while (*cursor != NULL) {
++		KfViewIndexEntry *entry = *cursor;
++		if (strcmp(entry->relative, relative) == 0) {
++			*cursor = entry->next;
++			index->count--;
++			TALLOC_FREE(entry);
++			return;
++		}
++		cursor = &entry->next;
++	}
++}
++
++static int scan_index(KfViewShared *shared, KfViewIndex *index,
++	const char *root, const char *relative, bool include_directories)
++{
++	char directory_path[PATH_MAX];
++	DIR *directory;
++	struct dirent *entry;
++	int status = join_view_path(directory_path, root, relative);
++	if (status < 0)
++		return status;
++	directory = opendir(directory_path);
++	if (directory == NULL)
++		return -errno;
++	while ((entry = readdir(directory)) != NULL) {
++		char child_relative[PATH_MAX];
++		char child_path[PATH_MAX];
++		struct stat statl;
++		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
++			continue;
++		if (include_directories && relative[0] == '\0' &&
++			strcmp(entry->d_name, KF_VIEW_INTERNAL_DIRECTORY) == 0)
++			continue;
++		if (relative[0] == '\0')
++			status = snprintf(child_relative, sizeof(child_relative), "%s",
++				entry->d_name);
++		else
++			status = snprintf(child_relative, sizeof(child_relative), "%s/%s",
++				relative, entry->d_name);
++		if (status < 0 || status >= (int) sizeof(child_relative)) {
++			closedir(directory);
++			return -ENAMETOOLONG;
++		}
++		status = join_view_path(child_path, root, child_relative);
++		if (status < 0) {
++			closedir(directory);
++			return status;
++		}
++		if (lstat(child_path, &statl) != 0) {
++			closedir(directory);
++			return -errno;
++		}
++		if (include_directories || !S_ISDIR(statl.st_mode)) {
++			status = index_add(shared, index, child_relative);
++			if (status < 0) {
++				closedir(directory);
++				return status;
++			}
++		}
++		if (S_ISDIR(statl.st_mode)) {
++			status = scan_index(shared, index, root, child_relative,
++				include_directories);
++			if (status < 0) {
++				closedir(directory);
++				return status;
++			}
++		}
++	}
++	closedir(directory);
++	return 0;
++}
++
++static void clear_index(KfViewIndex *index)
++{
++	size_t bucket;
++	for (bucket = 0; bucket < KF_VIEW_INDEX_BUCKETS; bucket++) {
++		KfViewIndexEntry *entry = index->buckets[bucket];
++		while (entry != NULL) {
++			KfViewIndexEntry *next = entry->next;
++			TALLOC_FREE(entry);
++			entry = next;
++		}
++		index->buckets[bucket] = NULL;
++	}
++	index->count = 0;
++}
++
++static int rebuild_indexes(KfViewShared *shared)
++{
++	int status;
++	size_t layer;
++	TALLOC_FREE(shared->whiteout_prefix_root);
++	TALLOC_FREE(shared->parent_whiteout_union_root);
++	clear_index(&shared->directory_merge_index);
++	clear_index(&shared->parent_upper_union_index);
++	clear_index(&shared->upper_index);
++	clear_index(&shared->whiteout_index);
++	for (layer = 0; layer < shared->parent_layer_count; layer++) {
++		KfViewParentLayer *parent = &shared->parent_layers[layer];
++		TALLOC_FREE(parent->whiteout_prefix_root);
++		clear_index(&parent->upper_index);
++		clear_index(&parent->whiteout_index);
++		status = scan_index(shared, &parent->upper_index,
++			parent->upper_root, "", true);
++		if (status < 0)
++			return status;
++		status = scan_index(shared, &parent->whiteout_index,
++			parent->whiteout_root, "", false);
++		if (status < 0)
++			return status;
++		parent->upper_empty = parent->upper_index.count == 0;
++		parent->whiteout_empty = parent->whiteout_index.count == 0;
++	}
++	status = scan_index(shared, &shared->upper_index, shared->upper_root, "", true);
++	if (status < 0)
++		return status;
++	status = scan_index(shared, &shared->whiteout_index,
++		shared->whiteout_root, "", false);
++	if (status < 0)
++		return status;
++	shared->upper_empty = shared->upper_index.count == 0;
++	shared->whiteout_empty = shared->whiteout_index.count == 0;
++	return 0;
++}
++
++static int read_control(KfViewShared *shared, const char *control_path)
++{
++	FILE *stream;
++	char line[KF_VIEW_CONTROL_MAX];
++	char schema[64] = "";
++	char base_root[PATH_MAX] = "";
++	char upper_root[PATH_MAX] = "";
++	char whiteout_root[PATH_MAX] = "";
++	char parent_upper_roots[KF_VIEW_MAX_PARENT_LAYERS][PATH_MAX];
++	char parent_whiteout_roots[KF_VIEW_MAX_PARENT_LAYERS][PATH_MAX];
++	char scope_roots[KF_VIEW_MAX_SCOPE_ROOTS][PATH_MAX];
++	size_t parent_upper_count = 0;
++	size_t parent_whiteout_count = 0;
++	size_t scope_root_count = 0;
++	size_t layer;
++	int status;
++	memset(parent_upper_roots, 0, sizeof(parent_upper_roots));
++	memset(parent_whiteout_roots, 0, sizeof(parent_whiteout_roots));
++	memset(scope_roots, 0, sizeof(scope_roots));
++
++	stream = fopen(control_path, "re");
++	if (stream == NULL)
++		return -errno;
++	while (fgets(line, sizeof(line), stream) != NULL) {
++		char *separator;
++		char *key;
++		char *value;
++		trim_line(line);
++		if (line[0] == '\0' || line[0] == '#')
++			continue;
++		separator = strchr(line, '=');
++		if (separator == NULL)
++			continue;
++		*separator = '\0';
++		key = line;
++		value = separator + 1;
++		if (strcmp(key, "schema") == 0)
++			strncpy(schema, value, sizeof(schema) - 1);
++		else if (strcmp(key, "base_root") == 0)
++			strncpy(base_root, value, sizeof(base_root) - 1);
++		else if (strcmp(key, "upper_root") == 0)
++			strncpy(upper_root, value, sizeof(upper_root) - 1);
++		else if (strcmp(key, "whiteout_root") == 0)
++			strncpy(whiteout_root, value, sizeof(whiteout_root) - 1);
++		else if (strcmp(key, "scope_root") == 0) {
++			if (scope_root_count >= KF_VIEW_MAX_SCOPE_ROOTS) {
++				fclose(stream);
++				return -E2BIG;
++			}
++			strncpy(scope_roots[scope_root_count++], value, PATH_MAX - 1);
++		}
++		else if (strcmp(key, "parent_upper_root") == 0) {
++			if (parent_upper_count >= KF_VIEW_MAX_PARENT_LAYERS) {
++				fclose(stream);
++				return -E2BIG;
++			}
++			strncpy(parent_upper_roots[parent_upper_count++], value,
++				PATH_MAX - 1);
++		}
++		else if (strcmp(key, "parent_whiteout_root") == 0) {
++			if (parent_whiteout_count >= KF_VIEW_MAX_PARENT_LAYERS) {
++				fclose(stream);
++				return -E2BIG;
++			}
++			strncpy(parent_whiteout_roots[parent_whiteout_count++], value,
++				PATH_MAX - 1);
++		}
++	}
++	if (ferror(stream)) {
++		status = -errno;
++		fclose(stream);
++		return status;
++	}
++	fclose(stream);
++
++	if (strcmp(schema, KF_VIEW_CONTROL_SCHEMA) != 0)
++		return -EPROTO;
++	if (parent_upper_count != parent_whiteout_count)
++		return -EPROTO;
++	status = canonical_directory(base_root, shared->base_root);
++	if (status < 0)
++		return status;
++	status = canonical_directory(upper_root, shared->upper_root);
++	if (status < 0)
++		return status;
++	status = canonical_directory(whiteout_root, shared->whiteout_root);
++	if (status < 0)
++		return status;
++
++	shared->base_root_length = strlen(shared->base_root);
++	while (shared->base_root_length > 1 &&
++		shared->base_root[shared->base_root_length - 1] == '/') {
++		shared->base_root[--shared->base_root_length] = '\0';
++	}
++	shared->upper_root_length = strlen(shared->upper_root);
++	while (shared->upper_root_length > 1 &&
++		shared->upper_root[shared->upper_root_length - 1] == '/') {
++		shared->upper_root[--shared->upper_root_length] = '\0';
++	}
++	shared->scope_root_count = scope_root_count;
++	for (layer = 0; layer < shared->scope_root_count; layer++) {
++		const char *relative;
++		status = canonical_directory(scope_roots[layer], shared->scope_roots[layer]);
++		if (status < 0)
++			return status;
++		shared->scope_root_lengths[layer] = strlen(shared->scope_roots[layer]);
++		while (shared->scope_root_lengths[layer] > 1 &&
++			shared->scope_roots[layer][shared->scope_root_lengths[layer] - 1] == '/')
++			shared->scope_roots[layer][--shared->scope_root_lengths[layer]] = '\0';
++		relative = relative_to_root(shared->base_root,
++			shared->base_root_length, shared->scope_roots[layer]);
++		if (relative == NULL)
++			return -EXDEV;
++	}
++	shared->parent_layer_count = parent_upper_count;
++	for (layer = 0; layer < shared->parent_layer_count; layer++) {
++		KfViewParentLayer *parent = &shared->parent_layers[layer];
++		status = canonical_directory(parent_upper_roots[layer],
++			parent->upper_root);
++		if (status < 0)
++			return status;
++		status = canonical_directory(parent_whiteout_roots[layer],
++			parent->whiteout_root);
++		if (status < 0)
++			return status;
++		parent->upper_root_length = strlen(parent->upper_root);
++		while (parent->upper_root_length > 1 &&
++			parent->upper_root[parent->upper_root_length - 1] == '/')
++			parent->upper_root[--parent->upper_root_length] = '\0';
++	}
++	if (snprintf(shared->control_path, sizeof(shared->control_path), "%s",
++		control_path) >= (int) sizeof(shared->control_path))
++		return -ENAMETOOLONG;
++	status = cleanup_internal_storage(shared);
++	if (status < 0)
++		return status;
++	return rebuild_indexes(shared);
++}
++
++static const char *relative_to_root(const char *root, size_t root_length,
++	const char *path)
++{
++	if (path == NULL)
++		return NULL;
++	if (strncmp(path, root, root_length) != 0)
++		return NULL;
++	if (path[root_length] == '\0')
++		return "";
++	if (path[root_length] != '/')
++		return NULL;
++	return path + root_length + 1;
++}
++
++static bool base_path_is_in_scope(const KfViewShared *shared, const char *path)
++{
++	size_t index;
++	if (shared->scope_root_count == 0)
++		return true;
++	for (index = 0; index < shared->scope_root_count; index++) {
++		if (relative_to_root(shared->scope_roots[index],
++			shared->scope_root_lengths[index], path) != NULL)
++			return true;
++	}
++	return false;
++}
++
++static int join_view_path(char output[PATH_MAX], const char *root, const char *relative)
++{
++	int length;
++	if (relative == NULL || relative[0] == '\0')
++		length = snprintf(output, PATH_MAX, "%s", root);
++	else
++		length = snprintf(output, PATH_MAX, "%s/%s", root, relative);
++	if (length < 0 || length >= PATH_MAX)
++		return -ENAMETOOLONG;
++	return 0;
++}
++
++static int source_count(const KfViewShared *shared)
++{
++	return (int) shared->parent_layer_count + 2;
++}
++
++static int base_source_index(const KfViewShared *shared)
++{
++	return source_count(shared) - 1;
++}
++
++static const char *source_root(const KfViewShared *shared, int source)
++{
++	if (source == 0)
++		return shared->upper_root;
++	if (source > 0 && source <= (int) shared->parent_layer_count)
++		return shared->parent_layers[source - 1].upper_root;
++	if (source == base_source_index(shared))
++		return shared->base_root;
++	return NULL;
++}
++
++static KfViewIndex *source_upper_index(KfViewShared *shared, int source)
++{
++	if (source == 0)
++		return &shared->upper_index;
++	if (source > 0 && source <= (int) shared->parent_layer_count)
++		return &shared->parent_layers[source - 1].upper_index;
++	return NULL;
++}
++
++static const KfViewPrefixNode *source_whiteout_prefix(
++	const KfViewShared *shared, int source)
++{
++	if (source == 0)
++		return shared->whiteout_prefix_root;
++	if (source > 0 && source <= (int) shared->parent_layer_count)
++		return shared->parent_layers[source - 1].whiteout_prefix_root;
++	return NULL;
++}
++
++static int visible_source_from(KfViewShared *shared, const char *relative,
++	int first_source)
++{
++	int source;
++	char base_path[PATH_MAX];
++	if (first_source == 0) {
++		if (whiteout_prefix_contains_path_or_ancestor(
++			shared->whiteout_prefix_root, relative))
++			return -2;
++		if (index_contains(&shared->upper_index, relative))
++			return 0;
++		first_source = 1;
++	}
++	if (first_source == 1 && shared->parent_layer_count > 0 &&
++		!index_contains(&shared->parent_upper_union_index, relative) &&
++		!whiteout_prefix_contains_path_or_ancestor(
++			shared->parent_whiteout_union_root, relative))
++		first_source = (int) shared->parent_layer_count + 1;
++	for (source = first_source;
++		source <= (int) shared->parent_layer_count; source++) {
++		KfViewIndex *index;
++		if (whiteout_prefix_contains_path_or_ancestor(
++			source_whiteout_prefix(shared, source), relative))
++			return -2;
++		index = source_upper_index(shared, source);
++		if (index != NULL && index_contains(index, relative))
++			return source;
++	}
++	if (join_view_path(base_path, shared->base_root, relative) < 0)
++		return -1;
++	return path_exists(base_path) ? base_source_index(shared) : -1;
++}
++
++static int visible_source(KfViewShared *shared, const char *relative)
++{
++	return visible_source_from(shared, relative, 0);
++}
++
++static int visible_path(KfViewShared *shared, const char *relative,
++	char output[PATH_MAX], int *source)
++{
++	const char *root;
++	int selected = visible_source(shared, relative);
++	if (selected == -2)
++		return -ENOENT;
++	if (selected < 0)
++		return -ENXIO;
++	root = source_root(shared, selected);
++	if (root == NULL)
++		return -EPROTO;
++	if (source != NULL)
++		*source = selected;
++	return join_view_path(output, root, relative);
++}
++
++static bool path_has_visible_lower(KfViewShared *shared, const char *relative)
++{
++	return visible_source_from(shared, relative, 1) >= 0;
++}
++
++static bool path_exists(const char *path)
++{
++	struct stat statl;
++	return lstat(path, &statl) == 0;
++}
++
++static int ensure_directory(const char *path)
++{
++	char current[PATH_MAX];
++	char *cursor;
++	struct stat statl;
++	if (!safe_absolute_path(path))
++		return -EINVAL;
++	if (snprintf(current, sizeof(current), "%s", path) >= (int) sizeof(current))
++		return -ENAMETOOLONG;
++	for (cursor = current + 1; ; cursor++) {
++		if (*cursor != '/' && *cursor != '\0')
++			continue;
++		{
++			char saved = *cursor;
++			*cursor = '\0';
++			if (mkdir(current, 0700) != 0 && errno != EEXIST)
++				return -errno;
++			if (lstat(current, &statl) != 0)
++				return -errno;
++			if (!S_ISDIR(statl.st_mode))
++				return -ENOTDIR;
++			*cursor = saved;
++			if (saved == '\0')
++				break;
++		}
++	}
++	return 0;
++}
++
++static int ensure_parent_directory(const char *path)
++{
++	char parent[PATH_MAX];
++	char *separator;
++	if (snprintf(parent, sizeof(parent), "%s", path) >= (int) sizeof(parent))
++		return -ENAMETOOLONG;
++	separator = strrchr(parent, '/');
++	if (separator == NULL || separator == parent)
++		return 0;
++	*separator = '\0';
++	return ensure_directory(parent);
++}
++
++static int remove_tree(const char *path)
++{
++	struct stat statl;
++	if (lstat(path, &statl) != 0)
++		return errno == ENOENT ? 0 : -errno;
++	if (S_ISDIR(statl.st_mode)) {
++		DIR *directory = opendir(path);
++		struct dirent *entry;
++		int status = 0;
++		if (directory == NULL)
++			return -errno;
++		while ((entry = readdir(directory)) != NULL) {
++			char child[PATH_MAX];
++			if (strcmp(entry->d_name, ".") == 0 ||
++				strcmp(entry->d_name, "..") == 0)
++				continue;
++			if (snprintf(child, sizeof(child), "%s/%s", path,
++				entry->d_name) >= (int) sizeof(child)) {
++				status = -ENAMETOOLONG;
++				break;
++			}
++			status = remove_tree(child);
++			if (status < 0)
++				break;
++		}
++		closedir(directory);
++		if (status < 0)
++			return status;
++		return rmdir(path) == 0 ? 0 : -errno;
++	}
++	return unlink(path) == 0 ? 0 : -errno;
++}
++
++static int fsync_directory(const char *path)
++{
++	int descriptor = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
++	int status;
++	if (descriptor < 0)
++		return -errno;
++	status = fsync(descriptor) == 0 ? 0 : -errno;
++	close(descriptor);
++	return status;
++}
++
++static int fsync_parent_directory(const char *path)
++{
++	char parent[PATH_MAX];
++	char *separator;
++	if (snprintf(parent, sizeof(parent), "%s", path) >= (int) sizeof(parent))
++		return -ENAMETOOLONG;
++	separator = strrchr(parent, '/');
++	if (separator == NULL)
++		return -EINVAL;
++	if (separator == parent)
++		separator[1] = '\0';
++	else
++		*separator = '\0';
++	return fsync_directory(parent);
++}
++
++static int cleanup_internal_storage(KfViewShared *shared)
++{
++	char internal[PATH_MAX];
++	char temporary_root[PATH_MAX];
++	char generation_path[PATH_MAX];
++	struct stat generation_stat;
++	bool initialize_generation = false;
++	int lock_fd;
++	int status = join_view_path(internal, shared->upper_root,
++		KF_VIEW_INTERNAL_DIRECTORY);
++	if (status < 0)
++		return status;
++	if (snprintf(temporary_root, sizeof(temporary_root), "%s/tmp", internal) >=
++		(int) sizeof(temporary_root))
++		return -ENAMETOOLONG;
++	if (snprintf(generation_path, sizeof(generation_path), "%s/generation",
++		internal) >= (int) sizeof(generation_path))
++		return -ENAMETOOLONG;
++	lock_fd = lock_view(shared);
++	if (lock_fd < 0)
++		return lock_fd;
++	status = remove_tree(temporary_root);
++	if (status == 0)
++		status = ensure_directory(temporary_root);
++	if (status == 0) {
++		shared->generation_fd = open(generation_path,
++			O_RDWR | O_CREAT | O_CLOEXEC, 0600);
++		if (shared->generation_fd < 0)
++			status = -errno;
++	}
++	if (status == 0 && fstat(shared->generation_fd, &generation_stat) != 0)
++		status = -errno;
++	if (status == 0 && generation_stat.st_size != (off_t) sizeof(uint64_t)) {
++		if (ftruncate(shared->generation_fd, (off_t) sizeof(uint64_t)) != 0)
++			status = -errno;
++		else
++			initialize_generation = true;
++	}
++	if (status == 0) {
++		shared->generation = mmap(NULL, sizeof(uint64_t), PROT_READ | PROT_WRITE,
++			MAP_SHARED, shared->generation_fd, 0);
++		if (shared->generation == MAP_FAILED) {
++			shared->generation = NULL;
++			status = -errno;
++		}
++	}
++	if (status == 0 && initialize_generation)
++		__atomic_store_n(shared->generation, 0, __ATOMIC_RELEASE);
++	if (status == 0) {
++		uint64_t generation = __atomic_load_n(shared->generation, __ATOMIC_ACQUIRE);
++		if ((generation & 1u) != 0)
++			generation = __atomic_add_fetch(shared->generation, 1,
++				__ATOMIC_ACQ_REL);
++		shared->observed_generation = generation;
++		if (msync(shared->generation, sizeof(uint64_t), MS_ASYNC) != 0)
++			status = -errno;
++	}
++	if (status == 0)
++		status = fsync_directory(internal);
++	unlock_view(lock_fd);
++	return status;
++}
++
++static int destroy_shared(KfViewShared *shared)
++{
++	if (shared->mutation_lock_fd >= 0) {
++		if (shared->generation != NULL) {
++			uint64_t generation = __atomic_load_n(shared->generation,
++				__ATOMIC_ACQUIRE);
++			if ((generation & 1u) != 0)
++				__atomic_add_fetch(shared->generation, 1, __ATOMIC_ACQ_REL);
++		}
++		unlock_view(shared->mutation_lock_fd);
++		shared->mutation_lock_fd = -1;
++	}
++	if (shared->generation != NULL) {
++		munmap(shared->generation, sizeof(uint64_t));
++		shared->generation = NULL;
++	}
++	if (shared->generation_fd >= 0) {
++		close(shared->generation_fd);
++		shared->generation_fd = -1;
++	}
++	return 0;
++}
++
++static int copy_user_xattrs(const char *source, const char *destination)
++{
++	ssize_t list_size = llistxattr(source, NULL, 0);
++	char *list;
++	char *name;
++	if (list_size < 0)
++		return errno == ENOTSUP ? 0 : -errno;
++	if (list_size == 0)
++		return 0;
++	list = malloc((size_t) list_size);
++	if (list == NULL)
++		return -ENOMEM;
++	list_size = llistxattr(source, list, (size_t) list_size);
++	if (list_size < 0) {
++		int status = -errno;
++		free(list);
++		return status;
++	}
++	for (name = list; name < list + list_size; name += strlen(name) + 1) {
++		ssize_t value_size;
++		void *value;
++		int status;
++		if (strncmp(name, "user.", 5) != 0)
++			continue;
++		value_size = lgetxattr(source, name, NULL, 0);
++		if (value_size < 0) {
++			status = -errno;
++			free(list);
++			return status;
++		}
++		value = malloc(value_size == 0 ? 1 : (size_t) value_size);
++		if (value == NULL) {
++			free(list);
++			return -ENOMEM;
++		}
++		if (value_size > 0 && lgetxattr(source, name, value,
++			(size_t) value_size) != value_size) {
++			status = -errno;
++			free(value);
++			free(list);
++			return status;
++		}
++		if (lsetxattr(destination, name, value, (size_t) value_size, 0) != 0) {
++			status = -errno;
++			free(value);
++			free(list);
++			return status;
++		}
++		free(value);
++	}
++	free(list);
++	return 0;
++}
++
++static int copy_regular_file(KfViewShared *shared, const char *source,
++	const char *destination, const struct stat *source_stat)
++{
++	char temporary[PATH_MAX];
++	char internal[PATH_MAX];
++	char buffer[KF_VIEW_COPY_BUFFER];
++	struct timespec times[2] = { source_stat->st_atim, source_stat->st_mtim };
++	int source_fd = -1;
++	int destination_fd = -1;
++	int status = 0;
++	ssize_t count;
++	if (join_view_path(internal, shared->upper_root,
++		KF_VIEW_INTERNAL_DIRECTORY "/tmp") < 0)
++		return -ENAMETOOLONG;
++	if (snprintf(temporary, sizeof(temporary), "%s/%d", internal,
++		getpid()) >= (int) sizeof(temporary))
++		return -ENAMETOOLONG;
++	source_fd = open(source, O_RDONLY | O_CLOEXEC);
++	if (source_fd < 0)
++		return -errno;
++	destination_fd = open(temporary,
++		O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
++	if (destination_fd < 0) {
++		status = -errno;
++		goto done;
++	}
++	while ((count = read(source_fd, buffer, sizeof(buffer))) != 0) {
++		ssize_t written = 0;
++		if (count < 0) {
++			if (errno == EINTR)
++				continue;
++			status = -errno;
++			goto done;
++		}
++		while (written < count) {
++			ssize_t result = write(destination_fd, buffer + written,
++				(size_t) (count - written));
++			if (result < 0) {
++				if (errno == EINTR)
++					continue;
++				status = -errno;
++				goto done;
++			}
++			written += result;
++		}
++	}
++	if (fchmod(destination_fd, source_stat->st_mode & 07777) != 0) {
++		status = -errno;
++		goto done;
++	}
++	if (futimens(destination_fd, times) != 0) {
++		status = -errno;
++		goto done;
++	}
++	status = copy_user_xattrs(source, temporary);
++	if (status < 0)
++		goto done;
++	if (fsync(destination_fd) != 0) {
++		status = -errno;
++		goto done;
++	}
++	if (close(destination_fd) != 0) {
++		destination_fd = -1;
++		status = -errno;
++		goto done;
++	}
++	destination_fd = -1;
++	if (rename(temporary, destination) != 0) {
++		status = -errno;
++		goto done;
++	}
++	status = fsync_parent_directory(destination);
++
++done:
++	if (destination_fd >= 0)
++		close(destination_fd);
++	if (source_fd >= 0)
++		close(source_fd);
++	if (status < 0)
++		unlink(temporary);
++	return status;
++}
++
++static int copy_object(KfViewShared *shared, const char *source,
++	const char *destination, const struct stat *source_stat)
++{
++	int status = ensure_parent_directory(destination);
++	if (status < 0)
++		return status;
++	if (S_ISREG(source_stat->st_mode))
++		return copy_regular_file(shared, source, destination, source_stat);
++	if (S_ISDIR(source_stat->st_mode)) {
++		if (mkdir(destination, source_stat->st_mode & 07777) != 0 && errno != EEXIST)
++			return -errno;
++		return 0;
++	}
++	if (S_ISLNK(source_stat->st_mode)) {
++		char target[PATH_MAX];
++		ssize_t length = readlink(source, target, sizeof(target) - 1);
++		if (length < 0)
++			return -errno;
++		target[length] = '\0';
++		if (symlink(target, destination) != 0 && errno != EEXIST)
++			return -errno;
++		return 0;
++	}
++	return -EOPNOTSUPP;
++}
++
++static int materialize_merged_directory(KfViewShared *shared,
++	const char *relative)
++{
++	char upper_path[PATH_MAX];
++	char visible[PATH_MAX];
++	struct stat visible_stat;
++	int source;
++	int status;
++	status = join_view_path(upper_path, shared->upper_root, relative);
++	if (status < 0)
++		return status;
++	status = visible_path(shared, relative, visible, NULL);
++	if (status < 0)
++		return status == -ENXIO ? 0 : status;
++	if (lstat(visible, &visible_stat) != 0)
++		return -errno;
++	if (!S_ISDIR(visible_stat.st_mode))
++		return 0;
++	if (!path_exists(upper_path)) {
++		status = copy_object(shared, visible, upper_path, &visible_stat);
++		if (status < 0)
++			return status;
++	}
++	for (source = 0; source < source_count(shared); source++) {
++		char directory_path[PATH_MAX];
++		DIR *directory;
++		struct dirent *entry;
++		const char *root = source_root(shared, source);
++		if (root == NULL || join_view_path(directory_path, root, relative) < 0)
++			return -ENAMETOOLONG;
++		directory = opendir(directory_path);
++		if (directory == NULL) {
++			if (errno == ENOENT)
++				continue;
++			return -errno;
++		}
++		while ((entry = readdir(directory)) != NULL) {
++			char child_relative[PATH_MAX];
++			char child_source[PATH_MAX];
++			char child_upper[PATH_MAX];
++			struct stat child_stat;
++			int child_selected;
++			if (strcmp(entry->d_name, ".") == 0 ||
++				strcmp(entry->d_name, "..") == 0)
++				continue;
++			status = child_relative_path(child_relative, relative,
++				entry->d_name);
++			if (status < 0)
++				break;
++			child_selected = visible_source(shared, child_relative);
++			if (child_selected != source)
++				continue;
++			status = join_view_path(child_source, root, child_relative);
++			if (status < 0)
++				break;
++			status = join_view_path(child_upper, shared->upper_root,
++				child_relative);
++			if (status < 0)
++				break;
++			if (lstat(child_source, &child_stat) != 0) {
++				status = -errno;
++				break;
++			}
++			if (S_ISDIR(child_stat.st_mode))
++				status = materialize_merged_directory(shared, child_relative);
++			else if (source != 0)
++				status = copy_object(shared, child_source, child_upper,
++					&child_stat);
++			else
++				status = 0;
++			if (status < 0)
++				break;
++		}
++		closedir(directory);
++		if (status < 0)
++			return status;
++	}
++	return 0;
++}
++
++static bool visible_directory_empty(KfViewShared *shared, const char *relative)
++{
++	int source;
++	for (source = 0; source < source_count(shared); source++) {
++		char directory_path[PATH_MAX];
++		DIR *directory;
++		struct dirent *entry;
++		const char *root = source_root(shared, source);
++		if (root == NULL || join_view_path(directory_path, root, relative) < 0)
++			return false;
++		directory = opendir(directory_path);
++		if (directory == NULL) {
++			if (errno == ENOENT)
++				continue;
++			return false;
++		}
++		while ((entry = readdir(directory)) != NULL) {
++			char child[PATH_MAX];
++			if (strcmp(entry->d_name, ".") == 0 ||
++				strcmp(entry->d_name, "..") == 0)
++				continue;
++			if (child_relative_path(child, relative, entry->d_name) < 0) {
++				closedir(directory);
++				return false;
++			}
++			if (visible_source(shared, child) != source)
++				continue;
++			closedir(directory);
++			return false;
++		}
++		closedir(directory);
++	}
++	return true;
++}
++
++static int lock_view(const KfViewShared *shared)
++{
++	int descriptor = open(shared->control_path, O_RDONLY | O_CLOEXEC);
++	if (descriptor < 0)
++		return -errno;
++	if (flock(descriptor, LOCK_EX) != 0) {
++		int status = -errno;
++		close(descriptor);
++		return status;
++	}
++	return descriptor;
++}
++
++static void unlock_view(int descriptor)
++{
++	flock(descriptor, LOCK_UN);
++	close(descriptor);
++}
++
++static int synchronize_indexes(KfViewShared *shared)
++{
++	uint64_t generation;
++	int lock_fd;
++	int status = 0;
++	if (shared->generation == NULL)
++		return -EPROTO;
++	if (shared->mutation_lock_fd >= 0)
++		return 0;
++	generation = __atomic_load_n(shared->generation, __ATOMIC_ACQUIRE);
++	if (generation == shared->observed_generation && (generation & 1u) == 0)
++		return 0;
++	lock_fd = lock_view(shared);
++	if (lock_fd < 0)
++		return lock_fd;
++	generation = __atomic_load_n(shared->generation, __ATOMIC_ACQUIRE);
++	if (generation != shared->observed_generation || (generation & 1u) != 0)
++		status = rebuild_indexes(shared);
++	if (status == 0 && (generation & 1u) != 0)
++		generation = __atomic_add_fetch(shared->generation, 1,
++			__ATOMIC_ACQ_REL);
++	if (status == 0)
++		shared->observed_generation = generation;
++	unlock_view(lock_fd);
++	return status;
++}
++
++static int ensure_mutation_lock(KfViewConfig *config)
++{
++	KfViewShared *shared = config->shared;
++	uint64_t generation;
++	int status;
++	if (config->mutation_active)
++		return 0;
++	if (shared->mutation_lock_fd >= 0) {
++		config->mutation_active = true;
++		shared->mutation_count++;
++		return 0;
++	}
++	status = synchronize_indexes(shared);
++	if (status < 0)
++		return status;
++	shared->mutation_lock_fd = lock_view(shared);
++	if (shared->mutation_lock_fd < 0)
++		return shared->mutation_lock_fd;
++	generation = __atomic_load_n(shared->generation, __ATOMIC_ACQUIRE);
++	if (generation != shared->observed_generation || (generation & 1u) != 0) {
++		status = rebuild_indexes(shared);
++		if (status < 0) {
++			unlock_view(shared->mutation_lock_fd);
++			shared->mutation_lock_fd = -1;
++			return status;
++		}
++		if ((generation & 1u) != 0)
++			generation = __atomic_add_fetch(shared->generation, 1,
++				__ATOMIC_ACQ_REL);
++	}
++	generation = __atomic_add_fetch(shared->generation, 1, __ATOMIC_ACQ_REL);
++	shared->observed_generation = generation;
++	config->mutation_active = true;
++	shared->mutation_count = 1;
++	shared->mutation_failed = false;
++	return 0;
++}
++
++static int finish_mutation(KfViewConfig *config, int status)
++{
++	KfViewShared *shared = config->shared;
++	uint64_t generation;
++	int rebuild_status = 0;
++	if (!config->mutation_active)
++		return status;
++	config->mutation_active = false;
++	if (status < 0)
++		shared->mutation_failed = true;
++	if (shared->mutation_count > 0)
++		shared->mutation_count--;
++	if (shared->mutation_count > 0)
++		return status;
++	if (shared->mutation_failed)
++		rebuild_status = rebuild_indexes(shared);
++	generation = __atomic_load_n(shared->generation, __ATOMIC_ACQUIRE);
++	if ((generation & 1u) != 0)
++		generation = __atomic_add_fetch(shared->generation, 1,
++			__ATOMIC_ACQ_REL);
++	shared->observed_generation = generation;
++	msync(shared->generation, sizeof(uint64_t), MS_ASYNC);
++	unlock_view(shared->mutation_lock_fd);
++	shared->mutation_lock_fd = -1;
++	shared->mutation_failed = false;
++	return status < 0 ? status : rebuild_status;
++}
++
++static int copy_up(KfViewShared *shared, const char *relative,
++	char destination[PATH_MAX], bool *base_exists)
++{
++	char source[PATH_MAX];
++	struct stat source_stat;
++	int selected;
++	int status;
++	*base_exists = path_has_visible_lower(shared, relative);
++	status = join_view_path(destination, shared->upper_root, relative);
++	if (status < 0)
++		return status;
++	if (path_exists(destination)) {
++		status = index_add(shared, &shared->upper_index, relative);
++		return status;
++	}
++	status = visible_path(shared, relative, source, &selected);
++	if (status == 0) {
++		if (lstat(source, &source_stat) != 0) {
++			return -errno;
++		}
++		status = copy_object(shared, source, destination, &source_stat);
++		if (status == 0)
++			status = index_add(shared, &shared->upper_index, relative);
++	}
++	else if (status == -ENXIO || status == -ENOENT)
++		status = ensure_parent_directory(destination);
++	(void) selected;
++	shared->upper_empty = shared->upper_index.count == 0;
++
++	return status;
++}
++
++static int remove_whiteout(KfViewShared *shared, const char *relative)
++{
++	char path[PATH_MAX];
++	int status = join_view_path(path, shared->whiteout_root, relative);
++	if (status < 0)
++		return status;
++	if (unlink(path) != 0) {
++		if (errno != ENOENT)
++			return -errno;
++	}
++	else {
++		status = fsync_parent_directory(path);
++		if (status < 0)
++			return status;
++	}
++	index_remove(&shared->whiteout_index, relative);
++	whiteout_prefix_remove(shared->whiteout_prefix_root, relative);
++	shared->whiteout_empty = shared->whiteout_index.count == 0;
++	return 0;
++}
++
++static int create_whiteout(KfViewShared *shared, const char *relative)
++{
++	char path[PATH_MAX];
++	int descriptor;
++	int status = join_view_path(path, shared->whiteout_root, relative);
++	if (status < 0)
++		return status;
++	status = ensure_parent_directory(path);
++	if (status < 0)
++		return status;
++	descriptor = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
++	if (descriptor < 0)
++		return -errno;
++	if (fsync(descriptor) != 0)
++		status = -errno;
++	if (close(descriptor) != 0 && status == 0)
++		status = -errno;
++	if (status == 0)
++		status = fsync_parent_directory(path);
++	if (status == 0)
++		status = index_add(shared, &shared->whiteout_index, relative);
++	shared->whiteout_empty = shared->whiteout_index.count == 0;
++	return status;
++}
++
++static const char *relative_for_path(const KfViewShared *shared, const char *path)
++{
++	size_t layer;
++	const char *relative = relative_to_root(shared->base_root,
++		shared->base_root_length, path);
++	if (relative != NULL && base_path_is_in_scope(shared, path))
++		return relative;
++	relative = relative_to_root(shared->upper_root,
++		shared->upper_root_length, path);
++	if (relative != NULL)
++		return relative;
++	for (layer = 0; layer < shared->parent_layer_count; layer++) {
++		const KfViewParentLayer *parent = &shared->parent_layers[layer];
++		relative = relative_to_root(parent->upper_root,
++			parent->upper_root_length, path);
++		if (relative != NULL)
++			return relative;
++	}
++	return NULL;
++}
++
++static int project_path(KfViewConfig *config, char path[PATH_MAX],
++	bool final_component)
++{
++	KfViewShared *shared = config->shared;
++	const char *relative;
++	char candidate[PATH_MAX];
++	int status;
++
++	status = synchronize_indexes(shared);
++	if (status < 0)
++		return status;
++	if (shared->upper_empty && shared->whiteout_empty &&
++		shared->parent_layer_count == 0)
++		return 0;
++	relative = relative_for_path(shared, path);
++	if (relative == NULL || relative[0] == '\0')
++		return 0;
++	status = visible_path(shared, relative, candidate, NULL);
++	if (status == -ENOENT) {
++		/*
++		 * Translate a whiteout to the missing child-upper path.  Readers still
++		 * receive ENOENT from the kernel, while O_CREAT can reach the mutation
++		 * hook, replace the whiteout and publish a new upper entry.
++		 */
++		status = join_view_path(candidate, shared->upper_root, relative);
++		if (status < 0)
++			return status;
++	}
++	if (status == -ENXIO)
++		return 0;
++	if (status < 0)
++		return status;
++	(void) final_component;
++	if (strcmp(path, candidate) != 0)
++		strcpy(path, candidate);
++	return 0;
++}
++
++static int map_upper_to_base(KfViewShared *shared, char path[PATH_MAX])
++{
++	const char *relative = relative_for_path(shared, path);
++	char mapped[PATH_MAX];
++	int status;
++	if (relative == NULL || relative_to_root(shared->base_root,
++		shared->base_root_length, path) != NULL)
++		return 0;
++	status = join_view_path(mapped, shared->base_root, relative);
++	if (status < 0)
++		return status;
++	strcpy(path, mapped);
++	return 0;
++}
++
++static void close_directory_state(KfViewDirState *state)
++{
++	if (state->merge_directory != NULL) {
++		closedir(state->merge_directory);
++		state->merge_directory = NULL;
++	}
++}
++
++static void remove_directory_state(KfViewConfig *config, int fd)
++{
++	KfViewDirState **cursor = &config->directory_states;
++	while (*cursor != NULL) {
++		KfViewDirState *state = *cursor;
++		if (state->fd == fd) {
++			*cursor = state->next;
++			close_directory_state(state);
++			TALLOC_FREE(state);
++			return;
++		}
++		cursor = &state->next;
++	}
++}
++
++static void reset_directory_state(KfViewConfig *config, int fd)
++{
++	KfViewDirState *state = config->directory_states;
++	while (state != NULL) {
++		if (state->fd == fd) {
++			close_directory_state(state);
++			state->completed = false;
++			state->merge_source_index = 0;
++			return;
++		}
++		state = state->next;
++	}
++}
++
++static int destroy_config(KfViewConfig *config)
++{
++	KfViewDirState *state = config->directory_states;
++	if (config->mutation_active)
++		finish_mutation(config, -EINTR);
++	while (state != NULL) {
++		close_directory_state(state);
++		state = state->next;
++	}
++	return 0;
++}
++
++static KfViewDirState *directory_state(KfViewConfig *config, int fd,
++	const char *host_path, const char *relative, int source_index)
++{
++	KfViewDirState *state = config->directory_states;
++	while (state != NULL) {
++		if (state->fd == fd) {
++			if (strcmp(state->host_path, host_path) != 0) {
++				close_directory_state(state);
++				state->completed = false;
++				snprintf(state->host_path, sizeof(state->host_path), "%s",
++					host_path);
++				snprintf(state->relative, sizeof(state->relative), "%s",
++					relative);
++				state->source_index = source_index;
++				state->merge_source_index = 0;
++			}
++			return state;
++		}
++		state = state->next;
++	}
++	state = talloc_zero(config, KfViewDirState);
++	if (state == NULL)
++		return NULL;
++	state->fd = fd;
++	snprintf(state->host_path, sizeof(state->host_path), "%s", host_path);
++	snprintf(state->relative, sizeof(state->relative), "%s", relative);
++	state->source_index = source_index;
++	state->merge_source_index = 0;
++	state->next = config->directory_states;
++	config->directory_states = state;
++	return state;
++}
++
++static int child_relative_path(char output[PATH_MAX], const char *relative,
++	const char *name)
++{
++	int length;
++	if (relative[0] == '\0')
++		length = snprintf(output, PATH_MAX, "%s", name);
++	else
++		length = snprintf(output, PATH_MAX, "%s/%s", relative, name);
++	return length < 0 || length >= PATH_MAX ? -ENAMETOOLONG : 0;
++}
++
++static bool keep_directory_name(const KfViewShared *shared,
++	const char *directory_relative, const char *name, int source_index)
++{
++	char child[PATH_MAX];
++	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
++		return true;
++	if (source_index == 0 && directory_relative[0] == '\0' &&
++		strcmp(name, KF_VIEW_INTERNAL_DIRECTORY) == 0)
++		return false;
++	if (child_relative_path(child, directory_relative, name) < 0)
++		return false;
++	return visible_source((KfViewShared *) shared, child) == source_index;
++}
++
++static int filter_getdents_result(Tracee *tracee, KfViewShared *shared,
++	const char *relative, int directory_source, bool is_64,
++	word_t output_address, unsigned int result, unsigned int count)
++{
++	char *input;
++	char *output;
++	char *cursor;
++	unsigned int kept = 0;
++	int status;
++	if (result == 0)
++		return 0;
++	if (result > count || count > 1024 * 1024)
++		return -EOVERFLOW;
++	input = malloc(result);
++	output = malloc(result);
++	if (input == NULL || output == NULL) {
++		free(input);
++		free(output);
++		return -ENOMEM;
++	}
++	status = read_data(tracee, input, output_address, result);
++	if (status < 0)
++		goto done;
++	for (cursor = input; cursor < input + result; ) {
++		unsigned short record_length;
++		const char *name;
++		if (is_64) {
++			struct kf_linux_dirent64 *entry =
++				(struct kf_linux_dirent64 *) cursor;
++			record_length = entry->d_reclen;
++			name = entry->d_name;
++		}
++		else {
++			struct kf_linux_dirent *entry =
++				(struct kf_linux_dirent *) cursor;
++			record_length = entry->d_reclen;
++			name = entry->d_name;
++		}
++		if (record_length == 0 || cursor + record_length > input + result) {
++			status = -EIO;
++			goto done;
++		}
++		if (keep_directory_name(shared, relative, name, directory_source)) {
++			memcpy(output + kept, cursor, record_length);
++			kept += record_length;
++		}
++		cursor += record_length;
++	}
++	if (kept > 0) {
++		status = write_data(tracee, output_address, output, kept);
++		if (status == 0)
++			poke_reg(tracee, SYSARG_RESULT, kept);
++	}
++	else {
++		word_t fd = peek_reg(tracee, ORIGINAL, SYSARG_1);
++		register_chained_syscall(tracee,
++			is_64 ? PR_getdents64 : PR_getdents,
++			fd, output_address, count, 0, 0, 0);
++		status = 0;
++	}
++
++done:
++	free(input);
++	free(output);
++	return status;
++}
++
++static unsigned short synthetic_record_length(bool is_64, size_t name_length)
++{
++	size_t header = is_64 ? offsetof(struct kf_linux_dirent64, d_name) :
++		offsetof(struct kf_linux_dirent, d_name);
++	size_t alignment = sizeof(unsigned long);
++	return (unsigned short) ((header + name_length + 1 + alignment - 1) &
++		~(alignment - 1));
++}
++
++static int append_synthetic_entry(char *buffer, unsigned int offset,
++	unsigned int capacity, const struct dirent *entry, bool is_64)
++{
++	unsigned short record_length = synthetic_record_length(is_64,
++		strlen(entry->d_name));
++	if (offset + record_length > capacity)
++		return 0;
++	memset(buffer + offset, 0, record_length);
++	if (is_64) {
++		struct kf_linux_dirent64 *target =
++			(struct kf_linux_dirent64 *) (buffer + offset);
++		target->d_ino = entry->d_ino;
++		target->d_off = offset + record_length;
++		target->d_reclen = record_length;
++		target->d_type = entry->d_type;
++		strcpy(target->d_name, entry->d_name);
++	}
++	else {
++		struct kf_linux_dirent *target =
++			(struct kf_linux_dirent *) (buffer + offset);
++		target->d_ino = entry->d_ino;
++		target->d_off = offset + record_length;
++		target->d_reclen = record_length;
++		strcpy(target->d_name, entry->d_name);
++		buffer[offset + record_length - 1] = entry->d_type;
++	}
++	return record_length;
++}
++
++static int synthesize_merged_entries(Tracee *tracee, KfViewConfig *config,
++	KfViewDirState *state, bool is_64, word_t output_address,
++	unsigned int count)
++{
++	char *buffer;
++	unsigned int written = 0;
++	int status = 0;
++	if (state->completed)
++		return 0;
++	if (count > 1024 * 1024)
++		return -EOVERFLOW;
++	buffer = malloc(count);
++	if (buffer == NULL)
++		return -ENOMEM;
++	while (written < count) {
++		long position;
++		struct dirent *entry;
++		int appended;
++		while (state->merge_directory == NULL &&
++			state->merge_source_index < source_count(config->shared)) {
++			char source_path[PATH_MAX];
++			const char *root;
++			if (state->merge_source_index == state->source_index) {
++				state->merge_source_index++;
++				continue;
++			}
++			root = source_root(config->shared, state->merge_source_index);
++			status = root == NULL ? -EPROTO : join_view_path(source_path,
++				root, state->relative);
++			if (status < 0)
++				break;
++			state->merge_directory = opendir(source_path);
++			if (state->merge_directory == NULL) {
++				if (errno != ENOENT) {
++					status = -errno;
++					break;
++				}
++				state->merge_source_index++;
++			}
++		}
++		if (status < 0)
++			break;
++		if (state->merge_directory == NULL) {
++			state->completed = true;
++			break;
++		}
++		position = telldir(state->merge_directory);
++		entry = readdir(state->merge_directory);
++		if (entry == NULL) {
++			close_directory_state(state);
++			state->merge_source_index++;
++			continue;
++		}
++		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
++			continue;
++		if (!keep_directory_name(config->shared, state->relative,
++			entry->d_name, state->merge_source_index))
++			continue;
++		appended = append_synthetic_entry(buffer, written, count, entry, is_64);
++		if (appended == 0) {
++			seekdir(state->merge_directory, position);
++			break;
++		}
++		written += (unsigned int) appended;
++	}
++	if (status == 0 && written > 0) {
++		status = write_data(tracee, output_address, buffer, written);
++		if (status == 0)
++			poke_reg(tracee, SYSARG_RESULT, written);
++	}
++	else
++		status = 0;
++	free(buffer);
++	return status;
++}
++
++static int handle_getdents_exit(Tracee *tracee, KfViewConfig *config)
++{
++	word_t sysnum = get_sysnum(tracee, ORIGINAL);
++	long result = (long) peek_reg(tracee, CURRENT, SYSARG_RESULT);
++	int fd = (int) peek_reg(tracee, ORIGINAL, SYSARG_1);
++	word_t output_address = peek_reg(tracee, ORIGINAL, SYSARG_2);
++	unsigned int count = (unsigned int) peek_reg(tracee, ORIGINAL, SYSARG_3);
++	char host_path[PATH_MAX];
++	const char *relative;
++	int directory_source = -1;
++	int source;
++	KfViewDirState *state;
++	int status;
++	status = synchronize_indexes(config->shared);
++	if (status < 0)
++		return status;
++	if (sysnum != PR_getdents && sysnum != PR_getdents64)
++		return 0;
++	if (result < 0)
++		return 0;
++	status = readlink_proc_pid_fd(tracee->pid, fd, host_path);
++	if (status < 0)
++		return 0;
++	relative = NULL;
++	for (source = 0; source < source_count(config->shared); source++) {
++		const char *root = source_root(config->shared, source);
++		size_t length = root == NULL ? 0 : strlen(root);
++		if (root == NULL)
++			continue;
++		relative = relative_to_root(root, length, host_path);
++		if (relative != NULL) {
++			directory_source = source;
++			break;
++		}
++	}
++	if (relative == NULL)
++		return 0;
++	if (!index_contains(&config->shared->directory_merge_index, relative))
++		return 0;
++	state = directory_state(config, fd, host_path, relative, directory_source);
++	if (state == NULL)
++		return -ENOMEM;
++	if (result > 0) {
++		close_directory_state(state);
++		state->completed = false;
++		state->merge_source_index = 0;
++		return filter_getdents_result(tracee, config->shared, relative,
++			directory_source, sysnum == PR_getdents64,
++			output_address, (unsigned int) result, count);
++	}
++	return synthesize_merged_entries(tracee, config, state,
++		sysnum == PR_getdents64, output_address, count);
++}
++
++static int current_path(Tracee *tracee, Reg path_sysarg, char path[PATH_MAX])
++{
++	int size = read_string(tracee, path,
++		peek_reg(tracee, CURRENT, path_sysarg), PATH_MAX);
++	if (size < 0)
++		return size;
++	return size >= PATH_MAX ? -ENAMETOOLONG : 0;
++}
++
++static int redirect_mutation(Tracee *tracee, KfViewConfig *config,
++	Reg path_sysarg, bool deleting)
++{
++	char current[PATH_MAX];
++	char relative[PATH_MAX];
++	char upper[PATH_MAX];
++	const char *relative_pointer;
++	bool base_exists;
++	int status = current_path(tracee, path_sysarg, current);
++	if (status < 0)
++		return status;
++	relative_pointer = relative_for_path(config->shared, current);
++	if (debug_enabled())
++		fprintf(stderr, "kf_view redirect mutation path=%s relative=%s deleting=%d\n",
++			current, relative_pointer == NULL ? "<outside>" : relative_pointer,
++			deleting);
++	if (relative_pointer == NULL || relative_pointer[0] == '\0')
++		return 0;
++	if (snprintf(relative, sizeof(relative), "%s", relative_pointer) >=
++		(int) sizeof(relative))
++		return -ENAMETOOLONG;
++	status = ensure_mutation_lock(config);
++	if (status < 0)
++		return status;
++	if (!deleting && index_contains(&config->shared->whiteout_index, relative)) {
++		status = join_view_path(upper, config->shared->upper_root, relative);
++		if (status == 0)
++			status = ensure_parent_directory(upper);
++		base_exists = false;
++	}
++	else
++		status = copy_up(config->shared, relative, upper, &base_exists);
++	if (status < 0)
++		return status;
++	if (!deleting) {
++		if (snprintf(config->pending_upper, sizeof(config->pending_upper),
++			"%s", relative) >= (int) sizeof(config->pending_upper) ||
++			snprintf(config->pending_remove_whiteout,
++				sizeof(config->pending_remove_whiteout), "%s", relative) >=
++				(int) sizeof(config->pending_remove_whiteout))
++			return -ENAMETOOLONG;
++		config->pending_upper_active = true;
++		config->pending_remove_whiteout_active = true;
++		if (debug_enabled())
++			fprintf(stderr, "kf_view pending upper=%s\n", relative);
++	}
++	else {
++		if (snprintf(config->pending_whiteout, sizeof(config->pending_whiteout),
++			"%s", relative) >= (int) sizeof(config->pending_whiteout))
++			return -ENAMETOOLONG;
++		config->pending_whiteout_active = true;
++		config->pending_whiteout_needed = base_exists;
++	}
++	return set_sysarg_path(tracee, upper, path_sysarg);
++}
++
++static int prepare_rename_source(KfViewShared *shared, const char *relative,
++	char upper[PATH_MAX], bool *base_exists)
++{
++	char source[PATH_MAX];
++	struct stat source_stat;
++	struct stat upper_stat;
++	int selected;
++	int status;
++	*base_exists = path_has_visible_lower(shared, relative);
++	status = join_view_path(upper, shared->upper_root, relative);
++	if (status < 0)
++		return status;
++	status = visible_path(shared, relative, source, &selected);
++	if (status == -ENXIO)
++		status = -ENOENT;
++	if (status < 0)
++		goto done;
++	if (lstat(source, &source_stat) != 0) {
++		status = -errno;
++		goto done;
++	}
++	if (lstat(upper, &upper_stat) == 0) {
++		if (*base_exists && S_ISDIR(source_stat.st_mode) &&
++			S_ISDIR(upper_stat.st_mode))
++			status = materialize_merged_directory(shared, relative);
++		else
++			status = 0;
++	}
++	else if (errno != ENOENT) {
++		status = -errno;
++	}
++	else if (S_ISDIR(source_stat.st_mode))
++		status = materialize_merged_directory(shared, relative);
++	else
++		status = copy_object(shared, source, upper, &source_stat);
++	if (status == 0)
++		status = rebuild_indexes(shared);
++
++done:
++	(void) selected;
++	return status;
++}
++
++static int redirect_rename(Tracee *tracee, KfViewConfig *config,
++	Reg source_sysarg, Reg destination_sysarg, word_t flags)
++{
++	char source_current[PATH_MAX];
++	char destination_current[PATH_MAX];
++	char source_relative[PATH_MAX];
++	char destination_relative[PATH_MAX];
++	char source_upper[PATH_MAX];
++	char destination_upper[PATH_MAX];
++	const char *source_pointer;
++	const char *destination_pointer;
++	bool source_base_exists;
++	bool destination_base_exists;
++	struct stat source_stat;
++	struct stat destination_stat;
++	int status;
++	if (flags != 0 && flags != RENAME_NOREPLACE)
++		return -EOPNOTSUPP;
++	status = current_path(tracee, source_sysarg, source_current);
++	if (status < 0)
++		return status;
++	status = current_path(tracee, destination_sysarg, destination_current);
++	if (status < 0)
++		return status;
++	source_pointer = relative_for_path(config->shared, source_current);
++	destination_pointer = relative_for_path(config->shared, destination_current);
++	if (source_pointer == NULL && destination_pointer == NULL)
++		return 0;
++	if (source_pointer == NULL || destination_pointer == NULL ||
++		source_pointer[0] == '\0' || destination_pointer[0] == '\0')
++		return -EXDEV;
++	if (snprintf(source_relative, sizeof(source_relative), "%s", source_pointer) >=
++		(int) sizeof(source_relative) ||
++		snprintf(destination_relative, sizeof(destination_relative), "%s",
++			destination_pointer) >= (int) sizeof(destination_relative))
++		return -ENAMETOOLONG;
++	status = ensure_mutation_lock(config);
++	if (status < 0)
++		return status;
++	status = prepare_rename_source(config->shared, source_relative,
++		source_upper, &source_base_exists);
++	if (status < 0)
++		return status;
++	if (lstat(source_upper, &source_stat) != 0)
++		return -errno;
++	if (!index_contains(&config->shared->whiteout_index, destination_relative)) {
++		char destination_visible[PATH_MAX];
++		status = visible_path(config->shared, destination_relative,
++			destination_visible, NULL);
++		if (status < 0 && status != -ENXIO)
++			return status;
++		if (status == 0 && lstat(destination_visible, &destination_stat) == 0 &&
++			S_ISDIR(source_stat.st_mode) && S_ISDIR(destination_stat.st_mode) &&
++			!visible_directory_empty(config->shared, destination_relative))
++			return -ENOTEMPTY;
++	}
++	if (index_contains(&config->shared->whiteout_index, destination_relative)) {
++		status = join_view_path(destination_upper, config->shared->upper_root,
++			destination_relative);
++		if (status == 0)
++			status = ensure_parent_directory(destination_upper);
++		destination_base_exists = false;
++	}
++	else
++		status = copy_up(config->shared, destination_relative,
++			destination_upper, &destination_base_exists);
++	(void) destination_base_exists;
++	if (status < 0)
++		return status;
++	if (source_base_exists) {
++		snprintf(config->pending_whiteout, sizeof(config->pending_whiteout),
++			"%s", source_relative);
++		config->pending_whiteout_active = true;
++		config->pending_whiteout_needed = true;
++	}
++	if (snprintf(config->pending_upper, sizeof(config->pending_upper), "%s",
++		destination_relative) >= (int) sizeof(config->pending_upper) ||
++		snprintf(config->pending_remove_whiteout,
++			sizeof(config->pending_remove_whiteout), "%s",
++			destination_relative) >= (int) sizeof(config->pending_remove_whiteout))
++		return -ENAMETOOLONG;
++	config->pending_upper_active = true;
++	config->pending_remove_whiteout_active = true;
++	config->pending_rebuild_indexes = true;
++	status = set_sysarg_path(tracee, source_upper, source_sysarg);
++	if (status < 0)
++		return status;
++	return set_sysarg_path(tracee, destination_upper, destination_sysarg);
++}
++
++static int redirect_link(Tracee *tracee, KfViewConfig *config,
++	Reg source_sysarg, Reg destination_sysarg)
++{
++	char source_current[PATH_MAX];
++	char source_relative[PATH_MAX];
++	char source_upper[PATH_MAX];
++	const char *source_pointer;
++	bool source_base_exists;
++	int status = current_path(tracee, source_sysarg, source_current);
++	if (status < 0)
++		return status;
++	source_pointer = relative_for_path(config->shared, source_current);
++	if (source_pointer == NULL)
++		return redirect_mutation(tracee, config, destination_sysarg, false);
++	if (source_pointer[0] == '\0')
++		return -EPERM;
++	if (snprintf(source_relative, sizeof(source_relative), "%s", source_pointer) >=
++		(int) sizeof(source_relative))
++		return -ENAMETOOLONG;
++	status = ensure_mutation_lock(config);
++	if (status < 0)
++		return status;
++	status = copy_up(config->shared, source_relative, source_upper,
++		&source_base_exists);
++	(void) source_base_exists;
++	if (status < 0) {
++		if (debug_enabled())
++			fprintf(stderr, "kf_view link copy-up failed relative=%s status=%d\n",
++				source_relative, status);
++		return status;
++	}
++	status = set_sysarg_path(tracee, source_upper, source_sysarg);
++	if (status < 0) {
++		if (debug_enabled())
++			fprintf(stderr, "kf_view link source redirect failed path=%s status=%d\n",
++				source_upper, status);
++		return status;
++	}
++	status = redirect_mutation(tracee, config, destination_sysarg, false);
++	return status;
++}
++
++static int redirect_rmdir(Tracee *tracee, KfViewConfig *config,
++	Reg path_sysarg)
++{
++	char current[PATH_MAX];
++	char relative[PATH_MAX];
++	const char *relative_pointer;
++	int status = current_path(tracee, path_sysarg, current);
++	if (status < 0)
++		return status;
++	relative_pointer = relative_for_path(config->shared, current);
++	if (relative_pointer == NULL)
++		return 0;
++	if (relative_pointer[0] == '\0')
++		return -EBUSY;
++	if (snprintf(relative, sizeof(relative), "%s", relative_pointer) >=
++		(int) sizeof(relative))
++		return -ENAMETOOLONG;
++	status = ensure_mutation_lock(config);
++	if (status < 0)
++		return status;
++	if (!visible_directory_empty(config->shared, relative))
++		return -ENOTEMPTY;
++	return redirect_mutation(tracee, config, path_sysarg, true);
++}
++
++static int guard_fd_mutation(Tracee *tracee, KfViewConfig *config,
++	Reg fd_sysarg)
++{
++	char path[PATH_MAX];
++	int fd = (int) peek_reg(tracee, CURRENT, fd_sysarg);
++	int status = readlink_proc_pid_fd(tracee->pid, fd, path);
++	if (status < 0)
++		return status;
++	if (relative_to_root(config->shared->upper_root,
++		config->shared->upper_root_length, path) != NULL)
++		return ensure_mutation_lock(config);
++	if (relative_for_path(config->shared, path) != NULL)
++		return -EROFS;
++	return 0;
++}
++
++static int openat2_flags(Tracee *tracee, word_t *flags)
++{
++	struct {
++		uint64_t flags;
++		uint64_t mode;
++		uint64_t resolve;
++	} how;
++	word_t address = peek_reg(tracee, CURRENT, SYSARG_3);
++	word_t size = peek_reg(tracee, CURRENT, SYSARG_4);
++	int status;
++	if (address == 0 || size < sizeof(uint64_t))
++		return -EINVAL;
++	memset(&how, 0, sizeof(how));
++	status = read_data(tracee, &how, address,
++		size < sizeof(how) ? (size_t) size : sizeof(how));
++	if (status < 0)
++		return status;
++	*flags = (word_t) how.flags;
++	return 0;
++}
++
++static int redirect_unix_bind(Tracee *tracee, KfViewConfig *config)
++{
++	struct sockaddr_un address;
++	word_t pointer = peek_reg(tracee, CURRENT, SYSARG_2);
++	word_t size = peek_reg(tracee, CURRENT, SYSARG_3);
++	const char *relative;
++	char relative_path[PATH_MAX];
++	char upper[PATH_MAX];
++	int status;
++	if (pointer == 0 || size <= offsetof(struct sockaddr_un, sun_path) ||
++		size > sizeof(address))
++		return 0;
++	memset(&address, 0, sizeof(address));
++	status = read_data(tracee, &address, pointer, (size_t) size);
++	if (status < 0)
++		return status;
++	if (address.sun_family != AF_UNIX || address.sun_path[0] == '\0')
++		return 0;
++	address.sun_path[sizeof(address.sun_path) - 1] = '\0';
++	if (relative_to_root(config->shared->upper_root,
++		config->shared->upper_root_length, address.sun_path) != NULL)
++		return 0;
++	relative = relative_for_path(config->shared, address.sun_path);
++	if (relative == NULL)
++		return 0;
++	if (relative[0] == '\0')
++		return -EACCES;
++	if (snprintf(relative_path, sizeof(relative_path), "%s", relative) >=
++		(int) sizeof(relative_path))
++		return -ENAMETOOLONG;
++	status = ensure_mutation_lock(config);
++	if (status < 0)
++		return status;
++	if (path_exists(address.sun_path))
++		return 0;
++	status = join_view_path(upper, config->shared->upper_root, relative_path);
++	if (status < 0)
++		return status;
++	status = ensure_parent_directory(upper);
++	if (status < 0)
++		return status;
++	if (strlen(upper) >= sizeof(address.sun_path))
++		return -ENAMETOOLONG;
++	strcpy(address.sun_path, upper);
++	status = write_data(tracee, pointer, &address, (size_t) size);
++	if (status < 0)
++		return status;
++	if (snprintf(config->pending_upper, sizeof(config->pending_upper), "%s",
++		relative_path) >= (int) sizeof(config->pending_upper) ||
++		snprintf(config->pending_remove_whiteout,
++			sizeof(config->pending_remove_whiteout), "%s", relative_path) >=
++			(int) sizeof(config->pending_remove_whiteout))
++		return -ENAMETOOLONG;
++	config->pending_upper_active = true;
++	config->pending_remove_whiteout_active = true;
++	return 0;
++}
++
++static int handle_mutation_enter(Tracee *tracee, KfViewConfig *config)
++{
++	word_t sysnum = get_sysnum(tracee, ORIGINAL);
++	word_t flags;
++	int status;
++	switch (sysnum) {
++	case PR_open:
++		flags = peek_reg(tracee, CURRENT, SYSARG_2);
++		if ((flags & O_ACCMODE) == O_RDONLY &&
++			(flags & (O_CREAT | O_TRUNC)) == 0)
++			return 0;
++		return redirect_mutation(tracee, config, SYSARG_1, false);
++	case PR_openat:
++		flags = peek_reg(tracee, CURRENT, SYSARG_3);
++		if ((flags & O_ACCMODE) == O_RDONLY &&
++			(flags & (O_CREAT | O_TRUNC)) == 0)
++			return 0;
++		return redirect_mutation(tracee, config, SYSARG_2, false);
++	case PR_openat2:
++		status = openat2_flags(tracee, &flags);
++		if (status < 0)
++			return status;
++		if ((flags & O_ACCMODE) == O_RDONLY &&
++			(flags & (O_CREAT | O_TRUNC)) == 0)
++			return 0;
++		return redirect_mutation(tracee, config, SYSARG_2, false);
++	case PR_creat:
++		return redirect_mutation(tracee, config, SYSARG_1, false);
++	case PR_unlink:
++		return redirect_mutation(tracee, config, SYSARG_1, true);
++	case PR_unlinkat:
++		if ((peek_reg(tracee, CURRENT, SYSARG_3) & AT_REMOVEDIR) != 0)
++			return redirect_rmdir(tracee, config, SYSARG_2);
++		return redirect_mutation(tracee, config, SYSARG_2, true);
++	case PR_rmdir:
++		return redirect_rmdir(tracee, config, SYSARG_1);
++	case PR_mkdir:
++	case PR_mknod:
++		return redirect_mutation(tracee, config, SYSARG_1, false);
++	case PR_mkdirat:
++	case PR_mknodat:
++		return redirect_mutation(tracee, config, SYSARG_2, false);
++	case PR_rename:
++		return redirect_rename(tracee, config, SYSARG_1, SYSARG_2, 0);
++	case PR_renameat:
++		return redirect_rename(tracee, config, SYSARG_2, SYSARG_4, 0);
++	case PR_renameat2:
++		return redirect_rename(tracee, config, SYSARG_2, SYSARG_4,
++			peek_reg(tracee, CURRENT, SYSARG_5));
++	case PR_link:
++		return redirect_link(tracee, config, SYSARG_1, SYSARG_2);
++	case PR_linkat:
++		if ((peek_reg(tracee, CURRENT, SYSARG_5) & AT_EMPTY_PATH) != 0)
++			return guard_fd_mutation(tracee, config, SYSARG_1);
++		return redirect_link(tracee, config, SYSARG_2, SYSARG_4);
++	case PR_symlink:
++		return redirect_mutation(tracee, config, SYSARG_2, false);
++	case PR_symlinkat:
++		return redirect_mutation(tracee, config, SYSARG_3, false);
++	case PR_truncate:
++	case PR_truncate64:
++	case PR_chmod:
++	case PR_chown:
++	case PR_chown32:
++	case PR_lchown:
++	case PR_lchown32:
++	case PR_utime:
++	case PR_utimes:
++	case PR_setxattr:
++	case PR_lsetxattr:
++	case PR_removexattr:
++	case PR_lremovexattr:
++		return redirect_mutation(tracee, config, SYSARG_1, false);
++	case PR_fchmodat:
++	case PR_fchownat:
++	case PR_futimesat:
++		if (peek_reg(tracee, CURRENT, SYSARG_2) == 0)
++			return guard_fd_mutation(tracee, config, SYSARG_1);
++		return redirect_mutation(tracee, config, SYSARG_2, false);
++	case PR_utimensat:
++		if (peek_reg(tracee, CURRENT, SYSARG_2) == 0)
++			return guard_fd_mutation(tracee, config, SYSARG_1);
++		return redirect_mutation(tracee, config, SYSARG_2, false);
++	case PR_fchmod:
++	case PR_fchown:
++	case PR_fchown32:
++	case PR_ftruncate:
++	case PR_ftruncate64:
++	case PR_fallocate:
++	case PR_fsetxattr:
++	case PR_fremovexattr:
++		return guard_fd_mutation(tracee, config, SYSARG_1);
++	case PR_bind:
++		return redirect_unix_bind(tracee, config);
++	default:
++		return 0;
++	}
++}
++
++static int reconcile_deferred_open(KfViewConfig *config)
++{
++	char upper[PATH_MAX];
++	bool completed;
++	int status = 0;
++	if (!config->pending_upper_active &&
++		!config->pending_remove_whiteout_active)
++		return 0;
++	completed = join_view_path(upper, config->shared->upper_root,
++		config->pending_upper) == 0 && path_exists(upper);
++	if (config->pending_upper_active && completed) {
++		status = index_add(config->shared, &config->shared->upper_index,
++			config->pending_upper);
++		config->shared->upper_empty =
++			config->shared->upper_index.count == 0;
++	}
++	if (status == 0 && config->pending_remove_whiteout_active && completed)
++		status = remove_whiteout(config->shared,
++			config->pending_remove_whiteout);
++	config->pending_upper_active = false;
++	config->pending_remove_whiteout_active = false;
++	return status;
++}
++
++int kf_view_callback(Extension *extension, ExtensionEvent event,
++	intptr_t data1, intptr_t data2)
++{
++	KfViewConfig *config;
++	switch (event) {
++	case INITIALIZATION: {
++		const char *control_path = getenv("KF_PROOT_VIEW_CONTROL_PATH");
++		KfViewShared *shared;
++		int status;
++		if (!safe_absolute_path(control_path))
++			return -EINVAL;
++		config = talloc_zero(extension, KfViewConfig);
++		if (config == NULL)
++			return -ENOMEM;
++		shared = talloc_zero(config, KfViewShared);
++		if (shared == NULL)
++			return -ENOMEM;
++		shared->generation_fd = -1;
++		shared->mutation_lock_fd = -1;
++		talloc_set_destructor(shared, destroy_shared);
++		status = read_control(shared, control_path);
++		if (status < 0) {
++			note(TRACEE(extension), ERROR, INTERNAL,
++				"invalid KF View control '%s': %s", control_path, strerror(-status));
++			return status;
++		}
++		config->shared = shared;
++		talloc_set_destructor(config, destroy_config);
++		extension->config = config;
++		extension->filtered_sysnums = filtered_sysnums;
++		if (debug_enabled())
++			fprintf(stderr, "kf_view initialized base=%s upper=%s whiteout=%s empty=%d/%d\n",
++				shared->base_root, shared->upper_root, shared->whiteout_root,
++				shared->upper_empty, shared->whiteout_empty);
++		return 0;
++	}
++	case INHERIT_PARENT:
++		return 1;
++	case INHERIT_CHILD: {
++		Extension *parent = (Extension *) data1;
++		KfViewConfig *parent_config = talloc_get_type_abort(parent->config,
++			KfViewConfig);
++		config = talloc_zero(extension, KfViewConfig);
++		if (config == NULL)
++			return -ENOMEM;
++		config->shared = talloc_reference(config, parent_config->shared);
++		if (config->shared == NULL)
++			return -ENOMEM;
++		talloc_set_destructor(config, destroy_config);
++		extension->config = config;
++		extension->filtered_sysnums = filtered_sysnums;
++		return 0;
++	}
++	case HOST_PATH:
++		config = talloc_get_type_abort(extension->config, KfViewConfig);
++		return project_path(config, (char *) data1, data2 != 0);
++	case TRANSLATED_PATH:
++		config = talloc_get_type_abort(extension->config, KfViewConfig);
++		return project_path(config, (char *) data1, true);
++	case DETRANSLATE_PATH:
++		config = talloc_get_type_abort(extension->config, KfViewConfig);
++		{
++			int status = map_upper_to_base(config->shared, (char *) data1);
++			if (status < 0)
++				return status;
++			if (data2 != 0)
++				return map_upper_to_base(config->shared, (char *) data2);
++			return 0;
++		}
++	case KF_TXN_PRE_HOST_MUTATION:
++		config = talloc_get_type_abort(extension->config, KfViewConfig);
++		if (debug_enabled())
++			fprintf(stderr, "kf_view pre-host-mutation path=%s\n",
++				(const char *) data1);
++		if (relative_to_root(config->shared->upper_root,
++			config->shared->upper_root_length, (const char *) data1) != NULL)
++		{
++			int status = ensure_mutation_lock(config);
++			if (status < 0)
++				return status;
++			config->pending_rebuild_indexes = true;
++			return 0;
++		}
++		if (relative_for_path(config->shared, (const char *) data1) != NULL)
++			return -EROFS;
++		return 0;
++	case SYSCALL_ENTER_START:
++		config = talloc_get_type_abort(extension->config, KfViewConfig);
++		{
++			int status = reconcile_deferred_open(config);
++			status = finish_mutation(config, status);
++			if (status < 0)
++				return status;
++		}
++		config->pending_whiteout_active = false;
++		config->pending_upper_active = false;
++		config->pending_remove_whiteout_active = false;
++		config->pending_rebuild_indexes = false;
++		return 0;
++	case SYSCALL_ENTER_END:
++		config = talloc_get_type_abort(extension->config, KfViewConfig);
++		if (data1 < 0)
++			return finish_mutation(config, (int) data1);
++		{
++			int status = handle_mutation_enter(TRACEE(extension), config);
++			return status < 0 ? finish_mutation(config, status) : status;
++		}
++	case SYSCALL_CHAINED_EXIT:
++		config = talloc_get_type_abort(extension->config, KfViewConfig);
++		return handle_getdents_exit(TRACEE(extension), config);
++	case SYSCALL_EXIT_END: {
++		word_t result = peek_reg(TRACEE(extension), CURRENT, SYSARG_RESULT);
++		Sysnum sysnum = get_sysnum(TRACEE(extension), ORIGINAL);
++		int status = 0;
++		config = talloc_get_type_abort(extension->config, KfViewConfig);
++		if (sysnum == PR_getdents || sysnum == PR_getdents64)
++			return handle_getdents_exit(TRACEE(extension), config);
++		if (sysnum == PR_close && (long) result == 0)
++			remove_directory_state(config, (int) peek_reg(TRACEE(extension),
++				ORIGINAL, SYSARG_1));
++		if (sysnum == PR_lseek && (long) result == 0 &&
++			peek_reg(TRACEE(extension), ORIGINAL, SYSARG_2) == 0 &&
++			peek_reg(TRACEE(extension), ORIGINAL, SYSARG_3) == SEEK_SET)
++			reset_directory_state(config, (int) peek_reg(TRACEE(extension),
++				ORIGINAL, SYSARG_1));
++		if (sysnum == PR__llseek && (long) result == 0 &&
++			peek_reg(TRACEE(extension), ORIGINAL, SYSARG_2) == 0 &&
++			peek_reg(TRACEE(extension), ORIGINAL, SYSARG_3) == 0 &&
++			peek_reg(TRACEE(extension), ORIGINAL, SYSARG_5) == SEEK_SET)
++			reset_directory_state(config, (int) peek_reg(TRACEE(extension),
++				ORIGINAL, SYSARG_1));
++		if (debug_enabled() &&
++			(config->pending_upper_active || config->pending_whiteout_active))
++			fprintf(stderr, "kf_view exit result=%ld pending_upper=%d pending_whiteout=%d pending_remove=%d pending_rebuild=%d\n",
++				(long) result, config->pending_upper_active,
++				config->pending_whiteout_active,
++				config->pending_remove_whiteout_active,
++				config->pending_rebuild_indexes);
++		if (config->pending_upper_active) {
++			config->pending_upper_active = false;
++			if ((long) result >= 0) {
++				status = index_add(config->shared,
++					&config->shared->upper_index, config->pending_upper);
++				config->shared->upper_empty =
++					config->shared->upper_index.count == 0;
++			}
++		}
++		if (config->pending_whiteout_active) {
++			config->pending_whiteout_active = false;
++			if (status == 0 && result == 0) {
++				index_remove(&config->shared->upper_index,
++					config->pending_whiteout);
++				config->shared->upper_empty =
++					config->shared->upper_index.count == 0;
++				if (config->pending_whiteout_needed) {
++					status = create_whiteout(config->shared,
++						config->pending_whiteout);
++				}
++			}
++		}
++		if (config->pending_remove_whiteout_active) {
++			config->pending_remove_whiteout_active = false;
++			if (status == 0 && (long) result >= 0) {
++				status = remove_whiteout(config->shared,
++					config->pending_remove_whiteout);
++			}
++		}
++		if (config->pending_rebuild_indexes) {
++			config->pending_rebuild_indexes = false;
++			if (status == 0 && (long) result >= 0) {
++				status = rebuild_indexes(config->shared);
++				if (debug_enabled())
++					fprintf(stderr, "kf_view rebuilt indexes upper=%zu whiteout=%zu status=%d\n",
++						config->shared->upper_index.count,
++						config->shared->whiteout_index.count, status);
++			}
++		}
++		return finish_mutation(config, status);
++	}
++	default:
++		return 0;
++	}
++}

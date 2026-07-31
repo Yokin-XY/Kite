@@ -1,10 +1,9 @@
 package com.kite.app.dropzone
 
 import android.content.Context
-import android.os.Environment
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.recipe.KiteRecipe
-import com.kite.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.storage.KiteManagedStorage
 import org.json.JSONObject
 import java.io.File
 import java.text.Normalizer
@@ -16,7 +15,7 @@ data class DropZoneStatus(
     val rootPath: String = "",
     val recipesPath: String = "",
     val message: String,
-    val canRequestAccess: Boolean = true
+    val canRequestAccess: Boolean = false
 )
 
 data class DropZoneScanResult(
@@ -34,7 +33,7 @@ class KiteDropZoneManager(
         return runCatching {
             val root = rootDir()
             val cards = cardsDir()
-            listOf(root, cards, importedDir(), logsDir(), legacyRecipesDir()).forEach { dir ->
+            listOf(root, cards, importedDir(), logsDir()).forEach { dir ->
                 if (!dir.exists() && !dir.mkdirs()) {
                     error("mkdir_failed:${dir.absolutePath}")
                 }
@@ -48,7 +47,7 @@ class KiteDropZoneManager(
                 available = true,
                 rootPath = root.absolutePath,
                 recipesPath = cards.absolutePath,
-                message = "共享卡片目录：${cards.absolutePath}"
+                message = "卡片注册存储已就绪"
             )
         }.getOrElse { error ->
             val rootPath = runCatching { rootDir().absolutePath }.getOrDefault("")
@@ -57,7 +56,7 @@ class KiteDropZoneManager(
                 path = rootPath,
                 reason = error.message.orEmpty()
             )
-            unavailable("Kite 共享区不可用，请检查存储权限", rootPath = rootPath)
+            unavailable("Kite 卡片注册存储不可用", rootPath = rootPath)
         }
     }
 
@@ -78,7 +77,7 @@ class KiteDropZoneManager(
         var skipped = 0
         var invalid = 0
 
-        legacyRecipeCandidates().forEach { candidate ->
+        importCandidates().forEach { candidate ->
             diagnostics.logDropZoneEvent("dropzone_recipe_found", path = candidate.absolutePath)
             val result = importCandidate(candidate)
             when (result) {
@@ -102,9 +101,9 @@ class KiteDropZoneManager(
         val message = when {
             imported > 0 && invalid > 0 -> "已加入 $imported 个卡片，跳过 $invalid 个无效文件；当前 $sharedCount 个"
             imported > 0 -> "已加入 $imported 个卡片；当前 $sharedCount 个"
-            invalid > 0 -> "已刷新共享卡片目录，跳过 $invalid 个无效文件；当前 $sharedCount 个"
-            skipped > 0 -> "已刷新共享卡片目录；当前 $sharedCount 个"
-            else -> "已刷新共享卡片目录；当前 $sharedCount 个"
+            invalid > 0 -> "已刷新卡片登记，跳过 $invalid 个无效文件；当前 $sharedCount 个"
+            skipped > 0 -> "已刷新卡片登记；当前 $sharedCount 个"
+            else -> "已刷新卡片登记；当前 $sharedCount 个"
         }
         return DropZoneScanResult(imported, skipped, invalid, message)
     }
@@ -182,8 +181,8 @@ class KiteDropZoneManager(
         return null
     }
 
-    private fun legacyRecipeCandidates(): List<File> {
-        val root = legacyRecipesDir()
+    private fun importCandidates(): List<File> {
+        val root = importedDir()
         if (!root.exists()) return emptyList()
         val directJson = root.listFiles { file ->
             file.isFile && file.extension.equals("json", ignoreCase = true)
@@ -216,19 +215,15 @@ class KiteDropZoneManager(
         return (directJson.toList() + packJson).distinctBy { it.absolutePath }
     }
 
-    private fun rootDir(): File =
-        ExternalExchangeManager.ensureExchangeDir(context)
+    private fun rootDir(): File = KiteManagedStorage.registryRootDir(context)
 
     private fun cardsDir(): File =
-        ExternalExchangeManager.ensureCardsDir(context)
-
-    private fun legacyRecipesDir(): File =
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Kite/recipes")
+        KiteManagedStorage.homeCardsDir(context)
 
     private fun importedDir(): File =
-        ExternalExchangeManager.ensureImportsDir(context)
+        KiteManagedStorage.cardImportsDir(context)
 
-    private fun logsDir(): File = File(rootDir(), "logs")
+    private fun logsDir(): File = KiteManagedStorage.cardLogsDir(context)
 
     private fun unavailable(
         message: String,

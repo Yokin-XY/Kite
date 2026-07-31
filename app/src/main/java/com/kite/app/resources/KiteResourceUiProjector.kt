@@ -17,12 +17,15 @@ object KiteResourceUiProjector {
         uninstalling: Boolean,
         failed: Boolean,
         failedOperation: String,
+        currentOperation: String = "",
         idleStateLabel: String,
         openRunStatus: CardRunStatus? = null,
         extraBusy: Boolean = false
     ): KiteResourceUiProjection {
         val labels = when {
             preparing -> "准备中" to "准备中"
+            installing && currentOperation == KiteResourceInstallRecipes.OP_UPDATE -> "更新中" to "更新中"
+            installing && currentOperation == KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装中" to "重新安装中"
             installing -> "获取中" to "获取中"
             uninstalling -> "卸载中" to "卸载中"
             failed && failedOperation == KiteResourceInstallStore.OP_UNINSTALL -> "卸载失败" to "继续卸载"

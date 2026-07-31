@@ -4,49 +4,21 @@
     {
       "id": "ai-community",
       "title": "独立工具",
-      "items": [
-        "kite.opencode",
-        "kite.openclaw",
-        "kite.reasonix",
-        "kite.hermes.core"
-      ],
       "style": "shelf"
     },
     {
       "id": "ai-vendor",
       "title": "厂商工具",
-      "items": [
-        "kite.codex.cli",
-        "kite.vscode.x11",
-        "kite.claude.code",
-        "kite.kimi.code",
-        "kite.qwen.code",
-        "kite.google.antigravity",
-        "kite.zai.coding.helper",
-        "kite.mimo.code"
-      ],
       "style": "shelf"
     },
     {
       "id": "foundation",
       "title": "基础环境",
-      "items": [
-        "kite.nodejs",
-        "kite.python",
-        "kite.git",
-        "kite.uv",
-        "kite.curl"
-      ],
       "style": "list"
     },
     {
       "id": "more",
       "title": "更多资源",
-      "items": [
-        "kite.pcmanfm.x11",
-        "kite.hermes.webui",
-        "kite.cc-switch.web"
-      ],
       "style": "list"
     }
   ],
@@ -62,19 +34,6 @@
         {
           "id": "angel-cli",
           "title": "Angel CLI",
-          "items": [
-            "kite.opencode",
-            "kite.openclaw",
-            "kite.reasonix",
-            "kite.hermes.core",
-            "kite.codex.cli",
-            "kite.claude.code",
-            "kite.kimi.code",
-            "kite.qwen.code",
-            "kite.google.antigravity",
-            "kite.zai.coding.helper",
-            "kite.mimo.code"
-          ],
           "style": "list"
         }
       ]

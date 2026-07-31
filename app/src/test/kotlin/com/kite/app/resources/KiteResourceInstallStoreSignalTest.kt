@@ -90,4 +90,145 @@ class KiteResourceInstallStoreSignalTest {
         store.clear(installingId)
         store.clear(failedId)
     }
+
+    @Test
+    fun `版本查询状态不能覆盖已安装事实`() {
+        val store = KiteResourceInstallStore(context)
+        val resourceId = "test.resource.version.${System.nanoTime()}"
+        store.clear(resourceId)
+        store.markInstalled(resourceId, "1.0.0", "install-run", "done")
+
+        store.markUpdateChecking(resourceId)
+        assertTrue(store.registryEntry(resourceId)?.installed == true)
+        assertEquals(KiteResourceInstallStore.UPDATE_STATUS_CHECKING, store.registryEntry(resourceId)?.updateStatus)
+
+        store.markUpdateAvailable(resourceId, "1.0.0", "1.1.0")
+        val available = store.registryEntry(resourceId)
+        assertTrue(available?.installed == true)
+        assertEquals("1.0.0", available?.version)
+        assertEquals("1.1.0", available?.latestVersion)
+        assertEquals(KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE, available?.updateStatus)
+        assertTrue((available?.lastCheckedAt ?: 0L) > 0L)
+
+        store.markUpdateCheckFailed(resourceId, "network")
+        val failed = store.registryEntry(resourceId)
+        assertTrue(failed?.installed == true)
+        assertEquals(KiteResourceInstallStore.STATUS_INSTALLED, failed?.status)
+        assertEquals(KiteResourceInstallStore.UPDATE_STATUS_FAILED, failed?.updateStatus)
+
+        store.markInstalling(resourceId, operation = KiteResourceInstallRecipes.OP_UPDATE)
+        assertTrue(store.registryEntry(resourceId)?.installing == true)
+        store.markMaintenanceFailed(resourceId, KiteResourceInstallRecipes.OP_UPDATE, "download")
+        val updateFailed = store.registryEntry(resourceId)
+        assertTrue(updateFailed?.installed == true)
+        assertEquals(KiteResourceInstallStore.STATUS_INSTALLED, updateFailed?.status)
+        assertEquals(KiteResourceInstallRecipes.OP_UPDATE, updateFailed?.operation)
+        assertEquals("1.0.0", updateFailed?.version)
+
+        store.clear(resourceId)
+    }
+
+    @Test
+    fun `资源事实与安装计划按环境隔离且切换只投影目标环境`() {
+        val suffix = System.nanoTime()
+        val resourceId = "test.resource.environment.$suffix"
+        val defaultEnvironment = KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID
+        val secondEnvironment = "profile-$suffix"
+        val store = KiteResourceInstallStore(context, defaultEnvironment)
+
+        store.clear(resourceId, defaultEnvironment)
+        store.clear(resourceId, secondEnvironment)
+        store.clearPlan(defaultEnvironment)
+        store.clearPlan(secondEnvironment)
+        store.markInstalled(resourceId, "1.0.0", "default-run", "default", defaultEnvironment)
+        store.beginPlan(resourceId, listOf(resourceId), defaultEnvironment)
+
+        store.activateEnvironment(secondEnvironment)
+        assertEquals(secondEnvironment, store.currentEnvironmentId())
+        assertFalse(store.isInstalled(resourceId))
+        assertTrue(store.planSnapshot().resourceIds.isEmpty())
+        assertEquals(secondEnvironment, store.signals.value.environmentId)
+
+        store.markFailed(
+            resourceId,
+            KiteResourceInstallStore.OP_INSTALL,
+            "profile-run",
+            "profile failure"
+        )
+        store.beginPlan(resourceId, listOf(resourceId))
+        assertTrue(store.isFailed(resourceId, secondEnvironment))
+        assertTrue(store.isInstalled(resourceId, defaultEnvironment))
+        assertEquals("1.0.0", store.registryEntry(resourceId, defaultEnvironment)?.version)
+        assertEquals(listOf(resourceId), store.planSnapshot(secondEnvironment).resourceIds)
+        assertEquals(listOf(resourceId), store.planSnapshot(defaultEnvironment).resourceIds)
+
+        store.activateEnvironment(defaultEnvironment)
+        assertTrue(store.isInstalled(resourceId))
+        assertFalse(store.isFailed(resourceId))
+        assertEquals(defaultEnvironment, store.signals.value.environmentId)
+
+        store.clear(resourceId, defaultEnvironment)
+        store.clear(resourceId, secondEnvironment)
+        store.clearPlan(defaultEnvironment)
+        store.clearPlan(secondEnvironment)
+    }
+
+    @Test
+    fun `缺失安装事实必须批量失效且只发出一次共享信号`() {
+        val store = KiteResourceInstallStore(context)
+        val suffix = System.nanoTime()
+        val first = "test.resource.missing.first.$suffix"
+        val second = "test.resource.missing.second.$suffix"
+        store.clear(first)
+        store.clear(second)
+        store.markInstalled(first, "1.0.0", "first-run", "done")
+        store.markInstalled(second, "2.0.0", "second-run", "done")
+        store.saveInstalledSnapshot(first, "First", "{}", "1.0.0", "{\"id\":\"$first\"}")
+        store.saveInstalledSnapshot(second, "Second", "{}", "2.0.0", "{\"id\":\"$second\"}")
+        val previousRevision = store.signals.value.revision
+
+        store.invalidateMissingInstallations(listOf(first, second))
+
+        assertFalse(store.isInstalled(first))
+        assertFalse(store.isInstalled(second))
+        assertEquals(null, store.installedSnapshotManifestJson(first))
+        assertEquals(null, store.installedSnapshotManifestJson(second))
+        assertEquals(previousRevision + 1, store.signals.value.revision)
+        assertEquals(setOf(first, second), store.signals.value.affectedResourceIds.toSet())
+        assertEquals("invalidateMissingInstallations", store.signals.value.reason)
+    }
+
+    @Test
+    fun `启动时清理没有执行队列承接的孤儿准备状态`() {
+        val environmentId = "orphan-preparing-${System.nanoTime()}"
+        val orphaned = "test.resource.orphaned.${System.nanoTime()}"
+        val registry = KiteResourceRegistry(context)
+        registry.clear(orphaned, environmentId)
+        registry.clearPlan(environmentId)
+        registry.markPreparing(orphaned, environmentId)
+
+        val store = KiteResourceInstallStore(context, environmentId)
+
+        assertFalse(store.isPreparing(orphaned, environmentId))
+        assertEquals("reconcileOrphanedPreparingState", store.signals.value.reason)
+        assertTrue(orphaned in store.signals.value.affectedResourceIds)
+    }
+
+    @Test
+    fun `启动时保留仍由执行队列承接的准备状态`() {
+        val environmentId = "planned-preparing-${System.nanoTime()}"
+        val planned = "test.resource.planned.${System.nanoTime()}"
+        val registry = KiteResourceRegistry(context)
+        registry.clear(planned, environmentId)
+        registry.clearPlan(environmentId)
+        registry.markPreparing(planned, environmentId)
+        registry.beginPlan(planned, listOf(planned), environmentId)
+
+        val store = KiteResourceInstallStore(context, environmentId)
+
+        assertTrue(store.isPreparing(planned, environmentId))
+        assertEquals(listOf(planned), store.planSnapshot(environmentId).resourceIds)
+        store.clear(planned, environmentId)
+        store.clearPlan(environmentId)
+    }
 }

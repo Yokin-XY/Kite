@@ -11,10 +11,15 @@
       "fallbackText": "Git"
     }
   },
+  "management": {
+    "mode": "system_component",
+    "managedCommands": ["git"]
+  },
   "display": {
     "sections": [
-      "more"
+      "foundation"
     ],
+    "order": 150,
     "category": "系统工具",
     "accent": "orange",
     "sizeLabel": "内置底座",

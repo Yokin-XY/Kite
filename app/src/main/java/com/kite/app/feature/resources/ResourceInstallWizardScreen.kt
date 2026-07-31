@@ -17,6 +17,7 @@ import com.kite.app.R
 import com.kite.app.action.KiteInstallPlanActionIntent
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceStepTone
+import com.kite.app.run.CardRunSurface
 
 /** CardRun 内安装向导的真实视图所有者，只消费 ResourceFeatureUiState。 */
 internal class ResourceInstallWizardScreen(
@@ -28,6 +29,7 @@ internal class ResourceInstallWizardScreen(
         (ResourceInstallWizardPlanActionResult) -> Unit,
     ) -> Unit,
     private val onUninstallFailedResource: (String) -> Unit,
+    private val onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     private val onExit: () -> Unit,
     private val onRetry: () -> Unit,
     private val onLiveTickRequired: () -> Unit
@@ -209,6 +211,7 @@ internal class ResourceInstallWizardScreen(
     private fun bindRow(binding: RowBinding, row: ResourceInstallWizardRowViewState, now: Long) {
         val tone = toneColor(row.projection.tone)
         val statusLabel = localizedStatusLabel(row)
+        val runRequest = row.runRequest(CardRunSurface.Report)
         binding.root.apply {
             contentDescription = root.context.getString(
                 R.string.resource_wizard_row_description,
@@ -220,9 +223,11 @@ internal class ResourceInstallWizardScreen(
                 if (row.isActive) factory.tokens.primarySoft else factory.tokens.border,
                 factory.dp(16).toFloat()
             )
-            setOnClickListener(null)
-            isClickable = false
-            isFocusable = false
+            setOnClickListener(runRequest?.let { request ->
+                View.OnClickListener { onOpenRun(request) }
+            })
+            isClickable = runRequest != null
+            isFocusable = runRequest != null
         }
         binding.number.apply {
             text = (row.index + 1).toString()

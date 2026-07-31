@@ -12,6 +12,8 @@ import com.kite.app.application.settings.AppLanguagePreference
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapSnapshot
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapStage
 import com.kite.app.application.runtimebootstrap.RuntimeRootfsPhase
+import com.kite.app.application.runtimemanagement.ProotEnvironmentOperation
+import com.kite.app.application.runtimemanagement.ProotViewInspectionSnapshot
 import com.kite.app.browser.BrowserRuntimeMode
 import com.kite.app.theme.KiteTheme
 import com.kite.app.ui.UiTextRole
@@ -31,6 +33,7 @@ internal class SettingsCategoryScreen(
     private val destination: SettingsCategoryDestination,
     initialState: SettingsUiState,
     initialRuntimeSnapshot: RuntimeBootstrapSnapshot = RuntimeBootstrapSnapshot(),
+    initialProotViewSnapshot: ProotViewInspectionSnapshot = ProotViewInspectionSnapshot(),
     appInfo: SettingsAppInfo = SettingsAppInfo(),
     initialTerminalFontSize: Int = 35,
     initialTerminalTheme: TerminalThemeMode = TerminalThemeMode.SYSTEM,
@@ -50,6 +53,11 @@ internal class SettingsCategoryScreen(
     onOpenDropZone: () -> Unit = {},
     onOpenAboutPage: (SettingsAboutPage) -> Unit = {},
     onOpenExternal: (String) -> Unit = {},
+    private val onRunViewAcceptance: () -> Unit = {},
+    private val onRunViewVerification: () -> Unit = {},
+    private val onCreateViewEnvironment: () -> Unit = {},
+    private val onSwitchViewEnvironment: (String) -> Unit = {},
+    private val onRunEnvironmentIsolationVerification: () -> Unit = {},
 ) {
     private val spec = SettingsCatalog.categories.single { it.destination == destination }
     private val themeEnvironment = KiteTheme.resolve(
@@ -73,6 +81,20 @@ internal class SettingsCategoryScreen(
     private var automationBinding: SettingsViewFactory.SwitchBinding? = null
     private var allFilesBinding: SettingsViewFactory.NavigationBinding? = null
     private var runtimeStatusBinding: SettingsViewFactory.InformationBinding? = null
+    private var prootViewSnapshot: ProotViewInspectionSnapshot = initialProotViewSnapshot
+    private var prootViewAcceptanceBinding: SettingsViewFactory.InformationBinding? = null
+    private var prootViewAcceptanceActionBinding: SettingsViewFactory.NavigationBinding? = null
+    private var prootViewEnabledBinding: SettingsViewFactory.InformationBinding? = null
+    private var prootViewCurrentBinding: SettingsViewFactory.InformationBinding? = null
+    private var prootEnvironmentBinding: SettingsViewFactory.InformationBinding? = null
+    private var prootEnvironmentCreateBinding: SettingsViewFactory.NavigationBinding? = null
+    private var prootEnvironmentSwitchBinding: SettingsViewFactory.NavigationBinding? = null
+    private var prootEnvironmentIsolationBinding: SettingsViewFactory.InformationBinding? = null
+    private var prootEnvironmentIsolationActionBinding: SettingsViewFactory.NavigationBinding? = null
+    private var prootViewStorageBinding: SettingsViewFactory.InformationBinding? = null
+    private var prootViewScopeBinding: SettingsViewFactory.InformationBinding? = null
+    private var prootViewVerificationBinding: SettingsViewFactory.InformationBinding? = null
+    private var prootViewVerificationActionBinding: SettingsViewFactory.NavigationBinding? = null
 
     val root: View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -206,6 +228,67 @@ internal class SettingsCategoryScreen(
                             context.getString(R.string.settings_experimental_warning_summary),
                         ))
                     }
+                    SettingsCategoryDestination.Engineering -> {
+                        prootViewAcceptanceBinding = factory.informationBinding(
+                            context.getString(R.string.settings_engineering_acceptance_title),
+                            prootViewAcceptanceSummary(),
+                        ).also { addView(it.root) }
+                        prootViewAcceptanceActionBinding = factory.navigationRow(
+                            context.getString(R.string.settings_engineering_acceptance_action_title),
+                            context.getString(R.string.settings_engineering_acceptance_action_summary),
+                            onRunViewAcceptance,
+                        ).also { addView(it.root) }
+                        prootViewEnabledBinding = factory.informationBinding(
+                            context.getString(R.string.settings_engineering_view_enabled_title),
+                            prootViewEnabledSummary(),
+                        ).also { addView(it.root) }
+                        prootViewCurrentBinding = factory.informationBinding(
+                            context.getString(R.string.settings_engineering_view_current_title),
+                            prootViewCurrentSummary(),
+                        ).also { addView(it.root) }
+                        prootEnvironmentBinding = factory.informationBinding(
+                            context.getString(R.string.settings_engineering_environments_title),
+                            prootEnvironmentSummary(),
+                        ).also { addView(it.root) }
+                        prootEnvironmentCreateBinding = factory.navigationRow(
+                            context.getString(R.string.settings_engineering_environment_create_title),
+                            context.getString(R.string.settings_engineering_environment_create_summary),
+                            onCreateViewEnvironment,
+                        ).also { addView(it.root) }
+                        prootEnvironmentSwitchBinding = factory.navigationRow(
+                            context.getString(R.string.settings_engineering_environment_switch_title),
+                            prootEnvironmentSwitchSummary(),
+                        ) {
+                            showEnvironmentChoice()
+                        }.also { addView(it.root) }
+                        prootEnvironmentIsolationBinding = factory.informationBinding(
+                            context.getString(R.string.settings_engineering_environment_isolation_title),
+                            prootEnvironmentIsolationSummary(),
+                        ).also { addView(it.root) }
+                        prootEnvironmentIsolationActionBinding = factory.navigationRow(
+                            context.getString(R.string.settings_engineering_environment_isolation_action_title),
+                            context.getString(R.string.settings_engineering_environment_isolation_action_summary),
+                            onRunEnvironmentIsolationVerification,
+                        ).also { addView(it.root) }
+                        prootViewStorageBinding = factory.informationBinding(
+                            context.getString(R.string.settings_engineering_view_storage_title),
+                            prootViewStorageSummary(),
+                        ).also { addView(it.root) }
+                        prootViewScopeBinding = factory.informationBinding(
+                            context.getString(R.string.settings_engineering_view_scope_title),
+                            prootViewScopeSummary(),
+                        ).also { addView(it.root) }
+                        prootViewVerificationBinding = factory.informationBinding(
+                            context.getString(R.string.settings_engineering_view_verification_title),
+                            prootViewVerificationSummary(),
+                        ).also { addView(it.root) }
+                        prootViewVerificationActionBinding = factory.navigationRow(
+                            context.getString(R.string.settings_engineering_run_verification_title),
+                            context.getString(R.string.settings_engineering_run_verification_summary),
+                            onRunViewVerification,
+                        ).also { addView(it.root) }
+                        updateEngineeringActionState()
+                    }
                     SettingsCategoryDestination.HelpAndAbout -> {
                         addHelpAboutContent(
                             appInfo = appInfo,
@@ -230,6 +313,239 @@ internal class SettingsCategoryScreen(
             state.browserRuntimeMode == BrowserRuntimeMode.AutomationBrowser,
             automationSummary(state.browserRuntimeMode),
         )
+    }
+
+    fun renderProotViewSnapshot(snapshot: ProotViewInspectionSnapshot) {
+        prootViewSnapshot = snapshot
+        prootViewAcceptanceBinding?.subtitle?.text = prootViewAcceptanceSummary()
+        prootViewEnabledBinding?.subtitle?.text = prootViewEnabledSummary()
+        prootViewCurrentBinding?.subtitle?.text = prootViewCurrentSummary()
+        prootEnvironmentBinding?.subtitle?.text = prootEnvironmentSummary()
+        prootEnvironmentSwitchBinding?.bind(prootEnvironmentSwitchSummary())
+        prootEnvironmentIsolationBinding?.subtitle?.text = prootEnvironmentIsolationSummary()
+        prootViewStorageBinding?.subtitle?.text = prootViewStorageSummary()
+        prootViewScopeBinding?.subtitle?.text = prootViewScopeSummary()
+        prootViewVerificationBinding?.subtitle?.text = prootViewVerificationSummary()
+        updateEngineeringActionState()
+    }
+
+    private fun prootViewEnabledSummary(): String {
+        val s = prootViewSnapshot
+        return buildString {
+            append("View 启用：").append(if (s.enabled) "是" else "否")
+            append('\n').append("Base 封存：").append(if (s.baseSealed) "是" else "否")
+            append('\n').append("运行时能力：").append(if (s.runtimeSupported) "完整" else "缺失")
+            if (!s.available) append('\n').append("（容器未就绪或 View 不可用）")
+        }
+    }
+
+    private fun prootViewCurrentSummary(): String {
+        val s = prootViewSnapshot
+        return buildString {
+            append("环境：").append(s.environmentId.ifBlank { "-" })
+            append('\n').append("Space：").append(s.spaceId.ifBlank { "-" })
+            append('\n').append("工作区：").append(s.workspacePath.ifBlank { "-" })
+            append('\n').append("current viewId：").append(s.currentViewId.ifBlank { "-" })
+            append('\n').append("父层深度：").append(s.parentDepth)
+        }
+    }
+
+    private fun prootEnvironmentSummary(): String {
+        val snapshot = prootViewSnapshot
+        if (snapshot.environments.isEmpty()) {
+            return context.getString(R.string.settings_engineering_environments_empty)
+        }
+        return buildString {
+            when (snapshot.environmentOperation) {
+                ProotEnvironmentOperation.Creating -> append(
+                    context.getString(R.string.settings_engineering_environment_creating),
+                )
+                ProotEnvironmentOperation.Switching -> append(
+                    context.getString(
+                        R.string.settings_engineering_environment_switching,
+                        snapshot.environmentOperationTarget.ifBlank { "-" },
+                    ),
+                )
+                ProotEnvironmentOperation.VerifyingAcceptance -> append(
+                    context.getString(R.string.settings_engineering_acceptance_running),
+                )
+                ProotEnvironmentOperation.VerifyingIsolation -> append(
+                    context.getString(R.string.settings_engineering_environment_isolation_running),
+                )
+                ProotEnvironmentOperation.Idle -> when {
+                    snapshot.environmentOperationError.isNotBlank() -> append(
+                        context.getString(
+                            R.string.settings_engineering_environment_operation_failed,
+                            snapshot.environmentOperationError,
+                        ),
+                    )
+                    snapshot.environmentOperationTarget.isNotBlank() -> append(
+                        context.getString(
+                            R.string.settings_engineering_environment_operation_completed,
+                            snapshot.environmentOperationTarget,
+                        ),
+                    )
+                    else -> append(
+                        context.getString(
+                            R.string.settings_engineering_environment_count,
+                            snapshot.environments.size,
+                        ),
+                    )
+                }
+            }
+            snapshot.environments.forEach { environment ->
+                append('\n').append(
+                    context.getString(
+                        if (environment.active) R.string.settings_engineering_environment_active_row
+                        else R.string.settings_engineering_environment_inactive_row,
+                        environment.environmentId,
+                        environment.viewId,
+                    ),
+                )
+                append('\n').append(environment.workspacePath)
+            }
+        }
+    }
+
+    private fun prootEnvironmentSwitchSummary(): String = context.getString(
+        R.string.settings_engineering_environment_switch_summary,
+        prootViewSnapshot.environmentId.ifBlank { "-" },
+        prootViewSnapshot.environments.size,
+    )
+
+    private fun prootEnvironmentIsolationSummary(): String {
+        val result = prootViewSnapshot.lastIsolationVerification
+        return if (result == null) {
+            context.getString(R.string.settings_engineering_environment_isolation_not_run)
+        } else buildString {
+            append(context.getString(
+                if (result.success) R.string.settings_engineering_environment_isolation_success
+                else R.string.settings_engineering_environment_isolation_failed,
+            ))
+            append('\n').append(context.getString(
+                R.string.settings_engineering_environment_isolation_pair,
+                result.firstEnvironmentId.ifBlank { "-" },
+                result.secondEnvironmentId.ifBlank { "-" },
+            ))
+            append('\n').append(context.getString(
+                R.string.settings_engineering_environment_isolation_evidence,
+                passLabel(result.rootIsolated),
+                passLabel(result.workspaceIsolated),
+                passLabel(result.exchangeShared),
+                passLabel(result.baseUntouched),
+                passLabel(result.originalEnvironmentRestored),
+            ))
+            if (result.message.isNotBlank()) append('\n').append(result.message)
+        }
+    }
+
+    private fun passLabel(success: Boolean): String = context.getString(
+        if (success) R.string.settings_engineering_check_pass else R.string.settings_engineering_check_fail,
+    )
+
+    private fun prootViewAcceptanceSummary(): String {
+        if (prootViewSnapshot.environmentOperation == ProotEnvironmentOperation.VerifyingAcceptance) {
+            return context.getString(R.string.settings_engineering_acceptance_running)
+        }
+        val result = prootViewSnapshot.lastAcceptance
+            ?: return context.getString(R.string.settings_engineering_acceptance_not_run)
+        val passed = result.checks.count { it.passed }
+        return buildString {
+            append(context.getString(
+                if (result.success) R.string.settings_engineering_acceptance_success
+                else R.string.settings_engineering_acceptance_failed,
+                passed,
+                result.checks.size,
+                result.totalMs,
+            ))
+            if (result.environmentId.isNotBlank()) {
+                append('\n').append("环境：").append(result.environmentId)
+                append(" · View：").append(result.viewId.ifBlank { "-" })
+            }
+            result.checks.forEach { check ->
+                append('\n')
+                append(if (check.passed) "✓ " else "✕ ")
+                append(check.title)
+                if (check.detail.isNotBlank()) append("：").append(check.detail)
+            }
+        }
+    }
+
+    private fun showEnvironmentChoice() {
+        val environments = prootViewSnapshot.environments
+        if (environments.size < 2 || prootViewSnapshot.environmentOperation != ProotEnvironmentOperation.Idle) {
+            return
+        }
+        factory.showTextChoiceDialog(
+            title = context.getString(R.string.settings_engineering_environment_switch_dialog_title),
+            summary = context.getString(R.string.settings_engineering_environment_switch_dialog_summary),
+            options = environments.map { environment ->
+                context.getString(
+                    if (environment.active) R.string.settings_engineering_environment_choice_active
+                    else R.string.settings_engineering_environment_choice,
+                    environment.environmentId,
+                )
+            },
+            selectedIndex = environments.indexOfFirst { it.active }.coerceAtLeast(0),
+        ) { index -> onSwitchViewEnvironment(environments[index].environmentId) }
+    }
+
+    private fun updateEngineeringActionState() {
+        val busy = prootViewSnapshot.environmentOperation != ProotEnvironmentOperation.Idle
+        setActionEnabled(prootViewAcceptanceActionBinding?.root, !busy && prootViewSnapshot.available)
+        setActionEnabled(prootEnvironmentCreateBinding?.root, !busy && prootViewSnapshot.available)
+        setActionEnabled(
+            prootEnvironmentSwitchBinding?.root,
+            !busy && prootViewSnapshot.available && prootViewSnapshot.environments.size > 1,
+        )
+        setActionEnabled(prootViewVerificationActionBinding?.root, !busy && prootViewSnapshot.available)
+        setActionEnabled(
+            prootEnvironmentIsolationActionBinding?.root,
+            !busy && prootViewSnapshot.available,
+        )
+    }
+
+    private fun setActionEnabled(view: View?, enabled: Boolean) {
+        view ?: return
+        view.isEnabled = enabled
+        view.alpha = if (enabled) 1f else 0.55f
+    }
+
+    private fun prootViewStorageSummary(): String {
+        val s = prootViewSnapshot
+        val allocated = s.upperAllocatedBytes
+        return buildString {
+            append("Upper 逻辑字节：").append(s.upperLogicalBytes)
+            append('\n').append("Upper 分配字节：").append(allocated ?: "未知")
+        }
+    }
+
+    private fun prootViewScopeSummary(): String {
+        val scopes = prootViewSnapshot.scopeRootPaths
+        return if (scopes.isEmpty()) "受管范围：-" else buildString {
+            append("受管范围：")
+            scopes.forEachIndexed { index, scope ->
+                if (index > 0) append('\n')
+                append("• ").append(scope)
+            }
+        }
+    }
+
+    private fun prootViewVerificationSummary(): String {
+        val result = prootViewSnapshot.lastVerification
+        return if (result == null) {
+            "最近验证：尚未运行"
+        } else {
+            buildString {
+                append("最近验证：").append(if (result.success) "成功" else "失败")
+                append('\n').append("runCount：").append(result.runCount)
+                append('\n').append("viewId：").append(result.viewId.ifBlank { "-" })
+                if (result.fileSha256.isNotBlank()) {
+                    append('\n').append("SHA-256：").append(result.fileSha256)
+                }
+                if (result.message.isNotBlank()) append('\n').append(result.message)
+            }
+        }
     }
 
     fun renderRuntimeSnapshot(snapshot: RuntimeBootstrapSnapshot) {

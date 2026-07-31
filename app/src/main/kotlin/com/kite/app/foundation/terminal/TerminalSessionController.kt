@@ -18,12 +18,15 @@ import com.kite.app.foundation.runtime.HostProcessTerminator
 import com.kite.app.foundation.runtime.ProcessExitSemantics
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.ProotTelemetryStore
+import com.kite.app.foundation.runtime.ProotViewBinding
 import com.kite.app.foundation.runtime.RuntimeFrameCoordinator
+import com.kite.app.foundation.runtime.RuntimeLaunchTrace
 import com.kite.app.foundation.runtime.RuntimeStorageGuard
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.contracts.ManagedTerminalRecord
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
 import com.kite.app.foundation.contracts.SpaceRecord
+import com.kite.app.foundation.contracts.ContainerLaunchConfig
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.contracts.isArchivedRecord
 import com.kite.app.foundation.contracts.isLiveProcessStatus
@@ -41,6 +44,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.ArrayDeque
 import java.util.LinkedHashMap
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -96,6 +100,7 @@ class TerminalSessionController(
     private val sessionHolders = LinkedHashMap<String, SessionHolder>()
     private val embeddedSessionRecords = LinkedHashMap<String, ManagedTerminalRecord>()
     private val launchEnvOverrides = LinkedHashMap<String, Map<String, String>>()
+    private val launchConfigOverrides = ConcurrentHashMap<String, ContainerLaunchConfig>()
     private val attachingSessionIds = LinkedHashSet<String>()
     private val transcriptMirrorRequested = AtomicLong(0L)
     private val transcriptMirrorFlushed = AtomicLong(0L)
@@ -263,7 +268,7 @@ class TerminalSessionController(
                     } else {
                         WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
                     }
-                    KFWorkspaceManager.ensureDefaultSpace(appContext)
+                    KFWorkspaceManager.ensureActiveSpace(appContext)
                 }
                 KFApplication.markLaunchStage(LOG_TAG, "默认空间与容器已就绪")
 
@@ -419,6 +424,11 @@ class TerminalSessionController(
     fun setLaunchEnvironmentOverrides(sessionId: String, overrides: Map<String, String>) {
         if (sessionId.isBlank() || overrides.isEmpty()) return
         launchEnvOverrides[sessionId] = overrides
+    }
+
+    fun setLaunchConfigOverride(sessionId: String, config: ContainerLaunchConfig) {
+        if (sessionId.isBlank()) return
+        launchConfigOverrides[sessionId] = config
     }
 
     /**
@@ -620,7 +630,7 @@ class TerminalSessionController(
     private suspend fun ensureSpaceRecord(): SpaceRecord {
         return withContext(Dispatchers.IO) {
             KFWorkspaceManager.getCurrentSpace(appContext)
-                ?: KFWorkspaceManager.ensureDefaultSpace(appContext)
+                ?: KFWorkspaceManager.ensureActiveSpace(appContext)
         }
     }
 
@@ -974,14 +984,22 @@ class TerminalSessionController(
             "== terminal attach sessionId=${record.id} previousStatus=${record.status.name} policy=$recoveryPolicy ==\n"
         )
         WorkSurfaceRuntimeBridge.markContainerStarting(appContext)
-        val config = withContext(Dispatchers.IO) {
+        val launchOverrides = launchEnvOverrides.remove(record.id).orEmpty()
+        val directLaunchConfig = launchConfigOverrides.remove(record.id)
+        RuntimeLaunchTrace.markTerminal(record.id, RuntimeLaunchTrace.TERMINAL_CONFIG_STARTED)
+        val config = directLaunchConfig ?: withContext(Dispatchers.IO) {
             // 终端会话属于工作面动作；真正的容器 launch 配置统一经 bridge 向建房层索取。
-            WorkSurfaceRuntimeBridge.buildTerminalLaunchConfig(appContext)
+            WorkSurfaceRuntimeBridge.buildTerminalLaunchConfig(
+                context = appContext,
+                requestedProotViewId = launchOverrides[ProotViewBinding.ENV_VIEW_ID],
+                requestedProotEnvironmentId = launchOverrides[ProotViewBinding.ENV_ENVIRONMENT_ID]
+            )
         }
+        RuntimeLaunchTrace.markTerminal(record.id, RuntimeLaunchTrace.TERMINAL_CONFIG_READY)
         val browserEnv = withContext(Dispatchers.IO) {
             BrowserEnvironmentProviderHost.get().defaultEnvironment(appContext, "terminal_page")
         }
-        val sessionEnvOverrides = browserEnv + launchEnvOverrides.remove(record.id).orEmpty()
+        val sessionEnvOverrides = browserEnv + launchOverrides
 
         val session = TerminalSession(
             config.executablePath,
@@ -993,6 +1011,7 @@ class TerminalSessionController(
         ).apply {
             mSessionName = record.title
         }
+        RuntimeLaunchTrace.markTerminal(record.id, RuntimeLaunchTrace.TERMINAL_PROCESS_CREATED)
 
         val holder = SessionHolder(
             record = record,
@@ -1464,6 +1483,7 @@ class TerminalSessionController(
             }
             embeddedSessionRecords.remove(targetSessionId)
             launchEnvOverrides.remove(targetSessionId)
+            launchConfigOverrides.remove(targetSessionId)
             uiCallbacks.onManagedSessionsChanged()
             uiCallbacks.showSessionNote("${targetRecord.title} 已结束，记录已保留。")
         } catch (error: Exception) {
@@ -1703,6 +1723,11 @@ class TerminalSessionController(
 
     override fun onTextChanged(changedSession: TerminalSession) {
         val holder = sessionHolders.values.firstOrNull { it.session == changedSession } ?: return
+        RuntimeLaunchTrace.markTerminal(
+            holder.record.id,
+            RuntimeLaunchTrace.TERMINAL_FIRST_OUTPUT,
+            firstOnly = true,
+        )
         auditTerminalOutputCapability(
             actionName = "terminalOutput",
             holder = holder,

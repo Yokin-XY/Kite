@@ -9,6 +9,7 @@ import com.kite.app.browser.BrowserHandoffPolicy
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunBrowserRouter
+import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
 import com.kite.app.run.CardRunSurface
@@ -17,7 +18,8 @@ import java.util.UUID
 /** Ubuntu 浏览器请求的路由/Store 适配器，不创建 WebView 或 Activity。 */
 internal class AndroidBrowserOpenGateway(
     private val diagnostics: KiteDiagnostics,
-    private val recipeResolver: (String) -> KiteRecipe?
+    private val recipeResolver: (String) -> KiteRecipe?,
+    private val environmentIdProvider: () -> String = { CardRunState.DEFAULT_ENVIRONMENT_ID }
 ) : BrowserOpenGateway {
     override fun open(request: BrowserOpenRequest): BrowserOpenResult {
         val bridgeRequest = KiteBrowserOpenRequest(
@@ -47,7 +49,11 @@ internal class AndroidBrowserOpenGateway(
         val recipeId = "temp_web_${UUID.randomUUID().toString().replace("-", "")}"
         val temporary = CardRunSpecialRecipes.temporaryBrowser(recipeId, request.url)
         val temporaryInstanceId = "run_${recipeId}_${UUID.randomUUID().toString().replace("-", "")}"
-        CardRunStore.start(temporary, temporaryInstanceId)
+        CardRunStore.start(
+            temporary,
+            temporaryInstanceId,
+            environmentId = environmentIdProvider()
+        )
         updateRun(temporary, temporaryInstanceId, request.url)
         diagnostics.logRecipeAction(
             temporary,
@@ -67,7 +73,8 @@ internal class AndroidBrowserOpenGateway(
     }
 
     private fun updateRun(recipe: KiteRecipe, instanceId: String, url: String) {
-        val existing = CardRunStore.get(instanceId)
+        val environmentId = environmentIdProvider()
+        val existing = CardRunStore.get(instanceId, environmentId)
         val status = when (existing?.status) {
             CardRunStatus.Starting,
             CardRunStatus.Running,
@@ -84,7 +91,8 @@ internal class AndroidBrowserOpenGateway(
             terminalSessionId = existing?.terminalSessionId,
             pid = existing?.pid,
             lastMeaningfulOutput = "Ubuntu 请求打开网页",
-            nextActionUrl = url
+            nextActionUrl = url,
+            environmentId = environmentId
         )
     }
 }

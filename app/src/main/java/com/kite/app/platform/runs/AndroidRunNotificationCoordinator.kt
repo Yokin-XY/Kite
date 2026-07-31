@@ -67,7 +67,8 @@ internal class AndroidRunNotificationCoordinator(
     private val closeRun: (KiteRecipe, CardRunState) -> RunCommandResult,
     private val restartRun: (KiteRecipe, CardRunState) -> RunCommandResult,
     private val closeRunTask: (String) -> Unit,
-    private val viewBinder: RunNotificationViewBinder
+    private val viewBinder: RunNotificationViewBinder,
+    private val environmentIdProvider: () -> String = { CardRunState.DEFAULT_ENVIRONMENT_ID }
 ) {
     private data class PendingPresentation(val generation: Long, val detail: String)
 
@@ -208,7 +209,11 @@ internal class AndroidRunNotificationCoordinator(
 
     private fun resolveExact(instanceId: String, generation: Long): Pair<KiteRecipe, CardRunState>? {
         val state = CardRunStore.get(instanceId)
-            ?.takeIf { it.ownerKind == CardRunState.OWNER_KIND_CARD && it.createdAt == generation }
+            ?.takeIf {
+                it.ownerKind == CardRunState.OWNER_KIND_CARD &&
+                    it.createdAt == generation &&
+                    it.environmentId == environmentIdProvider()
+            }
             ?: return null
         val recipe = recipeResolver(state.recipeId) ?: return null
         return recipe to state
@@ -239,7 +244,7 @@ internal class AndroidRunNotificationCoordinator(
     }
 
     private fun publishIgnored(instanceId: String, reason: String) {
-        val latest = CardRunStore.get(instanceId) ?: return
+        val latest = CardRunStore.get(instanceId, environmentIdProvider()) ?: return
         val recipe = recipeResolver(latest.recipeId) ?: return
         RunNotificationProjector.project(recipe, latest)?.let { model ->
             publish(model.copy(detail = ignoredMessage(reason)))
@@ -248,7 +253,10 @@ internal class AndroidRunNotificationCoordinator(
 
     private fun render(runs: List<CardRunState>) {
         val available = AndroidRunNotificationAccess.isAvailable(appContext)
-        val cardRuns = runs.filter { it.ownerKind == CardRunState.OWNER_KIND_CARD }
+        val cardRuns = runs.filter {
+            it.ownerKind == CardRunState.OWNER_KIND_CARD &&
+                it.environmentId == environmentIdProvider()
+        }
         dismissalStore.prune(cardRuns.mapTo(linkedSetOf(), CardRunState::instanceId))
         val models = cardRuns.mapNotNull { state ->
             val recipe = recipeResolver(state.recipeId) ?: return@mapNotNull null

@@ -27,6 +27,10 @@ internal interface ResourceActionGateway {
     suspend fun open(resourceId: String): List<ResourceActionEffect>
     suspend fun stop(resourceId: String): List<ResourceActionEffect>
     suspend fun uninstall(resourceId: String): List<ResourceActionEffect>
+    suspend fun checkUpdate(resourceId: String): List<ResourceActionEffect>
+    suspend fun checkUpdates(resourceIds: List<String>): List<ResourceActionEffect>
+    suspend fun update(resourceId: String): List<ResourceActionEffect>
+    suspend fun reinstall(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelInstall(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelFailedInstall(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelPlan(targetResourceId: String, planResourceIds: List<String>): List<ResourceActionEffect>
@@ -48,6 +52,9 @@ internal class ResourceActionWorkflowCoordinator(
             KiteResourceActionIntent.Open -> gateway.open(request.resourceId)
             KiteResourceActionIntent.Stop -> gateway.stop(request.resourceId)
             KiteResourceActionIntent.Uninstall -> gateway.uninstall(request.resourceId)
+            KiteResourceActionIntent.CheckUpdate -> gateway.checkUpdate(request.resourceId)
+            KiteResourceActionIntent.Update -> gateway.update(request.resourceId)
+            KiteResourceActionIntent.Reinstall -> gateway.reinstall(request.resourceId)
             KiteResourceActionIntent.CancelInstall -> gateway.cancelInstall(request.resourceId)
             KiteResourceActionIntent.CancelFailedInstall -> gateway.cancelFailedInstall(request.resourceId)
             KiteResourceActionIntent.BusyStatus -> listOf(ResourceActionEffect.Message("资源正在卸载"))
@@ -64,4 +71,7 @@ internal class ResourceActionWorkflowCoordinator(
 
     suspend fun installDirect(resourceId: String): List<ResourceActionEffect> =
         gateway.installDirect(resourceId)
+
+    suspend fun checkUpdates(resourceIds: List<String>): List<ResourceActionEffect> =
+        gateway.checkUpdates(resourceIds)
 }

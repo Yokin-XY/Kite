@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -35,5 +36,15 @@ class KiteAppGraphTest {
         assertSame(graph.recipeLoader, graph.createRecipeLoader())
         assertSame(graph.createRecipeLoader(), graph.createRecipeLoader())
         assertNotSame(graph.createDropZoneManager(), graph.createDropZoneManager())
+    }
+
+    @Test
+    fun `默认组合根登记所有内置 Agent 配置适配器`() {
+        val graph = KiteAppGraph.from(ApplicationProvider.getApplicationContext())
+
+        assertEquals(
+            setOf("opencode", "codex", "claude-code", "hermes", "openclaw", "kimi-code", "mimo-code"),
+            graph.agentConfigAdapterRegistry.adapterIds()
+        )
     }
 }

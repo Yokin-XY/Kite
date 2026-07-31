@@ -18,7 +18,10 @@ class ResourceActionWorkflowCoordinatorTest {
         }
 
         assertEquals(
-            listOf("install", "reopen", "open", "stop", "uninstall", "cancel", "cancel_failed"),
+            listOf(
+                "install", "reopen", "open", "stop", "uninstall",
+                "check_update", "update", "reinstall", "cancel", "cancel_failed"
+            ),
             gateway.calls
         )
     }
@@ -31,8 +34,12 @@ class ResourceActionWorkflowCoordinatorTest {
         coordinator.cancelPlan("target", listOf("base", "target"))
         coordinator.createHomeCard("target")
         coordinator.installDirect("target")
+        coordinator.checkUpdates(listOf("base", "target"))
 
-        assertEquals(listOf("cancel_plan:target:base,target", "home:target", "direct:target"), gateway.calls)
+        assertEquals(
+            listOf("cancel_plan:target:base,target", "home:target", "direct:target", "check_updates:base,target"),
+            gateway.calls
+        )
     }
 
     private class FakeGateway : ResourceActionGateway {
@@ -43,6 +50,11 @@ class ResourceActionWorkflowCoordinatorTest {
         override suspend fun open(resourceId: String) = record("open")
         override suspend fun stop(resourceId: String) = record("stop")
         override suspend fun uninstall(resourceId: String) = record("uninstall")
+        override suspend fun checkUpdate(resourceId: String) = record("check_update")
+        override suspend fun checkUpdates(resourceIds: List<String>) =
+            record("check_updates:${resourceIds.joinToString(",")}")
+        override suspend fun update(resourceId: String) = record("update")
+        override suspend fun reinstall(resourceId: String) = record("reinstall")
         override suspend fun cancelInstall(resourceId: String) = record("cancel")
         override suspend fun cancelFailedInstall(resourceId: String) = record("cancel_failed")
         override suspend fun cancelPlan(targetResourceId: String, planResourceIds: List<String>) =

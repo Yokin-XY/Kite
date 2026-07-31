@@ -55,6 +55,45 @@ class CardRunLaunchResolverTest {
     }
 
     @Test
+    fun `首页与资源页的 Agent 打开意图进入相同运行窗口语义`() {
+        val agent = recipe("agent-open")
+        val resolver = CardRunLaunchResolver(
+            catalogRecipes = { listOf(agent) },
+            registeredRecipe = { null },
+            specialRecipe = { null }
+        )
+
+        val home = resolver.resolve(
+            CardRunLaunchRequest(agent.id, agent.id, true, "card")
+        ) as CardRunLaunchResolution.Resolved
+        val resource = resolver.resolve(
+            CardRunLaunchRequest(agent.id, agent.id, true, "resource")
+        ) as CardRunLaunchResolution.Resolved
+
+        assertEquals(home.target.recipe, resource.target.recipe)
+        assertEquals(home.target.instanceId, resource.target.instanceId)
+        assertEquals(home.target.autoStart, resource.target.autoStart)
+        assertEquals(home.target.missingStatePolicy, resource.target.missingStatePolicy)
+    }
+
+    @Test
+    fun `special resource recipe refreshes a stale catalog snapshot with the same identity`() {
+        val stale = recipe("resource-kite.demo-open").copy(description = "stale")
+        val current = stale.copy(description = "current")
+        val resolver = CardRunLaunchResolver(
+            catalogRecipes = { listOf(stale) },
+            registeredRecipe = { stale },
+            specialRecipe = { current }
+        )
+
+        val resolved = resolver.resolve(
+            CardRunLaunchRequest(stale.id, null, true, "card")
+        ) as CardRunLaunchResolution.Resolved
+
+        assertEquals("current", resolved.target.recipe.description)
+    }
+
+    @Test
     fun `temporary web and install wizard may create state without auto start`() {
         val resolver = CardRunLaunchResolver(
             catalogRecipes = { emptyList() },

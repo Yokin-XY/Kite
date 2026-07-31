@@ -24,6 +24,7 @@ internal sealed interface ResourceFeatureRequest {
         val targetResourceId: String,
         val resourceIds: List<String>
     ) : ResourceFeatureRequest
+    data class CheckInstalledUpdates(val resourceIds: List<String>) : ResourceFeatureRequest
     data class SubmitAction(val request: KiteResourceActionRequest) : ResourceFeatureRequest
 }
 
@@ -62,6 +63,12 @@ internal object ResourceFeatureResultContract {
                     .distinct()
             )
         }
+        KIND_CHECK_INSTALLED_UPDATES -> ResourceFeatureRequest.CheckInstalledUpdates(
+            bundle.getStringArrayList(KEY_RESOURCE_IDS).orEmpty()
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .distinct()
+        )
         KIND_ACTION -> parseAction(bundle)
         else -> null
     }
@@ -86,6 +93,10 @@ internal object ResourceFeatureResultContract {
             is ResourceFeatureRequest.OpenInstallPlan -> putResource(KIND_OPEN_PLAN, request.targetResourceId)
             is ResourceFeatureRequest.CancelInstallPlan -> {
                 putResource(KIND_CANCEL_PLAN, request.targetResourceId)
+                putStringArrayList(KEY_RESOURCE_IDS, ArrayList(request.resourceIds))
+            }
+            is ResourceFeatureRequest.CheckInstalledUpdates -> {
+                putString(KEY_KIND, KIND_CHECK_INSTALLED_UPDATES)
                 putStringArrayList(KEY_RESOURCE_IDS, ArrayList(request.resourceIds))
             }
             is ResourceFeatureRequest.SubmitAction -> {
@@ -135,5 +146,6 @@ internal object ResourceFeatureResultContract {
     private const val KIND_RUN_HISTORY = "run_history"
     private const val KIND_OPEN_PLAN = "open_plan"
     private const val KIND_CANCEL_PLAN = "cancel_plan"
+    private const val KIND_CHECK_INSTALLED_UPDATES = "check_installed_updates"
     private const val KIND_ACTION = "action"
 }

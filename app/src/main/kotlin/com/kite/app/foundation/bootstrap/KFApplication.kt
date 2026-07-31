@@ -12,12 +12,15 @@ import android.os.SystemClock
 import com.kite.app.R
 import com.kite.app.application.resources.ResourceFeatureDependenciesOwner
 import com.kite.app.application.resources.ResourceFeatureGateway
+import com.kite.app.agent.registration.AgentRegistryDependenciesOwner
+import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.application.recipes.RecipeFeatureDependenciesOwner
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runtimemanagement.RuntimeManagementDependenciesOwner
 import com.kite.app.application.runtimemanagement.RuntimeManagementCoordinator
 import com.kite.app.application.runtimemanagement.RuntimeManagementGateway
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapDependenciesOwner
+import com.kite.app.application.runtimemanagement.ProotViewInspectionDependenciesOwner
 import com.kite.app.application.runtimebootstrap.RuntimeBootstrapGateway
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.runtime.AndroidShellBridgeWorker
@@ -45,7 +48,8 @@ import kotlinx.coroutines.launch
 
 class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFeatureDependenciesOwner,
     RuntimeManagementDependenciesOwner, WebWorkbenchDependenciesOwner, SettingsFeatureDependenciesOwner,
-    RuntimeBootstrapDependenciesOwner, RunHistoryDependenciesOwner, ThemeEnvironmentDependenciesOwner {
+    RuntimeBootstrapDependenciesOwner, RunHistoryDependenciesOwner, ThemeEnvironmentDependenciesOwner,
+    AgentRegistryDependenciesOwner, ProotViewInspectionDependenciesOwner {
 
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -55,6 +59,9 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
     override val recipeFeatureGateway: RecipeFeatureGateway
         get() = KiteAppGraph.from(this).recipeFeatureGateway
 
+    override val agentRegistry: KiteAgentRegistry
+        get() = KiteAppGraph.from(this).agentRegistry
+
     override val runtimeManagementGateway: RuntimeManagementGateway
         get() = KiteAppGraph.from(this).runtimeManagementGateway
 
@@ -63,6 +70,9 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
 
     override val runtimeBootstrapGateway: RuntimeBootstrapGateway
         get() = KiteAppGraph.from(this).runtimeBootstrapGateway
+
+    override val prootViewInspectionGateway: com.kite.app.application.runtimemanagement.ProotViewInspectionGateway
+        get() = KiteAppGraph.from(this).prootViewInspectionGateway
 
     override val webWorkbenchDiagnostics
         get() = KiteAppGraph.from(this).diagnostics

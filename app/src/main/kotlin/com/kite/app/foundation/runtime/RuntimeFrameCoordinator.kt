@@ -241,6 +241,6 @@ object RuntimeFrameCoordinator {
     private fun resolveCurrentSpace(appContext: Context): SpaceRecord {
         return KFWorkspaceManager.getCurrentSpace(appContext)
             ?: KFWorkspaceManager.listSpaces(appContext).firstOrNull()
-            ?: KFWorkspaceManager.ensureDefaultSpace(appContext)
+            ?: KFWorkspaceManager.ensureActiveSpace(appContext)
     }
 }

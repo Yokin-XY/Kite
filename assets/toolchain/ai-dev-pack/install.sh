@@ -14,6 +14,14 @@ PYTHON_BUILD_TAG="20260623"
 ADB_VERSION="rootfs"
 LIBATOMIC_VERSION="1.2.0"
 
+PROBE_LIBRARY="$PACK_DIR/lib/command-probe.sh"
+if [ ! -r "$PROBE_LIBRARY" ]; then
+  printf 'FAIL\tprobe-library\tmissing bundled probe library: %s\n' "$PROBE_LIBRARY"
+  exit 2
+fi
+# shellcheck source=lib/command-probe.sh
+source "$PROBE_LIBRARY"
+
 PASS=0
 WARN=0
 FAIL=0
@@ -292,19 +300,20 @@ version_line() {
   if has "$command_name"; then
     local path
     path="$(command -v "$command_name")"
-    local probe_output
+    local probe_argument="--version"
     if [ "$command_name" = "adb" ]; then
-      probe_output="$(timeout -k 2s 5s "$command_name" version 2>&1)"
-    else
-      probe_output="$(timeout -k 2s 5s "$command_name" --version 2>&1)"
+      probe_argument="version"
     fi
-    local probe_code="$?"
+    kf_probe_command "$command_name" "$probe_argument"
+    local probe_output="$KF_PROBE_OUTPUT"
+    local probe_code="$KF_PROBE_EXIT_CODE"
+    local probe_reason="$KF_PROBE_REASON"
     local version
     version="$(printf '%s\n' "$probe_output" | head -n 1)"
     if [ "$probe_code" -eq 0 ] && [ -n "$version" ]; then
-      emit PASS "inventory:$name" "path=$path | version=$version | source=$source"
+      emit PASS "inventory:$name" "path=$path | version=$version | probe=$probe_reason | source=$source"
     else
-      emit FAIL "inventory:$name" "path=$path | version=${version:-no output} | exitCode=$probe_code | source=$source"
+      emit FAIL "inventory:$name" "path=$path | version=${version:-no output} | exitCode=$probe_code | probe=$probe_reason | source=$source"
     fi
   else
     emit WARN "inventory:$name" "missing | source=$source"

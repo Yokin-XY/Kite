@@ -11,14 +11,20 @@
       "fallbackText": "Cl"
     }
   },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["openclaw"]
+  },
   "display": {
     "sections": [
-      "featured"
+      "ai-community"
     ],
+    "tabs": ["angel-cli"],
+    "order": 20,
     "category": "AI",
     "accent": "mint",
     "sizeLabel": "网络包",
-    "longDescription": "OpenClaw 是偏网关和多通道协作的 AI Agent 工具。Kite 把它先作为 Node.js 上层资源接入：获取阶段安装 openclaw npm 包并暴露 openclaw 命令，首次配置由终端里的 onboard 流程完成。",
+    "longDescription": "OpenClaw 是偏网关和多通道协作的 AI Agent 工具。Kite 把它作为 Node.js 上层资源接入：获取阶段安装 openclaw npm 包并暴露 openclaw 命令，打开后直接进入本地对话界面；模型与网络搜索服务由 OpenClaw 自己管理。",
     "recommendations": [
       {
         "resourceId": "kite.nodejs",
@@ -31,10 +37,6 @@
       {
         "resourceId": "kite.codex.cli",
         "label": "终端 Agent"
-      },
-      {
-        "resourceId": "kite.hermes.webui",
-        "label": "同类 Agent"
       }
     ],
     "tags": [
@@ -67,6 +69,59 @@
     "installRoot": "/workspace/.kf/software/kite.openclaw",
     "binRoot": "/workspace/.kf/bin"
   },
+  "agents": [
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "description": "连接 OpenClaw Gateway 的 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "openclaw"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "openclaw",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["openclaw", "acp"],
+        "environmentFiles": {
+          "OPENCLAW_GATEWAY_TOKEN": "/workspace/.kf/secrets/kite.openclaw-gateway-token"
+        },
+        "runtimeDependencies": [
+          {
+            "id": "openclaw-gateway",
+            "title": "OpenClaw 网关",
+            "argv": [
+              "openclaw",
+              "gateway",
+              "run",
+              "--bind",
+              "loopback",
+              "--port",
+              "18789",
+              "--auth",
+              "token"
+            ],
+            "workdir": "/workspace",
+            "environment": {
+              "OPENCLAW_DISABLE_BONJOUR": "1"
+            },
+            "environmentFiles": {
+              "OPENCLAW_GATEWAY_TOKEN": "/workspace/.kf/secrets/kite.openclaw-gateway-token"
+            },
+            "bindAddress": "127.0.0.1",
+            "bindPort": 18789,
+            "healthHttpPath": "/readyz",
+            "startupTimeoutMs": 30000,
+            "healthCheckStartupDelayMs": 0,
+            "restartPolicy": "on_failure",
+            "retentionClass": "resident"
+          }
+        ],
+        "title": "OpenClaw"
+      }
+    }
+  ],
   "actions": {
     "install": [
       {
@@ -78,6 +133,11 @@
             "packages": [
               "openclaw@latest"
             ]
+          },
+          {
+            "id": "prepare-openclaw-gateway-token",
+            "type": "shell",
+            "cmd": "umask 077 && mkdir -p /workspace/.kf/secrets && token_file=/workspace/.kf/secrets/kite.openclaw-gateway-token && if [ ! -s \"$token_file\" ]; then { cat /proc/sys/kernel/random/uuid; cat /proc/sys/kernel/random/uuid; } | tr -d '\\n-' > \"$token_file\"; fi && chmod 600 \"$token_file\" && test -s \"$token_file\""
           }
         ],
         "managedCommands": [
@@ -99,7 +159,7 @@
         "base": {
           "id": "",
           "name": "OpenClaw",
-          "description": "在终端里启动 OpenClaw onboard",
+          "description": "启动 OpenClaw Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -110,8 +170,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"OpenClaw 首次启动建议完成 onboard。\"\nopenclaw onboard --install-daemon\n"
+            "type": "agent",
+            "agentId": "openclaw",
+            "workdir": "/workspace"
           }
         ]
       }
@@ -136,7 +197,7 @@
         "base": {
           "id": "",
           "name": "OpenClaw",
-          "description": "在终端里启动 OpenClaw onboard",
+          "description": "启动 OpenClaw Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -147,8 +208,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"OpenClaw 首次启动建议完成 onboard。\"\nopenclaw onboard --install-daemon\n"
+            "type": "agent",
+            "agentId": "openclaw",
+            "workdir": "/workspace"
           }
         ]
       }

@@ -3,6 +3,7 @@ package com.kite.app.platform.runs
 import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.application.runs.RecipeStopRequest
+import com.kite.app.application.runs.RunExecutionEnvironmentProvider
 import com.kite.app.application.runs.StopExecutionOutcome
 import com.kite.app.application.runs.StopExecutionResult
 import com.kite.app.bridge.KiteBridgeClient
@@ -15,6 +16,7 @@ import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import java.io.File
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -109,6 +111,66 @@ class AndroidRecipeExecutorTest {
     }
 
     @Test
+    fun `SH 报告确认正常退出后清除运行绑定`() {
+        assertTrue(
+            AndroidRecipeExecutor.shellProcessExited(
+                status = com.kite.app.recipe.KiteRunReport.STATUS_FINISHED,
+                ok = true
+            )
+        )
+    }
+
+    @Test
+    fun `SH 仍在运行或结果不完整时保留运行绑定`() {
+        assertEquals(
+            false,
+            AndroidRecipeExecutor.shellProcessExited(
+                status = com.kite.app.recipe.KiteRunReport.STATUS_RUNNING,
+                ok = true
+            )
+        )
+        assertEquals(
+            false,
+            AndroidRecipeExecutor.shellProcessExited(
+                status = com.kite.app.recipe.KiteRunReport.STATUS_FINISHED,
+                ok = null
+            )
+        )
+    }
+
+    @Test
+    fun `显式 View 运行不再校准被写锁保护的活动工作区`() {
+        assertEquals(
+            false,
+            AndroidRecipeExecutor.requiresActiveWorkspacePreparation(
+                mapOf("KF_PROOT_VIEW_ID" to "resource-update-view")
+            )
+        )
+        assertTrue(AndroidRecipeExecutor.requiresActiveWorkspacePreparation(emptyMap()))
+    }
+
+    @Test
+    fun `终端步骤消费 RuntimeReadyLease 而不重复刷新运行时快照`() {
+        val source = listOf(
+            File("src/main/java/com/kite/app/platform/runs/AndroidRecipeExecutor.kt"),
+            File("app/src/main/java/com/kite/app/platform/runs/AndroidRecipeExecutor.kt"),
+        ).first(File::exists).readText()
+        val terminalBody = source.substringAfter("private fun executeTerminal(")
+            .substringBefore("private fun executeX11(")
+
+        assertTrue(source.contains("onReady: (RuntimeReadyLease) -> Unit"))
+        assertTrue(source.contains("TerminalRuntimeHost.refreshRuntimeSnapshot(appContext, preparedSpace = space)"))
+        assertTrue(terminalBody.contains("readyLease.spaceFor(request) ?: KFWorkspaceManager.ensureActiveSpace(appContext)"))
+        assertTrue(terminalBody.contains("HostNodeLaunchPlanner.plan("))
+        assertTrue(terminalBody.contains("HostNodeExecutionRequest.CommandLine(command)"))
+        assertEquals(false, terminalBody.contains("HostNodeChildProcessContract.from("))
+        assertTrue(terminalBody.contains("TerminalRuntimeHost.setLaunchConfigOverride"))
+        assertTrue(terminalBody.contains("prepared.hostConfig == null && command.isNotBlank()"))
+        assertEquals(false, terminalBody.contains("TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)"))
+        assertEquals(false, terminalBody.contains("TerminalSessionStore.refresh"))
+    }
+
+    @Test
     fun `尚未获得进程绑定的启动任务可以确定取消`() {
         val recipe = recipe(KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "sleep 10"))
         var result: StopExecutionResult? = null
@@ -122,6 +184,35 @@ class AndroidRecipeExecutorTest {
 
         assertEquals(StopExecutionOutcome.Confirmed, result?.outcome)
         assertEquals("终端已发送中断并关闭", result?.message)
+    }
+
+    @Test
+    fun `运行实例环境会进入所有 PRoot 步骤的统一环境`() {
+        val context = RuntimeEnvironment.getApplication()
+        val diagnostics = KiteDiagnostics(context)
+        val request = request(
+            KiteRecipeStep(id = "shell", type = KiteRecipe.STEP_SHELL, cmd = "true")
+        )
+        executor = AndroidRecipeExecutor(
+            context = context,
+            bridgeClient = KiteBridgeClient(diagnostics, context),
+            diagnostics = diagnostics,
+            executionEnvironmentProvider = RunExecutionEnvironmentProvider { execution ->
+                if (execution.instanceId == request.instanceId) {
+                    mapOf(
+                        "KF_PROOT_VIEW_ID" to "view-update",
+                        "KF_PROOT_VIEW_CONTROL_PATH" to "/private/view/control.conf"
+                    )
+                } else {
+                    emptyMap()
+                }
+            }
+        )
+
+        val environment = executor.browserEnvironment(request, "unit_test")
+
+        assertEquals("view-update", environment["KF_PROOT_VIEW_ID"])
+        assertEquals("/private/view/control.conf", environment["KF_PROOT_VIEW_CONTROL_PATH"])
     }
 
     private fun request(step: KiteRecipeStep): RecipeStepExecutionRequest {

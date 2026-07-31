@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name="com.kite.app.foundation.runtime.WarmProotRunnerBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.WARM_PROOT_RUNNER_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ProotAdmissionBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PROOT_ADMISSION_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.ProotAdmissionBenchmarkService"
+            android:exported="false" />
+    </application>
+</manifest>

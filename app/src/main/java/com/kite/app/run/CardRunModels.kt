@@ -41,7 +41,32 @@ enum class CardRunSurface(val label: String) {
     Terminal("终端"),
     Web("网页"),
     X11("X11"),
+    Agent("Agent 会话"),
     InstallWizard("安装向导")
+}
+
+enum class CardRunAgentConnectionStatus {
+    Preparing,
+    Ready,
+    WaitingPermission,
+    Disconnected,
+    Failed,
+    Stopped
+}
+
+/**
+ * CardRunStore 只保存可恢复的轻量 Agent 绑定。消息、工具过程和流式正文不属于这里。
+ */
+data class CardRunAgentBinding(
+    val providerId: String,
+    val sessionId: String? = null,
+    val status: CardRunAgentConnectionStatus,
+    val statusMessage: String? = null,
+    val updatedAt: Long = System.currentTimeMillis()
+) {
+    fun isActive(): Boolean = status == CardRunAgentConnectionStatus.Preparing ||
+        status == CardRunAgentConnectionStatus.Ready ||
+        status == CardRunAgentConnectionStatus.WaitingPermission
 }
 
 data class CardRunState(
@@ -66,14 +91,22 @@ data class CardRunState(
     val rootPid: String? = null,
     val processGroupId: String? = null,
     val systemSessionId: String? = null,
+    val runtimeLane: String? = null,
+    val runtimeFallbackReason: String? = null,
     val lastMeaningfulOutput: String? = null,
     val lastError: String? = null,
     val shellReportText: String? = null,
     val nextActionUrl: String? = null,
     val x11Display: String? = null,
     val x11SocketPath: String? = null,
+    /**
+     * 运行实例固定绑定的产品身份。它不等于 providerId，也不会随连接停止而清除。
+     */
+    val agentId: String? = null,
+    val agentBinding: CardRunAgentBinding? = null,
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val environmentId: String = DEFAULT_ENVIRONMENT_ID
 ) {
     val cardInstanceId: String get() = instanceId
 
@@ -91,7 +124,8 @@ data class CardRunState(
             !rootPid.isNullOrBlank() ||
             !processGroupId.isNullOrBlank() ||
             !terminalSessionId.isNullOrBlank() ||
-            !x11Display.isNullOrBlank()
+            !x11Display.isNullOrBlank() ||
+            agentBinding?.isActive() == true
 
     /**
      * 一次停止事务必须使用同一代实例的完整 owner 集合。
@@ -104,6 +138,7 @@ data class CardRunState(
     fun hasRuntimeOwnership(): Boolean = runtimeOwnerIdsForStop().isNotEmpty()
 
     fun recommendedSurface(): CardRunSurface = when {
+        agentBinding != null -> CardRunSurface.Agent
         !nextActionUrl.isNullOrBlank() -> CardRunSurface.Web
         !terminalSessionId.isNullOrBlank() -> CardRunSurface.Terminal
         !x11Display.isNullOrBlank() -> CardRunSurface.X11
@@ -125,6 +160,7 @@ data class CardRunState(
     }?.take(80)
 
     companion object {
+        const val DEFAULT_ENVIRONMENT_ID = "default"
         const val OWNER_KIND_CARD = "card"
         const val OWNER_KIND_RESOURCE = "resource"
         const val OWNER_KIND_INSTALL_WIZARD = "install_wizard"
@@ -132,6 +168,17 @@ data class CardRunState(
         const val OWNER_KIND_WEB = "web"
         const val OWNER_KIND_STEP_REPLAY = "step_replay"
         const val OWNER_KIND_X11 = "x11"
+
+        fun instanceIdForEnvironment(baseInstanceId: String, environmentId: String): String {
+            val environment = environmentId.trim().ifBlank { DEFAULT_ENVIRONMENT_ID }
+            return if (environment == DEFAULT_ENVIRONMENT_ID) {
+                baseInstanceId
+            } else if (baseInstanceId.endsWith("@environment:$environment")) {
+                baseInstanceId
+            } else {
+                "$baseInstanceId@environment:$environment"
+            }
+        }
 
         fun fromRecipeStatus(recipeId: String, status: String): CardRunState =
             CardRunState(
@@ -170,7 +217,8 @@ data class CardRunHistoryEntry(
     val summary: String = "",
     val error: String = "",
     val shellReportText: String = "",
-    val steps: List<CardRunHistoryStep> = emptyList()
+    val steps: List<CardRunHistoryStep> = emptyList(),
+    val environmentId: String = CardRunState.DEFAULT_ENVIRONMENT_ID
 ) {
     fun isClosed(): Boolean =
         endedAt != null ||

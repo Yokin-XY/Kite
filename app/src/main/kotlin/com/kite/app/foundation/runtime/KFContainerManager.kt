@@ -23,7 +23,10 @@ import java.nio.file.Paths
 import java.util.LinkedHashMap
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
 import kotlin.concurrent.thread
+import kotlin.concurrent.write
 
 /**
  * 建房层内核。
@@ -39,9 +42,12 @@ import kotlin.concurrent.thread
  * - 长驻容器只跟随 Android 给 Kite 分配的默认网络，不识别或复制 VPN 配置
  */
 object KFContainerManager {
+    private const val MAX_MANAGED_COMMAND_SYMLINK_DEPTH = 8
     private const val PROOT_TELEMETRY_MODE = "lifecycle_v2_active_registry_v1"
     private const val PROOT_TELEMETRY_FILE_NAME = "kf-proot-telemetry.jsonl"
     private const val PROOT_ACTIVE_REGISTRY_DIR_NAME = "kf-proot-active"
+    private const val NODE_COMPILE_CACHE_CONTAINER_PATH = "/workspace/.kf/cache/node-compile"
+    private const val NODE_COMPILE_CACHE_WORKSPACE_PATH = ".kf/cache/node-compile"
     private const val RUNTIME_SMOKE_TOKEN = "KITE_RUNTIME_READY"
     private const val RUNTIME_SMOKE_TIMEOUT_MS = 12_000L
     private const val CONTAINER_ROOTFS_READY_MARKER = ".kf-container-rootfs-ready"
@@ -84,9 +90,17 @@ object KFContainerManager {
     private data class BuildPreparation(
         val layout: AssetExtractor.RuntimeLayout,
         val container: ContainerRecord,
-        val exchangeDir: File,
+        val androidStorage: AndroidSharedStorageSnapshot,
         val shellPath: String,
-        val networkPlan: ContainerNetworkPlan
+        val networkPlan: ContainerNetworkPlan,
+        val viewBinding: ProotViewBinding?,
+        val environmentWorkspace: ProotEnvironmentWorkspacePlan,
+    )
+
+    private data class OrdinaryLaunchPreparationCandidate(
+        val layout: AssetExtractor.RuntimeLayout,
+        val container: ContainerRecord,
+        val identity: RuntimeLaunchPreparationIdentity,
     )
 
     private data class ContainerFilesystemView(
@@ -149,6 +163,12 @@ object KFContainerManager {
     private val _containerState = MutableStateFlow<ContainerRecord?>(null)
     val containerState: StateFlow<ContainerRecord?> = _containerState
     private val runtimeFilesRefreshedAt = LinkedHashMap<String, Long>()
+    private val launchLifecycleLock = ReentrantReadWriteLock()
+    private val ordinaryLaunchPreparationBootstrapLock = Any()
+    private val ordinaryLaunchPreparationCache = RuntimeLaunchPreparationCache<BuildPreparation>()
+
+    @Volatile
+    private var preparedDefaultContainerIdentity: RuntimeLaunchPreparationIdentity? = null
 
     private inline fun <T> traceStage(stage: String, block: () -> T): T {
         val startedAt = SystemClock.elapsedRealtime()
@@ -185,8 +205,18 @@ object KFContainerManager {
 
     @Synchronized
     fun ensureDefaultContainer(context: Context): ContainerRecord {
+        val appContext = context.applicationContext
+        resolveOrdinaryLaunchPreparationCandidate(appContext)?.let { candidate ->
+            if (preparedDefaultContainerIdentity == candidate.identity) {
+                Logger.i(
+                    "ContainerManager",
+                    "默认容器准备快照命中: id=${candidate.container.id}, createdAt=${candidate.container.createdAt}",
+                )
+                return candidate.container
+            }
+        }
         val layout = traceStage("ensureBaseImageReady(default-container)") {
-            ensureBaseImageReady(context)
+            ensureBaseImageReady(appContext)
         }
         val registry = traceStage("loadRegistry(default-container)") {
             loadRegistry(layout.registryFile)
@@ -206,7 +236,7 @@ object KFContainerManager {
         }
 
         traceStage("ensureContainerFilesystem(${container.id})") {
-            ensureContainerFilesystem(context, layout, container)
+            ensureContainerFilesystem(appContext, layout, container)
         }
 
         val updatedRegistry = registry
@@ -218,6 +248,7 @@ object KFContainerManager {
             saveRegistry(layout.registryFile, updatedRegistry)
         }
         _containerState.value = container
+        preparedDefaultContainerIdentity = buildRuntimeLaunchPreparationIdentity(layout, container)
         return container
     }
 
@@ -282,6 +313,19 @@ object KFContainerManager {
         }
     }
 
+    /**
+     * 返回 `/workspace` 当前对应的真实宿主目录，但不启动或准备 Ubuntu runtime。
+     * 文件提供器和目录选择器使用这个只读定位入口，避免为了浏览文件触发容器启动。
+     */
+    fun resolveWorkspaceDirectory(context: Context): File {
+        val appContext = context.applicationContext
+        return getSavedContainer(appContext)
+            ?.workspacePath
+            ?.takeIf(String::isNotBlank)
+            ?.let(::File)
+            ?: File(AssetExtractor.getRuntimeLayout(appContext).sharedDir, DEFAULT_CONTAINER_ID)
+    }
+
     fun isDefaultContainerReady(context: Context): Boolean {
         val layout = AssetExtractor.getRuntimeLayout(context.applicationContext)
         if (!AssetExtractor.isBaseImageReady(context.applicationContext, layout.profile)) return false
@@ -291,215 +335,250 @@ object KFContainerManager {
             File(saved.workspacePath).isDirectory
     }
 
-    @Synchronized
-    fun buildLaunchConfig(context: Context): ContainerLaunchConfig {
-        val prepared = prepareBuildContext(
-            context = context,
-            caller = "buildLaunchConfig",
-            refreshRuntimeFiles = true
-        )
+    fun buildLaunchConfig(
+        context: Context,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null
+    ): ContainerLaunchConfig {
+        return launchLifecycleLock.read {
+            val prepared = prepareBuildContext(
+                context = context,
+                caller = "buildLaunchConfig",
+                refreshRuntimeFiles = true,
+                requestedProotViewId = requestedProotViewId,
+                requestedProotEnvironmentId = requestedProotEnvironmentId
+            )
 
-        val args = buildContainerProotBaseArgv(
-            layout = prepared.layout,
-            container = prepared.container,
-            exchangeDir = prepared.exchangeDir,
-            workingDirectory = RuntimeBoundary.CONTAINER_ROOT_HOME,
-            networkPlan = prepared.networkPlan,
-            lane = ProotLaunchLane.INTERACTIVE,
-            purpose = "terminal_login_shell"
-        ).apply {
-            add("/bin/bash")
-            add("--login")
-        }.toTypedArray()
+            val args = buildContainerProotBaseArgv(
+                layout = prepared.layout,
+                container = prepared.container,
+                androidStorage = prepared.androidStorage,
+                workingDirectory = RuntimeBoundary.CONTAINER_ROOT_HOME,
+                networkPlan = prepared.networkPlan,
+                lane = ProotLaunchLane.INTERACTIVE,
+                purpose = "terminal_login_shell",
+                viewBinding = prepared.viewBinding,
+                environmentWorkspace = prepared.environmentWorkspace,
+            ).apply {
+                add("/bin/bash")
+                add("--login")
+            }.toTypedArray()
 
-        val env = buildContainerEnvironment(
-            context = context,
-            layout = prepared.layout,
-            container = prepared.container,
-            shellPath = prepared.shellPath
-        )
-            .map { (key, value) -> "$key=$value" }
-            .toTypedArray()
+            val env = buildContainerEnvironment(
+                context = context,
+                layout = prepared.layout,
+                container = prepared.container,
+                shellPath = prepared.shellPath,
+                viewBinding = prepared.viewBinding
+            )
+                .map { (key, value) -> "$key=$value" }
+                .toTypedArray()
 
-        return ContainerLaunchConfig(
-            container = prepared.container,
-            executablePath = prepared.layout.prootFile.absolutePath,
-            workingDirectory = prepared.container.workspacePath,
-            args = args,
-            env = env
-        )
+            ContainerLaunchConfig(
+                container = prepared.container,
+                executablePath = prepared.layout.prootFile.absolutePath,
+                workingDirectory = prepared.environmentWorkspace.workspaceDirectory.absolutePath,
+                args = args,
+                env = env
+            )
+        }
     }
 
-    @Synchronized
     fun buildContainerShellCommand(
         context: Context,
         workingDirectory: String = RuntimeBoundary.CONTAINER_WORKSPACE_PATH,
         payload: String,
-        loginShell: Boolean = true
+        loginShell: Boolean = true,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null
     ): Array<String> {
-        val prepared = prepareBuildContext(
-            context = context,
-            caller = "buildContainerShellCommand",
-            refreshRuntimeFiles = true
-        )
-        val safeWorkingDirectory = workingDirectory.trim()
-            .ifBlank { RuntimeBoundary.CONTAINER_WORKSPACE_PATH }
-        val wrappedPayload =
-            "cd '${shellQuote(safeWorkingDirectory)}' 2>/dev/null || cd ${RuntimeBoundary.CONTAINER_ROOT_HOME}; $payload"
+        return launchLifecycleLock.read {
+            val prepared = prepareBuildContext(
+                context = context,
+                caller = "buildContainerShellCommand",
+                refreshRuntimeFiles = true,
+                requestedProotViewId = requestedProotViewId,
+                requestedProotEnvironmentId = requestedProotEnvironmentId
+            )
+            val safeWorkingDirectory = workingDirectory.trim()
+                .ifBlank { RuntimeBoundary.CONTAINER_WORKSPACE_PATH }
+            val wrappedPayload =
+                "cd '${shellQuote(safeWorkingDirectory)}' 2>/dev/null || cd ${RuntimeBoundary.CONTAINER_ROOT_HOME}; $payload"
 
-        val innerArgv = if (loginShell) {
-            listOf("/bin/bash", "-lc", wrappedPayload)
-        } else {
-            listOf("/bin/sh", "-c", wrappedPayload)
-        }
-        val commandArgv = buildContainerProotBaseArgv(
-            layout = prepared.layout,
-            container = prepared.container,
-            exchangeDir = prepared.exchangeDir,
-            workingDirectory = safeWorkingDirectory,
-            networkPlan = prepared.networkPlan,
-            lane = ProotLaunchLane.EXEC,
-            purpose = "container_shell_command"
-        ).apply {
-            addAll(innerArgv)
-        }
+            val innerArgv = if (loginShell) {
+                listOf("/bin/bash", "-lc", wrappedPayload)
+            } else {
+                listOf("/bin/sh", "-c", wrappedPayload)
+            }
+            val commandArgv = buildContainerProotBaseArgv(
+                layout = prepared.layout,
+                container = prepared.container,
+                androidStorage = prepared.androidStorage,
+                workingDirectory = safeWorkingDirectory,
+                networkPlan = prepared.networkPlan,
+                lane = ProotLaunchLane.EXEC,
+                purpose = "container_shell_command",
+                viewBinding = prepared.viewBinding,
+                environmentWorkspace = prepared.environmentWorkspace,
+            ).apply {
+                addAll(innerArgv)
+            }
 
-        return arrayOf(
-            "/system/bin/sh",
-            "-c",
-            buildInlineShellEnvironment(
-                buildContainerEnvironment(
-                    context = context,
-                    layout = prepared.layout,
-                    container = prepared.container,
-                    shellPath = prepared.shellPath
-                )
-            ) + " " +
-                buildInlineCommandArgv(commandArgv)
-        )
+            arrayOf(
+                "/system/bin/sh",
+                "-c",
+                buildInlineShellEnvironment(
+                    buildContainerEnvironment(
+                        context = context,
+                        layout = prepared.layout,
+                        container = prepared.container,
+                        shellPath = prepared.shellPath,
+                        viewBinding = prepared.viewBinding
+                    )
+                ) + " " +
+                    buildInlineCommandArgv(commandArgv)
+            )
+        }
     }
 
-    @Synchronized
     fun ensureRuntimeOperational(context: Context) {
-        val config = buildContainerExecConfig(
-            context = context,
-            workingDirectory = RuntimeBoundary.CONTAINER_ROOT_HOME,
-            payload = "printf '$RUNTIME_SMOKE_TOKEN\n'",
-            loginShell = true
-        )
-        val process = ProcessBuilder(config.command)
-            .redirectErrorStream(true)
-            .apply { environment().putAll(config.env) }
-            .start()
-        val output = StringBuilder()
-        val reader = thread(start = true, isDaemon = true, name = "KiteRuntimeSmokeReader") {
-            runCatching {
-                process.inputStream.bufferedReader().useLines { lines ->
-                    lines.forEach { line -> output.append(line).append('\n') }
+        launchLifecycleLock.read {
+            val config = buildContainerExecConfig(
+                context = context,
+                workingDirectory = RuntimeBoundary.CONTAINER_ROOT_HOME,
+                payload = "printf '$RUNTIME_SMOKE_TOKEN\n'",
+                loginShell = true
+            )
+            val process = ProcessBuilder(config.command)
+                .redirectErrorStream(true)
+                .apply { environment().putAll(config.env) }
+                .start()
+            val output = StringBuilder()
+            val reader = thread(start = true, isDaemon = true, name = "KiteRuntimeSmokeReader") {
+                runCatching {
+                    process.inputStream.bufferedReader().useLines { lines ->
+                        lines.forEach { line -> output.append(line).append('\n') }
+                    }
                 }
             }
-        }
-        val completed = process.waitFor(RUNTIME_SMOKE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        if (!completed) {
-            process.destroyForcibly()
-            reader.join(500L)
-            throw IllegalStateException("Ubuntu 启动校验超时")
-        }
-        reader.join(1_000L)
-        val exitCode = process.exitValue()
-        if (exitCode != 0 || !output.contains(RUNTIME_SMOKE_TOKEN)) {
-            val message = output.toString().trim().take(360).ifBlank { "无输出" }
-            throw IllegalStateException("Ubuntu 启动校验失败，exitCode=$exitCode，output=$message")
+            val completed = process.waitFor(RUNTIME_SMOKE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            if (!completed) {
+                process.destroyForcibly()
+                reader.join(500L)
+                throw IllegalStateException("Ubuntu 启动校验超时")
+            }
+            reader.join(1_000L)
+            val exitCode = process.exitValue()
+            if (exitCode != 0 || !output.contains(RUNTIME_SMOKE_TOKEN)) {
+                val message = output.toString().trim().take(360).ifBlank { "无输出" }
+                throw IllegalStateException("Ubuntu 启动校验失败，exitCode=$exitCode，output=$message")
+            }
         }
     }
 
-    @Synchronized
     fun buildContainerExecConfig(
         context: Context,
         workingDirectory: String = RuntimeBoundary.CONTAINER_WORKSPACE_PATH,
         payload: String,
-        loginShell: Boolean = true
+        loginShell: Boolean = true,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null
     ): ContainerExecConfig {
-        val prepared = prepareBuildContext(
-            context = context,
-            caller = "buildContainerExecConfig"
-        )
-        val safeWorkingDirectory = workingDirectory.trim()
-            .ifBlank { RuntimeBoundary.CONTAINER_WORKSPACE_PATH }
+        return launchLifecycleLock.read {
+            val prepared = prepareBuildContext(
+                context = context,
+                caller = "buildContainerExecConfig",
+                requestedProotViewId = requestedProotViewId,
+                requestedProotEnvironmentId = requestedProotEnvironmentId
+            )
+            val safeWorkingDirectory = workingDirectory.trim()
+                .ifBlank { RuntimeBoundary.CONTAINER_WORKSPACE_PATH }
 
-        val command = buildContainerProotBaseArgv(
-            layout = prepared.layout,
-            container = prepared.container,
-            exchangeDir = prepared.exchangeDir,
-            workingDirectory = safeWorkingDirectory,
-            networkPlan = prepared.networkPlan,
-            lane = ProotLaunchLane.EXEC,
-            purpose = "container_exec_config"
-        ).apply {
-            if (loginShell) {
-                add("/bin/bash")
-                add("-lc")
-                add(payload)
-            } else {
-                add("/bin/sh")
-                add("-c")
-                add(payload)
+            val command = buildContainerProotBaseArgv(
+                layout = prepared.layout,
+                container = prepared.container,
+                androidStorage = prepared.androidStorage,
+                workingDirectory = safeWorkingDirectory,
+                networkPlan = prepared.networkPlan,
+                lane = ProotLaunchLane.EXEC,
+                purpose = "container_exec_config",
+                viewBinding = prepared.viewBinding,
+                environmentWorkspace = prepared.environmentWorkspace,
+            ).apply {
+                if (loginShell) {
+                    add("/bin/bash")
+                    add("-lc")
+                    add(payload)
+                } else {
+                    add("/bin/sh")
+                    add("-c")
+                    add(payload)
+                }
             }
+
+            val env = buildContainerEnvironment(
+                context = context,
+                layout = prepared.layout,
+                container = prepared.container,
+                shellPath = prepared.shellPath,
+                viewBinding = prepared.viewBinding
+            )
+
+            ContainerExecConfig(
+                container = prepared.container,
+                workingDirectory = safeWorkingDirectory,
+                command = command,
+                env = env
+            )
         }
-
-        val env = buildContainerEnvironment(
-            context = context,
-            layout = prepared.layout,
-            container = prepared.container,
-            shellPath = prepared.shellPath
-        )
-
-        return ContainerExecConfig(
-            container = prepared.container,
-            workingDirectory = safeWorkingDirectory,
-            command = command,
-            env = env
-        )
     }
 
-    @Synchronized
     fun buildContainerArgvExecConfig(
         context: Context,
         workingDirectory: String = RuntimeBoundary.CONTAINER_WORKSPACE_PATH,
-        argv: List<String>
+        argv: List<String>,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null
     ): ContainerExecConfig {
-        val prepared = prepareBuildContext(
-            context = context,
-            caller = "buildContainerArgvExecConfig"
-        )
-        val safeWorkingDirectory = workingDirectory.trim()
-            .ifBlank { RuntimeBoundary.CONTAINER_WORKSPACE_PATH }
+        return launchLifecycleLock.read {
+            val prepared = prepareBuildContext(
+                context = context,
+                caller = "buildContainerArgvExecConfig",
+                requestedProotViewId = requestedProotViewId,
+                requestedProotEnvironmentId = requestedProotEnvironmentId
+            )
+            val safeWorkingDirectory = workingDirectory.trim()
+                .ifBlank { RuntimeBoundary.CONTAINER_WORKSPACE_PATH }
 
-        val command = buildContainerProotBaseArgv(
-            layout = prepared.layout,
-            container = prepared.container,
-            exchangeDir = prepared.exchangeDir,
-            workingDirectory = safeWorkingDirectory,
-            networkPlan = prepared.networkPlan,
-            lane = ProotLaunchLane.EXEC,
-            purpose = "container_argv_exec_config"
-        ).apply {
-            addAll(argv)
+            val command = buildContainerProotBaseArgv(
+                layout = prepared.layout,
+                container = prepared.container,
+                androidStorage = prepared.androidStorage,
+                workingDirectory = safeWorkingDirectory,
+                networkPlan = prepared.networkPlan,
+                lane = ProotLaunchLane.EXEC,
+                purpose = "container_argv_exec_config",
+                viewBinding = prepared.viewBinding,
+                environmentWorkspace = prepared.environmentWorkspace,
+            ).apply {
+                addAll(argv)
+            }
+
+            val env = buildContainerEnvironment(
+                context = context,
+                layout = prepared.layout,
+                container = prepared.container,
+                shellPath = prepared.shellPath,
+                viewBinding = prepared.viewBinding
+            )
+
+            ContainerExecConfig(
+                container = prepared.container,
+                workingDirectory = safeWorkingDirectory,
+                command = command,
+                env = env
+            )
         }
-
-        val env = buildContainerEnvironment(
-            context = context,
-            layout = prepared.layout,
-            container = prepared.container,
-            shellPath = prepared.shellPath
-        )
-
-        return ContainerExecConfig(
-            container = prepared.container,
-            workingDirectory = safeWorkingDirectory,
-            command = command,
-            env = env
-        )
     }
 
     @Synchronized
@@ -555,22 +634,27 @@ object KFContainerManager {
      *
      * 因此这里默认只重建系统层，不清空工作区；只有明确要求时才一起删除工作区。
      */
-    @Synchronized
     fun resetDefaultContainer(context: Context, wipeWorkspace: Boolean = false): ContainerRecord {
-        val layout = ensureBaseImageReady(context)
-        getSavedContainer(context)?.let { container ->
-            val containerRoot = File(container.rootfsPath).parentFile
-            deleteRecursively(containerRoot)
-            if (wipeWorkspace) {
-                deleteRecursively(File(container.workspacePath))
+        return launchLifecycleLock.write {
+            ordinaryLaunchPreparationCache.invalidate("reset_default_container")
+            WarmProotExecutionCoordinator.invalidate("reset_default_container")
+            preparedDefaultContainerIdentity = null
+            val layout = ensureBaseImageReady(context)
+            getSavedContainer(context)?.let { container ->
+                val containerRoot = File(container.rootfsPath).parentFile
+                deleteRecursively(containerRoot)
+                if (wipeWorkspace) {
+                    deleteRecursively(File(container.workspacePath))
+                }
             }
-        }
 
-        val container = createDefaultContainer(layout)
-        ensureContainerFilesystem(context, layout, container)
-        saveRegistry(layout.registryFile, listOf(container))
-        _containerState.value = container
-        return container
+            val container = createDefaultContainer(layout)
+            ensureContainerFilesystem(context, layout, container)
+            saveRegistry(layout.registryFile, listOf(container))
+            _containerState.value = container
+            preparedDefaultContainerIdentity = buildRuntimeLaunchPreparationIdentity(layout, container)
+            container
+        }
     }
 
     fun getRuntimeLayout(context: Context): AssetExtractor.RuntimeLayout {
@@ -593,6 +677,96 @@ object KFContainerManager {
             .any { candidate -> candidate.exists() && candidate.isFile }
     }
 
+    /**
+     * 读取普通 PRoot 当前 PATH 中受管命令的宿主文件身份，不执行 PRoot，也不触发 Base/容器准备。
+     *
+     * 返回值允许只包含部分命令：调用方只有在目标资源的全部命令都有文件身份时，
+     * 才能据此复用之前的 shell 正向证明。
+     */
+    internal fun managedCommandVerificationBasis(
+        context: Context,
+        rawCommands: Collection<String>,
+    ): ManagedCommandVerificationBasis? {
+        val commands = rawCommands
+            .map { rawCommand -> rawCommand.trim().substringBefore(' ').trim() }
+            .filter(String::isNotBlank)
+            .distinct()
+            .sorted()
+        val candidate = resolveOrdinaryLaunchPreparationCandidate(context.applicationContext) ?: return null
+        val shellPaths = buildShellPath(candidate.container).split(':')
+        val commandFiles = commands.mapNotNull { command ->
+            shellPaths
+                .asSequence()
+                .mapNotNull { pathEntry -> resolveCommandHostFile(candidate.container, pathEntry, command) }
+                .mapNotNull { hostFile -> managedCommandHostFileStamp(candidate.container, command, hostFile) }
+                .firstOrNull()
+        }
+        return ManagedCommandVerificationBasis(
+            runtimeIdentity = candidate.identity,
+            commandFiles = commandFiles,
+        )
+    }
+
+    private fun managedCommandHostFileStamp(
+        container: ContainerRecord,
+        command: String,
+        initialFile: File,
+    ): ManagedCommandHostFileStamp? {
+        var current = initialFile
+        val visited = linkedSetOf<String>()
+        val linkChain = mutableListOf<String>()
+        repeat(MAX_MANAGED_COMMAND_SYMLINK_DEPTH) {
+            val currentPath = current.toPath()
+            val absolutePath = current.absolutePath
+            if (!visited.add(absolutePath)) return null
+            if (!Files.isSymbolicLink(currentPath)) {
+                if (!current.exists() || !current.isFile) return null
+                return ManagedCommandHostFileStamp(
+                    command = command,
+                    hostPath = initialFile.absolutePath,
+                    canonicalPath = runCatching(current::getCanonicalPath).getOrDefault(current.absolutePath),
+                    linkChain = linkChain.toList(),
+                    lastModifiedMs = current.lastModified(),
+                    length = current.length(),
+                )
+            }
+
+            val linkTarget = runCatching { Files.readSymbolicLink(currentPath).toString() }.getOrNull()
+                ?: return null
+            linkChain += "$absolutePath->$linkTarget"
+            current = if (linkTarget.startsWith('/')) {
+                resolveContainerHostPath(container, linkTarget) ?: return null
+            } else {
+                File(current.parentFile, linkTarget).normalize().takeIf { nextFile ->
+                    isWithinContainerHostRoots(container, nextFile)
+                } ?: return null
+            }
+        }
+        return null
+    }
+
+    private fun resolveContainerHostPath(container: ContainerRecord, containerPath: String): File? {
+        if (!containerPath.startsWith('/')) return null
+        if (containerPath == RuntimeBoundary.CONTAINER_WORKSPACE_PATH) {
+            return File(container.workspacePath)
+        }
+        if (containerPath.startsWith("${RuntimeBoundary.CONTAINER_WORKSPACE_PATH}/")) {
+            return File(
+                container.workspacePath,
+                containerPath.removePrefix("${RuntimeBoundary.CONTAINER_WORKSPACE_PATH}/")
+            )
+        }
+        return File(container.rootfsPath, containerPath.removePrefix("/"))
+    }
+
+    private fun isWithinContainerHostRoots(container: ContainerRecord, candidate: File): Boolean {
+        val candidatePath = candidate.absoluteFile.normalize().path
+        return listOf(container.rootfsPath, container.workspacePath).any { rootPath ->
+            val normalizedRoot = File(rootPath).absoluteFile.normalize().path.trimEnd(File.separatorChar)
+            candidatePath == normalizedRoot || candidatePath.startsWith("$normalizedRoot${File.separator}")
+        }
+    }
+
     private fun resolveLaunchContainer(
         context: Context,
         layout: AssetExtractor.RuntimeLayout = ensureBaseImageReady(context)
@@ -610,7 +784,147 @@ object KFContainerManager {
     private fun prepareBuildContext(
         context: Context,
         caller: String,
-        refreshRuntimeFiles: Boolean = false
+        refreshRuntimeFiles: Boolean = false,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null
+    ): BuildPreparation {
+        if (!RuntimeLaunchPreparationPolicy.isCacheEligible(
+                requestedProotViewId = requestedProotViewId,
+                requestedProotEnvironmentId = requestedProotEnvironmentId,
+            )
+        ) {
+            Logger.i("ContainerManager", "启动准备绕过缓存: caller=$caller, reason=explicit_view_or_environment")
+            return prepareBuildContextUncached(
+                context = context,
+                caller = caller,
+                refreshRuntimeFiles = refreshRuntimeFiles,
+                requestedProotViewId = requestedProotViewId,
+                requestedProotEnvironmentId = requestedProotEnvironmentId,
+            )
+        }
+
+        val appContext = context.applicationContext
+        resolveOrdinaryLaunchPreparationCandidate(appContext)?.let { candidate ->
+            return prepareOrdinaryBuildContext(
+                context = appContext,
+                caller = caller,
+                refreshRuntimeFiles = refreshRuntimeFiles,
+                candidate = candidate,
+            )
+        }
+
+        // 首次安装或运行时被修复时，先让一个调用完成完整准备；其余并发调用随后直接命中快照。
+        return synchronized(ordinaryLaunchPreparationBootstrapLock) {
+            resolveOrdinaryLaunchPreparationCandidate(appContext)?.let { candidate ->
+                return@synchronized prepareOrdinaryBuildContext(
+                    context = appContext,
+                    caller = caller,
+                    refreshRuntimeFiles = refreshRuntimeFiles,
+                    candidate = candidate,
+                )
+            }
+
+            if (ordinaryLaunchPreparationCache.snapshot().hasEntry) {
+                ordinaryLaunchPreparationCache.invalidate("ordinary_candidate_unavailable")
+            }
+            val prepared = prepareBuildContextUncached(
+                context = appContext,
+                caller = caller,
+                refreshRuntimeFiles = refreshRuntimeFiles,
+            )
+            ordinaryLaunchPreparationCache.getOrBuild(
+                identity = buildRuntimeLaunchPreparationIdentity(prepared.layout, prepared.container),
+                buildReason = "$caller:bootstrap",
+            ) { prepared }
+        }
+    }
+
+    private fun prepareOrdinaryBuildContext(
+        context: Context,
+        caller: String,
+        refreshRuntimeFiles: Boolean,
+        candidate: OrdinaryLaunchPreparationCandidate,
+    ): BuildPreparation {
+        val before = ordinaryLaunchPreparationCache.snapshot()
+        val startedAt = SystemClock.elapsedRealtime()
+        var prepared = ordinaryLaunchPreparationCache.getOrBuild(
+            identity = candidate.identity,
+            buildReason = caller,
+        ) {
+            prepareBuildContextUncached(
+                context = context,
+                caller = caller,
+                refreshRuntimeFiles = refreshRuntimeFiles,
+            )
+        }
+        val after = ordinaryLaunchPreparationCache.snapshot()
+        val result = if (after.rebuildCount > before.rebuildCount) "rebuild" else "hit"
+
+        // 状态、pid、错误等动态字段仍由 ContainerRecord 的真相源持有，不进入静态快照。
+        if (prepared.container != candidate.container) {
+            prepared = prepared.copy(container = candidate.container)
+        }
+        if (refreshRuntimeFiles && result == "hit") {
+            traceStage("refreshContainerRuntimeFiles($caller)") {
+                refreshContainerRuntimeFiles(context, candidate.container)
+            }
+        }
+        Logger.i(
+            "ContainerManager",
+            "启动准备缓存: caller=$caller, result=$result, generation=${after.generation}, " +
+                "cost=${SystemClock.elapsedRealtime() - startedAt}ms",
+        )
+        return prepared
+    }
+
+    private fun resolveOrdinaryLaunchPreparationCandidate(
+        context: Context,
+    ): OrdinaryLaunchPreparationCandidate? {
+        val layout = AssetExtractor.getRuntimeLayout(context)
+        val container = getSavedContainer(context) ?: return null
+        val runtimeReady = layout.prootFile.isFile &&
+            layout.prootLibtallocFile.isFile &&
+            layout.prootLoaderFile.isFile &&
+            layout.prootLoader32File.isFile &&
+            layout.prootRuntimeDescriptorFile.isFile
+        if (!runtimeReady || !AssetExtractor.isBaseImageReady(context, layout.profile)) return null
+        if (!isDefaultContainerRecordCurrent(container, layout)) return null
+        if (!isContainerRootfsReady(File(container.rootfsPath), layout.profile)) return null
+        if (!File(container.workspacePath).isDirectory) return null
+
+        return OrdinaryLaunchPreparationCandidate(
+            layout = layout,
+            container = container,
+            identity = buildRuntimeLaunchPreparationIdentity(layout, container),
+        )
+    }
+
+    private fun buildRuntimeLaunchPreparationIdentity(
+        layout: AssetExtractor.RuntimeLayout,
+        container: ContainerRecord,
+    ): RuntimeLaunchPreparationIdentity {
+        val descriptor = layout.prootRuntimeDescriptorFile
+        val descriptorStamp = descriptor.lastModified() * 31L + descriptor.length()
+        return RuntimeLaunchPreparationIdentity(
+            runtimeRootPath = layout.runtimeRoot.absolutePath,
+            runtimeDescriptorStamp = descriptorStamp,
+            containerId = container.id,
+            containerCreatedAtMs = container.createdAt,
+            rootfsPath = container.rootfsPath,
+            workspacePath = container.workspacePath,
+            networkMode = container.networkMode.name,
+        )
+    }
+
+    internal fun runtimeLaunchPreparationCacheSnapshot(): RuntimeLaunchPreparationCacheSnapshot =
+        ordinaryLaunchPreparationCache.snapshot()
+
+    private fun prepareBuildContextUncached(
+        context: Context,
+        caller: String,
+        refreshRuntimeFiles: Boolean = false,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null,
     ): BuildPreparation {
         val layout = traceStage("prepareRuntime($caller)") {
             AssetExtractor.prepareRuntime(context)
@@ -623,11 +937,17 @@ object KFContainerManager {
                 refreshContainerRuntimeFiles(context, container)
             }
         }
-        val exchangeDir = traceStage("ensureExternalExchange($caller)") {
-            ExternalExchangeManager.ensureExchangeDir(context)
+        val androidStorage = traceStage("resolveAndroidSharedStorage($caller)") {
+            AndroidSharedStorageManager.snapshot(context)
         }
         traceStage("ensureWorkspaceSystemComponents($caller)") {
-            WorkspaceBuildSupport.installSystemComponents(context, containerFilesystem(container).workspaceDir)
+            WorkspaceBuildSupport.installSystemComponents(
+                context = context,
+                workspaceDir = containerFilesystem(container).workspaceDir,
+                // T014h：普通启动路径必须查询 ProotViewStore 真实封存状态；
+                // 已封存时迁移清理不得触碰 .kf/bin。
+                sealedChecker = { isViewSealed(layout, container) },
+            )
         }
         val shellPath = traceStage("buildShellPath($caller)") {
             buildShellPath(container)
@@ -635,12 +955,32 @@ object KFContainerManager {
         val networkPlan = traceStage("buildNetworkPlan($caller)") {
             buildNetworkPlan(context, layout, container)
         }
+        val viewBinding = traceStage("resolveProotView($caller)") {
+            // 环境身份在此处一次性解析成确定 viewId，注入 native；native 热路径不查询 Android 注册表。
+            ProotViewRuntime.resolveActiveBinding(
+                container = container,
+                runtimeDescriptor = readProotRuntimeDescriptor(layout),
+                requestedViewId = requestedProotViewId,
+                requestedEnvironmentId = requestedProotEnvironmentId
+            )
+        }
+        traceStage("ensureNodeCompileCache($caller)") {
+            val cacheDirectory = File(container.workspacePath, NODE_COMPILE_CACHE_WORKSPACE_PATH)
+            check(cacheDirectory.mkdirs() || cacheDirectory.isDirectory) {
+                "无法创建 Node 编译缓存目录：${cacheDirectory.absolutePath}"
+            }
+        }
+        val environmentWorkspace = traceStage("resolveEnvironmentWorkspace($caller)") {
+            ProotEnvironmentWorkspace.plan(container, viewBinding).also { it.ensureReady() }
+        }
         return BuildPreparation(
             layout = layout,
             container = container,
-            exchangeDir = exchangeDir,
+            androidStorage = androidStorage,
             shellPath = shellPath,
-            networkPlan = networkPlan
+            networkPlan = networkPlan,
+            viewBinding = viewBinding,
+            environmentWorkspace = environmentWorkspace,
         )
     }
 
@@ -648,7 +988,8 @@ object KFContainerManager {
         context: Context,
         layout: AssetExtractor.RuntimeLayout,
         container: ContainerRecord,
-        shellPath: String
+        shellPath: String,
+        viewBinding: ProotViewBinding?
     ): LinkedHashMap<String, String> {
         return buildBaseContainerEnvironment(layout).apply {
             // 暂留桥接：启动入口要直接拿到标准工作面 env，等独立 launcher 落地后再完全迁出建房层。
@@ -659,7 +1000,11 @@ object KFContainerManager {
                 WorkspaceBuildSupport.runtimeProcProjectionDir(File(container.workspacePath)).absolutePath
             )
             put("UV_LINK_MODE", "copy")
+            put("NODE_COMPILE_CACHE", NODE_COMPILE_CACHE_CONTAINER_PATH)
             put("PATH", shellPath)
+            if (viewBinding != null) {
+                putAll(viewBinding.environment())
+            }
         }
     }
 
@@ -685,8 +1030,9 @@ object KFContainerManager {
             "PROOT_TMP_DIR" to layout.tmpDir.absolutePath,
             "KF_PROOT_TELEMETRY_MODE" to PROOT_TELEMETRY_MODE,
             "KF_PROOT_TELEMETRY_PATH" to prootTelemetryFile.absolutePath,
-            "KF_PROOT_ACTIVE_REGISTRY_ROOT" to prootActiveRegistryRoot.absolutePath,
+            "KF_PROOT_ACTIVE_REGISTRY_ROOT" to prootActiveRegistryRoot.absolutePath
         )
+        env.putAll(ProotFileProtectionRuntime.activeEnvironment(layout))
         addProotLoaderEnvironmentIfNeeded(layout, env)
         return env
     }
@@ -710,20 +1056,24 @@ object KFContainerManager {
     private fun buildContainerProotBaseArgv(
         layout: AssetExtractor.RuntimeLayout,
         container: ContainerRecord,
-        exchangeDir: File,
+        androidStorage: AndroidSharedStorageSnapshot,
         workingDirectory: String,
         networkPlan: ContainerNetworkPlan,
         lane: ProotLaunchLane,
-        purpose: String
+        purpose: String,
+        viewBinding: ProotViewBinding?,
+        environmentWorkspace: ProotEnvironmentWorkspacePlan,
     ): MutableList<String> {
         val plan = buildContainerProotLaunchPlan(
             layout = layout,
             container = container,
-            exchangeDir = exchangeDir,
+            androidStorage = androidStorage,
             workingDirectory = workingDirectory,
             networkPlan = networkPlan,
             lane = lane,
-            purpose = purpose
+            purpose = purpose,
+            viewBinding = viewBinding,
+            environmentWorkspace = environmentWorkspace,
         )
         publishProotLaunchContract(container, plan)
         return plan.baseArgv()
@@ -732,11 +1082,13 @@ object KFContainerManager {
     private fun buildContainerProotLaunchPlan(
         layout: AssetExtractor.RuntimeLayout,
         container: ContainerRecord,
-        exchangeDir: File,
+        androidStorage: AndroidSharedStorageSnapshot,
         workingDirectory: String,
         networkPlan: ContainerNetworkPlan,
         lane: ProotLaunchLane,
-        purpose: String
+        purpose: String,
+        viewBinding: ProotViewBinding?,
+        environmentWorkspace: ProotEnvironmentWorkspacePlan,
     ): ProotLaunchPlan {
         val prootRuntime = readProotRuntimeDescriptor(layout)
         return ProotLaunchPlan(
@@ -748,7 +1100,8 @@ object KFContainerManager {
             lane = lane,
             purpose = purpose,
             bindMounts = buildCommonProotBindMounts() +
-                buildContainerBindMounts(container, exchangeDir) +
+                buildContainerBindMounts(environmentWorkspace) +
+                AndroidSharedStorageManager.bindMounts(androidStorage) +
                 ProotBindMount(
                     sourcePath = networkPlan.runtimeResolvConfPath,
                     targetPath = networkPlan.containerResolvConfTarget,
@@ -763,6 +1116,7 @@ object KFContainerManager {
             loaderPath = layout.prootLoaderFile.absolutePath,
             loader32Path = layout.prootLoader32File.absolutePath,
             prootRuntime = prootRuntime,
+            filesystemView = viewBinding,
             telemetryMode = prootRuntime.optString("telemetryMode")
                 .ifBlank { ProotLaunchPlan.TELEMETRY_NONE_CURRENT }
         )
@@ -777,31 +1131,9 @@ object KFContainerManager {
     }
 
     private fun buildContainerBindMounts(
-        container: ContainerRecord,
-        exchangeDir: File
+        environmentWorkspace: ProotEnvironmentWorkspacePlan
     ): List<ProotBindMount> {
-        return listOf(
-            ProotBindMount(
-                sourcePath = container.workspacePath,
-                targetPath = RuntimeBoundary.CONTAINER_WORKSPACE_PATH,
-                role = "workspace"
-            ),
-            ProotBindMount(
-                sourcePath = exchangeDir.absolutePath,
-                targetPath = RuntimeBoundary.CONTAINER_EXCHANGE_PATH,
-                role = "exchange"
-            ),
-            ProotBindMount(
-                sourcePath = exchangeDir.absolutePath,
-                targetPath = ExternalExchangeManager.CONTAINER_DELIVERY_PATH,
-                role = "delivery_alias"
-            ),
-            ProotBindMount(
-                sourcePath = ExternalExchangeManager.ensureAlbumDir().absolutePath,
-                targetPath = ExternalExchangeManager.CONTAINER_ALBUM_PATH,
-                role = "album_exchange"
-            )
-        )
+        return environmentWorkspace.workspaceBindMounts()
     }
 
     private fun publishProotLaunchContract(container: ContainerRecord, plan: ProotLaunchPlan) {
@@ -848,6 +1180,26 @@ object KFContainerManager {
             .ifBlank { "external" }
     }
 
+    /**
+     * T014h：查询容器 Base/View 是否已封存（ProotViewStore catalog 已初始化）。
+     *
+     * 迁移清理 .kf/bin 的门禁依据。runtime 不支持或查询异常时视为未封存（保守允许清理）。
+     * 不依赖 versionCode/installMarker——App 升级后 View 可能早已封存。
+     */
+    private fun isViewSealed(
+        layout: AssetExtractor.RuntimeLayout,
+        container: com.kite.app.foundation.contracts.ContainerRecord,
+    ): Boolean {
+        return runCatching {
+            val descriptor = readProotRuntimeDescriptor(layout)
+            val capabilities = descriptor.optJSONArray("capabilities") ?: return@runCatching false
+            val supported = (0 until capabilities.length()).any { capabilities.optString(it) == ProotViewStore.RUNTIME_CAPABILITY } &&
+                (0 until capabilities.length()).any { capabilities.optString(it) == ProotViewStore.BLOCK_RUNTIME_CAPABILITY }
+            if (!supported) return@runCatching false
+            ProotViewStore.forContainer(container).recover() != null
+        }.getOrDefault(false)
+    }
+
     private fun addProotLoaderEnvironmentIfNeeded(
         layout: AssetExtractor.RuntimeLayout,
         env: MutableMap<String, String>
@@ -866,11 +1218,14 @@ object KFContainerManager {
             "PROOT_TMP_DIR",
             "GRADLE_USER_HOME",
             "ANDROID_USER_HOME",
+            "NODE_COMPILE_CACHE",
             "KF_WORKSPACE_ROOT",
             "KF_PROJECT_DIR",
             "KF_GRADLE_HELPER",
             "KF_PROOT_TELEMETRY_PATH",
             "KF_PROOT_ACTIVE_REGISTRY_ROOT",
+            ProotFileProtectionRuntime.CONTROL_ENV,
+            ProotFileProtectionRuntime.OPERATION_ENV,
             "KF_PROCFS_PROJECTION_ROOT",
             "TZ",
             "PATH"
@@ -948,9 +1303,6 @@ object KFContainerManager {
         }
         traceStage("ensureWorkspaceSystemComponents(${container.id})") {
             WorkspaceBuildSupport.installSystemComponents(context, filesystem.workspaceDir)
-        }
-        traceStage("ensureExternalExchange(${container.id})") {
-            ExternalExchangeManager.ensureExchangeDir(context)
         }
     }
 
@@ -1136,13 +1488,10 @@ object KFContainerManager {
         }
 
         val layout = AssetExtractor.getRuntimeLayout(context)
-        val profile = BaseImageProfile.fromImageName(container.imageName)
-        val rootfsDir = containerFilesystem(container).rootfsDir
 
-        // 写入系统工具文件（不影响网络）
-        ensurePackageManagerFiles(rootfsDir, profile)
-
-        // 构建网络配置计划（会写入 layout.tmpDir/resolv.conf）
+        // T014c：rootfs 系统文件（tmp/var/log 目录、sources.list、nsswitch.conf）只在 Base 封存前
+        // 由 ensureContainerBootstrap 写一次；普通启动不再直接改 rootfs。动态网络配置仍走 bind 注入
+        // （resolv.conf 写在 app 私有 layout.tmpDir，不污染 rootfs）。
         val networkPlan = buildNetworkPlan(context, layout, container)
 
         Logger.i(
@@ -1734,15 +2083,22 @@ object KFContainerManager {
      */
     private fun buildShellPath(container: ContainerRecord): String {
         val workspaceDir = containerFilesystem(container).workspaceDir
-        WorkspaceBuildSupport.ensure(workspaceDir)
+        // T014g：buildShellPath 不再隐式调用 ensure（ensure 会写共享目录，但不应由 PATH 构造触发）。
+        // 共享目录准备由 prepareBuildContext 的 ensureWorkspaceSystemComponents 阶段负责。
         val extraPaths = mutableListOf<String>()
+
+        // 环境命令优先：.kf/bin（环境变化层，用户/资源安装）排在共享目录之前，
+        // 避免共享 wrapper 错误覆盖用户安装的同名命令。
+        if (WorkspaceBuildSupport.helperBinDir(workspaceDir).exists()) {
+            extraPaths += WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
+        }
 
         if (WorkspaceBuildSupport.helperSystemBinDir(workspaceDir).exists()) {
             extraPaths += WorkspaceBuildSupport.CONTAINER_HELPER_SYSTEM_BIN_PATH
         }
 
-        if (WorkspaceBuildSupport.helperBinDir(workspaceDir).exists()) {
-            extraPaths += WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
+        if (WorkspaceBuildSupport.helperSystemWrappersDir(workspaceDir).exists()) {
+            extraPaths += WorkspaceBuildSupport.CONTAINER_HELPER_SYSTEM_WRAPPERS_PATH
         }
 
         extraPaths += "/root/.local/bin"

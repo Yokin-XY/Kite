@@ -22,6 +22,7 @@ internal class ResourceInstallWizardSurface(
         (ResourceInstallWizardPlanActionResult) -> Unit,
     ) -> Unit,
     onUninstallFailedResource: (String) -> Unit,
+    onOpenRun: (ResourceInstallWizardRunRequest) -> Unit,
     onExit: () -> Unit,
     onLiveTickRequired: () -> Unit
 ) {
@@ -34,6 +35,7 @@ internal class ResourceInstallWizardSurface(
         seedResourceIds = planResourceIds,
         onPlanAction = onPlanAction,
         onUninstallFailedResource = onUninstallFailedResource,
+        onOpenRun = onOpenRun,
         onExit = onExit,
         onRetry = { refresh(forceCatalogRefresh = true) },
         onLiveTickRequired = onLiveTickRequired

@@ -28,7 +28,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 
 /** 把 Android 运行时的四个事实流映射成 Feature 可消费的一份快照。 */
-internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManagementGateway {
+internal class AndroidRuntimeManagementGateway(
+    context: Context,
+    private val environmentIdProvider: () -> String = { CardRunState.DEFAULT_ENVIRONMENT_ID }
+) : RuntimeManagementGateway {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -38,7 +41,8 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
         TaskManagerStore.snapshot,
         RuntimeHealthStore.snapshot
     ) { runs, terminals, tasks, health ->
-        mapSnapshot(runs, terminals, tasks, health, cardIcons(runs))
+        val activeRuns = runs.filter { it.environmentId == environmentIdProvider() }
+        mapSnapshot(activeRuns, terminals, tasks, health, cardIcons(activeRuns))
     }.stateIn(
         scope = scope,
         started = SharingStarted.Eagerly,
@@ -49,13 +53,17 @@ internal class AndroidRuntimeManagementGateway(context: Context) : RuntimeManage
         refresh(force = false)
     }
 
-    override fun currentSnapshot(): RuntimeManagementSnapshot = mapSnapshot(
-        runs = CardRunStore.runs.value,
-        terminals = TerminalSessionStore.snapshot.value,
-        tasks = TaskManagerStore.snapshot.value,
-        health = RuntimeHealthStore.snapshot.value,
-        cardIconsByRecipeId = cardIcons(CardRunStore.runs.value),
-    )
+    override fun currentSnapshot(): RuntimeManagementSnapshot = CardRunStore.runs.value
+        .filter { it.environmentId == environmentIdProvider() }
+        .let { activeRuns ->
+            mapSnapshot(
+                runs = activeRuns,
+                terminals = TerminalSessionStore.snapshot.value,
+                tasks = TaskManagerStore.snapshot.value,
+                health = RuntimeHealthStore.snapshot.value,
+                cardIconsByRecipeId = cardIcons(activeRuns),
+            )
+        }
 
     private fun cardIcons(runs: List<CardRunState>): Map<String, RuntimeManagedCardIcon> = runs
         .map(CardRunState::recipeId)

@@ -39,9 +39,11 @@ internal class SettingsScreen(
                 SettingsCatalog.visibleCategories(isDebugBuild)
                     .groupBy(SettingsCategorySpec::section)
                     .forEach { (section, categories) ->
-                        addView(factory.sectionTitle(context.getString(section.titleRes())).apply {
-                            if (childCount > 0) setPadding(0, factory.dp(22), 0, factory.dp(12))
-                        })
+                        section.titleRes()?.let { resId ->
+                            addView(factory.sectionTitle(context.getString(resId)).apply {
+                                if (childCount > 0) setPadding(0, factory.dp(22), 0, factory.dp(12))
+                            })
+                        }
                         categories.forEach { category ->
                             addView(factory.navigationRow(
                                 context.getString(category.titleRes),
@@ -66,7 +68,8 @@ internal class SettingsScreen(
 
     fun currentScrollY(): Int = scrollView.scrollY
 
-    private fun SettingsSection.titleRes(): Int = when (this) {
+    private fun SettingsSection.titleRes(): Int? = when (this) {
+        SettingsSection.Engineering -> null
         SettingsSection.Personalization -> R.string.settings_section_personalization
         SettingsSection.Usage -> R.string.settings_section_usage
         SettingsSection.System -> R.string.settings_section_system

@@ -8,6 +8,15 @@ import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
 import com.kite.app.R
 import com.kite.app.action.KiteRecipeActionIntent
+import com.kite.app.agent.registration.AgentConfigurationStatus
+import com.kite.app.agent.registration.AgentDefinition
+import com.kite.app.agent.registration.AgentInstallationStatus
+import com.kite.app.agent.registration.AgentLaunchSpec
+import com.kite.app.agent.registration.AgentLaunchStatus
+import com.kite.app.agent.registration.AgentRegistration
+import com.kite.app.agent.registration.AgentRegistrationSource
+import com.kite.app.agent.registration.AgentRegistryEntry
+import com.kite.app.agent.registration.AgentRuntimeStatus
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
 import com.kite.app.recipe.KiteRecipe
@@ -22,6 +31,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
 class RecipeEditorScreenTest {
@@ -75,21 +85,39 @@ class RecipeEditorScreenTest {
         assertTrue(screen.root.allText().contains("Ungrouped"))
     }
 
-    private fun screen(actions: RecordingActions): RecipeEditorScreen = RecipeEditorScreen(
-        context = ContextThemeWrapper(
-            ApplicationProvider.getApplicationContext(),
-            R.style.Theme_Kite
-        ),
-        actions = actions,
-        iconSources = { emptyList() },
-        iconBytes = { null }
-    )
+    @Test
+    fun fourthActionLetsUserChooseRegisteredAgentByFriendlyName() {
+        val actions = RecordingActions()
+        val screen = screen(actions)
+        attach(screen)
+        screen.render(state().copy(agents = listOf(agentEntry())))
+        val context = screen.root.context
+
+        screen.root.findByDescription(context.getString(R.string.recipe_editor_add_action))!!.performClick()
+        val dialogRoot = ShadowDialog.getLatestDialog().window!!.decorView
+        dialogRoot.findByText("✦ ${context.getString(R.string.recipe_editor_step_agent)}")!!.performClick()
+        dialogRoot.findByDescription(
+            context.getString(R.string.recipe_editor_agent_choice_description, "OpenCode")
+        )!!.performClick()
+        dialogRoot.findByText(context.getString(R.string.recipe_editor_add))!!.performClick()
+
+        assertEquals("opencode", actions.putSteps.single().second.agentId)
+        assertEquals(KiteRecipe.STEP_AGENT, actions.putSteps.single().second.type)
+    }
+
+    private fun screen(actions: RecordingActions): RecipeEditorScreen {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        return RecipeEditorScreen(
+            context = ContextThemeWrapper(activity, R.style.Theme_Kite),
+            actions = actions,
+            iconSources = { emptyList() },
+            iconBytes = { null }
+        )
+    }
 
     private fun attach(screen: RecipeEditorScreen) {
-        Robolectric.buildActivity(Activity::class.java)
-            .setup()
-            .get()
-            .setContentView(screen.root)
+        val activity = (screen.root.context as ContextThemeWrapper).baseContext as Activity
+        activity.setContentView(screen.root)
     }
 
     private fun state(): RecipeEditorUiState {
@@ -139,8 +167,31 @@ class RecipeEditorScreenTest {
         return null
     }
 
+    private fun View.findByText(value: String): View? {
+        if (this is TextView && text.toString() == value && isEnabled) return this
+        if (this is ViewGroup) {
+            for (index in 0 until childCount) {
+                getChildAt(index).findByText(value)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun agentEntry(): AgentRegistryEntry = AgentRegistryEntry(
+        registration = AgentRegistration(
+            definition = AgentDefinition("opencode", "OpenCode"),
+            source = AgentRegistrationSource.Custom,
+            launch = AgentLaunchSpec.Managed("opencode", "acp", "stdio", listOf("opencode", "acp"))
+        ),
+        installationStatus = AgentInstallationStatus.NotApplicable,
+        configurationStatus = AgentConfigurationStatus.NotRequired,
+        runtimeStatus = AgentRuntimeStatus.Stopped,
+        launchStatus = AgentLaunchStatus.Ready
+    )
+
     private class RecordingActions : RecipeEditorScreenActions {
         val moves = mutableListOf<Pair<Int, Int>>()
+        val putSteps = mutableListOf<Pair<Int?, RecipeEditorStepDraft>>()
 
         override fun onBack() = Unit
         override fun onSave() = Unit
@@ -155,7 +206,9 @@ class RecipeEditorScreenTest {
         override fun onSetLaunchOpenInstance(enabled: Boolean) = Unit
         override fun onSetKeepFinishedNotification(enabled: Boolean) = Unit
         override fun onSetShortcutRequested(requested: Boolean) = Unit
-        override fun onPutStep(index: Int?, step: RecipeEditorStepDraft) = Unit
+        override fun onPutStep(index: Int?, step: RecipeEditorStepDraft) {
+            putSteps += index to step
+        }
         override fun onRemoveStep(index: Int) = Unit
         override fun onMoveStep(from: Int, to: Int) {
             moves += from to to

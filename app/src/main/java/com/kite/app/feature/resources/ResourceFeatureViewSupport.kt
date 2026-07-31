@@ -253,6 +253,9 @@ internal class ResourceFeatureViewFactory(
         KiteResourceActionIntent.Open -> R.string.resource_state_starting
         KiteResourceActionIntent.Stop -> R.string.resource_state_stopping
         KiteResourceActionIntent.Uninstall -> R.string.resource_state_uninstalling
+        KiteResourceActionIntent.CheckUpdate -> R.string.resource_state_checking_update
+        KiteResourceActionIntent.Update -> R.string.resource_state_updating
+        KiteResourceActionIntent.Reinstall -> R.string.resource_state_preparing
         KiteResourceActionIntent.CancelInstall,
         KiteResourceActionIntent.CancelFailedInstall -> R.string.resource_action_cancel
         KiteResourceActionIntent.BusyStatus,
@@ -278,6 +281,9 @@ internal class ResourceFeatureViewFactory(
         KiteResourceActionIntent.Open -> R.string.resource_action_open
         KiteResourceActionIntent.Stop -> R.string.resource_action_stop
         KiteResourceActionIntent.Uninstall -> R.string.resource_action_uninstall
+        KiteResourceActionIntent.CheckUpdate -> R.string.resource_action_check_update
+        KiteResourceActionIntent.Update -> R.string.resource_action_update
+        KiteResourceActionIntent.Reinstall -> R.string.resource_action_reinstall
         KiteResourceActionIntent.CancelInstall,
         KiteResourceActionIntent.CancelFailedInstall -> R.string.resource_action_cancel
         KiteResourceActionIntent.BusyStatus -> R.string.resource_action_processing

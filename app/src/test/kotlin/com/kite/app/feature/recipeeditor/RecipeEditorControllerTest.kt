@@ -6,6 +6,15 @@ import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.action.KiteRecipeActionPlan
 import com.kite.app.action.KiteRecipeActionRequest
 import com.kite.app.action.KiteRecipeActionSource
+import com.kite.app.agent.registration.AgentConfigurationStatus
+import com.kite.app.agent.registration.AgentDefinition
+import com.kite.app.agent.registration.AgentInstallationStatus
+import com.kite.app.agent.registration.AgentLaunchSpec
+import com.kite.app.agent.registration.AgentLaunchStatus
+import com.kite.app.agent.registration.AgentRegistration
+import com.kite.app.agent.registration.AgentRegistrationSource
+import com.kite.app.agent.registration.AgentRegistryEntry
+import com.kite.app.agent.registration.AgentRuntimeStatus
 import com.kite.app.application.recipes.RecipeExternalRefreshResult
 import com.kite.app.application.recipes.RecipeDeleteResult
 import com.kite.app.application.recipes.RecipeFeatureChange
@@ -14,6 +23,7 @@ import com.kite.app.recipe.KiteCardGroup
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
 import com.kite.app.recipe.KiteRecipe
+import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.recipe.NewRecipeInput
 import com.kite.app.run.CardRunState
@@ -175,6 +185,64 @@ class RecipeEditorControllerTest {
         assertEquals(draft.normalized(), restored)
     }
 
+    @Test
+    fun agentCardSaveWritesStableAgentIdWithoutProviderDetails() = runTest {
+        val gateway = FakeGateway(recipes = emptyList())
+        val agent = agentEntry("opencode", "OpenCode", "opencode-provider")
+        val controller = RecipeEditorController(
+            gateway,
+            initiallyRuntimeBlocked = false,
+            agentEntries = { listOf(agent) }
+        )
+        controller.dispatch(RecipeEditorAction.Initialize(null))
+        controller.dispatch(RecipeEditorAction.SetName("OpenCode"))
+        controller.dispatch(RecipeEditorAction.PutStep(null, RecipeEditorStepDraft.agent("opencode")))
+
+        val effect = controller.dispatch(RecipeEditorAction.Save)
+
+        assertTrue(effect is RecipeEditorEffect.Saved)
+        val step = gateway.savedInput?.steps?.single()
+        assertEquals("opencode", step?.agentId)
+        assertEquals(KiteRecipeIcon.ICON_BOT, gateway.savedInput?.iconName)
+    }
+
+    @Test
+    fun legacyProviderMigratesOnlyWhenRegistryMappingIsUnique() {
+        val legacy = recipe().copy(
+            type = KiteRecipe.TYPE_AGENT,
+            execution = KiteExecution.steps(
+                listOf(
+                    KiteRecipeStep(
+                        id = "agent",
+                        type = KiteRecipe.STEP_AGENT,
+                        providerId = "shared-provider"
+                    )
+                )
+            )
+        )
+        val unique = RecipeEditorDraft.fromRecipe(
+            legacy,
+            listOf(agentEntry("opencode", "OpenCode", "shared-provider"))
+        ).steps.single()
+        val ambiguous = RecipeEditorDraft.fromRecipe(
+            legacy,
+            listOf(
+                agentEntry("agent-a", "Agent", "shared-provider"),
+                agentEntry("agent-b", "Agent", "shared-provider")
+            )
+        ).steps.single()
+
+        assertEquals("opencode", unique.agentId)
+        assertEquals("", unique.legacyProviderId)
+        assertEquals("", ambiguous.agentId)
+        assertEquals("shared-provider", ambiguous.legacyProviderId)
+        assertTrue(
+            RecipeEditorDraft.fromRecipe(legacy, emptyList())
+                .validationErrors(emptyList())
+                .any { it.message.contains("旧 Agent provider") }
+        )
+    }
+
     private class FakeGateway(
         var recipes: List<KiteRecipe> = listOf(recipe())
     ) : RecipeFeatureGateway {
@@ -243,6 +311,27 @@ class RecipeEditorControllerTest {
     }
 
     private companion object {
+        fun agentEntry(
+            agentId: String,
+            displayName: String,
+            providerId: String
+        ): AgentRegistryEntry = AgentRegistryEntry(
+            registration = AgentRegistration(
+                definition = AgentDefinition(agentId, displayName),
+                source = AgentRegistrationSource.Custom,
+                launch = AgentLaunchSpec.Managed(
+                    providerId = providerId,
+                    protocol = "acp",
+                    transport = "stdio",
+                    argv = listOf(providerId, "acp")
+                )
+            ),
+            installationStatus = AgentInstallationStatus.NotApplicable,
+            configurationStatus = AgentConfigurationStatus.NotRequired,
+            runtimeStatus = AgentRuntimeStatus.Stopped,
+            launchStatus = AgentLaunchStatus.Ready
+        )
+
         fun recipe(): KiteRecipe = KiteRecipe(
             id = "tool",
             name = "Tool",

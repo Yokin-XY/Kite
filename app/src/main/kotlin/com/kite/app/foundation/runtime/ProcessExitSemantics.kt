@@ -74,6 +74,10 @@ object ProcessExitSemantics {
         return signal in MANAGED_STOP_SIGNALS
     }
 
+    fun isCommandUnavailableExit(exitCode: Int?): Boolean {
+        return exitCode == 126 || exitCode == 127
+    }
+
     private fun isCleanExit(exitCode: Int?): Boolean {
         return exitCode == 0
     }

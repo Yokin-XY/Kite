@@ -19,12 +19,16 @@ import java.util.UUID
 internal class AndroidDesktopOpenGateway(
     context: Context,
     private val diagnostics: KiteDiagnostics,
-    private val recipeResolver: (String) -> KiteRecipe?
+    private val recipeResolver: (String) -> KiteRecipe?,
+    private val environmentIdProvider: () -> String = { CardRunState.DEFAULT_ENVIRONMENT_ID }
 ) : DesktopOpenGateway {
     private val appContext = context.applicationContext
 
     override fun open(request: DesktopOpenRequest): DesktopOpenResult {
-        val existing = request.instanceId?.takeIf(String::isNotBlank)?.let(CardRunStore::get)
+        val environmentId = environmentIdProvider()
+        val existing = request.instanceId
+            ?.takeIf(String::isNotBlank)
+            ?.let { CardRunStore.get(it, environmentId) }
         val recipeId = request.recipeId?.takeIf(String::isNotBlank)
             ?: existing?.recipeId
             ?: "temp_desktop_${UUID.randomUUID().toString().replace("-", "")}"
@@ -41,6 +45,7 @@ internal class AndroidDesktopOpenGateway(
             ?: KiteX11SurfacePlan.allocate(
                 instanceId,
                 CardRunStore.snapshot()
+                    .filter { it.environmentId == environmentId }
                     .filterNot { it.instanceId == instanceId }
                     .mapNotNull(CardRunState::x11Display)
                     .toSet()
@@ -50,7 +55,8 @@ internal class AndroidDesktopOpenGateway(
             recipe = recipe,
             instanceId = instanceId,
             ownerKind = CardRunState.OWNER_KIND_X11,
-            stepId = DESKTOP_REQUEST_STEP
+            stepId = DESKTOP_REQUEST_STEP,
+            environmentId = environmentId
         )
         CardRunStore.update(
             recipe = recipe,
@@ -63,7 +69,8 @@ internal class AndroidDesktopOpenGateway(
             lastMeaningfulOutput = "正在准备 X11 桌面：${request.command.take(120)}",
             x11Display = binding.display,
             x11SocketPath = binding.socketPath,
-            clearNextActionUrl = true
+            clearNextActionUrl = true,
+            environmentId = environmentId
         )
         val started = KiteX11SurfaceServer.ensureStarted(appContext, binding)
         if (started.isFailure) {
@@ -78,7 +85,8 @@ internal class AndroidDesktopOpenGateway(
                 currentStepIndex = 0,
                 lastError = message,
                 x11Display = binding.display,
-                x11SocketPath = binding.socketPath
+                x11SocketPath = binding.socketPath,
+                environmentId = environmentId
             )
             diagnostics.logRecipeAction(
                 recipe,
@@ -109,7 +117,8 @@ internal class AndroidDesktopOpenGateway(
             lastMeaningfulOutput = "Ubuntu 请求桌面：${request.command.take(120)}",
             x11Display = binding.display,
             x11SocketPath = binding.socketPath,
-            clearNextActionUrl = true
+            clearNextActionUrl = true,
+            environmentId = environmentId
         )
         diagnostics.logRecipeAction(
             recipe,

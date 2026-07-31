@@ -3,7 +3,7 @@ package com.kite.app.recipe
 import android.content.Context
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.dropzone.KiteDropZoneManager
-import com.kite.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.storage.KiteManagedStorage
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -26,6 +26,7 @@ class KiteRecipeLoader(
         seedAssetRecipesIfNeeded(cardsDir)
         migrateLegacyPrivateRecipes(cardsDir)
         removeDeprecatedAssetRecipesIfNeeded(cardsDir)
+        migrateDeprecatedOpenClawHomeCardIfNeeded(cardsDir)
         val usedIds = linkedSetOf<String>()
         return sharedRecipeFiles(cardsDir)
             .mapNotNull { file -> loadRecipeFile(file, KiteRecipe.SOURCE_SHARED, canonicalize = true, usedIds = usedIds) }
@@ -72,6 +73,60 @@ class KiteRecipeLoader(
         return target
     }
 
+    /**
+     * 写入由外部事实源托管的首页模板。相同 owner 的模板可原位刷新；普通用户文件不会被覆盖。
+     */
+    fun addManagedSharedRecipeTemplate(
+        template: JSONObject,
+        fileStem: String,
+        ownerKind: String,
+        ownerId: String
+    ): File {
+        val normalizedKind = ownerKind.trim()
+        val normalizedOwnerId = ownerId.trim()
+        require(normalizedKind.isNotBlank() && normalizedOwnerId.isNotBlank())
+        val json = JSONObject(template.toString()).put(
+            MANAGED_TEMPLATE_KEY,
+            JSONObject()
+                .put("kind", normalizedKind)
+                .put("ownerId", normalizedOwnerId)
+        )
+        val base = json.optJSONObject("base") ?: JSONObject().also { json.put("base", it) }
+        if (!base.has("id")) base.put("id", "")
+        val cardsDir = sharedCardsDir()
+        val preferred = File(cardsDir, "${safeFileName(fileStem)}.json")
+        val canRefreshPreferred = preferred.exists() && runCatching {
+            val managed = JSONObject(preferred.readText()).optJSONObject(MANAGED_TEMPLATE_KEY)
+            managed?.optString("kind") == normalizedKind &&
+                managed.optString("ownerId") == normalizedOwnerId
+        }.getOrDefault(false)
+        val target = when {
+            !preferred.exists() || canRefreshPreferred -> preferred
+            else -> uniqueTargetFile(cardsDir, preferred.name)
+        }
+        runCatching {
+            target.writeText(json.toString(2))
+        }.onSuccess {
+            diagnostics.logRecipeEvent(
+                if (canRefreshPreferred) "managed_recipe_template_refreshed" else "managed_recipe_template_added",
+                null,
+                mapOf(
+                    "file" to target.name,
+                    "ownerKind" to normalizedKind,
+                    "ownerId" to normalizedOwnerId
+                )
+            )
+        }.onFailure {
+            diagnostics.logRecipeEvent(
+                "managed_recipe_template_write_failed",
+                null,
+                mapOf("file" to target.name, "error" to it.message.orEmpty())
+            )
+            throw it
+        }
+        return target
+    }
+
     fun deleteRecipe(recipe: KiteRecipe): Boolean {
         val deleted = deleteRecipeFiles(recipe.id)
         diagnostics.logRecipeEvent(
@@ -88,14 +143,14 @@ class KiteRecipeLoader(
 
     fun userRecipesPath(): String = sharedCardsDir().absolutePath
 
-    fun importedRecipesPath(): String = ExternalExchangeManager.ensureImportsDir(context).absolutePath
+    fun importedRecipesPath(): String = KiteManagedStorage.cardImportsDir(context).absolutePath
 
     fun runReportsPath(): String = runReportsDir.absolutePath
 
     fun sharedCardsPath(): String = sharedCardsDir().absolutePath
 
     private fun sharedCardsDir(): File =
-        ExternalExchangeManager.ensureCardsDir(context)
+        KiteManagedStorage.homeCardsDir(context)
 
     private fun seedAssetRecipesIfNeeded(cardsDir: File) {
         val marker = File(cardsDir, ASSET_SEED_MARKER)
@@ -251,6 +306,41 @@ class KiteRecipeLoader(
             }
         }
         return hasOldStartCommand && hasOldOpenUrl
+    }
+
+    private fun migrateDeprecatedOpenClawHomeCardIfNeeded(cardsDir: File) {
+        val marker = File(cardsDir, DEPRECATED_OPENCLAW_HOME_CARD_MIGRATION_MARKER)
+        if (marker.exists()) return
+        var hasFailure = false
+        sharedRecipeFiles(cardsDir).forEach { file ->
+            runCatching {
+                val migrated = migrateDeprecatedOpenClawHomeCard(JSONObject(file.readText()))
+                    ?: return@runCatching
+                file.writeText(migrated.toString(2))
+                diagnostics.logRecipeEvent(
+                    "recipe_deprecated_openclaw_home_card_migrated",
+                    null,
+                    mapOf("file" to file.name, "command" to OPENCLAW_CHAT_COMMAND)
+                )
+            }.onFailure {
+                hasFailure = true
+                diagnostics.logRecipeEvent(
+                    "recipe_deprecated_openclaw_home_card_migration_failed",
+                    null,
+                    mapOf("file" to file.name, "error" to it.message.orEmpty())
+                )
+            }
+        }
+        if (!hasFailure) {
+            writeRecipeMaintenanceMarker(cardsDir, marker.name, Instant.now().toString())
+                .onFailure {
+                    diagnostics.logRecipeEvent(
+                        "recipe_deprecated_openclaw_home_card_marker_failed",
+                        null,
+                        mapOf("file" to marker.absolutePath, "error" to it.message.orEmpty())
+                    )
+                }
+        }
     }
 
     private fun sharedRecipeFiles(cardsDir: File): List<File> {
@@ -515,17 +605,30 @@ class KiteRecipeLoader(
                 )
             }
 
+            KiteRecipe.STEP_AGENT -> {
+                val agentId = input.agentId.trim()
+                if (agentId.isBlank()) return null
+                KiteRecipeStep(
+                    id = input.id.ifBlank { "step_agent_${index + 1}_$recipeId" },
+                    type = KiteRecipe.STEP_AGENT,
+                    agentId = agentId,
+                    workdir = input.workdir.trim().ifBlank { DEFAULT_AGENT_WORKDIR }
+                )
+            }
+
             else -> null
         }
     }
 
     private fun inferType(requestedType: String, steps: List<KiteRecipeStep>, defaultUrl: String): String {
         if (requestedType == KiteRecipe.TYPE_TEMPLATE) return KiteRecipe.TYPE_TEMPLATE
+        val hasAgent = steps.any { it.type == KiteRecipe.STEP_AGENT }
         val hasShell = steps.any { it.type == KiteRecipe.STEP_SHELL || it.type == KiteRecipe.STEP_TERMINAL }
         val hasOpenWeb = steps.any { it.type == KiteRecipe.STEP_OPEN_WEB } || defaultUrl.isNotBlank()
         return when {
+            hasAgent && !hasShell && !hasOpenWeb -> KiteRecipe.TYPE_AGENT
             hasShell && hasOpenWeb -> KiteRecipe.TYPE_COMMAND_WEB
-            hasShell -> KiteRecipe.TYPE_START_SERVICE
+            hasShell || hasAgent -> KiteRecipe.TYPE_START_SERVICE
             hasOpenWeb -> KiteRecipe.TYPE_OPEN_URL
             else -> KiteRecipe.TYPE_TEMPLATE
         }
@@ -618,6 +721,7 @@ class KiteRecipeLoader(
     private fun defaultDescription(type: String): String = when (type) {
         KiteRecipe.TYPE_COMMAND_WEB -> "执行命令后打开网页工作台"
         KiteRecipe.TYPE_SCRIPT_WEB -> "运行脚本并打开网页工作台"
+        KiteRecipe.TYPE_AGENT -> "打开 Agent 会话"
         KiteRecipe.TYPE_START_SERVICE -> "启动本地服务"
         KiteRecipe.TYPE_TEMPLATE -> "配置模板"
         else -> "打开网页工作台"
@@ -640,15 +744,57 @@ class KiteRecipeLoader(
         context.assets.open(assetPath).bufferedReader().use { it.readText() }
 
     companion object {
+        private const val MANAGED_TEMPLATE_KEY = "kiteManaged"
+        private const val DEFAULT_AGENT_WORKDIR = "/workspace"
         // Keep stable: changing this marker re-seeds preset cards for existing users.
         private const val ASSET_SEED_MARKER = ".asset-presets-seeded-v4"
         private const val LEGACY_MIGRATION_MARKER = ".legacy-private-migrated-v1"
         private const val DEPRECATED_ASSET_CLEANUP_MARKER = ".deprecated-asset-presets-cleaned-v1"
+        private const val DEPRECATED_OPENCLAW_HOME_CARD_MIGRATION_MARKER =
+            ".deprecated-openclaw-home-card-migrated-v1"
         private const val DEPRECATED_HERMES_WEBUI_FILE_STEM = "hermes-webui"
         private const val DEPRECATED_HERMES_WEBUI_NAME = "Hermes WebUI"
         private const val DEPRECATED_HERMES_WEBUI_START_COMMAND = "hermes-web-ui start --port 8648"
         private const val DEPRECATED_HERMES_WEBUI_OPEN_URL = "http://127.0.0.1:8648"
+        private const val OPENCLAW_CHAT_COMMAND = "openclaw chat"
     }
+}
+
+internal fun migrateDeprecatedOpenClawHomeCard(json: JSONObject): JSONObject? {
+    val base = json.optJSONObject("base") ?: return null
+    if (base.optString("name") != "OpenClaw") return null
+    val steps = json.optJSONArray("recipe") ?: return null
+    if (steps.length() != 1) return null
+    val step = steps.optJSONObject(0) ?: return null
+    if (step.optString("type") != KiteRecipe.STEP_TERMINAL) return null
+    val legacyLines = step.optString("text")
+        .replace("\r\n", "\n")
+        .trim()
+        .lines()
+        .map(String::trim)
+    if (legacyLines != listOf(
+            "cd /workspace",
+            "echo \"OpenClaw 首次启动建议完成 onboard。\"",
+            "openclaw onboard --install-daemon"
+        )) {
+        return null
+    }
+
+    val migrated = JSONObject(json.toString())
+    val migratedBase = migrated.getJSONObject("base")
+    if (migratedBase.optString("description") == "在终端里启动 OpenClaw onboard") {
+        migratedBase.put("description", "在终端里直接启动 OpenClaw 对话")
+    }
+    migrated.put(
+        "recipe",
+        JSONArray().put(
+            JSONObject()
+                .put("type", KiteRecipe.STEP_TERMINAL)
+                .put("cmd", "openclaw chat")
+                .put("workdir", "/workspace")
+        )
+    )
+    return migrated
 }
 
 internal fun writeRecipeMaintenanceMarker(
@@ -690,5 +836,6 @@ data class NewRecipeStepInput(
     val type: String,
     val command: String = "",
     val url: String = "",
-    val workdir: String = ""
+    val workdir: String = "",
+    val agentId: String = ""
 )

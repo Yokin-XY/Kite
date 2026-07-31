@@ -1,0 +1,1166 @@
+diff --git a/src/GNUmakefile b/src/GNUmakefile
+index 90f6de0..23997ca 100644
+--- a/src/GNUmakefile
++++ b/src/GNUmakefile
+@@ -79,6 +79,7 @@ OBJECTS += \
+ 	extension/hidden_files/hidden_files.o \
+ 	extension/mountinfo/mountinfo.o \
+ 	extension/kf_procfs/kf_procfs.o \
++	extension/kf_txn/kf_txn.o \
+ 	extension/port_switch/port_switch.o \
+ 	extension/sysvipc/sysvipc.o \
+ 	extension/sysvipc/sysvipc_msg.o \
+diff --git a/src/cli/cli.c b/src/cli/cli.c
+index 2dd10df..f315e57 100644
+--- a/src/cli/cli.c
++++ b/src/cli/cli.c
+@@ -487,6 +487,10 @@ int main(int argc, char *const argv[])
+ 	if (NULL == getenv("PROOT_NO_KF_PROCFS"))
+ 		initialize_extension(tracee, kf_procfs_callback, NULL);
+ 
++	if (getenv("KF_PROOT_TXN_CONTROL_PATH") != NULL &&
++		NULL == getenv("PROOT_NO_KF_TXN"))
++		initialize_extension(tracee, kf_txn_callback, NULL);
++
+ 	/* Start the first tracee.  */
+ 	status = launch_process(tracee, &argv[status]);
+ 	if (status < 0) {
+diff --git a/src/extension/extension.h b/src/extension/extension.h
+index 8445a8f..2926446 100644
+--- a/src/extension/extension.h
++++ b/src/extension/extension.h
+@@ -142,6 +142,11 @@ typedef enum {
+          * a file */
+         LINK2SYMLINK_UNLINK,
+ 
++	/* A built-in extension is about to mutate a canonical host path.
++	 * data1 is the path.  This lets the KF transaction extension preserve
++	 * the preimage before link2symlink performs host-side helper changes. */
++	KF_TXN_PRE_HOST_MUTATION,
++
+ 	/* statx() syscall was used by tracee and is being replaced by proot
+ 	 * data1 argument contains pointer to statx_syscall_state struct
+ 	 * defined in tracee/statx.h
+@@ -208,5 +213,6 @@ extern int fix_symlink_size_callback(Extension *extension, ExtensionEvent event,
+ extern int ashmem_memfd_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ extern int mountinfo_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ extern int kf_procfs_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
++extern int kf_txn_callback(Extension *extension, ExtensionEvent event, intptr_t d1, intptr_t d2);
+ 
+ #endif /* EXTENSION_H */
+diff --git a/src/extension/kf_txn/kf_txn.c b/src/extension/kf_txn/kf_txn.c
+new file mode 100644
+index 0000000..54fd258
+--- /dev/null
++++ b/src/extension/kf_txn/kf_txn.c
+@@ -0,0 +1,973 @@
++#include "extension/extension.h"
++
++#include <dirent.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <inttypes.h>
++#include <limits.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/mman.h>
++#include <sys/file.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <unistd.h>
++
++#include "path/path.h"
++#include "tracee/mem.h"
++#include "tracee/reg.h"
++
++#define KF_TXN_CONTROL_SCHEMA "kf_resource_txn_v1"
++#define KF_TXN_ENTRY_SCHEMA "kf_resource_txn_entry_v1"
++#define KF_TXN_META_FILE "meta"
++#define KF_TXN_PAYLOAD_NAME "payload"
++#define KF_TXN_CONTROL_MAX 8192
++#define KF_TXN_COPY_BUFFER (64 * 1024)
++
++typedef struct {
++	char *control_path;
++	uint64_t generation;
++	uint64_t used_bytes;
++} KfTxnConfig;
++
++typedef struct {
++	uint64_t generation;
++	char root_path[PATH_MAX];
++	char entries_path[PATH_MAX];
++	uint64_t max_backup_bytes;
++} KfTxnControl;
++
++static FilteredSysnum filtered_sysnums[] = {
++	{ PR_open, 0 },
++	{ PR_openat, 0 },
++	{ PR_openat2, 0 },
++	{ PR_creat, 0 },
++	{ PR_write, 0 },
++	{ PR_writev, 0 },
++	{ PR_pwrite64, 0 },
++	{ PR_pwritev, 0 },
++	{ PR_pwritev2, 0 },
++	{ PR_truncate, 0 },
++	{ PR_truncate64, 0 },
++	{ PR_ftruncate, 0 },
++	{ PR_ftruncate64, 0 },
++	{ PR_fallocate, 0 },
++	{ PR_unlink, 0 },
++	{ PR_unlinkat, 0 },
++	{ PR_rmdir, 0 },
++	{ PR_rename, 0 },
++	{ PR_renameat, 0 },
++	{ PR_renameat2, 0 },
++	{ PR_mkdir, 0 },
++	{ PR_mkdirat, 0 },
++	{ PR_mknod, 0 },
++	{ PR_mknodat, 0 },
++	{ PR_link, 0 },
++	{ PR_linkat, 0 },
++	{ PR_symlink, 0 },
++	{ PR_symlinkat, 0 },
++	{ PR_chmod, 0 },
++	{ PR_fchmod, 0 },
++	{ PR_fchmodat, 0 },
++	{ PR_chown, 0 },
++	{ PR_chown32, 0 },
++	{ PR_fchown, 0 },
++	{ PR_fchown32, 0 },
++	{ PR_fchownat, 0 },
++	{ PR_lchown, 0 },
++	{ PR_lchown32, 0 },
++	{ PR_utime, 0 },
++	{ PR_utimes, 0 },
++	{ PR_utimensat, 0 },
++	{ PR_mmap, 0 },
++	{ PR_mmap2, 0 },
++	FILTERED_SYSNUM_END
++};
++
++static int remove_tree(const char *path);
++
++static bool mutation_sysnum(word_t sysnum)
++{
++	switch (sysnum) {
++	case PR_open:
++	case PR_openat:
++	case PR_openat2:
++	case PR_creat:
++	case PR_write:
++	case PR_writev:
++	case PR_pwrite64:
++	case PR_pwritev:
++	case PR_pwritev2:
++	case PR_truncate:
++	case PR_truncate64:
++	case PR_ftruncate:
++	case PR_ftruncate64:
++	case PR_fallocate:
++	case PR_unlink:
++	case PR_unlinkat:
++	case PR_rmdir:
++	case PR_rename:
++	case PR_renameat:
++	case PR_renameat2:
++	case PR_mkdir:
++	case PR_mkdirat:
++	case PR_mknod:
++	case PR_mknodat:
++	case PR_link:
++	case PR_linkat:
++	case PR_symlink:
++	case PR_symlinkat:
++	case PR_chmod:
++	case PR_fchmod:
++	case PR_fchmodat:
++	case PR_chown:
++	case PR_chown32:
++	case PR_fchown:
++	case PR_fchown32:
++	case PR_fchownat:
++	case PR_lchown:
++	case PR_lchown32:
++	case PR_utime:
++	case PR_utimes:
++	case PR_utimensat:
++	case PR_mmap:
++	case PR_mmap2:
++		return true;
++	default:
++		return false;
++	}
++}
++
++static bool debug_enabled(void)
++{
++	const char *value = getenv("KF_PROOT_TXN_DEBUG");
++	return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
++}
++
++static bool safe_absolute_path(const char *path)
++{
++	return path != NULL && path[0] == '/' &&
++		strchr(path, '\n') == NULL && strchr(path, '\r') == NULL;
++}
++
++static void trim_trailing_slash(char *path)
++{
++	size_t length = strlen(path);
++	while (length > 1 && path[length - 1] == '/') {
++		path[length - 1] = '\0';
++		length--;
++	}
++}
++
++static int normalize_absolute_path(const char *input, char output[PATH_MAX])
++{
++	const char *cursor;
++	size_t output_length = 1;
++
++	if (input == NULL || input[0] != '/')
++		return -EINVAL;
++	output[0] = '/';
++	output[1] = '\0';
++	cursor = input;
++	while (*cursor != '\0') {
++		const char *segment;
++		size_t segment_length;
++		while (*cursor == '/')
++			cursor++;
++		if (*cursor == '\0')
++			break;
++		segment = cursor;
++		while (*cursor != '\0' && *cursor != '/')
++			cursor++;
++		segment_length = (size_t) (cursor - segment);
++		if (segment_length == 1 && segment[0] == '.')
++			continue;
++		if (segment_length == 2 && segment[0] == '.' && segment[1] == '.') {
++			if (output_length == 1)
++				continue;
++			while (output_length > 1 && output[output_length - 1] != '/')
++				output_length--;
++			if (output_length > 1)
++				output_length--;
++			output[output_length] = '\0';
++			continue;
++		}
++		if (output_length > 1) {
++			if (output_length + 1 >= PATH_MAX)
++				return -ENAMETOOLONG;
++			output[output_length++] = '/';
++		}
++		if (segment_length >= PATH_MAX - output_length)
++			return -ENAMETOOLONG;
++		memcpy(output + output_length, segment, segment_length);
++		output_length += segment_length;
++		output[output_length] = '\0';
++	}
++	return 0;
++}
++
++static int read_control(const char *path, KfTxnControl *control)
++{
++	FILE *file;
++	char buffer[KF_TXN_CONTROL_MAX];
++	size_t size;
++	char *line;
++	char *save = NULL;
++	bool schema = false;
++	bool generation = false;
++	bool root = false;
++	bool entries = false;
++	bool max_bytes = false;
++
++	file = fopen(path, "r");
++	if (file == NULL)
++		return errno == ENOENT ? 0 : -errno;
++
++	size = fread(buffer, 1, sizeof(buffer) - 1, file);
++	if (ferror(file)) {
++		int error = errno;
++		fclose(file);
++		return -error;
++	}
++	if (!feof(file)) {
++		fclose(file);
++		return -E2BIG;
++	}
++	fclose(file);
++	buffer[size] = '\0';
++	memset(control, 0, sizeof(*control));
++
++	for (line = strtok_r(buffer, "\n", &save); line != NULL;
++		line = strtok_r(NULL, "\n", &save)) {
++		char *separator = strchr(line, '=');
++		char *value;
++		char *end = NULL;
++		if (separator == NULL || separator == line)
++			return -EPROTO;
++		*separator = '\0';
++		value = separator + 1;
++		if (strcmp(line, "schema") == 0) {
++			schema = strcmp(value, KF_TXN_CONTROL_SCHEMA) == 0;
++		}
++		else if (strcmp(line, "generation") == 0) {
++			errno = 0;
++			control->generation = strtoull(value, &end, 10);
++			generation = errno == 0 && end != value && *end == '\0' && control->generation > 0;
++		}
++		else if (strcmp(line, "root_path") == 0) {
++			if (strlen(value) >= sizeof(control->root_path))
++				return -ENAMETOOLONG;
++			strcpy(control->root_path, value);
++			root = true;
++		}
++		else if (strcmp(line, "entries_path") == 0) {
++			if (strlen(value) >= sizeof(control->entries_path))
++				return -ENAMETOOLONG;
++			strcpy(control->entries_path, value);
++			entries = true;
++		}
++		else if (strcmp(line, "max_backup_bytes") == 0) {
++			errno = 0;
++			control->max_backup_bytes = strtoull(value, &end, 10);
++			max_bytes = errno == 0 && end != value && *end == '\0' &&
++				control->max_backup_bytes > 0;
++		}
++	}
++
++	if (!schema || !generation || !root || !entries || !max_bytes)
++		return -EPROTO;
++	trim_trailing_slash(control->root_path);
++	trim_trailing_slash(control->entries_path);
++	if (!safe_absolute_path(control->root_path) ||
++		!safe_absolute_path(control->entries_path) ||
++		strcmp(control->root_path, control->entries_path) == 0)
++		return -EPROTO;
++	return 1;
++}
++
++static bool path_inside_root(const char *root, const char *path, const char **relative)
++{
++	size_t length = strlen(root);
++	if (strcmp(root, path) == 0) {
++		*relative = ".";
++		return true;
++	}
++	if (strncmp(root, path, length) != 0 || path[length] != '/')
++		return false;
++	*relative = path + length + 1;
++	return **relative != '\0';
++}
++
++static uint64_t fnv1a64(const char *value)
++{
++	uint64_t hash = UINT64_C(14695981039346656037);
++	const unsigned char *cursor = (const unsigned char *) value;
++	while (*cursor != '\0') {
++		hash ^= *cursor++;
++		hash *= UINT64_C(1099511628211);
++	}
++	return hash;
++}
++
++static int encode_hex(const char *value, char **encoded)
++{
++	static const char digits[] = "0123456789abcdef";
++	size_t length = strlen(value);
++	char *result;
++	size_t i;
++	if (length > (SIZE_MAX - 1) / 2)
++		return -EOVERFLOW;
++	result = malloc(length * 2 + 1);
++	if (result == NULL)
++		return -ENOMEM;
++	for (i = 0; i < length; i++) {
++		unsigned char byte = (unsigned char) value[i];
++		result[i * 2] = digits[byte >> 4];
++		result[i * 2 + 1] = digits[byte & 0x0f];
++	}
++	result[length * 2] = '\0';
++	*encoded = result;
++	return 0;
++}
++
++static int mkdir_one(const char *path, mode_t mode)
++{
++	if (mkdir(path, mode) == 0 || errno == EEXIST)
++		return 0;
++	return -errno;
++}
++
++static int ensure_directory(const char *path)
++{
++	char copy[PATH_MAX];
++	char *cursor;
++	if (!safe_absolute_path(path) || strlen(path) >= sizeof(copy))
++		return -EINVAL;
++	strcpy(copy, path);
++	for (cursor = copy + 1; *cursor != '\0'; cursor++) {
++		int status;
++		if (*cursor != '/')
++			continue;
++		*cursor = '\0';
++		status = mkdir_one(copy, 0700);
++		if (status < 0)
++			return status;
++		*cursor = '/';
++	}
++	return mkdir_one(copy, 0700);
++}
++
++static int copy_regular(const char *source, const char *destination,
++	mode_t mode, uint64_t *used_bytes, uint64_t limit)
++{
++	int input = -1;
++	int output = -1;
++	char *buffer = NULL;
++	int result = 0;
++
++	input = open(source, O_RDONLY | O_CLOEXEC);
++	if (input < 0)
++		return -errno;
++	output = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
++	if (output < 0) {
++		result = -errno;
++		goto out;
++	}
++	buffer = malloc(KF_TXN_COPY_BUFFER);
++	if (buffer == NULL) {
++		result = -ENOMEM;
++		goto out;
++	}
++	for (;;) {
++		ssize_t count = read(input, buffer, KF_TXN_COPY_BUFFER);
++		ssize_t offset = 0;
++		if (count < 0) {
++			if (errno == EINTR)
++				continue;
++			result = -errno;
++			goto out;
++		}
++		if (count == 0)
++			break;
++		if ((uint64_t) count > limit || *used_bytes > limit - (uint64_t) count) {
++			result = -ENOSPC;
++			goto out;
++		}
++		while (offset < count) {
++			ssize_t written = write(output, buffer + offset, (size_t) (count - offset));
++			if (written < 0) {
++				if (errno == EINTR)
++					continue;
++				result = -errno;
++				goto out;
++			}
++			offset += written;
++		}
++		*used_bytes += (uint64_t) count;
++	}
++	if (fchmod(output, mode & 07777) != 0 || fsync(output) != 0)
++		result = -errno;
++
++out:
++	free(buffer);
++	if (output >= 0)
++		close(output);
++	close(input);
++	if (result < 0)
++		unlink(destination);
++	return result;
++}
++
++static int copy_node(const char *source, const char *destination,
++	uint64_t *used_bytes, uint64_t limit)
++{
++	struct stat st;
++	if (lstat(source, &st) != 0)
++		return -errno;
++	if (S_ISREG(st.st_mode))
++		return copy_regular(source, destination, st.st_mode, used_bytes, limit);
++	if (S_ISLNK(st.st_mode)) {
++		char target[PATH_MAX];
++		ssize_t size = readlink(source, target, sizeof(target) - 1);
++		if (size < 0)
++			return -errno;
++		target[size] = '\0';
++		return symlink(target, destination) == 0 ? 0 : -errno;
++	}
++	if (S_ISDIR(st.st_mode)) {
++		DIR *directory;
++		struct dirent *entry;
++		int result = 0;
++		if (mkdir(destination, 0700) != 0)
++			return -errno;
++		directory = opendir(source);
++		if (directory == NULL)
++			return -errno;
++		while ((entry = readdir(directory)) != NULL) {
++			char child_source[PATH_MAX];
++			char child_destination[PATH_MAX];
++			if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
++				continue;
++			if (snprintf(child_source, sizeof(child_source), "%s/%s", source, entry->d_name) >=
++				(int) sizeof(child_source) ||
++				snprintf(child_destination, sizeof(child_destination), "%s/%s", destination,
++					entry->d_name) >= (int) sizeof(child_destination)) {
++				result = -ENAMETOOLONG;
++				break;
++			}
++			result = copy_node(child_source, child_destination, used_bytes, limit);
++			if (result < 0)
++				break;
++		}
++		closedir(directory);
++		if (result == 0 && chmod(destination, st.st_mode & 07777) != 0)
++			result = -errno;
++		return result;
++	}
++	return -ENOTSUP;
++}
++
++static int remove_tree(const char *path)
++{
++	struct stat st;
++	if (lstat(path, &st) != 0)
++		return errno == ENOENT ? 0 : -errno;
++	if (!S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode))
++		return unlink(path) == 0 ? 0 : -errno;
++	DIR *directory = opendir(path);
++	struct dirent *entry;
++	int result = 0;
++	if (directory == NULL)
++		return -errno;
++	while ((entry = readdir(directory)) != NULL) {
++		char child[PATH_MAX];
++		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
++			continue;
++		if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) >= (int) sizeof(child)) {
++			result = -ENAMETOOLONG;
++			break;
++		}
++		result = remove_tree(child);
++		if (result < 0)
++			break;
++	}
++	closedir(directory);
++	if (result == 0 && rmdir(path) != 0)
++		result = -errno;
++	return result;
++}
++
++static int write_meta(const char *entry_dir, const char *relative,
++	const char *kind, mode_t mode, const char *link_target, bool complete)
++{
++	char meta_path[PATH_MAX];
++	char temp_path[PATH_MAX];
++	char *relative_hex = NULL;
++	char *link_hex = NULL;
++	FILE *file = NULL;
++	int result;
++
++	if (snprintf(meta_path, sizeof(meta_path), "%s/%s", entry_dir, KF_TXN_META_FILE) >=
++		(int) sizeof(meta_path) ||
++		snprintf(temp_path, sizeof(temp_path), "%s/.meta-%ld", entry_dir, (long) getpid()) >=
++		(int) sizeof(temp_path))
++		return -ENAMETOOLONG;
++	result = encode_hex(relative, &relative_hex);
++	if (result < 0)
++		goto out;
++	result = encode_hex(link_target != NULL ? link_target : "", &link_hex);
++	if (result < 0)
++		goto out;
++	file = fopen(temp_path, "w");
++	if (file == NULL) {
++		result = -errno;
++		goto out;
++	}
++	if (fprintf(file,
++		"schema=%s\n"
++		"capture_state=%s\n"
++		"relative_path_hex=%s\n"
++		"before_kind=%s\n"
++		"mode=%u\n"
++		"link_target_hex=%s\n",
++		KF_TXN_ENTRY_SCHEMA, complete ? "complete" : "copying", relative_hex,
++		kind, (unsigned int) (mode & 07777), link_hex) < 0 ||
++		fflush(file) != 0 || fsync(fileno(file)) != 0) {
++		result = -errno;
++		goto out;
++	}
++	if (fclose(file) != 0) {
++		file = NULL;
++		result = -errno;
++		goto out;
++	}
++	file = NULL;
++	if (rename(temp_path, meta_path) != 0) {
++		result = -errno;
++		goto out;
++	}
++	result = 0;
++
++out:
++	if (file != NULL)
++		fclose(file);
++	if (result < 0)
++		unlink(temp_path);
++	free(relative_hex);
++	free(link_hex);
++	return result;
++}
++
++static int existing_entry_matches(const char *entry_dir, const char *relative)
++{
++	char meta_path[PATH_MAX];
++	char expected[PATH_MAX * 2 + 32];
++	char *relative_hex = NULL;
++	char buffer[KF_TXN_CONTROL_MAX];
++	FILE *file;
++	size_t size;
++	int result;
++	if (snprintf(meta_path, sizeof(meta_path), "%s/%s", entry_dir, KF_TXN_META_FILE) >=
++		(int) sizeof(meta_path))
++		return -ENAMETOOLONG;
++	result = encode_hex(relative, &relative_hex);
++	if (result < 0)
++		return result;
++	if (snprintf(expected, sizeof(expected), "relative_path_hex=%s\n", relative_hex) >=
++		(int) sizeof(expected)) {
++		free(relative_hex);
++		return -ENAMETOOLONG;
++	}
++	free(relative_hex);
++	file = fopen(meta_path, "r");
++	if (file == NULL)
++		return errno == ENOENT ? -EAGAIN : -errno;
++	size = fread(buffer, 1, sizeof(buffer) - 1, file);
++	fclose(file);
++	buffer[size] = '\0';
++	if (strstr(buffer, "capture_state=complete\n") == NULL)
++		return -EAGAIN;
++	return strstr(buffer, expected) != NULL ? 0 : -EEXIST;
++}
++
++static int measure_regular_bytes(const char *path, uint64_t *size)
++{
++	struct stat st;
++	if (lstat(path, &st) != 0)
++		return errno == ENOENT ? 0 : -errno;
++	if (S_ISREG(st.st_mode)) {
++		if ((uint64_t) st.st_size > UINT64_MAX - *size)
++			return -EOVERFLOW;
++		*size += (uint64_t) st.st_size;
++		return 0;
++	}
++	if (!S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode))
++		return 0;
++	DIR *directory = opendir(path);
++	struct dirent *entry;
++	int result = 0;
++	if (directory == NULL)
++		return -errno;
++	while ((entry = readdir(directory)) != NULL) {
++		char child[PATH_MAX];
++		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
++			continue;
++		if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) >= (int) sizeof(child)) {
++			result = -ENAMETOOLONG;
++			break;
++		}
++		result = measure_regular_bytes(child, size);
++		if (result < 0)
++			break;
++	}
++	closedir(directory);
++	return result;
++}
++
++static int measure_existing_payloads(const char *entries_path, uint64_t *size)
++{
++	DIR *directory = opendir(entries_path);
++	struct dirent *entry;
++	int result = 0;
++	*size = 0;
++	if (directory == NULL)
++		return -errno;
++	while ((entry = readdir(directory)) != NULL) {
++		char payload[PATH_MAX];
++		if (entry->d_name[0] == '.')
++			continue;
++		if (snprintf(payload, sizeof(payload), "%s/%s/%s", entries_path,
++			entry->d_name, KF_TXN_PAYLOAD_NAME) >= (int) sizeof(payload)) {
++			result = -ENAMETOOLONG;
++			break;
++		}
++		result = measure_regular_bytes(payload, size);
++		if (result < 0)
++			break;
++	}
++	closedir(directory);
++	return result;
++}
++
++static int capture_path_impl(KfTxnConfig *config, const KfTxnControl *control, const char *path)
++{
++	const char *relative;
++	uint64_t hash;
++	char entry_dir[PATH_MAX];
++	char payload[PATH_MAX];
++	struct stat st;
++	const char *kind = "absent";
++	char link_target[PATH_MAX] = "";
++	mode_t mode = 0;
++	int result;
++
++	if (!path_inside_root(control->root_path, path, &relative)) {
++		if (debug_enabled())
++			fprintf(stderr, "kf_txn skip path=%s root=%s\n", path, control->root_path);
++		return 0;
++	}
++	if (debug_enabled())
++		fprintf(stderr, "kf_txn capture path=%s relative=%s\n", path, relative);
++	result = ensure_directory(control->entries_path);
++	if (result < 0)
++		return result;
++	hash = fnv1a64(relative);
++	if (snprintf(entry_dir, sizeof(entry_dir), "%s/%016" PRIx64,
++		control->entries_path, hash) >= (int) sizeof(entry_dir))
++		return -ENAMETOOLONG;
++	if (mkdir(entry_dir, 0700) != 0) {
++		if (errno == EEXIST)
++			return existing_entry_matches(entry_dir, relative);
++		return -errno;
++	}
++
++	if (lstat(path, &st) == 0) {
++		mode = st.st_mode;
++		if (S_ISREG(st.st_mode))
++			kind = "file";
++		else if (S_ISDIR(st.st_mode))
++			kind = "directory";
++		else if (S_ISLNK(st.st_mode)) {
++			ssize_t size = readlink(path, link_target, sizeof(link_target) - 1);
++			if (size < 0) {
++				result = -errno;
++				goto fail;
++			}
++			link_target[size] = '\0';
++			kind = "symlink";
++		}
++		else {
++			result = -ENOTSUP;
++			goto fail;
++		}
++	}
++	else if (errno != ENOENT) {
++		result = -errno;
++		goto fail;
++	}
++
++	result = write_meta(entry_dir, relative, kind, mode, link_target, false);
++	if (result < 0)
++		goto fail;
++	if (strcmp(kind, "file") == 0 || strcmp(kind, "directory") == 0) {
++		if (snprintf(payload, sizeof(payload), "%s/%s", entry_dir, KF_TXN_PAYLOAD_NAME) >=
++			(int) sizeof(payload)) {
++			result = -ENAMETOOLONG;
++			goto fail;
++		}
++		result = copy_node(path, payload, &config->used_bytes, control->max_backup_bytes);
++		if (result < 0)
++			goto fail;
++	}
++	result = write_meta(entry_dir, relative, kind, mode, link_target, true);
++	if (result < 0)
++		goto fail;
++	return 0;
++
++fail:
++	remove_tree(entry_dir);
++	return result;
++}
++
++static int capture_path(KfTxnConfig *config, const KfTxnControl *control, const char *path)
++{
++	const char *relative;
++	char normalized[PATH_MAX];
++	char lock_path[PATH_MAX];
++	int lock_fd;
++	int result;
++	if (path == NULL || path[0] != '/')
++		return 0;
++	result = normalize_absolute_path(path, normalized);
++	if (result < 0)
++		return result;
++	if (!path_inside_root(control->root_path, normalized, &relative)) {
++		if (debug_enabled())
++			fprintf(stderr, "kf_txn skip path=%s root=%s\n", normalized, control->root_path);
++		return 0;
++	}
++	result = ensure_directory(control->entries_path);
++	if (result < 0)
++		return result;
++	if (snprintf(lock_path, sizeof(lock_path), "%s/.capture.lock",
++		control->entries_path) >= (int) sizeof(lock_path))
++		return -ENAMETOOLONG;
++	lock_fd = open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
++	if (lock_fd < 0)
++		return -errno;
++	if (flock(lock_fd, LOCK_EX) != 0) {
++		result = -errno;
++		close(lock_fd);
++		return result;
++	}
++	result = measure_existing_payloads(control->entries_path, &config->used_bytes);
++	if (result == 0)
++		result = capture_path_impl(config, control, normalized);
++	flock(lock_fd, LOCK_UN);
++	close(lock_fd);
++	return result;
++}
++
++static int current_path(Tracee *tracee, Reg path_sysarg, char path[PATH_MAX])
++{
++	int size = read_string(tracee, path,
++		peek_reg(tracee, CURRENT, path_sysarg), PATH_MAX);
++	if (size < 0)
++		return size;
++	if (size >= PATH_MAX)
++		return -ENAMETOOLONG;
++	return 0;
++}
++
++static int fd_path(Tracee *tracee, Reg fd_sysarg, char path[PATH_MAX])
++{
++	return readlink_proc_pid_fd(tracee->pid,
++		(int) peek_reg(tracee, CURRENT, fd_sysarg), path);
++}
++
++static int capture_path_arg(Tracee *tracee, KfTxnConfig *config,
++	const KfTxnControl *control, Reg path_sysarg)
++{
++	char path[PATH_MAX];
++	int status = current_path(tracee, path_sysarg, path);
++	if (debug_enabled() && status != 0)
++		fprintf(stderr, "kf_txn path_arg status=%d reg=%d\n", status, path_sysarg);
++	if (status != 0)
++		return status < 0 ? status : 0;
++	return capture_path(config, control, path);
++}
++
++/*
++ * Creation syscalls such as mkdir(2) are frequently used through idempotent
++ * helpers (`mkdir -p`).  When the destination already exists the syscall
++ * cannot mutate it, so recursively copying that directory would turn an
++ * otherwise small file update into a whole-tree snapshot.
++ */
++static int capture_creation_path_arg(Tracee *tracee, KfTxnConfig *config,
++	const KfTxnControl *control, Reg path_sysarg)
++{
++	char path[PATH_MAX];
++	struct stat st;
++	int status = current_path(tracee, path_sysarg, path);
++	if (debug_enabled() && status != 0)
++		fprintf(stderr, "kf_txn creation_path_arg status=%d reg=%d\n", status, path_sysarg);
++	if (status != 0)
++		return status < 0 ? status : 0;
++	if (lstat(path, &st) == 0)
++		return 0;
++	if (errno != ENOENT)
++		return -errno;
++	return capture_path(config, control, path);
++}
++
++static int capture_fd_arg(Tracee *tracee, KfTxnConfig *config,
++	const KfTxnControl *control, Reg fd_sysarg)
++{
++	char path[PATH_MAX];
++	int status = fd_path(tracee, fd_sysarg, path);
++	if (debug_enabled() && status != 0)
++		fprintf(stderr, "kf_txn fd_arg status=%d fd=%ld\n", status,
++			(long) peek_reg(tracee, CURRENT, fd_sysarg));
++	if (status != 0)
++		return status < 0 ? status : 0;
++	return capture_path(config, control, path);
++}
++
++static int capture_mutation(Tracee *tracee, KfTxnConfig *config,
++	const KfTxnControl *control)
++{
++	word_t sysnum = get_sysnum(tracee, ORIGINAL);
++	word_t flags;
++	int result;
++	switch (sysnum) {
++	case PR_open:
++		flags = peek_reg(tracee, CURRENT, SYSARG_2);
++		if ((flags & O_ACCMODE) == O_RDONLY && (flags & (O_CREAT | O_TRUNC)) == 0)
++			return 0;
++		return capture_path_arg(tracee, config, control, SYSARG_1);
++	case PR_openat:
++	case PR_openat2:
++		flags = peek_reg(tracee, CURRENT, SYSARG_3);
++		if ((flags & O_ACCMODE) == O_RDONLY && (flags & (O_CREAT | O_TRUNC)) == 0)
++			return 0;
++		return capture_path_arg(tracee, config, control, SYSARG_2);
++	case PR_creat:
++	case PR_truncate:
++	case PR_truncate64:
++	case PR_unlink:
++	case PR_rmdir:
++	case PR_chmod:
++	case PR_chown:
++	case PR_chown32:
++	case PR_lchown:
++	case PR_lchown32:
++	case PR_utime:
++	case PR_utimes:
++		return capture_path_arg(tracee, config, control, SYSARG_1);
++	case PR_mkdir:
++	case PR_mknod:
++		return capture_creation_path_arg(tracee, config, control, SYSARG_1);
++	case PR_unlinkat:
++	case PR_fchmodat:
++	case PR_fchownat:
++	case PR_utimensat:
++		return capture_path_arg(tracee, config, control, SYSARG_2);
++	case PR_mkdirat:
++	case PR_mknodat:
++		return capture_creation_path_arg(tracee, config, control, SYSARG_2);
++	case PR_rename:
++		result = capture_path_arg(tracee, config, control, SYSARG_1);
++		return result < 0 ? result : capture_path_arg(tracee, config, control, SYSARG_2);
++	case PR_renameat:
++	case PR_renameat2:
++		result = capture_path_arg(tracee, config, control, SYSARG_2);
++		return result < 0 ? result : capture_path_arg(tracee, config, control, SYSARG_4);
++	case PR_link:
++	case PR_symlink:
++		return capture_creation_path_arg(tracee, config, control, SYSARG_2);
++	case PR_linkat:
++		return capture_creation_path_arg(tracee, config, control, SYSARG_4);
++	case PR_symlinkat:
++		return capture_creation_path_arg(tracee, config, control, SYSARG_3);
++	case PR_write:
++	case PR_writev:
++	case PR_pwrite64:
++	case PR_pwritev:
++	case PR_pwritev2:
++	case PR_ftruncate:
++	case PR_ftruncate64:
++	case PR_fallocate:
++	case PR_fchmod:
++	case PR_fchown:
++	case PR_fchown32:
++		return capture_fd_arg(tracee, config, control, SYSARG_1);
++	case PR_mmap:
++	case PR_mmap2:
++		flags = peek_reg(tracee, CURRENT, SYSARG_4);
++		if ((peek_reg(tracee, CURRENT, SYSARG_3) & PROT_WRITE) == 0 ||
++			(flags & MAP_SHARED) == 0)
++			return 0;
++		return capture_fd_arg(tracee, config, control, SYSARG_5);
++	default:
++		return 0;
++	}
++}
++
++int kf_txn_callback(Extension *extension, ExtensionEvent event,
++	intptr_t data1, intptr_t data2 UNUSED)
++{
++	switch (event) {
++	case INITIALIZATION: {
++		const char *control_path = getenv("KF_PROOT_TXN_CONTROL_PATH");
++		KfTxnConfig *config;
++		if (control_path == NULL || !safe_absolute_path(control_path))
++			return -EINVAL;
++		config = talloc_zero(extension, KfTxnConfig);
++		if (config == NULL)
++			return -ENOMEM;
++		config->control_path = talloc_strdup(config, control_path);
++		if (config->control_path == NULL)
++			return -ENOMEM;
++		extension->config = config;
++		extension->filtered_sysnums = filtered_sysnums;
++		if (debug_enabled())
++			fprintf(stderr, "kf_txn initialized control=%s\n", control_path);
++		return 0;
++	}
++	case SYSCALL_ENTER_END: {
++		KfTxnConfig *config;
++		KfTxnControl control;
++		int active;
++		if (data1 < 0)
++			return 0;
++		if (!mutation_sysnum(get_sysnum(TRACEE(extension), ORIGINAL)))
++			return 0;
++		config = talloc_get_type_abort(extension->config, KfTxnConfig);
++		active = read_control(config->control_path, &control);
++		if (active <= 0)
++			return active;
++		if (config->generation != control.generation) {
++			config->generation = control.generation;
++			config->used_bytes = 0;
++		}
++		return capture_mutation(TRACEE(extension), config, &control);
++	}
++	case KF_TXN_PRE_HOST_MUTATION: {
++		KfTxnConfig *config = talloc_get_type_abort(extension->config, KfTxnConfig);
++		KfTxnControl control;
++		int active = read_control(config->control_path, &control);
++		if (active <= 0)
++			return active;
++		if (config->generation != control.generation) {
++			config->generation = control.generation;
++			config->used_bytes = 0;
++		}
++		return capture_path(config, &control, (const char *) data1);
++	}
++	default:
++		return 0;
++	}
++}
+diff --git a/src/extension/link2symlink/link2symlink.c b/src/extension/link2symlink/link2symlink.c
+index d5f6241..e800b67 100644
+--- a/src/extension/link2symlink/link2symlink.c
++++ b/src/extension/link2symlink/link2symlink.c
+@@ -137,6 +137,14 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 
+ 		strcpy(final, intermediate);
+ 		strcat(final, ".0002");
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) original, 0);
++		if (status < 0)
++			return status;
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) final, 0);
++		if (status < 0)
++			return status;
+ 		status = rename(original, final);
+ 		if (status < 0)
+ 			return status;
+@@ -145,11 +153,19 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 			return status;
+ 
+ 		/* Symlink the intermediate to the final file.  */
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) intermediate, 0);
++		if (status < 0)
++			return status;
+ 		status = symlink(final, intermediate);
+ 		if (status < 0)
+ 			return status;
+ 
+ 		/* Symlink the original path to the intermediate one.  */
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) original, 0);
++		if (status < 0)
++			return status;
+ 		status = symlink(intermediate, original);
+ 		if (status < 0)
+ 			return status;
+@@ -165,6 +181,14 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 		strncpy(new_final, final, strlen(final) - 4);
+ 		sprintf(new_final + strlen(final) - 4, "%04d", link_count);
+ 
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) final, 0);
++		if (status < 0)
++			return status;
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) new_final, 0);
++		if (status < 0)
++			return status;
+ 		status = rename(final, new_final);
+ 		if (status < 0)
+ 			return status;
+@@ -173,7 +197,15 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 			return status;
+ 		strcpy(final, new_final);
+ 		/* Symlink the intermediate to the final file.  */
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) intermediate, 0);
++		if (status < 0)
++			return status;
+ 		status = unlink(intermediate);
++		if (status < 0)
++			return status;
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) intermediate, 0);
+ 		if (status < 0)
+ 			return status;
+ 		status = symlink(final, intermediate);
+@@ -183,6 +215,10 @@ static int move_and_symlink_path(Tracee *tracee, Reg sysarg, Reg link_target_sys
+ 
+ 	/* Perform symlink() operation within PRoot.  */
+ 	status = read_path(tracee, final, peek_reg(tracee, CURRENT, link_target_sysarg));
++	if (status >= 0) {
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) final, 0);
++	}
+ 	if (status >= 0) {
+ 		status = symlink(intermediate, final);
+ 		if (status < 0) status = -errno;
+@@ -262,6 +298,18 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
+ 		strncpy(new_final, final, strlen(final) - 4);
+ 		sprintf(new_final + strlen(final) - 4, "%04d", link_count);
+ 
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) original, 0);
++		if (status < 0)
++			return status;
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) final, 0);
++		if (status < 0)
++			return status;
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) new_final, 0);
++		if (status < 0)
++			return status;
+ 		status = rename(final, new_final);
+ 		if (status < 0)
+ 			return status;
+@@ -272,16 +320,36 @@ static int decrement_link_count(Tracee *tracee, Reg sysarg)
+ 		strcpy(final, new_final);
+ 
+ 		/* Symlink the intermediate to the final file.  */
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) intermediate, 0);
++		if (status < 0)
++			return status;
+ 		status = unlink(intermediate);
+ 		if (status < 0)
+ 			return status;
+ 
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) intermediate, 0);
++		if (status < 0)
++			return status;
+ 		status = symlink(final, intermediate);
+ 		if (status < 0)
+ 			return status;
+ 	} else {
+ 		/* If it is the last, delete the intermediate and final */
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) original, 0);
++		if (status < 0)
++			return status;
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) intermediate, 0);
++		if (status < 0)
++			return status;
+ 		status = unlink(intermediate);
++		if (status < 0)
++			return status;
++		status = notify_extensions(tracee, KF_TXN_PRE_HOST_MUTATION,
++			(intptr_t) final, 0);
+ 		if (status < 0)
+ 			return status;
+ 		status = unlink(final);

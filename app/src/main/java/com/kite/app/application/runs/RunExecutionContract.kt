@@ -5,13 +5,16 @@ import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
+import com.kite.app.run.CardRunAgentBinding
 
 internal data class RunStartRequest(
     val recipe: KiteRecipe,
     val instanceId: String,
     val parentInstanceId: String? = null,
     val ownerKind: String = CardRunState.OWNER_KIND_CARD,
-    val stepId: String? = null
+    val stepId: String? = null,
+    val agentId: String? = null,
+    val environmentId: String = ""
 )
 
 internal data class RunStateMutation(
@@ -28,15 +31,20 @@ internal data class RunStateMutation(
     val rootPid: String? = null,
     val processGroupId: String? = null,
     val systemSessionId: String? = null,
+    val runtimeLane: String? = null,
+    val runtimeFallbackReason: String? = null,
     val lastMeaningfulOutput: String? = null,
     val lastError: String? = null,
     val shellReportText: String? = null,
     val nextActionUrl: String? = null,
     val x11Display: String? = null,
     val x11SocketPath: String? = null,
+    val agentId: String? = null,
+    val agentBinding: CardRunAgentBinding? = null,
     val clearRunBinding: Boolean = false,
     val clearTerminalSession: Boolean = false,
-    val clearNextActionUrl: Boolean = false
+    val clearNextActionUrl: Boolean = false,
+    val clearAgentBinding: Boolean = false
 )
 
 /**
@@ -63,6 +71,18 @@ internal data class RecipeStepExecutionRequest(
     val runtimeOwnerId: String? = null,
     val runtimeUnitId: String? = null
 )
+
+/**
+ * 为一次运行补充底层执行环境。提供者只按运行实例返回通用环境变量，
+ * 不感知资源类型、步骤类型或具体命令。
+ */
+internal fun interface RunExecutionEnvironmentProvider {
+    fun environment(request: RecipeStepExecutionRequest): Map<String, String>
+
+    companion object {
+        val None = RunExecutionEnvironmentProvider { emptyMap() }
+    }
+}
 
 internal data class RecipeStepCompletionRequest(
     val recipe: KiteRecipe,

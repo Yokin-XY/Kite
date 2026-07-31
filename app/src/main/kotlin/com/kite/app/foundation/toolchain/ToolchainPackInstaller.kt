@@ -33,7 +33,7 @@ object ToolchainPackInstaller {
     private const val INSTALL_TIMEOUT_SECONDS = 900L
     private const val OUTPUT_LIMIT = 48_000
     const val BOOTSTRAP_RESOURCE_RUN_PREFIX = "bootstrap:"
-    private const val RESOURCE_NODEJS = "kite.nodejs"
+    const val RESOURCE_NODEJS = "kite.nodejs"
     private const val RESOURCE_PYTHON = "kite.python"
     private const val RESOURCE_UV = "kite.uv"
     private const val RESOURCE_GIT = "kite.git"
@@ -43,12 +43,68 @@ object ToolchainPackInstaller {
     private const val PYTHON_VERSION = "3.14.6"
     private const val UV_VERSION = "0.11.25"
     private val BOOTSTRAP_RESOURCES = listOf(
-        BootstrapResource(RESOURCE_NODEJS, "--install-node", NODE_VERSION, "Node.js"),
-        BootstrapResource(RESOURCE_PYTHON, "--install-python", PYTHON_VERSION, "Python"),
-        BootstrapResource(RESOURCE_UV, "--install-uv", UV_VERSION, "uv"),
-        BootstrapResource(RESOURCE_GIT, "--install-git", "rootfs", "Git"),
-        BootstrapResource(RESOURCE_CURL, "--install-curl", "rootfs", "curl"),
-        BootstrapResource(RESOURCE_TOOL_ENV, "--install-system-tools", "v16", "系统工具集合")
+        BootstrapResource(
+            resourceId = RESOURCE_NODEJS,
+            mode = "--install-node",
+            version = NODE_VERSION,
+            label = "Node.js",
+            requiredPaths = listOf(".kf/bin/node", ".kf/bin/npm", ".kf/bin/npx"),
+            anyRuntimePaths = listOf(
+                ".kf/software/kite.nodejs/node-v26.4.0/bin/node",
+                ".kf/components/kite.nodejs/node-v26.4.0/bin/node",
+                ".kf/toolchains/node-v26.4.0/bin/node"
+            )
+        ),
+        BootstrapResource(
+            resourceId = RESOURCE_PYTHON,
+            mode = "--install-python",
+            version = PYTHON_VERSION,
+            label = "Python",
+            requiredPaths = listOf(".kf/bin/python3"),
+            anyRuntimePaths = listOf(
+                ".kf/software/kite.python/python-3.14.6/bin/python3.14",
+                ".kf/toolchains/python-3.14.6/bin/python3.14"
+            )
+        ),
+        BootstrapResource(
+            resourceId = RESOURCE_UV,
+            mode = "--install-uv",
+            version = UV_VERSION,
+            label = "uv",
+            requiredPaths = listOf(
+                ".kf/software/kite.uv/uv-0.11.25/uv",
+                ".kf/bin/uv"
+            )
+        ),
+        BootstrapResource(
+            resourceId = RESOURCE_GIT,
+            mode = "--install-git",
+            version = "rootfs",
+            label = "Git",
+            requiredPaths = listOf(".kf/software/kite.git/bin/git", ".kf/bin/git")
+        ),
+        BootstrapResource(
+            resourceId = RESOURCE_CURL,
+            mode = "--install-curl",
+            version = "rootfs",
+            label = "curl",
+            requiredPaths = listOf(".kf/software/kite.curl/bin/curl", ".kf/bin/curl")
+        ),
+        BootstrapResource(
+            resourceId = RESOURCE_TOOL_ENV,
+            mode = "--install-system-tools",
+            version = "v16",
+            label = "系统工具集合",
+            requiredPaths = listOf(
+                ".kf/software/kite.tool.env/pnpm-11.9.0/package/bin/pnpm.cjs",
+                ".kf/bin/pnpm",
+                ".kf/bin/wget",
+                ".kf/bin/jq",
+                ".kf/bin/rg",
+                ".kf/bin/fd",
+                ".kf/bin/zip"
+            )
+        )
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -126,8 +182,11 @@ object ToolchainPackInstaller {
     fun bootstrapResourcesSettled(context: Context): Boolean {
         return runCatching {
             val port = ToolchainResourcePortHost.get()
+            val environmentId = port.currentEnvironmentId(context.applicationContext)
             val ids = BOOTSTRAP_RESOURCES.map { it.resourceId }
-            ids.all { id -> bootstrapResourceStatusSettled(port.statusOf(context.applicationContext, id)) }
+            ids.all { id ->
+                bootstrapResourceStatusSettled(port.statusOf(context.applicationContext, id, environmentId))
+            }
         }.getOrDefault(false)
     }
 
@@ -252,13 +311,20 @@ object ToolchainPackInstaller {
         return runCatching {
             val manifest = extractRuntimePack(appContext)
             val totalSteps = BOOTSTRAP_RESOURCES.size
+            val installRunner = BootstrapInstallRunner(ToolchainResourcePortHost.get())
             val resourceResults = BOOTSTRAP_RESOURCES.mapIndexed { index, resource ->
                 val stepIndex = index + 1
-                markBootstrapResourceInstalling(appContext, resource)
                 if (reportBootstrapProgress) {
                     RuntimeBootstrapProgress.bundledToolStarted(resource.label, stepIndex, totalSteps)
                 }
-                val result = runCatching {
+                val runId = "$BOOTSTRAP_RESOURCE_RUN_PREFIX${resource.resourceId}"
+                val result = installRunner.run(
+                    context = appContext,
+                    resourceId = resource.resourceId,
+                    targetVersion = resource.version,
+                    runId = runId,
+                    alreadyReady = isBootstrapResourceReady(appContext, resource)
+                ) {
                     val resourcePackDir = mirrorPackIntoSharedResourceCache(appContext, resource.resourceId)
                     executeInstallScript(
                         context = appContext,
@@ -267,13 +333,6 @@ object ToolchainPackInstaller {
                         workspacePackPath = resourcePackWorkspacePath(resource.resourceId),
                         toolchainDir = "/workspace/.kf/software/${safeResourceId(resource.resourceId)}",
                         binDir = WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
-                    )
-                }.getOrElse { error ->
-                    ToolchainCommandResult(
-                        exitCode = -1,
-                        timedOut = false,
-                        durationMs = 0L,
-                        output = error.stackTraceToString().take(OUTPUT_LIMIT)
                     )
                 }
                 if (reportBootstrapProgress) {
@@ -284,7 +343,6 @@ object ToolchainPackInstaller {
                         result.exitCode != 0 || result.timedOut
                     )
                 }
-                recordBootstrapResourceResult(appContext, resource, result)
                 appendLog(appContext, result.toLogBlock(resource.resourceId))
                 resource to result
             }
@@ -292,7 +350,7 @@ object ToolchainPackInstaller {
             val failedResources = resourceResults
                 .filter { (_, result) -> result.exitCode != 0 || result.timedOut }
                 .map { (resource, _) -> resource.resourceId }
-            val phase = ToolchainInstallPhase.SUCCEEDED
+            val phase = resolveBootstrapPhase(failedResources.size)
             val summary = buildString {
                 append("SUMMARY resources=")
                 append(BOOTSTRAP_RESOURCES.size)
@@ -338,55 +396,15 @@ object ToolchainPackInstaller {
         }
     }
 
-    private fun markBootstrapResourceInstalling(context: Context, resource: BootstrapResource) {
-        runCatching {
-            ToolchainResourcePortHost.get().markInstalling(
-                context,
-                resource.resourceId,
-                "$BOOTSTRAP_RESOURCE_RUN_PREFIX${resource.resourceId}"
-            )
-        }.onFailure { error ->
-            Logger.e(LOG_TAG, "Failed to mark bootstrap resource ${resource.resourceId} installing: ${error.message}")
-        }
-    }
-
     private fun markBootstrapResourcesFailed(context: Context, reason: String) {
         runCatching {
             val port = ToolchainResourcePortHost.get()
+            val environmentId = port.currentEnvironmentId(context)
             BOOTSTRAP_RESOURCES.forEach { resource ->
-                port.markFailed(context, resource.resourceId, null, reason)
+                port.markFailed(context, resource.resourceId, null, reason, environmentId)
             }
         }.onFailure { error ->
             Logger.e(LOG_TAG, "Failed to mark bootstrap resources failed: ${error.message}")
-        }
-    }
-
-    private fun recordBootstrapResourceResult(
-        context: Context,
-        resource: BootstrapResource,
-        result: ToolchainCommandResult
-    ) {
-        runCatching {
-            val port = ToolchainResourcePortHost.get()
-            val registration = resolveBootstrapResourceRegistration(
-                resourceId = resource.resourceId,
-                version = resource.version,
-                exitCode = result.exitCode,
-                timedOut = result.timedOut,
-                summary = result.summaryLine() ?: "exitCode=${result.exitCode} timedOut=${result.timedOut}"
-            )
-            if (registration.installed) {
-                port.markInstalled(context, registration.resourceId, registration.version, null, registration.summary)
-            } else {
-                port.markFailed(
-                    context,
-                    registration.resourceId,
-                    null,
-                    registration.summary
-                )
-            }
-        }.onFailure { error ->
-            Logger.e(LOG_TAG, "Failed to register bootstrap resource ${resource.resourceId}: ${error.message}")
         }
     }
 
@@ -404,6 +422,9 @@ object ToolchainPackInstaller {
             summary = summary
         )
 
+    internal fun resolveBootstrapPhase(failedResourceCount: Int): ToolchainInstallPhase =
+        if (failedResourceCount == 0) ToolchainInstallPhase.SUCCEEDED else ToolchainInstallPhase.FAILED
+
     internal data class BootstrapResourceRegistration(
         val resourceId: String,
         val version: String,
@@ -415,8 +436,124 @@ object ToolchainPackInstaller {
         val resourceId: String,
         val mode: String,
         val version: String,
-        val label: String
+        val label: String,
+        val requiredPaths: List<String>,
+        val anyRuntimePaths: List<String> = emptyList()
     )
+
+    private fun isBootstrapResourceReady(context: Context, resource: BootstrapResource): Boolean {
+        val workspaceDir = workspaceDirOrNull(context) ?: return false
+        val requiredReady = resource.requiredPaths.all { relativePath ->
+            workspacePathExists(File(workspaceDir, relativePath), workspaceDir)
+        }
+        val runtimeReady = resource.anyRuntimePaths.isEmpty() || resource.anyRuntimePaths.any { relativePath ->
+            workspacePathExists(File(workspaceDir, relativePath), workspaceDir)
+        }
+        return requiredReady && runtimeReady
+    }
+
+    internal class BootstrapInstallRunner(
+        private val port: ToolchainResourcePort
+    ) {
+        fun run(
+            context: Context,
+            resourceId: String,
+            targetVersion: String,
+            runId: String,
+            alreadyReady: Boolean,
+            install: () -> ToolchainCommandResult
+        ): ToolchainCommandResult {
+            val environmentId = port.currentEnvironmentId(context)
+            val currentStatus = port.statusOf(context, resourceId, environmentId)
+            val currentVersion = port.versionOf(context, resourceId, environmentId)
+            if (alreadyReady) {
+                val reused = ToolchainCommandResult(
+                    exitCode = 0,
+                    timedOut = false,
+                    durationMs = 0L,
+                    output = "SUMMARY PASS=1 WARN=0 FAIL=0 reused=$resourceId\n"
+                )
+                if (currentStatus != ToolchainResourcePort.STATUS_INSTALLED || currentVersion != targetVersion) {
+                    val registrationError = runCatching {
+                        port.markInstalled(
+                            context,
+                            resourceId,
+                            targetVersion,
+                            runId,
+                            "已复用通过真实文件校验的系统组件",
+                            environmentId
+                        )
+                    }.exceptionOrNull()
+                    return if (registrationError == null) reused else reused.withFailure("register", registrationError)
+                }
+                return reused
+            }
+            port.markInstalling(context, resourceId, runId, environmentId)
+            val result = runCatching { install() }
+                .getOrElse { error -> transactionFailure("execute", error) }
+            if (result.exitCode != 0 || result.timedOut) {
+                return failInstall(context, resourceId, runId, environmentId, result)
+            }
+
+            val registration = resolveBootstrapResourceRegistration(
+                resourceId = resourceId,
+                version = targetVersion,
+                exitCode = result.exitCode,
+                timedOut = result.timedOut,
+                summary = result.summaryLine() ?: "exitCode=${result.exitCode} timedOut=${result.timedOut}"
+            )
+            val registrationError = runCatching {
+                port.markInstalled(
+                    context,
+                    registration.resourceId,
+                    registration.version,
+                    runId,
+                    registration.summary,
+                    environmentId
+                )
+            }.exceptionOrNull()
+            if (registrationError != null) {
+                return result.withFailure("register", registrationError)
+            }
+            return result
+        }
+
+        private fun failInstall(
+            context: Context,
+            resourceId: String,
+            runId: String,
+            environmentId: String,
+            result: ToolchainCommandResult
+        ): ToolchainCommandResult {
+            runCatching {
+                port.markFailed(
+                    context,
+                    resourceId,
+                    runId,
+                    result.summaryLine() ?: "exitCode=${result.exitCode} timedOut=${result.timedOut}",
+                    environmentId
+                )
+            }.onFailure { error ->
+                Logger.e(LOG_TAG, "Failed to register bootstrap failure $resourceId: ${error.message}")
+            }
+            return result
+        }
+
+        private fun transactionFailure(stage: String, error: Throwable): ToolchainCommandResult =
+            ToolchainCommandResult(
+                exitCode = -1,
+                timedOut = false,
+                durationMs = 0L,
+                output = "KITE_RESOURCE_TRANSACTION_FAILED stage=$stage reason=${error.message ?: error.javaClass.simpleName}\n"
+            )
+
+        private fun ToolchainCommandResult.withFailure(stage: String, error: Throwable): ToolchainCommandResult =
+            copy(
+                exitCode = if (exitCode == 0) -1 else exitCode,
+                output = (output + "\nKITE_RESOURCE_TRANSACTION_FAILED stage=$stage reason=${error.message ?: error.javaClass.simpleName}\n")
+                    .takeLast(OUTPUT_LIMIT)
+            )
+    }
 
     private fun auditToolchainCapability(action: ToolchainAction) {
         CapabilityGate.evaluate(
@@ -561,6 +698,7 @@ object ToolchainPackInstaller {
             payload = payload,
             loginShell = true
         )
+
         val output = StringBuilder()
         val startedAt = System.currentTimeMillis()
         val process = ProcessBuilder(config.command)
@@ -721,7 +859,7 @@ object ToolchainPackInstaller {
         DOCTOR
     }
 
-    private data class ToolchainCommandResult(
+    internal data class ToolchainCommandResult(
         val exitCode: Int,
         val timedOut: Boolean,
         val durationMs: Long,

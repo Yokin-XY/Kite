@@ -515,6 +515,7 @@ internal class RunWindowOverviewScreen(
         RunSurfaceWindowKind.Web -> R.drawable.card_run_window_icon_web
         RunSurfaceWindowKind.Report,
         RunSurfaceWindowKind.X11,
+        RunSurfaceWindowKind.Agent,
         RunSurfaceWindowKind.InstallWizard -> R.drawable.card_run_window_icon_shell
     }
 
@@ -523,6 +524,7 @@ internal class RunWindowOverviewScreen(
         RunSurfaceWindowKind.Web,
         RunSurfaceWindowKind.X11 -> R.drawable.card_run_window_preview_web
         RunSurfaceWindowKind.Report,
+        RunSurfaceWindowKind.Agent,
         RunSurfaceWindowKind.InstallWizard -> R.drawable.card_run_window_preview_shell
     }
 

@@ -5,8 +5,12 @@ import com.kite.app.foundation.runtime.AssetExtractor
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.contracts.ContainerExecConfig
 import com.kite.app.foundation.contracts.ContainerLaunchConfig
-import com.kite.app.foundation.runtime.ExternalExchangeManager
 import com.kite.app.foundation.runtime.KFContainerManager
+import com.kite.app.foundation.runtime.ManagedCommandVerificationBasis
+import com.kite.app.foundation.runtime.JavaWarmProotRunnerProcess
+import com.kite.app.foundation.runtime.WarmProotRunnerProcess
+import com.kite.app.foundation.runtime.ProotEnvironmentWorkspace
+import com.kite.app.foundation.runtime.ProotViewStore
 import com.kite.app.foundation.contracts.RuntimeActionKind
 import com.kite.app.foundation.runtime.RuntimeBoundary
 import com.kite.app.foundation.contracts.RuntimeBoundarySnapshot
@@ -17,6 +21,12 @@ internal data class WorkSurfaceRuntimeDefaults(
     val workspaceDir: String,
     val rootHomeDir: String,
     val defaultProjectDir: String
+)
+
+internal data class ActiveWorkspaceEnvironment(
+    val environmentId: String,
+    val containerId: String,
+    val workspacePath: String,
 )
 
 /**
@@ -68,10 +78,6 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
         return getRuntimeLayout(context).logsDir
     }
 
-    fun ensureExchangeDir(context: Context): File {
-        return ExternalExchangeManager.ensureExchangeDir(context.applicationContext)
-    }
-
     override fun resolveRuntimeSnapshot(
         context: Context,
         container: ContainerRecord?
@@ -112,13 +118,12 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
                     """
                     首次安装提示：
                     1. 当前 `${defaults.workspaceDir}` 为空通常是正常的，新设备只安装了 APK，不会自动带上旧设备里的项目和工作区数据。
-                    2. 如果你是要继续开发，先把项目放进外部投递区，再从终端复制到 `${defaults.workspaceDir}`；或者直接在终端里 `git clone` 到 `${defaults.workspaceDir}`。
-                    3. 外部投递区在手机文件管理器里通常可见，对应宿主路径见下方。
-                    4. 如果容器基础环境刚初始化完，等一会再刷新一次也可以。
+                    2. 如果你是要继续开发，可在系统文件选择器的“Kite Ubuntu”中直接放入项目，或者在终端里 `git clone` 到 `${defaults.workspaceDir}`。
+                    3. 如果容器基础环境刚初始化完，等一会再刷新一次也可以。
 
                     建议下一步：
-                    - 点上面的“投递区”查看手机可见目录
-                    - 然后去终端页把项目放进 `${defaults.workspaceDir}`
+                    - 从 Agent 的“项目 +”选择或新建 Ubuntu 项目
+                    - 或从系统文件选择器打开“Kite Ubuntu”管理同一份文件
                     """.trimIndent()
                 }
             }
@@ -132,12 +137,12 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
                 """.trimIndent()
             }
 
-            RuntimePathRole.EXCHANGE -> {
+            RuntimePathRole.ANDROID_SHARED_STORAGE -> {
                 """
                 提示：
-                1. 这里是外部投递区，通常可以直接在手机文件管理器里看到。
-                2. 它会挂载到容器内的 `${ExternalExchangeManager.CONTAINER_MOUNT_PATH}`。
-                3. 如果要长期开发或执行命令，建议把项目复制到 `${defaults.workspaceDir}` 后继续。
+                1. 这里是安卓共享存储，Agent 操作的是手机上的真实文件，不是同步副本。
+                2. 适合整理下载、图片、文档和交付结果，不作为 Agent 项目工作区。
+                3. Git、依赖安装和正式构建仍然放在 `${defaults.workspaceDir}`。
                 """.trimIndent()
             }
 
@@ -165,7 +170,7 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
                 提示：
                 1. 这里属于底层 runtime 私有区，主要服务于 `PRoot / rootfs / 启动资产 / 临时文件`。
                 2. 正常开发、构建和 AI 工作流不应该把这里当日常工作目录。
-                3. 如果只是项目开发，优先回到 `${defaults.workspaceDir}`；如果是投递资料，优先使用 `${ExternalExchangeManager.CONTAINER_MOUNT_PATH}`。
+                3. 如果只是项目开发，优先回到 `${defaults.workspaceDir}`；手机资料直接使用其 `/storage/...` 真实路径。
                 """.trimIndent()
             }
 
@@ -193,7 +198,7 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
         return """
             提示：
             1. `${defaults.workspaceDir}` 是容器与 Android 侧共享的工作区。
-            2. 外部投递区会挂载到容器内的 `${ExternalExchangeManager.CONTAINER_MOUNT_PATH}`，适合先投喂材料。
+            2. 安卓共享存储在 Agent 中保持 `/storage/...` 真实路径，不经过复制或同步。
             3. rootfs 主要用于检查环境，不建议在文件页直接做大范围修改。
             4. 如果需要编辑、安装或跑脚本，优先切到终端页操作。
             """.trimIndent()
@@ -201,6 +206,23 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
 
     fun ensureDefaultContainer(context: Context): ContainerRecord {
         return KFContainerManager.ensureDefaultContainer(context.applicationContext)
+    }
+
+    /** 正式工作面固定使用普通 PRoot 的 default 共享工作区；显式 View 不改变全局工作面。 */
+    internal fun resolveActiveWorkspaceEnvironment(context: Context): ActiveWorkspaceEnvironment {
+        val appContext = context.applicationContext
+        val container = ensureDefaultContainer(appContext)
+        return resolveActiveWorkspaceEnvironment(container)
+    }
+
+    /** Runtime Prep 已经确认默认容器时，直接由该容器解析工作区，避免同一启动链再次准备 Base/容器。 */
+    internal fun resolveActiveWorkspaceEnvironment(container: ContainerRecord): ActiveWorkspaceEnvironment {
+        val workspace = ProotEnvironmentWorkspace.plan(container, binding = null).also { it.ensureReady() }
+        return ActiveWorkspaceEnvironment(
+            environmentId = ProotViewStore.DEFAULT_ENVIRONMENT_ID,
+            containerId = container.id,
+            workspacePath = workspace.workspaceDirectory.absolutePath,
+        )
     }
 
     override fun resolveActiveContainer(context: Context): ContainerRecord {
@@ -234,33 +256,72 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
         return KFContainerManager.isCommandAvailable(context.applicationContext, rawCommand)
     }
 
-    fun buildTerminalLaunchConfig(context: Context): ContainerLaunchConfig {
-        return KFContainerManager.buildLaunchConfig(context.applicationContext)
+    /** 只读当前普通 PRoot 的 runtime/命令文件身份；不执行命令，不触发运行时准备。 */
+    internal fun managedCommandVerificationBasis(
+        context: Context,
+        commands: Collection<String>,
+    ): ManagedCommandVerificationBasis? = KFContainerManager.managedCommandVerificationBasis(
+        context = context.applicationContext,
+        rawCommands = commands,
+    )
+
+    fun buildTerminalLaunchConfig(
+        context: Context,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null
+    ): ContainerLaunchConfig {
+        return KFContainerManager.buildLaunchConfig(
+            context = context.applicationContext,
+            requestedProotViewId = requestedProotViewId,
+            requestedProotEnvironmentId = requestedProotEnvironmentId
+        )
     }
 
     fun buildShellExecConfig(
         context: Context,
         workingDirectory: String = defaults.workspaceDir,
         payload: String,
-        loginShell: Boolean = true
+        loginShell: Boolean = true,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null
     ): ContainerExecConfig {
         return KFContainerManager.buildContainerExecConfig(
             context = context.applicationContext,
             workingDirectory = workingDirectory,
             payload = payload,
-            loginShell = loginShell
+            loginShell = loginShell,
+            requestedProotViewId = requestedProotViewId,
+            requestedProotEnvironmentId = requestedProotEnvironmentId
         )
     }
 
     fun buildArgvExecConfig(
         context: Context,
         workingDirectory: String = defaults.workspaceDir,
-        argv: List<String>
+        argv: List<String>,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null
     ): ContainerExecConfig {
         return KFContainerManager.buildContainerArgvExecConfig(
             context = context.applicationContext,
             workingDirectory = workingDirectory,
-            argv = argv
+            argv = argv,
+            requestedProotViewId = requestedProotViewId,
+            requestedProotEnvironmentId = requestedProotEnvironmentId
         )
+    }
+
+    /** 启动一个由 Android 持有 stdio 的温热 runner PRoot；不登记后台服务，也不自动恢复。 */
+    internal fun startWarmProotRunnerProcess(context: Context): WarmProotRunnerProcess {
+        val config = buildArgvExecConfig(
+            context = context.applicationContext,
+            workingDirectory = defaults.workspaceDir,
+            argv = listOf(WorkspaceBuildSupport.CONTAINER_KITE_RUNNER_PATH, "--server"),
+        )
+        val process = ProcessBuilder(config.command)
+            .redirectErrorStream(false)
+            .apply { environment().putAll(config.env) }
+            .start()
+        return JavaWarmProotRunnerProcess(process)
     }
 }

@@ -70,6 +70,11 @@ data class BackgroundRuntimeRecord(
     val title: String,
     val workingDirectory: String,
     val startCommand: String,
+    val startExecutable: String? = null,
+    val startArguments: List<String> = emptyList(),
+    val environment: Map<String, String> = emptyMap(),
+    /** 环境变量名 -> 容器可见私有文件；只持久化路径，运行时才读取值。 */
+    val environmentFiles: Map<String, String> = emptyMap(),
     val bindAddress: String? = null,
     val bindPort: Int? = null,
     val exposureScope: RuntimeExposureScope = RuntimeExposureScope.UNKNOWN,
@@ -77,6 +82,7 @@ data class BackgroundRuntimeRecord(
     val stopCommand: String? = null,
     val statusCommand: String? = null,
     val healthCommand: String? = null,
+    val healthHttpPath: String? = null,
     val healthCheckStartupDelayMs: Long? = null,
     val logPath: String,
     val createdAt: Long,
@@ -89,6 +95,8 @@ data class BackgroundRuntimeRecord(
     val lastHealthCheckedAt: Long? = null,
     val lastExitCode: Int? = null,
     val lastError: String? = null,
+    val lastLaunchLane: String? = null,
+    val lastLaunchReason: String? = null,
     val restartPolicy: BackgroundRuntimeRestartPolicy = BackgroundRuntimeRestartPolicy.NEVER,
     val restartFailureCount: Int = 0,
     val lastRestartAt: Long? = null,
@@ -121,6 +129,19 @@ data class BackgroundRuntimeRecord(
             .put("title", title)
             .put("workingDirectory", workingDirectory)
             .put("startCommand", startCommand)
+            .put("startExecutable", startExecutable)
+            .put(
+                "startArguments",
+                JSONArray().apply { startArguments.forEach(::put) }
+            )
+            .put(
+                "environment",
+                JSONObject().apply { environment.forEach { (key, value) -> put(key, value) } }
+            )
+            .put(
+                "environmentFiles",
+                JSONObject().apply { environmentFiles.forEach { (key, value) -> put(key, value) } }
+            )
             .put("bindAddress", bindAddress)
             .put("bindPort", bindPort)
             .put("exposureScope", exposureScope.name)
@@ -133,6 +154,7 @@ data class BackgroundRuntimeRecord(
             .put("stopCommand", stopCommand)
             .put("statusCommand", statusCommand)
             .put("healthCommand", healthCommand)
+            .put("healthHttpPath", healthHttpPath)
             .put("healthCheckStartupDelayMs", healthCheckStartupDelayMs)
             .put("logPath", logPath)
             .put("createdAt", createdAt)
@@ -145,6 +167,8 @@ data class BackgroundRuntimeRecord(
             .put("lastHealthCheckedAt", lastHealthCheckedAt)
             .put("lastExitCode", lastExitCode)
             .put("lastError", lastError)
+            .put("lastLaunchLane", lastLaunchLane)
+            .put("lastLaunchReason", lastLaunchReason)
             .put("restartPolicy", restartPolicy.name)
             .put("restartFailureCount", restartFailureCount)
             .put("lastRestartAt", lastRestartAt)
@@ -186,6 +210,34 @@ data class BackgroundRuntimeRecord(
                     WorkSurfaceRuntimeBridge.defaults.workspaceDir
                 ),
                 startCommand = json.optString("startCommand", ""),
+                startExecutable = json.optString("startExecutable").takeIf {
+                    !json.isNull("startExecutable") && it.isNotBlank()
+                },
+                startArguments = json.optJSONArray("startArguments")
+                    ?.let { array ->
+                        buildList {
+                            for (index in 0 until array.length()) add(array.optString(index))
+                        }
+                    }
+                    ?: emptyList(),
+                environment = json.optJSONObject("environment")
+                    ?.let { environmentJson ->
+                        buildMap {
+                            environmentJson.keys().forEach { key ->
+                                put(key, environmentJson.optString(key))
+                            }
+                        }
+                    }
+                    ?: emptyMap(),
+                environmentFiles = json.optJSONObject("environmentFiles")
+                    ?.let { environmentFilesJson ->
+                        buildMap {
+                            environmentFilesJson.keys().forEach { key ->
+                                put(key, environmentFilesJson.optString(key))
+                            }
+                        }
+                    }
+                    ?: emptyMap(),
                 bindAddress = json.optString("bindAddress").takeIf { !json.isNull("bindAddress") },
                 bindPort = json.optInt("bindPort").takeIf { !json.isNull("bindPort") },
                 exposureScope = RuntimeExposureScope.entries.firstOrNull {
@@ -212,6 +264,9 @@ data class BackgroundRuntimeRecord(
                 },
                 healthCommand = json.optString("healthCommand").takeIf {
                     !json.isNull("healthCommand")
+                },
+                healthHttpPath = json.optString("healthHttpPath").takeIf {
+                    !json.isNull("healthHttpPath")
                 },
                 healthCheckStartupDelayMs = json.optLong("healthCheckStartupDelayMs").takeIf {
                     !json.isNull("healthCheckStartupDelayMs")
@@ -241,6 +296,12 @@ data class BackgroundRuntimeRecord(
                     !json.isNull("lastExitCode")
                 },
                 lastError = json.optString("lastError").takeIf { !json.isNull("lastError") },
+                lastLaunchLane = json.optString("lastLaunchLane").takeIf {
+                    !json.isNull("lastLaunchLane") && it.isNotBlank()
+                },
+                lastLaunchReason = json.optString("lastLaunchReason").takeIf {
+                    !json.isNull("lastLaunchReason") && it.isNotBlank()
+                },
                 restartPolicy = BackgroundRuntimeRestartPolicy.entries.firstOrNull {
                     it.name == json.optString("restartPolicy", BackgroundRuntimeRestartPolicy.NEVER.name)
                 } ?: BackgroundRuntimeRestartPolicy.NEVER,

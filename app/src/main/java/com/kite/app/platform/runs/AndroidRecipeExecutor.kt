@@ -2,7 +2,6 @@ package com.kite.app.platform.runs
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import androidx.core.content.FileProvider
 import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeExecutor
@@ -12,6 +11,7 @@ import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.application.runs.RecipeStopRequest
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunExecutionEffect
+import com.kite.app.application.runs.RunExecutionEnvironmentProvider
 import com.kite.app.application.runs.RunStateMutation
 import com.kite.app.application.runs.StopExecutionOutcome
 import com.kite.app.application.runs.StopExecutionResult
@@ -23,18 +23,22 @@ import com.kite.app.bridge.OwnerStopOutputEvidence
 import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
-import com.kite.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.runtime.HostNodeExecutionRequest
+import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.ProotOwnerTerminationOutcome
 import com.kite.app.foundation.runtime.RuntimeFrameCoordinator
-import com.kite.app.foundation.runtime.TerminalSessionStore
+import com.kite.app.foundation.runtime.RuntimeLaunchTrace
 import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
+import com.kite.app.foundation.runtime.ProotViewBinding
 import com.kite.app.foundation.runtime.TaskManagerStore
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.workspace.KFWorkspaceManager
+import com.kite.app.foundation.workspace.HostNodeLaunchPlan
+import com.kite.app.foundation.workspace.HostNodeLaunchPlanner
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
@@ -63,11 +67,20 @@ import kotlin.concurrent.thread
 internal class AndroidRecipeExecutor(
     context: Context,
     private val bridgeClient: KiteBridgeClient,
-    private val diagnostics: KiteDiagnostics
+    private val diagnostics: KiteDiagnostics,
+    private val executionEnvironmentProvider: RunExecutionEnvironmentProvider =
+        RunExecutionEnvironmentProvider.None,
+    private val agentRuntime: AgentRecipeRuntime = AndroidAgentRecipeRuntime(context)
 ) : RecipeExecutor {
     private data class PendingTerminal(
         val request: RecipeStepExecutionRequest,
         val callback: (RecipeExecutionEvent) -> Unit
+    )
+
+    private data class PreparedTerminalLaunch(
+        val record: com.kite.app.foundation.contracts.ManagedTerminalRecord,
+        val hostConfig: com.kite.app.foundation.contracts.ContainerLaunchConfig?,
+        val fallbackReason: String,
     )
 
     private val appContext = context.applicationContext
@@ -107,16 +120,18 @@ internal class AndroidRecipeExecutor(
         request: RecipeStepExecutionRequest,
         callback: (RecipeExecutionEvent) -> Unit
     ) {
+        RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.EXECUTOR_RECEIVED)
         when (request.step.type) {
             KiteRecipe.STEP_SHELL -> withUbuntuRuntime(request, callback) {
                 executeShell(request, callback)
             }
-            KiteRecipe.STEP_TERMINAL -> withUbuntuRuntime(request, callback) {
-                executeTerminal(request, callback)
+            KiteRecipe.STEP_TERMINAL -> withUbuntuRuntime(request, callback) { readyLease ->
+                executeTerminal(request, callback, readyLease)
             }
             KiteRecipe.STEP_X11 -> withUbuntuRuntime(request, callback) {
                 executeX11(request, callback)
             }
+            KiteRecipe.STEP_AGENT -> executeAgent(request, callback)
             KiteRecipe.STEP_OPEN_WEB -> executeWeb(request, callback)
             KiteRecipe.STEP_ANDROID_ACTION -> executeAndroidAction(request, callback)
             else -> callback(request.failed("unsupported_step:${request.step.type}"))
@@ -142,6 +157,21 @@ internal class AndroidRecipeExecutor(
             TerminalRuntimeHost.sendCommand(appContext, "\u0003", sessionId)
             TerminalRuntimeHost.endSession(appContext, sessionId)
         }
+        if (agentRuntime.owns(request.instanceId, request.generation)) {
+            agentRuntime.stop(request.instanceId, request.generation) { stopped ->
+                if (!stopped) {
+                    stopRuntime(request, callback)
+                    return@stop
+                }
+                val result = if (request.runtimeOwnerIds.any(String::isNotBlank)) {
+                    verifyStopAfterTransportDeadline(request)
+                } else {
+                    StopExecutionResult(StopExecutionOutcome.Confirmed, "Agent 会话已关闭")
+                }
+                deliverStopResult(request, result, callback)
+            }
+            return
+        }
         if (!request.hasBridgeProcessBinding()) {
             callback(StopExecutionResult(StopExecutionOutcome.Confirmed, "终端已发送中断并关闭"))
             return
@@ -149,11 +179,23 @@ internal class AndroidRecipeExecutor(
         stopRuntime(request, callback)
     }
 
+    private fun executeAgent(
+        request: RecipeStepExecutionRequest,
+        callback: (RecipeExecutionEvent) -> Unit
+    ) {
+        agentRuntime.start(
+            request = request,
+            environment = browserEnvironment(request, "agent_step"),
+            callback = callback
+        )
+    }
+
     private fun withUbuntuRuntime(
         request: RecipeStepExecutionRequest,
         callback: (RecipeExecutionEvent) -> Unit,
-        onReady: () -> Unit
+        onReady: (RuntimeReadyLease) -> Unit
     ) {
+        RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.RUNTIME_PREP_STARTED)
         callback(
             RecipeExecutionEvent.Progress(
                 request.instanceId,
@@ -164,13 +206,28 @@ internal class AndroidRecipeExecutor(
         )
         thread(name = "KiteRunPrep-${request.instanceId.take(24)}", isDaemon = true) {
             runCatching {
-                WorkSurfaceRuntimeBridge.ensureBaseImageReady(appContext)
-                KFWorkspaceManager.ensureDefaultSpace(appContext)
-                WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
-                TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
-            }.onSuccess {
-                onReady()
+                val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
+                val executionEnvironment = executionEnvironmentProvider.environment(request)
+                val preparedSpace = if (requiresActiveWorkspacePreparation(executionEnvironment)) {
+                    val activeEnvironment = WorkSurfaceRuntimeBridge.resolveActiveWorkspaceEnvironment(container)
+                    KFWorkspaceManager.ensureActiveSpace(appContext, activeEnvironment).also { space ->
+                        TerminalRuntimeHost.refreshRuntimeSnapshot(appContext, preparedSpace = space)
+                    }
+                } else {
+                    null
+                }
+                RuntimeReadyLease.create(
+                    request = request,
+                    container = container,
+                    preparedSpace = preparedSpace,
+                    runtimeSnapshotRefreshed = preparedSpace != null,
+                )
+            }.onSuccess { readyLease ->
+                RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.RUNTIME_PREP_READY)
+                RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.RUNTIME_LEASE_ISSUED)
+                onReady(readyLease)
             }.onFailure { error ->
+                RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.RUNTIME_PREP_FAILED)
                 callback(
                     request.failed(
                         message = "Ubuntu 环境未就绪: ${error.message ?: error.javaClass.simpleName}",
@@ -258,6 +315,7 @@ internal class AndroidRecipeExecutor(
         val runId = report?.runId ?: result.requestId
         val pid = report?.pid ?: extractPid(output) ?: extractPid(result.message)
         val shellReport = shellReportText(report, request.recipe)
+        val processExited = shellProcessExited(report?.status, report?.ok)
         if (result.status == KiteRunReport.STATUS_BRIDGE_UNAVAILABLE) {
             callback(
                 request.failed(
@@ -320,7 +378,8 @@ internal class AndroidRecipeExecutor(
                     processGroupId = report?.processGroupId,
                     systemSessionId = report?.systemSessionId,
                     lastMeaningfulOutput = output,
-                    shellReportText = shellReport
+                    shellReportText = shellReport,
+                    clearRunBinding = processExited
                 )
             )
         )
@@ -328,19 +387,41 @@ internal class AndroidRecipeExecutor(
 
     private fun executeTerminal(
         request: RecipeStepExecutionRequest,
-        callback: (RecipeExecutionEvent) -> Unit
+        callback: (RecipeExecutionEvent) -> Unit,
+        readyLease: RuntimeReadyLease,
     ) {
         thread(name = "KiteTerminalStep-${request.instanceId.take(24)}", isDaemon = true) {
+            val command = request.step.text.orEmpty().ifBlank { request.step.cmd.orEmpty() }
             runCatching {
-                val space = KFWorkspaceManager.ensureDefaultSpace(appContext)
-                KFWorkspaceManager.createEmbeddedShellSession(
-                    spaceId = space.id,
-                    title = terminalTitle(request.recipe, request.stepIndex),
-                    sourceLabel = request.recipe.name
+                val space = readyLease.spaceFor(request) ?: KFWorkspaceManager.ensureActiveSpace(appContext)
+                val container = readyLease.containerFor(request)
+                RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.RUNTIME_LEASE_CONSUMED)
+                val hostLaunch = if (readyLease.preparedSpace != null && command.isNotBlank()) {
+                    HostNodeLaunchPlanner.plan(
+                        context = appContext,
+                        container = container,
+                        workspaceDirectory = File(space.workspacePath),
+                        request = HostNodeExecutionRequest.CommandLine(command),
+                        containerWorkingDirectory = request.step.workdir,
+                    )
+                } else {
+                    HostNodeLaunchPlan.Fallback("explicit_runtime_or_command_missing")
+                }
+                val fallbackReason = (hostLaunch as? HostNodeLaunchPlan.Fallback)?.reason ?: "none"
+                val hostConfig = (hostLaunch as? HostNodeLaunchPlan.Ready)?.config
+                PreparedTerminalLaunch(
+                    record = KFWorkspaceManager.createEmbeddedShellSession(
+                        spaceId = space.id,
+                        title = terminalTitle(request.recipe, request.stepIndex),
+                        sourceLabel = request.recipe.name,
+                    ),
+                    hostConfig = hostConfig,
+                    fallbackReason = fallbackReason,
                 )
-            }.onSuccess { record ->
-                TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)
-                TerminalSessionStore.refresh(appContext, force = true)
+            }.onSuccess { prepared ->
+                val record = prepared.record
+                RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.TERMINAL_RECORD_CREATED)
+                RuntimeLaunchTrace.bindTerminal(request.instanceId, record.id)
                 val terminalOwner = RuntimeOwnerIdentity.terminal(
                     rootNamespace = request.runtimeNamespace(),
                     instanceId = request.instanceId,
@@ -355,7 +436,11 @@ internal class AndroidRecipeExecutor(
                     sessionId = record.id,
                     overrides = browserEnvironment(request, "terminal_step") + terminalOwner.environment()
                 )
+                prepared.hostConfig?.let { config ->
+                    TerminalRuntimeHost.setLaunchConfigOverride(appContext, record.id, config)
+                }
                 TerminalRuntimeHost.stageEmbeddedSession(appContext, record)
+                RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.TERMINAL_STAGED)
                 pendingTerminals[record.id] = PendingTerminal(request, callback)
                 callback(
                     RecipeExecutionEvent.AwaitingUser(
@@ -375,14 +460,16 @@ internal class AndroidRecipeExecutor(
                                 ).distinct(),
                             runId = record.id,
                             terminalSessionId = record.id,
+                            runtimeLane = if (prepared.hostConfig != null) "host_node" else "proot_shell",
+                            runtimeFallbackReason = prepared.fallbackReason,
                             lastMeaningfulOutput = "等待终端完成：${record.title}",
                             clearNextActionUrl = true
                         )
                     )
                 )
-                val command = request.step.text.orEmpty().ifBlank { request.step.cmd.orEmpty() }
+                RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.TERMINAL_OPEN_REQUESTED)
                 TerminalRuntimeHost.openEmbeddedSession(appContext, record)
-                if (command.isNotBlank()) {
+                if (prepared.hostConfig == null && command.isNotBlank()) {
                     diagnostics.logRecipeAction(
                         request.recipe,
                         "terminal_step_command_scheduled",
@@ -400,6 +487,10 @@ internal class AndroidRecipeExecutor(
                                 if (command.endsWith("\n")) command else "$command\n",
                                 record.id
                             )
+                            RuntimeLaunchTrace.mark(
+                                request.instanceId,
+                                RuntimeLaunchTrace.TERMINAL_COMMAND_DISPATCHED,
+                            )
                             diagnostics.logRecipeAction(
                                 request.recipe,
                                 "terminal_step_command_dispatched",
@@ -410,6 +501,16 @@ internal class AndroidRecipeExecutor(
                         TimeUnit.MILLISECONDS
                     )
                 }
+                diagnostics.logRecipeAction(
+                    request.recipe,
+                    "terminal_runtime_lane_selected",
+                    mapOf(
+                        "instanceId" to request.instanceId,
+                        "sessionId" to record.id,
+                        "lane" to if (prepared.hostConfig != null) "host_node" else "proot_shell",
+                        "fallbackReason" to prepared.fallbackReason,
+                    )
+                )
             }.onFailure { error ->
                 callback(request.failed("创建终端失败：${error.message ?: error.javaClass.simpleName}"))
             }
@@ -624,18 +725,8 @@ internal class AndroidRecipeExecutor(
             ?: step.cmd?.takeIf { it.isNotBlank() }
             ?: step.text?.takeIf { it.isNotBlank() }
             ?: error("install_apk_missing_path")
-        val rawPath = if (path.startsWith("file://", ignoreCase = true)) Uri.parse(path).path.orEmpty() else path
-        val file = when {
-            rawPath == ExternalExchangeManager.CONTAINER_MOUNT_PATH -> null
-            rawPath.startsWith("${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/") -> {
-                File(
-                    ExternalExchangeManager.ensureExchangeDir(appContext),
-                    rawPath.removePrefix("${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/")
-                )
-            }
-            rawPath.startsWith("/sdcard/") || rawPath.startsWith("/storage/") -> File(rawPath)
-            else -> null
-        }?.absoluteFile ?: error("install_apk_path_not_allowed")
+        val file = ContainerVisibleFileResolver.resolve(appContext, path)
+            ?: error("install_apk_path_not_allowed")
         if (!file.isFile) error("install_apk_missing_file")
         val uri = FileProvider.getUriForFile(appContext, "${appContext.packageName}.fileprovider", file)
         appContext.startActivity(
@@ -792,7 +883,7 @@ internal class AndroidRecipeExecutor(
         appendLine(rawBody)
     }
 
-    private fun browserEnvironment(request: RecipeStepExecutionRequest, source: String): Map<String, String> =
+    internal fun browserEnvironment(request: RecipeStepExecutionRequest, source: String): Map<String, String> =
         KiteBrowserProxyInstaller.environment(
             context = appContext,
             recipeId = request.recipe.id,
@@ -803,7 +894,7 @@ internal class AndroidRecipeExecutor(
                 ?.let { RuntimeOwnerIdentity.RUNTIME_ID_ENV to it },
             request.runtimeUnitId?.takeIf { it.isNotBlank() }
                 ?.let { RuntimeOwnerIdentity.UNIT_ID_ENV to it }
-        ).toMap()
+        ).toMap() + executionEnvironmentProvider.environment(request)
 
     private fun RecipeStepExecutionRequest.runtimeNamespace(): RuntimeOwnerNamespace =
         if (runtimeRootOwnerId?.startsWith("resource:") == true) {
@@ -886,6 +977,12 @@ internal class AndroidRecipeExecutor(
         ?.firstOrNull { it.isNotBlank() }
 
     companion object {
+        internal fun requiresActiveWorkspacePreparation(environment: Map<String, String>): Boolean =
+            environment[ProotViewBinding.ENV_VIEW_ID].isNullOrBlank()
+
+        internal fun shellProcessExited(status: String?, ok: Boolean?): Boolean =
+            status == KiteRunReport.STATUS_FINISHED && ok == true
+
         internal fun runtimePreparationMutation(stepType: String, stepIndex: Int): RunStateMutation =
             RunStateMutation(
                 status = CardRunStatus.Running,

@@ -15,7 +15,8 @@ import com.kite.app.run.CardRunStore
 /** 通用配方动作的 Store/运行时适配器，不持有 Activity 或显示状态。 */
 internal class AndroidRecipeActionGateway(
     private val orchestrator: RunOrchestrator,
-    private val diagnostics: KiteDiagnostics
+    private val diagnostics: KiteDiagnostics,
+    private val environmentIdProvider: () -> String = { CardRunState.DEFAULT_ENVIRONMENT_ID }
 ) : RecipeActionGateway {
     override fun resolveState(
         recipe: KiteRecipe,
@@ -24,30 +25,36 @@ internal class AndroidRecipeActionGateway(
     ): CardRunState = requestedInstanceId
         ?.takeIf(String::isNotBlank)
         ?.let(CardRunStore::get)
-        ?.takeIf { it.recipeId == recipe.id }
+        ?.takeIf { it.recipeId == recipe.id && it.environmentId == environmentIdProvider() }
         ?: focusedInstanceId
             ?.takeIf(String::isNotBlank)
             ?.let(CardRunStore::get)
-            ?.takeIf { it.recipeId == recipe.id }
-        ?: CardRunStore.currentForRecipe(recipe.id)
-        ?: CardRunState.fromRecipeStatus(recipe.id, "unknown")
+            ?.takeIf { it.recipeId == recipe.id && it.environmentId == environmentIdProvider() }
+        ?: CardRunStore.currentForRecipe(recipe.id, environmentIdProvider())
+        ?: CardRunState.fromRecipeStatus(recipe.id, "unknown").copy(environmentId = environmentIdProvider())
 
     override fun start(
         recipe: KiteRecipe,
         previousState: CardRunState,
         preferredInstanceId: String?
     ): RecipeActionStartResult {
-        val instanceId = preferredInstanceId?.takeIf(String::isNotBlank)
-            ?: previousState.instanceId.takeIf { previousState.recipeId == recipe.id && it.isNotBlank() }
-            ?: CardRunStore.currentForRecipe(recipe.id)?.instanceId
-            ?: recipe.id
+        val environmentId = environmentIdProvider()
+        val existingPrevious = CardRunStore.get(previousState.instanceId, environmentId)
+            ?.takeIf { it.recipeId == recipe.id }
+        val instanceId = preferredInstanceId
+            ?.takeIf(String::isNotBlank)
+            ?.let { CardRunState.instanceIdForEnvironment(it, environmentId) }
+            ?: existingPrevious?.instanceId
+            ?: CardRunStore.currentForRecipe(recipe.id, environmentId)?.instanceId
+            ?: CardRunState.instanceIdForEnvironment(recipe.id, environmentId)
         val result = orchestrator.start(
             RunStartRequest(
                 recipe = recipe,
                 instanceId = instanceId,
                 parentInstanceId = previousState.parentInstanceId,
                 ownerKind = previousState.ownerKind,
-                stepId = previousState.stepId
+                stepId = previousState.stepId,
+                environmentId = environmentId
             )
         )
         diagnostics.logRecipeAction(
@@ -91,7 +98,8 @@ internal class AndroidRecipeActionGateway(
             recipe = recipe,
             status = CardRunStatus.Failed,
             instanceId = state.instanceId,
-            lastError = reason
+            lastError = reason,
+            environmentId = state.environmentId
         )
         diagnostics.logLifecycleEvent(
             recipe,

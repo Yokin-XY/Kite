@@ -14,6 +14,7 @@ import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallOutput
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.foundation.runtime.ProotViewBinding
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
 import org.json.JSONObject
 import java.net.ConnectException
@@ -540,7 +541,9 @@ class KiteBridgeClient(
             context = context,
             workingDirectory = step.workdir?.trim().orEmpty().ifBlank { DEFAULT_WORKDIR },
             payload = groupedAttachedPayload(step.cmd.orEmpty()),
-            loginShell = true
+            loginShell = true,
+            requestedProotViewId = extraEnv[ProotViewBinding.ENV_VIEW_ID],
+            requestedProotEnvironmentId = extraEnv[ProotViewBinding.ENV_ENVIRONMENT_ID]
         )
         val timeoutMs = step.timeoutMs?.takeIf { it > 0L } ?: DEFAULT_ATTACHED_TIMEOUT_MS
         val process = executeProcess(
@@ -623,7 +626,9 @@ class KiteBridgeClient(
             context = context,
             workingDirectory = step.workdir?.trim().orEmpty().ifBlank { DEFAULT_WORKDIR },
             payload = payload,
-            loginShell = true
+            loginShell = true,
+            requestedProotViewId = extraEnv[ProotViewBinding.ENV_VIEW_ID],
+            requestedProotEnvironmentId = extraEnv[ProotViewBinding.ENV_ENVIRONMENT_ID]
         )
         val process = executeProcess(config.command, config.env + extraEnv, DETACHED_START_TIMEOUT_MS) { output, chunk ->
             val meta = extractRunBindingMeta(output)

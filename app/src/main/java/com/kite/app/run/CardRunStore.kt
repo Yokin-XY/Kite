@@ -87,13 +87,17 @@ object CardRunStore {
         instanceId: String = recipe.id,
         parentInstanceId: String? = null,
         ownerKind: String = CardRunState.OWNER_KIND_CARD,
-        stepId: String? = null
+        stepId: String? = null,
+        agentId: String? = null,
+        environmentId: String = CardRunState.DEFAULT_ENVIRONMENT_ID
     ): CardRunState {
         registerRecipe(recipe)
         val now = System.currentTimeMillis()
+        val resolvedEnvironmentId = environmentId.normalizedEnvironmentId()
         val existing = runsByInstance[instanceId]
         if (
             existing != null &&
+            existing.environmentId == resolvedEnvironmentId &&
             existing.recipeId == recipe.id &&
             existing.status == CardRunStatus.Starting &&
             !existing.hasRunBinding()
@@ -104,11 +108,18 @@ object CardRunStore {
                 parentInstanceId = parentInstanceId ?: existing.parentInstanceId,
                 ownerKind = ownerKind,
                 stepId = stepId ?: existing.stepId,
+                agentId = existing.agentId ?: agentId.normalizedAgentId(),
                 stepCount = recipe.steps.size,
                 updatedAt = now
             )
             upsert(run)
             return run
+        }
+        val nextAgentId = existing?.agentId ?: agentId.normalizedAgentId()
+        val resumableAgentBinding = existing?.agentBinding?.takeIf {
+            existing.recipeId == recipe.id &&
+                nextAgentId != null &&
+                existing.agentId == nextAgentId
         }
         val run = CardRunState(
             instanceId = instanceId,
@@ -117,10 +128,13 @@ object CardRunStore {
             parentInstanceId = parentInstanceId,
             ownerKind = ownerKind,
             stepId = stepId,
+            agentId = nextAgentId,
+            agentBinding = resumableAgentBinding,
             status = CardRunStatus.Starting,
             stepCount = recipe.steps.size,
             createdAt = now,
-            updatedAt = now
+            updatedAt = now,
+            environmentId = resolvedEnvironmentId
         )
         upsert(run)
         recordHistoryStart(recipe, run, now)
@@ -147,22 +161,39 @@ object CardRunStore {
         rootPid: String? = null,
         processGroupId: String? = null,
         systemSessionId: String? = null,
+        runtimeLane: String? = null,
+        runtimeFallbackReason: String? = null,
         lastMeaningfulOutput: String? = null,
         lastError: String? = null,
         shellReportText: String? = null,
         nextActionUrl: String? = null,
         x11Display: String? = null,
         x11SocketPath: String? = null,
+        agentId: String? = null,
+        agentBinding: CardRunAgentBinding? = null,
         clearRunBinding: Boolean = false,
         clearTerminalSession: Boolean = false,
-        clearNextActionUrl: Boolean = false
+        clearNextActionUrl: Boolean = false,
+        clearAgentBinding: Boolean = false,
+        environmentId: String? = null
     ): CardRunState {
         val now = System.currentTimeMillis()
+        val resolvedEnvironmentId = environmentId?.normalizedEnvironmentId()
         val existing = instanceId
             ?.takeIf { it.isNotBlank() }
-            ?.let { get(it) ?: start(recipe, it) }
-            ?: currentForRecipe(recipe.id)
-            ?: start(recipe)
+            ?.let { id ->
+                get(id)?.takeIf { resolvedEnvironmentId == null || it.environmentId == resolvedEnvironmentId }
+                    ?: start(
+                        recipe = recipe,
+                        instanceId = id,
+                        environmentId = resolvedEnvironmentId ?: CardRunState.DEFAULT_ENVIRONMENT_ID
+                    )
+            }
+            ?: currentForRecipe(recipe.id, resolvedEnvironmentId)
+            ?: start(
+                recipe = recipe,
+                environmentId = resolvedEnvironmentId ?: CardRunState.DEFAULT_ENVIRONMENT_ID
+            )
         if (existing.shouldIgnoreStoppedRuntimeWrite(
                 status = status,
                 runId = runId,
@@ -196,6 +227,7 @@ object CardRunStore {
                 listOfNotNull(runtimeOwnerId?.takeIf { it.isNotBlank() }))
                 .distinct()
         }
+        val nextAgentId = existing.agentId ?: agentId.normalizedAgentId()
         val next = existing.copy(
             recipeName = recipe.name,
             parentInstanceId = parentInstanceId ?: existing.parentInstanceId,
@@ -215,12 +247,21 @@ object CardRunStore {
             rootPid = if (clearRunBinding) null else rootPid ?: existing.rootPid,
             processGroupId = if (clearRunBinding) null else processGroupId ?: existing.processGroupId,
             systemSessionId = if (clearRunBinding) null else systemSessionId ?: existing.systemSessionId,
+            runtimeLane = runtimeLane ?: existing.runtimeLane,
+            runtimeFallbackReason = runtimeFallbackReason ?: existing.runtimeFallbackReason,
             lastMeaningfulOutput = lastMeaningfulOutput ?: existing.lastMeaningfulOutput,
             lastError = lastError,
             shellReportText = shellReportText ?: existing.shellReportText,
             nextActionUrl = if (clearRunBinding || clearNextActionUrl) null else nextActionUrl ?: existing.nextActionUrl,
             x11Display = if (clearRunBinding) null else x11Display ?: existing.x11Display,
             x11SocketPath = if (clearRunBinding) null else x11SocketPath ?: existing.x11SocketPath,
+            agentId = nextAgentId,
+            agentBinding = when {
+                clearAgentBinding -> null
+                agentBinding != null -> agentBinding
+                clearRunBinding -> null
+                else -> existing.agentBinding
+            },
             createdAt = if (beginsNewHistory) now else existing.createdAt,
             updatedAt = now
         )
@@ -260,6 +301,41 @@ object CardRunStore {
         return next
     }
 
+    /**
+     * 只更新低频 Agent 运行绑定。调用方必须提交它观察到的运行代次，迟到连接不得改写新实例。
+     */
+    @Synchronized
+    fun updateAgentBinding(
+        instanceId: String,
+        expectedGeneration: Long,
+        status: CardRunAgentConnectionStatus,
+        providerId: String? = null,
+        sessionId: String? = null,
+        statusMessage: String? = null,
+        clear: Boolean = false
+    ): CardRunState? {
+        val existing = runsByInstance[instanceId] ?: return null
+        if (expectedGeneration <= 0L || existing.createdAt != expectedGeneration) return null
+        val previous = existing.agentBinding
+        val resolvedProviderId = providerId?.trim()?.takeIf(String::isNotBlank) ?: previous?.providerId
+        if (!clear && resolvedProviderId == null) return null
+        val now = System.currentTimeMillis()
+        val binding = if (clear) {
+            null
+        } else {
+            CardRunAgentBinding(
+                providerId = resolvedProviderId!!,
+                sessionId = sessionId?.trim()?.takeIf(String::isNotBlank) ?: previous?.sessionId,
+                status = status,
+                statusMessage = statusMessage?.trim()?.takeIf(String::isNotBlank),
+                updatedAt = now
+            )
+        }
+        val next = existing.copy(agentBinding = binding, updatedAt = now)
+        upsert(next)
+        return next
+    }
+
     @Synchronized
     fun removeRun(instanceId: String): CardRunState? {
         val removed = runsByInstance.remove(instanceId) ?: return null
@@ -269,13 +345,15 @@ object CardRunStore {
     }
 
     @Synchronized
-    fun currentForRecipe(recipeId: String): CardRunState? =
+    fun currentForRecipe(recipeId: String, environmentId: String? = null): CardRunState? =
         _runs.value
             .filter { it.recipeId == recipeId }
+            .filter { environmentId == null || it.environmentId == environmentId.normalizedEnvironmentId() }
             .filter { it.parentInstanceId.isNullOrBlank() }
             .maxByOrNull { it.updatedAt }
             ?: _runs.value
                 .filter { it.recipeId == recipeId }
+                .filter { environmentId == null || it.environmentId == environmentId.normalizedEnvironmentId() }
                 .maxByOrNull { it.updatedAt }
 
     @Synchronized
@@ -283,7 +361,51 @@ object CardRunStore {
         runsByInstance[instanceId]
 
     @Synchronized
+    fun get(instanceId: String, environmentId: String): CardRunState? =
+        runsByInstance[instanceId]
+            ?.takeIf { it.environmentId == environmentId.normalizedEnvironmentId() }
+
+    @Synchronized
     fun snapshot(): List<CardRunState> = _runs.value
+
+    /**
+     * 环境切换已经由 PRoot 进程守卫确认旧 View 退出，此处只收敛对应环境的运行事实。
+     * 不触碰其他环境，也不重新扫描进程。
+     */
+    @Synchronized
+    fun confirmEnvironmentStopped(environmentId: String): Set<String> {
+        val target = environmentId.normalizedEnvironmentId()
+        val now = System.currentTimeMillis()
+        val settled = linkedSetOf<String>()
+        runsByInstance.values.toList().forEach { run ->
+            if (run.environmentId != target || !run.requiresEnvironmentStopSettlement()) return@forEach
+            val next = run.copy(
+                status = CardRunStatus.Stopped,
+                surface = CardRunSurface.Summary,
+                selectedWindowId = null,
+                runtimeRootOwnerId = null,
+                runtimeOwnerId = null,
+                runtimeUnitId = null,
+                ownedRuntimeOwnerIds = emptyList(),
+                runId = null,
+                terminalSessionId = null,
+                pid = null,
+                rootPid = null,
+                processGroupId = null,
+                systemSessionId = null,
+                lastMeaningfulOutput = "环境已切换，原环境运行已结束",
+                lastError = null,
+                nextActionUrl = null,
+                x11Display = null,
+                x11SocketPath = null,
+                updatedAt = now
+            )
+            upsert(next)
+            registeredRecipes[next.recipeId]?.let { recipe -> recordHistoryUpdate(recipe, next, now) }
+            settled += next.instanceId
+        }
+        return settled
+    }
 
     /**
      * 终止层已核验 owner 退出时，只收敛对应的“停止待确认”实例。
@@ -335,6 +457,7 @@ object CardRunStore {
                     nextActionUrl = null,
                     x11Display = null,
                     x11SocketPath = null,
+                    agentBinding = null,
                     updatedAt = now,
                 )
             } else {
@@ -364,15 +487,21 @@ object CardRunStore {
     }
 
     @Synchronized
-    fun childrenOf(parentInstanceId: String): List<CardRunState> =
+    fun childrenOf(parentInstanceId: String, environmentId: String? = null): List<CardRunState> =
         _runs.value
             .filter { it.parentInstanceId == parentInstanceId }
+            .filter { environmentId == null || it.environmentId == environmentId.normalizedEnvironmentId() }
             .sortedByDescending { it.updatedAt }
 
     @Synchronized
-    fun historyForRecipe(recipeId: String, limit: Int = MAX_HISTORY_PER_RECIPE): List<CardRunHistoryEntry> =
+    fun historyForRecipe(
+        recipeId: String,
+        limit: Int = MAX_HISTORY_PER_RECIPE,
+        environmentId: String? = null
+    ): List<CardRunHistoryEntry> =
         historiesByRecipe[recipeId]
             ?.withoutStaleOpenEntries()
+            ?.filter { environmentId == null || it.environmentId == environmentId.normalizedEnvironmentId() }
             ?.sortedByDescending { it.startedAt }
             ?.take(limit.coerceAtLeast(0))
             .orEmpty()
@@ -394,7 +523,11 @@ object CardRunStore {
     }
 
     @Synchronized
-    fun removeRunStatesForRecipes(recipeIds: Collection<String>, removeOpenHistory: Boolean = false) {
+    fun removeRunStatesForRecipes(
+        recipeIds: Collection<String>,
+        removeOpenHistory: Boolean = false,
+        environmentId: String? = null
+    ) {
         val ids = recipeIds
             .map { it.trim() }
             .filter { it.isNotBlank() }
@@ -402,6 +535,7 @@ object CardRunStore {
         if (ids.isEmpty()) return
         val removedInstanceIds = runsByInstance.values
             .filter { it.recipeId in ids || it.instanceId in ids }
+            .filter { environmentId == null || it.environmentId == environmentId.normalizedEnvironmentId() }
             .mapTo(mutableSetOf()) { it.instanceId }
         if (removedInstanceIds.isEmpty()) return
         runsByInstance.entries.removeAll { (_, run) -> run.instanceId in removedInstanceIds }
@@ -410,7 +544,11 @@ object CardRunStore {
             ids.forEach { recipeId ->
                 val entries = historiesByRecipe[recipeId] ?: return@forEach
                 val before = entries.size
-                entries.removeAll { it.instanceId in removedInstanceIds && !it.isClosed() }
+                entries.removeAll {
+                    it.instanceId in removedInstanceIds &&
+                        (environmentId == null || it.environmentId == environmentId.normalizedEnvironmentId()) &&
+                        !it.isClosed()
+                }
                 if (entries.size != before) {
                     historyChanged = true
                     if (entries.isEmpty()) historiesByRecipe.remove(recipeId)
@@ -561,6 +699,33 @@ object CardRunStore {
     }
 
     private fun CardRunState.normalizedAfterProcessRestore(): CardRunState {
+        if (agentBinding?.isActive() == true || (agentBinding != null && status.shouldResetAfterProcessRestore())) {
+            val now = System.currentTimeMillis()
+            return copy(
+                status = CardRunStatus.Failed,
+                surface = CardRunSurface.Summary,
+                runtimeRootOwnerId = null,
+                runtimeOwnerId = null,
+                runtimeUnitId = null,
+                ownedRuntimeOwnerIds = emptyList(),
+                runId = null,
+                terminalSessionId = null,
+                pid = null,
+                rootPid = null,
+                processGroupId = null,
+                systemSessionId = null,
+                lastMeaningfulOutput = AGENT_RESTORE_DISCONNECTED_MESSAGE,
+                lastError = AGENT_RESTORE_DISCONNECTED_MESSAGE,
+                nextActionUrl = null,
+                x11Display = null,
+                x11SocketPath = null,
+                agentBinding = agentBinding.copy(
+                    status = CardRunAgentConnectionStatus.Disconnected,
+                    statusMessage = AGENT_RESTORE_DISCONNECTED_MESSAGE,
+                    updatedAt = now
+                )
+            )
+        }
         if (!status.shouldResetAfterProcessRestore()) return this
         return copy(
             status = CardRunStatus.Failed,
@@ -582,13 +747,15 @@ object CardRunStore {
         )
     }
 
-    private fun CardRunState.shouldDropCurrentAfterProcessRestore(): Boolean =
-        status.endsHistoryEntry() ||
+    private fun CardRunState.shouldDropCurrentAfterProcessRestore(): Boolean {
+        if (agentBinding != null && agentBinding.status != CardRunAgentConnectionStatus.Stopped) return false
+        return status.endsHistoryEntry() ||
             status == CardRunStatus.CleanupPending ||
             status.shouldResetAfterProcessRestore() ||
             hasRunBinding() ||
             !parentInstanceId.isNullOrBlank() ||
             !nextActionUrl.isNullOrBlank()
+    }
 
     private fun CardRunStatus.shouldResetAfterProcessRestore(): Boolean =
         this == CardRunStatus.Starting ||
@@ -620,6 +787,7 @@ object CardRunStore {
             recipeName = recipe.name,
             instanceId = state.instanceId,
             ownerKind = state.ownerKind,
+            environmentId = state.environmentId,
             status = state.status,
             currentStepIndex = state.currentStepIndex,
             stepCount = state.stepCount.takeIf { it > 0 } ?: recipe.steps.size,
@@ -632,7 +800,11 @@ object CardRunStore {
             steps = recipe.toHistorySteps(state)
         )
         val entries = historiesByRecipe.getOrPut(recipe.id) { mutableListOf() }
-        entries.removeAll { it.instanceId == state.instanceId && !it.isClosed() }
+        entries.removeAll {
+            it.instanceId == state.instanceId &&
+                it.environmentId == state.environmentId &&
+                !it.isClosed()
+        }
         entries.removeAll { it.historyId == entry.historyId }
         entries.add(0, entry)
         trimHistory(recipe.id)
@@ -642,8 +814,11 @@ object CardRunStore {
     private fun recordHistoryUpdate(recipe: KiteRecipe, state: CardRunState, now: Long = state.updatedAt) {
         if (state.skipsHistory()) return
         val entries = historiesByRecipe.getOrPut(recipe.id) { mutableListOf() }
-        val current = entries.firstOrNull { it.instanceId == state.instanceId && !it.isClosed() }
-            ?: entries.firstOrNull()
+        val current = entries.firstOrNull {
+            it.instanceId == state.instanceId &&
+                it.environmentId == state.environmentId &&
+                !it.isClosed()
+        } ?: entries.firstOrNull { it.environmentId == state.environmentId }
             ?: run {
                 recordHistoryStart(recipe, state, now)
                 return
@@ -913,6 +1088,7 @@ object CardRunStore {
             .put("cardInstanceId", cardInstanceId)
             .put("recipeId", recipeId)
             .put("recipeName", recipeName)
+            .put("environmentId", environmentId)
             .put("parentInstanceId", parentInstanceId.orEmpty())
             .put("ownerKind", ownerKind)
             .put("stepId", stepId.orEmpty())
@@ -931,13 +1107,25 @@ object CardRunStore {
             .put("rootPid", rootPid.orEmpty())
             .put("processGroupId", processGroupId.orEmpty())
             .put("systemSessionId", systemSessionId.orEmpty())
+            .put("runtimeLane", runtimeLane.orEmpty())
+            .put("runtimeFallbackReason", runtimeFallbackReason.orEmpty())
             .put("lastMeaningfulOutput", lastMeaningfulOutput.orEmpty().take(MAX_STORED_TEXT_CHARS))
             .put("lastError", lastError.orEmpty().take(MAX_STORED_TEXT_CHARS))
             .put("shellReportText", shellReportText.orEmpty().takeLast(MAX_STORED_TEXT_CHARS))
             .put("nextActionUrl", nextActionUrl.orEmpty().redactedUrlForPersistence())
             .put("x11Display", x11Display.orEmpty())
             .put("x11SocketPath", x11SocketPath.orEmpty())
+            .put("agentId", agentId.orEmpty())
+            .put("agentBinding", agentBinding?.toJson() ?: JSONObject.NULL)
             .put("createdAt", createdAt)
+            .put("updatedAt", updatedAt)
+
+    private fun CardRunAgentBinding.toJson(): JSONObject =
+        JSONObject()
+            .put("providerId", providerId)
+            .put("sessionId", sessionId.orEmpty())
+            .put("status", status.name)
+            .put("statusMessage", statusMessage.orEmpty().take(MAX_AGENT_STATUS_MESSAGE_CHARS))
             .put("updatedAt", updatedAt)
 
     private fun CardRunHistoryEntry.toJson(): JSONObject =
@@ -945,6 +1133,7 @@ object CardRunStore {
             .put("historyId", historyId)
             .put("recipeId", recipeId)
             .put("recipeName", recipeName)
+            .put("environmentId", environmentId)
             .put("instanceId", instanceId)
             .put("ownerKind", ownerKind)
             .put("status", status.name)
@@ -979,6 +1168,7 @@ object CardRunStore {
             instanceId = instanceId,
             recipeId = recipeId,
             recipeName = optString("recipeName"),
+            environmentId = optString("environmentId").normalizedEnvironmentId(),
             parentInstanceId = optString("parentInstanceId").takeIf { it.isNotBlank() },
             ownerKind = optString("ownerKind").ifBlank { CardRunState.OWNER_KIND_CARD },
             stepId = optString("stepId").takeIf { it.isNotBlank() },
@@ -1005,14 +1195,29 @@ object CardRunStore {
             rootPid = optString("rootPid").takeIf { it.isNotBlank() },
             processGroupId = optString("processGroupId").takeIf { it.isNotBlank() },
             systemSessionId = optString("systemSessionId").takeIf { it.isNotBlank() },
+            runtimeLane = optString("runtimeLane").takeIf { it.isNotBlank() },
+            runtimeFallbackReason = optString("runtimeFallbackReason").takeIf { it.isNotBlank() },
             lastMeaningfulOutput = optString("lastMeaningfulOutput").takeIf { it.isNotBlank() },
             lastError = optString("lastError").takeIf { it.isNotBlank() },
             shellReportText = optString("shellReportText").takeIf { it.isNotBlank() },
             nextActionUrl = optString("nextActionUrl").takeIf { it.isNotBlank() },
             x11Display = optString("x11Display").takeIf { it.isNotBlank() },
             x11SocketPath = optString("x11SocketPath").takeIf { it.isNotBlank() },
+            agentId = optString("agentId").trim().takeIf(String::isNotBlank),
+            agentBinding = optJSONObject("agentBinding")?.toCardRunAgentBindingOrNull(),
             createdAt = createdAt,
             updatedAt = updatedAt
+        )
+    }
+
+    private fun JSONObject.toCardRunAgentBindingOrNull(): CardRunAgentBinding? {
+        val providerId = optString("providerId").trim().takeIf(String::isNotBlank) ?: return null
+        return CardRunAgentBinding(
+            providerId = providerId,
+            sessionId = optString("sessionId").trim().takeIf(String::isNotBlank),
+            status = enumValueOrDefault(optString("status"), CardRunAgentConnectionStatus.Disconnected),
+            statusMessage = optString("statusMessage").trim().takeIf(String::isNotBlank),
+            updatedAt = optLong("updatedAt").takeIf { it > 0L } ?: System.currentTimeMillis()
         )
     }
 
@@ -1033,6 +1238,7 @@ object CardRunStore {
             historyId = historyId,
             recipeId = recipeId,
             recipeName = optString("recipeName"),
+            environmentId = optString("environmentId").normalizedEnvironmentId(),
             instanceId = instanceId,
             ownerKind = optString("ownerKind").ifBlank { CardRunState.OWNER_KIND_CARD },
             status = status,
@@ -1060,6 +1266,15 @@ object CardRunStore {
     private inline fun <reified T : Enum<T>> enumValueOrDefault(name: String, default: T): T =
         runCatching { enumValueOf<T>(name) }.getOrDefault(default)
 
+    private fun String?.normalizedAgentId(): String? =
+        this?.trim()?.takeIf(String::isNotBlank)
+
+    private fun String.normalizedEnvironmentId(): String =
+        trim().ifBlank { CardRunState.DEFAULT_ENVIRONMENT_ID }
+
+    private fun CardRunState.requiresEnvironmentStopSettlement(): Boolean =
+        isBusy() || isActive() || isInterruptible() || hasRunBinding() || status == CardRunStatus.CleanupPending
+
     private fun String.redactedUrlForPersistence(): String =
         if (startsWith("http://", ignoreCase = true) || startsWith("https://", ignoreCase = true)) {
             BrowserHandoffPolicy.redactedUrlForDiagnostics(this)
@@ -1072,12 +1287,14 @@ object CardRunStore {
     private const val KEY_HISTORY = "history_v1"
     private const val MAX_STORED_RUNS = 80
     private const val MAX_STORED_TEXT_CHARS = 4000
+    private const val MAX_AGENT_STATUS_MESSAGE_CHARS = 500
     private const val MAX_HISTORY_PER_RECIPE = 5
     private const val MAX_STORED_HISTORY_ENTRIES = 200
     private const val MAX_HISTORY_DETAIL_CHARS = 260
     private const val MAX_HISTORY_SUMMARY_CHARS = 500
     private const val MAX_HISTORY_REPORT_CHARS = 4000
     private const val PROCESS_RESTORE_ABORTED_MESSAGE = "Kite 重新启动，上次运行未确认正常结束"
+    private const val AGENT_RESTORE_DISCONNECTED_MESSAGE = "Kite 重新启动，需要重新连接 Agent 会话"
     private const val OWNER_CONFIRMATION_RETENTION_MS = 60_000L
     private const val MAX_RECENT_OWNER_CONFIRMATIONS = 512
     private const val PERSIST_DEBOUNCE_MS = 300L

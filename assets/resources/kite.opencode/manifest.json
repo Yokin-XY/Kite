@@ -12,14 +12,25 @@
       "fit": "fullBleed"
     }
   },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["opencode"],
+    "versionProbe": {
+      "command": "opencode --version",
+      "pattern": "v?([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
   "display": {
     "sections": [
-      "featured"
+      "ai-community"
     ],
+    "tabs": ["angel-cli"],
+    "order": 10,
     "category": "AI",
     "accent": "blue",
     "sizeLabel": "网络包",
-    "longDescription": "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方 install script 安装 opencode 命令，并提供首页卡入口；Provider 配置和会话内容仍由终端运行态承接。",
+    "longDescription": "OpenCode 是开源的终端 AI 编码 Agent，可以连接 Claude、GPT、Gemini 等模型。Kite 通过官方发布包安装 opencode 命令，并使用 OpenCode 的 ACP stdio 能力建立原生 Agent 会话。",
     "recommendations": [
       {
         "resourceId": "kite.curl",
@@ -58,10 +69,39 @@
     "defaults": [],
     "extensions": []
   },
+  "agents": [
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "description": "OpenCode 原生 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "opencode"
+      },
+      "sessions": {
+        "adapter": "opencode"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "opencode",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["opencode", "acp"],
+        "title": "OpenCode"
+      }
+    }
+  ],
   "source": {
     "type": "github_release",
     "repository": "https://github.com/anomalyco/opencode",
-    "assetPattern": "opencode-{target}.tar.gz"
+    "releaseTagTemplate": "v{version}",
+    "assetPattern": "opencode-{target}.tar.gz",
+    "archiveType": "tar.gz",
+    "binaryPath": "opencode",
+    "architectures": {
+      "aarch64|arm64": "linux-arm64",
+      "x86_64|amd64": "linux-x64"
+    }
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.opencode",
@@ -69,47 +109,13 @@
     "binRoot": "/workspace/.kf/bin"
   },
   "actions": {
-    "install": [
-      {
-        "type": "managed",
-        "steps": [
-          {
-            "id": "select-opencode-architecture",
-            "type": "shell",
-            "cmd": "arch=\"$(uname -m)\"\ncase \"$arch\" in\n  aarch64|arm64) target=\"linux-arm64\" ;;\n  x86_64|amd64) target=\"linux-x64\" ;;\n  *) echo \"Unsupported OS/Arch: linux/$arch\"; exit 1 ;;\nesac\narchive=\"$install_root/opencode-$target.tar.gz\"\ntmp_dir=\"$install_root/tmp-opencode\"\nmkdir -p \"$tmp_dir\" \"$install_root/bin\""
-          },
-          {
-            "id": "download-opencode-release",
-            "type": "download",
-            "url": "https://github.com/anomalyco/opencode/releases/latest/download/opencode-$target.tar.gz",
-            "destination": "$archive"
-          },
-          {
-            "id": "install-opencode-binary",
-            "type": "shell",
-            "cmd": "tar -tzf \"$archive\" >/dev/null\ntar -xzf \"$archive\" -C \"$tmp_dir\"\ntest -x \"$tmp_dir/opencode\"\ninstall -m 0755 \"$tmp_dir/opencode\" \"$install_root/bin/opencode\"\nrm -rf \"$tmp_dir\" \"$archive\""
-          }
-        ],
-        "managedCommands": [
-          "opencode"
-        ],
-        "cleanInstallRoot": true,
-        "verify": [
-          {
-            "id": "opencode-command",
-            "cmd": "command -v opencode >/dev/null 2>&1"
-          }
-        ],
-        "timeoutMs": 600000
-      }
-    ],
     "open": {
       "runtime": "kite_recipe",
       "recipe": {
         "base": {
           "id": "",
           "name": "OpenCode",
-          "description": "在终端里启动 OpenCode",
+          "description": "启动 OpenCode Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -120,22 +126,13 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"OpenCode 首次启动会引导选择或配置 Provider。\"\nopencode\n"
+            "type": "agent",
+            "agentId": "opencode",
+            "workdir": "/workspace"
           }
         ]
       }
-    },
-    "uninstall": [
-      {
-        "type": "shell",
-        "cmd": ":",
-        "managedCommands": [
-          "opencode"
-        ],
-        "timeoutMs": 180000
-      }
-    ]
+    }
   },
   "homeCards": [
     {
@@ -145,7 +142,7 @@
         "base": {
           "id": "",
           "name": "OpenCode",
-          "description": "在终端里启动 OpenCode",
+          "description": "启动 OpenCode Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -156,8 +153,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"OpenCode 首次启动会引导选择或配置 Provider。\"\nopencode\n"
+            "type": "agent",
+            "agentId": "opencode",
+            "workdir": "/workspace"
           }
         ]
       }

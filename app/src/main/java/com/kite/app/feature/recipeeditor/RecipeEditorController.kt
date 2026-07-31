@@ -3,6 +3,7 @@ package com.kite.app.feature.recipeeditor
 import com.kite.app.action.KiteRecipeActionIntent
 import com.kite.app.action.KiteRecipeActionRequest
 import com.kite.app.action.KiteRecipeActionSource
+import com.kite.app.agent.registration.AgentRegistryEntry
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.recipes.RecipeDeleteResult
 import com.kite.app.recipe.KiteRecipe
@@ -18,7 +19,8 @@ import kotlinx.coroutines.sync.withLock
 /** 配方编辑器的纯状态控制器；草稿、校验与配置写入均在这里收口。 */
 internal class RecipeEditorController(
     private val gateway: RecipeFeatureGateway,
-    initiallyRuntimeBlocked: Boolean = true
+    initiallyRuntimeBlocked: Boolean = true,
+    private val agentEntries: () -> List<AgentRegistryEntry> = { emptyList() }
 ) {
     private val mutableState = MutableStateFlow(
         RecipeEditorUiState(runtimeBlocked = initiallyRuntimeBlocked)
@@ -55,6 +57,7 @@ internal class RecipeEditorController(
             is RecipeEditorAction.SetShortcutRequested -> updateDraft {
                 copy(shortcutRequested = action.requested)
             }
+            is RecipeEditorAction.ReconcileAgents -> reconcileAgents(action.agents)
             is RecipeEditorAction.PutStep -> putStep(action.index, action.step)
             is RecipeEditorAction.RemoveStep -> removeStep(action.index)
             is RecipeEditorAction.MoveStep -> moveStep(action.from, action.to)
@@ -96,6 +99,7 @@ internal class RecipeEditorController(
         return runCatching { gateway.loadRecipes(forceRefresh = false) }
             .fold(
                 onSuccess = { recipes ->
+                    val agents = agentEntries()
                     val normalizedId = recipeId?.trim().orEmpty()
                     val recipe = normalizedId.takeIf(String::isNotBlank)
                         ?.let { id -> recipes.firstOrNull { it.id == id } }
@@ -107,7 +111,8 @@ internal class RecipeEditorController(
                         )
                         return@fold RecipeEditorEffect.Failed("initialize", "未找到卡片：$normalizedId")
                     }
-                    val baseline = recipe?.let(RecipeEditorDraft::fromRecipe) ?: RecipeEditorDraft.empty()
+                    val baseline = recipe?.let { RecipeEditorDraft.fromRecipe(it, agents) }
+                        ?: RecipeEditorDraft.empty()
                     val restoredMatches = restoredDraft != null && when {
                         recipe != null -> restoredDraft.editingRecipeId == recipe.id
                         normalizedId.isBlank() -> restoredDraft.editingRecipeId.isBlank()
@@ -115,6 +120,7 @@ internal class RecipeEditorController(
                     }
                     val draft = restoredDraft
                         ?.takeIf { restoredMatches }
+                        ?.reconcileAgents(agents)
                         ?.normalized()
                         ?: baseline
                     val run = recipe?.let(::runFor)
@@ -124,6 +130,7 @@ internal class RecipeEditorController(
                         baseline = baseline,
                         draft = draft,
                         groups = gateway.groups(),
+                        agents = agents,
                         run = run,
                         runProjection = run?.let {
                             KiteCardRunUiProjector.project(
@@ -167,13 +174,40 @@ internal class RecipeEditorController(
     private fun putStep(index: Int?, step: RecipeEditorStepDraft): RecipeEditorEffect? = updateDraft {
         val next = steps.toMutableList()
         if (index == null || index !in next.indices) next += step else next[index] = step
-        copy(selectedType = RecipeEditorDraft.inferType(next), steps = next)
+        withSteps(next)
+    }
+
+    private fun reconcileAgents(agents: List<AgentRegistryEntry>): RecipeEditorEffect? {
+        val state = mutableState.value
+        if (state.agents == agents) return null
+        mutableState.value = state.copy(
+            baseline = state.baseline.reconcileAgents(agents),
+            draft = state.draft.reconcileAgents(agents),
+            agents = agents,
+            revision = state.revision + 1L
+        )
+        return null
     }
 
     private fun removeStep(index: Int): RecipeEditorEffect? = updateDraft {
         if (index !in steps.indices) return@updateDraft this
         val next = steps.toMutableList().apply { removeAt(index) }
-        copy(selectedType = RecipeEditorDraft.inferType(next), steps = next)
+        withSteps(next)
+    }
+
+    private fun RecipeEditorDraft.withSteps(next: List<RecipeEditorStepDraft>): RecipeEditorDraft {
+        val nextType = RecipeEditorDraft.inferType(next)
+        val followsTypeDefault = selectedIconType == KiteRecipeIcon.TYPE_BUILTIN &&
+            selectedIconName == KiteRecipeIcon.defaultNameForType(selectedType)
+        return copy(
+            selectedType = nextType,
+            selectedIconName = if (followsTypeDefault) {
+                KiteRecipeIcon.defaultNameForType(nextType)
+            } else {
+                selectedIconName
+            },
+            steps = next
+        )
     }
 
     private fun moveStep(from: Int, to: Int): RecipeEditorEffect? = updateDraft {
@@ -265,7 +299,7 @@ internal class RecipeEditorController(
     private suspend fun save(): RecipeEditorEffect {
         val state = mutableState.value
         val normalized = state.draft.normalized()
-        val errors = normalized.validationErrors()
+        val errors = normalized.validationErrors(state.agents)
         if (errors.isNotEmpty()) {
             mutableState.value = state.copy(
                 draft = normalized,
@@ -285,7 +319,7 @@ internal class RecipeEditorController(
         }.fold(
             onSuccess = { saved ->
                 gateway.saveEditorDraft(null)
-                val baseline = RecipeEditorDraft.fromRecipe(saved)
+                val baseline = RecipeEditorDraft.fromRecipe(saved, mutableState.value.agents)
                 val run = runFor(saved)
                 mutableState.value = mutableState.value.copy(
                     phase = RecipeEditorPhase.Ready,

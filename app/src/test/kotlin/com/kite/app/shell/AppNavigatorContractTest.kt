@@ -152,12 +152,50 @@ class AppNavigatorContractTest {
     }
 
     @Test
+    fun `Release 的工程目标无论直达还是恢复都必须回到设置首页`() {
+        val navigated = mutableListOf<AppDestination>()
+        val navigator = AppNavigator(
+            destinationSink = AppNavigator.DestinationSink(navigated::add),
+            initialDestination = AppDestination.SettingsEngineering,
+            isDebugBuild = false
+        )
+
+        assertEquals(AppDestination.Settings, navigator.currentDestination)
+        assertEquals(
+            AppDestination.Settings,
+            navigator.contract(AppDestination.SettingsEngineering).destination
+        )
+
+        navigator.enter(AppDestination.SettingsEngineering)
+        assertEquals(AppDestination.Settings, navigator.currentDestination)
+
+        navigator.navigate(AppDestination.SettingsEngineering)
+        assertEquals(listOf(AppDestination.Settings), navigated)
+    }
+
+    @Test
     fun `设置分类与 Shell 目标必须完整双向映射`() {
         SettingsCategoryDestination.entries.forEach { category ->
             val destination = category.toAppDestination()
             assertEquals(category, destination.toSettingsCategoryOrNull())
         }
         assertEquals(null, AppDestination.Console.toSettingsCategoryOrNull())
+    }
+
+    @Test
+    fun `Release 的工程设置分类不能建立双向路由`() {
+        assertEquals(
+            null,
+            SettingsCategoryDestination.Engineering.toAppDestinationOrNull(isDebugBuild = false)
+        )
+        assertEquals(
+            null,
+            AppDestination.SettingsEngineering.toSettingsCategoryOrNull(isDebugBuild = false)
+        )
+        assertEquals(
+            AppDestination.SettingsRuntimeEnvironment,
+            SettingsCategoryDestination.RuntimeEnvironment.toAppDestinationOrNull(isDebugBuild = false)
+        )
     }
 
     private fun navigator(): AppNavigator = AppNavigator(AppNavigator.DestinationSink { })

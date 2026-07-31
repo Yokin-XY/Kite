@@ -12,10 +12,20 @@
       "fit": "fullBleed"
     }
   },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["claude", "claude-agent-acp"],
+    "versionProbe": {
+      "command": "claude --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    }
+  },
   "display": {
     "sections": [
-      "featured"
+      "ai-vendor"
     ],
+    "tabs": ["angel-cli"],
+    "order": 70,
     "category": "AI",
     "accent": "orange",
     "sizeLabel": "网络包",
@@ -64,51 +74,42 @@
   },
   "source": {
     "type": "npm",
-    "package": "@anthropic-ai/claude-code"
+    "package": "@anthropic-ai/claude-code",
+    "companionPackages": ["@agentclientprotocol/claude-agent-acp"],
+    "installArguments": ["--allow-scripts=@anthropic-ai/claude-code"]
   },
   "paths": {
     "cacheRoot": "/workspace/.kf/cache/resources/kite.claude.code",
     "installRoot": "/workspace/.kf/software/kite.claude.code",
     "binRoot": "/workspace/.kf/bin"
   },
-  "actions": {
-    "install": [
-      {
-        "type": "managed",
-        "steps": [
-          {
-            "id": "install-claude-code-package",
-            "type": "npm",
-            "packages": [
-              "@anthropic-ai/claude-code@latest"
-            ],
-            "args": [
-              "--allow-scripts=@anthropic-ai/claude-code"
-            ],
-            "retryAttempts": 5,
-            "retryDelaySeconds": 3
-          }
-        ],
-        "managedCommands": [
-          "claude"
-        ],
-        "cleanInstallRoot": true,
-        "verify": [
-          {
-            "id": "claude-command",
-            "cmd": "claude --version >/dev/null 2>&1"
-          }
-        ],
-        "timeoutMs": 900000
+  "agents": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "description": "Claude Code 的 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "claude-code"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "claude-code",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["claude-agent-acp"],
+        "title": "Claude Code"
       }
-    ],
+    }
+  ],
+  "actions": {
     "open": {
       "runtime": "kite_recipe",
       "recipe": {
         "base": {
           "id": "",
           "name": "Claude Code",
-          "description": "在终端里启动 Claude Code",
+          "description": "启动 Claude Code Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -119,23 +120,13 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"Claude Code 首次启动会要求登录 Claude / Anthropic。\"\nclaude\n"
+            "type": "agent",
+            "agentId": "claude-code",
+            "workdir": "/workspace"
           }
         ]
       }
-    },
-    "uninstall": [
-      {
-        "type": "shell",
-        "cmd": ":",
-        "managedCommands": [
-          "claude"
-        ],
-        "npmUninstallPackage": "@anthropic-ai/claude-code",
-        "timeoutMs": 180000
-      }
-    ]
+    }
   },
   "homeCards": [
     {
@@ -145,7 +136,7 @@
         "base": {
           "id": "",
           "name": "Claude Code",
-          "description": "在终端里启动 Claude Code",
+          "description": "启动 Claude Code Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -156,8 +147,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"Claude Code 首次启动会要求登录 Claude / Anthropic。\"\nclaude\n"
+            "type": "agent",
+            "agentId": "claude-code",
+            "workdir": "/workspace"
           }
         ]
       }

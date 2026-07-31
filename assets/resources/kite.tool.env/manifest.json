@@ -10,10 +10,15 @@
       "value": ">_"
     }
   },
+  "management": {
+    "mode": "system_component",
+    "managedCommands": ["pnpm", "pnpx", "wget", "jq", "rg", "fd", "zip", "unzip", "zstd", "file"]
+  },
   "display": {
     "sections": [
       "search-only"
     ],
+    "order": 220,
     "category": "系统工具",
     "accent": "teal",
     "sizeLabel": "内置包",

@@ -351,6 +351,7 @@ internal class HomeFeatureViewFactory(
         KiteRecipe.STEP_SHELL -> context.getString(R.string.home_step_command)
         KiteRecipe.STEP_TERMINAL -> context.getString(R.string.home_step_terminal)
         KiteRecipe.STEP_OPEN_WEB -> context.getString(R.string.home_step_web)
+        KiteRecipe.STEP_AGENT -> context.getString(R.string.home_step_agent)
         KiteRecipe.STEP_ANDROID_ACTION -> context.getString(R.string.home_step_native)
         else -> context.getString(R.string.home_step_card)
     }

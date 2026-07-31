@@ -7,6 +7,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -83,6 +84,7 @@ import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.platform.resources.AndroidResourceOpenRecipeResolver
 import com.kite.app.run.CardRunState as RecipeRuntimeState
 import com.kite.app.run.CardRunDesktopRouter
 import com.kite.app.run.CardRunSurface
@@ -165,7 +167,7 @@ import com.kite.app.ui.terminal.KiteTerminalShellTheme
 import com.kite.app.ui.terminal.TerminalFragment
 import com.kite.app.ui.logs.LogActivity
 import com.kite.app.shell.TerminalSurfaceShellBinding
-import com.kite.app.shell.toAppDestination
+import com.kite.app.shell.toAppDestinationOrNull
 import com.kite.app.shell.toSettingsCategoryOrNull
 import com.kite.app.platform.runs.AndroidRunNotificationAccess
 import androidx.appcompat.app.AppCompatActivity
@@ -188,6 +190,7 @@ import org.json.JSONObject
 open class MainActivity : AppCompatActivity() {
     private lateinit var diagnostics: KiteDiagnostics
     private lateinit var recipeLoader: KiteRecipeLoader
+    private lateinit var resourceOpenRecipeResolver: AndroidResourceOpenRecipeResolver
     private lateinit var dropZoneManager: KiteDropZoneManager
     private lateinit var bridgeClient: KiteBridgeClient
     private lateinit var browserAuthRedirectCoordinator: BrowserAuthRedirectCoordinator
@@ -204,6 +207,7 @@ open class MainActivity : AppCompatActivity() {
     private lateinit var browserOpenCoordinator: BrowserOpenCoordinator
     private lateinit var installApkCoordinator: InstallApkCoordinator
     private lateinit var settingsGateway: SettingsGateway
+    private lateinit var activeEnvironmentIdProvider: () -> String
     private lateinit var rootHost: FrameLayout
     private lateinit var root: LinearLayout
 
@@ -213,9 +217,13 @@ open class MainActivity : AppCompatActivity() {
      */
     private val appNavigator: AppNavigator by lazy {
         AppNavigator(
-            destinationSink = AppNavigator.DestinationSink { screen -> dispatchLegacyDestination(screen) }
+            destinationSink = AppNavigator.DestinationSink { screen -> dispatchLegacyDestination(screen) },
+            isDebugBuild = isDebugBuild()
         )
     }
+
+    private fun isDebugBuild(): Boolean =
+        applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
     private val navigationBackCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             handleAppNavigationBack()
@@ -242,7 +250,7 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private var currentRecipes: List<KiteRecipe> = emptyList()
-    private var dropZoneStatus: DropZoneStatus = DropZoneStatus(available = false, message = "投放区尚未检查")
+    private var dropZoneStatus: DropZoneStatus = DropZoneStatus(available = false, message = "卡片注册存储尚未检查")
     private var isDropZoneRefreshing = false
     private var themeSelection = KiteTheme.defaultSelection
     private var tokens = KiteTheme.resolve(themeSelection, systemDark = false).tokens
@@ -266,13 +274,14 @@ open class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, navigationBackCallback)
         StartupTraceStore.markStage(this, "main.diagnostics_and_settings")
         val appGraph = KiteAppGraph.from(applicationContext)
+        activeEnvironmentIdProvider = appGraph.resourceInstallStore::currentEnvironmentId
+        CardRunStore.initialize(applicationContext)
         RunNotificationPermissionFragment.install(supportFragmentManager)
         resourceFeatureGateway = appGraph.resourceFeatureGateway
         recipeFeatureGateway = appGraph.recipeFeatureGateway
         diagnostics = appGraph.diagnostics
         diagnostics.writeCapabilityReport()
         settingsGateway = appGraph.settingsGateway
-        CardRunStore.initialize(applicationContext)
         runExecutionEffectBus = appGraph.runExecutionEffectBus
         resourceActionWorkflowCoordinator = appGraph.resourceActionWorkflowCoordinator
         recipeActionWorkflowCoordinator = appGraph.recipeActionWorkflowCoordinator
@@ -293,6 +302,7 @@ open class MainActivity : AppCompatActivity() {
         applyKiteWindowTheme(tokens, environment.isDark)
         applyKiteTerminalTheme()
         recipeLoader = appGraph.createRecipeLoader()
+        resourceOpenRecipeResolver = AndroidResourceOpenRecipeResolver(appGraph.resourceManifestLoader)
         dropZoneManager = appGraph.createDropZoneManager()
         dropZoneStatus = dropZoneManager.prepareDropZone()
         bridgeClient = appGraph.bridgeClient
@@ -565,7 +575,7 @@ open class MainActivity : AppCompatActivity() {
                 null,
                 mapOf("recipeId" to recipeId, "instanceId" to instanceId)
             )
-        val state = CardRunStore.get(instanceId)
+        val state = CardRunStore.get(instanceId, activeEnvironmentIdProvider())
             ?: return diagnostics.logRecipeEvent(
                 "kite_runtime_automation_stop_missing_state",
                 recipe,
@@ -754,7 +764,7 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun handleRunStopResolvedEffect(effect: RunExecutionEffect.StopResolved) {
-        val state = CardRunStore.get(effect.instanceId) ?: return
+        val state = CardRunStore.get(effect.instanceId, activeEnvironmentIdProvider()) ?: return
         if (state.recipeId != effect.recipeId) return
         val recipe = recipeForRunState(state) ?: return
         if (focusedRunInstanceId == state.instanceId) {
@@ -776,7 +786,7 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun handleRunOpenWebEffect(effect: RunExecutionEffect.OpenWeb) {
-        val state = CardRunStore.get(effect.instanceId) ?: return
+        val state = CardRunStore.get(effect.instanceId, activeEnvironmentIdProvider()) ?: return
         if (state.recipeId != effect.recipeId || state.nextActionUrl != effect.url) return
         val recipe = findRecipeById(effect.recipeId)
             ?: CardRunStore.registeredRecipe(effect.recipeId)
@@ -1118,19 +1128,7 @@ open class MainActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_DROPZONE_STORAGE) {
-            val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-            diagnostics.logDropZoneEvent(
-                if (granted) "dropzone_permission_granted" else "dropzone_permission_missing",
-                path = dropZoneStatus.rootPath,
-                reason = if (granted) "" else "storage_permission_denied"
-            )
-            dropZoneStatus = dropZoneManager.prepareDropZone()
-            Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_SHORT).show()
-            if (currentScreen == AppDestination.Console) showConsole()
-            (supportFragmentManager.findFragmentByTag(TAG_SETTINGS_FRAGMENT) as? SettingsFragment)
-                ?.refresh()
-        } else if (requestCode == REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS) {
+        if (requestCode == REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS) {
             runtimePermissionRequestInFlight = false
             dropZoneStatus = dropZoneManager.prepareDropZone()
             val permissionState = runtimeBootstrapGateway.currentSnapshot().permissions
@@ -1176,7 +1174,7 @@ open class MainActivity : AppCompatActivity() {
         isDropZoneRefreshing = true
         if (currentScreen == AppDestination.Console && showToast) showConsole()
         if (showToast) {
-            Toast.makeText(this, "正在刷新 Kite 投放区", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "正在刷新已登记卡片", Toast.LENGTH_SHORT).show()
         }
         lifecycleScope.launch {
             runCatching { recipeFeatureGateway.refreshExternalRecipes() }
@@ -1205,22 +1203,10 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun requestDropZoneAccess() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
-            openAllFilesAccessSettings()
-            return
-        }
-        if (Build.VERSION.SDK_INT <= 32 &&
-            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQUEST_DROPZONE_STORAGE)
-            return
-        }
-        startActivity(
-            Intent(
-                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:$packageName")
-            )
-        )
+        dropZoneStatus = dropZoneManager.prepareDropZone()
+        Toast.makeText(this, dropZoneStatus.message, Toast.LENGTH_SHORT).show()
+        (supportFragmentManager.findFragmentByTag(TAG_SETTINGS_FRAGMENT) as? SettingsFragment)
+            ?.refresh()
     }
 
     private fun showConsole() {
@@ -1387,7 +1373,7 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun dispatchLegacyDestination(screen: AppDestination) {
-        screen.toSettingsCategoryOrNull()?.let {
+        screen.toSettingsCategoryOrNull(isDebugBuild = isDebugBuild())?.let {
             showSettingsCategory(it)
             return
         }
@@ -1427,7 +1413,11 @@ open class MainActivity : AppCompatActivity() {
         showFeatureFragment(SettingsFragment(), TAG_SETTINGS_FRAGMENT)
     }
     private fun showSettingsCategory(destination: SettingsCategoryDestination) {
-        enterScreen(destination.toAppDestination())
+        val screen = destination.toAppDestinationOrNull(isDebugBuild = isDebugBuild()) ?: run {
+            showSettings()
+            return
+        }
+        enterScreen(screen)
         showFeatureFragment(SettingsCategoryFragment.newInstance(destination), TAG_SETTINGS_CATEGORY_FRAGMENT)
     }
 
@@ -1487,8 +1477,10 @@ open class MainActivity : AppCompatActivity() {
                 is HomeFeatureRequest.SubmitAction -> lifecycleScope.launch {
                     val recipes = recipeFeatureGateway.loadRecipes(forceRefresh = false)
                     currentRecipes = recipes
-                    val recipe = recipes.firstOrNull { it.id == request.recipeId }
-                        ?: CardRunStore.registeredRecipe(request.recipeId)
+                    val recipe = (
+                        recipes.firstOrNull { it.id == request.recipeId }
+                            ?: CardRunStore.registeredRecipe(request.recipeId)
+                        )?.let(::resolveCurrentResourceRecipe)
                     if (recipe == null) {
                         Toast.makeText(this@MainActivity, "卡片目录正在更新，请稍后重试", Toast.LENGTH_SHORT).show()
                     } else {
@@ -1516,7 +1508,7 @@ open class MainActivity : AppCompatActivity() {
             when (val request = RuntimeManagementResultContract.parse(bundle)) {
                 RuntimeManagementRequest.Back -> requestNavigationBack()
                 is RuntimeManagementRequest.OpenSurface -> {
-                    val state = CardRunStore.get(request.instanceId)
+                    val state = CardRunStore.get(request.instanceId, activeEnvironmentIdProvider())
                     if (state == null || state.recipeId != request.recipeId) {
                         Toast.makeText(this, "运行窗口不可用", Toast.LENGTH_SHORT).show()
                     } else {
@@ -1714,6 +1706,11 @@ open class MainActivity : AppCompatActivity() {
                             request.targetResourceId,
                             request.resourceIds
                         )
+                    )
+                }
+                is ResourceFeatureRequest.CheckInstalledUpdates -> lifecycleScope.launch {
+                    applyResourceActionEffects(
+                        resourceActionWorkflowCoordinator.checkUpdates(request.resourceIds)
                     )
                 }
                 is ResourceFeatureRequest.SubmitAction -> lifecycleScope.launch {
@@ -1959,8 +1956,10 @@ open class MainActivity : AppCompatActivity() {
     private fun closeCardRunInstanceForStop(recipe: KiteRecipe, previousState: RecipeRuntimeState, reason: String) {
         val instanceId = listOf(
             previousState.instanceId,
-            focusedRunInstanceId?.takeIf { CardRunStore.get(it)?.recipeId == recipe.id },
-            CardRunStore.currentForRecipe(recipe.id)?.instanceId,
+            focusedRunInstanceId?.takeIf {
+                CardRunStore.get(it, activeEnvironmentIdProvider())?.recipeId == recipe.id
+            },
+            CardRunStore.currentForRecipe(recipe.id, activeEnvironmentIdProvider())?.instanceId,
             recipe.id
         ).firstOrNull { !it.isNullOrBlank() } ?: return
 
@@ -2058,7 +2057,7 @@ open class MainActivity : AppCompatActivity() {
                     )
                 )
                 is RecipeActionEffect.CloseRunTask -> {
-                    val state = CardRunStore.get(effect.instanceId)
+                    val state = CardRunStore.get(effect.instanceId, activeEnvironmentIdProvider())
                     val recipe = state
                         ?.takeIf { it.recipeId == effect.recipeId }
                         ?.let(::recipeForRunState)
@@ -2083,6 +2082,7 @@ open class MainActivity : AppCompatActivity() {
                     step.type == KiteRecipe.STEP_OPEN_WEB ||
                         step.type == KiteRecipe.STEP_TERMINAL ||
                         step.type == KiteRecipe.STEP_X11 ||
+                        step.type == KiteRecipe.STEP_AGENT ||
                         step.type == KiteRecipe.STEP_SHELL
                     )
             }
@@ -2341,11 +2341,17 @@ open class MainActivity : AppCompatActivity() {
     }
 
     private fun findRecipeById(recipeId: String): KiteRecipe? {
+        if (::resourceOpenRecipeResolver.isInitialized) {
+            resourceOpenRecipeResolver.resolve(recipeId)?.let { return it }
+        }
         if (currentRecipes.isEmpty()) {
             currentRecipes = recipeLoader.loadAllRecipes()
         }
         return currentRecipes.firstOrNull { it.id == recipeId }
     }
+
+    private fun resolveCurrentResourceRecipe(recipe: KiteRecipe): KiteRecipe =
+        resourceOpenRecipeResolver.resolve(recipe.id) ?: recipe
 
     private fun openWeb(url: String, source: String, recipe: KiteRecipe? = null) {
         val target = url.trim().ifBlank { DEFAULT_LOCAL_URL }
@@ -2533,7 +2539,6 @@ open class MainActivity : AppCompatActivity() {
         private const val DEFAULT_LOCAL_URL = "http://127.0.0.1:8648"
         private const val TERMINAL_STOP_GRACE_MS = 350L
         private val ANSI_ESCAPE_REGEX = Regex("""\u001B\[[0-9;?]*[ -/]*[@-~]""")
-        private const val REQUEST_DROPZONE_STORAGE = 801
         private const val REQUEST_FIRST_RUN_RUNTIME_PERMISSIONS = 803
         private const val REQUEST_NOTIFICATION_PERMISSION = 804
         private const val REQUEST_FIRST_RUN_PERMISSION_ONBOARDING = 805

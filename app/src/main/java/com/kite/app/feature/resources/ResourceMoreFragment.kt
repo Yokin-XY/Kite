@@ -9,6 +9,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.application.runs.RunHistoryDependenciesOwner
 import com.kite.app.application.runs.RunHistoryGateway
+import com.kite.app.action.KiteResourceActionIntent
+import com.kite.app.action.KiteResourceActionSource
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.run.CardRunHistoryEntry
@@ -38,6 +40,15 @@ internal class ResourceMoreFragment : ResourceFeatureFragment() {
         context = requireContext(),
         onBack = { send(ResourceFeatureRequest.Back) },
         onCreateHomeCard = { send(ResourceFeatureRequest.CreateHomeCard(resourceId)) },
+        onMaintenanceAction = { intent ->
+            submitExplicit(
+                resourceId = resourceId,
+                intent = intent,
+                source = KiteResourceActionSource.Detail,
+                onAccepted = { screen?.acknowledge(it) },
+                onUnavailable = ::render
+            )
+        },
         onOpenHistory = { historyId ->
             send(ResourceFeatureRequest.OpenRunHistory(resourceId, installRecipeId(), historyId))
         }

@@ -14,6 +14,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.kite.app.action.KiteRecipeActionIntent
+import com.kite.app.agent.registration.AgentRegistryDependenciesOwner
+import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.application.recipes.RecipeFeatureDependenciesOwner
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import kotlinx.coroutines.Dispatchers
@@ -28,8 +30,17 @@ internal class RecipeEditorFragment : Fragment() {
             ?: error("Application 必须提供 RecipeFeatureGateway")
         owner.recipeFeatureGateway
     }
+    private val agentRegistry: KiteAgentRegistry by lazy(LazyThreadSafetyMode.NONE) {
+        val owner = requireContext().applicationContext as? AgentRegistryDependenciesOwner
+            ?: error("Application 必须提供 KiteAgentRegistry")
+        owner.agentRegistry
+    }
     private val controller: RecipeEditorController by lazy(LazyThreadSafetyMode.NONE) {
-        RecipeEditorController(gateway, initiallyRuntimeBlocked = runtimeBlocked)
+        RecipeEditorController(
+            gateway,
+            initiallyRuntimeBlocked = runtimeBlocked,
+            agentEntries = { agentRegistry.snapshot().entries }
+        )
     }
     private var screen: RecipeEditorScreen? = null
     private var restoredDraft: RecipeEditorDraft? = null
@@ -67,6 +78,13 @@ internal class RecipeEditorFragment : Fragment() {
                 launch {
                     gateway.changes.collect {
                         controller.dispatch(RecipeEditorAction.ReconcileRun)
+                    }
+                }
+                launch {
+                    agentRegistry.signals.collect {
+                        controller.dispatch(
+                            RecipeEditorAction.ReconcileAgents(agentRegistry.snapshot().entries)
+                        )
                     }
                 }
                 controller.dispatch(RecipeEditorAction.SetRuntimeBlocked(runtimeBlocked))

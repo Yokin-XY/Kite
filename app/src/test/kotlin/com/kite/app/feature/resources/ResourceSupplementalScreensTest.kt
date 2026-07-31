@@ -7,10 +7,13 @@ import android.widget.TextView
 import com.kite.app.R
 import com.kite.app.action.KiteResourceActionIntent
 import com.kite.app.application.resources.ResourceFeatureDescriptor
+import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceUiProjection
 import com.kite.app.run.CardRunHistoryEntry
 import com.kite.app.run.CardRunStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -23,7 +26,8 @@ class ResourceSupplementalScreensTest {
     fun `more screen keeps resource and history actions as data callbacks`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val opened = mutableListOf<String>()
-        val screen = ResourceMoreScreen(activity, {}, {}, opened::add)
+        val maintenance = mutableListOf<KiteResourceActionIntent>()
+        val screen = ResourceMoreScreen(activity, {}, {}, maintenance::add, opened::add)
         activity.setContentView(screen.root)
         val context = screen.root.context
         val history = CardRunHistoryEntry(
@@ -36,7 +40,11 @@ class ResourceSupplementalScreensTest {
             endedAt = 2L
         )
 
-        screen.render(item(), listOf(history))
+        screen.render(item(maintenance = managedMaintenance()), listOf(history))
+        val checkButton = screen.root.views().filterIsInstance<TextView>().first {
+            it.text.toString() == context.getString(R.string.resource_action_check_update)
+        }
+        checkButton.performClick()
         val historyRow = screen.root.views().first { view ->
             view.isClickable && view.texts().any {
                 it.contains(context.getString(R.string.runtime_management_status_completed))
@@ -45,8 +53,38 @@ class ResourceSupplementalScreensTest {
         historyRow.performClick()
 
         assertEquals(listOf("history"), opened)
+        assertEquals(listOf(KiteResourceActionIntent.CheckUpdate), maintenance)
         assertTrue(screen.root.texts().contains(context.getString(R.string.resource_manage_title)))
         assertTrue(screen.root.texts().contains(context.getString(R.string.resource_more_create_card)))
+        assertFalse(screen.root.texts().contains("修复"))
+
+        screen.render(
+            item(maintenance = managedMaintenance(
+                updateStatus = com.kite.app.resources.KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE,
+                updateEnabled = true,
+                latestVersion = "2.0.0"
+            )),
+            listOf(history)
+        )
+        val rebound = screen.root.views().filterIsInstance<TextView>().first {
+            it.text.toString() == context.getString(R.string.resource_maintenance_update_to, "2.0.0")
+        }
+        assertSame(checkButton, rebound)
+
+        screen.acknowledge(KiteResourceActionIntent.Update)
+        screen.render(
+            item(
+                phase = ResourceItemPhase.Installing,
+                operation = KiteResourceInstallRecipes.OP_UPDATE,
+                maintenance = managedMaintenance(
+                    updateStatus = com.kite.app.resources.KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE,
+                    latestVersion = "2.0.0"
+                )
+            ),
+            listOf(history)
+        )
+        assertTrue(screen.root.texts().contains(context.getString(R.string.resource_maintenance_updating)))
+        assertTrue(screen.root.texts().contains(context.getString(R.string.resource_state_updating)))
     }
 
     @Test
@@ -62,12 +100,33 @@ class ResourceSupplementalScreensTest {
         assertTrue(screen.root.texts().any { it.contains("\"id\": \"tool\"") })
     }
 
-    private fun item() = ResourceItemUiState(
+    private fun item(
+        phase: ResourceItemPhase = ResourceItemPhase.Installed,
+        operation: String = "",
+        maintenance: ResourceMaintenanceUiState = ResourceMaintenanceUiState()
+    ) = ResourceItemUiState(
         descriptor = ResourceFeatureDescriptor("tool", "Tool"),
-        phase = ResourceItemPhase.Installed,
+        phase = phase,
         projection = KiteResourceUiProjection("已获取", "打开", true, null),
         primaryIntent = KiteResourceActionIntent.Open,
-        secondaryIntent = null
+        secondaryIntent = null,
+        operation = operation,
+        maintenance = maintenance
+    )
+
+    private fun managedMaintenance(
+        updateStatus: String = "",
+        updateEnabled: Boolean = false,
+        latestVersion: String = ""
+    ) = ResourceMaintenanceUiState(
+        userLifecycleEnabled = true,
+        installedVersion = "1.0.0",
+        latestVersion = latestVersion,
+        updateStatus = updateStatus,
+        checkUpdateEnabled = !updateEnabled,
+        updateEnabled = updateEnabled,
+        reinstallEnabled = true,
+        uninstallEnabled = true
     )
 
     private fun View.views(): List<View> = buildList {

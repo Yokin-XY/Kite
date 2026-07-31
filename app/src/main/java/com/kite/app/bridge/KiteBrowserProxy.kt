@@ -54,7 +54,8 @@ data class KiteInstallApkResponse(
 
 object KiteBrowserProxyInstaller {
     const val ENDPOINT = "http://127.0.0.1:8791/open-web"
-    const val CONTAINER_COMMAND = "/workspace/.kf/bin/kite-open-url"
+    // T014b/c：Android 注入的浏览器代理落在共享 .kf/system/bin，不写环境变化目录 .kf/bin。
+    const val CONTAINER_COMMAND = "/workspace/.kf/system/bin/kite-open-url"
     private const val DESKTOP_FILE = "kite-browser.desktop"
     private const val MARKER = "# Kite generated browser proxy"
 
@@ -98,7 +99,9 @@ object KiteBrowserProxyInstaller {
     fun ensureInstalled(context: Context) {
         runCatching {
             val container = WorkSurfaceRuntimeBridge.resolveActiveContainer(context.applicationContext)
-            val binDir = File(container.workspacePath, ".kf/bin").also { it.mkdirs() }
+            // T014b/c：Android 注入的浏览器代理属于 Android 持有的 helper，落在共享 .kf/system/bin；
+            // 不再写环境变化目录 .kf/bin，也不再直接写 rootfs 的 /root/.local/share、/root/.config。
+            val binDir = File(container.workspacePath, ".kf/system/bin").also { it.mkdirs() }
             val script = proxyScript()
             listOf(
                 "kite-open-url",
@@ -117,10 +120,8 @@ object KiteBrowserProxyInstaller {
                     target.setExecutable(true, false)
                 }
             }
-            installDesktopContract(
-                dataHome = File(container.rootfsPath, "root/.local/share"),
-                configHome = File(container.rootfsPath, "root/.config")
-            )
+            // desktop contract 只写 workspace 侧（bind 到 /workspace/.kf），由 XDG_DATA_HOME/
+            // XDG_CONFIG_HOME 指向；不再直接写 rootfs。
             installDesktopContract(
                 dataHome = File(container.workspacePath, ".kf/share"),
                 configHome = File(container.workspacePath, ".kf/config")
@@ -219,7 +220,8 @@ object KiteBrowserProxyInstaller {
 
 object KiteDesktopProxyInstaller {
     const val ENDPOINT = "http://127.0.0.1:8791/open-desktop"
-    const val CONTAINER_COMMAND = "/workspace/.kf/bin/kite-open-desktop"
+    // T014b/c：Android 注入的桌面代理落在共享 .kf/system/bin。
+    const val CONTAINER_COMMAND = "/workspace/.kf/system/bin/kite-open-desktop"
     private const val MARKER = "# Kite generated desktop proxy"
 
     fun environmentVars(
@@ -238,7 +240,7 @@ object KiteDesktopProxyInstaller {
     fun ensureInstalled(context: Context) {
         runCatching {
             val container = WorkSurfaceRuntimeBridge.resolveActiveContainer(context.applicationContext)
-            val binDir = File(container.workspacePath, ".kf/bin").also { it.mkdirs() }
+            val binDir = File(container.workspacePath, ".kf/system/bin").also { it.mkdirs() }
             val target = File(binDir, "kite-open-desktop")
             if (shouldWrite(target)) {
                 target.writeText(proxyScript())

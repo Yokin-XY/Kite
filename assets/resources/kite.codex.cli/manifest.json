@@ -11,10 +11,21 @@
       "fallbackText": "Cx"
     }
   },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["codex", "codex-acp"],
+    "versionProbe": {
+      "command": "codex --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    },
+    "preservePaths": ["user-home"]
+  },
   "display": {
     "sections": [
-      "featured"
+      "ai-vendor"
     ],
+    "tabs": ["angel-cli"],
+    "order": 50,
     "category": "AI",
     "accent": "teal",
     "sizeLabel": "网络包",
@@ -60,6 +71,7 @@
   "source": {
     "type": "npm",
     "package": "@openai/codex",
+    "companionPackages": ["@agentclientprotocol/codex-acp"],
     "repository": "https://github.com/openai/codex"
   },
   "paths": {
@@ -67,41 +79,33 @@
     "installRoot": "/workspace/.kf/software/kite.codex.cli",
     "binRoot": "/workspace/.kf/bin"
   },
-  "actions": {
-    "install": [
-      {
-        "type": "managed",
-        "steps": [
-          {
-            "id": "install-codex-package",
-            "type": "npm",
-            "packages": [
-              "@openai/codex@latest"
-            ],
-            "retryAttempts": 5,
-            "retryDelaySeconds": 3
-          }
-        ],
-        "managedCommands": [
-          "codex"
-        ],
-        "cleanInstallRoot": true,
-        "verify": [
-          {
-            "id": "codex-command",
-            "cmd": "codex --version >/dev/null 2>&1"
-          }
-        ],
-        "timeoutMs": 600000
+  "agents": [
+    {
+      "id": "codex",
+      "name": "Codex",
+      "description": "Codex 的 ACP 会话",
+      "configuration": {
+        "required": false,
+        "adapter": "codex"
+      },
+      "launch": {
+        "mode": "managed",
+        "providerId": "codex",
+        "protocol": "acp",
+        "transport": "stdio",
+        "argv": ["codex-acp"],
+        "title": "Codex"
       }
-    ],
+    }
+  ],
+  "actions": {
     "open": {
       "runtime": "kite_recipe",
       "recipe": {
         "base": {
           "id": "",
           "name": "Codex CLI",
-          "description": "在终端里启动 OpenAI Codex",
+          "description": "启动 Codex Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -112,23 +116,13 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"Codex CLI 首次启动会要求登录 ChatGPT 或配置 API Key。\"\ncodex\n"
+            "type": "agent",
+            "agentId": "codex",
+            "workdir": "/workspace"
           }
         ]
       }
-    },
-    "uninstall": [
-      {
-        "type": "shell",
-        "cmd": ":",
-        "managedCommands": [
-          "codex"
-        ],
-        "npmUninstallPackage": "@openai/codex",
-        "timeoutMs": 180000
-      }
-    ]
+    }
   },
   "homeCards": [
     {
@@ -138,7 +132,7 @@
         "base": {
           "id": "",
           "name": "Codex CLI",
-          "description": "在终端里启动 OpenAI Codex",
+          "description": "启动 Codex Agent 会话",
           "icon": {
             "type": "builtin",
             "name": "bot"
@@ -149,8 +143,9 @@
         },
         "recipe": [
           {
-            "type": "terminal",
-            "text": "cd /workspace\necho \"Codex CLI 首次启动会要求登录 ChatGPT 或配置 API Key。\"\ncodex\n"
+            "type": "agent",
+            "agentId": "codex",
+            "workdir": "/workspace"
           }
         ]
       }

@@ -1,0 +1,596 @@
+package com.kite.app.feature.runsurface
+
+import android.text.InputType
+import com.kite.app.agent.contract.AgentSessionSummary
+import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigChoice
+import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentCommand
+import com.kite.app.agent.contract.AgentSessionPhase
+import com.kite.app.agent.config.AgentProviderModelSummary
+import com.kite.app.agent.config.AgentProviderSummary
+import com.kite.app.agent.config.AgentLiveConfigSnapshot
+import com.kite.app.agent.config.AgentProviderCredentialChange
+import com.kite.app.agent.config.AgentConfigScope
+import com.kite.app.agent.config.AgentCoreDocumentDescriptor
+import com.kite.app.agent.config.AgentCoreDocumentSemantics
+import com.kite.app.agent.runtime.AgentDraftModelSelection
+import com.kite.app.agent.store.AgentProject
+import com.kite.app.agent.registration.KiteAgentRegistry
+import com.kite.app.agent.config.AgentConfigAdapterRegistry
+import com.kite.app.theme.KiteTheme
+import androidx.appcompat.app.AppCompatActivity
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+
+@RunWith(RobolectricTestRunner::class)
+class AgentSurfaceNavigationPolicyTest {
+    @Test
+    fun `输入器固定模型与权限两个公共入口`() {
+        assertEquals(
+            listOf("模型", "权限"),
+            AgentSurfaceNavigationPolicy.fixedComposerEntries
+        )
+    }
+
+    @Test
+    fun `输入器显示当前模型推理强度与权限而不是空入口名`() {
+        val model = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "gpt-5.6-sol",
+            choices = listOf(AgentConfigChoice("gpt-5.6-sol", "GPT-5.6-Sol")),
+        )
+        val thought = AgentConfigOption.Select(
+            id = "thought",
+            name = "推理强度",
+            category = AgentConfigCategory.ThoughtLevel,
+            currentValue = "medium",
+            choices = listOf(AgentConfigChoice("medium", "中")),
+        )
+        val permission = AgentConfigOption.Select(
+            id = "permission",
+            name = "权限",
+            category = AgentConfigCategory.Permission,
+            currentValue = "full",
+            choices = listOf(AgentConfigChoice("full", "完全")),
+        )
+
+        assertEquals("GPT-5.6-Sol 中", AgentSurfaceNavigationPolicy.composerModelLabel(listOf(model, thought)))
+        assertEquals("完全", AgentSurfaceNavigationPolicy.composerPermissionLabel(permission))
+        assertEquals("模型", AgentSurfaceNavigationPolicy.composerModelLabel(emptyList()))
+        assertEquals("权限", AgentSurfaceNavigationPolicy.composerPermissionLabel(null))
+        assertEquals(
+            "自定义",
+            AgentSurfaceNavigationPolicy.composerPermissionLabel(permission.copy(currentValue = "native-custom")),
+        )
+    }
+
+    @Test
+    fun `核心设定按真实作用域分组并明确完整覆盖`() {
+        val global = AgentCoreDocumentDescriptor(
+            id = "system",
+            displayName = "主 Agent 系统提示",
+            fileName = "SYSTEM.md",
+            displayLocation = "/root/.kimi-code/SYSTEM.md",
+            scope = AgentConfigScope.User,
+            semantics = AgentCoreDocumentSemantics.FullSystemPromptReplacement,
+            exists = false,
+            writable = true,
+            priorityDescription = "替换内置主 Agent 提示",
+            warning = "完整替换",
+        )
+        val project = global.copy(
+            id = "project-agents",
+            displayName = "项目说明",
+            fileName = "AGENTS.md",
+            displayLocation = "/workspace/AGENTS.md",
+            scope = AgentConfigScope.Project,
+            semantics = AgentCoreDocumentSemantics.SupplementalInstructions,
+            exists = true,
+        )
+
+        assertEquals("全局设定", AgentCoreDocumentUiPolicy.sectionTitle(global))
+        assertEquals("当前工作区", AgentCoreDocumentUiPolicy.sectionTitle(project))
+        assertEquals("完整替换主 Agent 系统提示", AgentCoreDocumentUiPolicy.semanticsLabel(global.semantics))
+        assertTrue(AgentCoreDocumentUiPolicy.summary(global).contains("尚未创建"))
+        assertTrue(AgentCoreDocumentUiPolicy.summary(project).contains("已存在"))
+    }
+
+    @Test
+    fun `会话搜索只过滤当前 Agent 已返回的列表`() {
+        val sessions = listOf(
+            AgentSessionSummary(id = "session-a", cwd = "/workspace/kite", title = "修复安装流程"),
+            AgentSessionSummary(id = "session-b", cwd = "/workspace/nomo", title = "整理记忆协议")
+        )
+
+        assertEquals(listOf("session-a"), AgentSurfaceNavigationPolicy
+            .filterSessions(sessions, "KITE")
+            .map(AgentSessionSummary::id))
+        assertEquals(listOf("session-b"), AgentSurfaceNavigationPolicy
+            .filterSessions(sessions, "记忆")
+            .map(AgentSessionSummary::id))
+        assertEquals(sessions, AgentSurfaceNavigationPolicy.filterSessions(sessions, "  "))
+    }
+
+    @Test
+    fun `默认会话直接显示而项目只在展开后显示子会话`() {
+        val sessions = listOf(
+            AgentSessionSummary(id = "default-1", cwd = "/workspace", title = "普通会话"),
+            AgentSessionSummary(id = "kite-1", cwd = "/workspace/Kite", title = "修复入口"),
+            AgentSessionSummary(id = "kite-2", cwd = "/workspace/Kite/", title = "整理页面"),
+            AgentSessionSummary(id = "wechat-1", cwd = "/workspace/微信", title = "接入会话")
+        )
+
+        val grouping = AgentSurfaceNavigationPolicy.groupSessions(sessions, "/workspace/")
+        val collapsed = AgentSurfaceNavigationPolicy.drawerRows(grouping, emptySet())
+        val expanded = AgentSurfaceNavigationPolicy.drawerRows(grouping, setOf("/workspace/Kite"))
+
+        assertEquals(listOf("default-1"), grouping.defaultSessions.map(AgentSessionSummary::id))
+        assertEquals(listOf("Kite", "微信"), grouping.projects.map(AgentSessionProjectGroup::name))
+        assertEquals(
+            AgentDrawerAction.NewDraft("/workspace"),
+            (collapsed.first() as AgentDrawerRow.SectionHeader).action
+        )
+        assertEquals(
+            listOf("default-1"),
+            collapsed.filterIsInstance<AgentDrawerRow.Session>().map { it.summary.id }
+        )
+        assertEquals(
+            listOf("default-1", "kite-1", "kite-2"),
+            expanded.filterIsInstance<AgentDrawerRow.Session>().map { it.summary.id }
+        )
+        assertTrue(collapsed.filterIsInstance<AgentDrawerRow.ProjectHeader>().none { it.expanded })
+        assertTrue(expanded.filterIsInstance<AgentDrawerRow.ProjectHeader>().single { it.project.name == "Kite" }.expanded)
+    }
+
+    @Test
+    fun `registered project keeps its own name before the first session exists`() {
+        val grouping = AgentSurfaceNavigationPolicy.groupSessions(
+            sessions = emptyList(),
+            defaultCwd = "/workspace",
+            registeredProjects = listOf(
+                AgentProject("opencode", "微信项目", "/workspace/client/wechat", 1L),
+            ),
+        )
+
+        assertEquals(listOf("微信项目"), grouping.projects.map(AgentSessionProjectGroup::name))
+        assertTrue(grouping.projects.single().sessions.isEmpty())
+        assertEquals(
+            listOf("微信项目"),
+            AgentSurfaceNavigationPolicy.drawerRows(grouping, emptySet())
+                .filterIsInstance<AgentDrawerRow.ProjectHeader>()
+                .map { it.project.name },
+        )
+    }
+
+    @Test
+    fun `archived project hides both registration and sessions grouped by its directory`() {
+        val grouping = AgentSurfaceNavigationPolicy.groupSessions(
+            sessions = listOf(
+                AgentSessionSummary(id = "default", cwd = "/workspace", title = "默认会话"),
+                AgentSessionSummary(id = "kite", cwd = "/workspace/Kite", title = "项目会话"),
+            ),
+            defaultCwd = "/workspace",
+            registeredProjects = listOf(
+                AgentProject("opencode", "Kite", "/workspace/Kite", 1L),
+            ),
+            archivedProjectCwds = setOf("/workspace/Kite/"),
+        )
+
+        assertEquals(listOf("default"), grouping.defaultSessions.map(AgentSessionSummary::id))
+        assertTrue(grouping.projects.isEmpty())
+        assertEquals(
+            listOf("default"),
+            AgentSurfaceNavigationPolicy.drawerRows(grouping, emptySet())
+                .filterIsInstance<AgentDrawerRow.Session>()
+                .map { it.summary.id },
+        )
+    }
+
+    @Test
+    fun `归档列表保持分组到会话两级结构`() {
+        val sessions = listOf(
+            AgentSessionSummary(id = "default-1", cwd = "/workspace"),
+            AgentSessionSummary(id = "kite-1", cwd = "/workspace/Kite"),
+            AgentSessionSummary(id = "wechat-1", cwd = "/workspace/微信")
+        )
+        val grouping = AgentSurfaceNavigationPolicy.groupSessions(sessions, "/workspace")
+
+        val rows = AgentSurfaceNavigationPolicy.archivedRows(
+            grouping,
+            expandedCwds = setOf("/workspace", "/workspace/微信")
+        )
+
+        assertEquals(
+            listOf("会话", "Kite", "微信"),
+            rows.filterIsInstance<AgentArchivedRow.GroupHeader>().map(AgentArchivedRow.GroupHeader::title)
+        )
+        assertEquals(
+            listOf("default-1", "wechat-1"),
+            rows.filterIsInstance<AgentArchivedRow.Session>().map { it.summary.id }
+        )
+    }
+
+    @Test
+    fun `归档项目与归档会话在同一列表且空项目仍可恢复`() {
+        val archivedProject = AgentProject(
+            agentId = "opencode",
+            name = "空项目",
+            cwd = "/workspace/empty",
+            createdAtMillis = 1L,
+            archivedAtMillis = 2L,
+        )
+        val grouping = AgentSurfaceNavigationPolicy.groupSessions(
+            sessions = listOf(AgentSessionSummary(id = "kite-1", cwd = "/workspace/Kite")),
+            defaultCwd = "/workspace",
+            registeredProjects = listOf(
+                AgentProject("opencode", "Kite", "/workspace/Kite", 1L),
+                archivedProject,
+            ),
+        )
+
+        val rows = AgentSurfaceNavigationPolicy.archivedRows(
+            grouping = grouping,
+            expandedCwds = emptySet(),
+            archivedProjects = listOf(archivedProject),
+        )
+        val headers = rows.filterIsInstance<AgentArchivedRow.GroupHeader>()
+
+        assertEquals(listOf("Kite", "空项目"), headers.map(AgentArchivedRow.GroupHeader::title))
+        assertEquals(archivedProject, headers.single { it.title == "空项目" }.archivedProject)
+        assertEquals(0, headers.single { it.title == "空项目" }.count)
+        assertTrue(rows.none { it is AgentArchivedRow.Session })
+    }
+
+    @Test
+    fun `首字符斜杠触发原生命令过滤而普通消息不触发`() {
+        val commands = listOf(
+            AgentCommand("model", "切换模型"),
+            AgentCommand("mcp", "显示 MCP 服务器状态"),
+            AgentCommand("review", "代码审查")
+        )
+
+        assertEquals("", AgentSurfaceNavigationPolicy.slashCommandQuery("/"))
+        assertEquals("mo", AgentSurfaceNavigationPolicy.slashCommandQuery("/Mo"))
+        assertEquals(null, AgentSurfaceNavigationPolicy.slashCommandQuery("你好 /model"))
+        assertEquals(null, AgentSurfaceNavigationPolicy.slashCommandQuery("/model glm"))
+        assertEquals(
+            listOf("model"),
+            AgentSurfaceNavigationPolicy.filterCommands(commands, "mo").map(AgentCommand::name)
+        )
+        assertEquals(
+            listOf("mcp"),
+            AgentSurfaceNavigationPolicy.filterCommands(commands, "服务器").map(AgentCommand::name)
+        )
+    }
+
+    @Test
+    fun `模型选项按 Agent 返回的供应商分组而不是页面猜测`() {
+        val option = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "zhipu/glm-5.2",
+            choices = listOf(
+                AgentConfigChoice("zhipu/glm-5.2", "GLM-5.2", groupId = "zhipu", groupName = "智谱 GLM"),
+                AgentConfigChoice("mimo/mimo-v2-pro", "MiMo V2 Pro", groupId = "mimo", groupName = "小米 MiMo"),
+                AgentConfigChoice("mimo/mimo-v2-flash", "MiMo V2 Flash", groupId = "mimo", groupName = "小米 MiMo")
+            )
+        )
+
+        val groups = AgentSurfaceNavigationPolicy.modelChoiceGroups(option)
+
+        assertEquals(listOf("智谱 GLM", "小米 MiMo"), groups.map { it.name })
+        assertEquals(listOf(1, 2), groups.map { it.choices.size })
+        assertTrue(AgentSurfaceNavigationPolicy.modelChoiceGroups(
+            option.copy(category = AgentConfigCategory.Mode)
+        ).isEmpty())
+        assertEquals(
+            listOf("智谱 GLM"),
+            AgentSurfaceNavigationPolicy.modelChoiceGroups(
+                option.copy(choices = option.choices.take(1))
+            ).map { it.name }
+        )
+        assertTrue(AgentSurfaceNavigationPolicy.modelChoiceGroups(
+            option.copy(choices = listOf(AgentConfigChoice("plain", "普通模型")))
+        ).isEmpty())
+    }
+
+    @Test
+    fun `会话配置入口优先显示模型与推理强度且不复制会话事实`() {
+        val options = listOf(
+            AgentConfigOption.Select(
+                id = "mode",
+                name = "工作模式",
+                category = AgentConfigCategory.Mode,
+                currentValue = "agent",
+                choices = listOf(AgentConfigChoice("agent", "Agent"))
+            ),
+            AgentConfigOption.Select(
+                id = "model",
+                name = "模型",
+                category = AgentConfigCategory.Model,
+                currentValue = "mimo/mimo-v2-pro",
+                choices = listOf(AgentConfigChoice("mimo/mimo-v2-pro", "MiMo V2 Pro"))
+            ),
+            AgentConfigOption.Select(
+                id = "effort",
+                name = "推理强度",
+                category = AgentConfigCategory.ThoughtLevel,
+                currentValue = "high",
+                choices = listOf(AgentConfigChoice("high", "高"))
+            )
+        )
+
+        assertEquals("MiMo V2 Pro · 高", AgentSurfaceNavigationPolicy.configurationSummary(options))
+    }
+
+    @Test
+    fun `工作模式不占用模型与推理强度摘要`() {
+        val modeAndPermissionOnly = listOf(
+            AgentConfigOption.Select(
+                id = "mode",
+                name = "工作模式",
+                category = AgentConfigCategory.Mode,
+                currentValue = "plan",
+                choices = listOf(AgentConfigChoice("plan", "计划"))
+            ),
+            AgentConfigOption.Select(
+                id = "approval-policy",
+                name = "权限",
+                category = AgentConfigCategory.Permission,
+                currentValue = "ask",
+                choices = listOf(AgentConfigChoice("ask", "请求批准"))
+            )
+        )
+
+        assertEquals("", AgentSurfaceNavigationPolicy.configurationSummary(modeAndPermissionOnly))
+        val permission = AgentSurfaceNavigationPolicy.permissionOption(modeAndPermissionOnly)
+        assertEquals("approval-policy", permission?.id)
+        assertEquals("ask", permission?.currentValue)
+        assertEquals(
+            null,
+            AgentSurfaceNavigationPolicy.permissionOption(modeAndPermissionOnly.filterNot {
+                it.category == AgentConfigCategory.Permission
+            })
+        )
+    }
+
+    @Test
+    fun `供应商列表可以保留二十个真实分组且面板高度有上限`() {
+        val option = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "provider-0/model",
+            choices = (0 until 20).map { index ->
+                AgentConfigChoice(
+                    value = "provider-$index/model",
+                    name = "模型 $index",
+                    groupId = "provider-$index",
+                    groupName = "供应商 $index"
+                )
+            }
+        )
+
+        assertEquals(20, AgentSurfaceNavigationPolicy.modelChoiceGroups(option).size)
+        assertEquals(
+            430,
+            AgentSurfaceNavigationPolicy.sessionPanelMaxHeight(
+                viewportHeight = 1000,
+                composerHeight = 180,
+                topBarHeight = 64,
+                preferredHeight = 430,
+                minimumHeight = 220,
+                outerSpacing = 32
+            )
+        )
+        assertEquals(
+            224,
+            AgentSurfaceNavigationPolicy.sessionPanelMaxHeight(
+                viewportHeight = 500,
+                composerHeight = 180,
+                topBarHeight = 64,
+                preferredHeight = 430,
+                minimumHeight = 220,
+                outerSpacing = 32
+            )
+        )
+    }
+
+    @Test
+    fun `供应商编辑器生成稳定安全 ID 并校验地址和模型`() {
+        assertEquals("glm", AgentProviderEditorPolicy.providerIdFromName("智谱 GLM"))
+        assertTrue(AgentProviderEditorPolicy.providerIdFromName("智谱").startsWith("custom-"))
+        assertEquals(
+            null,
+            AgentProviderEditorPolicy.validate(
+                displayName = "智谱 GLM",
+                providerId = "zhipu",
+                baseUrl = "https://open.bigmodel.cn/api/paas/v4/",
+                models = listOf(AgentProviderModelSummary("glm-5.2", "GLM-5.2"))
+            )
+        )
+        assertEquals(
+            "模型 ID 不能重复",
+            AgentProviderEditorPolicy.validate(
+                displayName = "测试供应商",
+                providerId = "test",
+                baseUrl = "https://example.com/v1",
+                models = listOf(
+                    AgentProviderModelSummary("model-a"),
+                    AgentProviderModelSummary("model-a")
+                )
+            )
+        )
+        assertEquals(
+            "请求地址必须是有效的 HTTP 或 HTTPS 地址",
+            AgentProviderEditorPolicy.validate(
+                displayName = "测试供应商",
+                providerId = "test",
+                baseUrl = "file:///tmp/config",
+                models = listOf(AgentProviderModelSummary("model-a"))
+            )
+        )
+    }
+
+    @Test
+    fun `API Key 输入保持可见并安全清理剪贴板首尾空白`() {
+        assertEquals(
+            InputType.TYPE_TEXT_VARIATION_NORMAL,
+            AgentProviderCredentialInputPolicy.inputType and InputType.TYPE_MASK_VARIATION
+        )
+        assertEquals("sk-example-value", AgentProviderCredentialInputPolicy.clipboardValue("  sk-example-value\n"))
+        assertEquals(null, AgentProviderCredentialInputPolicy.clipboardValue("  \n"))
+        assertEquals(
+            "••••••••••••",
+            AgentProviderCredentialInputPolicy.displayHint(
+                credentialPresent = true,
+                removeRequested = false,
+                emptyHint = "粘贴供应商 API Key"
+            )
+        )
+        assertEquals(
+            "保存后移除 API Key",
+            AgentProviderCredentialInputPolicy.displayHint(
+                credentialPresent = true,
+                removeRequested = true,
+                emptyHint = "粘贴供应商 API Key"
+            )
+        )
+        assertEquals(
+            AgentProviderCredentialChange.Keep,
+            AgentProviderCredentialInputPolicy.credentialChange(removeRequested = false, value = "")
+        )
+        assertTrue(
+            AgentProviderCredentialInputPolicy.credentialChange(
+                removeRequested = false,
+                value = "  sk-replacement  "
+            ) is AgentProviderCredentialChange.Replace
+        )
+        assertEquals(
+            AgentProviderCredentialChange.Remove,
+            AgentProviderCredentialInputPolicy.credentialChange(removeRequested = true, value = "")
+        )
+    }
+
+    @Test
+    fun `归档编辑支持逐项与全选且不能删除当前会话`() {
+        val sessions = listOf(
+            AgentSessionSummary(id = "session-a", cwd = "/workspace"),
+            AgentSessionSummary(id = "session-b", cwd = "/workspace")
+        )
+
+        val selectedA = AgentArchivedSelectionPolicy.toggle(emptySet(), "session-a")
+        assertEquals(setOf("session-a"), selectedA)
+        assertEquals(emptySet<String>(), AgentArchivedSelectionPolicy.toggle(selectedA, "session-a"))
+        assertEquals(setOf("session-a", "session-b"), AgentArchivedSelectionPolicy.selectAll(sessions))
+        assertTrue(AgentArchivedSelectionPolicy.canDelete(selectedA, currentSessionId = "session-b", deleteSupported = true))
+        assertFalse(AgentArchivedSelectionPolicy.canDelete(selectedA, currentSessionId = "session-a", deleteSupported = true))
+        assertFalse(AgentArchivedSelectionPolicy.canDelete(selectedA, currentSessionId = null, deleteSupported = false))
+    }
+
+    @Test
+    fun `Agent 视觉投影使用中性灰阶且不改强调色`() {
+        val source = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens
+        val light = AgentSurfaceThemePolicy.project(source, isDark = false)
+        val dark = AgentSurfaceThemePolicy.project(source, isDark = true)
+
+        assertEquals(android.graphics.Color.WHITE, light.pageBackground)
+        assertEquals(android.graphics.Color.rgb(247, 247, 247), light.cardBackground)
+        assertEquals(android.graphics.Color.rgb(17, 17, 17), light.textPrimary)
+        assertEquals(android.graphics.Color.rgb(102, 102, 102), light.textSecondary)
+        assertEquals(android.graphics.Color.BLACK, dark.pageBackground)
+        assertEquals(android.graphics.Color.rgb(36, 36, 36), dark.cardBackground)
+        assertEquals(source.primaryStrong, light.primaryStrong)
+        assertEquals(source.primaryStrong, dark.primaryStrong)
+    }
+
+    @Test
+    fun `持久默认提示明确不会改变当前会话`() {
+        assertEquals(
+            "智谱 GLM 已设为默认；正在进行的会话不会改变",
+            AgentPersistentDefaultPolicy.savedMessage("智谱 GLM", currentAgent = true)
+        )
+        assertEquals(
+            "供应商资料已保存；下次打开该 Agent 时使用",
+            AgentPersistentDefaultPolicy.configurationSavedMessage("供应商资料已保存", currentAgent = false)
+        )
+    }
+
+    @Test
+    fun `空白草稿目录读取原生默认且其他选择不改默认`() {
+        val snapshot = AgentLiveConfigSnapshot(
+            agentId = "opencode",
+            adapterId = "opencode",
+            revision = "r1",
+            displayLocation = "/root/.config/opencode/opencode.jsonc",
+            activeProviderId = "zhipu",
+            defaultModel = "zhipu/glm-5.2",
+            providers = listOf(
+                AgentProviderSummary(
+                    id = "zhipu",
+                    displayName = "智谱 GLM",
+                    models = listOf(AgentProviderModelSummary("glm-5.2", "GLM-5.2"))
+                ),
+                AgentProviderSummary(
+                    id = "mimo",
+                    displayName = "小米 MiMo",
+                    models = listOf(AgentProviderModelSummary("mimo-v2-pro", "MiMo V2 Pro"))
+                )
+            )
+        )
+
+        val default = AgentDraftModelPolicy.defaultSelection(snapshot)
+        val option = AgentDraftModelPolicy.option(snapshot, default)!!
+        val mimoChoice = option.choices.single { it.groupId == "mimo" }
+        val mimo = AgentDraftModelPolicy.selection(snapshot, mimoChoice.value)
+
+        assertEquals(AgentDraftModelSelection("zhipu", "glm-5.2", true), default)
+        assertEquals("GLM-5.2", option.choices.single { it.value == option.currentValue }.name)
+        assertEquals(AgentDraftModelSelection("mimo", "mimo-v2-pro", false), mimo)
+        assertEquals(listOf("智谱 GLM", "小米 MiMo"), option.choices.mapNotNull { it.groupName }.distinct())
+    }
+
+    @Test
+    fun `会话搜索和设置页返回抽屉时复用同一视图树`() {
+        val activity = Robolectric.buildActivity(AppCompatActivity::class.java).setup().get()
+        val tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens
+        val binding = RunAgentSurfaceBinding(
+            context = activity,
+            tokens = tokens,
+            onCloseInstance = {},
+            onPickImages = {},
+            onPickFiles = {},
+            agentRegistry = KiteAgentRegistry(
+                context = activity,
+                resourceRegistrationSource = { emptyList() }
+            ),
+            agentConfigAdapters = AgentConfigAdapterRegistry(emptyList())
+        )
+
+        binding.showSessionDrawerForTesting()
+        binding.showSessionSearchForTesting()
+
+        assertEquals("SessionSearch", binding.navigationScreenForTesting())
+        assertTrue(binding.handleBack())
+        assertEquals("Drawer", binding.navigationScreenForTesting())
+
+        binding.showSettingsForTesting(returnToDrawer = true)
+
+        assertTrue(binding.handleBack())
+        assertEquals("Drawer", binding.navigationScreenForTesting())
+        assertTrue(binding.handleBack())
+        assertEquals("Main", binding.navigationScreenForTesting())
+
+        binding.dispose()
+        activity.finish()
+    }
+}

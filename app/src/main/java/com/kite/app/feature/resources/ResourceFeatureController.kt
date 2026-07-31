@@ -9,6 +9,7 @@ import com.kite.app.resources.KiteResourceInstallStepUiProjector
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceRuntimeFacts
 import com.kite.app.resources.KiteResourceRuntimeFactsProjector
+import com.kite.app.resources.KiteResourceSourcePlanFactory
 import com.kite.app.resources.KiteResourceUiProjector
 import com.kite.app.run.CardRunStatus
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +39,7 @@ internal class ResourceFeatureController(
                 }
                 is ResourceFeatureAction.Primary -> requestPrimary(action)
                 is ResourceFeatureAction.Secondary -> requestSecondary(action)
+                is ResourceFeatureAction.Explicit -> requestExplicit(action)
             }
         }
 
@@ -111,6 +113,7 @@ internal class ResourceFeatureController(
             uninstalling = facts.uninstalling,
             failed = facts.failed,
             failedOperation = facts.failedOperation,
+            currentOperation = facts.currentOperation,
             idleStateLabel = facts.idleStateLabel,
             openRunStatus = openRunStatus,
             extraBusy = facts.extraBusy
@@ -119,6 +122,7 @@ internal class ResourceFeatureController(
             facts.uninstalling -> KiteResourceInstallStore.OP_UNINSTALL
             facts.failed && facts.failedOperation == KiteResourceInstallStore.OP_UNINSTALL ->
                 KiteResourceInstallStore.OP_UNINSTALL
+            facts.currentOperation.isNotBlank() -> facts.currentOperation
             else -> KiteResourceInstallStore.OP_INSTALL
         }
         val inPlan = descriptor.id == plan.targetResourceId || descriptor.id in plan.resourceIds
@@ -134,7 +138,32 @@ internal class ResourceFeatureController(
             operation = operation,
             operationRun = gateway.operationRunSnapshot(descriptor.id, operation),
             registrySummary = registryEntry?.summary.orEmpty(),
-            registryUpdatedAt = registryEntry?.updatedAt ?: 0L
+            registryUpdatedAt = registryEntry?.updatedAt ?: 0L,
+            maintenance = maintenanceState(descriptor, registryEntry, facts)
+        )
+    }
+
+    private fun maintenanceState(
+        descriptor: ResourceFeatureDescriptor,
+        registryEntry: com.kite.app.resources.KiteResourceRegistryEntry?,
+        facts: KiteResourceRuntimeFacts
+    ): ResourceMaintenanceUiState {
+        val manifest = descriptor.manifest ?: return ResourceMaintenanceUiState()
+        val plan = KiteResourceSourcePlanFactory.plan(manifest)
+        val userManaged = manifest.management.userLifecycleEnabled
+        val idle = !facts.extraBusy && !facts.preparing && !facts.installing && !facts.uninstalling
+        return ResourceMaintenanceUiState(
+            userLifecycleEnabled = userManaged,
+            installedVersion = registryEntry?.version.orEmpty(),
+            latestVersion = registryEntry?.latestVersion.orEmpty(),
+            updateStatus = registryEntry?.updateStatus.orEmpty(),
+            statusSummary = registryEntry?.summary.orEmpty(),
+            checkUpdateEnabled = userManaged && facts.installed && idle && plan.capabilities.checkUpdate,
+            updateEnabled = userManaged && facts.installed && idle && plan.capabilities.update &&
+                registryEntry?.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE &&
+                registryEntry.latestVersion.isNotBlank(),
+            reinstallEnabled = userManaged && facts.installed && idle && plan.capabilities.install && plan.capabilities.uninstall,
+            uninstallEnabled = userManaged && facts.installed && idle && plan.capabilities.uninstall
         )
     }
 
@@ -200,6 +229,22 @@ internal class ResourceFeatureController(
             ?: return ResourceFeatureEffect.ActionUnavailable(action.resourceId, "secondary_action_unavailable")
         return ResourceFeatureEffect.ActionRequested(
             KiteResourceActionRequest(action.resourceId, intent, action.source)
+        )
+    }
+
+    private fun requestExplicit(action: ResourceFeatureAction.Explicit): ResourceFeatureEffect {
+        val item = state.value.item(action.resourceId)
+            ?: return ResourceFeatureEffect.ActionUnavailable(action.resourceId, "resource_not_in_catalog")
+        val allowed = when (action.intent) {
+            KiteResourceActionIntent.CheckUpdate -> item.maintenance.checkUpdateEnabled
+            KiteResourceActionIntent.Update -> item.maintenance.updateEnabled
+            KiteResourceActionIntent.Reinstall -> item.maintenance.reinstallEnabled
+            KiteResourceActionIntent.Uninstall -> item.maintenance.uninstallEnabled
+            else -> false
+        }
+        if (!allowed) return ResourceFeatureEffect.ActionUnavailable(action.resourceId, "maintenance_action_unavailable")
+        return ResourceFeatureEffect.ActionRequested(
+            KiteResourceActionRequest(action.resourceId, action.intent, action.source)
         )
     }
 

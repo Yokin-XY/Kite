@@ -13,6 +13,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import com.kite.app.R
 import com.kite.app.action.KiteResourceActionIntent
+import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceStepTone
 import com.kite.app.ui.UiKit
 
@@ -25,6 +26,7 @@ internal class ResourceManageScreen(
     private val onPrimaryAction: (String) -> Unit,
     private val onOpenPlan: (String) -> Unit,
     private val onCancelPlan: (String, List<String>) -> Unit,
+    private val onCheckInstalledUpdates: (List<String>) -> Unit,
     private val onRetry: () -> Unit
 ) {
     private val environment = ResourceFeatureTheme.environment(context)
@@ -37,11 +39,19 @@ internal class ResourceManageScreen(
     )
     private val queueHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val installedHost = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val installedCheckButton = TextView(context).apply {
+        textSize = 12.5f
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        setPadding(factory.dp(13), factory.dp(7), factory.dp(13), factory.dp(7))
+    }
     private val scrollView = ScrollView(context).apply { isFillViewport = true }
     private val installedBindings = linkedMapOf<String, ResourceItemViewBinding>()
     private var queueStructureSignature = ""
     private var installedStructureSignature = ""
     private var queueBinding: QueueBinding? = null
+    private var installedCheckResourceIds: List<String> = emptyList()
     private var restoredScrollY = initialScrollY.coerceAtLeast(0)
 
     val root: View = LinearLayout(context).apply {
@@ -57,9 +67,7 @@ internal class ResourceManageScreen(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(0, factory.dp(12), 0, 0) })
-            addView(factory.sectionTitle(context.getString(R.string.resource_manage_installed)).apply {
-                setPadding(0, factory.dp(24), 0, factory.dp(12))
-            })
+            addView(installedSectionHeader())
             addView(installedHost)
         })
         addView(scrollView, LinearLayout.LayoutParams(
@@ -70,6 +78,7 @@ internal class ResourceManageScreen(
     }
 
     fun render(state: ResourceFeatureUiState) {
+        bindInstalledSectionHeader(state)
         if (state.phase in setOf(ResourceCatalogPhase.Idle, ResourceCatalogPhase.Loading) && state.items.isEmpty()) {
             renderLoading()
             return
@@ -85,6 +94,15 @@ internal class ResourceManageScreen(
 
     fun acknowledge(resourceId: String, intent: KiteResourceActionIntent) {
         factory.acknowledge(installedBindings[resourceId], factory.acknowledgementLabel(intent))
+    }
+
+    fun acknowledgeUpdateCheck() {
+        installedCheckButton.apply {
+            text = context.getString(R.string.resource_state_checking_update)
+            isEnabled = false
+            alpha = 0.58f
+            setOnClickListener(null)
+        }
     }
 
     fun scrollY(): Int = scrollView.scrollY.takeIf { it > 0 } ?: restoredScrollY
@@ -375,6 +393,48 @@ internal class ResourceManageScreen(
             }
         } else {
             installed.forEach { item -> factory.bind(installedBindings[item.resourceId] ?: return@forEach, item) }
+        }
+    }
+
+    private fun installedSectionHeader(): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, factory.dp(24), 0, factory.dp(12))
+        addView(
+            factory.sectionTitle(context.getString(R.string.resource_manage_installed)),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        addView(installedCheckButton)
+    }
+
+    private fun bindInstalledSectionHeader(state: ResourceFeatureUiState) {
+        val installed = state.items.filter { it.phase in installedPhases }
+        val checking = installed.any {
+            it.maintenance.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_CHECKING
+        }
+        installedCheckResourceIds = installed.filter { it.maintenance.checkUpdateEnabled }
+            .map(ResourceItemUiState::resourceId)
+            .distinct()
+        val visible = checking || installedCheckResourceIds.isNotEmpty()
+        installedCheckButton.apply {
+            visibility = if (visible) View.VISIBLE else View.GONE
+            text = context.getString(if (checking) {
+                R.string.resource_state_checking_update
+            } else {
+                R.string.resource_action_check_update
+            })
+            isEnabled = visible && !checking
+            alpha = if (isEnabled) 1f else 0.58f
+            setTextColor(factory.tokens.primaryStrong)
+            background = factory.roundedBox(
+                factory.tokens.primarySubtle,
+                Color.TRANSPARENT,
+                factory.dp(15).toFloat()
+            )
+            setOnClickListener(null)
+            if (isEnabled) {
+                setOnClickListener { onCheckInstalledUpdates(installedCheckResourceIds) }
+            }
         }
     }
 

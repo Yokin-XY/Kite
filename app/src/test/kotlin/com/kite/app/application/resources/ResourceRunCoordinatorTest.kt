@@ -100,6 +100,11 @@ class ResourceRunCoordinatorTest {
 
         waitUntil { gateway.startedRequests.count { it.resourceId == "tool" } == 2 }
         assertEquals(listOf("tool"), gateway.clearedResources)
+        assertEquals(
+            listOf("commit:tool", "clear:tool", "finalize:tool"),
+            gateway.settlementOrder.take(3)
+        )
+        assertEquals(listOf("tool"), gateway.finalizedMutations)
         assertEquals(KiteResourceInstallRecipes.OP_INSTALL, gateway.startedRequests.last().operation)
     }
 
@@ -118,6 +123,88 @@ class ResourceRunCoordinatorTest {
         waitUntil { gateway.installedResources.isNotEmpty() }
         assertEquals(1, gateway.installedResources.size)
         assertEquals(1, gateway.savedSnapshots.size)
+    }
+
+    @Test
+    fun `重新安装成功按安装事务结算且不进入安装队列`() {
+        val gateway = FakeResourceRunGateway()
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(gateway, hub)
+        val request = launch("tool", KiteResourceInstallRecipes.OP_REINSTALL)
+        val started = coordinator.start(request) as ResourceRunLaunchResult.Accepted
+
+        hub.onStateCommitted(
+            RunLifecycleEvent(
+                request.recipe,
+                started.state.copy(status = CardRunStatus.Completed)
+            )
+        )
+
+        waitUntil { gateway.installedResources.isNotEmpty() }
+        assertEquals(listOf("tool"), gateway.installedResources)
+        assertTrue(gateway.clearedResources.isEmpty())
+        assertTrue(gateway.advancedResources.isEmpty())
+    }
+
+    @Test
+    fun `更新成功先提交底层恢复点再登记新版本`() {
+        val gateway = FakeResourceRunGateway()
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(gateway, hub)
+        val request = launch("tool", KiteResourceInstallRecipes.OP_UPDATE)
+        val started = coordinator.start(request) as ResourceRunLaunchResult.Accepted
+
+        hub.onStateCommitted(
+            RunLifecycleEvent(request.recipe, started.state.copy(status = CardRunStatus.Completed))
+        )
+
+        waitUntil { gateway.installedResources.isNotEmpty() }
+        assertEquals(listOf("tool"), gateway.committedMutations)
+        assertEquals(
+            listOf("commit:tool", "installed:tool", "finalize:tool"),
+            gateway.settlementOrder
+        )
+        assertEquals(listOf("tool"), gateway.finalizedMutations)
+        assertTrue(gateway.rolledBackMutations.isEmpty())
+    }
+
+    @Test
+    fun `更新失败先自动回滚再保留已安装失败事实`() {
+        val gateway = FakeResourceRunGateway()
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(gateway, hub)
+        val request = launch("tool", KiteResourceInstallRecipes.OP_UPDATE)
+        val started = coordinator.start(request) as ResourceRunLaunchResult.Accepted
+
+        hub.onStateCommitted(
+            RunLifecycleEvent(
+                request.recipe,
+                started.state.copy(status = CardRunStatus.Failed, lastError = "download failed")
+            )
+        )
+
+        waitUntil { gateway.failedResources.isNotEmpty() }
+        assertEquals(listOf("tool"), gateway.rolledBackMutations)
+        assertEquals("download failed", gateway.failedResources.single().reason)
+        assertTrue(gateway.installedResources.isEmpty())
+    }
+
+    @Test
+    fun `恢复点提交失败会回滚而不会登记更新成功`() {
+        val gateway = FakeResourceRunGateway().apply { commitFailure = "checkpoint write failed" }
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(gateway, hub)
+        val request = launch("tool", KiteResourceInstallRecipes.OP_UPDATE)
+        val started = coordinator.start(request) as ResourceRunLaunchResult.Accepted
+
+        hub.onStateCommitted(
+            RunLifecycleEvent(request.recipe, started.state.copy(status = CardRunStatus.Completed))
+        )
+
+        waitUntil { gateway.failedResources.isNotEmpty() }
+        assertEquals(listOf("tool"), gateway.rolledBackMutations)
+        assertTrue(gateway.failedResources.single().reason.contains("checkpoint write failed"))
+        assertTrue(gateway.installedResources.isEmpty())
     }
 
     @Test
@@ -158,6 +245,42 @@ class ResourceRunCoordinatorTest {
         assertTrue(gateway.startedRequests.isEmpty())
         assertTrue(!coordinator.startNextPlannedInstall("wizard-instance"))
         assertTrue(gateway.planStepsStarted.isEmpty())
+    }
+
+    @Test
+    fun `运行完成回执始终写回启动时环境而不跟随中途切换`() {
+        val gateway = FakeResourceRunGateway().apply { activeEnvironmentId = "default" }
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(gateway, hub)
+        val request = launch("environment-bound", KiteResourceInstallRecipes.OP_INSTALL)
+        val started = coordinator.start(request) as ResourceRunLaunchResult.Accepted
+
+        gateway.activeEnvironmentId = "profile-2"
+        hub.onStateCommitted(
+            RunLifecycleEvent(
+                request.recipe,
+                started.state.copy(status = CardRunStatus.Completed, runId = "bound-run")
+            )
+        )
+
+        waitUntil { gateway.installedEnvironments.isNotEmpty() }
+        assertEquals(listOf("default"), gateway.installedEnvironments)
+        assertEquals("default", gateway.startedRequests.single().environmentId)
+    }
+
+    @Test
+    fun `环境切换会终结旧环境资源事务并执行更新回滚`() {
+        val gateway = FakeResourceRunGateway().apply { activeEnvironmentId = "default" }
+        val hub = RunLifecycleEventHub()
+        val coordinator = coordinator(gateway, hub)
+        coordinator.start(launch("environment-update", KiteResourceInstallRecipes.OP_UPDATE))
+
+        coordinator.onEnvironmentStopped("default")
+
+        waitUntil { gateway.failedResources.isNotEmpty() }
+        assertEquals(listOf("environment-update"), gateway.rolledBackMutations)
+        assertTrue(gateway.failedResources.single().reason.contains("环境已切换"))
+        assertEquals("default", gateway.startedRequests.single().environmentId)
     }
 
     private fun coordinator(
@@ -214,22 +337,31 @@ private class FakeResourceRunGateway : ResourceRunGateway {
     val startedRequests = mutableListOf<ResourceRunLaunchRequest>()
     val operationStarts = mutableListOf<Pair<String, String>>()
     val installedResources = mutableListOf<String>()
+    val installedEnvironments = mutableListOf<String>()
     val savedSnapshots = mutableListOf<String>()
     val failedResources = mutableListOf<Failure>()
     val clearedResources = mutableListOf<String>()
     val advancedResources = mutableListOf<String>()
     val failedPlanResources = mutableListOf<String>()
     val planStepsStarted = mutableListOf<String>()
+    val committedMutations = mutableListOf<String>()
+    val finalizedMutations = mutableListOf<String>()
+    val rolledBackMutations = mutableListOf<String>()
+    val settlementOrder = mutableListOf<String>()
+    var commitFailure: String? = null
     val advanceResults = mutableMapOf<String, List<String>>()
     val plannedInstalls = mutableMapOf<String, ResourceRunLaunchRequest>()
     val pendingResources = mutableListOf<String>()
     val installedFacts = mutableSetOf<String>()
+    var activeEnvironmentId: String = "default"
     private var generation = 100L
 
-    override fun recipe(resourceId: String, operation: String): KiteRecipe? =
+    override fun recipe(resourceId: String, operation: String, targetVersion: String?): KiteRecipe? =
         plannedInstalls[resourceId]?.recipe
 
     override fun isBundled(resourceId: String): Boolean = false
+
+    override fun currentEnvironmentId(): String = activeEnvironmentId
 
     override fun beginRun(request: ResourceRunLaunchRequest): CardRunState {
         startedRequests += request
@@ -247,54 +379,96 @@ private class FakeResourceRunGateway : ResourceRunGateway {
         )
     }
 
-    override fun prepare(request: ResourceRunLaunchRequest, callback: (Result<Unit>) -> Unit) = Unit
+    override fun prepare(
+        request: ResourceRunLaunchRequest,
+        instanceId: String,
+        callback: (Result<Unit>) -> Unit
+    ) = Unit
+
+    override fun commitMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> {
+        committedMutations += request.resourceId
+        settlementOrder += "commit:${request.resourceId}"
+        return commitFailure?.let { Result.failure(IllegalStateException(it)) } ?: Result.success(Unit)
+    }
+
+    override fun finalizeMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> {
+        finalizedMutations += request.resourceId
+        settlementOrder += "finalize:${request.resourceId}"
+        return Result.success(Unit)
+    }
+
+    override fun rollbackMutation(request: ResourceRunLaunchRequest, instanceId: String): Result<Unit> {
+        rolledBackMutations += request.resourceId
+        settlementOrder += "rollback:${request.resourceId}"
+        return Result.success(Unit)
+    }
 
     override fun failRunPreparation(request: ResourceRunLaunchRequest, instanceId: String, message: String) = Unit
 
-    override fun markOperationStarted(resourceId: String, operation: String) {
+    override fun markOperationStarted(resourceId: String, operation: String, environmentId: String) {
         operationStarts += resourceId to operation
     }
 
-    override fun markInstalled(resourceId: String, runId: String?, summary: String?) {
+    override fun markInstalled(
+        resourceId: String,
+        versionHint: String?,
+        runId: String?,
+        summary: String?,
+        evidence: String?,
+        environmentId: String
+    ) {
         installedResources += resourceId
+        installedEnvironments += environmentId
+        settlementOrder += "installed:$resourceId"
     }
 
-    override fun saveInstalledSnapshot(resourceId: String) {
+    override fun saveInstalledSnapshot(resourceId: String, environmentId: String) {
         savedSnapshots += resourceId
     }
 
-    override fun markFailed(resourceId: String, operation: String, runId: String?, reason: String) {
+    override fun markFailed(
+        resourceId: String,
+        operation: String,
+        runId: String?,
+        reason: String,
+        environmentId: String
+    ) {
         failedResources += Failure(resourceId, operation, reason)
     }
 
-    override fun clearResource(resourceId: String) {
+    override fun clearResource(resourceId: String, environmentId: String) {
         clearedResources += resourceId
+        settlementOrder += "clear:$resourceId"
     }
 
-    override fun advancePlanAfter(resourceId: String): List<String> {
+    override fun advancePlanAfter(resourceId: String, environmentId: String): List<String> {
         advancedResources += resourceId
         return advanceResults[resourceId].orEmpty()
     }
 
-    override fun failPlanAt(resourceId: String) {
+    override fun failPlanAt(resourceId: String, environmentId: String) {
         failedPlanResources += resourceId
     }
 
-    override fun clearPlan() = Unit
+    override fun clearPlan(environmentId: String) = Unit
 
-    override fun resumePlanFrom(resourceId: String): Boolean = true
+    override fun resumePlanFrom(resourceId: String, environmentId: String): Boolean = true
 
-    override fun isInstalled(resourceId: String): Boolean = resourceId in installedFacts
+    override fun isInstalled(resourceId: String, environmentId: String): Boolean = resourceId in installedFacts
 
-    override fun markPlanStepRunning(resourceId: String): Boolean {
+    override fun markPlanStepRunning(resourceId: String, environmentId: String): Boolean {
         planStepsStarted += resourceId
         return true
     }
 
-    override fun pendingPlanResourceIds(): List<String> = pendingResources.toList()
+    override fun pendingPlanResourceIds(environmentId: String): List<String> = pendingResources.toList()
 
-    override fun plannedInstall(resourceId: String, parentInstanceId: String?): ResourceRunLaunchRequest? =
-        plannedInstalls[resourceId]?.copy(parentInstanceId = parentInstanceId)
+    override fun plannedInstall(
+        resourceId: String,
+        parentInstanceId: String?,
+        environmentId: String
+    ): ResourceRunLaunchRequest? =
+        plannedInstalls[resourceId]?.copy(parentInstanceId = parentInstanceId, environmentId = environmentId)
 }
 
 private class FakeRunStateGateway : RunStateGateway {

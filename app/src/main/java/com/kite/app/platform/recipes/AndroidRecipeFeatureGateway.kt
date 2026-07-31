@@ -30,7 +30,8 @@ internal class AndroidRecipeFeatureGateway(
     context: Context,
     private val recipeLoader: KiteRecipeLoader,
     private val groupStore: KiteCardGroupStore,
-    private val dropZoneManager: KiteDropZoneManager
+    private val dropZoneManager: KiteDropZoneManager,
+    private val environmentIdProvider: () -> String = { CardRunState.DEFAULT_ENVIRONMENT_ID }
 ) : RecipeFeatureGateway {
     private val appContext = context.applicationContext
     private val settings by lazy {
@@ -62,7 +63,7 @@ internal class AndroidRecipeFeatureGateway(
     override fun groups(): List<KiteCardGroup> = groupStore.groups()
 
     override fun runSnapshot(recipeId: String): CardRunState? =
-        CardRunStore.currentForRecipe(recipeId)
+        CardRunStore.currentForRecipe(recipeId, environmentIdProvider())
 
     override suspend fun saveRecipe(input: NewRecipeInput): KiteRecipe {
         val (recipe, catalog) = withContext(Dispatchers.IO) {
@@ -81,7 +82,7 @@ internal class AndroidRecipeFeatureGateway(
     }
 
     override suspend fun deleteRecipe(recipeId: String): RecipeDeleteResult {
-        CardRunStore.currentForRecipe(recipeId)
+        CardRunStore.currentForRecipe(recipeId, environmentIdProvider())
             ?.takeIf(::mustStopBeforeDelete)
             ?.let { return RecipeDeleteResult.RequiresStop(it) }
         val deleted = withContext(Dispatchers.IO) {
@@ -221,12 +222,14 @@ internal class AndroidRecipeFeatureGateway(
             context: Context,
             recipeLoader: KiteRecipeLoader,
             groupStore: KiteCardGroupStore,
-            dropZoneManager: KiteDropZoneManager
+            dropZoneManager: KiteDropZoneManager,
+            environmentIdProvider: () -> String = { CardRunState.DEFAULT_ENVIRONMENT_ID }
         ): AndroidRecipeFeatureGateway = AndroidRecipeFeatureGateway(
             context,
             recipeLoader,
             groupStore,
-            dropZoneManager
+            dropZoneManager,
+            environmentIdProvider
         )
 
         private const val APP_SETTINGS = "kite_app_settings"

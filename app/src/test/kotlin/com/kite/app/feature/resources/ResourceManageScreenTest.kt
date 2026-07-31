@@ -116,11 +116,47 @@ class ResourceManageScreenTest {
         assertEquals(1, backCount)
     }
 
+    @Test
+    fun `已获取标题统一检查只提交可检查资源并立即进入检查中`() {
+        val checked = mutableListOf<List<String>>()
+        val screen = createScreen(onCheckInstalledUpdates = checked::add)
+        attach(screen)
+        val context = screen.root.context
+        screen.render(ResourceFeatureUiState(
+            phase = ResourceCatalogPhase.Ready,
+            items = listOf(
+                item(
+                    phase = ResourceItemPhase.Installed,
+                    actionLabel = "打开",
+                    stateLabel = "已获取",
+                    resourceId = "checkable",
+                    maintenance = ResourceMaintenanceUiState(checkUpdateEnabled = true)
+                ),
+                item(
+                    phase = ResourceItemPhase.Installed,
+                    actionLabel = "打开",
+                    stateLabel = "已获取",
+                    resourceId = "system"
+                )
+            )
+        ))
+
+        val button = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_action_check_update)
+        }
+        button.performClick()
+        assertEquals(listOf(listOf("checkable")), checked)
+        screen.acknowledgeUpdateCheck()
+        assertEquals(context.getString(R.string.resource_state_checking_update), button.text.toString())
+        assertFalse(button.isEnabled)
+    }
+
     private fun createScreen(
         onBack: () -> Unit = {},
         onPrimaryAction: (String) -> Unit = {},
         onOpenPlan: (String) -> Unit = {},
-        onCancelPlan: (String, List<String>) -> Unit = { _, _ -> }
+        onCancelPlan: (String, List<String>) -> Unit = { _, _ -> },
+        onCheckInstalledUpdates: (List<String>) -> Unit = {}
     ): ResourceManageScreen = ResourceManageScreen(
         context = ContextThemeWrapper(
             ApplicationProvider.getApplicationContext(),
@@ -132,6 +168,7 @@ class ResourceManageScreenTest {
         onPrimaryAction = onPrimaryAction,
         onOpenPlan = onOpenPlan,
         onCancelPlan = onCancelPlan,
+        onCheckInstalledUpdates = onCheckInstalledUpdates,
         onRetry = {}
     )
 
@@ -167,9 +204,11 @@ class ResourceManageScreenTest {
     private fun item(
         phase: ResourceItemPhase,
         actionLabel: String,
-        stateLabel: String
+        stateLabel: String,
+        resourceId: String = "tool",
+        maintenance: ResourceMaintenanceUiState = ResourceMaintenanceUiState()
     ): ResourceItemUiState = ResourceItemUiState(
-        descriptor = ResourceFeatureDescriptor("tool", "Tool"),
+        descriptor = ResourceFeatureDescriptor(resourceId, resourceId.replaceFirstChar(Char::uppercase)),
         phase = phase,
         projection = KiteResourceUiProjection(
             stateLabel = stateLabel,
@@ -182,7 +221,8 @@ class ResourceManageScreenTest {
         } else {
             KiteResourceActionIntent.Open
         },
-        secondaryIntent = null
+        secondaryIntent = null,
+        maintenance = maintenance
     )
 
     private fun attach(screen: ResourceManageScreen) {

@@ -1,12 +1,14 @@
 package com.kite.app.resources
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
 data class KiteResourceManifest(
     val id: String,
+    val availability: KiteResourceAvailability = KiteResourceAvailability.STABLE,
     val name: String,
     val description: String,
     val version: String,
@@ -28,12 +30,65 @@ data class KiteResourceManifest(
     val baseRequirements: List<String>,
     val defaultRequirements: List<String>,
     val extensions: List<String>,
+    val management: KiteResourceManagementSpec,
+    val source: KiteResourceSourceSpec,
     val sourceType: String,
     val installActions: List<KiteResourceShellAction>,
+    val updateActions: List<KiteResourceShellAction>,
     val uninstallActions: List<KiteResourceShellAction>,
+    val agentProfiles: List<KiteResourceAgentProfile> = emptyList(),
     val openRecipe: JSONObject?,
     val homeCards: List<KiteResourceHomeCard>,
-    val rawJson: JSONObject
+    val rawJson: JSONObject,
+    val installRoot: String = "",
+    val catalogTabs: List<String> = emptyList(),
+    val catalogOrder: Int = Int.MAX_VALUE
+)
+
+/**
+ * 资源注册时声明的 Agent 启动能力。
+ *
+ * 这里只描述协议、传输、结构化 argv 和启动前依赖，不保存运行中的连接或会话事实。运行时能力仍以
+ * initialize 协商结果为准，不能从清单预判模型、权限或会话操作。
+ */
+data class KiteResourceAgentProfile(
+    val agentId: String,
+    val displayName: String,
+    val description: String,
+    val launchMode: String,
+    val providerId: String,
+    val protocol: String,
+    val transport: String,
+    val argv: List<String>,
+    val environmentFiles: Map<String, String> = emptyMap(),
+    val runtimeDependencies: List<KiteResourceAgentRuntimeDependency> = emptyList(),
+    val connectionReference: String = "",
+    val configurationRequired: Boolean = false,
+    val configAdapterId: String = "",
+    val sessionAdapterId: String = "",
+    val title: String = ""
+)
+
+/**
+ * Managed Agent 在启动协议进程前需要的共享后台运行项。
+ *
+ * 资源只声明结构化命令、私有环境文件和轻量就绪探测；进程、健康和恢复事实仍统一归
+ * BackgroundRuntimeRegistry / BackgroundRuntimeHost 所有。
+ */
+data class KiteResourceAgentRuntimeDependency(
+    val id: String,
+    val title: String,
+    val argv: List<String>,
+    val workdir: String = "/workspace",
+    val environment: Map<String, String> = emptyMap(),
+    val environmentFiles: Map<String, String> = emptyMap(),
+    val bindAddress: String = "",
+    val bindPort: Int? = null,
+    val healthHttpPath: String = "",
+    val startupTimeoutMs: Long = 30_000L,
+    val healthCheckStartupDelayMs: Long = 0L,
+    val restartPolicy: String = "on_failure",
+    val retentionClass: String = "resident",
 )
 
 data class KiteResourceShellAction(
@@ -176,8 +231,27 @@ data class KiteResourcePlanMissingRequirement(
     val requestedByResourceId: String
 )
 
-class KiteResourceManifestLoader(private val context: Context) {
-    private val supply: KiteResourceManifestSupply = AssetResourceManifestSupply(context)
+class KiteResourceManifestLoader private constructor(
+    private val isDebugBuild: Boolean,
+    definitionSource: KiteResourceDefinitionSource
+) {
+    constructor(
+        context: Context,
+        isDebugBuild: Boolean = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    ) : this(
+        isDebugBuild = isDebugBuild,
+        definitionSource = KiteResourceAssetDefinitionSource(context)
+    )
+
+    internal constructor(
+        isDebugBuild: Boolean,
+        definitionSources: List<KiteResourceDefinitionSource>
+    ) : this(
+        isDebugBuild = isDebugBuild,
+        definitionSource = KiteResourceCompositeDefinitionSource(definitionSources)
+    )
+
+    private val supply: KiteResourceManifestSupply = DefinitionResourceManifestSupply(definitionSource)
 
     fun requestManifest(resourceId: String): KiteResourceManifest? =
         supply.requestManifest(KiteResourceManifestRequest(resourceId))
@@ -278,12 +352,14 @@ class KiteResourceManifestLoader(private val context: Context) {
         fun invalidate()
     }
 
-    private inner class AssetResourceManifestSupply(private val context: Context) : KiteResourceManifestSupply {
+    private inner class DefinitionResourceManifestSupply(
+        private val definitionSource: KiteResourceDefinitionSource
+    ) : KiteResourceManifestSupply {
         private val lock = Any()
         private val requestedManifests = linkedMapOf<String, KiteResourceManifest?>()
         private val requestedProviders = linkedMapOf<String, List<String>>()
         private val requestedPlans = linkedMapOf<String, KiteResourceInstallPlanPayload?>()
-        private var knownAssetEntries: List<String>? = null
+        private var definitionSnapshotCache: KiteResourceDefinitionSnapshot? = null
         private var allManifestCache: Map<String, KiteResourceManifest>? = null
         private var homeLayoutCache: KiteResourceHomeLayout? = null
         private var homeLayoutLoaded = false
@@ -293,9 +369,7 @@ class KiteResourceManifestLoader(private val context: Context) {
             if (resourceId.isBlank()) return null
             return synchronized(lock) {
                 if (requestedManifests.containsKey(resourceId)) return@synchronized requestedManifests[resourceId]
-                val direct = readManifest("$ASSET_ROOT/$resourceId/manifest.json")
-                    ?.takeIf { it.id == resourceId }
-                val manifest = direct ?: requestAllManifests()[resourceId]
+                val manifest = requestAllManifests()[resourceId]
                 requestedManifests[resourceId] = manifest
                 manifest
             }
@@ -416,11 +490,13 @@ class KiteResourceManifestLoader(private val context: Context) {
             return synchronized(lock) {
                 allManifestCache?.let { return@synchronized it }
                 val loaded = linkedMapOf<String, KiteResourceManifest>()
-                assetEntries().forEach { entry ->
-                    readManifest("$ASSET_ROOT/$entry/manifest.json")?.let { manifest ->
-                        if (manifest.id.isNotBlank()) {
-                            loaded[manifest.id] = manifest
+                definitionSnapshot().manifests.forEach { (declaredId, manifestJson) ->
+                    parseManifestDocument(declaredId, manifestJson)?.let { manifest ->
+                        if (manifest.id == declaredId && manifest.id.isNotBlank() && isAvailable(manifest)) {
+                            loaded.putIfAbsent(manifest.id, manifest)
                             requestedManifests[manifest.id] = manifest
+                        } else if (manifest.id != declaredId) {
+                            Log.w(TAG, "Resource definition id mismatch: key=$declaredId manifest=${manifest.id}")
                         }
                     }
                 }
@@ -432,7 +508,10 @@ class KiteResourceManifestLoader(private val context: Context) {
         override fun requestHomeLayout(): KiteResourceHomeLayout? {
             return synchronized(lock) {
                 if (homeLayoutLoaded) return@synchronized homeLayoutCache
-                homeLayoutCache = readHomeLayout("$ASSET_ROOT/home.json")
+                val layout = definitionSnapshot().homeLayoutJson?.let(::parseHomeLayoutDocument)
+                homeLayoutCache = layout?.let { parsed ->
+                    KiteResourceCatalogProjector.project(parsed, requestAllManifests().values)
+                }
                 homeLayoutLoaded = true
                 homeLayoutCache
             }
@@ -443,39 +522,30 @@ class KiteResourceManifestLoader(private val context: Context) {
                 requestedManifests.clear()
                 requestedProviders.clear()
                 requestedPlans.clear()
-                knownAssetEntries = null
+                definitionSnapshotCache = null
                 allManifestCache = null
                 homeLayoutCache = null
                 homeLayoutLoaded = false
+                definitionSource.invalidate()
             }
         }
 
-        private fun assetEntries(): List<String> {
-            knownAssetEntries?.let { return it }
-            val entries = context.assets.list(ASSET_ROOT).orEmpty()
-                .filterNot { it.endsWith(".json", ignoreCase = true) }
-                .sorted()
-            knownAssetEntries = entries
-            return entries
-        }
+        private fun definitionSnapshot(): KiteResourceDefinitionSnapshot =
+            definitionSnapshotCache ?: definitionSource.snapshot().also { definitionSnapshotCache = it }
     }
 
-    private fun readManifest(path: String): KiteResourceManifest? =
+    private fun parseManifestDocument(resourceId: String, rawJson: String): KiteResourceManifest? =
         runCatching {
-            context.assets.open(path).bufferedReader().use { reader ->
-                parseManifest(JSONObject(reader.readText()))
-            }
+            parseManifest(JSONObject(rawJson))
         }.onFailure { error ->
-            Log.w(TAG, "Failed to read resource manifest: $path", error)
+            Log.w(TAG, "Failed to parse resource manifest: $resourceId", error)
         }.getOrNull()
 
-    private fun readHomeLayout(path: String): KiteResourceHomeLayout? =
+    private fun parseHomeLayoutDocument(rawJson: String): KiteResourceHomeLayout? =
         runCatching {
-            context.assets.open(path).bufferedReader().use { reader ->
-                parseHomeLayout(JSONObject(reader.readText()))
-            }
+            parseHomeLayout(JSONObject(rawJson))
         }.onFailure { error ->
-            Log.w(TAG, "Failed to read resource home layout: $path", error)
+            Log.w(TAG, "Failed to parse resource home layout", error)
         }.getOrNull()
 
     private fun parseHomeLayout(json: JSONObject): KiteResourceHomeLayout {
@@ -543,15 +613,32 @@ class KiteResourceManifestLoader(private val context: Context) {
         val display = json.optJSONObject("display") ?: JSONObject()
         val relations = json.optJSONObject("relations") ?: JSONObject()
         val source = json.optJSONObject("source") ?: JSONObject()
+        val management = json.optJSONObject("management") ?: JSONObject()
         val actions = json.optJSONObject("actions") ?: JSONObject()
+        val agentProfiles = parseAgentProfiles(
+            agents = json.optJSONArray("agents"),
+            legacyAgent = json.optJSONObject("agent")
+        )
         val open = actions.optJSONObject("open")
         val openRecipe = open
             ?.takeIf { it.optString("runtime") == "kite_recipe" }
             ?.optJSONObject("recipe")
             ?.deepCopy()
 
+        val installActions = parseInstallActions(actions.optJSONArray("install"))
+        val updateActions = parseInstallActions(actions.optJSONArray("update"))
+        val uninstallActions = parseShellActions(actions.optJSONArray("uninstall"))
+        val sourceSpec = parseSource(source)
+        val managementSpec = parseManagement(
+            management,
+            fallbackManagedCommands = (installActions + updateActions + uninstallActions)
+                .flatMap(KiteResourceShellAction::managedCommands)
+                .distinct()
+        )
+
         return KiteResourceManifest(
             id = json.optString("id"),
+            availability = KiteResourceAvailability.parse(json.optString("availability")),
             name = base.optString("name"),
             description = base.optString("description"),
             version = base.optString("version"),
@@ -582,12 +669,168 @@ class KiteResourceManifestLoader(private val context: Context) {
             baseRequirements = relations.optJSONArray("base").toStringList(),
             defaultRequirements = relations.optJSONArray("defaults").toStringList(),
             extensions = relations.optJSONArray("extensions").toStringList(),
-            sourceType = source.optString("type"),
-            installActions = parseInstallActions(actions.optJSONArray("install")),
-            uninstallActions = parseShellActions(actions.optJSONArray("uninstall")),
+            management = managementSpec,
+            source = sourceSpec,
+            sourceType = sourceSpec.type,
+            installActions = installActions,
+            updateActions = updateActions,
+            uninstallActions = uninstallActions,
+            agentProfiles = agentProfiles,
             openRecipe = openRecipe,
             homeCards = parseHomeCards(json.optJSONArray("homeCards")),
-            rawJson = json.deepCopy()
+            rawJson = json.deepCopy(),
+            installRoot = json.optJSONObject("paths")?.optString("installRoot").orEmpty(),
+            catalogTabs = display.optJSONArray("tabs").toStringList(),
+            catalogOrder = display.optInt("order", Int.MAX_VALUE).coerceAtLeast(0)
+        )
+    }
+
+    private fun parseAgentProfiles(
+        agents: JSONArray?,
+        legacyAgent: JSONObject?
+    ): List<KiteResourceAgentProfile> {
+        if (agents != null) {
+            return buildList {
+                for (index in 0 until agents.length()) {
+                    parseAgentProfile(agents.optJSONObject(index), legacy = false)?.let(::add)
+                }
+            }
+        }
+        return listOfNotNull(parseAgentProfile(legacyAgent, legacy = true))
+    }
+
+    private fun parseAgentProfile(json: JSONObject?, legacy: Boolean): KiteResourceAgentProfile? {
+        if (json == null) return null
+        val launch = if (legacy) json else json.optJSONObject("launch") ?: return null
+        val providerId = launch.optString("providerId").trim()
+        val protocol = launch.optString("protocol").trim().lowercase()
+        val transport = launch.optString("transport").trim().lowercase()
+        val launchMode = launch.optString("mode").trim().lowercase().ifBlank { "managed" }
+        val argv = launch.optJSONArray("argv").toStringList()
+        val connectionReference = launch.optString("connectionReference").trim()
+        val agentId = if (legacy) providerId else json.optString("id").trim()
+        val validLaunch = when (launchMode) {
+            "managed" -> argv.isNotEmpty()
+            "attach" -> connectionReference.isNotBlank()
+            else -> false
+        }
+        if (
+            agentId.isBlank() || providerId.isBlank() || protocol.isBlank() ||
+            transport.isBlank() || !validLaunch
+        ) return null
+        val title = if (legacy) json.optString("title").trim() else launch.optString("title").trim()
+        val configuration = if (legacy) null else json.optJSONObject("configuration")
+        val sessions = if (legacy) null else json.optJSONObject("sessions")
+        return KiteResourceAgentProfile(
+            agentId = agentId,
+            displayName = if (legacy) title.ifBlank { agentId } else json.optString("name").trim()
+                .ifBlank { title.ifBlank { agentId } },
+            description = if (legacy) "" else json.optString("description").trim(),
+            launchMode = launchMode,
+            providerId = providerId,
+            protocol = protocol,
+            transport = transport,
+            argv = argv,
+            environmentFiles = launch.optJSONObject("environmentFiles").toStringMap(),
+            runtimeDependencies = parseAgentRuntimeDependencies(
+                launch.optJSONArray("runtimeDependencies")
+            ),
+            connectionReference = connectionReference,
+            configurationRequired = configuration?.optBoolean("required", false) == true,
+            configAdapterId = configuration?.optString("adapter")?.trim().orEmpty(),
+            sessionAdapterId = sessions?.optString("adapter")?.trim().orEmpty(),
+            title = title
+        )
+    }
+
+    private fun parseAgentRuntimeDependencies(
+        dependencies: JSONArray?
+    ): List<KiteResourceAgentRuntimeDependency> = buildList {
+        if (dependencies == null) return@buildList
+        for (index in 0 until dependencies.length()) {
+            val dependency = dependencies.optJSONObject(index) ?: continue
+            val id = dependency.optString("id").trim()
+            val argv = dependency.optJSONArray("argv").toStringList()
+            if (!STABLE_RUNTIME_DEPENDENCY_ID.matches(id) || argv.isEmpty()) continue
+            val port = dependency.optInt("bindPort", 0).takeIf { it in 1..65_535 }
+            add(
+                KiteResourceAgentRuntimeDependency(
+                    id = id,
+                    title = dependency.optString("title").trim().ifBlank { id },
+                    argv = argv,
+                    workdir = dependency.optString("workdir").trim().ifBlank { "/workspace" },
+                    environment = dependency.optJSONObject("environment").toStringMap(),
+                    environmentFiles = dependency.optJSONObject("environmentFiles").toStringMap(),
+                    bindAddress = dependency.optString("bindAddress").trim(),
+                    bindPort = port,
+                    healthHttpPath = dependency.optString("healthHttpPath").trim(),
+                    startupTimeoutMs = dependency.optLong("startupTimeoutMs", 30_000L)
+                        .coerceIn(1_000L, 120_000L),
+                    healthCheckStartupDelayMs = dependency
+                        .optLong("healthCheckStartupDelayMs", 0L)
+                        .coerceIn(0L, 120_000L),
+                    restartPolicy = dependency.optString("restartPolicy").trim()
+                        .ifBlank { "on_failure" },
+                    retentionClass = dependency.optString("retentionClass").trim()
+                        .ifBlank { "resident" },
+                )
+            )
+        }
+    }
+
+    private fun parseManagement(
+        managementJson: JSONObject,
+        fallbackManagedCommands: List<String>
+    ): KiteResourceManagementSpec {
+        val declaredCommands = managementJson.optJSONArray("managedCommands").toStringList()
+        return KiteResourceManagementSpec(
+            mode = KiteResourceManagementMode.parse(managementJson.optString("mode")),
+            managedCommands = declaredCommands.ifEmpty { fallbackManagedCommands },
+            versionProbe = parseVersionProbe(managementJson.optJSONObject("versionProbe")),
+            latestVersionProbe = parseVersionProbe(managementJson.optJSONObject("latestVersionProbe")),
+            preservePaths = managementJson.optJSONArray("preservePaths").toStringList()
+        )
+    }
+
+    private fun parseVersionProbe(probeJson: JSONObject?): KiteResourceVersionProbeSpec? {
+        val command = probeJson?.optString("command").orEmpty().trim()
+        return command.takeIf(String::isNotBlank)?.let {
+            KiteResourceVersionProbeSpec(
+                command = it,
+                pattern = probeJson?.optString("pattern").orEmpty(),
+                group = probeJson?.optInt("group", 1)?.coerceAtLeast(0) ?: 1
+            )
+        }
+    }
+
+    private fun parseSource(sourceJson: JSONObject): KiteResourceSourceSpec {
+        val type = sourceJson.optString("type").trim()
+        return KiteResourceSourceSpec(
+            type = type,
+            packageName = sourceJson.optString("package").trim(),
+            companionPackages = sourceJson.optJSONArray("companionPackages").toStringList(),
+            repository = sourceJson.optString("repository").trim(),
+            url = sourceJson.optString("url").trim(),
+            asset = sourceJson.optString("asset").trim(),
+            assetPattern = sourceJson.optString("assetPattern").trim(),
+            channel = sourceJson.optString("channel").trim().ifBlank { "stable" },
+            tag = sourceJson.optString("tag").trim().ifBlank {
+                if (type == "npm") "latest" else ""
+            },
+            releaseTagTemplate = sourceJson.optString("releaseTagTemplate").trim(),
+            archiveType = sourceJson.optString("archiveType").trim(),
+            binaryPath = sourceJson.optString("binaryPath").trim(),
+            architectures = sourceJson.optJSONObject("architectures").toStringMap(),
+            latestUrl = sourceJson.optString("latestUrl").trim(),
+            latestFormat = sourceJson.optString("latestFormat").trim().ifBlank { "json" },
+            latestJsonField = sourceJson.optString("latestJsonField").trim(),
+            latestStripPrefix = sourceJson.optString("latestStripPrefix").trim(),
+            installArguments = sourceJson.optJSONArray("installArguments").toStringList(),
+            versionArguments = sourceJson.optJSONArray("versionArguments").toStringList(),
+            environment = sourceJson.optJSONObject("environment").toStringMap(),
+            profile = sourceJson.optString("profile").trim(),
+            interpreter = sourceJson.optString("interpreter").trim(),
+            entry = sourceJson.optString("entry").trim()
         )
     }
 
@@ -806,6 +1049,9 @@ class KiteResourceManifestLoader(private val context: Context) {
     private fun KiteResourceManifest.isVisibleResourceCard(): Boolean =
         sections.isNotEmpty()
 
+    private fun isAvailable(manifest: KiteResourceManifest): Boolean =
+        manifest.availability != KiteResourceAvailability.DEBUG_ONLY || isDebugBuild
+
     private fun JSONObject.deepCopy(): JSONObject =
         JSONObject(toString())
 
@@ -870,7 +1116,7 @@ class KiteResourceManifestLoader(private val context: Context) {
     }
 
     companion object {
-        private const val ASSET_ROOT = "resources"
         private const val TAG = "KiteResourceManifest"
+        private val STABLE_RUNTIME_DEPENDENCY_ID = Regex("[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?")
     }
 }

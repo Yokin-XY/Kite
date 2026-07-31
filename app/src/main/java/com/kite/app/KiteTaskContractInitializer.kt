@@ -33,12 +33,33 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
                 KiteBrowserProxyInstaller.defaultEnvironment(context, source)
         })
         ToolchainResourcePortHost.install(object : ToolchainResourcePort {
-            override fun statusOf(context: android.content.Context, resourceId: String): String =
-                KiteAppGraph.from(context.applicationContext).resourceInstallStore
-                    .registryEntry(resourceId)?.status.orEmpty()
+            override fun currentEnvironmentId(context: android.content.Context): String =
+                KiteAppGraph.from(context.applicationContext).resourceInstallStore.currentEnvironmentId()
 
-            override fun markInstalling(context: android.content.Context, resourceId: String, runId: String?) {
-                KiteAppGraph.from(context.applicationContext).resourceInstallStore.markInstalling(resourceId, runId)
+            override fun statusOf(
+                context: android.content.Context,
+                resourceId: String,
+                environmentId: String
+            ): String =
+                KiteAppGraph.from(context.applicationContext).resourceInstallStore
+                    .registryEntry(resourceId, environmentId)?.status.orEmpty()
+
+            override fun versionOf(
+                context: android.content.Context,
+                resourceId: String,
+                environmentId: String
+            ): String =
+                KiteAppGraph.from(context.applicationContext).resourceInstallStore
+                    .registryEntry(resourceId, environmentId)?.version.orEmpty()
+
+            override fun markInstalling(
+                context: android.content.Context,
+                resourceId: String,
+                runId: String?,
+                environmentId: String
+            ) {
+                KiteAppGraph.from(context.applicationContext).resourceInstallStore
+                    .markInstalling(resourceId, runId, environmentId = environmentId)
             }
 
             override fun markInstalled(
@@ -46,21 +67,24 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
                 resourceId: String,
                 version: String?,
                 runId: String?,
-                summary: String?
+                summary: String?,
+                environmentId: String
             ) {
                 KiteAppGraph.from(context.applicationContext).resourceInstallStore
-                    .markInstalled(resourceId, version ?: "", runId, summary)
+                    .markInstalled(resourceId, version ?: "", runId, summary, environmentId)
             }
 
             override fun markFailed(
                 context: android.content.Context,
                 resourceId: String,
                 runId: String?,
-                reason: String?
+                reason: String?,
+                environmentId: String
             ) {
                 KiteAppGraph.from(context.applicationContext).resourceInstallStore
-                    .markFailed(resourceId, KiteResourceInstallStore.OP_INSTALL, runId, reason)
+                    .markFailed(resourceId, KiteResourceInstallStore.OP_INSTALL, runId, reason, environmentId)
             }
+
         })
         return true
     }

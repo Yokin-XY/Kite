@@ -29,6 +29,8 @@ class KiteResourceInstallPlanCompilerTest {
 
         assertTrue(script.contains("kite_resource_download"))
         assertTrue(script.contains(".part"))
+        assertTrue(script.contains("mv -f \"${'$'}partial\" \"${'$'}destination\""))
+        assertFalse(script.contains("KITE_RESOURCE_VIEW_TRANSACTION"))
         assertTrue(script.contains("KITE_RESOURCE_RETRY stage=acquire"))
         assertTrue(script.contains("KITE_RESOURCE_HEARTBEAT stage="))
         assertTrue(script.contains("KITE_RESOURCE_FAILURE stage="))

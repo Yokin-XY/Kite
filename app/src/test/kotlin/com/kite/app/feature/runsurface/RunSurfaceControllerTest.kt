@@ -6,6 +6,8 @@ import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
+import com.kite.app.run.CardRunAgentBinding
+import com.kite.app.run.CardRunAgentConnectionStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -26,6 +28,45 @@ class RunSurfaceControllerTest {
 
         assertEquals(attached.structureKey, updated?.structureKey)
         assertEquals("第二段", (updated?.content as? RunSurfaceContent.Report)?.outputText)
+    }
+
+    @Test
+    fun `Agent 从准备到会话就绪不重建显示面`() {
+        val recipe = recipe(KiteRecipeStep(id = "agent", type = KiteRecipe.STEP_AGENT, agentId = "opencode"))
+        val preparing = state(
+            surface = CardRunSurface.Agent,
+            agentId = "opencode",
+            agentBinding = CardRunAgentBinding(
+                providerId = "opencode",
+                status = CardRunAgentConnectionStatus.Preparing,
+                statusMessage = "正在启动 OpenCode"
+            )
+        )
+        val ready = preparing.copy(
+            agentBinding = preparing.agentBinding?.copy(
+                sessionId = "session-1",
+                status = CardRunAgentConnectionStatus.Ready,
+                statusMessage = "准备就绪"
+            ),
+            updatedAt = preparing.updatedAt + 1
+        )
+
+        val first = controller.attach(recipe, preparing)
+        val second = controller.update(recipe, ready)!!
+
+        assertEquals(first.structureKey, second.structureKey)
+        assertEquals(CardRunSurface.Agent, second.surface)
+        assertEquals(
+            RunSurfaceContent.Agent(
+                agentId = "opencode",
+                providerId = "opencode",
+                sessionId = "session-1",
+                connectionStatus = CardRunAgentConnectionStatus.Ready,
+                statusMessage = "准备就绪"
+            ),
+            second.content
+        )
+        assertEquals(listOf(CardRunSurface.Agent), second.windows.map(RunSurfaceWindowUiState::surface))
     }
 
     @Test
@@ -197,7 +238,9 @@ class RunSurfaceControllerTest {
         report: String? = null,
         lastMeaningfulOutput: String? = null,
         lastError: String? = null,
-        x11Display: String? = null
+        x11Display: String? = null,
+        agentId: String? = null,
+        agentBinding: CardRunAgentBinding? = null
     ): CardRunState = CardRunState(
         instanceId = instanceId,
         recipeId = "recipe-1",
@@ -209,6 +252,8 @@ class RunSurfaceControllerTest {
         terminalSessionId = terminalSessionId,
         nextActionUrl = nextActionUrl,
         x11Display = x11Display,
+        agentId = agentId,
+        agentBinding = agentBinding,
         lastMeaningfulOutput = lastMeaningfulOutput,
         lastError = lastError,
         shellReportText = report,

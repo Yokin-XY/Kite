@@ -1,5 +1,7 @@
 package com.kite.app.foundation.service
 
+import com.kite.app.foundation.runtime.ProcessExitSemantics
+
 fun BackgroundRuntimeStatus.isActiveStatus(): Boolean {
     return this == BackgroundRuntimeStatus.RUNNING ||
         this == BackgroundRuntimeStatus.STARTING
@@ -12,6 +14,34 @@ fun BackgroundRuntimeStatus.isTerminalStatus(): Boolean {
 
 fun BackgroundRuntimeRecord.isActiveRuntime(): Boolean {
     return status.isActiveStatus()
+}
+
+internal object BackgroundRuntimeSpacePolicy {
+    fun mayStart(recordSpaceId: String, activeSpaceId: String): Boolean {
+        return recordSpaceId.isNotBlank() && recordSpaceId == activeSpaceId
+    }
+
+    fun confirmedStopped(record: BackgroundRuntimeRecord, stoppedAt: Long): BackgroundRuntimeRecord {
+        return record.copy(
+            status = if (record.status.isActiveStatus()) {
+                BackgroundRuntimeStatus.STOPPED
+            } else {
+                record.status
+            },
+            healthStatus = BackgroundRuntimeHealthStatus.INACTIVE,
+            pid = null,
+            lastStoppedAt = if (record.status.isActiveStatus()) stoppedAt else record.lastStoppedAt,
+            lastAdmissionDeferredAt = null,
+            lastAdmissionSource = null,
+            lastAdmissionReason = null,
+        )
+    }
+}
+
+internal object BackgroundRuntimeRestartGate {
+    fun blocksAutomaticStart(record: BackgroundRuntimeRecord): Boolean {
+        return ProcessExitSemantics.isCommandUnavailableExit(record.lastExitCode)
+    }
 }
 
 object BackgroundRuntimeHealthText {

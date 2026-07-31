@@ -8,6 +8,8 @@ import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifestLoader
+import com.kite.app.resources.KiteResourceSourcePlanFactory
+import com.kite.app.application.resources.ResourceVersionParser
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
@@ -25,11 +27,13 @@ internal class AndroidResourceRunGateway(
 ) : ResourceRunGateway {
     private val appContext = context.applicationContext
 
-    override fun recipe(resourceId: String, operation: String) =
-        recipeFactory.recipe(resourceId, operation)
+    override fun recipe(resourceId: String, operation: String, targetVersion: String?) =
+        recipeFactory.recipe(resourceId, operation, targetVersion)
 
     override fun isBundled(resourceId: String): Boolean =
         recipeFactory.isBundled(resourceId)
+
+    override fun currentEnvironmentId(): String = installStore.currentEnvironmentId()
 
     override fun beginRun(request: ResourceRunLaunchRequest): CardRunState {
         val instanceId = request.preferredInstanceId
@@ -41,7 +45,8 @@ internal class AndroidResourceRunGateway(
             instanceId = instanceId,
             parentInstanceId = request.parentInstanceId,
             ownerKind = CardRunState.OWNER_KIND_RESOURCE,
-            stepId = request.resourceId
+            stepId = request.resourceId,
+            environmentId = request.environmentId
         )
         val state = CardRunStore.update(
             recipe = request.recipe,
@@ -53,7 +58,8 @@ internal class AndroidResourceRunGateway(
             surface = CardRunSurface.Report,
             currentStepIndex = 0,
             lastMeaningfulOutput = "正在准备资源：${request.recipe.name}",
-            shellReportText = "资源：${request.recipe.name}\n结果：正在准备资源"
+            shellReportText = "资源：${request.recipe.name}\n结果：正在准备资源",
+            environmentId = request.environmentId
         )
         diagnostics.logRecipeAction(
             request.recipe,
@@ -67,7 +73,11 @@ internal class AndroidResourceRunGateway(
         return state
     }
 
-    override fun prepare(request: ResourceRunLaunchRequest, callback: (Result<Unit>) -> Unit) {
+    override fun prepare(
+        request: ResourceRunLaunchRequest,
+        instanceId: String,
+        callback: (Result<Unit>) -> Unit
+    ) {
         if (!request.stageBundledResource) {
             callback(Result.success(Unit))
             return
@@ -75,10 +85,9 @@ internal class AndroidResourceRunGateway(
         thread(name = "KiteResourcePrepare-${request.resourceId}", isDaemon = true) {
             callback(
                 runCatching {
-                    ToolchainPackInstaller.stageLocalResourcePack(
-                        appContext,
-                        request.resourceId
-                    )
+                    if (request.stageBundledResource) {
+                        stageBundledResource(request.resourceId)
+                    }
                     Unit
                 }
             )
@@ -97,23 +106,68 @@ internal class AndroidResourceRunGateway(
             surface = CardRunSurface.Report,
             currentStepIndex = 0,
             lastError = message,
-            shellReportText = "资源：${request.recipe.name}\n结果：$message"
+            shellReportText = "资源：${request.recipe.name}\n结果：$message",
+            environmentId = request.environmentId
         )
     }
 
-    override fun markOperationStarted(resourceId: String, operation: String) {
+    override fun markOperationStarted(resourceId: String, operation: String, environmentId: String) {
         when (operation) {
-            KiteResourceInstallRecipes.OP_INSTALL -> installStore.markInstalling(resourceId)
-            KiteResourceInstallRecipes.OP_UNINSTALL -> installStore.markUninstalling(resourceId)
+            KiteResourceInstallRecipes.OP_INSTALL,
+            KiteResourceInstallRecipes.OP_UPDATE,
+            KiteResourceInstallRecipes.OP_REINSTALL ->
+                installStore.markInstalling(resourceId, operation = operation, environmentId = environmentId)
+            KiteResourceInstallRecipes.OP_UNINSTALL -> installStore.markUninstalling(resourceId, environmentId = environmentId)
         }
     }
 
-    override fun markInstalled(resourceId: String, runId: String?, summary: String?) {
-        val version = manifestLoader.requestManifest(resourceId)?.version.orEmpty()
-        installStore.markInstalled(resourceId, version, runId, summary)
+    private fun stageBundledResource(resourceId: String) {
+        val asset = manifestLoader.requestManifest(resourceId)?.source?.asset.orEmpty()
+        require(asset.isNotBlank()) { "Bundled resource $resourceId has no source.asset" }
+        if (asset == TOOLCHAIN_PACK_ASSET) {
+            ToolchainPackInstaller.stageLocalResourcePack(appContext, resourceId)
+        } else {
+            BundledResourceAssetStager.stage(appContext, resourceId, asset)
+        }
     }
 
-    override fun saveInstalledSnapshot(resourceId: String) {
+    override fun markInstalled(
+        resourceId: String,
+        versionHint: String?,
+        runId: String?,
+        summary: String?,
+        evidence: String?,
+        environmentId: String
+    ) {
+        val manifest = manifestLoader.requestManifest(resourceId)
+        val installedProbe = manifest?.let(KiteResourceSourcePlanFactory::versionCheckPlan)?.installed
+        val observedRaw = evidence.orEmpty().lineSequence()
+            .map(String::trim)
+            .lastOrNull { it.startsWith(INSTALLED_VERSION_MARKER) }
+            ?.removePrefix(INSTALLED_VERSION_MARKER)
+            .orEmpty()
+        val observedVersion = installedProbe?.let { probe ->
+            ResourceVersionParser.installed(observedRaw, probe)
+        }
+        val existingVersion = installStore.registryEntry(resourceId, environmentId)?.version.orEmpty()
+        val version = observedVersion ?: versionHint ?: existingVersion
+        val installedSummary = observedVersion?.let { "已验证安装版本 $it" } ?: summary
+        installStore.markInstalled(resourceId, version, runId, installedSummary, environmentId)
+        if (!versionHint.isNullOrBlank()) {
+            if (observedVersion == null || equivalentVersion(observedVersion, versionHint)) {
+                installStore.markUpdateCurrent(resourceId, version, versionHint, environmentId)
+            } else {
+                installStore.markMaintenanceFailed(
+                    resourceId,
+                    KiteResourceInstallRecipes.OP_UPDATE,
+                    "目标版本校验不一致",
+                    environmentId
+                )
+            }
+        }
+    }
+
+    override fun saveInstalledSnapshot(resourceId: String, environmentId: String) {
         val manifest = manifestLoader.requestManifest(resourceId) ?: return
         val iconJson = JSONObject().apply {
             if (manifest.iconAsset.isNotBlank()) {
@@ -131,7 +185,8 @@ internal class AndroidResourceRunGateway(
             name = manifest.name,
             iconJson = iconJson,
             version = manifest.version,
-            manifestJson = manifest.rawJson.toString()
+            manifestJson = manifest.rawJson.toString(),
+            environmentId = environmentId
         )
     }
 
@@ -139,41 +194,52 @@ internal class AndroidResourceRunGateway(
         resourceId: String,
         operation: String,
         runId: String?,
-        reason: String
+        reason: String,
+        environmentId: String
     ) {
-        installStore.markFailed(resourceId, operation, runId, reason)
+        if (operation in setOf(
+                KiteResourceInstallRecipes.OP_UPDATE,
+                KiteResourceInstallRecipes.OP_REINSTALL
+            ) &&
+            installStore.registryEntry(resourceId, environmentId)?.version?.isNotBlank() == true
+        ) {
+            installStore.markMaintenanceFailed(resourceId, operation, reason, environmentId)
+        } else {
+            installStore.markFailed(resourceId, operation, runId, reason, environmentId)
+        }
     }
 
-    override fun clearResource(resourceId: String) {
-        installStore.clear(resourceId)
+    override fun clearResource(resourceId: String, environmentId: String) {
+        installStore.clear(resourceId, environmentId)
     }
 
-    override fun advancePlanAfter(resourceId: String): List<String> =
-        installStore.advancePlanAfter(resourceId)
+    override fun advancePlanAfter(resourceId: String, environmentId: String): List<String> =
+        installStore.advancePlanAfter(resourceId, environmentId)
 
-    override fun failPlanAt(resourceId: String) {
-        installStore.failPlanAt(resourceId)
+    override fun failPlanAt(resourceId: String, environmentId: String) {
+        installStore.failPlanAt(resourceId, environmentId)
     }
 
-    override fun clearPlan() {
-        installStore.clearPlan()
+    override fun clearPlan(environmentId: String) {
+        installStore.clearPlan(environmentId)
     }
 
-    override fun resumePlanFrom(resourceId: String): Boolean =
-        installStore.resumePlanFrom(resourceId)
+    override fun resumePlanFrom(resourceId: String, environmentId: String): Boolean =
+        installStore.resumePlanFrom(resourceId, environmentId)
 
-    override fun isInstalled(resourceId: String): Boolean =
-        installStore.isInstalled(resourceId)
+    override fun isInstalled(resourceId: String, environmentId: String): Boolean =
+        installStore.isInstalled(resourceId, environmentId)
 
-    override fun markPlanStepRunning(resourceId: String): Boolean =
-        installStore.markPlanStepRunning(resourceId)
+    override fun markPlanStepRunning(resourceId: String, environmentId: String): Boolean =
+        installStore.markPlanStepRunning(resourceId, environmentId)
 
-    override fun pendingPlanResourceIds(): List<String> =
-        installStore.pendingPlanResourceIds()
+    override fun pendingPlanResourceIds(environmentId: String): List<String> =
+        installStore.pendingPlanResourceIds(environmentId)
 
     override fun plannedInstall(
         resourceId: String,
-        parentInstanceId: String?
+        parentInstanceId: String?,
+        environmentId: String
     ): ResourceRunLaunchRequest? {
         val recipe = recipeFactory.recipe(resourceId, KiteResourceInstallRecipes.OP_INSTALL) ?: return null
         return ResourceRunLaunchRequest(
@@ -181,10 +247,19 @@ internal class AndroidResourceRunGateway(
             recipe = recipe,
             operation = KiteResourceInstallRecipes.OP_INSTALL,
             stageBundledResource = recipeFactory.isBundled(resourceId),
-            parentInstanceId = parentInstanceId
+            parentInstanceId = parentInstanceId,
+            environmentId = environmentId
         )
     }
 
     private fun newInstanceId(resourceId: String, recipeId: String): String =
         "resource-run-${KiteResourceInstallRecipes.safeId(resourceId)}-${KiteResourceInstallRecipes.safeId(recipeId)}-${UUID.randomUUID().toString().replace("-", "")}"
+
+    private fun equivalentVersion(left: String, right: String): Boolean =
+        left.removePrefix("v") == right.removePrefix("v")
+
+    companion object {
+        private const val TOOLCHAIN_PACK_ASSET = "toolchain/ai-dev-pack"
+        private const val INSTALLED_VERSION_MARKER = "KITE_RESOURCE_INSTALLED_VERSION "
+    }
 }

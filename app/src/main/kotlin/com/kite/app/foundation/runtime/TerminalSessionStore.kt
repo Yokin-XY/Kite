@@ -9,6 +9,7 @@ import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.contracts.isArchivedStatus
 import com.kite.app.foundation.contracts.isLiveProcessStatus
 import com.kite.app.foundation.contracts.isOpenableStatus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -188,6 +189,13 @@ object TerminalSessionStore {
                             break
                         }
                     } while (true)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Logger.e(
+                        "TerminalSessionStore",
+                        "终端快照刷新失败: ${error.message ?: error.javaClass.simpleName}"
+                    )
                 } finally {
                     synchronized(this@TerminalSessionStore) {
                         refreshJob = null

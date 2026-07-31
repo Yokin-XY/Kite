@@ -74,12 +74,12 @@ object BootstrapCoordinator {
                     Logger.i(LOG_TAG, "Host service request is waiting for workspace initialization")
 
                     withContext(Dispatchers.IO) {
-                        KFWorkspaceManager.ensureDefaultSpace(appContext)
+                        KFWorkspaceManager.ensureActiveSpace(appContext)
                     }
                     _snapshot.value = _snapshot.value.copy(stage = BootstrapStage.SPACE_READY)
                     KFShellService.start(appContext)
                     Logger.i(LOG_TAG, "Host service start requested after workspace became ready")
-                    KFApplication.markLaunchStage(LOG_TAG, "默认空间已预热")
+                    KFApplication.markLaunchStage(LOG_TAG, "当前环境空间已预热")
                     BackgroundRuntimeHost.ensureCoreRuntimes(appContext)
                     BackgroundRuntimeHost.ensureResidentRuntimes(appContext, reason = "service-start:app-bootstrap")
                     KFApplication.markLaunchStage(LOG_TAG, "后台守护运行项已请求")

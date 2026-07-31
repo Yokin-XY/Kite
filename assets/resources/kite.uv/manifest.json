@@ -12,10 +12,15 @@
       "fit": "fullBleed"
     }
   },
+  "management": {
+    "mode": "system_component",
+    "managedCommands": ["uv", "uvx"]
+  },
   "display": {
     "sections": [
-      "more"
+      "foundation"
     ],
+    "order": 160,
     "category": "Python",
     "accent": "green",
     "sizeLabel": "内置包",

@@ -1706,7 +1706,23 @@ class TerminalFragment : Fragment(), TerminalViewClient, TerminalSessionUiCallba
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 KFWorkspaceManager.currentSpaceState.collect { space ->
+                    val previousSpaceId = currentSpace?.id
                     currentSpace = space
+                    if (
+                        previousSpaceId != null &&
+                        space != null &&
+                        previousSpaceId != space.id &&
+                        ::terminalController.isInitialized
+                    ) {
+                        terminalController = TerminalRuntimeHost.attachUi(
+                            requireContext().applicationContext,
+                            this@TerminalFragment,
+                            notifyManagedSessionsChanged = !isDetailOnlyMode(),
+                        )
+                        if (!isDetailOnlyMode()) {
+                            showListPage()
+                        }
+                    }
                     renderManagedSessions()
                 }
             }

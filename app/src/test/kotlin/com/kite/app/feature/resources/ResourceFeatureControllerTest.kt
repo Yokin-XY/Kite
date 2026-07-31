@@ -10,6 +10,11 @@ import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceRegistryEntry
+import com.kite.app.resources.KiteResourceManagementMode
+import com.kite.app.resources.KiteResourceManagementSpec
+import com.kite.app.resources.KiteResourceManifest
+import com.kite.app.resources.KiteResourceSourceSpec
+import com.kite.app.resources.KiteResourceVersionProbeSpec
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
 import kotlinx.coroutines.test.runTest
@@ -19,6 +24,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 
 class ResourceFeatureControllerTest {
     @Test
@@ -209,6 +215,35 @@ class ResourceFeatureControllerTest {
         assertEquals(listOf("tool"), controller.state.value.items.map(ResourceItemUiState::resourceId))
     }
 
+    @Test
+    fun `已安装外部扩展从共享版本事实开放检查和更新意图`() = runTest {
+        val gateway = FakeGateway().apply {
+            catalog = listOf(ResourceFeatureDescriptor("tool", "Tool", manifest = managedManifest()))
+            registry["tool"] = KiteResourceRegistryEntry(
+                resourceId = "tool",
+                status = KiteResourceRegistry.STATUS_INSTALLED,
+                version = "1.0.0",
+                latestVersion = "2.0.0",
+                updateStatus = KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE
+            )
+        }
+        val controller = ResourceFeatureController(gateway)
+        controller.dispatch(ResourceFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        assertTrue(item.maintenance.checkUpdateEnabled)
+        assertTrue(item.maintenance.updateEnabled)
+        assertEquals(KiteResourceActionIntent.Open, item.primaryIntent)
+        val effect = controller.dispatch(
+            ResourceFeatureAction.Explicit(
+                "tool",
+                KiteResourceActionIntent.Update,
+                KiteResourceActionSource.Detail
+            )
+        ) as ResourceFeatureEffect.ActionRequested
+        assertEquals(KiteResourceActionIntent.Update, effect.request.intent)
+    }
+
     private class FakeGateway : ResourceFeatureGateway {
         override val changes: Flow<ResourceFeatureChange> = emptyFlow()
         var catalog = listOf(ResourceFeatureDescriptor("tool", "Tool"))
@@ -250,5 +285,42 @@ class ResourceFeatureControllerTest {
         operation = operation,
         summary = summary,
         updatedAt = 123L
+    )
+
+    private fun managedManifest() = KiteResourceManifest(
+        id = "tool",
+        name = "Tool",
+        description = "",
+        version = "",
+        iconText = "",
+        iconAsset = "",
+        displayCategory = "",
+        displayAccent = "",
+        displaySizeLabel = "",
+        displayLongDescription = "",
+        displayBadge = null,
+        displayMedia = null,
+        displayPreviewCards = emptyList(),
+        displayRequirementRows = emptyList(),
+        displayRecommendations = emptyList(),
+        sections = listOf("test"),
+        tags = emptyList(),
+        provides = emptyList(),
+        baseRequirements = emptyList(),
+        defaultRequirements = emptyList(),
+        extensions = emptyList(),
+        management = KiteResourceManagementSpec(
+            mode = KiteResourceManagementMode.MANAGED_EXTENSION,
+            managedCommands = listOf("tool"),
+            versionProbe = KiteResourceVersionProbeSpec("tool --version")
+        ),
+        source = KiteResourceSourceSpec(type = "npm", packageName = "tool"),
+        sourceType = "npm",
+        installActions = emptyList(),
+        updateActions = emptyList(),
+        uninstallActions = emptyList(),
+        openRecipe = null,
+        homeCards = emptyList(),
+        rawJson = JSONObject()
     )
 }

@@ -32,8 +32,6 @@ import java.io.File
  */
 object KFWorkspaceManager {
 
-    private const val DEFAULT_SPACE_ID = "space-main"
-    private const val DEFAULT_SPACE_NAME = "默认空间"
     private const val SPACES_FILE = "spaces.json"
     private const val TERMINALS_FILE = "terminal-sessions.json"
     private const val AGENTS_FILE = "agent-runtimes.json"
@@ -44,26 +42,37 @@ object KFWorkspaceManager {
     private fun runtimeRoot(context: Context): File = WorkSurfaceRuntimeBridge.getRuntimeRoot(context)
 
     @Synchronized
-    fun ensureDefaultSpace(context: Context): SpaceRecord {
-        WorkSurfaceRuntimeBridge.ensureBaseImageReady(context)
-        val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(context)
+    fun ensureActiveSpace(context: Context): SpaceRecord {
+        val active = WorkSurfaceRuntimeBridge.resolveActiveWorkspaceEnvironment(context)
+        return ensureActiveSpace(context, active)
+    }
+
+    /** Runtime Prep 已经解析环境时只消费该事实，不再向下重复准备 Base、容器和工作区。 */
+    @Synchronized
+    internal fun ensureActiveSpace(context: Context, active: ActiveWorkspaceEnvironment): SpaceRecord {
         val runtimeRoot = runtimeRoot(context)
         val now = System.currentTimeMillis()
+        val identity = EnvironmentSpaceIdentity.resolve(active.environmentId)
 
         val spaces = loadSpaces(runtimeRoot).toMutableList()
-        val existing = spaces.firstOrNull { it.id == DEFAULT_SPACE_ID }
+        val existing = spaces.firstOrNull { it.environmentId == active.environmentId }
+            ?: spaces.firstOrNull { it.id == identity.spaceId }
         val currentTerminalSessionId = existing?.currentTerminalSessionId
 
         val space = (existing ?: SpaceRecord(
-            id = DEFAULT_SPACE_ID,
-            displayName = DEFAULT_SPACE_NAME,
-            containerId = container.id,
-            workspacePath = container.workspacePath,
+            id = identity.spaceId,
+            displayName = identity.displayName,
+            environmentId = active.environmentId,
+            containerId = active.containerId,
+            workspacePath = active.workspacePath,
             createdAt = now,
-            note = "当前产品默认以空间为顶层对象。"
+            note = "工作空间跟随 PRoot 活跃环境。"
         )).copy(
-            containerId = container.id,
-            workspacePath = container.workspacePath,
+            id = identity.spaceId,
+            displayName = identity.displayName,
+            environmentId = active.environmentId,
+            containerId = active.containerId,
+            workspacePath = active.workspacePath,
             lastOpenedAt = now,
             status = SpaceStatus.ACTIVE,
             currentTerminalSessionId = currentTerminalSessionId
@@ -71,6 +80,13 @@ object KFWorkspaceManager {
 
         val updatedSpaces = spaces
             .filterNot { it.id == space.id }
+            .map { candidate ->
+                if (candidate.status == SpaceStatus.ACTIVE) {
+                    candidate.copy(status = SpaceStatus.READY)
+                } else {
+                    candidate
+                }
+            }
             .toMutableList()
             .apply { add(space) }
 
@@ -78,23 +94,61 @@ object KFWorkspaceManager {
         ensureBuiltinAgents(runtimeRoot, space)
         val (normalizedSpaces, _) = normalizeWorkspaceState(runtimeRoot)
         syncCurrentSpaceState(normalizedSpaces)
-        val normalizedSpace = normalizedSpaces.firstOrNull { it.id == DEFAULT_SPACE_ID } ?: space
+        val normalizedSpace = normalizedSpaces.firstOrNull { it.id == identity.spaceId } ?: space
         _currentSpaceState.value = normalizedSpace
         return normalizedSpace
     }
 
+    /** 兼容旧调用端；正式工作面固定使用原生 PRoot 的 default 空间。 */
+    fun ensureDefaultSpace(context: Context): SpaceRecord = ensureActiveSpace(context)
+
     fun getCurrentSpace(context: Context): SpaceRecord? {
         val normalizedSpaces = normalizeWorkspaceState(runtimeRoot(context)).first
         syncCurrentSpaceState(normalizedSpaces)
-        return _currentSpaceState.value ?: normalizedSpaces.firstOrNull { it.id == DEFAULT_SPACE_ID }?.also {
-            _currentSpaceState.value = it
-        }
+        return _currentSpaceState.value
+            ?: normalizedSpaces
+                .filter { it.status == SpaceStatus.ACTIVE }
+                .maxByOrNull { it.lastOpenedAt ?: it.createdAt }
+                ?.also { _currentSpaceState.value = it }
+            ?: normalizedSpaces.firstOrNull {
+                it.id == EnvironmentSpaceIdentity.LEGACY_DEFAULT_SPACE_ID
+            }?.also {
+                _currentSpaceState.value = it
+            }
     }
 
     fun listSpaces(context: Context): List<SpaceRecord> {
         return normalizeWorkspaceState(runtimeRoot(context)).first.also { normalizedSpaces ->
             syncCurrentSpaceState(normalizedSpaces)
         }
+    }
+
+    /**
+     * View 进程守卫已确认旧环境退出后，收口它所属的工作面运行记录。
+     * 会话与 AI 记录保留，只清除不再成立的活跃进程事实。
+     */
+    @Synchronized
+    fun confirmEnvironmentStopped(context: Context, environmentId: String): String? {
+        val runtimeRoot = runtimeRoot(context)
+        val spaces = loadSpaces(runtimeRoot)
+        val space = spaces.firstOrNull { it.environmentId == environmentId } ?: return null
+        val terminals = loadTerminalSessions(runtimeRoot)
+        val agents = loadAgentRuntimes(runtimeRoot)
+        val stopped = EnvironmentSpaceStateTransitions.confirmStopped(
+            spaceId = space.id,
+            terminals = terminals,
+            agents = agents,
+            stoppedAt = System.currentTimeMillis(),
+        )
+        if (stopped.terminals != terminals) {
+            saveTerminalSessions(runtimeRoot, stopped.terminals)
+        }
+        if (stopped.agents != agents) {
+            saveAgentRuntimes(runtimeRoot, stopped.agents)
+        }
+        val (normalizedSpaces, _) = normalizeWorkspaceState(runtimeRoot)
+        syncCurrentSpaceState(normalizedSpaces)
+        return space.id
     }
 
     @Synchronized

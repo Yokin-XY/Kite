@@ -11,216 +11,422 @@ data class KiteResourceInstallSignal(
     val targetResourceId: String? = null,
     val affectedResourceIds: List<String> = emptyList(),
     val status: String? = null,
-    val operation: String = ""
+    val operation: String = "",
+    val environmentId: String = KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID
 )
 
-class KiteResourceInstallStore(context: Context) {
+class KiteResourceInstallStore(
+    context: Context,
+    initialEnvironmentId: String = KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID
+) {
     private val registry = KiteResourceRegistry(context)
     private val installedSnapshots = KiteInstalledResourceSnapshotStore(context)
     private val pageCache = KiteResourcePageCacheStore(context)
 
+    @Volatile
+    private var activeEnvironmentId = normalizeEnvironmentId(initialEnvironmentId)
+
     init {
-        initializeSharedSnapshots()
+        ensureEnvironmentSnapshot(activeEnvironmentId)
+        reconcileOrphanedPreparingState(activeEnvironmentId)
     }
 
     val signals: StateFlow<KiteResourceInstallSignal> = sharedSignals
 
-    fun status(resourceId: String): String? =
-        registryEntry(resourceId)?.status?.takeIf { it.isNotBlank() }
+    fun currentEnvironmentId(): String = activeEnvironmentId
 
-    fun isInstalled(resourceId: String): Boolean =
-        registryEntry(resourceId)?.installed == true
+    fun activateEnvironment(environmentId: String) {
+        val next = normalizeEnvironmentId(environmentId)
+        val previous = activeEnvironmentId
+        if (previous == next) return
+        ensureEnvironmentSnapshot(next)
+        val affected = synchronized(signalLock) {
+            (snapshotForLocked(previous).keys + snapshotForLocked(next).keys).distinct()
+        }
+        activeEnvironmentId = next
+        emitSignal(
+            reason = "activeEnvironmentChanged",
+            affectedResourceIds = affected,
+            environmentId = next
+        )
+    }
 
-    fun isFailed(resourceId: String): Boolean =
-        registryEntry(resourceId)?.failed == true
+    fun status(resourceId: String, environmentId: String = currentEnvironmentId()): String? =
+        registryEntry(resourceId, environmentId)?.status?.takeIf { it.isNotBlank() }
 
-    fun isInstalling(resourceId: String): Boolean =
-        registryEntry(resourceId)?.installing == true
+    fun isInstalled(resourceId: String, environmentId: String = currentEnvironmentId()): Boolean =
+        registryEntry(resourceId, environmentId)?.installed == true
 
-    fun isPreparing(resourceId: String): Boolean =
-        registryEntry(resourceId)?.preparing == true
+    fun isFailed(resourceId: String, environmentId: String = currentEnvironmentId()): Boolean =
+        registryEntry(resourceId, environmentId)?.failed == true
 
-    fun isUninstalling(resourceId: String): Boolean =
-        registryEntry(resourceId)?.uninstalling == true
+    fun isInstalling(resourceId: String, environmentId: String = currentEnvironmentId()): Boolean =
+        registryEntry(resourceId, environmentId)?.installing == true
 
-    fun isBusy(resourceId: String): Boolean =
-        registryEntry(resourceId)?.busy == true
+    fun isPreparing(resourceId: String, environmentId: String = currentEnvironmentId()): Boolean =
+        registryEntry(resourceId, environmentId)?.preparing == true
 
-    fun failedOperation(resourceId: String): String =
-        registryEntry(resourceId)?.operation.orEmpty()
+    fun isUninstalling(resourceId: String, environmentId: String = currentEnvironmentId()): Boolean =
+        registryEntry(resourceId, environmentId)?.uninstalling == true
 
-    fun registrySnapshot(resourceIds: Collection<String> = emptyList()): Map<String, KiteResourceRegistryEntry> =
+    fun isBusy(resourceId: String, environmentId: String = currentEnvironmentId()): Boolean =
+        registryEntry(resourceId, environmentId)?.busy == true
+
+    fun failedOperation(resourceId: String, environmentId: String = currentEnvironmentId()): String =
+        registryEntry(resourceId, environmentId)?.operation.orEmpty()
+
+    fun registrySnapshot(
+        resourceIds: Collection<String> = emptyList(),
+        environmentId: String = currentEnvironmentId()
+    ): Map<String, KiteResourceRegistryEntry> =
         synchronized(signalLock) {
+            val snapshot = snapshotForLocked(normalizeEnvironmentId(environmentId))
             if (resourceIds.isEmpty()) {
-                sharedRegistrySnapshot.toMap()
+                snapshot.toMap()
             } else {
                 resourceIds
                     .map { KiteResourceInstallRecipes.safeId(it) }
                     .filter { it.isNotBlank() }
                     .distinct()
-                    .mapNotNull { resourceId -> sharedRegistrySnapshot[resourceId]?.let { resourceId to it } }
+                    .mapNotNull { resourceId -> snapshot[resourceId]?.let { resourceId to it } }
                     .toMap()
             }
         }
 
-    fun registryEntry(resourceId: String): KiteResourceRegistryEntry? =
+    fun registryEntry(
+        resourceId: String,
+        environmentId: String = currentEnvironmentId()
+    ): KiteResourceRegistryEntry? =
         synchronized(signalLock) {
-            sharedRegistrySnapshot[KiteResourceInstallRecipes.safeId(resourceId)]
+            snapshotForLocked(normalizeEnvironmentId(environmentId))[KiteResourceInstallRecipes.safeId(resourceId)]
         }
 
-    fun planSnapshot(): KiteResourcePlanSnapshot =
-        synchronized(signalLock) { sharedPlanSnapshot }
+    fun planSnapshot(environmentId: String = currentEnvironmentId()): KiteResourcePlanSnapshot =
+        synchronized(signalLock) {
+            sharedPlanSnapshots[normalizeEnvironmentId(environmentId)] ?: KiteResourcePlanSnapshot()
+        }
 
-    fun markInstalling(resourceId: String, runId: String? = null) {
-        registry.markInstalling(resourceId, runId)
-        val entry = refreshRegistryEntry(resourceId)
+    fun markInstalling(
+        resourceId: String,
+        runId: String? = null,
+        operation: String = OP_INSTALL,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        registry.markInstalling(resourceId, runId, operation, environmentId)
+        val entry = refreshRegistryEntry(resourceId, environmentId)
         emitSignal(
             reason = "markInstalling",
             resourceId = resourceId,
             affectedResourceIds = listOf(resourceId),
             status = entry?.status ?: STATUS_INSTALLING,
-            operation = entry?.operation ?: OP_INSTALL
+            operation = entry?.operation ?: operation,
+            environmentId = environmentId
         )
     }
 
-    fun markPreparing(resourceId: String) {
-        registry.markPreparing(resourceId)
-        val entry = refreshRegistryEntry(resourceId)
+    fun markPreparing(resourceId: String, environmentId: String = currentEnvironmentId()) {
+        registry.markPreparing(resourceId, environmentId)
+        val entry = refreshRegistryEntry(resourceId, environmentId)
         emitSignal(
             reason = "markPreparing",
             resourceId = resourceId,
             affectedResourceIds = listOf(resourceId),
             status = entry?.status ?: STATUS_PREPARING,
-            operation = entry?.operation ?: OP_INSTALL
+            operation = entry?.operation ?: OP_INSTALL,
+            environmentId = environmentId
         )
     }
 
-    fun markUninstalling(resourceId: String, runId: String? = null) {
-        registry.markUninstalling(resourceId, runId)
-        val entry = refreshRegistryEntry(resourceId)
+    fun markUninstalling(
+        resourceId: String,
+        runId: String? = null,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        registry.markUninstalling(resourceId, runId, environmentId)
+        val entry = refreshRegistryEntry(resourceId, environmentId)
         emitSignal(
             reason = "markUninstalling",
             resourceId = resourceId,
             affectedResourceIds = listOf(resourceId),
             status = entry?.status ?: STATUS_UNINSTALLING,
-            operation = entry?.operation ?: OP_UNINSTALL
+            operation = entry?.operation ?: OP_UNINSTALL,
+            environmentId = environmentId
         )
     }
 
-    fun markInstalled(resourceId: String, version: String, runId: String?, summary: String?) {
-        registry.markInstalled(resourceId, version, runId, summary)
-        val entry = refreshRegistryEntry(resourceId)
+    fun markInstalled(
+        resourceId: String,
+        version: String,
+        runId: String?,
+        summary: String?,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        registry.markInstalled(resourceId, version, runId, summary, environmentId)
+        val entry = refreshRegistryEntry(resourceId, environmentId)
         emitSignal(
             reason = "markInstalled",
             resourceId = resourceId,
             affectedResourceIds = listOf(resourceId),
             status = entry?.status ?: STATUS_INSTALLED,
-            operation = entry?.operation ?: OP_INSTALL
+            operation = entry?.operation ?: OP_INSTALL,
+            environmentId = environmentId
         )
     }
 
-    fun markFailed(resourceId: String, operation: String, runId: String?, reason: String?) {
-        registry.markFailed(resourceId, operation, runId, reason)
-        val entry = refreshRegistryEntry(resourceId)
+    fun markFailed(
+        resourceId: String,
+        operation: String,
+        runId: String?,
+        reason: String?,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        registry.markFailed(resourceId, operation, runId, reason, environmentId)
+        val entry = refreshRegistryEntry(resourceId, environmentId)
         emitSignal(
             reason = "markFailed",
             resourceId = resourceId,
             affectedResourceIds = listOf(resourceId),
             status = entry?.status ?: STATUS_FAILED,
-            operation = entry?.operation ?: operation
+            operation = entry?.operation ?: operation,
+            environmentId = environmentId
         )
     }
 
-    fun clear(resourceId: String) {
-        registry.clear(resourceId)
-        installedSnapshots.clear(resourceId)
+    fun markUpdateChecking(resourceId: String, environmentId: String = currentEnvironmentId()) {
+        markVersionCheck(resourceId, UPDATE_STATUS_CHECKING, reason = "markUpdateChecking", environmentId = environmentId)
+    }
+
+    fun markUpdateAvailable(
+        resourceId: String,
+        installedVersion: String,
+        latestVersion: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        markVersionCheck(
+            resourceId,
+            UPDATE_STATUS_AVAILABLE,
+            installedVersion = installedVersion,
+            latestVersion = latestVersion,
+            reason = "markUpdateAvailable",
+            environmentId = environmentId
+        )
+    }
+
+    fun markUpdateCurrent(
+        resourceId: String,
+        installedVersion: String,
+        latestVersion: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        markVersionCheck(
+            resourceId,
+            UPDATE_STATUS_CURRENT,
+            installedVersion = installedVersion,
+            latestVersion = latestVersion,
+            reason = "markUpdateCurrent",
+            environmentId = environmentId
+        )
+    }
+
+    fun markUpdateUnsupported(
+        resourceId: String,
+        explanation: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        markVersionCheck(
+            resourceId,
+            UPDATE_STATUS_UNSUPPORTED,
+            summary = explanation,
+            reason = "markUpdateUnsupported",
+            environmentId = environmentId
+        )
+    }
+
+    fun markUpdateCheckFailed(
+        resourceId: String,
+        explanation: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        markVersionCheck(
+            resourceId,
+            UPDATE_STATUS_FAILED,
+            summary = explanation,
+            reason = "markUpdateCheckFailed",
+            environmentId = environmentId
+        )
+    }
+
+    fun markMaintenanceFailed(
+        resourceId: String,
+        operation: String,
+        explanation: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        markVersionCheck(
+            resourceId,
+            UPDATE_STATUS_FAILED,
+            summary = explanation,
+            operation = operation,
+            registryStatus = STATUS_INSTALLED,
+            reason = "markMaintenanceFailed",
+            environmentId = environmentId
+        )
+    }
+
+    fun clear(resourceId: String, environmentId: String = currentEnvironmentId()) {
+        registry.clear(resourceId, environmentId)
+        installedSnapshots.clear(resourceId, environmentId)
         synchronized(signalLock) {
-            sharedRegistrySnapshot.remove(KiteResourceInstallRecipes.safeId(resourceId))
+            snapshotForLocked(normalizeEnvironmentId(environmentId))
+                .remove(KiteResourceInstallRecipes.safeId(resourceId))
         }
         emitSignal(
             reason = "clear",
             resourceId = resourceId,
             affectedResourceIds = listOf(resourceId),
-            status = ""
+            status = "",
+            environmentId = environmentId
         )
     }
 
-    fun beginPlan(targetResourceId: String, resourceIds: List<String>) {
-        registry.beginPlan(targetResourceId, resourceIds)
-        refreshPlanSnapshot()
+    fun invalidateMissingInstallations(
+        resourceIds: Collection<String>,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        clearResourceFacts(
+            resourceIds = resourceIds,
+            reason = "invalidateMissingInstallations",
+            environmentId = environmentId
+        )
+    }
+
+    private fun reconcileOrphanedPreparingState(environmentId: String) {
+        val planResourceIds = planSnapshot(environmentId).resourceIds.toSet()
+        val orphaned = registrySnapshot(environmentId = environmentId).values
+            .filter { entry -> entry.preparing && entry.resourceId !in planResourceIds }
+            .map(KiteResourceRegistryEntry::resourceId)
+        clearResourceFacts(
+            resourceIds = orphaned,
+            reason = "reconcileOrphanedPreparingState",
+            environmentId = environmentId
+        )
+    }
+
+    private fun clearResourceFacts(
+        resourceIds: Collection<String>,
+        reason: String,
+        environmentId: String
+    ) {
+        val normalizedEnvironmentId = normalizeEnvironmentId(environmentId)
+        val normalizedIds = resourceIds
+            .map(KiteResourceInstallRecipes::safeId)
+            .filter(String::isNotBlank)
+            .distinct()
+        if (normalizedIds.isEmpty()) return
+        registry.clear(normalizedIds, normalizedEnvironmentId)
+        installedSnapshots.clear(normalizedIds, normalizedEnvironmentId)
+        synchronized(signalLock) {
+            val snapshot = snapshotForLocked(normalizedEnvironmentId)
+            normalizedIds.forEach(snapshot::remove)
+        }
+        emitSignal(
+            reason = reason,
+            affectedResourceIds = normalizedIds,
+            status = "",
+            environmentId = normalizedEnvironmentId
+        )
+    }
+
+    fun beginPlan(
+        targetResourceId: String,
+        resourceIds: List<String>,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        registry.beginPlan(targetResourceId, resourceIds, environmentId)
+        refreshPlanSnapshot(environmentId)
         emitSignal(
             reason = "beginPlan",
             targetResourceId = targetResourceId,
-            affectedResourceIds = resourceIds + targetResourceId
+            affectedResourceIds = resourceIds + targetResourceId,
+            environmentId = environmentId
         )
     }
 
-    fun pendingPlanResourceIds(): List<String> =
-        planSnapshot().pendingResourceIds
+    fun pendingPlanResourceIds(environmentId: String = currentEnvironmentId()): List<String> =
+        planSnapshot(environmentId).pendingResourceIds
 
-    fun runningPlanResourceIds(): List<String> =
-        planSnapshot().runningResourceIds
+    fun runningPlanResourceIds(environmentId: String = currentEnvironmentId()): List<String> =
+        planSnapshot(environmentId).runningResourceIds
 
-    fun planResourceIds(): List<String> =
-        planSnapshot().resourceIds
+    fun planResourceIds(environmentId: String = currentEnvironmentId()): List<String> =
+        planSnapshot(environmentId).resourceIds
 
-    fun planStepStatus(resourceId: String): String =
-        planSnapshot().stepStatus(KiteResourceInstallRecipes.safeId(resourceId))
+    fun planStepStatus(resourceId: String, environmentId: String = currentEnvironmentId()): String =
+        planSnapshot(environmentId).stepStatus(KiteResourceInstallRecipes.safeId(resourceId))
 
-    fun markPlanStepRunning(resourceId: String): Boolean {
-        val changed = registry.markPlanStepRunning(resourceId)
+    fun markPlanStepRunning(resourceId: String, environmentId: String = currentEnvironmentId()): Boolean {
+        val changed = registry.markPlanStepRunning(resourceId, environmentId)
         if (changed) {
-            refreshPlanSnapshot()
-            emitSignal("markPlanStepRunning", resourceId = resourceId, affectedResourceIds = listOf(resourceId))
-        }
-        return changed
-    }
-
-    fun advancePlanAfter(resourceId: String): List<String> {
-        val next = registry.advancePlanAfter(resourceId)
-        val plan = refreshPlanSnapshot()
-        emitSignal(
-            reason = "advancePlanAfter",
-            resourceId = resourceId,
-            targetResourceId = plan.targetResourceId,
-            affectedResourceIds = plan.resourceIds + resourceId
-        )
-        return next
-    }
-
-    fun failPlanAt(resourceId: String) {
-        registry.failPlanAt(resourceId)
-        val plan = refreshPlanSnapshot()
-        emitSignal(
-            reason = "failPlanAt",
-            resourceId = resourceId,
-            targetResourceId = plan.targetResourceId,
-            affectedResourceIds = plan.resourceIds + resourceId
-        )
-    }
-
-    fun resumePlanFrom(resourceId: String): Boolean {
-        val changed = registry.resumePlanFrom(resourceId)
-        if (changed) {
-            val plan = refreshPlanSnapshot()
+            refreshPlanSnapshot(environmentId)
             emitSignal(
-                reason = "resumePlanFrom",
+                "markPlanStepRunning",
                 resourceId = resourceId,
-                targetResourceId = plan.targetResourceId,
-                affectedResourceIds = plan.resourceIds + resourceId
+                affectedResourceIds = listOf(resourceId),
+                environmentId = environmentId
             )
         }
         return changed
     }
 
-    fun clearPlan() {
-        val previous = planSnapshot()
-        registry.clearPlan()
-        refreshPlanSnapshot()
+    fun advancePlanAfter(resourceId: String, environmentId: String = currentEnvironmentId()): List<String> {
+        val next = registry.advancePlanAfter(resourceId, environmentId)
+        val plan = refreshPlanSnapshot(environmentId)
+        emitSignal(
+            reason = "advancePlanAfter",
+            resourceId = resourceId,
+            targetResourceId = plan.targetResourceId,
+            affectedResourceIds = plan.resourceIds + resourceId,
+            environmentId = environmentId
+        )
+        return next
+    }
+
+    fun failPlanAt(resourceId: String, environmentId: String = currentEnvironmentId()) {
+        registry.failPlanAt(resourceId, environmentId)
+        val plan = refreshPlanSnapshot(environmentId)
+        emitSignal(
+            reason = "failPlanAt",
+            resourceId = resourceId,
+            targetResourceId = plan.targetResourceId,
+            affectedResourceIds = plan.resourceIds + resourceId,
+            environmentId = environmentId
+        )
+    }
+
+    fun resumePlanFrom(resourceId: String, environmentId: String = currentEnvironmentId()): Boolean {
+        val changed = registry.resumePlanFrom(resourceId, environmentId)
+        if (changed) {
+            val plan = refreshPlanSnapshot(environmentId)
+            emitSignal(
+                reason = "resumePlanFrom",
+                resourceId = resourceId,
+                targetResourceId = plan.targetResourceId,
+                affectedResourceIds = plan.resourceIds + resourceId,
+                environmentId = environmentId
+            )
+        }
+        return changed
+    }
+
+    fun clearPlan(environmentId: String = currentEnvironmentId()) {
+        val previous = planSnapshot(environmentId)
+        registry.clearPlan(environmentId)
+        refreshPlanSnapshot(environmentId)
         emitSignal(
             reason = "clearPlan",
             targetResourceId = previous.targetResourceId,
-            affectedResourceIds = previous.resourceIds + previous.targetResourceId
+            affectedResourceIds = previous.resourceIds + previous.targetResourceId,
+            environmentId = environmentId
         )
     }
 
@@ -229,13 +435,16 @@ class KiteResourceInstallStore(context: Context) {
         name: String,
         iconJson: String,
         version: String,
-        manifestJson: String
+        manifestJson: String,
+        environmentId: String = currentEnvironmentId()
     ) {
-        installedSnapshots.save(resourceId, name, iconJson, version, manifestJson)
+        installedSnapshots.save(resourceId, name, iconJson, version, manifestJson, environmentId)
     }
 
-    fun installedSnapshotManifestJson(resourceId: String): String? =
-        installedSnapshots.manifestJson(resourceId)
+    fun installedSnapshotManifestJson(
+        resourceId: String,
+        environmentId: String = currentEnvironmentId()
+    ): String? = installedSnapshots.manifestJson(resourceId, environmentId)
 
     fun putPageCache(cacheKey: String, payloadJson: String, maxAgeMs: Long) {
         pageCache.putPage(cacheKey, payloadJson, maxAgeMs)
@@ -248,28 +457,65 @@ class KiteResourceInstallStore(context: Context) {
         pageCache.clearExpired()
     }
 
-    private fun initializeSharedSnapshots() {
+    private fun ensureEnvironmentSnapshot(environmentId: String) {
+        val normalizedEnvironmentId = normalizeEnvironmentId(environmentId)
         synchronized(signalLock) {
-            if (snapshotsInitialized) return
-            sharedRegistrySnapshot.clear()
-            sharedRegistrySnapshot.putAll(registry.snapshot())
-            sharedPlanSnapshot = registry.planSnapshot()
-            snapshotsInitialized = true
+            if (normalizedEnvironmentId in initializedEnvironments) return
+            sharedRegistrySnapshots[normalizedEnvironmentId] =
+                registry.snapshot(environmentId = normalizedEnvironmentId).toMutableMap()
+            sharedPlanSnapshots[normalizedEnvironmentId] = registry.planSnapshot(normalizedEnvironmentId)
+            initializedEnvironments += normalizedEnvironmentId
         }
     }
 
-    private fun refreshRegistryEntry(resourceId: String): KiteResourceRegistryEntry? {
+    private fun markVersionCheck(
+        resourceId: String,
+        updateStatus: String,
+        installedVersion: String = "",
+        latestVersion: String = "",
+        summary: String? = null,
+        operation: String? = null,
+        registryStatus: String? = null,
+        reason: String,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        registry.markVersionCheck(
+            resourceId = resourceId,
+            updateStatus = updateStatus,
+            installedVersion = installedVersion,
+            latestVersion = latestVersion,
+            summary = summary,
+            operation = operation,
+            status = registryStatus,
+            environmentId = environmentId
+        )
+        val entry = refreshRegistryEntry(resourceId, environmentId)
+        emitSignal(
+            reason = reason,
+            resourceId = resourceId,
+            affectedResourceIds = listOf(resourceId),
+            status = entry?.status,
+            operation = entry?.operation.orEmpty(),
+            environmentId = environmentId
+        )
+    }
+
+    private fun refreshRegistryEntry(resourceId: String, environmentId: String): KiteResourceRegistryEntry? {
+        val normalizedEnvironmentId = normalizeEnvironmentId(environmentId)
         val cleanId = KiteResourceInstallRecipes.safeId(resourceId)
-        val entry = registry.entry(cleanId)
+        val entry = registry.entry(cleanId, normalizedEnvironmentId)
         synchronized(signalLock) {
-            if (entry == null) sharedRegistrySnapshot.remove(cleanId) else sharedRegistrySnapshot[cleanId] = entry
+            val snapshot = snapshotForLocked(normalizedEnvironmentId)
+            if (entry == null) snapshot.remove(cleanId) else snapshot[cleanId] = entry
         }
         return entry
     }
 
-    private fun refreshPlanSnapshot(): KiteResourcePlanSnapshot =
-        registry.planSnapshot().also { snapshot ->
-            synchronized(signalLock) { sharedPlanSnapshot = snapshot }
+    private fun refreshPlanSnapshot(environmentId: String): KiteResourcePlanSnapshot =
+        registry.planSnapshot(normalizeEnvironmentId(environmentId)).also { snapshot ->
+            synchronized(signalLock) {
+                sharedPlanSnapshots[normalizeEnvironmentId(environmentId)] = snapshot
+            }
         }
 
     private fun emitSignal(
@@ -278,7 +524,8 @@ class KiteResourceInstallStore(context: Context) {
         targetResourceId: String? = null,
         affectedResourceIds: List<String> = emptyList(),
         status: String? = null,
-        operation: String = ""
+        operation: String = "",
+        environmentId: String = currentEnvironmentId()
     ) {
         synchronized(signalLock) {
             revision += 1
@@ -292,17 +539,24 @@ class KiteResourceInstallStore(context: Context) {
                     .filter { it.isNotBlank() }
                     .distinct(),
                 status = status,
-                operation = operation
+                operation = operation,
+                environmentId = normalizeEnvironmentId(environmentId)
             )
         }
     }
 
+    private fun normalizeEnvironmentId(environmentId: String): String =
+        environmentId.trim().ifBlank { KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID }
+
+    private fun snapshotForLocked(environmentId: String): MutableMap<String, KiteResourceRegistryEntry> =
+        sharedRegistrySnapshots.getOrPut(environmentId) { linkedMapOf() }
+
     companion object {
         private val signalLock = Any()
         private val sharedSignals = MutableStateFlow(KiteResourceInstallSignal())
-        private val sharedRegistrySnapshot = linkedMapOf<String, KiteResourceRegistryEntry>()
-        private var sharedPlanSnapshot = KiteResourcePlanSnapshot()
-        private var snapshotsInitialized = false
+        private val sharedRegistrySnapshots = linkedMapOf<String, MutableMap<String, KiteResourceRegistryEntry>>()
+        private val sharedPlanSnapshots = linkedMapOf<String, KiteResourcePlanSnapshot>()
+        private val initializedEnvironments = linkedSetOf<String>()
         private var revision = 0L
 
         const val STATUS_INSTALLED = KiteResourceRegistry.STATUS_INSTALLED
@@ -312,6 +566,11 @@ class KiteResourceInstallStore(context: Context) {
         const val STATUS_UNINSTALLING = KiteResourceRegistry.STATUS_UNINSTALLING
         const val OP_INSTALL = KiteResourceRegistry.OP_INSTALL
         const val OP_UNINSTALL = KiteResourceRegistry.OP_UNINSTALL
+        const val UPDATE_STATUS_CHECKING = "checking"
+        const val UPDATE_STATUS_AVAILABLE = "available"
+        const val UPDATE_STATUS_CURRENT = "current"
+        const val UPDATE_STATUS_UNSUPPORTED = "unsupported"
+        const val UPDATE_STATUS_FAILED = "failed"
         const val PLAN_STEP_DONE = KiteResourceRegistry.PLAN_STEP_DONE
         const val PLAN_STEP_RUNNING = KiteResourceRegistry.PLAN_STEP_RUNNING
         const val PLAN_STEP_FAILED = KiteResourceRegistry.PLAN_STEP_FAILED

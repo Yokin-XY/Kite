@@ -127,7 +127,7 @@ object SupervisordServiceHealthStore {
     ): SupervisordServiceHealthSnapshot {
         val space = KFWorkspaceManager.getCurrentSpace(context)
             ?: KFWorkspaceManager.listSpaces(context).firstOrNull()
-            ?: KFWorkspaceManager.ensureDefaultSpace(context)
+            ?: KFWorkspaceManager.ensureActiveSpace(context)
         val supervisorId = BackgroundRuntimeRegistry.builtinContainerSupervisorId(space.id)
         val supervisorRecord = BackgroundRuntimeRegistry.get(context, supervisorId)
         val supervisorPid = supervisorRecord?.pid?.takeIf { it > 0 }

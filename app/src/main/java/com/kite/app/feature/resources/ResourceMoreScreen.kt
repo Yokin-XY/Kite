@@ -14,6 +14,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.content.res.AppCompatResources
 import com.kite.app.R
+import com.kite.app.action.KiteResourceActionIntent
+import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.run.CardRunHistoryEntry
 import com.kite.app.run.CardRunStatus
 import com.kite.app.ui.UiKit
@@ -24,6 +27,7 @@ internal class ResourceMoreScreen(
     private val context: Context,
     onBack: () -> Unit,
     private val onCreateHomeCard: () -> Unit,
+    private val onMaintenanceAction: (KiteResourceActionIntent) -> Unit,
     private val onOpenHistory: (String) -> Unit
 ) {
     private val environment = ResourceFeatureTheme.environment(context)
@@ -39,7 +43,10 @@ internal class ResourceMoreScreen(
             dp(96),
         )
     }
-    private var signature: Int? = null
+    private var structureSignature: Int? = null
+    private var maintenanceSignature: Int? = null
+    private var maintenanceStatus: TextView? = null
+    private val maintenanceButtons = linkedMapOf<KiteResourceActionIntent, TextView>()
 
     val root: LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -53,10 +60,17 @@ internal class ResourceMoreScreen(
     }
 
     fun render(item: ResourceItemUiState?, history: List<CardRunHistoryEntry>) {
-        val nextSignature = 31 * (item?.hashCode() ?: 0) + history.hashCode()
-        if (signature == nextSignature) return
-        signature = nextSignature
-        content.removeAllViews()
+        val nextStructureSignature = 31 * (item?.descriptor?.hashCode() ?: 0) + history.hashCode()
+        if (structureSignature != nextStructureSignature) {
+            structureSignature = nextStructureSignature
+            maintenanceSignature = null
+            maintenanceStatus = null
+            maintenanceButtons.clear()
+            content.removeAllViews()
+        } else if (item != null) {
+            bindMaintenance(item)
+            return
+        } else return
         if (item == null) {
             content.addView(factory.stateBlock(
                 context.getString(R.string.resource_more_loading_title),
@@ -67,7 +81,23 @@ internal class ResourceMoreScreen(
         }
         content.addView(header(item))
         content.addView(createHomeCardRow(item))
+        content.addView(maintenancePanel(item))
         content.addView(historyPanel(history))
+        bindMaintenance(item)
+    }
+
+    fun acknowledge(intent: KiteResourceActionIntent) {
+        maintenanceButtons.values.forEach { button ->
+            button.isEnabled = false
+            button.alpha = 0.58f
+        }
+        maintenanceStatus?.text = context.getString(when (intent) {
+            KiteResourceActionIntent.CheckUpdate -> R.string.resource_maintenance_checking
+            KiteResourceActionIntent.Update -> R.string.resource_maintenance_updating
+            KiteResourceActionIntent.Reinstall -> R.string.resource_maintenance_reinstalling
+            KiteResourceActionIntent.Uninstall -> R.string.resource_state_uninstalling
+            else -> R.string.resource_action_processing
+        })
     }
 
     private fun header(item: ResourceItemUiState): View = LinearLayout(context).apply {
@@ -153,6 +183,126 @@ internal class ResourceMoreScreen(
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }, LinearLayout.LayoutParams(dp(24), dp(42)))
             if (canCreate) setOnClickListener { onCreateHomeCard() }
+        }
+    }
+
+    private fun maintenancePanel(item: ResourceItemUiState): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(0, dp(22), 0, 0)
+        addView(TextView(context).apply {
+            text = context.getString(R.string.resource_maintenance_title)
+            ui.applyTextRole(this, UiTextRole.SectionTitle)
+            setPadding(0, 0, 0, dp(10))
+        })
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = ui.containerBackground(tokens.cardBackground, tokens.border, environment.components.card)
+            maintenanceStatus = TextView(context).apply {
+                textSize = 13f
+                setTextColor(tokens.textSecondary)
+                setLineSpacing(dp(3).toFloat(), 1f)
+            }
+            addView(maintenanceStatus)
+            if (item.maintenance.userLifecycleEnabled) {
+                addView(maintenanceButton(KiteResourceActionIntent.CheckUpdate), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    dp(44)
+                ).apply { setMargins(0, dp(13), 0, 0) })
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(maintenanceButton(KiteResourceActionIntent.Reinstall), actionLayoutParams())
+                    addView(maintenanceButton(KiteResourceActionIntent.Uninstall, danger = true), actionLayoutParams(dp(8)))
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
+                    setMargins(0, dp(9), 0, 0)
+                })
+            }
+        })
+    }
+
+    private fun maintenanceButton(intent: KiteResourceActionIntent, danger: Boolean = false): TextView =
+        TextView(context).apply {
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            includeFontPadding = false
+            setTextColor(if (danger) tokens.danger else tokens.primaryStrong)
+            background = ui.containerBackground(
+                if (danger) tokens.dangerSoft else tokens.primarySubtle,
+                if (danger) tokens.dangerBorder else tokens.primarySoft,
+                environment.components.control
+            )
+            maintenanceButtons[intent] = this
+        }
+
+    private fun actionLayoutParams(startMargin: Int = 0): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+            if (startMargin > 0) setMargins(startMargin, 0, 0, 0)
+        }
+
+    private fun bindMaintenance(item: ResourceItemUiState) {
+        val state = item.maintenance
+        val nextSignature = state.hashCode()
+        if (maintenanceSignature == nextSignature) return
+        maintenanceSignature = nextSignature
+        maintenanceStatus?.text = when {
+            !state.userLifecycleEnabled -> context.getString(R.string.resource_maintenance_system_managed)
+            item.phase == ResourceItemPhase.NotInstalled -> context.getString(R.string.resource_maintenance_install_first)
+            item.phase == ResourceItemPhase.Installing && item.operation == KiteResourceInstallRecipes.OP_UPDATE ->
+                context.getString(R.string.resource_maintenance_updating)
+            item.phase == ResourceItemPhase.Installing && item.operation == KiteResourceInstallRecipes.OP_REINSTALL ->
+                context.getString(R.string.resource_maintenance_reinstalling)
+            item.phase == ResourceItemPhase.Uninstalling -> context.getString(R.string.resource_state_uninstalling)
+            state.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_CHECKING ->
+                context.getString(R.string.resource_maintenance_checking)
+            state.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_AVAILABLE ->
+                context.getString(
+                    R.string.resource_maintenance_available,
+                    state.installedVersion.ifBlank { context.getString(R.string.resource_maintenance_unknown_version) },
+                    state.latestVersion
+                )
+            state.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_CURRENT ->
+                context.getString(R.string.resource_maintenance_current, state.installedVersion.ifBlank { state.latestVersion })
+            state.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_UNSUPPORTED ->
+                context.getString(R.string.resource_maintenance_unsupported)
+            state.updateStatus == KiteResourceInstallStore.UPDATE_STATUS_FAILED ->
+                context.getString(
+                    if (item.operation == KiteResourceInstallRecipes.OP_REINSTALL) {
+                        R.string.resource_maintenance_reinstall_failed
+                    } else {
+                        R.string.resource_maintenance_check_failed
+                    },
+                    state.statusSummary
+                )
+            else -> context.getString(
+                R.string.resource_maintenance_installed_version,
+                state.installedVersion.ifBlank { context.getString(R.string.resource_maintenance_unknown_version) }
+            )
+        }
+
+        val primaryIntent = if (state.updateEnabled) KiteResourceActionIntent.Update else KiteResourceActionIntent.CheckUpdate
+        maintenanceButtons[KiteResourceActionIntent.CheckUpdate]?.apply {
+            val enabled = if (state.updateEnabled) true else state.checkUpdateEnabled
+            text = when {
+                item.phase == ResourceItemPhase.Installing && item.operation == KiteResourceInstallRecipes.OP_UPDATE ->
+                    context.getString(R.string.resource_state_updating)
+                state.updateEnabled -> context.getString(R.string.resource_maintenance_update_to, state.latestVersion)
+                else -> context.getString(R.string.resource_action_check_update)
+            }
+            isEnabled = enabled
+            alpha = if (enabled) 1f else 0.5f
+            setOnClickListener(if (enabled) View.OnClickListener { onMaintenanceAction(primaryIntent) } else null)
+        }
+        bindMaintenanceButton(KiteResourceActionIntent.Reinstall, state.reinstallEnabled, R.string.resource_action_reinstall)
+        bindMaintenanceButton(KiteResourceActionIntent.Uninstall, state.uninstallEnabled, R.string.resource_action_uninstall)
+    }
+
+    private fun bindMaintenanceButton(intent: KiteResourceActionIntent, enabled: Boolean, label: Int) {
+        maintenanceButtons[intent]?.apply {
+            text = context.getString(label)
+            isEnabled = enabled
+            alpha = if (enabled) 1f else 0.5f
+            setOnClickListener(if (enabled) View.OnClickListener { onMaintenanceAction(intent) } else null)
         }
     }
 

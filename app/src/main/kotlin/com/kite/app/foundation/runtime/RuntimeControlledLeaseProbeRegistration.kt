@@ -71,7 +71,7 @@ object RuntimeControlledLeaseProbeRegistration {
     ): BackgroundRuntimeRecord {
         val appContext = context.applicationContext
         val space = KFWorkspaceManager.getCurrentSpace(appContext)
-            ?: KFWorkspaceManager.ensureDefaultSpace(appContext)
+            ?: KFWorkspaceManager.ensureActiveSpace(appContext)
         return register(
             context = appContext,
             spaceId = space.id,

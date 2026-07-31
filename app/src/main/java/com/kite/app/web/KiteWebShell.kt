@@ -23,7 +23,7 @@ import com.kite.app.browser.BrowserHandoffPolicy
 import com.kite.app.browser.BrowserHandoffRequest
 import com.kite.app.browser.automation.BrowserAutomationController
 import com.kite.app.diagnostics.KiteDiagnostics
-import com.kite.app.foundation.runtime.ExternalExchangeManager
+import com.kite.app.foundation.storage.KiteManagedStorage
 import java.io.File
 import java.net.URI
 
@@ -338,16 +338,14 @@ class KiteWebShell(
             return
         }
         val downloadUri = uri ?: return
-        val downloadsDir = File(ExternalExchangeManager.ensureExchangeDir(activity), DOWNLOADS_DIR_NAME).apply {
-            mkdirs()
-        }
+        val downloadsDir = KiteManagedStorage.publicDownloadsDir()
         val target = uniqueDownloadFile(
             downloadsDir,
             sanitizeDownloadName(URLUtil.guessFileName(url, contentDisposition, mimeType))
         )
         val request = DownloadManager.Request(downloadUri)
             .setTitle(target.name)
-            .setDescription("${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/$DOWNLOADS_DIR_NAME/${target.name}")
+            .setDescription(target.absolutePath)
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationUri(Uri.fromFile(target))
         if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
@@ -359,7 +357,7 @@ class KiteWebShell(
         }
         runCatching { manager.enqueue(request) }
             .onSuccess {
-                onStatus("Downloading: ${ExternalExchangeManager.CONTAINER_MOUNT_PATH}/$DOWNLOADS_DIR_NAME/${target.name}")
+                onStatus("正在下载到：${target.absolutePath}")
             }
             .onFailure {
                 openExternal(url)
@@ -427,9 +425,5 @@ class KiteWebShell(
             val currentPort = runCatching { Uri.parse(currentUrl).port }.getOrDefault(-1)
             return port <= 0 || currentPort <= 0 || currentPort == port
         }
-    }
-
-    companion object {
-        private const val DOWNLOADS_DIR_NAME = "downloads"
     }
 }

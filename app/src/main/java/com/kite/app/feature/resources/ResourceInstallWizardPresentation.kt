@@ -9,6 +9,7 @@ import com.kite.app.resources.KiteResourceInstallStepUiProjection
 import com.kite.app.resources.KiteResourceInstallStepUiProjector
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.run.CardRunStatus
+import com.kite.app.run.CardRunSurface
 
 internal enum class ResourceInstallWizardPlanActionResult {
     Accepted,
@@ -23,6 +24,13 @@ internal enum class ResourceInstallWizardHeaderState {
     Pending,
     Completed,
 }
+
+internal data class ResourceInstallWizardRunRequest(
+    val resourceId: String,
+    val operation: String,
+    val instanceId: String,
+    val surface: CardRunSurface,
+)
 
 internal data class ResourceInstallWizardRowViewState(
     val resourceId: String,
@@ -196,6 +204,17 @@ internal fun ResourceFeatureRunSnapshot.isLiveForWizard(): Boolean =
         status == CardRunStatus.WaitingTerminal ||
         status == CardRunStatus.AlreadyRunning ||
         status == CardRunStatus.Opened
+
+internal fun ResourceInstallWizardRowViewState.runRequest(
+    surface: CardRunSurface,
+): ResourceInstallWizardRunRequest? = run?.let { currentRun ->
+    ResourceInstallWizardRunRequest(
+        resourceId = resourceId,
+        operation = operation,
+        instanceId = currentRun.instanceId,
+        surface = surface,
+    )
+}
 
 internal fun ResourceInstallWizardRowViewState.subtitle(context: Context, now: Long): String {
     val base = "$sourceLabel · ${index + 1}/$total"

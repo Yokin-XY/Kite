@@ -4,6 +4,8 @@ import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.run.CardRunAgentBinding
+import com.kite.app.run.CardRunAgentConnectionStatus
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
@@ -41,6 +43,7 @@ class RunOrchestratorTest {
             KiteRecipe.STEP_TERMINAL,
             KiteRecipe.STEP_OPEN_WEB,
             KiteRecipe.STEP_X11,
+            KiteRecipe.STEP_AGENT,
             KiteRecipe.STEP_ANDROID_ACTION
         )
 
@@ -50,6 +53,89 @@ class RunOrchestratorTest {
         assertEquals(recipe.steps.map { it.type }, executor.executeRequests.map { it.step.type })
         assertEquals(CardRunStatus.Completed, gateway.state("instance-all")?.status)
         assertEquals(recipe.steps.size, gateway.state("instance-all")?.currentStepIndex)
+    }
+
+    @Test
+    fun `Agent 卡片在运行时确认前已经进入运行中承诺态`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val recipe = recipe("agent-opening", KiteRecipe.STEP_AGENT).copy(type = KiteRecipe.TYPE_AGENT)
+
+        val result = orchestrator.start(RunStartRequest(recipe, "agent-instance"))
+
+        assertEquals(RunCommandResult.Accepted("agent-instance"), result)
+        assertEquals(CardRunStatus.Running, gateway.state("agent-instance")?.status)
+        val request = executor.executeRequests.single()
+        assertEquals(KiteRecipe.STEP_AGENT, request.step.type)
+        assertTrue(request.runtimeOwnerId?.isNotBlank() == true)
+        assertEquals(false, gateway.state("agent-instance")?.hasRuntimeOwnership())
+    }
+
+    @Test
+    fun `Agent 实例固定身份并拒绝同一实例改绑其他 Agent`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val openCode = agentRecipe("fixed-agent", "opencode")
+
+        val first = orchestrator.start(RunStartRequest(openCode, "fixed-instance"))
+        val firstRequest = executor.executeRequests.single()
+        executor.emit(
+            RecipeExecutionEvent.Failed(
+                instanceId = firstRequest.instanceId,
+                generation = firstRequest.generation,
+                stepIndex = firstRequest.stepIndex,
+                message = "连接失败"
+            )
+        )
+        val other = agentRecipe("fixed-agent", "other-agent")
+        val second = orchestrator.start(RunStartRequest(other, "fixed-instance"))
+
+        assertEquals(RunCommandResult.Accepted("fixed-instance"), first)
+        assertEquals("opencode", gateway.state("fixed-instance")?.agentId)
+        assertEquals(RunCommandResult.Ignored("instance_agent_conflict"), second)
+        assertEquals("opencode", gateway.recipe("fixed-agent")?.steps?.single()?.agentId)
+        assertEquals(1, executor.executeRequests.size)
+    }
+
+    @Test
+    fun `Agent 停止只清连接与进程事实但保留固定身份`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val recipe = agentRecipe("stop-agent", "opencode")
+        orchestrator.start(RunStartRequest(recipe, "stop-agent-instance"))
+        val request = executor.executeRequests.single()
+        executor.emit(
+            RecipeExecutionEvent.AwaitingUser(
+                instanceId = request.instanceId,
+                generation = request.generation,
+                stepIndex = request.stepIndex,
+                mutation = RunStateMutation(
+                    status = CardRunStatus.Running,
+                    surface = CardRunSurface.Agent,
+                    currentStepIndex = request.stepIndex,
+                    agentId = "opencode",
+                    agentBinding = CardRunAgentBinding(
+                        providerId = "opencode-provider",
+                        sessionId = "session-1",
+                        status = CardRunAgentConnectionStatus.Ready
+                    )
+                )
+            )
+        )
+
+        assertEquals(
+            RunCommandResult.Accepted("stop-agent-instance"),
+            orchestrator.stop("stop-agent-instance")
+        )
+        executor.emitStop(StopExecutionResult(StopExecutionOutcome.Confirmed, "Agent 会话已关闭"))
+
+        val stopped = gateway.state("stop-agent-instance")
+        assertEquals(CardRunStatus.Stopped, stopped?.status)
+        assertEquals("opencode", stopped?.agentId)
+        assertEquals(null, stopped?.agentBinding)
     }
 
     @Test
@@ -107,6 +193,41 @@ class RunOrchestratorTest {
         assertEquals(null, state?.pid)
         assertEquals(CardRunStatus.Completed, lifecycleEvents.last().state.status)
         assertEquals("resource-finite-instance", lifecycleEvents.last().state.instanceId)
+    }
+
+    @Test
+    fun `普通有限 SH 确认退出后完成而不是被旧 PID 保持运行中`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val recipe = recipe("finite-shell", KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "finite-shell-instance"))
+        val request = executor.executeRequests.single()
+
+        executor.emit(
+            RecipeExecutionEvent.Completed(
+                instanceId = request.instanceId,
+                generation = request.generation,
+                stepIndex = request.stepIndex,
+                mutation = RunStateMutation(
+                    status = CardRunStatus.Running,
+                    currentStepIndex = request.stepIndex,
+                    runId = "finished-run",
+                    pid = "123",
+                    rootPid = "123",
+                    processGroupId = "123",
+                    systemSessionId = "123",
+                    lastMeaningfulOutput = "命令完成",
+                    clearRunBinding = true
+                )
+            )
+        )
+
+        val state = gateway.state("finite-shell-instance")
+        assertEquals(CardRunStatus.Completed, state?.status)
+        assertEquals(null, state?.runId)
+        assertEquals(null, state?.pid)
+        assertEquals(1, state?.currentStepIndex)
     }
 
     @Test
@@ -599,6 +720,25 @@ class RunOrchestratorTest {
             }
         )
     )
+
+    private fun agentRecipe(id: String, agentId: String): KiteRecipe = KiteRecipe(
+        id = id,
+        name = id,
+        description = "",
+        type = KiteRecipe.TYPE_AGENT,
+        defaultUrl = "",
+        shortcut = false,
+        execution = KiteExecution.steps(
+            listOf(
+                KiteRecipeStep(
+                    id = "agent",
+                    type = KiteRecipe.STEP_AGENT,
+                    agentId = agentId,
+                    workdir = "/workspace"
+                )
+            )
+        )
+    )
 }
 
 private class FakeRecipeExecutor(
@@ -696,6 +836,7 @@ private class FakeRunStateGateway : RunStateGateway {
             parentInstanceId = request.parentInstanceId,
             ownerKind = request.ownerKind,
             stepId = request.stepId,
+            agentId = request.agentId,
             status = CardRunStatus.Starting,
             stepCount = request.recipe.steps.size,
             createdAt = now,
@@ -750,6 +891,12 @@ private class FakeRunStateGateway : RunStateGateway {
             },
             x11Display = if (mutation.clearRunBinding) null else mutation.x11Display ?: existing.x11Display,
             x11SocketPath = if (mutation.clearRunBinding) null else mutation.x11SocketPath ?: existing.x11SocketPath,
+            agentId = existing.agentId ?: mutation.agentId,
+            agentBinding = if (mutation.clearRunBinding || mutation.clearAgentBinding) {
+                null
+            } else {
+                mutation.agentBinding ?: existing.agentBinding
+            },
             updatedAt = now
         ).also { states[instanceId] = it }
     }

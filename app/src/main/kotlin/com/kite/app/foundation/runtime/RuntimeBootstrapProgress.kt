@@ -135,8 +135,6 @@ object RuntimeBootstrapProgress {
                 snapshot("正在准备工作区", "正在准备构建辅助目录。", if (completed) 70 else 67)
             stage.startsWith("ensureWorkspaceSystemComponents") ->
                 snapshot("正在安装 Kite 系统命令", "正在写入 Kite 内置命令和桥接脚本。", if (completed) 76 else 70)
-            stage.startsWith("ensureExternalExchange") ->
-                snapshot("正在准备投递区", "正在确认 Android 与 Ubuntu 的共享投递目录。", if (completed) 78 else 76)
             stage == "ensureRuntimeOperational" ->
                 snapshot("正在启动 Ubuntu", "正在用 PRoot 执行最小 shell。", if (completed) 80 else 78)
             stage == "installBundledToolchain" ->
