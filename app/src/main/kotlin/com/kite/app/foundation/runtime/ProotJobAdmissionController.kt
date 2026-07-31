@@ -292,13 +292,8 @@ internal class ProotJobAdmissionController(
     }
 
     private fun ProotJobAdmissionPolicy.effectiveGlobalMax(): Int {
-        val profileMax = globalMaxOverride ?: when (profileGroup) {
-            RuntimeLifecyclePolicyProfileGroup.LOW_POWER -> 1
-            RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED -> 2
-            RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE -> 4
-            RuntimeLifecyclePolicyProfileGroup.CUSTOM -> lanes.maxOfOrNull { it.maxConcurrency }
-                ?.coerceIn(1, 4) ?: 1
-        }
+        val profileMax = globalMaxOverride
+            ?: ProotPerformanceTunings.resolve(profileGroup, lanes).configuredGlobalMax
         return when (pressure) {
             RuntimePressureLevel.UNKNOWN -> 1
             RuntimePressureLevel.NORMAL -> profileMax

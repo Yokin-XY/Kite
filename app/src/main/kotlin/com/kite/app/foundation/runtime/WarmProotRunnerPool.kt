@@ -18,11 +18,15 @@ internal data class WarmProotRunnerPoolTuning(
     val idleTimeoutMs: Long,
 ) {
     companion object {
-        fun forProfile(profile: RuntimeLifecyclePolicyProfileGroup): WarmProotRunnerPoolTuning = when (profile) {
-            RuntimeLifecyclePolicyProfileGroup.LOW_POWER -> WarmProotRunnerPoolTuning(1, 2_000L)
-            RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED -> WarmProotRunnerPoolTuning(2, 30_000L)
-            RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE -> WarmProotRunnerPoolTuning(4, 120_000L)
-            RuntimeLifecyclePolicyProfileGroup.CUSTOM -> WarmProotRunnerPoolTuning(2, 30_000L)
+        fun forPolicy(
+            profile: RuntimeLifecyclePolicyProfileGroup,
+            lanes: List<RuntimeLanePolicy>,
+        ): WarmProotRunnerPoolTuning {
+            val tuning = ProotPerformanceTunings.resolve(profile, lanes)
+            return WarmProotRunnerPoolTuning(
+                maxWarmRunners = tuning.maxWarmRunners,
+                idleTimeoutMs = tuning.idleTimeoutMs,
+            )
         }
     }
 }
@@ -405,7 +409,9 @@ internal object WarmProotExecutionCoordinator {
                             )
                         )
                     },
-                    tuningProvider = { WarmProotRunnerPoolTuning.forProfile(policy.profileGroup) },
+                    tuningProvider = {
+                        WarmProotRunnerPoolTuning.forPolicy(policy.profileGroup, policy.lanes)
+                    },
                 )
             ).also { holder = it }
         }
