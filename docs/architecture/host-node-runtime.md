@@ -66,12 +66,28 @@ Android seccomp 拒绝部分普通发行版允许的新 syscall。兼容副本�
 | HN-007 | 兼容性 | Host Node 看见 Android 物理 workspace/rootfs；原生 addon 可绕过 JS 子进程代理 | 建立路径、系统探测、直接 `execve/system` 和代表性 addon 矩阵；不能安全表达时启动前回退 |
 | HN-008 | 覆盖面 | 资源终端、Agent 和后台结构化入口已共用 Host Node 计划器 | 新入口必须提交结构化请求，禁止在入口复制 Host/PRoot 选择 |
 | HN-009 | 可观测性 | CardRun 与后台 Registry 保存实际车道和原因 | 新入口必须通过状态拥有者写入，页面不能探测或复制运行事实 |
+| HN-010 | 包管理兼容 | 受管 npm/npx/pnpm CLI 可留在 Host，但真实 lifecycle script 和原生构建尚未形成发布矩阵 | 覆盖纯 JS 插件、shell lifecycle、node-gyp/编译器、失败清理和启动前整条 PRoot 回退 |
+| HN-011 | 版本生命周期 | `kite.nodejs` 是唯一运行时来源，但活跃进程的旧代次租约和延迟回收仍未完成正式验收 | 升级发布新代次；旧租约退出前不回收或替换其 loader/libc/Node 资产；有反向依赖时禁止卸载 |
+
+## 证据映射
+
+| 编号 | 当前证据 | 状态 |
+| --- | --- | --- |
+| HN-001～HN-002 | `HostNodeNativeCompatibilityContractTest` 与 ARM64/C 源合同 | 自动护栏 |
+| HN-003 | `HostNodeRuntimePreparerTest` 的身份、段边界、精确命中和畸形 ELF 拒绝 | 自动护栏 |
+| HN-004～HN-005 | `host-node-pressure-benchmark` 既有真机矩阵；受管 Node 子进程脚本合同 | 历史性能证据有效，前提变化才重跑 |
+| HN-006 | `HostNodeRuntimeTest` 与 `test-kite-node-host-runtime.mjs` 的 shebang、wrapper、spawn/exec/fork/信号 | 自动护栏加真机脚本入口 |
+| HN-007 | 当前只有失败关闭和 PRoot 回退边界，尚无代表性 addon 矩阵 | 未关闭，等待真实样本矩阵 |
+| HN-008 | `HostNodeLaunchPlannerContractTest`，终端、Agent、后台入口回归 | 自动护栏 |
+| HN-009 | `CardRunRuntimeLaneContractTest` 与 `BackgroundRuntimeStructuredLaunchContractTest` | 自动护栏 |
+| HN-010 | 受管 CLI 路由已覆盖，真实插件/lifecycle/native build 未覆盖 | 未关闭 |
+| HN-011 | 单一资源来源已存在，活跃代次租约与升级回收未完成 | 未关闭 |
 
 ## 尚未关闭的专项门
 
-- 真实 npm/plugin 生命周期脚本与原生构建回退矩阵；
+- HN-010 的真实 npm/plugin 生命周期脚本与原生构建回退矩阵；
 - HN-007 的代表性原生 addon 与直接 syscall；
-- 运行中旧 Node 代次租约和升级后的延迟回收；
+- HN-011 的运行中旧 Node 代次租约和升级后延迟回收；
 - Node/rootfs/兼容层升级后的针对性回归；
 - 真实模型首个 token 属于应用链路验收，不由 `--version` 或横幅替代。
 
@@ -81,4 +97,3 @@ Android seccomp 拒绝部分普通发行版允许的新 syscall。兼容副本�
 
 Node 将作为[通用依赖快速通道](managed-runtime-fast-path.md)的首个标准 Provider 接入
 [混合运行路由](runtime-provider-routing.md)。RF210 只做合同适配和等价性护栏，不重写现有兼容层。
-
