@@ -282,8 +282,8 @@
 
 ##### RF410c 回归与父任务门
 
-- [ ] 普通终端、复杂 shell、Linux ELF、编译器、Agent、后台与显式 View 合同通过；
-- [ ] Debug 构建与必要真机链通过，不重跑已冻结的 Node 性能矩阵。
+- [x] 普通终端、复杂 shell、Linux ELF、编译器现状、Agent、后台与显式 View 合同通过；
+- [x] Debug 构建与必要真机链通过，未重跑已冻结的 Node 性能矩阵。
 
 #### RF420 负载分类与准入
 

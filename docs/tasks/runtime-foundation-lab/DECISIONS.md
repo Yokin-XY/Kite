@@ -121,7 +121,7 @@
 
 ## ADR-RF-016 PRoot Provider 只拥有逻辑计划
 
-- 状态：已接受，RF410a～RF410b 已落地
+- 状态：已接受，RF410 已完成
 - 日期：2026-08-01
 - 决定：最终 PRoot Provider 归一 payload、工作目录、环境、PTY、View 与选择原因；物理启动配置继续由既有 `KFContainerManager` 在执行入口生成。
 - 原因：把 PRoot argv、bind、网络和遥测复制进新 Provider 会形成第二套兼容实现；只返回字符串 `Fallback` 又不足以约束各入口使用同一计划。

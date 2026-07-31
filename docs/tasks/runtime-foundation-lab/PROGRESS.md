@@ -20,7 +20,7 @@
 | RF320 | 已完成 | 文件 Provider、Recipe/Run、权限边界和真机门通过 |
 | RF330 | 已完成 | 安全 ZIP 正确性通过，但真机慢于 PRoot，不进入资源快速车道 |
 | RF340 | 已完成 | 真实能力目录、薄适配、失败关闭和父任务门通过 |
-| RF400 | 进行中 | RF410b 正式入口适配完成，进入 RF410c 等价回归与真机门 |
+| RF400 | 进行中 | RF410 已完成，进入 RF420 PRoot 负载分类与准入 |
 
 ## RF110 开机与三问自检
 
@@ -29,6 +29,15 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-08-01 RF410c / RF410 父任务验收
+
+- RF410b 已完成的 10 个相关 suite、52 项回归继续覆盖 Provider/Planner、普通终端、Agent、后台、资源 shell、停止派发和显式 View 传递；RF410c 仅新增 debug 真机探针，没有重复执行这些未受影响的测试，也没有重跑 Node 性能矩阵。
+- Debug 编译与构建通过；APK 为 247,072,180 bytes，SHA-256 `DCEB615400A353BBFA2000E2DF95A07FF1BC5EDF1C050F73F7EB7F4E910DA721`，构建物未进入 Git。
+- OnePlus 8T 固定探针通过：直接 shell 104 ms、复杂 shell/ELF 103 ms、结构化 argv 103 ms；正式 `RunOrchestrator -> AndroidRecipeExecutor -> PRoot Provider -> 唯一进程` 为 985 ms，最终车道 `proot_shell`，原因 `shell_command_requires_proot`。
+- 当前 Ubuntu rootfs 没有 `cc`；探针确认缺失状态未被 Provider 改造掩盖，不能宣称编译器执行成功。显式 View 只验证逻辑计划和 ID 传递，不创建伪 View 或全局叠层。
+- 旧 600 秒 owner 探针属于瞬态运行，不写入持久化 CardRun；误用持久化文件观察后已通过停止 debug 应用清理。同一轮固定短探针结束后无残留 PRoot/睡眠进程，日志无新增 ANR/FATAL。
+- RF410 完成；下一恢复指针为 RF420，把现有准入控制器接入逐类声明，不改变 PRoot 物理构造器、View 和状态拥有者。
 
 ### 2026-08-01 RF410b 正式入口等价适配
 

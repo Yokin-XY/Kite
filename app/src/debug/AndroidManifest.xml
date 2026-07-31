@@ -41,6 +41,13 @@
                 <action android:name="com.kite.app.debug.NATIVE_ARCHIVE_CAPABILITY_BENCHMARK" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ProotCompatibilityProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PROOT_COMPATIBILITY_PROBE" />
+            </intent-filter>
+        </receiver>
         <service
             android:name="com.kite.app.foundation.runtime.NativeDownloadCapabilityBenchmarkService"
             android:exported="false" />
