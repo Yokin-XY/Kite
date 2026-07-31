@@ -40,7 +40,8 @@
 | RF740 | 已完成 | planned/actual 固定投影、合同复核和敏感字段护栏通过 |
 | RF750 | 已完成 | 1404 项全量回归与强制构建通过；RF700 无生产装配，不覆盖安装 |
 | RF800 | 进行中 | 只沿 RF650 go 方向补后台长期 owner 强身份，不迁移终端/Agent |
-| RF810 | 进行中 | 审计后台记录、Host 进程、停止确认、恢复和 `/proc` 身份链 |
+| RF810 | 已完成 | 定位 PID/token/停止窗口，确认持久强身份还需 boot ID + start ticks |
+| RF820 | 进行中 | 增加 Host 同轮强身份观察与后台 JSON 向后兼容持久化 |
 
 ## RF110 开机与三问自检
 
@@ -130,6 +131,14 @@
 - 目标是什么？把后台 runtime 从 PID-only 恢复推进到可证明的 `(hostPid, processStartTicks)` 身份前，完整核清记录、真实创建/attach/stop、持久化和观察链。
 - 完成后拿什么证明？生产引用图、字段来源、旧记录兼容、停止确认和重复实例风险逐项落到代码位置；本叶只审计与定合同，不改生产行为。
 - 依赖是否满足？满足。RF650 已明确后台是唯一可继续准备的长期 owner 类别，RF750 已完成且没有把自适应预研接入生产；终端和 Agent 继续 no-go。
+
+## RF810 验收
+
+- 正式架构审计写入 `docs/architecture/background-runtime-strong-identity.md`；生产链为 single-flight → ProcessBuilder → handle/PID → Registry，应用重启后则由 persisted PID + container-like + command token/statusCommand 弱探测恢复。
+- `HostProcessInspector` 已解析 `/proc/<pid>/stat`，但只取 PGID、SID、CPU ticks，未取字段 22 starttime；`HostProcessRecord` 没有进程代次，`HostProcessSnapshot` 没有 boot identity。
+- 发现跨设备 reboot 边界：`(pid,startTicks)` 只在同一 boot 内唯一。后台记录跨 reboot 持久化，所以 RF820 必须保存 `(bootId,pid,startTicks)`；boot 相同后才可向 RF610 提供 PID+代次。
+- 停止链当前先用内存 `stoppingRuntimeIds`，终止并无条件写 STOPPED 后才持久化 expected stop；终止结果不控制 STOPPED。RF830 必须改为先持久化意图、再精确校验代次、观察退出后确认并释放 lease。
+- RF810 只修改正式架构/任务文档，没有代码和生产行为变化，无需构建或真机。下一恢复指针进入 RF820；SERVICE、Host lane、终端和 Agent 均不进入本桥接。
 
 ## RF710 开机与三问自检
 

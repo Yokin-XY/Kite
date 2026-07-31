@@ -278,3 +278,11 @@
 - 决定：RF700 以规划合同结束，不接生产 Store、定时器或 coordinator override。HIGH/CRITICAL 内存压力继续由现有 admission 的 effective max 自动收缩；失败率调档与自动升档均保持 no-go。
 - 原因：内存压力与收缩准入存在直接安全关系，且生产机制已经生效；任务失败可能来自命令、依赖、网络或环境，尚不能归因于并发。仓库也没有可靠 thermal source，无法满足升档门。再建自适应 override 会复制正式档位事实并可能形成抖动。
 - 影响：RF710～RF740 代码只作为纯评估/模拟/投影合同保留，不接 `RuntimeHealthStore`。下一优化阶段转向 RF650 已证明的后台强身份桥接，避免为了“继续优化”重复实现已有内存收缩。
+
+## ADR-RF-036 后台持久强身份包含 boot identity 且停止意图先落盘
+
+- 状态：已接受，RF810 已完成
+- 日期：2026-08-01
+- 决定：后台记录的持久强身份采用 `(bootId, hostPid, processStartTicks)`；只有 boot 一致后才向 RF610 长期 lease 提供 PID+代次。停止必须先持久化 expected stop，再校验同一强身份、发信号并观察退出，最后确认 STOPPED 和释放容量。
+- 原因：PID 会复用，start ticks 也会在设备 reboot 后重新从 boot 起点计数；仅靠 command token/statusCommand 只能证明类似进程或服务存在。当前停止链无论 terminate outcome 都写 STOPPED，且 expected stop 落盘晚于信号，无法承担长期容量释放语义。
+- 影响：RF820 先补通用 Host 观察与 Registry 持久化，不改变 attach/kill；RF830 才允许调整停止和恢复。旧 JSON、`ps -A` fallback 或任一身份字段缺失都只可继续现有诊断，不得进入长期 lease。

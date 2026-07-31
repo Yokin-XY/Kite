@@ -525,13 +525,17 @@
 #### RF810 后台运行身份与停止链审计
 
 - 解法：核清 `BackgroundRuntimeRecord`、`HostProcessRecord`、真实进程创建/attach/stop、JSON 恢复和 `/proc/<pid>/stat` 读取边界，形成最小字段与迁移顺序。
-- 验收标准：生产读写图可复核；PID-only、token/command 匹配和停止确认缺口分别定位；不修改生产行为。
+- 验收标准：
+  - [x] 创建、handle、PID 发布、应用重启、外部 attach、停止、协调和恢复生产链已逐项核清；
+  - [x] PID-only、command token/statusCommand 弱归属和无条件 STOPPED 缺口分别定位；
+  - [x] 确认 `/proc stat` 已读取但缺第 22 字段，且跨设备重启还必须增加 boot identity；
+  - [x] 固定 RF820～RF840 最小字段、写入不变量、停止顺序和类别边界；本叶未修改生产行为。
 - 依赖：RF650、RF750。
 
 #### RF820 强进程身份值对象与持久化
 
-- 解法：为后台 runtime owner 增加 `(hostPid, processStartTicks)` 强身份，旧记录缺失时保持 review/no-attach；只由真实进程观察器生成。
-- 验收标准：PID 复用拒绝、旧 JSON 兼容、同 owner 代次、序列化恢复和敏感字段边界通过。
+- 解法：宿主同轮 `/proc` 观察生成 `(bootId, hostPid, processStartTicks)`；后台 JSON 保存 boot/代次，只有同 boot 后才转换为 RF610 的 PID+代次身份。旧记录缺失时保持 review/no-attach。
+- 验收标准：PID 复用、设备 boot 变化拒绝；旧 JSON 兼容；PID 改变/清空同步清身份；序列化恢复和敏感字段边界通过。
 - 依赖：RF810。
 
 #### RF830 停止确认与单实例恢复桥
