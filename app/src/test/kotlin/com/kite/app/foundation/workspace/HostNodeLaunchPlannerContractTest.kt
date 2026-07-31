@@ -10,10 +10,11 @@ class HostNodeLaunchPlannerContractTest {
     fun `planner owns provider selection and child process contract without process lifecycle`() {
         val source = sourceFile().readText()
 
+        assertTrue(source.contains("HostPythonRuntimeProvider.prepare("))
         assertTrue(source.contains("HostNodeRuntimeProvider.prepare("))
         assertTrue(source.contains("RuntimeProviderDecision.Unsupported"))
-        assertTrue(source.contains("HostNodeLaunchPlan.Blocked"))
-        assertTrue(source.contains("HostNodeChildProcessContract.from(childExecConfig, marker).attachTo(baseConfig)"))
+        assertTrue(source.contains("ManagedRuntimeLaunchPlan.Blocked"))
+        assertTrue(source.contains("HostNodeChildProcessContract.from(childExecConfig, marker).attachTo(baseConfig.plan)"))
         assertTrue(source.contains("WorkSurfaceRuntimeBridge.buildArgvExecConfig("))
         assertFalse(source.contains("ProcessBuilder("))
         assertFalse(source.contains("CardRunStore"))
@@ -21,7 +22,7 @@ class HostNodeLaunchPlannerContractTest {
     }
 
     private fun sourceFile(): File = listOf(
-        File("src/main/kotlin/com/kite/app/foundation/workspace/HostNodeLaunchPlanner.kt"),
-        File("app/src/main/kotlin/com/kite/app/foundation/workspace/HostNodeLaunchPlanner.kt"),
+        File("src/main/kotlin/com/kite/app/foundation/workspace/ManagedRuntimeLaunchPlanner.kt"),
+        File("app/src/main/kotlin/com/kite/app/foundation/workspace/ManagedRuntimeLaunchPlanner.kt"),
     ).first(File::exists)
 }

@@ -7,6 +7,8 @@ import android.content.Intent
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
+import com.kite.app.foundation.contracts.ContainerLaunchConfig
+import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -158,6 +160,7 @@ private object PythonRuntimeBenchmark {
     }
 
     private fun functionalReports(context: Context, host: HostPythonLayout): List<String> = listOf(
+        productionProviderReport(context, host),
         compatibilityReport(
             context,
             host,
@@ -182,6 +185,36 @@ private object PythonRuntimeBenchmark {
         compatibilityReport(context, host, "venv_create", VENV_CREATE_PROBE),
         compatibilityReport(context, host, "venv_child", VENV_CHILD_PROBE),
     )
+
+    private fun productionProviderReport(context: Context, host: HostPythonLayout): String {
+        val decision = HostPythonRuntimeProvider.prepare(
+            context = HostPythonProviderContext(context, host.container, host.workspaceDirectory),
+            request = RuntimeExecutionRequest(
+                payload = RuntimeExecutionPayload.Argv(
+                    executable = "python3",
+                    arguments = listOf("-c", "print(\"$TOKEN\")"),
+                ),
+                workingDirectory = "/workspace",
+                environment = mapOf("KITE_PYTHON_PROVIDER_PROBE" to "1"),
+            ),
+        )
+        val execution = when (decision) {
+            is RuntimeProviderDecision.Ready -> execute(decision.plan)
+            is RuntimeProviderDecision.Unsupported -> Execution(
+                exitCode = -1,
+                stdout = "",
+                stderr = "unsupported_${decision.reason}",
+            )
+            is RuntimeProviderDecision.Blocked -> Execution(
+                exitCode = -1,
+                stdout = "",
+                stderr = "blocked_${decision.reason}",
+            )
+        }
+        return "status=compatibility capability=production_provider host=${execution.succeeded} " +
+            "hostExit=${execution.exitCode} hostReason=${safe(execution.stderr)} " +
+            "proot=not_run prootExit=not_run prootReason=provider_host_only"
+    }
 
     private fun compatibilityReport(
         context: Context,
@@ -249,6 +282,25 @@ private object PythonRuntimeBenchmark {
             }
         }.redirectErrorStream(false)
 
+        return execute(processBuilder)
+    }
+
+    private fun execute(config: ContainerLaunchConfig): Execution {
+        val environmentMap = config.env.associateTo(linkedMapOf()) { entry ->
+            entry.substringBefore('=') to entry.substringAfter('=', "")
+        }
+        return execute(
+            ProcessBuilder(config.args.toList())
+                .directory(File(config.workingDirectory))
+                .apply {
+                    environment().clear()
+                    environment().putAll(environmentMap)
+                }
+                .redirectErrorStream(false)
+        )
+    }
+
+    private fun execute(processBuilder: ProcessBuilder): Execution {
         val process = processBuilder.start()
         val stdout = ByteArrayOutputStream()
         val stderr = ByteArrayOutputStream()
@@ -287,13 +339,13 @@ private object PythonRuntimeBenchmark {
         val pythonLibraryDirectory = File(pythonRoot, "lib")
         check(pythonLibraryDirectory.isDirectory) { "python_libraries_missing" }
         val workspaceDirectory = File(container.workspacePath)
-        val assets = when (val prepared = HostNodeRuntimePreparer.prepare(
+        val assets = when (val prepared = GlibcHostRuntimePreparer.prepare(
             context = context,
             container = container,
             workspaceDirectory = workspaceDirectory,
         )) {
-            is HostNodeRuntimePreparation.Ready -> prepared.assets
-            is HostNodeRuntimePreparation.Fallback -> error("host_assets_${prepared.reason}")
+            is GlibcHostRuntimePreparation.Ready -> prepared.assets
+            is GlibcHostRuntimePreparation.Unsupported -> error("host_assets_${prepared.reason}")
         }
         val rootfsDirectory = File(container.rootfsPath)
         val glibcDirectories = listOf(
@@ -302,6 +354,7 @@ private object PythonRuntimeBenchmark {
         ).filter(File::isDirectory)
         check(glibcDirectories.isNotEmpty()) { "glibc_libraries_missing" }
         return HostPythonLayout(
+            container = container,
             workspaceDirectory = workspaceDirectory,
             rootfsDirectory = rootfsDirectory,
             pythonRoot = pythonRoot,
@@ -356,13 +409,14 @@ private object PythonRuntimeBenchmark {
     }
 
     private data class HostPythonLayout(
+        val container: ContainerRecord,
         val workspaceDirectory: File,
         val rootfsDirectory: File,
         val pythonRoot: File,
         val pythonBinary: File,
         val pythonLibraryDirectory: File,
         val glibcLibraryDirectories: List<File>,
-        val assets: HostNodeRuntimeAssets,
+        val assets: GlibcHostRuntimeAssets,
     ) {
         val environment: Map<String, String>
             get() {
@@ -387,11 +441,11 @@ private object PythonRuntimeBenchmark {
                     "PYTHONUNBUFFERED" to "1",
                     "GLIBC_TUNABLES" to "glibc.pthread.rseq=0",
                     "SSL_CERT_FILE" to certificateFile.absolutePath,
-                    "KITE_NODE_HOST_LOADER" to assets.patchedLoader.absolutePath,
-                    "KITE_NODE_HOST_LIBRARY_PATH" to libraryPath,
-                    "KITE_NODE_HOST_COMPAT_LIBRARY" to assets.compatLibrary.absolutePath,
-                    "KITE_NODE_HOST_BINARY" to pythonBinary.absolutePath,
-                    "KITE_NODE_HOST_RESOLV_CONF" to assets.resolvConf.absolutePath,
+                    "KITE_GLIBC_HOST_LOADER" to assets.patchedLoader.absolutePath,
+                    "KITE_GLIBC_HOST_LIBRARY_PATH" to libraryPath,
+                    "KITE_GLIBC_HOST_COMPAT_LIBRARY" to assets.compatLibrary.absolutePath,
+                    "KITE_GLIBC_HOST_TARGET" to pythonBinary.absolutePath,
+                    "KITE_GLIBC_HOST_RESOLV_CONF" to assets.resolvConf.absolutePath,
                 )
             }
 

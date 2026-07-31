@@ -27,7 +27,7 @@ Node 的详细合同、HN-001～HN-009 风险索引见[宿主 Node 快速运行�
 - 新的真实原生 addon、插件或 Gateway 样本暴露旧矩阵未覆盖的能力；
 - 旧证据对应的入口已不再是正式路径。
 
-## Python：首个新增候选
+## Python：首个新增 Provider
 
 Python 不能因为“也是解释器”直接复制 Node 结论。它需要独立证明：
 
@@ -38,16 +38,19 @@ Python 不能因为“也是解释器”直接复制 Node 结论。它需要独�
 - venv、pip、纯 Python wheel；
 - C 扩展、`dlopen`、构建工具链和直接 syscall。
 
-RF230 先形成 Host/PRoot 同版本对照和 go/no-go。没有达到预先固定的收益、稳定性或回退可证明性时，Python 保持 PRoot，
-不为了完成路线而强行上线。
+RF230 先形成 Host/PRoot 同版本对照和 go/no-go；RF240 只在通过固定门槛后接入纯 Python 结构化 argv。
 
 RF230 已在 OnePlus 8T 上形成 go/no-go：纯 Python、标准库、内置 C 扩展和纯 Python wheel 可在 Host 启动；Python
 `subprocess` 与 venv 子解释器不能直接执行 Linux ELF，必须在进程创建前回到 PRoot。完整数据和证据边界见
 [宿主 Python 性能矩阵](host-python-performance-matrix.md)。
 
+RF240 已把入口无关的 `GlibcHostRuntimePreparer`、`HostPythonRuntimeProvider` 和统一
+`ManagedRuntimeLaunchPlanner` 接入终端、Agent 与后台运行的共同准备链。Provider 不创建进程、不读取资源 ID，也不新增状态源；
+实际车道继续写回原有运行事实。终端的普通命令文本仍走 PRoot，只有已经结构化为 argv 的受管 Python 请求可进入快速通道。
+
 ## Python 第一阶段边界
 
-若 RF230 给出 go，RF240 只开放：
+RF240 只开放：
 
 - 结构化 `python` executable 与 argv；
 - 无 shell 展开；

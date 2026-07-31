@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF200` 通用依赖快速通道
-- 当前任务：`RF240` 纯 Python 结构化命令快速通道
+- 当前任务：`RF250` Python subprocess、venv、pip 与扩展分层
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -109,10 +109,10 @@
 - 问题证据：若 RF230 证明有稳定收益，最小安全范围应先排除 shell 展开和 C 扩展。
 - 解法：只接受结构化 Python argv、可表达 cwd/env/stdio 和满足身份门的资产；不满足时启动前回退 PRoot。
 - 验收标准：
-  - [ ] 无应用名特判；
-  - [ ] Host/PRoot 同输入语义对照通过；
-  - [ ] 唯一进程、取消、退出码和输出完整；
-  - [ ] 真机收益达到 RF230 预先固定的发布门。
+  - [x] 无应用名特判；
+  - [x] Host/PRoot 同输入语义对照通过；
+  - [x] 唯一进程、取消、退出码和输出完整；
+  - [x] 真机收益达到 RF230 预先固定的发布门。
 - 依赖：RF230 的 go 结论。
 
 #### RF250 Python subprocess、venv、pip 与扩展分层

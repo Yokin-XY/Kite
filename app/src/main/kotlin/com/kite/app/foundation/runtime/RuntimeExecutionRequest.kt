@@ -47,6 +47,8 @@ internal enum class RuntimeExecutionRequirement {
     ANDROID_NATIVE,
     INTERACTIVE_PTY,
     FILESYSTEM_VIEW,
+    CHILD_PROCESS,
+    UNVERIFIED_NATIVE_EXTENSION,
 }
 
 internal enum class RuntimeFallbackPolicy {
@@ -77,4 +79,3 @@ internal data class RuntimeExecutionRequest(
         private val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
     }
 }
-

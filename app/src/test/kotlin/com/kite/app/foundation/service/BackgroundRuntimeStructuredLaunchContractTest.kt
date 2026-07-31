@@ -57,10 +57,10 @@ class BackgroundRuntimeStructuredLaunchContractTest {
         val body = source.substringAfter("private fun buildRuntimeProcessLaunchConfig(")
             .substringBefore("private fun ", missingDelimiterValue = source)
 
-        assertTrue(body.contains("HostNodeLaunchPlanner.plan("))
+        assertTrue(body.contains("ManagedRuntimeLaunchPlanner.plan("))
         assertTrue(body.contains("RuntimeExecutionPayload.Argv(executable, record.startArguments)"))
         assertTrue(body.contains("WorkSurfaceRuntimeBridge.buildShellExecConfig("))
-        assertTrue(body.contains("hostFallbackReason ?: \"host_node_unavailable\""))
+        assertTrue(body.contains("hostFallbackReason ?: \"managed_runtime_unavailable\""))
         assertFalse(body.contains("ProcessBuilder("))
         val startBody = source.substringAfter("private fun startProcessRuntime(")
             .substringBefore("private fun buildRuntimeProcessLaunchConfig(")

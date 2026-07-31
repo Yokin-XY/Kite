@@ -74,9 +74,34 @@ Debug Receiver 不接受命令、路径、负载或并发度；外部只能选�
 Host 的两个失败均发生在 Python 主进程创建后，因此正式 RF240 不能“先试 Host、失败再跑 PRoot”。Planner 必须根据能力声明在
 创建任何 Python 进程前选择 PRoot。
 
+## RF240 生产接入复验
+
+RF240 将通用 glibc Host 资产从 Node 专名中提取，并接入标准 `HostPythonRuntimeProvider` 与统一
+`ManagedRuntimeLaunchPlanner`。2026-07-31 在同一台 OnePlus 8T 上覆盖安装 Debug APK 后，生产 Provider 直接生成的
+`ContainerLaunchConfig` 已真实启动 Python 3.14.6，输出标记和退出码均通过；它没有借用 Node 环境变量或 Node 资产路径。
+
+发布门的六个固定性能点如下。时间仍为三轮 wall-clock p50：
+
+| 负载 | 并发 | Host p50 | PRoot p50 | p50 降低 | 失败 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 启动 | 1 | 109ms | 265ms | 58.9% | 0 |
+| 启动 | 8 | 132ms | 400ms | 67.0% | 0 |
+| import | 1 | 109ms | 527ms | 79.3% | 0 |
+| import | 8 | 226ms | 411ms | 45.0% | 0 |
+| 小文件 | 1 | 108ms | 734ms | 85.3% | 0 |
+| 小文件 | 8 | 235ms | 490ms | 52.0% | 0 |
+
+六个固定点均超过 20% 门槛。完整 RF240 矩阵仍为 20 组对照、40 个通道测点零失败，Host p50 降低
+33.2%～85.3%，且没有新增 ANR/FATAL。兼容复验仍得到同一边界：stdlib、内置 C 扩展、pip 入口、纯 wheel 和 venv
+创建通过；Python subprocess 与 venv 子解释器只在 PRoot 通过。
+
+当前正式通道只对结构化受管 Python 请求开放。调用方必须在请求中声明子进程、完整 Linux、View、PTY 或未验证原生扩展需求；
+这些需求会在创建 Python 进程前回退 PRoot。当前资源清单没有结构化 Python 消费者，因此 RF240 不把某个应用或资源改成隐式
+Python 特例；后续消费者必须显式进入统一 Planner。
+
 ## RF240 发布门
 
-以下门槛在生产 Provider 实现前固定：
+以下门槛已按生产 Provider 复验：
 
 1. 只接受结构化 `python`/`python3` argv，不接受 shell 文本和资源 ID 条件。
 2. 请求声明 subprocess、完整 Linux、View 或未验证 C 扩展时，Host 进程创建数必须为 0，PRoot 只创建一次。
@@ -89,4 +114,4 @@ Host 的两个失败均发生在 Python 主进程创建后，因此正式 RF240 
 - 单设备、Debug 构建和三轮样本适合做 go/no-go，不是全机型容量承诺。
 - 未冷却 Linux page cache，因此“启动”表示独立进程启动，不表示首次安装后的物理冷盘启动。
 - 本矩阵没有宣称第三方 C 扩展、编译工具链、网络 pip 安装或长期 Python 服务兼容。
-- RF240 接入正式 Provider 后仍需按发布门跑最窄生产链路，不重复 Node 历史矩阵。
+- RF240 只复验 Python 生产链与通用 glibc 资产，没有重复 Node 历史矩阵。

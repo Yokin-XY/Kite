@@ -41,8 +41,8 @@ import com.kite.app.application.runs.RunStateMutation
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
-import com.kite.app.foundation.workspace.HostNodeLaunchPlan
-import com.kite.app.foundation.workspace.HostNodeLaunchPlanner
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlan
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlanner
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.resources.KiteResourceAgentProfile
 import com.kite.app.resources.KiteResourceAgentRuntimeDependency
@@ -176,7 +176,7 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
         require(argv.isNotEmpty()) { "agent_process_command_empty" }
         val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
         val activeEnvironment = WorkSurfaceRuntimeBridge.resolveActiveWorkspaceEnvironment(container)
-        val hostPlan = HostNodeLaunchPlanner.plan(
+        val runtimePlan = ManagedRuntimeLaunchPlanner.plan(
             context = appContext,
             container = container,
             workspaceDirectory = File(activeEnvironment.workspacePath),
@@ -186,7 +186,7 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
                 environment = environment,
             ),
         )
-        return ManagedAgentProcessLaunchSelector.select(hostPlan, environment) {
+        return ManagedAgentProcessLaunchSelector.select(runtimePlan, environment) {
             WorkSurfaceRuntimeBridge.buildArgvExecConfig(
                 context = appContext,
                 workingDirectory = workingDirectory,
@@ -200,31 +200,31 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
 /** Host 已就绪时绝不构建第二条 PRoot 进程；Fallback 也只生成一份 PRoot 配置。 */
 internal object ManagedAgentProcessLaunchSelector {
     fun select(
-        hostPlan: HostNodeLaunchPlan,
+        runtimePlan: ManagedRuntimeLaunchPlan,
         additionalEnvironment: Map<String, String>,
         prootConfig: () -> ContainerExecConfig,
-    ): ManagedAgentProcessLaunch = when (hostPlan) {
-        is HostNodeLaunchPlan.Ready -> ManagedAgentProcessLaunch(
+    ): ManagedAgentProcessLaunch = when (runtimePlan) {
+        is ManagedRuntimeLaunchPlan.Ready -> ManagedAgentProcessLaunch(
             process = AgentProcessLaunch(
-                command = hostPlan.config.args.toList(),
-                environment = hostPlan.config.env.associateTo(linkedMapOf()) { entry ->
+                command = runtimePlan.config.args.toList(),
+                environment = runtimePlan.config.env.associateTo(linkedMapOf()) { entry ->
                     entry.substringBefore('=') to entry.substringAfter('=', "")
                 },
             ),
-            runtimeLane = "host_node",
+            runtimeLane = runtimePlan.lane.value,
             fallbackReason = "none",
         )
-        is HostNodeLaunchPlan.Fallback -> prootConfig().let { config ->
+        is ManagedRuntimeLaunchPlan.Fallback -> prootConfig().let { config ->
             ManagedAgentProcessLaunch(
                 process = AgentProcessLaunch(
                     command = config.command,
                     environment = config.env + additionalEnvironment,
                 ),
                 runtimeLane = "proot_shell",
-                fallbackReason = hostPlan.reason,
+                fallbackReason = runtimePlan.reason,
             )
         }
-        is HostNodeLaunchPlan.Blocked -> error("runtime_provider_blocked:${hostPlan.reason}")
+        is ManagedRuntimeLaunchPlan.Blocked -> error("runtime_provider_blocked:${runtimePlan.reason}")
     }
 }
 

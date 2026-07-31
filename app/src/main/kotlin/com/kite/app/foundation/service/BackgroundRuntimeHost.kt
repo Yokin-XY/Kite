@@ -25,8 +25,8 @@ import com.kite.app.foundation.runtime.RuntimeResidentPolicyStore
 import com.kite.app.foundation.runtime.isContainerLikeProcess
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
-import com.kite.app.foundation.workspace.HostNodeLaunchPlan
-import com.kite.app.foundation.workspace.HostNodeLaunchPlanner
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlan
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlanner
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -1361,7 +1361,7 @@ object BackgroundRuntimeHost {
             val space = resolveSpace(appContext)
             check(space.id == record.spaceId) { "runtime_space_is_not_active" }
             val container = WorkSurfaceRuntimeBridge.resolveActiveContainer(appContext)
-            when (val plan = HostNodeLaunchPlanner.plan(
+            when (val plan = ManagedRuntimeLaunchPlanner.plan(
                 context = appContext,
                 container = container,
                 workspaceDirectory = File(space.workspacePath),
@@ -1371,22 +1371,22 @@ object BackgroundRuntimeHost {
                     environment = resolvedEnvironment,
                 ),
             )) {
-                is HostNodeLaunchPlan.Ready -> return RuntimeProcessLaunchConfig(
+                is ManagedRuntimeLaunchPlan.Ready -> return RuntimeProcessLaunchConfig(
                     command = plan.config.args.toList(),
                     environment = plan.config.env.associateTo(linkedMapOf()) { entry ->
                         entry.substringBefore('=') to entry.substringAfter('=', "")
                     },
-                    route = "host_node",
-                    reason = "structured_node_ready",
+                    route = plan.lane.value,
+                    reason = plan.reason,
                 )
-                is HostNodeLaunchPlan.Fallback -> {
+                is ManagedRuntimeLaunchPlan.Fallback -> {
                     hostFallbackReason = plan.reason
                     Logger.i(
                         LOG_TAG,
                         "结构化后台命令回退 PRoot: ${record.id}, reason=${plan.reason}"
                     )
                 }
-                is HostNodeLaunchPlan.Blocked -> {
+                is ManagedRuntimeLaunchPlan.Blocked -> {
                     error("runtime_provider_blocked:${plan.reason}")
                 }
             }
@@ -1408,7 +1408,7 @@ object BackgroundRuntimeHost {
             reason = if (executable.isBlank()) {
                 "structured_request_absent"
             } else {
-                hostFallbackReason ?: "host_node_unavailable"
+                hostFallbackReason ?: "managed_runtime_unavailable"
             },
         )
     }

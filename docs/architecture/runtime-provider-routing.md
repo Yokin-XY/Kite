@@ -22,13 +22,14 @@ Kite 同时保留三种执行能力，但不让资源卡、页面或最终应用
 
 当前已经具备：
 
-- `HostNodeRuntimeProvider` 与 `HostNodeLaunchPlanner`，可在创建进程前选择 Host Node 或 PRoot；
-- 终端、Agent、后台运行的结构化 Node 入口；
+- `HostNodeRuntimeProvider`、`HostPythonRuntimeProvider` 与 `ManagedRuntimeLaunchPlanner`，可在创建进程前选择 Host Node、Host Python 或 PRoot；
+- 终端、Agent、后台运行共用的受管运行时准备入口；终端命令文本仍保持 PRoot，结构化 Node/Python argv 才参与快速选择；
 - `runtimeLane`、`runtimeFallbackReason` 在 `CardRunStore` 与后台运行记录中的事实保存；
 - `ProotJobAdmissionController`、温热 Runner 协议和固定维护任务的第一条生产接线；
 - PackageInstaller、网络、文件保护、Keystore 等分散的 Android 原生实现。
 
-当前缺口不是重新实现 Node 或 PRoot，而是缺少入口无关的请求与 Provider 合同，原生能力也尚未作为统一运行选择的一等参与者。
+当前缺口不是重新实现 Node、Python 或 PRoot，而是原生能力尚未作为统一运行选择的一等参与者；Python 的 subprocess、venv、
+pip 生命周期和第三方扩展也仍需按能力分层，不能从纯 Python 结论外推。
 
 ## 术语
 

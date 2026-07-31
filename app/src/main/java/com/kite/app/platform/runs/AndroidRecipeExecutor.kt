@@ -38,8 +38,8 @@ import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.HostNodeLaunchPlan
-import com.kite.app.foundation.workspace.HostNodeLaunchPlanner
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlan
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlanner
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
@@ -80,7 +80,8 @@ internal class AndroidRecipeExecutor(
 
     private data class PreparedTerminalLaunch(
         val record: com.kite.app.foundation.contracts.ManagedTerminalRecord,
-        val hostConfig: com.kite.app.foundation.contracts.ContainerLaunchConfig?,
+        val runtimeConfig: com.kite.app.foundation.contracts.ContainerLaunchConfig?,
+        val runtimeLane: String,
         val fallbackReason: String,
     )
 
@@ -397,8 +398,8 @@ internal class AndroidRecipeExecutor(
                 val space = readyLease.spaceFor(request) ?: KFWorkspaceManager.ensureActiveSpace(appContext)
                 val container = readyLease.containerFor(request)
                 RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.RUNTIME_LEASE_CONSUMED)
-                val hostLaunch = if (readyLease.preparedSpace != null && command.isNotBlank()) {
-                    HostNodeLaunchPlanner.plan(
+                val runtimeLaunch = if (readyLease.preparedSpace != null && command.isNotBlank()) {
+                    ManagedRuntimeLaunchPlanner.plan(
                         context = appContext,
                         container = container,
                         workspaceDirectory = File(space.workspacePath),
@@ -408,20 +409,21 @@ internal class AndroidRecipeExecutor(
                         ),
                     )
                 } else {
-                    HostNodeLaunchPlan.Fallback("explicit_runtime_or_command_missing")
+                    ManagedRuntimeLaunchPlan.Fallback("explicit_runtime_or_command_missing")
                 }
-                if (hostLaunch is HostNodeLaunchPlan.Blocked) {
-                    error("runtime_provider_blocked:${hostLaunch.reason}")
+                if (runtimeLaunch is ManagedRuntimeLaunchPlan.Blocked) {
+                    error("runtime_provider_blocked:${runtimeLaunch.reason}")
                 }
-                val fallbackReason = (hostLaunch as? HostNodeLaunchPlan.Fallback)?.reason ?: "none"
-                val hostConfig = (hostLaunch as? HostNodeLaunchPlan.Ready)?.config
+                val fallbackReason = (runtimeLaunch as? ManagedRuntimeLaunchPlan.Fallback)?.reason ?: "none"
+                val readyRuntime = runtimeLaunch as? ManagedRuntimeLaunchPlan.Ready
                 PreparedTerminalLaunch(
                     record = KFWorkspaceManager.createEmbeddedShellSession(
                         spaceId = space.id,
                         title = terminalTitle(request.recipe, request.stepIndex),
                         sourceLabel = request.recipe.name,
                     ),
-                    hostConfig = hostConfig,
+                    runtimeConfig = readyRuntime?.config,
+                    runtimeLane = readyRuntime?.lane?.value ?: "proot_shell",
                     fallbackReason = fallbackReason,
                 )
             }.onSuccess { prepared ->
@@ -442,7 +444,7 @@ internal class AndroidRecipeExecutor(
                     sessionId = record.id,
                     overrides = browserEnvironment(request, "terminal_step") + terminalOwner.environment()
                 )
-                prepared.hostConfig?.let { config ->
+                prepared.runtimeConfig?.let { config ->
                     TerminalRuntimeHost.setLaunchConfigOverride(appContext, record.id, config)
                 }
                 TerminalRuntimeHost.stageEmbeddedSession(appContext, record)
@@ -466,7 +468,7 @@ internal class AndroidRecipeExecutor(
                                 ).distinct(),
                             runId = record.id,
                             terminalSessionId = record.id,
-                            runtimeLane = if (prepared.hostConfig != null) "host_node" else "proot_shell",
+                            runtimeLane = prepared.runtimeLane,
                             runtimeFallbackReason = prepared.fallbackReason,
                             lastMeaningfulOutput = "等待终端完成：${record.title}",
                             clearNextActionUrl = true
@@ -475,7 +477,7 @@ internal class AndroidRecipeExecutor(
                 )
                 RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.TERMINAL_OPEN_REQUESTED)
                 TerminalRuntimeHost.openEmbeddedSession(appContext, record)
-                if (prepared.hostConfig == null && command.isNotBlank()) {
+                if (prepared.runtimeConfig == null && command.isNotBlank()) {
                     diagnostics.logRecipeAction(
                         request.recipe,
                         "terminal_step_command_scheduled",
@@ -513,7 +515,7 @@ internal class AndroidRecipeExecutor(
                     mapOf(
                         "instanceId" to request.instanceId,
                         "sessionId" to record.id,
-                        "lane" to if (prepared.hostConfig != null) "host_node" else "proot_shell",
+                        "lane" to prepared.runtimeLane,
                         "fallbackReason" to prepared.fallbackReason,
                     )
                 )

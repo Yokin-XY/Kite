@@ -9,11 +9,12 @@
 | RF110 | 已完成 | 总架构、三份 Provider 文档、Node 风险索引与性能证据已固化 |
 | RF120 | 已完成 | 三个 Node 入口已迁移到统一结构化请求，行为等价 |
 | RF130 | 已完成 | Ready/Unsupported/Blocked 已接入三条正式 Node 入口 |
-| RF200 | 进行中 | RF210～RF230 已完成，进入 RF240 纯 Python Provider |
+| RF200 | 进行中 | RF210～RF240 已完成，进入 RF250 Python 能力分层 |
 | RF210 | 已完成 | Node 显式实现标准 Provider，既有行为等价 |
 | RF220 | 已完成 | HN-001～HN-011 已完成证据和开放门映射 |
 | RF230 | 已完成 | 纯 Python go；subprocess/venv child/第三方扩展保持 PRoot |
-| RF240～RF440 | 待开始 | 按任务树依赖推进 |
+| RF240 | 已完成 | 通用 glibc 资产与纯 Python 结构化 Provider 已通过真机门 |
+| RF250～RF440 | 待开始 | 按任务树依赖推进 |
 
 ## RF110 开机与三问自检
 
@@ -22,6 +23,17 @@
 - 依赖是否满足？满足。当前分支从干净 `main@8223ba0` 建立；原主工作树的 `AGENTS.md` 和 Agent 模型库改动未带入。
 
 ## 倒序日志
+
+### 2026-07-31 RF240 验收
+
+- 将启动器、兼容库和 rootfs 身份副本准备提取为入口无关的 `GlibcHostRuntimePreparer`；Node 既有嵌入资产未改变，因此没有重复 Node 性能矩阵。
+- 新增 `HostPythonRuntimeProvider` 与 `ManagedRuntimeLaunchPlanner`，只接收受管结构化 Python argv；终端、Agent、后台入口继续只创建一条实际运行通道并写回真实 lane/reason。
+- subprocess、完整 Linux、PTY、View、未验证原生扩展、`-m pip` 与 `-m venv` 均在 Host 进程创建前回退 PRoot；身份损坏继续失败关闭。
+- 目标回归覆盖 7 个 suite、37 项测试，0 failure、0 error、0 skipped；Debug 构建和一加 8T 覆盖安装成功。
+- 真机直接执行生产 Provider 成功；完整通用资产矩阵 20 组对照、40 个通道测点零失败，无新增 ANR/FATAL。六个发布门测点 p50 降低 45.0%～85.3%。
+- 兼容边界与 RF230 一致：stdlib/内置扩展/pip 入口/纯 wheel/venv 创建通过，Python subprocess 与 venv 子解释器保持 PRoot。
+- 强制全量回归为 240 个 suite、1261 tests、0 failure、0 error、2 skipped；强制 Debug 构建成功。最终 APK 240595564 bytes，SHA-256 `FC9CED0CF82F286653F3F730EBB4815F73DCB4DE164DF7E84569626858136C21`，已覆盖安装到一加 8T 并复验生产 Provider。
+- 下一恢复指针进入 RF250，只研究 Python 能力分层，不重做 Node 或 RF230 基线。
 
 ### 2026-07-31 RF230 验收
 
