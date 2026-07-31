@@ -145,6 +145,8 @@ RF840 的生产接入结论为 **no-go**，不是强身份链失败，而是统�
 
 因此 RF840 不修改生产准入。下一阶段必须先把短任务和长期 owner 放入同一实际容量仲裁器；后台记录仍是 owner/身份事实源，仲裁器只持有容量序列和 lease，不复制命令、状态或进程身份。生产试接仍只消费 `lastLaunchLane=proot_shell` 且强身份 ready 的 PROCESS 记录；Host 快速通道不占 PRoot lease。停止释放 lease 前必须同时取得 PRoot owner 树 `settled` 和强身份终态，只退出 wrapper 不算停止完成。
 
+RF910 的统一只读计数和后续接入边界见 [PRoot 短任务与长期 owner 统一容量合同](unified-proot-capacity.md)。
+
 ## 禁止方案
 
 - 不把 command token、statusCommand、端口健康或 PID-only 当强身份。

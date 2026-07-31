@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF900` 短任务与长期 owner 统一容量仲裁
-- 当前任务：`RF910` 统一容量快照与不变量
+- 当前任务：`RF920` 后台 provisional lease 持久化
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -573,8 +573,11 @@
 
 #### RF910 统一容量快照与不变量
 
-- 把短任务 active/queue 与外部长持有量放入同一仲裁快照，固定总量不超 effective max、压力只影响新准入、读取不创建进程。
-- 长期 owner 只向仲裁器提交 owner key、lane、posture、必要性和 lease generation，不提交命令、路径或业务状态。
+- 状态：已完成，只读合同未接生产。
+- [x] 短任务 controller 在同一锁内输出 active/queued 逐 lane 计数；
+- [x] 长期 `ADMITTED/STARTING/RUNNING/STOPPING/ORPHAN_REVIEW` 与短任务合并计数，REQUESTED 只排队，RELEASED 不占容量；
+- [x] 压力缩档只产生 overcommitted 并禁止新准入，不驱逐既有 holder；独占维护和重复 owner/进程身份失败关闭；
+- [x] 快照只有枚举、布尔和计数，不含 owner、PID、命令、路径或输出；不读 Store、不创建进程、不接后台生产启动。
 
 #### RF920 后台 provisional lease 持久化
 

@@ -334,3 +334,11 @@
 - 决定：RF840 保持生产 no-go。不能把 `LongLivedProotAdmissionSimulator` 直接实例化后接到后台，也不能仅从 RUNNING 记录反推长期容量；必须先让短任务和长期 owner 共用一个实际容量仲裁器，并在 `BackgroundRuntimeRecord` 内持久化进程创建前的 provisional lease generation/phase。
 - 原因：当前短任务 actual controller 和长期 planned simulator 彼此不计数，直接并行会超售 1/2/4 档；后台现有状态也不能表达“已占容量、尚无 PID”的 STARTING 窗口。两者都会在并发启动或控制面重启时产生假空闲、重复准入或第二实例。
 - 影响：RF834 的强身份与 owner 树停止继续作为必要地基，但不等于容量生产接入完成。解阻任务固定为 RF910～RF950；实际健康字段必须来自统一仲裁器，后台身份仍由 `BackgroundRuntimeRegistry` 唯一持有，终端和 Agent 不借机迁移。
+
+## ADR-RF-043 统一容量先固定无副作用快照再改生产仲裁
+
+- 状态：已接受，RF910 已完成
+- 日期：2026-08-01
+- 决定：先从现有短任务 controller 同锁投影逐 lane actual 计数，再以纯函数合并长期 lease phase；RF910 不实例化第二个 controller、不接后台、不读取 Store 或进程。统一快照 scope 固定为 `unified_contract_not_production`。
+- 原因：直接改生产准入会同时跨越短任务公平队列、长期 provisional lease 持久化和重启恢复三个风险面，难以证明总容量没有超售。先固定计数和失败关闭不变量，可以让 RF920/930 复用同一事实，而不会把规划结果冒充 actual。
+- 影响：ADMITTED 到 ORPHAN_REVIEW 均持有容量；REQUESTED 只排队，RELEASED 忽略。压力缩档可出现 OVERCOMMITTED，但不得强杀既有任务；重复 owner/进程身份、lane sum 不一致和独占冲突均阻止新准入。RF920 仍必须在 `BackgroundRuntimeRecord` 内补 provisional generation/phase。

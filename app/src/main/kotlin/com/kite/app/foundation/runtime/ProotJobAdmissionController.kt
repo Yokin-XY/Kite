@@ -56,6 +56,8 @@ internal data class ProotJobAdmissionSnapshot(
     val activeCount: Int,
     val queuedCount: Int,
     val activeSharedWrite: Boolean,
+    val activeByLane: Map<RuntimeLaneKind, Int>,
+    val queuedByLane: Map<RuntimeLaneKind, Int>,
     val admittedCount: Long,
     val cancelledCount: Long,
     val timedOutCount: Long,
@@ -193,6 +195,12 @@ internal class ProotJobAdmissionController(
             activeCount = active.size,
             queuedCount = pending.size,
             activeSharedWrite = active.values.any { it.request.access == ProotJobAccess.SHARED_WRITE },
+            activeByLane = RuntimeLaneKind.entries.associateWith { lane ->
+                active.values.count { it.request.lane == lane }
+            },
+            queuedByLane = RuntimeLaneKind.entries.associateWith { lane ->
+                pending.count { it.request.lane == lane }
+            },
             admittedCount = admittedCount,
             cancelledCount = cancelledCount,
             timedOutCount = timedOutCount,

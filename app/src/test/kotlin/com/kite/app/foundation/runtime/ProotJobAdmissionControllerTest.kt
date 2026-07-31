@@ -90,6 +90,35 @@ class ProotJobAdmissionControllerTest {
     }
 
     @Test
+    fun `snapshot derives active and queued lane counts from the locked controller state`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val active = granted(
+            controller.acquireBlocking(request("active", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val executor = Executors.newSingleThreadExecutor()
+        val queued = executor.submit<ProotJobAdmissionResult> {
+            controller.acquireBlocking(
+                request("queued", RuntimeLaneKind.SERVICE, waitTimeoutMs = 5_000L)
+            )
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+
+        val snapshot = controller.snapshot()
+
+        assertEquals(1, snapshot.activeByLane[RuntimeLaneKind.INTERACTIVE])
+        assertEquals(0, snapshot.activeByLane[RuntimeLaneKind.SERVICE])
+        assertEquals(0, snapshot.queuedByLane[RuntimeLaneKind.INTERACTIVE])
+        assertEquals(1, snapshot.queuedByLane[RuntimeLaneKind.SERVICE])
+        assertEquals(snapshot.activeCount, snapshot.activeByLane.values.sum())
+        assertEquals(snapshot.queuedCount, snapshot.queuedByLane.values.sum())
+        assertTrue(controller.cancelQueued("queued"))
+        queued.get(1, TimeUnit.SECONDS)
+        active.close()
+        executor.shutdownNow()
+        controller.close()
+    }
+
+    @Test
     fun `lane limit remains stricter than high performance global limit`() {
         val controller = ProotJobAdmissionController(
             ProotJobAdmissionPolicy(

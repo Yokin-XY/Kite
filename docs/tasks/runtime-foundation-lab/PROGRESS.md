@@ -49,7 +49,8 @@
 | RF834 | 已完成 | 1429 项全量门通过；真机创建、外死、重复启动与 PRoot owner 树停止已闭环 |
 | RF840 | 已完成 | 生产接入 no-go：强身份已过门，统一容量/STARTING 持久化/actual 观测仍缺失 |
 | RF850 | 已完成 | 1431 项全量门、强制 Debug、OnePlus 8T 和范围审查全部通过 |
-| RF910 | 待开始 | 下一恢复点：统一短任务与长期 owner 容量快照，不接后台生产启动 |
+| RF910 | 已完成 | 同锁 lane 事实与统一只读容量合同完成，仍标记未生产 |
+| RF920 | 待开始 | 下一恢复点：同一后台记录持久化 provisional lease generation/phase |
 
 ## RF110 开机与三问自检
 
@@ -207,6 +208,14 @@
 - OnePlus 8T 已证明 Host Node 强身份、外死单实例恢复、重复启动、显式停止，以及 PRoot owner 三层树完整收敛；没有把设备 reboot 或无 pidfd 的 detached 路径包装成已验证的内核原子保证。
 - 后台强身份桥接完成，长期 lease 生产接入因统一容量事实缺失明确 no-go；下一恢复点为 RF910，先建立短任务与长期 owner 的统一容量快照，不修改后台生产启动。
 - 全阶段没有重跑 Node/Python 冻结性能矩阵，没有迁移终端或 Agent，没有推送远端。
+
+## RF910 统一容量快照与不变量
+
+- `ProotJobAdmissionSnapshot` 现在从 controller 同一把锁内的 active/pending 集合生成逐 lane 计数；总数与 lane sum 必须一致，统一层不扫描任务或猜测 lane。
+- 新增纯 `UnifiedProotCapacityProjection`，把短任务 actual snapshot 与调用方提供的长期 lease 记录合并。长期 ADMITTED、STARTING、RUNNING、STOPPING 和 ORPHAN_REVIEW 全部持有容量，REQUESTED 只排队，RELEASED 历史不参与冲突。
+- 压力收缩造成既有 holder 超过新上限时输出 OVERCOMMITTED、剩余容量归零，但不产生驱逐动作；独占维护与其他活动任务并存、同 owner 多个未释放代次或进程身份冲突均输出 CONTRACT_MISMATCH。
+- 快照固定为 `unified_contract_not_production`，只含低基数枚举、布尔和计数；没有 ownerId、leaseId、PID、命令、路径、Store、Context 或 ProcessBuilder，也没有后台生产引用。
+- 首轮编译错误来自测试错误消息 nullable，修正后执行；第二轮两个失败是测试把 RUNNING 误算 queued、把聚合 identity count 误判为身份泄漏，修正断言并增加 RELEASED 同 owner 旧代次反例。最终目标回归 21 项、0 failure、0 error、0 skipped；强制 Debug 产物刷新后再以非强制构建取得 exitCode=0，下一恢复点 RF920。
 
 ## RF710 开机与三问自检
 
