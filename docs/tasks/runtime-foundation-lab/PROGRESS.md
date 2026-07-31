@@ -64,6 +64,11 @@
 | RF1120 | 已完成 | 两整轮 28×3 固定矩阵零失败、零残留，READY 收窄稳定变慢 |
 | RF1130 | 已完成 | 无稳定收益，否决生产启动窗口 |
 | RF1140 | 未触发 | RF1130 no-go；未新增生产队列、状态或入口接线 |
+| RF1200 | 进行中 | Git 作为下一个通用依赖候选，先做兼容与性能 go/no-go |
+| RF1210 | 已完成 | 正式依赖覆盖与安全边界审计完成，Git 优先于 curl/uv |
+| RF1220 | 进行中 | Host Git 兼容与 PRoot 对照矩阵 |
+| RF1230 | 待开始 | 依据矩阵决定是否实现通用 Provider |
+| RF1240 | 待开始 | 条件生产门或 no-go 收口 |
 
 ## RF110 开机与三问自检
 
@@ -327,6 +332,14 @@
 - RF1140 不触发。没有给 config 增字段，没有迁移终端/Agent/后台/Bridge，没有新增生产 semaphore、lease、Store、健康字段或定时器。Debug 矩阵保留，用于 PRoot/runtime/rootfs 前提改变后复算。
 - 下一优化方向必须回到通用依赖内部的高频文件/解释器/子进程成本，继续遵守“只给通用依赖开快速通道，不给使用端应用特化”的三车道原则。
 - RF1100 完成。
+
+## RF1210 通用依赖候选审计
+
+- 读取 17 份正式资源清单的 `relations.base`：`kite.git` 被 10 个上层资源依赖，`kite.nodejs` 9、`kite.curl` 4、`kite.python` 1、`kite.uv` 1。Node/Python 已完成，不能因进入新阶段而重验。
+- curl 的高价值静态 HTTPS 下载已由 RF310 原生 Provider 覆盖；任意 curl 的网络时延占主导，当前增量收益低。uv 只有一个直接上层且核心语义是 Python 下载、venv 和子进程，正落在 RF250 保持 PRoot 的边界。Git 同时具有最高未覆盖 reach 和本地小文件敏感性，进入首位。
+- 设备受管 Git 链为 `/workspace/.kf/bin/git -> /workspace/.kf/software/kite.git/bin/git -> /usr/bin/git`，最终身份属于当前 rootfs，不另带一份应用专用 Git。实验只复用 `GlibcHostRuntimePreparer` 的入口无关 launcher/loader/libc/compat 资产。
+- Git 本地 builtin 与远程/helper 不能一起宣称兼容。首轮矩阵分别覆盖本地 version/init/status/add/commit/log/diff/rev-parse；hooks、pager、external diff/filter、credential/ssh/remote helper 与 submodule 必须独立失败关闭或证明。
+- RF1210 完成，进入 RF1220 Debug 矩阵；不修改资源卡、shim、Planner 或正式入口。
 
 ## RF710 开机与三问自检
 

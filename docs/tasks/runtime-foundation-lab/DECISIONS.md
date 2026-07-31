@@ -414,3 +414,11 @@
 - 决定：不实现 RF1140，不在终端、Agent、后台、Bridge 或通用 config 中接入 launch semaphore/lease。RF1120 Debug 固定矩阵作为可复算诊断保留，但不发布正式健康字段，也不形成第二个生产 admission。
 - 原因：两套 OnePlus 8T 矩阵中，READY 窗口收窄稳定恶化 tail 与 batch wall；start-return 只在一套出现偶发 P95 改善，另一套基本追平，失败率本来就是 0，无法证明确定收益。单固定 PRoot READY 只有几十毫秒，也不在真实重型应用几十秒启动的同一量级。
 - 影响：不能以“协调器代码容易写”为由生产化。下一阶段只研究通用依赖内部可证明的高频路径成本；任何快速通道仍以依赖 ABI/能力为条件，不识别使用端应用。
+
+## ADR-RF-053 下一个快速通道候选按正式依赖覆盖与能力风险选择 Git
+
+- 状态：已接受，RF1210 已完成
+- 日期：2026-08-01
+- 决定：在 Node/Python 已完成后，下一候选选择受管 Git，先做 Debug-only Host glibc 兼容与性能矩阵。curl 和 uv 暂不进入；不修改资源卡、Git shim、Planner 或生产入口。
+- 原因：正式清单中 Git 被 10 个资源依赖，curl 4、uv 1；Git 本地操作又对小文件路径访问敏感。curl 的静态 HTTPS 高价值范围已有 Android 原生 Provider，uv 的核心语义落在 Python 子进程/venv PRoot 边界。覆盖面必须与可验证能力同时考虑，不能只按工具知名度选择。
+- 影响：RF1220 必须把本地 builtin 与 hooks/pager/filter/remote/helper/submodule 分层，不得因 `git --version` 成功就开放。只有同版本同仓库语义一致且收益稳定时，RF1230 才能讨论 Provider；否则 no-go。

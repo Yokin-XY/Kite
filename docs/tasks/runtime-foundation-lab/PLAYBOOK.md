@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF1100` PRoot 进程启动窗口协调（已完成，生产 no-go）
-- 当前任务：`RF1130` go/no-go 与生产合同（已完成）
+- 当前阶段：`RF1200` Git 通用依赖快速通道可行性
+- 当前任务：`RF1220` Host Git 兼容与性能矩阵
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -681,6 +681,38 @@
 - [x] 没有修改 `ContainerLaunchConfig`/`ContainerExecConfig`、终端、Agent、后台或 Bridge 生产入口；
 - [x] 没有新增生产队列、lease、健康字段或调度状态；
 - [x] RF1100 以 Debug 证据与 no-go 结论关闭。
+
+### RF1200 [P1 快速通道扩展] Git 通用依赖可行性
+
+父任务方向：Git 是正式资源中覆盖面仅次于 Node 的通用依赖，且本地仓库操作对小文件和 stat/open 敏感。先验证 rootfs Git 经通用 glibc Host 资产直接运行是否正确且有稳定收益；不为任何上层 Agent 或资源写特判。
+
+#### RF1210 候选排序与安全边界
+
+- 状态：已完成，见 [Host Git 快速通道](../../architecture/host-git-fast-path.md)。
+- [x] 按正式资源关系统计依赖覆盖面，不按印象选候选；
+- [x] Git 10、curl 4、uv 1，Node/Python 已完成且不重复；
+- [x] 固定本地 builtin、hooks/helpers、remote、pager、filter、submodule 的分层边界；
+- [x] 不修改 Git 资源卡、命令 shim 或生产 Planner。
+
+#### RF1220 Host Git 兼容与性能矩阵
+
+- 状态：进行中。
+- 使用 `GlibcHostRuntimePreparer` 的通用资产，精确解析受管 Git 身份和动态库；
+- 覆盖 version/init/status/add/commit/log/diff/rev-parse 与 1/4/8 并发；
+- hooks、pager、external diff/filter、credential/ssh/remote helper、submodule 分别证明可用或失败关闭；
+- 同一仓库、同一 Git 版本与独立 PRoot 对照，输出正确性、P50/P95 和失败率。
+
+#### RF1230 go/no-go 与条件 Provider
+
+- 只有兼容矩阵和性能门同时通过才实现 `HostGitRuntimeProvider`；
+- Provider 只能按受管 Git 身份、结构化 argv 与显式能力保证选择，不识别资源或上层应用；
+- 任一子进程/路径/配置边界不满足时，必须在进程创建前整条回 PRoot。
+
+#### RF1240 父任务门
+
+- 若 no-go，保留 Debug 证据且不修改生产入口；
+- 若 go，完成三入口唯一进程、取消、输出、升级失效和真机回归；
+- 强制全量单测、Debug 构建、范围审查并独立提交。
 
 ## 每个叶子任务的固定闭环
 
