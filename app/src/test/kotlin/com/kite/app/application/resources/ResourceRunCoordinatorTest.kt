@@ -19,6 +19,9 @@ import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicLong
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -334,27 +337,27 @@ class ResourceRunCoordinatorTest {
 private class FakeResourceRunGateway : ResourceRunGateway {
     data class Failure(val resourceId: String, val operation: String, val reason: String)
 
-    val startedRequests = mutableListOf<ResourceRunLaunchRequest>()
-    val operationStarts = mutableListOf<Pair<String, String>>()
-    val installedResources = mutableListOf<String>()
-    val installedEnvironments = mutableListOf<String>()
-    val savedSnapshots = mutableListOf<String>()
-    val failedResources = mutableListOf<Failure>()
-    val clearedResources = mutableListOf<String>()
-    val advancedResources = mutableListOf<String>()
-    val failedPlanResources = mutableListOf<String>()
-    val planStepsStarted = mutableListOf<String>()
-    val committedMutations = mutableListOf<String>()
-    val finalizedMutations = mutableListOf<String>()
-    val rolledBackMutations = mutableListOf<String>()
-    val settlementOrder = mutableListOf<String>()
-    var commitFailure: String? = null
-    val advanceResults = mutableMapOf<String, List<String>>()
-    val plannedInstalls = mutableMapOf<String, ResourceRunLaunchRequest>()
-    val pendingResources = mutableListOf<String>()
-    val installedFacts = mutableSetOf<String>()
-    var activeEnvironmentId: String = "default"
-    private var generation = 100L
+    val startedRequests = CopyOnWriteArrayList<ResourceRunLaunchRequest>()
+    val operationStarts = CopyOnWriteArrayList<Pair<String, String>>()
+    val installedResources = CopyOnWriteArrayList<String>()
+    val installedEnvironments = CopyOnWriteArrayList<String>()
+    val savedSnapshots = CopyOnWriteArrayList<String>()
+    val failedResources = CopyOnWriteArrayList<Failure>()
+    val clearedResources = CopyOnWriteArrayList<String>()
+    val advancedResources = CopyOnWriteArrayList<String>()
+    val failedPlanResources = CopyOnWriteArrayList<String>()
+    val planStepsStarted = CopyOnWriteArrayList<String>()
+    val committedMutations = CopyOnWriteArrayList<String>()
+    val finalizedMutations = CopyOnWriteArrayList<String>()
+    val rolledBackMutations = CopyOnWriteArrayList<String>()
+    val settlementOrder = CopyOnWriteArrayList<String>()
+    @Volatile var commitFailure: String? = null
+    val advanceResults = ConcurrentHashMap<String, List<String>>()
+    val plannedInstalls = ConcurrentHashMap<String, ResourceRunLaunchRequest>()
+    val pendingResources = CopyOnWriteArrayList<String>()
+    val installedFacts = ConcurrentHashMap.newKeySet<String>()
+    @Volatile var activeEnvironmentId: String = "default"
+    private val generation = AtomicLong(100L)
 
     override fun recipe(resourceId: String, operation: String, targetVersion: String?): KiteRecipe? =
         plannedInstalls[resourceId]?.recipe
@@ -365,17 +368,17 @@ private class FakeResourceRunGateway : ResourceRunGateway {
 
     override fun beginRun(request: ResourceRunLaunchRequest): CardRunState {
         startedRequests += request
-        generation += 1
+        val nextGeneration = generation.incrementAndGet()
         return CardRunState(
-            instanceId = request.preferredInstanceId ?: "${request.resourceId}-$generation",
+            instanceId = request.preferredInstanceId ?: "${request.resourceId}-$nextGeneration",
             recipeId = request.recipe.id,
             recipeName = request.recipe.name,
             ownerKind = CardRunState.OWNER_KIND_RESOURCE,
             stepId = request.resourceId,
             status = CardRunStatus.Starting,
             surface = CardRunSurface.Report,
-            createdAt = generation,
-            updatedAt = generation
+            createdAt = nextGeneration,
+            updatedAt = nextGeneration
         )
     }
 
