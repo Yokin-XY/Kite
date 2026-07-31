@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF800` 后台长期 owner 强身份桥接
-- 当前任务：`RF850` RF800 父任务门
+- 当前阶段：`RF900` 短任务与长期 owner 统一容量仲裁
+- 当前任务：`RF910` 统一容量快照与不变量
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -563,9 +563,9 @@
 
 #### RF850 RF800 父任务门
 
-- [ ] 强身份、停止和恢复联合回归通过；
-- [ ] 后台服务生产接入形成 go/no-go 与 OnePlus 8T 证据；
-- [ ] 终端和 Agent 保持 no-go，Node/Python 冻结矩阵不重跑。
+- [x] 强身份、停止和恢复联合回归通过；
+- [x] 后台服务生产接入形成 no-go 与 OnePlus 8T 证据；
+- [x] 终端和 Agent 保持 no-go，Node/Python 冻结矩阵未重跑。
 
 ### RF900 [P1 后续] 短任务与长期 owner 统一容量仲裁
 

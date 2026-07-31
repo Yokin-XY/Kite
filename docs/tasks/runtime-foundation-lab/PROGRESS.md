@@ -48,7 +48,8 @@
 | RF833 | 已完成 | 停止意图优先；逐信号重验代次；确认退出前不写终态、不释放容量 |
 | RF834 | 已完成 | 1429 项全量门通过；真机创建、外死、重复启动与 PRoot owner 树停止已闭环 |
 | RF840 | 已完成 | 生产接入 no-go：强身份已过门，统一容量/STARTING 持久化/actual 观测仍缺失 |
-| RF850 | 进行中 | RF800 父任务全量回归、范围核对与最终 Git 门 |
+| RF850 | 已完成 | 1431 项全量门、强制 Debug、OnePlus 8T 和范围审查全部通过 |
+| RF910 | 待开始 | 下一恢复点：统一短任务与长期 owner 容量快照，不接后台生产启动 |
 
 ## RF110 开机与三问自检
 
@@ -197,6 +198,15 @@
 - 正式健康面只有短任务 `proot_actual_*`，长期 `proot_long_planned_*` 仍明确未生产。当前若直接输出 actual，会把未受统一仲裁的后台数冒充生产容量事实。
 - 结论为 no-go，RF840 不修改生产准入。解阻工作拆为 RF910～RF950：统一容量快照、同记录 provisional lease、生命周期桥、actual schema、真机故障矩阵；终端和 Agent 继续不迁移。
 - 新增 RF840 边界合同，禁止后台 Host 或短任务 coordinator 偷接 planned simulator、禁止在缺 lease 字段时冒充生产接入；长期状态机、容量、恢复、投影和边界共 5 suites、35 tests 全部通过。因无生产代码变化，本叶不重复构建或真机安装。
+
+## RF850 / RF800 父任务验收
+
+- 最终强制全量回归为 269 个 suite、1431 tests、0 failure、0 error、2 skipped；强制 Debug 构建成功。
+- 最终本地 APK 为 241,218,672 bytes，SHA-256 `FBC4AC8B1F49E75F3D6BD58788086C45A5D7F7D446DF40BC78CC36803FD60B79`；该构建物已在 RF834 生产 stop/start 复验同一生产代码，构建物未进入 Git。
+- RF800 从 `ab716c4` 之后共 7 个提交、20 个文件，只修改后台 runtime/强身份、对应测试和本任务正式文档；Agent、终端与 runsurface 没有净变化。
+- OnePlus 8T 已证明 Host Node 强身份、外死单实例恢复、重复启动、显式停止，以及 PRoot owner 三层树完整收敛；没有把设备 reboot 或无 pidfd 的 detached 路径包装成已验证的内核原子保证。
+- 后台强身份桥接完成，长期 lease 生产接入因统一容量事实缺失明确 no-go；下一恢复点为 RF910，先建立短任务与长期 owner 的统一容量快照，不修改后台生产启动。
+- 全阶段没有重跑 Node/Python 冻结性能矩阵，没有迁移终端或 Agent，没有推送远端。
 
 ## RF710 开机与三问自检
 
