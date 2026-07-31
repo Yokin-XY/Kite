@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1000` 长期 owner 的短任务保底余量
-- 当前任务：`RF1020` actual 仲裁与公平队列
+- 当前任务：`RF1030` actual 健康与固定矩阵
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -625,10 +625,11 @@
 
 #### RF1020 actual 仲裁与公平队列
 
-- 在同一 `ProotJobAdmissionController` 内限制新 managed owner；
-- managed owner 达上限时跳过该等待项，让可运行短任务继续推进；
-- 保留共享写队首屏障、全局上限、lane 上限、压力和关闭语义；
-- 用并发反例证明均衡/高性能余量和低功耗物理边界。
+- 状态：已完成。
+- [x] 在同一 `ProotJobAdmissionController` 内限制新 managed owner；
+- [x] managed owner 达上限时跳过该等待项，让可运行短任务继续推进；
+- [x] 保留共享写队首屏障、全局上限、lane 上限、压力和关闭语义；
+- [x] 用并发反例证明均衡/高性能余量和低功耗物理边界。
 
 #### RF1030 actual 健康与固定矩阵
 

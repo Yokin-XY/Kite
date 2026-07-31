@@ -305,6 +305,7 @@ internal class ProotJobAdmissionController(
         if (active.size >= currentPolicy.effectiveGlobalMax()) return false
         if (active.values.any { it.request.access == ProotJobAccess.SHARED_WRITE }) return false
         if (waiter.request.access == ProotJobAccess.SHARED_WRITE && active.isNotEmpty()) return false
+        if (managedOwnerHeadroomReached(waiter.request, currentPolicy)) return false
 
         val lanePolicy = currentPolicy.lane(waiter.request.lane)
         val laneActive = active.values.count { it.request.lane == waiter.request.lane }
@@ -327,6 +328,9 @@ internal class ProotJobAdmissionController(
                 return@firstOrNull true
             }
             if (candidate.request.access == ProotJobAccess.SHARED_WRITE) return@firstOrNull true
+            if (managedOwnerHeadroomReached(candidate.request, currentPolicy)) {
+                return@firstOrNull false
+            }
 
             val lanePolicy = currentPolicy.lane(candidate.request.lane)
             val laneActive = active.values.count { it.request.lane == candidate.request.lane }
@@ -363,8 +367,21 @@ internal class ProotJobAdmissionController(
                 "admission_shared_write_active"
             waiter.request.access == ProotJobAccess.SHARED_WRITE && active.isNotEmpty() ->
                 "admission_shared_write_waiting_for_exclusive"
+            managedOwnerHeadroomReached(waiter.request, currentPolicy) ->
+                "admission_managed_owner_headroom_timeout"
             else -> "admission_lane_capacity_timeout"
         }
+    }
+
+    private fun managedOwnerHeadroomReached(
+        request: ProotJobAdmissionRequest,
+        currentPolicy: ProotJobAdmissionPolicy,
+    ): Boolean {
+        if (request.cancellationMode != ProotJobCancellationMode.MANAGED_OWNER) return false
+        val activeManagedOwners = active.values.count {
+            it.request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER
+        }
+        return activeManagedOwners >= currentPolicy.managedOwnerMax()
     }
 
     private fun waiterComparator(): Comparator<Waiter> =
@@ -386,6 +403,11 @@ internal class ProotJobAdmissionController(
             RuntimePressureLevel.HIGH,
             RuntimePressureLevel.CRITICAL -> 1
         }
+    }
+
+    private fun ProotJobAdmissionPolicy.managedOwnerMax(): Int {
+        val globalMax = effectiveGlobalMax()
+        return if (globalMax <= 1) 1 else globalMax - 1
     }
 
     private fun ProotJobAdmissionPolicy.lane(kind: RuntimeLaneKind): RuntimeLanePolicy {

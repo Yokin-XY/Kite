@@ -440,6 +440,70 @@ class ProotJobAdmissionControllerTest {
     }
 
     @Test
+    fun `balanced profile keeps one slot for a short task behind a queued managed owner`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED)
+        val firstManaged = granted(controller.acquireBlocking(managedRequest("managed-one"))).lease
+        val executor = Executors.newSingleThreadExecutor()
+        val secondManaged = executor.submit<ProotJobAdmissionResult> {
+            controller.acquireBlocking(managedRequest("managed-two").copy(waitTimeoutMs = 5_000L))
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+
+        val short = granted(
+            controller.acquireBlocking(request("short", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val active = controller.snapshot()
+        assertEquals(2, active.activeCount)
+        assertEquals(1, active.managedOwnerActiveCount)
+        assertEquals(1, active.activeByLane[RuntimeLaneKind.INTERACTIVE])
+
+        short.close()
+        assertTrue(controller.cancelQueued("managed-two"))
+        val rejected = secondManaged.get(1, TimeUnit.SECONDS) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_cancelled", rejected.reason)
+        firstManaged.close()
+        executor.shutdownNow()
+        controller.close()
+    }
+
+    @Test
+    fun `high performance profile allows three managed owners and preserves the fourth slot`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE)
+        val managed = (1..3).map { index ->
+            granted(controller.acquireBlocking(managedRequest("managed-$index"))).lease
+        }
+
+        val fourthManaged = controller.acquireBlocking(
+            managedRequest("managed-four").copy(waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_managed_owner_headroom_timeout", fourthManaged.reason)
+        val short = granted(
+            controller.acquireBlocking(request("short", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        assertEquals(4, controller.snapshot().activeCount)
+        assertEquals(3, controller.snapshot().managedOwnerActiveCount)
+
+        short.close()
+        managed.reversed().forEach(AutoCloseable::close)
+        controller.close()
+    }
+
+    @Test
+    fun `low power profile does not invent a second slot`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val managed = granted(controller.acquireBlocking(managedRequest("managed"))).lease
+
+        val short = controller.acquireBlocking(
+            request("short", RuntimeLaneKind.INTERACTIVE, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_global_capacity_timeout", short.reason)
+        assertEquals(1, controller.snapshot().activeCount)
+        managed.close()
+        controller.close()
+    }
+
+    @Test
     fun `contract mismatch blocks every new admission until the same key is cleared`() {
         val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE)
         controller.blockNewAdmissions("managed-owner:broken")

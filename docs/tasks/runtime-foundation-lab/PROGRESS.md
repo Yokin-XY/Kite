@@ -56,8 +56,8 @@
 | RF950 | 已完成 | 1460 项全量门与 OnePlus 8T 故障矩阵通过，后台通用 PRoot PROCESS 生产门已打开 |
 | RF1000 | 进行中 | 解决长期 owner 占满总容量后的短任务饥饿 |
 | RF1010 | 已完成 | 固定 1/2/4 档长期上限 1/1/3，低功耗不伪造第二容量 |
-| RF1020 | 进行中 | actual controller 增加 managed owner 余量与队列绕行 |
-| RF1030 | 待开始 | actual 健康与 OnePlus 8T 固定矩阵 |
+| RF1020 | 已完成 | actual controller 已限制 managed owner，并允许短任务绕过其等待项 |
+| RF1030 | 进行中 | actual 健康与 OnePlus 8T 固定矩阵 |
 | RF1040 | 待开始 | 全量回归、类别复核与父任务门 |
 
 ## RF110 开机与三问自检
@@ -268,6 +268,13 @@
 - 审计 actual controller 后确认：优先级只选择当前可推进的 waiter，不能从长期 holder 手中产生空位。均衡档两个 managed owner 或高性能档四个 managed owner 可以无限期占满总量，后到交互任务只能超时。
 - 新合同只限制新 `MANAGED_OWNER`：低功耗 1/1、均衡 1/2、高性能 3/4，给非长期任务保留至多一个可用位置；低功耗只有一个物理名额，明确不承诺并发。恢复和压力缩档不驱逐 holder，共享写屏障保持原语义。
 - 下一恢复点 RF1020：在同一 controller/同一锁内实现上限、blocked reason 与 waiter 绕行，并先用并发反例证明，不接新类别。
+
+## RF1020 actual 仲裁与公平队列
+
+- `ProotJobAdmissionController` 在同一锁内按 `MANAGED_OWNER` 计算长期活动数。总量大于 1 时，新长期 owner 上限为 `globalMax-1`；总量为 1 时上限仍为 1。达到上限固定返回 `admission_managed_owner_headroom_timeout`。
+- waiter 选择保留共享写队首屏障；普通 managed owner 达上限时不再阻塞后面的可运行短任务。没有建立第二个 controller、队列或状态源，恢复导入仍可 overcommit 且不驱逐 holder。
+- 新增三个反例：均衡档第二长期 owner 先排队、后到 INTERACTIVE 仍准入；高性能三个长期 owner 后第四个被拒、短任务占第 4 位；低功耗一个长期 owner 后短任务仍按全局容量拒绝，不伪造第二名额。
+- 强制目标 suite `ProotJobAdmissionControllerTest` 共 21 tests，0 failure、0 error、0 skipped。下一恢复点 RF1030，更新 actual 低基数健康与固定真机矩阵。
 
 ## RF710 开机与三问自检
 
