@@ -159,5 +159,15 @@
         <service
             android:name="com.kite.app.platform.resources.ManagedCommandProofBenchmarkService"
             android:exported="false" />
+        <receiver
+            android:name="com.kite.app.platform.resources.ManagedPackageVersionBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.MANAGED_PACKAGE_VERSION_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.platform.resources.ManagedPackageVersionBenchmarkService"
+            android:exported="false" />
     </application>
 </manifest>
