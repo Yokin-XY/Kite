@@ -585,8 +585,16 @@
 
 ## ADR-RF-074 固定包元数据矩阵通过，允许最小生产样板
 
-- 状态：已接受，RF1620 已完成，RF1630 待开始
+- 状态：已接受，RF1620 与 RF1630 已完成
 - 日期：2026-08-01
 - 决定：RF1620 判 go，RF1630 可以把同一入口无关的受控 JSON 字符串字段合同提升为最小生产 Provider，并只让默认 npm 已安装版本探针提交该请求。Ready、Unsupported、Blocked 必须继续在 PRoot/Node 创建前完成；自定义命令和任何不完整事实保持原 PRoot。RF1620 的 Debug 候选与广播不能成为生产状态源或页面入口。
 - 原因：OnePlus 8T 三轮 13 类固定矩阵均零差异。单请求原生 p50 为 2.407～3.078ms，相对 PRoot 405.967～506.872ms 降低 99.2%～99.5%，p95 为 6.088～6.775ms；固定 5 请求批次降低 99.5%～99.7%。路径逃逸无 PRoot，符号链接、超限、坏 JSON、缺字段、非字符串和旧命令均保持兼容回落，夹具无残留。
 - 影响：RF1630 只能修改共同版本探针合同、元数据 Provider、默认 npm 来源生成和既有 Gateway 选择；不得迁移显式 `命令 --version`、远端版本请求、资源安装事务、取消清理、UI、Store 或 PRoot View。叶子继续 Targeted/Quick/Stage，Full 只留给 RF1640 父门。
+
+## ADR-RF-075 结构化元数据最小样板进入父门验收
+
+- 状态：已接受，RF1630 已完成，RF1640 待开始
+- 日期：2026-08-01
+- 决定：保留生产 `AndroidNativeStructuredJsonStringProvider` 和 `AndroidResourceVersionGateway` 的进程前选择样板，进入 RF1640 真实资源与父任务门。默认 npm 来源显式附带容器路径、256KiB 上限和 `version` 字段；Ready 直接返回，Unsupported 只回退一次原命令，Blocked 不回退。显式版本命令没有结构化合同，继续 PRoot；不得从 shell 文本推导合同。
+- 原因：5 份正式资源复用同一生成合同；网关单测固定 `0/1/0/1` 次 recipe 路由，最终 Stage 315 tests 零失败。OnePlus 上生产 Provider 的 13 类固定矩阵零差异，单请求 p50 从 208.897ms 降到 3.121ms，p95 7.414ms；五请求批次从 1352.117ms 降到 8.938ms，降低 99.3%，且固定夹具已清理。
+- 影响：RF1640 仍必须用一个真实已安装默认 npm 资源证明 `native=1/fallback=0`，并用旧显式探针证明 `native=0/fallback=1`；父门 Full 零失败后才能正式 go。远端版本、安装/更新/取消、Store、UI、PRoot View、Node/Python/RF1500、魅族、main 和远端继续不在范围内。

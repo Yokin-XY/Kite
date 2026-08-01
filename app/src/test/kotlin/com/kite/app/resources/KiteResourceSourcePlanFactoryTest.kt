@@ -2,6 +2,7 @@ package com.kite.app.resources
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -47,6 +48,49 @@ class KiteResourceSourcePlanFactoryTest {
         assertEquals("version", install.versionCheck.latest?.jsonField)
         assertEquals(latest, install.versionCheck.latest)
         assertTrue(install.capabilities.update)
+    }
+
+    @Test
+    fun `默认 NPM 已安装版本同时保留结构化元数据与原命令回退`() {
+        val generated = parse(
+            source = """{"type":"npm","package":"@scope/example"}""",
+            management = """{"mode":"managed_extension","managedCommands":["example"]}""",
+        )
+        val explicit = parse(
+            source = """{"type":"npm","package":"@scope/example"}""",
+            management = managed("example", "example --version"),
+        )
+
+        val generatedProbe = KiteResourceSourcePlanFactory.versionCheckPlan(generated).installed
+        val metadata = checkNotNull(generatedProbe?.structuredMetadata)
+
+        assertEquals(
+            "/workspace/.kf/software/kite.example/npm-global/lib/node_modules/@scope/example/package.json",
+            metadata.containerPath,
+        )
+        assertEquals("version", metadata.jsonField)
+        assertEquals(256L * 1024L, metadata.maximumBytes)
+        assertTrue(generatedProbe.command.contains("node -p"))
+        assertEquals(null, KiteResourceSourcePlanFactory.versionCheckPlan(explicit).installed?.structuredMetadata)
+    }
+
+    @Test
+    fun `正式资源至少两个复用同一结构化元数据合同`() {
+        val resourceDirectory = sequenceOf(File("../assets/resources"), File("assets/resources"))
+            .first(File::isDirectory)
+        val probes = resourceDirectory.listFiles().orEmpty()
+            .map { File(it, "manifest.json") }
+            .filter(File::isFile)
+            .map { loader.parseManifestJson(it.readText()) }
+            .filter { manifest ->
+                manifest.source.type == "npm" && manifest.management.versionProbe == null
+            }
+            .mapNotNull { manifest ->
+                KiteResourceSourcePlanFactory.versionCheckPlan(manifest).installed?.structuredMetadata
+            }
+
+        assertTrue("至少两个正式资源必须复用结构化元数据合同", probes.size >= 2)
+        assertTrue(probes.all { it.jsonField == "version" && it.containerPath.endsWith("/package.json") })
     }
 
     @Test

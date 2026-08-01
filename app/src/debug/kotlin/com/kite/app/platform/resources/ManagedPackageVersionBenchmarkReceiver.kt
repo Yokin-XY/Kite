@@ -9,18 +9,18 @@ import android.os.SystemClock
 import android.system.Os
 import android.util.Log
 import com.kite.app.application.resources.ResourceVersionParser
+import com.kite.app.foundation.runtime.AndroidNativeStructuredJsonStringProvider as ManagedPackageMetadataVersionCandidate
 import com.kite.app.foundation.runtime.RuntimeProviderDecision
-import com.kite.app.foundation.runtime.RuntimeProviderKind
+import com.kite.app.foundation.runtime.StructuredJsonStringContext as ManagedPackageMetadataContext
+import com.kite.app.foundation.runtime.StructuredJsonStringPlan as ManagedPackageMetadataPlan
+import com.kite.app.foundation.runtime.StructuredJsonStringRequest as ManagedPackageMetadataRequest
+import com.kite.app.foundation.runtime.StructuredJsonStringRoot as ManagedPackageMetadataRoot
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.resources.KiteResourceVersionProbeSpec
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.charset.CodingErrorAction
-import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.LinkOption
-import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -77,153 +77,6 @@ class ManagedPackageVersionBenchmarkService : Service() {
         val running = AtomicBoolean(false)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
-}
-
-internal data class ManagedPackageMetadataRoot(
-    val containerPath: String,
-    val directory: File,
-)
-
-internal data class ManagedPackageMetadataContext(
-    val roots: List<ManagedPackageMetadataRoot>,
-)
-
-internal data class ManagedPackageMetadataRequest(
-    val containerPath: String,
-    val maximumBytes: Long,
-    val jsonField: String,
-)
-
-internal data class ManagedPackageMetadataPlan(
-    val value: String,
-)
-
-/** RF1620 Debug 候选：准备阶段只读受控普通 JSON，不创建进程、不写状态。 */
-internal object ManagedPackageMetadataVersionCandidate {
-    fun prepare(
-        context: ManagedPackageMetadataContext,
-        request: ManagedPackageMetadataRequest,
-    ): RuntimeProviderDecision<ManagedPackageMetadataPlan> {
-        if (context.roots.isEmpty()) return blocked("managed_metadata_roots_missing")
-        if (request.maximumBytes !in 1L..MAXIMUM_METADATA_BYTES) {
-            return blocked("managed_metadata_maximum_bytes_invalid")
-        }
-        if (!JSON_FIELD.matches(request.jsonField)) return blocked("managed_metadata_field_invalid")
-        val resolved = resolve(context, request.containerPath)
-        val file = when (resolved) {
-            is MetadataPathResolution.Ready -> resolved.file
-            is MetadataPathResolution.Unsupported -> return unsupported(resolved.reason)
-            is MetadataPathResolution.Blocked -> return blocked(resolved.reason)
-        }
-        val attributes = runCatching {
-            Files.readAttributes(
-                file.toPath(),
-                BasicFileAttributes::class.java,
-                LinkOption.NOFOLLOW_LINKS,
-            )
-        }.getOrNull() ?: return unsupported("managed_metadata_file_missing")
-        if (!attributes.isRegularFile) return unsupported("managed_metadata_file_not_regular")
-        if (attributes.size() > request.maximumBytes) return unsupported("managed_metadata_file_too_large")
-        val bytes = runCatching { readBounded(file, request.maximumBytes) }.getOrNull()
-            ?: return unsupported("managed_metadata_file_read_failed")
-        val raw = runCatching {
-            StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes))
-                .toString()
-        }.getOrNull() ?: return unsupported("managed_metadata_utf8_invalid")
-        val value = runCatching {
-            val json = org.json.JSONObject(raw)
-            json.opt(request.jsonField) as? String
-        }.getOrNull() ?: return unsupported("managed_metadata_string_field_missing")
-        if (value.length > MAXIMUM_VALUE_CHARS) return unsupported("managed_metadata_value_too_large")
-        return RuntimeProviderDecision.Ready(
-            provider = RuntimeProviderKind.ANDROID_NATIVE,
-            plan = ManagedPackageMetadataPlan(value),
-            reason = "managed_metadata_string_ready",
-        )
-    }
-
-    private fun resolve(
-        context: ManagedPackageMetadataContext,
-        rawPath: String,
-    ): MetadataPathResolution {
-        if (!rawPath.startsWith('/') || rawPath.endsWith('/') || '\\' in rawPath || rawPath.length > 512) {
-            return MetadataPathResolution.Blocked("managed_metadata_path_invalid")
-        }
-        val root = context.roots
-            .filter { candidate ->
-                candidate.containerPath.startsWith('/') &&
-                    candidate.containerPath != "/" &&
-                    !candidate.containerPath.endsWith('/') &&
-                    rawPath.startsWith("${candidate.containerPath}/")
-            }
-            .maxByOrNull { it.containerPath.length }
-            ?: return MetadataPathResolution.Blocked("managed_metadata_root_not_authorized")
-        val segments = rawPath.removePrefix("${root.containerPath}/").split('/')
-        if (segments.isEmpty() || segments.any { it.isBlank() || it == "." || it == ".." }) {
-            return MetadataPathResolution.Blocked("managed_metadata_path_segment_invalid")
-        }
-        val rootPath = root.directory.toPath().toAbsolutePath().normalize()
-        if (!Files.isDirectory(rootPath, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(rootPath)) {
-            return MetadataPathResolution.Blocked("managed_metadata_root_invalid")
-        }
-        var cursor = rootPath
-        segments.forEachIndexed { index, segment ->
-            cursor = cursor.resolve(segment).normalize()
-            if (!cursor.startsWith(rootPath)) {
-                return MetadataPathResolution.Blocked("managed_metadata_path_escape")
-            }
-            val attributes = runCatching {
-                Files.readAttributes(
-                    cursor,
-                    BasicFileAttributes::class.java,
-                    LinkOption.NOFOLLOW_LINKS,
-                )
-            }.getOrNull() ?: return MetadataPathResolution.Unsupported("managed_metadata_path_missing")
-            if (attributes.isSymbolicLink) {
-                return MetadataPathResolution.Unsupported("managed_metadata_symbolic_link")
-            }
-            if (index < segments.lastIndex && !attributes.isDirectory) {
-                return MetadataPathResolution.Unsupported("managed_metadata_parent_not_directory")
-            }
-        }
-        return MetadataPathResolution.Ready(cursor.toFile())
-    }
-
-    private fun readBounded(file: File, maximumBytes: Long): ByteArray {
-        val limit = maximumBytes.toInt()
-        return file.inputStream().use { input ->
-            val output = ByteArrayOutputStream(limit.coerceAtMost(8 * 1024))
-            val buffer = ByteArray(8 * 1024)
-            var total = 0
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                total += count
-                if (total > limit) error("managed_metadata_file_too_large")
-                output.write(buffer, 0, count)
-            }
-            output.toByteArray()
-        }
-    }
-
-    private fun unsupported(reason: String) =
-        RuntimeProviderDecision.Unsupported(RuntimeProviderKind.ANDROID_NATIVE, reason)
-
-    private fun blocked(reason: String) =
-        RuntimeProviderDecision.Blocked(RuntimeProviderKind.ANDROID_NATIVE, reason)
-
-    private sealed interface MetadataPathResolution {
-        data class Ready(val file: File) : MetadataPathResolution
-        data class Unsupported(val reason: String) : MetadataPathResolution
-        data class Blocked(val reason: String) : MetadataPathResolution
-    }
-
-    private val JSON_FIELD = Regex("[A-Za-z][A-Za-z0-9_-]{0,63}")
-    private const val MAXIMUM_METADATA_BYTES = 1024L * 1024L
-    private const val MAXIMUM_VALUE_CHARS = 256
 }
 
 private object ManagedPackageVersionBenchmark {
@@ -354,7 +207,7 @@ private object ManagedPackageVersionBenchmark {
         }
         val fixturesCleanedOnExit = !Files.exists(suiteRoot.toPath(), LinkOption.NOFOLLOW_LINKS)
         return reports + (
-            "status=complete suite=$SUITE productionChanged=false fixturesCleanedOnExit=$fixturesCleanedOnExit"
+            "status=complete suite=$SUITE providerSource=production fixturesCleanedOnExit=$fixturesCleanedOnExit"
             )
     }
 

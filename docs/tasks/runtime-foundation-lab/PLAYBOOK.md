@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1600` 进行中
-- 当前任务：`RF1630` 最小生产样板
+- 当前任务：`RF1640` go/no-go 与父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 冻结锚点：`8c046238b3c59094becc8f46df9857169a733649`
 - 分支：`codex/runtime-foundation-lab`
@@ -915,6 +915,10 @@
 - 默认 npm 来源可生成结构化元数据探针；显式 `versionProbe`、非 npm 来源和旧协议继续现有 PRoot 命令；Host/原生开始后不自动重放 PRoot；
 - 不新增 Store；版本事实仍由 `ResourceVersionCoordinator` 产出，安装状态仍由原 Store 持有，页面不选择 lane、不扫描文件、不整页刷新；
 - 叶子验证使用 Targeted、Quick、Stage，不运行 Full。
+- [x] `AndroidNativeStructuredJsonStringProvider` 只消费授权根、容器路径、最大字节和顶层字符串字段，不读取资源、包、命令或页面标识；
+- [x] 默认 npm 来源在保留原命令回退的同时生成结构化元数据合同，5 份正式资源复用；显式探针保持无结构化事实；
+- [x] Gateway 单测固定 Ready 零 PRoot、Unsupported 单次 PRoot、Blocked 零 PRoot、旧命令单次 PRoot；选择不解析 `probe.command`；
+- [x] 最终 Stage 为 62 suites、315 tests、零失败；OnePlus 固定矩阵 13 类零差异，生产 Provider 单请求 p50 降低 98.5%、批次降低 99.3%，允许进入 RF1640。
 
 #### RF1640 go/no-go 与父任务门
 

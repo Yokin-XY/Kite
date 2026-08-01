@@ -92,11 +92,11 @@
 | RF1552 | 已完成 | Quick/Stage/Full 实跑零失败，默认测试数最高减少 82.7% |
 | RF1553 | 已完成 | 独立工作进程持锁；外层中断后仍阻止 Gradle 重叠 |
 | RF1554 | 已完成 | Full、Debug 构建、互斥探针和范围审查全部通过 |
-| RF1600 | 进行中 | 固定正确性与收益门已通过，进入 RF1630 最小生产样板 |
+| RF1600 | 进行中 | 最小生产样板已通过，进入 RF1640 真链与父任务门 |
 | RF1610 | 已完成 | 5 个正式资源共享默认元数据探针；两类高风险调用面已排除 |
 | RF1620 | 已完成 | 三轮 13 类零差异；单请求和 5 请求批次收益门均通过 |
-| RF1630 | 待开始 | 只接默认 npm 元数据结构化合同；旧探针保持进程前回退 |
-| RF1640 | 未触发 | 真链、Full 和父任务 go/no-go 门 |
+| RF1630 | 已完成 | 生产 Provider、唯一回退、Stage 与 OnePlus 固定矩阵均通过 |
+| RF1640 | 待开始 | 真实资源唯一车道、Full 和父任务 go/no-go 门 |
 
 ## RF1600 开机与三问自检
 
@@ -122,6 +122,15 @@
 - 首次真机夹具把预发布和构建元数据组合在同一字符串，超出 Kite 当前单后缀版本合同；已拆成两个合法固定样本，没有修改解析器。随后安全阻断样例曾因比较器把原因文本与空基线文本做全对象比较产生一个假差异；修正为校验 `blocked/fallback=0`，没有改变 Provider、样例结果或阈值。
 - 最终 Stage 为 53 suites、261 tests、0 failure、0 error、1 skipped；跳过项仅为 Windows 宿主无符号链接权限，OnePlus 固定 symlink 样例已真实通过。Debug 构建 60 tasks 成功；APK `247509540` bytes、SHA-256 `5A8CC74B9E5E97BCDB0C21F0B82221660D7C8F730EA9E54CA41713ED000B082C`，只覆盖安装到 `3f8bbaad`，未进入 Git。
 - OnePlus 当前 Kite 进程无 FATAL/ANR，`files/runtime/shared/ubuntu-main/.kf/cache/rf1620-managed-package-version` 不存在。本叶没有修改生产 Gateway、Provider、资源清单、Store 或 UI；RF1620 判 go，下一恢复指针为 RF1630。
+
+## RF1630 最小生产样板
+
+- 新增入口无关的 `AndroidNativeStructuredJsonStringProvider`：请求只含授权根、容器路径、最大字节和顶层字符串字段；普通文件和严格 UTF-8 JSON 字符串字段形成 Ready，非法授权/路径合同 Blocked，缺失、符号链接、超限、坏 JSON、缺字段和非字符串保持 Unsupported。Provider 不读取资源 ID、包名、命令或页面，也不创建进程或写状态。
+- `KiteResourceVersionProbeSpec` 只新增可选内部结构化元数据合同；`defaultInstalledVersionProbe()` 为默认 npm 探针同时保留原 `node -p` 命令回退并附加合同。正式资产扫描确认 5 份无显式 `versionProbe` 的 npm 资源共享该路径；显式命令探针结构化事实为空，行为不变。
+- `AndroidResourceVersionGateway` 只在已安装版本入口读取结构化合同：Ready 直接返回，Unsupported 在首个业务进程前只执行一次原 PRoot 命令，Blocked 失败关闭且不回退；远端版本和显式命令路径未迁移。组合根只提供 `/workspace` 现有物理映射和低基数 route/reason 日志，没有新增 Store、UI 扫描或页面刷新。
+- 最终 Stage 为 62 suites、315 tests、0 failure、0 error、1 skipped；跳过仍仅为 Windows 宿主无符号链接权限。固定网关测试证明 Ready `0` 次 recipe、Unsupported `1` 次、Blocked `0` 次、旧命令 `1` 次；静态护栏证明已安装版本选择不读取 `probe.command`，生产 Provider 不含资源/包/页面标识。
+- 最终 Debug 构建 60 tasks 成功；APK `247525656` bytes、SHA-256 `16C7FF592D8695C5F916CB199896CD86356B632AD414540CB7F178D382F201C3`，仅安装到 OnePlus 8T `3f8bbaad`。生产 Provider 固定矩阵为 13 类、`differences=0`、`correctnessGate=true`；单请求 PRoot/native p50 为 `208.897/3.121ms`，降低 `98.5%`，原生 p95 `7.414ms`；五请求批次 p50 为 `1352.117/8.938ms`，降低 `99.3%`，`providerSource=production` 且夹具清理为真；同一日志核对无 FATAL/ANR。
+- 曾有两次验收采集器假失败：第一次 `logcat -T` 的含空格时间被 PowerShell 拆参，第二次按历史行数截取新日志受环形缓冲变化影响；两次都没有改变生产代码、样例或阈值。第二次矩阵真实完成行已按专用标签和时间戳复核，不能把采集器超时解释成性能结果。RF1630 判 go，下一恢复指针为 RF1640。
 
 ## RF1500 开机与三问自检
 
