@@ -10,10 +10,31 @@ internal enum class ProotJobAccess {
     SHARED_WRITE,
 }
 
+internal enum class ProotJobCancellationMode {
+    /** 任务没有独立交互入口，由调用方的 timeout 和运行 owner 完成回收。 */
+    TIMEOUT_AND_OWNER,
+
+    /** 用户通过终端会话发起取消，终端 owner 负责回收进程树。 */
+    TERMINAL_SESSION,
+
+    /** 长期进程通过受管服务或 Agent owner 停止。 */
+    MANAGED_OWNER,
+}
+
+internal enum class ProotJobResultMode {
+    CAPTURED_STDIO,
+    TERMINAL_SESSION,
+    DETACHED_BINDING,
+    MANAGED_CHANNEL,
+}
+
 internal data class ProotJobAdmissionRequest(
     val jobId: String,
+    val ownerId: String,
     val lane: RuntimeLaneKind,
     val access: ProotJobAccess = ProotJobAccess.READ_ONLY,
+    val cancellationMode: ProotJobCancellationMode,
+    val resultMode: ProotJobResultMode,
     val pressureEssential: Boolean = false,
     val waitTimeoutMs: Long = 10_000L,
 )
@@ -35,9 +56,17 @@ internal data class ProotJobAdmissionSnapshot(
     val activeCount: Int,
     val queuedCount: Int,
     val activeSharedWrite: Boolean,
+    val activeByLane: Map<RuntimeLaneKind, Int>,
+    val queuedByLane: Map<RuntimeLaneKind, Int>,
     val admittedCount: Long,
+    val cancelledCount: Long,
     val timedOutCount: Long,
     val maxObservedActive: Int,
+    val restoredCount: Long = 0L,
+    val contractBlockCount: Int = 0,
+    val managedOwnerAdmissionMax: Int,
+    val managedOwnerActiveCount: Int = 0,
+    val managedOwnerQueuedCount: Int = 0,
 )
 
 internal sealed interface ProotJobAdmissionResult {
@@ -70,6 +99,7 @@ internal class ProotJobAdmissionController(
         val sequence: Long,
         val enqueuedAtNanos: Long,
         val request: ProotJobAdmissionRequest,
+        var cancelled: Boolean = false,
     )
 
     private data class Active(
@@ -81,14 +111,17 @@ internal class ProotJobAdmissionController(
     private val changed = lock.newCondition()
     private val pending = mutableListOf<Waiter>()
     private val active = linkedMapOf<Long, Active>()
+    private val contractBlocks = linkedSetOf<String>()
 
     @Volatile
     private var policy: ProotJobAdmissionPolicy = initialPolicy.normalized()
 
     private var nextSequence = 0L
     private var admittedCount = 0L
+    private var cancelledCount = 0L
     private var timedOutCount = 0L
     private var maxObservedActive = 0
+    private var restoredCount = 0L
     private var closed = false
 
     fun updatePolicy(updated: ProotJobAdmissionPolicy) {
@@ -102,12 +135,21 @@ internal class ProotJobAdmissionController(
         validate(request)
         val waiter = lock.withLock {
             if (closed) return ProotJobAdmissionResult.Rejected("admission_closed")
+            if (pending.any { it.request.jobId == request.jobId } || active.values.any {
+                    it.request.jobId == request.jobId
+                }
+            ) {
+                return ProotJobAdmissionResult.Rejected("admission_job_id_conflict")
+            }
             Waiter(++nextSequence, monotonicNanos(), request).also(pending::add)
         }
         val deadline = waiter.enqueuedAtNanos + TimeUnit.MILLISECONDS.toNanos(request.waitTimeoutMs)
 
         return lock.withLock {
             while (true) {
+                if (waiter.cancelled) {
+                    return@withLock ProotJobAdmissionResult.Rejected("admission_cancelled")
+                }
                 if (closed) {
                     pending.remove(waiter)
                     return@withLock ProotJobAdmissionResult.Rejected("admission_closed")
@@ -142,6 +184,77 @@ internal class ProotJobAdmissionController(
         }
     }
 
+    fun blockNewAdmissions(key: String) {
+        val normalized = key.trim()
+        require(normalized.isNotBlank() && normalized.length <= 192) {
+            "admission_contract_block_key_invalid"
+        }
+        lock.withLock {
+            contractBlocks += normalized
+            changed.signalAll()
+        }
+    }
+
+    fun clearAdmissionBlock(key: String) {
+        lock.withLock {
+            contractBlocks.remove(key.trim())
+            changed.signalAll()
+        }
+    }
+
+    fun replaceAdmissionBlocks(namespace: String, values: Set<String>) {
+        val prefix = namespace.trim()
+        require(prefix.isNotBlank() && prefix.length <= 64) {
+            "admission_contract_block_namespace_invalid"
+        }
+        val replacements = values.mapTo(linkedSetOf()) { value ->
+            "$prefix${value.trim()}".also { key ->
+                require(key.length <= 192) { "admission_contract_block_key_invalid" }
+            }
+        }
+        lock.withLock {
+            contractBlocks.removeAll { it.startsWith(prefix) }
+            contractBlocks += replacements
+            changed.signalAll()
+        }
+    }
+
+    /**
+     * 控制面重建时恢复已经由持久 owner 事实证明仍占容量的任务。
+     * 恢复不受当前收缩上限驱逐；超额只会阻止后续新准入。
+     */
+    fun restoreActive(request: ProotJobAdmissionRequest): ProotJobAdmissionResult = lock.withLock {
+        validate(request)
+        require(request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER) {
+            "restored_admission_managed_owner_required"
+        }
+        if (closed) return@withLock ProotJobAdmissionResult.Rejected("admission_closed")
+        if (pending.any { it.request.jobId == request.jobId } || active.values.any {
+                it.request.jobId == request.jobId
+            }
+        ) {
+            return@withLock ProotJobAdmissionResult.Rejected("admission_job_id_conflict")
+        }
+        val sequence = ++nextSequence
+        active[sequence] = Active(sequence, request)
+        restoredCount += 1L
+        maxObservedActive = maxOf(maxObservedActive, active.size)
+        changed.signalAll()
+        ProotJobAdmissionResult.Granted(
+            ProotJobAdmissionLease(request) { release(sequence) }
+        )
+    }
+
+    /** 只取消尚未准入的任务；已经开始的任务必须交回其声明的运行 owner。 */
+    fun cancelQueued(jobId: String): Boolean = lock.withLock {
+        val waiter = pending.firstOrNull { it.request.jobId == jobId } ?: return@withLock false
+        pending.remove(waiter)
+        waiter.cancelled = true
+        cancelledCount += 1L
+        changed.signalAll()
+        true
+    }
+
     fun snapshot(): ProotJobAdmissionSnapshot = lock.withLock {
         ProotJobAdmissionSnapshot(
             profileGroup = policy.profileGroup,
@@ -150,9 +263,25 @@ internal class ProotJobAdmissionController(
             activeCount = active.size,
             queuedCount = pending.size,
             activeSharedWrite = active.values.any { it.request.access == ProotJobAccess.SHARED_WRITE },
+            activeByLane = RuntimeLaneKind.entries.associateWith { lane ->
+                active.values.count { it.request.lane == lane }
+            },
+            queuedByLane = RuntimeLaneKind.entries.associateWith { lane ->
+                pending.count { it.request.lane == lane }
+            },
             admittedCount = admittedCount,
+            cancelledCount = cancelledCount,
             timedOutCount = timedOutCount,
             maxObservedActive = maxObservedActive,
+            restoredCount = restoredCount,
+            contractBlockCount = contractBlocks.size,
+            managedOwnerAdmissionMax = policy.managedOwnerMax(),
+            managedOwnerActiveCount = active.values.count {
+                it.request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER
+            },
+            managedOwnerQueuedCount = pending.count {
+                it.request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER
+            },
         )
     }
 
@@ -172,11 +301,13 @@ internal class ProotJobAdmissionController(
 
     private fun canAdmit(waiter: Waiter): Boolean {
         if (selectedWaiter() !== waiter) return false
+        if (contractBlocks.isNotEmpty()) return false
         val currentPolicy = policy
         if (blockedByPressure(waiter.request, currentPolicy)) return false
         if (active.size >= currentPolicy.effectiveGlobalMax()) return false
         if (active.values.any { it.request.access == ProotJobAccess.SHARED_WRITE }) return false
         if (waiter.request.access == ProotJobAccess.SHARED_WRITE && active.isNotEmpty()) return false
+        if (managedOwnerHeadroomReached(waiter.request, currentPolicy)) return false
 
         val lanePolicy = currentPolicy.lane(waiter.request.lane)
         val laneActive = active.values.count { it.request.lane == waiter.request.lane }
@@ -199,6 +330,9 @@ internal class ProotJobAdmissionController(
                 return@firstOrNull true
             }
             if (candidate.request.access == ProotJobAccess.SHARED_WRITE) return@firstOrNull true
+            if (managedOwnerHeadroomReached(candidate.request, currentPolicy)) {
+                return@firstOrNull false
+            }
 
             val lanePolicy = currentPolicy.lane(candidate.request.lane)
             val laneActive = active.values.count { it.request.lane == candidate.request.lane }
@@ -227,6 +361,7 @@ internal class ProotJobAdmissionController(
     private fun blockedReason(waiter: Waiter): String {
         val currentPolicy = policy
         return when {
+            contractBlocks.isNotEmpty() -> "admission_contract_mismatch"
             blockedByPressure(waiter.request, currentPolicy) ->
                 "admission_pressure_${currentPolicy.pressure.name.lowercase()}"
             currentPolicy.effectiveGlobalMax() <= active.size -> "admission_global_capacity_timeout"
@@ -234,8 +369,21 @@ internal class ProotJobAdmissionController(
                 "admission_shared_write_active"
             waiter.request.access == ProotJobAccess.SHARED_WRITE && active.isNotEmpty() ->
                 "admission_shared_write_waiting_for_exclusive"
+            managedOwnerHeadroomReached(waiter.request, currentPolicy) ->
+                "admission_managed_owner_headroom_timeout"
             else -> "admission_lane_capacity_timeout"
         }
+    }
+
+    private fun managedOwnerHeadroomReached(
+        request: ProotJobAdmissionRequest,
+        currentPolicy: ProotJobAdmissionPolicy,
+    ): Boolean {
+        if (request.cancellationMode != ProotJobCancellationMode.MANAGED_OWNER) return false
+        val activeManagedOwners = active.values.count {
+            it.request.cancellationMode == ProotJobCancellationMode.MANAGED_OWNER
+        }
+        return activeManagedOwners >= currentPolicy.managedOwnerMax()
     }
 
     private fun waiterComparator(): Comparator<Waiter> =
@@ -248,13 +396,8 @@ internal class ProotJobAdmissionController(
     }
 
     private fun ProotJobAdmissionPolicy.effectiveGlobalMax(): Int {
-        val profileMax = globalMaxOverride ?: when (profileGroup) {
-            RuntimeLifecyclePolicyProfileGroup.LOW_POWER -> 1
-            RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED -> 2
-            RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE -> 4
-            RuntimeLifecyclePolicyProfileGroup.CUSTOM -> lanes.maxOfOrNull { it.maxConcurrency }
-                ?.coerceIn(1, 4) ?: 1
-        }
+        val profileMax = globalMaxOverride
+            ?: ProotPerformanceTunings.resolve(profileGroup, lanes).configuredGlobalMax
         return when (pressure) {
             RuntimePressureLevel.UNKNOWN -> 1
             RuntimePressureLevel.NORMAL -> profileMax
@@ -262,6 +405,11 @@ internal class ProotJobAdmissionController(
             RuntimePressureLevel.HIGH,
             RuntimePressureLevel.CRITICAL -> 1
         }
+    }
+
+    private fun ProotJobAdmissionPolicy.managedOwnerMax(): Int {
+        val globalMax = effectiveGlobalMax()
+        return if (globalMax <= 1) 1 else globalMax - 1
     }
 
     private fun ProotJobAdmissionPolicy.lane(kind: RuntimeLaneKind): RuntimeLanePolicy {
@@ -288,6 +436,7 @@ internal class ProotJobAdmissionController(
 
     private fun validate(request: ProotJobAdmissionRequest) {
         require(request.jobId.isNotBlank() && request.jobId.length <= 96) { "admission_job_id_invalid" }
+        require(request.ownerId.isNotBlank() && request.ownerId.length <= 160) { "admission_owner_id_invalid" }
         require(request.waitTimeoutMs in 1L..600_000L) { "admission_wait_timeout_invalid" }
     }
 }

@@ -1,5 +1,8 @@
 package com.kite.app.agent.registration
 
+import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
+import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
+
 /** 面向用户的稳定 Agent 身份；显示名称允许改名或重复。 */
 data class AgentDefinition(
     val agentId: String,
@@ -22,7 +25,9 @@ sealed interface AgentLaunchSpec {
         override val providerId: String,
         override val protocol: String,
         override val transport: String,
-        val argv: List<String>
+        val argv: List<String>,
+        val runtimeGuarantees: Set<String> = emptySet(),
+        val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
     ) : AgentLaunchSpec
 
     data class Attach(
@@ -150,10 +155,14 @@ object AgentRegistrationPolicy {
             }
         }
         return when (val launch = registration.launch) {
-            is AgentLaunchSpec.Managed -> if (launch.argv.isEmpty() || launch.argv.any(String::isBlank)) {
-                "Managed Agent 必须声明完整 argv"
-            } else {
-                null
+            is AgentLaunchSpec.Managed -> when {
+                launch.argv.isEmpty() || launch.argv.any(String::isBlank) ->
+                    "Managed Agent 必须声明完整 argv"
+                RuntimeExecutionGuaranteeCodec.normalize(launch.runtimeGuarantees) == null ->
+                    "Managed Agent 包含未知 runtimeGuarantee"
+                RuntimeExecutionGuaranteeEvidenceCodec.normalize(launch.runtimeGuaranteeEvidence) == null ->
+                    "Managed Agent 包含无效 runtimeGuaranteeEvidence"
+                else -> null
             }
             is AgentLaunchSpec.Attach -> if (launch.connectionReference.isBlank()) {
                 "Attach Agent 必须引用连接配置"

@@ -6,6 +6,8 @@ import com.kite.app.application.resources.ResourceActionEffect
 import com.kite.app.application.resources.ResourceActionGateway
 import com.kite.app.application.resources.ResourceDependencyGuard
 import com.kite.app.application.resources.ResourceVersionCheckResult
+import com.kite.app.application.resources.ResourceVersionBatchScheduler
+import com.kite.app.application.resources.ResourceVersionBatchSummary
 import com.kite.app.application.resources.ResourceVersionCoordinator
 import com.kite.app.application.resources.ResourceUpdateBatchPolicy
 import com.kite.app.application.resources.ResourceRunContinuation
@@ -22,6 +24,7 @@ import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
 import com.kite.app.foundation.runtime.RuntimeLaunchTrace
+import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
@@ -31,6 +34,7 @@ import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceManagementMode
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
@@ -60,11 +64,14 @@ internal class AndroidResourceActionGateway(
     private val bridgeClient: KiteBridgeClient,
     private val diagnostics: KiteDiagnostics,
     private val versionCoordinator: ResourceVersionCoordinator,
+    private val versionBatchObserver: (ResourceVersionBatchSummary) -> Unit = {},
     private val environmentFor: (String) -> Map<String, String> = { emptyMap() },
     private val installedStateProbe: ResourceInstalledStateProbe =
         AndroidResourceInstalledStateProbe(bridgeClient),
     private val managedCommandEvidence: ResourceManagedCommandEvidenceCoordinator =
-        ResourceManagedCommandEvidenceCoordinator(),
+        ResourceManagedCommandEvidenceCoordinator { message ->
+            Logger.i("ResourceManagedCommandProof", message)
+        },
 ) : ResourceActionGateway {
     private val appContext = context.applicationContext
 
@@ -216,8 +223,16 @@ internal class AndroidResourceActionGateway(
         // 先一次性写入所有目标的乐观状态，再开始任何网络或命令探测。
         targets.forEach { target -> installStore.markUpdateChecking(target.id, environmentId) }
         val results = withContext(Dispatchers.IO) {
-            targets.map { target ->
-                target to versionCoordinator.check(target.manifest, environmentId)
+            // 所有车道先在业务进程前完成结构化预检；事实不足的整项进入单槽兼容队列。
+            val prepared = targets.map { target ->
+                target to versionCoordinator.prepareBatchCheck(target.manifest, environmentId)
+            }
+            ResourceVersionBatchScheduler.executeOrdered(
+                requests = prepared,
+                laneOf = { preparedRequest -> preparedRequest.second.lane },
+                observer = versionBatchObserver,
+            ) { preparedRequest ->
+                preparedRequest.first to versionCoordinator.check(preparedRequest.second)
             }
         }.map { (target, result) -> applyUpdateCheckResult(target, result, environmentId) }
 
@@ -588,7 +603,14 @@ internal class AndroidResourceActionGateway(
                 isInstalled = entry?.installed == true,
                 verificationBasis = verificationBasis,
             )
-            ResourceManagedCommandEvidenceRequest(requirement, identity)
+            ResourceManagedCommandEvidenceRequest(
+                requirement = requirement,
+                identity = identity,
+                nativeProof = buildResourceManagedCommandNativeProof(
+                    identity = identity,
+                    nativeEnvironmentEligible = environmentId == KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID,
+                ),
+            )
         }
         val missing = managedCommandEvidence.missingResourceIds(requests) { pendingRequirements ->
             installedStateProbe.missingResourceIds(pendingRequirements)

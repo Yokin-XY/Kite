@@ -8,6 +8,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -28,6 +30,80 @@ class ResourceManagedCommandEvidenceCoordinatorTest {
 
         assertEquals(1, probes.get())
         assertEquals(1, coordinator.positiveEvidenceCount())
+    }
+
+    @Test
+    fun `完整默认环境原生证明不会启动 PRoot 探测`() = runTest {
+        val coordinator = ResourceManagedCommandEvidenceCoordinator()
+        val probes = AtomicInteger(0)
+        val identity = identity()
+        val proof = buildResourceManagedCommandNativeProof(identity, nativeEnvironmentEligible = true)
+
+        val result = coordinator.missingResourceIds(listOf(request(identity, proof))) {
+            probes.incrementAndGet()
+            Result.success(emptySet())
+        }
+
+        assertEquals(emptySet<String>(), result.getOrThrow())
+        assertEquals(0, probes.get())
+        assertEquals(1, coordinator.positiveEvidenceCount())
+    }
+
+    @Test
+    fun `非执行文件和非默认环境不能建立原生证明`() {
+        val executable = identity()
+        val nonExecutable = executable.copy(
+            verificationBasis = executable.verificationBasis.copy(
+                commandFiles = executable.verificationBasis.commandFiles.map { commandFile ->
+                    commandFile.copy(executable = false)
+                },
+            ),
+        )
+
+        assertNotNull(buildResourceManagedCommandNativeProof(executable, nativeEnvironmentEligible = true))
+        assertNull(buildResourceManagedCommandNativeProof(nonExecutable, nativeEnvironmentEligible = true))
+        assertNull(buildResourceManagedCommandNativeProof(executable, nativeEnvironmentEligible = false))
+    }
+
+    @Test
+    fun `混合请求只把不完整事实交给 PRoot`() = runTest {
+        val coordinator = ResourceManagedCommandEvidenceCoordinator()
+        val nativeIdentity = identity(resourceId = "native")
+        val fallbackIdentity = identity(resourceId = "fallback")
+        val probed = mutableListOf<String>()
+
+        val result = coordinator.missingResourceIds(
+            listOf(
+                request(
+                    nativeIdentity,
+                    buildResourceManagedCommandNativeProof(nativeIdentity, nativeEnvironmentEligible = true),
+                ),
+                request(fallbackIdentity),
+            ),
+        ) { requirements ->
+            probed += requirements.map(ResourceManagedCommandRequirement::resourceId)
+            Result.success(emptySet())
+        }
+
+        assertEquals(emptySet<String>(), result.getOrThrow())
+        assertEquals(listOf("fallback"), probed)
+    }
+
+    @Test
+    fun `错配原生证明失败关闭到 PRoot`() = runTest {
+        val coordinator = ResourceManagedCommandEvidenceCoordinator()
+        val requested = identity(resourceId = "requested")
+        val other = identity(resourceId = "other")
+        val probes = AtomicInteger(0)
+
+        coordinator.missingResourceIds(
+            listOf(request(requested, ResourceManagedCommandNativeProof(other))),
+        ) {
+            probes.incrementAndGet()
+            Result.success(emptySet())
+        }.getOrThrow()
+
+        assertEquals(1, probes.get())
     }
 
     @Test
@@ -150,10 +226,14 @@ class ResourceManagedCommandEvidenceCoordinatorTest {
         assertEquals(1, probes.get())
     }
 
-    private fun request(identity: ResourceManagedCommandEvidenceIdentity) =
+    private fun request(
+        identity: ResourceManagedCommandEvidenceIdentity,
+        nativeProof: ResourceManagedCommandNativeProof? = null,
+    ) =
         ResourceManagedCommandEvidenceRequest(
             requirement = ResourceManagedCommandRequirement(identity.resourceId, identity.commands),
             identity = identity,
+            nativeProof = nativeProof,
         )
 
     private fun identity(
@@ -193,6 +273,7 @@ class ResourceManagedCommandEvidenceCoordinatorTest {
                     linkChain = linkChain,
                     lastModifiedMs = 23L,
                     length = commandLength,
+                    executable = true,
                 )
             },
         ),

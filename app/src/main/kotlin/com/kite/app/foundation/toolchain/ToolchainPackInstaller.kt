@@ -32,6 +32,7 @@ object ToolchainPackInstaller {
     private const val STATUS_FILE = "status.json"
     private const val INSTALL_TIMEOUT_SECONDS = 900L
     private const val OUTPUT_LIMIT = 48_000
+    private const val BOOTSTRAP_MAXIMUM_CONCURRENCY = 2
     const val BOOTSTRAP_RESOURCE_RUN_PREFIX = "bootstrap:"
     const val RESOURCE_NODEJS = "kite.nodejs"
     private const val RESOURCE_PYTHON = "kite.python"
@@ -95,6 +96,7 @@ object ToolchainPackInstaller {
             mode = "--install-system-tools",
             version = "v16",
             label = "系统工具集合",
+            dependencies = setOf(RESOURCE_NODEJS),
             requiredPaths = listOf(
                 ".kf/software/kite.tool.env/pnpm-11.9.0/package/bin/pnpm.cjs",
                 ".kf/bin/pnpm",
@@ -312,38 +314,83 @@ object ToolchainPackInstaller {
             val manifest = extractRuntimePack(appContext)
             val totalSteps = BOOTSTRAP_RESOURCES.size
             val installRunner = BootstrapInstallRunner(ToolchainResourcePortHost.get())
-            val resourceResults = BOOTSTRAP_RESOURCES.mapIndexed { index, resource ->
-                val stepIndex = index + 1
-                if (reportBootstrapProgress) {
-                    RuntimeBootstrapProgress.bundledToolStarted(resource.label, stepIndex, totalSteps)
-                }
-                val runId = "$BOOTSTRAP_RESOURCE_RUN_PREFIX${resource.resourceId}"
-                val result = installRunner.run(
-                    context = appContext,
-                    resourceId = resource.resourceId,
-                    targetVersion = resource.version,
-                    runId = runId,
-                    alreadyReady = isBootstrapResourceReady(appContext, resource)
-                ) {
-                    val resourcePackDir = mirrorPackIntoSharedResourceCache(appContext, resource.resourceId)
-                    executeInstallScript(
+            val resourcesById = BOOTSTRAP_RESOURCES.associateBy(BootstrapResource::resourceId)
+            val decision = DependencyBatchScheduler.executeOrdered(
+                tasks = BOOTSTRAP_RESOURCES.mapIndexed { index, resource ->
+                    DependencyBatchTask(
+                        key = resource.resourceId,
+                        dependencies = resource.dependencies,
+                    ) {
+                        val stepIndex = index + 1
+                        if (reportBootstrapProgress) {
+                            RuntimeBootstrapProgress.bundledToolStarted(resource.label, stepIndex, totalSteps)
+                        }
+                        val runId = "$BOOTSTRAP_RESOURCE_RUN_PREFIX${resource.resourceId}"
+                        val result = installRunner.run(
+                            context = appContext,
+                            resourceId = resource.resourceId,
+                            targetVersion = resource.version,
+                            runId = runId,
+                            alreadyReady = isBootstrapResourceReady(appContext, resource)
+                        ) {
+                            val resourcePackDir = mirrorPackIntoSharedResourceCache(appContext, resource.resourceId)
+                            executeInstallScript(
+                                context = appContext,
+                                mode = resource.mode,
+                                workspacePackDir = resourcePackDir,
+                                workspacePackPath = resourcePackWorkspacePath(resource.resourceId),
+                                toolchainDir = "/workspace/.kf/software/${safeResourceId(resource.resourceId)}",
+                                binDir = WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
+                            )
+                        }
+                        if (reportBootstrapProgress) {
+                            RuntimeBootstrapProgress.bundledToolCompleted(
+                                resource.label,
+                                stepIndex,
+                                totalSteps,
+                                result.exitCode != 0 || result.timedOut
+                            )
+                        }
+                        appendLog(appContext, result.toLogBlock(resource.resourceId))
+                        result
+                    }
+                },
+                maximumConcurrency = BOOTSTRAP_MAXIMUM_CONCURRENCY,
+                isSuccessful = { result -> result.exitCode == 0 && !result.timedOut },
+            )
+            val report = when (decision) {
+                is DependencyBatchDecision.Completed -> decision.report
+                is DependencyBatchDecision.Blocked -> error(decision.reason)
+            }
+            val resourceResults = report.outcomes.map { outcome ->
+                val resource = checkNotNull(resourcesById[outcome.key])
+                val result = when (outcome) {
+                    is DependencyBatchTaskOutcome.Executed -> outcome.value
+                        ?: installRunner.failWithoutExecution(
+                            context = appContext,
+                            resourceId = resource.resourceId,
+                            runId = "$BOOTSTRAP_RESOURCE_RUN_PREFIX${resource.resourceId}",
+                            reason = outcome.failureReason ?: "dependency_batch_task_failed",
+                        )
+                    is DependencyBatchTaskOutcome.DependencyBlocked -> installRunner.failWithoutExecution(
                         context = appContext,
-                        mode = resource.mode,
-                        workspacePackDir = resourcePackDir,
-                        workspacePackPath = resourcePackWorkspacePath(resource.resourceId),
-                        toolchainDir = "/workspace/.kf/software/${safeResourceId(resource.resourceId)}",
-                        binDir = WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
+                        resourceId = resource.resourceId,
+                        runId = "$BOOTSTRAP_RESOURCE_RUN_PREFIX${resource.resourceId}",
+                        reason = "dependency_failed:${outcome.failedDependencies.joinToString(",")}",
                     )
                 }
-                if (reportBootstrapProgress) {
+                val executedWithResult = outcome is DependencyBatchTaskOutcome.Executed && outcome.value != null
+                if (!executedWithResult && reportBootstrapProgress) {
                     RuntimeBootstrapProgress.bundledToolCompleted(
                         resource.label,
-                        stepIndex,
+                        BOOTSTRAP_RESOURCES.indexOf(resource) + 1,
                         totalSteps,
-                        result.exitCode != 0 || result.timedOut
+                        failed = true,
                     )
                 }
-                appendLog(appContext, result.toLogBlock(resource.resourceId))
+                if (!executedWithResult) {
+                    appendLog(appContext, result.toLogBlock(resource.resourceId))
+                }
                 resource to result
             }
 
@@ -432,11 +479,27 @@ object ToolchainPackInstaller {
         val summary: String
     )
 
+    internal data class BootstrapResourceSchedulingContract(
+        val resourceId: String,
+        val mode: String,
+        val dependencies: Set<String>,
+    )
+
+    internal fun bootstrapResourceSchedulingContracts(): List<BootstrapResourceSchedulingContract> =
+        BOOTSTRAP_RESOURCES.map { resource ->
+            BootstrapResourceSchedulingContract(
+                resourceId = resource.resourceId,
+                mode = resource.mode,
+                dependencies = resource.dependencies,
+            )
+        }
+
     private data class BootstrapResource(
         val resourceId: String,
         val mode: String,
         val version: String,
         val label: String,
+        val dependencies: Set<String> = emptySet(),
         val requiredPaths: List<String>,
         val anyRuntimePaths: List<String> = emptyList()
     )
@@ -516,6 +579,25 @@ object ToolchainPackInstaller {
                 return result.withFailure("register", registrationError)
             }
             return result
+        }
+
+        fun failWithoutExecution(
+            context: Context,
+            resourceId: String,
+            runId: String,
+            reason: String,
+        ): ToolchainCommandResult {
+            val result = ToolchainCommandResult(
+                exitCode = 2,
+                timedOut = false,
+                durationMs = 0L,
+                output = "FAIL\tdependency-batch\t$reason\nSUMMARY PASS=0 WARN=0 FAIL=1\n",
+            )
+            val registrationError = runCatching {
+                val environmentId = port.currentEnvironmentId(context)
+                port.markFailed(context, resourceId, runId, reason, environmentId)
+            }.exceptionOrNull()
+            return if (registrationError == null) result else result.withFailure("register", registrationError)
         }
 
         private fun failInstall(

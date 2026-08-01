@@ -10,6 +10,10 @@ import com.kite.app.foundation.runtime.ManagedCommandVerificationBasis
 import com.kite.app.foundation.runtime.JavaWarmProotRunnerProcess
 import com.kite.app.foundation.runtime.WarmProotRunnerProcess
 import com.kite.app.foundation.runtime.ProotEnvironmentWorkspace
+import com.kite.app.foundation.runtime.ProotCompatibilityPlan
+import com.kite.app.foundation.runtime.ProotCompatibilityRuntimeProvider
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
 import com.kite.app.foundation.runtime.ProotViewStore
 import com.kite.app.foundation.contracts.RuntimeActionKind
 import com.kite.app.foundation.runtime.RuntimeBoundary
@@ -309,6 +313,67 @@ object WorkSurfaceRuntimeBridge : com.kite.app.foundation.contracts.WorkSurfaceC
             requestedProotViewId = requestedProotViewId,
             requestedProotEnvironmentId = requestedProotEnvironmentId
         )
+    }
+
+    /** 把标准 PRoot 逻辑计划交给既有物理构造器；不在 Provider 中复制 rootfs/bind/network 规则。 */
+    internal fun buildProotExecConfig(
+        context: Context,
+        plan: ProotCompatibilityPlan,
+    ): ContainerExecConfig {
+        require(!plan.interactivePty) { "proot_exec_plan_cannot_be_interactive" }
+        val config = when (val payload = plan.payload) {
+            is RuntimeExecutionPayload.CommandLine -> buildShellExecConfig(
+                context = context,
+                workingDirectory = plan.workingDirectory,
+                payload = payload.command,
+                loginShell = plan.loginShell,
+                requestedProotViewId = plan.requestedProotViewId,
+                requestedProotEnvironmentId = plan.requestedProotEnvironmentId,
+            )
+            is RuntimeExecutionPayload.Argv -> buildArgvExecConfig(
+                context = context,
+                workingDirectory = plan.workingDirectory,
+                argv = listOf(payload.executable) + payload.arguments,
+                requestedProotViewId = plan.requestedProotViewId,
+                requestedProotEnvironmentId = plan.requestedProotEnvironmentId,
+            )
+            is RuntimeExecutionPayload.NativeCapability -> error("proot_native_capability_plan_forbidden")
+        }
+        return config.copy(env = config.env + plan.environment)
+    }
+
+    /** 显式兼容入口的统一短路径：先经最终 Provider，再交给同一个物理构造器。 */
+    internal fun buildRequiredProotExecConfig(
+        context: Context,
+        request: RuntimeExecutionRequest,
+        selectionReason: String,
+        loginShell: Boolean = true,
+    ): ContainerExecConfig = buildProotExecConfig(
+        context = context,
+        plan = ProotCompatibilityRuntimeProvider.requirePlan(
+            request = request,
+            selectionReason = selectionReason,
+            loginShell = loginShell,
+        ),
+    )
+
+    /** 交互 PRoot 仍使用原终端登录壳配置，只把标准计划中的 View 与环境事实传进去。 */
+    internal fun buildProotTerminalLaunchConfig(
+        context: Context,
+        plan: ProotCompatibilityPlan,
+    ): ContainerLaunchConfig {
+        require(plan.interactivePty) { "proot_terminal_plan_requires_interactive_pty" }
+        val config = buildTerminalLaunchConfig(
+            context = context,
+            requestedProotViewId = plan.requestedProotViewId,
+            requestedProotEnvironmentId = plan.requestedProotEnvironmentId,
+        )
+        val environment = linkedMapOf<String, String>()
+        config.env.forEach { entry ->
+            environment[entry.substringBefore('=')] = entry.substringAfter('=', "")
+        }
+        environment.putAll(plan.environment)
+        return config.copy(env = environment.map { (key, value) -> "$key=$value" }.toTypedArray())
     }
 
     /** 启动一个由 Android 持有 stdio 的温热 runner PRoot；不登记后台服务，也不自动恢复。 */

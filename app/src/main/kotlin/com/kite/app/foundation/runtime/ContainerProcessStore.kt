@@ -104,6 +104,7 @@ object ContainerProcessStore {
     private const val LOG_TAG = "ContainerProcessStore"
     private const val CONTAINER_KILL_PATH = "/usr/bin/kill"
     private const val PROCESS_LIST_TIMEOUT_SECONDS = 12L
+    private const val PROCESS_LIST_MAX_OUTPUT_BYTES = 1024 * 1024
     private const val PROCESS_ACTION_LOG_FILE = "task-manager-process-actions.log"
     private const val MIN_REFRESH_INTERVAL_MS = 450L
     private const val SOURCE_CONTAINER_PS = "container_ps"
@@ -689,10 +690,7 @@ object ContainerProcessStore {
         val workspacePath = container.workspacePath
 
         runCatching {
-            val result = runContainerArgvCommand(
-                context = context,
-                argv = listOf("/usr/bin/ps", "-eo", "pid=,ppid=,pgid=,sid=,stat=,comm=,args=")
-            )
+            val result = runBoundedContainerProcessList(context)
             if (result.exitCode == 0) {
                 val filtered = filterForContainerProcesses(
                     allProcesses = result.output.lineSequence()
@@ -1000,6 +998,41 @@ object ContainerProcessStore {
         return executeCommand(config.command, config.env)
     }
 
+    private fun runBoundedContainerProcessList(context: Context): ShellCommandResult {
+        val execution = BoundedProotTaskExecutor.executeBlocking(
+            context = context,
+            request = containerProcessListTaskRequest(
+                WarmProotExecutionCoordinator.nextJobId("container-process-list")
+            ),
+        )
+        val completed = execution.execution
+        return ShellCommandResult(
+            exitCode = completed?.exitCode ?: -1,
+            output = if (completed == null) {
+                execution.reason
+            } else {
+                (completed.stdoutTail + completed.stderrTail).toString(Charsets.UTF_8)
+            },
+            timedOut = completed?.timedOut == true,
+        )
+    }
+
+    internal fun containerProcessListPlanForTests(jobId: String): BoundedProotTaskPlan =
+        BoundedProotTaskExecutor.plan(containerProcessListTaskRequest(jobId))
+
+    internal fun containerProcessListTaskRequest(jobId: String) = BoundedProotTaskRequest(
+        jobId = jobId,
+        ownerId = "system:container-process-store",
+        argv = CONTAINER_PROCESS_LIST_ARGV,
+        workingDirectory = "/root",
+        lane = RuntimeLaneKind.PROBE,
+        access = ProotJobAccess.READ_ONLY,
+        pressureEssential = false,
+        waitTimeoutMs = 1_000L,
+        timeoutMs = TimeUnit.SECONDS.toMillis(PROCESS_LIST_TIMEOUT_SECONDS),
+        maxOutputBytesPerStream = PROCESS_LIST_MAX_OUTPUT_BYTES,
+    )
+
     private fun isContainerProcessAlive(context: Context, pid: Int): Boolean {
         if (pid <= 0) return false
         return runCatching {
@@ -1283,6 +1316,9 @@ object ContainerProcessStore {
         "claude",
         "codex"
     )
+
+    private val CONTAINER_PROCESS_LIST_ARGV =
+        listOf("/usr/bin/ps", "-eo", "pid=,ppid=,pgid=,sid=,stat=,comm=,args=")
 
     private val PS_PROCESS_REGEX =
         Regex("""^(\d+)\s+(\d+)(?:\s+(\d+)\s+(\d+))?\s+(\S+)\s+(\S+)\s*(.*)$""")

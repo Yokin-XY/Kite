@@ -27,7 +27,11 @@ import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.runtime.AgentRuntimeRegistry
 import com.kite.app.agent.runtime.AgentRuntimeStartRequest
 import com.kite.app.foundation.runtime.AndroidSharedStorageManager
-import com.kite.app.foundation.runtime.HostNodeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
+import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import com.kite.app.foundation.runtime.RuntimeExposureScope
 import com.kite.app.foundation.contracts.ContainerExecConfig
 import com.kite.app.agent.runtime.AgentRuntimeStatusSink
@@ -43,8 +47,8 @@ import com.kite.app.application.runs.RunStateMutation
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.foundation.workspace.KFWorkspaceManager
 import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
-import com.kite.app.foundation.workspace.HostNodeLaunchPlan
-import com.kite.app.foundation.workspace.HostNodeLaunchPlanner
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlan
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlanner
 import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.resources.KiteResourceAgentProfile
 import com.kite.app.resources.KiteResourceAgentRuntimeDependency
@@ -96,6 +100,8 @@ internal fun interface ManagedAgentProcessLaunchPlanner {
         argv: List<String>,
         workingDirectory: String,
         environment: Map<String, String>,
+        runtimeGuarantees: Set<String>,
+        runtimeGuaranteeEvidence: Map<String, String>,
     ): ManagedAgentProcessLaunch
 }
 
@@ -125,6 +131,8 @@ internal class AndroidManagedAgentRuntimeDependencyPreparer(context: Context) :
                 startExecutable = dependency.argv.first(),
                 startArguments = dependency.argv.drop(1),
                 environment = dependency.environment,
+                runtimeGuarantees = dependency.runtimeGuarantees,
+                runtimeGuaranteeEvidence = dependency.runtimeGuaranteeEvidence,
                 environmentFiles = dependency.environmentFiles,
                 bindAddress = dependency.bindAddress.takeIf(String::isNotBlank),
                 bindPort = dependency.bindPort,
@@ -174,57 +182,63 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
         argv: List<String>,
         workingDirectory: String,
         environment: Map<String, String>,
+        runtimeGuarantees: Set<String>,
+        runtimeGuaranteeEvidence: Map<String, String>,
     ): ManagedAgentProcessLaunch {
         require(argv.isNotEmpty()) { "agent_process_command_empty" }
+        val guarantees = RuntimeExecutionGuaranteeCodec.decode(runtimeGuarantees)
+            ?: error("agent_runtime_guarantees_invalid")
+        val guaranteeEvidence = RuntimeExecutionGuaranteeEvidenceCodec.normalize(runtimeGuaranteeEvidence)
+            ?: error("agent_runtime_guarantee_evidence_invalid")
         val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(appContext)
         val activeEnvironment = WorkSurfaceRuntimeBridge.resolveActiveWorkspaceEnvironment(container)
-        val hostPlan = HostNodeLaunchPlanner.plan(
+        val runtimePlan = ManagedRuntimeLaunchPlanner.plan(
             context = appContext,
             container = container,
             workspaceDirectory = File(activeEnvironment.workspacePath),
-            request = HostNodeExecutionRequest.Argv(argv.first(), argv.drop(1)),
-            containerWorkingDirectory = workingDirectory,
-            additionalEnvironment = environment,
-        )
-        return ManagedAgentProcessLaunchSelector.select(hostPlan, environment) {
-            WorkSurfaceRuntimeBridge.buildArgvExecConfig(
-                context = appContext,
+            request = RuntimeExecutionRequest(
+                payload = RuntimeExecutionPayload.Argv(argv.first(), argv.drop(1)),
                 workingDirectory = workingDirectory,
-                argv = argv,
-            )
+                environment = environment,
+                guarantees = guarantees,
+                guaranteeEvidence = guaranteeEvidence,
+            ),
+        )
+        return ManagedAgentProcessLaunchSelector.select(runtimePlan) { plan ->
+            WorkSurfaceRuntimeBridge.buildProotExecConfig(appContext, plan)
         }
     }
 
 }
 
-/** Host 已就绪时绝不构建第二条 PRoot 进程；Fallback 也只生成一份 PRoot 配置。 */
+/** Host 已就绪时绝不构建第二条 PRoot 进程；Proot 计划也只物化一份配置。 */
 internal object ManagedAgentProcessLaunchSelector {
     fun select(
-        hostPlan: HostNodeLaunchPlan,
-        additionalEnvironment: Map<String, String>,
-        prootConfig: () -> ContainerExecConfig,
-    ): ManagedAgentProcessLaunch = when (hostPlan) {
-        is HostNodeLaunchPlan.Ready -> ManagedAgentProcessLaunch(
+        runtimePlan: ManagedRuntimeLaunchPlan,
+        prootConfig: (com.kite.app.foundation.runtime.ProotCompatibilityPlan) -> ContainerExecConfig,
+    ): ManagedAgentProcessLaunch = when (runtimePlan) {
+        is ManagedRuntimeLaunchPlan.Ready -> ManagedAgentProcessLaunch(
             process = AgentProcessLaunch(
-                command = hostPlan.config.args.toList(),
-                environment = hostPlan.config.env.associateTo(linkedMapOf()) { entry ->
+                command = runtimePlan.config.args.toList(),
+                environment = runtimePlan.config.env.associateTo(linkedMapOf()) { entry ->
                     entry.substringBefore('=') to entry.substringAfter('=', "")
                 },
-                workingDirectory = hostPlan.config.workingDirectory,
+                workingDirectory = runtimePlan.config.workingDirectory,
             ),
-            runtimeLane = "host_node",
+            runtimeLane = runtimePlan.lane.value,
             fallbackReason = "none",
         )
-        is HostNodeLaunchPlan.Fallback -> prootConfig().let { config ->
+        is ManagedRuntimeLaunchPlan.Proot -> prootConfig(runtimePlan.plan).let { config ->
             ManagedAgentProcessLaunch(
                 process = AgentProcessLaunch(
                     command = config.command,
-                    environment = config.env + additionalEnvironment,
+                    environment = config.env,
                 ),
                 runtimeLane = "proot_shell",
-                fallbackReason = hostPlan.reason,
+                fallbackReason = runtimePlan.reason,
             )
         }
+        is ManagedRuntimeLaunchPlan.Blocked -> error("runtime_provider_blocked:${runtimePlan.reason}")
     }
 }
 
@@ -257,6 +271,8 @@ internal class AndroidAgentRecipeRuntime(
         val protocol: String,
         val transport: String,
         val argv: List<String>,
+        val runtimeGuarantees: Set<String>,
+        val runtimeGuaranteeEvidence: Map<String, String>,
         val environmentFiles: Map<String, String>,
         val runtimeDependencies: List<KiteResourceAgentRuntimeDependency>,
         val connectionReference: String?,
@@ -376,6 +392,8 @@ internal class AndroidAgentRecipeRuntime(
                     argv = resolved.argv,
                     workingDirectory = cwd,
                     environment = resolvedEnvironment,
+                    runtimeGuarantees = resolved.runtimeGuarantees,
+                    runtimeGuaranteeEvidence = resolved.runtimeGuaranteeEvidence,
                 )
             }.getOrElse { error ->
                 callback(
@@ -632,6 +650,8 @@ internal class AndroidAgentRecipeRuntime(
                     protocol = launch.protocol,
                     transport = launch.transport,
                     argv = launch.argv,
+                    runtimeGuarantees = launch.runtimeGuarantees,
+                    runtimeGuaranteeEvidence = launch.runtimeGuaranteeEvidence,
                     environmentFiles = profile?.environmentFiles.orEmpty(),
                     runtimeDependencies = profile?.runtimeDependencies.orEmpty(),
                     connectionReference = null,
@@ -649,6 +669,8 @@ internal class AndroidAgentRecipeRuntime(
                 protocol = launch.protocol,
                 transport = launch.transport,
                 argv = emptyList(),
+                runtimeGuarantees = emptySet(),
+                runtimeGuaranteeEvidence = emptyMap(),
                 environmentFiles = emptyMap(),
                 runtimeDependencies = emptyList(),
                 connectionReference = launch.connectionReference,
@@ -670,6 +692,8 @@ internal class AndroidAgentRecipeRuntime(
             protocol = protocol,
             transport = transport,
             argv = argv,
+            runtimeGuarantees = runtimeGuarantees,
+            runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
             environmentFiles = environmentFiles,
             runtimeDependencies = runtimeDependencies,
             connectionReference = connectionReference.takeIf(String::isNotBlank),
@@ -803,10 +827,15 @@ internal class AndroidAgentRecipeRuntime(
         request: AgentSessionCommand,
     ): AgentOperationResult<Unit> = withContext(Dispatchers.IO) {
         val config = runCatching {
-            WorkSurfaceRuntimeBridge.buildArgvExecConfig(
+            require(request.argv.isNotEmpty()) { "agent_session_command_empty" }
+            WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig(
                 context = appContext,
-                workingDirectory = request.cwd,
-                argv = request.argv,
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.Argv(request.argv.first(), request.argv.drop(1)),
+                    workingDirectory = request.cwd,
+                    requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
+                ),
+                selectionReason = "agent_session_command_requires_proot",
             )
         }.getOrElse { error ->
             return@withContext AgentOperationResult.Failure("会话管理命令准备失败：${error.message}", error)

@@ -123,3 +123,9 @@ Agent 会话重命名是可选原生能力，不是 Kite 显示别名。`AgentSe
 会话抽屉的更多菜单使用能力投影：归档始终是 Kite 标记并可直接执行；重命名只在原生 rename 可用时显示；删除只在原生 delete 可用时显示，当前正在使用的会话禁用删除，其余删除必须二次确认。菜单和选择态采用 Agent 页面固定中性视觉，不消费 Kite 旧青蓝强调色。
 
 设置摘要和管理页必须以同一组 Kite 归档标记为总量口径。Agent 未运行、不支持列表、读取失败、源会话已删除和真正没有归档内容是不同状态；UI 只消费 Runtime/Adapter 与 Store 的既有事实，不在行绑定或页面绘制期间扫描文件、探测进程或执行网络检查。
+
+## Agent 会话语义与三车道运行底座在进程创建前衔接
+
+Agent 注册和资源清单可以声明 `runtimeGuarantees` 与 `runtimeGuaranteeEvidence`，`AndroidAgentRecipeRuntime` 只负责把这些事实连同结构化 argv、工作目录和环境提交给统一 `ManagedRuntimeLaunchPlanner`。Planner 必须在创建业务进程前给出唯一结果：Host Ready、单次 PRoot 计划或明确 Blocked；Host 业务进程启动后不得因失败再静默重跑一份 PRoot 任务。后台运行依赖使用同一运行保证字段，但事实继续由 `BackgroundRuntimeRegistry` 持有。
+
+运行底座只决定进程创建前的执行车道，不拥有 Agent 会话语义。会话固定 Agent、草稿和模型、恢复、请求发送、状态文案、rename/delete 的能力判断、stdin、超时、错误反馈和回调顺序继续由 Kite Agent SDK、Runtime 与专用 Adapter 持有。官方账号动作不伪造运行保证；会话管理命令需要完整 Linux 时可使用统一 FULL_LINUX PRoot Provider，但不能借此改写用户可见操作语义。

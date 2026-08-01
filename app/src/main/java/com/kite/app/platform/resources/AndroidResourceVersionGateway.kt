@@ -1,7 +1,15 @@
 package com.kite.app.platform.resources
 
 import com.kite.app.application.resources.ResourceVersionGateway
+import com.kite.app.application.resources.ResourceVersionBatchPreparationGateway
+import com.kite.app.application.resources.ResourceVersionInstalledPreparation
+import com.kite.app.bridge.BridgeResult
 import com.kite.app.bridge.KiteBridgeClient
+import com.kite.app.foundation.runtime.AndroidNativeStructuredJsonStringProvider
+import com.kite.app.foundation.runtime.RuntimeProviderDecision
+import com.kite.app.foundation.runtime.RuntimeProviderKind
+import com.kite.app.foundation.runtime.StructuredJsonStringContext
+import com.kite.app.foundation.runtime.StructuredJsonStringRequest
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
 import com.kite.app.recipe.KiteRecipe
@@ -19,16 +27,91 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.coroutines.resume
 
-/** 使用 Ubuntu 实际命令读取本地版本，使用 App 网络栈查询来源端版本。 */
+internal enum class InstalledVersionRoute {
+    ANDROID_NATIVE,
+    PROOT_FALLBACK,
+    BLOCKED,
+}
+
+internal data class InstalledVersionRouteEvent(
+    val route: InstalledVersionRoute,
+    val reason: String,
+)
+
+/** 优先读取已声明的受控元数据；事实不足时才用 Ubuntu 命令读取本地版本。 */
 internal class AndroidResourceVersionGateway(
     private val bridgeClient: KiteBridgeClient,
-    private val environmentFor: (String) -> Map<String, String> = { emptyMap() }
-) : ResourceVersionGateway {
+    private val environmentFor: (String) -> Map<String, String> = { emptyMap() },
+    private val metadataContextProvider: () -> StructuredJsonStringContext? = { null },
+    private val routeObserver: (InstalledVersionRouteEvent) -> Unit = {},
+    private val recipeRunner: (
+        KiteRecipe,
+        Map<String, String>,
+        (BridgeResult) -> Unit,
+    ) -> Unit = { recipe, environment, callback ->
+        bridgeClient.runRecipe(recipe, extraEnv = environment, callback = callback)
+    },
+) : ResourceVersionGateway, ResourceVersionBatchPreparationGateway {
     override suspend fun readInstalledVersion(
         resourceId: String,
         probe: KiteResourceVersionProbeSpec,
         environmentId: String
-    ): Result<String> = readCommandVersion(resourceId, "installed_version", probe, environmentId)
+    ): Result<String> {
+        return when (val preparation = prepareInstalledVersion(probe)) {
+            is ResourceVersionInstalledPreparation.Ready -> {
+                observe(InstalledVersionRoute.ANDROID_NATIVE, preparation.reason)
+                Result.success(preparation.rawValue)
+            }
+            is ResourceVersionInstalledPreparation.Unsupported -> fallbackToCommand(
+                resourceId,
+                probe,
+                environmentId,
+                preparation.reason,
+            )
+            is ResourceVersionInstalledPreparation.Blocked -> {
+                observe(InstalledVersionRoute.BLOCKED, preparation.reason)
+                Result.failure(IllegalArgumentException("installed_version_blocked:${preparation.reason}"))
+            }
+        }
+    }
+
+    /** 只做受控文件事实预检；不会启动命令、网络请求或 PRoot。 */
+    override suspend fun prepareInstalledVersion(
+        probe: KiteResourceVersionProbeSpec,
+    ): ResourceVersionInstalledPreparation {
+        val metadata = probe.structuredMetadata
+            ?: return ResourceVersionInstalledPreparation.Unsupported("structured_metadata_absent")
+        val decision = withContext(Dispatchers.IO) {
+            val nativeContext = runCatching { metadataContextProvider() }.getOrNull()
+                ?: return@withContext RuntimeProviderDecision.Unsupported(
+                    RuntimeProviderKind.ANDROID_NATIVE,
+                    "structured_json_context_unavailable",
+                )
+            runCatching {
+                AndroidNativeStructuredJsonStringProvider.prepare(
+                    context = nativeContext,
+                    request = StructuredJsonStringRequest(
+                        containerPath = metadata.containerPath,
+                        maximumBytes = metadata.maximumBytes,
+                        jsonField = metadata.jsonField,
+                    ),
+                )
+            }.getOrElse {
+                RuntimeProviderDecision.Unsupported(
+                    RuntimeProviderKind.ANDROID_NATIVE,
+                    "structured_json_prepare_failed",
+                )
+            }
+        }
+        return when (decision) {
+            is RuntimeProviderDecision.Ready ->
+                ResourceVersionInstalledPreparation.Ready(decision.plan.value, decision.reason)
+            is RuntimeProviderDecision.Unsupported ->
+                ResourceVersionInstalledPreparation.Unsupported(decision.reason)
+            is RuntimeProviderDecision.Blocked ->
+                ResourceVersionInstalledPreparation.Blocked(decision.reason)
+        }
+    }
 
     override suspend fun readLatestVersion(
         resourceId: String,
@@ -72,8 +155,8 @@ internal class AndroidResourceVersionGateway(
             execution = KiteExecution.steps(listOf(step)),
             runtimeSource = RUNTIME_SOURCE
         )
-        bridgeClient.runRecipe(recipe, extraEnv = commandEnvironment) { result ->
-            if (!continuation.isActive) return@runRecipe
+        recipeRunner(recipe, commandEnvironment) callback@{ result ->
+            if (!continuation.isActive) return@callback
             if (result.ok) {
                 val output = result.runReport?.lastMeaningfulOutput()
                     ?.takeIf(String::isNotBlank)
@@ -90,6 +173,20 @@ internal class AndroidResourceVersionGateway(
                 )
             }
         }
+    }
+
+    private suspend fun fallbackToCommand(
+        resourceId: String,
+        probe: KiteResourceVersionProbeSpec,
+        environmentId: String,
+        reason: String,
+    ): Result<String> {
+        observe(InstalledVersionRoute.PROOT_FALLBACK, reason)
+        return readCommandVersion(resourceId, "installed_version", probe, environmentId)
+    }
+
+    private fun observe(route: InstalledVersionRoute, reason: String) {
+        runCatching { routeObserver(InstalledVersionRouteEvent(route, reason)) }
     }
 
     private suspend fun readRemoteVersion(probe: KiteResourceRemoteVersionProbe): Result<String> =

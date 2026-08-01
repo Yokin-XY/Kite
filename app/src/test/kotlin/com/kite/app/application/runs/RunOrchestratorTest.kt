@@ -33,6 +33,27 @@ class RunOrchestratorTest {
     }
 
     @Test
+    fun `原生能力进入同一运行实例但不伪造进程与终端所有权`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val orchestrator = RunOrchestrator(gateway, executor)
+        val recipe = recipe("native-lane", KiteRecipe.STEP_NATIVE_CAPABILITY)
+
+        orchestrator.start(RunStartRequest(recipe, "native-instance"))
+
+        val request = executor.executeRequests.single()
+        val state = gateway.state("native-instance")!!
+        assertEquals(KiteRecipe.STEP_NATIVE_CAPABILITY, request.step.type)
+        assertEquals(CardRunSurface.Report, state.surface)
+        assertEquals(null, state.runtimeRootOwnerId)
+        assertEquals(null, state.runtimeOwnerId)
+        assertEquals(null, state.runtimeUnitId)
+        assertEquals(emptyList<String>(), state.ownedRuntimeOwnerIds)
+        assertEquals(null, state.runId)
+        assertEquals(null, state.terminalSessionId)
+    }
+
+    @Test
     fun `所有步骤类型按顺序进入同一个执行端口`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor(autoComplete = true)

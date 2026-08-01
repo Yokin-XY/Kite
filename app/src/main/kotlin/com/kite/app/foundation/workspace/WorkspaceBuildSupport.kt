@@ -16,6 +16,12 @@ import org.json.JSONObject
  * 不放：rootfs/bind/PRoot 细节、入口层动作。
  */
 object WorkspaceBuildSupport {
+    internal data class ColdReuseProofPaths(
+        val directories: List<File>,
+        val staticFiles: List<File>,
+        val requiredPaths: List<File>,
+    )
+
     private const val CONTAINER_AAPT2_OVERRIDE = "/opt/android-sdk/build-tools/aapt2"
     const val CONTAINER_WORKSPACE_ROOT = "/workspace"
     const val DEFAULT_PROJECT_DIR = "/workspace/KFShell"
@@ -46,6 +52,7 @@ object WorkspaceBuildSupport {
     private const val SYSTEMCTL_SHIM_NAME = "systemctl"
     private const val SERVICE_SHIM_NAME = "service"
     private const val SUPERVISORCTL_WRAPPER_NAME = "supervisorctl"
+    private const val SUPERVISORD_HEALTH_SNAPSHOT_HELPER_NAME = "kf-supervisord-health-snapshot"
     private const val ADB_WRAPPER_NAME = "adb"
     private const val FASTBOOT_WRAPPER_NAME = "fastboot"
     private const val ADB_CHECK_SCRIPT_NAME = "kf-adb-check"
@@ -84,6 +91,8 @@ object WorkspaceBuildSupport {
     const val CONTAINER_HELPER_SYSTEM_BIN_PATH = "/workspace/.kf/system/bin"
     const val CONTAINER_HELPER_SYSTEM_WRAPPERS_PATH = "/workspace/.kf/system/wrappers"
     const val CONTAINER_KITE_RUNNER_PATH = "/workspace/.kf/system/bin/kf-runner"
+    const val CONTAINER_SUPERVISORD_HEALTH_SNAPSHOT_PATH =
+        "/workspace/.kf/system/bin/kf-supervisord-health-snapshot"
     const val CONTAINER_HELPER_SYSTEM_PROC_PATH = "/workspace/.kf/system/state/proc"
     const val CONTAINER_HELPER_SYSTEM_STATE_PATH = "/workspace/.kf/system/state"
     const val CONTAINER_HELPER_TOOLCHAIN_PATH = "/workspace/.kf/toolchains"
@@ -239,6 +248,8 @@ object WorkspaceBuildSupport {
         writeTextIfChanged(supervisorctlWrapper, buildSupervisorctlWrapperScript())
         supervisorctlWrapper.setExecutable(true, false)
 
+        ensureSupervisordHealthSnapshotHelper(workspaceDir)
+
         val adbWrapper = File(helperSystemBinDir, ADB_WRAPPER_NAME)
         writeTextIfChanged(adbWrapper, buildAdbClientWrapperScript())
         adbWrapper.setExecutable(true, false)
@@ -338,6 +349,17 @@ object WorkspaceBuildSupport {
         chmodIfPossible(helperSystemWrappersDir, 0b101101101)
     }
 
+    /** 只校准 Supervisord 健康采集 helper，供高频刷新避免重跑整套 Workspace ensure。 */
+    @Synchronized
+    fun ensureSupervisordHealthSnapshotHelper(workspaceDir: File): File {
+        val systemBin = helperSystemBinDir(workspaceDir)
+        if (!systemBin.exists()) systemBin.mkdirs()
+        val helper = File(systemBin, SUPERVISORD_HEALTH_SNAPSHOT_HELPER_NAME)
+        writeTextIfChanged(helper, buildSupervisordHealthSnapshotScript())
+        helper.setExecutable(true, false)
+        return helper
+    }
+
     fun installSystemComponents(
         context: Context,
         workspaceDir: File,
@@ -413,6 +435,59 @@ object WorkspaceBuildSupport {
             chmodIfPossible(systemStateDir, 0b111101101)
             installedSystemComponentKeys.add(installKey)
         }
+    }
+
+    /**
+     * 跨进程复用只核对 Android 持有的工作区物理事实。
+     * 动态运行状态只要求路径存在，不把内容冻结进收据。
+     */
+    internal fun coldReuseProofPaths(workspaceDir: File): ColdReuseProofPaths {
+        val helperRoot = helperRootDir(workspaceDir)
+        val systemBin = helperSystemBinDir(workspaceDir)
+        val wrappers = helperSystemWrappersDir(workspaceDir)
+        val directories = listOf(
+            helperRoot,
+            helperSystemDir(workspaceDir),
+            systemBin,
+            wrappers,
+            helperSystemProcDir(workspaceDir),
+            helperSystemStateDir(workspaceDir),
+            helperToolchainDir(workspaceDir),
+            gradleUserHomeDir(workspaceDir),
+            androidUserHomeDir(workspaceDir),
+            androidDataDir(workspaceDir),
+        )
+        val managedDirectoryFiles = sequenceOf(systemBin, wrappers)
+            .filter(File::isDirectory)
+            .flatMap { directory -> directory.walkTopDown().filter(File::isFile) }
+            .toList()
+        val staticFiles = buildList {
+            add(File(workspaceDir, "README.txt"))
+            add(File(helperRoot, "README.txt"))
+            add(File(helperRoot, CONTROLLED_LEASE_PROBE_SCRIPT_NAME))
+            add(File(helperRoot, HOST_CONTRACT_FILE_NAME))
+            add(File(helperSystemStateDir(workspaceDir), SYSTEM_COMPONENTS_INSTALL_MARKER_FILE_NAME))
+            addAll(managedDirectoryFiles)
+        }.distinctBy { it.absolutePath }.sortedBy { it.absolutePath }
+        val requiredPaths = listOf(
+            runtimePressureFile(workspaceDir),
+            runtimeProcessTableFile(workspaceDir),
+            prootTelemetryEventsFile(workspaceDir),
+            runtimeReclaimerPolicyFile(workspaceDir),
+            runtimeResidentPolicyFile(workspaceDir),
+            runtimeWorkloadPolicyFile(workspaceDir),
+            runtimeWorkloadIntentFile(workspaceDir),
+            runtimeProcessManifestFile(workspaceDir),
+            runtimeProcessManifestExampleFile(workspaceDir),
+            prootCapacityExecutorPolicyFile(workspaceDir),
+            prootLaunchContractFile(workspaceDir),
+            prootLaunchRequestFile(workspaceDir),
+        )
+        return ColdReuseProofPaths(
+            directories = directories,
+            staticFiles = staticFiles,
+            requiredPaths = requiredPaths,
+        )
     }
 
     private fun systemComponentsInstallVersion(context: Context): String {
@@ -899,6 +974,34 @@ object WorkspaceBuildSupport {
             |done
             |
             |exec /usr/bin/supervisorctl "${'$'}@"
+        """.trimMargin() + "\n"
+    }
+
+    internal fun buildSupervisordHealthSnapshotScript(): String {
+        return """
+            |#!/usr/bin/env sh
+            |# KF_GENERATED_SUPERVISORD_HEALTH_SNAPSHOT_VERSION=1
+            |set +e
+            |
+            |if [ "${'$'}#" -ne 0 ]; then
+            |  echo "kf-supervisord-health-snapshot accepts no arguments" >&2
+            |  exit 64
+            |fi
+            |if [ ! -x /usr/bin/supervisorctl ]; then
+            |  echo "supervisorctl missing"
+            |  exit 127
+            |fi
+            |
+            |/usr/bin/supervisorctl -c /etc/supervisor/supervisord.conf -s "http://127.0.0.1:19001" update >/dev/null 2>&1 || true
+            |/usr/bin/supervisorctl -c /etc/supervisor/supervisord.conf -s "http://127.0.0.1:19001" status 2>&1
+            |status_exit=${'$'}?
+            |echo "__KF_SUPERVISOR_LOGS__"
+            |for f in /var/log/supervisor/*.log; do
+            |  [ -f "${'$'}f" ] || continue
+            |  echo "__KF_LOG_FILE__:${'$'}f"
+            |  /usr/bin/tail -n 8 "${'$'}f" 2>/dev/null
+            |done
+            |exit "${'$'}status_exit"
         """.trimMargin() + "\n"
     }
 

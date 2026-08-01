@@ -14,6 +14,29 @@ import java.nio.file.Paths
 @RunWith(RobolectricTestRunner::class)
 class WorkspaceBuildSupportTest {
     @Test
+    fun ensure_writesVersionedSupervisordHealthHelperWithoutArguments() {
+        val workspace = Files.createTempDirectory("kite-supervisord-health-helper-").toFile()
+        try {
+            val helper = WorkspaceBuildSupport.ensureSupervisordHealthSnapshotHelper(workspace)
+            val script = helper.readText()
+
+            assertEquals(
+                WorkspaceBuildSupport.CONTAINER_SUPERVISORD_HEALTH_SNAPSHOT_PATH.substringAfterLast('/'),
+                helper.name,
+            )
+            assertTrue(script.contains("KF_GENERATED_SUPERVISORD_HEALTH_SNAPSHOT_VERSION=1"))
+            assertTrue(script.contains("if [ \"${'$'}#\" -ne 0 ]"))
+            assertTrue(script.contains("/usr/bin/supervisorctl"))
+            assertTrue(script.contains(" update "))
+            assertTrue(script.contains(" status 2>&1"))
+            assertTrue(script.contains("__KF_SUPERVISOR_LOGS__"))
+            assertTrue(script.contains("/usr/bin/tail -n 8"))
+        } finally {
+            workspace.deleteRecursively()
+        }
+    }
+
+    @Test
     fun ensure_replacesContainerSymlinkFdWrapper() {
         val workspace = Files.createTempDirectory("kite-workspace-support-").toFile()
         try {

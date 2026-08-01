@@ -1,6 +1,8 @@
 package com.kite.app.agent.registration
 
 import android.content.Context
+import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeCodec
+import com.kite.app.foundation.runtime.RuntimeExecutionGuaranteeEvidenceCodec
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -126,10 +128,21 @@ class KiteCustomAgentRegistrationStore(context: Context) {
                     .put("transport", launch.transport)
                     .apply {
                         when (launch) {
-                            is AgentLaunchSpec.Managed -> put(
-                                "argv",
-                                JSONArray().apply { launch.argv.forEach(::put) }
-                            )
+                            is AgentLaunchSpec.Managed -> {
+                                put("argv", JSONArray().apply { launch.argv.forEach(::put) })
+                                put(
+                                    "runtimeGuarantees",
+                                    JSONArray().apply { launch.runtimeGuarantees.sorted().forEach(::put) }
+                                )
+                                put(
+                                    "runtimeGuaranteeEvidence",
+                                    JSONObject().apply {
+                                        launch.runtimeGuaranteeEvidence.toSortedMap().forEach { (key, value) ->
+                                            put(key, value)
+                                        }
+                                    }
+                                )
+                            }
                             is AgentLaunchSpec.Attach -> put(
                                 "connectionReference",
                                 launch.connectionReference
@@ -146,12 +159,22 @@ class KiteCustomAgentRegistrationStore(context: Context) {
         val protocol = launchJson.optString("protocol").trim().lowercase()
         val transport = launchJson.optString("transport").trim().lowercase()
         val launch = when (launchJson.optString("mode").trim().lowercase()) {
-            "managed" -> AgentLaunchSpec.Managed(
-                providerId = providerId,
-                protocol = protocol,
-                transport = transport,
-                argv = launchJson.optJSONArray("argv").toStringList()
-            )
+            "managed" -> {
+                val runtimeGuarantees = RuntimeExecutionGuaranteeCodec.normalize(
+                    launchJson.optJSONArray("runtimeGuarantees").toStringList()
+                ) ?: return null
+                val runtimeGuaranteeEvidence = RuntimeExecutionGuaranteeEvidenceCodec.normalize(
+                    launchJson.optJSONObject("runtimeGuaranteeEvidence").toStringMap()
+                ) ?: return null
+                AgentLaunchSpec.Managed(
+                    providerId = providerId,
+                    protocol = protocol,
+                    transport = transport,
+                    argv = launchJson.optJSONArray("argv").toStringList(),
+                    runtimeGuarantees = runtimeGuarantees,
+                    runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
+                )
+            }
             "attach" -> AgentLaunchSpec.Attach(
                 providerId = providerId,
                 protocol = protocol,
@@ -187,6 +210,13 @@ class KiteCustomAgentRegistrationStore(context: Context) {
             for (index in 0 until length()) {
                 optString(index).trim().takeIf(String::isNotBlank)?.let(::add)
             }
+        }
+    }
+
+    private fun JSONObject?.toStringMap(): Map<String, String> {
+        if (this == null) return emptyMap()
+        return buildMap {
+            keys().forEach { key -> put(key, optString(key)) }
         }
     }
 

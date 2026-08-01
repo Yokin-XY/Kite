@@ -92,15 +92,6 @@ object RuntimeProcessStopReconciliation {
                 expected = true
             )
         }
-        if (requiresCoreRecovery(root)) {
-            return decision(
-                state = RuntimeProcessUnitObservationState.CORE_RECOVERY_REQUIRED,
-                reason = "core_process_missing_requires_existing_runtime_host_recovery_path",
-                suppress = false,
-                auto = true,
-                core = true
-            )
-        }
         expectedStopReason(root)?.let { expectedReason ->
             return decision(
                 state = RuntimeProcessUnitObservationState.STOPPED_EXPECTED,
@@ -108,6 +99,15 @@ object RuntimeProcessStopReconciliation {
                 suppress = true,
                 auto = false,
                 expected = true
+            )
+        }
+        if (requiresCoreRecovery(root)) {
+            return decision(
+                state = RuntimeProcessUnitObservationState.CORE_RECOVERY_REQUIRED,
+                reason = "core_process_missing_requires_existing_runtime_host_recovery_path",
+                suppress = false,
+                auto = true,
+                core = true
             )
         }
 

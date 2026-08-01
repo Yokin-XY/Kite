@@ -169,15 +169,6 @@ internal data class HostNodeInvocation(
     }
 }
 
-/** 普通入口使用结构化 argv；只有兼容旧卡片时才允许受限的单命令文本。 */
-internal sealed interface HostNodeExecutionRequest {
-    data class CommandLine(val command: String) : HostNodeExecutionRequest
-    data class Argv(
-        val executable: String,
-        val arguments: List<String> = emptyList(),
-    ) : HostNodeExecutionRequest
-}
-
 internal sealed interface HostNodeCommandResolution {
     data class Ready(val invocation: HostNodeInvocation) : HostNodeCommandResolution
     data class Fallback(val reason: String) : HostNodeCommandResolution

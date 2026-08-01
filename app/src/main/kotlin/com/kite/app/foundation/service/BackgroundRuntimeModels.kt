@@ -1,6 +1,8 @@
 package com.kite.app.foundation.service
 
 import com.kite.app.foundation.runtime.RuntimeExposureScope
+import com.kite.app.foundation.runtime.HostProcessIdentityObservation
+import com.kite.app.foundation.runtime.normalizeHostBootId
 import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeProcessUnitObservationState
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
@@ -73,6 +75,8 @@ data class BackgroundRuntimeRecord(
     val startExecutable: String? = null,
     val startArguments: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
+    val runtimeGuarantees: Set<String> = emptySet(),
+    val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
     /** 环境变量名 -> 容器可见私有文件；只持久化路径，运行时才读取值。 */
     val environmentFiles: Map<String, String> = emptyMap(),
     val bindAddress: String? = null,
@@ -115,7 +119,13 @@ data class BackgroundRuntimeRecord(
     val lastStopReconciliationReason: String? = null,
     val lastStopReconciliationAt: Long? = null,
     val lastStopReconciliationAutoRecoverySuppressed: Boolean = false,
-    val retentionClass: RuntimeRetentionClass = RuntimeRetentionClass.BATCH
+    val retentionClass: RuntimeRetentionClass = RuntimeRetentionClass.BATCH,
+    val processBootId: String? = null,
+    val processStartTicks: Long? = null,
+    /** RF920: 同一后台 owner 的 PRoot lease 检查点；未接入生产启动链。 */
+    val longLivedProotLeaseGeneration: Long? = null,
+    val longLivedProotLeasePhase: String? = null,
+    val longLivedProotLeaseUpdatedAt: Long? = null,
 ) {
     internal fun processIdentityEnvironment(): Map<String, String> =
         RuntimeOwnerIdentity.backgroundRuntime(id, kind.name).environment()
@@ -137,6 +147,16 @@ data class BackgroundRuntimeRecord(
             .put(
                 "environment",
                 JSONObject().apply { environment.forEach { (key, value) -> put(key, value) } }
+            )
+            .put(
+                "runtimeGuarantees",
+                JSONArray().apply { runtimeGuarantees.sorted().forEach(::put) }
+            )
+            .put(
+                "runtimeGuaranteeEvidence",
+                JSONObject().apply {
+                    runtimeGuaranteeEvidence.toSortedMap().forEach { (key, value) -> put(key, value) }
+                }
             )
             .put(
                 "environmentFiles",
@@ -163,6 +183,11 @@ data class BackgroundRuntimeRecord(
             .put("status", status.name)
             .put("healthStatus", healthStatus.name)
             .put("pid", pid)
+            .put("processBootId", processBootId)
+            .put("processStartTicks", processStartTicks)
+            .put("longLivedProotLeaseGeneration", longLivedProotLeaseGeneration)
+            .put("longLivedProotLeasePhase", longLivedProotLeasePhase)
+            .put("longLivedProotLeaseUpdatedAt", longLivedProotLeaseUpdatedAt)
             .put("lastHealthSummary", lastHealthSummary)
             .put("lastHealthCheckedAt", lastHealthCheckedAt)
             .put("lastExitCode", lastExitCode)
@@ -226,6 +251,22 @@ data class BackgroundRuntimeRecord(
                             environmentJson.keys().forEach { key ->
                                 put(key, environmentJson.optString(key))
                             }
+                        }
+                    }
+                    ?: emptyMap(),
+                runtimeGuarantees = json.optJSONArray("runtimeGuarantees")
+                    ?.let { array ->
+                        buildSet {
+                            for (index in 0 until array.length()) {
+                                array.optString(index).trim().takeIf(String::isNotBlank)?.let(::add)
+                            }
+                        }
+                    }
+                    ?: emptySet(),
+                runtimeGuaranteeEvidence = json.optJSONObject("runtimeGuaranteeEvidence")
+                    ?.let { evidenceJson ->
+                        buildMap {
+                            evidenceJson.keys().forEach { key -> put(key, evidenceJson.optString(key)) }
                         }
                     }
                     ?: emptyMap(),
@@ -355,8 +396,67 @@ data class BackgroundRuntimeRecord(
                     json.optBoolean("lastStopReconciliationAutoRecoverySuppressed", false),
                 retentionClass = RuntimeRetentionClass.entries.firstOrNull {
                     it.name == json.optString("retentionClass", RuntimeRetentionClass.BATCH.name)
-                } ?: RuntimeRetentionClass.BATCH
+                } ?: RuntimeRetentionClass.BATCH,
+                processBootId = json.optString("processBootId")
+                    .takeIf { !json.isNull("processBootId") }
+                    ?.let(::normalizeHostBootId),
+                processStartTicks = json.optLong("processStartTicks").takeIf {
+                    !json.isNull("processStartTicks") && it > 0L
+                },
+                longLivedProotLeaseGeneration = json.optLong("longLivedProotLeaseGeneration")
+                    .takeIf { !json.isNull("longLivedProotLeaseGeneration") },
+                longLivedProotLeasePhase = json.optString("longLivedProotLeasePhase")
+                    .takeIf { !json.isNull("longLivedProotLeasePhase") },
+                longLivedProotLeaseUpdatedAt = json.optLong("longLivedProotLeaseUpdatedAt")
+                    .takeIf { !json.isNull("longLivedProotLeaseUpdatedAt") },
             )
         }
     }
+}
+
+internal fun BackgroundRuntimeRecord.withProcessPid(nextPid: Int?): BackgroundRuntimeRecord {
+    val normalizedPid = nextPid?.takeIf { it > 0 }
+    val preserveIdentity = normalizedPid != null && normalizedPid == pid
+    return copy(
+        pid = normalizedPid,
+        processBootId = processBootId.takeIf { preserveIdentity },
+        processStartTicks = processStartTicks.takeIf { preserveIdentity },
+    )
+}
+
+internal fun BackgroundRuntimeRecord.shouldPreserveExpectedStopForObservedStatus(
+    nextStatus: BackgroundRuntimeStatus,
+    nextPid: Int?,
+): Boolean {
+    val normalizedPid = nextPid?.takeIf { it > 0 }
+    return status.isActiveStatus() &&
+        nextStatus.isActiveStatus() &&
+        normalizedPid != null &&
+        normalizedPid == pid &&
+        hasExpectedStopIntent()
+}
+
+internal fun BackgroundRuntimeRecord.hasExpectedStopIntent(): Boolean =
+    lastStopReconciliationState == RuntimeProcessUnitObservationState.STOPPED_EXPECTED &&
+        lastStopReconciliationAutoRecoverySuppressed
+
+internal fun BackgroundRuntimeRecord.withObservedProcessIdentity(
+    identity: HostProcessIdentityObservation,
+): BackgroundRuntimeRecord? {
+    if (!status.isActiveStatus() || pid != identity.hostPid) return null
+    return copy(
+        processBootId = identity.bootId,
+        processStartTicks = identity.processStartTicks,
+    )
+}
+
+internal fun BackgroundRuntimeRecord.persistedProcessIdentityOrNull(): HostProcessIdentityObservation? {
+    val currentPid = pid?.takeIf { it > 0 } ?: return null
+    val currentBootId = normalizeHostBootId(processBootId) ?: return null
+    val currentStartTicks = processStartTicks?.takeIf { it > 0L } ?: return null
+    return HostProcessIdentityObservation(
+        bootId = currentBootId,
+        hostPid = currentPid,
+        processStartTicks = currentStartTicks,
+    )
 }

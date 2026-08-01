@@ -7,6 +7,9 @@ import com.kite.app.agent.process.AgentProcessFactory
 import com.kite.app.agent.process.AgentProcessLaunch
 import com.kite.app.agent.process.JavaAgentProcessFactory
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -27,7 +30,15 @@ internal class AndroidAgentConfigCommandExecutor(
     ): AgentConfigCommandExecutionResult = withContext(Dispatchers.IO) {
         if (argv.isEmpty()) return@withContext AgentConfigCommandExecutionResult.Failed("Agent 检查命令为空")
         val config = runCatching {
-            WorkSurfaceRuntimeBridge.buildArgvExecConfig(appContext, cwd, argv)
+            WorkSurfaceRuntimeBridge.buildRequiredProotExecConfig(
+                context = appContext,
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.Argv(argv.first(), argv.drop(1)),
+                    workingDirectory = cwd,
+                    requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
+                ),
+                selectionReason = "agent_config_command_requires_proot",
+            )
         }.getOrElse { error ->
             return@withContext AgentConfigCommandExecutionResult.Failed(
                 "Agent 检查命令准备失败：${error.message ?: "未知错误"}"

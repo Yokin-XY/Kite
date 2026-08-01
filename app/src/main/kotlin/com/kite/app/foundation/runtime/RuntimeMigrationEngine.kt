@@ -52,7 +52,7 @@ object RuntimeMigrationEngine {
         layout: AssetExtractor.RuntimeLayout,
         packagedDescriptor: JSONObject
     ): JSONObject {
-        val selected = resolvePackagedProotDescriptor(
+        val selected = selectPackagedProotDescriptor(
             packagedDescriptor = packagedDescriptor,
             assetExists = { assetPath -> assetExists(context, assetPath) }
         )
@@ -76,13 +76,13 @@ object RuntimeMigrationEngine {
         packagedDescriptor: JSONObject,
         assetExists: (String) -> Boolean = { true }
     ): JSONObject {
-        return resolvePackagedProotDescriptor(
+        return selectPackagedProotDescriptor(
             packagedDescriptor = packagedDescriptor,
             assetExists = assetExists
         )
     }
 
-    private fun resolvePackagedProotDescriptor(
+    internal fun selectPackagedProotDescriptor(
         packagedDescriptor: JSONObject,
         assetExists: (String) -> Boolean
     ): JSONObject {

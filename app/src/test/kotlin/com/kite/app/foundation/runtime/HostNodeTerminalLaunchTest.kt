@@ -135,13 +135,62 @@ class HostNodeTerminalLaunchTest {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
 
         assertEquals(
-            HostNodeTerminalLaunchResult.Fallback("network_mode_requires_proot"),
-            HostNodeTerminalLaunchFactory.prepare(
-                context = context,
-                container = container(File(root, "rootfs"), File(root, "workspace"), NetworkMode.NONE),
-                workspaceDirectory = File(root, "workspace"),
-                command = "node --version",
-                containerWorkingDirectory = "/workspace",
+            RuntimeProviderDecision.Unsupported(
+                RuntimeProviderKind.MANAGED_RUNTIME,
+                "network_mode_requires_proot",
+            ),
+            HostNodeRuntimeProvider.prepare(
+                context = HostNodeProviderContext(
+                    context,
+                    container(File(root, "rootfs"), File(root, "workspace"), NetworkMode.NONE),
+                    File(root, "workspace"),
+                ),
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.CommandLine("node --version"),
+                    workingDirectory = "/workspace",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `explicit native and full linux requirements reject host before asset preparation`() {
+        val root = temporaryFolder.newFolder()
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val container = container(File(root, "missing-rootfs"), File(root, "missing-workspace"))
+
+        assertEquals(
+            RuntimeProviderDecision.Unsupported(
+                RuntimeProviderKind.MANAGED_RUNTIME,
+                "android_native_required",
+            ),
+            HostNodeRuntimeProvider.prepare(
+                context = HostNodeProviderContext(
+                    context,
+                    container,
+                    File(root, "missing-workspace"),
+                ),
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.NativeCapability("network.download_sha256"),
+                    requirements = setOf(RuntimeExecutionRequirement.ANDROID_NATIVE),
+                ),
+            ),
+        )
+        assertEquals(
+            RuntimeProviderDecision.Unsupported(
+                RuntimeProviderKind.MANAGED_RUNTIME,
+                "full_linux_required",
+            ),
+            HostNodeRuntimeProvider.prepare(
+                context = HostNodeProviderContext(
+                    context,
+                    container,
+                    File(root, "missing-workspace"),
+                ),
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.Argv("node", listOf("--version")),
+                    requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
+                ),
             ),
         )
     }

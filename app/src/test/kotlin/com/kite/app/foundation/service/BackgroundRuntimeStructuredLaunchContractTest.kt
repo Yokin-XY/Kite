@@ -17,6 +17,8 @@ class BackgroundRuntimeStructuredLaunchContractTest {
             startExecutable = "arbitrary-node-cli",
             startArguments = listOf("gateway", "value with spaces"),
             environment = mapOf("DISABLE_DISCOVERY" to "1"),
+            runtimeGuarantees = setOf("no_child_process", "verified_native_imports"),
+            runtimeGuaranteeEvidence = mapOf("pythonAbi" to "cpython-314-aarch64-linux-gnu"),
             environmentFiles = mapOf("RUNTIME_TOKEN" to "/workspace/.kf/secrets/runtime-token"),
             lastLaunchLane = "host_node",
             lastLaunchReason = "structured_node_ready",
@@ -27,6 +29,11 @@ class BackgroundRuntimeStructuredLaunchContractTest {
         assertEquals("arbitrary-node-cli", restored.startExecutable)
         assertEquals(listOf("gateway", "value with spaces"), restored.startArguments)
         assertEquals(mapOf("DISABLE_DISCOVERY" to "1"), restored.environment)
+        assertEquals(setOf("no_child_process", "verified_native_imports"), restored.runtimeGuarantees)
+        assertEquals(
+            mapOf("pythonAbi" to "cpython-314-aarch64-linux-gnu"),
+            restored.runtimeGuaranteeEvidence,
+        )
         assertEquals(
             mapOf("RUNTIME_TOKEN" to "/workspace/.kf/secrets/runtime-token"),
             restored.environmentFiles,
@@ -38,6 +45,8 @@ class BackgroundRuntimeStructuredLaunchContractTest {
             remove("startExecutable")
             remove("startArguments")
             remove("environment")
+            remove("runtimeGuarantees")
+            remove("runtimeGuaranteeEvidence")
             remove("environmentFiles")
             remove("lastLaunchLane")
             remove("lastLaunchReason")
@@ -46,6 +55,8 @@ class BackgroundRuntimeStructuredLaunchContractTest {
         assertNull(restoredLegacy.startExecutable)
         assertTrue(restoredLegacy.startArguments.isEmpty())
         assertTrue(restoredLegacy.environment.isEmpty())
+        assertTrue(restoredLegacy.runtimeGuarantees.isEmpty())
+        assertTrue(restoredLegacy.runtimeGuaranteeEvidence.isEmpty())
         assertTrue(restoredLegacy.environmentFiles.isEmpty())
         assertNull(restoredLegacy.lastLaunchLane)
         assertNull(restoredLegacy.lastLaunchReason)
@@ -57,11 +68,16 @@ class BackgroundRuntimeStructuredLaunchContractTest {
         val body = source.substringAfter("private fun buildRuntimeProcessLaunchConfig(")
             .substringBefore("private fun ", missingDelimiterValue = source)
 
-        assertTrue(body.contains("HostNodeLaunchPlanner.plan("))
-        assertTrue(body.contains("HostNodeExecutionRequest.Argv(executable, record.startArguments)"))
-        assertTrue(body.contains("WorkSurfaceRuntimeBridge.buildShellExecConfig("))
-        assertTrue(body.contains("hostFallbackReason ?: \"host_node_unavailable\""))
+        assertTrue(body.contains("ManagedRuntimeLaunchPlanner.plan("))
+        assertTrue(body.contains("RuntimeExecutionPayload.Argv(executable, record.startArguments)"))
+        assertTrue(body.contains("RuntimeExecutionGuaranteeCodec.decode(record.runtimeGuarantees)"))
+        assertTrue(body.contains("ManagedRuntimeLaunchPlan.Proot"))
+        assertTrue(body.contains("WorkSurfaceRuntimeBridge.buildProotExecConfig("))
+        assertTrue(body.contains("ManagedRuntimeLaunchPlanner.fallbackOrBlocked("))
+        assertFalse(body.contains("WorkSurfaceRuntimeBridge.buildShellExecConfig("))
         assertFalse(body.contains("ProcessBuilder("))
+        assertTrue(source.contains("current.runtimeGuarantees != definition.runtimeGuarantees"))
+        assertTrue(source.contains("current.runtimeGuaranteeEvidence != definition.runtimeGuaranteeEvidence"))
         val startBody = source.substringAfter("private fun startProcessRuntime(")
             .substringBefore("private fun buildRuntimeProcessLaunchConfig(")
         assertEquals(1, startBody.windowed("ProcessBuilder(".length).count { it == "ProcessBuilder(" })

@@ -1158,7 +1158,7 @@ private fun KiteRecipe.Companion.inferTypeForResourceSteps(steps: List<KiteRecip
     val hasAgent = steps.any { it.type == KiteRecipe.STEP_AGENT }
     val hasCommand = steps.any {
         it.type == KiteRecipe.STEP_SHELL || it.type == KiteRecipe.STEP_TERMINAL ||
-            it.type == KiteRecipe.STEP_X11
+            it.type == KiteRecipe.STEP_X11 || it.type == KiteRecipe.STEP_NATIVE_CAPABILITY
     }
     val hasOpenWeb = steps.any { it.type == KiteRecipe.STEP_OPEN_WEB }
     return when {

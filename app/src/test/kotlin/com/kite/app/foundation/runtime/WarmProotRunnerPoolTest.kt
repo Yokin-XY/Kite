@@ -11,6 +11,31 @@ import org.junit.Test
 
 class WarmProotRunnerPoolTest {
     @Test
+    fun `execution timing separates runner wait from business job`() {
+        var nowNanos = 0L
+        val pool = pool(
+            identityProvider = {
+                nowNanos = TimeUnit.MILLISECONDS.toNanos(10L)
+                identity("timed")
+            },
+            sessionFactory = {
+                FakeSession { request ->
+                    nowNanos = TimeUnit.MILLISECONDS.toNanos(35L)
+                    success(request.jobId)
+                }
+            },
+            monotonicNanos = { nowNanos },
+        )
+
+        val execution = pool.executeBlocking(admission("timed"), job("timed"))
+
+        assertEquals(10L, execution.queueWaitMs)
+        assertEquals(25L, execution.executeMs)
+        assertEquals(35L, execution.totalMs)
+        pool.close()
+    }
+
+    @Test
     fun `sequential jobs reuse one matching warm session`() {
         val factoryCount = AtomicInteger(0)
         val pool = pool(sessionFactory = {
@@ -42,6 +67,28 @@ class WarmProotRunnerPoolTest {
         assertEquals(2, sessions.size)
         assertTrue(sessions.first().closed)
         assertFalse(sessions.last().closed)
+        pool.close()
+    }
+
+    @Test
+    fun `expired idle session is observable and retired before later work`() {
+        var nowNanos = 0L
+        val sessions = mutableListOf<FakeSession>()
+        val pool = pool(
+            sessionFactory = { FakeSession { request -> success(request.jobId) }.also(sessions::add) },
+            tuningProvider = { WarmProotRunnerPoolTuning(maxWarmRunners = 2, idleTimeoutMs = 1L) },
+            monotonicNanos = { nowNanos },
+        )
+        assertTrue(pool.executeBlocking(admission("first"), job("first")).succeeded)
+
+        nowNanos = TimeUnit.MILLISECONDS.toNanos(2L)
+        assertEquals(2L, pool.snapshot().oldestIdleAgeMs)
+        assertTrue(pool.executeBlocking(admission("second"), job("second")).succeeded)
+
+        assertEquals(2, sessions.size)
+        assertTrue(sessions.first().closed)
+        assertFalse(sessions.last().closed)
+        assertEquals(1, pool.sessionCount())
         pool.close()
     }
 
@@ -191,9 +238,13 @@ class WarmProotRunnerPoolTest {
 
         assertTrue(entered.await(1, TimeUnit.SECONDS))
         pool.trimTo(1)
+        assertEquals(2, pool.snapshot().activeSessions)
+        assertEquals(1, pool.snapshot().staleSessions)
         release.countDown()
         assertTrue(done.await(2, TimeUnit.SECONDS))
         assertEquals(1, pool.sessionCount())
+        assertEquals(1, pool.snapshot().idleSessions)
+        assertEquals(0, pool.snapshot().staleSessions)
         executor.shutdownNow()
         pool.close()
     }
@@ -201,6 +252,10 @@ class WarmProotRunnerPoolTest {
     private fun pool(
         identityProvider: () -> WarmProotRunnerIdentity? = { identity("default") },
         sessionFactory: () -> WarmProotJobSession,
+        tuningProvider: () -> WarmProotRunnerPoolTuning = {
+            WarmProotRunnerPoolTuning(maxWarmRunners = 2, idleTimeoutMs = 60_000L)
+        },
+        monotonicNanos: () -> Long = System::nanoTime,
     ): WarmProotRunnerPool {
         val lanes = RuntimeWorkloadPolicy.defaultLanes().map { lane ->
             if (lane.lane == RuntimeLaneKind.INTERACTIVE) {
@@ -219,13 +274,17 @@ class WarmProotRunnerPoolTest {
             ),
             identityProvider = identityProvider,
             sessionFactory = sessionFactory,
-            tuningProvider = { WarmProotRunnerPoolTuning(maxWarmRunners = 2, idleTimeoutMs = 60_000L) },
+            tuningProvider = tuningProvider,
+            monotonicNanos = monotonicNanos,
         )
     }
 
     private fun admission(id: String) = ProotJobAdmissionRequest(
         jobId = id,
+        ownerId = "test:$id",
         lane = RuntimeLaneKind.INTERACTIVE,
+        cancellationMode = ProotJobCancellationMode.TIMEOUT_AND_OWNER,
+        resultMode = ProotJobResultMode.CAPTURED_STDIO,
         waitTimeoutMs = 1_000L,
     )
 
@@ -251,6 +310,7 @@ class WarmProotRunnerPoolTest {
             linkChain = emptyList(),
             lastModifiedMs = 1L,
             length = 100L,
+            executable = true,
         ),
     )
 

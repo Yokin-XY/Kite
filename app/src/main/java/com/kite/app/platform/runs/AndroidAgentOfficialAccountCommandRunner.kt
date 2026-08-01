@@ -28,7 +28,13 @@ internal class AndroidAgentOfficialAccountCommandRunner(
     private val openExternal: (String) -> Boolean,
 ) : AgentOfficialAccountCommandRunner {
     override suspend fun run(command: AgentOfficialAccountCommand): AgentOfficialAccountCommandResult {
-        val plannedLaunch = launchPlanner.plan(command.argv, DEFAULT_WORKDIR, emptyMap())
+        val plannedLaunch = launchPlanner.plan(
+            argv = command.argv,
+            workingDirectory = DEFAULT_WORKDIR,
+            environment = emptyMap(),
+            runtimeGuarantees = emptySet(),
+            runtimeGuaranteeEvidence = emptyMap(),
+        )
         val process = processFactory.start(plannedLaunch.process)
         val output = StringBuilder()
         val outputLock = Mutex()

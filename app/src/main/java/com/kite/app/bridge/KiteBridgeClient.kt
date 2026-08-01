@@ -13,8 +13,12 @@ import com.kite.app.recipe.KiteStepReport
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallOutput
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
+import com.kite.app.foundation.runtime.ProotCompatibilityRuntimeProvider
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
+import com.kite.app.foundation.contracts.ContainerExecConfig
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
-import com.kite.app.foundation.runtime.ProotViewBinding
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
 import org.json.JSONObject
 import java.net.ConnectException
@@ -49,11 +53,11 @@ class KiteBridgeClient(
         thread(name = "KiteCardRunPidDirCleanup", isDaemon = true) {
             ids.forEach { cardInstanceId ->
                 runCatching {
-                    val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+                    val config = buildProotShellExecConfig(
                         context = context,
                         workingDirectory = DEFAULT_WORKDIR,
                         payload = cleanCardRunPidDirPayload(cardInstanceId),
-                        loginShell = true
+                        selectionReason = "card_run_pid_cleanup_requires_proot",
                     )
                     executeProcess(config.command, config.env, DIRECT_STOP_TIMEOUT_MS)
                 }
@@ -537,18 +541,17 @@ class KiteBridgeClient(
         extraEnv: Map<String, String> = emptyMap(),
         onProgress: ((BridgeProgress) -> Unit)? = null
     ): DirectStepExecution {
-        val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+        val config = buildProotShellExecConfig(
             context = context,
             workingDirectory = step.workdir?.trim().orEmpty().ifBlank { DEFAULT_WORKDIR },
             payload = groupedAttachedPayload(step.cmd.orEmpty()),
-            loginShell = true,
-            requestedProotViewId = extraEnv[ProotViewBinding.ENV_VIEW_ID],
-            requestedProotEnvironmentId = extraEnv[ProotViewBinding.ENV_ENVIRONMENT_ID]
+            environment = extraEnv,
+            selectionReason = "shell_command_requires_proot",
         )
         val timeoutMs = step.timeoutMs?.takeIf { it > 0L } ?: DEFAULT_ATTACHED_TIMEOUT_MS
         val process = executeProcess(
             command = config.command,
-            env = config.env + extraEnv,
+            env = config.env,
             timeoutMs = timeoutMs,
             activeRecipeId = recipe.id,
             activeRunId = runId,
@@ -622,15 +625,14 @@ class KiteBridgeClient(
             cardInstanceId = cardInstanceId,
             runId = runId
         )
-        val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+        val config = buildProotShellExecConfig(
             context = context,
             workingDirectory = step.workdir?.trim().orEmpty().ifBlank { DEFAULT_WORKDIR },
             payload = payload,
-            loginShell = true,
-            requestedProotViewId = extraEnv[ProotViewBinding.ENV_VIEW_ID],
-            requestedProotEnvironmentId = extraEnv[ProotViewBinding.ENV_ENVIRONMENT_ID]
+            environment = extraEnv,
+            selectionReason = "detached_shell_requires_proot",
         )
-        val process = executeProcess(config.command, config.env + extraEnv, DETACHED_START_TIMEOUT_MS) { output, chunk ->
+        val process = executeProcess(config.command, config.env, DETACHED_START_TIMEOUT_MS) { output, chunk ->
             val meta = extractRunBindingMeta(output)
             onProgress?.invoke(
                 BridgeProgress(
@@ -1041,13 +1043,32 @@ class KiteBridgeClient(
     private fun cleanCardRunPidFile(context: Context, pidFilePath: String?): String {
         val path = pidFilePath?.takeIf { it.isNotBlank() } ?: return ""
         val payload = "rm -f -- ${shellQuote(path)} && printf '__kite_pid_file_cleaned:%s\\n' ${shellQuote(path)}"
-        val config = WorkSurfaceRuntimeBridge.buildShellExecConfig(
+        val config = buildProotShellExecConfig(
             context = context,
             workingDirectory = DEFAULT_WORKDIR,
             payload = payload,
-            loginShell = true
+            selectionReason = "card_run_pid_cleanup_requires_proot",
         )
         return executeProcess(config.command, config.env, DIRECT_STOP_TIMEOUT_MS).output
+    }
+
+    private fun buildProotShellExecConfig(
+        context: Context,
+        workingDirectory: String,
+        payload: String,
+        environment: Map<String, String> = emptyMap(),
+        selectionReason: String,
+    ): ContainerExecConfig {
+        val plan = ProotCompatibilityRuntimeProvider.requirePlan(
+            request = RuntimeExecutionRequest(
+                payload = RuntimeExecutionPayload.CommandLine(payload),
+                workingDirectory = workingDirectory,
+                environment = environment,
+                requirements = setOf(RuntimeExecutionRequirement.FULL_LINUX),
+            ),
+            selectionReason = selectionReason,
+        )
+        return WorkSurfaceRuntimeBridge.buildProotExecConfig(context, plan)
     }
 
     private fun cleanCardRunPidDirPayload(cardInstanceId: String): String {

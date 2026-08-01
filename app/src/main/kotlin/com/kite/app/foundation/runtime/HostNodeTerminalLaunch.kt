@@ -7,61 +7,81 @@ import com.kite.app.foundation.contracts.NetworkMode
 import java.io.File
 import java.util.TimeZone
 
-internal sealed interface HostNodeTerminalLaunchResult {
-    data class Ready(val config: ContainerLaunchConfig) : HostNodeTerminalLaunchResult
-    data class Fallback(val reason: String) : HostNodeTerminalLaunchResult
-}
+internal data class HostNodeProviderContext(
+    val androidContext: Context,
+    val container: ContainerRecord,
+    val workspaceDirectory: File,
+)
 
 /** 入口无关的 Node Runtime Provider；只生成计划，不创建进程、不持有生命周期状态。 */
-internal object HostNodeRuntimeProvider {
-    fun prepare(
-        context: Context,
-        container: ContainerRecord,
-        workspaceDirectory: File,
-        request: HostNodeExecutionRequest,
-        containerWorkingDirectory: String?,
-        additionalEnvironment: Map<String, String> = emptyMap(),
-    ): HostNodeTerminalLaunchResult {
+internal object HostNodeRuntimeProvider :
+    RuntimeExecutionProvider<HostNodeProviderContext, ContainerLaunchConfig> {
+    override val kind: RuntimeProviderKind = RuntimeProviderKind.MANAGED_RUNTIME
+
+    override fun prepare(
+        context: HostNodeProviderContext,
+        request: RuntimeExecutionRequest,
+    ): RuntimeProviderDecision<ContainerLaunchConfig> {
+        if (RuntimeExecutionRequirement.ANDROID_NATIVE in request.requirements) {
+            return unsupported("android_native_required")
+        }
+        if (RuntimeExecutionRequirement.FULL_LINUX in request.requirements) {
+            return unsupported("full_linux_required")
+        }
+        if (RuntimeExecutionRequirement.FILESYSTEM_VIEW in request.requirements) {
+            return unsupported("filesystem_view_required")
+        }
+        val container = context.container
         if (container.networkMode != NetworkMode.HOST) {
-            return HostNodeTerminalLaunchResult.Fallback("network_mode_requires_proot")
+            return unsupported("network_mode_requires_proot")
         }
         val workspaceControlDirectory = File(container.workspacePath, ".kf")
         val assets = when (val prepared = HostNodeRuntimePreparer.prepare(
-            context,
+            context.androidContext,
             container,
-            workspaceDirectory,
+            context.workspaceDirectory,
             workspaceControlDirectory,
         )) {
             is HostNodeRuntimePreparation.Ready -> prepared.assets
-            is HostNodeRuntimePreparation.Fallback -> return HostNodeTerminalLaunchResult.Fallback(prepared.reason)
+            is HostNodeRuntimePreparation.Fallback -> return unsupported(prepared.reason)
         }
         val layout = when (val resolved = HostNodeRuntimeResolver.resolve(
             rootfsDirectory = File(container.rootfsPath),
-            workspaceDirectory = workspaceDirectory,
+            workspaceDirectory = context.workspaceDirectory,
             workspaceControlDirectory = workspaceControlDirectory,
             assets = assets,
         )) {
             is HostNodeRuntimeResolution.Ready -> resolved.layout
-            is HostNodeRuntimeResolution.Fallback -> return HostNodeTerminalLaunchResult.Fallback(resolved.reason)
+            is HostNodeRuntimeResolution.Fallback -> return unsupported(resolved.reason)
         }
-        val invocation = when (val resolved = when (request) {
-            is HostNodeExecutionRequest.CommandLine -> HostNodeCommandResolver.resolve(request.command, layout)
-            is HostNodeExecutionRequest.Argv -> HostNodeCommandResolver.resolve(
-                executable = request.executable,
-                arguments = request.arguments,
+        val invocation = when (val resolved = when (val payload = request.payload) {
+            is RuntimeExecutionPayload.CommandLine -> HostNodeCommandResolver.resolve(payload.command, layout)
+            is RuntimeExecutionPayload.Argv -> HostNodeCommandResolver.resolve(
+                executable = payload.executable,
+                arguments = payload.arguments,
                 layout = layout,
             )
+            is RuntimeExecutionPayload.NativeCapability -> {
+                return unsupported("native_capability_required")
+            }
         }) {
             is HostNodeCommandResolution.Ready -> resolved.invocation
-            is HostNodeCommandResolution.Fallback -> return HostNodeTerminalLaunchResult.Fallback(resolved.reason)
+            is HostNodeCommandResolution.Fallback -> return unsupported(resolved.reason)
         }
-        val workingDirectory = layout.mapContainerPath(containerWorkingDirectory)
+        val workingDirectory = layout.mapContainerPath(request.workingDirectory)
             ?.takeIf(File::isDirectory)
-            ?: return HostNodeTerminalLaunchResult.Fallback("working_directory_invalid")
-        return HostNodeTerminalLaunchResult.Ready(
-            buildConfig(container, layout, invocation, workingDirectory, additionalEnvironment)
+            ?: return unsupported("working_directory_invalid")
+        return RuntimeProviderDecision.Ready(
+            provider = kind,
+            plan = buildConfig(container, layout, invocation, workingDirectory, request.environment),
+            reason = "host_node_ready",
         )
     }
+
+    private fun unsupported(reason: String) = RuntimeProviderDecision.Unsupported(
+        provider = kind,
+        reason = reason,
+    )
 
     internal fun buildConfig(
         container: ContainerRecord,
@@ -139,20 +159,6 @@ internal object HostNodeRuntimeProvider {
 
 /** 旧终端调用面的窄适配器；实际选择和配置均由统一 Provider 持有。 */
 internal object HostNodeTerminalLaunchFactory {
-    fun prepare(
-        context: Context,
-        container: ContainerRecord,
-        workspaceDirectory: File,
-        command: String,
-        containerWorkingDirectory: String?,
-    ): HostNodeTerminalLaunchResult = HostNodeRuntimeProvider.prepare(
-        context = context,
-        container = container,
-        workspaceDirectory = workspaceDirectory,
-        request = HostNodeExecutionRequest.CommandLine(command),
-        containerWorkingDirectory = containerWorkingDirectory,
-    )
-
     internal fun buildConfig(
         container: ContainerRecord,
         layout: HostNodeRuntimeLayout,

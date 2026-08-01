@@ -30,6 +30,8 @@ internal object BackgroundRuntimeSpacePolicy {
             },
             healthStatus = BackgroundRuntimeHealthStatus.INACTIVE,
             pid = null,
+            processBootId = null,
+            processStartTicks = null,
             lastStoppedAt = if (record.status.isActiveStatus()) stoppedAt else record.lastStoppedAt,
             lastAdmissionDeferredAt = null,
             lastAdmissionSource = null,
@@ -51,4 +53,7 @@ object BackgroundRuntimeHealthText {
     const val UNCONFIGURED = "未配置健康探测"
     const val STOPPED = "进程已停止"
     const val NOT_RUNNING = "进程未运行"
+    const val STOPPING_PENDING = "已请求停止，等待进程退出确认"
+    const val STOPPING_REVIEW = "已请求停止，进程身份待确认"
+    const val IDENTITY_REVIEW = "进程身份待确认"
 }

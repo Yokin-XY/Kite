@@ -97,6 +97,7 @@
     "releaseTagTemplate": "v{version}",
     "assetPattern": "opencode-{target}.tar.gz",
     "archiveType": "tar.gz",
+    "maxBytes": 536870912,
     "binaryPath": "opencode",
     "architectures": {
       "aarch64|arm64": "linux-arm64",

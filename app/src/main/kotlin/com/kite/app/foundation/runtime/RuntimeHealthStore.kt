@@ -5,6 +5,7 @@ import com.kite.app.foundation.contracts.NetworkMode
 import android.content.Context
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.service.BackgroundRuntimeKind
+import com.kite.app.foundation.service.BackgroundManagedProotProductionGate
 import com.kite.app.foundation.service.BackgroundRuntimeRecord
 import com.kite.app.foundation.service.RuntimeRetentionClass
 import com.kite.app.foundation.service.SupervisordServiceHealthSnapshot
@@ -2723,6 +2724,9 @@ object RuntimeHealthStore {
         builder.append(prootTelemetryRepairPlan.toEnvText())
         builder.append(pressureConsumer.toEnvText())
         builder.append(pressureStability.toEnvText())
+        builder.append(WarmProotExecutionCoordinator.tuningSnapshot().toRuntimeHealthEnvText())
+        builder.append(BackgroundManagedProotProductionGate.toRuntimeHealthEnvText())
+        builder.append(BoundedProotTaskTelemetry.snapshot().toRuntimeHealthEnvText())
         builder.append(prootPoolPlan.toEnvText())
         builder.append(prootManagementMainline.toEnvText())
         builder.append(prootDeviceCalibration.toEnvText())

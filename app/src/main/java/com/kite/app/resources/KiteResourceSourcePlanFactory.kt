@@ -125,7 +125,12 @@ object KiteResourceSourcePlanFactory {
         val packageJson = "/workspace/.kf/software/$resourceId/npm-global/lib/node_modules/$packageName/package.json"
         return KiteResourceVersionProbeSpec(
             command = "node -p \"require('$packageJson').version\"",
-            group = 0
+            group = 0,
+            structuredMetadata = KiteResourceMetadataVersionProbeSpec(
+                containerPath = packageJson,
+                maximumBytes = MAXIMUM_PACKAGE_METADATA_BYTES,
+                jsonField = "version",
+            ),
         )
     }
 
@@ -312,7 +317,8 @@ object KiteResourceSourcePlanFactory {
                     id = "download-official-installer",
                     type = KiteResourceInstallPlanCompiler.STEP_DOWNLOAD,
                     urls = listOf(url),
-                    destination = "${'$'}install_root/.kite-downloads/install.sh"
+                    destination = "${'$'}install_root/.kite-downloads/install.sh",
+                    maxBytes = manifest.source.maxBytes,
                 ),
                 KiteResourceInstallStep(
                     id = "run-official-installer",
@@ -392,7 +398,8 @@ object KiteResourceSourcePlanFactory {
                     id = "download-release-asset",
                     type = KiteResourceInstallPlanCompiler.STEP_DOWNLOAD,
                     urls = listOf("$releaseBase/${'$'}asset_name"),
-                    destination = "${'$'}archive"
+                    destination = "${'$'}archive",
+                    maxBytes = manifest.source.maxBytes,
                 ),
                 KiteResourceInstallStep(
                     id = "install-release-asset",
@@ -563,6 +570,7 @@ object KiteResourceSourcePlanFactory {
     private const val SOURCE_OFFICIAL_SCRIPT = "official_script"
     private const val SOURCE_BUNDLED = "bundled"
     private const val PROFILE_MANAGED_SCRIPT_V1 = "managed_script_v1"
+    private const val MAXIMUM_PACKAGE_METADATA_BYTES = 256L * 1024L
     private val TARGET_VERSION_SOURCES = setOf(SOURCE_NPM, SOURCE_GITHUB_RELEASE)
     private val SAFE_NPM_PACKAGE = Regex("(?:@[A-Za-z0-9._~-]+/)?[A-Za-z0-9._~-]+")
     private val SAFE_RESOURCE_ID = Regex("[A-Za-z0-9._-]+")

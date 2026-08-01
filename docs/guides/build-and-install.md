@@ -12,7 +12,7 @@
 ## 构建 Debug APK
 
 ```powershell
-.\gradlew.bat :app:assembleDebug --console=plain
+.\scripts\invoke-kite-gradle.ps1 -GradleArguments ':app:assembleDebug'
 ```
 
 输出文件：
@@ -24,7 +24,8 @@ app/build/outputs/apk/debug/app-debug.apk
 先执行单元测试再构建：
 
 ```powershell
-.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --console=plain
+.\scripts\run-kite-tests.ps1 -Profile Full
+.\scripts\invoke-kite-gradle.ps1 -GradleArguments ':app:assembleDebug'
 ```
 
 ## ADB 安装

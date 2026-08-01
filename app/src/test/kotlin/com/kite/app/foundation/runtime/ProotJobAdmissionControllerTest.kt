@@ -4,10 +4,70 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProotJobAdmissionControllerTest {
+    @Test
+    fun `job contract requires an explicit owner`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED)
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            controller.acquireBlocking(request("missing-owner", RuntimeLaneKind.PROBE).copy(ownerId = ""))
+        }
+
+        assertEquals("admission_owner_id_invalid", error.message)
+        controller.close()
+    }
+
+    @Test
+    fun `active job id cannot be admitted twice and becomes reusable after release`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED)
+        val first = granted(
+            controller.acquireBlocking(request("same-job", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+
+        val conflict = controller.acquireBlocking(
+            request("same-job", RuntimeLaneKind.SERVICE)
+        ) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_job_id_conflict", conflict.reason)
+        first.close()
+        granted(controller.acquireBlocking(request("same-job", RuntimeLaneKind.SERVICE))).lease.close()
+        controller.close()
+    }
+
+    @Test
+    fun `queued cancellation wakes waiter without stopping active owner`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val active = granted(
+            controller.acquireBlocking(request("active", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val executor = Executors.newSingleThreadExecutor()
+        val queued = executor.submit<ProotJobAdmissionResult> {
+            controller.acquireBlocking(request("queued", RuntimeLaneKind.SERVICE, waitTimeoutMs = 5_000L))
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+
+        val conflict = controller.acquireBlocking(
+            request("queued", RuntimeLaneKind.PROBE)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_job_id_conflict", conflict.reason)
+        assertTrue(controller.cancelQueued("queued"))
+        val cancelled = queued.get(1, TimeUnit.SECONDS) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_cancelled", cancelled.reason)
+        assertEquals(0, controller.snapshot().queuedCount)
+        assertEquals(1, controller.snapshot().activeCount)
+        assertEquals(1L, controller.snapshot().cancelledCount)
+        assertTrue(!controller.cancelQueued("active"))
+        active.close()
+        granted(controller.acquireBlocking(request("queued", RuntimeLaneKind.SERVICE))).lease.close()
+        executor.shutdownNow()
+        controller.close()
+    }
+
     @Test
     fun `profiles enforce one two and four active jobs`() {
         val expected = mapOf(
@@ -27,6 +87,35 @@ class ProotJobAdmissionControllerTest {
             leases.forEach(AutoCloseable::close)
             controller.close()
         }
+    }
+
+    @Test
+    fun `snapshot derives active and queued lane counts from the locked controller state`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val active = granted(
+            controller.acquireBlocking(request("active", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val executor = Executors.newSingleThreadExecutor()
+        val queued = executor.submit<ProotJobAdmissionResult> {
+            controller.acquireBlocking(
+                request("queued", RuntimeLaneKind.SERVICE, waitTimeoutMs = 5_000L)
+            )
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+
+        val snapshot = controller.snapshot()
+
+        assertEquals(1, snapshot.activeByLane[RuntimeLaneKind.INTERACTIVE])
+        assertEquals(0, snapshot.activeByLane[RuntimeLaneKind.SERVICE])
+        assertEquals(0, snapshot.queuedByLane[RuntimeLaneKind.INTERACTIVE])
+        assertEquals(1, snapshot.queuedByLane[RuntimeLaneKind.SERVICE])
+        assertEquals(snapshot.activeCount, snapshot.activeByLane.values.sum())
+        assertEquals(snapshot.queuedCount, snapshot.queuedByLane.values.sum())
+        assertTrue(controller.cancelQueued("queued"))
+        queued.get(1, TimeUnit.SECONDS)
+        active.close()
+        executor.shutdownNow()
+        controller.close()
     }
 
     @Test
@@ -97,6 +186,38 @@ class ProotJobAdmissionControllerTest {
         assertTrue(done.await(2, TimeUnit.SECONDS))
         assertEquals(listOf("interactive", "batch"), order)
         pool.shutdownNow()
+        controller.close()
+    }
+
+    @Test
+    fun `same priority waiters remain fifo`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val active = granted(
+            controller.acquireBlocking(request("active", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val order = mutableListOf<String>()
+        val executor = Executors.newFixedThreadPool(2)
+        val done = CountDownLatch(2)
+        executor.execute {
+            granted(controller.acquireBlocking(request("first", RuntimeLaneKind.SERVICE))).lease.use {
+                synchronized(order) { order += "first" }
+            }
+            done.countDown()
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+        executor.execute {
+            granted(controller.acquireBlocking(request("second", RuntimeLaneKind.SERVICE))).lease.use {
+                synchronized(order) { order += "second" }
+            }
+            done.countDown()
+        }
+        waitUntil { controller.snapshot().queuedCount == 2 }
+
+        active.close()
+
+        assertTrue(done.await(2, TimeUnit.SECONDS))
+        assertEquals(listOf("first", "second"), order)
+        executor.shutdownNow()
         controller.close()
     }
 
@@ -216,6 +337,191 @@ class ProotJobAdmissionControllerTest {
         controller.close()
     }
 
+    @Test
+    fun `pressure shrink keeps active leases and blocks only later admission`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE)
+        val first = granted(controller.acquireBlocking(request("first", RuntimeLaneKind.INTERACTIVE))).lease
+        val second = granted(controller.acquireBlocking(request("second", RuntimeLaneKind.INTERACTIVE))).lease
+
+        controller.updatePolicy(
+            ProotJobAdmissionPolicy(
+                profileGroup = RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE,
+                pressure = RuntimePressureLevel.HIGH,
+            )
+        )
+
+        assertEquals(1, controller.snapshot().effectiveGlobalMax)
+        assertEquals(2, controller.snapshot().activeCount)
+        val rejected = controller.acquireBlocking(
+            request("later", RuntimeLaneKind.SERVICE, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_global_capacity_timeout", rejected.reason)
+        assertEquals(2, controller.snapshot().activeCount)
+        first.close()
+        second.close()
+        controller.close()
+    }
+
+    @Test
+    fun `background transition keeps active build and blocks only later build admission`() {
+        val lanes = RuntimeWorkloadPolicy.defaultLanes()
+        val controller = ProotJobAdmissionController(
+            ProotJobAdmissionPolicy(
+                profileGroup = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED,
+                lanes = lanes,
+                pressure = RuntimePressureLevel.NORMAL,
+                foreground = true,
+            )
+        )
+        val active = granted(
+            controller.acquireBlocking(request("active-build", RuntimeLaneKind.BUILD))
+        ).lease
+
+        controller.updatePolicy(
+            ProotJobAdmissionPolicy(
+                profileGroup = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED,
+                lanes = lanes,
+                pressure = RuntimePressureLevel.NORMAL,
+                foreground = false,
+            )
+        )
+
+        assertEquals(1, controller.snapshot().activeCount)
+        val rejected = controller.acquireBlocking(
+            request("later-build", RuntimeLaneKind.BUILD, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_lane_capacity_timeout", rejected.reason)
+        assertEquals(1, controller.snapshot().activeCount)
+        active.close()
+        controller.close()
+    }
+
+    @Test
+    fun `closing admission wakes queued waiter without releasing active owner`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val active = granted(
+            controller.acquireBlocking(request("active", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val executor = Executors.newSingleThreadExecutor()
+        val queued = executor.submit<ProotJobAdmissionResult> {
+            controller.acquireBlocking(request("queued", RuntimeLaneKind.SERVICE, waitTimeoutMs = 5_000L))
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+
+        controller.close()
+        val rejected = queued.get(1, TimeUnit.SECONDS) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_closed", rejected.reason)
+        assertEquals(0, controller.snapshot().queuedCount)
+        assertEquals(1, controller.snapshot().activeCount)
+        active.close()
+        executor.shutdownNow()
+    }
+
+    @Test
+    fun `restored holder may exceed a shrunken limit and blocks only new admission`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val first = granted(controller.restoreActive(managedRequest("restored-one"))).lease
+        val second = granted(controller.restoreActive(managedRequest("restored-two"))).lease
+
+        val snapshot = controller.snapshot()
+        assertEquals(1, snapshot.effectiveGlobalMax)
+        assertEquals(2, snapshot.activeCount)
+        assertEquals(2L, snapshot.restoredCount)
+        assertEquals(2, snapshot.managedOwnerActiveCount)
+        val rejected = controller.acquireBlocking(
+            request("new", RuntimeLaneKind.INTERACTIVE, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_global_capacity_timeout", rejected.reason)
+
+        first.close()
+        second.close()
+        controller.close()
+    }
+
+    @Test
+    fun `balanced profile keeps one slot for a short task behind a queued managed owner`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.DEFAULT_BALANCED)
+        val firstManaged = granted(controller.acquireBlocking(managedRequest("managed-one"))).lease
+        val executor = Executors.newSingleThreadExecutor()
+        val secondManaged = executor.submit<ProotJobAdmissionResult> {
+            controller.acquireBlocking(managedRequest("managed-two").copy(waitTimeoutMs = 5_000L))
+        }
+        waitUntil { controller.snapshot().queuedCount == 1 }
+
+        val short = granted(
+            controller.acquireBlocking(request("short", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        val active = controller.snapshot()
+        assertEquals(2, active.activeCount)
+        assertEquals(1, active.managedOwnerActiveCount)
+        assertEquals(1, active.activeByLane[RuntimeLaneKind.INTERACTIVE])
+
+        short.close()
+        assertTrue(controller.cancelQueued("managed-two"))
+        val rejected = secondManaged.get(1, TimeUnit.SECONDS) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_cancelled", rejected.reason)
+        firstManaged.close()
+        executor.shutdownNow()
+        controller.close()
+    }
+
+    @Test
+    fun `high performance profile allows three managed owners and preserves the fourth slot`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE)
+        val managed = (1..3).map { index ->
+            granted(controller.acquireBlocking(managedRequest("managed-$index"))).lease
+        }
+
+        val fourthManaged = controller.acquireBlocking(
+            managedRequest("managed-four").copy(waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+        assertEquals("admission_managed_owner_headroom_timeout", fourthManaged.reason)
+        val short = granted(
+            controller.acquireBlocking(request("short", RuntimeLaneKind.INTERACTIVE))
+        ).lease
+        assertEquals(4, controller.snapshot().activeCount)
+        assertEquals(3, controller.snapshot().managedOwnerActiveCount)
+
+        short.close()
+        managed.reversed().forEach(AutoCloseable::close)
+        controller.close()
+    }
+
+    @Test
+    fun `low power profile does not invent a second slot`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.LOW_POWER)
+        val managed = granted(controller.acquireBlocking(managedRequest("managed"))).lease
+
+        val short = controller.acquireBlocking(
+            request("short", RuntimeLaneKind.INTERACTIVE, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_global_capacity_timeout", short.reason)
+        assertEquals(1, controller.snapshot().activeCount)
+        managed.close()
+        controller.close()
+    }
+
+    @Test
+    fun `contract mismatch blocks every new admission until the same key is cleared`() {
+        val controller = controller(profile = RuntimeLifecyclePolicyProfileGroup.HIGH_PERFORMANCE)
+        controller.blockNewAdmissions("managed-owner:broken")
+
+        val rejected = controller.acquireBlocking(
+            request("blocked-by-contract", RuntimeLaneKind.INTERACTIVE, waitTimeoutMs = 5L)
+        ) as ProotJobAdmissionResult.Rejected
+
+        assertEquals("admission_contract_mismatch", rejected.reason)
+        assertEquals(1, controller.snapshot().contractBlockCount)
+        controller.clearAdmissionBlock("managed-owner:broken")
+        granted(
+            controller.acquireBlocking(request("allowed-after-repair", RuntimeLaneKind.INTERACTIVE))
+        ).lease.close()
+        assertEquals(0, controller.snapshot().contractBlockCount)
+        controller.close()
+    }
+
     private fun controller(
         profile: RuntimeLifecyclePolicyProfileGroup,
         pressure: RuntimePressureLevel = RuntimePressureLevel.NORMAL,
@@ -241,10 +547,18 @@ class ProotJobAdmissionControllerTest {
         waitTimeoutMs: Long = 1_000L,
     ) = ProotJobAdmissionRequest(
         jobId = id,
+        ownerId = "test:$id",
         lane = lane,
         access = access,
+        cancellationMode = ProotJobCancellationMode.TIMEOUT_AND_OWNER,
+        resultMode = ProotJobResultMode.CAPTURED_STDIO,
         pressureEssential = pressureEssential,
         waitTimeoutMs = waitTimeoutMs,
+    )
+
+    private fun managedRequest(id: String) = request(id, RuntimeLaneKind.SERVICE).copy(
+        cancellationMode = ProotJobCancellationMode.MANAGED_OWNER,
+        resultMode = ProotJobResultMode.DETACHED_BINDING,
     )
 
     private fun granted(result: ProotJobAdmissionResult) = result as ProotJobAdmissionResult.Granted

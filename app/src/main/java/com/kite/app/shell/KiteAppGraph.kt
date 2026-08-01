@@ -1,6 +1,7 @@
 package com.kite.app.shell
 
 import android.content.Context
+import android.util.Log
 import com.kite.app.CardRunTaskCloser
 import com.kite.app.action.KiteActionRouter
 import com.kite.app.action.KiteRecipeActionCoordinator
@@ -18,6 +19,7 @@ import com.kite.app.application.packages.InstallApkCoordinator
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceActionWorkflowCoordinator
 import com.kite.app.application.resources.ResourceVersionCoordinator
+import com.kite.app.application.resources.ResourceVersionBatchSummary
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunExecutionEnvironmentProvider
@@ -45,6 +47,9 @@ import com.kite.app.recipe.KiteCardGroupStore
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceManifestLoader
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
+import com.kite.app.foundation.runtime.KFContainerManager
+import com.kite.app.foundation.runtime.StructuredJsonStringContext
+import com.kite.app.foundation.runtime.StructuredJsonStringRoot
 import com.kite.app.platform.resources.AndroidResourceFeatureGateway
 import com.kite.app.platform.browser.AndroidBrowserHandoffGateway
 import com.kite.app.platform.browser.AndroidBrowserAuthRedirectGateway
@@ -319,8 +324,35 @@ internal class KiteAppGraph private constructor(context: Context) {
                 recipeFeatureGateway = recipeFeatureGateway,
                 bridgeClient = bridgeClient,
                 diagnostics = diagnostics,
+                versionBatchObserver = { summary: ResourceVersionBatchSummary ->
+                    Log.i(
+                        "KiteVersionBatchRoute",
+                        "total=${summary.total} structuredNativeRemote=${summary.structuredNativeRemote} " +
+                            "prootCompatibility=${summary.prootCompatibility} " +
+                            "maxStructuredNativeRemote=${summary.maxStructuredNativeRemote} " +
+                            "maxProotCompatibility=${summary.maxProotCompatibility}",
+                    )
+                },
                 versionCoordinator = ResourceVersionCoordinator(
-                    AndroidResourceVersionGateway(bridgeClient)
+                    AndroidResourceVersionGateway(
+                        bridgeClient = bridgeClient,
+                        metadataContextProvider = {
+                            StructuredJsonStringContext(
+                                listOf(
+                                    StructuredJsonStringRoot(
+                                        containerPath = "/workspace",
+                                        directory = KFContainerManager.resolveWorkspaceDirectory(appContext),
+                                    )
+                                )
+                            )
+                        },
+                        routeObserver = { event ->
+                            Log.i(
+                                "KiteVersionRoute",
+                                "route=${event.route.name.lowercase()} reason=${event.reason}",
+                            )
+                        },
+                    )
                 )
             )
         )

@@ -15,7 +15,8 @@ Kite 当前优先稳定已有能力。开始修改前，先在 [能力状态](do
 ## 常用检查
 
 ```powershell
-.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --console=plain
+.\scripts\run-kite-tests.ps1 -Profile Full
+.\scripts\invoke-kite-gradle.ps1 -GradleArguments ':app:assembleDebug'
 powershell -File scripts/KITE_ARCHITECTURE_CHECKS.ps1
 powershell -File scripts/KITE_RUNTIME_LANE_STATIC_CHECKS.ps1
 ```

@@ -325,7 +325,8 @@ internal class RunOrchestrator(
                 stepId = step.id,
                 attemptId = flight.attemptId
             )
-            val publishesProcessOwnership = step.type != KiteRecipe.STEP_AGENT
+            val publishesProcessOwnership =
+                step.type != KiteRecipe.STEP_AGENT && step.type != KiteRecipe.STEP_NATIVE_CAPABILITY
             val running = commit(
                 recipe,
                 state.instanceId,
@@ -564,7 +565,8 @@ internal class RunOrchestrator(
     companion object {
         fun surfaceFor(stepType: String): CardRunSurface = when (stepType) {
             KiteRecipe.STEP_SHELL,
-            KiteRecipe.STEP_ANDROID_ACTION -> CardRunSurface.Report
+            KiteRecipe.STEP_ANDROID_ACTION,
+            KiteRecipe.STEP_NATIVE_CAPABILITY -> CardRunSurface.Report
             KiteRecipe.STEP_TERMINAL -> CardRunSurface.Terminal
             KiteRecipe.STEP_OPEN_WEB -> CardRunSurface.Web
             KiteRecipe.STEP_X11 -> CardRunSurface.X11
@@ -579,6 +581,7 @@ internal class RunOrchestrator(
             KiteRecipe.STEP_X11 -> "正在准备 X11"
             KiteRecipe.STEP_AGENT -> "正在准备 Agent 会话"
             KiteRecipe.STEP_ANDROID_ACTION -> "正在执行安卓动作"
+            KiteRecipe.STEP_NATIVE_CAPABILITY -> "正在执行安卓原生能力"
             else -> "正在执行步骤"
         }
 
@@ -589,6 +592,7 @@ internal class RunOrchestrator(
             KiteRecipe.STEP_X11 -> "正在重置 X11 窗口"
             KiteRecipe.STEP_AGENT -> "正在关闭旧会话并重新连接 Agent"
             KiteRecipe.STEP_ANDROID_ACTION -> "正在重新执行安卓动作"
+            KiteRecipe.STEP_NATIVE_CAPABILITY -> "正在停止旧原生能力并重新执行"
             else -> "正在重新执行步骤"
         }
 
@@ -637,6 +641,11 @@ internal class RunOrchestrator(
             } else {
                 null
             }
+            KiteRecipe.STEP_NATIVE_CAPABILITY -> RecipeStopRequest(
+                recipe = recipe,
+                instanceId = state.instanceId,
+                generation = state.createdAt,
+            )
             else -> null
         }
 

@@ -29,7 +29,15 @@ enum class KiteResourceAvailability(val wireValue: String) {
 data class KiteResourceVersionProbeSpec(
     val command: String,
     val pattern: String = "",
-    val group: Int = 1
+    val group: Int = 1,
+    val structuredMetadata: KiteResourceMetadataVersionProbeSpec? = null,
+)
+
+/** 版本查询的内部结构化合同；显式命令探针不从 shell 文本推导此事实。 */
+data class KiteResourceMetadataVersionProbeSpec(
+    val containerPath: String,
+    val maximumBytes: Long,
+    val jsonField: String,
 )
 
 data class KiteResourceManagementSpec(
@@ -66,5 +74,6 @@ data class KiteResourceSourceSpec(
     val environment: Map<String, String> = emptyMap(),
     val profile: String = "",
     val interpreter: String = "",
-    val entry: String = ""
+    val entry: String = "",
+    val maxBytes: Long = 0L
 )

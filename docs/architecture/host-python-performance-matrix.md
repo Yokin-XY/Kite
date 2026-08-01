@@ -1,0 +1,163 @@
+# 宿主 Python 性能与兼容矩阵
+
+## 结论
+
+RF230 对“纯 Python 结构化快速通道”给出 **go**，对“Python 全能力直接 Host 化”给出 **no-go**。
+
+- go：解释器启动、stdlib、内置 C 扩展、pip 模块入口、纯 Python wheel 安装、venv 创建，以及本矩阵五类纯 Python 负载。
+- no-go：Python `subprocess` 直接执行 Linux ELF、venv 子解释器直接启动、缺少精确 ABI 证据的第三方 C 扩展和需要完整 Linux 视图的任务。
+- 路由要求：上述 no-go 能力必须在 Python 进程创建前整条进入 PRoot；Host 已开始后不得自动重放。
+
+这不是为某个资源或应用制作 Python 特版。候选 Provider 只允许依据解释器身份、ABI、argv、环境和能力声明选择。
+
+## 证据环境
+
+- 日期：2026-07-31
+- 设备：OnePlus 8T，serial `3f8bbaad`
+- Python：同一份受管 Python 3.14.6
+- 对照：独立 Host glibc 启动与独立 Ubuntu/PRoot 启动
+- 构建：Debug；覆盖安装保留既有 Ubuntu、工作区和 Python 资产
+- 轮数：每个性能测点 3 轮
+- 并发：1、4、8、16
+
+固定入口：
+
+```powershell
+.\scripts\python-runtime-benchmark.ps1 -Mode Benchmark
+.\scripts\python-runtime-benchmark.ps1 -Mode Compatibility
+```
+
+Debug Receiver 不接受命令、路径、负载或并发度；外部只能选择上述两组固定矩阵。
+
+## 性能结果
+
+表中时间是同一轮并发任务全部完成的 wall-clock p50/p95；“降低”按 `(PRoot p50 - Host p50) / PRoot p50` 计算。
+
+| 负载 | 并发 | Host p50 | PRoot p50 | p50 降低 | Host p95 | PRoot p95 | 失败 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 启动 | 1 | 105ms | 167ms | 37.1% | 105ms | 186ms | 0 |
+| 启动 | 4 | 108ms | 331ms | 67.4% | 109ms | 362ms | 0 |
+| 启动 | 8 | 131ms | 427ms | 69.3% | 134ms | 486ms | 0 |
+| 启动 | 16 | 167ms | 483ms | 65.4% | 176ms | 519ms | 0 |
+| import | 1 | 105ms | 545ms | 80.7% | 105ms | 637ms | 0 |
+| import | 4 | 111ms | 265ms | 58.1% | 117ms | 354ms | 0 |
+| import | 8 | 222ms | 417ms | 46.8% | 229ms | 437ms | 0 |
+| import | 16 | 265ms | 750ms | 64.7% | 312ms | 757ms | 0 |
+| 小文件 | 1 | 112ms | 834ms | 86.6% | 113ms | 843ms | 0 |
+| 小文件 | 4 | 119ms | 359ms | 66.9% | 120ms | 359ms | 0 |
+| 小文件 | 8 | 220ms | 596ms | 63.1% | 227ms | 598ms | 0 |
+| 小文件 | 16 | 340ms | 888ms | 61.7% | 366ms | 917ms | 0 |
+| CPU | 1 | 108ms | 334ms | 67.7% | 112ms | 335ms | 0 |
+| CPU | 4 | 118ms | 253ms | 53.4% | 206ms | 262ms | 0 |
+| CPU | 8 | 235ms | 392ms | 40.1% | 250ms | 393ms | 0 |
+| CPU | 16 | 368ms | 593ms | 37.9% | 416ms | 649ms | 0 |
+| I/O | 1 | 110ms | 534ms | 79.4% | 114ms | 539ms | 0 |
+| I/O | 4 | 111ms | 258ms | 57.0% | 125ms | 259ms | 0 |
+| I/O | 8 | 229ms | 386ms | 40.7% | 236ms | 402ms | 0 |
+| I/O | 16 | 347ms | 730ms | 52.5% | 357ms | 732ms | 0 |
+
+20 组 Host/PRoot 对照、40 个通道测点全部零失败。Host p50 降低范围为 37.1%～86.6%。16 路仍快于 PRoot，
+但不能据此把 16 路固定为全局并发；正式调度仍由压力档位和任务类型决定。
+
+## 兼容结果
+
+| 能力 | Host | PRoot | 边界 |
+| --- | --- | --- | --- |
+| stdlib 与内置 C 扩展 | 通过 | 通过 | 覆盖 `_ssl`、`_sqlite3`、`_hashlib`、`ctypes`、证书与本地 DNS |
+| pip 模块入口 | 通过 | 通过 | 只证明入口可用，不开放任意网络安装 |
+| 本地纯 Python wheel 安装与 import | 通过 | 通过 | 固定无网络 wheel；生命周期留在 RF250 |
+| venv 创建 | 通过 | 通过 | 只证明环境文件可创建 |
+| Python `subprocess` 启动同一解释器 | 失败 | 通过 | Linux ELF 解释器路径在 Android 宿主不可直接解析 |
+| venv 子解释器启动 | 失败 | 通过 | 与 subprocess 属于同一执行边界 |
+| 第三方 C 扩展 wheel | 精确 ABI 样本通过 | 通过 | 只按已验证导入闭包与 `pythonAbi` 开放，不外推任意 manylinux wheel、`dlopen` 或 syscall |
+
+Host 的两个失败均发生在 Python 主进程创建后，因此正式 RF240 不能“先试 Host、失败再跑 PRoot”。Planner 必须根据能力声明在
+创建任何 Python 进程前选择 PRoot。
+
+## RF240 生产接入复验
+
+RF240 将通用 glibc Host 资产从 Node 专名中提取，并接入标准 `HostPythonRuntimeProvider` 与统一
+`ManagedRuntimeLaunchPlanner`。2026-07-31 在同一台 OnePlus 8T 上覆盖安装 Debug APK 后，生产 Provider 直接生成的
+`ContainerLaunchConfig` 已真实启动 Python 3.14.6，输出标记和退出码均通过；它没有借用 Node 环境变量或 Node 资产路径。
+
+发布门的六个固定性能点如下。时间仍为三轮 wall-clock p50：
+
+| 负载 | 并发 | Host p50 | PRoot p50 | p50 降低 | 失败 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 启动 | 1 | 109ms | 265ms | 58.9% | 0 |
+| 启动 | 8 | 132ms | 400ms | 67.0% | 0 |
+| import | 1 | 109ms | 527ms | 79.3% | 0 |
+| import | 8 | 226ms | 411ms | 45.0% | 0 |
+| 小文件 | 1 | 108ms | 734ms | 85.3% | 0 |
+| 小文件 | 8 | 235ms | 490ms | 52.0% | 0 |
+
+六个固定点均超过 20% 门槛。完整 RF240 矩阵仍为 20 组对照、40 个通道测点零失败，Host p50 降低
+33.2%～85.3%，且没有新增 ANR/FATAL。兼容复验仍得到同一边界：stdlib、内置 C 扩展、pip 入口、纯 wheel 和 venv
+创建通过；Python subprocess 与 venv 子解释器只在 PRoot 通过。
+
+当前正式通道只对结构化受管 Python 请求开放。调用方必须在请求中声明子进程、完整 Linux、View、PTY 或未验证原生扩展需求；
+这些需求会在创建 Python 进程前回退 PRoot。当前资源清单没有结构化 Python 消费者，因此 RF240 不把某个应用或资源改成隐式
+Python 特例；后续消费者必须显式进入统一 Planner。
+
+## RF240 发布门
+
+以下门槛已按生产 Provider 复验：
+
+1. 只接受结构化 `python`/`python3` argv，不接受 shell 文本和资源 ID 条件。
+2. 请求声明 subprocess、完整 Linux、View 或未验证 C 扩展时，Host 进程创建数必须为 0，PRoot 只创建一次。
+3. Host 与 PRoot 的 cwd、env、stdin/stdout/stderr、退出码、取消和运行事实对照通过。
+4. OnePlus 8T 的启动、import、小文件在并发 1 和 8 时，Host p50 相对 PRoot 至少降低 20%，三轮零失败。
+5. 真机无新增 ANR/FATAL；Provider 抽象不得改变已冻结 Node 入口、glibc 资产身份或子进程语义。
+
+## RF250 能力分层发现
+
+RF250 使用独立 `Layered` 模式，只增加新测点，不重跑 RF230 性能矩阵：
+
+```powershell
+.\scripts\python-runtime-benchmark.ps1 -Mode Layered
+```
+
+| 能力 | Host | PRoot | 决定 |
+| --- | --- | --- | --- |
+| `subprocess` 的 GNU/Linux 身份 | 失败 | 通过 | 声明子进程的任务整条进入 PRoot |
+| `os.system` 的 Ubuntu 文件视图 | 失败 | 通过 | shell/完整 Linux 视图整条进入 PRoot |
+| `os.execve(sys.executable)` | 失败 | 通过 | 进程替换任务整条进入 PRoot |
+| `venv(with_pip=True)` | 失败 | 失败 | 当前 Python 包不能靠切换车道获得该能力，保持关闭并优先研究受管 `uv` 生命周期 |
+
+最重要的反例是：Host 上执行 `/bin/echo` 曾表面成功，因为它命中了 Android `/bin`，不是 Ubuntu `/bin`。因此“请求没有声明
+子进程”不能被解释为“脚本确定不产生子进程”。RF251 增加两项肯定式保证：`NO_CHILD_PROCESS` 与
+`VERIFIED_NATIVE_IMPORTS`。只有调用方在创建进程前同时提供两项保证，Python Provider 才能进入 Host；缺少任一保证就回退
+PRoot。要求子进程、venv、pip 生命周期或未验证扩展时仍按原原因回退。
+
+受管解释器身份也改为只接受裸 `python*` 或稳定 `/workspace/.kf/bin/python*` 入口，并在每次计划时重新追踪当前目标；不能把
+`.kf` 下的 venv 或任意 Python 路径误认为基础运行时。`PYTHONPATH` 与 `PYTHONSTARTUP` 的容器路径在启动前映射，活动
+`VIRTUAL_ENV` 直接回 PRoot。
+
+## RF254 扩展 ABI 与包生命周期
+
+RF254 增加独立 `Extension` 模式，不重跑 RF230/RF240 性能矩阵：
+
+```powershell
+.\scripts\python-runtime-benchmark.ps1 -Mode Extension
+```
+
+固定源码为 `scripts/fixtures/python/kite_probe_ext.c`，wheel 元数据固定为 0.0.1 和 0.0.2 两代；ARM64 `.so` 与 wheel 是本地构建
+证据，不进入 Git。OnePlus 8T 的结果为：
+
+| 能力 | Host | PRoot | 决定 |
+| --- | --- | --- | --- |
+| `cpython-314-aarch64-linux-gnu` 直接导入 | 通过 | 通过 | 只证明该 ABI 和导入闭包 |
+| 0.0.1 安装、0.0.2 新代次安装并切换 | 通过 0.0.2 导入 | 两代安装与元数据验证通过 | 使用不可变代次，不原地覆盖 |
+| 声明 `cpython-315-aarch64-linux-gnu` | 启动前拒绝 | 未启动 | 原因固定为 `python_native_imports_abi_mismatch` |
+
+反例同样重要：在同一 `--target` 目录执行 `pip --target --upgrade` 后，0.0.2 文件虽已写入，旧 0.0.1 `.dist-info` 仍在，
+`importlib.metadata` 可能继续返回 0.0.1。因此包升级不得靠目录内覆盖；必须安装到新代次，验证通过后改变所选 `PYTHONPATH`，
+旧代次等待运行租约释放后再回收。
+
+## 证据限制
+
+- 单设备、Debug 构建和三轮样本适合做 go/no-go，不是全机型容量承诺。
+- 未冷却 Linux page cache，因此“启动”表示独立进程启动，不表示首次安装后的物理冷盘启动。
+- 本矩阵没有宣称任意第三方 C 扩展、编译工具链、网络 pip 安装或长期 Python 服务兼容；RF254 只证明固定 ARM64 样本与精确 ABI 门。
+- RF240 只复验 Python 生产链与通用 glibc 资产，没有重复 Node 历史矩阵。
+- RF252/RF254 已把保证和 ABI 证据透传到资源 Agent、后台依赖、自定义登记与持久化；旧调用方缺少肯定式证据，会安全回到 PRoot。

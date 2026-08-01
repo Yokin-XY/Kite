@@ -19,6 +19,12 @@ internal data class ResourceManagedCommandEvidenceIdentity(
 internal data class ResourceManagedCommandEvidenceRequest(
     val requirement: ResourceManagedCommandRequirement,
     val identity: ResourceManagedCommandEvidenceIdentity?,
+    val nativeProof: ResourceManagedCommandNativeProof? = null,
+)
+
+/** 只表示普通默认容器中由完整宿主文件事实直接成立的肯定式证明。 */
+internal data class ResourceManagedCommandNativeProof(
+    val identity: ResourceManagedCommandEvidenceIdentity,
 )
 
 internal fun buildResourceManagedCommandEvidenceIdentity(
@@ -45,6 +51,16 @@ internal fun buildResourceManagedCommandEvidenceIdentity(
     )
 }
 
+internal fun buildResourceManagedCommandNativeProof(
+    identity: ResourceManagedCommandEvidenceIdentity?,
+    nativeEnvironmentEligible: Boolean,
+): ResourceManagedCommandNativeProof? {
+    if (!nativeEnvironmentEligible || identity == null) return null
+    if (identity.verificationBasis.commandFiles.size != identity.commands.size) return null
+    if (identity.verificationBasis.commandFiles.any { commandFile -> !commandFile.executable }) return null
+    return ResourceManagedCommandNativeProof(identity)
+}
+
 /**
  * 受管命令正向证明协调器。
  *
@@ -54,6 +70,7 @@ internal fun buildResourceManagedCommandEvidenceIdentity(
  */
 internal class ResourceManagedCommandEvidenceCoordinator(
     private val maxEntries: Int = 128,
+    private val observationSink: (String) -> Unit = {},
 ) {
     private val reconcileMutex = Mutex()
     private val positiveEvidence = LinkedHashMap<ResourceManagedCommandEvidenceIdentity, Unit>(16, 0.75f, true)
@@ -65,11 +82,31 @@ internal class ResourceManagedCommandEvidenceCoordinator(
         val normalized = requests
             .filter { request -> request.requirement.resourceId.isNotBlank() && request.requirement.commands.isNotEmpty() }
             .distinctBy { request -> request.requirement.resourceId }
+        val nativeProven = normalized.mapNotNull { request ->
+            request.nativeProof?.identity?.takeIf { identity ->
+                identity == request.identity &&
+                    identity.resourceId == request.requirement.resourceId &&
+                    identity.commands == request.requirement.commands
+            }
+        }.toSet()
         val pending = synchronized(positiveEvidence) {
+            nativeProven.forEach { identity ->
+                positiveEvidence.keys.removeAll { previous ->
+                    previous.environmentId == identity.environmentId &&
+                        previous.resourceId == identity.resourceId
+                }
+                positiveEvidence[identity] = Unit
+            }
+            trimToCapacityLocked()
             normalized.filterNot { request ->
-                request.identity?.let(positiveEvidence::containsKey) == true
+                request.identity in nativeProven ||
+                    request.identity?.let(positiveEvidence::containsKey) == true
             }
         }
+        observationSink(
+            "resolved total=${normalized.size}, native=${nativeProven.size}, " +
+                "cached=${normalized.size - nativeProven.size - pending.size}, fallback=${pending.size}",
+        )
         if (pending.isEmpty()) return@withLock Result.success(emptySet())
 
         probe(pending.map(ResourceManagedCommandEvidenceRequest::requirement)).map { missing ->

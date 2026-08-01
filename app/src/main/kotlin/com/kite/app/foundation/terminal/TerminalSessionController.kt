@@ -19,6 +19,10 @@ import com.kite.app.foundation.runtime.ProcessExitSemantics
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.ProotTelemetryStore
 import com.kite.app.foundation.runtime.ProotViewBinding
+import com.kite.app.foundation.runtime.ProotCompatibilityRuntimeProvider
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import com.kite.app.foundation.runtime.RuntimeFrameCoordinator
 import com.kite.app.foundation.runtime.RuntimeLaunchTrace
 import com.kite.app.foundation.runtime.RuntimeStorageGuard
@@ -989,11 +993,23 @@ class TerminalSessionController(
         RuntimeLaunchTrace.markTerminal(record.id, RuntimeLaunchTrace.TERMINAL_CONFIG_STARTED)
         val config = directLaunchConfig ?: withContext(Dispatchers.IO) {
             // 终端会话属于工作面动作；真正的容器 launch 配置统一经 bridge 向建房层索取。
-            WorkSurfaceRuntimeBridge.buildTerminalLaunchConfig(
-                context = appContext,
-                requestedProotViewId = launchOverrides[ProotViewBinding.ENV_VIEW_ID],
-                requestedProotEnvironmentId = launchOverrides[ProotViewBinding.ENV_ENVIRONMENT_ID]
+            val prootPlan = ProotCompatibilityRuntimeProvider.requirePlan(
+                request = RuntimeExecutionRequest(
+                    payload = RuntimeExecutionPayload.Argv("/bin/bash", listOf("--login")),
+                    workingDirectory = "/root",
+                    environment = launchOverrides,
+                    requirements = setOf(
+                        RuntimeExecutionRequirement.FULL_LINUX,
+                        RuntimeExecutionRequirement.INTERACTIVE_PTY,
+                    ) + if (launchOverrides[ProotViewBinding.ENV_VIEW_ID].isNullOrBlank()) {
+                        emptySet()
+                    } else {
+                        setOf(RuntimeExecutionRequirement.FILESYSTEM_VIEW)
+                    },
+                ),
+                selectionReason = "interactive_terminal_requires_proot",
             )
+            WorkSurfaceRuntimeBridge.buildProotTerminalLaunchConfig(appContext, prootPlan)
         }
         RuntimeLaunchTrace.markTerminal(record.id, RuntimeLaunchTrace.TERMINAL_CONFIG_READY)
         val browserEnv = withContext(Dispatchers.IO) {

@@ -23,7 +23,11 @@ import com.kite.app.bridge.OwnerStopOutputEvidence
 import com.kite.app.bridge.KiteBrowserProxyInstaller
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.foundation.contracts.ManagedTerminalStatus
-import com.kite.app.foundation.runtime.HostNodeExecutionRequest
+import com.kite.app.foundation.capability.CapabilityCatalog
+import com.kite.app.foundation.capability.CapabilityInvocationKind
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.runtime.RuntimeExecutionRequest
+import com.kite.app.foundation.runtime.RuntimeExecutionRequirement
 import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
 import com.kite.app.foundation.runtime.ProotOwnerProcessTerminator
 import com.kite.app.foundation.runtime.ProotOwnerTerminationOutcome
@@ -37,8 +41,8 @@ import com.kite.app.foundation.terminal.TerminalRuntimeHost
 import com.kite.app.foundation.terminal.TerminalRuntimeRegistry
 import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.workspace.KFWorkspaceManager
-import com.kite.app.foundation.workspace.HostNodeLaunchPlan
-import com.kite.app.foundation.workspace.HostNodeLaunchPlanner
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlan
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlanner
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
@@ -70,8 +74,15 @@ internal class AndroidRecipeExecutor(
     private val diagnostics: KiteDiagnostics,
     private val executionEnvironmentProvider: RunExecutionEnvironmentProvider =
         RunExecutionEnvironmentProvider.None,
-    private val agentRuntime: AgentRecipeRuntime = AndroidAgentRecipeRuntime(context)
+    private val agentRuntime: AgentRecipeRuntime = AndroidAgentRecipeRuntime(context),
+    private val nativeCapabilityRuntime: NativeCapabilityRecipeRuntime =
+        AndroidNativeCapabilityRecipeRuntime(context),
 ) : RecipeExecutor {
+    private data class AndroidActionResult(
+        val output: String,
+        val capabilityId: String? = null,
+    )
+
     private data class PendingTerminal(
         val request: RecipeStepExecutionRequest,
         val callback: (RecipeExecutionEvent) -> Unit
@@ -79,8 +90,10 @@ internal class AndroidRecipeExecutor(
 
     private data class PreparedTerminalLaunch(
         val record: com.kite.app.foundation.contracts.ManagedTerminalRecord,
-        val hostConfig: com.kite.app.foundation.contracts.ContainerLaunchConfig?,
+        val runtimeConfig: com.kite.app.foundation.contracts.ContainerLaunchConfig?,
+        val runtimeLane: String,
         val fallbackReason: String,
+        val environment: Map<String, String>,
     )
 
     private val appContext = context.applicationContext
@@ -134,6 +147,7 @@ internal class AndroidRecipeExecutor(
             KiteRecipe.STEP_AGENT -> executeAgent(request, callback)
             KiteRecipe.STEP_OPEN_WEB -> executeWeb(request, callback)
             KiteRecipe.STEP_ANDROID_ACTION -> executeAndroidAction(request, callback)
+            KiteRecipe.STEP_NATIVE_CAPABILITY -> nativeCapabilityRuntime.execute(request, callback)
             else -> callback(request.failed("unsupported_step:${request.step.type}"))
         }
     }
@@ -169,6 +183,23 @@ internal class AndroidRecipeExecutor(
                     StopExecutionResult(StopExecutionOutcome.Confirmed, "Agent 会话已关闭")
                 }
                 deliverStopResult(request, result, callback)
+            }
+            return
+        }
+        if (nativeCapabilityRuntime.owns(request.instanceId, request.generation)) {
+            nativeCapabilityRuntime.stop(request.instanceId, request.generation) { stopped ->
+                if (!stopped) {
+                    callback(
+                        StopExecutionResult(
+                            StopExecutionOutcome.StillRunning,
+                            "原生能力仍在停止中",
+                        )
+                    )
+                } else if (request.hasBridgeProcessBinding()) {
+                    stopRuntime(request, callback)
+                } else {
+                    callback(StopExecutionResult(StopExecutionOutcome.Confirmed, "原生能力已停止"))
+                }
             }
             return
         }
@@ -396,27 +427,44 @@ internal class AndroidRecipeExecutor(
                 val space = readyLease.spaceFor(request) ?: KFWorkspaceManager.ensureActiveSpace(appContext)
                 val container = readyLease.containerFor(request)
                 RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.RUNTIME_LEASE_CONSUMED)
-                val hostLaunch = if (readyLease.preparedSpace != null && command.isNotBlank()) {
-                    HostNodeLaunchPlanner.plan(
-                        context = appContext,
-                        container = container,
-                        workspaceDirectory = File(space.workspacePath),
-                        request = HostNodeExecutionRequest.CommandLine(command),
-                        containerWorkingDirectory = request.step.workdir,
-                    )
-                } else {
-                    HostNodeLaunchPlan.Fallback("explicit_runtime_or_command_missing")
+                val runtimeEnvironment = browserEnvironment(request, "terminal_step")
+                val requestedView = runtimeEnvironment[ProotViewBinding.ENV_VIEW_ID].orEmpty().isNotBlank()
+                val runtimeLaunch = ManagedRuntimeLaunchPlanner.plan(
+                    context = appContext,
+                    container = container,
+                    workspaceDirectory = File(space.workspacePath),
+                    request = RuntimeExecutionRequest(
+                        payload = if (command.isNotBlank()) {
+                            RuntimeExecutionPayload.CommandLine(command)
+                        } else {
+                            RuntimeExecutionPayload.Argv("/bin/bash", listOf("--login"))
+                        },
+                        workingDirectory = request.step.workdir,
+                        environment = runtimeEnvironment,
+                        requirements = buildSet {
+                            add(RuntimeExecutionRequirement.INTERACTIVE_PTY)
+                            if (command.isBlank()) add(RuntimeExecutionRequirement.FULL_LINUX)
+                            if (requestedView) add(RuntimeExecutionRequirement.FILESYSTEM_VIEW)
+                        },
+                    ),
+                )
+                if (runtimeLaunch is ManagedRuntimeLaunchPlan.Blocked) {
+                    error("runtime_provider_blocked:${runtimeLaunch.reason}")
                 }
-                val fallbackReason = (hostLaunch as? HostNodeLaunchPlan.Fallback)?.reason ?: "none"
-                val hostConfig = (hostLaunch as? HostNodeLaunchPlan.Ready)?.config
+                val readyRuntime = runtimeLaunch as? ManagedRuntimeLaunchPlan.Ready
+                val prootRuntime = runtimeLaunch as? ManagedRuntimeLaunchPlan.Proot
                 PreparedTerminalLaunch(
                     record = KFWorkspaceManager.createEmbeddedShellSession(
                         spaceId = space.id,
                         title = terminalTitle(request.recipe, request.stepIndex),
                         sourceLabel = request.recipe.name,
                     ),
-                    hostConfig = hostConfig,
-                    fallbackReason = fallbackReason,
+                    runtimeConfig = readyRuntime?.config ?: prootRuntime?.let { selected ->
+                        WorkSurfaceRuntimeBridge.buildProotTerminalLaunchConfig(appContext, selected.plan)
+                    },
+                    runtimeLane = readyRuntime?.lane?.value ?: "proot_shell",
+                    fallbackReason = prootRuntime?.reason ?: "none",
+                    environment = runtimeEnvironment,
                 )
             }.onSuccess { prepared ->
                 val record = prepared.record
@@ -434,9 +482,9 @@ internal class AndroidRecipeExecutor(
                 TerminalRuntimeHost.setLaunchEnvironmentOverrides(
                     appContext = appContext,
                     sessionId = record.id,
-                    overrides = browserEnvironment(request, "terminal_step") + terminalOwner.environment()
+                    overrides = prepared.environment + terminalOwner.environment()
                 )
-                prepared.hostConfig?.let { config ->
+                prepared.runtimeConfig?.let { config ->
                     TerminalRuntimeHost.setLaunchConfigOverride(appContext, record.id, config)
                 }
                 TerminalRuntimeHost.stageEmbeddedSession(appContext, record)
@@ -460,7 +508,7 @@ internal class AndroidRecipeExecutor(
                                 ).distinct(),
                             runId = record.id,
                             terminalSessionId = record.id,
-                            runtimeLane = if (prepared.hostConfig != null) "host_node" else "proot_shell",
+                            runtimeLane = prepared.runtimeLane,
                             runtimeFallbackReason = prepared.fallbackReason,
                             lastMeaningfulOutput = "等待终端完成：${record.title}",
                             clearNextActionUrl = true
@@ -469,7 +517,7 @@ internal class AndroidRecipeExecutor(
                 )
                 RuntimeLaunchTrace.mark(request.instanceId, RuntimeLaunchTrace.TERMINAL_OPEN_REQUESTED)
                 TerminalRuntimeHost.openEmbeddedSession(appContext, record)
-                if (prepared.hostConfig == null && command.isNotBlank()) {
+                if (prepared.runtimeLane == "proot_shell" && command.isNotBlank()) {
                     diagnostics.logRecipeAction(
                         request.recipe,
                         "terminal_step_command_scheduled",
@@ -507,7 +555,7 @@ internal class AndroidRecipeExecutor(
                     mapOf(
                         "instanceId" to request.instanceId,
                         "sessionId" to record.id,
-                        "lane" to if (prepared.hostConfig != null) "host_node" else "proot_shell",
+                        "lane" to prepared.runtimeLane,
                         "fallbackReason" to prepared.fallbackReason,
                     )
                 )
@@ -690,16 +738,24 @@ internal class AndroidRecipeExecutor(
             when (request.step.action) {
                 KiteRecipe.ANDROID_ACTION_PREPARE_AI_ENV -> {
                     ToolchainPackInstaller.prepareAiEnv(appContext)
-                    "安卓动作完成：prepare_ai_env"
+                    AndroidActionResult("安卓动作完成：prepare_ai_env")
                 }
                 KiteRecipe.ANDROID_ACTION_TOOLCHAIN_DOCTOR -> {
                     ToolchainPackInstaller.doctor(appContext)
-                    "安卓动作完成：toolchain_doctor"
+                    AndroidActionResult("安卓动作完成：toolchain_doctor")
                 }
-                KiteRecipe.ANDROID_ACTION_INSTALL_APK -> installApk(request.step)
+                KiteRecipe.ANDROID_ACTION_INSTALL_APK -> {
+                    val entry = CapabilityCatalog.routableEntryForLegacyAction(request.step.action)
+                        ?.takeIf { it.invocation == CapabilityInvocationKind.ANDROID_ACTION }
+                        ?: error("android_action_capability_not_catalogued:${request.step.action}")
+                    AndroidActionResult(
+                        output = installApk(request.step),
+                        capabilityId = entry.id,
+                    )
+                }
                 else -> error("unsupported_android_action")
             }
-        }.onSuccess { output ->
+        }.onSuccess { result ->
             callback(
                 RecipeExecutionEvent.Completed(
                     request.instanceId,
@@ -709,7 +765,9 @@ internal class AndroidRecipeExecutor(
                         status = CardRunStatus.Running,
                         surface = CardRunSurface.Report,
                         currentStepIndex = request.stepIndex,
-                        lastMeaningfulOutput = output,
+                        runtimeLane = result.capabilityId?.let { "android_native" },
+                        runtimeFallbackReason = result.capabilityId?.let { "android_capability:$it" },
+                        lastMeaningfulOutput = result.output,
                         clearNextActionUrl = true
                     )
                 )
@@ -988,6 +1046,8 @@ internal class AndroidRecipeExecutor(
                 status = CardRunStatus.Running,
                 surface = RunOrchestrator.surfaceFor(stepType),
                 currentStepIndex = stepIndex,
+                runtimeLane = SHELL_RUNTIME_LANE.takeIf { stepType == KiteRecipe.STEP_SHELL },
+                runtimeFallbackReason = SHELL_RUNTIME_REASON.takeIf { stepType == KiteRecipe.STEP_SHELL },
                 lastMeaningfulOutput = when (stepType) {
                     KiteRecipe.STEP_TERMINAL -> "正在准备终端环境"
                     KiteRecipe.STEP_X11 -> "正在准备 X11 环境"
@@ -996,6 +1056,8 @@ internal class AndroidRecipeExecutor(
                 }
             )
 
+        internal const val SHELL_RUNTIME_LANE = "proot_shell"
+        internal const val SHELL_RUNTIME_REASON = "shell_command_requires_proot"
         private const val TERMINAL_COMMAND_DELAY_MS = 650L
         private val TERMINAL_FINISHED_STATUSES = setOf(
             ManagedTerminalStatus.EXITED,

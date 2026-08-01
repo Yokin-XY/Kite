@@ -18,5 +18,222 @@
         <service
             android:name="com.kite.app.foundation.runtime.ProotAdmissionBenchmarkService"
             android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ProotLaunchWindowBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PROOT_LAUNCH_WINDOW_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.ProotLaunchWindowBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ProotActiveRuntimeBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PROOT_ACTIVE_RUNTIME_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.ProotActiveRuntimeBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ProotActiveRuntimeHotspotReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PROOT_ACTIVE_RUNTIME_HOTSPOT" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.ProotActiveRuntimeHotspotService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ProotPatchAblationBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PROOT_PATCH_ABLATION_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.ProotPatchAblationBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.HostGitBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.HOST_GIT_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.HostGitBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.HostGitRelayBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.HOST_GIT_RELAY_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.HostGitRelayBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.GlibcChildRelayBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.GLIBC_CHILD_RELAY_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.GlibcChildRelayBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ManagedProotProductionGateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.MANAGED_PROOT_PRODUCTION_GATE" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.ManagedProotProductionGateService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ManagedProotLifecycleProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.MANAGED_PROOT_LIFECYCLE_START" />
+                <action android:name="com.kite.app.debug.MANAGED_PROOT_LIFECYCLE_STOP" />
+                <action android:name="com.kite.app.debug.MANAGED_PROOT_LIFECYCLE_SNAPSHOT" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="com.kite.app.foundation.runtime.PythonRuntimeBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PYTHON_RUNTIME_BENCHMARK" />
+                <action android:name="com.kite.app.debug.PYTHON_RUNTIME_COMPATIBILITY" />
+                <action android:name="com.kite.app.debug.PYTHON_RUNTIME_LAYERED" />
+                <action android:name="com.kite.app.debug.PYTHON_RUNTIME_EXTENSION" />
+                <action android:name="com.kite.app.debug.PYTHON_RUNTIME_RELAY" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.PythonRuntimeBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.NativeDownloadCapabilityProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.NATIVE_DOWNLOAD_CAPABILITY_PROBE" />
+                <action android:name="com.kite.app.debug.NATIVE_DOWNLOAD_CAPABILITY_BENCHMARK" />
+                <action android:name="com.kite.app.debug.NATIVE_FILE_CAPABILITY_BENCHMARK" />
+                <action android:name="com.kite.app.debug.NATIVE_ARCHIVE_CAPABILITY_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="com.kite.app.foundation.runtime.ProotCompatibilityProbeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PROOT_COMPATIBILITY_PROBE" />
+                <action android:name="com.kite.app.debug.BOUNDED_PROOT_PROCESS_LIST_PROBE" />
+                <action android:name="com.kite.app.debug.SUPERVISORD_HEALTH_PROBE" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.NativeDownloadCapabilityBenchmarkService"
+            android:exported="false" />
+        <service
+            android:name="com.kite.app.foundation.runtime.NativeFileCapabilityBenchmarkService"
+            android:exported="false" />
+        <service
+            android:name="com.kite.app.foundation.runtime.NativeArchiveCapabilityBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.platform.resources.ManagedCommandProofBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.MANAGED_COMMAND_PROOF_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.platform.resources.ManagedCommandProofBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.platform.resources.ManagedPackageVersionBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.MANAGED_PACKAGE_VERSION_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.platform.resources.ManagedPackageVersionBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.platform.resources.ResourceVersionProductionRouteProofReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.RESOURCE_VERSION_PRODUCTION_ROUTE_PROOF" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.platform.resources.ResourceVersionProductionRouteProofService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.platform.resources.ResourceVersionBatchSchedulingBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.RESOURCE_VERSION_BATCH_SCHEDULING_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.platform.resources.ResourceVersionBatchSchedulingBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.platform.resources.ResourceVersionBatchProductionProofReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.RESOURCE_VERSION_BATCH_PRODUCTION_PROOF" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.platform.resources.ResourceVersionBatchProductionProofService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.toolchain.BundledResourceDependencyBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.BUNDLED_RESOURCE_DEPENDENCY_BENCHMARK" />
+                <action android:name="com.kite.app.debug.BUNDLED_RESOURCE_PRODUCTION_PROOF" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.toolchain.BundledResourceDependencyBenchmarkService"
+            android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.DefaultContainerColdReuseBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="com.kite.app.foundation.runtime.DefaultContainerColdReuseProductionBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_PRODUCTION" />
+                <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_FULL" />
+                <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_COUNTEREXAMPLE" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="com.kite.app.foundation.runtime.OrdinaryLaunchPreparationBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.ORDINARY_LAUNCH_PREPARATION_BASELINE" />
+                <action android:name="com.kite.app.debug.ORDINARY_LAUNCH_PREPARATION_CANDIDATE" />
+                <action android:name="com.kite.app.debug.ORDINARY_LAUNCH_PREPARATION_COUNTEREXAMPLE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

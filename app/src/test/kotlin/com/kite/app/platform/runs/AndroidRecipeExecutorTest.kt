@@ -8,6 +8,8 @@ import com.kite.app.application.runs.StopExecutionOutcome
 import com.kite.app.application.runs.StopExecutionResult
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.diagnostics.KiteDiagnostics
+import com.kite.app.foundation.capability.CapabilityCatalog
+import com.kite.app.foundation.runtime.KFContainerManager
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeStep
@@ -89,6 +91,38 @@ class AndroidRecipeExecutorTest {
     }
 
     @Test
+    fun `APK 安装动作通过目录映射稳定能力并只报告系统交接`() {
+        val context = RuntimeEnvironment.getApplication()
+        val apk = File(KFContainerManager.resolveWorkspaceDirectory(context), "catalog-handoff.apk")
+        apk.parentFile?.mkdirs()
+        apk.writeBytes(byteArrayOf(1, 2, 3))
+        val request = request(
+            KiteRecipeStep(
+                id = "install",
+                type = KiteRecipe.STEP_ANDROID_ACTION,
+                action = KiteRecipe.ANDROID_ACTION_INSTALL_APK,
+                cmd = "/workspace/${apk.name}",
+            )
+        )
+        var event: RecipeExecutionEvent? = null
+
+        try {
+            executor.execute(request) { event = it }
+        } finally {
+            apk.delete()
+        }
+
+        val completed = event as RecipeExecutionEvent.Completed
+        assertEquals("android_native", completed.mutation.runtimeLane)
+        assertEquals(
+            "android_capability:${CapabilityCatalog.CAPABILITY_OPEN_APK_INSTALLER}",
+            completed.mutation.runtimeFallbackReason,
+        )
+        assertTrue(completed.mutation.lastMeaningfulOutput.orEmpty().startsWith("已打开安装器："))
+        assertEquals(CardRunStatus.Running, completed.mutation.status)
+    }
+
+    @Test
     fun `终端准备过程保持终端显示面而不生成 SH 报告`() {
         val preparing = AndroidRecipeExecutor.runtimePreparationMutation(
             stepType = KiteRecipe.STEP_TERMINAL,
@@ -108,6 +142,8 @@ class AndroidRecipeExecutorTest {
 
         assertEquals(CardRunSurface.Report, preparing.surface)
         assertEquals("正在准备 SH 环境", preparing.lastMeaningfulOutput)
+        assertEquals(AndroidRecipeExecutor.SHELL_RUNTIME_LANE, preparing.runtimeLane)
+        assertEquals(AndroidRecipeExecutor.SHELL_RUNTIME_REASON, preparing.runtimeFallbackReason)
     }
 
     @Test
@@ -161,11 +197,14 @@ class AndroidRecipeExecutorTest {
         assertTrue(source.contains("onReady: (RuntimeReadyLease) -> Unit"))
         assertTrue(source.contains("TerminalRuntimeHost.refreshRuntimeSnapshot(appContext, preparedSpace = space)"))
         assertTrue(terminalBody.contains("readyLease.spaceFor(request) ?: KFWorkspaceManager.ensureActiveSpace(appContext)"))
-        assertTrue(terminalBody.contains("HostNodeLaunchPlanner.plan("))
-        assertTrue(terminalBody.contains("HostNodeExecutionRequest.CommandLine(command)"))
+        assertTrue(terminalBody.contains("ManagedRuntimeLaunchPlanner.plan("))
+        assertTrue(terminalBody.contains("RuntimeExecutionPayload.CommandLine(command)"))
+        assertTrue(terminalBody.contains("RuntimeExecutionRequirement.INTERACTIVE_PTY"))
+        assertTrue(terminalBody.contains("RuntimeExecutionRequirement.FILESYSTEM_VIEW"))
+        assertTrue(terminalBody.contains("WorkSurfaceRuntimeBridge.buildProotTerminalLaunchConfig"))
         assertEquals(false, terminalBody.contains("HostNodeChildProcessContract.from("))
         assertTrue(terminalBody.contains("TerminalRuntimeHost.setLaunchConfigOverride"))
-        assertTrue(terminalBody.contains("prepared.hostConfig == null && command.isNotBlank()"))
+        assertTrue(terminalBody.contains("prepared.runtimeLane == \"proot_shell\" && command.isNotBlank()"))
         assertEquals(false, terminalBody.contains("TerminalRuntimeHost.refreshRuntimeSnapshot(appContext)"))
         assertEquals(false, terminalBody.contains("TerminalSessionStore.refresh"))
     }

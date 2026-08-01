@@ -12,7 +12,8 @@ class ResourceRunProotFastPathContractTest {
         val source = locateKiteAppGraphSource().readText()
 
         assertTrue(source.contains("RunExecutionEnvironmentProvider.None"))
-        assertTrue(source.contains("AndroidResourceVersionGateway(bridgeClient)"))
+        assertTrue(source.contains("AndroidResourceVersionGateway("))
+        assertTrue(source.contains("metadataContextProvider ="))
         assertFalse(source.contains("resourceViewEnvironment(request.previousState.environmentId)"))
         assertFalse(source.contains("environmentFor = ::resourceViewEnvironment"))
         assertFalse(source.contains("private fun resourceViewEnvironment"))

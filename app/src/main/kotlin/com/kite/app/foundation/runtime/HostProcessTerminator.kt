@@ -46,6 +46,25 @@ object HostProcessTerminator {
         )
     }
 
+    /**
+     * 对应用重启后只剩 PID 的进程，每次发信号和等待前都重验启动代次。
+     * guard 失配代表原代次已退出；此时不得向复用该 PID 的新进程发信号。
+     */
+    suspend fun terminateExactHostProcess(
+        pid: Int,
+        isExactProcess: () -> Boolean,
+        log: (String) -> Unit = {},
+    ): HostTerminationOutcome {
+        return terminateInternal(
+            pid = pid,
+            preferProcessGroup = false,
+            sendHangupFirst = false,
+            immediateKill = false,
+            identityGuard = isExactProcess,
+            log = log,
+        )
+    }
+
     suspend fun killHostProcess(
         pid: Int,
         log: (String) -> Unit = {}
@@ -64,6 +83,7 @@ object HostProcessTerminator {
         preferProcessGroup: Boolean,
         sendHangupFirst: Boolean,
         immediateKill: Boolean,
+        identityGuard: (() -> Boolean)? = null,
         log: (String) -> Unit
     ): HostTerminationOutcome {
         if (pid <= 0) {
@@ -77,7 +97,7 @@ object HostProcessTerminator {
             )
         }
 
-        if (!isAlive(pid)) {
+        if (!isAlive(pid, identityGuard)) {
             log("进程已退出，无需终止: pid=$pid")
             return HostTerminationOutcome(
                 pid = pid,
@@ -91,14 +111,14 @@ object HostProcessTerminator {
 
         val signalTarget = if (preferProcessGroup) -pid else pid
         val sentHangup = if (sendHangupFirst) {
-            sendSignal(signalTarget, pid, OsConstants.SIGHUP, log)
+            sendSignal(signalTarget, pid, OsConstants.SIGHUP, identityGuard, log)
         } else {
             false
         }
 
         if (sentHangup) {
             delay(120L)
-            if (!isAlive(pid)) {
+            if (!isAlive(pid, identityGuard)) {
                 return HostTerminationOutcome(
                     pid = pid,
                     usedProcessGroup = preferProcessGroup,
@@ -113,9 +133,9 @@ object HostProcessTerminator {
         val sentTerminate = if (immediateKill) {
             false
         } else {
-            sendSignal(signalTarget, pid, OsConstants.SIGTERM, log)
+            sendSignal(signalTarget, pid, OsConstants.SIGTERM, identityGuard, log)
         }
-        if (!immediateKill && waitForExit(pid, TERM_GRACE_MS)) {
+        if (!immediateKill && waitForExit(pid, TERM_GRACE_MS, identityGuard)) {
             return HostTerminationOutcome(
                 pid = pid,
                 usedProcessGroup = preferProcessGroup,
@@ -126,8 +146,8 @@ object HostProcessTerminator {
             )
         }
 
-        val sentKill = sendSignal(signalTarget, pid, OsConstants.SIGKILL, log)
-        val exited = waitForExit(pid, KILL_GRACE_MS)
+        val sentKill = sendSignal(signalTarget, pid, OsConstants.SIGKILL, identityGuard, log)
+        val exited = waitForExit(pid, KILL_GRACE_MS, identityGuard)
         return HostTerminationOutcome(
             pid = pid,
             usedProcessGroup = preferProcessGroup,
@@ -142,8 +162,13 @@ object HostProcessTerminator {
         primaryTarget: Int,
         fallbackPid: Int,
         signal: Int,
+        identityGuard: (() -> Boolean)?,
         log: (String) -> Unit
     ): Boolean {
+        if (identityGuard?.invoke() == false) {
+            log("进程身份已变化，取消信号: pid=$fallbackPid signal=$signal")
+            return false
+        }
         val primaryResult = runCatching {
             KFJni.sendSignal(primaryTarget, signal)
         }.getOrElse {
@@ -170,18 +195,22 @@ object HostProcessTerminator {
         return false
     }
 
-    private suspend fun waitForExit(pid: Int, timeoutMs: Long): Boolean {
+    private suspend fun waitForExit(
+        pid: Int,
+        timeoutMs: Long,
+        identityGuard: (() -> Boolean)?,
+    ): Boolean {
         val attempts = (timeoutMs / POLL_INTERVAL_MS).toInt().coerceAtLeast(1)
         repeat(attempts) {
-            if (!isAlive(pid)) {
+            if (!isAlive(pid, identityGuard)) {
                 return true
             }
             delay(POLL_INTERVAL_MS)
         }
-        return !isAlive(pid)
+        return !isAlive(pid, identityGuard)
     }
 
-    private fun isAlive(pid: Int): Boolean {
-        return File("/proc/$pid").exists()
+    private fun isAlive(pid: Int, identityGuard: (() -> Boolean)?): Boolean {
+        return identityGuard?.invoke() != false && File("/proc/$pid").exists()
     }
 }

@@ -1,0 +1,4 @@
+Metadata-Version: 2.1
+Name: kite-probe-ext
+Version: 0.0.2
+Summary: Kite reproducible CPython ABI probe upgrade

@@ -36,7 +36,9 @@ internal class StopCoordinator {
             systemSessionId = state.systemSessionId,
             interruptTerminal = terminalSessionId != null
         )
-        if (terminalSessionId == null && !request.hasBridgeProcessBinding()) {
+        val currentStepRequiresExecutorStop = recipe.steps.getOrNull(state.currentStepIndex)
+            ?.type == KiteRecipe.STEP_NATIVE_CAPABILITY
+        if (terminalSessionId == null && !request.hasBridgeProcessBinding() && !currentStepRequiresExecutorStop) {
             return StopPlan.CompleteLocally("已关闭")
         }
         return StopPlan.Execute(request)

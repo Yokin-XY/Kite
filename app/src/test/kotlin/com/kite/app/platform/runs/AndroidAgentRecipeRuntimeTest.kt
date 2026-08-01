@@ -34,7 +34,10 @@ import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.foundation.contracts.ContainerExecConfig
 import com.kite.app.foundation.contracts.ContainerLaunchConfig
 import com.kite.app.foundation.contracts.ContainerRecord
-import com.kite.app.foundation.workspace.HostNodeLaunchPlan
+import com.kite.app.foundation.runtime.ProotCompatibilityPlan
+import com.kite.app.foundation.runtime.RuntimeExecutionPayload
+import com.kite.app.foundation.workspace.ManagedRuntimeLane
+import com.kite.app.foundation.workspace.ManagedRuntimeLaunchPlan
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.recipe.KiteRecipeStep
@@ -47,6 +50,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -290,17 +294,18 @@ class AndroidAgentRecipeRuntimeTest {
     fun hostReadyLaunchNeverBuildsProotFallback() {
         val prootBuilds = AtomicInteger(0)
         val selected = ManagedAgentProcessLaunchSelector.select(
-            hostPlan = HostNodeLaunchPlan.Ready(
-                ContainerLaunchConfig(
+            runtimePlan = ManagedRuntimeLaunchPlan.Ready(
+                config = ContainerLaunchConfig(
                     container = container(),
                     executablePath = "/host/node",
                     workingDirectory = "/workspace",
                     args = arrayOf("/host/node", "openclaw", "acp"),
                     env = arrayOf("PATH=/host/bin", "OPENCLAW_GATEWAY_TOKEN=private")
-                )
+                ),
+                lane = ManagedRuntimeLane.HOST_NODE,
+                reason = "host_node_ready",
             ),
-            additionalEnvironment = mapOf("OPENCLAW_GATEWAY_TOKEN" to "private"),
-        ) {
+        ) { _ ->
             prootBuilds.incrementAndGet()
             prootConfig()
         }
@@ -314,14 +319,41 @@ class AndroidAgentRecipeRuntimeTest {
     }
 
     @Test
+    fun pythonHostReadyProjectsPythonLaneWithoutBuildingProot() {
+        val prootBuilds = AtomicInteger(0)
+        val selected = ManagedAgentProcessLaunchSelector.select(
+            runtimePlan = ManagedRuntimeLaunchPlan.Ready(
+                config = ContainerLaunchConfig(
+                    container = container(),
+                    executablePath = "/host/glibc",
+                    workingDirectory = "/workspace",
+                    args = arrayOf("/host/glibc", "-c", "print('ok')"),
+                    env = arrayOf("KITE_GLIBC_HOST_TARGET=/host/python3"),
+                ),
+                lane = ManagedRuntimeLane.HOST_PYTHON,
+                reason = "host_python_ready",
+            ),
+        ) { _ ->
+            prootBuilds.incrementAndGet()
+            prootConfig()
+        }
+
+        assertEquals(0, prootBuilds.get())
+        assertEquals("host_python", selected.runtimeLane)
+        assertEquals("none", selected.fallbackReason)
+    }
+
+    @Test
     fun fallbackBuildsExactlyOneProotLaunchAndKeepsReason() {
         val prootBuilds = AtomicInteger(0)
         val selected = ManagedAgentProcessLaunchSelector.select(
-            hostPlan = HostNodeLaunchPlan.Fallback("host_node_not_ready"),
-            additionalEnvironment = mapOf("OPENCLAW_GATEWAY_TOKEN" to "private"),
-        ) {
+            runtimePlan = ManagedRuntimeLaunchPlan.Proot(
+                plan = prootPlan(mapOf("OPENCLAW_GATEWAY_TOKEN" to "private")),
+                reason = "host_node_not_ready",
+            ),
+        ) { plan ->
             prootBuilds.incrementAndGet()
-            prootConfig()
+            prootConfig().copy(env = prootConfig().env + plan.environment)
         }
 
         assertEquals(1, prootBuilds.get())
@@ -331,6 +363,23 @@ class AndroidAgentRecipeRuntimeTest {
         assertEquals("private", selected.process.environment["OPENCLAW_GATEWAY_TOKEN"])
         assertEquals("/usr/bin", selected.process.environment["PATH"])
         assertEquals(null, selected.process.workingDirectory)
+    }
+
+    @Test
+    fun blockedProviderNeverBuildsProotFallback() {
+        val prootBuilds = AtomicInteger(0)
+
+        val failure = assertThrows(IllegalStateException::class.java) {
+            ManagedAgentProcessLaunchSelector.select(
+                runtimePlan = ManagedRuntimeLaunchPlan.Blocked("runtime_identity_invalid"),
+            ) { _ ->
+                prootBuilds.incrementAndGet()
+                prootConfig()
+            }
+        }
+
+        assertEquals(0, prootBuilds.get())
+        assertTrue(failure.message.orEmpty().contains("runtime_identity_invalid"))
     }
 
     private fun container(): ContainerRecord = ContainerRecord(
@@ -348,6 +397,17 @@ class AndroidAgentRecipeRuntimeTest {
         command = listOf("openclaw", "acp"),
         env = mapOf("PATH" to "/usr/bin"),
     )
+
+    private fun prootPlan(environment: Map<String, String>): ProotCompatibilityPlan =
+        ProotCompatibilityPlan(
+            payload = RuntimeExecutionPayload.Argv("openclaw", listOf("acp")),
+            workingDirectory = "/workspace",
+            environment = environment,
+            interactivePty = false,
+            loginShell = true,
+            requestedProotViewId = null,
+            requestedProotEnvironmentId = null,
+        )
 
     private fun runtime(registrations: List<AgentRegistration>): AndroidAgentRecipeRuntime {
         val registry = KiteAgentRegistry(

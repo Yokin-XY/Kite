@@ -1,5 +1,7 @@
 package com.kite.app.platform.resources
 
+import com.kite.app.foundation.runtime.AndroidNativeDownloadCapabilityProvider
+import com.kite.app.recipe.KiteRecipe
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceDefinitionSnapshot
 import com.kite.app.resources.KiteResourceDefinitionSource
@@ -120,9 +122,12 @@ class AndroidResourceRecipeFactoryTest {
     @Test
     fun `OpenCode 样板从 GitHub Release 来源生成架构和版本配方`() {
         val update = factory.recipe("kite.opencode", KiteResourceInstallRecipes.OP_UPDATE, "v1.18.4")
-        val script = update?.steps.orEmpty().joinToString("\n") { it.cmd.orEmpty() }
+        val steps = update?.steps.orEmpty()
+        val script = steps.joinToString("\n") { it.cmd.orEmpty() }
 
         assertNotNull(update)
+        assertTrue(steps.all { it.type == KiteRecipe.STEP_SHELL })
+        assertTrue(script.contains("kite_resource_download"))
         assertTrue(script.contains("aarch64|arm64) target='linux-arm64'"))
         assertTrue(script.contains("releases/download/v1.18.4/${'$'}asset_name"))
         assertTrue(script.contains("opencode-${'$'}target.tar.gz"))
@@ -132,12 +137,73 @@ class AndroidResourceRecipeFactoryTest {
     @Test
     fun `Kimi 样板从官方脚本来源生成隔离目录和确定版本配方`() {
         val update = factory.recipe("kite.kimi.code", KiteResourceInstallRecipes.OP_UPDATE, "0.27.0")
-        val script = update?.steps.orEmpty().joinToString("\n") { it.cmd.orEmpty() }
+        val steps = update?.steps.orEmpty()
+        val native = steps.single { it.type == KiteRecipe.STEP_NATIVE_CAPABILITY }
+        val script = steps.single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
 
         assertNotNull(update)
+        assertEquals(AndroidNativeDownloadCapabilityProvider.CAPABILITY_ID, native.action)
+        assertEquals("16777216", native.params?.getString(AndroidNativeDownloadCapabilityProvider.PARAM_MAX_BYTES))
+        assertTrue(
+            native.params?.getString(AndroidNativeDownloadCapabilityProvider.PARAM_DESTINATION)
+                .orEmpty().startsWith("/workspace/.kf/cache/resources/kite.kimi.code/native-downloads/")
+        )
+        assertFalse(script.contains("kite_resource_download"))
+        assertTrue(script.contains("native_cache='/workspace/.kf/cache/resources/kite.kimi.code/native-downloads/"))
+        assertTrue(script.contains("update_lock=\"${'$'}install_root.kite-update-lock\""))
+        assertTrue(script.indexOf("recover-interrupted-install") < script.indexOf("mv -f \"${'$'}native_cache\""))
         assertTrue(script.contains("KIMI_INSTALL_DIR=\"${'$'}install_root\""))
         assertTrue(script.contains("KIMI_NO_MODIFY_PATH=\"1\""))
         assertTrue(script.contains("\"--version\" \"0.27.0\""))
+    }
+
+    @Test
+    fun `显式官方脚本下载也走原生缓存而安装与校验仍在资源事务内`() {
+        val recipe = factory.recipe("kite.hermes.core", KiteResourceInstallRecipes.OP_INSTALL)
+        val steps = recipe?.steps.orEmpty()
+        val native = steps.single { it.type == KiteRecipe.STEP_NATIVE_CAPABILITY }
+        val shell = steps.single { it.type == KiteRecipe.STEP_SHELL }.cmd.orEmpty()
+
+        assertEquals("https://hermes-agent.nousresearch.com/install.sh", native.params?.getString("url"))
+        assertTrue(shell.contains("transactional_clean=\"0\""))
+        assertTrue(shell.contains("run-hermes-installer"))
+        assertTrue(shell.contains("verify hermes-command"))
+        assertTrue(shell.indexOf("mv -f \"${'$'}native_cache\"") < shell.indexOf("run-hermes-installer"))
+        assertTrue(shell.indexOf("verify hermes-command") < shell.indexOf("commit-install kite.hermes.core"))
+    }
+
+    @Test
+    fun `没有尺寸上限的资源下载保持 PRoot 而不猜测原生安全边界`() {
+        val resourceId = "demo.unbounded-download"
+        val source = object : KiteResourceDefinitionSource {
+            override fun snapshot(): KiteResourceDefinitionSnapshot = KiteResourceDefinitionSnapshot(
+                revision = "unbounded",
+                manifests = mapOf(
+                    resourceId to """
+                        {
+                          "schemaVersion":1,
+                          "id":"$resourceId",
+                          "base":{"name":"Demo","description":"Demo","version":"1.0.0"},
+                          "management":{"mode":"managed_extension","managedCommands":["demo"]},
+                          "display":{"sections":["more"],"category":"开发验证"},
+                          "relations":{"base":[],"defaults":[],"extensions":[]},
+                          "source":{"type":"official_script","url":"https://example.test/install.sh"},
+                          "paths":{"installRoot":"/workspace/.kf/software/$resourceId"}
+                        }
+                    """.trimIndent()
+                ),
+                homeLayoutJson = """{"schemaVersion":1,"sections":[]}""",
+            )
+
+            override fun invalidate() = Unit
+        }
+        val loader = KiteResourceManifestLoader(isDebugBuild = true, definitionSources = listOf(source))
+        val recipe = AndroidResourceRecipeFactory(loader)
+            .recipe(resourceId, KiteResourceInstallRecipes.OP_INSTALL)
+        val steps = recipe?.steps.orEmpty()
+
+        assertTrue(steps.all { it.type == KiteRecipe.STEP_SHELL })
+        assertTrue(steps.single().cmd.orEmpty().contains("kite_resource_download"))
     }
 
     @Test

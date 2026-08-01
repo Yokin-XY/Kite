@@ -16,7 +16,7 @@ class CardRunRuntimeLaneContractTest {
         assertTrue(store.contains("runtimeLane = optString(\"runtimeLane\")"))
         assertTrue(store.contains(".put(\"runtimeFallbackReason\", runtimeFallbackReason.orEmpty())"))
         assertTrue(mutation.contains("val runtimeLane: String? = null"))
-        assertTrue(executor.contains("runtimeLane = if (prepared.hostConfig != null) \"host_node\" else \"proot_shell\""))
+        assertTrue(executor.contains("runtimeLane = prepared.runtimeLane"))
         assertTrue(executor.contains("runtimeFallbackReason = prepared.fallbackReason"))
     }
 

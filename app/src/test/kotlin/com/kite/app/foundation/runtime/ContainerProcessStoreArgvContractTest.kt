@@ -10,6 +10,24 @@ import org.junit.Test
 
 class ContainerProcessStoreArgvContractTest {
     @Test
+    fun `进程表查询进入有界只读 probe 而信号命令不进入`() {
+        val plan = ContainerProcessStore.containerProcessListPlanForTests("process-list-1")
+
+        assertEquals("process-list-1", plan.admission.jobId)
+        assertEquals("system:container-process-store", plan.admission.ownerId)
+        assertEquals(RuntimeLaneKind.PROBE, plan.admission.lane)
+        assertEquals(ProotJobAccess.READ_ONLY, plan.admission.access)
+        assertEquals(ProotJobCancellationMode.TIMEOUT_AND_OWNER, plan.admission.cancellationMode)
+        assertEquals(ProotJobResultMode.CAPTURED_STDIO, plan.admission.resultMode)
+        assertEquals(
+            listOf("/usr/bin/ps", "-eo", "pid=,ppid=,pgid=,sid=,stat=,comm=,args="),
+            plan.job.argv,
+        )
+        assertEquals(12_000L, plan.job.timeoutMs)
+        assertEquals(1024 * 1024, plan.job.maxOutputBytesPerStream)
+    }
+
+    @Test
     fun `存活探测直接构造 kill argv`() {
         assertEquals(
             listOf("/usr/bin/kill", "-0", "4321"),
