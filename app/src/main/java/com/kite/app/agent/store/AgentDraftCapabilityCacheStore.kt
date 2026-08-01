@@ -14,7 +14,8 @@ import org.json.JSONObject
  * 最近一次由 Agent 公布的草稿可选项缓存。
  *
  * 这不是会话或用户配置事实源：不保存 sessionId、消息、密钥或草稿选择，只让下次空白页在不创建
- * Agent 会话的前提下先展示已知的模式、即时配置和命令。真实会话一旦公布新目录就覆盖缓存。
+ * Agent 会话的前提下先展示已知的模式、非模型相关即时配置和命令。推理强度与当前模型绑定，
+ * 不进入跨会话缓存；真实会话必须重新公布并由适配器映射。
  */
 class AgentDraftCapabilityCacheStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -63,7 +64,10 @@ class AgentDraftCapabilityCacheStore(context: Context) {
     private fun AgentDraftCapabilityCatalog.toJson(): JSONObject = JSONObject().apply {
         put(KEY_VERSION, VERSION)
         put(KEY_CONFIGURATION, JSONArray().apply {
-            configuration.take(MAX_CONFIGURATION).forEach { option -> put(option.toJson()) }
+            configuration
+                .filterNot { it.category == AgentConfigCategory.ThoughtLevel }
+                .take(MAX_CONFIGURATION)
+                .forEach { option -> put(option.toJson()) }
         })
         put(KEY_MODES, JSONArray().apply {
             modes.take(MAX_MODES).forEach { mode ->
@@ -204,7 +208,7 @@ class AgentDraftCapabilityCacheStore(context: Context) {
         const val KEY_INPUT_HINT = "inputHint"
         const val TYPE_SELECT = "select"
         const val TYPE_TOGGLE = "toggle"
-        const val VERSION = 1
+        const val VERSION = 2
         const val MAX_CONFIGURATION = 32
         const val MAX_CATALOGS = 32
         const val MAX_CHOICES = 256

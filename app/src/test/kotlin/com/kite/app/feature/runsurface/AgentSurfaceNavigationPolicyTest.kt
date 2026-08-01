@@ -6,6 +6,7 @@ import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.config.AgentProviderModelSummary
@@ -557,11 +558,35 @@ class AgentSurfaceNavigationPolicyTest {
                 name = "推理强度",
                 category = AgentConfigCategory.ThoughtLevel,
                 currentValue = "high",
-                choices = listOf(AgentConfigChoice("high", "高"))
+                choices = listOf(
+                    AgentConfigChoice("medium", "中", reasoning = AgentReasoningLevel.Medium),
+                    AgentConfigChoice("high", "高", reasoning = AgentReasoningLevel.High),
+                )
             )
         )
 
         assertEquals("MiMo V2 Pro · 高", AgentSurfaceNavigationPolicy.configurationSummary(options))
+    }
+
+    @Test
+    fun `没有完成语义映射或没有可切换档位时隐藏推理强度`() {
+        val raw = AgentConfigOption.Select(
+            id = "effort",
+            name = "Reasoning",
+            category = AgentConfigCategory.ThoughtLevel,
+            currentValue = "high",
+            choices = listOf(
+                AgentConfigChoice("medium", "Medium"),
+                AgentConfigChoice("high", "High"),
+            ),
+        )
+        val fixed = raw.copy(
+            choices = listOf(AgentConfigChoice("high", "高", reasoning = AgentReasoningLevel.High)),
+        )
+
+        assertEquals(null, AgentSurfaceNavigationPolicy.reasoningOption(listOf(raw)))
+        assertEquals(null, AgentSurfaceNavigationPolicy.reasoningOption(listOf(fixed)))
+        assertEquals("", AgentSurfaceNavigationPolicy.configurationSummary(listOf(raw)))
     }
 
     @Test

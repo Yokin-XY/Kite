@@ -44,6 +44,8 @@ import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
+import com.kite.app.agent.config.AgentReasoningControl
+import com.kite.app.agent.config.AgentReasoningControls
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentSkillSummary
@@ -126,6 +128,8 @@ internal class OpenCodeAgentConfigAdapter(
             ),
             initialProfileId = ASK_ACTION,
         )
+
+    override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.OpenCode
 
     override fun defaultModelChange(
         option: AgentConfigOption.Select

@@ -280,6 +280,46 @@ value class AgentConfigCategory(val value: String) {
     }
 }
 
+/**
+ * Kite 对外稳定的推理强度语义。
+ *
+ * 这些值只描述一条有序的纯推理强度轴；适配器仍须保留 Agent 的原生配置值，
+ * 并且只能公布当前 Provider/Model 真正支持的子集。
+ */
+enum class AgentReasoningLevel(
+    override val id: String,
+    override val displayName: String,
+    override val description: String,
+    override val order: Int,
+) : AgentReasoningSemantics {
+    Off("off", "关闭", "关闭当前工具可控制的扩展推理；不代表模型完全没有内部推理", 10),
+    Minimal("minimal", "最低", "使用最少的可控推理开销", 20),
+    Low("low", "低", "优先响应速度与资源开销", 30),
+    Medium("medium", "中", "在速度、开销与推理深度之间保持平衡", 40),
+    High("high", "高", "为复杂任务使用更深的推理", 50),
+    ExtraHigh("xhigh", "极高", "使用模型提供的额外高强度推理", 60),
+    Maximum("max", "最高", "使用模型提供的最高纯推理强度", 70),
+}
+
+/** 不属于有序强度轴、但可以由 Agent 原生能力明确提供的控制语义。 */
+enum class AgentReasoningMode(
+    override val id: String,
+    override val displayName: String,
+    override val description: String,
+    override val order: Int,
+) : AgentReasoningSemantics {
+    Inherit("inherit", "跟随默认", "清除当前会话覆盖，使用工具或模型的默认值", 1),
+    Adaptive("adaptive", "自动", "由工具或模型根据任务动态决定推理强度", 2),
+    Enabled("enabled", "开启", "当前模型只提供推理开关，具体强度由模型决定", 3),
+}
+
+sealed interface AgentReasoningSemantics {
+    val id: String
+    val displayName: String
+    val description: String
+    val order: Int
+}
+
 sealed interface AgentConfigOption {
     val id: String
     val name: String
@@ -313,7 +353,9 @@ data class AgentConfigChoice(
     val description: String? = null,
     val groupId: String? = null,
     val groupName: String? = null,
-    val extension: AgentProtocolExtension? = null
+    val extension: AgentProtocolExtension? = null,
+    /** 原生 value 保持不变；这里仅携带 Kite 已验证的统一推理语义。 */
+    val reasoning: AgentReasoningSemantics? = null
 )
 
 sealed interface AgentConfigValue {

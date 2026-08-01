@@ -216,13 +216,30 @@ internal object AgentSurfaceNavigationPolicy {
         val sessions: MutableList<AgentSessionSummary> = mutableListOf(),
     )
 
+    /**
+     * 推理强度只有在适配层完成统一语义映射且存在真实可切换项时才进入页面。
+     * Toggle 自身已经明确表达二值能力；Select 则必须保留当前值并至少有两个已映射选项。
+     */
+    fun reasoningOption(options: List<AgentConfigOption>): AgentConfigOption? = options
+        .firstOrNull { option ->
+            if (option.category != AgentConfigCategory.ThoughtLevel) return@firstOrNull false
+            when (option) {
+                is AgentConfigOption.Toggle -> true
+                is AgentConfigOption.Select -> option.choices.size >= 2 &&
+                    option.choices.all { it.reasoning != null } &&
+                    option.choices.any { it.value == option.currentValue }
+            }
+        }
+
     fun configurationSummary(options: List<AgentConfigOption>): String {
         val ordered = buildList {
             options.firstOrNull { it.category == AgentConfigCategory.Model }?.let(::add)
-            options.firstOrNull { it.category == AgentConfigCategory.ThoughtLevel }?.let(::add)
+            reasoningOption(options)?.let(::add)
             if (isEmpty()) {
                 options.firstOrNull {
-                    it.category != AgentConfigCategory.Mode && it.category != AgentConfigCategory.Permission
+                    it.category != AgentConfigCategory.Mode &&
+                        it.category != AgentConfigCategory.Permission &&
+                        it.category != AgentConfigCategory.ThoughtLevel
                 }?.let(::add)
             }
         }.distinctBy(AgentConfigOption::id)

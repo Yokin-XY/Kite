@@ -615,6 +615,14 @@ interface AgentConfigAdapter {
     ): List<AgentConfigOption> = options
 
     /**
+     * 声明当前 Agent 能够把哪些原生推理值安全映射到 Kite 统一语义。
+     *
+     * 这里声明的是映射词表，不是可见选项全集；实际选项仍必须由当前协议、Provider 和 Model
+     * 公布。未声明时统一推理入口隐藏，显示层不得按产品名称或文案猜测。
+     */
+    fun reasoningControl(): AgentReasoningControl? = null
+
+    /**
      * 声明 Kite 可以为当前会话代理的权限请求处理档位。
      *
      * 默认关闭。适配器必须确认该 Agent 的连接会把审批请求交给 [AgentPermissionRequest]，才能公布；

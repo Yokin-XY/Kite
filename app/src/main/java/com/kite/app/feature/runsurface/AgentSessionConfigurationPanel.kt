@@ -208,7 +208,7 @@ internal class AgentSessionConfigurationPanel(
     }
 
     private fun buildOverview(host: LinearLayout, options: List<AgentConfigOption>) {
-        val thoughtLevel = options.firstOrNull { it.category == AgentConfigCategory.ThoughtLevel }
+        val thoughtLevel = AgentSurfaceNavigationPolicy.reasoningOption(options)
         val model = options.filterIsInstance<AgentConfigOption.Select>()
             .firstOrNull { it.category == AgentConfigCategory.Model }
         val groups = model?.let(::modelGroups).orEmpty()
@@ -221,8 +221,8 @@ internal class AgentSessionConfigurationPanel(
             selectedModelGroupId = selectedGroup?.id
         }
 
-        host.addView(sectionLabel("推理强度"))
         thoughtLevel?.let { option ->
+            host.addView(sectionLabel("推理强度"))
             when (option) {
                 is AgentConfigOption.Select -> option.choices.forEach { choice ->
                     host.addView(choiceRow(
@@ -245,12 +245,12 @@ internal class AgentSessionConfigurationPanel(
                     },
                 ))
             }
+            host.addView(View(context).apply {
+                setBackgroundColor(tokens.border)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(1)).apply {
+                setMargins(ui.dp(13), ui.dp(7), ui.dp(13), ui.dp(7))
+            })
         }
-        host.addView(View(context).apply {
-            setBackgroundColor(tokens.border)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(1)).apply {
-            setMargins(ui.dp(13), ui.dp(7), ui.dp(13), ui.dp(7))
-        })
         host.addView(navigationRow(
             title = "模型",
             value = model?.valueLabel() ?: "暂无可选模型",

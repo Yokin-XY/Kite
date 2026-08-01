@@ -9,6 +9,8 @@ import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentSessionConfigurationOverlayProvider
 import com.kite.app.agent.config.defaultAgentConfigAdapters
 import com.kite.app.agent.config.mergeAgentSessionConfigurationOverlay
+import com.kite.app.agent.config.normalizePublishedSessionConfiguration
+import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentFailureCode
 import com.kite.app.agent.contract.AgentOperationResult
 import com.kite.app.agent.contract.AgentSessionPhase
@@ -513,7 +515,10 @@ internal class AndroidAgentRecipeRuntime(
             configuration = mergeAgentSessionConfigurationOverlay(
                 options = cachedDraftCatalog.configuration,
                 native = nativeSessionConfiguration,
-            ).options,
+            ).options.let { options ->
+                configAdapter?.normalizePublishedSessionConfiguration(options)
+                    ?: options.filterNot { it.category == AgentConfigCategory.ThoughtLevel }
+            },
         )
         when (val result = AgentRuntimeRegistry.start(
             request = AgentRuntimeStartRequest(
@@ -524,7 +529,8 @@ internal class AndroidAgentRecipeRuntime(
                 additionalDirectories = AndroidSharedStorageManager.containerRoots(appContext),
                 preferredSessionId = null,
                 normalizeConfiguration = { options ->
-                    configAdapter?.normalizeSessionConfiguration(options) ?: options
+                    configAdapter?.normalizePublishedSessionConfiguration(options)
+                        ?: options.filterNot { it.category == AgentConfigCategory.ThoughtLevel }
                 },
                 resolveDraftModelSelection = { target: AgentDraftModelSelection, options ->
                     configAdapter?.sessionModelSelection(

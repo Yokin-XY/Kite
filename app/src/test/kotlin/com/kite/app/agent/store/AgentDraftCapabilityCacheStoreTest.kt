@@ -32,11 +32,18 @@ class AgentDraftCapabilityCacheStoreTest {
     }
 
     @Test
-    fun `缓存只回放草稿可选项且不包含会话或密钥`() {
+    fun `缓存不回放与当前模型绑定的推理强度且不包含会话或密钥`() {
         store.put(
             "opencode",
             AgentDraftCapabilityCatalog(
                 configuration = listOf(
+                    AgentConfigOption.Select(
+                        id = "language",
+                        name = "语言",
+                        category = AgentConfigCategory("language"),
+                        currentValue = "zh",
+                        choices = listOf(AgentConfigChoice("zh", "中文"))
+                    ),
                     AgentConfigOption.Select(
                         id = "thought",
                         name = "推理强度",
@@ -56,7 +63,7 @@ class AgentDraftCapabilityCacheStoreTest {
 
         val restored = store.catalog("opencode")!!
 
-        assertEquals(listOf("thought"), restored.configuration.map { it.id })
+        assertEquals(listOf("language"), restored.configuration.map { it.id })
         assertEquals(listOf("build", "plan"), restored.modes.map { it.id })
         assertEquals("build", restored.currentModeId)
         assertEquals(listOf("review"), restored.commands.map { it.name })

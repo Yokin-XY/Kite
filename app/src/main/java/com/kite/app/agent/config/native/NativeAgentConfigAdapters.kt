@@ -39,6 +39,8 @@ import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
+import com.kite.app.agent.config.AgentReasoningControl
+import com.kite.app.agent.config.AgentReasoningControls
 import com.kite.app.agent.config.AgentSkillSummary
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
@@ -1263,6 +1265,8 @@ internal class OpenClawAgentConfigAdapter(
 
     override fun displayName(): String = "OpenClaw"
 
+    override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.OpenClaw
+
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> {
         val workspace = openClawWorkspacePath()
         fun document(
@@ -1826,6 +1830,8 @@ internal class ClaudeCodeAgentConfigAdapter(
 
     override fun displayName(): String = "Claude Code"
 
+    override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.ClaudeCode
+
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {
         add(NativeAgentCoreDocumentSpec(
             id = "claude-global",
@@ -2226,6 +2232,8 @@ internal class CodexAgentConfigAdapter(
     private val skillDirectory = NativeAgentSkillDirectory(projection::resolve, listOf(SKILL_ROOT))
 
     override fun displayName(): String = "Codex"
+
+    override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.Codex
 
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {
         add(NativeAgentCoreDocumentSpec(
@@ -2726,6 +2734,8 @@ internal class HermesAgentConfigAdapter(
     )
 
     override fun displayName(): String = "Hermes"
+
+    override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.Hermes
 
     override fun sessionPermissionControl(): AgentSessionPermissionControl =
         mediatedSessionPermissionControl(
