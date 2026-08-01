@@ -70,8 +70,8 @@
 | RF1230 | 已完成 | direct Host Git no-go；argv/预扫描/事后回退都不能保证仓库语义 |
 | RF1240 | 已完成 | 1464 项全量门、强制构建、双轮真机和生产范围审查通过 |
 | RF1300 | 进行中 | 研究入口无关的 glibc child relay，不为 Git/Python 写特判 |
-| RF1310 | 进行中 | 审计 exec/spawn、fd、信号、路径、环境和递归边界 |
-| RF1320 | 待开始 | Debug-only relay 固定矩阵 |
+| RF1310 | 已完成 | 入口/观察语义与同步错误、hidden symbol 风险已固化 |
+| RF1320 | 进行中 | Debug-only relay 固定矩阵 |
 | RF1330 | 待开始 | 复算 Git/Python 子进程反例与性能 |
 | RF1340 | 待开始 | go/no-go、全量门与生产范围审查 |
 
@@ -370,6 +370,14 @@
 - `a31a35d3..HEAD` 范围只有 Debug manifest、Debug benchmark 与架构/任务文档；`app/src/main`、正式资源、shim、Planner、lane/Store 均无净改动。
 - OnePlus 8T 已覆盖安装并连续运行两套 11 case 矩阵，无匹配 FATAL/ANR。RF1200 以 no-go 完成，不因性能收益绕过兼容门。
 - 下一阶段进入 RF1300；它研究通用 child relay，而不是重新验证 Node/Python 或给 Git 增加特判。
+
+## RF1310 child relay 入口与语义审计
+
+- 正式 glibc launcher 的 `--preload` 只作用于当前目标；正式 compat 库不拦 exec/spawn。Node child bridge 已有路径/cwd/env/PRoot 前缀逻辑，但属于 JS API 层，不能冒充任意 glibc 覆盖。
+- 通用 relay 至少面对 execve/execvp/execvpe/fexecve、posix_spawn/p、system/popen、fork/vfork 后 exec 与 shebang；只覆盖导出 `execve` 不能证明 glibc hidden 调用也命中。
+- argv/env/cwd 之外，fd/file actions、pgroup、signal mask/default、wait exit、取消与 child PID 都是兼容合同。额外 wrapper 不能形成第二业务进程或遗留 tracee。
+- 最大先验风险是同步错误：原生 exec/spawn 可直接返回 ENOENT/EACCES，而先启动 PRoot wrapper 会把它变成稍后的 exit 127。无法在不复制容器解析规则的条件下保持时，必须 no-go 或把 Provider 限制为调用方明确接受异步 child 的结构化合同。
+- RF1310 只新增架构合同，生产 launcher/compat/Provider/资源/lane 均不变。RF1320 使用独立 Debug 资产验证实际入口，不覆盖冻结资产。
 
 ## RF710 开机与三问自检
 

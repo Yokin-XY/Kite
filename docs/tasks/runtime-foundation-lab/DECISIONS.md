@@ -446,3 +446,11 @@
 - 决定：RF1200 no-go 后不继续扩大 Git resolver；另立 RF1300，只研究 Host glibc 父进程的通用 exec/spawn child 能否无业务语义地交给既有 PRoot 兼容前缀。Debug 原型必须使用独立资产，不覆盖已冻结的正式 compat 库。
 - 原因：Git、Python 和其他 Linux 依赖的共同缺口不是父 ELF 无法启动，而是 child 重新进入 Android 文件系统/ABI 语义。按每个工具补白名单会重复造机制；若能在通用 exec 边界保留 argv/env/cwd/fd/signal/exit，才有跨依赖复用价值。
 - 影响：RF1310 先审计所有入口和不可变语义；RF1320 未过门前不修改生产 launcher、compat、Provider、资源或 lane。任何漏拦、双执行、递归套 PRoot、fd/信号变化或静默降级直接 no-go。
+
+## ADR-RF-057 child relay 的正确性包含同步创建错误与进程观察语义
+
+- 状态：已接受，RF1310 已完成
+- 日期：2026-08-01
+- 决定：child relay 不以“最终命令输出相同”为充分条件。同步 ENOENT/EACCES、posix_spawn 返回值、fd/file actions、pgroup/signal、wait exit、取消和唯一 child 都属于发布合同；Debug 探针还必须证明每个 exec/spawn 家族入口实际被拦截。
+- 原因：把目标改写为 PRoot wrapper 后，wrapper 创建成功可能把原本同步的 exec/spawn 错误变成异步 exit；glibc 内部 hidden symbol 也可能绕过 LD_PRELOAD interpose。二者都会让表面成功的 demo 在真实调用方中改变控制流。
+- 影响：RF1320 必须先做入口命中与错误矩阵，再做 Git/Python 复算。若需要复制容器解析器、忽略同步差异或接受漏拦，RF1300 直接 no-go，不进入正式 compat 库。

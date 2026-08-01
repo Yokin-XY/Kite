@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1300` 通用 glibc child relay 可行性
-- 当前任务：`RF1310` child relay 入口与语义审计
+- 当前任务：`RF1320` Debug-only child relay 最小探针
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -726,14 +726,15 @@
 
 #### RF1310 child relay 入口与语义审计
 
-- 状态：进行中；
-- 复读通用 glibc launcher/compat、Node JS child bridge 与 PRoot argv/env 构造；
-- 枚举 exec/spawn 入口、PATH 搜索、shebang、cwd、env、stdio/fd、信号、退出码和递归保护；
-- 明确哪些事实可由底层无业务语义地转发，哪些构成不可接受的行为变化；
-- 本阶段不改生产 compat 资产、不发布正式配置、不接 Git/Python/资源入口。
+- 状态：已完成，见 [通用 glibc Child Relay](../../architecture/glibc-child-relay.md)；
+- [x] 复读通用 glibc launcher/compat、Node JS child bridge 与 PRoot argv/env 构造；
+- [x] 枚举 exec/spawn、PATH、shebang、cwd/env、fd、信号、退出与递归边界；
+- [x] 固定同步 ENOENT/EACCES 与 glibc hidden symbol 两个先验高风险点；
+- [x] 不改生产 compat 资产、不发布正式配置、不接 Git/Python/资源入口。
 
 #### RF1320 Debug-only 最小 relay 探针
 
+- 状态：进行中；
 - 仅在独立 Debug 资产中实现固定 child 探针，不覆盖正式 `libkite-glibc-compat.so`；
 - 对照直接 Host、Host+relay、独立 PRoot 三条路径；
 - 覆盖 argv/env/cwd、stdout/stderr/stdin、exit/signal、PATH、shebang、并发和递归保护。
