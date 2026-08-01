@@ -74,6 +74,10 @@ internal class AndroidResourceActionGateway(
         },
 ) : ResourceActionGateway {
     private val appContext = context.applicationContext
+    private val systemManagedResourceFactsReconciler = SystemManagedResourceFactsReconciler(
+        installStore = installStore,
+        installedStateProbe = installedStateProbe,
+    )
 
     override suspend fun install(resourceId: String): List<ResourceActionEffect> {
         val environmentId = installStore.currentEnvironmentId()
@@ -529,8 +533,22 @@ internal class AndroidResourceActionGateway(
 
     private suspend fun buildInstallPlan(target: ResourceTarget, environmentId: String): PreparedInstallPlan {
         manifestLoader.invalidate()
-        val manifests = manifestLoader.manifests().values.filter { it.sections.isNotEmpty() }
-        reconcileInstalledResources(manifests, environmentId)
+        val allManifests = manifestLoader.manifests().values
+        val manifests = allManifests.filter { it.sections.isNotEmpty() }
+        val systemConvergence = systemManagedResourceFactsReconciler
+            .reconcile(allManifests, environmentId)
+            .getOrElse { error ->
+                Logger.i(
+                    "SystemManagedResourceFacts",
+                    "convergence skipped environment=$environmentId reason=${error.message ?: error.javaClass.simpleName}",
+                )
+                SystemManagedResourceFactsConvergence()
+            }
+        reconcileInstalledResources(
+            manifests = manifests,
+            environmentId = environmentId,
+            alreadyVerifiedResourceIds = systemConvergence.readyResourceIds,
+        )
         val byId = manifests.associateBy(KiteResourceManifest::id)
         val installedIds = manifests.filter { isInstalled(it, environmentId) }
             .mapTo(linkedSetOf(), KiteResourceManifest::id)
@@ -543,9 +561,11 @@ internal class AndroidResourceActionGateway(
                 KiteResourceRequestPolicy.INSTALL_PLAN_CACHE_MS
             )
             val unknown = serverPlan.resourceIds.filterNot(byId::containsKey)
-            val ids = serverPlan.resourceIds.filter { id ->
-                byId[id]?.let { !isInstalled(it, environmentId) || id == target.id } == true
-            }
+            val ids = pendingInstallPlanResourceIds(
+                resourceIds = serverPlan.resourceIds.filter(byId::containsKey),
+                targetResourceId = target.id,
+                installedResourceIds = installedIds,
+            )
             return PreparedInstallPlan(ids, serverPlan.missing.map { it.requirement } + unknown)
         }
         val ordered = linkedSetOf<String>()
@@ -566,17 +586,26 @@ internal class AndroidResourceActionGateway(
             if (manifest != null && (!isInstalled(manifest, environmentId) || id == target.id)) ordered += id
         }
         visit(target.id)
-        return PreparedInstallPlan(ordered.toList(), missing)
+        return PreparedInstallPlan(
+            resourceIds = pendingInstallPlanResourceIds(
+                resourceIds = ordered,
+                targetResourceId = target.id,
+                installedResourceIds = installedIds,
+            ),
+            missing = missing,
+        )
     }
 
     private suspend fun reconcileInstalledResources(
         manifests: Collection<KiteResourceManifest>,
-        environmentId: String
+        environmentId: String,
+        alreadyVerifiedResourceIds: Set<String> = emptySet(),
     ): Set<String> {
         val requirements = ResourceManagedCommandProbeProtocol.normalize(
             manifests
                 .asSequence()
                 .filter { manifest -> installStore.isInstalled(manifest.id, environmentId) }
+                .filterNot { manifest -> manifest.id in alreadyVerifiedResourceIds }
                 .map { manifest ->
                     ResourceManagedCommandRequirement(
                         resourceId = manifest.id,
