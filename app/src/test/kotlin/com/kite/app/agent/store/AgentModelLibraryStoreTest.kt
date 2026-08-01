@@ -75,4 +75,35 @@ class AgentModelLibraryStoreTest {
         assertEquals("GLM-5.2", snapshot.modelDisplayName("mimo", "glm-5.2", "GLM-5.2"))
         assertEquals("GLM-5.2", store.snapshot("hermes").modelDisplayName("zhipu", "glm-5.2", "GLM-5.2"))
     }
+
+    @Test
+    fun `系统来源显示名称按Kite来源和真实模型值隔离`() {
+        assertTrue(
+            store.replaceProviderModelDisplayNames(
+                "codex",
+                "__kite_official__:chatgpt",
+                listOf(AgentModelDisplayName("openai/gpt-5.6", "日常"))
+            )
+        )
+        assertTrue(
+            store.replaceProviderModelDisplayNames(
+                "codex",
+                "builtin",
+                listOf(AgentModelDisplayName("free/small", "轻量"))
+            )
+        )
+
+        val snapshot = AgentModelLibraryStore(context).snapshot("codex")
+        assertEquals("日常", snapshot.modelDisplayName(
+            "__kite_official__:chatgpt",
+            "openai/gpt-5.6",
+            "GPT-5.6"
+        ))
+        assertEquals("轻量", snapshot.modelDisplayName("builtin", "free/small", "Free Small"))
+        assertEquals("GPT-5.6", snapshot.modelDisplayName("builtin", "openai/gpt-5.6", "GPT-5.6"))
+        assertEquals(
+            setOf("openai/gpt-5.6"),
+            snapshot.providers["__kite_official__:chatgpt"]?.modelDisplayNames?.keys
+        )
+    }
 }
