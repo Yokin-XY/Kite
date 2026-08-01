@@ -84,7 +84,7 @@
 | RF1440 | 已完成 | 不更新正式 PRoot；全量门、真机与生产范围审查通过 |
 | RF1500 | 进行中 | 先固化兼容债务，再验证高频受管命令只读证明 |
 | RF1510 | 已完成 | 三车道明确不支持、兼容路线与未来候选已统一编号 |
-| RF1520 | 进行中 | 审计资源打开/获取的 PRoot 命令探针与固定收益门 |
+| RF1520 | 已完成 | 打开/获取共享能力；收益成立，无执行位假阳性已进入 RF1530 |
 | RF1530 | 待开始 | 仅在肯定式完整证明下研究原生受管命令 Provider |
 | RF1540 | 待开始 | go/no-go、全量门与 OnePlus 8T 正式链验收 |
 | RF1550 | 已完成 | 保留全量覆盖；Quick 默认测试数减少 82.7%，本机构建统一排队 |
@@ -136,6 +136,15 @@
 - 统一包装器完成 Debug 构建：60 个任务中 5 个执行、55 个 up-to-date，`BUILD SUCCESSFUL in 26s`。APK 为 241900484 bytes，SHA-256 `AD05EFA67345ABAD6AF4F2EE4D2D61A7FDFE7E2C27D17D536B04CC7A3AE9EA3C`；构建物未进入 Git。
 - 范围审查：没有删除或排除任何测试源码；CI 的独立全量入口保持原样；没有改设备状态、资源卡、Provider、运行资产或生产业务代码。`references/toolchain.md` 已在本地更新为包装器入口，但该本机事实文件按仓库规则不进入 Git。
 - RF1550 完成。下一步恢复 `rf1520-managed-command-proof-draft`，继续高频结构化只读验证；后续叶子使用 Stage，RF1500 父门才再次使用 Full。
+
+## RF1520 正式调用面与收益门审计
+
+- `AndroidResourceActionGateway.open()` 与 `install()`/`buildInstallPlan()` 均在用户动作的后台 preflight 调用同一 `reconcileInstalledResources()`；首次正向核对仍由 `AndroidResourceInstalledStateProbe` 创建静默 PRoot Recipe，现有原生文件身份只用于成功证据缓存。
+- 固定 Debug 矩阵不接收 ADB 自定义命令、路径、资源 ID、轮数或环境参数，覆盖可执行、缺失、断链和无执行位四类事实，并在退出后按 `NOFOLLOW_LINKS` 核对夹具清理。
+- OnePlus 8T 首轮九次对照：PRoot p50/p95 为 `106/107ms`，Android 文件证明为 `8966/22569us`，p50 减少约 91.5%；shell 零失败、无 ANR/FATAL。
+- 当前 Android 身份将无执行位普通文件误判为存在，形成确定假阳性，因此本叶没有修改正式 Probe、Provider、资源或路由；结论仅为共同调用面与收益门成立。
+- `docs/architecture/managed-command-native-proof.md` 已在生产改动前固定 RF1530 三轮确认门：零差异、原生 p95 不高于 30ms、p50 同时至少减少 50ms/50%，未知事实继续 PRoot。
+- 下一恢复指针为 RF1530，只修通用文件可执行证明和失败关闭，不扩大到安装脚本、动态 PATH、View、别名、函数、版本或实际命令执行。
 
 ## RF1431 验收
 

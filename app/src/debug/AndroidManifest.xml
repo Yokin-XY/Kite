@@ -149,5 +149,15 @@
         <service
             android:name="com.kite.app.foundation.runtime.NativeArchiveCapabilityBenchmarkService"
             android:exported="false" />
+        <receiver
+            android:name="com.kite.app.platform.resources.ManagedCommandProofBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.MANAGED_COMMAND_PROOF_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.platform.resources.ManagedCommandProofBenchmarkService"
+            android:exported="false" />
     </application>
 </manifest>
