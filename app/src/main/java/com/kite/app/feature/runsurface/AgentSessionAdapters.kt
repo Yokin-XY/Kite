@@ -145,6 +145,7 @@ internal class ArchivedSessionAdapter(
     private val context: Context,
     private val tokens: ThemeTokens,
     private val onClick: (AgentSessionSummary) -> Unit,
+    private val onUnavailableClick: (String) -> Unit,
     private val onGroupToggle: (String) -> Unit,
     private val onProjectRestore: (AgentProject) -> Unit,
 ) : ListAdapter<AgentArchivedRow, RecyclerView.ViewHolder>(DIFF) {
@@ -163,6 +164,7 @@ internal class ArchivedSessionAdapter(
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
         is AgentArchivedRow.GroupHeader -> TYPE_GROUP
         is AgentArchivedRow.Session -> TYPE_SESSION
+        is AgentArchivedRow.UnavailableSession -> TYPE_SESSION
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
@@ -188,6 +190,7 @@ internal class ArchivedSessionAdapter(
                 selectionMode,
                 row.summary.id in selectedIds
             )
+            is AgentArchivedRow.UnavailableSession -> (holder as Holder).bindUnavailable(row.sessionId)
         }
     }
 
@@ -329,6 +332,20 @@ internal class ArchivedSessionAdapter(
                 else -> "管理归档会话，${title.text}"
             }
             container.setOnClickListener { onClick(session) }
+        }
+
+        fun bindUnavailable(sessionId: String) {
+            selector.visibility = View.GONE
+            title.text = "暂时无法读取的归档会话"
+            title.typeface = Typeface.DEFAULT
+            subtitle.text = "会话 ID · $sessionId"
+            container.background = ui.roundedBox(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+                ui.dp(16).toFloat()
+            )
+            container.contentDescription = "管理暂时无法读取的归档会话，$sessionId"
+            container.setOnClickListener { onUnavailableClick(sessionId) }
         }
     }
 

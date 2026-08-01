@@ -9,6 +9,8 @@ import com.kite.app.agent.store.AgentProject
 
 /** 页面分组、筛选和会话配置导航的纯计算策略。 */
 internal object AgentSurfaceNavigationPolicy {
+    const val UNAVAILABLE_ARCHIVE_GROUP_CWD = "kite://unavailable-archived-sessions"
+
     fun sessionListFailureMessage(rawMessage: String): String {
         val normalized = rawMessage.trim().lowercase()
         return when {
@@ -131,6 +133,35 @@ internal object AgentSurfaceNavigationPolicy {
                 archivedProject = archivedProjectsByCwd[normalizedCwd],
             ))
             if (expanded) group.sessions.forEach { add(AgentArchivedRow.Session(it)) }
+        }
+    }
+
+    fun archivedSessionProjection(
+        sessions: List<AgentSessionSummary>,
+        archivedSessionIds: Set<String>,
+    ): AgentArchivedSessionProjection {
+        val sessionsById = sessions.associateBy(AgentSessionSummary::id)
+        return AgentArchivedSessionProjection(
+            sessions = archivedSessionIds.mapNotNull(sessionsById::get),
+            unavailableSessionIds = archivedSessionIds.filterNot(sessionsById::containsKey),
+        )
+    }
+
+    fun unavailableArchivedRows(
+        sessionIds: List<String>,
+        expandedCwds: Set<String>,
+    ): List<AgentArchivedRow> {
+        if (sessionIds.isEmpty()) return emptyList()
+        val expanded = UNAVAILABLE_ARCHIVE_GROUP_CWD in expandedCwds
+        return buildList {
+            add(AgentArchivedRow.GroupHeader(
+                cwd = UNAVAILABLE_ARCHIVE_GROUP_CWD,
+                title = "暂时无法读取",
+                subtitle = "${sessionIds.size} 个归档会话",
+                count = sessionIds.size,
+                expanded = expanded,
+            ))
+            if (expanded) sessionIds.forEach { add(AgentArchivedRow.UnavailableSession(it)) }
         }
     }
 
@@ -271,6 +302,11 @@ internal object AgentSurfaceNavigationPolicy {
 
     private const val UNGROUPED_CONFIGURATION_KEY = "__kite_ungrouped__"
 }
+
+internal data class AgentArchivedSessionProjection(
+    val sessions: List<AgentSessionSummary>,
+    val unavailableSessionIds: List<String>,
+)
 
 internal data class AgentModelChoiceGroup(
     val id: String,

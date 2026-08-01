@@ -1946,6 +1946,9 @@ internal class RunAgentSurfaceBinding(
         navigationScreen = AgentNavigationScreen.ArchivedContent
         var editMode = false
         var archivedSessions = emptyList<AgentSessionSummary>()
+        var unavailableArchivedSessionIds = sessionMetadataStore
+            .archivedSessionIds(targetProviderId)
+            .sorted()
         var archivedProjects = projectStore.archivedProjects(targetAgentId)
         var sessionStatusMessage: String? = "正在读取已归档会话…"
         val selectedIds = linkedSetOf<String>()
@@ -1980,6 +1983,16 @@ internal class RunAgentSurfaceBinding(
                     showArchivedSessionActions(selected, archivedSession, refreshArchivedContent)
                 }
             },
+            onUnavailableClick = { unavailableSessionId ->
+                showUnavailableArchivedSessionActions(targetProviderId, unavailableSessionId) {
+                    unavailableArchivedSessionIds = sessionMetadataStore
+                        .archivedSessionIds(targetProviderId)
+                        .filterNot { it in archivedSessions.map(AgentSessionSummary::id) }
+                        .sorted()
+                    renderArchivedRows()
+                    renderArchiveState()
+                }
+            },
             onGroupToggle = { cwd ->
                 val normalized = AgentSurfaceNavigationPolicy.normalizeCwd(cwd)
                 if (!expandedArchivedCwds.add(normalized)) expandedArchivedCwds.remove(normalized)
@@ -2004,16 +2017,24 @@ internal class RunAgentSurfaceBinding(
                 defaultCwd,
                 projectStore.projects(targetAgentId) + archivedProjects,
             )
-            if (!archiveExpansionSeeded && (archivedSessions.isNotEmpty() || archivedProjects.isNotEmpty())) {
+            if (!archiveExpansionSeeded &&
+                (archivedSessions.isNotEmpty() || unavailableArchivedSessionIds.isNotEmpty() || archivedProjects.isNotEmpty())
+            ) {
                 when {
                     groups.defaultSessions.isNotEmpty() -> expandedArchivedCwds.add(groups.defaultCwd)
                     groups.projects.isNotEmpty() -> expandedArchivedCwds.add(groups.projects.first().cwd)
+                    unavailableArchivedSessionIds.isNotEmpty() ->
+                        expandedArchivedCwds.add(AgentSurfaceNavigationPolicy.UNAVAILABLE_ARCHIVE_GROUP_CWD)
                 }
                 archiveExpansionSeeded = true
             }
-            archivedAdapter.submitList(
-                AgentSurfaceNavigationPolicy.archivedRows(groups, expandedArchivedCwds, archivedProjects)
-            )
+            archivedAdapter.submitList(buildList {
+                addAll(AgentSurfaceNavigationPolicy.archivedRows(groups, expandedArchivedCwds, archivedProjects))
+                addAll(AgentSurfaceNavigationPolicy.unavailableArchivedRows(
+                    unavailableArchivedSessionIds,
+                    expandedArchivedCwds,
+                ))
+            })
         }
         val editAction = TextView(context).apply {
             text = "编辑"
@@ -2109,7 +2130,9 @@ internal class RunAgentSurfaceBinding(
             }
         }
         renderArchiveState = {
-            val hasItems = archivedSessions.isNotEmpty() || archivedProjects.isNotEmpty()
+            val hasItems = archivedSessions.isNotEmpty() ||
+                unavailableArchivedSessionIds.isNotEmpty() ||
+                archivedProjects.isNotEmpty()
             archivedList.visibility = if (hasItems) View.VISIBLE else View.GONE
             editAction.visibility = if (archivedSessions.isEmpty()) View.INVISIBLE else View.VISIBLE
             if (archivedSessions.isEmpty()) {
@@ -2184,7 +2207,12 @@ internal class RunAgentSurfaceBinding(
                     is AgentOperationResult.Success -> {
                         if (navigationScreen != AgentNavigationScreen.ArchivedContent) return@launch
                         val archivedIds = sessionMetadataStore.archivedSessionIds(targetProviderId)
-                        archivedSessions = result.value.sessions.filter { it.id in archivedIds }
+                        val projection = AgentSurfaceNavigationPolicy.archivedSessionProjection(
+                            result.value.sessions,
+                            archivedIds,
+                        )
+                        archivedSessions = projection.sessions
+                        unavailableArchivedSessionIds = projection.unavailableSessionIds
                         selectedIds.retainAll(archivedSessions.mapTo(linkedSetOf(), AgentSessionSummary::id))
                         sessionStatusMessage = null
                         renderArchivedRows()
@@ -5111,6 +5139,25 @@ internal class RunAgentSurfaceBinding(
         return card
     }
 
+    private fun showUnavailableArchivedSessionActions(
+        providerId: String,
+        sessionId: String,
+        onChanged: () -> Unit,
+    ) {
+        showAgentDialogCard(
+            title = "暂时无法读取的归档会话",
+            message = "Agent 当前会话列表没有返回这条记录。移出归档只会清除 Kite 的归档标记，不会删除 Agent 数据。",
+            actions = listOf(
+                AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
+                AgentDialogAction("移出归档", UiActionRole.Primary) { dialog, _ ->
+                    dialog.dismiss()
+                    sessionMetadataStore.restore(providerId, sessionId)
+                    onChanged()
+                },
+            ),
+        )
+    }
+
     private fun showSystemModelDisplayNameEditor(
         selected: AgentRegistryEntry,
         adapter: AgentConfigAdapter,
@@ -7610,6 +7657,10 @@ internal sealed interface AgentArchivedRow {
 
     data class Session(val summary: AgentSessionSummary) : AgentArchivedRow {
         override val key: String = "session:${summary.id}"
+    }
+
+    data class UnavailableSession(val sessionId: String) : AgentArchivedRow {
+        override val key: String = "unavailable-session:$sessionId"
     }
 }
 

@@ -288,6 +288,39 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
+    fun `归档投影不会静默丢弃 Agent 当前未返回的会话`() {
+        val projection = AgentSurfaceNavigationPolicy.archivedSessionProjection(
+            sessions = listOf(
+                AgentSessionSummary(id = "available", cwd = "/workspace"),
+                AgentSessionSummary(id = "not-archived", cwd = "/workspace"),
+            ),
+            archivedSessionIds = linkedSetOf("available", "missing"),
+        )
+
+        assertEquals(listOf("available"), projection.sessions.map(AgentSessionSummary::id))
+        assertEquals(listOf("missing"), projection.unavailableSessionIds)
+    }
+
+    @Test
+    fun `暂时无法读取的归档会话以独立分组展示`() {
+        val collapsed = AgentSurfaceNavigationPolicy.unavailableArchivedRows(
+            listOf("session-a", "session-b"),
+            emptySet(),
+        )
+        val expanded = AgentSurfaceNavigationPolicy.unavailableArchivedRows(
+            listOf("session-a", "session-b"),
+            setOf(AgentSurfaceNavigationPolicy.UNAVAILABLE_ARCHIVE_GROUP_CWD),
+        )
+
+        assertEquals(1, collapsed.size)
+        assertEquals("暂时无法读取", (collapsed.single() as AgentArchivedRow.GroupHeader).title)
+        assertEquals(
+            listOf("session-a", "session-b"),
+            expanded.filterIsInstance<AgentArchivedRow.UnavailableSession>().map { it.sessionId },
+        )
+    }
+
+    @Test
     fun `首字符斜杠触发原生命令过滤而普通消息不触发`() {
         val commands = listOf(
             AgentCommand("model", "切换模型"),
