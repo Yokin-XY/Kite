@@ -10,6 +10,7 @@ object CardRunIntents {
     const val ACTION_OPEN = "com.kite.app.action.OPEN_CARD_RUN"
     const val EXTRA_RECIPE_ID = "com.kite.app.extra.RECIPE_ID"
     const val EXTRA_INSTANCE_ID = "com.kite.app.extra.INSTANCE_ID"
+    const val EXTRA_GENERATION = "com.kite.app.extra.GENERATION"
     const val EXTRA_LAUNCH_SOURCE = "com.kite.app.extra.LAUNCH_SOURCE"
     const val EXTRA_AUTO_START = "com.kite.app.extra.AUTO_START"
     const val EXTRA_TEMP_URL = "com.kite.app.extra.TEMP_URL"
@@ -26,22 +27,25 @@ object CardRunIntents {
     fun newInstanceId(recipeId: String): String =
         "run_${recipeId}_${UUID.randomUUID().toString().replace("-", "")}"
 
-    fun instanceDataUri(instanceId: String): Uri =
-        Uri.parse("kite://card-run/${Uri.encode(instanceId)}")
+    fun instanceDataUri(instanceId: String, generation: Long): Uri =
+        Uri.parse("kite://card-run/${Uri.encode(instanceId)}/${generation.coerceAtLeast(0L)}")
 
     fun launchIntent(
         context: Context,
         recipeId: String,
         instanceId: String? = null,
         launchSource: String = SOURCE_CARD,
-        autoStart: Boolean = true
+        autoStart: Boolean = true,
+        generation: Long? = null,
     ): Intent {
         val resolvedInstanceId = instanceId?.takeIf { it.isNotBlank() } ?: recipeId
+        val resolvedGeneration = generation?.takeIf { it > 0L } ?: 0L
         return Intent(context, CardRunActivity::class.java)
             .setAction(ACTION_OPEN)
-            .setData(instanceDataUri(resolvedInstanceId))
+            .setData(instanceDataUri(resolvedInstanceId, resolvedGeneration))
             .putExtra(EXTRA_RECIPE_ID, recipeId)
             .putExtra(EXTRA_INSTANCE_ID, resolvedInstanceId)
+            .putExtra(EXTRA_GENERATION, resolvedGeneration)
             .putExtra(EXTRA_LAUNCH_SOURCE, launchSource)
             .putExtra(EXTRA_AUTO_START, autoStart)
             .apply {
@@ -70,14 +74,16 @@ object CardRunIntents {
         recipeId: String,
         instanceId: String,
         targetResourceId: String,
-        planResourceIds: List<String>
+        planResourceIds: List<String>,
+        generation: Long? = null,
     ): Intent =
         launchIntent(
             context = context,
             recipeId = recipeId,
             instanceId = instanceId,
             launchSource = SOURCE_RESOURCE_INSTALL,
-            autoStart = false
+            autoStart = false,
+            generation = generation,
         )
             .putExtra(EXTRA_RESOURCE_INSTALL_TARGET_ID, targetResourceId)
             .putStringArrayListExtra(
@@ -90,12 +96,39 @@ object CardRunIntents {
         recipeId: String,
         instanceId: String,
         launchSource: String = SOURCE_NOTIFICATION,
-        autoStart: Boolean = false
+        autoStart: Boolean = false,
+        generation: Long? = null,
     ): PendingIntent =
         PendingIntent.getActivity(
             context,
             instanceId.hashCode(),
-            launchIntent(context, recipeId, instanceId, launchSource, autoStart),
+            launchIntent(context, recipeId, instanceId, launchSource, autoStart, generation),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+
+    /** 只接受 URI 与 extras 指向同一实例代次的任务身份。 */
+    fun taskIdentity(intent: Intent?): CardRunTaskIdentity? {
+        val source = intent ?: return null
+        if (source.action != ACTION_OPEN) return null
+        if (source.component?.className != CardRunActivity::class.java.name) return null
+        val data = source.data ?: return null
+        if (data.scheme != "kite" || data.host != "card-run") return null
+        val segments = data.pathSegments
+        if (segments.size != 2) return null
+        val uriInstanceId = segments[0].trim().takeIf(String::isNotBlank) ?: return null
+        val uriGeneration = segments[1].toLongOrNull()?.takeIf { it > 0L } ?: return null
+        val extraInstanceId = source.getStringExtra(EXTRA_INSTANCE_ID)
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+            ?: return null
+        val extraGeneration = source.getLongExtra(EXTRA_GENERATION, 0L).takeIf { it > 0L }
+            ?: return null
+        if (extraInstanceId != uriInstanceId || extraGeneration != uriGeneration) return null
+        return CardRunTaskIdentity(extraInstanceId, extraGeneration)
+    }
 }
+
+data class CardRunTaskIdentity(
+    val instanceId: String,
+    val generation: Long,
+)

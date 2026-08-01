@@ -1,9 +1,13 @@
 package com.kite.app.application.resources
 
+import com.kite.app.resources.KiteResourcePlanSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 一次资源计划准备所绑定的持久化向导代次。
@@ -60,11 +64,13 @@ internal class ResourceInstallPreparationFlights(
     fun cancel(
         environmentId: String,
         targetResourceId: String? = null,
+        instanceId: String? = null,
         generation: Long? = null,
     ): Boolean {
         val flight = synchronized(lock) {
             val current = flightsByEnvironment[environmentId] ?: return false
             if (targetResourceId != null && current.token.targetResourceId != targetResourceId) return false
+            if (instanceId != null && current.token.instanceId != instanceId) return false
             if (generation != null && current.token.generation != generation) return false
             flightsByEnvironment.remove(environmentId)
             current
@@ -92,4 +98,27 @@ internal class ResourceInstallPreparationFlights(
         block()
         true
     }
+}
+
+/** 同一环境的计划创建、恢复与取消共用一条生命周期通道。 */
+internal class ResourcePlanLifecycleGate {
+    private val locks = ConcurrentHashMap<String, Mutex>()
+
+    suspend fun <T> withEnvironment(environmentId: String, block: suspend () -> T): T {
+        val key = environmentId.trim().ifBlank { "default" }
+        return locks.computeIfAbsent(key) { Mutex() }.withLock { block() }
+    }
+}
+
+/** 取消只能消费调用方开始时观察到的同一份计划代次。 */
+internal object ResourcePlanCancellationPolicy {
+    fun owns(
+        current: KiteResourcePlanSnapshot,
+        expectedTargetResourceId: String,
+        expectedGeneration: Long,
+        requestedTargetResourceId: String,
+    ): Boolean =
+        current.targetResourceId == expectedTargetResourceId &&
+            current.generation == expectedGeneration &&
+            (current.targetResourceId.isBlank() || current.targetResourceId == requestedTargetResourceId)
 }

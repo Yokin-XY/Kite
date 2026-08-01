@@ -114,6 +114,17 @@ class CardRunStoreStateTransitionTest {
     }
 
     @Test
+    fun `迟到关闭不能移除同名的新代次`() {
+        val recipe = TestRecipes.serviceRecipe(id = "remove-generation")
+        val current = CardRunStore.start(recipe)
+
+        assertNull(CardRunStore.removeRun(current.instanceId, current.createdAt - 1L))
+        assertEquals(current.createdAt, CardRunStore.get(current.instanceId)?.createdAt)
+        assertEquals(current, CardRunStore.removeRun(current.instanceId, current.createdAt))
+        assertNull(CardRunStore.get(current.instanceId))
+    }
+
+    @Test
     fun `update 带 lastError 时进入 Failed 终态并保留错误信息`() {
         val recipe = TestRecipes.serviceRecipe(id = "r5")
         CardRunStore.start(recipe)

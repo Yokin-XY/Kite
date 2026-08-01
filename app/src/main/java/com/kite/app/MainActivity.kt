@@ -419,7 +419,8 @@ open class MainActivity : AppCompatActivity() {
                         recipeId = result.recipeId,
                         instanceId = result.instanceId,
                         launchSource = CardRunIntents.SOURCE_BROWSER_PROXY,
-                        autoStart = false
+                        autoStart = false,
+                        generation = CardRunStore.get(result.instanceId)?.createdAt,
                     )
                 )
                 true
@@ -1519,7 +1520,8 @@ open class MainActivity : AppCompatActivity() {
                                 recipeId = request.recipeId,
                                 instanceId = request.instanceId,
                                 launchSource = CardRunIntents.SOURCE_CARD,
-                                autoStart = false
+                                autoStart = false,
+                                generation = state.createdAt,
                             )
                         )
                     }
@@ -1732,7 +1734,8 @@ open class MainActivity : AppCompatActivity() {
                         recipeId = effect.recipeId,
                         instanceId = effect.instanceId,
                         launchSource = CardRunIntents.SOURCE_CARD,
-                        autoStart = effect.autoStart
+                        autoStart = effect.autoStart,
+                        generation = effect.generation,
                     )
                 )
                 is ResourceActionEffect.OpenInstallWizard -> startActivity(
@@ -1741,7 +1744,8 @@ open class MainActivity : AppCompatActivity() {
                         recipeId = effect.recipeId,
                         instanceId = effect.instanceId,
                         targetResourceId = effect.targetResourceId,
-                        planResourceIds = effect.planResourceIds
+                        planResourceIds = effect.planResourceIds,
+                        generation = effect.generation,
                     )
                 )
                 is ResourceActionEffect.Message -> showResourceDiscreteToast(effect.text)
@@ -1963,8 +1967,12 @@ open class MainActivity : AppCompatActivity() {
             recipe.id
         ).firstOrNull { !it.isNullOrBlank() } ?: return
 
-        val closedLiveInstance = CardRunTaskCloser.close(instanceId)
-        val closedTask = finishCardRunTaskByInstanceId(instanceId)
+        val generation = CardRunStore.get(instanceId, activeEnvironmentIdProvider())
+            ?.createdAt
+            ?: previousState.createdAt.takeIf { previousState.instanceId == instanceId }
+            ?: return
+        val closedLiveInstance = CardRunTaskCloser.close(instanceId, generation)
+        val closedTask = finishCardRunTaskByInstanceId(instanceId, generation)
         diagnostics.logRecipeAction(
             recipe,
             "card_run_task_close_requested",
@@ -1977,18 +1985,16 @@ open class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun finishCardRunTaskByInstanceId(instanceId: String): Boolean {
-        if (instanceId.isBlank() || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return false
-        val targetUri = CardRunIntents.instanceDataUri(instanceId).toString()
+    private fun finishCardRunTaskByInstanceId(instanceId: String, generation: Long): Boolean {
+        if (instanceId.isBlank() || generation <= 0L || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return false
+        val targetIdentity = CardRunTaskIdentity(instanceId, generation)
         return runCatching {
             val manager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return@runCatching false
             var closed = false
             manager.appTasks.forEach { task ->
                 val baseIntent = task.taskInfo.baseIntent
-                val matchesData = baseIntent?.data?.toString() == targetUri
-                val matchesExtra = baseIntent?.getStringExtra(CardRunIntents.EXTRA_INSTANCE_ID) == instanceId
                 val isCardRun = baseIntent?.component?.className == CardRunActivity::class.java.name
-                if (isCardRun && (matchesData || matchesExtra)) {
+                if (isCardRun && CardRunIntents.taskIdentity(baseIntent) == targetIdentity) {
                     task.finishAndRemoveTask()
                     closed = true
                 }
@@ -2053,7 +2059,8 @@ open class MainActivity : AppCompatActivity() {
                         recipeId = effect.recipeId,
                         instanceId = effect.instanceId,
                         launchSource = CardRunIntents.SOURCE_CARD,
-                        autoStart = effect.autoStart
+                        autoStart = effect.autoStart,
+                        generation = effect.generation,
                     )
                 )
                 is RecipeActionEffect.CloseRunTask -> {
@@ -2273,7 +2280,8 @@ open class MainActivity : AppCompatActivity() {
                         recipeId = result.recipeId,
                         instanceId = result.instanceId,
                         launchSource = CardRunIntents.SOURCE_CARD,
-                        autoStart = false
+                        autoStart = false,
+                        generation = CardRunStore.get(result.instanceId)?.createdAt,
                     )
                 )
             }
@@ -2328,7 +2336,8 @@ open class MainActivity : AppCompatActivity() {
             recipeId = result.recipeId,
             instanceId = result.instanceId,
             launchSource = result.source.ifBlank { CardRunIntents.SOURCE_BROWSER_PROXY },
-            autoStart = false
+            autoStart = false,
+            generation = CardRunStore.get(result.instanceId)?.createdAt,
         ).putExtra(CardRunIntents.EXTRA_TEMP_URL, result.url)
             .putExtra(CardRunIntents.EXTRA_TEMP_TITLE, result.title)
         val recipe = CardRunStore.registeredRecipe(result.recipeId)

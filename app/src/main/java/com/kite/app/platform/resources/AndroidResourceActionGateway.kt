@@ -7,6 +7,8 @@ import com.kite.app.application.resources.ResourceActionGateway
 import com.kite.app.application.resources.ResourceDependencyGuard
 import com.kite.app.application.resources.ResourceInstallPreparationFlights
 import com.kite.app.application.resources.ResourceInstallPreparationToken
+import com.kite.app.application.resources.ResourcePlanLifecycleGate
+import com.kite.app.application.resources.ResourcePlanCancellationPolicy
 import com.kite.app.application.resources.ResourceVersionCheckResult
 import com.kite.app.application.resources.ResourceVersionBatchScheduler
 import com.kite.app.application.resources.ResourceVersionBatchSummary
@@ -80,15 +82,34 @@ internal class AndroidResourceActionGateway(
             Logger.i("ResourceManagedCommandProof", message)
         },
 ) : ResourceActionGateway {
+    private data class PlanCancelOutcome(
+        val accepted: Boolean,
+        val effects: List<ResourceActionEffect>,
+    )
+
     private val appContext = context.applicationContext
     private val systemManagedResourceFactsReconciler = SystemManagedResourceFactsReconciler(
         installStore = installStore,
         installedStateProbe = installedStateProbe,
     )
     private val preparationFlights = ResourceInstallPreparationFlights(backgroundScope)
+    private val planLifecycleGate = ResourcePlanLifecycleGate()
+    private val openRunStarter = ResourceOpenRunStarter(
+        startRun = runOrchestrator::start,
+        stateFor = { instanceId, environmentId -> CardRunStore.get(instanceId, environmentId) },
+    )
 
     override suspend fun install(resourceId: String): List<ResourceActionEffect> {
         val environmentId = installStore.currentEnvironmentId()
+        return planLifecycleGate.withEnvironment(environmentId) {
+            installLocked(resourceId, environmentId)
+        }
+    }
+
+    private suspend fun installLocked(
+        resourceId: String,
+        environmentId: String,
+    ): List<ResourceActionEffect> {
         val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
         if (!target.manifest.management.userLifecycleEnabled) {
             return message("${target.name} 是 Kite 管理的系统组件，无需单独获取")
@@ -96,7 +117,12 @@ internal class AndroidResourceActionGateway(
         if (installStore.isFailed(target.id, environmentId) &&
             installStore.failedOperation(target.id, environmentId) != KiteResourceInstallStore.OP_UNINSTALL
         ) {
-            return uninstall(target, ResourceRunContinuation.Reinstall, environmentId)
+            return uninstall(
+                target = target,
+                continuation = ResourceRunContinuation.Reinstall,
+                environmentId = environmentId,
+                restartInstall = { installLocked(target.id, environmentId) },
+            )
         }
 
         val currentPlan = installStore.planSnapshot(environmentId)
@@ -107,15 +133,23 @@ internal class AndroidResourceActionGateway(
             return openCurrentInstallPlan(target, installStore.planSnapshot(environmentId), environmentId)
         }
         installStore.markPreparing(target.id, environmentId)
-        val effect = installWizardEffect(target, emptyList(), environmentId)
+        val effect = installWizardEffect(
+            target = target,
+            planResourceIds = emptyList(),
+            environmentId = environmentId,
+            reuseCurrent = false,
+        )
         launchInstallPreparation(target, effect, environmentId)
         return listOf(effect)
     }
 
     override suspend fun reopenInstall(resourceId: String): List<ResourceActionEffect> {
-        val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
-        val plan = installStore.planSnapshot()
-        return openCurrentInstallPlan(target, plan, installStore.currentEnvironmentId())
+        val environmentId = installStore.currentEnvironmentId()
+        return planLifecycleGate.withEnvironment(environmentId) {
+            val target = target(resourceId)
+                ?: return@withEnvironment message("资源目录正在更新，请稍后重试")
+            openCurrentInstallPlan(target, installStore.planSnapshot(environmentId), environmentId)
+        }
     }
 
     override suspend fun open(resourceId: String): List<ResourceActionEffect> {
@@ -133,7 +167,7 @@ internal class AndroidResourceActionGateway(
         if (existing != null && existing.isReusableOpenRun()) {
             RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.EXISTING_RUN_REUSED)
             return listOf(
-                ResourceActionEffect.OpenRun(recipe.id, existing.instanceId, autoStart = false),
+                resourceOpenEffect(existing),
                 ResourceActionEffect.Message("${target.name} 已在运行，正在打开原实例")
             )
         }
@@ -148,25 +182,17 @@ internal class AndroidResourceActionGateway(
                 install(target.id)
         }
         RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.ACTION_DISPATCHED)
-        return if (shouldOpenRunTask(recipe)) {
-            listOf(
-                ResourceActionEffect.OpenRun(recipe.id, instanceId, autoStart = true),
-                ResourceActionEffect.Message("正在打开 ${target.name}")
-            )
-        } else {
-            when (val result = runOrchestrator.start(
-                RunStartRequest(
-                    recipe = recipe,
-                    instanceId = instanceId,
-                    ownerKind = CardRunState.OWNER_KIND_RESOURCE,
-                    stepId = target.id,
-                    environmentId = environmentId
-                )
-            )) {
-                is RunCommandResult.Accepted -> message("正在打开 ${target.name}")
-                is RunCommandResult.Ignored -> result.asResourceStartEffect("资源运行未启动")
-            }
-        }
+        return openRunStarter.start(
+            request = RunStartRequest(
+                recipe = recipe,
+                instanceId = instanceId,
+                ownerKind = CardRunState.OWNER_KIND_RESOURCE,
+                stepId = target.id,
+                environmentId = environmentId
+            ),
+            resourceName = target.name,
+            opensRunSurface = shouldOpenRunTask(recipe),
+        )
     }
 
     override suspend fun stop(resourceId: String): List<ResourceActionEffect> {
@@ -324,7 +350,13 @@ internal class AndroidResourceActionGateway(
         val planIds = plan.resourceIds.takeIf { resourceId in it || resourceId == plan.targetResourceId }.orEmpty()
             .ifEmpty { listOf(resourceId) }
         val targetId = plan.targetResourceId.takeIf(String::isNotBlank) ?: resourceId
-        return cancelPlanForEnvironment(targetId, planIds, environmentId)
+        return cancelPlanForEnvironment(
+            targetResourceId = targetId,
+            planResourceIds = planIds,
+            environmentId = environmentId,
+            expectedPlanTargetResourceId = plan.targetResourceId,
+            expectedPlanGeneration = plan.generation,
+        ).effects
     }
 
     override suspend fun cancelFailedInstall(resourceId: String): List<ResourceActionEffect> {
@@ -336,20 +368,91 @@ internal class AndroidResourceActionGateway(
     override suspend fun cancelPlan(
         targetResourceId: String,
         planResourceIds: List<String>
-    ): List<ResourceActionEffect> = cancelPlanForEnvironment(
-        targetResourceId,
-        planResourceIds,
-        installStore.currentEnvironmentId()
-    )
+    ): List<ResourceActionEffect> {
+        val environmentId = installStore.currentEnvironmentId()
+        val plan = installStore.planSnapshot(environmentId)
+        if (plan.targetResourceId.isBlank()) return message("当前获取任务已经结束")
+        return cancelPlanForEnvironment(
+            targetResourceId = targetResourceId,
+            planResourceIds = planResourceIds,
+            environmentId = environmentId,
+            expectedPlanTargetResourceId = plan.targetResourceId,
+            expectedPlanGeneration = plan.generation,
+        ).effects
+    }
+
+    override suspend fun cancelInstallWizard(
+        targetResourceId: String,
+        planResourceIds: List<String>,
+        environmentId: String,
+        instanceId: String,
+        expectedGeneration: Long,
+    ): Boolean {
+        val currentPlan = installStore.planSnapshot(environmentId)
+        if (currentPlan.targetResourceId != targetResourceId) return false
+        return cancelPlanForEnvironment(
+            targetResourceId = targetResourceId,
+            planResourceIds = planResourceIds,
+            environmentId = environmentId,
+            expectedPlanTargetResourceId = currentPlan.targetResourceId,
+            expectedPlanGeneration = currentPlan.generation,
+            expectedWizardInstanceId = instanceId,
+            expectedWizardGeneration = expectedGeneration,
+        ).accepted
+    }
 
     private suspend fun cancelPlanForEnvironment(
         targetResourceId: String,
         planResourceIds: List<String>,
-        environmentId: String
-    ): List<ResourceActionEffect> {
+        environmentId: String,
+        expectedPlanTargetResourceId: String,
+        expectedPlanGeneration: Long,
+        expectedWizardInstanceId: String? = null,
+        expectedWizardGeneration: Long? = null,
+    ): PlanCancelOutcome = planLifecycleGate.withEnvironment(environmentId) {
         val currentPlan = installStore.planSnapshot(environmentId)
+        if (!ResourcePlanCancellationPolicy.owns(
+                current = currentPlan,
+                expectedTargetResourceId = expectedPlanTargetResourceId,
+                expectedGeneration = expectedPlanGeneration,
+                requestedTargetResourceId = targetResourceId,
+            )
+        ) {
+            return@withEnvironment PlanCancelOutcome(
+                accepted = false,
+                effects = message("获取任务已经变化，本次取消未执行"),
+            )
+        }
+        if (expectedWizardInstanceId != null && expectedWizardGeneration != null) {
+            val wizard = CardRunStore.get(expectedWizardInstanceId, environmentId)
+                ?.takeIf { state ->
+                    state.createdAt == expectedWizardGeneration &&
+                        state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD &&
+                        state.stepId == targetResourceId &&
+                        state.status !in INSTALL_WIZARD_ENDED_STATUSES
+                }
+            val currentWizard = wizard?.let {
+                CardRunStore.currentForRecipe(it.recipeId, environmentId)
+            }
+            if (
+                wizard == null ||
+                currentWizard == null ||
+                currentWizard.instanceId != wizard.instanceId ||
+                currentWizard.createdAt != wizard.createdAt
+            ) {
+                return@withEnvironment PlanCancelOutcome(
+                    accepted = false,
+                    effects = message("获取向导已经变化，本次关闭未执行"),
+                )
+            }
+        }
         if (currentPlan.isPreparing && currentPlan.targetResourceId == targetResourceId) {
-            preparationFlights.cancel(environmentId, currentPlan.targetResourceId)
+            preparationFlights.cancel(
+                environmentId = environmentId,
+                targetResourceId = currentPlan.targetResourceId,
+                instanceId = expectedWizardInstanceId,
+                generation = expectedWizardGeneration,
+            )
             if (!installStore.isInstalled(currentPlan.targetResourceId, environmentId)) {
                 installStore.clear(currentPlan.targetResourceId, environmentId)
             }
@@ -358,10 +461,10 @@ internal class AndroidResourceActionGateway(
                 resourceIds = listOf(currentPlan.targetResourceId),
                 environmentId = environmentId,
             )
-            return message("获取任务已取消")
+            return@withEnvironment PlanCancelOutcome(true, message("获取任务已取消"))
         }
-        val resourceIds = planResourceIds.filter(String::isNotBlank)
-            .ifEmpty { installStore.planResourceIds(environmentId) }
+        val resourceIds = currentPlan.resourceIds
+            .ifEmpty { planResourceIds.filter(String::isNotBlank) }
             .ifEmpty { listOfNotNull(targetResourceId.takeIf(String::isNotBlank)) }
             .distinct()
         val unfinished = resourceIds.filterNot { installStore.isInstalled(it, environmentId) }
@@ -381,13 +484,14 @@ internal class AndroidResourceActionGateway(
             cleanupCancelledResources(unfinished, environmentId)
         } else true
         clearInstallTask(targetResourceId, resourceIds, environmentId)
-        return if (unfinished.isEmpty()) {
+        val effects = if (unfinished.isEmpty()) {
             message("获取任务已取消")
         } else if (cleanupComplete) {
             message("获取任务已取消，临时内容已清理")
         } else {
             message("获取任务已取消，部分临时内容稍后继续清理")
         }
+        PlanCancelOutcome(true, effects)
     }
 
     override suspend fun createHomeCard(resourceId: String): List<ResourceActionEffect> =
@@ -458,9 +562,10 @@ internal class AndroidResourceActionGateway(
         effect: ResourceActionEffect.OpenInstallWizard,
         environmentId: String,
     ) {
-        val wizard = CardRunStore.get(effect.instanceId)
+        val wizard = CardRunStore.get(effect.instanceId, environmentId)
             ?.takeIf { state ->
-                state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD &&
+                state.createdAt == effect.generation &&
+                    state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD &&
                     state.stepId == target.id &&
                     state.status !in INSTALL_WIZARD_ENDED_STATUSES
             }
@@ -598,7 +703,7 @@ internal class AndroidResourceActionGateway(
 
     private fun ownsPreparingPlan(token: ResourceInstallPreparationToken): Boolean {
         val plan = installStore.planSnapshot(token.environmentId)
-        val wizard = CardRunStore.get(token.instanceId)
+        val wizard = CardRunStore.get(token.instanceId, token.environmentId)
         return plan.isPreparing &&
             plan.targetResourceId == token.targetResourceId &&
             wizard?.createdAt == token.generation &&
@@ -610,19 +715,22 @@ internal class AndroidResourceActionGateway(
     private fun installWizardEffect(
         target: ResourceTarget,
         planResourceIds: List<String>,
-        environmentId: String = installStore.currentEnvironmentId()
+        environmentId: String = installStore.currentEnvironmentId(),
+        reuseCurrent: Boolean = true,
     ): ResourceActionEffect.OpenInstallWizard {
         val recipe = CardRunSpecialRecipes.installWizard(target.id, target.name)
         CardRunStore.registerRecipe(recipe)
-        val current = CardRunStore.currentForRecipe(recipe.id, environmentId)
-            ?.takeIf { state ->
-                state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD &&
-                    state.stepId == target.id &&
-                    state.status !in INSTALL_WIZARD_ENDED_STATUSES
-            }
-        val instanceId = current?.instanceId
-            ?: "resource-install-wizard-${KiteResourceInstallRecipes.safeId(target.id)}-${UUID.randomUUID().toString().replace("-", "")}"
-        if (current == null) {
+        val current = if (reuseCurrent) {
+            CardRunStore.currentForRecipe(recipe.id, environmentId)
+                ?.takeIf { state ->
+                    state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD &&
+                        state.stepId == target.id &&
+                        state.status !in INSTALL_WIZARD_ENDED_STATUSES
+                }
+        } else null
+        val root = current ?: run {
+            val instanceId =
+                "resource-install-wizard-${KiteResourceInstallRecipes.safeId(target.id)}-${UUID.randomUUID().toString().replace("-", "")}"
             CardRunStore.update(
                 recipe = recipe,
                 status = CardRunStatus.Opened,
@@ -635,24 +743,20 @@ internal class AndroidResourceActionGateway(
                 environmentId = environmentId
             )
         }
-        return ResourceActionEffect.OpenInstallWizard(
-            recipeId = recipe.id,
-            instanceId = instanceId,
-            targetResourceId = target.id,
-            planResourceIds = planResourceIds
-        )
+        return installWizardOpenEffect(root, target.id, planResourceIds)
     }
 
     private suspend fun uninstall(
         target: ResourceTarget,
         continuation: ResourceRunContinuation,
-        environmentId: String = installStore.currentEnvironmentId()
+        environmentId: String = installStore.currentEnvironmentId(),
+        restartInstall: (suspend () -> List<ResourceActionEffect>)? = null,
     ): List<ResourceActionEffect> {
         val recipe = runCoordinator.recipe(target.id, KiteResourceInstallRecipes.OP_UNINSTALL)
         if (recipe == null) {
             installStore.clear(target.id, environmentId)
             return when (continuation) {
-                ResourceRunContinuation.Reinstall -> install(target.id)
+                ResourceRunContinuation.Reinstall -> restartInstall?.invoke() ?: install(target.id)
                 ResourceRunContinuation.CancelFailedInstall -> {
                     installStore.clearPlan(environmentId)
                     message("已取消 ${target.name} 的失败获取")
@@ -856,7 +960,6 @@ internal class AndroidResourceActionGateway(
                 !installStore.isFailed(resourceId, environmentId)
             ) installStore.clear(resourceId, environmentId)
         }
-        installStore.clearPlan(environmentId)
         val recipeIds = resourceIds.flatMap { resourceId ->
             listOf(
                 KiteResourceInstallRecipes.recipeId(resourceId, KiteResourceInstallRecipes.OP_INSTALL),
@@ -868,6 +971,9 @@ internal class AndroidResourceActionGateway(
             removeOpenHistory = true,
             environmentId = environmentId
         )
+        // 计划最后清除；在这之前同一环境的新获取仍会被既有计划挡住，
+        // 避免旧取消流程按相同 recipeId 误删刚创建的新代次。
+        installStore.clearPlan(environmentId)
     }
 
     private suspend fun cleanupCancelledResources(
@@ -1031,3 +1137,64 @@ internal class AndroidResourceActionGateway(
         )
     }
 }
+
+/**
+ * 把资源 Open 的执行接受结果交接为同一 CardRun root 的可见 Effect。
+ * 可见页面只在编排器已接受且状态拥有者可返回确定代次后打开。
+ */
+internal class ResourceOpenRunStarter(
+    private val startRun: (RunStartRequest) -> RunCommandResult,
+    private val stateFor: (instanceId: String, environmentId: String) -> CardRunState?,
+) {
+    fun start(
+        request: RunStartRequest,
+        resourceName: String,
+        opensRunSurface: Boolean,
+    ): List<ResourceActionEffect> = when (val result = startRun(request)) {
+        is RunCommandResult.Accepted -> {
+            if (!opensRunSurface) {
+                listOf(ResourceActionEffect.Message("正在打开 $resourceName"))
+            } else {
+                val root = stateFor(result.instanceId, request.environmentId)
+                    ?.takeIf { state ->
+                        state.instanceId == result.instanceId &&
+                            state.environmentId == request.environmentId &&
+                            state.recipeId == request.recipe.id
+                    }
+                if (root == null) {
+                    listOf(ResourceActionEffect.Message("资源运行页面暂不可打开：运行状态未创建"))
+                } else {
+                    listOf(
+                        resourceOpenEffect(root),
+                        ResourceActionEffect.Message("正在打开 $resourceName"),
+                    )
+                }
+            }
+        }
+        is RunCommandResult.Ignored -> if (result.reason == RUN_NOTIFICATIONS_REQUIRED) {
+            listOf(ResourceActionEffect.RequireNotifications)
+        } else {
+            listOf(ResourceActionEffect.Message("资源运行未启动：${result.reason}"))
+        }
+    }
+}
+
+internal fun resourceOpenEffect(root: CardRunState): ResourceActionEffect.OpenRun =
+    ResourceActionEffect.OpenRun(
+        recipeId = root.recipeId,
+        instanceId = root.instanceId,
+        generation = root.createdAt,
+        autoStart = false,
+    )
+
+internal fun installWizardOpenEffect(
+    root: CardRunState,
+    targetResourceId: String,
+    planResourceIds: List<String>,
+): ResourceActionEffect.OpenInstallWizard = ResourceActionEffect.OpenInstallWizard(
+    recipeId = root.recipeId,
+    instanceId = root.instanceId,
+    generation = root.createdAt,
+    targetResourceId = targetResourceId,
+    planResourceIds = planResourceIds,
+)

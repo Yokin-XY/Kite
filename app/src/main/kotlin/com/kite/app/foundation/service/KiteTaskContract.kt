@@ -27,6 +27,12 @@ interface KiteTaskContract {
     /** 构造一个跳转到主控台的 Intent(带 NEW_TASK 标志)。 */
     fun buildMainActivityIntent(context: Context): Intent =
         Intent(context, mainActivityClass).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    /**
+     * 系统从最近任务移除一个应用任务时，把原始 root Intent 交还业务层解释。
+     * foundation 不认识实例 ID、代次或运行 Store，也不直接停止业务实例。
+     */
+    fun onTaskRemoved(context: Context, rootIntent: Intent?) = Unit
 }
 
 /**

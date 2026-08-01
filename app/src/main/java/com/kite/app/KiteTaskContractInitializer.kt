@@ -1,6 +1,8 @@
 package com.kite.app
 
 import com.kite.app.bridge.KiteBrowserProxyInstaller
+import com.kite.app.application.runs.RunInstanceCloseCommand
+import com.kite.app.application.runs.RunInstanceCloseSource
 import com.kite.app.foundation.service.KiteTaskContract
 import com.kite.app.foundation.service.KiteTaskContractHost
 import com.kite.app.foundation.terminal.BrowserEnvironmentProvider
@@ -27,6 +29,17 @@ class KiteTaskContractInitializer : android.content.ContentProvider() {
         KiteTaskContractHost.install(object : KiteTaskContract {
             override val mainActivityClass: Class<*> = MainActivity::class.java
             override val cardRunActivityClassName: String = CardRunActivity::class.java.name
+
+            override fun onTaskRemoved(context: android.content.Context, rootIntent: android.content.Intent?) {
+                val identity = CardRunIntents.taskIdentity(rootIntent) ?: return
+                KiteAppGraph.from(context.applicationContext).runInstanceCloseCoordinator.request(
+                    RunInstanceCloseCommand(
+                        instanceId = identity.instanceId,
+                        expectedGeneration = identity.generation,
+                        source = RunInstanceCloseSource.TaskRemoved,
+                    )
+                )
+            }
         })
         BrowserEnvironmentProviderHost.install(object : BrowserEnvironmentProvider {
             override fun defaultEnvironment(context: android.content.Context, source: String): Map<String, String> =

@@ -452,6 +452,100 @@ class RunOrchestratorTest {
     }
 
     @Test
+    fun `旧代次停止命令不能停止同名新代次`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val ownedWindows = FakeRunOwnedWindowGateway()
+        val orchestrator = RunOrchestrator(
+            stateGateway = gateway,
+            executor = executor,
+            ownedWindowGateway = ownedWindows,
+        )
+        val recipe = recipe("stale-stop-command", KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "same-instance"))
+        val oldState = gateway.state("same-instance")!!
+        gateway.seed(
+            oldState.copy(
+                status = CardRunStatus.Running,
+                createdAt = oldState.createdAt + 100,
+                updatedAt = oldState.updatedAt + 100,
+            )
+        )
+
+        val result = orchestrator.stop(
+            RunStopCommand(
+                instanceId = oldState.instanceId,
+                expectedGeneration = oldState.createdAt,
+            )
+        )
+
+        assertEquals(RunCommandResult.Ignored("generation_mismatch"), result)
+        assertEquals(oldState.createdAt + 100, gateway.state("same-instance")?.createdAt)
+        assertEquals(CardRunStatus.Running, gateway.state("same-instance")?.status)
+        assertTrue(ownedWindows.requests.isEmpty())
+        assertTrue(executor.stopRequests.isEmpty())
+    }
+
+    @Test
+    fun `当前代次停止命令进入既有停止链路`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val ownedWindows = FakeRunOwnedWindowGateway()
+        val orchestrator = RunOrchestrator(
+            stateGateway = gateway,
+            executor = executor,
+            ownedWindowGateway = ownedWindows,
+        )
+        val recipe = recipe("current-stop-command", KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "current-instance"))
+        val state = gateway.state("current-instance")!!
+
+        val result = orchestrator.stop(
+            RunStopCommand(
+                instanceId = state.instanceId,
+                expectedGeneration = state.createdAt,
+            )
+        )
+
+        assertEquals(RunCommandResult.Accepted("current-instance"), result)
+        assertEquals(CardRunStatus.Stopping, gateway.state("current-instance")?.status)
+        assertEquals(listOf("current-instance" to state.createdAt), ownedWindows.requests)
+        assertTrue(executor.stopRequests.isEmpty())
+    }
+
+    @Test
+    fun `兼容停止入口捕获代次后仍拒绝竞态中新建的同名代次`() {
+        val gateway = FakeRunStateGateway()
+        val executor = FakeRecipeExecutor()
+        val ownedWindows = FakeRunOwnedWindowGateway()
+        val orchestrator = RunOrchestrator(
+            stateGateway = gateway,
+            executor = executor,
+            ownedWindowGateway = ownedWindows,
+        )
+        val recipe = recipe("compatible-stop-race", KiteRecipe.STEP_SHELL)
+        orchestrator.start(RunStartRequest(recipe, "race-instance"))
+        val oldGeneration = gateway.state("race-instance")!!.createdAt
+        gateway.afterNextStateRead = { captured ->
+            gateway.seed(
+                captured!!.copy(
+                    status = CardRunStatus.Running,
+                    createdAt = captured.createdAt + 100,
+                    updatedAt = captured.updatedAt + 100,
+                )
+            )
+        }
+
+        val result = orchestrator.stop("race-instance")
+
+        assertEquals(RunCommandResult.Ignored("generation_mismatch"), result)
+        assertEquals(oldGeneration + 100, gateway.state("race-instance")?.createdAt)
+        assertEquals(CardRunStatus.Running, gateway.state("race-instance")?.status)
+        assertTrue(ownedWindows.requests.isEmpty())
+        assertTrue(executor.stopRequests.isEmpty())
+    }
+
+    @Test
     fun `停止仍有残留时不清除运行绑定`() {
         val gateway = FakeRunStateGateway()
         val executor = FakeRecipeExecutor()
@@ -835,6 +929,7 @@ private class FakeRunStateGateway : RunStateGateway {
     private val recipes = linkedMapOf<String, KiteRecipe>()
     private val states = linkedMapOf<String, CardRunState>()
     private var generation = 100L
+    var afterNextStateRead: ((CardRunState?) -> Unit)? = null
 
     override fun register(recipe: KiteRecipe) {
         recipes[recipe.id] = recipe
@@ -842,7 +937,14 @@ private class FakeRunStateGateway : RunStateGateway {
 
     override fun recipe(recipeId: String): KiteRecipe? = recipes[recipeId]
 
-    override fun state(instanceId: String): CardRunState? = states[instanceId]
+    override fun state(instanceId: String): CardRunState? {
+        val state = states[instanceId]
+        afterNextStateRead?.also { callback ->
+            afterNextStateRead = null
+            callback(state)
+        }
+        return state
+    }
 
     override fun current(recipeId: String): CardRunState? =
         states.values.filter { it.recipeId == recipeId }.maxByOrNull { it.updatedAt }

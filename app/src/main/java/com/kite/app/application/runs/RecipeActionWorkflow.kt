@@ -14,7 +14,8 @@ internal sealed interface RecipeActionEffect {
     data class OpenRun(
         val recipeId: String,
         val instanceId: String,
-        val autoStart: Boolean
+        val autoStart: Boolean,
+        val generation: Long,
     ) : RecipeActionEffect
     data class CloseRunTask(val recipeId: String, val instanceId: String) : RecipeActionEffect
     data object ShowConsole : RecipeActionEffect
@@ -24,7 +25,8 @@ internal sealed interface RecipeActionEffect {
 
 internal data class RecipeActionStartResult(
     val instanceId: String,
-    val command: RunCommandResult
+    val command: RunCommandResult,
+    val generation: Long,
 )
 
 internal interface RecipeActionGateway {
@@ -61,7 +63,12 @@ internal class RecipeActionWorkflowCoordinator(
             is KiteRecipeActionPlan.Ignored -> emptyList()
             KiteRecipeActionPlan.RuntimeRequired -> listOf(RecipeActionEffect.EnsureRuntime)
             KiteRecipeActionPlan.OpenRun -> listOf(
-                RecipeActionEffect.OpenRun(request.recipe.id, state.instanceId, autoStart = false)
+                RecipeActionEffect.OpenRun(
+                    request.recipe.id,
+                    state.instanceId,
+                    autoStart = false,
+                    generation = state.createdAt,
+                )
             )
             KiteRecipeActionPlan.LaunchTask -> launchTask(request, state)
             KiteRecipeActionPlan.Stop -> stopEffects(request.recipe, state)
@@ -76,7 +83,12 @@ internal class RecipeActionWorkflowCoordinator(
         val started = gateway.start(request.recipe, state, request.instanceId)
         return when (val command = started.command) {
             is RunCommandResult.Accepted -> listOf(
-                RecipeActionEffect.OpenRun(request.recipe.id, started.instanceId, autoStart = false)
+                RecipeActionEffect.OpenRun(
+                    request.recipe.id,
+                    started.instanceId,
+                    autoStart = false,
+                    generation = started.generation,
+                )
             )
             is RunCommandResult.Ignored -> startIgnoredEffects(command)
         }
@@ -96,7 +108,14 @@ internal class RecipeActionWorkflowCoordinator(
                     if (request.source != KiteRecipeActionSource.Editor && route.recipe.launch.openInstance) {
                         add(RecipeActionEffect.ShowConsole)
                     } else {
-                        add(RecipeActionEffect.OpenRun(route.recipe.id, started.instanceId, autoStart = false))
+                        add(
+                            RecipeActionEffect.OpenRun(
+                                route.recipe.id,
+                                started.instanceId,
+                                autoStart = false,
+                                generation = started.generation,
+                            )
+                        )
                     }
                 }
                 is RunCommandResult.Ignored -> startIgnoredEffects(command)

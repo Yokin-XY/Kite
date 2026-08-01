@@ -189,6 +189,7 @@ class KFShellService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        forwardTaskRemoval(rootIntent)
         closeCardRunTasksIfMainTaskRemoved(rootIntent)
         Logger.i("KFShellService", "recent task removed; requesting foreground runtime recovery")
         start(applicationContext)
@@ -203,6 +204,14 @@ class KFShellService : Service() {
         Logger.i("KFShellService", "main task removed; closed card run document tasks=$closedCount")
     }
 
+    private fun forwardTaskRemoval(rootIntent: Intent?) {
+        runCatching {
+            KiteTaskContractHost.get().onTaskRemoved(applicationContext, rootIntent)
+        }.onFailure { error ->
+            Logger.e("KFShellService", "task removal forwarding failed: ${error.message}")
+        }
+    }
+
     private fun finishCardRunDocumentTasks(): Int {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return 0
         val manager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager ?: return 0
@@ -212,6 +221,7 @@ class KFShellService : Service() {
             val baseIntent = task.taskInfo.baseIntent
             val isCardRunTask = baseIntent.component?.className == cardRunClassName
             if (isCardRunTask) {
+                forwardTaskRemoval(baseIntent)
                 task.finishAndRemoveTask()
                 closedCount += 1
             }

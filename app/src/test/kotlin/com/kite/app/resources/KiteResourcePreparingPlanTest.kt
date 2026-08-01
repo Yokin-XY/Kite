@@ -28,6 +28,7 @@ class KiteResourcePreparingPlanTest {
         assertEquals(targetId, first.targetResourceId)
         assertTrue(first.isPreparing)
         assertFalse(first.isActive)
+        assertTrue(first.generation > 0L)
         assertTrue(first.resourceIds.isEmpty())
 
         assertTrue(store.beginPreparingPlan(targetId, environmentId))
@@ -64,6 +65,7 @@ class KiteResourcePreparingPlanTest {
         val active = store.planSnapshot(environmentId)
         assertEquals(targetId, active.targetResourceId)
         assertTrue(active.isActive)
+        assertEquals(stillPreparing.generation, active.generation)
         assertFalse(active.isPreparing)
         assertEquals(listOf(dependencyId, targetId), active.resourceIds)
         assertEquals(listOf(dependencyId, targetId), active.pendingResourceIds)

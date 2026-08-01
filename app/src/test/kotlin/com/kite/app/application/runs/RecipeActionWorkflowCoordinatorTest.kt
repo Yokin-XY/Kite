@@ -54,7 +54,12 @@ class RecipeActionWorkflowCoordinatorTest {
         assertEquals(
             listOf(
                 RecipeActionEffect.FocusRun("instance-1"),
-                RecipeActionEffect.OpenRun(recipe.id, "instance-1", autoStart = false)
+                RecipeActionEffect.OpenRun(
+                    recipe.id,
+                    "instance-1",
+                    autoStart = false,
+                    generation = gateway.state.createdAt,
+                )
             ),
             effects
         )
@@ -83,7 +88,14 @@ class RecipeActionWorkflowCoordinatorTest {
 
         assertEquals(listOf("start:instance-1"), gateway.calls)
         assertEquals(
-            listOf(RecipeActionEffect.OpenRun(recipe.id, "instance-1", autoStart = false)),
+            listOf(
+                RecipeActionEffect.OpenRun(
+                    recipe.id,
+                    "instance-1",
+                    autoStart = false,
+                    generation = gateway.state.createdAt,
+                )
+            ),
             effects
         )
     }
@@ -182,7 +194,11 @@ class RecipeActionWorkflowCoordinatorTest {
             preferredInstanceId: String?
         ): RecipeActionStartResult {
             calls += "start:${previousState.instanceId}"
-            return RecipeActionStartResult(previousState.instanceId, startCommand)
+            return RecipeActionStartResult(
+                previousState.instanceId,
+                startCommand,
+                generation = previousState.createdAt,
+            )
         }
 
         override fun stop(recipe: KiteRecipe, state: CardRunState): RunCommandResult {

@@ -454,9 +454,9 @@ Assert-True ($cardRunActivity -match 'resourceRunCoordinator\.startNextPlannedIn
 Assert-True (
     $cardRunActivity -match 'onCloseInstance = ::closeCurrentInstance' -and
     $cardRunActivity -match '(?s)override fun handleOnBackPressed\(\).*navigateBackFromTask\(\)' -and
-    $cardRunActivity -match '(?s)private fun closeCurrentInstance\(\).*pendingCloseGeneration = state\.createdAt.*runOrchestrator\.stop\(state\.instanceId\).*RunCommandResult\.Accepted -> Unit' -and
+    $cardRunActivity -match '(?s)private fun closeCurrentInstance\(\).*pendingCloseGeneration = state\.createdAt.*runInstanceCloseCoordinator\.close\(.*expectedGeneration = state\.createdAt.*RunCommandResult\.Accepted' -and
     $cardRunActivity -match '(?s)pendingCloseGeneration == state\.createdAt.*state\.status == CardRunStatus\.Stopped.*closeTaskWindow\(CardRunTaskCloseReason\.StopConfirmed\)' -and
-    $cardRunActivity -match '(?s)CardRunTaskCloser\.register\(instanceId\).*closeTaskWindow\(CardRunTaskCloseReason\.DismissSurface\)'
+    $cardRunActivity -match '(?s)CardRunTaskCloser\.register\(instanceId, state\.createdAt\).*closeTaskWindow\(CardRunTaskCloseReason\.DismissSurface\)'
 ) 'CardRun navigation must stay separate from explicit instance stop and task-close callbacks.'
 
 $showRunManagement = Function-Body $main 'showKiteProcessOverview'
@@ -608,7 +608,7 @@ Assert-True ($cardRunStore -match 'status = CardRunStatus\.Failed' -and $cardRun
 Assert-True ($cardRunStore -match 'normalizedHistoryAfterProcessRestore' -and $cardRunStore -match 'error = error\.ifBlank \{ PROCESS_RESTORE_ABORTED_MESSAGE \}') 'process-restore history must preserve an abnormal-exit error.'
 Assert-True ($cardRunStore -match 'shouldIgnoreStoppedRuntimeWrite' -and $cardRunStore -match 'this\.status != CardRunStatus\.Stopped' -and $cardRunStore -match 'CardRunStatus\.Running') 'CardRunStore must reject stale runtime writes that try to revive a stopped card.'
 
-Assert-True ($androidRecipeActionGateway -match '(?s)override fun resolveState\b.*CardRunStore::get' -and $androidRecipeActionGateway -match 'orchestrator\.stop\(state\.instanceId\)') 'Shared recipe stop must resolve the latest CardRunStore state and submit its instance through RunOrchestrator.'
+Assert-True ($androidRecipeActionGateway -match '(?s)override fun resolveState\b.*CardRunStore::get' -and $androidRecipeActionGateway -match 'RunStopCommand\(state\.instanceId, state\.createdAt\)') 'Shared recipe stop must resolve the latest CardRunStore state and submit its exact generation through RunOrchestrator.'
 Assert-True ($main -notmatch 'fun\s+(stopRecipeByCardInstanceId|stopRecipeWithOrchestrator)\s*\(') 'MainActivity must not retain a second stop intake.'
 Assert-True ($main -match 'is RunExecutionEffect\.StopResolved -> handleRunStopResolvedEffect\(effect\)') 'Stop resolution must return to the visible shell through the shared execution Effect contract.'
 Assert-True ($stopCoordinator -match 'RecipeStopRequest' -and $stopCoordinator -match 'terminalSessionId == null' -and $stopCoordinator -match 'hasBridgeProcessBinding') 'StopCoordinator must distinguish terminal-only state from retained process bindings.'

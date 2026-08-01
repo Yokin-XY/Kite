@@ -7,12 +7,14 @@ internal sealed interface ResourceActionEffect {
     data class OpenRun(
         val recipeId: String,
         val instanceId: String,
+        val generation: Long,
         val autoStart: Boolean
     ) : ResourceActionEffect
 
     data class OpenInstallWizard(
         val recipeId: String,
         val instanceId: String,
+        val generation: Long,
         val targetResourceId: String,
         val planResourceIds: List<String>
     ) : ResourceActionEffect
@@ -34,6 +36,13 @@ internal interface ResourceActionGateway {
     suspend fun cancelInstall(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelFailedInstall(resourceId: String): List<ResourceActionEffect>
     suspend fun cancelPlan(targetResourceId: String, planResourceIds: List<String>): List<ResourceActionEffect>
+    suspend fun cancelInstallWizard(
+        targetResourceId: String,
+        planResourceIds: List<String>,
+        environmentId: String,
+        instanceId: String,
+        expectedGeneration: Long,
+    ): Boolean
     suspend fun createHomeCard(resourceId: String): List<ResourceActionEffect>
     suspend fun installDirect(resourceId: String): List<ResourceActionEffect>
 }
@@ -65,6 +74,20 @@ internal class ResourceActionWorkflowCoordinator(
         targetResourceId: String,
         planResourceIds: List<String>
     ): List<ResourceActionEffect> = gateway.cancelPlan(targetResourceId, planResourceIds)
+
+    suspend fun cancelInstallWizard(
+        targetResourceId: String,
+        planResourceIds: List<String>,
+        environmentId: String,
+        instanceId: String,
+        expectedGeneration: Long,
+    ): Boolean = gateway.cancelInstallWizard(
+        targetResourceId = targetResourceId,
+        planResourceIds = planResourceIds,
+        environmentId = environmentId,
+        instanceId = instanceId,
+        expectedGeneration = expectedGeneration,
+    )
 
     suspend fun createHomeCard(resourceId: String): List<ResourceActionEffect> =
         gateway.createHomeCard(resourceId)

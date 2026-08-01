@@ -66,7 +66,7 @@ internal class AndroidRunNotificationCoordinator(
     private val completeStep: (RunStepCompletionCommand) -> RunCommandResult,
     private val closeRun: (KiteRecipe, CardRunState) -> RunCommandResult,
     private val restartRun: (KiteRecipe, CardRunState) -> RunCommandResult,
-    private val closeRunTask: (String) -> Unit,
+    private val closeRunTask: (String, Long) -> Unit,
     private val viewBinder: RunNotificationViewBinder,
     private val environmentIdProvider: () -> String = { CardRunState.DEFAULT_ENVIRONMENT_ID }
 ) {
@@ -142,7 +142,7 @@ internal class AndroidRunNotificationCoordinator(
                 publishPending(recipe, state)
                 val result = closeRun(recipe, state)
                 if (result is RunCommandResult.Accepted) {
-                    closeRunTask(instanceId)
+                    closeRunTask(instanceId, generation)
                 } else if (result is RunCommandResult.Ignored) {
                     publishIgnored(instanceId, result.reason)
                 }
@@ -306,7 +306,8 @@ internal class AndroidRunNotificationCoordinator(
         val content = CardRunIntents.pendingIntent(
             context = appContext,
             recipeId = model.recipeId,
-            instanceId = model.instanceId
+            instanceId = model.instanceId,
+            generation = model.generation,
         )
         val builder = NotificationCompat.Builder(appContext, KFApplication.CHANNEL_RUNS)
             .setSmallIcon(R.drawable.ic_status)

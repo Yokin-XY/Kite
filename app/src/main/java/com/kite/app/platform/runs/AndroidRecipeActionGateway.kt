@@ -6,6 +6,7 @@ import com.kite.app.application.runs.RecipeActionStartResult
 import com.kite.app.application.runs.RunCommandResult
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartRequest
+import com.kite.app.application.runs.RunStopCommand
 import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.recipe.KiteRecipe
 import com.kite.app.run.CardRunState
@@ -69,7 +70,11 @@ internal class AndroidRecipeActionGateway(
                 "steps" to recipe.steps.joinToString(" -> ") { it.type }
             )
         )
-        return RecipeActionStartResult(instanceId, result)
+        return RecipeActionStartResult(
+            instanceId = instanceId,
+            command = result,
+            generation = CardRunStore.get(instanceId, environmentId)?.createdAt ?: 0L,
+        )
     }
 
     override fun stop(recipe: KiteRecipe, state: CardRunState): RunCommandResult {
@@ -82,7 +87,9 @@ internal class AndroidRecipeActionGateway(
                 "terminalSessionId" to state.terminalSessionId.orEmpty()
             )
         )
-        return orchestrator.stop(state.instanceId).also { result ->
+        return orchestrator.stop(
+            RunStopCommand(state.instanceId, state.createdAt)
+        ).also { result ->
             if (result is RunCommandResult.Ignored) {
                 diagnostics.logBridgeEvent(
                     "stop_orchestrator_ignored",

@@ -25,6 +25,7 @@ import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunExecutionEnvironmentProvider
 import com.kite.app.application.runs.RunLifecycleEventHub
 import com.kite.app.application.runs.RunHistoryGateway
+import com.kite.app.application.runs.RunInstanceCloseCoordinator
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartGate
 import com.kite.app.application.runs.RecipeActionWorkflowCoordinator
@@ -77,6 +78,7 @@ import com.kite.app.platform.runtimebootstrap.AndroidRuntimeBootstrapGateway
 import com.kite.app.platform.onboarding.AndroidFirstRunOnboardingStore
 import com.kite.app.platform.settings.AndroidSettingsGateway
 import com.kite.app.run.CardRunStore
+import com.kite.app.run.CardRunStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -243,7 +245,7 @@ internal class KiteAppGraph private constructor(context: Context) {
             restartRun = { recipe, state ->
                 recipeActionGateway.start(recipe, state, state.instanceId).command
             },
-            closeRunTask = { instanceId -> CardRunTaskCloser.close(instanceId) },
+            closeRunTask = { instanceId, generation -> CardRunTaskCloser.close(instanceId, generation) },
             viewBinder = AndroidRunNotificationViewBinder(appContext),
             environmentIdProvider = resourceInstallStore::currentEnvironmentId
         )
@@ -358,6 +360,33 @@ internal class KiteAppGraph private constructor(context: Context) {
             )
         )
     }
+    val runInstanceCloseCoordinator: RunInstanceCloseCoordinator by lazy {
+        RunInstanceCloseCoordinator(
+            scope = processScope,
+            state = CardRunStore::get,
+            stopRun = { command -> runOrchestrator.stop(command) },
+            cancelInstallWizard = { state ->
+                val targetResourceId = state.stepId.orEmpty()
+                val plan = resourceInstallStore.planSnapshot(state.environmentId)
+                if (state.status in INSTALL_WIZARD_ENDED_STATUSES) {
+                    CardRunStore.removeRun(state.instanceId, state.createdAt) != null
+                } else if (
+                    targetResourceId.isNotBlank() &&
+                    plan.targetResourceId == targetResourceId
+                ) {
+                    resourceActionWorkflowCoordinator.cancelInstallWizard(
+                        targetResourceId = targetResourceId,
+                        planResourceIds = plan.resourceIds,
+                        environmentId = state.environmentId,
+                        instanceId = state.instanceId,
+                        expectedGeneration = state.createdAt,
+                    )
+                } else {
+                    CardRunStore.removeRun(state.instanceId, state.createdAt) != null
+                }
+            },
+        )
+    }
 
     fun createRecipeLoader(): KiteRecipeLoader = recipeLoader
 
@@ -384,6 +413,14 @@ internal class KiteAppGraph private constructor(context: Context) {
         recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
 
     companion object {
+        private val INSTALL_WIZARD_ENDED_STATUSES = setOf(
+            CardRunStatus.Unknown,
+            CardRunStatus.Stopped,
+            CardRunStatus.Completed,
+            CardRunStatus.Failed,
+            CardRunStatus.BridgeUnavailable,
+        )
+
         @Volatile
         private var instance: KiteAppGraph? = null
 

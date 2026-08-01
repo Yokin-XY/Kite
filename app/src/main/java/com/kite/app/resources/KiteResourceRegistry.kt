@@ -31,6 +31,8 @@ data class KiteResourceRegistryEntry(
 data class KiteResourcePlanSnapshot(
     val targetResourceId: String = "",
     val status: String = "",
+    /** 计划行的稳定创建代次；状态推进只更新 updatedAt，不改变此值。 */
+    val generation: Long = 0L,
     val resourceIds: List<String> = emptyList(),
     val runningResourceIds: List<String> = emptyList(),
     val pendingResourceIds: List<String> = emptyList(),
@@ -148,7 +150,7 @@ class KiteResourceRegistry(context: Context) {
         val db = database.readableDatabase
         val plan = db.query(
             TABLE_PLAN,
-            arrayOf(COL_TARGET_RESOURCE_ID, COL_STATUS),
+            arrayOf(COL_TARGET_RESOURCE_ID, COL_STATUS, COL_CREATED_AT),
             "$COL_PLAN_ID = ?",
             arrayOf(activePlanId),
             null,
@@ -157,7 +159,11 @@ class KiteResourceRegistry(context: Context) {
             "1"
         ).use { cursor ->
             if (cursor.moveToFirst()) {
-                cursor.getString(0).orEmpty() to cursor.getString(1).orEmpty()
+                Triple(
+                    cursor.getString(0).orEmpty(),
+                    cursor.getString(1).orEmpty(),
+                    cursor.getLong(2),
+                )
             } else {
                 null
             }
@@ -193,6 +199,7 @@ class KiteResourceRegistry(context: Context) {
         return KiteResourcePlanSnapshot(
             targetResourceId = plan.first,
             status = plan.second,
+            generation = plan.third,
             resourceIds = resourceIds,
             runningResourceIds = running,
             pendingResourceIds = pending,

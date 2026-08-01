@@ -4,6 +4,7 @@ import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteRecipe
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -23,7 +24,8 @@ class CardRunLaunchResolverTest {
                     instanceId = " run-1 ",
                     autoStart = true,
                     launchSource = " card ",
-                    installPlanResourceIds = listOf("a", " a ", "", "b")
+                    installPlanResourceIds = listOf("a", " a ", "", "b"),
+                    expectedGeneration = 17L,
                 )
             )
         assertTrue(result is CardRunLaunchResolution.Resolved)
@@ -34,6 +36,7 @@ class CardRunLaunchResolverTest {
         assertEquals("card", resolved.launchSource)
         assertEquals(CardRunMissingStatePolicy.Create, resolved.missingStatePolicy)
         assertEquals(listOf("a", "b"), resolved.installPlanResourceIds)
+        assertEquals(17L, resolved.expectedGeneration)
     }
 
     @Test
@@ -149,6 +152,14 @@ class CardRunLaunchResolverTest {
         assertEquals("wizard-id", wizard.id)
         assertEquals(CardRunSpecialRecipes.RESOURCE_INSTALL_WIZARD_RUNTIME_SOURCE, wizard.runtimeSource)
         assertEquals(true, wizard.launch.openInstance)
+    }
+
+    @Test
+    fun `带代次的任务只允许绑定完全相同的已存在状态`() {
+        assertTrue(CardRunLaunchGenerationPolicy.accepts(17L, 17L))
+        assertFalse(CardRunLaunchGenerationPolicy.accepts(18L, 17L))
+        assertFalse(CardRunLaunchGenerationPolicy.accepts(null, 17L))
+        assertTrue(CardRunLaunchGenerationPolicy.accepts(null, 0L))
     }
 
     private fun recipe(id: String): KiteRecipe = KiteRecipe(

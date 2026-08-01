@@ -344,6 +344,14 @@ object CardRunStore {
         return removed
     }
 
+    /** 仅移除调用方实际观察到的运行代次，迟到的窗口关闭不得删除同名新实例。 */
+    @Synchronized
+    fun removeRun(instanceId: String, expectedGeneration: Long): CardRunState? {
+        val existing = runsByInstance[instanceId] ?: return null
+        if (expectedGeneration <= 0L || existing.createdAt != expectedGeneration) return null
+        return removeRun(instanceId)
+    }
+
     @Synchronized
     fun currentForRecipe(recipeId: String, environmentId: String? = null): CardRunState? =
         _runs.value

@@ -57,7 +57,7 @@ class AndroidRunNotificationCoordinatorTest {
                 closeCalls.incrementAndGet()
                 RunCommandResult.Accepted(waiting.instanceId)
             },
-            closeTask = { closeTaskCalls.incrementAndGet() }
+            closeTask = { _, _ -> closeTaskCalls.incrementAndGet() }
         )
 
         val staleFinished = CountDownLatch(1)
@@ -127,7 +127,7 @@ class AndroidRunNotificationCoordinatorTest {
         restartRun: (KiteRecipe, CardRunState) -> RunCommandResult = { _, _ ->
             RunCommandResult.Ignored("not_used")
         },
-        closeTask: (String) -> Unit = {}
+        closeTask: (String, Long) -> Unit = { _, _ -> }
     ): AndroidRunNotificationCoordinator = AndroidRunNotificationCoordinator(
         context = application,
         recipeResolver = { recipeId -> runtimeRecipe.takeIf { it.id == recipeId } },

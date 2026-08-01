@@ -113,6 +113,12 @@ internal data class RunStepRestartCommand(
     val expectedStepId: String
 )
 
+/** 调用方所见的运行代次；停止命令不得被重新解释为停止同名的新实例。 */
+internal data class RunStopCommand(
+    val instanceId: String,
+    val expectedGeneration: Long,
+)
+
 internal data class RunOwnedWindowsCloseResult(
     val confirmed: Boolean,
     val message: String = "",

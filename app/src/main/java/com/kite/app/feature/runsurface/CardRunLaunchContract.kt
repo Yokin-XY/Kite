@@ -10,7 +10,8 @@ internal data class CardRunLaunchRequest(
     val temporaryUrl: String? = null,
     val temporaryTitle: String? = null,
     val installTargetResourceId: String? = null,
-    val installPlanResourceIds: List<String> = emptyList()
+    val installPlanResourceIds: List<String> = emptyList(),
+    val expectedGeneration: Long = 0L,
 )
 
 internal data class CardRunLaunchTarget(
@@ -20,12 +21,18 @@ internal data class CardRunLaunchTarget(
     val launchSource: String,
     val missingStatePolicy: CardRunMissingStatePolicy,
     val installTargetResourceId: String?,
-    val installPlanResourceIds: List<String>
+    val installPlanResourceIds: List<String>,
+    val expectedGeneration: Long,
 )
 
 internal enum class CardRunMissingStatePolicy {
     Create,
     RequireExisting
+}
+
+internal object CardRunLaunchGenerationPolicy {
+    fun accepts(existingGeneration: Long?, expectedGeneration: Long): Boolean =
+        expectedGeneration <= 0L || existingGeneration == expectedGeneration
 }
 
 internal sealed interface CardRunLaunchResolution {
@@ -69,7 +76,8 @@ internal class CardRunLaunchResolver(
                 installPlanResourceIds = request.installPlanResourceIds
                     .map(String::trim)
                     .filter(String::isNotBlank)
-                    .distinct()
+                    .distinct(),
+                expectedGeneration = request.expectedGeneration.takeIf { it > 0L } ?: 0L,
             )
         )
     }

@@ -28,6 +28,8 @@ import com.kite.app.application.resources.ResourceRunContinuation
 import com.kite.app.application.resources.ResourceRunLaunchRequest
 import com.kite.app.application.resources.ResourceRunLaunchResult
 import com.kite.app.application.runs.RunCommandResult
+import com.kite.app.application.runs.RunInstanceCloseCommand
+import com.kite.app.application.runs.RunInstanceCloseSource
 import com.kite.app.application.runs.RUN_NOTIFICATIONS_REQUIRED
 import com.kite.app.application.runs.RunOrchestrator
 import com.kite.app.application.runs.RunStartRequest
@@ -42,12 +44,12 @@ import com.kite.app.diagnostics.KiteDiagnostics
 import com.kite.app.feature.resources.ResourceInstallWizardPlanActionResult
 import com.kite.app.feature.resources.ResourceInstallWizardRunRequest
 import com.kite.app.feature.runsurface.CardRunLaunchRequest
+import com.kite.app.feature.runsurface.CardRunLaunchGenerationPolicy
 import com.kite.app.feature.runsurface.CardRunLaunchResolution
 import com.kite.app.feature.runsurface.CardRunLaunchResolver
 import com.kite.app.feature.runsurface.CardRunLaunchTarget
 import com.kite.app.feature.runsurface.CardRunMissingStatePolicy
 import com.kite.app.feature.runsurface.CardRunTaskCloseReason
-import com.kite.app.feature.runsurface.CardRunTaskClosePolicy
 import com.kite.app.feature.runsurface.CardRunTaskNavigationAction
 import com.kite.app.feature.runsurface.CardRunTaskNavigationPolicy
 import com.kite.app.application.runs.CardRunSpecialRecipes
@@ -105,11 +107,13 @@ class CardRunActivity : AppCompatActivity() {
     private var surfaceHost: RunSurfaceHost? = null
     private var chrome: RunActivityChrome? = null
     private var currentTarget: CardRunLaunchTarget? = null
+    private var boundEnvironmentId: String? = null
     private var currentState: CardRunState? = null
     private var currentChildren: List<CardRunState> = emptyList()
     private var registeredBrowserInstanceId: String? = null
     private var registeredDesktopInstanceId: String? = null
     private var registeredCloserInstanceId: String? = null
+    private var registeredCloserGeneration: Long? = null
     private var pendingCloseInstanceId: String? = null
     private var pendingCloseGeneration: Long? = null
     private var tickScheduled = false
@@ -174,8 +178,13 @@ class CardRunActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         graph.browserAuthRedirectCoordinator.reconcile()
-        currentTarget?.instanceId?.let(CardRunStore::get)?.let(::renderState)
-        surfaceHost?.reconcile()
+        currentTarget?.instanceId
+            ?.let(CardRunStore::get)
+            ?.takeIf(::matchesCurrentTarget)
+            ?.let { state ->
+                renderState(state)
+                surfaceHost?.reconcile()
+            }
         StartupTraceStore.markReady(applicationContext)
     }
 
@@ -187,7 +196,7 @@ class CardRunActivity : AppCompatActivity() {
     override fun onDestroy() {
         CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
         CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
-        CardRunTaskCloser.unregister(registeredCloserInstanceId)
+        CardRunTaskCloser.unregister(registeredCloserInstanceId, registeredCloserGeneration)
         surfaceController.detach()
         surfaceHost?.dispose()
         surfaceHost = null
@@ -216,19 +225,27 @@ class CardRunActivity : AppCompatActivity() {
 
     private fun bindTarget(requestedTarget: CardRunLaunchTarget) {
         val environmentId = activeEnvironmentId()
+        boundEnvironmentId = environmentId
         val target = requestedTarget.copy(
             instanceId = CardRunState.instanceIdForEnvironment(
                 requestedTarget.instanceId,
                 environmentId
             )
         )
-        if (currentTarget?.instanceId != target.instanceId) {
+        if (
+            currentTarget?.instanceId != target.instanceId ||
+            currentTarget?.expectedGeneration != target.expectedGeneration
+        ) {
             currentState = null
             currentChildren = emptyList()
         }
         currentTarget = target
         CardRunStore.registerRecipe(target.recipe)
         val existing = CardRunStore.get(target.instanceId, environmentId)
+        if (!CardRunLaunchGenerationPolicy.accepts(existing?.createdAt, target.expectedGeneration)) {
+            showLaunchError("该运行代次已经结束，请从原入口重新打开")
+            return
+        }
         if (existing == null && target.missingStatePolicy == CardRunMissingStatePolicy.RequireExisting) {
             showLaunchError("该运行已经结束，请从首页重新启动")
             return
@@ -296,7 +313,7 @@ class CardRunActivity : AppCompatActivity() {
             CardRunStore.childrenOf(state.instanceId, environmentId)
         )
         ensureSurfaceShell()
-        registerInstanceRoutes(target.recipe, target.instanceId)
+        registerInstanceRoutes(target.recipe, state)
         renderState(CardRunStore.get(target.instanceId, environmentId) ?: state)
     }
 
@@ -338,7 +355,7 @@ class CardRunActivity : AppCompatActivity() {
 
     private fun renderState(state: CardRunState) {
         val target = currentTarget ?: return
-        if (state.instanceId != target.instanceId || state.recipeId != target.recipe.id) return
+        if (!matchesCurrentTarget(state)) return
         if (
             pendingCloseInstanceId == state.instanceId &&
             pendingCloseGeneration == state.createdAt &&
@@ -359,6 +376,14 @@ class CardRunActivity : AppCompatActivity() {
         surfaceHost?.render(uiState, ::createSurfaceBinding)
         chrome?.render(uiState)
         scheduleTickIfNeeded()
+    }
+
+    private fun matchesCurrentTarget(state: CardRunState): Boolean {
+        val target = currentTarget ?: return false
+        return state.instanceId == target.instanceId &&
+            state.recipeId == target.recipe.id &&
+            state.environmentId == targetEnvironmentId() &&
+            CardRunLaunchGenerationPolicy.accepts(state.createdAt, target.expectedGeneration)
     }
 
     private fun createSurfaceBinding(state: RunSurfaceUiState): RunSurfaceBinding = when (state.content) {
@@ -416,7 +441,7 @@ class CardRunActivity : AppCompatActivity() {
                     KiteInstallPlanActionIntent.StartNext -> startNextPlannedInstall(acknowledge)
                     KiteInstallPlanActionIntent.Finish -> {
                         acknowledge(ResourceInstallWizardPlanActionResult.Accepted)
-                        closeTaskWindow(CardRunTaskCloseReason.FinishCompleted)
+                        closeCurrentInstance()
                     }
                 }
             },
@@ -428,7 +453,7 @@ class CardRunActivity : AppCompatActivity() {
     }
 
     private fun openResourceRun(request: ResourceInstallWizardRunRequest) {
-        val environmentId = activeEnvironmentId()
+        val environmentId = targetEnvironmentId()
         val existing = CardRunStore.get(request.instanceId, environmentId)
         if (existing == null) {
             Toast.makeText(this, "运行记录已结束", Toast.LENGTH_SHORT).show()
@@ -449,6 +474,7 @@ class CardRunActivity : AppCompatActivity() {
                 instanceId = existing.instanceId,
                 launchSource = CardRunIntents.SOURCE_RESOURCE_INSTALL,
                 autoStart = false,
+                generation = existing.createdAt,
             ).apply {
                 flags = flags and Intent.FLAG_ACTIVITY_NEW_DOCUMENT.inv()
             }
@@ -486,12 +512,18 @@ class CardRunActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 CardRunStore.runs.collect { runs ->
-                    val instanceId = currentTarget?.instanceId ?: return@collect
-                    val environmentId = activeEnvironmentId()
-                    runs.firstOrNull {
-                        it.instanceId == instanceId && it.environmentId == environmentId
-                    }?.let(::renderState)
-                    surfaceHost?.reconcile()
+                    val target = currentTarget ?: return@collect
+                    val environmentId = targetEnvironmentId()
+                    val candidate = runs.firstOrNull {
+                        it.instanceId == target.instanceId && it.environmentId == environmentId
+                    }
+                    if (candidate != null && matchesCurrentTarget(candidate)) {
+                        renderState(candidate)
+                        surfaceHost?.reconcile()
+                    } else if (candidate != null && target.expectedGeneration > 0L) {
+                        // 同名新代次已经出现；旧文档任务只关闭自己的显示面，绝不换绑。
+                        closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
+                    }
                 }
             }
         }
@@ -505,15 +537,27 @@ class CardRunActivity : AppCompatActivity() {
         }
         pendingCloseInstanceId = state.instanceId
         pendingCloseGeneration = state.createdAt
-        when (val result = runOrchestrator.stop(state.instanceId)) {
-            is RunCommandResult.Accepted -> Unit
-            is RunCommandResult.Ignored -> {
-                pendingCloseInstanceId = null
-                pendingCloseGeneration = null
-                if (result.reason == "already_stopped") {
-                    closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
-                } else {
-                    Toast.makeText(this, "无法关闭：${result.reason}", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            when (val result = graph.runInstanceCloseCoordinator.close(
+                RunInstanceCloseCommand(
+                    instanceId = state.instanceId,
+                    expectedGeneration = state.createdAt,
+                    source = RunInstanceCloseSource.Explicit,
+                )
+            )) {
+                is RunCommandResult.Accepted -> {
+                    if (state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD) {
+                        closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
+                    }
+                }
+                is RunCommandResult.Ignored -> {
+                    pendingCloseInstanceId = null
+                    pendingCloseGeneration = null
+                    if (result.reason == "already_stopped" || result.reason == "missing_instance") {
+                        closeTaskWindow(CardRunTaskCloseReason.StopConfirmed)
+                    } else {
+                        Toast.makeText(this@CardRunActivity, "无法关闭：${result.reason}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
@@ -567,7 +611,8 @@ class CardRunActivity : AppCompatActivity() {
         }
     }
 
-    private fun registerInstanceRoutes(recipe: KiteRecipe, instanceId: String) {
+    private fun registerInstanceRoutes(recipe: KiteRecipe, state: CardRunState) {
+        val instanceId = state.instanceId
         CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
         registeredBrowserInstanceId = instanceId
         CardRunBrowserRouter.register(instanceId) { request ->
@@ -577,12 +622,13 @@ class CardRunActivity : AppCompatActivity() {
         CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
         registeredDesktopInstanceId = instanceId
         CardRunDesktopRouter.register(instanceId) {
-            runOnUiThread { CardRunStore.get(instanceId, activeEnvironmentId())?.let(::renderState) }
+            runOnUiThread { CardRunStore.get(instanceId, targetEnvironmentId())?.let(::renderState) }
             true
         }
-        CardRunTaskCloser.unregister(registeredCloserInstanceId)
+        CardRunTaskCloser.unregister(registeredCloserInstanceId, registeredCloserGeneration)
         registeredCloserInstanceId = instanceId
-        CardRunTaskCloser.register(instanceId) {
+        registeredCloserGeneration = state.createdAt
+        CardRunTaskCloser.register(instanceId, state.createdAt) {
             runOnUiThread { closeTaskWindow(CardRunTaskCloseReason.DismissSurface) }
         }
     }
@@ -615,7 +661,7 @@ class CardRunActivity : AppCompatActivity() {
                 return
             }
         }
-        val environmentId = activeEnvironmentId()
+        val environmentId = targetEnvironmentId()
         val existing = CardRunStore.get(instanceId, environmentId)
         CardRunStore.update(
             recipe = recipe,
@@ -759,7 +805,8 @@ class CardRunActivity : AppCompatActivity() {
             temporaryUrl = getStringExtra(CardRunIntents.EXTRA_TEMP_URL),
             temporaryTitle = getStringExtra(CardRunIntents.EXTRA_TEMP_TITLE),
             installTargetResourceId = getStringExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_TARGET_ID),
-            installPlanResourceIds = getStringArrayListExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_PLAN_IDS).orEmpty()
+            installPlanResourceIds = getStringArrayListExtra(CardRunIntents.EXTRA_RESOURCE_INSTALL_PLAN_IDS).orEmpty(),
+            expectedGeneration = getLongExtra(CardRunIntents.EXTRA_GENERATION, 0L),
         )
     }
 
@@ -853,10 +900,11 @@ class CardRunActivity : AppCompatActivity() {
     private fun detachVisibleTarget() {
         CardRunBrowserRouter.unregister(registeredBrowserInstanceId)
         CardRunDesktopRouter.unregister(registeredDesktopInstanceId)
-        CardRunTaskCloser.unregister(registeredCloserInstanceId)
+        CardRunTaskCloser.unregister(registeredCloserInstanceId, registeredCloserGeneration)
         registeredBrowserInstanceId = null
         registeredDesktopInstanceId = null
         registeredCloserInstanceId = null
+        registeredCloserGeneration = null
         surfaceController.detach()
         surfaceHost?.dispose()
         surfaceHost = null
@@ -864,6 +912,7 @@ class CardRunActivity : AppCompatActivity() {
         chrome = null
         agentSurfaceBinding = null
         currentTarget = null
+        boundEnvironmentId = null
         currentState = null
         currentChildren = emptyList()
         pendingCloseInstanceId = null
@@ -877,20 +926,8 @@ class CardRunActivity : AppCompatActivity() {
         }
     }
 
-    private fun closeTaskWindow(reason: CardRunTaskCloseReason) {
-        currentState?.let { state ->
-            val plan = graph.resourceInstallStore.planSnapshot()
-            val decision = CardRunTaskClosePolicy.decide(
-                state = state,
-                reason = reason,
-                hasInstallPlan = plan.targetResourceId.isNotBlank() || plan.resourceIds.isNotEmpty(),
-                hasRunningInstallPlan = plan.runningResourceIds.isNotEmpty(),
-                hasActiveChildRun = CardRunStore.childrenOf(state.instanceId, state.environmentId)
-                    .any(CardRunTaskClosePolicy::isActiveChild),
-            )
-            if (decision.clearInstallPlan) graph.resourceInstallStore.clearPlan()
-            if (decision.removeRunState) CardRunStore.removeRun(state.instanceId)
-        }
+    private fun closeTaskWindow(@Suppress("UNUSED_PARAMETER") reason: CardRunTaskCloseReason) {
+        // 页面只关闭显示任务；运行停止、计划取消和临时事实清理由各自状态拥有者完成。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) finishAndRemoveTask() else finish()
     }
 
@@ -932,6 +969,8 @@ class CardRunActivity : AppCompatActivity() {
     }
 
     private fun activeEnvironmentId(): String = graph.resourceInstallStore.currentEnvironmentId()
+
+    private fun targetEnvironmentId(): String = boundEnvironmentId ?: activeEnvironmentId()
 
     private fun restoreSystemBars() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

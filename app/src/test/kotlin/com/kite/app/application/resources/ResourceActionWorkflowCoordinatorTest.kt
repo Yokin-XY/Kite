@@ -32,12 +32,25 @@ class ResourceActionWorkflowCoordinatorTest {
         val coordinator = ResourceActionWorkflowCoordinator(gateway)
 
         coordinator.cancelPlan("target", listOf("base", "target"))
+        coordinator.cancelInstallWizard(
+            targetResourceId = "target",
+            planResourceIds = listOf("base", "target"),
+            environmentId = "profile",
+            instanceId = "wizard",
+            expectedGeneration = 17L,
+        )
         coordinator.createHomeCard("target")
         coordinator.installDirect("target")
         coordinator.checkUpdates(listOf("base", "target"))
 
         assertEquals(
-            listOf("cancel_plan:target:base,target", "home:target", "direct:target", "check_updates:base,target"),
+            listOf(
+                "cancel_plan:target:base,target",
+                "cancel_wizard:target:profile:wizard:17:base,target",
+                "home:target",
+                "direct:target",
+                "check_updates:base,target",
+            ),
             gateway.calls
         )
     }
@@ -59,6 +72,16 @@ class ResourceActionWorkflowCoordinatorTest {
         override suspend fun cancelFailedInstall(resourceId: String) = record("cancel_failed")
         override suspend fun cancelPlan(targetResourceId: String, planResourceIds: List<String>) =
             record("cancel_plan:$targetResourceId:${planResourceIds.joinToString(",")}")
+        override suspend fun cancelInstallWizard(
+            targetResourceId: String,
+            planResourceIds: List<String>,
+            environmentId: String,
+            instanceId: String,
+            expectedGeneration: Long,
+        ): Boolean {
+            calls += "cancel_wizard:$targetResourceId:$environmentId:$instanceId:$expectedGeneration:${planResourceIds.joinToString(",")}"
+            return true
+        }
         override suspend fun createHomeCard(resourceId: String) = record("home:$resourceId")
         override suspend fun installDirect(resourceId: String) = record("direct:$resourceId")
     }

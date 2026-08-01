@@ -214,16 +214,31 @@ internal class RunOrchestrator(
     }
 
     fun stop(instanceId: String): RunCommandResult {
-        val preparation = synchronized(lock) {
+        val command = synchronized(lock) {
             val state = stateGateway.state(instanceId)
                 ?: return RunCommandResult.Ignored("missing_instance")
+            RunStopCommand(
+                instanceId = state.instanceId,
+                expectedGeneration = state.createdAt,
+            )
+        }
+        return stop(command)
+    }
+
+    fun stop(command: RunStopCommand): RunCommandResult {
+        val preparation = synchronized(lock) {
+            val state = stateGateway.state(command.instanceId)
+                ?: return RunCommandResult.Ignored("missing_instance")
+            if (state.createdAt != command.expectedGeneration) {
+                return RunCommandResult.Ignored("generation_mismatch")
+            }
             val recipe = stateGateway.recipe(state.recipeId)
                 ?: return RunCommandResult.Ignored("missing_recipe")
             when (val plan = stopCoordinator.plan(recipe, state)) {
                 is StopPlan.Ignore -> return RunCommandResult.Ignored(plan.reason)
                 is StopPlan.CompleteLocally -> {
-                    clearFlights(instanceId)
-                    commit(recipe, instanceId, stoppingMutation(state))
+                    clearFlights(command.instanceId)
+                    commit(recipe, command.instanceId, stoppingMutation(state))
                     StopPreparation(
                         previousState = state,
                         recipe = recipe,
@@ -231,8 +246,8 @@ internal class RunOrchestrator(
                     )
                 }
                 is StopPlan.Execute -> {
-                    clearFlights(instanceId)
-                    commit(recipe, instanceId, stoppingMutation(state))
+                    clearFlights(command.instanceId)
+                    commit(recipe, command.instanceId, stoppingMutation(state))
                     StopPreparation(
                         previousState = state,
                         recipe = recipe,
@@ -242,12 +257,12 @@ internal class RunOrchestrator(
             }
         }
         ownedWindowGateway.closeAll(
-            instanceId = instanceId,
+            instanceId = command.instanceId,
             expectedGeneration = preparation.previousState.createdAt
         ) { result ->
             handleOwnedWindowsCloseResult(preparation, result)
         }
-        return RunCommandResult.Accepted(instanceId)
+        return RunCommandResult.Accepted(command.instanceId)
     }
 
     private fun handleOwnedWindowsCloseResult(
