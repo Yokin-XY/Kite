@@ -1958,32 +1958,21 @@ internal class RunAgentSurfaceBinding(
         lateinit var renderEditState: () -> Unit
         lateinit var renderArchivedRows: () -> Unit
         fun selectedSessionIds(): Set<String> = AgentArchivedSelectionPolicy.selectedSessionIds(selectedKeys)
-        fun selectedProjectCwds(): Set<String> = AgentArchivedSelectionPolicy.selectedProjectCwds(selectedKeys)
         fun applySelection(next: Set<AgentArchivedSelectionKey>) {
             selectedKeys.clear()
             selectedKeys.addAll(next)
             renderEditState()
         }
-        fun projectSessionIds(project: AgentProject): Set<String> = archivedSessions
-            .filter { AgentSurfaceNavigationPolicy.sameCwd(it.cwd, project.cwd) }
-            .mapTo(linkedSetOf(), AgentSessionSummary::id)
-        fun toggleSession(sessionId: String, cwd: String? = null) {
-            val parentProjectCwd = cwd?.let { sessionCwd ->
-                archivedProjects.firstOrNull {
-                    AgentSurfaceNavigationPolicy.sameCwd(it.cwd, sessionCwd)
-                }?.cwd
-            }
+        fun toggleSession(sessionId: String) {
             applySelection(AgentArchivedSelectionPolicy.toggleSession(
                 current = selectedKeys,
                 sessionId = sessionId,
-                parentProjectCwd = parentProjectCwd,
             ))
         }
-        fun toggleProject(project: AgentProject) {
+        fun toggleProject(row: AgentArchivedRow.GroupHeader) {
             applySelection(AgentArchivedSelectionPolicy.toggleProject(
                 current = selectedKeys,
-                projectCwd = project.cwd,
-                childSessionIds = projectSessionIds(project),
+                childSessionIds = row.selectableSessionIds,
             ))
         }
         val status = TextView(context).apply {
@@ -2003,14 +1992,14 @@ internal class RunAgentSurfaceBinding(
             tokens = tokens,
             onClick = { archivedSession ->
                 if (editMode) {
-                    toggleSession(archivedSession.id, archivedSession.cwd)
+                    toggleSession(archivedSession.id)
                 } else {
                     showArchivedSessionActions(selected, archivedSession, refreshArchivedContent)
                 }
             },
             onLongClick = { archivedSession ->
                 editMode = true
-                toggleSession(archivedSession.id, archivedSession.cwd)
+                toggleSession(archivedSession.id)
             },
             onUnavailableClick = { unavailableSession ->
                 if (editMode) {
@@ -2044,9 +2033,9 @@ internal class RunAgentSurfaceBinding(
                 }
             },
             onProjectSelect = ::toggleProject,
-            onProjectLongClick = { project ->
+            onProjectLongClick = { row ->
                 editMode = true
-                toggleProject(project)
+                toggleProject(row)
             },
         )
         archivedList.adapter = archivedAdapter
@@ -2115,8 +2104,7 @@ internal class RunAgentSurfaceBinding(
         fun showBatchRestoreConfirmation() {
             val selectedIds = selectedSessionIds()
             val sessions = archivedSessions.filter { it.id in selectedIds }
-            val projects = archivedProjects.filter { it.cwd in selectedProjectCwds() }
-            val restorableCount = sessions.size + projects.size
+            val restorableCount = sessions.size
             if (restorableCount == 0) return
             val skippedCount = selectedIds.count { id ->
                 unavailableArchivedSessions.any { it.sessionId == id }
@@ -2135,7 +2123,6 @@ internal class RunAgentSurfaceBinding(
                         filledPrimary = true,
                     ) { dialog, _ ->
                         sessions.forEach { sessionMetadataStore.restore(targetProviderId, it.id) }
-                        projects.forEach { projectStore.restore(targetAgentId, it.cwd) }
                         dialog.dismiss()
                         editMode = false
                         selectedKeys.clear()
@@ -2149,12 +2136,11 @@ internal class RunAgentSurfaceBinding(
             val selectedIds = selectedSessionIds()
             val sessions = archivedSessions.filter { it.id in selectedIds }
             val unavailable = unavailableArchivedSessions.filter { it.sessionId in selectedIds }
-            val projects = archivedProjects.filter { it.cwd in selectedProjectCwds() }
-            val count = sessions.size + unavailable.size + projects.size
+            val count = sessions.size + unavailable.size
             if (count == 0) return
             showAgentDialogCard(
                 title = "删除所选内容？",
-                message = "会话将从 Agent 永久删除；项目和失效记录只从 Kite 移除。",
+                message = "会话将从 Agent 永久删除；失效记录只从 Kite 移除。",
                 actions = listOf(
                     AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
                     AgentDialogAction("删除", UiActionRole.Danger) { dialog, button ->
@@ -2198,9 +2184,6 @@ internal class RunAgentSurfaceBinding(
                                     sessionMetadataStore.remove(targetProviderId, metadata.sessionId)
                                     deleted++
                                 }
-                            }
-                            projects.forEach { project ->
-                                if (projectStore.remove(targetAgentId, project.cwd)) deleted++
                             }
                             dialog.dismiss()
                             if (failures.isEmpty()) {
@@ -2249,22 +2232,19 @@ internal class RunAgentSurfaceBinding(
         }
         renderEditState = {
             val selectedIds = selectedSessionIds()
-            val selectedProjects = selectedProjectCwds()
-            archivedAdapter.setSelectionState(editMode, selectedIds, selectedProjects)
+            archivedAdapter.setSelectionState(editMode, selectedIds)
             selectionRow.visibility = if (editMode) View.VISIBLE else View.GONE
             batchActions.visibility = if (editMode) View.VISIBLE else View.GONE
             val allKeys = AgentArchivedSelectionPolicy.selectAll(
                 sessionIds = archivedSessions.map(AgentSessionSummary::id) +
                     unavailableArchivedSessions.map(AgentArchivedSessionMetadata::sessionId),
-                projectCwds = archivedProjects.map(AgentProject::cwd),
             )
             val allSelected = allKeys.isNotEmpty() && selectedKeys.containsAll(allKeys)
             renderArchiveSelectionIndicator(selectAllIndicator, allSelected)
             selectAll.contentDescription = if (allSelected) "取消全选归档内容" else "全选归档内容"
             selectedCount.text = "已选择 ${selectedKeys.size} 项"
             val hasSelection = selectedKeys.isNotEmpty()
-            val hasRestorableContent = archivedSessions.any { it.id in selectedIds } ||
-                archivedProjects.any { it.cwd in selectedProjects }
+            val hasRestorableContent = archivedSessions.any { it.id in selectedIds }
             restoreSelected.isEnabled = hasRestorableContent
             renderArchiveBatchAction(restoreSelected, hasRestorableContent, danger = false)
             val runtime = AgentRuntimeRegistry.session(instanceId)
@@ -2306,7 +2286,6 @@ internal class RunAgentSurfaceBinding(
             val allKeys = AgentArchivedSelectionPolicy.selectAll(
                 sessionIds = archivedSessions.map(AgentSessionSummary::id) +
                     unavailableArchivedSessions.map(AgentArchivedSessionMetadata::sessionId),
-                projectCwds = archivedProjects.map(AgentProject::cwd),
             )
             val checked = allKeys.isNotEmpty() && !selectedKeys.containsAll(allKeys)
             selectedKeys.clear()
@@ -2400,7 +2379,6 @@ internal class RunAgentSurfaceBinding(
                         val validKeys = AgentArchivedSelectionPolicy.selectAll(
                             sessionIds = archivedSessions.map(AgentSessionSummary::id) +
                                 unavailableArchivedSessions.map(AgentArchivedSessionMetadata::sessionId),
-                            projectCwds = archivedProjects.map(AgentProject::cwd),
                         )
                         selectedKeys.retainAll(validKeys)
                         sessionStatusMessage = null
@@ -7948,6 +7926,7 @@ internal sealed interface AgentArchivedRow {
         val count: Int,
         val expanded: Boolean,
         val archivedProject: AgentProject? = null,
+        val selectableSessionIds: Set<String> = emptySet(),
     ) : AgentArchivedRow {
         override val key: String = "group:$cwd"
     }

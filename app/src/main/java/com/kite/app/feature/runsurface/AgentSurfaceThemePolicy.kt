@@ -36,46 +36,43 @@ internal object AgentArchivedSelectionPolicy {
     fun toggleSession(
         current: Set<AgentArchivedSelectionKey>,
         sessionId: String,
-        parentProjectCwd: String? = null,
     ): Set<AgentArchivedSelectionKey> = current.toMutableSet().apply {
         val key = AgentArchivedSelectionKey.Session(sessionId)
-        if (!add(key)) {
-            remove(key)
-            parentProjectCwd?.let { remove(AgentArchivedSelectionKey.Project(it)) }
-        }
+        if (!add(key)) remove(key)
     }
 
     fun toggleProject(
         current: Set<AgentArchivedSelectionKey>,
-        projectCwd: String,
         childSessionIds: Collection<String>,
     ): Set<AgentArchivedSelectionKey> = current.toMutableSet().apply {
-        val projectKey = AgentArchivedSelectionKey.Project(projectCwd)
-        val childKeys = childSessionIds.map(AgentArchivedSelectionKey::Session)
-        if (projectKey in this) {
-            remove(projectKey)
+        val childKeys = childSessionIds.mapTo(linkedSetOf(), AgentArchivedSelectionKey::Session)
+        if (childKeys.isNotEmpty() && containsAll(childKeys)) {
             removeAll(childKeys.toSet())
         } else {
-            add(projectKey)
             addAll(childKeys)
         }
     }
 
-    fun selectAll(
-        sessionIds: Collection<String>,
-        projectCwds: Collection<String>,
-    ): Set<AgentArchivedSelectionKey> = buildSet {
+    fun selectAll(sessionIds: Collection<String>): Set<AgentArchivedSelectionKey> = buildSet {
         sessionIds.mapTo(this, AgentArchivedSelectionKey::Session)
-        projectCwds.mapTo(this, AgentArchivedSelectionKey::Project)
+    }
+
+    fun projectSelectionState(
+        selected: Set<AgentArchivedSelectionKey>,
+        childSessionIds: Collection<String>,
+    ): AgentArchivedProjectSelectionState {
+        val childKeys = childSessionIds.mapTo(linkedSetOf(), AgentArchivedSelectionKey::Session)
+        val selectedCount = childKeys.count(selected::contains)
+        return when {
+            selectedCount == 0 -> AgentArchivedProjectSelectionState.Unchecked
+            selectedCount == childKeys.size -> AgentArchivedProjectSelectionState.Checked
+            else -> AgentArchivedProjectSelectionState.Partial
+        }
     }
 
     fun selectedSessionIds(selected: Set<AgentArchivedSelectionKey>): Set<String> = selected
         .filterIsInstance<AgentArchivedSelectionKey.Session>()
         .mapTo(linkedSetOf(), AgentArchivedSelectionKey.Session::sessionId)
-
-    fun selectedProjectCwds(selected: Set<AgentArchivedSelectionKey>): Set<String> = selected
-        .filterIsInstance<AgentArchivedSelectionKey.Project>()
-        .mapTo(linkedSetOf(), AgentArchivedSelectionKey.Project::cwd)
 
     fun canDelete(
         selectedIds: Set<String>,
@@ -135,5 +132,10 @@ internal data class AgentSelectionPalette(
 
 internal sealed interface AgentArchivedSelectionKey {
     data class Session(val sessionId: String) : AgentArchivedSelectionKey
-    data class Project(val cwd: String) : AgentArchivedSelectionKey
+}
+
+internal enum class AgentArchivedProjectSelectionState {
+    Unchecked,
+    Partial,
+    Checked,
 }

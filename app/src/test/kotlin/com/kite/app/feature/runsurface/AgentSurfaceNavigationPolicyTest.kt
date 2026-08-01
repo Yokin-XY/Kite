@@ -256,6 +256,10 @@ class AgentSurfaceNavigationPolicyTest {
             listOf("default-1", "wechat-1"),
             rows.filterIsInstance<AgentArchivedRow.Session>().map { it.summary.id }
         )
+        val headers = rows.filterIsInstance<AgentArchivedRow.GroupHeader>()
+        assertTrue(headers.single { it.title == "会话" }.selectableSessionIds.isEmpty())
+        assertEquals(setOf("kite-1"), headers.single { it.title == "Kite" }.selectableSessionIds)
+        assertEquals(setOf("wechat-1"), headers.single { it.title == "微信" }.selectableSessionIds)
     }
 
     @Test
@@ -286,6 +290,7 @@ class AgentSurfaceNavigationPolicyTest {
         assertEquals(listOf("Kite", "空项目"), headers.map(AgentArchivedRow.GroupHeader::title))
         assertEquals(archivedProject, headers.single { it.title == "空项目" }.archivedProject)
         assertEquals(0, headers.single { it.title == "空项目" }.count)
+        assertTrue(headers.single { it.title == "空项目" }.selectableSessionIds.isEmpty())
         assertTrue(rows.none { it is AgentArchivedRow.Session })
     }
 
@@ -675,22 +680,20 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
-    fun `归档编辑支持会话项目级联与全选`() {
-        val selectedA = AgentArchivedSelectionPolicy.toggleSession(emptySet(), "session-a", "/project")
+    fun `归档项目选择只是已归档子会话集合`() {
+        val selectedA = AgentArchivedSelectionPolicy.toggleSession(emptySet(), "session-a")
         assertEquals(setOf(AgentArchivedSelectionKey.Session("session-a")), selectedA)
         assertEquals(
             emptySet<AgentArchivedSelectionKey>(),
-            AgentArchivedSelectionPolicy.toggleSession(selectedA, "session-a", "/project"),
+            AgentArchivedSelectionPolicy.toggleSession(selectedA, "session-a"),
         )
 
         val selectedProject = AgentArchivedSelectionPolicy.toggleProject(
             current = emptySet(),
-            projectCwd = "/project",
             childSessionIds = listOf("session-a", "session-b"),
         )
         assertEquals(
             setOf(
-                AgentArchivedSelectionKey.Project("/project"),
                 AgentArchivedSelectionKey.Session("session-a"),
                 AgentArchivedSelectionKey.Session("session-b"),
             ),
@@ -700,17 +703,27 @@ class AgentSurfaceNavigationPolicyTest {
             emptySet<AgentArchivedSelectionKey>(),
             AgentArchivedSelectionPolicy.toggleProject(
                 selectedProject,
-                "/project",
                 listOf("session-a", "session-b"),
             ),
         )
 
+        assertEquals(
+            AgentArchivedProjectSelectionState.Unchecked,
+            AgentArchivedSelectionPolicy.projectSelectionState(emptySet(), listOf("session-a", "session-b")),
+        )
+        assertEquals(
+            AgentArchivedProjectSelectionState.Partial,
+            AgentArchivedSelectionPolicy.projectSelectionState(selectedA, listOf("session-a", "session-b")),
+        )
+        assertEquals(
+            AgentArchivedProjectSelectionState.Checked,
+            AgentArchivedSelectionPolicy.projectSelectionState(selectedProject, listOf("session-a", "session-b")),
+        )
+
         val all = AgentArchivedSelectionPolicy.selectAll(
             sessionIds = listOf("session-a", "session-b", "missing"),
-            projectCwds = listOf("/project"),
         )
         assertEquals(setOf("session-a", "session-b", "missing"), AgentArchivedSelectionPolicy.selectedSessionIds(all))
-        assertEquals(setOf("/project"), AgentArchivedSelectionPolicy.selectedProjectCwds(all))
         val sessionIds = AgentArchivedSelectionPolicy.selectedSessionIds(selectedA)
         assertTrue(AgentArchivedSelectionPolicy.canDelete(sessionIds, currentSessionId = "session-b", deleteSupported = true))
         assertFalse(AgentArchivedSelectionPolicy.canDelete(sessionIds, currentSessionId = "session-a", deleteSupported = true))

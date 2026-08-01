@@ -126,6 +126,11 @@ internal object AgentSurfaceNavigationPolicy {
         }
         groups.forEach { group ->
             val normalizedCwd = normalizeCwd(group.cwd)
+            val projectSessionIds = if (normalizedCwd == normalizeCwd(grouping.defaultCwd)) {
+                emptySet()
+            } else {
+                group.sessions.mapTo(linkedSetOf(), AgentSessionSummary::id)
+            }
             val expanded = normalizedCwd in expandedCwds
             add(AgentArchivedRow.GroupHeader(
                 cwd = group.cwd,
@@ -134,6 +139,7 @@ internal object AgentSurfaceNavigationPolicy {
                 count = group.sessions.size,
                 expanded = expanded,
                 archivedProject = archivedProjectsByCwd[normalizedCwd],
+                selectableSessionIds = projectSessionIds,
             ))
             if (expanded) group.sessions.forEach { add(AgentArchivedRow.Session(it)) }
         }

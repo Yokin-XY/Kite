@@ -152,8 +152,8 @@ internal class ArchivedSessionAdapter(
     private val onUnavailableLongClick: (AgentArchivedSessionMetadata) -> Unit,
     private val onGroupToggle: (String) -> Unit,
     private val onProjectRestore: (AgentProject) -> Unit,
-    private val onProjectSelect: (AgentProject) -> Unit,
-    private val onProjectLongClick: (AgentProject) -> Unit,
+    private val onProjectSelect: (AgentArchivedRow.GroupHeader) -> Unit,
+    private val onProjectLongClick: (AgentArchivedRow.GroupHeader) -> Unit,
 ) : ListAdapter<AgentArchivedRow, RecyclerView.ViewHolder>(DIFF) {
     private val ui = UiKit(context, tokens)
     private val selectionPalette = AgentSelectionVisualPolicy.palette(
@@ -161,21 +161,15 @@ internal class ArchivedSessionAdapter(
     )
     private var selectionMode = false
     private var selectedIds: Set<String> = emptySet()
-    private var selectedProjectCwds: Set<String> = emptySet()
 
     fun setSelectionState(
         selectionMode: Boolean,
         selectedIds: Set<String>,
-        selectedProjectCwds: Set<String>,
     ) {
         val nextIds = selectedIds.toSet()
-        val nextProjectCwds = selectedProjectCwds.toSet()
-        if (this.selectionMode == selectionMode && this.selectedIds == nextIds &&
-            this.selectedProjectCwds == nextProjectCwds
-        ) return
+        if (this.selectionMode == selectionMode && this.selectedIds == nextIds) return
         this.selectionMode = selectionMode
         this.selectedIds = nextIds
-        this.selectedProjectCwds = nextProjectCwds
         notifyDataSetChanged()
     }
 
@@ -216,8 +210,16 @@ internal class ArchivedSessionAdapter(
         }
     }
 
-    private fun renderSelectionIndicator(indicator: ImageView, selected: Boolean) {
-        indicator.setImageResource(if (selected) R.drawable.ic_check_light else 0)
+    private fun renderSelectionIndicator(
+        indicator: ImageView,
+        state: AgentArchivedProjectSelectionState,
+    ) {
+        val selected = state != AgentArchivedProjectSelectionState.Unchecked
+        indicator.setImageResource(when (state) {
+            AgentArchivedProjectSelectionState.Unchecked -> 0
+            AgentArchivedProjectSelectionState.Partial -> R.drawable.ic_remove_light
+            AgentArchivedProjectSelectionState.Checked -> R.drawable.ic_check_light
+        })
         indicator.imageTintList = ColorStateList.valueOf(selectionPalette.selectedIndicatorContent)
         indicator.background = InsetDrawable(
             ui.roundedBox(
@@ -233,6 +235,14 @@ internal class ArchivedSessionAdapter(
         )
         indicator.setPadding(iconInset, iconInset, iconInset, iconInset)
         indicator.contentDescription = if (selected) "已选择" else "未选择"
+    }
+
+    private fun renderSelectionIndicator(indicator: ImageView, selected: Boolean) {
+        renderSelectionIndicator(
+            indicator,
+            if (selected) AgentArchivedProjectSelectionState.Checked
+            else AgentArchivedProjectSelectionState.Unchecked,
+        )
     }
 
     inner class GroupHolder(private val container: LinearLayout) : RecyclerView.ViewHolder(container) {
@@ -294,10 +304,13 @@ internal class ArchivedSessionAdapter(
         }
 
         fun bind(row: AgentArchivedRow.GroupHeader) {
-            val projectSelected = row.archivedProject?.cwd in selectedProjectCwds
-            val showProjectSelector = selectionMode && row.archivedProject != null
+            val projectSelectionState = AgentArchivedSelectionPolicy.projectSelectionState(
+                selected = selectedIds.mapTo(linkedSetOf(), AgentArchivedSelectionKey::Session),
+                childSessionIds = row.selectableSessionIds,
+            )
+            val showProjectSelector = selectionMode && row.selectableSessionIds.isNotEmpty()
             selector.visibility = if (showProjectSelector) View.VISIBLE else View.GONE
-            renderSelectionIndicator(selector, projectSelected)
+            renderSelectionIndicator(selector, projectSelectionState)
             chevron.rotation = if (row.expanded) 90f else 0f
             chevron.visibility = if (showProjectSelector) {
                 View.GONE
@@ -322,14 +335,19 @@ internal class ArchivedSessionAdapter(
                 "展开 ${row.title} 的归档会话"
             }
             container.setOnClickListener {
-                if (selectionMode && row.archivedProject != null) {
-                    onProjectSelect(row.archivedProject)
+                if (showProjectSelector) {
+                    onProjectSelect(row)
                 } else if (row.count > 0) {
                     onGroupToggle(row.cwd)
                 }
             }
             container.setOnLongClickListener {
-                row.archivedProject?.let(onProjectLongClick) != null
+                if (row.selectableSessionIds.isEmpty()) {
+                    false
+                } else {
+                    onProjectLongClick(row)
+                    true
+                }
             }
         }
     }
