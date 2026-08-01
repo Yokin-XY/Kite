@@ -486,3 +486,11 @@
 - 决定：下一性能父任务不再新增应用特例，直接用 APK 打包的 active/stock PRoot 做同输入 A/B，并把 active 无遥测与正式遥测分开。Debug 对照不得改变 `activeRuntimeId` 或生产迁移状态。
 - 原因：当前上层启动耗时混合了解释器、文件加载、网络和应用初始化；只有同 rootfs/argv 的 PRoot 二进制对照才能回答 Kite 生命周期/View 增量是否构成底层瓶颈。历史 termux baseline 已因 `execve ENOSYS` 隔离，不能作为正常性能对照。
 - 影响：RF1410 先固定参数等价与通用负载，RF1420 再上 OnePlus 8T。仅当 active 相对 stock 稳定退化且能归因到可关闭热点时，RF1430 才允许修改 PRoot 资产；强身份、停止确认和保护语义不得作为性能开关被移除。
+
+## ADR-RF-062 PRoot A/B 分离总运行时差异与遥测增量
+
+- 状态：已接受，RF1410 已完成
+- 日期：2026-08-01
+- 决定：RF1420 同时测 active 正式遥测、同 active 无遥测和 stock 无遥测。active/stock 差值只代表当前打包运行时总体差异；只有同 active 二进制的有/无遥测差值可归因于生命周期采集。
+- 原因：active 与 stock 的来源代次、体积和 embedded/external loader 均不同，二元 A/B 无法把差值归因到 View、telemetry 或某个补丁。增加同二进制 telemetry toggle 才能避免错误删除关键能力。
+- 影响：基准复用正式 argv/env/bind/network，只允许固定变换；historical baseline 继续 quarantine。低于 15ms 的差异不触发生产工作，至少两个通用负载跨 4/8 并发达到相对与绝对双阈值后，RF1430 才打开。

@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1400` PRoot 活跃运行时开销归因
-- 当前任务：`RF1410` 活跃/库存 PRoot 对照合同
+- 当前任务：`RF1420` Debug-only 固定 A/B 矩阵
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -762,9 +762,11 @@
 
 #### RF1410 活跃/库存 PRoot 对照合同
 
-- 审计两个资产的来源、loader、CLI 兼容和当前正式选择链；
-- 固定启动、shell、元数据遍历、文件读写和子进程负载，不重复 Node/Python 已冻结矩阵；
-- 明确 stock 只作为 Debug 对照，绝不改变正式 `activeRuntimeId`。
+- 状态：已完成，见 [PRoot 活跃运行时开销归因](../../architecture/proot-active-runtime-overhead.md)；
+- [x] 审计 active/stock/historical 三个资产的来源、loader、身份和正式选择链；
+- [x] 固定启动、shell、元数据遍历、文件读写和子进程负载，不重复 Node/Python 已冻结矩阵；
+- [x] stock 只允许复制到 Debug 私有目录，绝不改变正式 `activeRuntimeId` 或安装态 `bin/proot`；
+- [x] 固定相对/绝对双阈值，避免对微秒级噪声做生产补丁。
 
 #### RF1420 Debug-only 固定 A/B 矩阵
 

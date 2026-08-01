@@ -75,8 +75,8 @@
 | RF1330 | 已完成 | Git 实测 child 满足窄合同；Python 仅显式 direct exec/spawn 子集满足，不能整体放行 |
 | RF1340 | 已完成 | preload relay 生产 no-go；Debug 证据保留，正式链零改动 |
 | RF1400 | 进行中 | 对比活跃/库存 PRoot，归因 wrapper、遥测与通用负载成本 |
-| RF1410 | 进行中 | 固定资产身份、参数等价与非 Node/Python 负载合同 |
-| RF1420 | 待开始 | Debug-only 1/4/8 固定 A/B 真机矩阵 |
+| RF1410 | 已完成 | 固定三资产身份、loader 等价、五类通用负载与双阈值 |
+| RF1420 | 进行中 | Debug-only 1/4/8 固定 A/B 真机矩阵 |
 | RF1430 | 待开始 | 仅在稳定退化成立时定位热点与候选补丁 |
 | RF1440 | 待开始 | go/no-go、全量门与生产范围审查 |
 
@@ -414,6 +414,13 @@
 - 目标是什么？直接测量当前活跃 Kite PRoot 相对 APK 内库存 PRoot 的增量成本，区分 wrapper 固定开销、生命周期遥测和通用 Linux 负载，不再用 OpenClaw 或解释器总耗时猜原因。
 - 完成后拿什么证明？同一 rootfs/workspace/argv/env 的 1/4/8 固定交替矩阵，覆盖启动、shell、元数据、文件 I/O 与 child，分别比较 active 无遥测、active 正式遥测和 stock；验证结果、残留与 ANR/FATAL。
 - 依赖是否满足？满足。两个资产均已随 APK 打包且身份固定；termux historical baseline 已标记 `execve ENOSYS`，不纳入成功对照；本阶段只新增 Debug 入口，不切换正式 runtime。
+
+## RF1410 活跃/库存 PRoot 对照合同
+
+- 当前正式 v23 active 为 356864-byte embedded-loader 二进制，SHA-256 `0A465CE2F5E3DCD80F801EF500478E4932248806EDC86CE5C9B0918D60C604BC`；stock 为 214416-byte external-loader 二进制，SHA-256 `125DFF2415AE1DCB8B1AE97C51357DE73EF11F28268B86CD50A0F13AA1C3EA91`。
+- historical Termux baseline 的 SHA-256 为 `AAB80BBBB38345A6CF30D5173B1D9E5FB506B72FCFB48B089DB0DA62088B51C4`，descriptor 已固定 `quarantined_after_execve_enosys`，不进入成功性能对照。
+- Debug A/B 必须先取得同一正式 `buildArgvExecConfig`，active 无遥测只移除三个 lifecycle 环境键；stock 只替换 argv[0] 并补正式 external loader 环境。不得重建 bind/rootfs/network，也不得切换安装态 runtime。
+- 固定负载为 startup、shell、512 小文件 metadata、128 小文件 write 与 16 child fanout，1/4/8 并发、三轮、顺序轮换。至少两个 4/8 并发负载同时达到 P50 退化 15% 且 15ms、两轮同向，才算可行动热点。
 
 ## RF710 开机与三问自检
 
