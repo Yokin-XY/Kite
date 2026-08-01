@@ -438,3 +438,11 @@
 - 决定：不实现 `HostGitRuntimeProvider`，不修改 Git shim、资源清单、统一 Planner 或运行 lane。Debug 矩阵保留；本地 builtin 的性能收益不抵消任意 child 和仓库配置语义无法在进程创建前证明的问题。
 - 原因：同一 argv 是否触发 hook/filter/helper 取决于仓库和配置，subcommand 白名单不正确，预扫描不完备且有竞态，运行后回退又可能重复副作用。正式资源的十条 Git relation 也不是十条 Git 安装热路径，不能把依赖覆盖数直接当成可兑现的启动收益。
 - 影响：所有未显式证明的 Git 继续整条走 PRoot。下一可研究的通用机制是 exec 边界 child relay，让 Host glibc 父进程的外部 child 无损进入 PRoot；它必须独立证明 argv/env/cwd/fd/signal/exit 与唯一进程语义，不能作为 Git 特判偷偷接入。
+
+## ADR-RF-056 child relay 必须作为通用执行边界独立立项
+
+- 状态：已接受，RF1240 已完成
+- 日期：2026-08-01
+- 决定：RF1200 no-go 后不继续扩大 Git resolver；另立 RF1300，只研究 Host glibc 父进程的通用 exec/spawn child 能否无业务语义地交给既有 PRoot 兼容前缀。Debug 原型必须使用独立资产，不覆盖已冻结的正式 compat 库。
+- 原因：Git、Python 和其他 Linux 依赖的共同缺口不是父 ELF 无法启动，而是 child 重新进入 Android 文件系统/ABI 语义。按每个工具补白名单会重复造机制；若能在通用 exec 边界保留 argv/env/cwd/fd/signal/exit，才有跨依赖复用价值。
+- 影响：RF1310 先审计所有入口和不可变语义；RF1320 未过门前不修改生产 launcher、compat、Provider、资源或 lane。任何漏拦、双执行、递归套 PRoot、fd/信号变化或静默降级直接 no-go。

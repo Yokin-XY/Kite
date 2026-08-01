@@ -64,11 +64,16 @@
 | RF1120 | 已完成 | 两整轮 28×3 固定矩阵零失败、零残留，READY 收窄稳定变慢 |
 | RF1130 | 已完成 | 无稳定收益，否决生产启动窗口 |
 | RF1140 | 未触发 | RF1130 no-go；未新增生产队列、状态或入口接线 |
-| RF1200 | 进行中 | Git 作为下一个通用依赖候选，先做兼容与性能 go/no-go |
+| RF1200 | 已完成 | direct Host Git no-go；Debug 证据与全量门闭环，生产链零改动 |
 | RF1210 | 已完成 | 正式依赖覆盖与安全边界审计完成，Git 优先于 curl/uv |
 | RF1220 | 已完成 | 两套真机矩阵：本地 builtin 明显受益，所有外部子进程类别均有缺口 |
 | RF1230 | 已完成 | direct Host Git no-go；argv/预扫描/事后回退都不能保证仓库语义 |
-| RF1240 | 进行中 | 保留 Debug 证据、全量回归并确认生产链零改动 |
+| RF1240 | 已完成 | 1464 项全量门、强制构建、双轮真机和生产范围审查通过 |
+| RF1300 | 进行中 | 研究入口无关的 glibc child relay，不为 Git/Python 写特判 |
+| RF1310 | 进行中 | 审计 exec/spawn、fd、信号、路径、环境和递归边界 |
+| RF1320 | 待开始 | Debug-only relay 固定矩阵 |
+| RF1330 | 待开始 | 复算 Git/Python 子进程反例与性能 |
+| RF1340 | 待开始 | go/no-go、全量门与生产范围审查 |
 
 ## RF110 开机与三问自检
 
@@ -357,6 +362,14 @@
 - 不采用 builtin/subcommand 白名单。相同 `status/diff/add` 会因 repository config 和 attributes 进入不同能力边界，命令名不是稳定合同。
 - 重新核对正式 manifest：10 个 `relations.base` 说明上层需要 Git 可用，但静态安装 Recipe 中没有十条 `clone/fetch` 热路径；除 Git 卡自检外，Git 主要由上层程序动态调用，而 Host Node 的任意 child 已按兼容合同进入 PRoot。仅为直连终端 Git 开 Provider 不能兑现原先按 reach 推定的收益面。
 - `HostGitBenchmarkReceiver` 作为 Debug-only 可复算证据保留。若要继续利用本地 builtin 收益，下一研究问题必须提升为入口无关的 glibc child relay：Host 父进程保留，所有 external child 在 exec 边界无损进入 PRoot；未证明前不接生产。
+
+## RF1240 Host Git 父任务门
+
+- 强制全量 `:app:testDebugUnitTest --rerun-tasks` 通过：275 suites、1464 tests、0 failures、0 errors、2 skipped。
+- 强制 `:app:assembleDebug --rerun-tasks` 通过。APK 241,399,304 bytes，SHA-256 `F00F997ACD89B8F5DC84A8C04377500851A8B1B08258B2C9A44911AC5377728D`；构建物未进入 Git。
+- `a31a35d3..HEAD` 范围只有 Debug manifest、Debug benchmark 与架构/任务文档；`app/src/main`、正式资源、shim、Planner、lane/Store 均无净改动。
+- OnePlus 8T 已覆盖安装并连续运行两套 11 case 矩阵，无匹配 FATAL/ANR。RF1200 以 no-go 完成，不因性能收益绕过兼容门。
+- 下一阶段进入 RF1300；它研究通用 child relay，而不是重新验证 Node/Python 或给 Git 增加特判。
 
 ## RF710 开机与三问自检
 

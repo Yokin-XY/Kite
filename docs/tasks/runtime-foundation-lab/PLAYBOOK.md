@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF1200` Git 通用依赖快速通道可行性
-- 当前任务：`RF1240` Host Git 父任务门
+- 当前阶段：`RF1300` 通用 glibc child relay 可行性
+- 当前任务：`RF1310` child relay 入口与语义审计
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -714,10 +714,41 @@
 
 #### RF1240 父任务门
 
-- 状态：进行中。
-- 若 no-go，保留 Debug 证据且不修改生产入口；
-- 若 go，完成三入口唯一进程、取消、输出、升级失效和真机回归；
-- 强制全量单测、Debug 构建、范围审查并独立提交。
+- 状态：已完成，RF1200 以 no-go 收口。
+- [x] Debug 证据保留，生产入口、资源、shim、Planner 和状态均无净改动；
+- [x] 1464 项全量单测、强制 Debug 构建通过；
+- [x] 两套 OnePlus 8T 矩阵完成，无匹配 FATAL/ANR；
+- [x] RF1200 不进入生产，Debug 基准只作为前提变化后的可复算证据。
+
+### RF1300 [P0 快速通道底座] 通用 glibc child relay 可行性
+
+父任务方向：研究 Host glibc 父进程在调用 `execve/execvp/posix_spawn` 等外部 child 时，能否不解释 Git/Python/应用语义，统一把 child 原样交给既有 PRoot 兼容执行前缀。若成立，它可以补齐多个通用依赖的子进程缺口；若 fd、信号、路径或唯一执行无法保持，则实验 no-go。
+
+#### RF1310 child relay 入口与语义审计
+
+- 状态：进行中；
+- 复读通用 glibc launcher/compat、Node JS child bridge 与 PRoot argv/env 构造；
+- 枚举 exec/spawn 入口、PATH 搜索、shebang、cwd、env、stdio/fd、信号、退出码和递归保护；
+- 明确哪些事实可由底层无业务语义地转发，哪些构成不可接受的行为变化；
+- 本阶段不改生产 compat 资产、不发布正式配置、不接 Git/Python/资源入口。
+
+#### RF1320 Debug-only 最小 relay 探针
+
+- 仅在独立 Debug 资产中实现固定 child 探针，不覆盖正式 `libkite-glibc-compat.so`；
+- 对照直接 Host、Host+relay、独立 PRoot 三条路径；
+- 覆盖 argv/env/cwd、stdout/stderr/stdin、exit/signal、PATH、shebang、并发和递归保护。
+
+#### RF1330 Git/Python 通用反例复算
+
+- 用同一 relay 复算 RF1220 hook/filter/helper/submodule 和 RF250 Python subprocess；
+- 不允许按工具名、资源 ID、subcommand 或脚本内容做选择；
+- 只有状态和输出与独立 PRoot 一致后才比较性能。
+
+#### RF1340 go/no-go 与父任务门
+
+- 兼容、唯一执行和收益同时成立才讨论生产合同；
+- 任一 exec 入口漏拦、fd/信号改变、嵌套 PRoot 或静默降级都 no-go；
+- 全量回归、强制构建、OnePlus 8T 固定矩阵和生产范围审查后独立提交。
 
 ## 每个叶子任务的固定闭环
 
