@@ -97,6 +97,25 @@
 | RF1620 | 已完成 | 三轮 13 类零差异；单请求和 5 请求批次收益门均通过 |
 | RF1630 | 已完成 | 生产 Provider、唯一回退、Stage 与 OnePlus 固定矩阵均通过 |
 | RF1640 | 已完成 | 真实动作链 native/proot 各一次；Full 1487 项零失败，production go |
+| RF1700 | 进行中 | 已选批量版本检查分车道有界并发；AI 会话冻结 |
+| RF1710 | 已完成 | 正式批量入口、三个候选与预设发布门已固定 |
+| RF1720 | 进行中 | 固定五请求顺序、并发、取消、失败和性能基线 |
+| RF1730 | 未触发 | 仅在 RF1720 判 go 后接最小生产调度样板 |
+| RF1740 | 未触发 | OnePlus 真实批量链、Full 与父任务门 |
+
+## RF1700 开机与三问自检
+
+- 目标是什么？依据 PLAYBOOK 的 RF1700，只缩短资源管理页批量检查已获取资源更新的整批等待：结构化原生/远端任务最多 3 个并发，显式命令/PRoot 最多 1 个；不改变版本语义、结果顺序、Store 或页面。
+- 完成后拿什么证明？固定五请求三轮零差异；顺序、检查中先写、失败隔离、取消和并发上限断言；p50 每轮至少降低 40%、p95 不高于 550ms；OnePlus 真实至少 2 目标批量链；Targeted/Quick/Stage、父门唯一 Full 和 FATAL/ANR。
+- 依赖是否满足？RF1600 已通过生产 Provider、真实 native/proot 各一次和 Full 1487 tests；RF1550 已提供测试分层与跨 worktree Gradle 锁；分支 `codex/runtime-foundation-lab` 在 `46c1f890149da7d267cc6aa53496656c934f091b` 干净开始。
+- 红线：AI 会话协议、消息模型、流式输出、渲染、会话恢复、附件和样式全部冻结；不迁移显式版本命令、不解析 shell、不改安装/更新事务、单项检查、Store、UI 或 PRoot View；只用 OnePlus 8T `3f8bbaad`，不触碰魅族、main、其他工作树、远端、版本或发布。
+
+## RF1710 候选与发布门审计
+
+- 第一名“批量版本检查分车道有界并发”覆盖正式资源管理页唯一批量入口及所有符合更新条件的已安装资源。当前先批量写入 `markUpdateChecking()`，随后 `targets.map` 完全串行；5 个默认 npm 正式资源的本地版本已原生化、远端请求相互独立，串行累计等待属于真实用户链。
+- 第二名“显式 `--version` 结构化迁移”虽然覆盖 4 份显式探针，但 CLI 版本可能不等于包元数据版本，且显式声明本身可能是业务覆盖，当前不能安全替换。第三名“Ubuntu `/run`/locale 小探针原生化”频率较高，但缺少 rootfs 权限、mount、owner 和启动时序闭包，均保留兼容路线。
+- RF1720 的门在生产改动前固定：五请求三轮零差异；输出顺序不变；原生/远端并发 `<=3`、兼容并发 `<=1`；检查中状态先写、失败隔离、取消无残留；批次 p50 每轮至少降低 40%、候选 p95 不高于 550ms。门失败即 no-go。
+- 本轮 primary lane 为 Orchestrator：Action Intake 只提交批量意图，`KiteResourceInstallStore` 仍是状态拥有者，`ResourceVersionCoordinator` 仍产出版本事实；禁止把并发选择放到页面、Store 或 Execution Core。AI 会话不参与调用链并被明确冻结。
 
 ## RF1600 开机与三问自检
 
