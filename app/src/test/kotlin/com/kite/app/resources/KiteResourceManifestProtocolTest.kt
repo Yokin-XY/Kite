@@ -264,15 +264,9 @@ class KiteResourceManifestProtocolTest {
             listOf("@openai/codex", "@agentclientprotocol/codex-acp"),
             uninstallAction.npmUninstallPackages
         )
-        val dependency = manifest.agentProfiles.single().runtimeDependencies.single()
-        assertEquals("codex-responses-relay", dependency.id)
-        assertEquals(
-            "/workspace/.kf/secrets/kite.codex-relay-upstream",
-            dependency.activationFile,
-        )
-        assertEquals("127.0.0.1", dependency.bindAddress)
-        assertEquals(4453, dependency.bindPort)
-        assertTrue(dependency.argv.last().contains("exec codex-relay"))
+        val profile = manifest.agentProfiles.single()
+        assertTrue(profile.runtimeDependencies.isEmpty())
+        assertEquals(listOf("kite-codex-acp"), profile.argv)
         val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)
         assertEquals("agent", openStep?.optString("type"))
         assertEquals("codex", openStep?.optString("agentId"))
@@ -285,14 +279,21 @@ class KiteResourceManifestProtocolTest {
         val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
         val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest)
         val installAction = sourcePlan.installActions.single()
-        val installStep = installAction.installSteps.single()
+        val installRelayStep = installAction.installSteps.single { it.id == "install-codex-relay" }
+        val installLauncherStep = installAction.installSteps.single { it.id == "install-kite-codex-launcher" }
 
         assertEquals("pypi", manifest.sourceType)
         assertEquals(listOf("kite.python", "kite.uv"), manifest.baseRequirements)
-        assertEquals(listOf("codex-relay"), manifest.management.managedCommands)
-        assertEquals(listOf("codex-relay"), installAction.managedCommands)
-        assertTrue(installStep.cmd.contains("UV_TOOL_DIR=\"\$install_root/uv-tools\""))
-        assertTrue(installStep.cmd.contains("codex-relay==0.5.5"))
+        assertEquals(listOf("codex-relay", "kite-codex-acp"), manifest.management.managedCommands)
+        assertEquals(listOf("codex-relay", "kite-codex-acp"), installAction.managedCommands)
+        assertTrue(installRelayStep.cmd.contains("UV_TOOL_DIR=\"\$install_root/uv-tools\""))
+        assertTrue(installRelayStep.cmd.contains("codex-relay==0.5.5"))
+        assertTrue(installLauncherStep.cmd.contains("codex-relay --bind 127.0.0.1 --port 4453"))
+        assertTrue(installLauncherStep.cmd.contains("codex-acp \"\$@\""))
+        assertTrue(installLauncherStep.cmd.contains("/dev/tcp/127.0.0.1/4453"))
+        assertTrue(installLauncherStep.cmd.contains("KITE_CODEX_UPSTREAM=\"\$upstream\""))
+        assertTrue(installLauncherStep.cmd.contains("require('https')"))
+        assertFalse(installLauncherStep.cmd.contains("rejectUnauthorized: false"))
         assertTrue(installAction.verifications.single().cmd.contains("codex-relay --version"))
         assertTrue(sourcePlan.capabilities.install)
         assertTrue(sourcePlan.capabilities.uninstall)
@@ -391,7 +392,7 @@ class KiteResourceManifestProtocolTest {
         )
 
         val expected = listOf(
-            Expected("kite.codex.cli", "codex", "Codex", listOf("codex-acp"), "codex"),
+            Expected("kite.codex.cli", "codex", "Codex", listOf("kite-codex-acp"), "codex"),
             Expected("kite.claude.code", "claude-code", "Claude Code", listOf("claude-agent-acp"), "claude-code"),
             Expected("kite.hermes.core", "hermes", "Hermes", listOf("hermes", "acp"), "hermes"),
             Expected("kite.kimi.code", "kimi", "Kimi Code", listOf("kimi", "acp"), "kimi-code"),
@@ -407,7 +408,19 @@ class KiteResourceManifestProtocolTest {
             val profile = manifest.agentProfiles.single()
             val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
             val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest)
-            val installedCommands = sourcePlan.installActions.flatMap { it.managedCommands }.toSet()
+            val installedCommands = (
+                sourcePlan.installActions.flatMap { it.managedCommands } +
+                    manifest.baseRequirements.flatMap { requirementId ->
+                        val requirementFile = File(resourceRoot(), "$requirementId/manifest.json")
+                        if (!requirementFile.isFile) emptyList() else {
+                            val requirement = KiteResourceManifestLoader(context)
+                                .parseManifestJson(requirementFile.readText())
+                            KiteResourceSourcePlanFactory.plan(requirement)
+                                .installActions
+                                .flatMap { it.managedCommands }
+                        }
+                    }
+                ).toSet()
             val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)
             val homeStep = manifest.homeCards.single().recipe.optJSONArray("recipe")?.optJSONObject(0)
 

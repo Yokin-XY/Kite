@@ -655,6 +655,53 @@ class NativeAgentConfigAdaptersTest {
     }
 
     @Test
+    fun codexMigratesLegacyProviderAliasByMatchingEndpoint() = runTest {
+        val file = nativeFile("root/.codex/config.toml")
+        file.writeText(
+            """
+                model_provider = "zhipu"
+                model = "glm-5.2"
+
+                [model_providers.zhipu]
+                name = "旧智谱配置"
+                base_url = "https://open.bigmodel.cn/api/coding/paas/v4/"
+                wire_api = "responses"
+                requires_openai_auth = false
+                experimental_bearer_token = "$SECRET"
+            """.trimIndent(),
+        )
+        val adapter = CodexAgentConfigAdapter(context, ::container)
+        val before = (adapter.readLive("codex") as AgentConfigReadResult.Ready).snapshot
+
+        val applied = adapter.apply(
+            AgentConfigApplyRequest(
+                agentId = "codex",
+                expectedRevision = before.revision,
+                changes = listOf(
+                    AgentPersistentConfigChange.ConfigureProvider(
+                        AgentProviderDraft(
+                            id = "zhipu-coding-plan",
+                            displayName = "智谱 GLM Coding Plan",
+                            baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4",
+                            models = listOf(AgentProviderModelSummary("glm-5.2", "GLM-5.2")),
+                        ),
+                        AgentProviderCredentialChange.Keep,
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+
+        val text = file.readText()
+        assertEquals("zhipu-coding-plan", applied.snapshot.activeProviderId)
+        assertEquals(SECRET, nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").readText())
+        assertTrue(text.contains("[model_providers.zhipu]"))
+        assertTrue(text.contains("[model_providers.zhipu-coding-plan]"))
+        assertFalse(text.contains("experimental_bearer_token"))
+        assertFalse(text.contains(SECRET))
+        assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
     fun codexProjectsNativeModesIntoVerifiedPermissionLevels() {
         val adapter = CodexAgentConfigAdapter(context, ::container)
         val native = AgentConfigOption.Select(
@@ -677,6 +724,30 @@ class NativeAgentConfigAdaptersTest {
         assertEquals(listOf("read-only", "agent", "agent-full-access"), permission.choices.map { it.value })
         assertEquals(listOf("只读", "审批", "完全"), permission.choices.map { it.name })
         assertEquals("agent", permission.currentValue)
+    }
+
+    @Test
+    fun codexHidesFallbackEffortSuffixWhenCustomModelHasNoVerifiedChoice() {
+        val adapter = CodexAgentConfigAdapter(context, ::container)
+        val customModel = AgentConfigOption.Select(
+            id = "model",
+            name = "Model",
+            category = AgentConfigCategory.Model,
+            currentValue = "glm-5.2[medium]",
+            choices = listOf(
+                AgentConfigChoice("gpt-5.6-sol[low]", "GPT-5.6-Sol (low)"),
+                AgentConfigChoice("gpt-5.6-sol[high]", "GPT-5.6-Sol (high)"),
+            ),
+        )
+
+        val normalized = adapter.normalizeSessionConfiguration(listOf(customModel)).single() as AgentConfigOption.Select
+
+        assertEquals("glm-5.2", normalized.currentValue)
+        assertEquals(customModel.choices, normalized.choices)
+
+        val verifiedModel = customModel.copy(currentValue = "gpt-5.6-sol[high]")
+        val verified = adapter.normalizeSessionConfiguration(listOf(verifiedModel)).single() as AgentConfigOption.Select
+        assertEquals("gpt-5.6-sol[high]", verified.currentValue)
     }
 
     @Test

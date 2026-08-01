@@ -2242,6 +2242,15 @@ internal class CodexAgentConfigAdapter(
     override fun normalizeSessionConfiguration(options: List<AgentConfigOption>): List<AgentConfigOption> =
         super.normalizeSessionConfiguration(options).mapNotNull { option ->
             if (
+                option is AgentConfigOption.Select &&
+                option.category == AgentConfigCategory.Model &&
+                option.choices.none { it.value == option.currentValue }
+            ) {
+                return@mapNotNull option.copy(
+                    currentValue = stripUnverifiedCodexEffortSuffix(option.currentValue),
+                )
+            }
+            if (
                 option !is AgentConfigOption.Select ||
                 option.id != NATIVE_MODE_OPTION_ID ||
                 option.category != AgentConfigCategory.Mode
@@ -2425,10 +2434,22 @@ internal class CodexAgentConfigAdapter(
                 is AgentPersistentConfigChange.ConfigureProvider -> {
                     val provider = change.provider
                     val before = Toml.parse(editor.text)
-                    val activeProviderId = before.getString("model_provider")
-                    val legacyToken = before
-                        .getTable("model_providers.${tomlPathKey(provider.id)}")
-                        ?.getString("experimental_bearer_token")
+                    val matchingProviderIds = buildSet {
+                        add(provider.id)
+                        before.getTable("model_providers")?.let { providers ->
+                            providers.keySet().forEach { providerId ->
+                                val existingUrl = providers.getTable(providerId)?.getString("base_url")
+                                if (sameProviderEndpoint(existingUrl, provider.baseUrl)) add(providerId)
+                            }
+                        }
+                    }
+                    val legacyToken = matchingProviderIds.asSequence()
+                        .mapNotNull { providerId ->
+                            before.getTable("model_providers.${tomlPathKey(providerId)}")
+                                ?.getString("experimental_bearer_token")
+                                ?.takeIf(String::isNotBlank)
+                        }
+                        .firstOrNull()
                     editor = editor
                         .setTopString("model_provider", provider.id)
                         .setTopString("model", provider.models.first().id.trim())
@@ -2437,11 +2458,14 @@ internal class CodexAgentConfigAdapter(
                         .setSectionString(provider.id, "wire_api", "responses")
                         .setSectionBoolean(provider.id, "requires_openai_auth", false)
                         .setSectionString(provider.id, "experimental_bearer_token", null)
+                    matchingProviderIds.forEach { providerId ->
+                        editor = editor.setSectionString(providerId, "experimental_bearer_token", null)
+                    }
+                    val keepsExistingRelayCredential = sameProviderEndpoint(relayUpstream, provider.baseUrl)
                     relayUpstream = provider.baseUrl.trim()
                     relayApiKey = when (val credential = change.credential) {
                         AgentProviderCredentialChange.Keep -> when {
-                            activeProviderId != provider.id -> ""
-                            relayApiKey.isNotBlank() -> relayApiKey
+                            keepsExistingRelayCredential && relayApiKey.isNotBlank() -> relayApiKey
                             !legacyToken.isNullOrBlank() -> legacyToken
                             else -> ""
                         }
@@ -2622,6 +2646,19 @@ internal class CodexAgentConfigAdapter(
         )
         private val SAFE_IMPORT_REFERENCE = Regex("kite-import:import-[A-Za-z0-9-]{8,80}")
         private val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]{0,127}")
+        private val CODEX_COMPOSITE_MODEL = Regex("^(.+)\\[([^]\\r\\n]+)]$")
+        private val CODEX_FALLBACK_EFFORTS = setOf(
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        )
+        private fun stripUnverifiedCodexEffortSuffix(value: String): String {
+            val match = CODEX_COMPOSITE_MODEL.matchEntire(value) ?: return value
+            return match.groupValues[1]
+                .takeIf { match.groupValues[2].lowercase() in CODEX_FALLBACK_EFFORTS }
+                ?: value
+        }
+        private fun sameProviderEndpoint(left: String?, right: String?): Boolean =
+            !left.isNullOrBlank() && !right.isNullOrBlank() &&
+                left.trim().trimEnd('/') == right.trim().trimEnd('/')
         private fun tomlPathKey(value: String): String =
             if (Regex("[A-Za-z0-9_-]+").matches(value)) value
             else "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
