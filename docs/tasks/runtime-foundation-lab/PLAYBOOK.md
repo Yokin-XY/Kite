@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF2000` 下一通用候选审计
-- 当前任务：`RF2020` 普通 PRoot 首份启动配置固定矩阵
+- 当前阶段：`RF2000` 已收口（production no-go）
+- 当前任务：等待本支线合并后重新启动候选审计
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 冻结锚点：`8c046238b3c59094becc8f46df9857169a733649`
 - 分支：`codex/runtime-foundation-lab`
@@ -1044,7 +1044,7 @@
 - [x] RF1900 唯一 Full 为 291 suites、1514 tests、0 failure、0 error、3 个既有平台跳过。Robolectric 在成功退出后留下一个 Windows 临时目录清理警告，但不在工作树/设备/产物中，也未影响退出码或测试统计；
 - [x] RF1900 判 production go；首次安装、APK 更新、修复、重置、Canary、显式 View/环境和任一收据失配仍完整准备，动态网络仍逐进程重建。AI 会话、UI、Store、PRoot 命令和既有边界未改。
 
-### RF2000 [进行中] 普通 PRoot 首份启动配置复用
+### RF2000 [已完成/no-go] 普通 PRoot 首份启动配置复用
 
 父任务目标：普通默认 Ubuntu 容器已经由 RF1900 收据证明 Ready 后，首份终端/卡片/资源/后台 PRoot 启动配置只复用收据已覆盖的静态 layout、container 和 workspace 事实；共享存储、动态网络、View、环境工作区、Node 缓存、运行状态和最终命令仍逐次构造。任一事实未知、收据失配或请求显式 View/环境时，在首个业务进程和原生副作用前整条走现有完整准备。
 
@@ -1056,21 +1056,20 @@
 
 #### RF2020 固定冷进程配置矩阵
 
-- [ ] 固定 Debug/测试入口不接受 ADB 自定义路径、argv、容器、轮数或阈值；在独立冷进程中先确认默认容器 Ready，再只构造固定 `argv=[/bin/true]` 的首份配置，不创建业务进程；
-- [ ] 基线与候选必须得到同一容器身份、工作目录、完整 command/env、共享存储、网络、View 和环境工作区投影；固定收据失配、显式 View、显式环境和非法身份都必须在副作用前走完整准备；
-- [ ] OnePlus 三轮每轮至少减少 30% 且 300ms，候选 p95 不高于 500ms；任一正确性门、收益门或零业务进程门失败即 no-go，不降低门槛。
+- [x] 固定 Debug/测试入口不接受 ADB 自定义路径、argv、容器、轮数或阈值；独立冷进程只构造固定 `argv=[/bin/true]` 的首份配置，三轮均 `businessProcessStarted=false`；
+- [x] 基线与候选得到同一容器身份、工作目录及完整 command/env 摘要；显式 View/环境固定反例、收据失配修复和非法身份单测均失败关闭；
+- [x] 保守配对基线 1298/1294/1294ms，候选 889/878/890ms，每轮减少 31.2%～32.1% 与 404～416ms；百分比和绝对收益通过，但候选 p95=890ms 高于预设 500ms，RF2020 按硬门判 no-go。
 
 #### RF2030 最小生产复用样板
 
-- [ ] 只在现有普通候选 Ready 且请求无显式 View/环境时，用候选 layout/container 跳过收据已经证明的静态重复准备；动态共享存储、网络、View/环境、Node 缓存、telemetry 与最终启动合同继续重建；
-- [ ] 未知事实、失配、首次安装/修复/重置、Canary 和显式 View/环境保持原完整路径；Host/原生路由、PRoot 命令、Store、页面与 AI 会话不变；
-- [ ] Targeted、Quick、Stage、Debug 构建和 OnePlus 正式入口通过后，才进入父门。
+- [x] 未触发：RF2020 延迟上限未过，没有把候选接到 `prepareOrdinaryBuildContext` 或任何正式调用方；固定测试明确断言生产仍调用原 `prepareBuildContextUncached`；
+- [x] 只保留 Debug 固定矩阵、internal benchmark helper 与无行为的 argv 配置组装提取；Host/原生路由、PRoot 命令、Store、页面与 AI 会话未改。
 
 #### RF2040 go/no-go 与父任务门
 
-- [ ] 真实终端或生产 PRoot 动作冷进程命中快路，命令只执行一次，容器/工作区身份一致，FATAL/ANR=0；
-- [ ] RF2000 只运行一次 Full 并零失败；范围审查没有 UI、Store、AI 会话、其他工作树、版本或发布改动；
-- [ ] 判 production go 后立即重新审计 RF2100；若候选只剩单页面/低频/几十毫秒或连续两轮 no-go，则进入细节优化区间并汇总。
+- [x] 不运行候选生产动作：RF2020 已 no-go。OnePlus 固定反例通过，Kite 进程存活，FATAL/ANR=0；
+- [x] Quick 59 suites/269 tests、Stage 118 suites/621 tests（1 个既有跳过）、Debug 构建和 RF2000 唯一 Full 292 suites/1515 tests（3 个既有跳过）全部零失败；
+- [x] RF2000 判 production no-go，工作树只保留可复算证据与等价重构。按用户本轮收尾要求不启动 RF2100，等待代码合并后重新审计。
 
 ## 每个叶子任务的固定闭环
 

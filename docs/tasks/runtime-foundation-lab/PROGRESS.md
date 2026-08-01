@@ -112,9 +112,11 @@
 | RF1920 | 已完成 | 三轮冷进程减少 89.7%～90.1%/至少 1851ms；p95 214ms，判 go |
 | RF1930 | 已完成 | 版本化物理收据＋动态网络复算；三轮减少 69.1%～69.7%/至少 1060ms |
 | RF1940 | 已完成 | 真实 App 冷启动命中、FATAL/ANR=0、唯一 Full 1514 tests，production go |
-| RF2000 | 进行中 | 第一名普通 PRoot 首份启动配置复用；先过固定矩阵再允许生产样板 |
+| RF2000 | 已完成/no-go | 候选省 31.2%～32.1%/404～416ms，但 p95 890ms 未过 500ms 硬门；未接生产 |
 | RF2010 | 已完成 | 四类配置 API/多正式流程覆盖已确认；令牌与原生归档候选暂不进入生产 |
-| RF2020 | 进行中 | 固定冷进程配置等价、失败关闭、零业务进程与 30%＋300ms 收益门 |
+| RF2020 | 已完成/no-go | 等价、失败关闭和相对/绝对收益通过；候选延迟上限失败 |
+| RF2030 | 未触发 | RF2020 no-go；生产仍走原完整首份准备 |
+| RF2040 | 已完成 | Quick/Stage/Debug/Full 1515 tests 与真机反例通过，父任务安全收口 |
 
 ## RF1800 开机与三问自检
 
@@ -202,6 +204,21 @@
 - 第三名“原生 tar/tar.gz/xz 归档”符合 Android 原生能力方向，但当前兼容债务明确缺少统一安全解析、权限/链接语义和多正式调用方；既有安全 ZIP 在 OnePlus 固定矩阵还比 PRoot 慢约 202.8%。没有新平台/实现证据，不重复旧矩阵，判 no-go。
 - RF2020 门在生产改动前冻结：固定 Debug/测试动作不接受 ADB 自定义路径、argv、容器、轮数或阈值；独立冷进程先确认默认容器 Ready，再只构造固定 `/bin/true` argv 配置且不启动它。基线/候选 command、env、身份和全部投影必须一致；收据失配、显式 View/环境、非法身份回完整路径。OnePlus 三轮每轮至少减少 30%＋300ms，候选 p95 不高于 500ms，任一门失败即 no-go。
 - RF2010 只回写三件套，没有生产补丁、测试、构建或设备状态变更；状态继续归容器注册表和 `RuntimeLaunchPreparationCache`，页面不参与。
+
+## RF2020 固定冷进程配置矩阵与 no-go
+
+- Debug 入口只接受三种固定 action，不读取 ADB 传入的路径、argv、容器、轮数或阈值；固定 payload 为 `/bin/true`，只构造 `ContainerExecConfig` 而不执行。静态合同还明确断言正式 `prepareOrdinaryBuildContext` 继续调用 `prepareBuildContextUncached`，没有接候选 helper。
+- 生产改动前的真实当前路径三轮为 1710/1721/1726ms，三轮 `sameIdentity=true`、`businessProcessStarted=false`，config digest 均为 `7e4a25968688659e8bc37a296ebc86cbb66307d3413b1be269d9aa39ee452067`。阶段证据中 `prepareRuntime` 约 469ms、工作区系统组件约 344ms，说明不是几十毫秒细节。
+- 同一候选 APK 的保守配对矩阵将基线强制为完整准备：1298/1294/1294ms；未接生产的候选为 889/878/890ms。每轮减少 409/416/404ms，即 31.5%/32.1%/31.2%；容器身份、command/env digest、20 项 command 与 74 项 env 完全一致，三轮都没有业务进程。
+- 预设门要求每轮至少 30%＋300ms且候选 p95 不高于 500ms。前两项通过，但候选 p95=890ms，故 RF2020 按原门判 no-go，不降低阈值，不进入 RF2030。显式 View/环境反例为 `viewFallback=true/environmentFallback=true`；收据失配为 `fallbackTriggered=true/repaired=true`；非法结构化身份的既有单测仍 Blocked。
+- Quick 为 59 suites/269 tests，Stage 为 118 suites/621 tests、1 个既有跳过，Debug 构建通过。OnePlus 最终进程存活，FATAL/ANR=0。
+
+## RF2040 父任务安全收口
+
+- RF2030 未触发：`buildContainerArgvExecConfigColdReuseCandidateForBenchmark` 只被 Debug 固定入口调用，正式普通准备仍走原完整路径。生产代码仅提取等价的 argv 配置组装 helper，保留了原 command/env/container/workdir 构造。
+- RF2000 唯一 Full 为 292 suites、1515 tests、0 failure、0 error、3 个既有平台跳过；没有第二轮 Full。范围审查未发现 UI、Store、AI 会话、PRoot 命令、其他工作树、版本、发布或远端改动。
+- RF2000 判 production no-go。保留这份可复算证据是为了避免合并后误把约 0.89 秒候选当成已放行能力；下一次只有找到能把候选 p95 压到 500ms 内且保持现有反例的通用机制，才重开生产接入。
+- 用户要求本轮约 40 分钟后收尾以便代码合并，因此不启动 RF2100；当前恢复点是“RF2000 已安全关闭，合并后重新审计下一候选”。
 
 ## RF1700 开机与三问自检
 

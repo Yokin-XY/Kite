@@ -578,36 +578,87 @@ object KFContainerManager {
             )
             val safeWorkingDirectory = workingDirectory.trim()
                 .ifBlank { RuntimeBoundary.CONTAINER_WORKSPACE_PATH }
+            assembleContainerArgvExecConfig(context, prepared, safeWorkingDirectory, argv)
+        }
+    }
 
-            val command = buildContainerProotBaseArgv(
-                layout = prepared.layout,
-                container = prepared.container,
-                androidStorage = prepared.androidStorage,
-                workingDirectory = safeWorkingDirectory,
-                networkPlan = prepared.networkPlan,
-                lane = ProotLaunchLane.EXEC,
-                purpose = "container_argv_exec_config",
-                viewBinding = prepared.viewBinding,
-                environmentWorkspace = prepared.environmentWorkspace,
-            ).apply {
-                addAll(argv)
-            }
+    /** RF2020 固定对照：强制走现有完整准备，但只构造配置，不创建业务进程。 */
+    internal fun buildContainerArgvExecConfigFullPreparationForBenchmark(
+        context: Context,
+        argv: List<String>,
+    ): ContainerExecConfig = launchLifecycleLock.read {
+        val prepared = prepareBuildContextUncached(
+            context = context.applicationContext,
+            caller = "rf2020-full-benchmark",
+        )
+        assembleContainerArgvExecConfig(
+            context = context.applicationContext,
+            prepared = prepared,
+            workingDirectory = RuntimeBoundary.CONTAINER_WORKSPACE_PATH,
+            argv = argv,
+        )
+    }
 
-            val env = buildContainerEnvironment(
-                context = context,
-                layout = prepared.layout,
-                container = prepared.container,
-                shellPath = prepared.shellPath,
-                viewBinding = prepared.viewBinding
-            )
-
-            ContainerExecConfig(
-                container = prepared.container,
-                workingDirectory = safeWorkingDirectory,
-                command = command,
-                env = env
+    /** RF2020 未接生产的候选：复用 Ready 静态事实，动态启动投影仍逐冷进程构造。 */
+    internal fun buildContainerArgvExecConfigColdReuseCandidateForBenchmark(
+        context: Context,
+        argv: List<String>,
+    ): ContainerExecConfig = launchLifecycleLock.read {
+        val appContext = context.applicationContext
+        val candidate = checkNotNull(resolveOrdinaryLaunchPreparationCandidate(appContext)) {
+            "ordinary_launch_preparation_candidate_not_ready"
+        }
+        val prepared = ordinaryLaunchPreparationCache.getOrBuild(
+            identity = candidate.identity,
+            buildReason = "rf2020-candidate-benchmark",
+        ) {
+            prepareBuildContextFromReadyCandidate(
+                context = appContext,
+                caller = "rf2020-candidate-benchmark",
+                refreshRuntimeFiles = false,
+                candidate = candidate,
             )
         }
+        assembleContainerArgvExecConfig(
+            context = appContext,
+            prepared = prepared,
+            workingDirectory = RuntimeBoundary.CONTAINER_WORKSPACE_PATH,
+            argv = argv,
+        )
+    }
+
+    private fun assembleContainerArgvExecConfig(
+        context: Context,
+        prepared: BuildPreparation,
+        workingDirectory: String,
+        argv: List<String>,
+    ): ContainerExecConfig {
+        val command = buildContainerProotBaseArgv(
+            layout = prepared.layout,
+            container = prepared.container,
+            androidStorage = prepared.androidStorage,
+            workingDirectory = workingDirectory,
+            networkPlan = prepared.networkPlan,
+            lane = ProotLaunchLane.EXEC,
+            purpose = "container_argv_exec_config",
+            viewBinding = prepared.viewBinding,
+            environmentWorkspace = prepared.environmentWorkspace,
+        ).apply {
+            addAll(argv)
+        }
+        val env = buildContainerEnvironment(
+            context = context,
+            layout = prepared.layout,
+            container = prepared.container,
+            shellPath = prepared.shellPath,
+            viewBinding = prepared.viewBinding,
+        )
+        return ContainerExecConfig(
+            container = prepared.container,
+            workingDirectory = workingDirectory,
+            command = command,
+            env = env,
+        )
     }
 
     @Synchronized
@@ -1069,6 +1120,60 @@ object KFContainerManager {
         return BuildPreparation(
             layout = layout,
             container = container,
+            androidStorage = androidStorage,
+            shellPath = shellPath,
+            networkPlan = networkPlan,
+            viewBinding = viewBinding,
+            environmentWorkspace = environmentWorkspace,
+        )
+    }
+
+    /**
+     * 只允许由完整冷复用收据产生的普通候选进入。
+     *
+     * 收据已经逐文件证明 runtime、默认容器和工作区静态组件；这里仍逐冷进程解析
+     * Android 共享存储、网络、View/环境工作区、Node 缓存与最终启动环境。
+     */
+    private fun prepareBuildContextFromReadyCandidate(
+        context: Context,
+        caller: String,
+        refreshRuntimeFiles: Boolean,
+        candidate: OrdinaryLaunchPreparationCandidate,
+    ): BuildPreparation {
+        if (refreshRuntimeFiles) {
+            traceStage("refreshContainerRuntimeFiles($caller)") {
+                refreshContainerRuntimeFiles(context, candidate.container)
+            }
+        }
+        val androidStorage = traceStage("resolveAndroidSharedStorage($caller)") {
+            AndroidSharedStorageManager.snapshot(context)
+        }
+        val shellPath = traceStage("buildShellPath($caller)") {
+            buildShellPath(candidate.container)
+        }
+        val networkPlan = traceStage("buildNetworkPlan($caller)") {
+            buildNetworkPlan(context, candidate.layout, candidate.container)
+        }
+        val viewBinding = traceStage("resolveProotView($caller)") {
+            ProotViewRuntime.resolveActiveBinding(
+                container = candidate.container,
+                runtimeDescriptor = readProotRuntimeDescriptor(candidate.layout),
+                requestedViewId = null,
+                requestedEnvironmentId = null,
+            )
+        }
+        traceStage("ensureNodeCompileCache($caller)") {
+            val cacheDirectory = File(candidate.container.workspacePath, NODE_COMPILE_CACHE_WORKSPACE_PATH)
+            check(cacheDirectory.mkdirs() || cacheDirectory.isDirectory) {
+                "无法创建 Node 编译缓存目录：${cacheDirectory.absolutePath}"
+            }
+        }
+        val environmentWorkspace = traceStage("resolveEnvironmentWorkspace($caller)") {
+            ProotEnvironmentWorkspace.plan(candidate.container, viewBinding).also { it.ensureReady() }
+        }
+        return BuildPreparation(
+            layout = candidate.layout,
+            container = candidate.container,
             androidStorage = androidStorage,
             shellPath = shellPath,
             networkPlan = networkPlan,

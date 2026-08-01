@@ -226,5 +226,14 @@
                 <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_COUNTEREXAMPLE" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name="com.kite.app.foundation.runtime.OrdinaryLaunchPreparationBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.ORDINARY_LAUNCH_PREPARATION_BASELINE" />
+                <action android:name="com.kite.app.debug.ORDINARY_LAUNCH_PREPARATION_CANDIDATE" />
+                <action android:name="com.kite.app.debug.ORDINARY_LAUNCH_PREPARATION_COUNTEREXAMPLE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
