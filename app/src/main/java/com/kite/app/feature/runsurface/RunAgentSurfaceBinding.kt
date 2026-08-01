@@ -2278,21 +2278,23 @@ internal class RunAgentSurfaceBinding(
             actionRow.addView(TextView(context).apply {
                 text = action.label
                 textSize = 14f
-                typeface = Typeface.DEFAULT_BOLD
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 gravity = Gravity.CENTER
                 isEnabled = action.enabled
                 alpha = if (action.enabled) 1f else 0.36f
-                setTextColor(when (action.role) {
-                    UiActionRole.Primary -> tokens.primaryStrong
-                    UiActionRole.Secondary -> tokens.textSecondary
-                    UiActionRole.Danger -> tokens.danger
-                })
+                setTextColor(
+                    if (action.filledPrimary) agentPageBackground else when (action.role) {
+                        UiActionRole.Primary -> tokens.primaryStrong
+                        UiActionRole.Secondary -> tokens.textSecondary
+                        UiActionRole.Danger -> tokens.danger
+                    }
+                )
                 background = ui.roundedBox(
-                    when (action.role) {
-                        UiActionRole.Primary -> tokens.primarySubtle
-                        UiActionRole.Secondary -> agentSettingsSurface
-                        UiActionRole.Danger -> tokens.dangerSoft
-                    },
+                    if (action.filledPrimary) tokens.textPrimary else when (action.role) {
+                            UiActionRole.Primary -> tokens.primarySubtle
+                            UiActionRole.Secondary -> agentSettingsSurface
+                            UiActionRole.Danger -> tokens.dangerSoft
+                        },
                     android.graphics.Color.TRANSPARENT,
                     ui.dp(16).toFloat()
                 )
@@ -5142,11 +5144,14 @@ internal class RunAgentSurfaceBinding(
             targetSessionId = sessionId,
         )
         showAgentDialogCard(
-            title = "暂时无法读取的归档会话",
-            message = "Agent 当前列表没有返回这条记录。移出归档只取消 Kite 标记；删除时可以明确选择只清理 Kite 记录，或在 Agent 支持时请求永久删除。",
+            title = "暂时无法读取会话",
+            message = "Agent 未返回这条会话。你可以恢复到列表，或删除这条记录。",
             actions = listOf(
-                AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
-                AgentDialogAction("移出归档", UiActionRole.Primary) { dialog, _ ->
+                AgentDialogAction(
+                    label = "恢复",
+                    role = UiActionRole.Primary,
+                    filledPrimary = true,
+                ) { dialog, _ ->
                     dialog.dismiss()
                     sessionMetadataStore.restore(providerId, sessionId)
                     onChanged()
@@ -5172,43 +5177,43 @@ internal class RunAgentSurfaceBinding(
     ) {
         val providerId = selected.registration.launch.providerId
         showAgentDialogCard(
-            title = "删除无法读取的记录？",
+            title = if (canDeleteNatively) "删除会话？" else "删除记录？",
             message = if (canDeleteNatively) {
-                "“仅删 Kite”只清理本地归档记录；“永久删除”会使用稳定会话 ID 请求 ${selected.registration.definition.displayName} 删除，成功后再清理 Kite 记录。"
+                "这会从 ${selected.registration.definition.displayName} 永久删除，无法恢复。"
             } else {
-                "当前无法安全调用 Agent 原生删除。“仅删 Kite”只清理本地归档记录，不会修改或声称删除 Agent 数据。"
+                "这只会删除 Kite 保存的归档记录。"
             },
             actions = listOf(
                 AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
-                AgentDialogAction("仅删 Kite", UiActionRole.Danger) { dialog, _ ->
-                    sessionMetadataStore.remove(providerId, sessionId)
-                    dialog.dismiss()
-                    onChanged()
-                    Toast.makeText(context, "已删除 Kite 归档记录", Toast.LENGTH_SHORT).show()
-                },
                 AgentDialogAction(
-                    label = "永久删除",
+                    label = "删除",
                     role = UiActionRole.Danger,
-                    enabled = canDeleteNatively,
                 ) { dialog, button ->
                     button.isEnabled = false
                     button.alpha = 0.48f
                     button.text = "删除中…"
-                    lifecycleOwner.lifecycleScope.launch {
-                        when (val result = AgentRuntimeRegistry.deleteSession(instanceId, generation, sessionId)) {
-                            is AgentOperationResult.Success -> {
-                                sessionMetadataStore.remove(providerId, sessionId)
-                                dialog.dismiss()
-                                onChanged()
-                                Toast.makeText(context, "已永久删除 Agent 会话", Toast.LENGTH_SHORT).show()
-                            }
-                            is AgentOperationResult.Unsupported -> {
-                                dialog.dismiss()
-                                Toast.makeText(context, "当前 Agent 未提供永久删除", Toast.LENGTH_LONG).show()
-                            }
-                            is AgentOperationResult.Failure -> {
-                                dialog.dismiss()
-                                Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                    if (!canDeleteNatively) {
+                        sessionMetadataStore.remove(providerId, sessionId)
+                        dialog.dismiss()
+                        onChanged()
+                        Toast.makeText(context, "已删除 Kite 归档记录", Toast.LENGTH_SHORT).show()
+                    } else {
+                        lifecycleOwner.lifecycleScope.launch {
+                            when (val result = AgentRuntimeRegistry.deleteSession(instanceId, generation, sessionId)) {
+                                is AgentOperationResult.Success -> {
+                                    sessionMetadataStore.remove(providerId, sessionId)
+                                    dialog.dismiss()
+                                    onChanged()
+                                    Toast.makeText(context, "已永久删除 Agent 会话", Toast.LENGTH_SHORT).show()
+                                }
+                                is AgentOperationResult.Unsupported -> {
+                                    dialog.dismiss()
+                                    Toast.makeText(context, "当前 Agent 未提供永久删除", Toast.LENGTH_LONG).show()
+                                }
+                                is AgentOperationResult.Failure -> {
+                                    dialog.dismiss()
+                                    Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                     }
@@ -7254,6 +7259,7 @@ internal class RunAgentSurfaceBinding(
         val label: String,
         val role: UiActionRole,
         val enabled: Boolean = true,
+        val filledPrimary: Boolean = false,
         val onClick: (Dialog, TextView) -> Unit
     )
 
