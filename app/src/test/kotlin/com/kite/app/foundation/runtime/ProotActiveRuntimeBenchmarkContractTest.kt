@@ -41,11 +41,20 @@ class ProotActiveRuntimeBenchmarkContractTest {
         assertTrue(source.contains("rf1430_proot_active_hotspot"))
         assertTrue(source.contains("status=rejected suite="))
         assertTrue(source.contains("requiresForeground=true"))
+        assertTrue(source.contains("PROOT_PATCH_ABLATION_BENCHMARK"))
+        assertTrue(source.contains("private val ABLATION_RUNTIMES"))
+        assertTrue(source.contains("rf1432_ablation_identity_mismatch_"))
+        assertTrue(source.contains("patch_00_base"))
+        assertTrue(source.contains("patch_05_view"))
+        assertTrue(source.contains("patch_06_unbundled"))
+        assertTrue(source.contains("patch_07_ndk28"))
+        assertTrue(source.contains("PATCH_ABLATION_VARIANTS"))
         assertFalse(source.contains("getStringExtra"))
         assertFalse(source.contains("getIntExtra"))
         assertFalse(source.contains("activeRuntimeId"))
         assertTrue(manifest.contains("com.kite.app.debug.PROOT_ACTIVE_RUNTIME_BENCHMARK"))
         assertTrue(manifest.contains("com.kite.app.debug.PROOT_ACTIVE_RUNTIME_HOTSPOT"))
+        assertTrue(manifest.contains("com.kite.app.debug.PROOT_PATCH_ABLATION_BENCHMARK"))
         assertTrue(
             Regex(
                 "android:name=\"com\\.kite\\.app\\.foundation\\.runtime\\.ProotActiveRuntimeBenchmarkService\"\\s+" +

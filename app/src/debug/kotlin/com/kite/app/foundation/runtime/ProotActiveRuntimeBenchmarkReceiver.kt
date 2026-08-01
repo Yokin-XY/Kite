@@ -136,6 +136,53 @@ class ProotActiveRuntimeHotspotService : Service() {
     }
 }
 
+/** Debug-only RF1432 正式补丁逐层消融；候选二进制必须预先部署到固定应用私有路径。 */
+class ProotPatchAblationBenchmarkReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action != ACTION) return
+        ProotActiveRuntimeBenchmarkReceiver.startDebugService(
+            context = context,
+            service = Intent(context, ProotPatchAblationBenchmarkService::class.java),
+            suite = "rf1432_proot_patch_ablation",
+        )
+    }
+
+    internal companion object {
+        const val ACTION = "com.kite.app.debug.PROOT_PATCH_ABLATION_BENCHMARK"
+    }
+}
+
+class ProotPatchAblationBenchmarkService : Service() {
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!running.compareAndSet(false, true)) return START_NOT_STICKY
+        scope.launch {
+            try {
+                ProotActiveRuntimeBenchmark.runPatchAblation(applicationContext).forEach { report ->
+                    Log.i(ProotActiveRuntimeBenchmarkReceiver.LOG_TAG, report)
+                }
+            } catch (error: Throwable) {
+                Log.e(
+                    ProotActiveRuntimeBenchmarkReceiver.LOG_TAG,
+                    "status=failed suite=rf1432_proot_patch_ablation " +
+                        "reason=${ProotActiveRuntimeBenchmarkReceiver.safe(error.message ?: error.javaClass.simpleName)}",
+                    error,
+                )
+            } finally {
+                running.set(false)
+                stopSelf()
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    private companion object {
+        val running = AtomicBoolean(false)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
+}
+
 private object ProotActiveRuntimeBenchmark {
     private const val TOKEN = "KITE_PROOT_RF1420_OK"
     private const val STOCK_ASSET = "proot/proot-arm64"
@@ -164,6 +211,14 @@ private object ProotActiveRuntimeBenchmark {
         ACTIVE_NO_TELEMETRY_NO_MOUNTINFO("active_no_telemetry_no_mountinfo"),
         ACTIVE_NO_TELEMETRY_MINIMAL("active_no_telemetry_minimal"),
         ACTIVE_NO_TELEMETRY_EXTERNAL_LOADER("active_no_telemetry_external_loader"),
+        ABLATION_BASE("patch_00_base"),
+        ABLATION_LIFECYCLE("patch_01_lifecycle"),
+        ABLATION_PROCFS("patch_02_procfs"),
+        ABLATION_TRANSACTION("patch_03_transaction"),
+        ABLATION_PROTECTION("patch_04_protection"),
+        ABLATION_VIEW("patch_05_view"),
+        ABLATION_UNBUNDLED("patch_06_unbundled"),
+        ABLATION_NDK28("patch_07_ndk28"),
         STOCK_NO_TELEMETRY("stock_no_telemetry"),
     }
 
@@ -190,6 +245,26 @@ private object ProotActiveRuntimeBenchmark {
         Variant.STOCK_NO_TELEMETRY,
     )
 
+    private data class AblationRuntime(
+        val variant: Variant,
+        val fileName: String,
+        val sha256: String,
+    )
+
+    private val ABLATION_RUNTIMES = listOf(
+        AblationRuntime(Variant.ABLATION_BASE, "proot-rf1432-00-base", "F8BD91DE272733B30ECC222D1BD38E924242A3DBCD28F3B51A04E1F42022E251"),
+        AblationRuntime(Variant.ABLATION_LIFECYCLE, "proot-rf1432-01-lifecycle", "9435B333DA2AFBE1031D7CE926A9AD5EA733F8E5650DC20A6E089C241568E6CF"),
+        AblationRuntime(Variant.ABLATION_PROCFS, "proot-rf1432-02-procfs", "DFEB842ADB5C2FB41991110AE67A79299CA874F8E22A338F171371C617717C88"),
+        AblationRuntime(Variant.ABLATION_TRANSACTION, "proot-rf1432-03-transaction", "E52501DA61EFA14972E0FEEF38EC6576EFC2D1C7D1F895498A7E1F9F3F2E6D5A"),
+        AblationRuntime(Variant.ABLATION_PROTECTION, "proot-rf1432-04-protection", "DC57AE34026C39D71B162A84142E840075E0B7C3673417520B6B2992A9328B28"),
+        AblationRuntime(Variant.ABLATION_VIEW, "proot-rf1432-05-view", "7B1B4C5C4A370D03B46907A47FBCBDF12E0386ED5173ADE088ACE37401004247"),
+        AblationRuntime(Variant.ABLATION_UNBUNDLED, "proot-rf1432-06-unbundled", "205C06FA726ADF4535C6A237A910A4CBCF8B6055EAA63367392F483C3EE6AA1A"),
+        AblationRuntime(Variant.ABLATION_NDK28, "proot-rf1432-07-ndk28", "57778BB2D8BBF65E387B5755266EBCC95C6EFF53E8C65F1AADFC9C6549B1769B"),
+    )
+
+    private val PATCH_ABLATION_VARIANTS = ABLATION_RUNTIMES.map(AblationRuntime::variant) +
+        listOf(Variant.ACTIVE_NO_TELEMETRY, Variant.STOCK_NO_TELEMETRY)
+
     private enum class Workload(val label: String) {
         STARTUP("startup"),
         SHELL("shell"),
@@ -215,6 +290,7 @@ private object ProotActiveRuntimeBenchmark {
         val stock: File,
         val loader: File,
         val loader32: File,
+        val ablation: Map<Variant, File> = emptyMap(),
     )
 
     private data class PreparedConfig(
@@ -403,6 +479,83 @@ private object ProotActiveRuntimeBenchmark {
         }
     }
 
+    fun runPatchAblation(context: Context): List<String> {
+        val workspace = prepareWorkspace(context, "proot-patch-ablation-rf1432")
+        return try {
+            val identityConfig = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
+                context = context,
+                argv = listOf("/bin/true"),
+            )
+            val assets = prepareRuntimeAssets(context, identityConfig, requireAblation = true)
+            warmup(context, workspace, assets, PATCH_ABLATION_VARIANTS)
+            val batches = linkedMapOf<CaseKey, MutableList<Batch>>()
+
+            HOTSPOT_CONCURRENCY_LEVELS.forEachIndexed { levelIndex, concurrency ->
+                repeat(HOTSPOT_ROUNDS) { round ->
+                    val offset = (levelIndex + round) % PATCH_ABLATION_VARIANTS.size
+                    val variants = PATCH_ABLATION_VARIANTS.drop(offset) + PATCH_ABLATION_VARIANTS.take(offset)
+                    variants.forEach { variant ->
+                        val batch = runBatch(
+                            prepareConfigs(
+                                context = context,
+                                workspace = workspace,
+                                assets = assets,
+                                workload = Workload.SMALL_WRITE,
+                                variant = variant,
+                                count = concurrency,
+                            ),
+                        )
+                        batches.getOrPut(CaseKey(Workload.SMALL_WRITE, variant, concurrency)) { mutableListOf() } += batch
+                        Thread.sleep(35L)
+                    }
+                }
+            }
+
+            buildList {
+                add(
+                    "status=started suite=rf1432_proot_patch_ablation rounds=$HOTSPOT_ROUNDS " +
+                        "levels=${HOTSPOT_CONCURRENCY_LEVELS.joinToString(",")} " +
+                        "activeSha256=$ACTIVE_SHA256 " +
+                        "stockSha256=$STOCK_SHA256"
+                )
+                ABLATION_RUNTIMES.forEach { runtime ->
+                    add(
+                        "status=identity suite=rf1432_proot_patch_ablation " +
+                            "variant=${runtime.variant.label} sha256=${runtime.sha256}"
+                    )
+                }
+                HOTSPOT_CONCURRENCY_LEVELS.forEach { concurrency ->
+                    PATCH_ABLATION_VARIANTS.forEach { variant ->
+                        val measured = checkNotNull(
+                            batches[CaseKey(Workload.SMALL_WRITE, variant, concurrency)]
+                        )
+                        val executions = measured.flatMap(Batch::executions)
+                        val failures = executions.count { !succeeded(Workload.SMALL_WRITE, it) }
+                        val residual = executions.count(Execution::residual)
+                        check(failures == 0 && residual == 0) {
+                            "rf1432_small_write_${variant.label}_${concurrency}_failed"
+                        }
+                        add(
+                            "status=ok suite=rf1432_proot_patch_ablation case=small_write " +
+                                "variant=${variant.label} concurrency=$concurrency rounds=$HOTSPOT_ROUNDS " +
+                                "wallMedianMs=${median(measured.map(Batch::wallMs))} " +
+                                "wallSamplesMs=${measured.joinToString(",") { it.wallMs.toString() }} " +
+                                "p50Ms=${percentile(executions.map(Execution::durationMs), 0.50)} " +
+                                "p95Ms=${percentile(executions.map(Execution::durationMs), 0.95)} " +
+                                "failures=$failures residual=$residual"
+                        )
+                    }
+                }
+                add(
+                    "status=complete suite=rf1432_proot_patch_ablation " +
+                        "cases=${PATCH_ABLATION_VARIANTS.size * HOTSPOT_CONCURRENCY_LEVELS.size}"
+                )
+            }
+        } finally {
+            workspace.hostRoot.deleteRecursively()
+        }
+    }
+
     private fun prepareWorkspace(context: Context, suiteDirectory: String): BenchmarkWorkspace {
         val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(context)
         val hostRoot = File(container.workspacePath, ".kf/system/bench/$suiteDirectory")
@@ -413,7 +566,9 @@ private object ProotActiveRuntimeBenchmark {
         val metadata = File(hostRoot, "metadata")
         val writes = File(hostRoot, "write")
         val registry = File(hostRoot, "active-registry")
-        check(metadata.mkdirs() && writes.mkdirs() && registry.mkdirs()) { "rf1420_workspace_create_failed" }
+        check(metadata.mkdirs() && writes.mkdirs() && registry.mkdirs()) {
+            "rf1420_workspace_create_failed"
+        }
         val telemetry = File(hostRoot, "telemetry.jsonl")
         check(telemetry.createNewFile()) { "rf1420_telemetry_create_failed" }
         repeat(512) { index ->
@@ -430,7 +585,11 @@ private object ProotActiveRuntimeBenchmark {
         )
     }
 
-    private fun prepareRuntimeAssets(context: Context, identityConfig: ContainerExecConfig): RuntimeAssets {
+    private fun prepareRuntimeAssets(
+        context: Context,
+        identityConfig: ContainerExecConfig,
+        requireAblation: Boolean = false,
+    ): RuntimeAssets {
         val active = File(checkNotNull(identityConfig.command.firstOrNull())).canonicalFile
         check(active.isFile && active.canExecute()) { "rf1420_active_missing" }
         check(sha256(active) == ACTIVE_SHA256) { "rf1420_active_identity_mismatch" }
@@ -460,7 +619,20 @@ private object ProotActiveRuntimeBenchmark {
         }
         Os.chmod(stock.absolutePath, 0b111101101)
         check(stock.canExecute() && sha256(stock) == STOCK_SHA256) { "rf1420_stock_unusable" }
-        return RuntimeAssets(active, stock, loader, loader32)
+        val ablation = if (requireAblation) {
+            ABLATION_RUNTIMES.associate { runtime ->
+                val file = File(debugRoot, runtime.fileName)
+                check(file.isFile && sha256(file) == runtime.sha256) {
+                    "rf1432_ablation_identity_mismatch_${runtime.variant.label}"
+                }
+                Os.chmod(file.absolutePath, 0b111101101)
+                check(file.canExecute()) { "rf1432_ablation_unusable_${runtime.variant.label}" }
+                runtime.variant to file
+            }
+        } else {
+            emptyMap()
+        }
+        return RuntimeAssets(active, stock, loader, loader32, ablation)
     }
 
     private fun warmup(
@@ -603,6 +775,28 @@ private object ProotActiveRuntimeBenchmark {
                 ),
             )
             Variant.ACTIVE_NO_TELEMETRY_EXTERNAL_LOADER -> base.copy(
+                env = (base.env - TELEMETRY_KEYS) + mapOf(
+                    "PROOT_LOADER" to assets.loader.absolutePath,
+                    "PROOT_LOADER_32" to assets.loader32.absolutePath,
+                ),
+            )
+            Variant.ABLATION_BASE,
+            Variant.ABLATION_LIFECYCLE,
+            Variant.ABLATION_PROCFS,
+            Variant.ABLATION_TRANSACTION,
+            Variant.ABLATION_PROTECTION,
+            Variant.ABLATION_VIEW,
+            Variant.ABLATION_NDK28,
+            -> base.copy(
+                command = base.command.toMutableList().also {
+                    it[0] = checkNotNull(assets.ablation[variant]).absolutePath
+                },
+                env = base.env - TELEMETRY_KEYS,
+            )
+            Variant.ABLATION_UNBUNDLED -> base.copy(
+                command = base.command.toMutableList().also {
+                    it[0] = checkNotNull(assets.ablation[variant]).absolutePath
+                },
                 env = (base.env - TELEMETRY_KEYS) + mapOf(
                     "PROOT_LOADER" to assets.loader.absolutePath,
                     "PROOT_LOADER_32" to assets.loader32.absolutePath,

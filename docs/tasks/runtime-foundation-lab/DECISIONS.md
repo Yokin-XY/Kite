@@ -481,7 +481,7 @@
 
 ## ADR-RF-061 下一阶段直接归因活跃 PRoot 增量成本
 
-- 状态：已接受，RF1400 进行中
+- 状态：已接受，RF1400 已完成
 - 日期：2026-08-01
 - 决定：下一性能父任务不再新增应用特例，直接用 APK 打包的 active/stock PRoot 做同输入 A/B，并把 active 无遥测与正式遥测分开。Debug 对照不得改变 `activeRuntimeId` 或生产迁移状态。
 - 原因：当前上层启动耗时混合了解释器、文件加载、网络和应用初始化；只有同 rootfs/argv 的 PRoot 二进制对照才能回答 Kite 生命周期/View 增量是否构成底层瓶颈。历史 termux baseline 已因 `execve ENOSYS` 隔离，不能作为正常性能对照。
@@ -510,3 +510,19 @@
 - 决定：不默认关闭 `kf_procfs`、`mountinfo`、active registry 或 lifecycle telemetry，也不通过 external loader 替代 embedded loader。RF1432 只研究同源 lifecycle 每事件实现的无损减费；small-write 在缺少可复现同源二进制前不写猜测补丁。
 - 原因：九轮 small-write 中四种开关均未缩小 active/stock 的 92～104ms 差值；child-fanout 中移除 registry、共享日志乃至每进程独立日志都保留约 90ms telemetry 增量。已观测成本属于更深的 active patch/build 差异与事件同步处理，不属于这些可配置开关。
 - 影响：候选必须保留完整事件 schema、父子与 start-ticks 强身份、退出结果和 active registry。KFShell 现有源码树含用户脏改，不作为可写候选；构建只能从 descriptor 固定的 `d30b988` 与正式 patch 在忽略目录复现，正式资产在 RF1440 前不改变。
+
+## ADR-RF-065 lifecycle 局部减费候选不进入生产
+
+- 状态：已接受，RF1432 已完成
+- 日期：2026-08-01
+- 决定：单次缓冲写、持久 telemetry fd 和 registry 活跃计数三个候选均 no-go；不生成正式补丁，不替换 v23。保留可复现源码构建和 Debug 证据，不保留实验二进制。
+- 原因：110 个 session、5404 个事件的 schema、签名和字节一致，但 4/8 并发 wall 与 active 持平。profile 虽显示 registry 约占已测事件路径的 92%，减少日志 open、编码调用和最后一次目录扫描没有兑现端到端收益，说明当前原子 registry 快照总路径需要整体协议设计，不能靠局部微调冒充优化。
+- 影响：active registry、完整生命周期事件、强身份和退出事实继续保持。未来若重开 registry 协议，必须同时给出冷启动恢复、事件 gap、运行中快照、异常中断和旧 reader 兼容，不得只测日志吞吐。
+
+## ADR-RF-066 当前 PRoot 高并发差异不归因于 Kite 六层补丁
+
+- 状态：已接受，RF1440 已完成
+- 日期：2026-08-01
+- 决定：RF1400 以生产 no-go 收口，正式 `proot-kf-lifecycle-arm64` 和 runtime descriptor 保持不变。仓库只新增固定补丁消融入口、可复现构建脚本和结论文档。
+- 原因：完整 v23 已逐字节复现。三套九轮消融中，无 patch 到完整 v23 在 8 并发 small-write 均为 `299～317ms`，stock 为 `204～209ms`，不存在 lifecycle/procfs/transaction/protection/View/block-View 台阶；编译时 external loader 与 NDK 28 也分别保持 `305～314ms`。差异在第一个 Kite patch 之前已存在，属于 `d30b988` Termux 源码线与来源未知库存资产的共同边界。
+- 影响：不能为了约 100ms 的高并发基准把来源未知、缺少 lifecycle/registry/保护/View 的 stock 升为正式 runtime。下一次重开必须有同源、同能力候选，先过语义再谈性能；OpenClaw 总启动时间也不能再归因给本轮已排除的 Kite patch、loader 或 NDK 代次。

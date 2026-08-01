@@ -74,14 +74,14 @@
 | RF1320 | 已完成 | direct exec/spawn 正常语义与并发通过；漏拦和同步错误边界已证实 |
 | RF1330 | 已完成 | Git 实测 child 满足窄合同；Python 仅显式 direct exec/spawn 子集满足，不能整体放行 |
 | RF1340 | 已完成 | preload relay 生产 no-go；Debug 证据保留，正式链零改动 |
-| RF1400 | 进行中 | 对比活跃/库存 PRoot，归因 wrapper、遥测与通用负载成本 |
+| RF1400 | 已完成 | Kite 补丁/loader/NDK 候选均 no-go；正式 v23 保持不变 |
 | RF1410 | 已完成 | 固定三资产身份、loader 等价、五类通用负载与双阈值 |
 | RF1420 | 已完成 | 两套隔离 sink 矩阵打开 small-write 与 c4 lifecycle 热点门 |
-| RF1430 | 进行中 | 定位默认关闭的文件 hook 与 lifecycle 并发写入成本 |
+| RF1430 | 已完成 | 高并发差异始于六个 Kite patch 之前；lifecycle 三候选无收益 |
 | RF1431 | 已完成 | 九轮矩阵排除默认扩展、loader、共享日志和 registry 竞争 |
-| RF1432 | 进行中 | 从 d30b988 + 正式 patch 重建 v23，并研究无损 lifecycle 热路径候选 |
-| RF1433 | 待开始 | 候选事件语义、身份、退出、registry 与性能复算 |
-| RF1440 | 待开始 | go/no-go、全量门与生产范围审查 |
+| RF1432 | 已完成 | 完整 v23 字节复现；固定补丁消融、unbundled 与 NDK 28 候选 |
+| RF1433 | 已完成 | lifecycle 语义一致但无收益；三套补丁消融矩阵零失败、零残留 |
+| RF1440 | 已完成 | 不更新正式 PRoot；全量门、真机与生产范围审查通过 |
 
 ## RF1431 验收
 
@@ -97,6 +97,20 @@
 - 目标是什么？重建可复现的 v23 Debug 候选，并在不减少 lifecycle 事件、强身份、退出事实和 registry 的前提下减少每事件同步开销。
 - 完成后拿什么证明？源与 patch 身份、独立二进制、事件/registry 逐项对照、RF1431 性能复算；正式资产在 RF1440 前保持零差异。
 - 依赖是否满足？RF1431 已排除扩展、loader 和文件竞争伪因；`d30b988`、正式 patch 与 NDK 构建链均可读取，但必须避开 KFShell 脏工作树。
+
+## RF1432～RF1433 可复现源码、候选与消融结果
+
+- `scripts/build-proot-runtime-ablation.ps1` 从 `d30b98846cfdf0923bea26956922a2acf9ef23ae` 归档源码，严格按 lifecycle、procfs、transaction、protection、view、block-view 顺序应用正式 patch，并把所有产物限制在 `local-artifacts/`。脚本实跑得到 356864-byte、SHA-256 `0A465CE2F5E3DCD80F801EF500478E4932248806EDC86CE5C9B0918D60C604BC`，与正式 v23 逐字节一致。
+- lifecycle 候选依次验证了单缓冲区单次 write、持久 `O_APPEND` fd，以及 registry 活跃计数延迟目录扫描。前两项在 4/8 并发均与 active 持平；第三项 110 个 session、5404 个事件的 schema、事件签名和总字节完全一致，但 child-fanout 为 `219/221ms`（4 并发）与 `238/239ms`（8 并发），仍无收益。profile 显示 registry 约 `249µs/event`，说明成本来自每事件原子快照总路径，不是单次 open、JSON 编码或尾部目录扫描。
+- 固定 `PROOT_PATCH_ABLATION_BENCHMARK` 不接受外部参数，逐层比较无 patch、lifecycle、procfs、transaction、protection、view、完整 v23、编译时 unbundled loader、NDK 28 和 stock。三套九轮 OnePlus 8T 矩阵全部结果正确、零残留。
+- 4 并发受设备升频/调度影响出现两簇样本，但各同源层中位数均处于 `132～160ms`，stock 为 `136～139ms`，不存在补丁台阶。8 并发更稳定：无 patch 到完整 v23 均为 `299～317ms`，stock 为 `204～209ms`；unbundled 为 `305/314ms`，NDK 28 为 `314ms`。因此六个 Kite patch、embedded loader 与 NDK 26 不是该差异的根因。
+- stock 只标识为来源未知的 PRoot 5.1.0 资产，缺少 lifecycle、active registry、保护和 View 能力，不能因基准更快而升级为正式 runtime。剩余差异属于 `d30b988` Termux 源码/库存未知构建代次之间的共同边界；在没有同源、同能力且完整语义的候选前，不做不可回退的二进制替换。
+
+## RF1440 父任务门
+
+- go/no-go：no-go。正式 `proot-kf-lifecycle-arm64`、`proot-runtime.json`、六个 patch、Provider、资源清单和运行 lane 均保持不变；Git 只保留 Debug 诊断入口、可复现构建脚本与长期结论。
+- OnePlus 8T 最终消融 20 组、九轮全部成功、零残留；logcat 无匹配 ANR/FATAL。后台直接触发 Service 的既有 Debug 限制仍以 `requiresForeground=true` 显式报告，不进入生产路径。
+- 强制全量单测汇总为 276 个 suite、1465 tests、0 failure、0 error、2 skipped。强制 Debug 构建通过；APK 241563604 bytes，SHA-256 `81FF9937CC2333F564ABB1ABA892AD05EA5D55FCB4991B2B439A9AA5CEEC5986`。最终 logcat 无匹配 ANR/FATAL，设备无残留 benchmark PRoot 进程。
 
 ## RF110 开机与三问自检
 

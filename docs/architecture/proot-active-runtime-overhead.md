@@ -81,3 +81,35 @@ OnePlus 8T 九轮结果：
 - child-fanout 的 4 并发增量不由 active registry 或共享日志争用主导；独立日志仍保留约 90ms，因此热点是 lifecycle 每事件同步采集、格式化与落盘总路径；
 - 8 并发已经落入设备吞吐平台，任何只在 8 并发好看的方案都不能算优化；
 - RF1432 只能优化事件实现，不减少事件、不关闭 telemetry、不弱化强身份与退出确认。候选必须先在 Debug 私有路径与正式资产并行，不能直接覆盖 runtime descriptor。
+
+## RF1432 可复现源码与 lifecycle 候选
+
+正式 v23 已从 `d30b98846cfdf0923bea26956922a2acf9ef23ae` 和六个仓库 patch 在隔离目录重建。固定 NDK 26.3、版本字符串和构建参数后，重建产物为 356864 bytes，SHA-256 `0A465CE2F5E3DCD80F801EF500478E4932248806EDC86CE5C9B0918D60C604BC`，与 APK 正式资产逐字节一致。仓库通过 `scripts/build-proot-runtime-ablation.ps1` 保留这一复现合同；脚本只向 `local-artifacts/` 输出，不生成 Git 构建物。
+
+三个无损 lifecycle 候选依次尝试：
+
+1. 用有界栈缓冲区一次编码并一次 `write`；
+2. 复用单个 `O_APPEND` fd，并在轮转或失败时安全重开；
+3. 记录每个 Tracee 的 registry 活跃事实，只在计数归零时确认并退休 session。
+
+候选三与正式 active 对照 110 个 session、5404 个事件，事件 schema、每 session 连续序号、事件类型签名和总字节一致。profile 把每事件成本分为 identity 1µs、scope 1µs、open 0µs、编码/写入 19µs、registry 249µs；但候选 wall 未改善：child-fanout 4 并发为 active/candidate `219/221ms`，8 并发为 `238/239ms`。这证明 registry 的总原子快照路径昂贵，但单独减少日志 open、编码调用或空 session 扫描并不能降低当前批次时间。三个候选均 no-go，不生成正式 patch。
+
+## RF1433 正式补丁消融
+
+固定 Debug 入口按顺序构建并比较以下同源层级：
+
+| 变体 | 含义 | SHA-256 |
+| --- | --- | --- |
+| `patch_00_base` | `d30b988` 加 Android 头文件构建兼容，不含 Kite 功能 patch | `F8BD91DE...E251` |
+| `patch_01_lifecycle` | 加 lifecycle | `9435B333...E6CF` |
+| `patch_02_procfs` | 再加 procfs | `DFEB842A...7C88` |
+| `patch_03_transaction` | 再加 transaction | `E52501DA...6D5A` |
+| `patch_04_protection` | 再加 protection | `DC57AE34...8B28` |
+| `patch_05_view` | 再加 View v1 | `7B1B4C5C...4247` |
+| active | 再加 block View v2，即正式 v23 | `0A465CE2...4BC` |
+| `patch_06_unbundled` | 完整 v23，编译时 external loader | `205C06FA...A1A` |
+| `patch_07_ndk28` | 完整 v23，改用 NDK 28.2 | `57778BB2...769B` |
+
+三套 OnePlus 8T 九轮矩阵均结果正确、零残留。4 并发样本受升频和调度影响存在约 130ms/240ms 两簇，但各补丁层中位数均为 `132～160ms`，stock 为 `136～139ms`，没有层级台阶。8 并发结果稳定：所有 `d30b988` 同源层为 `299～317ms`，stock 为 `204～209ms`；unbundled 为 `305/314ms`，NDK 28 为 `314ms`。
+
+所以当前 high-concurrency small-write 差异在第一个 Kite patch 之前已经存在，也不由 embedded loader 或 NDK 26 引起。库存资产报告 PRoot 5.1.0，但源码和构建来源未知，且不具备正式 lifecycle、active registry、保护与 View 语义，不能作为生产替代。RF1400 最终 no-go：正式 v23 保持不变，后续只有拿到同源、同能力的新 PRoot 基线并通过完整语义矩阵时才允许重开。
