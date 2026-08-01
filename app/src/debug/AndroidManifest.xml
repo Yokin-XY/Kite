@@ -199,5 +199,15 @@
         <service
             android:name="com.kite.app.platform.resources.ResourceVersionBatchProductionProofService"
             android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.toolchain.BundledResourceDependencyBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.BUNDLED_RESOURCE_DEPENDENCY_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.toolchain.BundledResourceDependencyBenchmarkService"
+            android:exported="false" />
     </application>
 </manifest>
