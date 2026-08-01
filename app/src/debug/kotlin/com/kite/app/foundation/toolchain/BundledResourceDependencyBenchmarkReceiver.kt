@@ -346,19 +346,15 @@ private object BundledResourceDependencyBenchmark {
                     "candidateP50Ms=${percentile(candidateDurations, 0.50)} candidateP95Ms=$candidateP95Ms " +
                     "minimumReductionMs=${reductionsMs.minOrNull() ?: 0L} " +
                     "minimumReductionPercent=${formatPercent(reductionsPercent.minOrNull() ?: 0.0)} " +
-                    "performanceGate=$performanceGate correctnessGate=$correctnessGate providerSource=candidate_scheduler",
+                    "performanceGate=$performanceGate correctnessGate=$correctnessGate providerSource=production_scheduler",
             )
         }
     }
 
-    private fun fixedTasks(): List<FixedTask> = listOf(
-        FixedTask("node", "--install-node"),
-        FixedTask("python", "--install-python"),
-        FixedTask("uv", "--install-uv"),
-        FixedTask("git", "--install-git"),
-        FixedTask("curl", "--install-curl"),
-        FixedTask("system-tools", "--install-system-tools", setOf("node")),
-    )
+    private fun fixedTasks(): List<FixedTask> =
+        ToolchainPackInstaller.bootstrapResourceSchedulingContracts().map { contract ->
+            FixedTask(contract.resourceId, contract.mode, contract.dependencies)
+        }
 
     private fun elapsedMs(startedNs: Long): Long =
         (SystemClock.elapsedRealtimeNanos() - startedNs) / 1_000_000L

@@ -105,8 +105,8 @@
 | RF1800 | 进行中 | 真实包最小收益 68.9%，已进入最小生产调度样板 |
 | RF1810 | 已完成 | 44,411ms 真实串行基线与 6 资源依赖图已审计，发布门已冻结 |
 | RF1820 | 已完成 | 真实内置包三轮零差异，最小减少 68.9%/38,320ms，判 go |
-| RF1830 | 待开始 | 把已证明的通用依赖调度接到首次 6 资源准备 |
-| RF1840 | 未触发 | 真实生产链与父门唯一 Full |
+| RF1830 | 已完成 | 生产 6 资源依赖调度已接入；真包三轮最小减少 67.7%/42,749ms |
+| RF1840 | 待开始 | 真实生产链与父门唯一 Full |
 
 ## RF1800 开机与三问自检
 
@@ -129,6 +129,13 @@
 - Debug-only 真机矩阵固定使用 APK `ai-dev-pack` 的 Node 30.94MiB、Python 28.85MiB、uv 22.94MiB、pnpm 4.39MiB 包，以及 Git/curl rootfs 动作；6 个任务、1 条正式依赖、3 轮、2 槽和阈值均不可由 ADB 覆盖。每个串行/候选使用独立临时软件根和 bin 根，既有正式安装目录未修改。
 - OnePlus 三轮串行为 `57,809/68,948/55,630ms`，候选为 `13,704/20,412/17,310ms`，分别减少 `76.3%/70.4%/68.9%`，绝对减少 `44,105/48,536/38,320ms`；候选 p50 17,310ms、p95 20,412ms，明显超过预设每轮 20%＋5,000ms、p95 36,000ms 门。
 - 三轮 `differences=0`、输入顺序稳定、6 项全部成功、最大活动数 2、依赖数 1、进程清理和 `fixturesCleanedOnExit=true`；隔离目录最终不存在，当前 Kite 进程 FATAL/ANR 为 0。RF1820 判 go，允许 RF1830 最小生产接入，但不允许修改脚本、资源登记、普通资源安装、UI 或 AI 会话。
+
+## RF1830 最小生产调度样板
+
+- `ToolchainPackInstaller.runPreparePackLocked()` 已由完全串行改为委托通用 `DependencyBatchScheduler`。生产任务清单显式声明系统工具依赖 Node，其余 5 项无前置；调度器仍只消费键、依赖和工作闭包，不读取资源名、包名、命令或页面身份。
+- 每项继续调用原 `BootstrapInstallRunner`、原安装脚本参数和原资源根；执行异常或依赖阻断的任务通过原 `ToolchainResourcePort` 登记失败，不新增 Store。结果继续按输入顺序生成失败列表、timeout 和最终摘要，`RuntimeBootstrapProgress` 仍是唯一启动进度拥有者。
+- Debug 固定矩阵已读取生产调度合同并标记 `providerSource=production_scheduler`。OnePlus 三轮串行 `63,182/64,940/62,200ms`，生产调度 `20,433/21,008/18,303ms`，减少 `67.7%/67.7%/70.6%`，绝对至少减少 `42,749ms`；`differences=0`、6 项全成功、1 条依赖、最大活动数 2、性能/正确性/清理门全部通过。
+- Targeted 16 tests、Quick 57 suites/266 tests、Stage 58 suites/278 tests 与 Debug 构建均零失败；固定临时目录不存在、矩阵服务已停止、Kite 进程存活，FATAL/ANR 为 0。补丁没有触及 UI、普通资源事务、PRoot View 或 AI 会话，RF1830 完成并进入 RF1840。
 
 ## RF1700 开机与三问自检
 

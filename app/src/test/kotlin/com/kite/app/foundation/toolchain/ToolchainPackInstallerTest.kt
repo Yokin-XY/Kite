@@ -164,6 +164,52 @@ class ToolchainPackInstallerTest {
         assertEquals(listOf("status", "version"), port.events)
     }
 
+    @Test
+    fun bootstrapSchedulingContractKeepsSixResourcesAndFormalDependency() {
+        val contracts = ToolchainPackInstaller.bootstrapResourceSchedulingContracts()
+
+        assertEquals(
+            listOf(
+                "kite.nodejs",
+                "kite.python",
+                "kite.uv",
+                "kite.git",
+                "kite.curl",
+                "kite.tool.env",
+            ),
+            contracts.map { it.resourceId },
+        )
+        assertEquals(
+            listOf(
+                "--install-node",
+                "--install-python",
+                "--install-uv",
+                "--install-git",
+                "--install-curl",
+                "--install-system-tools",
+            ),
+            contracts.map { it.mode },
+        )
+        assertTrue(contracts.take(5).all { it.dependencies.isEmpty() })
+        assertEquals(setOf("kite.nodejs"), contracts.last().dependencies)
+    }
+
+    @Test
+    fun bootstrapDependencyBlockedWritesExistingFailureStore() {
+        val port = RecordingPort()
+        val result = ToolchainPackInstaller.BootstrapInstallRunner(port).failWithoutExecution(
+            context = context,
+            resourceId = "kite.tool.env",
+            runId = "bootstrap:kite.tool.env",
+            reason = "dependency_failed:kite.nodejs",
+        )
+
+        assertEquals(2, result.exitCode)
+        assertFalse(result.timedOut)
+        assertTrue(result.output.contains("FAIL=1"))
+        assertEquals(listOf("failed"), port.events)
+    }
+
     private class RecordingPort(
         private val status: String = "",
         private val version: String = "1.0.0"

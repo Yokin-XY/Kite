@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1800` 进行中
-- 当前任务：`RF1830` 最小生产调度样板
+- 当前任务：`RF1840` go/no-go 与父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 冻结锚点：`8c046238b3c59094becc8f46df9857169a733649`
 - 分支：`codex/runtime-foundation-lab`
@@ -999,6 +999,10 @@
 - `ToolchainPackInstaller` 只把当前串行循环替换为最多 2 槽的依赖调度；安装脚本、参数、资源根、注册、失败事实、最终摘要和输入顺序保持不变；
 - `KiteResourceInstallStore` 继续拥有每资源状态，`RuntimeBootstrapProgress` 继续拥有启动准备进度；页面不参与调度、不新增 Store、不扫描重资产、不整页刷新；
 - 叶子使用 Targeted、Quick、Stage，不运行 Full。
+- [x] 生产 `runPreparePackLocked()` 已把串行 `mapIndexed` 替换为同一 `DependencyBatchScheduler`；6 个正式任务、输入顺序和原安装函数保持不变，系统工具只在 Node 成功后释放；
+- [x] 任务执行异常或前置失败时，未执行资源通过原 `ToolchainResourcePort` 写入失败事实；无关任务继续，最终摘要仍按 6 项输入顺序归并；
+- [x] Debug 固定矩阵已委托生产调度合同；OnePlus 三轮串行 63,182/64,940/62,200ms，生产调度 20,433/21,008/18,303ms，每轮减少 67.7%～70.6%、至少 42,749ms，零差异且最大活动数 2；
+- [x] Targeted 16 tests、Quick 266 tests、Stage 278 tests、Debug 构建、夹具/进程清理和 FATAL/ANR 检查通过；没有新增页面刷新、渲染时探测或第二 Store。
 
 #### RF1840 go/no-go 与父任务门
 
