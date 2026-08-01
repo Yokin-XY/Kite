@@ -454,6 +454,7 @@ internal class AgentSessionDrawerAdapter(
     private val context: Context,
     private val tokens: ThemeTokens,
     private val onSessionClick: (AgentSessionSummary) -> Unit,
+    private val onSessionMenu: (View, AgentSessionSummary) -> Unit,
     private val onProjectToggle: (String) -> Unit,
     private val onProjectMenu: (View, AgentSessionProjectGroup) -> Unit,
     private val onAction: (AgentDrawerAction) -> Unit
@@ -614,24 +615,40 @@ internal class AgentSessionDrawerAdapter(
             setTextColor(tokens.textSecondary)
             setPadding(0, ui.dp(3), 0, 0)
         }
+        private val more = ImageButton(context).apply {
+            setImageResource(R.drawable.ic_more_horizontal_light)
+            imageTintList = ColorStateList.valueOf(tokens.textTertiary)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
+            background = ui.roundedBox(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+                ui.dp(20).toFloat(),
+            )
+        }
 
         init {
-            container.orientation = LinearLayout.VERTICAL
+            container.orientation = LinearLayout.HORIZONTAL
+            container.gravity = Gravity.CENTER_VERTICAL
             container.layoutParams = RecyclerView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(0, ui.dp(2), 0, ui.dp(2)) }
-            container.addView(title)
-            container.addView(subtitle)
+            container.addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(title)
+                addView(subtitle)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            container.addView(more, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
         }
 
         fun bind(row: AgentDrawerRow.Session, selected: Boolean) {
             val session = row.summary
             container.setPadding(
                 ui.dp(if (row.inProject) 46 else 14),
-                ui.dp(10),
-                ui.dp(14),
-                ui.dp(10)
+                ui.dp(6),
+                ui.dp(4),
+                ui.dp(6)
             )
             title.text = session.title?.takeIf(String::isNotBlank) ?: "未命名会话"
             title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
@@ -646,6 +663,8 @@ internal class AgentSessionDrawerAdapter(
             } else {
                 "打开会话，${title.text}"
             }
+            more.contentDescription = "${title.text} 会话操作"
+            more.setOnClickListener { onSessionMenu(it, session) }
             container.setOnClickListener { onSessionClick(session) }
         }
     }

@@ -193,6 +193,19 @@ internal object AgentSurfaceNavigationPolicy {
             deleteSupported &&
             currentSessionId != targetSessionId
 
+    fun sessionMenuActions(
+        renameSupported: Boolean,
+        deleteSupported: Boolean,
+        currentSessionId: String?,
+        targetSessionId: String,
+    ): List<AgentDrawerSessionMenuAction> = buildList {
+        if (renameSupported) add(AgentDrawerSessionMenuAction.Rename)
+        add(AgentDrawerSessionMenuAction.Archive)
+        if (deleteSupported) {
+            add(AgentDrawerSessionMenuAction.Delete(enabled = currentSessionId != targetSessionId))
+        }
+    }
+
     private fun projectName(cwd: String): String = normalizeCwd(cwd)
         .substringAfterLast('/')
         .takeIf(String::isNotBlank)

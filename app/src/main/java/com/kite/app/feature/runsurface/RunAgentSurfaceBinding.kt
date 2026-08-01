@@ -63,6 +63,7 @@ import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentOperationResult
 import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentSessionPhase
+import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.AgentConfigAdapter
@@ -222,6 +223,7 @@ internal class RunAgentSurfaceBinding(
         context = context,
         tokens = this.tokens,
         onSessionClick = ::loadDrawerSession,
+        onSessionMenu = ::showSessionMenu,
         onProjectToggle = ::toggleDrawerProject,
         onProjectMenu = ::showProjectMenu,
         onAction = ::handleDrawerAction
@@ -1689,6 +1691,182 @@ internal class RunAgentSurfaceBinding(
         renderDrawerSessions()
     }
 
+    private fun showSessionMenu(anchor: View, session: AgentSessionSummary) {
+        val runtime = AgentRuntimeRegistry.session(instanceId)
+        ui.showAnchoredMenu(
+            context = context,
+            anchor = anchor,
+            widthDp = 184,
+            items = AgentSurfaceNavigationPolicy.sessionMenuActions(
+                renameSupported = runtime?.capabilities?.sessions?.rename == true,
+                deleteSupported = runtime?.capabilities?.sessions?.delete == true,
+                currentSessionId = runtime?.sessionId,
+                targetSessionId = session.id,
+            ).map { action ->
+                when (action) {
+                    AgentDrawerSessionMenuAction.Rename -> UiMenuItem(
+                        label = "重命名",
+                        iconRes = R.drawable.ic_edit_light,
+                        onClick = { showSessionRenameDialog(session) },
+                    )
+                    AgentDrawerSessionMenuAction.Archive -> UiMenuItem(
+                    label = "归档",
+                    iconRes = R.drawable.ic_archive_light,
+                    onClick = { archiveDrawerSession(session) },
+                    )
+                    is AgentDrawerSessionMenuAction.Delete -> UiMenuItem(
+                        label = "删除",
+                        iconRes = R.drawable.ic_delete_light,
+                        enabled = action.enabled,
+                        role = UiActionRole.Danger,
+                        onClick = { showDrawerSessionDeleteConfirmation(session) },
+                    )
+                }
+            },
+        )
+    }
+
+    private fun archiveDrawerSession(session: AgentSessionSummary) {
+        val currentProviderId = providerId?.takeIf(String::isNotBlank) ?: return
+        if (sessionMetadataStore.archive(currentProviderId, session.id)) {
+            renderDrawerSessions()
+            renderSessionSearchResults()
+            Toast.makeText(context, "已归档", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showDrawerSessionDeleteConfirmation(session: AgentSessionSummary) {
+        val selected = agentId
+            ?.let { agentRegistry.snapshot().entry(it) }
+            ?: return
+        showArchivedDeleteConfirmation(selected, listOf(session)) {
+            drawerSessions = drawerSessions.filterNot { it.id == session.id }
+            renderDrawerSessions()
+            renderSessionSearchResults()
+        }
+    }
+
+    private fun showSessionRenameDialog(session: AgentSessionSummary) {
+        val originalTitle = session.title?.takeIf(String::isNotBlank).orEmpty()
+        val inputField = EditText(context).apply {
+            hint = "会话名称"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            maxLines = 1
+            setText(originalTitle)
+            setSelection(text?.length ?: 0)
+            setTextColor(tokens.textPrimary)
+            setHintTextColor(tokens.textTertiary)
+            setPadding(ui.dp(16), 0, ui.dp(16), 0)
+            background = ui.roundedBox(
+                agentInputBackground,
+                tokens.borderStrong,
+                ui.dp(15).toFloat(),
+                ui.dp(1),
+            )
+        }
+        val dialog = Dialog(context)
+        val cancel = TextView(context).apply {
+            text = "取消"
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textSecondary)
+            background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(16).toFloat())
+            setOnClickListener { dialog.dismiss() }
+        }
+        val confirm = TextView(context).apply {
+            text = "重命名"
+            textSize = 14f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            gravity = Gravity.CENTER
+            setTextColor(selectionPalette.primaryActionText)
+            background = ui.roundedBox(
+                selectionPalette.primaryAction,
+                android.graphics.Color.TRANSPARENT,
+                ui.dp(16).toFloat(),
+            )
+        }
+        confirm.setOnClickListener {
+            val title = inputField.text?.toString()?.trim().orEmpty()
+            if (title.isBlank() || title.any(Char::isISOControl)) {
+                inputField.error = "请输入有效的会话名称"
+                return@setOnClickListener
+            }
+            confirm.isEnabled = false
+            confirm.alpha = 0.48f
+            confirm.text = "保存中…"
+            lifecycleOwner.lifecycleScope.launch {
+                when (val result = AgentRuntimeRegistry.renameSession(
+                    instanceId,
+                    generation,
+                    AgentSessionRenameRequest(session.id, title),
+                )) {
+                    is AgentOperationResult.Success -> {
+                        drawerSessions = drawerSessions.map {
+                            if (it.id == session.id) it.copy(title = title) else it
+                        }
+                        dialog.dismiss()
+                        renderDrawerSessions()
+                        renderSessionSearchResults()
+                        Toast.makeText(context, "已重命名", Toast.LENGTH_SHORT).show()
+                    }
+                    is AgentOperationResult.Unsupported -> {
+                        confirm.isEnabled = true
+                        confirm.alpha = 1f
+                        confirm.text = "重命名"
+                        inputField.error = "当前 Agent 不支持重命名"
+                    }
+                    is AgentOperationResult.Failure -> {
+                        confirm.isEnabled = true
+                        confirm.alpha = 1f
+                        confirm.text = "重命名"
+                        inputField.error = result.message
+                    }
+                }
+            }
+        }
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(22), ui.dp(22), ui.dp(22), ui.dp(18))
+            background = ui.roundedBox(agentSurface, android.graphics.Color.TRANSPARENT, ui.dp(26).toFloat())
+            elevation = ui.dp(10).toFloat()
+            addView(TextView(context).apply {
+                text = "重命名会话"
+                textSize = 19f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(inputField, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ui.dp(52),
+            ).apply { setMargins(0, ui.dp(16), 0, 0) })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(cancel, LinearLayout.LayoutParams(0, ui.dp(48), 1f))
+                addView(confirm, LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply {
+                    setMargins(ui.dp(8), 0, 0, 0)
+                })
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { setMargins(0, ui.dp(18), 0, 0) })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            setGravity(Gravity.CENTER)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(if (isDark) 0.62f else 0.32f)
+            setLayout(
+                (context.resources.displayMetrics.widthPixels * 0.88f).toInt(),
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+        }
+        inputField.requestFocus()
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+    }
+
     private fun showProjectMenu(anchor: View, project: AgentSessionProjectGroup) {
         ui.showAnchoredMenu(
             context = context,
@@ -1697,6 +1875,7 @@ internal class RunAgentSurfaceBinding(
             items = listOf(
                 UiMenuItem(
                     label = "归档项目",
+                    iconRes = R.drawable.ic_archive_light,
                     onClick = { archiveProject(project) },
                 )
             ),
@@ -7938,6 +8117,12 @@ internal sealed interface AgentArchivedRow {
     data class UnavailableSession(val metadata: AgentArchivedSessionMetadata) : AgentArchivedRow {
         override val key: String = "unavailable-session:${metadata.sessionId}"
     }
+}
+
+internal sealed interface AgentDrawerSessionMenuAction {
+    data object Rename : AgentDrawerSessionMenuAction
+    data object Archive : AgentDrawerSessionMenuAction
+    data class Delete(val enabled: Boolean) : AgentDrawerSessionMenuAction
 }
 
 

@@ -361,6 +361,17 @@ class UiKit private constructor(
                         stroke = Color.TRANSPARENT,
                         recipe = components.control,
                     )
+                    item.iconRes?.let { iconRes ->
+                        addView(ImageView(context).apply {
+                            setImageResource(iconRes)
+                            imageTintList = ColorStateList.valueOf(
+                                if (item.role == UiActionRole.Danger) tokens.danger else tokens.textPrimary,
+                            )
+                            scaleType = ImageView.ScaleType.CENTER_INSIDE
+                        }, LinearLayout.LayoutParams(dp(22), dp(22)).apply {
+                            setMargins(0, 0, dp(12), 0)
+                        })
+                    }
                     addView(TextView(context).apply {
                         text = item.label
                         applyTextRole(this, UiTextRole.Body)
@@ -567,6 +578,7 @@ data class UiDialogAction(
 
 data class UiMenuItem(
     val label: String,
+    val iconRes: Int? = null,
     val selected: Boolean = false,
     val checkable: Boolean = false,
     val enabled: Boolean = true,

@@ -347,6 +347,44 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
+    fun `会话更多菜单只暴露 Agent 已声明的真实能力`() {
+        assertEquals(
+            listOf(
+                AgentDrawerSessionMenuAction.Rename,
+                AgentDrawerSessionMenuAction.Archive,
+                AgentDrawerSessionMenuAction.Delete(enabled = true),
+            ),
+            AgentSurfaceNavigationPolicy.sessionMenuActions(
+                renameSupported = true,
+                deleteSupported = true,
+                currentSessionId = "current",
+                targetSessionId = "historical",
+            ),
+        )
+        assertEquals(
+            listOf(
+                AgentDrawerSessionMenuAction.Archive,
+                AgentDrawerSessionMenuAction.Delete(enabled = false),
+            ),
+            AgentSurfaceNavigationPolicy.sessionMenuActions(
+                renameSupported = false,
+                deleteSupported = true,
+                currentSessionId = "current",
+                targetSessionId = "current",
+            ),
+        )
+        assertEquals(
+            listOf(AgentDrawerSessionMenuAction.Archive),
+            AgentSurfaceNavigationPolicy.sessionMenuActions(
+                renameSupported = false,
+                deleteSupported = false,
+                currentSessionId = null,
+                targetSessionId = "historical",
+            ),
+        )
+    }
+
+    @Test
     fun `无法读取记录只在同一 Provider 提供删除且不是当前会话时开放原生删除`() {
         assertTrue(
             AgentSurfaceNavigationPolicy.canDeleteUnavailableSessionNatively(
