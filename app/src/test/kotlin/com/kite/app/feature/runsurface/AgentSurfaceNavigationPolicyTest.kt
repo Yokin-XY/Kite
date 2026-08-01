@@ -536,6 +536,8 @@ class AgentSurfaceNavigationPolicyTest {
         )
         assertEquals("请输入显示名称", AgentProviderEditorPolicy.validateModel("  ", "model-a"))
         assertEquals(null, AgentProviderEditorPolicy.validateModel("日常模型", "model-a"))
+        assertEquals("请输入显示名称", AgentProviderEditorPolicy.validateDisplayName("\t"))
+        assertEquals(null, AgentProviderEditorPolicy.validateDisplayName("日常模型"))
     }
 
     @Test

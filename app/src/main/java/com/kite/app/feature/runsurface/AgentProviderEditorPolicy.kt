@@ -38,12 +38,17 @@ internal object AgentProviderEditorPolicy {
     }
 
     fun validateModel(displayName: String, modelId: String): String? {
+        validateDisplayName(displayName)?.let { return it }
+        if (!SAFE_MODEL_ID.matches(modelId.trim())) return "模型 ID 不能为空，也不能包含空格"
+        return null
+    }
+
+    fun validateDisplayName(displayName: String): String? {
         val normalizedName = displayName.trim()
         if (normalizedName.isBlank()) return "请输入显示名称"
         if (normalizedName.length > MAX_MODEL_DISPLAY_NAME || normalizedName.any(Char::isISOControl)) {
             return "显示名称不能超过 $MAX_MODEL_DISPLAY_NAME 个字符"
         }
-        if (!SAFE_MODEL_ID.matches(modelId.trim())) return "模型 ID 不能为空，也不能包含空格"
         return null
     }
 

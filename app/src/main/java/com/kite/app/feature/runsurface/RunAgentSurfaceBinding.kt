@@ -5031,15 +5031,24 @@ internal class RunAgentSurfaceBinding(
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginStart = ui.dp(4)
                 })
-                if (projection.editableProvider != null && selectedProviderIds.isEmpty()) {
+                if (projection.models.isNotEmpty() && selectedProviderIds.isEmpty()) {
                     addView(iconButton(context, R.drawable.ic_more_vert_light, "编辑 ${projection.name}") {
-                        showProviderEditor(
-                            selected,
-                            adapter,
-                            providerPageSnapshot ?: snapshot,
-                            projection.editableProvider,
-                            preset = null
-                        )
+                        if (projection.editableProvider != null) {
+                            showProviderEditor(
+                                selected,
+                                adapter,
+                                providerPageSnapshot ?: snapshot,
+                                projection.editableProvider,
+                                preset = null
+                            )
+                        } else {
+                            showSystemModelDisplayNameEditor(
+                                selected,
+                                adapter,
+                                providerPageSnapshot ?: snapshot,
+                                projection,
+                            )
+                        }
                     }.apply { imageTintList = ColorStateList.valueOf(tokens.textSecondary) }, LinearLayout.LayoutParams(
                         ui.dp(42),
                         ui.dp(42)
@@ -5100,6 +5109,147 @@ internal class RunAgentSurfaceBinding(
             }
         }
         return card
+    }
+
+    private fun showSystemModelDisplayNameEditor(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+        snapshot: AgentLiveConfigSnapshot,
+        projection: AgentModelProviderProjection,
+    ) {
+        providerPageAgentId = selected.registration.definition.agentId
+        providerPageAdapter = adapter
+        providerPageSnapshot = snapshot
+        navigationScreen = AgentNavigationScreen.ProviderEditor
+        navigationHost.removeAllViews()
+        navigationHost.addView(
+            buildSystemModelDisplayNameEditorPage(selected, projection),
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
+        navigationHost.visibility = View.VISIBLE
+    }
+
+    private fun buildSystemModelDisplayNameEditorPage(
+        selected: AgentRegistryEntry,
+        projection: AgentModelProviderProjection,
+    ): View {
+        val fields = linkedMapOf<String, EditText>()
+        val status = TextView(context).apply {
+            textSize = 12.5f
+            setTextColor(tokens.danger)
+            visibility = View.GONE
+            setPadding(ui.dp(2), 0, ui.dp(2), ui.dp(10))
+        }
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(16), ui.dp(10), ui.dp(16), ui.dp(30))
+            addView(status)
+            addView(sectionTitle(
+                projection.name,
+                when (projection.source) {
+                    AgentModelProviderSource.Official ->
+                        "官方模型目录与登录状态由系统管理；这里只修改 Kite 显示名称。"
+                    AgentModelProviderSource.DiscoveredFree ->
+                        "免费模型目录由 Agent 提供；这里只修改 Kite 显示名称。"
+                    AgentModelProviderSource.Configured ->
+                        "显示名称只影响 Kite 界面。"
+                }
+            ))
+            projection.models.forEach { model ->
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(14))
+                    background = ui.roundedBox(
+                        agentSettingsSurface,
+                        android.graphics.Color.TRANSPARENT,
+                        ui.dp(20).toFloat()
+                    )
+                    val field = providerEditorField(
+                        this,
+                        label = "显示名称",
+                        hintText = model.name,
+                        value = model.name,
+                    )
+                    fields[model.value] = field
+                    addView(TextView(context).apply {
+                        text = "模型 ID"
+                        textSize = 13f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(tokens.textPrimary)
+                        setPadding(ui.dp(2), 0, 0, ui.dp(7))
+                    })
+                    addView(TextView(context).apply {
+                        text = model.value
+                        textSize = 13.5f
+                        typeface = Typeface.MONOSPACE
+                        setTextColor(tokens.textSecondary)
+                        setTextIsSelectable(true)
+                        setPadding(ui.dp(15), ui.dp(14), ui.dp(15), ui.dp(14))
+                        background = ui.roundedBox(agentSurface, tokens.border, ui.dp(18).toFloat(), ui.dp(1))
+                        contentDescription = "只读模型 ID，${model.value}"
+                    }, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ))
+                    addView(TextView(context).apply {
+                        text = "真正传给 Agent 的稳定标识，只读且不会随显示名称改变。"
+                        textSize = 12.5f
+                        setTextColor(tokens.textSecondary)
+                        setPadding(ui.dp(2), ui.dp(7), ui.dp(2), 0)
+                    })
+                }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { setMargins(0, 0, 0, ui.dp(12)) })
+            }
+        }
+        val save = TextView(context).apply {
+            text = "保存"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textPrimary)
+            contentDescription = "保存模型显示名称"
+            isClickable = true
+            isFocusable = true
+            setOnClickListener {
+                val names = projection.models.map { model ->
+                    val displayName = fields.getValue(model.value).text?.toString()?.trim().orEmpty()
+                    val error = AgentProviderEditorPolicy.validateDisplayName(displayName)
+                    if (error != null) {
+                        status.text = "${model.value}：$error"
+                        status.visibility = View.VISIBLE
+                        return@setOnClickListener
+                    }
+                    AgentModelDisplayName(model.value, displayName)
+                }
+                modelLibraryStore.replaceProviderModelDisplayNames(
+                    selected.registration.definition.agentId,
+                    projection.id,
+                    names,
+                )
+                showCurrentProviderList()
+                Toast.makeText(context, "显示名称已保存", Toast.LENGTH_SHORT).show()
+            }
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+            addView(buildAgentSubpageHeader(
+                title = "编辑显示名称",
+                backDescription = "返回模型库",
+                onBack = ::showCurrentProviderList,
+                trailingView = save,
+            ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+            addView(ScrollView(context).apply {
+                isFillViewport = true
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(content, ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }
     }
 
     private fun buildOfficialAccountAction(
