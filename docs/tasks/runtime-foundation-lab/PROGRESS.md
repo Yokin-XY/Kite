@@ -107,11 +107,13 @@
 | RF1820 | 已完成 | 真实内置包三轮零差异，最小减少 68.9%/38,320ms，判 go |
 | RF1830 | 已完成 | 生产 6 资源依赖调度已接入；真包三轮最小减少 67.7%/42,749ms |
 | RF1840 | 已完成 | 真实生产复用/登记链和父门唯一 Full 通过，production go |
-| RF1900 | 进行中 | 默认 Ubuntu 容器冷启动复用证明；先做固定冷进程矩阵 |
+| RF1900 | 已完成 | 默认 Ubuntu 容器冷进程复用 production go；三轮至少减少 69.1%/1060ms，Full 1514 tests |
 | RF1910 | 已完成 | 第一名冷启动默认容器复用；工具链热复用与健康合并均因收益不足 no-go |
 | RF1920 | 已完成 | 三轮冷进程减少 89.7%～90.1%/至少 1851ms；p95 214ms，判 go |
 | RF1930 | 已完成 | 版本化物理收据＋动态网络复算；三轮减少 69.1%～69.7%/至少 1060ms |
-| RF1940 | 进行中 | 父门真实冷启动、唯一 Full 与 go/no-go |
+| RF1940 | 已完成 | 真实 App 冷启动命中、FATAL/ANR=0、唯一 Full 1514 tests，production go |
+| RF2000 | 进行中 | 重新审计下一通用候选；未固定门前不写生产补丁 |
+| RF2010 | 进行中 | 真实调用面、兼容债务和停止信号审计 |
 
 ## RF1800 开机与三问自检
 
@@ -177,6 +179,19 @@
 - 为关闭跨进程自修复语义，新增版本化物理收据：绑定 APK `versionCode/lastUpdateTime`、PRoot/loader/描述符物理戳、容器身份、Host 时区、rootfs 关键文件/目录权限、工作区静态组件和必要动态路径；普通冷进程只有收据复算完全一致才 Ready，动态网络仍每次重建。APK 重装、时区或任何证明变化都会整条回完整准备并在成功后重写收据。
 - 固定真机反例把收据时区改为不可匹配值，得到 `fallbackTriggered=true/repaired=true/correctnessGate=true`；未由 ADB 传入路径、容器、阈值或样例。最终 OnePlus 三轮配对：完整准备 1550/1535/1546ms，正式快路 479/475/469ms，减少 1071/1060/1077ms、69.1%/69.1%/69.7%；快路 p95 479ms，三轮 `sameIdentity=true/baseUnchanged=true`。
 - 定向测试、Quick 58 suites/268 tests、Stage 62 suites/291 tests（1 个既有平台跳过）与 Debug 构建通过。补丁只改运行时准备、工作区物理证明和 Debug 入口；没有页面、Store、PRoot 命令、View、AI 会话或其他工作树改动。RF1930 完成，进入 RF1940 唯一 Full 与父门。
+
+## RF1940 go/no-go 与父任务门
+
+- OnePlus 强停后从正式 `StartupGuardActivity` 冷启动，系统确认 `LaunchState=COLD`、进入 `MainActivity`、`TotalTime=1404ms`；同一真实进程的正式后台准备日志命中 `默认容器冷进程复用` 与 `mutableRepair=receipt_verified`，不是 Debug 入口直接调用。
+- 固定收据失配反例为 `fallbackTriggered=true/repaired=true`；最终三轮正式/完整配对仍为 469～479ms 对 1535～1550ms，每轮至少减少 69.1%/1060ms，身份一致、基础镜像不变。当前 Kite 进程存活，FATAL/ANR=0。
+- RF1900 唯一 Full 为 291 suites、1514 tests、0 failure、0 error、3 个既有平台跳过。Robolectric 在构建成功后报告一个 Windows 临时目录未立即删除；该目录位于系统 Temp，不在工作树、设备或 Git 中，测试退出码仍为 0，未重跑第二次 Full。
+- RF1900 判 production go。用户可感知收益是新进程第一次取得已经完整修复过的默认 Ubuntu 容器时，约 1.5 秒的重复准备降到约 0.47 秒；首次安装、APK 更新、收据失配和所有未知事实仍付完整修复，不把结论外推到首屏全部耗时或任意 PRoot 命令。
+
+## RF2000 开机与三问自检
+
+- 目标是什么？RF1900 结束后重新审计真实生产调用面，只开启仍能跨多个正式流程、结构化失败关闭并带来用户可感知收益的下一父任务。
+- 完成后拿什么证明？最多三个候选的正式调用方/频率/固定成本，第一名固定反例、端到端收益门与停止信号；无候选达门则连续记录 no-go，不写生产补丁。
+- 依赖是否满足？RF1900 已以唯一 Full 1514 tests 和 OnePlus 真实冷启动完成；当前分支从 `f1d7c402` 后继续，AI 会话、UI、PRoot View、魅族、main/其他工作树、远端、版本与发布仍冻结。
 
 ## RF1700 开机与三问自检
 
