@@ -12,6 +12,7 @@ internal data class DefaultContainerColdReuseFacts(
     val containerRecordCurrent: Boolean,
     val containerRootfsReady: Boolean,
     val workspaceReady: Boolean,
+    val mutableRepairCurrent: Boolean,
     val identity: RuntimeLaunchPreparationIdentity?,
 )
 
@@ -47,6 +48,7 @@ internal object DefaultContainerColdReuseProvider {
             if (!facts.containerRecordCurrent) add("container_record")
             if (!facts.containerRootfsReady) add("container_rootfs")
             if (!facts.workspaceReady) add("workspace")
+            if (!facts.mutableRepairCurrent) add("mutable_repair")
         }
         if (missing.isNotEmpty()) {
             return DefaultContainerColdReuseDecision.Unsupported(

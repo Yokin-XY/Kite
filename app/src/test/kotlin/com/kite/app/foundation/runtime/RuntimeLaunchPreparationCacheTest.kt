@@ -84,6 +84,9 @@ class RuntimeLaunchPreparationCacheTest {
         assertTrue(source.contains("ordinaryLaunchPreparationCache.invalidate(\"reset_default_container\")"))
         assertTrue(source.contains("preparedDefaultContainerIdentity = null"))
         assertTrue(source.contains("默认容器准备快照命中"))
+        assertTrue(source.contains("默认容器冷进程复用"))
+        assertTrue(source.contains("buildNetworkPlan(cold-reuse:"))
+        assertTrue(source.contains("DefaultContainerColdReuseReceipt.isCurrent("))
         assertTrue(source.contains("launchLifecycleLock.read"))
         assertTrue(source.contains("launchLifecycleLock.write"))
     }

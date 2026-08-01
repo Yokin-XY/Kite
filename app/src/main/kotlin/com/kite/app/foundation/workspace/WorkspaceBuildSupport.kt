@@ -16,6 +16,12 @@ import org.json.JSONObject
  * 不放：rootfs/bind/PRoot 细节、入口层动作。
  */
 object WorkspaceBuildSupport {
+    internal data class ColdReuseProofPaths(
+        val directories: List<File>,
+        val staticFiles: List<File>,
+        val requiredPaths: List<File>,
+    )
+
     private const val CONTAINER_AAPT2_OVERRIDE = "/opt/android-sdk/build-tools/aapt2"
     const val CONTAINER_WORKSPACE_ROOT = "/workspace"
     const val DEFAULT_PROJECT_DIR = "/workspace/KFShell"
@@ -429,6 +435,59 @@ object WorkspaceBuildSupport {
             chmodIfPossible(systemStateDir, 0b111101101)
             installedSystemComponentKeys.add(installKey)
         }
+    }
+
+    /**
+     * 跨进程复用只核对 Android 持有的工作区物理事实。
+     * 动态运行状态只要求路径存在，不把内容冻结进收据。
+     */
+    internal fun coldReuseProofPaths(workspaceDir: File): ColdReuseProofPaths {
+        val helperRoot = helperRootDir(workspaceDir)
+        val systemBin = helperSystemBinDir(workspaceDir)
+        val wrappers = helperSystemWrappersDir(workspaceDir)
+        val directories = listOf(
+            helperRoot,
+            helperSystemDir(workspaceDir),
+            systemBin,
+            wrappers,
+            helperSystemProcDir(workspaceDir),
+            helperSystemStateDir(workspaceDir),
+            helperToolchainDir(workspaceDir),
+            gradleUserHomeDir(workspaceDir),
+            androidUserHomeDir(workspaceDir),
+            androidDataDir(workspaceDir),
+        )
+        val managedDirectoryFiles = sequenceOf(systemBin, wrappers)
+            .filter(File::isDirectory)
+            .flatMap { directory -> directory.walkTopDown().filter(File::isFile) }
+            .toList()
+        val staticFiles = buildList {
+            add(File(workspaceDir, "README.txt"))
+            add(File(helperRoot, "README.txt"))
+            add(File(helperRoot, CONTROLLED_LEASE_PROBE_SCRIPT_NAME))
+            add(File(helperRoot, HOST_CONTRACT_FILE_NAME))
+            add(File(helperSystemStateDir(workspaceDir), SYSTEM_COMPONENTS_INSTALL_MARKER_FILE_NAME))
+            addAll(managedDirectoryFiles)
+        }.distinctBy { it.absolutePath }.sortedBy { it.absolutePath }
+        val requiredPaths = listOf(
+            runtimePressureFile(workspaceDir),
+            runtimeProcessTableFile(workspaceDir),
+            prootTelemetryEventsFile(workspaceDir),
+            runtimeReclaimerPolicyFile(workspaceDir),
+            runtimeResidentPolicyFile(workspaceDir),
+            runtimeWorkloadPolicyFile(workspaceDir),
+            runtimeWorkloadIntentFile(workspaceDir),
+            runtimeProcessManifestFile(workspaceDir),
+            runtimeProcessManifestExampleFile(workspaceDir),
+            prootCapacityExecutorPolicyFile(workspaceDir),
+            prootLaunchContractFile(workspaceDir),
+            prootLaunchRequestFile(workspaceDir),
+        )
+        return ColdReuseProofPaths(
+            directories = directories,
+            staticFiles = staticFiles,
+            requiredPaths = requiredPaths,
+        )
     }
 
     private fun systemComponentsInstallVersion(context: Context): String {

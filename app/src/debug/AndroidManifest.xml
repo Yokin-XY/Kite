@@ -217,5 +217,14 @@
                 <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_BENCHMARK" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name="com.kite.app.foundation.runtime.DefaultContainerColdReuseProductionBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_PRODUCTION" />
+                <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_FULL" />
+                <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_COUNTEREXAMPLE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

@@ -58,7 +58,7 @@ private object DefaultContainerColdReuseBenchmark {
         val noSideEffects = before == afterCandidate
 
         val baselineStartedAt = SystemClock.elapsedRealtimeNanos()
-        val baselineContainer = KFContainerManager.ensureDefaultContainer(context)
+        val baselineContainer = KFContainerManager.ensureDefaultContainerFullPreparationForBenchmark(context)
         val baselineMs = elapsedMs(baselineStartedAt)
         val afterBaseline = KFContainerManager.defaultContainerColdReuseDecision(context)
 

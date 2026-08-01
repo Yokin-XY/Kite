@@ -54,6 +54,11 @@ class DefaultContainerColdReuseProviderTest {
     }
 
     @Test
+    fun staleMutableRepairReceiptFallsBackToFullPreparation() {
+        assertUnsupportedFact(readyFacts().copy(mutableRepairCurrent = false), "mutable_repair")
+    }
+
+    @Test
     fun invalidStructuredIdentityIsBlocked() {
         val decision = DefaultContainerColdReuseProvider.evaluate(
             readyFacts(identity(runtimeDescriptorStamp = 0L)),
@@ -80,6 +85,7 @@ class DefaultContainerColdReuseProviderTest {
         containerRecordCurrent = true,
         containerRootfsReady = true,
         workspaceReady = true,
+        mutableRepairCurrent = true,
         identity = identity,
     )
 

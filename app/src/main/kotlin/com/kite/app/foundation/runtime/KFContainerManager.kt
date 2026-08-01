@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.Context.CONNECTIVITY_SERVICE
 import android.net.ConnectivityManager
 import android.os.SystemClock
+import android.system.Os
 import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.workspace.WorkspaceBuildSupport
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -216,7 +217,28 @@ object KFContainerManager {
                 )
                 return candidate.container
             }
+
+            // Provider 的跨进程收据已经核对本版本、时区、关键文件、权限和工作区事实；
+            // 动态网络仍在每个新进程重新生成，不把网络状态写入静态收据。
+            traceStage("buildNetworkPlan(cold-reuse:${candidate.container.id})") {
+                buildNetworkPlan(appContext, candidate.layout, candidate.container)
+            }
+            _containerState.value = candidate.container
+            preparedDefaultContainerIdentity = buildRuntimeLaunchPreparationIdentity(
+                candidate.layout,
+                candidate.container,
+            )
+            Logger.i(
+                "ContainerManager",
+                "默认容器冷进程复用: id=${candidate.container.id}, " +
+                    "createdAt=${candidate.container.createdAt}, mutableRepair=receipt_verified",
+            )
+            return candidate.container
         }
+        return ensureDefaultContainerFullPreparation(appContext)
+    }
+
+    private fun ensureDefaultContainerFullPreparation(appContext: Context): ContainerRecord {
         val layout = traceStage("ensureBaseImageReady(default-container)") {
             ensureBaseImageReady(appContext)
         }
@@ -253,6 +275,11 @@ object KFContainerManager {
         preparedDefaultContainerIdentity = buildRuntimeLaunchPreparationIdentity(layout, container)
         return container
     }
+
+    /** Debug 固定矩阵的原完整路径；不接受外部参数，也不改变正式入口的选择。 */
+    @Synchronized
+    internal fun ensureDefaultContainerFullPreparationForBenchmark(context: Context): ContainerRecord =
+        ensureDefaultContainerFullPreparation(context.applicationContext)
 
     @Synchronized
     fun ensureNobleCanaryContainer(context: Context): ContainerRecord {
@@ -924,16 +951,22 @@ object KFContainerManager {
     ): DefaultContainerColdReuseInspection {
         val layout = AssetExtractor.getRuntimeLayout(context)
         val container = getSavedContainer(context)
-        val runtimeReady = layout.prootFile.isFile &&
-            layout.prootLibtallocFile.isFile &&
-            layout.prootLoaderFile.isFile &&
-            layout.prootLoader32File.isFile &&
-            layout.prootRuntimeDescriptorFile.isFile &&
-            AssetExtractor.installedRuntimeAssetsCurrent(context, layout)
         val containerRecordCurrent = container != null && isDefaultContainerRecordCurrent(container, layout)
         val containerRootfsReady = containerRecordCurrent &&
             isContainerRootfsReady(File(checkNotNull(container).rootfsPath), layout.profile)
         val workspaceReady = containerRecordCurrent && File(checkNotNull(container).workspacePath).isDirectory
+        val mutableRepairCurrent = containerRecordCurrent && DefaultContainerColdReuseReceipt.isCurrent(
+            context = context,
+            layout = layout,
+            container = checkNotNull(container),
+            hostTimeZoneId = currentHostTimeZoneId(),
+        )
+        val runtimeReady = mutableRepairCurrent &&
+            layout.prootFile.isFile &&
+            layout.prootLibtallocFile.isFile &&
+            layout.prootLoaderFile.isFile &&
+            layout.prootLoader32File.isFile &&
+            layout.prootRuntimeDescriptorFile.isFile
         val identity = container
             ?.takeIf { containerRecordCurrent }
             ?.let { buildRuntimeLaunchPreparationIdentity(layout, it) }
@@ -948,6 +981,7 @@ object KFContainerManager {
                 containerRecordCurrent = containerRecordCurrent,
                 containerRootfsReady = containerRootfsReady,
                 workspaceReady = workspaceReady,
+                mutableRepairCurrent = mutableRepairCurrent,
                 identity = identity,
             ),
         )
@@ -1336,15 +1370,8 @@ object KFContainerManager {
                 cloneBaseImage(layout.baseImageDir, containerRootfs)
             }
         }
-        traceStage("ensureAndroidHostGroups(${container.id})") {
-            ensureAndroidHostGroups(containerRootfs)
-        }
-        traceStage("ensurePackageManagerFiles(${container.id})") {
-            ensurePackageManagerFiles(containerRootfs, layout.profile)
-        }
-        traceStage("ensureContainerTimeZone(${container.id})") {
-            ensureContainerTimeZone(containerRootfs)
-        }
+        // bootstrap 已依次执行 host groups、包管理目录、网络和时区校准；
+        // 不在外层把同一组可变修复重复一遍。
         traceStage("ensureContainerBootstrap(${container.id})") {
             ensureContainerBootstrap(context, layout, containerRootfs, layout.profile)
         }
@@ -1357,11 +1384,17 @@ object KFContainerManager {
                 filesystem.workspaceDir.mkdirs()
             }
         }
-        traceStage("ensureWorkspaceBuildSupport(${container.id})") {
-            WorkspaceBuildSupport.ensure(filesystem.workspaceDir)
-        }
+        // installSystemComponents 首步就是 WorkspaceBuildSupport.ensure；保持一次完整校准即可。
         traceStage("ensureWorkspaceSystemComponents(${container.id})") {
             WorkspaceBuildSupport.installSystemComponents(context, filesystem.workspaceDir)
+        }
+        traceStage("writeDefaultContainerColdReuseReceipt(${container.id})") {
+            DefaultContainerColdReuseReceipt.write(
+                context = context,
+                layout = layout,
+                container = container,
+                hostTimeZoneId = currentHostTimeZoneId(),
+            )
         }
     }
 
@@ -1719,7 +1752,7 @@ object KFContainerManager {
         }
     }
 
-    private fun currentHostTimeZoneId(): String {
+    internal fun currentHostTimeZoneId(): String {
         val candidate = TimeZone.getDefault().id.trim()
         val valid = candidate.isNotBlank() &&
             !candidate.startsWith("/") &&
@@ -2089,11 +2122,7 @@ object KFContainerManager {
 
     private fun applyHostMode(target: File, mode: String) {
         runCatching {
-            val process = ProcessBuilder("/system/bin/chmod", mode, target.absolutePath)
-                .redirectErrorStream(true)
-                .start()
-            process.inputStream.bufferedReader().use { it.readText() }
-            process.waitFor()
+            Os.chmod(target.absolutePath, mode.toInt(radix = 8))
         }.onFailure { error ->
             Logger.d("ContainerManager", "chmod $mode 失败: ${target.absolutePath}, ${error.message}")
         }
