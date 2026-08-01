@@ -69,11 +69,16 @@
 | RF1220 | 已完成 | 两套真机矩阵：本地 builtin 明显受益，所有外部子进程类别均有缺口 |
 | RF1230 | 已完成 | direct Host Git no-go；argv/预扫描/事后回退都不能保证仓库语义 |
 | RF1240 | 已完成 | 1464 项全量门、强制构建、双轮真机和生产范围审查通过 |
-| RF1300 | 进行中 | 研究入口无关的 glibc child relay，不为 Git/Python 写特判 |
+| RF1300 | 已完成 | unrestricted relay no-go；窄合同结果可行但当前实现不满足生产 fork/lifecycle 门 |
 | RF1310 | 已完成 | 入口/观察语义与同步错误、hidden symbol 风险已固化 |
 | RF1320 | 已完成 | direct exec/spawn 正常语义与并发通过；漏拦和同步错误边界已证实 |
 | RF1330 | 已完成 | Git 实测 child 满足窄合同；Python 仅显式 direct exec/spawn 子集满足，不能整体放行 |
-| RF1340 | 进行中 | go/no-go、全量门与生产范围审查 |
+| RF1340 | 已完成 | preload relay 生产 no-go；Debug 证据保留，正式链零改动 |
+| RF1400 | 进行中 | 对比活跃/库存 PRoot，归因 wrapper、遥测与通用负载成本 |
+| RF1410 | 进行中 | 固定资产身份、参数等价与非 Node/Python 负载合同 |
+| RF1420 | 待开始 | Debug-only 1/4/8 固定 A/B 真机矩阵 |
+| RF1430 | 待开始 | 仅在稳定退化成立时定位热点与候选补丁 |
+| RF1440 | 待开始 | go/no-go、全量门与生产范围审查 |
 
 ## RF110 开机与三问自检
 
@@ -395,6 +400,20 @@
 - Host Python + relay 中，Python subprocess、`/bin/uname` subprocess、`os.execve`、venv 创建及 venv child 均与独立 PRoot 一致，实际命中 `execv:3, execve:2`。`os.system("git --version")` 未命中 relay，Host 失败而 PRoot 成功，证实 Python 不能按解释器整体放行。
 - `venv --with-pip` 在 Host+relay 与独立 PRoot 均因同一 `ensurepip` 路径失败，不作为 relay 回归或成功证据。矩阵结束后无 relay/proot/python 残留，logcat 无匹配 ANR/FATAL。
 - 结论是“显式 direct exec/spawn 调用合同可行”，不是“Git/Python 已通用兼容”。RF1340 只有在请求能在进程创建前声明该保证、且不依赖同步 errno 时，才可讨论生产接线；未知调用保持整条 PRoot。
+
+## RF1340 go/no-go 与父任务门
+
+- 现有 `runtimeGuarantees` 能承载肯定式 direct exec/spawn 与异步失败保证，无需新增平行配置；但 Debug relay 在 exec 路径读取控制文件并使用 `calloc/strdup/realloc/free`。对多线程父进程 fork 后的 child，这些操作没有 async-signal-safe 证明，固定单线程矩阵不能替代该发布门。
+- Debug 基准显式创建并在完成后删除每轮 prefix/env 控制目录。正式 `RuntimeExecutionProvider` 在生成 `ContainerLaunchConfig` 时尚无 run identity 或进程终态清理所有权；直接复用会产生跨运行覆盖、泄漏或竞态风险。
+- `system/popen/fexecve` 漏拦和同步 errno 变化虽然能由调用方保证失败关闭，但不能抵消上述实现级阻断。把 relay 二进制打进正式资产、扩展 guarantee enum 或修改 Host Python 均被否决。
+- RF1300 最终结论：实验原理与窄语义合同成立，当前 preload 实现生产 no-go。正式 launcher、compat、Host Python、资源、Planner、lane/Store 零改动；Debug 原型与文档保留为后续重新设计 fork-safe relay 的起点。
+- 父任务门完成 275 个 suite、1464 项全量单测，0 failure、0 error、2 skipped；强制 Debug 构建通过，APK 241,481,432 bytes，SHA-256 `9C844C210D26CA63D88F9E76CAD774C00BC744CB595BCD3C7DC3183EC999799F`。`3f0c1577..HEAD` 对 `app/src/main`、正式 `assets` 与 `app/build.gradle` 零净改动。OnePlus 8T 沿用 RF1320/RF1330 当轮固定矩阵，无残留 relay/proot/python，logcat 无匹配 ANR/FATAL。
+
+## RF1400 开机与三问自检
+
+- 目标是什么？直接测量当前活跃 Kite PRoot 相对 APK 内库存 PRoot 的增量成本，区分 wrapper 固定开销、生命周期遥测和通用 Linux 负载，不再用 OpenClaw 或解释器总耗时猜原因。
+- 完成后拿什么证明？同一 rootfs/workspace/argv/env 的 1/4/8 固定交替矩阵，覆盖启动、shell、元数据、文件 I/O 与 child，分别比较 active 无遥测、active 正式遥测和 stock；验证结果、残留与 ANR/FATAL。
+- 依赖是否满足？满足。两个资产均已随 APK 打包且身份固定；termux historical baseline 已标记 `execve ENOSYS`，不纳入成功对照；本阶段只新增 Debug 入口，不切换正式 runtime。
 
 ## RF710 开机与三问自检
 

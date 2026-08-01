@@ -470,3 +470,19 @@
 - 决定：不增加 Git/Python 工具白名单，也不因一次真机矩阵直接开放整个解释器。只有调用方在进程创建前肯定声明“只使用已覆盖 direct exec/spawn 家族”与“接受容器目标的异步 child failure”时，候选 Provider 才能使用 relay；空声明、未知调用、`system/popen/fexecve` 或依赖同步 errno 的请求继续整条 PRoot。
 - 原因：Git 固定矩阵的全部外部机制均通过 `execve`，relay 后状态、文件副作用与 PRoot 一致且保留明显并发收益；同一个 Python 父进程却同时存在可捕获的 subprocess/execve 和绕过 relay 的 `os.system`。工具身份因此不能证明运行语义，只有调用方合同能在首个业务进程前安全分流。
 - 影响：RF1340 若接生产，必须新增通用、肯定式、失败关闭的执行保证，不解析工具名或脚本；relay 仍复用唯一 PRoot builder，不生成第二条状态链。无法把保证贯穿 Recipe/Run 请求时，RF1300 以生产 no-go 收口。
+
+## ADR-RF-060 当前 preload child relay 不进入生产
+
+- 状态：已接受，RF1340 已完成
+- 日期：2026-08-01
+- 决定：保留 Debug relay、真机矩阵与窄调用合同，但不把 relay 打入正式 glibc 资产，不扩展正式 guarantee enum，不修改 Host Python/Git/资源/Planner。RF1300 以“原理可行、当前实现生产 no-go”收口。
+- 原因：exec interposer 当前依赖文件 I/O 与动态分配，无法证明多线程父进程 fork 后 child 的 async-signal-safe；每运行 prefix/env 控制文件也没有进入现有 run 生命周期所有权。两项均可能造成死锁、跨运行污染或长期残留，不能用单线程成功样本掩盖。
+- 影响：未来重开必须先给出 fork-safe 的预计算/无分配执行路径和由现有 run owner 管理的配置生命周期，再复用 RF1320/RF1330 矩阵。当前未知子进程仍整条 PRoot，已冻结 Node 专用 child bridge 不受影响。
+
+## ADR-RF-061 下一阶段直接归因活跃 PRoot 增量成本
+
+- 状态：已接受，RF1400 进行中
+- 日期：2026-08-01
+- 决定：下一性能父任务不再新增应用特例，直接用 APK 打包的 active/stock PRoot 做同输入 A/B，并把 active 无遥测与正式遥测分开。Debug 对照不得改变 `activeRuntimeId` 或生产迁移状态。
+- 原因：当前上层启动耗时混合了解释器、文件加载、网络和应用初始化；只有同 rootfs/argv 的 PRoot 二进制对照才能回答 Kite 生命周期/View 增量是否构成底层瓶颈。历史 termux baseline 已因 `execve ENOSYS` 隔离，不能作为正常性能对照。
+- 影响：RF1410 先固定参数等价与通用负载，RF1420 再上 OnePlus 8T。仅当 active 相对 stock 稳定退化且能归因到可关闭热点时，RF1430 才允许修改 PRoot 资产；强身份、停止确认和保护语义不得作为性能开关被移除。

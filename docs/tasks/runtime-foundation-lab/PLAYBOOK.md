@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF1300` 通用 glibc child relay 可行性
-- 当前任务：`RF1340` go/no-go 与父任务门
+- 当前阶段：`RF1400` PRoot 活跃运行时开销归因
+- 当前任务：`RF1410` 活跃/库存 PRoot 对照合同
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -751,8 +751,36 @@
 
 #### RF1340 go/no-go 与父任务门
 
-- 兼容、唯一执行和收益同时成立才讨论生产合同；
-- 任一 exec 入口漏拦、fd/信号改变、嵌套 PRoot 或静默降级都 no-go；
+- 状态：已完成，当前 preload relay 生产 no-go；
+- [x] 兼容、唯一执行和收益同时成立才讨论生产合同；
+- [x] fork-child 安全与控制文件生命周期未关闭，正式 Provider/compat/资源/lane 保持不变；
+- [x] 全量回归、强制构建、OnePlus 8T 固定矩阵和生产范围审查后独立提交。
+
+### RF1400 [P0 PRoot 核心] 活跃运行时开销归因
+
+父任务方向：不再通过上层应用启动时间猜测 PRoot。用 APK 已打包的活跃 `proot-kf-lifecycle-arm64` 与库存 `proot-arm64` 在同一 rootfs、workspace、argv、环境和设备上做固定 A/B，分离基础 wrapper、生命周期遥测和通用小文件/子进程负载的成本。历史 quarantined baseline 只作身份材料，不作为成功对照。
+
+#### RF1410 活跃/库存 PRoot 对照合同
+
+- 审计两个资产的来源、loader、CLI 兼容和当前正式选择链；
+- 固定启动、shell、元数据遍历、文件读写和子进程负载，不重复 Node/Python 已冻结矩阵；
+- 明确 stock 只作为 Debug 对照，绝不改变正式 `activeRuntimeId`。
+
+#### RF1420 Debug-only 固定 A/B 矩阵
+
+- 固定 1/4/8 并发、交替顺序、三轮、超时和结果校验；
+- active 先测无遥测，再测正式生命周期遥测；stock 使用同等可表达参数；
+- 同时记录 wall、P50/P95、失败、残留与 ANR/FATAL，不接受 ADB 自定义命令。
+
+#### RF1430 热点归因与候选补丁边界
+
+- 只有 active 相对 stock 稳定退化时才继续定位 syscall/telemetry/path 热点；
+- 不为某个应用特判，不关闭强身份、停止确认或文件保护；
+- 候选改动必须能在默认无 View 路径上失败关闭，并保留现有生命周期事实。
+
+#### RF1440 go/no-go 与父任务门
+
+- 有稳定收益且完整语义保持才改正式 PRoot；否则以“非 Kite PRoot 增量瓶颈”收口；
 - 全量回归、强制构建、OnePlus 8T 固定矩阵和生产范围审查后独立提交。
 
 ## 每个叶子任务的固定闭环

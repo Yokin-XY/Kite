@@ -115,3 +115,13 @@ OnePlus 8T 用同一 relay 复算 Git 与 Python，结果证明选择单位必�
 - relay 对 `PATH` 的每个分段和受控根开头的环境值做通用容器路径映射，未读取工具名、资源 ID、subcommand 或脚本内容。
 
 因此可进入 RF1340 的只有肯定式窄合同：调用方明确保证只走已覆盖 direct exec/spawn，并接受目标解析失败由 child exit 异步表达。未知或空声明、shell API、fd exec、同步 errno 依赖全部失败关闭到 PRoot。正式 Provider、launcher、compat 资产、资源和 lane 在 RF1330 仍未修改。
+
+## RF1340 生产门结论
+
+当前 preload relay 不进入正式运行链。阻断不是 Git/Python 结果矩阵，而是实现级生命周期：
+
+- `exec` 路径读取 prefix/env 文件并动态分配；多线程父进程 fork 后的 child 只能调用 async-signal-safe 操作，现有实现没有该证明；
+- Debug runner 自己创建并删除控制目录，正式 Provider 生成计划时没有可绑定的 run identity 与进程终态清理钩子；
+- 把控制文件改成全局共享会引入并发覆盖，把它永久保留会泄漏环境事实，两者均违反既有唯一运行和状态拥有者合同。
+
+因此 RF1300 以“窄协议可行、当前实现生产 no-go”收口。Debug C 源、构建脚本和固定矩阵继续作为研究证据；正式 glibc 资产、Host Python、资源声明、Planner 与运行事实不变。未来重开必须先提供 fork-safe 的预计算/无分配路径，以及由既有 run owner 管理、进程终态可回收的配置生命周期。
