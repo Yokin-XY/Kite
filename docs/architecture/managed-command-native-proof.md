@@ -77,3 +77,18 @@ Debug 基准不接收 ADB 命令、路径、轮数、资源 ID 或环境参数�
 | 3 | 105ms | 11.930ms | 28.269ms | 88.6% |
 
 三轮的可执行、缺失、断链和无执行位结果均与 PRoot 完全一致；假阳性、假阴性、shell failure、残留、ANR 和 FATAL 均为零。RF1530 的候选门通过，RF1540 仍需验证真实资源打开/获取链和父任务 Full 门。
+
+## RF1540 正式链确认
+
+最终接入保留原有 `reconcileInstalledResources()` 作为唯一入口，并只增加低基数计数观测。协调器本身不依赖 Android 日志，正式 Android 组装层注入日志出口，因此纯 JVM 合同测试和生产观测互不污染。
+
+2026-08-01 在 OnePlus 8T 上覆盖安装最终候选包，从资源目录人工触发已获取的 OpenClaw“打开”：
+
+- 日志为 `resolved total=1, native=1, cached=0, fallback=0`；
+- 同一时间窗没有 `resource-installed-state-probe`，即没有创建 PRoot `command -v` 探针；
+- 页面进入 OpenClaw Agent 显示面并显示“可以开始新会话”；
+- 没有新增 ANR 或 FATAL。
+
+资源“获取”的 `buildInstallPlan()` 与“打开”调用同一 `reconcileInstalledResources()`，由生产代码审查和 JVM 回归共同覆盖。本轮没有为了验收点击一个未获取资源并改变用户安装状态，因此不把它描述成第二次真机安装证据。
+
+父任务 Full 为 279 suites、1473 tests、0 failure、0 error、2 skipped；最终结论为 go。该能力只减少受管命令首次正向核对的约 90ms PRoot 固定成本，不等价于把整个 OpenClaw 启动时间缩短 90%。

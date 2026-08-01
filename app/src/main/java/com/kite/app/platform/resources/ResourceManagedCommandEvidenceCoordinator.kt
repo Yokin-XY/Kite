@@ -70,6 +70,7 @@ internal fun buildResourceManagedCommandNativeProof(
  */
 internal class ResourceManagedCommandEvidenceCoordinator(
     private val maxEntries: Int = 128,
+    private val observationSink: (String) -> Unit = {},
 ) {
     private val reconcileMutex = Mutex()
     private val positiveEvidence = LinkedHashMap<ResourceManagedCommandEvidenceIdentity, Unit>(16, 0.75f, true)
@@ -102,6 +103,10 @@ internal class ResourceManagedCommandEvidenceCoordinator(
                     request.identity?.let(positiveEvidence::containsKey) == true
             }
         }
+        observationSink(
+            "resolved total=${normalized.size}, native=${nativeProven.size}, " +
+                "cached=${normalized.size - nativeProven.size - pending.size}, fallback=${pending.size}",
+        )
         if (pending.isEmpty()) return@withLock Result.success(emptySet())
 
         probe(pending.map(ResourceManagedCommandEvidenceRequest::requirement)).map { missing ->

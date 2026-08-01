@@ -22,6 +22,7 @@ import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
 import com.kite.app.foundation.runtime.RuntimeLaunchTrace
+import com.kite.app.foundation.logging.Logger
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
@@ -65,7 +66,9 @@ internal class AndroidResourceActionGateway(
     private val installedStateProbe: ResourceInstalledStateProbe =
         AndroidResourceInstalledStateProbe(bridgeClient),
     private val managedCommandEvidence: ResourceManagedCommandEvidenceCoordinator =
-        ResourceManagedCommandEvidenceCoordinator(),
+        ResourceManagedCommandEvidenceCoordinator { message ->
+            Logger.i("ResourceManagedCommandProof", message)
+        },
 ) : ResourceActionGateway {
     private val appContext = context.applicationContext
 

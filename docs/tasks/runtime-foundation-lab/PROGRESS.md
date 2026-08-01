@@ -82,11 +82,11 @@
 | RF1432 | 已完成 | 完整 v23 字节复现；固定补丁消融、unbundled 与 NDK 28 候选 |
 | RF1433 | 已完成 | lifecycle 语义一致但无收益；三套补丁消融矩阵零失败、零残留 |
 | RF1440 | 已完成 | 不更新正式 PRoot；全量门、真机与生产范围审查通过 |
-| RF1500 | 进行中 | 先固化兼容债务，再验证高频受管命令只读证明 |
+| RF1500 | 已完成 | 债务总账、原生证明、真实打开链和父任务门均已完成 |
 | RF1510 | 已完成 | 三车道明确不支持、兼容路线与未来候选已统一编号 |
 | RF1520 | 已完成 | 打开/获取共享能力；收益成立，无执行位假阳性已进入 RF1530 |
 | RF1530 | 已完成 | 完整肯定证明直达原生；三轮 p50 降低 88.6%～90.2% |
-| RF1540 | 进行中 | go/no-go、Full 门与 OnePlus 8T 正式资源链验收 |
+| RF1540 | 已完成 | OpenClaw 打开 native=1/fallback=0；Full 1473 项零失败 |
 | RF1550 | 已完成 | 保留全量覆盖；Quick 默认测试数减少 82.7%，本机构建统一排队 |
 | RF1551 | 已完成 | 276 类测试是覆盖累积，不是重复注册；共享 daemon/机器资源会碰撞 |
 | RF1552 | 已完成 | Quick/Stage/Full 实跑零失败，默认测试数最高减少 82.7% |
@@ -154,6 +154,15 @@
 - 第一版真机正确性通过，但原生 p95 `32.316ms` 超过预设 30ms，未放宽阈值。随后用一次 `readAttributes(NOFOLLOW_LINKS)` 代替每候选多次 stat，并重新开始三轮确认。
 - OnePlus 8T 三轮 PRoot p50 为 `105/106/105ms`，原生 p50 为 `10.683/10.394/11.930ms`、p95 为 `14.210/15.194/28.269ms`，p50 减少 `89.8%/90.2%/88.6%`；三轮零差异、零 shell failure、零残留、无 ANR/FATAL。
 - RF1530 完成。下一恢复指针为 RF1540：只做真实打开/获取链、Full、Debug 与范围审查；不再扩展能力边界。
+
+## RF1540 go/no-go 与父任务门
+
+- OnePlus 8T 覆盖安装候选 Debug 包后，从真实资源目录点击 OpenClaw“打开”；观测为 `resolved total=1, native=1, cached=0, fallback=0`，同一日志窗口没有 `resource-installed-state-probe`，页面进入 OpenClaw Agent 显示面并显示“可以开始新会话”。
+- “获取”的 `buildInstallPlan()` 与“打开”复用同一 `reconcileInstalledResources()`。本轮用生产代码审查和自动测试覆盖获取侧，没有为了制造真机证据点击未获取资源、改变用户安装状态。
+- 第一轮 Full 暴露观测日志直接依赖 Android `Log`，8 项协调器 JVM 测试因此失败；改为协调器接收纯函数观测出口、Android 组装层注入 Logger 后，目标测试通过。
+- 最终 Full：279 suites、1473 tests、0 failure、0 error、2 skipped，JUnit 195.478 秒、墙钟 245.308 秒；真实打开窗口无新增 ANR/FATAL。
+- 最终 Debug 构建成功，APK 为 248913164 bytes，SHA-256 `AF9936C58C2507340DA6B588EC1F523C2C5CE3C98B34609EC1A93BE157DC2EC2`；覆盖安装后再次实测仍为 `native=1/fallback=0` 并进入 OpenClaw 显示面，构建物未进入 Git。
+- 生产范围审查：没有资源、命令或应用白名单；没有新 Store；动态 PATH、View、安装脚本内部校验、版本执行、别名和函数继续 PRoot。RF1500 以 go 收口，下一候选必须从兼容债务总账重新立项。
 
 ## RF1431 验收
 

@@ -24,6 +24,8 @@ class ManagedCommandNativeProofContractTest {
         assertTrue(gateway.contains("buildResourceManagedCommandNativeProof"))
         assertTrue(coordinator.contains("nativeEnvironmentEligible"))
         assertTrue(coordinator.contains("pending.map(ResourceManagedCommandEvidenceRequest::requirement)"))
+        assertTrue(gateway.contains("ResourceManagedCommandProof"))
+        assertTrue(coordinator.contains("fallback=\${pending.size}"))
         assertFalse(coordinator.contains("openclaw"))
         assertFalse(coordinator.contains("kite.openclaw"))
     }
