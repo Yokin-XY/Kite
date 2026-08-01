@@ -74,6 +74,35 @@ class RecipeActionWorkflowCoordinatorTest {
     }
 
     @Test
+    fun `home launch task starts run before opening the same instance`() {
+        val effects = dispatch(
+            intent = KiteRecipeActionIntent.Primary,
+            source = KiteRecipeActionSource.ConsoleCard,
+            openTaskOnStart = true
+        )
+
+        assertEquals(listOf("start:instance-1"), gateway.calls)
+        assertEquals(
+            listOf(RecipeActionEffect.OpenRun(recipe.id, "instance-1", autoStart = false)),
+            effects
+        )
+    }
+
+    @Test
+    fun `home launch task requests notifications without opening an unstarted run`() {
+        gateway.startCommand = RunCommandResult.Ignored(RUN_NOTIFICATIONS_REQUIRED)
+
+        val effects = dispatch(
+            intent = KiteRecipeActionIntent.Primary,
+            source = KiteRecipeActionSource.ConsoleCard,
+            openTaskOnStart = true
+        )
+
+        assertEquals(listOf("start:instance-1"), gateway.calls)
+        assertEquals(listOf(RecipeActionEffect.RequireNotifications), effects)
+    }
+
+    @Test
     fun `通知不可用时只请求权限且不打开半成品运行窗口`() {
         gateway.startCommand = RunCommandResult.Ignored(RUN_NOTIFICATIONS_REQUIRED)
 
@@ -119,9 +148,15 @@ class RecipeActionWorkflowCoordinatorTest {
     private fun dispatch(
         intent: KiteRecipeActionIntent,
         source: KiteRecipeActionSource = KiteRecipeActionSource.Editor,
-        runtimeBlocked: Boolean = false
+        runtimeBlocked: Boolean = false,
+        openTaskOnStart: Boolean = false
     ): List<RecipeActionEffect> = coordinator.dispatch(
-        KiteRecipeActionRequest(recipe, intent, source),
+        KiteRecipeActionRequest(
+            recipe = recipe,
+            intent = intent,
+            source = source,
+            openTaskOnStart = openTaskOnStart
+        ),
         runtimeBlocked,
         focusedInstanceId = null
     )

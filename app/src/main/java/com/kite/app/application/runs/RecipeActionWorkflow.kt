@@ -63,11 +63,22 @@ internal class RecipeActionWorkflowCoordinator(
             KiteRecipeActionPlan.OpenRun -> listOf(
                 RecipeActionEffect.OpenRun(request.recipe.id, state.instanceId, autoStart = false)
             )
-            KiteRecipeActionPlan.LaunchTask -> listOf(
-                RecipeActionEffect.OpenRun(request.recipe.id, request.recipe.id, autoStart = true)
-            )
+            KiteRecipeActionPlan.LaunchTask -> launchTask(request, state)
             KiteRecipeActionPlan.Stop -> stopEffects(request.recipe, state)
             is KiteRecipeActionPlan.Execute -> execute(request, state, plan.route)
+        }
+    }
+
+    private fun launchTask(
+        request: KiteRecipeActionRequest,
+        state: CardRunState
+    ): List<RecipeActionEffect> {
+        val started = gateway.start(request.recipe, state, request.instanceId)
+        return when (val command = started.command) {
+            is RunCommandResult.Accepted -> listOf(
+                RecipeActionEffect.OpenRun(request.recipe.id, started.instanceId, autoStart = false)
+            )
+            is RunCommandResult.Ignored -> startIgnoredEffects(command)
         }
     }
 
@@ -88,11 +99,7 @@ internal class RecipeActionWorkflowCoordinator(
                         add(RecipeActionEffect.OpenRun(route.recipe.id, started.instanceId, autoStart = false))
                     }
                 }
-                is RunCommandResult.Ignored -> if (command.reason == RUN_NOTIFICATIONS_REQUIRED) {
-                    listOf(RecipeActionEffect.RequireNotifications)
-                } else {
-                    listOf(RecipeActionEffect.Message("运行未启动：${command.reason}"))
-                }
+                is RunCommandResult.Ignored -> startIgnoredEffects(command)
             }
         }
         is KiteActionRoute.Unsupported -> {
@@ -108,5 +115,12 @@ internal class RecipeActionWorkflowCoordinator(
                 RecipeActionEffect.ShowConsole
             )
             is RunCommandResult.Ignored -> emptyList()
+        }
+
+    private fun startIgnoredEffects(command: RunCommandResult.Ignored): List<RecipeActionEffect> =
+        if (command.reason == RUN_NOTIFICATIONS_REQUIRED) {
+            listOf(RecipeActionEffect.RequireNotifications)
+        } else {
+            listOf(RecipeActionEffect.Message("运行未启动：${command.reason}"))
         }
 }
