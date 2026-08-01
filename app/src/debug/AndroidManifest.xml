@@ -210,5 +210,12 @@
         <service
             android:name="com.kite.app.foundation.toolchain.BundledResourceDependencyBenchmarkService"
             android:exported="false" />
+        <receiver
+            android:name="com.kite.app.foundation.runtime.DefaultContainerColdReuseBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.DEFAULT_CONTAINER_COLD_REUSE_BENCHMARK" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

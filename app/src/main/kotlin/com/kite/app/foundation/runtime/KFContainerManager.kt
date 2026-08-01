@@ -890,22 +890,71 @@ object KFContainerManager {
     private fun resolveOrdinaryLaunchPreparationCandidate(
         context: Context,
     ): OrdinaryLaunchPreparationCandidate? {
+        val inspection = inspectDefaultContainerColdReuse(context)
+        val ready = inspection.decision as? DefaultContainerColdReuseDecision.Ready ?: return null
+        val layout = inspection.layout ?: return null
+        val container = inspection.container ?: return null
+        return OrdinaryLaunchPreparationCandidate(
+            layout = layout,
+            container = container,
+            identity = ready.identity,
+        )
+    }
+
+    internal fun defaultContainerColdReuseDecision(
+        context: Context,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null,
+    ): DefaultContainerColdReuseDecision = inspectDefaultContainerColdReuse(
+        context = context.applicationContext,
+        requestedProotViewId = requestedProotViewId,
+        requestedProotEnvironmentId = requestedProotEnvironmentId,
+    ).decision
+
+    private data class DefaultContainerColdReuseInspection(
+        val layout: AssetExtractor.RuntimeLayout?,
+        val container: ContainerRecord?,
+        val decision: DefaultContainerColdReuseDecision,
+    )
+
+    private fun inspectDefaultContainerColdReuse(
+        context: Context,
+        requestedProotViewId: String? = null,
+        requestedProotEnvironmentId: String? = null,
+    ): DefaultContainerColdReuseInspection {
         val layout = AssetExtractor.getRuntimeLayout(context)
-        val container = getSavedContainer(context) ?: return null
+        val container = getSavedContainer(context)
         val runtimeReady = layout.prootFile.isFile &&
             layout.prootLibtallocFile.isFile &&
             layout.prootLoaderFile.isFile &&
             layout.prootLoader32File.isFile &&
-            layout.prootRuntimeDescriptorFile.isFile
-        if (!runtimeReady || !AssetExtractor.isBaseImageReady(context, layout.profile)) return null
-        if (!isDefaultContainerRecordCurrent(container, layout)) return null
-        if (!isContainerRootfsReady(File(container.rootfsPath), layout.profile)) return null
-        if (!File(container.workspacePath).isDirectory) return null
-
-        return OrdinaryLaunchPreparationCandidate(
+            layout.prootRuntimeDescriptorFile.isFile &&
+            AssetExtractor.installedRuntimeAssetsCurrent(context, layout)
+        val containerRecordCurrent = container != null && isDefaultContainerRecordCurrent(container, layout)
+        val containerRootfsReady = containerRecordCurrent &&
+            isContainerRootfsReady(File(checkNotNull(container).rootfsPath), layout.profile)
+        val workspaceReady = containerRecordCurrent && File(checkNotNull(container).workspacePath).isDirectory
+        val identity = container
+            ?.takeIf { containerRecordCurrent }
+            ?.let { buildRuntimeLaunchPreparationIdentity(layout, it) }
+        val decision = DefaultContainerColdReuseProvider.evaluate(
+            DefaultContainerColdReuseFacts(
+                ordinaryRequest = RuntimeLaunchPreparationPolicy.isCacheEligible(
+                    requestedProotViewId = requestedProotViewId,
+                    requestedProotEnvironmentId = requestedProotEnvironmentId,
+                ),
+                runtimeAssetsCurrent = runtimeReady,
+                baseImageReady = AssetExtractor.isBaseImageReady(context, layout.profile),
+                containerRecordCurrent = containerRecordCurrent,
+                containerRootfsReady = containerRootfsReady,
+                workspaceReady = workspaceReady,
+                identity = identity,
+            ),
+        )
+        return DefaultContainerColdReuseInspection(
             layout = layout,
             container = container,
-            identity = buildRuntimeLaunchPreparationIdentity(layout, container),
+            decision = decision,
         )
     }
 

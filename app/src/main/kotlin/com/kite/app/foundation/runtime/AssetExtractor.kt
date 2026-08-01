@@ -169,6 +169,24 @@ object AssetExtractor {
         return isRootfsReady(layout.baseImageDir, profile)
     }
 
+    /**
+     * 只读核对 APK 当前选择的 PRoot 代次与已安装运行时是否一致。
+     * 不写迁移日志、不提取资产；未知或不完整一律返回 false。
+     */
+    internal fun installedRuntimeAssetsCurrent(
+        context: Context,
+        layout: RuntimeLayout = getRuntimeLayout(context),
+    ): Boolean = runCatching {
+        val packagedDescriptor = readPackagedProotRuntimeDescriptor(context)
+        val selectedDescriptor = RuntimeMigrationEngine.selectPackagedProotDescriptor(
+            packagedDescriptor = packagedDescriptor,
+            assetExists = { assetPath -> assetExists(context, assetPath) },
+        )
+        val selectedAssets = resolvePackagedProotRuntimeAssets(context, selectedDescriptor)
+        layout.prootFile.canExecute() &&
+            !shouldRefreshProotRuntimeAssets(layout, selectedDescriptor, selectedAssets)
+    }.getOrDefault(false)
+
     private fun ensureRuntimeDirectories(layout: RuntimeLayout) {
         listOf(
             layout.runtimeRoot,
