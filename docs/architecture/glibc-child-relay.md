@@ -104,3 +104,14 @@ OnePlus 8T 固定矩阵得到分层结论，而不是一个笼统的“可用/�
 - missing executable、missing spawn、EACCES 与坏 shebang 均从父进程的同步返回变为 PRoot wrapper 的异步失败，预设风险被证实。
 
 因此 unrestricted glibc child relay 为 no-go。RF1330 只允许验证一个更窄但仍通用的候选合同：调用方明确只使用已捕获的 direct exec/spawn 家族，并接受 child 创建成功后以异步 exit 报告容器目标失败。它仍不识别 Git/Python；若真实依赖进入 system/popen/fexecve 或依赖同步 errno，则整条 PRoot。
+
+## RF1330 调用方复算结论
+
+OnePlus 8T 用同一 relay 复算 Git 与 Python，结果证明选择单位必须是“调用语义”，不能是“工具”：
+
+- Git 的 shell alias、hook、external diff、clean filter、remote helper 与 submodule 在被测版本中均通过 `execve` 命中 relay；marker、index、输出与独立 PRoot 一致。8 并发 Host parent + relay 为 145ms，独立 PRoot parent 为 566ms；
+- Python 的 `subprocess`、直接 `os.execve`、venv 创建与 venv child 可经 `execv/execve` 进入 PRoot child；
+- 同一个 Python 父进程的 `os.system` 不命中 relay，Host 失败而 PRoot 成功。这个反例否决“Host Python + relay 等于完整 Python 兼容”；
+- relay 对 `PATH` 的每个分段和受控根开头的环境值做通用容器路径映射，未读取工具名、资源 ID、subcommand 或脚本内容。
+
+因此可进入 RF1340 的只有肯定式窄合同：调用方明确保证只走已覆盖 direct exec/spawn，并接受目标解析失败由 child exit 异步表达。未知或空声明、shell API、fd exec、同步 errno 依赖全部失败关闭到 PRoot。正式 Provider、launcher、compat 资产、资源和 lane 在 RF1330 仍未修改。

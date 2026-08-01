@@ -29,7 +29,14 @@ import kotlinx.coroutines.launch
 /** Debug-only 固定 Python Host/PRoot 矩阵；不接受外部命令、路径、负载或并发参数。 */
 class PythonRuntimeBenchmarkReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action !in setOf(ACTION_BENCHMARK, ACTION_COMPATIBILITY, ACTION_LAYERED, ACTION_EXTENSION)) return
+        if (intent.action !in setOf(
+                ACTION_BENCHMARK,
+                ACTION_COMPATIBILITY,
+                ACTION_LAYERED,
+                ACTION_EXTENSION,
+                ACTION_RELAY,
+            )
+        ) return
         runCatching {
             context.startService(
                 Intent(context, PythonRuntimeBenchmarkService::class.java).putExtra(
@@ -38,6 +45,7 @@ class PythonRuntimeBenchmarkReceiver : BroadcastReceiver() {
                         ACTION_COMPATIBILITY -> MODE_COMPATIBILITY
                         ACTION_LAYERED -> MODE_LAYERED
                         ACTION_EXTENSION -> MODE_EXTENSION
+                        ACTION_RELAY -> MODE_RELAY
                         else -> MODE_BENCHMARK
                     },
                 )
@@ -56,11 +64,13 @@ class PythonRuntimeBenchmarkReceiver : BroadcastReceiver() {
         const val ACTION_COMPATIBILITY = "com.kite.app.debug.PYTHON_RUNTIME_COMPATIBILITY"
         const val ACTION_LAYERED = "com.kite.app.debug.PYTHON_RUNTIME_LAYERED"
         const val ACTION_EXTENSION = "com.kite.app.debug.PYTHON_RUNTIME_EXTENSION"
+        const val ACTION_RELAY = "com.kite.app.debug.PYTHON_RUNTIME_RELAY"
         const val EXTRA_MODE = "mode"
         const val MODE_BENCHMARK = "benchmark"
         const val MODE_COMPATIBILITY = "compatibility"
         const val MODE_LAYERED = "layered"
         const val MODE_EXTENSION = "extension"
+        const val MODE_RELAY = "relay"
         const val LOG_TAG = "[KFShell]PythonRuntimeBenchmark"
 
         fun safe(value: String): String = value.take(240).map { character ->
@@ -85,6 +95,8 @@ class PythonRuntimeBenchmarkService : Service() {
                         PythonRuntimeBenchmark.runLayeredCompatibility(applicationContext)
                     PythonRuntimeBenchmarkReceiver.MODE_EXTENSION ->
                         PythonRuntimeBenchmark.runExtensionCompatibility(applicationContext)
+                    PythonRuntimeBenchmarkReceiver.MODE_RELAY ->
+                        PythonRuntimeBenchmark.runRelayCompatibility(applicationContext)
                     else -> PythonRuntimeBenchmark.run(applicationContext)
                 }
                 reports.forEach { report ->
@@ -190,6 +202,60 @@ private object PythonRuntimeBenchmark {
             add(extensionWheelLifecycleReport(context, host))
             add(abiMismatchReport(context, host))
             add("status=extension_complete")
+        }
+    }
+
+    fun runRelayCompatibility(context: Context): List<String> {
+        val host = resolveHost(context, withRelay = true)
+        return try {
+            buildList {
+                add("status=relay_started python=${safe(host.pythonBinary.absolutePath)}")
+                add(
+                    compatibilityReport(
+                        context,
+                        host,
+                        "subprocess_python_relay",
+                        "import subprocess,sys;" +
+                            "subprocess.run([sys.executable,\"--version\"],check=True);print(\"$TOKEN\")",
+                    )
+                )
+                add(
+                    compatibilityReport(
+                        context,
+                        host,
+                        "subprocess_linux_identity_relay",
+                        "import subprocess;value=subprocess.check_output([\"/bin/uname\",\"-o\"],text=True).strip();" +
+                            "assert value==\"GNU/Linux\",value;print(\"$TOKEN\")",
+                    )
+                )
+                add(
+                    compatibilityReport(
+                        context,
+                        host,
+                        "os_system_linux_view_relay",
+                        "import os;assert os.system(\"git --version\") == 0;print(\"$TOKEN\")",
+                    )
+                )
+                add(
+                    compatibilityReport(
+                        context,
+                        host,
+                        "os_exec_python_relay",
+                        "import os,sys;os.execve(sys.executable,[sys.executable,\"-c\",\"print('$TOKEN')\"],os.environ.copy())",
+                    )
+                )
+                add(compatibilityReport(context, host, "venv_create_relay", VENV_CREATE_PROBE))
+                add(compatibilityReport(context, host, "venv_child_relay", VENV_CHILD_PROBE))
+                add(compatibilityReport(context, host, "venv_with_pip_relay", VENV_WITH_PIP_PROBE))
+                val hits = host.relayContract?.logFile?.takeIf(File::isFile)?.readLines().orEmpty()
+                add(
+                    "status=relay_hits total=${hits.size} " +
+                        "entries=${hits.groupingBy { it }.eachCount().entries.joinToString(",") { "${it.key}:${it.value}" }}"
+                )
+                add("status=relay_complete")
+            }
+        } finally {
+            host.relayContract?.root?.deleteRecursively()
         }
     }
 
@@ -512,7 +578,7 @@ private object PythonRuntimeBenchmark {
         )
     }
 
-    private fun resolveHost(context: Context): HostPythonLayout {
+    private fun resolveHost(context: Context, withRelay: Boolean = false): HostPythonLayout {
         val container = checkNotNull(KFContainerManager.getSavedContainer(context)) {
             "default_container_missing"
         }
@@ -544,6 +610,11 @@ private object PythonRuntimeBenchmark {
             File(rootfsDirectory, "lib/aarch64-linux-gnu"),
         ).filter(File::isDirectory)
         check(glibcDirectories.isNotEmpty()) { "glibc_libraries_missing" }
+        val relayContract = if (withRelay) {
+            prepareRelayContract(context, container, workspaceDirectory, rootfsDirectory)
+        } else {
+            null
+        }
         return HostPythonLayout(
             container = container,
             workspaceDirectory = workspaceDirectory,
@@ -553,6 +624,48 @@ private object PythonRuntimeBenchmark {
             pythonLibraryDirectory = pythonLibraryDirectory,
             glibcLibraryDirectories = glibcDirectories,
             assets = assets,
+            relayContract = relayContract,
+        )
+    }
+
+    private fun prepareRelayContract(
+        context: Context,
+        container: ContainerRecord,
+        workspaceDirectory: File,
+        rootfsDirectory: File,
+    ): RelayContract {
+        val control = File(workspaceDirectory, ".kf").absoluteFile.normalize()
+        val relayLibrary = File(
+            context.filesDir,
+            "runtime/debug/glibc-child-relay-rf1320/libkite-glibc-child-relay.so",
+        ).absoluteFile.normalize()
+        check(relayLibrary.isFile && isArm64Elf(relayLibrary)) { "python_relay_asset_missing" }
+        val root = File(control, "system/bench/python-child-relay-rf1330").absoluteFile.normalize()
+        val allowed = File(control, "system/bench").absoluteFile.normalize()
+        check(root.toPath().startsWith(allowed.toPath())) { "python_relay_root_invalid" }
+        root.deleteRecursively()
+        check(root.mkdirs()) { "python_relay_root_create_failed" }
+        val marker = "__kite_python_relay_marker__"
+        val base = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
+            context = context,
+            workingDirectory = "/workspace",
+            argv = listOf(marker),
+        )
+        check(base.command.lastOrNull() == marker) { "python_relay_prefix_marker_mismatch" }
+        val prefixFile = File(root, "prefix.nul")
+        val environmentFile = File(root, "environment.nul")
+        val logFile = File(root, "relay.log")
+        writeNulList(prefixFile, base.command.dropLast(1))
+        writeNulList(environmentFile, base.env.map { (key, value) -> "$key=$value" })
+        return RelayContract(
+            root = root,
+            relayLibrary = relayLibrary,
+            prefixFile = prefixFile,
+            environmentFile = environmentFile,
+            logFile = logFile,
+            control = control,
+            workspace = workspaceDirectory.absoluteFile.normalize(),
+            rootfs = rootfsDirectory.absoluteFile.normalize(),
         )
     }
 
@@ -608,6 +721,7 @@ private object PythonRuntimeBenchmark {
         val pythonLibraryDirectory: File,
         val glibcLibraryDirectories: List<File>,
         val assets: GlibcHostRuntimeAssets,
+        val relayContract: RelayContract? = null,
     ) {
         val environment: Map<String, String>
             get() {
@@ -619,7 +733,7 @@ private object PythonRuntimeBenchmark {
                     add(pythonLibraryDirectory)
                     addAll(glibcLibraryDirectories)
                 }.distinctBy(File::getAbsolutePath).joinToString(":") { it.absolutePath }
-                return linkedMapOf(
+                val environment = linkedMapOf(
                     "HOME" to File(rootfsDirectory, "root").absolutePath,
                     "USER" to "root",
                     "LOGNAME" to "root",
@@ -638,6 +752,19 @@ private object PythonRuntimeBenchmark {
                     "KITE_GLIBC_HOST_TARGET" to pythonBinary.absolutePath,
                     "KITE_GLIBC_HOST_RESOLV_CONF" to assets.resolvConf.absolutePath,
                 )
+                relayContract?.let { relay ->
+                    environment["KITE_GLIBC_HOST_COMPAT_LIBRARY"] =
+                        "${assets.compatLibrary.absolutePath}:${relay.relayLibrary.absolutePath}"
+                    environment.putAll(linkedMapOf(
+                        "KITE_GLIBC_CHILD_RELAY_PREFIX_FILE" to relay.prefixFile.absolutePath,
+                        "KITE_GLIBC_CHILD_RELAY_ENV_FILE" to relay.environmentFile.absolutePath,
+                        "KITE_GLIBC_CHILD_RELAY_LOG" to relay.logFile.absolutePath,
+                        "KITE_GLIBC_CHILD_RELAY_HOST_ROOTFS" to relay.rootfs.absolutePath,
+                        "KITE_GLIBC_CHILD_RELAY_HOST_WORKSPACE" to relay.workspace.absolutePath,
+                        "KITE_GLIBC_CHILD_RELAY_HOST_CONTROL" to relay.control.absolutePath,
+                    ))
+                }
+                return environment
             }
 
         fun command(code: String): List<String> = listOf(
@@ -645,6 +772,26 @@ private object PythonRuntimeBenchmark {
             "-c",
             code,
         )
+    }
+
+    private data class RelayContract(
+        val root: File,
+        val relayLibrary: File,
+        val prefixFile: File,
+        val environmentFile: File,
+        val logFile: File,
+        val control: File,
+        val workspace: File,
+        val rootfs: File,
+    )
+
+    private fun writeNulList(file: File, values: List<String>) {
+        file.outputStream().use { output ->
+            values.forEach { value ->
+                output.write(value.toByteArray(Charsets.UTF_8))
+                output.write(0)
+            }
+        }
     }
 
     private fun java.io.InputStream.copyTo(output: ByteArrayOutputStream, limit: Long) {

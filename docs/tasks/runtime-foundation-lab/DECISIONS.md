@@ -462,3 +462,11 @@
 - 决定：任意 glibc 父进程的 unrestricted child relay 不进入生产；`system/popen/fexecve` 漏拦与同步错误变化是明确阻断。RF1330 只验证入口无关的窄合同：调用方只使用已覆盖 direct exec/spawn 家族，并明确接受容器目标错误在 child 启动后以异步 exit 表达。
 - 原因：常规 exec/spawn 的 argv/env/cwd/fd/exit/signal 和 1/4/8 并发已证明可行，完全放弃会丢掉可复用价值；但把漏拦或 errno 差异藏起来又会制造假兼容。用显式能力要求分层，才能在进程创建前选择而不靠工具白名单。
 - 影响：RF1330 必须观察 Git/Python 的实际命中入口与最终状态，不因名称放行。Debug 资产继续独立部署；正式 compat、launcher、Provider、资源、lane 仍不变。若上层无法声明该合同，保持整条 PRoot。
+
+## ADR-RF-059 child relay 只能由调用语义保证开放
+
+- 状态：已接受，RF1330 已完成
+- 日期：2026-08-01
+- 决定：不增加 Git/Python 工具白名单，也不因一次真机矩阵直接开放整个解释器。只有调用方在进程创建前肯定声明“只使用已覆盖 direct exec/spawn 家族”与“接受容器目标的异步 child failure”时，候选 Provider 才能使用 relay；空声明、未知调用、`system/popen/fexecve` 或依赖同步 errno 的请求继续整条 PRoot。
+- 原因：Git 固定矩阵的全部外部机制均通过 `execve`，relay 后状态、文件副作用与 PRoot 一致且保留明显并发收益；同一个 Python 父进程却同时存在可捕获的 subprocess/execve 和绕过 relay 的 `os.system`。工具身份因此不能证明运行语义，只有调用方合同能在首个业务进程前安全分流。
+- 影响：RF1340 若接生产，必须新增通用、肯定式、失败关闭的执行保证，不解析工具名或脚本；relay 仍复用唯一 PRoot builder，不生成第二条状态链。无法把保证贯穿 Recipe/Run 请求时，RF1300 以生产 no-go 收口。

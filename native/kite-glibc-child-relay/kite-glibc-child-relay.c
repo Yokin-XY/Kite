@@ -154,12 +154,67 @@ static char *map_path(const char *value) {
     return mapped;
 }
 
+static size_t key_length(const char *entry);
+
 static bool private_environment(const char *entry) {
     if (entry == NULL) return true;
     return strncmp(entry, "KITE_GLIBC_HOST_", 16U) == 0 ||
            strncmp(entry, "KITE_GLIBC_CHILD_RELAY_", 24U) == 0 ||
            strncmp(entry, "LD_PRELOAD=", 11U) == 0 ||
            strncmp(entry, "LD_LIBRARY_PATH=", 16U) == 0;
+}
+
+static char *map_path_list(const char *value) {
+    size_t capacity = strlen(value) * 2U + 32U;
+    char *result = calloc(capacity, 1U);
+    if (result == NULL) return NULL;
+    size_t output = 0U;
+    const char *cursor = value;
+    while (true) {
+        const char *separator = strchr(cursor, ':');
+        size_t length = separator == NULL ? strlen(cursor) : (size_t) (separator - cursor);
+        char *segment = strndup(cursor, length);
+        char *mapped = segment == NULL ? NULL : map_path(segment);
+        free(segment);
+        if (mapped == NULL) {
+            free(result);
+            return NULL;
+        }
+        size_t mapped_length = strlen(mapped);
+        if (output + mapped_length + 2U > capacity) {
+            capacity = (output + mapped_length + 2U) * 2U;
+            char *grown = realloc(result, capacity);
+            if (grown == NULL) {
+                free(mapped);
+                free(result);
+                return NULL;
+            }
+            result = grown;
+        }
+        memcpy(result + output, mapped, mapped_length);
+        output += mapped_length;
+        free(mapped);
+        if (separator == NULL) break;
+        result[output++] = ':';
+        cursor = separator + 1;
+    }
+    result[output] = '\0';
+    return result;
+}
+
+static char *map_environment_entry(const char *entry) {
+    size_t length = key_length(entry);
+    if (length == 0U) return strdup(entry);
+    const char *value = entry + length + 1U;
+    char *mapped = length == 4U && strncmp(entry, "PATH", 4U) == 0
+        ? map_path_list(value)
+        : map_path(value);
+    if (mapped == NULL) return NULL;
+    size_t size = length + strlen(mapped) + 2U;
+    char *result = calloc(size, 1U);
+    if (result != NULL) snprintf(result, size, "%.*s=%s", (int) length, entry, mapped);
+    free(mapped);
+    return result;
 }
 
 static size_t key_length(const char *entry) {
@@ -189,7 +244,16 @@ static char **merge_environment(char *const requested[]) {
     }
     size_t count = 0;
     for (size_t index = 0; index < requested_count; ++index) {
-        if (!private_environment(requested[index])) merged[count++] = strdup(requested[index]);
+        if (!private_environment(requested[index])) {
+            char *mapped = map_environment_entry(requested[index]);
+            if (mapped == NULL) {
+                free_list(base);
+                for (size_t written = 0; written < count; ++written) free(merged[written]);
+                free(merged);
+                return NULL;
+            }
+            merged[count++] = mapped;
+        }
     }
     for (size_t index = 0; index < base.count; ++index) {
         if (!has_key(merged, count, base.values[index])) merged[count++] = strdup(base.values[index]);

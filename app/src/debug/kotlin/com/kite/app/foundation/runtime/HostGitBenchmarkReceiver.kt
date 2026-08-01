@@ -72,6 +72,48 @@ class HostGitBenchmarkService : Service() {
     }
 }
 
+class HostGitRelayBenchmarkReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action != ACTION) return
+        context.startService(Intent(context, HostGitRelayBenchmarkService::class.java))
+    }
+
+    internal companion object {
+        const val ACTION = "com.kite.app.debug.HOST_GIT_RELAY_BENCHMARK"
+        const val LOG_TAG = "[KFShell]HostGitRelay"
+    }
+}
+
+class HostGitRelayBenchmarkService : Service() {
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!running.compareAndSet(false, true)) return START_NOT_STICKY
+        scope.launch {
+            try {
+                HostGitBenchmark.run(applicationContext, withRelay = true).forEach { report ->
+                    Log.i(HostGitRelayBenchmarkReceiver.LOG_TAG, report)
+                }
+            } catch (error: Throwable) {
+                Log.e(
+                    HostGitRelayBenchmarkReceiver.LOG_TAG,
+                    "status=failed reason=${HostGitBenchmarkReceiver.safe(error.message ?: error.javaClass.simpleName)}",
+                    error,
+                )
+            } finally {
+                running.set(false)
+                stopSelf()
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    private companion object {
+        val running = AtomicBoolean(false)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
+}
+
 private object HostGitBenchmark {
     private const val FILE_COUNT = 1_000
     private const val ROUNDS = 7
@@ -87,6 +129,14 @@ private object HostGitBenchmark {
         val gitBinary: File,
         val assets: GlibcHostRuntimeAssets,
         val libraryPath: String,
+        val relayLibrary: File?,
+        var relayContract: RelayContract? = null,
+    )
+
+    private data class RelayContract(
+        val prefixFile: File,
+        val environmentFile: File,
+        val logFile: File,
     )
 
     private data class Execution(
@@ -105,9 +155,9 @@ private object HostGitBenchmark {
         val failures: Int,
     )
 
-    fun run(context: Context): List<String> {
+    fun run(context: Context, withRelay: Boolean = false): List<String> {
         val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(context)
-        val layout = resolveLayout(context, container)
+        val layout = resolveLayout(context, container, withRelay)
         val benchmarkRoot = File(layout.control, "system/bench/host-git-rf1220").absoluteFile.normalize()
         val allowedRoot = File(layout.control, "system/bench").absoluteFile.normalize()
         check(benchmarkRoot.toPath().startsWith(allowedRoot.toPath())) { "git_benchmark_root_invalid" }
@@ -121,6 +171,10 @@ private object HostGitBenchmark {
             val prootHome = File(benchmarkRoot, "proot-home").also(File::mkdirs)
             seedFiles(hostRepository)
             seedFiles(prootRepository)
+
+            if (withRelay) {
+                layout.relayContract = prepareRelayContract(context, layout, hostRepository, benchmarkRoot)
+            }
 
             val hostEnvironment = gitEnvironment(hostHome.absolutePath)
             val prootEnvironment = gitEnvironment(containerPath(layout, prootHome))
@@ -152,14 +206,23 @@ private object HostGitBenchmark {
                 add(compatibility)
                 addAll(performance)
                 addAll(subprocess)
-                add("status=ok suite=rf1220_host_git cases=${1 + performance.size + subprocess.size}")
+                layout.relayContract?.logFile?.takeIf(File::isFile)?.readLines()?.let { hits ->
+                    add(
+                        "status=ok case=relay_hits total=${hits.size} " +
+                            "entries=${hits.groupingBy { it }.eachCount().entries.joinToString(",") { "${it.key}:${it.value}" }}"
+                    )
+                }
+                add(
+                    "status=ok suite=${if (withRelay) "rf1330_host_git_relay" else "rf1220_host_git"} " +
+                        "cases=${1 + performance.size + subprocess.size + if (withRelay) 1 else 0}"
+                )
             }
         } finally {
             benchmarkRoot.deleteRecursively()
         }
     }
 
-    private fun resolveLayout(context: Context, container: ContainerRecord): Layout {
+    private fun resolveLayout(context: Context, container: ContainerRecord, withRelay: Boolean): Layout {
         val workspace = File(container.workspacePath).absoluteFile.normalize()
         val control = File(workspace, ".kf").absoluteFile.normalize()
         val rootfs = File(container.rootfsPath).absoluteFile.normalize()
@@ -186,6 +249,15 @@ private object HostGitBenchmark {
             File(rootfs, "lib"),
         ).filter(File::isDirectory).distinctBy(File::getAbsolutePath)
         check(libraryDirectories.isNotEmpty()) { "git_library_path_missing" }
+        val relay = if (withRelay) {
+            File(context.filesDir, "runtime/debug/glibc-child-relay-rf1320/libkite-glibc-child-relay.so")
+                .absoluteFile.normalize()
+                .also { file ->
+                    check(file.isFile && isArm64Elf(file)) { "git_relay_asset_missing" }
+                }
+        } else {
+            null
+        }
         return Layout(
             container = container,
             rootfs = rootfs,
@@ -194,7 +266,30 @@ private object HostGitBenchmark {
             gitBinary = expected,
             assets = assets,
             libraryPath = libraryDirectories.joinToString(":") { it.absolutePath },
+            relayLibrary = relay,
         )
+    }
+
+    private fun prepareRelayContract(
+        context: Context,
+        layout: Layout,
+        hostRepository: File,
+        benchmarkRoot: File,
+    ): RelayContract {
+        val marker = "__kite_git_relay_marker__"
+        val base = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
+            context = context,
+            workingDirectory = containerPath(layout, hostRepository),
+            argv = listOf(marker),
+        )
+        check(base.command.lastOrNull() == marker) { "git_relay_prefix_marker_mismatch" }
+        val prefixFile = File(benchmarkRoot, "relay-prefix.nul")
+        val environmentFile = File(benchmarkRoot, "relay-environment.nul")
+        val logFile = File(benchmarkRoot, "relay.log")
+        writeNulList(prefixFile, base.command.dropLast(1))
+        writeNulList(environmentFile, base.env.map { (key, value) -> "$key=$value" })
+        logFile.delete()
+        return RelayContract(prefixFile, environmentFile, logFile)
     }
 
     private fun compatibility(
@@ -339,7 +434,7 @@ private object HostGitBenchmark {
         val hostExternalDiff = installProbeScript(
             repository = hostRepository,
             name = "external-diff",
-            body = "/usr/bin/printf 'OK' > '${hostExternalDiffMarker.absolutePath}'\n",
+            body = "/usr/bin/printf 'OK' > '${childVisiblePath(layout, hostExternalDiffMarker)}'\n",
         )
         val prootExternalDiff = installProbeScript(
             repository = prootRepository,
@@ -368,7 +463,7 @@ private object HostGitBenchmark {
         val hostFilter = installProbeScript(
             repository = hostRepository,
             name = "clean-filter",
-            body = "/usr/bin/printf 'OK' > '${hostFilterMarker.absolutePath}'\n" +
+            body = "/usr/bin/printf 'OK' > '${childVisiblePath(layout, hostFilterMarker)}'\n" +
                 "/usr/bin/tr '[:lower:]' '[:upper:]'\n",
         )
         val prootFilter = installProbeScript(
@@ -430,7 +525,7 @@ private object HostGitBenchmark {
         val prootRemoteMarker = File(prootRepository, ".git/kf-probes/remote.marker")
         val hostRemoteHelper = installRemoteHelper(
             repository = hostRepository,
-            markerPath = hostRemoteMarker.absolutePath,
+            markerPath = childVisiblePath(layout, hostRemoteMarker),
         )
         val prootRemoteHelper = installRemoteHelper(
             repository = prootRepository,
@@ -439,7 +534,13 @@ private object HostGitBenchmark {
         val hostRemoteDirectory = requireNotNull(hostRemoteHelper.parentFile)
         val prootRemoteDirectory = requireNotNull(prootRemoteHelper.parentFile)
         val hostRemotePath = hostRemoteDirectory.absolutePath + ":" +
-            File(layout.rootfs, "usr/lib/git-core").absolutePath
+            buildList {
+                add(File(layout.rootfs, "usr/lib/git-core").absolutePath)
+                if (layout.relayLibrary != null) {
+                    add(File(layout.rootfs, "usr/bin").absolutePath)
+                    add(File(layout.rootfs, "bin").absolutePath)
+                }
+            }.joinToString(":")
         val prootRemotePath = containerPath(layout, prootRemoteDirectory) +
             ":/usr/lib/git-core:/usr/bin:/bin"
         val hostRemoteRun = executeHost(
@@ -586,7 +687,13 @@ done
             "TMP" to tmp.absolutePath,
             "TEMP" to tmp.absolutePath,
             "PWD" to repository.absolutePath,
-            "PATH" to File(layout.rootfs, "usr/lib/git-core").absolutePath,
+            "PATH" to buildList {
+                add(File(layout.rootfs, "usr/lib/git-core").absolutePath)
+                if (layout.relayLibrary != null) {
+                    add(File(layout.rootfs, "usr/bin").absolutePath)
+                    add(File(layout.rootfs, "bin").absolutePath)
+                }
+            }.joinToString(":"),
             "GLIBC_TUNABLES" to "glibc.pthread.rseq=0",
             "GIT_EXEC_PATH" to File(layout.rootfs, "usr/lib/git-core").absolutePath,
             "KITE_GLIBC_HOST_LANE" to "direct_glibc_v1",
@@ -597,6 +704,20 @@ done
             "KITE_GLIBC_HOST_RESOLV_CONF" to layout.assets.resolvConf.absolutePath,
         )
         environment.putAll(additionalEnvironment)
+        val relay = layout.relayLibrary
+        val relayContract = layout.relayContract
+        if (relay != null && relayContract != null) {
+            environment["KITE_GLIBC_HOST_COMPAT_LIBRARY"] =
+                "${layout.assets.compatLibrary.absolutePath}:${relay.absolutePath}"
+            environment.putAll(linkedMapOf(
+                "KITE_GLIBC_CHILD_RELAY_PREFIX_FILE" to relayContract.prefixFile.absolutePath,
+                "KITE_GLIBC_CHILD_RELAY_ENV_FILE" to relayContract.environmentFile.absolutePath,
+                "KITE_GLIBC_CHILD_RELAY_LOG" to relayContract.logFile.absolutePath,
+                "KITE_GLIBC_CHILD_RELAY_HOST_ROOTFS" to layout.rootfs.absolutePath,
+                "KITE_GLIBC_CHILD_RELAY_HOST_WORKSPACE" to layout.workspace.absolutePath,
+                "KITE_GLIBC_CHILD_RELAY_HOST_CONTROL" to layout.control.absolutePath,
+            ))
+        }
         return ContainerLaunchConfig(
             container = layout.container,
             executablePath = layout.assets.launcher.absolutePath,
@@ -725,6 +846,9 @@ done
         return if (relative.isBlank()) "/workspace" else "/workspace/$relative"
     }
 
+    private fun childVisiblePath(layout: Layout, file: File): String =
+        if (layout.relayLibrary != null) containerPath(layout, file) else file.absolutePath
+
     private fun isArm64Elf(file: File): Boolean = runCatching {
         file.inputStream().use { input ->
             val header = ByteArray(20)
@@ -740,5 +864,15 @@ done
         val sorted = values.sorted()
         val index = ceil(sorted.size * ratio).toInt().coerceIn(1, sorted.size) - 1
         return sorted[index]
+    }
+
+    private fun writeNulList(file: File, values: List<String>) {
+        file.parentFile?.mkdirs()
+        file.outputStream().use { output ->
+            values.forEach { value ->
+                output.write(value.toByteArray(Charsets.UTF_8))
+                output.write(0)
+            }
+        }
     }
 }

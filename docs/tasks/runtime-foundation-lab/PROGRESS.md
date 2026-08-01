@@ -72,8 +72,8 @@
 | RF1300 | 进行中 | 研究入口无关的 glibc child relay，不为 Git/Python 写特判 |
 | RF1310 | 已完成 | 入口/观察语义与同步错误、hidden symbol 风险已固化 |
 | RF1320 | 已完成 | direct exec/spawn 正常语义与并发通过；漏拦和同步错误边界已证实 |
-| RF1330 | 进行中 | 复算 Git/Python 是否满足窄 direct exec/spawn 合同 |
-| RF1340 | 待开始 | go/no-go、全量门与生产范围审查 |
+| RF1330 | 已完成 | Git 实测 child 满足窄合同；Python 仅显式 direct exec/spawn 子集满足，不能整体放行 |
+| RF1340 | 进行中 | go/no-go、全量门与生产范围审查 |
 
 ## RF110 开机与三问自检
 
@@ -387,6 +387,14 @@
 - missing exec/spawn、EACCES、坏 shebang 四类均改变同步错误：direct/PRoot parent 能得到 errno/return，Host+relay 先成功创建 PRoot wrapper，再以 exit 1 和 stderr 报错。unrestricted relay 因此 no-go。
 - 1/4/8 并发各三轮均零失败。Host parent + relay batch wall 中位数为 106/117/137ms，PRoot parent 为 124/161/209ms；P95 为 109/116/126ms 对 110/109/124ms。收益来自父进程留在 Host，不是把 PRoot child 本身加速。
 - RF1330 只复算窄的 `direct exec/spawn + async child failure accepted` 候选合同；不按工具名选择，任一真实 system/popen/fexecve 或同步 errno 依赖都失败关闭。
+
+## RF1330 Git/Python 通用反例复算
+
+- relay 增加受控根环境值与 `PATH` 分段映射，仍只消费统一 PRoot 前缀与环境文件；没有读取 Git/Python 名称、资源 ID、subcommand 或脚本文本。Debug 原生库 SHA-256 为 `37037E8E4EFB08CA62B908BCF5A3364EDEEC5BD734AAECACB71002ABDADCC378`，只部署到 OnePlus 8T 应用私有调试目录。
+- Host Git + relay 复算 12 个固定 case：本地 HEAD/status/diff/index 保持一致，shell alias、hook、external diff、clean filter、remote helper 和 submodule 全部与独立 PRoot 对照一致；8 次 child 全部真实命中 `execve`。8 并发 Host batch wall 145ms，PRoot 566ms，Host P95 126ms，PRoot 512ms。
+- Host Python + relay 中，Python subprocess、`/bin/uname` subprocess、`os.execve`、venv 创建及 venv child 均与独立 PRoot 一致，实际命中 `execv:3, execve:2`。`os.system("git --version")` 未命中 relay，Host 失败而 PRoot 成功，证实 Python 不能按解释器整体放行。
+- `venv --with-pip` 在 Host+relay 与独立 PRoot 均因同一 `ensurepip` 路径失败，不作为 relay 回归或成功证据。矩阵结束后无 relay/proot/python 残留，logcat 无匹配 ANR/FATAL。
+- 结论是“显式 direct exec/spawn 调用合同可行”，不是“Git/Python 已通用兼容”。RF1340 只有在请求能在进程创建前声明该保证、且不依赖同步 errno 时，才可讨论生产接线；未知调用保持整条 PRoot。
 
 ## RF710 开机与三问自检
 

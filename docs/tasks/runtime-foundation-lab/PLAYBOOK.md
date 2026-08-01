@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1300` 通用 glibc child relay 可行性
-- 当前任务：`RF1330` Git/Python 通用反例复算
+- 当前任务：`RF1340` go/no-go 与父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -743,10 +743,11 @@
 
 #### RF1330 Git/Python 通用反例复算
 
-- 状态：进行中；
-- 用同一 relay 复算 RF1220 hook/filter/helper/submodule 和 RF250 Python subprocess；
-- 不允许按工具名、资源 ID、subcommand 或脚本内容做选择；
-- 只有状态和输出与独立 PRoot 一致后才比较性能。
+- 状态：已完成；窄合同对显式 direct exec/spawn 调用方可行，但不能按 Git/Python 整体放行；
+- [x] 同一 relay 复算 RF1220 hook/filter/helper/submodule 和 RF250 Python subprocess；
+- [x] Git 外部 child 全部经 `execve` 命中；状态、marker、index 与独立 PRoot 一致；
+- [x] Python subprocess、`os.execve`、venv child 通过，`os.system` 因未命中 relay 保持失败关闭；
+- [x] 不按工具名、资源 ID、subcommand 或脚本内容选择，只有调用方显式声明窄语义合同才可进入下一门。
 
 #### RF1340 go/no-go 与父任务门
 

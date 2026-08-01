@@ -39,6 +39,16 @@
             android:name="com.kite.app.foundation.runtime.HostGitBenchmarkService"
             android:exported="false" />
         <receiver
+            android:name="com.kite.app.foundation.runtime.HostGitRelayBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.HOST_GIT_RELAY_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.HostGitRelayBenchmarkService"
+            android:exported="false" />
+        <receiver
             android:name="com.kite.app.foundation.runtime.GlibcChildRelayBenchmarkReceiver"
             android:exported="true">
             <intent-filter>
@@ -75,6 +85,7 @@
                 <action android:name="com.kite.app.debug.PYTHON_RUNTIME_COMPATIBILITY" />
                 <action android:name="com.kite.app.debug.PYTHON_RUNTIME_LAYERED" />
                 <action android:name="com.kite.app.debug.PYTHON_RUNTIME_EXTENSION" />
+                <action android:name="com.kite.app.debug.PYTHON_RUNTIME_RELAY" />
             </intent-filter>
         </receiver>
         <service
