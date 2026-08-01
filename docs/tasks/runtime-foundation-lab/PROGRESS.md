@@ -112,8 +112,9 @@
 | RF1920 | 已完成 | 三轮冷进程减少 89.7%～90.1%/至少 1851ms；p95 214ms，判 go |
 | RF1930 | 已完成 | 版本化物理收据＋动态网络复算；三轮减少 69.1%～69.7%/至少 1060ms |
 | RF1940 | 已完成 | 真实 App 冷启动命中、FATAL/ANR=0、唯一 Full 1514 tests，production go |
-| RF2000 | 进行中 | 重新审计下一通用候选；未固定门前不写生产补丁 |
-| RF2010 | 进行中 | 真实调用面、兼容债务和停止信号审计 |
+| RF2000 | 进行中 | 第一名普通 PRoot 首份启动配置复用；先过固定矩阵再允许生产样板 |
+| RF2010 | 已完成 | 四类配置 API/多正式流程覆盖已确认；令牌与原生归档候选暂不进入生产 |
+| RF2020 | 进行中 | 固定冷进程配置等价、失败关闭、零业务进程与 30%＋300ms 收益门 |
 
 ## RF1800 开机与三问自检
 
@@ -189,9 +190,18 @@
 
 ## RF2000 开机与三问自检
 
-- 目标是什么？RF1900 结束后重新审计真实生产调用面，只开启仍能跨多个正式流程、结构化失败关闭并带来用户可感知收益的下一父任务。
-- 完成后拿什么证明？最多三个候选的正式调用方/频率/固定成本，第一名固定反例、端到端收益门与停止信号；无候选达门则连续记录 no-go，不写生产补丁。
-- 依赖是否满足？RF1900 已以唯一 Full 1514 tests 和 OnePlus 真实冷启动完成；当前分支从 `f1d7c402` 后继续，AI 会话、UI、PRoot View、魅族、main/其他工作树、远端、版本与发布仍冻结。
+- 目标是什么？只缩短普通默认 Ubuntu 容器已经 Ready 后，冷进程构造第一份终端/卡片/资源/后台 PRoot 启动配置时重复的静态准备；不把 PRoot 换掉，也不缓存动态网络、View 或运行状态。
+- 完成后拿什么证明？固定首份 argv 配置零进程矩阵，command/env/身份全等；收据失配、显式 View/环境和非法身份回完整准备；OnePlus 三轮每轮至少 30%＋300ms、候选 p95 不高于 500ms；Targeted/Quick/Stage、真实生产动作与父门唯一 Full。
+- 依赖是否满足？RF1900 已以唯一 Full 1514 tests 和 OnePlus 真实冷启动完成；现有 `DefaultContainerColdReuseReceipt`、`RuntimeLaunchPreparationIdentity` 与 `RuntimeLaunchPreparationCache` 可作为唯一事实/缓存，不新增 Store。当前分支从 `4fafac8f` 干净开始。
+- 红线：首次安装/修复/重置、Canary、显式 View/环境、共享存储、动态网络、Node 缓存、telemetry 和最终命令语义不变；AI 会话、UI、PRoot View、魅族、main/其他工作树、远端、版本与发布冻结。
+
+## RF2010 候选与发布门审计
+
+- 第一名“普通 PRoot 首份启动配置复用”覆盖 `buildLaunchConfig`、`buildContainerShellCommand`、`buildContainerExecConfig`、`buildContainerArgvExecConfig` 四个正式构造 API，以及终端、卡片/资源、后台、Agent、运行时管理等调用面。现有 `RuntimeLaunchPreparationCache` 只在同进程第一份配置完整构造后生效；冷进程即使 RF1900 收据已经证明 layout/container/workspace 静态事实，首份配置仍重复 `AssetExtractor.prepareRuntime`、容器解析和工作区系统组件校准。
+- 第二名“ensure 到配置的跨层准备令牌”可消除同一业务链先 `ensureDefaultContainer()` 再 build config 的重复证明，但要把准备身份/失效传播到 `WorkSurfaceRuntimeBridge` 及多个调用方，扩大公共协议并产生令牌过期风险。第一名留在 `KFContainerManager` 内可获得相同覆盖且复用现有候选、single-flight 和缓存，因此第二名本轮 no-go。
+- 第三名“原生 tar/tar.gz/xz 归档”符合 Android 原生能力方向，但当前兼容债务明确缺少统一安全解析、权限/链接语义和多正式调用方；既有安全 ZIP 在 OnePlus 固定矩阵还比 PRoot 慢约 202.8%。没有新平台/实现证据，不重复旧矩阵，判 no-go。
+- RF2020 门在生产改动前冻结：固定 Debug/测试动作不接受 ADB 自定义路径、argv、容器、轮数或阈值；独立冷进程先确认默认容器 Ready，再只构造固定 `/bin/true` argv 配置且不启动它。基线/候选 command、env、身份和全部投影必须一致；收据失配、显式 View/环境、非法身份回完整路径。OnePlus 三轮每轮至少减少 30%＋300ms，候选 p95 不高于 500ms，任一门失败即 no-go。
+- RF2010 只回写三件套，没有生产补丁、测试、构建或设备状态变更；状态继续归容器注册表和 `RuntimeLaunchPreparationCache`，页面不参与。
 
 ## RF1700 开机与三问自检
 
