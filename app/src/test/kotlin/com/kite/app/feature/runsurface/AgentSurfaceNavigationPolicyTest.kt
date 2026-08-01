@@ -321,6 +321,46 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
+    fun `无法读取记录只在同一 Provider 提供删除且不是当前会话时开放原生删除`() {
+        assertTrue(
+            AgentSurfaceNavigationPolicy.canDeleteUnavailableSessionNatively(
+                targetProviderId = "opencode",
+                runtimeProviderId = "opencode",
+                deleteSupported = true,
+                currentSessionId = "current",
+                targetSessionId = "missing",
+            ),
+        )
+        assertFalse(
+            AgentSurfaceNavigationPolicy.canDeleteUnavailableSessionNatively(
+                targetProviderId = "opencode",
+                runtimeProviderId = "hermes",
+                deleteSupported = true,
+                currentSessionId = null,
+                targetSessionId = "missing",
+            ),
+        )
+        assertFalse(
+            AgentSurfaceNavigationPolicy.canDeleteUnavailableSessionNatively(
+                targetProviderId = "opencode",
+                runtimeProviderId = "opencode",
+                deleteSupported = false,
+                currentSessionId = null,
+                targetSessionId = "missing",
+            ),
+        )
+        assertFalse(
+            AgentSurfaceNavigationPolicy.canDeleteUnavailableSessionNatively(
+                targetProviderId = "opencode",
+                runtimeProviderId = "opencode",
+                deleteSupported = true,
+                currentSessionId = "missing",
+                targetSessionId = "missing",
+            ),
+        )
+    }
+
+    @Test
     fun `首字符斜杠触发原生命令过滤而普通消息不触发`() {
         val commands = listOf(
             AgentCommand("model", "切换模型"),

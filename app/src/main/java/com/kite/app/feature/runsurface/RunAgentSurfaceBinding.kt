@@ -1969,7 +1969,7 @@ internal class RunAgentSurfaceBinding(
                 }
             },
             onUnavailableClick = { unavailableSessionId ->
-                showUnavailableArchivedSessionActions(targetProviderId, unavailableSessionId) {
+                showUnavailableArchivedSessionActions(selected, unavailableSessionId) {
                     unavailableArchivedSessionIds = sessionMetadataStore
                         .archivedSessionIds(targetProviderId)
                         .filterNot { it in archivedSessions.map(AgentSessionSummary::id) }
@@ -5125,19 +5125,90 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun showUnavailableArchivedSessionActions(
-        providerId: String,
+        selected: AgentRegistryEntry,
         sessionId: String,
         onChanged: () -> Unit,
     ) {
+        val providerId = selected.registration.launch.providerId
+        val runtime = AgentRuntimeRegistry.session(instanceId)
+        val canDeleteNatively = AgentSurfaceNavigationPolicy.canDeleteUnavailableSessionNatively(
+            targetProviderId = providerId,
+            runtimeProviderId = runtime?.providerId,
+            deleteSupported = runtime?.capabilities?.sessions?.delete == true,
+            currentSessionId = runtime?.sessionId,
+            targetSessionId = sessionId,
+        )
         showAgentDialogCard(
             title = "暂时无法读取的归档会话",
-            message = "Agent 当前会话列表没有返回这条记录。移出归档只会清除 Kite 的归档标记，不会删除 Agent 数据。",
+            message = "Agent 当前列表没有返回这条记录。移出归档只取消 Kite 标记；删除时可以明确选择只清理 Kite 记录，或在 Agent 支持时请求永久删除。",
             actions = listOf(
                 AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
                 AgentDialogAction("移出归档", UiActionRole.Primary) { dialog, _ ->
                     dialog.dismiss()
                     sessionMetadataStore.restore(providerId, sessionId)
                     onChanged()
+                },
+                AgentDialogAction("删除", UiActionRole.Danger) { dialog, _ ->
+                    dialog.dismiss()
+                    showUnavailableArchivedDeleteConfirmation(
+                        selected = selected,
+                        sessionId = sessionId,
+                        canDeleteNatively = canDeleteNatively,
+                        onChanged = onChanged,
+                    )
+                },
+            ),
+        )
+    }
+
+    private fun showUnavailableArchivedDeleteConfirmation(
+        selected: AgentRegistryEntry,
+        sessionId: String,
+        canDeleteNatively: Boolean,
+        onChanged: () -> Unit,
+    ) {
+        val providerId = selected.registration.launch.providerId
+        showAgentDialogCard(
+            title = "删除无法读取的记录？",
+            message = if (canDeleteNatively) {
+                "“仅删 Kite”只清理本地归档记录；“永久删除”会使用稳定会话 ID 请求 ${selected.registration.definition.displayName} 删除，成功后再清理 Kite 记录。"
+            } else {
+                "当前无法安全调用 Agent 原生删除。“仅删 Kite”只清理本地归档记录，不会修改或声称删除 Agent 数据。"
+            },
+            actions = listOf(
+                AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
+                AgentDialogAction("仅删 Kite", UiActionRole.Danger) { dialog, _ ->
+                    sessionMetadataStore.remove(providerId, sessionId)
+                    dialog.dismiss()
+                    onChanged()
+                    Toast.makeText(context, "已删除 Kite 归档记录", Toast.LENGTH_SHORT).show()
+                },
+                AgentDialogAction(
+                    label = "永久删除",
+                    role = UiActionRole.Danger,
+                    enabled = canDeleteNatively,
+                ) { dialog, button ->
+                    button.isEnabled = false
+                    button.alpha = 0.48f
+                    button.text = "删除中…"
+                    lifecycleOwner.lifecycleScope.launch {
+                        when (val result = AgentRuntimeRegistry.deleteSession(instanceId, generation, sessionId)) {
+                            is AgentOperationResult.Success -> {
+                                sessionMetadataStore.remove(providerId, sessionId)
+                                dialog.dismiss()
+                                onChanged()
+                                Toast.makeText(context, "已永久删除 Agent 会话", Toast.LENGTH_SHORT).show()
+                            }
+                            is AgentOperationResult.Unsupported -> {
+                                dialog.dismiss()
+                                Toast.makeText(context, "当前 Agent 未提供永久删除", Toast.LENGTH_LONG).show()
+                            }
+                            is AgentOperationResult.Failure -> {
+                                dialog.dismiss()
+                                Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
                 },
             ),
         )

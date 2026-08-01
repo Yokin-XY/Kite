@@ -165,6 +165,17 @@ internal object AgentSurfaceNavigationPolicy {
         }
     }
 
+    fun canDeleteUnavailableSessionNatively(
+        targetProviderId: String,
+        runtimeProviderId: String?,
+        deleteSupported: Boolean,
+        currentSessionId: String?,
+        targetSessionId: String,
+    ): Boolean =
+        runtimeProviderId == targetProviderId &&
+            deleteSupported &&
+            currentSessionId != targetSessionId
+
     private fun projectName(cwd: String): String = normalizeCwd(cwd)
         .substringAfterLast('/')
         .takeIf(String::isNotBlank)
