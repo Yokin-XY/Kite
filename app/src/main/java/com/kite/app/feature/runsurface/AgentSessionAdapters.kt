@@ -459,6 +459,9 @@ internal class AgentSessionDrawerAdapter(
     private val onAction: (AgentDrawerAction) -> Unit
 ) : ListAdapter<AgentDrawerRow, RecyclerView.ViewHolder>(DIFF) {
     private val ui = UiKit(context, tokens)
+    private val selectionPalette = AgentSelectionVisualPolicy.palette(
+        isDark = tokens.pageBackground == android.graphics.Color.BLACK,
+    )
     var selectedSessionId: String? = null
         set(value) {
             if (field == value) return
@@ -634,7 +637,7 @@ internal class AgentSessionDrawerAdapter(
             title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             subtitle.text = AgentSessionRelativeTimeFormatter.format(session.updatedAt)
             container.background = ui.roundedBox(
-                if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
+                if (selected) selectionPalette.selectedRow else android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
                 ui.dp(16).toFloat()
             )
