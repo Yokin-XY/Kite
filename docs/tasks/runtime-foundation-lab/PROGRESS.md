@@ -87,6 +87,11 @@
 | RF1520 | 进行中 | 审计资源打开/获取的 PRoot 命令探针与固定收益门 |
 | RF1530 | 待开始 | 仅在肯定式完整证明下研究原生受管命令 Provider |
 | RF1540 | 待开始 | go/no-go、全量门与 OnePlus 8T 正式链验收 |
+| RF1550 | 已完成 | 保留全量覆盖；Quick 默认测试数减少 82.7%，本机构建统一排队 |
+| RF1551 | 已完成 | 276 类测试是覆盖累积，不是重复注册；共享 daemon/机器资源会碰撞 |
+| RF1552 | 已完成 | Quick/Stage/Full 实跑零失败，默认测试数最高减少 82.7% |
+| RF1553 | 已完成 | Windows 命名锁已通过等待、释放和超时双进程探针 |
+| RF1554 | 已完成 | Full、Debug 构建、互斥探针和范围审查全部通过 |
 
 ## RF1500 开机与三问自检
 
@@ -100,6 +105,35 @@
 - 新增 `docs/architecture/runtime-compatibility-backlog.md`，以 FAST/NATIVE/PROOT 稳定编号保存三车道共 17 项明确不支持或尚未生产化边界。
 - 每项分别记录已确认原因、当前兼容路线和未来候选；用户提出的“第二个全 PRoot Python”只作为后续组合方向记录，没有改变当前 Python、资源命令或 Provider。
 - 总路由文档加入唯一总账入口；本叶没有修改代码、资源清单、运行资产、构建配置或设备状态，Markdown 差异检查通过。
+
+## RF1550 开机与三问自检
+
+- 目标是什么？依据 PLAYBOOK 的 RF1550，在不删除完整测试资产的前提下压缩每个叶子的默认执行集，并协调同机多个 Kite worktree 的 Gradle 重任务。
+- 完成后拿什么证明？276 类静态清单、Quick/Stage/Full 实跑摘要、Quick 相对 1465 项/343 秒历史全量的比例、命名互斥锁双进程证据、最终 Full 与 Debug 构建。
+- 依赖是否满足？RF1510 已完成；RF1520 三个 Debug 草稿文件已保存在 `stash@{0}: rf1520-managed-command-proof-draft`，当前工作树只允许 RF1550 文件变化。主线正在另一 worktree 运行 Agent 定向测试，本阶段不停止或干扰该进程。
+- 红线：不按测试数量删覆盖，不把 Quick 冒充发布全量，不共享 worktree `build/`，不执行 `gradlew --stop` 杀死其他任务，不默认抢占任何 ADB 设备。
+
+## RF1551 审计结果
+
+- 当前 `app/src/test` 为 276 个 Kotlin 测试文件、约 1.85 MiB；文件名没有重复类组。RF1440 的 276 suites/1465 tests 是覆盖资产累积，不是同一测试被 Gradle 重复注册。
+- 其中 Robolectric 测试类 103 个、读取源码/资产的静态合同类约 50 个、协程测试类约 22 个。按 `Contract/Protocol/Routing/Policy/Schema/Guard` 稳定后缀可选出 48 类，占总类数 17.4%，适合作为 Quick 候选。
+- 各 worktree 的仓库 `.gradle`、模块 `build/` 和测试结果目录天然分开；共享的是用户级 Gradle 缓存/daemon、全局 Kotlin daemon 和设备/机器资源。检查时主线 wrapper、主线测试 worker、本支线单次 Gradle daemon 与长期 Kotlin daemon 同时存在，证明需要跨 worktree 协调而不是删除 build 目录。
+
+## RF1552～RF1553 验收
+
+- `run-kite-tests.ps1` 固定 Quick/Stage/Full 三档。Quick 由六类稳定职责后缀自动选取；Stage 未声明或声明不存在的测试模式会在 Gradle 前失败；Full 不接受自定义过滤。
+- Quick：49 suites、254 tests、0 failure、0 error、0 skipped，墙钟 84.572 秒；相对本轮 Full 测试数减少 82.7%、墙钟减少 57.9%。
+- Stage（Quick + `com.kite.app.platform.resources.*`）：55 suites、288 tests、零失败，墙钟 74.529 秒。它命中前一轮编译缓存，不能据此宣称 Stage 固有快于 Quick。
+- Full：277 suites、1467 tests、0 failure、0 error、2 skipped，墙钟 201.151 秒；完整语义未改变。相对 RF1440 强制 `--rerun-tasks` 的约 343 秒减少 41.4%。
+- 命名锁双进程探针中，第一进程持锁 3 秒，第二进程 `waitMs=2803` 后获得；1 秒超时探针 exit 1 并明确报告。所有临时输出位于忽略的 `local-artifacts/`。
+- 测试输出仍有既有 Robolectric SQLite CloseGuard 警告，但 JUnit 为零失败；它属于测试资源释放债务，不在本阶段以静默屏蔽处理。
+
+## RF1554 父任务门
+
+- `KiteTestProfileScriptContractTest` 两项合同进入 Quick，固定三档、25% 类数上限、Stage 范围校验、命名锁、禁止 `gradlew --stop` 和禁止删除缓存。
+- 统一包装器完成 Debug 构建：60 个任务中 5 个执行、55 个 up-to-date，`BUILD SUCCESSFUL in 26s`。APK 为 241900484 bytes，SHA-256 `AD05EFA67345ABAD6AF4F2EE4D2D61A7FDFE7E2C27D17D536B04CC7A3AE9EA3C`；构建物未进入 Git。
+- 范围审查：没有删除或排除任何测试源码；CI 的独立全量入口保持原样；没有改设备状态、资源卡、Provider、运行资产或生产业务代码。`references/toolchain.md` 已在本地更新为包装器入口，但该本机事实文件按仓库规则不进入 Git。
+- RF1550 完成。下一步恢复 `rf1520-managed-command-proof-draft`，继续高频结构化只读验证；后续叶子使用 Stage，RF1500 父门才再次使用 Full。
 
 ## RF1431 验收
 

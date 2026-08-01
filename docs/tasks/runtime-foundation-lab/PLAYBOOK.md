@@ -837,6 +837,37 @@
 - 完成目标回归、Debug 构建、OnePlus 8T 资源打开/获取链和生产范围审查后独立提交；
 - 本父任务不迁移安装脚本内部的任意 `command -v`，不修改资源清单，不扩大到版本执行、shell 函数、别名或任意 PATH。
 
+### RF1550 [P0 工程门] 测试分层与本机构建协调
+
+父任务目标：保留完整回归资产，但不再让每个叶子任务都执行 1400+ 全量测试；建立日常快测、阶段回归、发布全量三层入口，并让同机多个 Kite worktree 的 Gradle 重任务经过同一协调锁。各 worktree 的源码、`.gradle`、`build/` 和测试报告继续物理隔离；设备仍按明确 serial 分工。
+
+#### RF1551 测试资产与并发碰撞审计
+
+- 问题证据：当前 `app/src/test` 有 276 个测试类、约 1.85 MiB 源码；RF1440 全量为 1465 tests，强制执行约 343 秒。历史每个阶段都追加合同测试并重复运行全量；同时多个 worktree 共用用户级 Gradle/Kotlin daemon 与依赖缓存，已有 classes.jar 锁等待和并行进程争用记录；
+- 解法：统计测试类形态、稳定命名族、现有执行命令、worktree 构建目录与当前 Java/Gradle 进程，区分“覆盖累积”和“重复注册”；
+- 验收标准：给出可复算的测试类/命名族数量；确认哪些目录已隔离、哪些 daemon/cache/设备需要协调；不删除测试；
+- 依赖：RF1510 已完成。RF1520 草稿独立 stash，避免混入。
+
+#### RF1552 三层测试入口
+
+- 问题证据：当前只有目标 `--tests` 与全量 `testDebugUnitTest` 两个极端，长期任务缺少统一日常门；
+- 解法：新增单一脚本入口：Quick 固定执行架构/合同/协议/路由/策略/Schema/Guard 命名族，Stage 在 Quick 基础上合并调用方给出的模块测试模式，Full 执行全部测试；默认不强制 `--rerun-tasks`；
+- 验收标准：Quick/Stage/Full 参数失败关闭；Stage 未提供测试范围时拒绝；每次输出 suite/test/failure/error/skipped/耗时摘要；Quick 测试类不超过全量 25%；Full 保持原 `testDebugUnitTest` 语义；
+- 依赖：RF1551。
+
+#### RF1553 跨 worktree Gradle 构建协调
+
+- 问题证据：worktree 自身 `.gradle` 和 `build/` 已隔离，但同机进程仍共享 `C:\Users\19437\.gradle`、Gradle daemon、Kotlin daemon、CPU 和内存；`--no-daemon` 仍会创建单次构建 daemon；
+- 解法：新增通用本地 Gradle 包装器，以 Windows 命名互斥锁串行化 Kite 重任务，自动附加 `--no-daemon --console=plain`，异常退出由系统释放锁；不复制依赖缓存，不杀其他 worktree 的 daemon；
+- 验收标准：同一时刻只允许一个包装器进入 Gradle；等待、超时和遗弃锁均明确报告；任意 Gradle 参数原样透传；CI 保持原入口；工具链文档统一要求本地长期任务使用包装器；
+- 依赖：RF1551。
+
+#### RF1554 压缩与隔离父任务门
+
+- [x] Quick、Stage 和 Full 入口分别实跑；Quick 数量与耗时相对 Full 形成明确比例；
+- [x] 启动两个只读锁探针证明互斥，没有并行启动真实双 Gradle 重任务；
+- [x] 脚本合同、全量测试与 Debug 构建通过；RF1520 从 stash 恢复后使用新测试入口。
+
 ## 每个叶子任务的固定闭环
 
 1. 复读任务目标、验收和依赖；

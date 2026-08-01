@@ -5,13 +5,24 @@
 完整单元测试和 Debug 构建：
 
 ```powershell
-.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --console=plain
+# 日常跨层护栏
+.\scripts\run-kite-tests.ps1 -Profile Quick
+
+# 阶段回归：Quick 加受影响模块
+.\scripts\run-kite-tests.ps1 -Profile Stage -Tests 'com.kite.app.platform.resources.*'
+
+# 父任务、合并和发布门
+.\scripts\run-kite-tests.ps1 -Profile Full
+.\scripts\invoke-kite-gradle.ps1 -GradleArguments ':app:assembleDebug'
 ```
+
+不要把 Quick 或 Stage 写成发布全量。多个本地 worktree 必须通过上述包装器进入 Gradle；CI 运行在独立机器，继续使用工作流中的
+原始全量命令。分层原则与锁边界见[测试执行分层与本机构建协调](../architecture/test-execution-profiles.md)。
 
 Android Lint：
 
 ```powershell
-.\gradlew.bat :app:lintDebug --console=plain
+.\scripts\invoke-kite-gradle.ps1 -GradleArguments ':app:lintDebug'
 ```
 
 架构和运行车道护栏：
