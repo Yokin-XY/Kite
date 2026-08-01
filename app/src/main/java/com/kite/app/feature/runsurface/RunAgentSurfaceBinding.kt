@@ -160,6 +160,7 @@ internal class RunAgentSurfaceBinding(
         Configuration.UI_MODE_NIGHT_YES
     private val tokens = AgentSurfaceThemePolicy.project(tokens, isDark)
     private val ui = UiKit(context, this.tokens)
+    private val selectionPalette = AgentSelectionVisualPolicy.palette(isDark)
     private val sessionMetadataStore = AgentSessionMetadataStore(context)
     private val draftCapabilityCacheStore = AgentDraftCapabilityCacheStore(context)
     private val modelLibraryStore = AgentModelLibraryStore(context)
@@ -2080,17 +2081,16 @@ internal class RunAgentSurfaceBinding(
                 ))
             })
         }
-        val selectAllIndicator = TextView(context).apply {
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
+        val selectAllIndicator = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER
         }
         val selectAll = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(selectAllIndicator, LinearLayout.LayoutParams(ui.dp(30), ui.dp(30)).apply {
-                setMargins(ui.dp(4), 0, ui.dp(8), 0)
-            })
+            addView(selectAllIndicator, LinearLayout.LayoutParams(
+                ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+                ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+            ).apply { setMargins(0, 0, ui.dp(4), 0) })
             addView(TextView(context).apply {
                 text = "全选"
                 textSize = 14f
@@ -2223,10 +2223,10 @@ internal class RunAgentSurfaceBinding(
                 ),
             )
         }
-        val restoreSelected = actionOutlineButton("恢复") {
+        val restoreSelected = archiveBatchActionButton("恢复") {
             showBatchRestoreConfirmation()
         }
-        val deleteSelected = actionDangerButton("删除") {
+        val deleteSelected = archiveBatchActionButton("删除") {
             showBatchDeleteConfirmation()
         }
         val batchActions = LinearLayout(context).apply {
@@ -2234,8 +2234,16 @@ internal class RunAgentSurfaceBinding(
             gravity = Gravity.CENTER_VERTICAL
             visibility = View.GONE
             setPadding(ui.dp(18), ui.dp(8), ui.dp(18), ui.dp(14))
-            addView(restoreSelected, LinearLayout.LayoutParams(0, ui.dp(48), 1f))
-            addView(deleteSelected, LinearLayout.LayoutParams(0, ui.dp(48), 1f).apply {
+            addView(restoreSelected, LinearLayout.LayoutParams(
+                0,
+                ui.dp(AgentSelectionVisualPolicy.ACTION_HEIGHT_DP),
+                1f,
+            ))
+            addView(deleteSelected, LinearLayout.LayoutParams(
+                0,
+                ui.dp(AgentSelectionVisualPolicy.ACTION_HEIGHT_DP),
+                1f,
+            ).apply {
                 setMargins(ui.dp(10), 0, 0, 0)
             })
         }
@@ -2251,14 +2259,14 @@ internal class RunAgentSurfaceBinding(
                 projectCwds = archivedProjects.map(AgentProject::cwd),
             )
             val allSelected = allKeys.isNotEmpty() && selectedKeys.containsAll(allKeys)
-            renderCircularSelection(selectAllIndicator, allSelected)
+            renderArchiveSelectionIndicator(selectAllIndicator, allSelected)
             selectAll.contentDescription = if (allSelected) "取消全选归档内容" else "全选归档内容"
             selectedCount.text = "已选择 ${selectedKeys.size} 项"
             val hasSelection = selectedKeys.isNotEmpty()
             val hasRestorableContent = archivedSessions.any { it.id in selectedIds } ||
                 archivedProjects.any { it.cwd in selectedProjects }
             restoreSelected.isEnabled = hasRestorableContent
-            restoreSelected.alpha = if (hasRestorableContent) 1f else 0.38f
+            renderArchiveBatchAction(restoreSelected, hasRestorableContent, danger = false)
             val runtime = AgentRuntimeRegistry.session(instanceId)
             val selectedReadableIds = archivedSessions
                 .filter { it.id in selectedIds }
@@ -2272,7 +2280,7 @@ internal class RunAgentSurfaceBinding(
                 )
             val canDelete = hasSelection && canDeleteReadableSessions
             deleteSelected.isEnabled = canDelete
-            deleteSelected.alpha = if (canDelete) 1f else 0.38f
+            renderArchiveBatchAction(deleteSelected, canDelete, danger = true)
             deleteSelected.contentDescription = when {
                 !hasSelection -> "删除归档会话，请先选择"
                 !canDeleteReadableSessions && runtime?.sessionId in selectedReadableIds ->
@@ -2413,15 +2421,54 @@ internal class RunAgentSurfaceBinding(
         refreshArchivedContent()
     }
 
-    private fun renderCircularSelection(indicator: TextView, selected: Boolean) {
-        indicator.text = if (selected) "✓" else ""
-        indicator.setTextColor(android.graphics.Color.WHITE)
-        indicator.background = ui.roundedBox(
-            if (selected) tokens.primaryStrong else android.graphics.Color.TRANSPARENT,
-            if (selected) android.graphics.Color.TRANSPARENT else tokens.borderStrong,
-            ui.dp(15).toFloat(),
-            ui.dp(1)
+    private fun renderArchiveSelectionIndicator(indicator: ImageView, selected: Boolean) {
+        indicator.setImageResource(if (selected) R.drawable.ic_check_light else 0)
+        indicator.imageTintList = ColorStateList.valueOf(selectionPalette.selectedIndicatorContent)
+        indicator.background = InsetDrawable(
+            ui.roundedBox(
+                if (selected) selectionPalette.selectedIndicator else android.graphics.Color.TRANSPARENT,
+                if (selected) android.graphics.Color.TRANSPARENT else selectionPalette.unselectedIndicatorStroke,
+                ui.dp(AgentSelectionVisualPolicy.INDICATOR_SIZE_DP / 2).toFloat(),
+                ui.dp(1),
+            ),
+            ui.dp((AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_SIZE_DP) / 2),
         )
+        val iconInset = ui.dp(
+            (AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_ICON_SIZE_DP) / 2,
+        )
+        indicator.setPadding(iconInset, iconInset, iconInset, iconInset)
+        indicator.contentDescription = if (selected) "已选择" else "未选择"
+    }
+
+    private fun archiveBatchActionButton(label: String, onClick: () -> Unit): TextView =
+        TextView(context).apply {
+            text = label
+            textSize = 14.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun renderArchiveBatchAction(button: TextView, enabled: Boolean, danger: Boolean) {
+        val backgroundColor = when {
+            !enabled -> selectionPalette.disabledAction
+            danger -> selectionPalette.dangerAction
+            else -> selectionPalette.primaryAction
+        }
+        val textColor = when {
+            !enabled -> selectionPalette.disabledActionText
+            danger -> selectionPalette.dangerActionText
+            else -> selectionPalette.primaryActionText
+        }
+        button.setTextColor(textColor)
+        button.background = ui.roundedBox(
+            backgroundColor,
+            android.graphics.Color.TRANSPARENT,
+            ui.dp(AgentSelectionVisualPolicy.ACTION_RADIUS_DP).toFloat(),
+        )
+        button.alpha = 1f
     }
 
     private fun showArchivedSessionActions(

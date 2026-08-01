@@ -156,6 +156,9 @@ internal class ArchivedSessionAdapter(
     private val onProjectLongClick: (AgentProject) -> Unit,
 ) : ListAdapter<AgentArchivedRow, RecyclerView.ViewHolder>(DIFF) {
     private val ui = UiKit(context, tokens)
+    private val selectionPalette = AgentSelectionVisualPolicy.palette(
+        isDark = tokens.pageBackground == android.graphics.Color.BLACK,
+    )
     private var selectionMode = false
     private var selectedIds: Set<String> = emptySet()
     private var selectedProjectCwds: Set<String> = emptySet()
@@ -213,16 +216,33 @@ internal class ArchivedSessionAdapter(
         }
     }
 
+    private fun renderSelectionIndicator(indicator: ImageView, selected: Boolean) {
+        indicator.setImageResource(if (selected) R.drawable.ic_check_light else 0)
+        indicator.imageTintList = ColorStateList.valueOf(selectionPalette.selectedIndicatorContent)
+        indicator.background = InsetDrawable(
+            ui.roundedBox(
+                if (selected) selectionPalette.selectedIndicator else android.graphics.Color.TRANSPARENT,
+                if (selected) android.graphics.Color.TRANSPARENT else selectionPalette.unselectedIndicatorStroke,
+                ui.dp(AgentSelectionVisualPolicy.INDICATOR_SIZE_DP / 2).toFloat(),
+                ui.dp(1),
+            ),
+            ui.dp((AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_SIZE_DP) / 2),
+        )
+        val iconInset = ui.dp(
+            (AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_ICON_SIZE_DP) / 2,
+        )
+        indicator.setPadding(iconInset, iconInset, iconInset, iconInset)
+        indicator.contentDescription = if (selected) "已选择" else "未选择"
+    }
+
     inner class GroupHolder(private val container: LinearLayout) : RecyclerView.ViewHolder(container) {
         private val chevron = ImageView(context).apply {
             setImageResource(R.drawable.ic_chevron_right_light)
             imageTintList = ColorStateList.valueOf(tokens.textSecondary)
             setPadding(ui.dp(9), ui.dp(9), ui.dp(9), ui.dp(9))
         }
-        private val selector = TextView(context).apply {
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
+        private val selector = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER
         }
         private val title = TextView(context).apply {
             textSize = 14.5f
@@ -257,7 +277,10 @@ internal class ArchivedSessionAdapter(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(0, ui.dp(3), 0, ui.dp(3)) }
-            container.addView(selector, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
+            container.addView(selector, LinearLayout.LayoutParams(
+                ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+                ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+            ))
             container.addView(chevron, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
             container.addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -274,14 +297,7 @@ internal class ArchivedSessionAdapter(
             val projectSelected = row.archivedProject?.cwd in selectedProjectCwds
             val showProjectSelector = selectionMode && row.archivedProject != null
             selector.visibility = if (showProjectSelector) View.VISIBLE else View.GONE
-            selector.text = if (projectSelected) "✓" else ""
-            selector.setTextColor(android.graphics.Color.WHITE)
-            selector.background = ui.roundedBox(
-                if (projectSelected) tokens.primaryStrong else android.graphics.Color.TRANSPARENT,
-                if (projectSelected) android.graphics.Color.TRANSPARENT else tokens.borderStrong,
-                ui.dp(20).toFloat(),
-                ui.dp(1),
-            )
+            renderSelectionIndicator(selector, projectSelected)
             chevron.rotation = if (row.expanded) 90f else 0f
             chevron.visibility = if (showProjectSelector) {
                 View.GONE
@@ -319,10 +335,8 @@ internal class ArchivedSessionAdapter(
     }
 
     inner class Holder(private val container: LinearLayout) : RecyclerView.ViewHolder(container) {
-        private val selector = TextView(context).apply {
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
+        private val selector = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER
             isClickable = false
             isFocusable = false
         }
@@ -341,9 +355,10 @@ internal class ArchivedSessionAdapter(
         }
 
         init {
-            container.addView(selector, LinearLayout.LayoutParams(ui.dp(30), ui.dp(30)).apply {
-                setMargins(ui.dp(7), 0, ui.dp(7), 0)
-            })
+            container.addView(selector, LinearLayout.LayoutParams(
+                ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+                ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+            ))
             container.addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(title)
@@ -355,15 +370,7 @@ internal class ArchivedSessionAdapter(
 
         fun bind(session: AgentSessionSummary, selectionMode: Boolean, selected: Boolean) {
             selector.visibility = if (selectionMode) View.VISIBLE else View.GONE
-            selector.text = if (selected) "✓" else ""
-            selector.setTextColor(android.graphics.Color.WHITE)
-            selector.background = ui.roundedBox(
-                if (selected) tokens.primaryStrong else android.graphics.Color.TRANSPARENT,
-                if (selected) android.graphics.Color.TRANSPARENT else tokens.borderStrong,
-                ui.dp(15).toFloat(),
-                ui.dp(1)
-            )
-            selector.contentDescription = if (selected) "已选择" else "未选择"
+            renderSelectionIndicator(selector, selected)
             title.text = session.title?.takeIf(String::isNotBlank) ?: "未命名会话"
             title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             subtitle.text = buildString {
@@ -371,7 +378,7 @@ internal class ArchivedSessionAdapter(
                 append(" · ").append(AgentSessionRelativeTimeFormatter.format(session.updatedAt))
             }
             container.background = ui.roundedBox(
-                if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
+                if (selected) selectionPalette.selectedRow else android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
                 ui.dp(16).toFloat()
             )
@@ -394,19 +401,12 @@ internal class ArchivedSessionAdapter(
         ) {
             val sourceDeleted = metadata.sourceState == AgentArchivedSessionSourceState.Deleted
             selector.visibility = if (selectionMode) View.VISIBLE else View.GONE
-            selector.text = if (selected) "✓" else ""
-            selector.setTextColor(android.graphics.Color.WHITE)
-            selector.background = ui.roundedBox(
-                if (selected) tokens.primaryStrong else android.graphics.Color.TRANSPARENT,
-                if (selected) android.graphics.Color.TRANSPARENT else tokens.borderStrong,
-                ui.dp(15).toFloat(),
-                ui.dp(1),
-            )
+            renderSelectionIndicator(selector, selected)
             title.text = if (sourceDeleted) "源会话已删除" else "尚未确认的归档会话"
             title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             subtitle.text = "会话 ID · ${metadata.sessionId}"
             container.background = ui.roundedBox(
-                if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
+                if (selected) selectionPalette.selectedRow else android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
                 ui.dp(16).toFloat()
             )

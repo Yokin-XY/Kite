@@ -734,6 +734,20 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
+    fun `归档选择视觉使用 ChatGPT 中性尺寸与颜色`() {
+        assertEquals(22, AgentSelectionVisualPolicy.INDICATOR_SIZE_DP)
+        assertEquals(44, AgentSelectionVisualPolicy.TOUCH_TARGET_DP)
+        assertEquals(14, AgentSelectionVisualPolicy.INDICATOR_ICON_SIZE_DP)
+        assertEquals(48, AgentSelectionVisualPolicy.ACTION_HEIGHT_DP)
+
+        val light = AgentSelectionVisualPolicy.palette(isDark = false)
+        assertEquals(android.graphics.Color.rgb(32, 33, 35), light.selectedIndicator)
+        assertEquals(android.graphics.Color.rgb(247, 247, 248), light.selectedRow)
+        assertEquals(android.graphics.Color.rgb(252, 235, 235), light.dangerAction)
+        assertEquals(android.graphics.Color.rgb(207, 30, 39), light.dangerActionText)
+    }
+
+    @Test
     fun `持久默认提示明确不会改变当前会话`() {
         assertEquals(
             "智谱 GLM 已设为默认；正在进行的会话不会改变",
