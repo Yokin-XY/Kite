@@ -494,3 +494,11 @@
 - 决定：RF1420 同时测 active 正式遥测、同 active 无遥测和 stock 无遥测。active/stock 差值只代表当前打包运行时总体差异；只有同 active 二进制的有/无遥测差值可归因于生命周期采集。
 - 原因：active 与 stock 的来源代次、体积和 embedded/external loader 均不同，二元 A/B 无法把差值归因到 View、telemetry 或某个补丁。增加同二进制 telemetry toggle 才能避免错误删除关键能力。
 - 影响：基准复用正式 argv/env/bind/network，只允许固定变换；historical baseline 继续 quarantine。低于 15ms 的差异不触发生产工作，至少两个通用负载跨 4/8 并发达到相对与绝对双阈值后，RF1430 才打开。
+
+## ADR-RF-063 PRoot 热点定位门已打开但禁止退回 stock
+
+- 状态：已接受，RF1420 已完成
+- 日期：2026-08-01
+- 决定：RF1430 打开两个窄热点：默认无 View/保护事务的文件 syscall fast-disable，以及 lifecycle telemetry 在 4 并发 child-fanout 的写入竞争。不得把 stock 设为正式 runtime，也不得通过关闭 telemetry、强身份、保护或 View 消除成本。
+- 原因：两套隔离矩阵中 small-write 的 active 有/无 telemetry 都稳定比 stock 多 89～115ms；child-fanout 4 并发的 telemetry 增量稳定为 98～109ms。与此同时 startup/shell/metadata 与 8 并发 child-fanout 未表现同样差异，说明应定位具体热分支，不应笼统替换整个运行时。
+- 影响：RF1430 必须读真实 Termux PRoot fork/补丁来源，并用同矩阵验证候选。若源码不可复现、收益不稳定或任何事件/文件语义改变，RF1440 维持当前 active 二进制并以 no-go 收口。

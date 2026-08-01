@@ -76,8 +76,8 @@
 | RF1340 | 已完成 | preload relay 生产 no-go；Debug 证据保留，正式链零改动 |
 | RF1400 | 进行中 | 对比活跃/库存 PRoot，归因 wrapper、遥测与通用负载成本 |
 | RF1410 | 已完成 | 固定三资产身份、loader 等价、五类通用负载与双阈值 |
-| RF1420 | 进行中 | Debug-only 1/4/8 固定 A/B 真机矩阵 |
-| RF1430 | 待开始 | 仅在稳定退化成立时定位热点与候选补丁 |
+| RF1420 | 已完成 | 两套隔离 sink 矩阵打开 small-write 与 c4 lifecycle 热点门 |
+| RF1430 | 进行中 | 定位默认关闭的文件 hook 与 lifecycle 并发写入成本 |
 | RF1440 | 待开始 | go/no-go、全量门与生产范围审查 |
 
 ## RF110 开机与三问自检
@@ -421,6 +421,16 @@
 - historical Termux baseline 的 SHA-256 为 `AAB80BBBB38345A6CF30D5173B1D9E5FB506B72FCFB48B089DB0DA62088B51C4`，descriptor 已固定 `quarantined_after_execve_enosys`，不进入成功性能对照。
 - Debug A/B 必须先取得同一正式 `buildArgvExecConfig`，active 无遥测只移除三个 lifecycle 环境键；stock 只替换 argv[0] 并补正式 external loader 环境。不得重建 bind/rootfs/network，也不得切换安装态 runtime。
 - 固定负载为 startup、shell、512 小文件 metadata、128 小文件 write 与 16 child fanout，1/4/8 并发、三轮、顺序轮换。至少两个 4/8 并发负载同时达到 P50 退化 15% 且 15ms、两轮同向，才算可行动热点。
+- 首两套试跑全部 45 组语义通过、零残留，但 active telemetry 使用正式累计 sink，第二套 child-fanout 出现与首套矛盾的轮转型抖动。该数据只用于发现夹具污染，不进入性能结论；RF1420 已改为每套独享 Debug telemetry/registry sink，并记录最终 bytes/rotations。
+
+## RF1420 Debug-only 固定 A/B 矩阵
+
+- Debug receiver/service 不接收 extras，stock 只复制到 `files/runtime/debug/proot-overhead-rf1420`，安装态 `bin/proot`、descriptor 与 `activeRuntimeId` 未改变。目标合同测试、Debug 构建和 OnePlus 8T 覆盖安装通过。
+- 两套最终隔离矩阵各 45 组、585 个 wrapper 样本，全部结果校验成功、0 failure、0 residual；每套独享 telemetry sink 1,527,550 bytes、0 rotation，结束后清理。logcat 无匹配 ANR/FATAL。
+- startup、shell、metadata 在 active telemetry、active no-telemetry 与 stock 之间均未达到 15ms 行动阈值，说明基础 wrapper、最小 shell 与 512 文件只读遍历不是当前 Kite 增量热点。
+- small-write 的 active/no-telemetry/stock 在 4 并发两套 wall median 为 `242/247/152ms`、`241/248/137ms`，8 并发为 `316/317/228ms`、`317/315/200ms`。有无 telemetry 接近，而 active 相对 stock 稳定多 89～115ms；进入 active 二进制默认文件 syscall hook 定位。
+- child-fanout 在 4 并发两套 active telemetry/no-telemetry/stock 为 `222/124/122ms`、`226/117/112ms`，telemetry 增量 98～109ms；8 并发三者接近。进入 lifecycle 事件并发写入/锁/registry 定位，但不能外推为所有并发档稳定退化。
+- RF1430 只允许优化默认无 View、无保护事务时的 fast-disable 分支，以及不丢事件/身份/退出事实的 telemetry 写入路径；不得关闭强身份、保护或 View 能力。
 
 ## RF710 开机与三问自检
 

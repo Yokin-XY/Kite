@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1400` PRoot 活跃运行时开销归因
-- 当前任务：`RF1420` Debug-only 固定 A/B 矩阵
+- 当前任务：`RF1430` 热点归因与候选补丁边界
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -770,9 +770,11 @@
 
 #### RF1420 Debug-only 固定 A/B 矩阵
 
-- 固定 1/4/8 并发、交替顺序、三轮、超时和结果校验；
-- active 先测无遥测，再测正式生命周期遥测；stock 使用同等可表达参数；
-- 同时记录 wall、P50/P95、失败、残留与 ANR/FATAL，不接受 ADB 自定义命令。
+- 状态：已完成；两套独享 sink 矩阵均为 45 组零失败、零残留；
+- [x] 固定 1/4/8 并发、交替顺序、三轮、超时和结果校验；
+- [x] active 正式遥测、同 active 无遥测与 stock external-loader 使用同一正式计划；
+- [x] 记录 wall samples、P50/P95、失败、残留、sink bytes/rotation 与 ANR/FATAL；
+- [x] ADB 入口不接受命令、路径、并发、轮数或 runtime 参数。
 
 #### RF1430 热点归因与候选补丁边界
 
