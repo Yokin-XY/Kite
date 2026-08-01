@@ -52,7 +52,7 @@ internal object AgentModelLibraryPolicy {
                     choices.firstOrNull()?.groupName.equals(provider.displayName, ignoreCase = true)
                 }?.value
             val models = protocolChoices
-                ?.map { choice -> choice.withDisplayName(library, provider.id) }
+                ?.map { choice -> withDisplayName(choice, library, provider.id) }
                 ?: displayProvider.models.map { model -> providerModelChoice(displayProvider, model) }
             val selectedModel = selectedModelValue(snapshot, provider.id, models)
             AgentModelProviderProjection(
@@ -69,14 +69,16 @@ internal object AgentModelLibraryPolicy {
         val configuredIds = configured.mapTo(linkedSetOf()) { it.id }
         val officialGroupIds = officialAccounts.flatMapTo(linkedSetOf()) { it.modelGroupIds }
         val official = officialAccounts.map { account ->
-            val choices = account.modelGroupIds.flatMap { groupId -> choicesByGroup[groupId].orEmpty() }
+            val choices = account.modelGroupIds
+                .flatMap { groupId -> choicesByGroup[groupId].orEmpty() }
             val providerId = officialProviderId(account.id)
-            val selectedModel = selectedModelValue(snapshot, providerId, choices)
-                ?: choices.firstOrNull { it.value == snapshot.defaultModel }?.value
+            val displayChoices = choices.map { choice -> withDisplayName(choice, library, providerId) }
+            val selectedModel = selectedModelValue(snapshot, providerId, displayChoices)
+                ?: displayChoices.firstOrNull { it.value == snapshot.defaultModel }?.value
             AgentModelProviderProjection(
                 id = providerId,
                 name = account.displayName,
-                models = choices,
+                models = displayChoices,
                 source = AgentModelProviderSource.Official,
                 officialAccount = account,
                 selectedModelValue = selectedModel,
@@ -89,11 +91,12 @@ internal object AgentModelLibraryPolicy {
             .filterKeys { it !in configuredIds && it !in officialGroupIds }
             .map { (groupId, choices) ->
                 val providerId = groupId.ifBlank { UNGROUPED_ID }
-                val selectedModel = selectedModelValue(snapshot, providerId, choices)
+                val displayChoices = choices.map { choice -> withDisplayName(choice, library, providerId) }
+                val selectedModel = selectedModelValue(snapshot, providerId, displayChoices)
                 AgentModelProviderProjection(
                     id = providerId,
                     name = choices.firstOrNull()?.groupName?.takeIf(String::isNotBlank) ?: "Agent 内置",
-                    models = choices,
+                    models = displayChoices,
                     source = AgentModelProviderSource.DiscoveredFree,
                     selectedModelValue = selectedModel,
                     visibleInConversation = selectedModel != null || library.isProviderVisible(providerId)
@@ -105,24 +108,54 @@ internal object AgentModelLibraryPolicy {
     fun filterConversationModelOption(
         option: AgentConfigOption.Select,
         library: AgentModelLibrarySnapshot,
-        activeProviderId: String? = null
+        activeProviderId: String? = null,
+        officialAccounts: List<AgentOfficialAccountSpec> = emptyList(),
     ): AgentConfigOption.Select {
         if (option.category != AgentConfigCategory.Model) return option
-        val currentGroupId = option.choices.firstOrNull { it.value == option.currentValue }?.providerGroupId()
+        val currentSourceId = option.choices
+            .firstOrNull { it.value == option.currentValue }
+            ?.let { sourceIdForChoice(it, officialAccounts) }
         val filteredChoices = option.choices.filter { choice ->
-            val groupId = choice.providerGroupId()
-            groupId == null ||
-                groupId == currentGroupId ||
-                groupId == activeProviderId ||
-                library.isProviderVisible(groupId)
+            val sourceId = sourceIdForChoice(choice, officialAccounts)
+            sourceId == null ||
+                sourceId == currentSourceId ||
+                sourceId == activeProviderId ||
+                library.isProviderVisible(sourceId)
         }.ifEmpty {
             option.choices.filter { it.value == option.currentValue }.ifEmpty { option.choices }
         }
         val visibleChoices = filteredChoices.map { choice ->
-            val providerId = choice.providerGroupId()
-            if (providerId == null) choice else choice.withDisplayName(library, providerId)
+            val sourceId = sourceIdForChoice(choice, officialAccounts)
+            if (sourceId == null) choice else withDisplayName(choice, library, sourceId)
         }
         return option.copy(choices = visibleChoices)
+    }
+
+    internal fun sourceIdForChoice(
+        choice: AgentConfigChoice,
+        officialAccounts: List<AgentOfficialAccountSpec>
+    ): String? {
+        val groupId = choice.providerGroupId() ?: return null
+        val official = officialAccounts.firstOrNull { groupId in it.modelGroupIds }
+        return official?.let { officialProviderId(it.id) } ?: groupId
+    }
+
+    internal fun withDisplayName(
+        choice: AgentConfigChoice,
+        library: AgentModelLibrarySnapshot,
+        sourceId: String
+    ): AgentConfigChoice {
+        val names = library.providers[sourceId]?.modelDisplayNames.orEmpty()
+        val exactName = names[choice.value]
+        val legacyModelId = choice.value.removePrefix("$sourceId/")
+            .takeIf { it.isNotBlank() && it != choice.value }
+        val legacyName = legacyModelId?.let(names::get)
+        val displayName = exactName ?: legacyName ?: return choice
+        val modelId = if (exactName != null) choice.value else legacyModelId ?: choice.value
+        return choice.copy(
+            name = displayName,
+            description = modelId.takeIf { it != displayName }
+        )
     }
 
     private fun selectedModelValue(
@@ -153,19 +186,6 @@ internal object AgentModelLibraryPolicy {
     private fun AgentConfigChoice.providerGroupId(): String? =
         groupId?.takeIf(String::isNotBlank) ?: groupName?.takeIf(String::isNotBlank)
 
-    private fun AgentConfigChoice.withDisplayName(
-        library: AgentModelLibrarySnapshot,
-        providerId: String
-    ): AgentConfigChoice {
-        val modelId = value.removePrefix("$providerId/")
-        if (modelId == value) return this
-        val displayName = library.modelDisplayName(providerId, modelId, name)
-        return copy(
-            name = displayName,
-            description = modelId.takeIf { it != displayName }
-        )
-    }
-
     private const val UNGROUPED_ID = "__kite_agent_builtin__"
-    private fun officialProviderId(accountId: String): String = "__kite_official__:$accountId"
+    internal fun officialProviderId(accountId: String): String = "__kite_official__:$accountId"
 }

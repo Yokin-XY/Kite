@@ -285,7 +285,13 @@ class AgentModelLibraryPolicyTest {
         val providers = AgentModelLibraryPolicy.projectProviders(
             snapshot = snapshot,
             modelOption = option,
-            library = AgentModelLibrarySnapshot(),
+            library = AgentModelLibrarySnapshot(
+                providers = mapOf(
+                    "__kite_official__:chatgpt" to AgentModelLibraryProviderPreference(
+                        modelDisplayNames = mapOf("openai/gpt-5.6" to "日常")
+                    )
+                )
+            ),
             officialAccounts = listOf(account),
         )
 
@@ -293,10 +299,74 @@ class AgentModelLibraryPolicyTest {
         assertEquals("__kite_official__:chatgpt", official.id)
         assertEquals("ChatGPT 官方", official.name)
         assertEquals(listOf("openai/gpt-5.6"), official.models.map { it.value })
+        assertEquals(listOf("日常"), official.models.map { it.name })
+        assertEquals(listOf("openai/gpt-5.6"), official.models.map { it.description })
         assertEquals(AgentModelLibraryStore.OFFICIAL_GROUP_ID, official.libraryGroupId)
         assertEquals(account, official.officialAccount)
         assertEquals(null, official.editableProvider)
         assertFalse(providers.any { it.source == AgentModelProviderSource.DiscoveredFree && it.id == "openai" })
+    }
+
+    @Test
+    fun `官方来源可见性使用Kite来源ID且当前模型仍保留`() {
+        val account = AgentOfficialAccountSpec(
+            id = "chatgpt",
+            displayName = "ChatGPT 官方",
+            modelGroupIds = listOf("openai"),
+            login = AgentOfficialAccountCommand(listOf("codex", "login")),
+        )
+        val option = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "free/small",
+            choices = listOf(
+                AgentConfigChoice("openai/gpt-5.6", "GPT-5.6", groupId = "openai"),
+                AgentConfigChoice("free/small", "Free Small", groupId = "free"),
+            ),
+        )
+        val library = AgentModelLibrarySnapshot(
+            providers = mapOf(
+                "__kite_official__:chatgpt" to AgentModelLibraryProviderPreference(
+                    visibleInConversation = false
+                )
+            )
+        )
+
+        val hidden = AgentModelLibraryPolicy.filterConversationModelOption(
+            option,
+            library,
+            officialAccounts = listOf(account),
+        )
+        val current = AgentModelLibraryPolicy.filterConversationModelOption(
+            option.copy(currentValue = "openai/gpt-5.6"),
+            library,
+            officialAccounts = listOf(account),
+        )
+
+        assertEquals(listOf("free/small"), hidden.choices.map { it.value })
+        assertTrue(current.choices.any { it.value == "openai/gpt-5.6" })
+    }
+
+    @Test
+    fun `免费来源显示名称只替换文案并保留真实选择值`() {
+        val library = AgentModelLibrarySnapshot(
+            providers = mapOf(
+                "builtin" to AgentModelLibraryProviderPreference(
+                    modelDisplayNames = mapOf("free/free-small" to "轻量")
+                )
+            )
+        )
+
+        val provider = AgentModelLibraryPolicy.projectProviders(
+            snapshot = AgentLiveConfigSnapshot("agent", "test", "1", "/config"),
+            modelOption = modelOption(current = "zhipu/glm-5.2"),
+            library = library,
+        ).single { it.id == "builtin" }
+
+        assertEquals("轻量", provider.models.single().name)
+        assertEquals("free/free-small", provider.models.single().value)
+        assertEquals("free/free-small", provider.models.single().description)
     }
 
     private fun modelOption(current: String = "zhipu/glm-5.2") = AgentConfigOption.Select(

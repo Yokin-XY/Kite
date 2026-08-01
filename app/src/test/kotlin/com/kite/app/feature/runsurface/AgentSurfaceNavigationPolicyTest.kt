@@ -22,6 +22,8 @@ import com.kite.app.agent.store.AgentProject
 import com.kite.app.agent.store.AgentModelLibraryProviderPreference
 import com.kite.app.agent.store.AgentModelLibrarySnapshot
 import com.kite.app.agent.registration.KiteAgentRegistry
+import com.kite.app.agent.registration.AgentOfficialAccountCommand
+import com.kite.app.agent.registration.AgentOfficialAccountSpec
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.theme.KiteTheme
 import androidx.appcompat.app.AppCompatActivity
@@ -696,13 +698,84 @@ class AgentSurfaceNavigationPolicyTest {
             )
         )
 
-        val option = AgentDraftModelPolicy.option(snapshot, selected = null, discovered = discovered)!!
+        val option = AgentDraftModelPolicy.option(
+            snapshot,
+            selected = null,
+            discovered = discovered,
+            library = AgentModelLibrarySnapshot(
+                providers = mapOf(
+                    "opencode" to AgentModelLibraryProviderPreference(
+                        modelDisplayNames = mapOf("opencode/big-pickle" to "免费轻量")
+                    )
+                )
+            )
+        )!!
         val freeChoice = option.choices.single { it.groupId == "opencode" }
         val selection = AgentDraftModelPolicy.selection(snapshot, freeChoice.value, option.choices)
 
         assertEquals(listOf("智谱 GLM", "OpenCode Zen"), option.choices.mapNotNull { it.groupName }.distinct())
+        assertEquals("免费轻量", freeChoice.name)
         assertEquals(AgentDraftModelSelection("opencode", "big-pickle", false), selection)
         assertEquals("GLM-5.2", option.choices.single { it.value == option.currentValue }.name)
+    }
+
+    @Test
+    fun `空白草稿显示官方模型别名但选择仍返回真实模型引用`() {
+        val snapshot = AgentLiveConfigSnapshot(
+            agentId = "codex",
+            adapterId = "codex",
+            revision = "r1",
+            displayLocation = "/root/.codex/config.toml",
+            activeProviderId = "custom",
+            defaultModel = "custom/default",
+            providers = listOf(
+                AgentProviderSummary(
+                    id = "custom",
+                    displayName = "自定义",
+                    models = listOf(AgentProviderModelSummary("default", "Default"))
+                )
+            )
+        )
+        val account = AgentOfficialAccountSpec(
+            id = "chatgpt",
+            displayName = "ChatGPT 官方",
+            modelGroupIds = listOf("openai"),
+            login = AgentOfficialAccountCommand(listOf("codex", "login")),
+        )
+        val discovered = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "openai/gpt-5.6",
+            choices = listOf(
+                AgentConfigChoice(
+                    value = "openai/gpt-5.6",
+                    name = "GPT-5.6",
+                    groupId = "openai",
+                    groupName = "OpenAI",
+                )
+            )
+        )
+        val option = AgentDraftModelPolicy.option(
+            snapshot,
+            selected = null,
+            discovered = discovered,
+            library = AgentModelLibrarySnapshot(
+                providers = mapOf(
+                    "__kite_official__:chatgpt" to AgentModelLibraryProviderPreference(
+                        modelDisplayNames = mapOf("openai/gpt-5.6" to "日常")
+                    )
+                )
+            ),
+            officialAccounts = listOf(account),
+        )!!
+
+        val officialChoice = option.choices.single { it.groupId == "openai" }
+        val selection = AgentDraftModelPolicy.selection(snapshot, officialChoice.value, option.choices)
+
+        assertEquals("日常", officialChoice.name)
+        assertEquals("openai/gpt-5.6", officialChoice.description)
+        assertEquals(AgentDraftModelSelection("openai", "gpt-5.6", false), selection)
     }
 
     @Test

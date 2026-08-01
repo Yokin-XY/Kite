@@ -5,6 +5,7 @@ import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.config.AgentLiveConfigSnapshot
 import com.kite.app.agent.runtime.AgentDraftModelSelection
+import com.kite.app.agent.registration.AgentOfficialAccountSpec
 import com.kite.app.agent.store.AgentModelLibrarySnapshot
 
 internal object AgentPersistentDefaultPolicy {
@@ -43,7 +44,8 @@ internal object AgentDraftModelPolicy {
         snapshot: AgentLiveConfigSnapshot,
         selected: AgentDraftModelSelection?,
         discovered: AgentConfigOption.Select? = null,
-        library: AgentModelLibrarySnapshot = AgentModelLibrarySnapshot()
+        library: AgentModelLibrarySnapshot = AgentModelLibrarySnapshot(),
+        officialAccounts: List<AgentOfficialAccountSpec> = emptyList(),
     ): AgentConfigOption.Select? {
         val configuredChoices = snapshot.providers.flatMap { provider ->
             provider.models.map { model ->
@@ -62,10 +64,12 @@ internal object AgentDraftModelPolicy {
             val providerId = choice.groupId?.trim()?.takeIf(String::isNotBlank) ?: return@mapNotNull null
             val modelId = choice.value.removePrefix("$providerId/").trim().takeIf(String::isNotBlank)
                 ?: return@mapNotNull null
+            val sourceId = AgentModelLibraryPolicy.sourceIdForChoice(choice, officialAccounts) ?: providerId
+            val displayChoice = AgentModelLibraryPolicy.withDisplayName(choice, library, sourceId)
             AgentConfigChoice(
                 value = choiceValue(providerId, modelId),
-                name = choice.name,
-                description = choice.description,
+                name = displayChoice.name,
+                description = displayChoice.description,
                 groupId = providerId,
                 groupName = choice.groupName?.takeIf(String::isNotBlank) ?: providerId
             )

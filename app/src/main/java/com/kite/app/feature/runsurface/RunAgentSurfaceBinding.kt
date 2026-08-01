@@ -101,6 +101,7 @@ import com.kite.app.agent.config.AgentSkillSummary
 import com.kite.app.agent.registration.AgentConfigurationStatus
 import com.kite.app.agent.registration.AgentInstallationStatus
 import com.kite.app.agent.registration.AgentLaunchStatus
+import com.kite.app.agent.registration.AgentOfficialAccountSpec
 import com.kite.app.agent.registration.AgentRegistryEntry
 import com.kite.app.agent.registration.AgentRegistrySnapshot
 import com.kite.app.agent.registration.AgentRuntimeStatus
@@ -280,6 +281,7 @@ internal class RunAgentSurfaceBinding(
     private var coreDocumentEditorInput: EditText? = null
     private var draftModelAgentId: String? = null
     private var draftModelSnapshot: AgentLiveConfigSnapshot? = null
+    private var draftModelOfficialAccounts: List<AgentOfficialAccountSpec> = emptyList()
     private var draftModelLoadRevision: Long = 0L
     private var draftModelLoadJob: Job? = null
     private var providerEditorStatusText: TextView? = null
@@ -396,6 +398,9 @@ internal class RunAgentSurfaceBinding(
         val content = state.content as? RunSurfaceContent.Agent ?: return
         instanceId = state.target.instanceId
         generation = state.createdAt
+        if (agentId != content.agentId) {
+            draftModelOfficialAccounts = emptyList()
+        }
         agentId = content.agentId
         agentDisplayName = state.title.ifBlank { content.agentId ?: "Agent" }
         agentTitleText.setTextIfChanged(agentDisplayName)
@@ -1283,9 +1288,9 @@ internal class RunAgentSurfaceBinding(
         draftModelAgentId = targetAgentId
         draftModelLoadJob?.cancel()
         draftModelLoadJob = lifecycleOwner.lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
+            val loaded = withContext(Dispatchers.IO) {
                 val registration = agentRegistry.snapshot().entry(targetAgentId)?.registration
-                registration
+                registration?.officialAccounts.orEmpty() to registration
                     ?.let(agentConfigAdapters::adapterFor)
                     ?.readLive(targetAgentId)
             }
@@ -1296,7 +1301,8 @@ internal class RunAgentSurfaceBinding(
                     it.generation == generation && it.isDraft
                 } == null
             ) return@launch
-            val snapshot = (result as? AgentConfigReadResult.Ready)?.snapshot
+            draftModelOfficialAccounts = loaded.first
+            val snapshot = (loaded.second as? AgentConfigReadResult.Ready)?.snapshot
             draftModelSnapshot = snapshot
             if (snapshot != null) {
                 val current = AgentRuntimeRegistry.draftModelSelection(instanceId, generation)
@@ -1308,7 +1314,8 @@ internal class RunAgentSurfaceBinding(
                     snapshot,
                     current,
                     discovered,
-                    modelLibraryStore.snapshot(targetAgentId)
+                    modelLibraryStore.snapshot(targetAgentId),
+                    draftModelOfficialAccounts,
                 )
                 val next = current?.takeIf { AgentDraftModelPolicy.contains(available, it) }
                     ?: AgentDraftModelPolicy.defaultSelection(snapshot)
@@ -6058,7 +6065,12 @@ internal class RunAgentSurfaceBinding(
             ?.activeProviderId
         return options.map { option ->
             if (option is AgentConfigOption.Select && option.category == AgentConfigCategory.Model) {
-                AgentModelLibraryPolicy.filterConversationModelOption(option, library, activeProviderId)
+                AgentModelLibraryPolicy.filterConversationModelOption(
+                    option,
+                    library,
+                    activeProviderId,
+                    modelLibraryOfficialAccounts(targetAgentId),
+                )
             } else option
         }
     }
@@ -6121,7 +6133,8 @@ internal class RunAgentSurfaceBinding(
                 AgentRuntimeRegistry.draftModelSelection(runtime.instanceId, runtime.generation),
                 cached.filterIsInstance<AgentConfigOption.Select>()
                     .firstOrNull { it.category == AgentConfigCategory.Model },
-                agentId?.let(modelLibraryStore::snapshot) ?: com.kite.app.agent.store.AgentModelLibrarySnapshot()
+                agentId?.let(modelLibraryStore::snapshot) ?: com.kite.app.agent.store.AgentModelLibrarySnapshot(),
+                modelLibraryOfficialAccounts(agentId),
             )
         }
         return if (persistentModel == null) {
@@ -6129,6 +6142,14 @@ internal class RunAgentSurfaceBinding(
         } else {
             listOf(persistentModel) + cached.filterNot { it.category == AgentConfigCategory.Model }
         }
+    }
+
+    private fun modelLibraryOfficialAccounts(targetAgentId: String?): List<AgentOfficialAccountSpec> {
+        if (targetAgentId.isNullOrBlank()) return emptyList()
+        if (targetAgentId == agentId && draftModelOfficialAccounts.isNotEmpty()) {
+            return draftModelOfficialAccounts
+        }
+        return settingsRegistrySnapshot?.entry(targetAgentId)?.registration?.officialAccounts.orEmpty()
     }
 
     private fun composerModeOptions(): List<AgentComposerModeOption> {
