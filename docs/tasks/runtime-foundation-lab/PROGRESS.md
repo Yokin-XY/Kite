@@ -67,8 +67,8 @@
 | RF1200 | 进行中 | Git 作为下一个通用依赖候选，先做兼容与性能 go/no-go |
 | RF1210 | 已完成 | 正式依赖覆盖与安全边界审计完成，Git 优先于 curl/uv |
 | RF1220 | 已完成 | 两套真机矩阵：本地 builtin 明显受益，所有外部子进程类别均有缺口 |
-| RF1230 | 进行中 | 判断是否存在无需命令白名单和配置猜测的通用选择合同 |
-| RF1240 | 待开始 | 条件生产门或 no-go 收口 |
+| RF1230 | 已完成 | direct Host Git no-go；argv/预扫描/事后回退都不能保证仓库语义 |
+| RF1240 | 进行中 | 保留 Debug 证据、全量回归并确认生产链零改动 |
 
 ## RF110 开机与三问自检
 
@@ -349,6 +349,14 @@
 - shell alias Host exit 127；hook exit 1 且 marker 文件虽创建但内容为空；external diff exit 128；remote helper exit 128；submodule exit 127。对应 PRoot 全部 exit 0 且 marker 正确。
 - clean filter 是关键反例：Host `git add` 返回 0，但 filter marker 错误且 index 内容与 PRoot 不同，证明仅以返回码选择/验收会静默破坏仓库语义。
 - Debug 构建和覆盖安装通过，未发现匹配 FATAL。RF1220 完成；生产资源卡、Git shim、Planner、运行状态与正式入口均未修改。
+
+## RF1230 direct Host Git go/no-go
+
+- 结论：生产 no-go。结构化 argv 仍无法证明同一仓库的 local config、`.gitattributes`、hooks、remote helper 或 submodule 不会创建 child；完整复刻 Git 的解析与优先级才可能预判，既形成平行实现，也有检查后被修改的竞态。
+- 不能采用运行后失败再回 PRoot。Git 是有副作用工具，`add/commit/filter` 可在错误暴露前改变 index、对象库或工作树；RF1220 更证明 exit 0 也可能写入错误内容，再跑一遍 PRoot 会制造第二次执行而不是回退。
+- 不采用 builtin/subcommand 白名单。相同 `status/diff/add` 会因 repository config 和 attributes 进入不同能力边界，命令名不是稳定合同。
+- 重新核对正式 manifest：10 个 `relations.base` 说明上层需要 Git 可用，但静态安装 Recipe 中没有十条 `clone/fetch` 热路径；除 Git 卡自检外，Git 主要由上层程序动态调用，而 Host Node 的任意 child 已按兼容合同进入 PRoot。仅为直连终端 Git 开 Provider 不能兑现原先按 reach 推定的收益面。
+- `HostGitBenchmarkReceiver` 作为 Debug-only 可复算证据保留。若要继续利用本地 builtin 收益，下一研究问题必须提升为入口无关的 glibc child relay：Host 父进程保留，所有 external child 在 exec 边界无损进入 PRoot；未证明前不接生产。
 
 ## RF710 开机与三问自检
 

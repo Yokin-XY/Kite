@@ -430,3 +430,11 @@
 - 决定：Host Git 矩阵同时核验 HEAD、status/diff 输出、index 内容和外部脚本 marker；PRoot 作为同二进制、同输入的独立控制组。Host 启动成功或 exit 0 均不构成能力兼容证明。
 - 原因：真机 clean filter 反例中，Host `git add` 返回 0，但 `/usr/bin` 子命令没有正确执行，marker 内容错误且写入 index 的内容与 PRoot 不同。alias、hook、external diff、remote helper 和 submodule 也分别证明 Git 会从 builtin 边界进入 shell/helper 子进程。
 - 影响：RF1230 不能用运行后失败回退，因为 Git 可能已经修改 index/工作树且错误可能静默；只能在任何 Git 进程创建前证明完整能力边界，否则整条选择 PRoot。任何依赖 subcommand 白名单、仓库配置猜测或忽略 stderr 的方案均为 no-go。
+
+## ADR-RF-055 direct Host Git 不进入生产
+
+- 状态：已接受，RF1230 已完成
+- 日期：2026-08-01
+- 决定：不实现 `HostGitRuntimeProvider`，不修改 Git shim、资源清单、统一 Planner 或运行 lane。Debug 矩阵保留；本地 builtin 的性能收益不抵消任意 child 和仓库配置语义无法在进程创建前证明的问题。
+- 原因：同一 argv 是否触发 hook/filter/helper 取决于仓库和配置，subcommand 白名单不正确，预扫描不完备且有竞态，运行后回退又可能重复副作用。正式资源的十条 Git relation 也不是十条 Git 安装热路径，不能把依赖覆盖数直接当成可兑现的启动收益。
+- 影响：所有未显式证明的 Git 继续整条走 PRoot。下一可研究的通用机制是 exec 边界 child relay，让 Host glibc 父进程的外部 child 无损进入 PRoot；它必须独立证明 argv/env/cwd/fd/signal/exit 与唯一进程语义，不能作为 Git 特判偷偷接入。

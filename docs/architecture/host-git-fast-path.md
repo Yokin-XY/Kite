@@ -58,4 +58,12 @@ RF1220 已在 OnePlus 8T 连续完成两套固定矩阵：
 - shell alias、hook、external diff、clean filter、remote helper 和 submodule 均出现 Host 子进程能力缺口；其中 clean filter 甚至返回 0，但 marker 和 index 内容证明已经静默改变语义；
 - PRoot 对照在全部反例中均成功，并产生预期 marker/内容。
 
-因此，“rootfs Git 能在 Host 启动”与“任意 Git 命令可走 Host”是两件事。RF1230 必须判断是否存在不依赖 subcommand 白名单、配置猜测或静默降级的通用选择合同；在该合同成立前，生产资源卡、Git shim、统一 Planner 和运行状态保持不变。
+因此，“rootfs Git 能在 Host 启动”与“任意 Git 命令可走 Host”是两件事。RF1230 最终判 direct Host Git 生产 no-go：
+
+- argv 不能证明仓库配置、attributes、hooks 与 helper 不会触发子进程；
+- 扫描这些输入既不完整，又存在扫描后到执行前被修改的窗口；
+- 运行后回退不安全，filter 已证明命令可以 exit 0 却写入错误 index；
+- 按 subcommand 白名单只是在底层复制 Git 语义，并非通用能力合同；
+- 10 个资源的 `relations.base` 表示依赖可用性，不等于十条安装热路径都执行 Git。正式 manifest 中除 Git 自检外没有静态 `git clone/fetch` 安装步骤，上层运行时的动态 Git 子进程继续由既有 PRoot child bridge 保兼容。
+
+生产资源卡、Git shim、统一 Planner 和运行状态保持不变。若以后继续研究，边界应是“通用 glibc 子进程代理是否能把 Host 父进程的任意 child 原样转入 PRoot”，而不是为 Git 增加命令白名单。

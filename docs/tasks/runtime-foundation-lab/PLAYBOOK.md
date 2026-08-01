@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1200` Git 通用依赖快速通道可行性
-- 当前任务：`RF1230` Host Git go/no-go 与条件 Provider
+- 当前任务：`RF1240` Host Git 父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -705,13 +705,16 @@
 
 #### RF1230 go/no-go 与条件 Provider
 
-- 状态：进行中。
-- 只有兼容矩阵和性能门同时通过才实现 `HostGitRuntimeProvider`；
-- Provider 只能按受管 Git 身份、结构化 argv 与显式能力保证选择，不识别资源或上层应用；
-- 任一子进程/路径/配置边界不满足时，必须在进程创建前整条回 PRoot。
+- 状态：已完成，direct Host Git 生产 no-go。
+- [x] argv 不能证明 local config、attributes、hooks、helper 或 submodule 不触发子进程；
+- [x] 运行后失败回退会面对已修改 index/工作树，不能提供唯一执行；
+- [x] subcommand 白名单和仓库预扫描均不能形成稳定通用合同；
+- [x] 未实现 `HostGitRuntimeProvider`，未修改 Git shim、资源卡或统一 Planner；
+- [x] 后续候选只允许研究入口无关的通用 child relay，不把 Git 特判塞进执行链。
 
 #### RF1240 父任务门
 
+- 状态：进行中。
 - 若 no-go，保留 Debug 证据且不修改生产入口；
 - 若 go，完成三入口唯一进程、取消、输出、升级失效和真机回归；
 - 强制全量单测、Debug 构建、范围审查并独立提交。
