@@ -59,4 +59,36 @@ class AgentSessionMetadataStoreTest {
         assertFalse(store.remove("opencode", "session-a"))
         assertTrue(store.archivedSessionIds("opencode").isEmpty())
     }
+
+    @Test
+    fun `完整源目录只把确实缺失的归档会话标记为已删除`() {
+        store.archive("opencode", "session-present", 100L)
+        store.archive("opencode", "session-missing", 100L)
+
+        assertTrue(store.reconcileSourceDirectory("opencode", setOf("session-present"), 200L))
+
+        val records = store.archivedSessions("opencode").associateBy { it.sessionId }
+        assertEquals(AgentArchivedSessionSourceState.Available, records.getValue("session-present").sourceState)
+        assertEquals(AgentArchivedSessionSourceState.Deleted, records.getValue("session-missing").sourceState)
+        assertEquals(200L, records.getValue("session-missing").sourceCheckedAtMillis)
+    }
+
+    @Test
+    fun `旧归档记录读取为尚未确认并可迁移到新版源状态`() {
+        val preferences = context.getSharedPreferences("kite_agent_session_metadata", Context.MODE_PRIVATE)
+        preferences.edit().putString(
+            "payload",
+            """{"version":2,"records":[{"providerId":"opencode","sessionId":"legacy","archivedAt":456}]}"""
+        ).commit()
+
+        assertEquals(
+            AgentArchivedSessionSourceState.Unknown,
+            store.archivedSessions("opencode").single().sourceState,
+        )
+        assertTrue(store.reconcileSourceDirectory("opencode", emptySet(), 789L))
+        assertEquals(
+            AgentArchivedSessionSourceState.Deleted,
+            store.archivedSessions("opencode").single().sourceState,
+        )
+    }
 }

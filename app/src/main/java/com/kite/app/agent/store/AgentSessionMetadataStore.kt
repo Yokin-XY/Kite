@@ -17,18 +17,60 @@ class AgentSessionMetadataStore(context: Context) {
     )
 
     fun archivedSessionIds(providerId: String): Set<String> = synchronized(LOCK) {
+        archivedSessions(providerId).mapTo(linkedSetOf(), AgentArchivedSessionMetadata::sessionId)
+    }
+
+    fun archivedSessions(providerId: String): List<AgentArchivedSessionMetadata> = synchronized(LOCK) {
         readRecords()
-            .asSequence()
             .filter { it.providerId == providerId && it.archivedAtMillis != null }
-            .map(Record::sessionId)
-            .toSet()
+            .map { record ->
+                AgentArchivedSessionMetadata(
+                    sessionId = record.sessionId,
+                    archivedAtMillis = checkNotNull(record.archivedAtMillis),
+                    sourceState = record.sourceState,
+                    sourceCheckedAtMillis = record.sourceCheckedAtMillis,
+                )
+            }
     }
 
     fun archive(providerId: String, sessionId: String, nowMillis: Long = System.currentTimeMillis()): Boolean =
         update(providerId, sessionId) { current ->
-            val next = current.copy(archivedAtMillis = nowMillis.coerceAtLeast(1L))
+            val checkedAt = nowMillis.coerceAtLeast(1L)
+            val next = current.copy(
+                archivedAtMillis = checkedAt,
+                sourceState = AgentArchivedSessionSourceState.Available,
+                sourceCheckedAtMillis = checkedAt,
+            )
             next to (next != current)
         }
+
+    fun reconcileSourceDirectory(
+        providerId: String,
+        sourceSessionIds: Set<String>,
+        checkedAtMillis: Long = System.currentTimeMillis(),
+    ): Boolean = synchronized(LOCK) {
+        val normalizedProviderId = providerId.trim()
+        if (normalizedProviderId.isBlank()) return@synchronized false
+        val checkedAt = checkedAtMillis.coerceAtLeast(1L)
+        val records = readRecords().toMutableList()
+        var changed = false
+        records.indices.forEach { index ->
+            val current = records[index]
+            if (current.providerId != normalizedProviderId || current.archivedAtMillis == null) return@forEach
+            val nextState = if (current.sessionId in sourceSessionIds) {
+                AgentArchivedSessionSourceState.Available
+            } else {
+                AgentArchivedSessionSourceState.Deleted
+            }
+            val next = current.copy(sourceState = nextState, sourceCheckedAtMillis = checkedAt)
+            if (next != current) {
+                records[index] = next
+                changed = true
+            }
+        }
+        if (changed) writeRecords(records)
+        changed
+    }
 
     fun restore(providerId: String, sessionId: String): Boolean = update(providerId, sessionId) { current ->
         val next = current.copy(archivedAtMillis = null)
@@ -83,7 +125,13 @@ class AgentSessionMetadataStore(context: Context) {
                 if (providerId.isBlank() || sessionId.isBlank()) continue
                 val archivedAtMillis = json.optLong(KEY_ARCHIVED_AT, 0L).takeIf { it > 0L }
                     ?: continue
-                add(Record(providerId, sessionId, archivedAtMillis))
+                val sourceState = when (json.optString(KEY_SOURCE_STATE)) {
+                    SOURCE_AVAILABLE -> AgentArchivedSessionSourceState.Available
+                    SOURCE_DELETED -> AgentArchivedSessionSourceState.Deleted
+                    else -> AgentArchivedSessionSourceState.Unknown
+                }
+                val sourceCheckedAtMillis = json.optLong(KEY_SOURCE_CHECKED_AT, 0L).coerceAtLeast(0L)
+                add(Record(providerId, sessionId, archivedAtMillis, sourceState, sourceCheckedAtMillis))
             }
         }
     }
@@ -97,6 +145,16 @@ class AgentSessionMetadataStore(context: Context) {
                         put(KEY_PROVIDER_ID, record.providerId)
                         put(KEY_SESSION_ID, record.sessionId)
                         record.archivedAtMillis?.let { put(KEY_ARCHIVED_AT, it) }
+                        if (record.sourceState != AgentArchivedSessionSourceState.Unknown) {
+                            put(KEY_SOURCE_STATE, when (record.sourceState) {
+                                AgentArchivedSessionSourceState.Available -> SOURCE_AVAILABLE
+                                AgentArchivedSessionSourceState.Deleted -> SOURCE_DELETED
+                                AgentArchivedSessionSourceState.Unknown -> error("未知状态不应写入")
+                            })
+                        }
+                        record.sourceCheckedAtMillis.takeIf { it > 0L }?.let {
+                            put(KEY_SOURCE_CHECKED_AT, it)
+                        }
                     })
                 }
             })
@@ -106,7 +164,9 @@ class AgentSessionMetadataStore(context: Context) {
     private data class Record(
         val providerId: String,
         val sessionId: String,
-        val archivedAtMillis: Long? = null
+        val archivedAtMillis: Long? = null,
+        val sourceState: AgentArchivedSessionSourceState = AgentArchivedSessionSourceState.Unknown,
+        val sourceCheckedAtMillis: Long = 0L,
     ) {
         fun isEmpty(): Boolean = archivedAtMillis == null
     }
@@ -120,6 +180,23 @@ class AgentSessionMetadataStore(context: Context) {
         const val KEY_PROVIDER_ID = "providerId"
         const val KEY_SESSION_ID = "sessionId"
         const val KEY_ARCHIVED_AT = "archivedAt"
-        const val VERSION = 2
+        const val KEY_SOURCE_STATE = "sourceState"
+        const val KEY_SOURCE_CHECKED_AT = "sourceCheckedAt"
+        const val SOURCE_AVAILABLE = "available"
+        const val SOURCE_DELETED = "deleted"
+        const val VERSION = 3
     }
+}
+
+data class AgentArchivedSessionMetadata(
+    val sessionId: String,
+    val archivedAtMillis: Long,
+    val sourceState: AgentArchivedSessionSourceState,
+    val sourceCheckedAtMillis: Long,
+)
+
+enum class AgentArchivedSessionSourceState {
+    Unknown,
+    Available,
+    Deleted,
 }

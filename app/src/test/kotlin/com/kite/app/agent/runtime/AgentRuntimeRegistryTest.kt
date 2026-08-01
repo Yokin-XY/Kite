@@ -146,6 +146,55 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
+    fun `列出会话会聚合全部分页后再返回完整目录`() = runTest {
+        val provider = FakeProvider()
+        AgentRuntimeRegistry.start(
+            request = AgentRuntimeStartRequest("instance-pages", 1L, "fake", "/workspace"),
+            provider = provider,
+            statusSink = AgentRuntimeStatusSink { _, _, _ -> },
+        ) as AgentOperationResult.Success
+        provider.connection.sessionListHandler = { request ->
+            when (request.cursor) {
+                null -> AgentOperationResult.Success(AgentSessionPage(
+                    sessions = listOf(AgentSessionSummary("session-a", "/workspace/a")),
+                    nextCursor = "page-2",
+                ))
+                "page-2" -> AgentOperationResult.Success(AgentSessionPage(
+                    sessions = listOf(AgentSessionSummary("session-b", "/workspace/b")),
+                ))
+                else -> AgentOperationResult.Failure("未知分页")
+            }
+        }
+
+        val listed = AgentRuntimeRegistry.listSessions("instance-pages", 1L) as AgentOperationResult.Success
+
+        assertEquals(listOf("session-a", "session-b"), listed.value.sessions.map { it.id })
+        assertEquals(listOf(null, "page-2"), provider.connection.listRequests.map { it.cursor })
+        assertEquals(null, listed.value.nextCursor)
+    }
+
+    @Test
+    fun `列出会话遇到重复分页游标时拒绝返回不完整目录`() = runTest {
+        val provider = FakeProvider()
+        AgentRuntimeRegistry.start(
+            request = AgentRuntimeStartRequest("instance-loop", 1L, "fake", "/workspace"),
+            provider = provider,
+            statusSink = AgentRuntimeStatusSink { _, _, _ -> },
+        ) as AgentOperationResult.Success
+        provider.connection.sessionListHandler = {
+            AgentOperationResult.Success(AgentSessionPage(
+                sessions = listOf(AgentSessionSummary("session-a", "/workspace")),
+                nextCursor = "same-cursor",
+            ))
+        }
+
+        val listed = AgentRuntimeRegistry.listSessions("instance-loop", 1L)
+
+        assertTrue(listed is AgentOperationResult.Failure)
+        assertEquals(2, provider.connection.listRequests.size)
+    }
+
+    @Test
     fun `首发失败后保留已创建会话且重试不会重复创建或留下重复用户消息`() = runTest {
         val provider = FakeProvider(promptFailures = 1, requestPermission = false)
         AgentRuntimeRegistry.start(
@@ -792,6 +841,8 @@ class AgentRuntimeRegistryTest {
         var promptCalls = 0
         var lastNewSessionRequest: AgentNewSessionRequest? = null
         var lastListRequest: AgentSessionListRequest? = null
+        val listRequests = mutableListOf<AgentSessionListRequest>()
+        var sessionListHandler: ((AgentSessionListRequest) -> AgentOperationResult<AgentSessionPage>)? = null
         var selectedModeId: String? = null
         val selectedModelValues = mutableListOf<String>()
         val callOrder = mutableListOf<String>()
@@ -908,6 +959,8 @@ class AgentRuntimeRegistryTest {
 
         override suspend fun listSessions(request: AgentSessionListRequest): AgentOperationResult<AgentSessionPage> {
             lastListRequest = request
+            listRequests += request
+            sessionListHandler?.let { return it(request) }
             return AgentOperationResult.Success(
                 AgentSessionPage(
                     sessions = listOf(AgentSessionSummary("historical-1", request.cwd ?: "/workspace"))

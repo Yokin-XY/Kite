@@ -18,6 +18,7 @@ import com.kite.app.agent.contract.AgentSessionListRequest
 import com.kite.app.agent.contract.AgentSessionPage
 import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentSessionSnapshot
+import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.contract.AgentNewSessionRequest
 import com.kite.app.agent.contract.AgentTurnResult
 import com.kite.app.agent.contract.KiteAgentConnection
@@ -93,6 +94,8 @@ fun interface AgentRuntimeStatusSink {
  * AgentConversationStore。页面只能提交 prompt/cancel/permission 等意图，不能直接持有 SDK 连接。
  */
 object AgentRuntimeRegistry {
+    private const val MAX_SESSION_LIST_PAGES = 100
+
     private class ActiveRuntime(
         @Volatile var session: AgentRuntimeSession,
         val defaultCwd: String,
@@ -436,7 +439,25 @@ object AgentRuntimeRegistry {
         val active = activeByInstance[instanceId]
             ?.takeIf { it.session.generation == generation }
             ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
-        return active.connection.listSessions(AgentSessionListRequest(cwd = cwd))
+        val sessions = linkedMapOf<String, AgentSessionSummary>()
+        val seenCursors = linkedSetOf<String>()
+        var cursor: String? = null
+        repeat(MAX_SESSION_LIST_PAGES) {
+            when (val result = active.connection.listSessions(AgentSessionListRequest(cwd = cwd, cursor = cursor))) {
+                is AgentOperationResult.Success -> {
+                    result.value.sessions.forEach { session -> sessions[session.id] = session }
+                    val nextCursor = result.value.nextCursor?.takeIf(String::isNotBlank)
+                        ?: return AgentOperationResult.Success(AgentSessionPage(sessions.values.toList()))
+                    if (!seenCursors.add(nextCursor)) {
+                        return AgentOperationResult.Failure("Agent 会话列表分页游标重复")
+                    }
+                    cursor = nextCursor
+                }
+                is AgentOperationResult.Failure -> return result
+                is AgentOperationResult.Unsupported -> return result
+            }
+        }
+        return AgentOperationResult.Failure("Agent 会话列表分页过多")
     }
 
     suspend fun deleteSession(

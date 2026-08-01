@@ -1582,6 +1582,12 @@ internal class RunAgentSurfaceBinding(
                 when (val result = AgentRuntimeRegistry.listSessions(instanceId, generation)) {
                     is AgentOperationResult.Success -> {
                         if (requestRevision != drawerLoadRevision) return@launch
+                        providerId?.let { currentProviderId ->
+                            sessionMetadataStore.reconcileSourceDirectory(
+                                providerId = currentProviderId,
+                                sourceSessionIds = result.value.sessions.mapTo(linkedSetOf(), AgentSessionSummary::id),
+                            )
+                        }
                         drawerSessionsKey = requestKey
                         drawerSessions = result.value.sessions
                         renderDrawerSessions()
@@ -2194,6 +2200,10 @@ internal class RunAgentSurfaceBinding(
                 when (val result = AgentRuntimeRegistry.listSessions(instanceId, generation)) {
                     is AgentOperationResult.Success -> {
                         if (navigationScreen != AgentNavigationScreen.ArchivedContent) return@launch
+                        sessionMetadataStore.reconcileSourceDirectory(
+                            providerId = targetProviderId,
+                            sourceSessionIds = result.value.sessions.mapTo(linkedSetOf(), AgentSessionSummary::id),
+                        )
                         val archivedIds = sessionMetadataStore.archivedSessionIds(targetProviderId)
                         val projection = AgentSurfaceNavigationPolicy.archivedSessionProjection(
                             result.value.sessions,
