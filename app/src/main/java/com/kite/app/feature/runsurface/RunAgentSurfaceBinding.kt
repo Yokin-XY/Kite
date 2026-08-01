@@ -16,6 +16,7 @@ import android.provider.OpenableColumns
 import android.text.Editable
 import android.text.InputType
 import android.text.method.LinkMovementMethod
+import android.text.method.PasswordTransformationMethod
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextUtils
@@ -4961,12 +4962,13 @@ internal class RunAgentSurfaceBinding(
                 removeRequested = false,
                 emptyHint = hintText
             )
-            inputType = AgentProviderCredentialInputPolicy.inputType
             textSize = 15f
             setTextColor(tokens.textPrimary)
             setHintTextColor(tokens.textTertiary)
-            setSingleLine(false)
-            setHorizontallyScrolling(false)
+            setSingleLine(true)
+            setHorizontallyScrolling(true)
+            inputType = AgentProviderCredentialInputPolicy.inputType
+            transformationMethod = PasswordTransformationMethod.getInstance()
             minLines = 1
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             imeOptions = EditorInfo.IME_ACTION_DONE

@@ -703,9 +703,9 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
-    fun `API Key 输入保持可见并安全清理剪贴板首尾空白`() {
+    fun `API Key 输入保持掩码并安全清理剪贴板首尾空白`() {
         assertEquals(
-            InputType.TYPE_TEXT_VARIATION_NORMAL,
+            InputType.TYPE_TEXT_VARIATION_PASSWORD,
             AgentProviderCredentialInputPolicy.inputType and InputType.TYPE_MASK_VARIATION
         )
         assertEquals("sk-example-value", AgentProviderCredentialInputPolicy.clipboardValue("  sk-example-value\n"))

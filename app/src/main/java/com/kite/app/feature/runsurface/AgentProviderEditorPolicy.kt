@@ -56,7 +56,9 @@ internal object AgentProviderEditorPolicy {
 }
 
 internal object AgentProviderCredentialInputPolicy {
-    const val inputType: Int = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+    const val inputType: Int = InputType.TYPE_CLASS_TEXT or
+        InputType.TYPE_TEXT_VARIATION_PASSWORD or
+        InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
     const val savedMask: String = "••••••••••••"
 
     fun displayHint(
