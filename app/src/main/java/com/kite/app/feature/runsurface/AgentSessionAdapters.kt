@@ -147,19 +147,32 @@ internal class ArchivedSessionAdapter(
     private val context: Context,
     private val tokens: ThemeTokens,
     private val onClick: (AgentSessionSummary) -> Unit,
+    private val onLongClick: (AgentSessionSummary) -> Unit,
     private val onUnavailableClick: (AgentArchivedSessionMetadata) -> Unit,
+    private val onUnavailableLongClick: (AgentArchivedSessionMetadata) -> Unit,
     private val onGroupToggle: (String) -> Unit,
     private val onProjectRestore: (AgentProject) -> Unit,
+    private val onProjectSelect: (AgentProject) -> Unit,
+    private val onProjectLongClick: (AgentProject) -> Unit,
 ) : ListAdapter<AgentArchivedRow, RecyclerView.ViewHolder>(DIFF) {
     private val ui = UiKit(context, tokens)
     private var selectionMode = false
     private var selectedIds: Set<String> = emptySet()
+    private var selectedProjectCwds: Set<String> = emptySet()
 
-    fun setSelectionState(selectionMode: Boolean, selectedIds: Set<String>) {
+    fun setSelectionState(
+        selectionMode: Boolean,
+        selectedIds: Set<String>,
+        selectedProjectCwds: Set<String>,
+    ) {
         val nextIds = selectedIds.toSet()
-        if (this.selectionMode == selectionMode && this.selectedIds == nextIds) return
+        val nextProjectCwds = selectedProjectCwds.toSet()
+        if (this.selectionMode == selectionMode && this.selectedIds == nextIds &&
+            this.selectedProjectCwds == nextProjectCwds
+        ) return
         this.selectionMode = selectionMode
         this.selectedIds = nextIds
+        this.selectedProjectCwds = nextProjectCwds
         notifyDataSetChanged()
     }
 
@@ -192,7 +205,11 @@ internal class ArchivedSessionAdapter(
                 selectionMode,
                 row.summary.id in selectedIds
             )
-            is AgentArchivedRow.UnavailableSession -> (holder as Holder).bindUnavailable(row.metadata)
+            is AgentArchivedRow.UnavailableSession -> (holder as Holder).bindUnavailable(
+                row.metadata,
+                selectionMode,
+                row.metadata.sessionId in selectedIds,
+            )
         }
     }
 
@@ -201,6 +218,11 @@ internal class ArchivedSessionAdapter(
             setImageResource(R.drawable.ic_chevron_right_light)
             imageTintList = ColorStateList.valueOf(tokens.textSecondary)
             setPadding(ui.dp(9), ui.dp(9), ui.dp(9), ui.dp(9))
+        }
+        private val selector = TextView(context).apply {
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
         }
         private val title = TextView(context).apply {
             textSize = 14.5f
@@ -235,6 +257,7 @@ internal class ArchivedSessionAdapter(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(0, ui.dp(3), 0, ui.dp(3)) }
+            container.addView(selector, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
             container.addView(chevron, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
             container.addView(LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -248,8 +271,25 @@ internal class ArchivedSessionAdapter(
         }
 
         fun bind(row: AgentArchivedRow.GroupHeader) {
+            val projectSelected = row.archivedProject?.cwd in selectedProjectCwds
+            val showProjectSelector = selectionMode && row.archivedProject != null
+            selector.visibility = if (showProjectSelector) View.VISIBLE else View.GONE
+            selector.text = if (projectSelected) "✓" else ""
+            selector.setTextColor(android.graphics.Color.WHITE)
+            selector.background = ui.roundedBox(
+                if (projectSelected) tokens.primaryStrong else android.graphics.Color.TRANSPARENT,
+                if (projectSelected) android.graphics.Color.TRANSPARENT else tokens.borderStrong,
+                ui.dp(20).toFloat(),
+                ui.dp(1),
+            )
             chevron.rotation = if (row.expanded) 90f else 0f
-            chevron.visibility = if (row.count > 0) View.VISIBLE else View.INVISIBLE
+            chevron.visibility = if (showProjectSelector) {
+                View.GONE
+            } else if (row.count > 0) {
+                View.VISIBLE
+            } else {
+                View.INVISIBLE
+            }
             title.text = row.title
             subtitle.text = row.subtitle.orEmpty()
             subtitle.visibility = if (row.subtitle.isNullOrBlank()) View.GONE else View.VISIBLE
@@ -266,7 +306,14 @@ internal class ArchivedSessionAdapter(
                 "展开 ${row.title} 的归档会话"
             }
             container.setOnClickListener {
-                if (row.count > 0) onGroupToggle(row.cwd)
+                if (selectionMode && row.archivedProject != null) {
+                    onProjectSelect(row.archivedProject)
+                } else if (row.count > 0) {
+                    onGroupToggle(row.cwd)
+                }
+            }
+            container.setOnLongClickListener {
+                row.archivedProject?.let(onProjectLongClick) != null
             }
         }
     }
@@ -334,21 +381,41 @@ internal class ArchivedSessionAdapter(
                 else -> "管理归档会话，${title.text}"
             }
             container.setOnClickListener { onClick(session) }
+            container.setOnLongClickListener {
+                onLongClick(session)
+                true
+            }
         }
 
-        fun bindUnavailable(metadata: AgentArchivedSessionMetadata) {
+        fun bindUnavailable(
+            metadata: AgentArchivedSessionMetadata,
+            selectionMode: Boolean,
+            selected: Boolean,
+        ) {
             val sourceDeleted = metadata.sourceState == AgentArchivedSessionSourceState.Deleted
-            selector.visibility = View.GONE
+            selector.visibility = if (selectionMode) View.VISIBLE else View.GONE
+            selector.text = if (selected) "✓" else ""
+            selector.setTextColor(android.graphics.Color.WHITE)
+            selector.background = ui.roundedBox(
+                if (selected) tokens.primaryStrong else android.graphics.Color.TRANSPARENT,
+                if (selected) android.graphics.Color.TRANSPARENT else tokens.borderStrong,
+                ui.dp(15).toFloat(),
+                ui.dp(1),
+            )
             title.text = if (sourceDeleted) "源会话已删除" else "尚未确认的归档会话"
-            title.typeface = Typeface.DEFAULT
+            title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             subtitle.text = "会话 ID · ${metadata.sessionId}"
             container.background = ui.roundedBox(
-                android.graphics.Color.TRANSPARENT,
+                if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
                 ui.dp(16).toFloat()
             )
             container.contentDescription = "管理${title.text}，${metadata.sessionId}"
             container.setOnClickListener { onUnavailableClick(metadata) }
+            container.setOnLongClickListener {
+                onUnavailableLongClick(metadata)
+                true
+            }
         }
     }
 

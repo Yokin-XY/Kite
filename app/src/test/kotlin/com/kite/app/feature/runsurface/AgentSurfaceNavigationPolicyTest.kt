@@ -675,19 +675,46 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
-    fun `归档编辑支持逐项与全选且不能删除当前会话`() {
-        val sessions = listOf(
-            AgentSessionSummary(id = "session-a", cwd = "/workspace"),
-            AgentSessionSummary(id = "session-b", cwd = "/workspace")
+    fun `归档编辑支持会话项目级联与全选`() {
+        val selectedA = AgentArchivedSelectionPolicy.toggleSession(emptySet(), "session-a", "/project")
+        assertEquals(setOf(AgentArchivedSelectionKey.Session("session-a")), selectedA)
+        assertEquals(
+            emptySet<AgentArchivedSelectionKey>(),
+            AgentArchivedSelectionPolicy.toggleSession(selectedA, "session-a", "/project"),
         )
 
-        val selectedA = AgentArchivedSelectionPolicy.toggle(emptySet(), "session-a")
-        assertEquals(setOf("session-a"), selectedA)
-        assertEquals(emptySet<String>(), AgentArchivedSelectionPolicy.toggle(selectedA, "session-a"))
-        assertEquals(setOf("session-a", "session-b"), AgentArchivedSelectionPolicy.selectAll(sessions))
-        assertTrue(AgentArchivedSelectionPolicy.canDelete(selectedA, currentSessionId = "session-b", deleteSupported = true))
-        assertFalse(AgentArchivedSelectionPolicy.canDelete(selectedA, currentSessionId = "session-a", deleteSupported = true))
-        assertFalse(AgentArchivedSelectionPolicy.canDelete(selectedA, currentSessionId = null, deleteSupported = false))
+        val selectedProject = AgentArchivedSelectionPolicy.toggleProject(
+            current = emptySet(),
+            projectCwd = "/project",
+            childSessionIds = listOf("session-a", "session-b"),
+        )
+        assertEquals(
+            setOf(
+                AgentArchivedSelectionKey.Project("/project"),
+                AgentArchivedSelectionKey.Session("session-a"),
+                AgentArchivedSelectionKey.Session("session-b"),
+            ),
+            selectedProject,
+        )
+        assertEquals(
+            emptySet<AgentArchivedSelectionKey>(),
+            AgentArchivedSelectionPolicy.toggleProject(
+                selectedProject,
+                "/project",
+                listOf("session-a", "session-b"),
+            ),
+        )
+
+        val all = AgentArchivedSelectionPolicy.selectAll(
+            sessionIds = listOf("session-a", "session-b", "missing"),
+            projectCwds = listOf("/project"),
+        )
+        assertEquals(setOf("session-a", "session-b", "missing"), AgentArchivedSelectionPolicy.selectedSessionIds(all))
+        assertEquals(setOf("/project"), AgentArchivedSelectionPolicy.selectedProjectCwds(all))
+        val sessionIds = AgentArchivedSelectionPolicy.selectedSessionIds(selectedA)
+        assertTrue(AgentArchivedSelectionPolicy.canDelete(sessionIds, currentSessionId = "session-b", deleteSupported = true))
+        assertFalse(AgentArchivedSelectionPolicy.canDelete(sessionIds, currentSessionId = "session-a", deleteSupported = true))
+        assertFalse(AgentArchivedSelectionPolicy.canDelete(sessionIds, currentSessionId = null, deleteSupported = false))
     }
 
     @Test

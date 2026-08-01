@@ -1,6 +1,5 @@
 package com.kite.app.feature.runsurface
 
-import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.theme.ThemeTokens
 
 internal object AgentSurfaceThemePolicy {
@@ -34,16 +33,58 @@ internal object AgentSurfaceThemePolicy {
 }
 
 internal object AgentArchivedSelectionPolicy {
-    fun toggle(current: Set<String>, sessionId: String): Set<String> = current.toMutableSet().apply {
-        if (!add(sessionId)) remove(sessionId)
+    fun toggleSession(
+        current: Set<AgentArchivedSelectionKey>,
+        sessionId: String,
+        parentProjectCwd: String? = null,
+    ): Set<AgentArchivedSelectionKey> = current.toMutableSet().apply {
+        val key = AgentArchivedSelectionKey.Session(sessionId)
+        if (!add(key)) {
+            remove(key)
+            parentProjectCwd?.let { remove(AgentArchivedSelectionKey.Project(it)) }
+        }
     }
 
-    fun selectAll(sessions: List<AgentSessionSummary>): Set<String> = sessions
-        .mapTo(linkedSetOf(), AgentSessionSummary::id)
+    fun toggleProject(
+        current: Set<AgentArchivedSelectionKey>,
+        projectCwd: String,
+        childSessionIds: Collection<String>,
+    ): Set<AgentArchivedSelectionKey> = current.toMutableSet().apply {
+        val projectKey = AgentArchivedSelectionKey.Project(projectCwd)
+        val childKeys = childSessionIds.map(AgentArchivedSelectionKey::Session)
+        if (projectKey in this) {
+            remove(projectKey)
+            removeAll(childKeys.toSet())
+        } else {
+            add(projectKey)
+            addAll(childKeys)
+        }
+    }
+
+    fun selectAll(
+        sessionIds: Collection<String>,
+        projectCwds: Collection<String>,
+    ): Set<AgentArchivedSelectionKey> = buildSet {
+        sessionIds.mapTo(this, AgentArchivedSelectionKey::Session)
+        projectCwds.mapTo(this, AgentArchivedSelectionKey::Project)
+    }
+
+    fun selectedSessionIds(selected: Set<AgentArchivedSelectionKey>): Set<String> = selected
+        .filterIsInstance<AgentArchivedSelectionKey.Session>()
+        .mapTo(linkedSetOf(), AgentArchivedSelectionKey.Session::sessionId)
+
+    fun selectedProjectCwds(selected: Set<AgentArchivedSelectionKey>): Set<String> = selected
+        .filterIsInstance<AgentArchivedSelectionKey.Project>()
+        .mapTo(linkedSetOf(), AgentArchivedSelectionKey.Project::cwd)
 
     fun canDelete(
         selectedIds: Set<String>,
         currentSessionId: String?,
         deleteSupported: Boolean
     ): Boolean = deleteSupported && selectedIds.isNotEmpty() && currentSessionId !in selectedIds
+}
+
+internal sealed interface AgentArchivedSelectionKey {
+    data class Session(val sessionId: String) : AgentArchivedSelectionKey
+    data class Project(val cwd: String) : AgentArchivedSelectionKey
 }

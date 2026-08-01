@@ -247,6 +247,7 @@ internal class RunAgentSurfaceBinding(
     private var agentId: String? = null
     private var agentDisplayName: String = "Agent"
     private var navigationScreen = AgentNavigationScreen.Main
+    private var archivedSelectionBackHandler: (() -> Boolean)? = null
     private var settingsReturnsToDrawer = false
     private var selectedSettingsAgentId: String? = null
     private var persistentConfigAgentId: String? = null
@@ -499,7 +500,7 @@ internal class RunAgentSurfaceBinding(
             true
         }
         AgentNavigationScreen.ArchivedContent -> {
-            returnToAgentSettings()
+            if (archivedSelectionBackHandler?.invoke() != true) returnToAgentSettings()
             true
         }
         AgentNavigationScreen.SessionSearch -> {
@@ -1747,6 +1748,7 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun showSettingsPage(reload: Boolean) {
+        archivedSelectionBackHandler = null
         navigationScreen = AgentNavigationScreen.Settings
         navigationHost.removeAllViews()
         navigationHost.addView(settingsPageView, FrameLayout.LayoutParams(
@@ -1947,13 +1949,42 @@ internal class RunAgentSurfaceBinding(
             .sortedBy(AgentArchivedSessionMetadata::sessionId)
         var archivedProjects = projectStore.archivedProjects(targetAgentId)
         var sessionStatusMessage: String? = "正在读取已归档会话…"
-        val selectedIds = linkedSetOf<String>()
+        val selectedKeys = linkedSetOf<AgentArchivedSelectionKey>()
         val expandedArchivedCwds = linkedSetOf<String>()
         var archiveExpansionSeeded = false
         lateinit var refreshArchivedContent: () -> Unit
         lateinit var renderArchiveState: () -> Unit
         lateinit var renderEditState: () -> Unit
         lateinit var renderArchivedRows: () -> Unit
+        fun selectedSessionIds(): Set<String> = AgentArchivedSelectionPolicy.selectedSessionIds(selectedKeys)
+        fun selectedProjectCwds(): Set<String> = AgentArchivedSelectionPolicy.selectedProjectCwds(selectedKeys)
+        fun applySelection(next: Set<AgentArchivedSelectionKey>) {
+            selectedKeys.clear()
+            selectedKeys.addAll(next)
+            renderEditState()
+        }
+        fun projectSessionIds(project: AgentProject): Set<String> = archivedSessions
+            .filter { AgentSurfaceNavigationPolicy.sameCwd(it.cwd, project.cwd) }
+            .mapTo(linkedSetOf(), AgentSessionSummary::id)
+        fun toggleSession(sessionId: String, cwd: String? = null) {
+            val parentProjectCwd = cwd?.let { sessionCwd ->
+                archivedProjects.firstOrNull {
+                    AgentSurfaceNavigationPolicy.sameCwd(it.cwd, sessionCwd)
+                }?.cwd
+            }
+            applySelection(AgentArchivedSelectionPolicy.toggleSession(
+                current = selectedKeys,
+                sessionId = sessionId,
+                parentProjectCwd = parentProjectCwd,
+            ))
+        }
+        fun toggleProject(project: AgentProject) {
+            applySelection(AgentArchivedSelectionPolicy.toggleProject(
+                current = selectedKeys,
+                projectCwd = project.cwd,
+                childSessionIds = projectSessionIds(project),
+            ))
+        }
         val status = TextView(context).apply {
             text = "正在读取已归档会话…"
             textSize = 13.5f
@@ -1971,23 +2002,32 @@ internal class RunAgentSurfaceBinding(
             tokens = tokens,
             onClick = { archivedSession ->
                 if (editMode) {
-                    val next = AgentArchivedSelectionPolicy.toggle(selectedIds, archivedSession.id)
-                    selectedIds.clear()
-                    selectedIds.addAll(next)
-                    renderEditState()
+                    toggleSession(archivedSession.id, archivedSession.cwd)
                 } else {
                     showArchivedSessionActions(selected, archivedSession, refreshArchivedContent)
                 }
             },
+            onLongClick = { archivedSession ->
+                editMode = true
+                toggleSession(archivedSession.id, archivedSession.cwd)
+            },
             onUnavailableClick = { unavailableSession ->
-                showUnavailableArchivedSessionActions(selected, unavailableSession) {
-                    unavailableArchivedSessions = sessionMetadataStore
-                        .archivedSessions(targetProviderId)
-                        .filterNot { metadata -> metadata.sessionId in archivedSessions.map(AgentSessionSummary::id) }
-                        .sortedBy(AgentArchivedSessionMetadata::sessionId)
-                    renderArchivedRows()
-                    renderArchiveState()
+                if (editMode) {
+                    toggleSession(unavailableSession.sessionId)
+                } else {
+                    showUnavailableArchivedSessionActions(selected, unavailableSession) {
+                        unavailableArchivedSessions = sessionMetadataStore
+                            .archivedSessions(targetProviderId)
+                            .filterNot { metadata -> metadata.sessionId in archivedSessions.map(AgentSessionSummary::id) }
+                            .sortedBy(AgentArchivedSessionMetadata::sessionId)
+                        renderArchivedRows()
+                        renderArchiveState()
+                    }
                 }
+            },
+            onUnavailableLongClick = { unavailableSession ->
+                editMode = true
+                toggleSession(unavailableSession.sessionId)
             },
             onGroupToggle = { cwd ->
                 val normalized = AgentSurfaceNavigationPolicy.normalizeCwd(cwd)
@@ -2001,7 +2041,12 @@ internal class RunAgentSurfaceBinding(
                     renderArchivedRows()
                     renderArchiveState()
                 }
-            }
+            },
+            onProjectSelect = ::toggleProject,
+            onProjectLongClick = { project ->
+                editMode = true
+                toggleProject(project)
+            },
         )
         archivedList.adapter = archivedAdapter
         renderArchivedRows = {
@@ -2034,16 +2079,6 @@ internal class RunAgentSurfaceBinding(
                     expandedArchivedCwds,
                 ))
             })
-        }
-        val editAction = TextView(context).apply {
-            text = "编辑"
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(tokens.textPrimary)
-            visibility = View.INVISIBLE
-            isClickable = true
-            isFocusable = true
         }
         val selectAllIndicator = TextView(context).apply {
             textSize = 15f
@@ -2078,14 +2113,16 @@ internal class RunAgentSurfaceBinding(
             addView(selectedCount, LinearLayout.LayoutParams(0, ui.dp(44), 1f))
         }
         val restoreSelected = actionOutlineButton("恢复") {
+            val selectedIds = selectedSessionIds()
             val restoring = archivedSessions.filter { it.id in selectedIds }
             if (restoring.isEmpty()) return@actionOutlineButton
             restoring.forEach { sessionMetadataStore.restore(targetProviderId, it.id) }
             Toast.makeText(context, "已恢复 ${restoring.size} 个会话", Toast.LENGTH_SHORT).show()
-            selectedIds.clear()
+            selectedKeys.clear()
             refreshArchivedContent()
         }
         val deleteSelected = actionDangerButton("删除") {
+            val selectedIds = selectedSessionIds()
             val deleting = archivedSessions.filter { it.id in selectedIds }
             if (deleting.isEmpty()) return@actionDangerButton
             showArchivedDeleteConfirmation(selected, deleting, refreshArchivedContent)
@@ -2101,17 +2138,24 @@ internal class RunAgentSurfaceBinding(
             })
         }
         renderEditState = {
-            archivedAdapter.setSelectionState(editMode, selectedIds)
+            val selectedIds = selectedSessionIds()
+            val selectedProjects = selectedProjectCwds()
+            archivedAdapter.setSelectionState(editMode, selectedIds, selectedProjects)
             selectionRow.visibility = if (editMode) View.VISIBLE else View.GONE
             batchActions.visibility = if (editMode) View.VISIBLE else View.GONE
-            editAction.text = if (editMode) "完成" else "编辑"
-            val allSelected = archivedSessions.isNotEmpty() && selectedIds.size == archivedSessions.size
+            val allKeys = AgentArchivedSelectionPolicy.selectAll(
+                sessionIds = archivedSessions.map(AgentSessionSummary::id) +
+                    unavailableArchivedSessions.map(AgentArchivedSessionMetadata::sessionId),
+                projectCwds = archivedProjects.map(AgentProject::cwd),
+            )
+            val allSelected = allKeys.isNotEmpty() && selectedKeys.containsAll(allKeys)
             renderCircularSelection(selectAllIndicator, allSelected)
-            selectAll.contentDescription = if (allSelected) "取消全选归档会话" else "全选归档会话"
-            selectedCount.text = "已选择 ${selectedIds.size} 项"
-            val hasSelection = selectedIds.isNotEmpty()
-            restoreSelected.isEnabled = hasSelection
-            restoreSelected.alpha = if (hasSelection) 1f else 0.38f
+            selectAll.contentDescription = if (allSelected) "取消全选归档内容" else "全选归档内容"
+            selectedCount.text = "已选择 ${selectedKeys.size} 项"
+            val hasSelection = selectedKeys.isNotEmpty()
+            val hasRestorableSession = archivedSessions.any { it.id in selectedIds }
+            restoreSelected.isEnabled = hasRestorableSession
+            restoreSelected.alpha = if (hasRestorableSession) 1f else 0.38f
             val runtime = AgentRuntimeRegistry.session(instanceId)
             val canDelete = AgentArchivedSelectionPolicy.canDelete(
                 selectedIds = selectedIds,
@@ -2133,25 +2177,34 @@ internal class RunAgentSurfaceBinding(
                 unavailableArchivedSessions.isNotEmpty() ||
                 archivedProjects.isNotEmpty()
             archivedList.visibility = if (hasItems) View.VISIBLE else View.GONE
-            editAction.visibility = if (archivedSessions.isEmpty()) View.INVISIBLE else View.VISIBLE
-            if (archivedSessions.isEmpty()) {
+            if (!hasItems) {
                 editMode = false
-                selectedIds.clear()
+                selectedKeys.clear()
             }
             status.text = sessionStatusMessage ?: if (hasItems) "" else "暂无已归档内容"
             status.visibility = if (status.text.isNullOrBlank()) View.GONE else View.VISIBLE
             renderEditState()
         }
-        editAction.setOnClickListener {
-            editMode = !editMode
-            selectedIds.clear()
+        selectAll.setOnClickListener {
+            val allKeys = AgentArchivedSelectionPolicy.selectAll(
+                sessionIds = archivedSessions.map(AgentSessionSummary::id) +
+                    unavailableArchivedSessions.map(AgentArchivedSessionMetadata::sessionId),
+                projectCwds = archivedProjects.map(AgentProject::cwd),
+            )
+            val checked = allKeys.isNotEmpty() && !selectedKeys.containsAll(allKeys)
+            selectedKeys.clear()
+            if (checked) selectedKeys.addAll(allKeys)
             renderEditState()
         }
-        selectAll.setOnClickListener {
-            val checked = archivedSessions.isNotEmpty() && selectedIds.size != archivedSessions.size
-            selectedIds.clear()
-            if (checked) selectedIds.addAll(AgentArchivedSelectionPolicy.selectAll(archivedSessions))
-            renderEditState()
+        archivedSelectionBackHandler = {
+            if (!editMode) {
+                false
+            } else {
+                editMode = false
+                selectedKeys.clear()
+                renderEditState()
+                true
+            }
         }
         val page = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -2159,8 +2212,9 @@ internal class RunAgentSurfaceBinding(
             addView(buildAgentSubpageHeader(
                 title = "归档内容管理",
                 backDescription = "返回 Agent 设置",
-                onBack = ::returnToAgentSettings,
-                trailingView = editAction
+                onBack = {
+                    if (archivedSelectionBackHandler?.invoke() != true) returnToAgentSettings()
+                },
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
             addView(TextView(context).apply {
                 text = "${selected.registration.definition.displayName} · 项目归档只影响 Kite 列表，不会改动文件"
@@ -2219,7 +2273,12 @@ internal class RunAgentSurfaceBinding(
                             .archivedSessions(targetProviderId)
                             .filter { it.sessionId in projection.unavailableSessionIds }
                             .sortedBy(AgentArchivedSessionMetadata::sessionId)
-                        selectedIds.retainAll(archivedSessions.mapTo(linkedSetOf(), AgentSessionSummary::id))
+                        val validKeys = AgentArchivedSelectionPolicy.selectAll(
+                            sessionIds = archivedSessions.map(AgentSessionSummary::id) +
+                                unavailableArchivedSessions.map(AgentArchivedSessionMetadata::sessionId),
+                            projectCwds = archivedProjects.map(AgentProject::cwd),
+                        )
+                        selectedKeys.retainAll(validKeys)
                         sessionStatusMessage = null
                         renderArchivedRows()
                         renderArchiveState()
