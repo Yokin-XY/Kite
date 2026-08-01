@@ -28,8 +28,9 @@
 | NATIVE-ARCHIVE-02 | tar、tar.gz、xz 等任意归档原生化 | 尚无统一安全解析、权限/链接语义和性能证据 | 继续 PRoot 工具链 | 仅在多个正式调用方和固定安全合同出现后立项 |
 | NATIVE-SHELL-01 | 把任意 shell 文本编译为 Android 原生动作 | shell 展开、管道、重定向、环境和副作用无法靠轻量解析等价复制 | 任意 shell 继续 PRoot | 只增加枚举化、结构化的单项原生能力 |
 | NATIVE-VERSION-01 | 显式 `命令 --version` 与任意版本输出原生化 | 启动前不能完整证明可执行文件、Linux ELF、解释器、子进程、环境和输出语义 | 无结构化元数据合同的探针继续 PRoot | 调用方直接声明受控文件/字段或完整 argv 与执行闭包后另立专项 |
+| NATIVE-VERSION-02 | 仅凭结构化声明把批量版本检查直接放入原生并发 | 声明不能证明当前文件、权限、大小、JSON 字段已 Ready，内部回退可能同时启动多个 PRoot | 先做无业务进程的物理预检；Ready 进入 3 槽原生/远端，Unsupported 整项进入 1 槽兼容，Blocked 失败关闭 | 只有 Provider 语义或固定真实负载变化后重跑 RF1700 矩阵 |
 
-证据回指：[Android/NDK 原生能力](native-capability-provider.md)与任务 `RF300`、`RF1500`、`RF1600`。
+证据回指：[Android/NDK 原生能力](native-capability-provider.md)与任务 `RF300`、`RF1500`、`RF1600`、`RF1700`。
 
 ## Ubuntu/PRoot 兼容与调度
 

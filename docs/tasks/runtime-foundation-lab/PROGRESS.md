@@ -97,11 +97,11 @@
 | RF1620 | 已完成 | 三轮 13 类零差异；单请求和 5 请求批次收益门均通过 |
 | RF1630 | 已完成 | 生产 Provider、唯一回退、Stage 与 OnePlus 固定矩阵均通过 |
 | RF1640 | 已完成 | 真实动作链 native/proot 各一次；Full 1487 项零失败，production go |
-| RF1700 | 进行中 | 已选批量版本检查分车道有界并发；AI 会话冻结 |
+| RF1700 | 已完成 | 批量版本检查进程前预检与 3/1 调度 production go |
 | RF1710 | 已完成 | 正式批量入口、三个候选与预设发布门已固定 |
 | RF1720 | 已完成 | 固定矩阵三轮零差异，最小收益 58.4%，候选 p95 380ms，判 go |
 | RF1730 | 已完成 | 进程前预检、生产 3/1 调度、顺序与分层测试均通过 |
-| RF1740 | 进行中 | OnePlus 真实批量链、Full 与父任务门 |
+| RF1740 | 已完成 | OnePlus 真实双车道批量链与 Full 1497 tests 通过 |
 
 ## RF1700 开机与三问自检
 
@@ -133,6 +133,14 @@
 - RF1720 Debug 候选已收缩为对生产调度器的薄委托。OnePlus 生产调度器固定矩阵三轮串行 909/910/910ms、候选 377/372/371ms，减少 58.5%/59.1%/59.2%，p95 377ms，零差异且 `providerSource=production_scheduler`。
 - Targeted 5 suites/21 tests、Quick 55 suites/261 tests、Stage 59 suites/281 tests 均零失败；Debug 构建和 OnePlus 安装/广播通过，当前日志 FATAL/ANR 为 0。未运行 Full，留给 RF1700 父门。
 - 生产范围只涉及版本批量 Orchestrator、版本事实预检 Provider、AppGraph 低基数观测及对应 Debug/测试；AI 会话、页面、Store、安装/更新事务、单项入口、PRoot View 和其他设备均未改。
+
+## RF1740 真实批量链与父任务门
+
+- 新增 Debug-only 真实链触发器，ADB 只能触发，不能传资源、车道或数量。它从 `KiteResourceInstallStore.registrySnapshot()` 的正式已安装事实与 `KiteResourceSourcePlanFactory.versionCheckPlan()` 中，按通用合同选择一个声明结构化原生/远端和一个兼容目标，再调用生产 `ResourceActionWorkflowCoordinator.checkUpdates()`。
+- OnePlus 当前共有 2 个符合条件的正式已安装目标，选择数 2、去重后 2；生产摘要为 `structuredNativeRemote=1`、`prootCompatibility=1`、两类最大活动数均 1。兼容目标记录 `proot_fallback/structured_metadata_absent`，批量完成只返回既有单个汇总 Effect，`checkingRemaining=0`。
+- 全部目标的 `markUpdateChecking()` 在预检和调度前执行；生产结果继续按输入顺序由既有 `applyUpdateCheckResult()` 写回 Store。页面、按钮、刷新、汇总文案和单项检查入口没有修改，因此没有引入整页刷新、并行页面状态或新 Store。
+- 最终 Targeted 合同、Quick 56 suites/262 tests、Stage 60 suites/282 tests、Debug 构建/安装和 OnePlus 真实链均通过，日志 FATAL/ANR 为 0。RF1700 父门唯一 Full 为 288 suites、1497 tests、零失败、3 个既有平台跳过，production go。
+- 本父任务只缩短多个独立更新检查的累计等待；不承诺远端网络本身、单项检查或应用启动缩短 58%～59%。AI 会话协议、消息模型、流式输出、会话恢复、附件与样式始终冻结，未进入审计或改动文件。
 
 ## RF1600 开机与三问自检
 
