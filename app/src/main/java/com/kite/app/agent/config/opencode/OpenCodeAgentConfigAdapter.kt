@@ -39,6 +39,7 @@ import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentPermissionProfileSummary
 import com.kite.app.agent.config.AgentPermissionLevel
 import com.kite.app.agent.config.AgentSessionPermissionControl
+import com.kite.app.agent.config.AgentSessionPermissionHandling
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
@@ -117,9 +118,13 @@ internal class OpenCodeAgentConfigAdapter(
 
     override fun sessionPermissionControl(): AgentSessionPermissionControl =
         mediatedSessionPermissionControl(
-            AgentPermissionLevel.Restricted,
-            AgentPermissionLevel.Approval,
-            AgentPermissionLevel.Full,
+            profiles = OPEN_CODE_PERMISSION_PROFILES,
+            handlingByProfileId = mapOf(
+                DENY_ACTION to AgentSessionPermissionHandling.RejectRequest,
+                ASK_ACTION to AgentSessionPermissionHandling.AskUser,
+                ALLOW_ACTION to AgentSessionPermissionHandling.AllowRequest,
+            ),
+            initialProfileId = ASK_ACTION,
         )
 
     override fun defaultModelChange(
@@ -1641,7 +1646,7 @@ internal class OpenCodeAgentConfigAdapter(
                 displayName = "允许（allow）",
                 description = "无需审批直接运行；具体工具的 ask / deny 规则仍优先生效",
                 effect = AgentSessionConfigurationEffect.NextTurn,
-                level = AgentPermissionLevel.Lenient,
+                level = AgentPermissionLevel.Full,
             )
         )
         private val ENVIRONMENT_NAME = Regex("[A-Z_][A-Z0-9_]{0,127}")

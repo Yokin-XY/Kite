@@ -34,6 +34,7 @@ import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentPermissionProfileSummary
 import com.kite.app.agent.config.AgentPermissionLevel
 import com.kite.app.agent.config.AgentSessionPermissionControl
+import com.kite.app.agent.config.AgentSessionPermissionHandling
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
@@ -2728,8 +2729,13 @@ internal class HermesAgentConfigAdapter(
 
     override fun sessionPermissionControl(): AgentSessionPermissionControl =
         mediatedSessionPermissionControl(
-            AgentPermissionLevel.Approval,
-            AgentPermissionLevel.Full,
+            profiles = HERMES_PERMISSION_PROFILES,
+            handlingByProfileId = mapOf(
+                "manual" to AgentSessionPermissionHandling.AskUser,
+                "smart" to AgentSessionPermissionHandling.PreserveAgentDecision,
+                "off" to AgentSessionPermissionHandling.AllowRequest,
+            ),
+            initialProfileId = DEFAULT_APPROVAL_MODE,
         )
 
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {

@@ -207,6 +207,7 @@ internal object ManagedAgentProcessLaunchSelector {
                 environment = hostPlan.config.env.associateTo(linkedMapOf()) { entry ->
                     entry.substringBefore('=') to entry.substringAfter('=', "")
                 },
+                workingDirectory = hostPlan.config.workingDirectory,
             ),
             runtimeLane = "host_node",
             fallbackReason = "none",

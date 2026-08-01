@@ -25,7 +25,7 @@
     "category": "AI",
     "accent": "teal",
     "sizeLabel": "网络包",
-    "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。它负责本体安装、卸载和终端启动；配置与运行状态仍由 Hermes 自己管理。",
+    "longDescription": "Hermes 是 Hermes Agent 的本体组件。Kite 调用官方 install.sh，但用 --dir 和 --hermes-home 把代码、venv、数据目录固定到这张资源自己的软件区，并暴露 /workspace/.kf/bin/hermes。Nous Portal 官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Hermes 自己管理。",
     "recommendations": [
       {
         "resourceId": "kite.python",
@@ -92,6 +92,27 @@
         "required": false,
         "adapter": "hermes"
       },
+      "accounts": [
+        {
+          "id": "nous",
+          "name": "Nous Portal 官方",
+          "modelGroupIds": ["nous", "hermes"],
+          "status": {
+            "argv": ["hermes", "portal", "info"],
+            "loggedInPatterns": ["logged in"],
+            "loggedOutPatterns": ["not logged in"],
+            "timeoutMs": 15000
+          },
+          "login": {
+            "argv": ["hermes", "portal", "login"],
+            "timeoutMs": 300000
+          },
+          "logout": {
+            "argv": ["hermes", "logout", "--provider", "nous"],
+            "timeoutMs": 30000
+          }
+        }
+      ],
       "launch": {
         "mode": "managed",
         "providerId": "hermes",

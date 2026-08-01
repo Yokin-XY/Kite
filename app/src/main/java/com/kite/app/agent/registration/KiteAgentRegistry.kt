@@ -55,9 +55,28 @@ internal object AgentResourceRegistrationMapper {
             launch = launch,
             configurationRequired = configurationRequired,
             configAdapterId = configAdapterId.ifBlank { null },
-            sessionAdapterId = sessionAdapterId.ifBlank { null }
+            sessionAdapterId = sessionAdapterId.ifBlank { null },
+            officialAccounts = officialAccounts.map { account ->
+                AgentOfficialAccountSpec(
+                    id = account.id,
+                    displayName = account.displayName,
+                    modelGroupIds = account.modelGroupIds,
+                    status = account.status?.toRegistrationCommand(),
+                    login = account.login.toRegistrationCommand(),
+                    logout = account.logout?.toRegistrationCommand(),
+                )
+            }
         ).takeIf { AgentRegistrationPolicy.problem(it) == null }
     }
+
+    private fun com.kite.app.resources.KiteResourceAgentAccountCommand.toRegistrationCommand() =
+        AgentOfficialAccountCommand(
+            argv = argv,
+            loggedInPatterns = loggedInPatterns,
+            loggedOutPatterns = loggedOutPatterns,
+            successPatterns = successPatterns,
+            timeoutMs = timeoutMs,
+        )
 
     private const val MODE_MANAGED = "managed"
     private const val MODE_ATTACH = "attach"

@@ -198,8 +198,21 @@ class KiteResourceManifestProtocolTest {
             profile.environmentFiles["OPENCLAW_GATEWAY_TOKEN"],
         )
         assertEquals("openclaw-gateway", dependency.id)
-        assertEquals("openclaw", dependency.argv.first())
-        assertEquals(listOf("--auth", "token"), dependency.argv.takeLast(2))
+        assertEquals(
+            listOf(
+                "openclaw",
+                "gateway",
+                "run",
+                "--bind",
+                "loopback",
+                "--port",
+                "18789",
+                "--auth",
+                "token",
+                "--allow-unconfigured",
+            ),
+            dependency.argv,
+        )
         assertEquals("127.0.0.1", dependency.bindAddress)
         assertEquals(18789, dependency.bindPort)
         assertEquals("/readyz", dependency.healthHttpPath)
@@ -261,8 +274,10 @@ class KiteResourceManifestProtocolTest {
             Expected("kite.codex.cli", "codex", "Codex", listOf("codex-acp"), "codex"),
             Expected("kite.claude.code", "claude-code", "Claude Code", listOf("claude-agent-acp"), "claude-code"),
             Expected("kite.hermes.core", "hermes", "Hermes", listOf("hermes", "acp"), "hermes"),
+            Expected("kite.kimi.code", "kimi", "Kimi Code", listOf("kimi", "acp"), "kimi-code"),
+            Expected("kite.mimo.code", "mimo", "MiMo Code", listOf("mimo", "acp"), "mimo-code"),
             Expected("kite.openclaw", "openclaw", "OpenClaw", listOf("openclaw", "acp"), "openclaw"),
-            Expected("kite.mimo.code", "mimo", "MiMo Code", listOf("mimo", "acp"), "mimo-code")
+            Expected("kite.opencode", "opencode", "OpenCode", listOf("opencode", "acp"), "opencode")
         )
 
         expected.forEach { item ->
@@ -271,6 +286,8 @@ class KiteResourceManifestProtocolTest {
             )
             val profile = manifest.agentProfiles.single()
             val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
+            val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest)
+            val installedCommands = sourcePlan.installActions.flatMap { it.managedCommands }.toSet()
             val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)
             val homeStep = manifest.homeCards.single().recipe.optJSONArray("recipe")?.optJSONObject(0)
 
@@ -283,6 +300,10 @@ class KiteResourceManifestProtocolTest {
             assertEquals(item.argv, profile.argv)
             assertEquals(item.configAdapterId, profile.configAdapterId)
             assertFalse(profile.configurationRequired)
+            assertTrue(
+                "${item.resourceId} does not install the declared managed ACP entrypoint ${item.argv.first()}",
+                item.argv.first() in installedCommands,
+            )
             assertEquals(item.agentId, registration.definition.agentId)
             assertEquals(item.configAdapterId, registration.configAdapterId)
             assertEquals(AgentRegistrationSource.Resource(item.resourceId), registration.source)
@@ -300,6 +321,76 @@ class KiteResourceManifestProtocolTest {
         assertEquals(listOf("home"), hermes.management.preservePaths)
         assertTrue(hermes.installActions.single().installSteps.any { it.id == "install-hermes-acp-extra" })
         assertTrue(hermes.installActions.single().verifications.any { it.cmd.contains("hermes acp --help") })
+    }
+
+    @Test
+    fun officialAccountActionsStayInAgentRegistrationWithoutCredentials() {
+        data class Expected(
+            val resourceId: String,
+            val agentId: String,
+            val accountId: String,
+            val accountName: String,
+            val statusArgv: List<String>?,
+            val loginArgv: List<String>,
+            val logoutArgv: List<String>?,
+        )
+
+        listOf(
+            Expected(
+                "kite.codex.cli",
+                "codex",
+                "chatgpt",
+                "ChatGPT 官方",
+                listOf("codex", "login", "status"),
+                listOf("codex", "login"),
+                listOf("codex", "logout"),
+            ),
+            Expected(
+                "kite.claude.code",
+                "claude-code",
+                "anthropic",
+                "Anthropic 官方",
+                listOf("claude", "auth", "status"),
+                listOf("claude", "auth", "login"),
+                listOf("claude", "auth", "logout"),
+            ),
+            Expected(
+                "kite.hermes.core",
+                "hermes",
+                "nous",
+                "Nous Portal 官方",
+                listOf("hermes", "portal", "info"),
+                listOf("hermes", "portal", "login"),
+                listOf("hermes", "logout", "--provider", "nous"),
+            ),
+            Expected(
+                "kite.kimi.code",
+                "kimi",
+                "moonshot",
+                "Kimi 官方",
+                null,
+                listOf("kimi", "login"),
+                null,
+            ),
+        ).forEach { expected ->
+            val raw = File(resourceRoot(), "${expected.resourceId}/manifest.json").readText()
+            val manifest = KiteResourceManifestLoader(context).parseManifestJson(raw)
+            val profile = manifest.agentProfiles.single()
+            val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
+            val account = profile.officialAccounts.single()
+            val registered = registration.officialAccounts.single()
+
+            assertEquals(expected.agentId, profile.agentId)
+            assertEquals(expected.accountId, account.id)
+            assertEquals(expected.accountName, account.displayName)
+            assertEquals(expected.statusArgv, account.status?.argv)
+            assertEquals(expected.loginArgv, account.login.argv)
+            assertEquals(expected.logoutArgv, account.logout?.argv)
+            assertEquals(account.id, registered.id)
+            assertEquals(account.status?.argv, registered.status?.argv)
+            assertFalse(raw.contains("access_token", ignoreCase = true))
+            assertFalse(raw.contains("refresh_token", ignoreCase = true))
+        }
     }
 
     @Test

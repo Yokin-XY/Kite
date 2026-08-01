@@ -71,6 +71,11 @@ class AgentSessionConfigurationOverlayProvider(
         val configurationBySession = ConcurrentHashMap<String, List<AgentConfigOption>>()
         val permissionProfileBySession = ConcurrentHashMap<String, String>()
 
+        fun initialPermissionProfileId(option: AgentConfigOption.Select): String =
+            option.currentValue.takeIf { current ->
+                permissionControl?.profiles?.any { it.id == current } == true
+            } ?: permissionControl?.initialProfileId ?: option.currentValue
+
         fun merge(options: List<AgentConfigOption>, sessionId: String? = null): List<AgentConfigOption> {
             val sessionOverlay = overlay.get().map { option ->
                 if (
@@ -80,7 +85,7 @@ class AgentSessionConfigurationOverlayProvider(
                 ) {
                     option.copy(
                         currentValue = permissionProfileBySession.getOrPut(sessionId) {
-                            permissionControl?.initialProfileId ?: option.currentValue
+                            initialPermissionProfileId(option)
                         }
                     )
                 } else {

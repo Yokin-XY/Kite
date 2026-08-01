@@ -6,6 +6,7 @@ import com.kite.app.action.KiteActionRouter
 import com.kite.app.action.KiteRecipeActionCoordinator
 import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.agent.registration.KiteCustomAgentRegistrationStore
+import com.kite.app.agent.auth.AgentOfficialAccountManager
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.defaultAgentConfigAdapters
 import com.kite.app.bridge.KiteBridgeClient
@@ -57,6 +58,7 @@ import com.kite.app.platform.resources.AndroidResourceActionGateway
 import com.kite.app.platform.resources.AndroidResourceVersionGateway
 import com.kite.app.platform.recipes.AndroidRecipeFeatureGateway
 import com.kite.app.platform.runs.AndroidAgentConfigCommandExecutor
+import com.kite.app.platform.runs.AndroidAgentOfficialAccountCommandRunner
 import com.kite.app.platform.runs.AndroidRecipeExecutor
 import com.kite.app.platform.runs.AndroidRecipeActionGateway
 import com.kite.app.platform.runs.AndroidDesktopOpenGateway
@@ -70,12 +72,16 @@ import com.kite.app.platform.runtimebootstrap.AndroidRuntimeBootstrapGateway
 import com.kite.app.platform.onboarding.AndroidFirstRunOnboardingStore
 import com.kite.app.platform.settings.AndroidSettingsGateway
 import com.kite.app.run.CardRunStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 /**
  * Kite 进程级组合根。这里只装配已有能力，不承载页面状态或业务流程。
  */
 internal class KiteAppGraph private constructor(context: Context) {
     private val appContext = context.applicationContext
+    private val processScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val diagnostics: KiteDiagnostics by lazy { KiteDiagnostics(appContext) }
     val bridgeClient: KiteBridgeClient by lazy { KiteBridgeClient(diagnostics, appContext) }
@@ -136,6 +142,16 @@ internal class KiteAppGraph private constructor(context: Context) {
             manifestLoader = resourceManifestLoader,
             installStore = resourceInstallStore,
             customStore = customAgentRegistrationStore
+        )
+    }
+    val agentOfficialAccountManager: AgentOfficialAccountManager by lazy {
+        AgentOfficialAccountManager(
+            scope = processScope,
+            registry = agentRegistry,
+            commandRunner = AndroidAgentOfficialAccountCommandRunner(
+                context = appContext,
+                openExternal = { url -> AndroidExternalBrowserLauncher.open(appContext, url) }
+            )
         )
     }
     val recipeLoader: KiteRecipeLoader by lazy { KiteRecipeLoader(appContext, diagnostics) }

@@ -29,7 +29,7 @@
     "category": "AI",
     "accent": "teal",
     "sizeLabel": "网络包",
-    "longDescription": "Codex CLI 是 OpenAI 面向终端的编码助手。Kite 使用 OpenAI 官方 NPM 包获取对应平台的 codex 命令，并把它暴露到 /workspace/.kf/bin；登录、模型和项目权限仍由 Codex 自己在终端里引导，不写入资源卡 JSON。",
+    "longDescription": "Codex CLI 是 OpenAI 面向终端的编码助手。Kite 使用 OpenAI 官方 NPM 包获取对应平台的 codex 命令，并把它暴露到 /workspace/.kf/bin；官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Codex 自己保存，不写入资源卡 JSON。",
     "recommendations": [
       {
         "resourceId": "kite.nodejs",
@@ -88,6 +88,27 @@
         "required": false,
         "adapter": "codex"
       },
+      "accounts": [
+        {
+          "id": "chatgpt",
+          "name": "ChatGPT 官方",
+          "modelGroupIds": ["codex", "openai"],
+          "status": {
+            "argv": ["codex", "login", "status"],
+            "loggedInPatterns": ["logged in"],
+            "loggedOutPatterns": ["not logged in"],
+            "timeoutMs": 15000
+          },
+          "login": {
+            "argv": ["codex", "login"],
+            "timeoutMs": 300000
+          },
+          "logout": {
+            "argv": ["codex", "logout"],
+            "timeoutMs": 30000
+          }
+        }
+      ],
       "launch": {
         "mode": "managed",
         "providerId": "codex",

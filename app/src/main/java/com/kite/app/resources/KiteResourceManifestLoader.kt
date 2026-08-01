@@ -66,7 +66,30 @@ data class KiteResourceAgentProfile(
     val configurationRequired: Boolean = false,
     val configAdapterId: String = "",
     val sessionAdapterId: String = "",
+    val officialAccounts: List<KiteResourceAgentOfficialAccount> = emptyList(),
     val title: String = ""
+)
+
+/**
+ * Agent 自己拥有的官方账号入口。
+ *
+ * Kite 只声明如何查询、登录和退出，不保存账号 Token，也不把登录动作塞进会话启动流程。
+ */
+data class KiteResourceAgentOfficialAccount(
+    val id: String,
+    val displayName: String,
+    val modelGroupIds: List<String> = emptyList(),
+    val status: KiteResourceAgentAccountCommand? = null,
+    val login: KiteResourceAgentAccountCommand,
+    val logout: KiteResourceAgentAccountCommand? = null,
+)
+
+data class KiteResourceAgentAccountCommand(
+    val argv: List<String>,
+    val loggedInPatterns: List<String> = emptyList(),
+    val loggedOutPatterns: List<String> = emptyList(),
+    val successPatterns: List<String> = emptyList(),
+    val timeoutMs: Long = 30_000L,
 )
 
 /**
@@ -739,7 +762,48 @@ class KiteResourceManifestLoader private constructor(
             configurationRequired = configuration?.optBoolean("required", false) == true,
             configAdapterId = configuration?.optString("adapter")?.trim().orEmpty(),
             sessionAdapterId = sessions?.optString("adapter")?.trim().orEmpty(),
+            officialAccounts = parseAgentOfficialAccounts(json.optJSONArray("accounts")),
             title = title
+        )
+    }
+
+    private fun parseAgentOfficialAccounts(
+        accounts: JSONArray?
+    ): List<KiteResourceAgentOfficialAccount> = buildList {
+        if (accounts == null) return@buildList
+        for (index in 0 until accounts.length()) {
+            val account = accounts.optJSONObject(index) ?: continue
+            val id = account.optString("id").trim()
+            val displayName = account.optString("name").trim()
+            val status = parseAgentAccountCommand(account.optJSONObject("status"))
+            val login = parseAgentAccountCommand(account.optJSONObject("login")) ?: continue
+            val logout = parseAgentAccountCommand(account.optJSONObject("logout"))
+            if (!STABLE_RUNTIME_DEPENDENCY_ID.matches(id) || displayName.isBlank()) continue
+            add(
+                KiteResourceAgentOfficialAccount(
+                    id = id,
+                    displayName = displayName,
+                    modelGroupIds = account.optJSONArray("modelGroupIds").toStringList(),
+                    status = status,
+                    login = login,
+                    logout = logout,
+                )
+            )
+        }
+    }
+
+    private fun parseAgentAccountCommand(
+        command: JSONObject?
+    ): KiteResourceAgentAccountCommand? {
+        if (command == null) return null
+        val argv = command.optJSONArray("argv").toStringList()
+        if (argv.isEmpty()) return null
+        return KiteResourceAgentAccountCommand(
+            argv = argv,
+            loggedInPatterns = command.optJSONArray("loggedInPatterns").toStringList(),
+            loggedOutPatterns = command.optJSONArray("loggedOutPatterns").toStringList(),
+            successPatterns = command.optJSONArray("successPatterns").toStringList(),
+            timeoutMs = command.optLong("timeoutMs", 30_000L).coerceIn(1_000L, 300_000L),
         )
     }
 

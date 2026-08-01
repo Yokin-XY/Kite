@@ -25,6 +25,7 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.util.Base64
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -104,6 +105,8 @@ import com.kite.app.agent.registration.AgentRegistryEntry
 import com.kite.app.agent.registration.AgentRegistrySnapshot
 import com.kite.app.agent.registration.AgentRuntimeStatus
 import com.kite.app.agent.registration.KiteAgentRegistry
+import com.kite.app.agent.auth.AgentOfficialAccountManager
+import com.kite.app.agent.auth.AgentOfficialAccountStatus
 import com.kite.app.agent.runtime.AgentDraftCapabilityCatalog
 import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.runtime.AgentRuntimeRegistry
@@ -115,6 +118,9 @@ import com.kite.app.agent.store.AgentConversationSnapshot
 import com.kite.app.agent.store.AgentConversationStore
 import com.kite.app.agent.store.AgentConversationTurn
 import com.kite.app.agent.store.AgentConversationTurnState
+import com.kite.app.agent.store.AgentDraftCapabilityCacheStore
+import com.kite.app.agent.store.AgentModelDisplayName
+import com.kite.app.agent.store.AgentModelLibraryStore
 import com.kite.app.agent.store.AgentProject
 import com.kite.app.agent.store.AgentProjectSaveResult
 import com.kite.app.agent.store.AgentProjectStore
@@ -144,13 +150,16 @@ internal class RunAgentSurfaceBinding(
     private val onPickImages: () -> Unit,
     private val onPickFiles: () -> Unit,
     private val agentRegistry: KiteAgentRegistry,
-    private val agentConfigAdapters: AgentConfigAdapterRegistry
+    private val agentConfigAdapters: AgentConfigAdapterRegistry,
+    private val officialAccountManager: AgentOfficialAccountManager,
 ) : RunSurfaceBinding {
     private val isDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
         Configuration.UI_MODE_NIGHT_YES
     private val tokens = AgentSurfaceThemePolicy.project(tokens, isDark)
     private val ui = UiKit(context, this.tokens)
     private val sessionMetadataStore = AgentSessionMetadataStore(context)
+    private val draftCapabilityCacheStore = AgentDraftCapabilityCacheStore(context)
+    private val modelLibraryStore = AgentModelLibraryStore(context)
     private val projectStore = AgentProjectStore(context)
     private val agentPageBackground = this.tokens.pageBackground
     private val agentSurface = this.tokens.surface
@@ -189,6 +198,18 @@ internal class RunAgentSurfaceBinding(
     }
     private val input = EditText(context)
     private val actionButton = ImageButton(context)
+    private val sessionModelEntry = fixedComposerEntry(
+        label = "模型",
+        contentDescription = "模型，当前尚无可选项",
+        maximumWidth = ui.dp(118),
+        onClick = ::showSessionConfigurationPanel,
+    )
+    private val sessionPermissionEntry = fixedComposerEntry(
+        label = "权限",
+        contentDescription = "权限，当前尚无可选策略",
+        maximumWidth = ui.dp(104),
+        onClick = { showComposerExtensionMenu(ComposerExtensionRoute.Permissions) },
+    )
     private val adapter = ConversationAdapter(context, tokens, lifecycleOwner.lifecycleScope)
     private val navigationHost = FrameLayout(context)
     private val drawerList = RecyclerView(context)
@@ -211,6 +232,8 @@ internal class RunAgentSurfaceBinding(
     private val sessionSearchPageView: View by lazy(LazyThreadSafetyMode.NONE, ::buildSessionSearchPage)
     private val settingsPageView: View by lazy(LazyThreadSafetyMode.NONE, ::buildSettingsPage)
     private var observation: Job? = null
+    private var officialAccountObservation: Job? = null
+    private var officialAccountObservedAgentId: String? = null
     private var navigationJob: Job? = null
     private var observedKey: AgentConversationKey? = null
     private var currentSnapshot: AgentConversationSnapshot? = null
@@ -261,10 +284,30 @@ internal class RunAgentSurfaceBinding(
     private var draftModelLoadJob: Job? = null
     private var providerEditorStatusText: TextView? = null
     private var providerEditorSaveAction: TextView? = null
-    private val providerListCardBindings = linkedMapOf<String, ProviderListCardBinding>()
+    private var providerLibraryGroupId: String = AgentModelLibraryStore.ALL_GROUP_ID
+    private val expandedProviderIds = linkedSetOf<String>()
+    private val selectedProviderIds = linkedSetOf<String>()
     private var pendingSessionConfigId: String? = null
-    private var sessionConfigurationRoute = SessionConfigurationRoute.Overview
-    private var sessionConfigurationModelGroupId: String? = null
+    private val sessionConfigurationPanel by lazy(LazyThreadSafetyMode.NONE) {
+        AgentSessionConfigurationPanel(
+            context = context,
+            tokens = tokens,
+            overlay = sessionConfigurationOverlay,
+            optionsProvider = ::sessionConfigurationOptions,
+            pendingProvider = { pendingSessionConfigId != null },
+            viewportProvider = {
+                AgentSessionConfigurationViewport(
+                    availableWidth = root.width.takeIf { it > 0 }
+                        ?: context.resources.displayMetrics.widthPixels,
+                    viewportHeight = root.height.takeIf { it > 0 }
+                        ?: context.resources.displayMetrics.heightPixels,
+                    composerHeight = composerArea.height,
+                    topBarHeight = topBar.height,
+                )
+            },
+            onUpdateConfiguration = ::updateConfiguration,
+        )
+    }
     private var composerExtensionRoute = ComposerExtensionRoute.Main
     private var drawerSessions: List<AgentSessionSummary> = emptyList()
     private var drawerSessionsKey: AgentSessionListKey? = null
@@ -278,6 +321,7 @@ internal class RunAgentSurfaceBinding(
     private var skillDirectoryPickerDialog: WorkspaceDirectoryPickerDialog? = null
     private var toolbarVisible = true
     private var permissionSignature: String? = null
+    private var composerPresentation: ComposerPresentation? = null
     private val pendingAttachments = mutableListOf<PendingAttachment>()
 
     private val mainContent: View = LinearLayout(context).apply {
@@ -354,12 +398,12 @@ internal class RunAgentSurfaceBinding(
         generation = state.createdAt
         agentId = content.agentId
         agentDisplayName = state.title.ifBlank { content.agentId ?: "Agent" }
-        agentTitleText.text = agentDisplayName
+        agentTitleText.setTextIfChanged(agentDisplayName)
         providerId = content.providerId
         sessionId = content.sessionId
-        statusText.text = content.statusMessage
+        statusText.setTextIfChanged(content.statusMessage
             ?: content.connectionStatus?.let(::connectionStatusLabel)
-            ?: state.statusLabel
+            ?: state.statusLabel)
         if (prepareInitialEntryDraftIfNeeded()) return
         subscribe(content.providerId, content.sessionId)
         if (content.sessionId == null) loadDraftModelCatalog()
@@ -380,6 +424,9 @@ internal class RunAgentSurfaceBinding(
         closeSessionConfigurationPanel(animate = false)
         observation?.cancel()
         observation = null
+        officialAccountObservation?.cancel()
+        officialAccountObservation = null
+        officialAccountObservedAgentId = null
         navigationJob?.cancel()
         navigationJob = null
         draftModelLoadJob?.cancel()
@@ -471,6 +518,16 @@ internal class RunAgentSurfaceBinding(
     internal fun showSettingsForTesting(returnToDrawer: Boolean) = showAgentSettings(returnToDrawer)
 
     internal fun navigationScreenForTesting(): String = navigationScreen.name
+
+    internal fun sessionControlIdentityForTesting(): Pair<Int, Int> =
+        System.identityHashCode(sessionModelEntry) to System.identityHashCode(sessionPermissionEntry)
+
+    internal fun sessionControlChildCountsForTesting(): Pair<Int, Int> =
+        sessionConfigurationHost.childCount to sessionPermissionHost.childCount
+
+    internal fun refreshSessionControlsForTesting() = renderSessionConfigurationControls()
+
+    internal fun composerInputFlagsForTesting(): Pair<Int, Int> = input.inputType to input.imeOptions
 
     fun addAttachments(uris: List<Uri>) {
         if (uris.isEmpty()) return
@@ -697,61 +754,91 @@ internal class RunAgentSurfaceBinding(
 
     private fun buildComposer(context: Context): View = composer.apply {
         orientation = LinearLayout.VERTICAL
-        minimumHeight = ui.dp(96)
-        setPadding(ui.dp(7), ui.dp(6), ui.dp(7), ui.dp(6))
-        background = ui.roundedBox(agentInputBackground, agentBorder, ui.dp(27).toFloat(), ui.dp(1))
-        elevation = ui.dp(2).toFloat()
-        addView(input.apply {
-            hint = "给 Agent 发消息"
-            textSize = 16f
-            includeFontPadding = false
-            minHeight = ui.dp(42)
-            maxLines = 6
-            setTextColor(tokens.textPrimary)
-            setHintTextColor(tokens.textTertiary)
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            setPadding(ui.dp(12), ui.dp(8), ui.dp(12), ui.dp(4))
-            imeOptions = EditorInfo.IME_ACTION_SEND
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_SEND) {
-                    submitOrCancel()
-                    true
-                } else {
-                    false
-                }
-            }
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                    updateComposer()
-                    syncCommandPalette(s?.toString().orEmpty())
-                }
-                override fun afterTextChanged(s: Editable?) = Unit
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        background = ColorDrawable(android.graphics.Color.TRANSPARENT)
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(iconButtonWithAnchor(context, R.drawable.ic_add_light, "扩展与工作模式") {
-                showComposerExtensionMenu()
-            }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
             addView(sessionConfigurationHost, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                ui.dp(40)
-            ))
+                ui.dp(34)
+            ).also {
+                sessionConfigurationHost.addView(
+                    sessionModelEntry,
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34)),
+                )
+            })
             addView(sessionPermissionHost, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                ui.dp(40)
+                ui.dp(34)
             ).apply {
                 marginStart = ui.dp(5)
+            }.also {
+                sessionPermissionHost.addView(
+                    sessionPermissionEntry,
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34)),
+                )
             })
-            addView(View(context), LinearLayout.LayoutParams(0, ui.dp(1), 1f))
-            addView(actionButton.apply {
-                contentDescription = "发送"
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12))
-                setOnClickListener { submitOrCancel() }
-            }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(34)).apply {
+            setMargins(ui.dp(5), 0, ui.dp(5), ui.dp(6))
+        })
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = ui.dp(56)
+            addView(iconButtonWithAnchor(context, R.drawable.ic_add_light, "扩展与工作模式") {
+                showComposerExtensionMenu()
+            }.apply {
+                background = ui.roundedBox(
+                    agentInputBackground,
+                    android.graphics.Color.TRANSPARENT,
+                    ui.dp(27).toFloat(),
+                )
+                elevation = ui.dp(2).toFloat()
+            }, LinearLayout.LayoutParams(ui.dp(54), ui.dp(54)).apply {
+                marginEnd = ui.dp(6)
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = ui.dp(56)
+                setPadding(ui.dp(12), ui.dp(3), ui.dp(5), ui.dp(3))
+                background = ui.roundedBox(
+                    agentInputBackground,
+                    android.graphics.Color.TRANSPARENT,
+                    ui.dp(28).toFloat(),
+                )
+                elevation = ui.dp(2).toFloat()
+                addView(input.apply {
+                    hint = "给 Agent 发消息"
+                    textSize = 16f
+                    includeFontPadding = false
+                    minHeight = ui.dp(48)
+                    maxLines = 6
+                    inputType = InputType.TYPE_CLASS_TEXT or
+                        InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                        InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                    imeOptions = EditorInfo.IME_FLAG_NO_ENTER_ACTION
+                    setTextColor(tokens.textPrimary)
+                    setHintTextColor(tokens.textTertiary)
+                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    setPadding(0, ui.dp(8), ui.dp(6), ui.dp(7))
+                    addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                            updateComposer()
+                            syncCommandPalette(s?.toString().orEmpty())
+                        }
+                        override fun afterTextChanged(s: Editable?) = Unit
+                    })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(actionButton.apply {
+                    contentDescription = "发送"
+                    scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10))
+                    visibility = View.GONE
+                    setOnClickListener { submitOrCancel() }
+                }, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
@@ -838,23 +925,22 @@ internal class RunAgentSurfaceBinding(
 
     private fun renderSessionConfigurationControls() {
         renderSessionPermissionControl()
-        sessionConfigurationHost.removeAllViews()
         val options = sessionConfigurationOptions()
         val pending = pendingSessionConfigId != null
+        val modelLabel = AgentSurfaceNavigationPolicy.composerModelLabel(options)
+        val modelTextStyle = AgentSurfaceNavigationPolicy.composerModelTextStyle(modelLabel)
         sessionConfigurationHost.visibility = View.VISIBLE
-        sessionConfigurationHost.addView(
-            fixedComposerEntry(
-                label = AgentSurfaceNavigationPolicy.composerModelLabel(options),
-                contentDescription = if (options.isEmpty()) {
-                    "模型，当前尚无可选项"
-                } else {
-                    "选择模型，当前${AgentSurfaceNavigationPolicy.composerModelLabel(options)}"
-                },
-                pending = pending,
-                maximumWidth = ui.dp(150),
-                onClick = ::showSessionConfigurationPanel
-            ),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36))
+        bindFixedComposerEntry(
+            view = sessionModelEntry,
+            label = modelLabel,
+            contentDescription = if (options.isEmpty()) {
+                "模型，当前尚无可选项"
+            } else {
+                "选择模型，当前$modelLabel"
+            },
+            pending = pending,
+            maximumWidth = ui.dp(modelTextStyle.maximumWidthDp),
+            textSizeSp = modelTextStyle.textSizeSp,
         )
         if (sessionConfigurationOverlay.visibility == View.VISIBLE) {
             rebuildSessionConfigurationPanel(animateContent = false)
@@ -862,31 +948,27 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun renderSessionPermissionControl() {
-        sessionPermissionHost.removeAllViews()
         val option = composerPermissionOption()
         val pending = pendingSessionConfigId != null
         sessionPermissionHost.visibility = View.VISIBLE
-        sessionPermissionHost.addView(
-            fixedComposerEntry(
-                label = AgentSurfaceNavigationPolicy.composerPermissionLabel(option),
-                contentDescription = if (option == null) "权限，当前尚无可选策略" else "选择权限策略",
-                pending = pending,
-                maximumWidth = ui.dp(132),
-                onClick = { showComposerExtensionMenu(ComposerExtensionRoute.Permissions) }
-            ),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36))
+        bindFixedComposerEntry(
+            view = sessionPermissionEntry,
+            label = AgentSurfaceNavigationPolicy.composerPermissionLabel(option),
+            contentDescription = if (option == null) "权限，当前尚无可选策略" else "选择权限策略",
+            pending = pending,
+            maximumWidth = ui.dp(104),
         )
     }
 
     private fun fixedComposerEntry(
         label: String,
         contentDescription: String,
-        pending: Boolean,
         maximumWidth: Int,
+        textSizeSp: Float = 13f,
         onClick: () -> Unit
     ): TextView = TextView(context).apply {
         text = label
-        textSize = 13f
+        textSize = textSizeSp
         typeface = Typeface.DEFAULT_BOLD
         minWidth = ui.dp(58)
         maxWidth = maximumWidth
@@ -901,10 +983,35 @@ internal class RunAgentSurfaceBinding(
             ui.dp(18).toFloat()
         )
         this.contentDescription = contentDescription
-        isClickable = !pending
+        isClickable = true
         isFocusable = true
-        alpha = if (pending) 0.55f else 1f
         setOnClickListener { onClick() }
+    }
+
+    private fun bindFixedComposerEntry(
+        view: TextView,
+        label: String,
+        contentDescription: String,
+        pending: Boolean,
+        maximumWidth: Int,
+        textSizeSp: Float = 13f,
+    ) {
+        view.setTextIfChanged(label)
+        val expectedTextSizePx = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_SP,
+            textSizeSp,
+            context.resources.displayMetrics,
+        )
+        if (view.textSize != expectedTextSizePx) view.textSize = textSizeSp
+        if (view.maxWidth != maximumWidth) view.maxWidth = maximumWidth
+        if (view.contentDescription != contentDescription) view.contentDescription = contentDescription
+        if (view.isClickable == pending) view.isClickable = !pending
+        val nextAlpha = if (pending) 0.55f else 1f
+        if (view.alpha != nextAlpha) view.alpha = nextAlpha
+    }
+
+    private fun TextView.setTextIfChanged(value: CharSequence) {
+        if (!TextUtils.equals(text, value)) text = value
     }
 
     private fun renderPermission(snapshot: AgentConversationSnapshot?) {
@@ -1042,16 +1149,31 @@ internal class RunAgentSurfaceBinding(
         val cancelling = phase == AgentSessionPhase.Prompting || phase == AgentSessionPhase.Cancelling
         val canSend = phase == AgentSessionPhase.Ready &&
             (!input.text.isNullOrBlank() || pendingAttachments.isNotEmpty())
+        val nextPresentation = ComposerPresentation(phase, cancelling, canSend)
+        if (composerPresentation == nextPresentation) return
+        composerPresentation = nextPresentation
         input.isEnabled = phase == AgentSessionPhase.Ready
+        actionButton.visibility = if (cancelling || canSend) View.VISIBLE else View.GONE
         actionButton.isEnabled = cancelling || canSend
-        actionButton.setImageResource(if (cancelling) R.drawable.ic_terminal_interrupt else R.drawable.ic_send_light)
-        actionButton.imageTintList = ColorStateList.valueOf(tokens.buttonText)
-        actionButton.background = ui.roundedBox(
-            if (actionButton.isEnabled) tokens.primaryStrong else tokens.borderStrong,
-            android.graphics.Color.TRANSPARENT,
-            ui.dp(24).toFloat()
+        actionButton.setImageResource(when {
+            cancelling -> R.drawable.ic_terminal_interrupt
+            else -> R.drawable.ic_send_light
+        })
+        actionButton.imageTintList = ColorStateList.valueOf(
+            if (cancelling || canSend) tokens.buttonText else tokens.textPrimary
         )
-        actionButton.contentDescription = if (cancelling) "停止生成" else "发送"
+        actionButton.background = ui.roundedBox(
+            when {
+                cancelling || canSend -> tokens.primaryStrong
+                else -> tokens.borderStrong
+            },
+            android.graphics.Color.TRANSPARENT,
+            ui.dp(22).toFloat()
+        )
+        actionButton.contentDescription = when {
+            cancelling -> "停止生成"
+            else -> "发送"
+        }
     }
 
     private fun createNewSession(cwd: String? = null) {
@@ -1155,7 +1277,6 @@ internal class RunAgentSurfaceBinding(
             draftModelAgentId == targetAgentId &&
             (draftModelSnapshot != null || draftModelLoadJob?.isActive == true)
         ) {
-            if (draftModelSnapshot != null) renderSessionConfigurationControls()
             return
         }
         val requestRevision = ++draftModelLoadRevision
@@ -1179,7 +1300,17 @@ internal class RunAgentSurfaceBinding(
             draftModelSnapshot = snapshot
             if (snapshot != null) {
                 val current = AgentRuntimeRegistry.draftModelSelection(instanceId, generation)
-                val next = current?.takeIf { AgentDraftModelPolicy.contains(snapshot, it) }
+                val discovered = AgentRuntimeRegistry.draftCapabilityCatalog(instanceId, generation)
+                    ?.configuration
+                    ?.filterIsInstance<AgentConfigOption.Select>()
+                    ?.firstOrNull { it.category == AgentConfigCategory.Model }
+                val available = AgentDraftModelPolicy.option(
+                    snapshot,
+                    current,
+                    discovered,
+                    modelLibraryStore.snapshot(targetAgentId)
+                )
+                val next = current?.takeIf { AgentDraftModelPolicy.contains(available, it) }
                     ?: AgentDraftModelPolicy.defaultSelection(snapshot)
                 next?.let { AgentRuntimeRegistry.selectDraftModel(instanceId, generation, it) }
             }
@@ -1313,7 +1444,7 @@ internal class RunAgentSurfaceBinding(
                 adapter = drawerAdapter
                 itemAnimator = null
                 overScrollMode = View.OVER_SCROLL_NEVER
-                visibility = View.GONE
+                visibility = View.INVISIBLE
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
             addView(LinearLayout(context).apply {
@@ -1421,7 +1552,7 @@ internal class RunAgentSurfaceBinding(
             drawerSessions = emptyList()
             drawerAdapter.submitList(emptyList())
             sessionSearchAdapter.submitList(emptyList())
-            drawerList.visibility = View.GONE
+            drawerList.visibility = View.INVISIBLE
             sessionSearchList.visibility = View.GONE
             drawerStatusText.visibility = View.GONE
             sessionSearchStatusText.visibility = View.GONE
@@ -1430,6 +1561,8 @@ internal class RunAgentSurfaceBinding(
         if (runtime?.capabilities?.sessions?.list != true) {
             drawerSessionsKey = requestKey
             renderDrawerSessions()
+            drawerStatusText.text = "当前 Agent 由自身管理历史会话"
+            drawerStatusText.visibility = View.VISIBLE
             sessionSearchStatusText.text = "当前 Agent 未提供历史会话列表"
             sessionSearchStatusText.visibility = View.VISIBLE
             return
@@ -1465,9 +1598,10 @@ internal class RunAgentSurfaceBinding(
                     }
                     is AgentOperationResult.Failure -> {
                         if (requestRevision != drawerLoadRevision || hasCachedSessions) return@launch
-                        drawerStatusText.text = result.message
+                        val message = AgentSurfaceNavigationPolicy.sessionListFailureMessage(result.message)
+                        drawerStatusText.text = message
                         drawerStatusText.visibility = View.VISIBLE
-                        sessionSearchStatusText.text = result.message
+                        sessionSearchStatusText.text = message
                         sessionSearchStatusText.visibility = View.VISIBLE
                     }
                 }
@@ -1499,12 +1633,12 @@ internal class RunAgentSurfaceBinding(
                 ?.let(expandedProjectCwds::add)
             drawerExpansionSeeded = true
         }
+        val rows = AgentSurfaceNavigationPolicy.drawerRows(groups, expandedProjectCwds)
         drawerAdapter.selectedSessionId = sessionId
-        drawerAdapter.submitList(
-            AgentSurfaceNavigationPolicy.drawerRows(groups, expandedProjectCwds)
-        )
-        drawerList.visibility = View.VISIBLE
-        drawerStatusText.visibility = View.GONE
+        drawerAdapter.submitList(rows)
+        drawerList.visibility = if (rows.isEmpty()) View.INVISIBLE else View.VISIBLE
+        drawerStatusText.visibility = if (rows.isEmpty()) View.VISIBLE else View.GONE
+        if (rows.isEmpty()) drawerStatusText.text = "当前 Agent 还没有历史会话"
     }
 
     private fun renderSessionSearchResults() {
@@ -1599,6 +1733,11 @@ internal class RunAgentSurfaceBinding(
         navigationJob?.cancel()
         defaultPermissionPendingProfileId = null
         showSettingsPage(reload = settingsRegistrySnapshot == null)
+    }
+
+    private fun returnFromProviderManager() {
+        selectedProviderIds.clear()
+        returnToAgentSettings()
     }
 
     private fun showSettingsPage(reload: Boolean) {
@@ -1874,7 +2013,7 @@ internal class RunAgentSurfaceBinding(
             textSize = 14f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
+            setTextColor(tokens.textPrimary)
             visibility = View.INVISIBLE
             isClickable = true
             isFocusable = true
@@ -2206,8 +2345,8 @@ internal class RunAgentSurfaceBinding(
                         setTextColor(if (action.role == UiActionRole.Danger) tokens.danger else tokens.textPrimary)
                     }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     addView(TextView(context).apply {
-                        text = if (action.selected) "✓" else ""
-                        textSize = 16f
+                        text = if (action.selected) "●" else ""
+                        textSize = 11f
                         typeface = Typeface.DEFAULT_BOLD
                         gravity = Gravity.CENTER
                         setTextColor(tokens.primaryStrong)
@@ -2368,16 +2507,30 @@ internal class RunAgentSurfaceBinding(
         adapter: AgentConfigAdapter,
         snapshot: AgentLiveConfigSnapshot
     ): List<SettingsRow> = buildList {
-        if (adapter.capabilities().supports(AgentPersistentConfigCapability.Provider)) {
+        val supportsProviders = adapter.capabilities().supports(AgentPersistentConfigCapability.Provider)
+        val officialAccounts = selected.registration.officialAccounts
+        if (supportsProviders || officialAccounts.isNotEmpty()) {
+            val providerSummary = snapshot.providers.takeIf { it.isNotEmpty() }
+                ?.joinToString("、") { provider ->
+                    "${provider.displayName}（${provider.models.size} 个模型）"
+                }
+                ?: snapshot.providerIds.takeIf { it.isNotEmpty() }?.joinToString("、")
+            val accountSummary = officialAccounts.takeIf { it.isNotEmpty() }
+                ?.joinToString("、") { account ->
+                    val status = officialAccountManager.state(
+                        selected.registration.definition.agentId,
+                        account.id,
+                    ).status.officialAccountLabel()
+                    "${account.displayName}（$status）"
+                }
             add(SettingsRow(
                 title = "供应商配置",
-                subtitle = snapshot.providers.takeIf { it.isNotEmpty() }
-                    ?.joinToString("、") { provider ->
-                        "${provider.displayName}（${provider.models.size} 个模型）"
-                    }
-                    ?: snapshot.providerIds.takeIf { it.isNotEmpty() }?.joinToString("、")
-                    ?: "尚未配置供应商",
-                onClick = if (adapter.capabilities().supports(AgentPersistentConfigCapability.ProviderProfiles)) {
+                subtitle = listOfNotNull(providerSummary, accountSummary).joinToString("、")
+                    .ifBlank { "尚未配置供应商" },
+                onClick = if (
+                    adapter.capabilities().supports(AgentPersistentConfigCapability.ProviderProfiles) ||
+                    officialAccounts.isNotEmpty()
+                ) {
                     { showProviderManager(selected, adapter, snapshot) }
                 } else null
             ))
@@ -2958,9 +3111,16 @@ internal class RunAgentSurfaceBinding(
         adapter: AgentConfigAdapter,
         snapshot: AgentLiveConfigSnapshot
     ) {
-        providerPageAgentId = selected.registration.definition.agentId
+        val targetAgentId = selected.registration.definition.agentId
+        if (providerPageAgentId != null && providerPageAgentId != targetAgentId) {
+            providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
+            expandedProviderIds.clear()
+            selectedProviderIds.clear()
+        }
+        providerPageAgentId = targetAgentId
         providerPageAdapter = adapter
         providerPageSnapshot = snapshot
+        observeOfficialAccounts(targetAgentId, selected, adapter)
         navigationScreen = AgentNavigationScreen.ProviderList
         navigationHost.removeAllViews()
         navigationHost.addView(
@@ -2968,6 +3128,42 @@ internal class RunAgentSurfaceBinding(
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
         navigationHost.visibility = View.VISIBLE
+    }
+
+    private fun observeOfficialAccounts(
+        targetAgentId: String,
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+    ) {
+        if (officialAccountObservedAgentId != targetAgentId) {
+            officialAccountObservation?.cancel()
+            officialAccountObservedAgentId = targetAgentId
+            var previous = officialAccountManager.states.value.filterKeys { it.agentId == targetAgentId }
+            officialAccountObservation = lifecycleOwner.lifecycleScope.launch {
+                lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    officialAccountManager.states.collect { allStates ->
+                        val relevant = allStates.filterKeys { it.agentId == targetAgentId }
+                        if (relevant == previous) return@collect
+                        previous = relevant
+                        if (
+                            navigationScreen == AgentNavigationScreen.ProviderList &&
+                            providerPageAgentId == targetAgentId
+                        ) {
+                            showProviderManager(
+                                selected,
+                                adapter,
+                                providerPageSnapshot ?: return@collect,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        officialAccountManager.accounts(targetAgentId).forEach { account ->
+            if (officialAccountManager.state(targetAgentId, account.id).status == AgentOfficialAccountStatus.Unknown) {
+                officialAccountManager.refresh(targetAgentId, account.id)
+            }
+        }
     }
 
     private fun showMcpManager(
@@ -2992,6 +3188,47 @@ internal class RunAgentSurfaceBinding(
         )
         navigationHost.visibility = View.VISIBLE
         renderMcpSnapshot(snapshot)
+        refreshMcpSnapshot(selected, adapter)
+    }
+
+    /**
+     * MCP 文件可能由 Agent 自己或外部工具改动。进入管理页时先显示已有快照，再在 IO
+     * 线程重新读取原生事实；不得把目录读取放进 RecyclerView 绑定或页面绘制路径。
+     */
+    private fun refreshMcpSnapshot(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+    ) {
+        val targetAgentId = selected.registration.definition.agentId
+        val requestRevision = ++settingsLoadRevision
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { adapter.backfill(targetAgentId) }
+            if (
+                requestRevision != settingsLoadRevision ||
+                navigationScreen != AgentNavigationScreen.McpList ||
+                mcpPageAgentId != targetAgentId
+            ) return@launch
+            persistentConfigAgentId = targetAgentId
+            persistentConfigResult = result
+            when (result) {
+                is AgentConfigReadResult.Ready -> {
+                    val ids = result.snapshot.mcpServers.map(AgentMcpSummary::id).toSet()
+                    mcpConnectionStates.keys.retainAll(ids)
+                    mcpConnectionMessages.keys.retainAll(ids)
+                    renderMcpSnapshot(result.snapshot)
+                }
+                is AgentConfigReadResult.Failed -> if (mcpPageSnapshot?.mcpServers.isNullOrEmpty()) {
+                    mcpPageStatusText?.apply { text = result.message; visibility = View.VISIBLE }
+                }
+                is AgentConfigReadResult.Unavailable -> if (mcpPageSnapshot?.mcpServers.isNullOrEmpty()) {
+                    mcpPageStatusText?.apply {
+                        text = result.discovery.warnings.firstOrNull() ?: "当前 Agent 的 MCP 配置不可用"
+                        visibility = View.VISIBLE
+                    }
+                }
+            }
+        }
     }
 
     private fun buildMcpListPage(
@@ -3460,7 +3697,7 @@ internal class RunAgentSurfaceBinding(
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
+            setTextColor(tokens.textPrimary)
             contentDescription = if (existing == null) "保存新 MCP" else "保存 MCP"
             isClickable = true
             isFocusable = true
@@ -3577,6 +3814,39 @@ internal class RunAgentSurfaceBinding(
         )
         navigationHost.visibility = View.VISIBLE
         renderSkillSnapshot(snapshot)
+        refreshSkillSnapshot(selected, adapter)
+    }
+
+    /** Skill 与 MCP 使用同一刷新边界：进入页面时回填一次，列表只消费完成后的快照。 */
+    private fun refreshSkillSnapshot(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+    ) {
+        val targetAgentId = selected.registration.definition.agentId
+        val requestRevision = ++settingsLoadRevision
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { adapter.backfill(targetAgentId) }
+            if (
+                requestRevision != settingsLoadRevision ||
+                navigationScreen != AgentNavigationScreen.SkillList ||
+                skillPageAgentId != targetAgentId
+            ) return@launch
+            persistentConfigAgentId = targetAgentId
+            persistentConfigResult = result
+            when (result) {
+                is AgentConfigReadResult.Ready -> renderSkillSnapshot(result.snapshot)
+                is AgentConfigReadResult.Failed -> if (skillPageSnapshot?.skills.isNullOrEmpty()) {
+                    skillPageStatusText?.apply { text = result.message; visibility = View.VISIBLE }
+                }
+                is AgentConfigReadResult.Unavailable -> if (skillPageSnapshot?.skills.isNullOrEmpty()) {
+                    skillPageStatusText?.apply {
+                        text = result.discovery.warnings.firstOrNull() ?: "当前 Agent 的 Skill 配置不可用"
+                        visibility = View.VISIBLE
+                    }
+                }
+            }
+        }
     }
 
     private fun buildSkillListPage(
@@ -4199,39 +4469,35 @@ internal class RunAgentSurfaceBinding(
         minimumHeight = ui.dp(72)
         setPadding(ui.dp(16), ui.dp(10), ui.dp(7), ui.dp(10))
         background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(19).toFloat())
-        addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_status)
-            imageTintList = ColorStateList.valueOf(tokens.textSecondary)
-            setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
-        }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             addView(TextView(context).apply {
-                text = model.displayName.ifBlank { model.id }
+                text = model.displayName
                 textSize = 15f
                 typeface = Typeface.DEFAULT_BOLD
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setTextColor(tokens.textPrimary)
             })
-            addView(TextView(context).apply {
-                text = model.id
-                textSize = 12f
-                typeface = Typeface.MONOSPACE
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(tokens.textSecondary)
-                setPadding(0, ui.dp(3), 0, 0)
-            })
+            if (model.displayName != model.id) {
+                addView(TextView(context).apply {
+                    text = model.id
+                    textSize = 12.5f
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(tokens.textSecondary)
+                    setPadding(0, ui.dp(3), 0, 0)
+                })
+            }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            setMargins(ui.dp(7), 0, ui.dp(4), 0)
+            setMargins(ui.dp(2), 0, ui.dp(4), 0)
         })
         addView(ImageView(context).apply {
             setImageResource(R.drawable.ic_chevron_right_light)
             imageTintList = ColorStateList.valueOf(tokens.textSecondary)
             setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
         }, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
-        contentDescription = "编辑模型 ${model.displayName.ifBlank { model.id }}"
+        contentDescription = "编辑模型 ${model.displayName}"
         isClickable = true
         isFocusable = true
         setOnClickListener { onClick() }
@@ -4386,20 +4652,26 @@ internal class RunAgentSurfaceBinding(
             setPadding(ui.dp(2), 0, ui.dp(2), ui.dp(10))
         }
         content.addView(status)
-        val idField = providerEditorField(
+        val displayNameField = providerEditorField(
             content,
-            label = "模型 ID（发送给供应商）",
-            hintText = "例如 mimo-v2-pro",
-            value = model?.id.orEmpty()
-        )
-        val nameField = providerEditorField(
-            content,
-            label = "显示名称（仅在 Kite 中显示，可选）",
-            hintText = "留空时使用模型 ID",
+            label = "显示名称",
+            hintText = "例如 MiMo V2 Pro",
             value = model?.displayName.orEmpty()
         )
         content.addView(TextView(context).apply {
-            text = "模型 ID 必须和供应商真实接口一致；显示名称只用于会话选择时更易阅读。"
+            text = "只在 Kite 界面中显示，可以随时修改。"
+            textSize = 12.5f
+            setTextColor(tokens.textSecondary)
+            setPadding(ui.dp(2), 0, ui.dp(2), ui.dp(14))
+        })
+        val idField = providerEditorField(
+            content,
+            label = "模型 ID",
+            hintText = "例如 mimo-v2-pro",
+            value = model?.id.orEmpty()
+        )
+        content.addView(TextView(context).apply {
+            text = "发送给供应商或 Agent 的实际标识，请按官方值填写。"
             textSize = 12.5f
             setTextColor(tokens.textSecondary)
             setPadding(ui.dp(2), 0, ui.dp(2), ui.dp(18))
@@ -4417,18 +4689,19 @@ internal class RunAgentSurfaceBinding(
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
+            setTextColor(tokens.textPrimary)
             isClickable = true
             isFocusable = true
             setOnClickListener {
+                val displayName = displayNameField.text?.toString()?.trim().orEmpty()
                 val id = idField.text?.toString()?.trim().orEmpty()
-                if (id.isBlank()) {
-                    status.text = "请输入真实模型 ID"
+                val error = AgentProviderEditorPolicy.validateModel(displayName, id)
+                if (error != null) {
+                    status.text = error
                     status.visibility = View.VISIBLE
                     return@setOnClickListener
                 }
-                val name = nameField.text?.toString()?.trim().orEmpty().ifBlank { id }
-                onSave(AgentProviderModelSummary(id, name))
+                onSave(AgentProviderModelSummary(id, displayName))
                 closeProviderEditorOverlay()
             }
         }
@@ -4490,16 +4763,46 @@ internal class RunAgentSurfaceBinding(
         adapter: AgentConfigAdapter,
         snapshot: AgentLiveConfigSnapshot
     ): View = LinearLayout(context).apply {
-        providerListCardBindings.clear()
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(agentPageBackground)
+        val targetAgentId = selected.registration.definition.agentId
+        val library = modelLibraryStore.snapshot(targetAgentId)
+        val providers = AgentModelLibraryPolicy.projectProviders(
+            snapshot = snapshot,
+            modelOption = providerManagerModelOption(targetAgentId),
+            library = library,
+            officialAccounts = selected.registration.officialAccounts,
+        )
+        val freeProviders = providers.filter { it.source == AgentModelProviderSource.DiscoveredFree }
+        val officialProviders = providers.filter { it.source == AgentModelProviderSource.Official }
+        val canEditProviders = adapter.capabilities().supports(
+            AgentPersistentConfigCapability.ProviderProfiles
+        )
+        if (providerLibraryGroupId == AgentModelLibraryStore.FREE_GROUP_ID && freeProviders.isEmpty()) {
+            providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
+        }
+        if (providerLibraryGroupId !in library.groups.map { it.id } + setOf(
+                AgentModelLibraryStore.ALL_GROUP_ID,
+                AgentModelLibraryStore.OFFICIAL_GROUP_ID,
+                AgentModelLibraryStore.FREE_GROUP_ID
+            )) {
+            providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
+        }
+        val visibleProviders = when (providerLibraryGroupId) {
+            AgentModelLibraryStore.ALL_GROUP_ID -> providers
+            AgentModelLibraryStore.OFFICIAL_GROUP_ID -> officialProviders
+            AgentModelLibraryStore.FREE_GROUP_ID -> freeProviders
+            else -> providers.filter { it.libraryGroupId == providerLibraryGroupId }
+        }
         addView(buildAgentSubpageHeader(
-            title = "供应商配置",
+            title = "模型库",
             backDescription = "返回 Agent 设置",
-            onBack = ::returnToAgentSettings,
-            actionIcon = R.drawable.ic_add_light,
-            actionDescription = "添加供应商",
-            onAction = { showProviderEditor(selected, adapter, snapshot, existing = null, preset = null) }
+            onBack = ::returnFromProviderManager,
+            actionIcon = R.drawable.ic_add_light.takeIf { canEditProviders },
+            actionDescription = "添加供应商".takeIf { canEditProviders },
+            onAction = if (canEditProviders) ({
+                showProviderEditor(selected, adapter, snapshot, existing = null, preset = null)
+            }) else null,
         ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
         addView(ScrollView(context).apply {
             isFillViewport = true
@@ -4514,12 +4817,20 @@ internal class RunAgentSurfaceBinding(
                     setTextColor(tokens.textPrimary)
                 })
                 addView(TextView(context).apply {
-                    text = "这里准备供应商和可用模型；默认配置只影响以后新建或重新连接的会话。"
+                    text = "按分组管理供应商；展开卡片选择默认模型，长按可以整理会话选择项。"
                     textSize = 13f
                     setTextColor(tokens.textSecondary)
-                    setPadding(0, ui.dp(5), 0, ui.dp(18))
+                    setPadding(0, ui.dp(5), 0, ui.dp(13))
                 })
-                if (snapshot.providers.isEmpty()) {
+                addView(buildProviderGroupStrip(
+                    selected,
+                    adapter,
+                    snapshot,
+                    library,
+                    hasOfficialProviders = officialProviders.isNotEmpty(),
+                    hasFreeProviders = freeProviders.isNotEmpty(),
+                ))
+                if (visibleProviders.isEmpty()) {
                     addView(LinearLayout(context).apply {
                         orientation = LinearLayout.VERTICAL
                         gravity = Gravity.CENTER
@@ -4530,29 +4841,31 @@ internal class RunAgentSurfaceBinding(
                             ui.dp(24).toFloat()
                         )
                         addView(TextView(context).apply {
-                            text = "还没有供应商配置"
+                            text = if (providers.isEmpty()) "还没有供应商配置" else "这个分组还是空的"
                             textSize = 17f
                             typeface = Typeface.DEFAULT_BOLD
                             setTextColor(tokens.textPrimary)
                         })
                         addView(TextView(context).apply {
-                            text = "可以从预置开始，也可以完整自定义。"
+                            text = if (providers.isEmpty()) "可以从预置开始，也可以完整自定义。" else "可在供应商编辑页选择分组。"
                             textSize = 13f
                             gravity = Gravity.CENTER
                             setTextColor(tokens.textSecondary)
                             setPadding(0, ui.dp(7), 0, ui.dp(18))
                         })
-                        addView(actionTextButton("添加供应商") {
-                            showProviderEditor(selected, adapter, snapshot, existing = null, preset = null)
-                        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(48)))
+                        if (canEditProviders) {
+                            addView(actionTextButton("添加供应商") {
+                                showProviderEditor(selected, adapter, snapshot, existing = null, preset = null)
+                            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(48)))
+                        }
                     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 } else {
-                    snapshot.providers.forEach { provider ->
-                        addView(buildProviderListCard(
-                            provider = provider,
-                            selected = provider.id == snapshot.activeProviderId,
-                            onSelect = { selectPersistentProvider(selected, adapter, provider) },
-                            onEdit = { showProviderEditor(selected, adapter, providerPageSnapshot ?: snapshot, provider, preset = null) }
+                    visibleProviders.forEach { provider ->
+                        addView(buildProviderLibraryCard(
+                            selected = selected,
+                            adapter = adapter,
+                            snapshot = snapshot,
+                            projection = provider,
                         ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                             setMargins(0, 0, 0, ui.dp(12))
                         })
@@ -4560,89 +4873,512 @@ internal class RunAgentSurfaceBinding(
                 }
             }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        if (selectedProviderIds.isNotEmpty()) {
+            addView(buildProviderBatchBar(selected, adapter, snapshot, providers), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ui.dp(70)
+            ))
+        }
     }
 
-    private fun buildProviderListCard(
-        provider: AgentProviderSummary,
-        selected: Boolean,
-        onSelect: () -> Unit,
-        onEdit: () -> Unit
-    ): View {
-        lateinit var status: TextView
-        lateinit var editButton: View
-        val container = LinearLayout(context).apply {
+    private fun providerManagerModelOption(targetAgentId: String): AgentConfigOption.Select? {
+        val live = currentSnapshot
+            ?.takeIf { targetAgentId == agentId }
+            ?.configuration
+            ?.filterIsInstance<AgentConfigOption.Select>()
+            ?.firstOrNull { it.category == AgentConfigCategory.Model }
+        return live ?: draftCapabilityCacheStore.catalog(targetAgentId)
+            ?.configuration
+            ?.filterIsInstance<AgentConfigOption.Select>()
+            ?.firstOrNull { it.category == AgentConfigCategory.Model }
+    }
+
+    private fun buildProviderGroupStrip(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+        snapshot: AgentLiveConfigSnapshot,
+        library: com.kite.app.agent.store.AgentModelLibrarySnapshot,
+        hasOfficialProviders: Boolean,
+        hasFreeProviders: Boolean
+    ): View = HorizontalScrollView(context).apply {
+        isHorizontalScrollBarEnabled = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = ui.dp(92)
-            setPadding(ui.dp(18), ui.dp(15), ui.dp(9), ui.dp(15))
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
+            fun addGroup(id: String, name: String, removable: Boolean = false) {
                 addView(TextView(context).apply {
-                    text = provider.displayName
-                    textSize = 16.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
+                    text = name
+                    textSize = 13.5f
+                    typeface = if (providerLibraryGroupId == id) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                    gravity = Gravity.CENTER
                     setTextColor(tokens.textPrimary)
+                    setPadding(ui.dp(16), 0, ui.dp(16), 0)
+                    background = ui.roundedBox(
+                        if (providerLibraryGroupId == id) agentSettingsSurface else agentSurface,
+                        if (providerLibraryGroupId == id) android.graphics.Color.TRANSPARENT else tokens.border,
+                        ui.dp(18).toFloat(),
+                        if (providerLibraryGroupId == id) 0 else ui.dp(1)
+                    )
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        providerLibraryGroupId = id
+                        selectedProviderIds.clear()
+                        showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+                    }
+                    if (removable) {
+                        setOnLongClickListener {
+                            confirmDeleteModelGroup(selected, adapter, snapshot, id, name)
+                            true
+                        }
+                    }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(38)).apply {
+                    marginEnd = ui.dp(8)
                 })
-                addView(TextView(context).apply {
-                    text = provider.baseUrl
-                    textSize = 12.5f
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, ui.dp(4), 0, 0)
-                })
-                status = TextView(context).apply {
-                    textSize = 12f
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, ui.dp(4), 0, 0)
-                }
-                addView(status)
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            editButton = iconButton(
-                context,
-                R.drawable.ic_chevron_right_light,
-                "编辑 ${provider.displayName}",
-                onEdit
-            ).apply {
-                imageTintList = ColorStateList.valueOf(tokens.textSecondary)
             }
-            addView(editButton, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
-            isClickable = true
-            isFocusable = true
-            setOnClickListener { onSelect() }
-        }
-        providerListCardBindings[provider.id] = ProviderListCardBinding(container, status, editButton, provider)
-        renderProviderListCards(providerPageSnapshot?.activeProviderId, pendingProviderId = null)
-        return container
+            addGroup(AgentModelLibraryStore.ALL_GROUP_ID, "全部")
+            if (hasOfficialProviders) addGroup(AgentModelLibraryStore.OFFICIAL_GROUP_ID, "官方")
+            if (hasFreeProviders) addGroup(AgentModelLibraryStore.FREE_GROUP_ID, "免费")
+            library.groups.forEach { group -> addGroup(group.id, group.name, removable = true) }
+            addView(iconButton(context, R.drawable.ic_add_light, "新建分组") {
+                showCreateModelGroupDialog(selected, adapter, snapshot)
+            }.apply {
+                background = ui.roundedBox(agentSurface, tokens.border, ui.dp(18).toFloat(), ui.dp(1))
+                imageTintList = ColorStateList.valueOf(tokens.textSecondary)
+            }, LinearLayout.LayoutParams(ui.dp(38), ui.dp(38)))
+        }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }.also { strip ->
+        strip.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(0, 0, 0, ui.dp(16)) }
     }
 
-    private fun renderProviderListCards(activeProviderId: String?, pendingProviderId: String?) {
-        providerListCardBindings.forEach { (providerId, binding) ->
-            val isSelected = providerId == (pendingProviderId ?: activeProviderId)
-            binding.container.background = ui.roundedBox(
-                if (isSelected) agentSettingsSurface else agentSurface,
-                if (isSelected) android.graphics.Color.TRANSPARENT else tokens.border,
-                ui.dp(22).toFloat(),
-                if (isSelected) 0 else ui.dp(1)
-            )
-            binding.container.contentDescription = buildString {
-                append(binding.provider.displayName)
-                append(if (isSelected) "，已选择" else "，未选择")
-                if (pendingProviderId == providerId) append("，正在切换")
-            }
-            binding.status.text = buildString {
-                if (isSelected) append("当前默认 · ")
-                append("${binding.provider.models.size} 个模型 · ")
-                append(binding.provider.credentialPresence.providerCredentialLabel())
-            }
-            val enabled = pendingProviderId == null
-            binding.container.isEnabled = enabled
-            binding.editButton.isEnabled = enabled
-            binding.container.alpha = if (enabled || isSelected) 1f else 0.55f
-            binding.editButton.alpha = if (enabled) 1f else 0.45f
+    private fun buildProviderLibraryCard(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+        snapshot: AgentLiveConfigSnapshot,
+        projection: AgentModelProviderProjection
+    ): View {
+        val expanded = projection.id in expandedProviderIds
+        val selectedForBatch = projection.id in selectedProviderIds
+        val isDefault = projection.selectedModelValue != null
+        val officialAccount = projection.officialAccount
+        val officialState = officialAccount?.let { account ->
+            officialAccountManager.state(selected.registration.definition.agentId, account.id)
         }
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = ui.roundedBox(
+                if (isDefault || selectedForBatch) agentSettingsSurface else agentSurface,
+                if (isDefault || selectedForBatch) android.graphics.Color.TRANSPARENT else tokens.border,
+                ui.dp(22).toFloat(),
+                if (isDefault || selectedForBatch) 0 else ui.dp(1)
+            )
+            val header = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = ui.dp(76)
+                setPadding(ui.dp(13), ui.dp(10), ui.dp(7), ui.dp(10))
+                if (selectedProviderIds.isNotEmpty()) {
+                    addView(providerSelectionDot(selectedForBatch), LinearLayout.LayoutParams(ui.dp(34), ui.dp(34)).apply {
+                        marginEnd = ui.dp(4)
+                    })
+                }
+                addView(ImageView(context).apply {
+                    setImageResource(R.drawable.ic_bridge)
+                    imageTintList = ColorStateList.valueOf(tokens.textSecondary)
+                    setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
+                }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(TextView(context).apply {
+                        text = projection.name
+                        textSize = 16f
+                        typeface = Typeface.DEFAULT_BOLD
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setTextColor(tokens.textPrimary)
+                    })
+                    addView(TextView(context).apply {
+                        text = buildString {
+                            if (projection.source == AgentModelProviderSource.DiscoveredFree) append("免费 · ")
+                            if (projection.source == AgentModelProviderSource.Official) append("官方 · ")
+                            if (isDefault) append("当前默认 · ")
+                            if (officialState != null) {
+                                append(officialState.status.officialAccountLabel())
+                                if (projection.models.isNotEmpty()) append(" · ")
+                            }
+                            if (projection.models.isNotEmpty() || officialState == null) {
+                                append("${projection.models.size} 个模型")
+                            }
+                            if (!projection.visibleInConversation && !isDefault) append(" · 未加入会话选择")
+                        }
+                        textSize = 11.5f
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                        setTextColor(tokens.textSecondary)
+                        setPadding(0, ui.dp(3), 0, 0)
+                    })
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = ui.dp(4)
+                })
+                if (projection.editableProvider != null && selectedProviderIds.isEmpty()) {
+                    addView(iconButton(context, R.drawable.ic_more_vert_light, "编辑 ${projection.name}") {
+                        showProviderEditor(
+                            selected,
+                            adapter,
+                            providerPageSnapshot ?: snapshot,
+                            projection.editableProvider,
+                            preset = null
+                        )
+                    }.apply { imageTintList = ColorStateList.valueOf(tokens.textSecondary) }, LinearLayout.LayoutParams(
+                        ui.dp(42),
+                        ui.dp(42)
+                    ))
+                }
+                if (officialAccount != null && officialState != null && selectedProviderIds.isEmpty()) {
+                    addView(buildOfficialAccountAction(
+                        agentId = selected.registration.definition.agentId,
+                        account = officialAccount,
+                        status = officialState.status,
+                    ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)).apply {
+                        marginStart = ui.dp(6)
+                        marginEnd = ui.dp(2)
+                    })
+                }
+                addView(ImageView(context).apply {
+                    setImageResource(R.drawable.ic_chevron_right_light)
+                    imageTintList = ColorStateList.valueOf(tokens.textSecondary)
+                    rotation = if (expanded) 90f else 0f
+                    setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
+                }, LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)))
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    if (selectedProviderIds.isNotEmpty()) {
+                        toggleProviderBatchSelection(selected, adapter, snapshot, projection.id)
+                    } else {
+                        if (!expandedProviderIds.add(projection.id)) expandedProviderIds.remove(projection.id)
+                        showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+                    }
+                }
+                setOnLongClickListener {
+                    toggleProviderBatchSelection(selected, adapter, snapshot, projection.id)
+                    true
+                }
+            }
+            addView(header)
+            if (expanded && projection.models.isNotEmpty()) {
+                addView(View(context).apply { setBackgroundColor(tokens.border) }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ui.dp(1)
+                ).apply { setMargins(ui.dp(16), 0, ui.dp(16), 0) })
+                projection.models.forEach { model ->
+                    addView(sessionChoiceRow(
+                        title = model.name,
+                        description = model.description ?: model.value.takeIf { it != model.name },
+                        selected = model.value == projection.selectedModelValue,
+                        contentDescription = "设为默认模型 ${model.name}",
+                        useSelectionDot = true,
+                        onClick = {
+                            selectPersistentModel(selected, adapter, snapshot, projection, model)
+                        }
+                    ), LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { setMargins(ui.dp(8), 0, ui.dp(8), ui.dp(4)) })
+                }
+            }
+        }
+        return card
+    }
+
+    private fun buildOfficialAccountAction(
+        agentId: String,
+        account: com.kite.app.agent.registration.AgentOfficialAccountSpec,
+        status: AgentOfficialAccountStatus,
+    ): TextView = TextView(context).apply {
+        text = when (status) {
+            AgentOfficialAccountStatus.Checking -> "检查中"
+            AgentOfficialAccountStatus.SigningIn -> "取消"
+            AgentOfficialAccountStatus.CancellingLogin -> "取消中"
+            AgentOfficialAccountStatus.SigningOut -> "退出中"
+            AgentOfficialAccountStatus.LoggedIn -> if (account.logout != null) "退出" else "已登录"
+            AgentOfficialAccountStatus.Unknown,
+            AgentOfficialAccountStatus.Unverified,
+            AgentOfficialAccountStatus.LoggedOut,
+            AgentOfficialAccountStatus.Failed -> "登录"
+        }
+        textSize = 14f
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        gravity = Gravity.CENTER
+        setTextColor(tokens.textPrimary)
+        setPadding(ui.dp(13), 0, ui.dp(13), 0)
+        background = ui.roundedBox(
+            agentSurface,
+            tokens.border,
+            ui.dp(18).toFloat(),
+            ui.dp(1),
+        )
+        val pending = status in setOf(
+            AgentOfficialAccountStatus.Checking,
+            AgentOfficialAccountStatus.CancellingLogin,
+            AgentOfficialAccountStatus.SigningOut,
+        )
+        isEnabled = !pending && (status != AgentOfficialAccountStatus.LoggedIn || account.logout != null)
+        alpha = if (isEnabled) 1f else 0.55f
+        isClickable = isEnabled
+        isFocusable = isEnabled
+        setOnClickListener {
+            when (status) {
+                AgentOfficialAccountStatus.SigningIn -> officialAccountManager.cancelLogin(agentId, account.id)
+                AgentOfficialAccountStatus.LoggedIn -> officialAccountManager.logout(agentId, account.id)
+                else -> officialAccountManager.login(agentId, account.id)
+            }
+        }
+    }
+
+    private fun AgentOfficialAccountStatus.officialAccountLabel(): String = when (this) {
+        AgentOfficialAccountStatus.Unknown -> "待检查"
+        AgentOfficialAccountStatus.Unverified -> "未检测登录状态"
+        AgentOfficialAccountStatus.Checking -> "正在检查"
+        AgentOfficialAccountStatus.LoggedOut -> "未登录"
+        AgentOfficialAccountStatus.LoggedIn -> "已登录"
+        AgentOfficialAccountStatus.SigningIn -> "等待浏览器确认"
+        AgentOfficialAccountStatus.CancellingLogin -> "正在结束登录"
+        AgentOfficialAccountStatus.SigningOut -> "正在退出"
+        AgentOfficialAccountStatus.Failed -> "状态未知"
+    }
+
+    private fun providerSelectionDot(selected: Boolean): View = TextView(context).apply {
+        text = if (selected) "●" else ""
+        textSize = 12f
+        gravity = Gravity.CENTER
+        setTextColor(tokens.textPrimary)
+        background = ui.roundedBox(
+            android.graphics.Color.TRANSPARENT,
+            if (selected) tokens.textPrimary else tokens.borderStrong,
+            ui.dp(17).toFloat(),
+            ui.dp(1)
+        )
+    }
+
+    private fun toggleProviderBatchSelection(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+        snapshot: AgentLiveConfigSnapshot,
+        providerId: String
+    ) {
+        if (!selectedProviderIds.add(providerId)) selectedProviderIds.remove(providerId)
+        showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+    }
+
+    private fun buildProviderBatchBar(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+        snapshot: AgentLiveConfigSnapshot,
+        providers: List<AgentModelProviderProjection>
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(10))
+        setBackgroundColor(agentSurface)
+        addView(TextView(context).apply {
+            text = "已选 ${selectedProviderIds.size} 项"
+            textSize = 12.5f
+            setTextColor(tokens.textSecondary)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(providerBatchAction("取消", UiActionRole.Secondary) {
+            selectedProviderIds.clear()
+            showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+        })
+        addView(providerBatchAction("会话选择模型", UiActionRole.Primary) {
+            val selectedProviders = providers.filter { it.id in selectedProviderIds }
+            val shouldShow = selectedProviders.any { !it.visibleInConversation }
+            selectedProviders.forEach { provider ->
+                val visible = shouldShow || provider.selectedModelValue != null
+                modelLibraryStore.setProviderVisible(
+                    selected.registration.definition.agentId,
+                    provider.id,
+                    visible
+                )
+            }
+            selectedProviderIds.clear()
+            showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+        })
+        val removable = providers.filter {
+            it.id in selectedProviderIds &&
+                it.editableProvider != null &&
+                it.selectedModelValue == null
+        }
+        if (removable.isNotEmpty()) {
+            addView(providerBatchAction("删除", UiActionRole.Danger) {
+                confirmRemoveSelectedProviders(selected, adapter, snapshot, removable)
+            })
+        }
+    }
+
+    private fun providerBatchAction(label: String, role: UiActionRole, onClick: () -> Unit): TextView =
+        TextView(context).apply {
+            text = label
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(when (role) {
+                UiActionRole.Primary -> tokens.textPrimary
+                UiActionRole.Secondary -> tokens.textSecondary
+                UiActionRole.Danger -> tokens.danger
+            })
+            setPadding(ui.dp(13), 0, ui.dp(13), 0)
+            background = ui.roundedBox(
+                when (role) {
+                    UiActionRole.Primary -> agentSettingsSurface
+                    UiActionRole.Secondary -> android.graphics.Color.TRANSPARENT
+                    UiActionRole.Danger -> tokens.dangerSoft
+                },
+                android.graphics.Color.TRANSPARENT,
+                ui.dp(17).toFloat()
+            )
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }.also { action ->
+            action.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(36)).apply {
+                marginStart = ui.dp(5)
+            }
+        }
+
+    private fun showCreateModelGroupDialog(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+        snapshot: AgentLiveConfigSnapshot
+    ) {
+        val dialog = Dialog(context)
+        val input = EditText(context).apply {
+            hint = "分组名称"
+            textSize = 15f
+            maxLines = 1
+            setSingleLine(true)
+            setTextColor(tokens.textPrimary)
+            setHintTextColor(tokens.textTertiary)
+            setPadding(ui.dp(16), 0, ui.dp(16), 0)
+            background = ui.roundedBox(agentSettingsSurface, tokens.border, ui.dp(18).toFloat(), ui.dp(1))
+        }
+        val status = TextView(context).apply {
+            textSize = 12f
+            setTextColor(tokens.danger)
+            visibility = View.GONE
+        }
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(22), ui.dp(22), ui.dp(22), ui.dp(18))
+            background = ui.roundedBox(agentSurface, android.graphics.Color.TRANSPARENT, ui.dp(26).toFloat())
+            elevation = ui.dp(10).toFloat()
+            addView(TextView(context).apply {
+                text = "新建分组"
+                textSize = 19f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = "分组只整理模型库，不会改变 Agent 原生配置。"
+                textSize = 13f
+                setTextColor(tokens.textSecondary)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, ui.dp(7), 0, ui.dp(14))
+            })
+            addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(52)))
+            addView(status, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(ui.dp(2), ui.dp(7), ui.dp(2), 0)
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(providerBatchAction("取消", UiActionRole.Secondary) { dialog.dismiss() }, LinearLayout.LayoutParams(
+                    0,
+                    ui.dp(46),
+                    1f
+                ))
+                addView(providerBatchAction("新建", UiActionRole.Primary) {
+                    val group = modelLibraryStore.createGroup(
+                        selected.registration.definition.agentId,
+                        input.text?.toString().orEmpty()
+                    )
+                    if (group == null) {
+                        status.text = "请输入一个未使用的分组名称"
+                        status.visibility = View.VISIBLE
+                    } else {
+                        providerLibraryGroupId = group.id
+                        dialog.dismiss()
+                        showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+                    }
+                }, LinearLayout.LayoutParams(0, ui.dp(46), 1f).apply { marginStart = ui.dp(8) })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(0, ui.dp(16), 0, 0)
+            })
+        }
+        dialog.setContentView(content)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            setGravity(Gravity.CENTER)
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(if (isDark) 0.62f else 0.32f)
+            setLayout((context.resources.displayMetrics.widthPixels * 0.88f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        input.requestFocus()
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+    }
+
+    private fun confirmDeleteModelGroup(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+        snapshot: AgentLiveConfigSnapshot,
+        groupId: String,
+        groupName: String
+    ) {
+        showAgentDialogCard(
+            title = "删除分组“$groupName”？",
+            message = "供应商和模型不会被删除，只会回到“全部”。",
+            actions = listOf(
+                AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
+                AgentDialogAction("删除", UiActionRole.Danger) { dialog, _ ->
+                    modelLibraryStore.deleteGroup(selected.registration.definition.agentId, groupId)
+                    providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
+                    dialog.dismiss()
+                    showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+                }
+            )
+        )
+    }
+
+    private fun confirmRemoveSelectedProviders(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+        snapshot: AgentLiveConfigSnapshot,
+        providers: List<AgentModelProviderProjection>
+    ) {
+        showAgentDialogCard(
+            title = "删除 ${providers.size} 个供应商？",
+            message = "会移除这些供应商的 Agent 原生资料和凭据；免费内置来源与当前默认供应商不会删除。",
+            actions = listOf(
+                AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
+                AgentDialogAction("删除", UiActionRole.Danger) { dialog, button ->
+                    button.isEnabled = false
+                    button.alpha = 0.45f
+                    button.text = "删除中…"
+                    dialog.dismiss()
+                    applyPersistentProviderChanges(
+                        selected,
+                        adapter,
+                        snapshot,
+                        providers.map { AgentPersistentConfigChange.RemoveProvider(it.id, removeCredential = true) },
+                        "供应商资料已删除"
+                    )
+                }
+            )
+        )
     }
 
     private fun showProviderEditor(
@@ -4671,6 +5407,9 @@ internal class RunAgentSurfaceBinding(
         existing: AgentProviderSummary?,
         initialPreset: AgentProviderPreset?
     ): View {
+        val targetAgentId = selected.registration.definition.agentId
+        val modelLibrary = modelLibraryStore.snapshot(targetAgentId)
+        var selectedGroupId = existing?.id?.let(modelLibrary::providerGroupId)
         val initialModels = existing?.models ?: initialPreset?.models.orEmpty()
         val modelDrafts = mutableListOf<AgentProviderModelSummary>()
         val content = LinearLayout(context).apply {
@@ -4808,6 +5547,30 @@ internal class RunAgentSurfaceBinding(
         }
         content.addView(basicFields)
 
+        val groupValue = TextView(context).apply {
+            text = modelLibrary.groups.firstOrNull { it.id == selectedGroupId }?.name ?: "未分组"
+        }
+        content.addView(sectionTitle("分组", "只整理 Kite 模型库；不会改写 Agent 原生模型配置。"))
+        content.addView(providerGroupSelectionRow(groupValue) {
+            showAgentChoiceCard(
+                title = "选择分组",
+                message = "删除分组时，供应商会自动回到“全部”。",
+                actions = listOf(
+                    AgentChoiceAction("未分组", selected = selectedGroupId == null) {
+                        selectedGroupId = null
+                        groupValue.text = "未分组"
+                    }
+                ) + modelLibrary.groups.map { group ->
+                    AgentChoiceAction(group.name, selected = group.id == selectedGroupId) {
+                        selectedGroupId = group.id
+                        groupValue.text = group.name
+                    }
+                }
+            )
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(0, 0, 0, ui.dp(20))
+        })
+
         content.addView(sectionTitle("可用模型", "配置此供应商可以提供的模型；会话中再选择实际使用哪一个。"))
         content.addView(modelsHost)
         content.addView(actionOutlineButton("＋  添加模型") {
@@ -4898,7 +5661,7 @@ internal class RunAgentSurfaceBinding(
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
+            setTextColor(tokens.textPrimary)
             contentDescription = if (existing == null) "保存新供应商" else "保存供应商"
             isClickable = true
             isFocusable = true
@@ -4935,7 +5698,15 @@ internal class RunAgentSurfaceBinding(
                         ),
                         credential = credential
                     ),
-                    successMessage = "供应商资料已更新"
+                    successMessage = "供应商资料已更新",
+                    onApplied = { appliedProviderId ->
+                        modelLibraryStore.assignProviderGroup(targetAgentId, appliedProviderId, selectedGroupId)
+                        modelLibraryStore.replaceProviderModelDisplayNames(
+                            targetAgentId,
+                            appliedProviderId,
+                            models.map { model -> AgentModelDisplayName(model.id, model.displayName) }
+                        )
+                    }
                 )
             }
         }
@@ -4966,11 +5737,13 @@ internal class RunAgentSurfaceBinding(
         snapshot: AgentLiveConfigSnapshot,
         provider: AgentProviderSummary
     ) {
-        AlertDialog.Builder(context)
-            .setTitle("删除 ${provider.displayName}？")
-            .setMessage("供应商资料和它在 Agent 原生认证文件中的 API Key 都会移除；其他供应商不受影响。")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("删除") { _, _ ->
+        showAgentDialogCard(
+            title = "删除 ${provider.displayName}？",
+            message = "供应商资料和它在 Agent 原生认证文件中的 API Key 都会移除；其他供应商不受影响。",
+            actions = listOf(
+                AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
+                AgentDialogAction("删除", UiActionRole.Danger) { dialog, _ ->
+                    dialog.dismiss()
                 applyPersistentProviderChange(
                     selected,
                     adapter,
@@ -4978,26 +5751,32 @@ internal class RunAgentSurfaceBinding(
                     AgentPersistentConfigChange.RemoveProvider(provider.id, removeCredential = true),
                     "供应商资料已删除"
                 )
-            }
-            .show()
+                }
+            )
+        )
     }
 
-    private fun selectPersistentProvider(
+    private fun selectPersistentModel(
         selected: AgentRegistryEntry,
         adapter: AgentConfigAdapter,
-        provider: AgentProviderSummary
+        snapshot: AgentLiveConfigSnapshot,
+        provider: AgentModelProviderProjection,
+        model: AgentConfigChoice
     ) {
-        val snapshot = providerPageSnapshot ?: return
-        if (snapshot.activeProviderId == provider.id) return
-        val model = provider.models.firstOrNull()
-        if (model == null) {
-            Toast.makeText(context, "请先编辑供应商并添加至少一个模型", Toast.LENGTH_SHORT).show()
+        val selection = if (provider.source == AgentModelProviderSource.Configured) {
+            val modelId = model.value.removePrefix("${provider.id}/")
+            AgentPersistentConfigChange.SelectProvider(provider.id, modelId)
+        } else {
+            val option = providerManagerModelOption(selected.registration.definition.agentId)
+                ?.copy(currentValue = model.value)
+            option?.let(adapter::defaultModelChange)
+        }
+        if (selection == null) {
+            Toast.makeText(context, "当前 Agent 不能把这个模型保存为默认", Toast.LENGTH_SHORT).show()
             return
         }
-        val selection = AgentPersistentConfigChange.SelectProvider(provider.id, model.id)
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
-        renderProviderListCards(snapshot.activeProviderId, pendingProviderId = provider.id)
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val outcome = withContext(Dispatchers.IO) {
@@ -5024,24 +5803,18 @@ internal class RunAgentSurfaceBinding(
                         targetAgentId,
                         refreshedSnapshot ?: applyResult.snapshot
                     )
-                    renderProviderListCards(
-                        (refreshedSnapshot ?: applyResult.snapshot).activeProviderId,
-                        pendingProviderId = null
-                    )
+                    showProviderManager(selected, adapter, refreshedSnapshot ?: applyResult.snapshot)
                     val message = AgentPersistentDefaultPolicy.savedMessage(
-                        provider.displayName,
+                        model.name,
                         targetAgentId == agentId
                     )
                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 }
                 else -> {
-                    renderProviderListCards(
-                        refreshedSnapshot?.activeProviderId ?: snapshot.activeProviderId,
-                        pendingProviderId = null
-                    )
+                    showProviderManager(selected, adapter, refreshedSnapshot ?: snapshot)
                     Toast.makeText(
                         context,
-                        applyResult.userMessage("默认供应商已更新"),
+                        applyResult.userMessage("默认模型已更新"),
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -5054,7 +5827,8 @@ internal class RunAgentSurfaceBinding(
         adapter: AgentConfigAdapter,
         snapshot: AgentLiveConfigSnapshot,
         change: AgentPersistentConfigChange,
-        successMessage: String
+        successMessage: String,
+        onApplied: ((String) -> Unit)? = null
     ) {
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
@@ -5082,6 +5856,12 @@ internal class RunAgentSurfaceBinding(
                     providerEditorSaveAction = null
                     providerEditorStatusText = null
                     val appliedSnapshot = refreshedSnapshot ?: applyResult.snapshot
+                    val appliedProviderId = when (change) {
+                        is AgentPersistentConfigChange.ConfigureProvider -> change.provider.id
+                        is AgentPersistentConfigChange.SelectProvider -> change.providerId
+                        else -> null
+                    }
+                    if (appliedProviderId != null) onApplied?.invoke(appliedProviderId)
                     usePersistentSnapshotAsDraftDefault(targetAgentId, appliedSnapshot)
                     showProviderManager(selected, adapter, appliedSnapshot)
                     Toast.makeText(
@@ -5233,17 +6013,98 @@ internal class RunAgentSurfaceBinding(
 
     private fun sessionConfigurationOptions(): List<AgentConfigOption> {
         currentSnapshot?.let { snapshot ->
-            return snapshot.configuration.filterNot {
+            return filterModelLibraryChoices(snapshot.configuration.filterNot {
                 it.category == AgentConfigCategory.Mode || it.category == AgentConfigCategory.Permission
-            }
+            })
         }
         val runtime = AgentRuntimeRegistry.session(instanceId)
             ?.takeIf { it.generation == generation && it.isDraft }
             ?: return emptyList()
-        return draftSessionConfigurationOptions(runtime)
+        return filterModelLibraryChoices(draftSessionConfigurationOptions(runtime))
             .filterNot {
                 it.category == AgentConfigCategory.Mode || it.category == AgentConfigCategory.Permission
             }
+    }
+
+    private fun providerGroupSelectionRow(valueText: TextView, onClick: () -> Unit): View =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = ui.dp(58)
+            setPadding(ui.dp(16), ui.dp(8), ui.dp(7), ui.dp(8))
+            background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(19).toFloat())
+            addView(valueText.apply {
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textPrimary)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(ImageView(context).apply {
+                setImageResource(R.drawable.ic_chevron_right_light)
+                imageTintList = ColorStateList.valueOf(tokens.textSecondary)
+                setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
+            }, LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun filterModelLibraryChoices(options: List<AgentConfigOption>): List<AgentConfigOption> {
+        val targetAgentId = agentId?.takeIf(String::isNotBlank) ?: return options
+        val library = modelLibraryStore.snapshot(targetAgentId)
+        val activeProviderId = draftModelSnapshot
+            ?.takeIf { it.agentId == targetAgentId }
+            ?.activeProviderId
+        return options.map { option ->
+            if (option is AgentConfigOption.Select && option.category == AgentConfigCategory.Model) {
+                AgentModelLibraryPolicy.filterConversationModelOption(option, library, activeProviderId)
+            } else option
+        }
+    }
+
+    private fun applyPersistentProviderChanges(
+        selected: AgentRegistryEntry,
+        adapter: AgentConfigAdapter,
+        snapshot: AgentLiveConfigSnapshot,
+        changes: List<AgentPersistentConfigChange>,
+        successMessage: String
+    ) {
+        if (changes.isEmpty()) return
+        val targetAgentId = selected.registration.definition.agentId
+        val requestRevision = ++settingsLoadRevision
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                val result = adapter.apply(AgentConfigApplyRequest(targetAgentId, snapshot.revision, changes))
+                val refreshed = when (result) {
+                    is AgentConfigApplyResult.Applied -> AgentConfigReadResult.Ready(result.snapshot)
+                    else -> adapter.backfill(targetAgentId)
+                }
+                result to refreshed
+            }
+            if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
+            persistentConfigAgentId = targetAgentId
+            persistentConfigResult = outcome.second
+            val refreshedSnapshot = (outcome.second as? AgentConfigReadResult.Ready)?.snapshot
+            when (val result = outcome.first) {
+                is AgentConfigApplyResult.Applied -> {
+                    val applied = refreshedSnapshot ?: result.snapshot
+                    providerPageSnapshot = applied
+                    selectedProviderIds.clear()
+                    expandedProviderIds.retainAll(applied.providers.map { it.id }.toSet())
+                    usePersistentSnapshotAsDraftDefault(targetAgentId, applied)
+                    showProviderManager(selected, adapter, applied)
+                    Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
+                }
+                else -> {
+                    if (refreshedSnapshot != null) providerPageSnapshot = refreshedSnapshot
+                    selectedProviderIds.clear()
+                    showProviderManager(selected, adapter, refreshedSnapshot ?: snapshot)
+                    Toast.makeText(context, result.userMessage(successMessage), Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     private fun draftSessionConfigurationOptions(
@@ -5257,7 +6118,10 @@ internal class RunAgentSurfaceBinding(
         val persistentModel = draftModelSnapshot?.let { snapshot ->
             AgentDraftModelPolicy.option(
                 snapshot,
-                AgentRuntimeRegistry.draftModelSelection(runtime.instanceId, runtime.generation)
+                AgentRuntimeRegistry.draftModelSelection(runtime.instanceId, runtime.generation),
+                cached.filterIsInstance<AgentConfigOption.Select>()
+                    .firstOrNull { it.category == AgentConfigCategory.Model },
+                agentId?.let(modelLibraryStore::snapshot) ?: com.kite.app.agent.store.AgentModelLibrarySnapshot()
             )
         }
         return if (persistentModel == null) {
@@ -5806,419 +6670,25 @@ internal class RunAgentSurfaceBinding(
         if (pendingSessionConfigId != null) return
         closeCommandPalette(animate = false)
         closeComposerExtensionMenu(animate = false)
-        sessionConfigurationRoute = SessionConfigurationRoute.Overview
-        sessionConfigurationModelGroupId = null
-        rebuildSessionConfigurationPanel(animateContent = false)
-        sessionConfigurationOverlay.apply {
-            visibility = View.VISIBLE
-            alpha = 0f
-            setOnClickListener { closeSessionConfigurationPanel() }
-            animate()
-                .alpha(1f)
-                .setDuration(150L)
-                .setInterpolator(DecelerateInterpolator())
-                .start()
-        }
+        sessionConfigurationPanel.show()
     }
 
     private fun closeSessionConfigurationPanel(animate: Boolean = true) {
-        if (sessionConfigurationOverlay.visibility != View.VISIBLE) return
-        if (!animate) {
-            sessionConfigurationOverlay.animate().cancel()
-            sessionConfigurationOverlay.visibility = View.GONE
-            sessionConfigurationOverlay.removeAllViews()
-            return
-        }
-        sessionConfigurationOverlay.animate()
-            .alpha(0f)
-            .setDuration(110L)
-            .withEndAction {
-                sessionConfigurationOverlay.visibility = View.GONE
-                sessionConfigurationOverlay.removeAllViews()
-            }
-            .start()
+        sessionConfigurationPanel.close(animate)
     }
 
     private fun rebuildSessionConfigurationPanel(animateContent: Boolean) {
-        if (sessionConfigurationOverlay.visibility != View.VISIBLE && animateContent) return
-        val options = sessionConfigurationOptions()
-        val availableWidth = (root.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels) - ui.dp(36)
-        val panelWidth = minOf(
-            availableWidth,
-            ui.dp(if (sessionConfigurationRoute == SessionConfigurationRoute.Overview) 228 else 340)
-        )
-        val viewportHeight = root.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
-        val maxHeight = AgentSurfaceNavigationPolicy.sessionPanelMaxHeight(
-            viewportHeight = viewportHeight,
-            composerHeight = composerArea.height,
-            topBarHeight = topBar.height,
-            preferredHeight = ui.dp(430),
-            minimumHeight = ui.dp(220),
-            outerSpacing = ui.dp(32)
-        )
-        val panel = MaxHeightScrollView(context, maxHeight).apply {
-            isFillViewport = false
-            isVerticalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            isClickable = true
-            elevation = ui.dp(12).toFloat()
-            background = ui.roundedBox(
-                agentSurface,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(24).toFloat()
-            )
-            setOnClickListener { }
-            addView(buildSessionConfigurationPanelContent(options), ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ))
-        }
-        sessionConfigurationOverlay.removeAllViews()
-        sessionConfigurationOverlay.addView(panel, FrameLayout.LayoutParams(
-            panelWidth,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.START or Gravity.BOTTOM
-        ).apply {
-            marginStart = ui.dp(28)
-            bottomMargin = composerArea.height + ui.dp(14)
-        })
-        if (animateContent) {
-            panel.alpha = 0f
-            panel.translationY = ui.dp(8).toFloat()
-            panel.scaleX = 0.98f
-            panel.scaleY = 0.98f
-            panel.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .scaleX(1f)
-                .scaleY(1f)
-                .setDuration(170L)
-                .setInterpolator(DecelerateInterpolator())
-                .start()
-        }
+        sessionConfigurationPanel.refresh(animateContent)
     }
 
-    private fun buildSessionConfigurationPanelContent(options: List<AgentConfigOption>): View =
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(ui.dp(10), ui.dp(8), ui.dp(10), ui.dp(12))
-            when (sessionConfigurationRoute) {
-                SessionConfigurationRoute.Overview -> buildSessionConfigurationOverview(this, options)
-                SessionConfigurationRoute.ModelProviders -> buildSessionModelProviders(this, options)
-                SessionConfigurationRoute.Models -> buildSessionModels(this, options)
-            }
-        }
 
-    private fun buildSessionConfigurationOverview(
-        host: LinearLayout,
-        options: List<AgentConfigOption>
-    ) {
-        if (options.isEmpty()) {
-            host.addView(settingsMessage("当前 Agent 尚未提供可选模型"))
-            return
-        }
-        val thoughtLevel = options.firstOrNull { it.category == AgentConfigCategory.ThoughtLevel }
-        val model = options.firstOrNull { it.category == AgentConfigCategory.Model }
-        val remaining = options.filterNot { it === thoughtLevel || it === model }
 
-        thoughtLevel?.let { option ->
-            when (option) {
-                is AgentConfigOption.Select -> {
-                    host.addView(sessionSectionLabel(option.sessionSettingTitle()))
-                    option.choices.forEach { choice ->
-                        host.addView(sessionChoiceRow(
-                            title = choice.name,
-                            description = choice.description,
-                            selected = choice.value == option.currentValue,
-                            contentDescription = "${option.sessionSettingTitle()}，${choice.name}",
-                            onClick = {
-                                updateConfiguration(option.id, AgentConfigValue.Select(choice.value))
-                            }
-                        ))
-                    }
-                }
-                is AgentConfigOption.Toggle -> host.addView(sessionChoiceRow(
-                    title = option.sessionSettingTitle(),
-                    description = option.description ?: if (option.currentValue) "当前已开启" else "当前已关闭",
-                    selected = option.currentValue,
-                    contentDescription = "${option.sessionSettingTitle()}，${option.currentValueLabel()}",
-                    onClick = {
-                        updateConfiguration(option.id, AgentConfigValue.Toggle(!option.currentValue))
-                    }
-                ))
-            }
-        }
-        if (thoughtLevel != null && model != null) {
-            host.addView(View(context).apply {
-                setBackgroundColor(tokens.border)
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(1)).apply {
-                setMargins(ui.dp(13), ui.dp(6), ui.dp(13), ui.dp(6))
-            })
-        }
-        (model as? AgentConfigOption.Select)?.let { option ->
-            host.addView(sessionNavigationRow(
-                title = option.sessionSettingTitle(),
-                value = option.currentValueLabel(),
-                description = null,
-                onClick = {
-                    val groups = AgentSurfaceNavigationPolicy.modelChoiceGroups(option)
-                    sessionConfigurationRoute = if (groups.isEmpty()) {
-                        SessionConfigurationRoute.Models
-                    } else {
-                        SessionConfigurationRoute.ModelProviders
-                    }
-                    sessionConfigurationModelGroupId = groups.firstOrNull { group ->
-                        group.choices.any { it.value == option.currentValue }
-                    }?.id
-                    rebuildSessionConfigurationPanel(animateContent = true)
-                }
-            ))
-        }
-        remaining.forEach { option ->
-            when (option) {
-                is AgentConfigOption.Select -> {
-                    host.addView(sessionSectionLabel(option.sessionSettingTitle()))
-                    option.choices.forEach { choice ->
-                        host.addView(sessionChoiceRow(
-                            title = choice.name,
-                            description = choice.description,
-                            selected = choice.value == option.currentValue,
-                            contentDescription = "${option.sessionSettingTitle()}，${choice.name}",
-                            onClick = {
-                                updateConfiguration(option.id, AgentConfigValue.Select(choice.value))
-                            }
-                        ))
-                    }
-                }
-                is AgentConfigOption.Toggle -> host.addView(sessionChoiceRow(
-                    title = option.sessionSettingTitle(),
-                    description = option.description ?: if (option.currentValue) "当前已开启" else "当前已关闭",
-                    selected = option.currentValue,
-                    contentDescription = "${option.sessionSettingTitle()}，${option.currentValueLabel()}",
-                    onClick = {
-                        updateConfiguration(option.id, AgentConfigValue.Toggle(!option.currentValue))
-                    }
-                ))
-            }
-        }
-    }
 
-    private fun buildSessionModelProviders(host: LinearLayout, options: List<AgentConfigOption>) {
-        val model = options.filterIsInstance<AgentConfigOption.Select>()
-            .firstOrNull { it.category == AgentConfigCategory.Model }
-        val groups = model?.let(AgentSurfaceNavigationPolicy::modelChoiceGroups).orEmpty()
-        host.addView(sessionPanelHeader("选择供应商") {
-            sessionConfigurationRoute = SessionConfigurationRoute.Overview
-            rebuildSessionConfigurationPanel(animateContent = true)
-        })
-        if (model == null || groups.isEmpty()) {
-            host.addView(settingsMessage("当前 Agent 没有可分组的模型"))
-            return
-        }
-        val grid = GridLayout(context).apply {
-            columnCount = 2
-            alignmentMode = GridLayout.ALIGN_BOUNDS
-            useDefaultMargins = false
-        }
-        groups.forEachIndexed { index, group ->
-            val current = group.choices.any { it.value == model.currentValue }
-            val row = index / 2
-            val column = index % 2
-            grid.addView(
-                sessionModelProviderCard(group.name, group.choices.size, current) {
-                    sessionConfigurationModelGroupId = group.id
-                    sessionConfigurationRoute = SessionConfigurationRoute.Models
-                    rebuildSessionConfigurationPanel(animateContent = true)
-                },
-                GridLayout.LayoutParams(
-                    GridLayout.spec(row, 1f),
-                    GridLayout.spec(column, 1f)
-                ).apply {
-                    width = 0
-                    height = ui.dp(66)
-                    setMargins(
-                        if (column == 0) ui.dp(2) else ui.dp(4),
-                        ui.dp(3),
-                        if (column == 0) ui.dp(4) else ui.dp(2),
-                        ui.dp(3)
-                    )
-                }
-            )
-        }
-        host.addView(grid, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ))
-    }
 
-    private fun sessionModelProviderCard(
-        name: String,
-        modelCount: Int,
-        selected: Boolean,
-        onClick: () -> Unit
-    ): View = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(ui.dp(10), ui.dp(7), ui.dp(7), ui.dp(7))
-        background = ui.roundedBox(
-            agentSettingsSurface,
-            android.graphics.Color.TRANSPARENT,
-            ui.dp(17).toFloat()
-        )
-        addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_bridge)
-            imageTintList = ColorStateList.valueOf(tokens.textPrimary)
-            setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
-        }, LinearLayout.LayoutParams(ui.dp(34), ui.dp(34)))
-        addView(LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(TextView(context).apply {
-                text = name
-                textSize = 13f
-                typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(tokens.textPrimary)
-            })
-            addView(TextView(context).apply {
-                text = "$modelCount 个模型"
-                textSize = 10.5f
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(tokens.textSecondary)
-                setPadding(0, ui.dp(2), 0, 0)
-            })
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-            marginStart = ui.dp(5)
-        })
-        contentDescription = "供应商 $name，$modelCount 个模型"
-        isClickable = pendingSessionConfigId == null
-        isFocusable = true
-        alpha = if (pendingSessionConfigId == null) 1f else 0.55f
-        setOnClickListener { onClick() }
-    }
 
-    private fun buildSessionModels(host: LinearLayout, options: List<AgentConfigOption>) {
-        val model = options.filterIsInstance<AgentConfigOption.Select>()
-            .firstOrNull { it.category == AgentConfigCategory.Model }
-        val groups = model?.let(AgentSurfaceNavigationPolicy::modelChoiceGroups).orEmpty()
-        val group = groups.firstOrNull { it.id == sessionConfigurationModelGroupId }
-        val choices = group?.choices ?: model?.choices.orEmpty()
-        host.addView(sessionPanelHeader(group?.name ?: "选择模型") {
-            sessionConfigurationRoute = if (groups.isEmpty()) {
-                SessionConfigurationRoute.Overview
-            } else {
-                SessionConfigurationRoute.ModelProviders
-            }
-            rebuildSessionConfigurationPanel(animateContent = true)
-        })
-        if (model == null || choices.isEmpty()) {
-            host.addView(settingsMessage("当前 Agent 没有可选模型"))
-            return
-        }
-        choices.forEach { choice ->
-            host.addView(sessionChoiceRow(
-                title = choice.name,
-                description = choice.description ?: choice.value.takeIf { it != choice.name },
-                selected = choice.value == model.currentValue,
-                contentDescription = "模型 ${choice.name}",
-                onClick = {
-                    sessionConfigurationRoute = SessionConfigurationRoute.Overview
-                    updateConfiguration(model.id, AgentConfigValue.Select(choice.value))
-                }
-            ))
-        }
-    }
 
-    private fun sessionPanelHeader(title: String, onBack: (() -> Unit)?): View = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = ui.dp(48)
-        if (onBack != null) {
-            addView(iconButton(context, R.drawable.ic_arrow_back_light, "返回", onBack),
-                LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)))
-        } else {
-            addView(View(context), LinearLayout.LayoutParams(ui.dp(8), ui.dp(1)))
-        }
-        addView(TextView(context).apply {
-            text = title
-            textSize = 15.5f
-            typeface = Typeface.DEFAULT_BOLD
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textPrimary)
-            setPadding(ui.dp(8), 0, ui.dp(8), 0)
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(iconButton(context, R.drawable.ic_close_light, "关闭会话配置") {
-            closeSessionConfigurationPanel()
-        }, LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)))
-    }
 
-    private fun sessionSectionLabel(label: String): View = TextView(context).apply {
-        text = label
-        textSize = 12.5f
-        typeface = Typeface.DEFAULT_BOLD
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        setTextColor(tokens.textSecondary)
-        setPadding(ui.dp(13), ui.dp(12), ui.dp(13), ui.dp(5))
-    }
 
-    private fun sessionNavigationRow(
-        title: String,
-        value: String,
-        description: String?,
-        onClick: () -> Unit
-    ): View = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = ui.dp(60)
-        setPadding(ui.dp(14), ui.dp(7), ui.dp(5), ui.dp(7))
-        background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(17).toFloat())
-        addView(LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(TextView(context).apply {
-                text = title
-                textSize = 12.5f
-                typeface = Typeface.DEFAULT_BOLD
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(tokens.textSecondary)
-            })
-            addView(TextView(context).apply {
-                text = value
-                textSize = 14.5f
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setTextColor(tokens.textPrimary)
-                setPadding(0, ui.dp(2), 0, 0)
-            })
-            description?.takeIf(String::isNotBlank)?.let { detail ->
-                addView(TextView(context).apply {
-                    text = detail
-                    textSize = 11.5f
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(tokens.textTertiary)
-                    setPadding(0, ui.dp(2), 0, 0)
-                })
-            }
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(ImageView(context).apply {
-            setImageResource(R.drawable.ic_chevron_right_light)
-            imageTintList = ColorStateList.valueOf(tokens.textSecondary)
-            setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
-        }, LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)))
-        contentDescription = "$title，$value"
-        isClickable = pendingSessionConfigId == null
-        isFocusable = true
-        setOnClickListener { onClick() }
-    }.also { row ->
-        row.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { setMargins(ui.dp(2), ui.dp(2), ui.dp(2), ui.dp(5)) }
-    }
 
     private fun sessionChoiceRow(
         title: String,
@@ -6226,6 +6696,7 @@ internal class RunAgentSurfaceBinding(
         selected: Boolean,
         contentDescription: String,
         showChevron: Boolean = false,
+        useSelectionDot: Boolean = false,
         onClick: () -> Unit
     ): View = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -6263,6 +6734,16 @@ internal class RunAgentSurfaceBinding(
                 imageTintList = ColorStateList.valueOf(tokens.textSecondary)
                 setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10))
             }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
+            selected && useSelectionDot -> addView(View(context).apply {
+                background = ui.roundedBox(
+                    tokens.textPrimary,
+                    android.graphics.Color.TRANSPARENT,
+                    ui.dp(5).toFloat()
+                )
+            }, LinearLayout.LayoutParams(ui.dp(10), ui.dp(10)).apply {
+                marginStart = ui.dp(15)
+                marginEnd = ui.dp(15)
+            })
             selected -> addView(ImageView(context).apply {
                 setImageResource(R.drawable.ic_check_light)
                 imageTintList = ColorStateList.valueOf(tokens.textPrimary)
@@ -6333,24 +6814,10 @@ internal class RunAgentSurfaceBinding(
         ).apply { setMargins(ui.dp(2), ui.dp(1), ui.dp(2), ui.dp(1)) }
     }
 
-    private fun AgentConfigOption.currentValueLabel(): String = when (this) {
-        is AgentConfigOption.Select -> choices.firstOrNull { it.value == currentValue }?.name ?: currentValue
-        is AgentConfigOption.Toggle -> if (currentValue) "开启" else "关闭"
-    }
-
     private fun AgentConfigOption.withDraftValue(value: AgentConfigValue?): AgentConfigOption = when {
         this is AgentConfigOption.Select && value is AgentConfigValue.Select -> copy(currentValue = value.value)
         this is AgentConfigOption.Toggle && value is AgentConfigValue.Toggle -> copy(currentValue = value.value)
         else -> this
-    }
-
-    private fun AgentConfigOption.sessionSettingTitle(): String = when (category) {
-        AgentConfigCategory.Model -> "模型"
-        AgentConfigCategory.ThoughtLevel -> "推理强度"
-        AgentConfigCategory.Mode -> "工作模式"
-        AgentConfigCategory.Permission -> "权限"
-        AgentConfigCategory.ModelConfiguration -> "模型设置"
-        else -> name
     }
 
     private fun updateConfiguration(configId: String, value: AgentConfigValue) {
@@ -6359,18 +6826,20 @@ internal class RunAgentSurfaceBinding(
         if (runtime?.generation == generation && runtime.isDraft) {
             val result = if (configId == AgentDraftModelPolicy.CONFIG_ID && value is AgentConfigValue.Select) {
                 val snapshot = draftModelSnapshot ?: return
-                val selection = AgentDraftModelPolicy.selection(snapshot, value.value) ?: return
+                val modelChoices = draftSessionConfigurationOptions(runtime)
+                    .filterIsInstance<AgentConfigOption.Select>()
+                    .firstOrNull { it.id == AgentDraftModelPolicy.CONFIG_ID }
+                    ?.choices
+                    .orEmpty()
+                val selection = AgentDraftModelPolicy.selection(snapshot, value.value, modelChoices) ?: return
                 AgentRuntimeRegistry.selectDraftModel(instanceId, generation, selection)
             } else {
                 AgentRuntimeRegistry.selectDraftConfiguration(instanceId, generation, configId, value)
             }
             when (result) {
                 is AgentOperationResult.Success -> {
-                    sessionConfigurationRoute = SessionConfigurationRoute.Overview
+                    sessionConfigurationPanel.showOverview(animateContent = true)
                     renderSessionConfigurationControls()
-                    if (sessionConfigurationOverlay.visibility == View.VISIBLE) {
-                        rebuildSessionConfigurationPanel(animateContent = true)
-                    }
                     Toast.makeText(context, "已为本次新会话预选", Toast.LENGTH_SHORT).show()
                 }
                 else -> showOperationResult(result, null)
@@ -6872,12 +7341,6 @@ private class MaxHeightScrollView(
     }
 }
 
-private enum class SessionConfigurationRoute {
-    Overview,
-    ModelProviders,
-    Models
-}
-
 private enum class ComposerExtensionRoute {
     Main,
     Modes,
@@ -6906,6 +7369,17 @@ internal data class AgentSessionProjectGroup(
     val cwd: String,
     val name: String,
     val sessions: List<AgentSessionSummary>
+)
+
+private data class ComposerPresentation(
+    val phase: AgentSessionPhase?,
+    val cancelling: Boolean,
+    val canSend: Boolean,
+)
+
+internal data class ComposerModelTextStyle(
+    val textSizeSp: Float,
+    val maximumWidthDp: Int,
 )
 
 internal data class AgentSessionGrouping(
@@ -6968,249 +7442,6 @@ internal sealed interface AgentArchivedRow {
     }
 }
 
-internal object AgentSurfaceNavigationPolicy {
-    const val MODEL_ENTRY_LABEL = "模型"
-    const val PERMISSION_ENTRY_LABEL = "权限"
-    val fixedComposerEntries: List<String> = listOf(MODEL_ENTRY_LABEL, PERMISSION_ENTRY_LABEL)
-
-    fun normalizeCwd(cwd: String): String {
-        val cleaned = cwd.trim().replace('\\', '/')
-        if (cleaned == "/") return cleaned
-        return cleaned.trimEnd('/')
-    }
-
-    fun sameCwd(left: String, right: String): Boolean = normalizeCwd(left) == normalizeCwd(right)
-
-    fun groupSessions(
-        sessions: List<AgentSessionSummary>,
-        defaultCwd: String,
-        registeredProjects: List<AgentProject> = emptyList(),
-        archivedProjectCwds: Set<String> = emptySet(),
-    ): AgentSessionGrouping {
-        val normalizedDefault = normalizeCwd(defaultCwd).ifBlank { "/workspace" }
-        val normalizedArchivedCwds = archivedProjectCwds.mapTo(linkedSetOf(), ::normalizeCwd)
-        val defaultSessions = mutableListOf<AgentSessionSummary>()
-        val projects = linkedMapOf<String, ProjectBucket>()
-        registeredProjects
-            .sortedBy(AgentProject::createdAtMillis)
-            .forEach { project ->
-                val normalized = normalizeCwd(project.cwd)
-                if (normalized.isNotBlank() && normalized != normalizedDefault &&
-                    normalized !in normalizedArchivedCwds
-                ) {
-                    projects.putIfAbsent(normalized, ProjectBucket(project.name))
-                }
-            }
-        sessions.forEach { session ->
-            val normalized = normalizeCwd(session.cwd).ifBlank { normalizedDefault }
-            if (normalized in normalizedArchivedCwds) return@forEach
-            if (normalized == normalizedDefault) {
-                defaultSessions += session
-            } else {
-                projects.getOrPut(normalized) { ProjectBucket(projectName(normalized)) }.sessions += session
-            }
-        }
-        return AgentSessionGrouping(
-            defaultCwd = normalizedDefault,
-            defaultSessions = defaultSessions,
-            projects = projects.map { (cwd, bucket) ->
-                AgentSessionProjectGroup(
-                    cwd = cwd,
-                    name = bucket.name,
-                    sessions = bucket.sessions,
-                )
-            }
-        )
-    }
-
-    fun drawerRows(
-        grouping: AgentSessionGrouping,
-        expandedProjectCwds: Set<String>
-    ): List<AgentDrawerRow> = buildList {
-        add(AgentDrawerRow.SectionHeader(
-            title = "会话",
-            actionDescription = "在默认目录新建会话",
-            action = AgentDrawerAction.NewDraft(grouping.defaultCwd),
-            key = "section:sessions"
-        ))
-        if (grouping.defaultSessions.isEmpty()) {
-            add(AgentDrawerRow.Empty("还没有会话", "empty:sessions"))
-        } else {
-            grouping.defaultSessions.forEach { add(AgentDrawerRow.Session(it, inProject = false)) }
-        }
-        add(AgentDrawerRow.SectionHeader(
-            title = "项目",
-            actionDescription = "选择新的项目目录",
-            action = AgentDrawerAction.ChooseProject,
-            key = "section:projects"
-        ))
-        if (grouping.projects.isEmpty()) {
-            add(AgentDrawerRow.Empty("还没有项目会话", "empty:projects"))
-        } else {
-            grouping.projects.forEach { project ->
-                val expanded = normalizeCwd(project.cwd) in expandedProjectCwds
-                add(AgentDrawerRow.ProjectHeader(project, expanded))
-                if (expanded) {
-                    project.sessions.forEach { add(AgentDrawerRow.Session(it, inProject = true)) }
-                }
-            }
-        }
-    }
-
-    fun archivedRows(
-        grouping: AgentSessionGrouping,
-        expandedCwds: Set<String>,
-        archivedProjects: List<AgentProject> = emptyList(),
-    ): List<AgentArchivedRow> = buildList {
-        val archivedProjectsByCwd = archivedProjects.associateBy { normalizeCwd(it.cwd) }
-        val groups = buildList {
-            if (grouping.defaultSessions.isNotEmpty()) {
-                add(AgentSessionProjectGroup(grouping.defaultCwd, "会话", grouping.defaultSessions))
-            }
-            addAll(grouping.projects.filter { group ->
-                group.sessions.isNotEmpty() || normalizeCwd(group.cwd) in archivedProjectsByCwd
-            })
-        }
-        groups.forEach { group ->
-            val normalizedCwd = normalizeCwd(group.cwd)
-            val expanded = normalizedCwd in expandedCwds
-            add(AgentArchivedRow.GroupHeader(
-                cwd = group.cwd,
-                title = group.name,
-                subtitle = group.sessions.size.takeIf { it > 0 }?.let { "$it 个归档会话" },
-                count = group.sessions.size,
-                expanded = expanded,
-                archivedProject = archivedProjectsByCwd[normalizedCwd],
-            ))
-            if (expanded) group.sessions.forEach { add(AgentArchivedRow.Session(it)) }
-        }
-    }
-
-    private fun projectName(cwd: String): String = normalizeCwd(cwd)
-        .substringAfterLast('/')
-        .takeIf(String::isNotBlank)
-        ?: cwd
-
-    private data class ProjectBucket(
-        val name: String,
-        val sessions: MutableList<AgentSessionSummary> = mutableListOf(),
-    )
-
-    fun configurationSummary(options: List<AgentConfigOption>): String {
-        val ordered = buildList {
-            options.firstOrNull { it.category == AgentConfigCategory.Model }?.let(::add)
-            options.firstOrNull { it.category == AgentConfigCategory.ThoughtLevel }?.let(::add)
-            if (isEmpty()) {
-                options.firstOrNull {
-                    it.category != AgentConfigCategory.Mode && it.category != AgentConfigCategory.Permission
-                }?.let(::add)
-            }
-        }.distinctBy(AgentConfigOption::id)
-        return ordered.joinToString(" · ") { option ->
-            when (option) {
-                is AgentConfigOption.Select -> option.choices
-                    .firstOrNull { it.value == option.currentValue }
-                    ?.name
-                    ?: option.currentValue
-                is AgentConfigOption.Toggle -> if (option.currentValue) "开启" else "关闭"
-            }
-        }
-    }
-
-    fun composerModelLabel(options: List<AgentConfigOption>): String = configurationSummary(options)
-        .replace(" · ", " ")
-        .ifBlank { MODEL_ENTRY_LABEL }
-
-    fun composerPermissionLabel(option: AgentConfigOption.Select?): String = when (option) {
-        null -> PERMISSION_ENTRY_LABEL
-        else -> option.choices
-            .firstOrNull { it.value == option.currentValue }
-            ?.name
-            ?.takeIf(String::isNotBlank)
-            ?: "自定义"
-    }
-
-    fun permissionOption(options: List<AgentConfigOption>): AgentConfigOption.Select? = options
-        .filterIsInstance<AgentConfigOption.Select>()
-        .firstOrNull { it.category == AgentConfigCategory.Permission && it.choices.isNotEmpty() }
-
-    fun sessionPanelMaxHeight(
-        viewportHeight: Int,
-        composerHeight: Int,
-        topBarHeight: Int,
-        preferredHeight: Int,
-        minimumHeight: Int,
-        outerSpacing: Int
-    ): Int {
-        val available = viewportHeight - composerHeight - topBarHeight - outerSpacing
-        return minOf(preferredHeight, available.coerceAtLeast(minimumHeight))
-    }
-
-    fun filterSessions(
-        sessions: List<AgentSessionSummary>,
-        query: String
-    ): List<AgentSessionSummary> {
-        val normalized = query.trim().lowercase()
-        if (normalized.isEmpty()) return sessions
-        return sessions.filter { session ->
-            sequenceOf(session.title, session.id, session.cwd)
-                .filterNotNull()
-                .any { value -> value.lowercase().contains(normalized) }
-        }
-    }
-
-    fun slashCommandQuery(text: String): String? {
-        if (!text.startsWith('/')) return null
-        val query = text.drop(1)
-        if (query.any(Char::isWhitespace)) return null
-        return query.lowercase()
-    }
-
-    fun filterCommands(commands: List<AgentCommand>, query: String): List<AgentCommand> {
-        val normalized = query.trim().lowercase()
-        if (normalized.isEmpty()) return commands
-        return commands.filter { command ->
-            command.name.lowercase().contains(normalized) ||
-                command.description.lowercase().contains(normalized)
-        }
-    }
-
-    fun modelChoiceGroups(option: AgentConfigOption.Select): List<AgentModelChoiceGroup> {
-        if (option.category != AgentConfigCategory.Model) return emptyList()
-        val grouped = linkedMapOf<String, MutableList<com.kite.app.agent.contract.AgentConfigChoice>>()
-        var hasExplicitGroup = false
-        option.choices.forEach { choice ->
-            val groupId = choice.groupId?.takeIf(String::isNotBlank)
-            val groupName = choice.groupName?.takeIf(String::isNotBlank)
-            if (groupId != null || groupName != null) hasExplicitGroup = true
-            val key = groupId ?: groupName ?: UNGROUPED_CONFIGURATION_KEY
-            grouped.getOrPut(key, ::mutableListOf) += choice
-        }
-        if (!hasExplicitGroup) return emptyList()
-        return grouped.map { (id, choices) ->
-            AgentModelChoiceGroup(
-                id = id,
-                name = choices.firstOrNull()?.groupName?.takeIf(String::isNotBlank) ?: "其他供应商",
-                choices = choices
-            )
-        }
-    }
-
-    private const val UNGROUPED_CONFIGURATION_KEY = "__kite_ungrouped__"
-}
-
-internal data class AgentModelChoiceGroup(
-    val id: String,
-    val name: String,
-    val choices: List<com.kite.app.agent.contract.AgentConfigChoice>
-)
-
-private data class ProviderListCardBinding(
-    val container: View,
-    val status: TextView,
-    val editButton: View,
-    val provider: AgentProviderSummary
-)
 
 private class ProviderCredentialFieldBinding(
     val field: EditText,
@@ -7256,1682 +7487,5 @@ private class ProviderCredentialFieldBinding(
         pasteAction.alpha = if (enabled) 1f else 0.45f
         deleteAction.isEnabled = enabled
         deleteAction.alpha = if (enabled) 1f else 0.45f
-    }
-}
-
-internal object AgentPersistentDefaultPolicy {
-    fun savedMessage(providerName: String, currentAgent: Boolean): String = if (currentAgent) {
-        "$providerName 已设为默认；正在进行的会话不会改变"
-    } else {
-        "$providerName 已设为默认；下次打开该 Agent 时使用"
-    }
-
-    fun configurationSavedMessage(successMessage: String, currentAgent: Boolean): String = if (currentAgent) {
-        "$successMessage；正在进行的会话不会改变"
-    } else {
-        "$successMessage；下次打开该 Agent 时使用"
-    }
-}
-
-internal object AgentDraftModelPolicy {
-    const val CONFIG_ID = "kite.draft.model"
-
-    fun defaultSelection(snapshot: AgentLiveConfigSnapshot): AgentDraftModelSelection? {
-        val provider = snapshot.providers.firstOrNull { it.id == snapshot.activeProviderId }
-            ?: return null
-        val model = provider.models.firstOrNull { candidate ->
-            snapshot.defaultModel == candidate.id ||
-                snapshot.defaultModel == "${provider.id}/${candidate.id}"
-        } ?: provider.models.firstOrNull() ?: return null
-        return AgentDraftModelSelection(provider.id, model.id, usesAgentDefault = true)
-    }
-
-    fun contains(snapshot: AgentLiveConfigSnapshot, selection: AgentDraftModelSelection): Boolean =
-        snapshot.providers.any { provider ->
-            provider.id == selection.providerId && provider.models.any { it.id == selection.modelId }
-        }
-
-    fun option(
-        snapshot: AgentLiveConfigSnapshot,
-        selected: AgentDraftModelSelection?
-    ): AgentConfigOption.Select? {
-        val choices = snapshot.providers.flatMap { provider ->
-            provider.models.map { model ->
-                AgentConfigChoice(
-                    value = choiceValue(provider.id, model.id),
-                    name = model.displayName,
-                    description = model.id.takeIf { it != model.displayName },
-                    groupId = provider.id,
-                    groupName = provider.displayName
-                )
-            }
-        }
-        if (choices.isEmpty()) return null
-        val current = selected?.takeIf { contains(snapshot, it) }
-            ?: defaultSelection(snapshot)
-            ?: return null
-        return AgentConfigOption.Select(
-            id = CONFIG_ID,
-            name = "模型",
-            category = AgentConfigCategory.Model,
-            currentValue = choiceValue(current.providerId, current.modelId),
-            choices = choices
-        )
-    }
-
-    fun selection(snapshot: AgentLiveConfigSnapshot, value: String): AgentDraftModelSelection? {
-        val default = defaultSelection(snapshot)
-        snapshot.providers.forEach { provider ->
-            provider.models.forEach { model ->
-                if (choiceValue(provider.id, model.id) == value) {
-                    return AgentDraftModelSelection(
-                        provider.id,
-                        model.id,
-                        usesAgentDefault = default?.providerId == provider.id && default.modelId == model.id
-                    )
-                }
-            }
-        }
-        return null
-    }
-
-    private fun choiceValue(providerId: String, modelId: String): String =
-        "${providerId.length}:$providerId$modelId"
-}
-
-internal object AgentProviderEditorPolicy {
-    private val SAFE_PROVIDER_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
-    private val SAFE_MODEL_ID = Regex("[^\\s\\p{Cc}]{1,384}")
-
-    fun providerIdFromName(displayName: String): String {
-        val ascii = displayName.trim().lowercase()
-            .replace(Regex("[^a-z0-9._-]+"), "-")
-            .trim('-', '.', '_')
-            .take(96)
-        if (ascii.isNotBlank() && SAFE_PROVIDER_ID.matches(ascii)) return ascii
-        val hash = displayName.trim().hashCode().toUInt().toString(16)
-        return "custom-$hash"
-    }
-
-    fun validate(
-        displayName: String,
-        providerId: String,
-        baseUrl: String,
-        models: List<AgentProviderModelSummary>
-    ): String? {
-        if (displayName.isBlank()) return "请输入供应商名称"
-        if (!SAFE_PROVIDER_ID.matches(providerId)) return "供应商 ID 只能使用字母、数字、点、下划线和短横线"
-        val uri = Uri.parse(baseUrl.trim())
-        if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank() || uri.userInfo != null) {
-            return "请求地址必须是有效的 HTTP 或 HTTPS 地址"
-        }
-        if (models.isEmpty()) return "请至少添加一个可用模型"
-        if (models.any { !SAFE_MODEL_ID.matches(it.id.trim()) }) return "模型 ID 不能为空，也不能包含空格"
-        if (models.map { it.id.trim() }.distinct().size != models.size) return "模型 ID 不能重复"
-        return null
-    }
-}
-
-internal object AgentProviderCredentialInputPolicy {
-    const val inputType: Int = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-    const val savedMask: String = "••••••••••••"
-
-    fun displayHint(
-        credentialPresent: Boolean,
-        removeRequested: Boolean,
-        emptyHint: String
-    ): String = when {
-        removeRequested -> "保存后移除 API Key"
-        credentialPresent -> savedMask
-        else -> emptyHint
-    }
-
-    fun credentialChange(
-        removeRequested: Boolean,
-        value: CharSequence?
-    ): AgentProviderCredentialChange {
-        if (removeRequested) return AgentProviderCredentialChange.Remove
-        val replacement = value?.toString()?.trim().orEmpty()
-        return if (replacement.isBlank()) {
-            AgentProviderCredentialChange.Keep
-        } else {
-            AgentProviderCredentialChange.replace(replacement)
-        }
-    }
-
-    fun clipboardValue(value: CharSequence?): String? = value
-        ?.toString()
-        ?.trim()
-        ?.takeIf(String::isNotBlank)
-}
-
-internal object AgentSurfaceThemePolicy {
-    fun project(source: ThemeTokens, isDark: Boolean): ThemeTokens = if (isDark) {
-        source.copy(
-            pageBackground = android.graphics.Color.BLACK,
-            surface = android.graphics.Color.rgb(32, 32, 32),
-            surfaceElevated = android.graphics.Color.rgb(38, 38, 38),
-            cardBackground = android.graphics.Color.rgb(36, 36, 36),
-            inputBackground = android.graphics.Color.rgb(32, 32, 32),
-            border = android.graphics.Color.rgb(55, 55, 55),
-            borderStrong = android.graphics.Color.rgb(74, 74, 74),
-            textPrimary = android.graphics.Color.rgb(245, 245, 245),
-            textSecondary = android.graphics.Color.rgb(178, 178, 178),
-            textTertiary = android.graphics.Color.rgb(122, 122, 122)
-        )
-    } else {
-        source.copy(
-            pageBackground = android.graphics.Color.WHITE,
-            surface = android.graphics.Color.WHITE,
-            surfaceElevated = android.graphics.Color.WHITE,
-            cardBackground = android.graphics.Color.rgb(247, 247, 247),
-            inputBackground = android.graphics.Color.WHITE,
-            border = android.graphics.Color.rgb(232, 232, 232),
-            borderStrong = android.graphics.Color.rgb(209, 209, 209),
-            textPrimary = android.graphics.Color.rgb(17, 17, 17),
-            textSecondary = android.graphics.Color.rgb(102, 102, 102),
-            textTertiary = android.graphics.Color.rgb(150, 150, 150)
-        )
-    }
-}
-
-internal object AgentArchivedSelectionPolicy {
-    fun toggle(current: Set<String>, sessionId: String): Set<String> = current.toMutableSet().apply {
-        if (!add(sessionId)) remove(sessionId)
-    }
-
-    fun selectAll(sessions: List<AgentSessionSummary>): Set<String> = sessions
-        .mapTo(linkedSetOf(), AgentSessionSummary::id)
-
-    fun canDelete(
-        selectedIds: Set<String>,
-        currentSessionId: String?,
-        deleteSupported: Boolean
-    ): Boolean = deleteSupported && selectedIds.isNotEmpty() && currentSessionId !in selectedIds
-}
-
-private class ArchivedSessionAdapter(
-    private val context: Context,
-    private val tokens: ThemeTokens,
-    private val onClick: (AgentSessionSummary) -> Unit,
-    private val onGroupToggle: (String) -> Unit,
-    private val onProjectRestore: (AgentProject) -> Unit,
-) : ListAdapter<AgentArchivedRow, RecyclerView.ViewHolder>(DIFF) {
-    private val ui = UiKit(context, tokens)
-    private var selectionMode = false
-    private var selectedIds: Set<String> = emptySet()
-
-    fun setSelectionState(selectionMode: Boolean, selectedIds: Set<String>) {
-        val nextIds = selectedIds.toSet()
-        if (this.selectionMode == selectionMode && this.selectedIds == nextIds) return
-        this.selectionMode = selectionMode
-        this.selectedIds = nextIds
-        notifyDataSetChanged()
-    }
-
-    override fun getItemViewType(position: Int): Int = when (getItem(position)) {
-        is AgentArchivedRow.GroupHeader -> TYPE_GROUP
-        is AgentArchivedRow.Session -> TYPE_SESSION
-    }
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
-        if (viewType == TYPE_GROUP) {
-            GroupHolder(LinearLayout(context))
-        } else {
-            Holder(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(ui.dp(30), ui.dp(8), ui.dp(12), ui.dp(8))
-                layoutParams = RecyclerView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { setMargins(0, ui.dp(2), 0, ui.dp(2)) }
-            })
-        }
-
-    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        when (val row = getItem(position)) {
-            is AgentArchivedRow.GroupHeader -> (holder as GroupHolder).bind(row)
-            is AgentArchivedRow.Session -> (holder as Holder).bind(
-                row.summary,
-                selectionMode,
-                row.summary.id in selectedIds
-            )
-        }
-    }
-
-    inner class GroupHolder(private val container: LinearLayout) : RecyclerView.ViewHolder(container) {
-        private val chevron = ImageView(context).apply {
-            setImageResource(R.drawable.ic_chevron_right_light)
-            imageTintList = ColorStateList.valueOf(tokens.textSecondary)
-            setPadding(ui.dp(9), ui.dp(9), ui.dp(9), ui.dp(9))
-        }
-        private val title = TextView(context).apply {
-            textSize = 14.5f
-            typeface = Typeface.DEFAULT_BOLD
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textPrimary)
-        }
-        private val subtitle = TextView(context).apply {
-            textSize = 11.5f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.MIDDLE
-            setTextColor(tokens.textSecondary)
-            setPadding(0, ui.dp(2), 0, 0)
-        }
-        private val restoreAction = TextView(context).apply {
-            text = "恢复"
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
-            setPadding(ui.dp(10), ui.dp(8), ui.dp(10), ui.dp(8))
-            isClickable = true
-            isFocusable = true
-        }
-
-        init {
-            container.orientation = LinearLayout.HORIZONTAL
-            container.gravity = Gravity.CENTER_VERTICAL
-            container.setPadding(ui.dp(2), ui.dp(8), ui.dp(12), ui.dp(8))
-            container.layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, ui.dp(3), 0, ui.dp(3)) }
-            container.addView(chevron, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-            container.addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(title)
-                addView(subtitle)
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            container.addView(restoreAction, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ui.dp(40),
-            ))
-        }
-
-        fun bind(row: AgentArchivedRow.GroupHeader) {
-            chevron.rotation = if (row.expanded) 90f else 0f
-            chevron.visibility = if (row.count > 0) View.VISIBLE else View.INVISIBLE
-            title.text = row.title
-            subtitle.text = row.subtitle.orEmpty()
-            subtitle.visibility = if (row.subtitle.isNullOrBlank()) View.GONE else View.VISIBLE
-            restoreAction.visibility = if (row.archivedProject != null && !selectionMode) View.VISIBLE else View.GONE
-            restoreAction.contentDescription = "恢复项目 ${row.title}"
-            restoreAction.setOnClickListener {
-                row.archivedProject?.let(onProjectRestore)
-            }
-            container.contentDescription = if (row.count == 0) {
-                "已归档项目 ${row.title}"
-            } else if (row.expanded) {
-                "收起 ${row.title} 的归档会话"
-            } else {
-                "展开 ${row.title} 的归档会话"
-            }
-            container.setOnClickListener {
-                if (row.count > 0) onGroupToggle(row.cwd)
-            }
-        }
-    }
-
-    inner class Holder(private val container: LinearLayout) : RecyclerView.ViewHolder(container) {
-        private val selector = TextView(context).apply {
-            textSize = 15f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            isClickable = false
-            isFocusable = false
-        }
-        private val title = TextView(context).apply {
-            textSize = 14.5f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textPrimary)
-        }
-        private val subtitle = TextView(context).apply {
-            textSize = 11.5f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textSecondary)
-            setPadding(0, ui.dp(3), 0, 0)
-        }
-
-        init {
-            container.addView(selector, LinearLayout.LayoutParams(ui.dp(30), ui.dp(30)).apply {
-                setMargins(ui.dp(7), 0, ui.dp(7), 0)
-            })
-            container.addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(title)
-                addView(subtitle)
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                setMargins(ui.dp(4), 0, 0, 0)
-            })
-        }
-
-        fun bind(session: AgentSessionSummary, selectionMode: Boolean, selected: Boolean) {
-            selector.visibility = if (selectionMode) View.VISIBLE else View.GONE
-            selector.text = if (selected) "✓" else ""
-            selector.setTextColor(android.graphics.Color.WHITE)
-            selector.background = ui.roundedBox(
-                if (selected) tokens.primaryStrong else android.graphics.Color.TRANSPARENT,
-                if (selected) android.graphics.Color.TRANSPARENT else tokens.borderStrong,
-                ui.dp(15).toFloat(),
-                ui.dp(1)
-            )
-            selector.contentDescription = if (selected) "已选择" else "未选择"
-            title.text = session.title?.takeIf(String::isNotBlank) ?: "未命名会话"
-            title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            subtitle.text = buildString {
-                append(session.cwd.ifBlank { session.id })
-                session.updatedAt?.takeIf(String::isNotBlank)?.let { append(" · ").append(it) }
-            }
-            container.background = ui.roundedBox(
-                if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(16).toFloat()
-            )
-            container.contentDescription = when {
-                selectionMode && selected -> "取消选择，${title.text}"
-                selectionMode -> "选择，${title.text}"
-                else -> "管理归档会话，${title.text}"
-            }
-            container.setOnClickListener { onClick(session) }
-        }
-    }
-
-    private companion object {
-        const val TYPE_GROUP = 1
-        const val TYPE_SESSION = 2
-
-        val DIFF = object : DiffUtil.ItemCallback<AgentArchivedRow>() {
-            override fun areItemsTheSame(oldItem: AgentArchivedRow, newItem: AgentArchivedRow): Boolean =
-                oldItem.key == newItem.key
-
-            override fun areContentsTheSame(oldItem: AgentArchivedRow, newItem: AgentArchivedRow): Boolean =
-                oldItem == newItem
-        }
-    }
-}
-
-private class AgentSessionDrawerAdapter(
-    private val context: Context,
-    private val tokens: ThemeTokens,
-    private val onSessionClick: (AgentSessionSummary) -> Unit,
-    private val onProjectToggle: (String) -> Unit,
-    private val onProjectMenu: (View, AgentSessionProjectGroup) -> Unit,
-    private val onAction: (AgentDrawerAction) -> Unit
-) : ListAdapter<AgentDrawerRow, RecyclerView.ViewHolder>(DIFF) {
-    private val ui = UiKit(context, tokens)
-    var selectedSessionId: String? = null
-        set(value) {
-            if (field == value) return
-            field = value
-            notifyDataSetChanged()
-        }
-
-    override fun getItemViewType(position: Int): Int = when (getItem(position)) {
-        is AgentDrawerRow.SectionHeader -> TYPE_SECTION
-        is AgentDrawerRow.ProjectHeader -> TYPE_PROJECT
-        is AgentDrawerRow.Session -> TYPE_SESSION
-        is AgentDrawerRow.Empty -> TYPE_EMPTY
-    }
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder = when (viewType) {
-        TYPE_SECTION -> SectionHolder(LinearLayout(context))
-        TYPE_PROJECT -> ProjectHolder(LinearLayout(context))
-        TYPE_SESSION -> SessionHolder(LinearLayout(context))
-        else -> EmptyHolder(TextView(context))
-    }
-
-    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        when (val row = getItem(position)) {
-            is AgentDrawerRow.SectionHeader -> (holder as SectionHolder).bind(row)
-            is AgentDrawerRow.ProjectHeader -> (holder as ProjectHolder).bind(row)
-            is AgentDrawerRow.Session -> (holder as SessionHolder).bind(
-                row,
-                selected = row.summary.id == selectedSessionId
-            )
-            is AgentDrawerRow.Empty -> (holder as EmptyHolder).bind(row)
-        }
-    }
-
-    private inner class SectionHolder(private val container: LinearLayout) : RecyclerView.ViewHolder(container) {
-        private val title = TextView(context).apply {
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(tokens.textSecondary)
-            includeFontPadding = false
-        }
-        private val action = ImageButton(context).apply {
-            setImageResource(R.drawable.ic_compose_outline)
-            imageTintList = ColorStateList.valueOf(tokens.textTertiary)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
-            background = ui.roundedBox(
-                android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(20).toFloat()
-            )
-        }
-
-        init {
-            container.orientation = LinearLayout.HORIZONTAL
-            container.gravity = Gravity.CENTER_VERTICAL
-            container.setPadding(ui.dp(8), ui.dp(10), ui.dp(2), ui.dp(4))
-            container.layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            container.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            container.addView(action, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-        }
-
-        fun bind(row: AgentDrawerRow.SectionHeader) {
-            title.text = row.title
-            action.contentDescription = row.actionDescription
-            action.setOnClickListener { onAction(row.action) }
-        }
-    }
-
-    private inner class ProjectHolder(private val container: LinearLayout) : RecyclerView.ViewHolder(container) {
-        private val folder = ImageView(context).apply {
-            setImageResource(R.drawable.ic_folder_closed_outline)
-            imageTintList = ColorStateList.valueOf(tokens.textTertiary)
-            setPadding(ui.dp(6), ui.dp(8), ui.dp(6), ui.dp(8))
-        }
-        private val title = TextView(context).apply {
-            textSize = 14.5f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textPrimary)
-        }
-        private val add = ImageButton(context).apply {
-            setImageResource(R.drawable.ic_compose_outline)
-            imageTintList = ColorStateList.valueOf(tokens.textTertiary)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
-            background = ui.roundedBox(
-                android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(20).toFloat()
-            )
-        }
-        private val more = ImageButton(context).apply {
-            setImageResource(R.drawable.ic_more_horizontal_light)
-            imageTintList = ColorStateList.valueOf(tokens.textTertiary)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
-            background = ui.roundedBox(
-                android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(20).toFloat()
-            )
-        }
-
-        init {
-            container.orientation = LinearLayout.HORIZONTAL
-            container.gravity = Gravity.CENTER_VERTICAL
-            container.setPadding(0, ui.dp(6), ui.dp(2), ui.dp(6))
-            container.layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, ui.dp(2), 0, ui.dp(2)) }
-            container.addView(folder, LinearLayout.LayoutParams(ui.dp(36), ui.dp(40)))
-            container.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            container.addView(more, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-            container.addView(add, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-        }
-
-        fun bind(row: AgentDrawerRow.ProjectHeader) {
-            folder.setImageResource(
-                if (row.expanded) R.drawable.ic_folder_open_outline else R.drawable.ic_folder_closed_outline
-            )
-            title.text = row.project.name
-            add.contentDescription = "在 ${row.project.name} 中新建会话"
-            add.setOnClickListener { onAction(AgentDrawerAction.NewDraft(row.project.cwd)) }
-            more.contentDescription = "${row.project.name} 项目操作"
-            more.setOnClickListener { onProjectMenu(it, row.project) }
-            container.contentDescription = if (row.expanded) {
-                "收起项目 ${row.project.name}"
-            } else {
-                "展开项目 ${row.project.name}"
-            }
-            container.setOnClickListener { onProjectToggle(row.project.cwd) }
-        }
-    }
-
-    private inner class SessionHolder(private val container: LinearLayout) : RecyclerView.ViewHolder(container) {
-        private val title = TextView(context).apply {
-            textSize = 14.5f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textPrimary)
-        }
-        private val subtitle = TextView(context).apply {
-            textSize = 11.5f
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textSecondary)
-            setPadding(0, ui.dp(3), 0, 0)
-        }
-
-        init {
-            container.orientation = LinearLayout.VERTICAL
-            container.layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, ui.dp(2), 0, ui.dp(2)) }
-            container.addView(title)
-            container.addView(subtitle)
-        }
-
-        fun bind(row: AgentDrawerRow.Session, selected: Boolean) {
-            val session = row.summary
-            container.setPadding(
-                ui.dp(if (row.inProject) 46 else 14),
-                ui.dp(10),
-                ui.dp(14),
-                ui.dp(10)
-            )
-            title.text = session.title?.takeIf(String::isNotBlank) ?: "未命名会话"
-            title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            subtitle.text = session.updatedAt?.takeIf(String::isNotBlank) ?: session.id
-            container.background = ui.roundedBox(
-                if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(16).toFloat()
-            )
-            container.contentDescription = if (selected) {
-                "当前会话，${title.text}"
-            } else {
-                "打开会话，${title.text}"
-            }
-            container.setOnClickListener { onSessionClick(session) }
-        }
-    }
-
-    private inner class EmptyHolder(private val text: TextView) : RecyclerView.ViewHolder(text) {
-        init {
-            text.textSize = 12.5f
-            text.setTextColor(tokens.textTertiary)
-            text.setPadding(ui.dp(14), ui.dp(6), ui.dp(14), ui.dp(12))
-            text.layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        fun bind(row: AgentDrawerRow.Empty) {
-            text.text = row.label
-        }
-    }
-
-    private companion object {
-        const val TYPE_SECTION = 1
-        const val TYPE_PROJECT = 2
-        const val TYPE_SESSION = 3
-        const val TYPE_EMPTY = 4
-
-        val DIFF = object : DiffUtil.ItemCallback<AgentDrawerRow>() {
-            override fun areItemsTheSame(oldItem: AgentDrawerRow, newItem: AgentDrawerRow): Boolean =
-                oldItem.key == newItem.key
-
-            override fun areContentsTheSame(oldItem: AgentDrawerRow, newItem: AgentDrawerRow): Boolean =
-                oldItem == newItem
-        }
-    }
-}
-
-private class AgentSessionAdapter(
-    private val context: Context,
-    private val tokens: ThemeTokens,
-    private val onClick: (AgentSessionSummary) -> Unit
-) : ListAdapter<AgentSessionSummary, AgentSessionAdapter.Holder>(DIFF) {
-    private val ui = UiKit(context, tokens)
-    var selectedSessionId: String? = null
-        set(value) {
-            if (field == value) return
-            field = value
-            notifyDataSetChanged()
-        }
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder = Holder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(ui.dp(14), ui.dp(11), ui.dp(14), ui.dp(11))
-            layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, ui.dp(2), 0, ui.dp(2)) }
-        }
-    )
-
-    override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.bind(getItem(position), getItem(position).id == selectedSessionId)
-    }
-
-    inner class Holder(private val container: LinearLayout) : RecyclerView.ViewHolder(container) {
-        private val title = TextView(context).apply {
-            textSize = 14.5f
-            maxLines = 1
-            setTextColor(tokens.textPrimary)
-        }
-        private val subtitle = TextView(context).apply {
-            textSize = 11.5f
-            maxLines = 1
-            setTextColor(tokens.textSecondary)
-            setPadding(0, ui.dp(3), 0, 0)
-        }
-
-        init {
-            container.addView(title)
-            container.addView(subtitle)
-        }
-
-        fun bind(session: AgentSessionSummary, selected: Boolean) {
-            title.text = session.title?.takeIf(String::isNotBlank) ?: "未命名会话"
-            title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            subtitle.text = buildString {
-                append(session.cwd.ifBlank { session.id })
-                session.updatedAt?.takeIf(String::isNotBlank)?.let { append(" · ").append(it) }
-            }
-            container.background = ui.roundedBox(
-                if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(16).toFloat()
-            )
-            container.contentDescription = if (selected) {
-                "当前会话，${title.text}"
-            } else {
-                "打开会话，${title.text}"
-            }
-            container.setOnClickListener { onClick(session) }
-        }
-    }
-
-    private companion object {
-        val DIFF = object : DiffUtil.ItemCallback<AgentSessionSummary>() {
-            override fun areItemsTheSame(oldItem: AgentSessionSummary, newItem: AgentSessionSummary): Boolean =
-                oldItem.id == newItem.id
-
-            override fun areContentsTheSame(oldItem: AgentSessionSummary, newItem: AgentSessionSummary): Boolean =
-                oldItem == newItem
-        }
-    }
-}
-
-private class ConversationAdapter(
-    private val context: Context,
-    private val tokens: ThemeTokens,
-    private val scope: CoroutineScope
-) : ListAdapter<AgentConversationDisplayItem, ConversationAdapter.DisplayHolder>(DIFF) {
-    private val ui = UiKit(context, tokens)
-    private val mediaRepository = AgentConversationMediaRepository(context)
-    private val projectionCache = linkedMapOf<String, Pair<AgentConversationItem, List<AgentConversationDisplayItem>>>()
-    private val processExpansionOverrides = mutableMapOf<String, Boolean>()
-    private val expandedThoughtIds = mutableSetOf<String>()
-    private val expandedToolIds = mutableSetOf<String>()
-    private val toolGroupExpansionOverrides = mutableMapOf<String, Boolean>()
-    private val assistantBodyTypeface = Typeface.create(Typeface.DEFAULT, BODY_TEXT_WEIGHT, false)
-
-    fun submitConversation(
-        items: List<AgentConversationItem>,
-        turns: List<AgentConversationTurn>,
-        committed: () -> Unit,
-    ) {
-        val activeIds = items.mapTo(linkedSetOf()) { it.id }
-        projectionCache.keys.retainAll(activeIds)
-        val projectedById = items.associate { item ->
-            item.id to (projectionCache[item.id]
-                ?.takeIf { (source, _) -> source == item }
-                ?.second
-                ?: AgentConversationPresentation.project(listOf(item)).also { blocks ->
-                    projectionCache[item.id] = item to blocks
-                })
-        }
-        val projected = AgentConversationPresentation.composeTurns(items, turns) { item ->
-            projectedById[item.id].orEmpty()
-        }
-        val activeProcessIds = projected
-            .filterIsInstance<AgentConversationDisplayItem.Process>()
-            .mapTo(linkedSetOf()) { it.id }
-        processExpansionOverrides.keys.retainAll(activeProcessIds)
-        submitList(projected, committed)
-    }
-
-    override fun getItemViewType(position: Int): Int = when (getItem(position)) {
-        is AgentConversationDisplayItem.UserMessage -> TYPE_USER
-        is AgentConversationDisplayItem.AssistantText -> TYPE_ASSISTANT
-        is AgentConversationDisplayItem.Code -> TYPE_CODE
-        is AgentConversationDisplayItem.Rule -> TYPE_RULE
-        is AgentConversationDisplayItem.Table -> TYPE_TABLE
-        is AgentConversationDisplayItem.Process -> TYPE_PROCESS
-        is AgentConversationDisplayItem.Thought -> TYPE_THOUGHT
-        is AgentConversationDisplayItem.Tool -> TYPE_TOOL
-        is AgentConversationDisplayItem.Plan -> TYPE_PLAN
-        is AgentConversationDisplayItem.Image -> TYPE_IMAGE
-        is AgentConversationDisplayItem.Attachment -> TYPE_ATTACHMENT
-    }
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): DisplayHolder = when (viewType) {
-        TYPE_USER -> UserHolder()
-        TYPE_ASSISTANT -> AssistantTextHolder()
-        TYPE_CODE -> CodeHolder()
-        TYPE_RULE -> RuleHolder()
-        TYPE_TABLE -> TableHolder()
-        TYPE_PROCESS -> ProcessHolder()
-        TYPE_THOUGHT -> ThoughtHolder()
-        TYPE_TOOL -> ToolHolder()
-        TYPE_PLAN -> PlanHolder()
-        TYPE_IMAGE -> ImageHolder()
-        else -> AttachmentHolder()
-    }
-
-    override fun onBindViewHolder(holder: DisplayHolder, position: Int) {
-        holder.bind(getItem(position))
-    }
-
-    override fun onViewRecycled(holder: DisplayHolder) {
-        holder.recycle()
-        super.onViewRecycled(holder)
-    }
-
-    abstract inner class DisplayHolder(view: View) : RecyclerView.ViewHolder(view) {
-        abstract fun bind(item: AgentConversationDisplayItem)
-        open fun recycle() = Unit
-    }
-
-    inner class UserHolder : DisplayHolder(
-        FrameLayout(context).apply { layoutParams = rowParams(top = 8, bottom = 12) }
-    ) {
-        private val frame = itemView as FrameLayout
-        private val text = messageTextView().apply {
-            textSize = 15f
-            setLineSpacing(0f, 1.3f)
-            letterSpacing = CONVERSATION_LETTER_SPACING
-            maxWidth = context.resources.displayMetrics.widthPixels - ui.dp(72)
-            setPadding(ui.dp(15), ui.dp(10), ui.dp(15), ui.dp(10))
-            background = ui.roundedBox(tokens.surfaceElevated, tokens.border, ui.dp(20).toFloat(), ui.dp(1))
-        }.also { frame.addView(it) }
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.UserMessage
-            text.text = item.text
-            text.layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.END
-            )
-        }
-    }
-
-    inner class AssistantTextHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 2, bottom = 4)
-        }
-    ) {
-        private val container = itemView as LinearLayout
-        private val label = sectionLabel().also(container::addView)
-        private val textRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }.also {
-            container.addView(
-                it,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
-            )
-        }
-        private val quoteBar = View(context).apply {
-            setBackgroundColor(tokens.borderStrong)
-            visibility = View.GONE
-        }.also { textRow.addView(it, LinearLayout.LayoutParams(ui.dp(3), ViewGroup.LayoutParams.MATCH_PARENT).apply {
-            marginEnd = ui.dp(12)
-        }) }
-        private val text = messageTextView().also {
-            textRow.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        }
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.AssistantText
-            label.visibility = View.GONE
-            text.text = styledInlineText(item.inline)
-            text.movementMethod = if (item.inline.any { it.style == AgentInlineTextSegment.Style.Link }) {
-                LinkMovementMethod.getInstance()
-            } else {
-                null
-            }
-            text.linksClickable = text.movementMethod != null
-            text.highlightColor = android.graphics.Color.TRANSPARENT
-            text.setLinkTextColor(tokens.primaryStrong)
-            text.setTextColor(tokens.textPrimary)
-            text.background = null
-            text.setPadding(0, 0, 0, 0)
-            quoteBar.visibility = View.GONE
-            when (item.style) {
-                AgentTextBlockStyle.Heading1 -> {
-                    container.layoutParams = rowParams(top = 18, bottom = 7)
-                    setTextStyle(21f, Typeface.DEFAULT_BOLD, 1.18f)
-                }
-                AgentTextBlockStyle.Heading2 -> {
-                    container.layoutParams = rowParams(top = 16, bottom = 6)
-                    setTextStyle(18.5f, Typeface.DEFAULT_BOLD, 1.2f)
-                }
-                AgentTextBlockStyle.Heading3 -> {
-                    container.layoutParams = rowParams(top = 14, bottom = 5)
-                    setTextStyle(16.5f, Typeface.DEFAULT_BOLD, 1.22f)
-                }
-                AgentTextBlockStyle.Quote -> {
-                    container.layoutParams = rowParams(top = 8, bottom = 13)
-                    setTextStyle(14.5f, assistantBodyTypeface, 1.36f, BODY_LETTER_SPACING)
-                    text.setTextColor(tokens.textSecondary)
-                    quoteBar.visibility = View.VISIBLE
-                    text.setPadding(0, ui.dp(2), 0, ui.dp(2))
-                }
-                AgentTextBlockStyle.Bullet,
-                AgentTextBlockStyle.Ordered -> {
-                    container.layoutParams = rowParams(top = 2, bottom = 5)
-                    setTextStyle(14.5f, assistantBodyTypeface, 1.36f, BODY_LETTER_SPACING)
-                    text.setPadding(ui.dp(2), 0, 0, 0)
-                }
-                AgentTextBlockStyle.Paragraph -> {
-                    container.layoutParams = rowParams(top = 3, bottom = 13)
-                    setTextStyle(14.5f, assistantBodyTypeface, 1.38f, BODY_LETTER_SPACING)
-                }
-            }
-        }
-
-        private fun setTextStyle(
-            size: Float,
-            typeface: Typeface,
-            spacingMultiplier: Float,
-            tracking: Float = 0f,
-        ) {
-            text.textSize = size
-            text.typeface = typeface
-            text.setLineSpacing(0f, spacingMultiplier)
-            text.letterSpacing = tracking
-        }
-    }
-
-    inner class CodeHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 7, bottom = 9)
-            background = ui.roundedBox(tokens.surface, tokens.border, ui.dp(14).toFloat(), ui.dp(1))
-        }
-    ) {
-        private val container = itemView as LinearLayout
-        private val header = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(13), ui.dp(7), ui.dp(8), ui.dp(6))
-        }.also(container::addView)
-        private val language = TextView(context).apply {
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(tokens.textSecondary)
-        }.also { header.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-        private val copy = TextView(context).apply {
-            text = "复制"
-            textSize = 12f
-            setTextColor(tokens.primaryStrong)
-            gravity = Gravity.CENTER
-            setPadding(ui.dp(10), ui.dp(5), ui.dp(10), ui.dp(5))
-        }.also(header::addView)
-        private val code = messageTextView().apply {
-            textSize = 14f
-            typeface = Typeface.MONOSPACE
-            setHorizontallyScrolling(true)
-            setPadding(ui.dp(13), ui.dp(10), ui.dp(13), ui.dp(12))
-            background = ui.roundedBox(tokens.surfaceElevated, android.graphics.Color.TRANSPARENT, ui.dp(12).toFloat())
-        }.also { container.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(ui.dp(7), 0, ui.dp(7), ui.dp(7))
-        }) }
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.Code
-            language.text = buildString {
-                append(item.language ?: "代码")
-            }
-            code.text = item.code
-            copy.setOnClickListener { copyText("Agent 代码", item.code) }
-            copy.contentDescription = "复制代码"
-        }
-    }
-
-    inner class RuleHolder : DisplayHolder(
-        View(context).apply {
-            layoutParams = rowParams(top = 11, bottom = 11).apply { height = ui.dp(1) }
-            setBackgroundColor(tokens.border)
-        }
-    ) {
-        override fun bind(item: AgentConversationDisplayItem) = Unit
-    }
-
-    inner class TableHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 8, bottom = 10)
-            background = ui.roundedBox(tokens.surface, tokens.border, ui.dp(15).toFloat(), ui.dp(1))
-        }
-    ) {
-        private val container = itemView as LinearLayout
-        private val header = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(13), ui.dp(7), ui.dp(8), ui.dp(6))
-        }.also(container::addView)
-        private val label = TextView(context).apply {
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(tokens.textSecondary)
-        }.also { header.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-        private val copy = TextView(context).apply {
-            text = "复制"
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
-            setPadding(ui.dp(10), ui.dp(5), ui.dp(10), ui.dp(5))
-        }.also(header::addView)
-        private val table = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        init {
-            container.addView(HorizontalScrollView(context).apply {
-                isHorizontalScrollBarEnabled = false
-                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                setPadding(ui.dp(7), 0, ui.dp(7), ui.dp(7))
-                addView(table, ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                ))
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.Table
-            label.text = "表格"
-            copy.setOnClickListener { copyText("Agent 表格", item.copyText) }
-            copy.contentDescription = "复制表格"
-            table.removeAllViews()
-            table.addView(tableRow(item.headers, header = true))
-            item.rows.forEach { row -> table.addView(tableRow(row, header = false)) }
-        }
-
-        private fun tableRow(values: List<String>, header: Boolean): View = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = ui.roundedBox(
-                if (header) tokens.surfaceElevated else android.graphics.Color.TRANSPARENT,
-                android.graphics.Color.TRANSPARENT,
-                if (header) ui.dp(9).toFloat() else 0f,
-            )
-            values.forEach { value ->
-                addView(TextView(context).apply {
-                    text = value
-                    textSize = if (header) 12.5f else 13f
-                    typeface = if (header) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                    maxLines = 4
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(if (header) tokens.textPrimary else tokens.textSecondary)
-                    setPadding(ui.dp(11), ui.dp(9), ui.dp(11), ui.dp(9))
-                }, LinearLayout.LayoutParams(ui.dp(132), ViewGroup.LayoutParams.WRAP_CONTENT))
-            }
-        }
-    }
-
-    inner class ProcessHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 9, bottom = 9)
-        }
-    ) {
-        private val container = itemView as LinearLayout
-        private val header = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            isClickable = true
-            isFocusable = true
-            setPadding(0, ui.dp(5), 0, ui.dp(5))
-        }.also(container::addView)
-        private val title = TextView(context).apply {
-            textSize = 13.5f
-            typeface = Typeface.DEFAULT_BOLD
-            includeFontPadding = false
-            setTextColor(tokens.textPrimary)
-        }.also { header.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-        private val chevron = ImageView(context).apply {
-            setImageResource(R.drawable.ic_chevron_right_light)
-            setColorFilter(tokens.textSecondary)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            contentDescription = null
-        }.also { header.addView(it, LinearLayout.LayoutParams(ui.dp(20), ui.dp(20))) }
-        private val entries = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, ui.dp(4), 0, 0)
-        }.also(container::addView)
-        private var ticker: Runnable? = null
-        private var boundItem: AgentConversationDisplayItem.Process? = null
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.Process
-            stopTicker()
-            boundItem = item
-            val expanded = processExpansionOverrides[item.id]
-                ?: (item.state == AgentConversationTurnState.Running)
-            updateTitle(item)
-            chevron.rotation = if (expanded) 90f else 0f
-            entries.visibility = if (expanded) View.VISIBLE else View.GONE
-            if (expanded) rebuildEntries(item) else entries.removeAllViews()
-            header.contentDescription = if (expanded) "收起处理过程" else "展开处理过程"
-            header.setOnClickListener {
-                processExpansionOverrides[item.id] = !expanded
-                bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
-            }
-            if (item.state == AgentConversationTurnState.Running && item.startedAtMillis != null) startTicker(item)
-        }
-
-        private fun updateTitle(item: AgentConversationDisplayItem.Process) {
-            title.text = when (item.state) {
-                AgentConversationTurnState.Running -> {
-                    val elapsed = item.startedAtMillis
-                        ?.let { (System.currentTimeMillis() - it).coerceAtLeast(0L) }
-                        ?: 0L
-                    "思考中 ${formatProcessDuration(elapsed)}"
-                }
-                AgentConversationTurnState.Completed -> item.durationMillis
-                    ?.let { "思考了 ${formatProcessDuration(it)}" }
-                    ?: "已处理"
-                AgentConversationTurnState.Failed -> "处理失败"
-                AgentConversationTurnState.Cancelled -> "已取消"
-                AgentConversationTurnState.Historical -> "已处理"
-            }
-            title.setTextColor(
-                if (item.state == AgentConversationTurnState.Failed) tokens.danger else tokens.textPrimary
-            )
-        }
-
-        private fun startTicker(item: AgentConversationDisplayItem.Process) {
-            val runnable = object : Runnable {
-                override fun run() {
-                    if (boundItem?.id != item.id || !itemView.isAttachedToWindow) return
-                    updateTitle(item)
-                    itemView.postDelayed(this, PROCESS_TICK_MS)
-                }
-            }
-            ticker = runnable
-            itemView.postDelayed(runnable, PROCESS_TICK_MS)
-        }
-
-        private fun stopTicker() {
-            ticker?.let(itemView::removeCallbacks)
-            ticker = null
-        }
-
-        private fun rebuildEntries(item: AgentConversationDisplayItem.Process) {
-            entries.removeAllViews()
-            var index = 0
-            while (index < item.entries.size) {
-                when (val entry = item.entries[index]) {
-                    is AgentConversationDisplayItem.Thought -> {
-                        entries.addView(thoughtRow(entry))
-                        index += 1
-                    }
-                    is AgentConversationDisplayItem.Tool -> {
-                        val tools = item.entries
-                            .drop(index)
-                            .takeWhile { it is AgentConversationDisplayItem.Tool }
-                            .filterIsInstance<AgentConversationDisplayItem.Tool>()
-                        entries.addView(toolGroup(item, tools))
-                        index += tools.size
-                    }
-                    is AgentConversationDisplayItem.Plan -> {
-                        entries.addView(planRows(entry))
-                        index += 1
-                    }
-                    else -> index += 1
-                }
-            }
-        }
-
-        private fun thoughtRow(item: AgentConversationDisplayItem.Thought): View = TextView(context).apply {
-            text = item.text
-            textSize = 14.5f
-            includeFontPadding = false
-            setLineSpacing(0f, 1.28f)
-            letterSpacing = CONVERSATION_LETTER_SPACING
-            setTextColor(tokens.textPrimary)
-            setPadding(0, ui.dp(5), 0, ui.dp(7))
-        }
-
-        private fun toolRow(item: AgentConversationDisplayItem.Tool): View = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            val expanded = item.id in expandedToolIds
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, ui.dp(4), 0, ui.dp(4))
-                addView(ImageView(context).apply {
-                    setImageResource(R.drawable.ic_terminal_prompt_light)
-                    setColorFilter(if (item.status == "失败") tokens.danger else tokens.textTertiary)
-                    scaleType = ImageView.ScaleType.CENTER_INSIDE
-                }, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)).apply { marginEnd = ui.dp(8) })
-                addView(TextView(context).apply {
-                    text = buildString {
-                        append(item.title)
-                        if (item.status == "失败") append(" · 失败")
-                    }
-                    textSize = 13.5f
-                    includeFontPadding = false
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(if (item.status == "失败") tokens.danger else tokens.textSecondary)
-                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                if (!item.detail.isNullOrBlank()) {
-                    addView(ImageView(context).apply {
-                        setImageResource(R.drawable.ic_chevron_right_light)
-                        setColorFilter(tokens.textTertiary)
-                        rotation = if (expanded) 90f else 0f
-                        scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    }, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)))
-                }
-                isClickable = !item.detail.isNullOrBlank()
-                isFocusable = isClickable
-                setOnClickListener {
-                    if (item.detail.isNullOrBlank()) return@setOnClickListener
-                    if (expanded) expandedToolIds.remove(item.id) else expandedToolIds.add(item.id)
-                    bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
-                }
-            })
-            if (expanded && !item.detail.isNullOrBlank()) {
-                addView(TextView(context).apply {
-                    text = item.detail
-                    textSize = 12.5f
-                    typeface = Typeface.MONOSPACE
-                    includeFontPadding = false
-                    setLineSpacing(0f, 1.2f)
-                    setTextColor(tokens.textTertiary)
-                    setPadding(ui.dp(26), ui.dp(2), 0, ui.dp(7))
-                    setTextIsSelectable(true)
-                })
-            }
-        }
-
-        private fun toolGroup(
-            process: AgentConversationDisplayItem.Process,
-            tools: List<AgentConversationDisplayItem.Tool>,
-        ): View {
-            if (tools.size == 1) return toolRow(tools.single())
-            val groupId = "${process.id}:tools:${tools.first().id}"
-            val expanded = toolGroupExpansionOverrides[groupId] ?: false
-            return LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(0, ui.dp(4), 0, ui.dp(4))
-                    addView(ImageView(context).apply {
-                        setImageResource(R.drawable.ic_terminal_prompt_light)
-                        setColorFilter(tokens.textTertiary)
-                        scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    }, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)).apply { marginEnd = ui.dp(8) })
-                    addView(TextView(context).apply {
-                        text = if (tools.all { tool -> tool.kind?.lowercase()?.let { kind ->
-                                "command" in kind || "terminal" in kind
-                            } == true }) {
-                            "运行了多个命令"
-                        } else {
-                            "调用了多个工具"
-                        }
-                        textSize = 13.5f
-                        includeFontPadding = false
-                        setTextColor(tokens.textSecondary)
-                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                    addView(ImageView(context).apply {
-                        setImageResource(R.drawable.ic_chevron_right_light)
-                        setColorFilter(tokens.textTertiary)
-                        rotation = if (expanded) 90f else 0f
-                        scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    }, LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)))
-                    isClickable = true
-                    isFocusable = true
-                    contentDescription = if (expanded) "收起工具详情" else "展开工具详情"
-                    setOnClickListener {
-                        toolGroupExpansionOverrides[groupId] = !expanded
-                        bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
-                    }
-                })
-                if (expanded) {
-                    tools.forEach { tool ->
-                        addView(toolRow(tool), LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ).apply { marginStart = ui.dp(24) })
-                    }
-                }
-            }
-        }
-
-        private fun planRows(item: AgentConversationDisplayItem.Plan): View = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            item.entries.take(PLAN_ROWS).forEach { entry ->
-                addView(TextView(context).apply {
-                    text = "${planMark(entry.status)} ${entry.content}"
-                    textSize = 13.5f
-                    includeFontPadding = false
-                    setTextColor(
-                        if (entry.status.lowercase() in COMPLETED_STATUSES) tokens.textTertiary else tokens.textSecondary
-                    )
-                    setPadding(ui.dp(26), ui.dp(3), 0, ui.dp(3))
-                })
-            }
-        }
-
-        override fun recycle() {
-            stopTicker()
-            boundItem = null
-            entries.removeAllViews()
-        }
-    }
-
-    inner class ThoughtHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 5, bottom = 7)
-            setPadding(ui.dp(13), ui.dp(10), ui.dp(13), ui.dp(11))
-            background = ui.roundedBox(tokens.primarySubtle, tokens.border, ui.dp(14).toFloat(), ui.dp(1))
-        }
-    ) {
-        private val container = itemView as LinearLayout
-        private val label = sectionLabel().also(container::addView)
-        private val text = messageTextView().apply {
-            textSize = 14.5f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-            setTextColor(tokens.textSecondary)
-        }.also(container::addView)
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.Thought
-            val expanded = item.id in expandedThoughtIds
-            label.text = if (expanded) "思考过程 · 点击收起" else "思考过程 · 点击展开"
-            text.text = item.text
-            text.maxLines = if (expanded) Int.MAX_VALUE else COLLAPSED_THOUGHT_LINES
-            text.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
-            container.setOnClickListener {
-                if (expanded) expandedThoughtIds.remove(item.id) else expandedThoughtIds.add(item.id)
-                bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
-            }
-        }
-    }
-
-    inner class ToolHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 5, bottom = 7)
-            setPadding(ui.dp(13), ui.dp(10), ui.dp(13), ui.dp(10))
-            background = ui.roundedBox(tokens.surface, tokens.border, ui.dp(14).toFloat(), ui.dp(1))
-        }
-    ) {
-        private val container = itemView as LinearLayout
-        private val header = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }.also(container::addView)
-        private val title = TextView(context).apply {
-            textSize = 14.5f
-            typeface = Typeface.DEFAULT_BOLD
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textPrimary)
-        }.also { header.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-        private val status = TextView(context).apply {
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(ui.dp(8), ui.dp(3), ui.dp(8), ui.dp(3))
-        }.also(header::addView)
-        private val detail = messageTextView().apply {
-            textSize = 12.5f
-            setTextColor(tokens.textSecondary)
-            setPadding(0, ui.dp(6), 0, 0)
-        }.also(container::addView)
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.Tool
-            title.text = "工具 · ${item.title}"
-            status.text = item.status
-            val tone = when (item.status) {
-                "已完成" -> Triple(tokens.success, tokens.successSoft, tokens.successBorder)
-                "失败" -> Triple(tokens.danger, tokens.dangerSoft, tokens.dangerBorder)
-                else -> Triple(tokens.warning, tokens.warningSoft, tokens.warningBorder)
-            }
-            status.setTextColor(tone.first)
-            status.background = ui.roundedBox(tone.second, tone.third, ui.dp(10).toFloat(), ui.dp(1))
-            detail.text = item.detail.orEmpty()
-            detail.visibility = if (item.detail.isNullOrBlank()) View.GONE else View.VISIBLE
-            val expanded = item.id in expandedToolIds
-            detail.maxLines = if (expanded) Int.MAX_VALUE else COLLAPSED_TOOL_LINES
-            detail.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
-            container.contentDescription = buildString {
-                append(title.text)
-                append("，")
-                append(item.status)
-                if (!item.detail.isNullOrBlank()) {
-                    append(if (expanded) "，点击收起详情" else "，点击展开详情")
-                }
-            }
-            container.setOnClickListener {
-                if (item.detail.isNullOrBlank()) return@setOnClickListener
-                if (expanded) expandedToolIds.remove(item.id) else expandedToolIds.add(item.id)
-                bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
-            }
-        }
-    }
-
-    inner class PlanHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 5, bottom = 7)
-            setPadding(ui.dp(13), ui.dp(10), ui.dp(13), ui.dp(10))
-            background = ui.roundedBox(tokens.surface, tokens.border, ui.dp(14).toFloat(), ui.dp(1))
-        }
-    ) {
-        private val container = itemView as LinearLayout
-        private val label = sectionLabel().apply { text = "执行计划" }.also(container::addView)
-        private val lines = List(PLAN_ROWS) {
-            TextView(context).apply {
-                textSize = 13.5f
-                includeFontPadding = false
-                setTextColor(tokens.textSecondary)
-                setPadding(0, ui.dp(3), 0, ui.dp(3))
-            }.also(container::addView)
-        }
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.Plan
-            lines.forEachIndexed { index, text ->
-                val entry = item.entries.getOrNull(index)
-                text.visibility = if (entry == null) View.GONE else View.VISIBLE
-                if (entry != null) {
-                    text.text = "${planMark(entry.status)} ${entry.content}"
-                    text.setTextColor(if (entry.status.lowercase() in COMPLETED_STATUSES) tokens.textTertiary else tokens.textSecondary)
-                }
-            }
-            label.text = if (item.entries.size > PLAN_ROWS) {
-                "执行计划 · ${item.entries.size} 项"
-            } else {
-                "执行计划"
-            }
-        }
-    }
-
-    inner class AttachmentHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 5, bottom = 7)
-            setPadding(ui.dp(13), ui.dp(10), ui.dp(13), ui.dp(10))
-            background = ui.roundedBox(tokens.surface, tokens.border, ui.dp(14).toFloat(), ui.dp(1))
-        }
-    ) {
-        private val container = itemView as LinearLayout
-        private var openJob: Job? = null
-        private var boundId: String? = null
-        private val title = TextView(context).apply {
-            textSize = 14.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(tokens.textPrimary)
-        }.also(container::addView)
-        private val detail = TextView(context).apply {
-            textSize = 12.5f
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textSecondary)
-            setPadding(0, ui.dp(3), 0, 0)
-        }.also(container::addView)
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.Attachment
-            openJob?.cancel()
-            boundId = item.id
-            title.text = item.title
-            detail.text = "${item.detail} · 点击打开"
-            container.contentDescription = "${item.title}，${item.detail}，点击打开"
-            container.setOnClickListener { openAttachment(item) }
-        }
-
-        private fun openAttachment(item: AgentConversationDisplayItem.Attachment) {
-            openJob?.cancel()
-            detail.text = "${item.detail} · 正在准备"
-            openJob = scope.launch {
-                val result = runCatching {
-                    mediaRepository.resolveOpenUri(
-                        cacheKey = item.id,
-                        displayName = item.title,
-                        mimeType = item.mimeType,
-                        source = item.source
-                    )
-                }
-                if (boundId != item.id) return@launch
-                result.onSuccess { uri ->
-                    detail.text = "${item.detail} · 点击打开"
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        if (uri.scheme == "http" || uri.scheme == "https") {
-                            data = uri
-                        } else {
-                            setDataAndType(uri, item.mimeType ?: "*/*")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                    }
-                    runCatching { context.startActivity(intent) }
-                        .onFailure {
-                            Toast.makeText(context, "没有可打开此文件的应用", Toast.LENGTH_LONG).show()
-                        }
-                }.onFailure { error ->
-                    detail.text = "${item.detail} · 无法打开"
-                    Toast.makeText(
-                        context,
-                        error.message ?: "无法打开附件",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }
-
-        override fun recycle() {
-            openJob?.cancel()
-            openJob = null
-            boundId = null
-        }
-    }
-
-    inner class ImageHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 5, bottom = 9)
-            setPadding(ui.dp(7), ui.dp(7), ui.dp(7), ui.dp(9))
-            background = ui.roundedBox(tokens.surface, tokens.border, ui.dp(15).toFloat(), ui.dp(1))
-        }
-    ) {
-        private val container = itemView as LinearLayout
-        private var loadJob: Job? = null
-        private var boundId: String? = null
-        private val image = ImageView(context).apply {
-            adjustViewBounds = true
-            minimumHeight = ui.dp(150)
-            maxHeight = ui.dp(300)
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setBackgroundColor(tokens.surfaceElevated)
-        }.also { container.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(220))) }
-        private val status = TextView(context).apply {
-            textSize = 12.5f
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textSecondary)
-            setPadding(ui.dp(7), ui.dp(7), ui.dp(7), 0)
-        }.also(container::addView)
-
-        override fun bind(item: AgentConversationDisplayItem) {
-            item as AgentConversationDisplayItem.Image
-            loadJob?.cancel()
-            boundId = item.id
-            image.setImageDrawable(null)
-            status.text = "${item.title} · 正在载入预览"
-            container.contentDescription = "${item.title}，正在载入预览"
-            container.setOnClickListener(null)
-            loadJob = scope.launch {
-                val result = runCatching {
-                    mediaRepository.loadThumbnail(item.id, item.source, item.mimeType)
-                }
-                if (boundId != item.id) return@launch
-                result.onSuccess { bitmap ->
-                    image.setImageBitmap(bitmap)
-                    status.text = "${item.title} · 点击查看"
-                    container.contentDescription = "${item.title}，点击查看"
-                    container.setOnClickListener { showImage(item.title, bitmap) }
-                }.onFailure { error ->
-                    status.text = "${item.title} · ${error.message ?: "预览失败"}"
-                    container.contentDescription = status.text
-                }
-            }
-        }
-
-        override fun recycle() {
-            loadJob?.cancel()
-            loadJob = null
-            boundId = null
-            image.setImageDrawable(null)
-        }
-    }
-
-    private fun messageTextView(): TextView = TextView(context).apply {
-        textSize = 17f
-        setTextColor(tokens.textPrimary)
-        includeFontPadding = false
-        setLineSpacing(0f, 1.22f)
-        setTextIsSelectable(true)
-    }
-
-    private fun sectionLabel(): TextView = TextView(context).apply {
-        textSize = 11.5f
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(tokens.textTertiary)
-        setPadding(0, 0, 0, ui.dp(5))
-    }
-
-    private fun rowParams(top: Int, bottom: Int): RecyclerView.LayoutParams =
-        RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            setMargins(ui.dp(18), ui.dp(top), ui.dp(18), ui.dp(bottom))
-        }
-
-    private fun copyText(label: String, value: String) {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
-        Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun showImage(title: String, bitmap: Bitmap) {
-        val image = ImageView(context).apply {
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setImageBitmap(bitmap)
-            setPadding(ui.dp(10), ui.dp(8), ui.dp(10), ui.dp(8))
-        }
-        AlertDialog.Builder(context)
-            .setTitle(title)
-            .setView(image)
-            .setPositiveButton("关闭", null)
-            .show()
-    }
-
-    private fun styledInlineText(segments: List<AgentInlineTextSegment>): CharSequence {
-        val result = SpannableStringBuilder()
-        segments.forEach { segment ->
-            val start = result.length
-            result.append(segment.text)
-            val end = result.length
-            when (segment.style) {
-                AgentInlineTextSegment.Style.Plain -> Unit
-                AgentInlineTextSegment.Style.Strong -> result.setSpan(
-                    StyleSpan(Typeface.BOLD),
-                    start,
-                    end,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
-                AgentInlineTextSegment.Style.Code -> {
-                    result.setSpan(
-                        TypefaceSpan("monospace"),
-                        start,
-                        end,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
-                    result.setSpan(
-                        BackgroundColorSpan(tokens.surfaceElevated),
-                        start,
-                        end,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                    )
-                }
-                AgentInlineTextSegment.Style.Link -> segment.link?.let { url ->
-                    result.setSpan(
-                        URLSpan(url),
-                        start,
-                        end,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-                    )
-                }
-            }
-        }
-        return result
-    }
-
-    private fun planMark(status: String): String = when (status.lowercase()) {
-        in COMPLETED_STATUSES -> "✓"
-        "in_progress", "running" -> "◉"
-        "failed", "error" -> "!"
-        else -> "○"
-    }
-
-    private fun formatProcessDuration(durationMillis: Long): String {
-        val totalSeconds = (durationMillis / 1_000L).coerceAtLeast(0L)
-        val minutes = totalSeconds / 60L
-        val seconds = totalSeconds % 60L
-        return if (minutes > 0L) "${minutes}m ${seconds}s" else "${seconds}s"
-    }
-
-    private companion object {
-        const val TYPE_USER = 1
-        const val TYPE_ASSISTANT = 2
-        const val TYPE_CODE = 3
-        const val TYPE_THOUGHT = 4
-        const val TYPE_TOOL = 5
-        const val TYPE_PLAN = 6
-        const val TYPE_IMAGE = 7
-        const val TYPE_ATTACHMENT = 8
-        const val TYPE_RULE = 9
-        const val TYPE_TABLE = 10
-        const val TYPE_PROCESS = 11
-        const val PLAN_ROWS = 6
-        const val COLLAPSED_THOUGHT_LINES = 4
-        const val COLLAPSED_TOOL_LINES = 4
-        const val PROCESS_TICK_MS = 1_000L
-        const val BODY_TEXT_WEIGHT = 450
-        const val CONVERSATION_LETTER_SPACING = 0.025f
-        const val BODY_LETTER_SPACING = 0.03f
-        val COMPLETED_STATUSES = setOf("completed", "complete", "success", "succeeded")
-
-        val DIFF = object : DiffUtil.ItemCallback<AgentConversationDisplayItem>() {
-            override fun areItemsTheSame(
-                oldItem: AgentConversationDisplayItem,
-                newItem: AgentConversationDisplayItem
-            ): Boolean =
-                oldItem.id == newItem.id
-
-            override fun areContentsTheSame(
-                oldItem: AgentConversationDisplayItem,
-                newItem: AgentConversationDisplayItem
-            ): Boolean =
-                oldItem == newItem
-        }
     }
 }

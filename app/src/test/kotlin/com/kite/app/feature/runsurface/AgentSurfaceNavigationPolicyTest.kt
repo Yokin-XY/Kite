@@ -1,6 +1,7 @@
 package com.kite.app.feature.runsurface
 
 import android.text.InputType
+import android.view.inputmethod.EditorInfo
 import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
@@ -14,8 +15,12 @@ import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentConfigScope
 import com.kite.app.agent.config.AgentCoreDocumentDescriptor
 import com.kite.app.agent.config.AgentCoreDocumentSemantics
+import com.kite.app.agent.auth.AgentOfficialAccountCommandResult
+import com.kite.app.agent.auth.AgentOfficialAccountManager
 import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.store.AgentProject
+import com.kite.app.agent.store.AgentModelLibraryProviderPreference
+import com.kite.app.agent.store.AgentModelLibrarySnapshot
 import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.theme.KiteTheme
@@ -27,9 +32,24 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 @RunWith(RobolectricTestRunner::class)
 class AgentSurfaceNavigationPolicyTest {
+    @Test
+    fun `会话读取失败隐藏底层英文并区分登录需求`() {
+        assertEquals(
+            "需要先登录当前 Agent，请在右下角设置中完成登录",
+            AgentSurfaceNavigationPolicy.sessionListFailureMessage("Authentication required"),
+        )
+        assertEquals(
+            "暂时无法读取会话，请稍后重试",
+            AgentSurfaceNavigationPolicy.sessionListFailureMessage("socket closed unexpectedly"),
+        )
+    }
+
     @Test
     fun `输入器固定模型与权限两个公共入口`() {
         assertEquals(
@@ -39,7 +59,7 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
-    fun `输入器显示当前模型推理强度与权限而不是空入口名`() {
+    fun `输入器只显示当前模型并独立显示权限`() {
         val model = AgentConfigOption.Select(
             id = "model",
             name = "模型",
@@ -62,13 +82,29 @@ class AgentSurfaceNavigationPolicyTest {
             choices = listOf(AgentConfigChoice("full", "完全")),
         )
 
-        assertEquals("GPT-5.6-Sol 中", AgentSurfaceNavigationPolicy.composerModelLabel(listOf(model, thought)))
+        assertEquals("GPT-5.6-Sol", AgentSurfaceNavigationPolicy.composerModelLabel(listOf(model, thought)))
         assertEquals("完全", AgentSurfaceNavigationPolicy.composerPermissionLabel(permission))
         assertEquals("模型", AgentSurfaceNavigationPolicy.composerModelLabel(emptyList()))
         assertEquals("权限", AgentSurfaceNavigationPolicy.composerPermissionLabel(null))
         assertEquals(
             "自定义",
             AgentSurfaceNavigationPolicy.composerPermissionLabel(permission.copy(currentValue = "native-custom")),
+        )
+    }
+
+    @Test
+    fun `模型入口按名称长度使用确定性字号档位且保持固定最大宽度`() {
+        assertEquals(
+            ComposerModelTextStyle(textSizeSp = 13f, maximumWidthDp = 118),
+            AgentSurfaceNavigationPolicy.composerModelTextStyle("GLM-5.2"),
+        )
+        assertEquals(
+            ComposerModelTextStyle(textSizeSp = 12f, maximumWidthDp = 118),
+            AgentSurfaceNavigationPolicy.composerModelTextStyle("MiMo V2.5 Free"),
+        )
+        assertEquals(
+            ComposerModelTextStyle(textSizeSp = 11f, maximumWidthDp = 118),
+            AgentSurfaceNavigationPolicy.composerModelTextStyle("DeepSeek V4 Flash Free (New)"),
         )
     }
 
@@ -304,6 +340,63 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
+    fun `弹层有效临时供应商优先于当前生效模型所属供应商`() {
+        val groups = listOf(
+            AgentModelChoiceGroup(
+                id = "zhipu",
+                name = "智谱 GLM",
+                choices = listOf(AgentConfigChoice("zhipu/glm-5.2", "GLM-5.2")),
+            ),
+            AgentModelChoiceGroup(
+                id = "opencode",
+                name = "OpenCode Zen",
+                choices = listOf(AgentConfigChoice("opencode/big-pickle", "Big Pickle")),
+            ),
+        )
+
+        val selected = AgentSurfaceNavigationPolicy.resolveModelChoiceGroup(
+            groups = groups,
+            currentModelValue = "zhipu/glm-5.2",
+            requestedGroupId = "opencode",
+        )
+
+        assertEquals("opencode", selected?.id)
+    }
+
+    @Test
+    fun `弹层无效临时供应商回退到当前模型再回退首项`() {
+        val groups = listOf(
+            AgentModelChoiceGroup(
+                id = "zhipu",
+                name = "智谱 GLM",
+                choices = listOf(AgentConfigChoice("zhipu/glm-5.2", "GLM-5.2")),
+            ),
+            AgentModelChoiceGroup(
+                id = "opencode",
+                name = "OpenCode Zen",
+                choices = listOf(AgentConfigChoice("opencode/big-pickle", "Big Pickle")),
+            ),
+        )
+
+        assertEquals(
+            "opencode",
+            AgentSurfaceNavigationPolicy.resolveModelChoiceGroup(
+                groups = groups,
+                currentModelValue = "opencode/big-pickle",
+                requestedGroupId = "missing",
+            )?.id,
+        )
+        assertEquals(
+            "zhipu",
+            AgentSurfaceNavigationPolicy.resolveModelChoiceGroup(
+                groups = groups,
+                currentModelValue = "missing/model",
+                requestedGroupId = null,
+            )?.id,
+        )
+    }
+
+    @Test
     fun `会话配置入口优先显示模型与推理强度且不复制会话事实`() {
         val options = listOf(
             AgentConfigOption.Select(
@@ -439,6 +532,8 @@ class AgentSurfaceNavigationPolicyTest {
                 models = listOf(AgentProviderModelSummary("model-a"))
             )
         )
+        assertEquals("请输入显示名称", AgentProviderEditorPolicy.validateModel("  ", "model-a"))
+        assertEquals(null, AgentProviderEditorPolicy.validateModel("日常模型", "model-a"))
     }
 
     @Test
@@ -549,29 +644,87 @@ class AgentSurfaceNavigationPolicyTest {
         )
 
         val default = AgentDraftModelPolicy.defaultSelection(snapshot)
-        val option = AgentDraftModelPolicy.option(snapshot, default)!!
+        val option = AgentDraftModelPolicy.option(
+            snapshot,
+            default,
+            library = AgentModelLibrarySnapshot(
+                providers = mapOf(
+                    "zhipu" to AgentModelLibraryProviderPreference(
+                        modelDisplayNames = mapOf("glm-5.2" to "日常模型")
+                    )
+                )
+            )
+        )!!
         val mimoChoice = option.choices.single { it.groupId == "mimo" }
         val mimo = AgentDraftModelPolicy.selection(snapshot, mimoChoice.value)
 
         assertEquals(AgentDraftModelSelection("zhipu", "glm-5.2", true), default)
-        assertEquals("GLM-5.2", option.choices.single { it.value == option.currentValue }.name)
+        assertEquals("日常模型", option.choices.single { it.value == option.currentValue }.name)
         assertEquals(AgentDraftModelSelection("mimo", "mimo-v2-pro", false), mimo)
         assertEquals(listOf("智谱 GLM", "小米 MiMo"), option.choices.mapNotNull { it.groupName }.distinct())
+    }
+
+    @Test
+    fun `空白草稿合并Agent发现的免费模型且不写入持久默认`() {
+        val snapshot = AgentLiveConfigSnapshot(
+            agentId = "opencode",
+            adapterId = "opencode",
+            revision = "r1",
+            displayLocation = "/root/.config/opencode/opencode.jsonc",
+            activeProviderId = "zhipu",
+            defaultModel = "zhipu/glm-5.2",
+            providers = listOf(
+                AgentProviderSummary(
+                    id = "zhipu",
+                    displayName = "智谱 GLM",
+                    models = listOf(AgentProviderModelSummary("glm-5.2", "GLM-5.2"))
+                )
+            )
+        )
+        val discovered = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "opencode/big-pickle",
+            choices = listOf(
+                AgentConfigChoice(
+                    value = "opencode/big-pickle",
+                    name = "Big Pickle",
+                    groupId = "opencode",
+                    groupName = "OpenCode Zen"
+                )
+            )
+        )
+
+        val option = AgentDraftModelPolicy.option(snapshot, selected = null, discovered = discovered)!!
+        val freeChoice = option.choices.single { it.groupId == "opencode" }
+        val selection = AgentDraftModelPolicy.selection(snapshot, freeChoice.value, option.choices)
+
+        assertEquals(listOf("智谱 GLM", "OpenCode Zen"), option.choices.mapNotNull { it.groupName }.distinct())
+        assertEquals(AgentDraftModelSelection("opencode", "big-pickle", false), selection)
+        assertEquals("GLM-5.2", option.choices.single { it.value == option.currentValue }.name)
     }
 
     @Test
     fun `会话搜索和设置页返回抽屉时复用同一视图树`() {
         val activity = Robolectric.buildActivity(AppCompatActivity::class.java).setup().get()
         val tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens
+        val accountJob = SupervisorJob()
+        val agentRegistry = KiteAgentRegistry(
+            context = activity,
+            resourceRegistrationSource = { emptyList() }
+        )
         val binding = RunAgentSurfaceBinding(
             context = activity,
             tokens = tokens,
             onCloseInstance = {},
             onPickImages = {},
             onPickFiles = {},
-            agentRegistry = KiteAgentRegistry(
-                context = activity,
-                resourceRegistrationSource = { emptyList() }
+            agentRegistry = agentRegistry,
+            officialAccountManager = AgentOfficialAccountManager(
+                scope = CoroutineScope(accountJob + Dispatchers.Unconfined),
+                registry = agentRegistry,
+                commandRunner = { AgentOfficialAccountCommandResult(0, "") },
             ),
             agentConfigAdapters = AgentConfigAdapterRegistry(emptyList())
         )
@@ -591,6 +744,45 @@ class AgentSurfaceNavigationPolicyTest {
         assertEquals("Main", binding.navigationScreenForTesting())
 
         binding.dispose()
+        accountJob.cancel()
+        activity.finish()
+    }
+
+    @Test
+    fun `重复运行事实只绑定模型与权限状态而不重建输入控件`() {
+        val activity = Robolectric.buildActivity(AppCompatActivity::class.java).setup().get()
+        val tokens = KiteTheme.resolve(KiteTheme.defaultSelection, systemDark = false).tokens
+        val accountJob = SupervisorJob()
+        val agentRegistry = KiteAgentRegistry(
+            context = activity,
+            resourceRegistrationSource = { emptyList() },
+        )
+        val binding = RunAgentSurfaceBinding(
+            context = activity,
+            tokens = tokens,
+            onCloseInstance = {},
+            onPickImages = {},
+            onPickFiles = {},
+            agentRegistry = agentRegistry,
+            officialAccountManager = AgentOfficialAccountManager(
+                scope = CoroutineScope(accountJob + Dispatchers.Unconfined),
+                registry = agentRegistry,
+                commandRunner = { AgentOfficialAccountCommandResult(0, "") },
+            ),
+            agentConfigAdapters = AgentConfigAdapterRegistry(emptyList()),
+        )
+        val identities = binding.sessionControlIdentityForTesting()
+
+        repeat(100) { binding.refreshSessionControlsForTesting() }
+
+        assertEquals(identities, binding.sessionControlIdentityForTesting())
+        assertEquals(1 to 1, binding.sessionControlChildCountsForTesting())
+        val (inputType, imeOptions) = binding.composerInputFlagsForTesting()
+        assertTrue(inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE != 0)
+        assertEquals(EditorInfo.IME_FLAG_NO_ENTER_ACTION, imeOptions)
+
+        binding.dispose()
+        accountJob.cancel()
         activity.finish()
     }
 }

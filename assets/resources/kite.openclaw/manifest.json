@@ -100,7 +100,8 @@
               "--port",
               "18789",
               "--auth",
-              "token"
+              "token",
+              "--allow-unconfigured"
             ],
             "workdir": "/workspace",
             "environment": {

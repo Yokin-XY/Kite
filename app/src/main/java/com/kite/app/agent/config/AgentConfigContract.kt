@@ -309,18 +309,20 @@ data class AgentPermissionProfileSummary(
     val level: AgentPermissionLevel? = null,
 )
 
-/** Kite 只能在真实权限请求到达后代理这三种处理方式，不能替 Agent 发明新的沙箱边界。 */
+/** Kite 只能在真实权限请求到达后代理这些处理方式，不能替 Agent 发明新的沙箱边界。 */
 enum class AgentSessionPermissionHandling {
     AskUser,
     AllowRequest,
     RejectRequest,
+    /** 保留 Agent 原生风险判断；只有 Agent 仍向客户端提问时才交给用户。 */
+    PreserveAgentDecision,
 }
 
 /**
  * 某个 Agent 允许 Kite 在当前会话内代理的权限档位。
  *
- * 这里的 ID 属于 Kite 会话合同，不写回 Agent 原生配置；持久默认仍使用
- * [AgentPermissionProfileSummary.id] 与 [AgentPersistentConfigChange.SetPermissionProfile]。
+ * 这里的 ID 与该 Agent 的 [AgentPermissionProfileSummary.id] 共用同一目录；会话选择只保存在
+ * 当前连接中，不写回 [AgentPersistentConfigChange.SetPermissionProfile]。
  */
 data class AgentSessionPermissionProfile(
     val id: String,
@@ -364,7 +366,8 @@ data class AgentSessionPermissionControl(
     fun resolve(profileId: String, request: AgentPermissionRequest): AgentPermissionOutcome? {
         val handling = profiles.firstOrNull { it.id == profileId }?.handling ?: return null
         val preferredKind = when (handling) {
-            AgentSessionPermissionHandling.AskUser -> return null
+            AgentSessionPermissionHandling.AskUser,
+            AgentSessionPermissionHandling.PreserveAgentDecision -> return null
             AgentSessionPermissionHandling.AllowRequest -> AgentPermissionKind.AllowOnce
             AgentSessionPermissionHandling.RejectRequest -> AgentPermissionKind.RejectOnce
         }
@@ -390,6 +393,37 @@ fun mediatedSessionPermissionControl(
         )
     }
     return AgentSessionPermissionControl(profiles)
+}
+
+/**
+ * 从 Agent 的原生权限目录生成当前会话目录。
+ *
+ * 原生 ID、Kite 六档语义和选项数量都原样保留；适配器只补充每个原生档位到审批中介的
+ * 处理方式。这样设置页与会话页可以拥有不同当前值，但不会出现会话页越过原生上限。
+ */
+fun mediatedSessionPermissionControl(
+    profiles: List<AgentPermissionProfileSummary>,
+    handlingByProfileId: Map<String, AgentSessionPermissionHandling>,
+    initialProfileId: String? = null,
+): AgentSessionPermissionControl {
+    require(profiles.isNotEmpty()) { "原生权限目录不能为空" }
+    val sessionProfiles = profiles.map { profile ->
+        val level = requireNotNull(profile.level) { "${profile.id} 缺少 Kite 权限语义" }
+        val handling = requireNotNull(handlingByProfileId[profile.id]) {
+            "${profile.id} 缺少当前会话审批处理方式"
+        }
+        AgentSessionPermissionProfile(
+            id = profile.id,
+            level = level,
+            handling = handling,
+        )
+    }
+    val safeInitial = initialProfileId?.takeIf { requested ->
+        sessionProfiles.any { it.id == requested }
+    } ?: sessionProfiles.firstOrNull {
+        it.handling == AgentSessionPermissionHandling.AskUser
+    }?.id ?: sessionProfiles.first().id
+    return AgentSessionPermissionControl(sessionProfiles, safeInitial)
 }
 
 /** API Key 只在本次调用中短暂存在；任何字符串化都必须保持脱敏。 */
@@ -599,7 +633,12 @@ interface AgentConfigAdapter {
             if (capabilities().supports(AgentPersistentConfigCapability.DefaultModel)) {
                 snapshot.modelOption()?.let(::add)
             }
-            sessionPermissionControl()?.option()?.let(::add)
+            sessionPermissionControl()?.let { control ->
+                val current = snapshot.activePermissionProfileId?.takeIf { profileId ->
+                    control.profiles.any { it.id == profileId }
+                } ?: control.initialProfileId
+                add(control.option(current))
+            }
         }
     }
 

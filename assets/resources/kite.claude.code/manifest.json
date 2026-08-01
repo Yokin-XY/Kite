@@ -29,7 +29,7 @@
     "category": "AI",
     "accent": "orange",
     "sizeLabel": "网络包",
-    "longDescription": "Claude Code 是 Anthropic 面向终端的编码助手。Kite 使用 Anthropic 官方 NPM 包获取对应平台的原生 claude 命令，并负责依赖安装、命令暴露和结果验证；登录和项目授权仍在终端表面完成。",
+    "longDescription": "Claude Code 是 Anthropic 面向终端的编码助手。Kite 使用 Anthropic 官方 NPM 包获取对应平台的原生 claude 命令，并负责依赖安装、命令暴露和结果验证；官方账号可从 Agent 模型库发起登录或退出，凭据仍由 Claude Code 自己保存。",
     "recommendations": [
       {
         "resourceId": "kite.nodejs",
@@ -92,6 +92,27 @@
         "required": false,
         "adapter": "claude-code"
       },
+      "accounts": [
+        {
+          "id": "anthropic",
+          "name": "Anthropic 官方",
+          "modelGroupIds": ["claude-code", "anthropic", "claude"],
+          "status": {
+            "argv": ["claude", "auth", "status"],
+            "loggedInPatterns": ["\"loggedIn\":true"],
+            "loggedOutPatterns": ["\"loggedIn\":false"],
+            "timeoutMs": 15000
+          },
+          "login": {
+            "argv": ["claude", "auth", "login"],
+            "timeoutMs": 300000
+          },
+          "logout": {
+            "argv": ["claude", "auth", "logout"],
+            "timeoutMs": 30000
+          }
+        }
+      ],
       "launch": {
         "mode": "managed",
         "providerId": "claude-code",

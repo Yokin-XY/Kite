@@ -79,6 +79,17 @@
         "required": false,
         "adapter": "kimi-code"
       },
+      "accounts": [
+        {
+          "id": "moonshot",
+          "name": "Kimi 官方",
+          "modelGroupIds": ["kimi-code", "moonshot"],
+          "login": {
+            "argv": ["kimi", "login"],
+            "timeoutMs": 300000
+          }
+        }
+      ],
       "launch": {
         "mode": "managed",
         "providerId": "kimi",

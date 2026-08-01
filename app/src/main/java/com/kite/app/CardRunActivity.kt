@@ -104,6 +104,7 @@ class CardRunActivity : AppCompatActivity() {
     private var chrome: RunActivityChrome? = null
     private var currentTarget: CardRunLaunchTarget? = null
     private var currentState: CardRunState? = null
+    private var currentChildren: List<CardRunState> = emptyList()
     private var registeredBrowserInstanceId: String? = null
     private var registeredDesktopInstanceId: String? = null
     private var registeredCloserInstanceId: String? = null
@@ -219,6 +220,10 @@ class CardRunActivity : AppCompatActivity() {
                 environmentId
             )
         )
+        if (currentTarget?.instanceId != target.instanceId) {
+            currentState = null
+            currentChildren = emptyList()
+        }
         currentTarget = target
         CardRunStore.registerRecipe(target.recipe)
         val existing = CardRunStore.get(target.instanceId, environmentId)
@@ -332,7 +337,6 @@ class CardRunActivity : AppCompatActivity() {
     private fun renderState(state: CardRunState) {
         val target = currentTarget ?: return
         if (state.instanceId != target.instanceId || state.recipeId != target.recipe.id) return
-        currentState = state
         if (
             pendingCloseInstanceId == state.instanceId &&
             pendingCloseGeneration == state.createdAt &&
@@ -344,6 +348,9 @@ class CardRunActivity : AppCompatActivity() {
             return
         }
         val children = CardRunStore.childrenOf(state.instanceId, state.environmentId)
+        if (state == currentState && children == currentChildren) return
+        currentState = state
+        currentChildren = children
         val uiState = surfaceController.update(target.recipe, state, children)
             ?: surfaceController.attach(target.recipe, state, children)
         applySystemBars(uiState.surface)
@@ -384,7 +391,8 @@ class CardRunActivity : AppCompatActivity() {
                 )
             },
             agentRegistry = graph.agentRegistry,
-            agentConfigAdapters = graph.agentConfigAdapterRegistry
+            agentConfigAdapters = graph.agentConfigAdapterRegistry,
+            officialAccountManager = graph.agentOfficialAccountManager,
         ).also { agentSurfaceBinding = it }
         RunSurfaceContent.InstallWizard -> createInstallWizardBinding()
         else -> StaticRunSurfaceBinding(placeholder(state.title, state.statusLabel))
@@ -855,6 +863,7 @@ class CardRunActivity : AppCompatActivity() {
         agentSurfaceBinding = null
         currentTarget = null
         currentState = null
+        currentChildren = emptyList()
         pendingCloseInstanceId = null
         pendingCloseGeneration = null
     }

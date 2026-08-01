@@ -163,7 +163,38 @@ class OpenCodeAgentConfigAdapterTest {
     }
 
     @Test
-    fun keepsOfficialDefaultPermissionProfilesSeparateFromCurrentSessionControl() = runTest {
+    fun backfillDiscoversSkillAndMcpAddedAfterInitialRead() = runTest {
+        val config = File(configDir, "opencode.jsonc").apply { writeText("{}") }
+        val initial = (adapter.readLive(AGENT_ID) as AgentConfigReadResult.Ready).snapshot
+        assertTrue(initial.skills.none { it.id == "late-opencode" })
+        assertTrue(initial.mcpServers.none { it.id == "late-opencode" })
+
+        config.writeText(
+            """
+                {
+                  "mcp": {
+                    "late-opencode": {
+                      "type": "local",
+                      "command": ["demo", "serve"],
+                      "enabled": true
+                    }
+                  }
+                }
+            """.trimIndent(),
+        )
+        File(configDir, "skills/late-opencode/SKILL.md").apply {
+            parentFile?.mkdirs()
+            writeText("---\nname: late-opencode\ntitle: Late OpenCode skill\n---\nLate.")
+        }
+
+        val refreshed = (adapter.backfill(AGENT_ID) as AgentConfigReadResult.Ready).snapshot
+
+        assertTrue(refreshed.skills.any { it.id == "late-opencode" })
+        assertTrue(refreshed.mcpServers.any { it.id == "late-opencode" })
+    }
+
+    @Test
+    fun usesTheSameOfficialPermissionCatalogForDefaultsAndCurrentSession() = runTest {
         File(configDir, "opencode.jsonc").writeText("{}")
 
         val snapshot = (adapter.readLive(AGENT_ID) as AgentConfigReadResult.Ready).snapshot
@@ -175,11 +206,11 @@ class OpenCodeAgentConfigAdapterTest {
         assertEquals(SESSION_PERMISSION_CONFIG_ID, option.id)
         assertEquals(AgentConfigCategory.Permission, option.category)
         assertEquals(
-            listOf("kite.permission.restricted", "kite.permission.approval", "kite.permission.full"),
+            snapshot.permissionProfiles.map { it.id },
             option.choices.map { it.value },
         )
         assertEquals(listOf("受限", "审批", "完全"), option.choices.map { it.name })
-        assertEquals("kite.permission.approval", option.currentValue)
+        assertEquals("ask", option.currentValue)
         assertTrue(option.description?.contains("只影响当前会话") == true)
     }
 

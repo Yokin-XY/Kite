@@ -310,6 +310,7 @@ class AndroidAgentRecipeRuntimeTest {
         assertEquals("none", selected.fallbackReason)
         assertEquals(listOf("/host/node", "openclaw", "acp"), selected.process.command)
         assertEquals("private", selected.process.environment["OPENCLAW_GATEWAY_TOKEN"])
+        assertEquals("/workspace", selected.process.workingDirectory)
     }
 
     @Test
@@ -329,6 +330,7 @@ class AndroidAgentRecipeRuntimeTest {
         assertEquals(listOf("openclaw", "acp"), selected.process.command)
         assertEquals("private", selected.process.environment["OPENCLAW_GATEWAY_TOKEN"])
         assertEquals("/usr/bin", selected.process.environment["PATH"])
+        assertEquals(null, selected.process.workingDirectory)
     }
 
     private fun container(): ContainerRecord = ContainerRecord(

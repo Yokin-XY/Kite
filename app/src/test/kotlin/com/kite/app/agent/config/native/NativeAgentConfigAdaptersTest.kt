@@ -133,6 +133,89 @@ class NativeAgentConfigAdaptersTest {
     }
 
     @Test
+    fun backfillDiscoversSkillsAndMcpAddedAfterInitialReadForEveryNativeAdapter() = runTest {
+        val kimiMcp = nativeFile("root/.kimi-code/mcp.json").apply { writeText("{}") }
+        val mimoConfig = nativeFile("root/.config/mimocode/mimocode.jsonc").apply { writeText("{}") }
+        val openClawConfig = nativeFile("root/.openclaw/openclaw.json").apply { writeText("{}") }
+        nativeFile("root/.claude/settings.json").writeText("{}")
+        val claudeState = nativeFile("root/.claude.json").apply { writeText("{}") }
+        val codexConfig = nativeFile("root/.codex/config.toml").apply { writeText("") }
+        val hermesConfig = nativeFile("workspace/.kf/software/kite.hermes.core/home/config.yaml")
+            .apply { writeText("") }
+        val cases = listOf(
+            Triple("kimi", KimiCodeAgentConfigAdapter(context, ::container), "late-kimi"),
+            Triple("mimo", MiMoCodeAgentConfigAdapter(context, ::container), "late-mimo"),
+            Triple("openclaw", OpenClawAgentConfigAdapter(context, ::container), "late-openclaw"),
+            Triple("claude-code", ClaudeCodeAgentConfigAdapter(context, ::container), "late-claude"),
+            Triple("codex", CodexAgentConfigAdapter(context, ::container), "late-codex"),
+            Triple("hermes", HermesAgentConfigAdapter(context, ::container), "late-hermes"),
+        )
+
+        cases.forEach { (agentId, adapter, marker) ->
+            val initial = (adapter.readLive(agentId) as AgentConfigReadResult.Ready).snapshot
+            assertTrue("$agentId 初次读取不应预先出现测试 Skill", initial.skills.none { it.id == marker })
+            assertTrue("$agentId 初次读取不应预先出现测试 MCP", initial.mcpServers.none { it.id == marker })
+        }
+
+        kimiMcp.writeText(
+            """{"mcpServers":{"late-kimi":{"command":"demo","args":["serve"]}}}""",
+        )
+        nativeFile("root/.kimi-code/skills/late-kimi/SKILL.md").writeText(
+            "---\nname: late-kimi\ndescription: Late Kimi skill\n---\nLate.",
+        )
+
+        mimoConfig.writeText(
+            """{"mcp":{"late-mimo":{"type":"local","command":["demo","serve"]}}}""",
+        )
+        nativeFile("root/.config/mimocode/skills/late-mimo/SKILL.md").writeText(
+            "---\nname: late-mimo\ndescription: Late MiMo skill\n---\nLate.",
+        )
+
+        openClawConfig.writeText(
+            """{mcp:{servers:{"late-openclaw":{command:"demo",args:["serve"]}}}}""",
+        )
+        nativeFile("root/.openclaw/skills/late-openclaw/SKILL.md").writeText(
+            "---\nname: late-openclaw\ndescription: Late OpenClaw skill\n---\nLate.",
+        )
+
+        claudeState.writeText(
+            """{"mcpServers":{"late-claude":{"type":"stdio","command":"demo","args":["serve"]}}}""",
+        )
+        nativeFile("root/.claude/skills/late-claude/SKILL.md").writeText(
+            "---\nname: late-claude\ndescription: Late Claude skill\n---\nLate.",
+        )
+
+        codexConfig.writeText(
+            """
+                [mcp_servers.late-codex]
+                command = "demo"
+                args = ["serve"]
+            """.trimIndent(),
+        )
+        nativeFile("root/.agents/skills/late-codex/SKILL.md").writeText(
+            "---\nname: late-codex\ndescription: Late Codex skill\n---\nLate.",
+        )
+
+        hermesConfig.writeText(
+            """
+                mcp_servers:
+                  late-hermes:
+                    command: demo
+                    args: [serve]
+            """.trimIndent(),
+        )
+        nativeFile("workspace/.kf/software/kite.hermes.core/home/skills/late-hermes/SKILL.md").writeText(
+            "---\nname: late-hermes\ndescription: Late Hermes skill\n---\nLate.",
+        )
+
+        cases.forEach { (agentId, adapter, marker) ->
+            val refreshed = (adapter.backfill(agentId) as AgentConfigReadResult.Ready).snapshot
+            assertTrue("$agentId 应在再次读取后发现新 Skill", refreshed.skills.any { it.id == marker })
+            assertTrue("$agentId 应在再次读取后发现新 MCP", refreshed.mcpServers.any { it.id == marker })
+        }
+    }
+
+    @Test
     fun openClawDoesNotFallBackWhenWorkspaceConfigIsMalformed() = runTest {
         nativeFile("root/.openclaw/openclaw.json").writeText("{ agents:")
         val adapter = OpenClawAgentConfigAdapter(context, ::container)
@@ -733,9 +816,9 @@ class NativeAgentConfigAdaptersTest {
         val option = adapter.readSessionConfiguration("hermes").single() as AgentConfigOption.Select
         assertEquals(SESSION_PERMISSION_CONFIG_ID, option.id)
         assertEquals(AgentConfigCategory.Permission, option.category)
-        assertEquals("kite.permission.approval", option.currentValue)
-        assertEquals(listOf("kite.permission.approval", "kite.permission.full"), option.choices.map { it.value })
-        assertEquals(listOf("审批", "完全"), option.choices.map { it.name })
+        assertEquals("manual", option.currentValue)
+        assertEquals(before.permissionProfiles.map { it.id }, option.choices.map { it.value })
+        assertEquals(listOf("审批", "智能", "完全"), option.choices.map { it.name })
 
         val applied = adapter.apply(AgentConfigApplyRequest(
             agentId = "hermes",
@@ -782,7 +865,7 @@ class NativeAgentConfigAdaptersTest {
         assertEquals("zhipu/glm-5", model.currentValue)
         assertEquals(listOf("zhipu/glm-5", "zhipu/glm-5-code"), model.choices.map { it.value })
         assertEquals(listOf("zhipu", "zhipu"), model.choices.map { it.groupId })
-        assertEquals("kite.permission.approval", permission.currentValue)
+        assertEquals("smart", permission.currentValue)
 
         val applied = adapter.applySessionConfiguration(
             agentId = "hermes",
@@ -796,7 +879,7 @@ class NativeAgentConfigAdaptersTest {
         val afterPermission = applied.options.filterIsInstance<AgentConfigOption.Select>()
             .single { it.category == AgentConfigCategory.Permission }
         assertEquals("zhipu/glm-5-code", afterModel.currentValue)
-        assertEquals("kite.permission.approval", afterPermission.currentValue)
+        assertEquals("smart", afterPermission.currentValue)
         val text = file.readText()
         assertTrue(Regex("provider:\\s*['\"]?zhipu['\"]?").containsMatchIn(text))
         assertTrue(Regex("default:\\s*['\"]?glm-5-code['\"]?").containsMatchIn(text))
@@ -804,7 +887,7 @@ class NativeAgentConfigAdaptersTest {
     }
 
     @Test
-    fun hermesUsesApprovalAsSafeCurrentSessionControlDefault() = runTest {
+    fun hermesUsesItsNativeDefaultAsCurrentSessionControlDefault() = runTest {
         nativeFile("workspace/.kf/software/kite.hermes.core/home/config.yaml").writeText(
             "agent:\n  max_turns: 77\n",
         )
@@ -812,7 +895,7 @@ class NativeAgentConfigAdaptersTest {
 
         val option = adapter.readSessionConfiguration("hermes").single() as AgentConfigOption.Select
 
-        assertEquals("kite.permission.approval", option.currentValue)
+        assertEquals("smart", option.currentValue)
     }
 
     @Test

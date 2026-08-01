@@ -26,6 +26,7 @@ import com.kite.app.agent.contract.KiteAgentConnection
 import com.kite.app.agent.contract.KiteAgentProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -148,6 +149,44 @@ class AgentSessionConfigurationOverlayProviderTest {
         )
         assertEquals(AgentPermissionOutcome.Cancelled, delegate.requestPermission(permanentOnly))
         assertEquals(2, endpoint.permissionRequests)
+    }
+
+    @Test
+    fun nativePermissionCatalogKeepsOfficialIdsAndDoesNotForgeSmartApproval() {
+        val profiles = listOf(
+            AgentPermissionProfileSummary(
+                id = "manual",
+                displayName = "手动审批",
+                effect = AgentSessionConfigurationEffect.NewSession,
+                level = AgentPermissionLevel.Approval,
+            ),
+            AgentPermissionProfileSummary(
+                id = "smart",
+                displayName = "智能审批",
+                effect = AgentSessionConfigurationEffect.NewSession,
+                level = AgentPermissionLevel.Smart,
+            ),
+            AgentPermissionProfileSummary(
+                id = "off",
+                displayName = "关闭审批",
+                effect = AgentSessionConfigurationEffect.NewSession,
+                level = AgentPermissionLevel.Full,
+            ),
+        )
+        val control = mediatedSessionPermissionControl(
+            profiles = profiles,
+            handlingByProfileId = mapOf(
+                "manual" to AgentSessionPermissionHandling.AskUser,
+                "smart" to AgentSessionPermissionHandling.PreserveAgentDecision,
+                "off" to AgentSessionPermissionHandling.AllowRequest,
+            ),
+            initialProfileId = "smart",
+        )
+
+        assertEquals(listOf("manual", "smart", "off"), control.profiles.map { it.id })
+        assertEquals(listOf("审批", "智能", "完全"), control.option().choices.map { it.name })
+        assertEquals("smart", control.option().currentValue)
+        assertNull(control.resolve("smart", permissionRequest("session-1")))
     }
 
     private suspend fun connect(

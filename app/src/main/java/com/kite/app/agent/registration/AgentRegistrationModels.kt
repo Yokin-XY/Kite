@@ -49,7 +49,27 @@ data class AgentRegistration(
     /** 指向进程内配置适配器；不包含配置内容、路径或密钥。 */
     val configAdapterId: String? = null,
     /** 指向进程内会话管理适配器；不包含会话或运行状态。 */
-    val sessionAdapterId: String? = null
+    val sessionAdapterId: String? = null,
+    /** Agent 自己拥有的官方账号入口；这里只保存动作合同，不保存凭据。 */
+    val officialAccounts: List<AgentOfficialAccountSpec> = emptyList(),
+)
+
+data class AgentOfficialAccountSpec(
+    val id: String,
+    val displayName: String,
+    val modelGroupIds: List<String> = emptyList(),
+    /** Agent 未提供稳定外部状态命令时为空；Kite 不通过读取凭据文件猜测登录态。 */
+    val status: AgentOfficialAccountCommand? = null,
+    val login: AgentOfficialAccountCommand,
+    val logout: AgentOfficialAccountCommand? = null,
+)
+
+data class AgentOfficialAccountCommand(
+    val argv: List<String>,
+    val loggedInPatterns: List<String> = emptyList(),
+    val loggedOutPatterns: List<String> = emptyList(),
+    val successPatterns: List<String> = emptyList(),
+    val timeoutMs: Long = 30_000L,
 )
 
 enum class AgentInstallationStatus {
@@ -121,6 +141,13 @@ object AgentRegistrationPolicy {
         }
         registration.sessionAdapterId?.let { adapterId ->
             if (!stableId.matches(adapterId)) return "sessionAdapterId 格式无效：$adapterId"
+        }
+        registration.officialAccounts.forEach { account ->
+            if (!stableId.matches(account.id)) return "官方账号 ID 格式无效：${account.id}"
+            if (account.displayName.isBlank()) return "官方账号显示名称不能为空"
+            if (account.login.argv.isEmpty()) {
+                return "官方账号必须声明登录命令"
+            }
         }
         return when (val launch = registration.launch) {
             is AgentLaunchSpec.Managed -> if (launch.argv.isEmpty() || launch.argv.any(String::isBlank)) {
