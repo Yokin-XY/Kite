@@ -6853,22 +6853,6 @@ internal class RunAgentSurfaceBinding(
                     label = "归档当前会话",
                     enabled = !providerId.isNullOrBlank() && !sessionId.isNullOrBlank(),
                     onClick = ::archiveCurrentSession
-                ),
-                UiMenuItem(
-                    label = "Agent 设置",
-                    onClick = { showAgentSettings(returnToDrawer = false) }
-                ),
-                UiMenuItem(label = "新建会话", onClick = { createNewSession() }),
-                UiMenuItem(label = "在其他工作区新建会话", onClick = ::showNewWorkspaceSession),
-                UiMenuItem(
-                    label = "分支当前会话",
-                    enabled = AgentRuntimeRegistry.session(instanceId)?.capabilities?.sessions?.fork == true,
-                    onClick = ::forkCurrentSession
-                ),
-                UiMenuItem(
-                    label = "关闭 Agent 实例",
-                    role = UiActionRole.Danger,
-                    onClick = onCloseInstance
                 )
             )
         )
