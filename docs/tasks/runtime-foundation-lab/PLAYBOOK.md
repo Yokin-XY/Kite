@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF1800` 进行中
-- 当前任务：`RF1840` go/no-go 与父任务门
+- 当前阶段：`RF1900` 下一候选审计
+- 当前任务：`RF1910` 重新筛选高复用候选
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 冻结锚点：`8c046238b3c59094becc8f46df9857169a733649`
 - 分支：`codex/runtime-foundation-lab`
@@ -1006,11 +1006,11 @@
 
 #### RF1840 go/no-go 与父任务门
 
-- [ ] 固定矩阵和真实包三轮全部通过 RF1820 预设正确性、收益与清理门；
-- [ ] OnePlus 8T 真实生产首次准备链覆盖 6 个正式资源、1 条正式依赖和最多 2 个活动安装，结果登记与串行基线等价；
-- [ ] Targeted、Quick、Stage、Debug 构建、FATAL/ANR 和生产范围审查通过；
-- [ ] RF1800 父门唯一一次 Full 零失败后才能 production go；
-- [ ] AI 会话、普通资源安装事务、资源清单、UI、PRoot View、魅族、main/其他工作树、远端、版本和发布保持不动。
+- [x] 固定矩阵和真实包三轮全部通过 RF1820 预设正确性、收益与清理门；生产调度复验最小减少 67.7%/42,749ms，候选 p95 21,008ms；
+- [x] OnePlus 8T 真实生产入口读取 6 个正式资源和 1 条正式依赖，运行前后 Store 均 settled，最终 `SUCCEEDED/exitCode=0/failed=0`；正式资源已就绪时走原复用链，未为制造首次安装清空用户数据；
+- [x] Targeted 16 tests、Quick 266 tests、Stage 278 tests、Debug 构建、固定夹具/进程清理、FATAL/ANR 和生产范围审查通过；
+- [x] RF1800 父门唯一一次 Full 为 289 suites、1503 tests、零失败/零错误、3 个既有平台跳过，production go；
+- [x] AI 会话、普通资源安装事务、资源清单、UI、PRoot View、魅族、main/其他工作树、远端、版本和发布保持不动。
 
 ## 每个叶子任务的固定闭环
 

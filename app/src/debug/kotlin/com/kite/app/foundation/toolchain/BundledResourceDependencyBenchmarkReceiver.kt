@@ -24,9 +24,11 @@ import org.json.JSONObject
 /** Debug-only 真实内置包矩阵；ADB 只能触发，不能覆盖任务、依赖、路径、轮数、槽位或阈值。 */
 class BundledResourceDependencyBenchmarkReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action != ACTION) return
+        val action = intent?.action?.takeIf { it == ACTION || it == PRODUCTION_PROOF_ACTION } ?: return
         runCatching {
-            context.startService(Intent(context, BundledResourceDependencyBenchmarkService::class.java))
+            context.startService(
+                Intent(context, BundledResourceDependencyBenchmarkService::class.java).setAction(action)
+            )
         }.onFailure { error ->
             Log.e(LOG_TAG, "status=rejected requiresForeground=true reason=${safe(error.message)}")
         }
@@ -34,6 +36,7 @@ class BundledResourceDependencyBenchmarkReceiver : BroadcastReceiver() {
 
     internal companion object {
         const val ACTION = "com.kite.app.debug.BUNDLED_RESOURCE_DEPENDENCY_BENCHMARK"
+        const val PRODUCTION_PROOF_ACTION = "com.kite.app.debug.BUNDLED_RESOURCE_PRODUCTION_PROOF"
         const val LOG_TAG = "KiteBundledDependency"
 
         fun safe(value: String?): String = value.orEmpty().take(220).map { character ->
@@ -47,9 +50,17 @@ class BundledResourceDependencyBenchmarkService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!running.compareAndSet(false, true)) return START_NOT_STICKY
+        val action = intent?.action
         scope.launch {
             try {
-                BundledResourceDependencyBenchmark.run(applicationContext).forEach { report ->
+                val reports = when (action) {
+                    BundledResourceDependencyBenchmarkReceiver.ACTION ->
+                        BundledResourceDependencyBenchmark.run(applicationContext)
+                    BundledResourceDependencyBenchmarkReceiver.PRODUCTION_PROOF_ACTION ->
+                        BundledResourceProductionProof.run(applicationContext)
+                    else -> listOf("status=rejected reason=unknown_action")
+                }
+                reports.forEach { report ->
                     Log.i(BundledResourceDependencyBenchmarkReceiver.LOG_TAG, report)
                 }
             } catch (error: Throwable) {
@@ -69,6 +80,31 @@ class BundledResourceDependencyBenchmarkService : Service() {
     private companion object {
         val running = AtomicBoolean(false)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
+}
+
+private object BundledResourceProductionProof {
+    fun run(context: Context): List<String> {
+        val contracts = ToolchainPackInstaller.bootstrapResourceSchedulingContracts()
+        val beforeSettled = ToolchainPackInstaller.bootstrapResourcesSettled(context)
+        val startedAt = SystemClock.elapsedRealtimeNanos()
+        val state = ToolchainPackInstaller.prepareAiEnvForBootstrap(context)
+        val durationMs = (SystemClock.elapsedRealtimeNanos() - startedAt) / 1_000_000L
+        val afterSettled = ToolchainPackInstaller.bootstrapResourcesSettled(context)
+        val correctnessGate = contracts.size == 6 &&
+            contracts.sumOf { it.dependencies.size } == 1 &&
+            state.phase == ToolchainInstallPhase.SUCCEEDED &&
+            state.exitCode == 0 &&
+            state.summary == "SUMMARY resources=6 failed=0" &&
+            afterSettled
+        return listOf(
+            "status=production_proof suite=rf1840_bundled_resource_production " +
+                "resources=${contracts.size} dependencies=${contracts.sumOf { it.dependencies.size }} " +
+                "beforeSettled=$beforeSettled afterSettled=$afterSettled phase=${state.phase.name.lowercase()} " +
+                "exitCode=${state.exitCode} timedOut=${state.timedOut} durationMs=$durationMs " +
+                "summary=${BundledResourceDependencyBenchmarkReceiver.safe(state.summary)} " +
+                "correctnessGate=$correctnessGate adbOverrides=false",
+        )
     }
 }
 

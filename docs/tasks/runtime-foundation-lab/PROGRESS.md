@@ -102,11 +102,11 @@
 | RF1720 | 已完成 | 固定矩阵三轮零差异，最小收益 58.4%，候选 p95 380ms，判 go |
 | RF1730 | 已完成 | 进程前预检、生产 3/1 调度、顺序与分层测试均通过 |
 | RF1740 | 已完成 | OnePlus 真实双车道批量链与 Full 1497 tests 通过 |
-| RF1800 | 进行中 | 真实包最小收益 68.9%，已进入最小生产调度样板 |
+| RF1800 | 已完成 | 首次内置 6 资源生产依赖调度放行；最小减少 67.7%/42,749ms，Full 1503 tests |
 | RF1810 | 已完成 | 44,411ms 真实串行基线与 6 资源依赖图已审计，发布门已冻结 |
 | RF1820 | 已完成 | 真实内置包三轮零差异，最小减少 68.9%/38,320ms，判 go |
 | RF1830 | 已完成 | 生产 6 资源依赖调度已接入；真包三轮最小减少 67.7%/42,749ms |
-| RF1840 | 待开始 | 真实生产链与父门唯一 Full |
+| RF1840 | 已完成 | 真实生产复用/登记链和父门唯一 Full 通过，production go |
 
 ## RF1800 开机与三问自检
 
@@ -136,6 +136,13 @@
 - 每项继续调用原 `BootstrapInstallRunner`、原安装脚本参数和原资源根；执行异常或依赖阻断的任务通过原 `ToolchainResourcePort` 登记失败，不新增 Store。结果继续按输入顺序生成失败列表、timeout 和最终摘要，`RuntimeBootstrapProgress` 仍是唯一启动进度拥有者。
 - Debug 固定矩阵已读取生产调度合同并标记 `providerSource=production_scheduler`。OnePlus 三轮串行 `63,182/64,940/62,200ms`，生产调度 `20,433/21,008/18,303ms`，减少 `67.7%/67.7%/70.6%`，绝对至少减少 `42,749ms`；`differences=0`、6 项全成功、1 条依赖、最大活动数 2、性能/正确性/清理门全部通过。
 - Targeted 16 tests、Quick 57 suites/266 tests、Stage 58 suites/278 tests 与 Debug 构建均零失败；固定临时目录不存在、矩阵服务已停止、Kite 进程存活，FATAL/ANR 为 0。补丁没有触及 UI、普通资源事务、PRoot View 或 AI 会话，RF1830 完成并进入 RF1840。
+
+## RF1840 go/no-go 与父任务门
+
+- OnePlus 真实生产证明直接调用 `prepareAiEnvForBootstrap()`：正式合同为 6 个资源、1 条依赖，运行前后 `bootstrapResourcesSettled=true`，结果为 `phase=succeeded`、`exitCode=0`、`timedOut=false`、`SUMMARY resources=6 failed=0`，生产链耗时 2,301ms。设备已有工具链完整，因此按原文件校验复用并登记；没有清空应用数据或正式资源目录来伪造首次安装。
+- 首次真实包安装的性能和最大活动数继续由隔离但使用同 APK 包/生产调度合同的三轮矩阵证明：候选 18,303～21,008ms，最小减少 67.7% 和 42,749ms，零差异、最大活动数 2、夹具和进程无残留。
+- RF1800 唯一 Full 为 289 suites、1503 tests、0 failures、0 errors、3 个既有平台跳过；当前 Kite 进程存活，Debug 证明服务已退出，FATAL/ANR 为 0。正式架构只记录首次内置工具链的局部依赖调度，不把结论外推到任意资源安装或任意 shell。
+- RF1800 判 production go。用户可感知收益是新装或需要补齐底层工具链时，6 份资源不再无条件排队；已完整安装的日常启动只走约 2.3 秒真实复用/登记链，不宣称每次启动都减少 40 秒。
 
 ## RF1700 开机与三问自检
 

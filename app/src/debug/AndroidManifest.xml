@@ -204,6 +204,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.kite.app.debug.BUNDLED_RESOURCE_DEPENDENCY_BENCHMARK" />
+                <action android:name="com.kite.app.debug.BUNDLED_RESOURCE_PRODUCTION_PROOF" />
             </intent-filter>
         </receiver>
         <service

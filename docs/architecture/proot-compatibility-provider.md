@@ -15,6 +15,7 @@ Provider 化不是替换或重写现有 PRoot，而是让终端、资源、Agent
 - `ProotJobAdmissionController` 已支持任务 lane、优先级、共享写屏障和压力收缩；
 - `kf-runner --server` 与 `WarmProotRunnerPool` 已具备 stdio、退出、信号、取消、timeout 和身份失效；
 - 正式温热池接线目前只覆盖固定维护任务，不能宣称任意用户 shell 已进入统一调度。
+- 首次内置工具链准备已按 6 个结构化资源任务和显式依赖做最多 2 槽调度；系统工具只在 Node 成功后释放，失败只阻断后继，结果仍写回原资源 Store 并按输入顺序归并。
 
 ## 准入覆盖矩阵
 
@@ -24,6 +25,7 @@ Provider 化不是替换或重写现有 PRoot，而是让终端、资源、Agent
 | --- | --- | --- |
 | 固定资源采样 | 已接入 | 有稳定 owner、结构化 argv、共享写属性、20 秒 timeout 和有界 stdio 结果 |
 | 容器进程表查询 | 已接入 | 内部固定只读 argv、稳定 owner、12 秒 timeout 和 1 MiB/流上限；信号操作不共用此入口 |
+| 首次内置工具链准备 | 局部有界调度 | 固定 6 资源和 1 条显式依赖已通过真包门；仍沿原独立 PRoot 安装函数，不外推为任意资源或任意 shell 的 warm 准入 |
 | 普通交互终端 | 未接入 | 生命周期由终端会话持有，任意命令的读写属性不可预判 |
 | Recipe 任意 shell | 未接入 | shell 可包含未知副作用，不能猜成只读或安全重放 |
 | Agent 与长期服务 | 未接入 | 需要让 lease 与受管 owner 同寿命，不能只包住进程创建瞬间 |
