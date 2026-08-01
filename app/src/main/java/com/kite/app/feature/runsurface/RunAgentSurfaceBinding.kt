@@ -2112,20 +2112,122 @@ internal class RunAgentSurfaceBinding(
             addView(selectAll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(44)))
             addView(selectedCount, LinearLayout.LayoutParams(0, ui.dp(44), 1f))
         }
-        val restoreSelected = actionOutlineButton("恢复") {
+        fun showBatchRestoreConfirmation() {
             val selectedIds = selectedSessionIds()
-            val restoring = archivedSessions.filter { it.id in selectedIds }
-            if (restoring.isEmpty()) return@actionOutlineButton
-            restoring.forEach { sessionMetadataStore.restore(targetProviderId, it.id) }
-            Toast.makeText(context, "已恢复 ${restoring.size} 个会话", Toast.LENGTH_SHORT).show()
-            selectedKeys.clear()
-            refreshArchivedContent()
+            val sessions = archivedSessions.filter { it.id in selectedIds }
+            val projects = archivedProjects.filter { it.cwd in selectedProjectCwds() }
+            val restorableCount = sessions.size + projects.size
+            if (restorableCount == 0) return
+            val skippedCount = selectedIds.count { id ->
+                unavailableArchivedSessions.any { it.sessionId == id }
+            }
+            showAgentDialogCard(
+                title = "恢复所选内容？",
+                message = buildString {
+                    append("$restorableCount 项将回到列表。")
+                    if (skippedCount > 0) append(" $skippedCount 条不可恢复记录会保留。")
+                },
+                actions = listOf(
+                    AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
+                    AgentDialogAction(
+                        label = "恢复",
+                        role = UiActionRole.Primary,
+                        filledPrimary = true,
+                    ) { dialog, _ ->
+                        sessions.forEach { sessionMetadataStore.restore(targetProviderId, it.id) }
+                        projects.forEach { projectStore.restore(targetAgentId, it.cwd) }
+                        dialog.dismiss()
+                        editMode = false
+                        selectedKeys.clear()
+                        refreshArchivedContent()
+                        Toast.makeText(context, "已恢复 $restorableCount 项", Toast.LENGTH_SHORT).show()
+                    },
+                ),
+            )
+        }
+        fun showBatchDeleteConfirmation() {
+            val selectedIds = selectedSessionIds()
+            val sessions = archivedSessions.filter { it.id in selectedIds }
+            val unavailable = unavailableArchivedSessions.filter { it.sessionId in selectedIds }
+            val projects = archivedProjects.filter { it.cwd in selectedProjectCwds() }
+            val count = sessions.size + unavailable.size + projects.size
+            if (count == 0) return
+            showAgentDialogCard(
+                title = "删除所选内容？",
+                message = "会话将从 Agent 永久删除；项目和失效记录只从 Kite 移除。",
+                actions = listOf(
+                    AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
+                    AgentDialogAction("删除", UiActionRole.Danger) { dialog, button ->
+                        button.isEnabled = false
+                        button.alpha = 0.48f
+                        button.text = "删除中…"
+                        lifecycleOwner.lifecycleScope.launch {
+                            val runtime = AgentRuntimeRegistry.session(instanceId)
+                            var deleted = 0
+                            val failures = mutableListOf<String>()
+                            suspend fun deleteFromAgent(sessionId: String): Boolean = when (
+                                val result = AgentRuntimeRegistry.deleteSession(instanceId, generation, sessionId)
+                            ) {
+                                is AgentOperationResult.Success -> true
+                                is AgentOperationResult.Unsupported -> {
+                                    failures += "当前 Agent 未提供永久删除"
+                                    false
+                                }
+                                is AgentOperationResult.Failure -> {
+                                    failures += result.message
+                                    false
+                                }
+                            }
+                            sessions.forEach { session ->
+                                if (deleteFromAgent(session.id)) {
+                                    sessionMetadataStore.remove(targetProviderId, session.id)
+                                    deleted++
+                                }
+                            }
+                            unavailable.forEach { metadata ->
+                                val canDeleteNatively =
+                                    metadata.sourceState != AgentArchivedSessionSourceState.Deleted &&
+                                        AgentSurfaceNavigationPolicy.canDeleteUnavailableSessionNatively(
+                                            targetProviderId = targetProviderId,
+                                            runtimeProviderId = runtime?.providerId,
+                                            deleteSupported = runtime?.capabilities?.sessions?.delete == true,
+                                            currentSessionId = runtime?.sessionId,
+                                            targetSessionId = metadata.sessionId,
+                                        )
+                                if (!canDeleteNatively || deleteFromAgent(metadata.sessionId)) {
+                                    sessionMetadataStore.remove(targetProviderId, metadata.sessionId)
+                                    deleted++
+                                }
+                            }
+                            projects.forEach { project ->
+                                if (projectStore.remove(targetAgentId, project.cwd)) deleted++
+                            }
+                            dialog.dismiss()
+                            if (failures.isEmpty()) {
+                                editMode = false
+                                selectedKeys.clear()
+                            }
+                            refreshArchivedContent()
+                            val message = if (failures.isEmpty()) {
+                                "已删除 $deleted 项"
+                            } else {
+                                "已删除 $deleted 项；${failures.distinct().joinToString("；")}"
+                            }
+                            Toast.makeText(
+                                context,
+                                message,
+                                if (failures.isEmpty()) Toast.LENGTH_SHORT else Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    },
+                ),
+            )
+        }
+        val restoreSelected = actionOutlineButton("恢复") {
+            showBatchRestoreConfirmation()
         }
         val deleteSelected = actionDangerButton("删除") {
-            val selectedIds = selectedSessionIds()
-            val deleting = archivedSessions.filter { it.id in selectedIds }
-            if (deleting.isEmpty()) return@actionDangerButton
-            showArchivedDeleteConfirmation(selected, deleting, refreshArchivedContent)
+            showBatchDeleteConfirmation()
         }
         val batchActions = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2153,23 +2255,30 @@ internal class RunAgentSurfaceBinding(
             selectAll.contentDescription = if (allSelected) "取消全选归档内容" else "全选归档内容"
             selectedCount.text = "已选择 ${selectedKeys.size} 项"
             val hasSelection = selectedKeys.isNotEmpty()
-            val hasRestorableSession = archivedSessions.any { it.id in selectedIds }
-            restoreSelected.isEnabled = hasRestorableSession
-            restoreSelected.alpha = if (hasRestorableSession) 1f else 0.38f
+            val hasRestorableContent = archivedSessions.any { it.id in selectedIds } ||
+                archivedProjects.any { it.cwd in selectedProjects }
+            restoreSelected.isEnabled = hasRestorableContent
+            restoreSelected.alpha = if (hasRestorableContent) 1f else 0.38f
             val runtime = AgentRuntimeRegistry.session(instanceId)
-            val canDelete = AgentArchivedSelectionPolicy.canDelete(
-                selectedIds = selectedIds,
-                currentSessionId = runtime?.sessionId,
-                deleteSupported = runtime?.providerId == targetProviderId &&
-                    runtime.capabilities.sessions.delete
-            )
+            val selectedReadableIds = archivedSessions
+                .filter { it.id in selectedIds }
+                .mapTo(linkedSetOf(), AgentSessionSummary::id)
+            val canDeleteReadableSessions = selectedReadableIds.isEmpty() ||
+                AgentArchivedSelectionPolicy.canDelete(
+                    selectedIds = selectedReadableIds,
+                    currentSessionId = runtime?.sessionId,
+                    deleteSupported = runtime?.providerId == targetProviderId &&
+                        runtime.capabilities.sessions.delete,
+                )
+            val canDelete = hasSelection && canDeleteReadableSessions
             deleteSelected.isEnabled = canDelete
             deleteSelected.alpha = if (canDelete) 1f else 0.38f
             deleteSelected.contentDescription = when {
                 !hasSelection -> "删除归档会话，请先选择"
-                runtime?.capabilities?.sessions?.delete != true -> "当前 Agent 不支持永久删除"
-                runtime.sessionId in selectedIds -> "当前窗口使用中的会话不能永久删除"
-                else -> "永久删除选中的 ${selectedIds.size} 个会话"
+                !canDeleteReadableSessions && runtime?.sessionId in selectedReadableIds ->
+                    "当前窗口使用中的会话不能永久删除"
+                !canDeleteReadableSessions -> "当前 Agent 不支持永久删除所选会话"
+                else -> "删除选中的 ${selectedKeys.size} 项"
             }
         }
         renderArchiveState = {
@@ -2236,22 +2345,29 @@ internal class RunAgentSurfaceBinding(
         ))
         navigationHost.visibility = View.VISIBLE
 
-        val runtime = AgentRuntimeRegistry.session(instanceId)
-        if (runtime == null || runtime.providerId != targetProviderId) {
-            sessionStatusMessage = "已显示归档项目；打开该 Agent 后可读取归档会话"
-            renderArchivedRows()
-            renderArchiveState()
-            return
-        }
-        if (!runtime.capabilities.sessions.list) {
-            sessionStatusMessage = "当前 Agent 未提供会话列表；项目仍可恢复"
-            renderArchivedRows()
-            renderArchiveState()
-            return
-        }
-        refreshArchivedContent = {
+        refreshArchivedContent = refresh@{
             navigationJob?.cancel()
             archivedProjects = projectStore.archivedProjects(targetAgentId)
+            val archivedIds = sessionMetadataStore.archivedSessionIds(targetProviderId)
+            archivedSessions = archivedSessions.filter { it.id in archivedIds }
+            val availableIds = archivedSessions.mapTo(linkedSetOf(), AgentSessionSummary::id)
+            unavailableArchivedSessions = sessionMetadataStore
+                .archivedSessions(targetProviderId)
+                .filterNot { it.sessionId in availableIds }
+                .sortedBy(AgentArchivedSessionMetadata::sessionId)
+            val runtime = AgentRuntimeRegistry.session(instanceId)
+            if (runtime == null || runtime.providerId != targetProviderId) {
+                sessionStatusMessage = "打开当前 Agent 后可确认源会话状态"
+                renderArchivedRows()
+                renderArchiveState()
+                return@refresh
+            }
+            if (!runtime.capabilities.sessions.list) {
+                sessionStatusMessage = "当前 Agent 未提供会话列表；项目仍可管理"
+                renderArchivedRows()
+                renderArchiveState()
+                return@refresh
+            }
             sessionStatusMessage = "正在读取已归档会话…"
             renderArchivedRows()
             renderArchiveState()

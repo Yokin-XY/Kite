@@ -118,6 +118,19 @@ class AgentProjectStore(context: Context) {
         true
     }
 
+    /** 只删除 Kite 拥有的项目列表元数据，不触碰工作目录或其中的文件。 */
+    fun remove(agentId: String, cwd: String): Boolean = synchronized(LOCK) {
+        val normalizedAgentId = agentId.trim()
+        val normalizedCwd = KiteStorageContract.normalizeWorkspacePath(cwd)
+        if (normalizedAgentId.isBlank() || normalizedCwd == null) return@synchronized false
+        val projects = readProjects().toMutableList()
+        val removed = projects.removeAll {
+            it.agentId == normalizedAgentId && it.cwd == normalizedCwd
+        }
+        if (removed) writeProjects(projects)
+        removed
+    }
+
     internal fun resetForTest() {
         synchronized(LOCK) { preferences.edit().clear().commit() }
     }

@@ -77,6 +77,15 @@ class AgentProjectStoreTest {
     }
 
     @Test
+    fun `removing archived project only removes Kite metadata`() {
+        store.archive("opencode", "临时项目", "/workspace/derived", nowMillis = 24L)
+
+        assertTrue(store.remove("opencode", "/workspace/derived"))
+        assertTrue(store.archivedProjects("opencode").isEmpty())
+        assertTrue(store.projects("opencode").isEmpty())
+    }
+
+    @Test
     fun `project rejects Android directories workspace root and duplicate names`() {
         assertTrue(
             store.save("opencode", "手机文件", "/storage/emulated/0/Documents")
