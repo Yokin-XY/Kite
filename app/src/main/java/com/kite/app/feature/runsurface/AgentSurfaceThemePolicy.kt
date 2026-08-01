@@ -84,7 +84,7 @@ internal object AgentArchivedSelectionPolicy {
 internal object AgentSelectionVisualPolicy {
     const val INDICATOR_SIZE_DP = 18
     const val TOUCH_TARGET_DP = 44
-    const val CHECKED_DOT_SIZE_DP = 10
+    const val CHECKED_DOT_SIZE_DP = 12
     const val PARTIAL_DOT_SIZE_DP = 6
     const val ACTION_HEIGHT_DP = 48
     const val ACTION_RADIUS_DP = 16

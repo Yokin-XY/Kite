@@ -10,9 +10,7 @@ import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.Drawable
 import android.graphics.drawable.InsetDrawable
-import android.graphics.drawable.LayerDrawable
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.text.Editable
@@ -154,38 +152,37 @@ internal fun renderArchivedSelectionIndicator(
     val outerInset = ui.dp(
         (AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_SIZE_DP) / 2,
     )
-    val layers = mutableListOf<Drawable>(
-        InsetDrawable(
-            ui.roundedBox(
-                palette.indicatorSurface,
-                palette.unselectedIndicatorStroke,
-                ui.dp(AgentSelectionVisualPolicy.INDICATOR_SIZE_DP / 2).toFloat(),
-                ui.dp(1),
-            ),
-            outerInset,
+    indicator.background = InsetDrawable(
+        ui.roundedBox(
+            palette.indicatorSurface,
+            palette.unselectedIndicatorStroke,
+            ui.dp(AgentSelectionVisualPolicy.INDICATOR_SIZE_DP / 2).toFloat(),
+            ui.dp(1),
         ),
+        outerInset,
     )
     val dotSize = when (state) {
         AgentArchivedProjectSelectionState.Unchecked -> 0
         AgentArchivedProjectSelectionState.Partial -> AgentSelectionVisualPolicy.PARTIAL_DOT_SIZE_DP
         AgentArchivedProjectSelectionState.Checked -> AgentSelectionVisualPolicy.CHECKED_DOT_SIZE_DP
     }
-    if (dotSize > 0) {
+    if (dotSize == 0) {
+        indicator.setImageDrawable(null)
+        indicator.setPadding(0, 0, 0, 0)
+    } else {
         val dotInset = ui.dp((AgentSelectionVisualPolicy.TOUCH_TARGET_DP - dotSize) / 2)
-        layers += InsetDrawable(
+        indicator.setImageDrawable(
             ui.roundedBox(
-                palette.selectedIndicator,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(dotSize / 2).toFloat(),
-                0,
+                fill = palette.selectedIndicator,
+                stroke = android.graphics.Color.TRANSPARENT,
+                radius = ui.dp(dotSize / 2).toFloat(),
+                strokeWidth = 0,
             ),
-            dotInset,
         )
+        indicator.setPadding(dotInset, dotInset, dotInset, dotInset)
     }
-    indicator.setImageDrawable(null)
     indicator.imageTintList = null
-    indicator.setPadding(0, 0, 0, 0)
-    indicator.background = LayerDrawable(layers.toTypedArray())
+    indicator.scaleType = ImageView.ScaleType.FIT_CENTER
     indicator.contentDescription = when (state) {
         AgentArchivedProjectSelectionState.Unchecked -> "未选择"
         AgentArchivedProjectSelectionState.Partial -> "已选择部分"

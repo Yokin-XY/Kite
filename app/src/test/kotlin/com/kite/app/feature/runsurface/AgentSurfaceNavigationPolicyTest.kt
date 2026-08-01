@@ -788,7 +788,7 @@ class AgentSurfaceNavigationPolicyTest {
     fun `归档选择视觉使用 ChatGPT 中性尺寸与颜色`() {
         assertEquals(18, AgentSelectionVisualPolicy.INDICATOR_SIZE_DP)
         assertEquals(44, AgentSelectionVisualPolicy.TOUCH_TARGET_DP)
-        assertEquals(10, AgentSelectionVisualPolicy.CHECKED_DOT_SIZE_DP)
+        assertEquals(12, AgentSelectionVisualPolicy.CHECKED_DOT_SIZE_DP)
         assertEquals(6, AgentSelectionVisualPolicy.PARTIAL_DOT_SIZE_DP)
         assertEquals(48, AgentSelectionVisualPolicy.ACTION_HEIGHT_DP)
 
