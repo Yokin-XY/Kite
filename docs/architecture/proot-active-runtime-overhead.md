@@ -60,3 +60,24 @@ OnePlus 8T 的两套最终矩阵均使用每套独享的 telemetry/registry sink
 - stock 与 active 来源/loader 不同，RF1430 仍须在 PRoot 源码/patch 中定位通用 fast-disable 或事件写入路径，不能直接回退 stock。
 
 RF1430 因两个通用负载跨两套矩阵达到相对与绝对门槛而打开。可改边界仅为默认无 View、无保护事务的低成本跳过，以及不损失事件、强身份和退出确认的 telemetry 实现；产品功能不作为性能开关。
+
+## RF1431 热点拆分结论
+
+固定 Debug 热点矩阵只使用当前 active 和 stock 资产，继续复用正式 argv/env/rootfs/bind。small-write 增加四个 active 对照：关闭 `kf_procfs`、关闭 `mountinfo`、同时关闭、强制 external loader；child-fanout 增加无 registry 的共享 telemetry 与每个 PRoot 独立 telemetry 文件。最终判断使用九轮 wall samples，不以三轮中的调度偶发值决定源码改动。
+
+OnePlus 8T 九轮结果：
+
+| 负载 | 并发 | active no telemetry | stock | 关键对照 |
+| --- | ---: | ---: | ---: | --- |
+| small-write | 4 | 232ms | 140ms | no-procfs 230、no-mountinfo 243、minimal 242、external-loader 238ms |
+| small-write | 8 | 303ms | 199ms | no-procfs 315、no-mountinfo 309、minimal 302、external-loader 320ms |
+| child-fanout | 4 | 123ms | 118ms | telemetry 214、log-only 213、log-sharded 215ms |
+| child-fanout | 8 | 231ms | 235ms | telemetry/log-only/log-sharded 为 232/235/232ms |
+
+结论边界：
+
+- 默认 `kf_procfs`/`mountinfo` 扩展分派与 loader 模式不是 small-write 的稳定主因，不能通过默认关闭功能取得收益；
+- active no-telemetry 的 small-write 差值仍属于 v23 总体 patch/build 差异，只有重建同源候选后才能继续二分；
+- child-fanout 的 4 并发增量不由 active registry 或共享日志争用主导；独立日志仍保留约 90ms，因此热点是 lifecycle 每事件同步采集、格式化与落盘总路径；
+- 8 并发已经落入设备吞吐平台，任何只在 8 并发好看的方案都不能算优化；
+- RF1432 只能优化事件实现，不减少事件、不关闭 telemetry、不弱化强身份与退出确认。候选必须先在 Debug 私有路径与正式资产并行，不能直接覆盖 runtime descriptor。

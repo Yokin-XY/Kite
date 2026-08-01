@@ -16,6 +16,7 @@ class ProotActiveRuntimeBenchmarkContractTest {
         val manifest = File(root, "app/src/debug/AndroidManifest.xml").readText()
 
         assertTrue(source.contains("private const val ROUNDS = 3"))
+        assertTrue(source.contains("private const val HOTSPOT_ROUNDS = 9"))
         assertTrue(source.contains("private val CONCURRENCY_LEVELS = listOf(1, 4, 8)"))
         assertTrue(source.contains("ACTIVE_TELEMETRY"))
         assertTrue(source.contains("ACTIVE_NO_TELEMETRY"))
@@ -28,10 +29,23 @@ class ProotActiveRuntimeBenchmarkContractTest {
         assertTrue(source.contains("PROOT_LOADER_32"))
         assertTrue(source.contains("proot/proot-arm64"))
         assertTrue(source.contains("wallSamplesMs="))
+        assertTrue(source.contains("private val BASE_VARIANTS"))
+        assertTrue(source.contains("ACTIVE_TELEMETRY_LOG_ONLY"))
+        assertTrue(source.contains("ACTIVE_TELEMETRY_LOG_SHARDED"))
+        assertTrue(source.contains("ACTIVE_NO_TELEMETRY_NO_PROCFS"))
+        assertTrue(source.contains("ACTIVE_NO_TELEMETRY_NO_MOUNTINFO"))
+        assertTrue(source.contains("ACTIVE_NO_TELEMETRY_MINIMAL"))
+        assertTrue(source.contains("ACTIVE_NO_TELEMETRY_EXTERNAL_LOADER"))
+        assertTrue(source.contains("PROOT_NO_KF_PROCFS"))
+        assertTrue(source.contains("PROOT_NO_MOUNTINFO"))
+        assertTrue(source.contains("rf1430_proot_active_hotspot"))
+        assertTrue(source.contains("status=rejected suite="))
+        assertTrue(source.contains("requiresForeground=true"))
         assertFalse(source.contains("getStringExtra"))
         assertFalse(source.contains("getIntExtra"))
         assertFalse(source.contains("activeRuntimeId"))
         assertTrue(manifest.contains("com.kite.app.debug.PROOT_ACTIVE_RUNTIME_BENCHMARK"))
+        assertTrue(manifest.contains("com.kite.app.debug.PROOT_ACTIVE_RUNTIME_HOTSPOT"))
         assertTrue(
             Regex(
                 "android:name=\"com\\.kite\\.app\\.foundation\\.runtime\\.ProotActiveRuntimeBenchmarkService\"\\s+" +

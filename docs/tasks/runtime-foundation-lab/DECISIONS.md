@@ -502,3 +502,11 @@
 - 决定：RF1430 打开两个窄热点：默认无 View/保护事务的文件 syscall fast-disable，以及 lifecycle telemetry 在 4 并发 child-fanout 的写入竞争。不得把 stock 设为正式 runtime，也不得通过关闭 telemetry、强身份、保护或 View 消除成本。
 - 原因：两套隔离矩阵中 small-write 的 active 有/无 telemetry 都稳定比 stock 多 89～115ms；child-fanout 4 并发的 telemetry 增量稳定为 98～109ms。与此同时 startup/shell/metadata 与 8 并发 child-fanout 未表现同样差异，说明应定位具体热分支，不应笼统替换整个运行时。
 - 影响：RF1430 必须读真实 Termux PRoot fork/补丁来源，并用同矩阵验证候选。若源码不可复现、收益不稳定或任何事件/文件语义改变，RF1440 维持当前 active 二进制并以 no-go 收口。
+
+## ADR-RF-064 默认扩展与日志竞争不是已观测热点的主因
+
+- 状态：已接受，RF1431 已完成
+- 日期：2026-08-01
+- 决定：不默认关闭 `kf_procfs`、`mountinfo`、active registry 或 lifecycle telemetry，也不通过 external loader 替代 embedded loader。RF1432 只研究同源 lifecycle 每事件实现的无损减费；small-write 在缺少可复现同源二进制前不写猜测补丁。
+- 原因：九轮 small-write 中四种开关均未缩小 active/stock 的 92～104ms 差值；child-fanout 中移除 registry、共享日志乃至每进程独立日志都保留约 90ms telemetry 增量。已观测成本属于更深的 active patch/build 差异与事件同步处理，不属于这些可配置开关。
+- 影响：候选必须保留完整事件 schema、父子与 start-ticks 强身份、退出结果和 active registry。KFShell 现有源码树含用户脏改，不作为可写候选；构建只能从 descriptor 固定的 `d30b988` 与正式 patch 在忽略目录复现，正式资产在 RF1440 前不改变。

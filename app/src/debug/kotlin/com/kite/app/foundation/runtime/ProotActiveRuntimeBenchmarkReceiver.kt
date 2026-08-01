@@ -31,7 +31,11 @@ import kotlinx.coroutines.launch
 class ProotActiveRuntimeBenchmarkReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != ACTION) return
-        context.startService(Intent(context, ProotActiveRuntimeBenchmarkService::class.java))
+        startDebugService(
+            context = context,
+            service = Intent(context, ProotActiveRuntimeBenchmarkService::class.java),
+            suite = "rf1420_proot_active_runtime",
+        )
     }
 
     internal companion object {
@@ -41,6 +45,17 @@ class ProotActiveRuntimeBenchmarkReceiver : BroadcastReceiver() {
         fun safe(value: String): String = value.take(220).map { character ->
             if (character.isLetterOrDigit() || character in "-_.:=/%") character else '_'
         }.joinToString("")
+
+        fun startDebugService(context: Context, service: Intent, suite: String) {
+            runCatching { context.startService(service) }
+                .onFailure { error ->
+                    Log.e(
+                        LOG_TAG,
+                        "status=rejected suite=$suite requiresForeground=true " +
+                            "reason=${safe(error.message ?: error.javaClass.simpleName)}",
+                    )
+                }
+        }
     }
 }
 
@@ -74,16 +89,65 @@ class ProotActiveRuntimeBenchmarkService : Service() {
     }
 }
 
+/** Debug-only RF1430 热点拆分；固定比较默认扩展和 active registry，不接受外部参数。 */
+class ProotActiveRuntimeHotspotReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action != ACTION) return
+        ProotActiveRuntimeBenchmarkReceiver.startDebugService(
+            context = context,
+            service = Intent(context, ProotActiveRuntimeHotspotService::class.java),
+            suite = "rf1430_proot_active_hotspot",
+        )
+    }
+
+    internal companion object {
+        const val ACTION = "com.kite.app.debug.PROOT_ACTIVE_RUNTIME_HOTSPOT"
+    }
+}
+
+class ProotActiveRuntimeHotspotService : Service() {
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!running.compareAndSet(false, true)) return START_NOT_STICKY
+        scope.launch {
+            try {
+                ProotActiveRuntimeBenchmark.runHotspot(applicationContext).forEach { report ->
+                    Log.i(ProotActiveRuntimeBenchmarkReceiver.LOG_TAG, report)
+                }
+            } catch (error: Throwable) {
+                Log.e(
+                    ProotActiveRuntimeBenchmarkReceiver.LOG_TAG,
+                    "status=failed suite=rf1430_proot_active_hotspot " +
+                        "reason=${ProotActiveRuntimeBenchmarkReceiver.safe(error.message ?: error.javaClass.simpleName)}",
+                    error,
+                )
+            } finally {
+                running.set(false)
+                stopSelf()
+            }
+        }
+        return START_NOT_STICKY
+    }
+
+    private companion object {
+        val running = AtomicBoolean(false)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
+}
+
 private object ProotActiveRuntimeBenchmark {
     private const val TOKEN = "KITE_PROOT_RF1420_OK"
     private const val STOCK_ASSET = "proot/proot-arm64"
     private const val ACTIVE_SHA256 = "0A465CE2F5E3DCD80F801EF500478E4932248806EDC86CE5C9B0918D60C604BC"
     private const val STOCK_SHA256 = "125DFF2415AE1DCB8B1AE97C51357DE73EF11F28268B86CD50A0F13AA1C3EA91"
     private const val ROUNDS = 3
+    private const val HOTSPOT_ROUNDS = 9
     private const val PROCESS_TIMEOUT_MS = 30_000L
     private const val FUTURE_TIMEOUT_MS = 40_000L
     private const val OUTPUT_LIMIT = 64L * 1024L
     private val CONCURRENCY_LEVELS = listOf(1, 4, 8)
+    private val HOTSPOT_CONCURRENCY_LEVELS = listOf(4, 8)
     private val TELEMETRY_KEYS = setOf(
         "KF_PROOT_TELEMETRY_MODE",
         "KF_PROOT_TELEMETRY_PATH",
@@ -93,9 +157,38 @@ private object ProotActiveRuntimeBenchmark {
 
     private enum class Variant(val label: String) {
         ACTIVE_TELEMETRY("active_telemetry"),
+        ACTIVE_TELEMETRY_LOG_ONLY("active_telemetry_log_only"),
+        ACTIVE_TELEMETRY_LOG_SHARDED("active_telemetry_log_sharded"),
         ACTIVE_NO_TELEMETRY("active_no_telemetry"),
+        ACTIVE_NO_TELEMETRY_NO_PROCFS("active_no_telemetry_no_procfs"),
+        ACTIVE_NO_TELEMETRY_NO_MOUNTINFO("active_no_telemetry_no_mountinfo"),
+        ACTIVE_NO_TELEMETRY_MINIMAL("active_no_telemetry_minimal"),
+        ACTIVE_NO_TELEMETRY_EXTERNAL_LOADER("active_no_telemetry_external_loader"),
         STOCK_NO_TELEMETRY("stock_no_telemetry"),
     }
+
+    private val BASE_VARIANTS = listOf(
+        Variant.ACTIVE_TELEMETRY,
+        Variant.ACTIVE_NO_TELEMETRY,
+        Variant.STOCK_NO_TELEMETRY,
+    )
+
+    private val SMALL_WRITE_HOTSPOT_VARIANTS = listOf(
+        Variant.ACTIVE_NO_TELEMETRY,
+        Variant.ACTIVE_NO_TELEMETRY_NO_PROCFS,
+        Variant.ACTIVE_NO_TELEMETRY_NO_MOUNTINFO,
+        Variant.ACTIVE_NO_TELEMETRY_MINIMAL,
+        Variant.ACTIVE_NO_TELEMETRY_EXTERNAL_LOADER,
+        Variant.STOCK_NO_TELEMETRY,
+    )
+
+    private val CHILD_FANOUT_HOTSPOT_VARIANTS = listOf(
+        Variant.ACTIVE_TELEMETRY,
+        Variant.ACTIVE_TELEMETRY_LOG_ONLY,
+        Variant.ACTIVE_TELEMETRY_LOG_SHARDED,
+        Variant.ACTIVE_NO_TELEMETRY,
+        Variant.STOCK_NO_TELEMETRY,
+    )
 
     private enum class Workload(val label: String) {
         STARTUP("startup"),
@@ -151,7 +244,7 @@ private object ProotActiveRuntimeBenchmark {
     )
 
     fun run(context: Context): List<String> {
-        val workspace = prepareWorkspace(context)
+        val workspace = prepareWorkspace(context, "proot-overhead-rf1420")
         return try {
             val identityConfig = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
                 context = context,
@@ -164,8 +257,8 @@ private object ProotActiveRuntimeBenchmark {
             Workload.entries.forEachIndexed { workloadIndex, workload ->
                 CONCURRENCY_LEVELS.forEachIndexed { levelIndex, concurrency ->
                     repeat(ROUNDS) { round ->
-                        val offset = (workloadIndex + levelIndex + round) % Variant.entries.size
-                        val variants = Variant.entries.drop(offset) + Variant.entries.take(offset)
+                        val offset = (workloadIndex + levelIndex + round) % BASE_VARIANTS.size
+                        val variants = BASE_VARIANTS.drop(offset) + BASE_VARIANTS.take(offset)
                         variants.forEach { variant ->
                             val configs = prepareConfigs(
                                 context = context,
@@ -190,7 +283,7 @@ private object ProotActiveRuntimeBenchmark {
                 )
                 Workload.entries.forEach { workload ->
                     CONCURRENCY_LEVELS.forEach { concurrency ->
-                        Variant.entries.forEach { variant ->
+                        BASE_VARIANTS.forEach { variant ->
                             val key = CaseKey(workload, variant, concurrency)
                             val measured = checkNotNull(batches[key])
                             val executions = measured.flatMap(Batch::executions)
@@ -218,16 +311,101 @@ private object ProotActiveRuntimeBenchmark {
                     "status=telemetry_sink bytes=${workspace.hostTelemetryFile.length()} " +
                         "rotations=${workspace.hostTelemetryFile.parentFile?.listFiles()?.count { it.name.startsWith(workspace.hostTelemetryFile.name + ".") } ?: 0}"
                 )
-                add("status=complete suite=rf1420_proot_active_runtime cases=${Workload.entries.size * CONCURRENCY_LEVELS.size * Variant.entries.size}")
+                add("status=complete suite=rf1420_proot_active_runtime cases=${Workload.entries.size * CONCURRENCY_LEVELS.size * BASE_VARIANTS.size}")
             }
         } finally {
             workspace.hostRoot.deleteRecursively()
         }
     }
 
-    private fun prepareWorkspace(context: Context): BenchmarkWorkspace {
+    fun runHotspot(context: Context): List<String> {
+        val workspace = prepareWorkspace(context, "proot-hotspot-rf1430")
+        return try {
+            val identityConfig = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
+                context = context,
+                argv = listOf("/bin/true"),
+            )
+            val assets = prepareRuntimeAssets(context, identityConfig)
+            val cases = linkedMapOf(
+                Workload.SMALL_WRITE to SMALL_WRITE_HOTSPOT_VARIANTS,
+                Workload.CHILD_FANOUT to CHILD_FANOUT_HOTSPOT_VARIANTS,
+            )
+            warmup(context, workspace, assets, cases.values.flatten().distinct())
+
+            val batches = linkedMapOf<CaseKey, MutableList<Batch>>()
+            cases.entries.forEachIndexed { workloadIndex, (workload, declaredVariants) ->
+                HOTSPOT_CONCURRENCY_LEVELS.forEachIndexed { levelIndex, concurrency ->
+                    repeat(HOTSPOT_ROUNDS) { round ->
+                        val offset = (workloadIndex + levelIndex + round) % declaredVariants.size
+                        val variants = declaredVariants.drop(offset) + declaredVariants.take(offset)
+                        variants.forEach { variant ->
+                            val configs = prepareConfigs(
+                                context = context,
+                                workspace = workspace,
+                                assets = assets,
+                                workload = workload,
+                                variant = variant,
+                                count = concurrency,
+                            )
+                            val batch = runBatch(configs)
+                            batches.getOrPut(CaseKey(workload, variant, concurrency)) { mutableListOf() } += batch
+                            Thread.sleep(35L)
+                        }
+                    }
+                }
+            }
+
+            buildList {
+                add(
+                    "status=started suite=rf1430_proot_active_hotspot rounds=$HOTSPOT_ROUNDS " +
+                        "levels=${HOTSPOT_CONCURRENCY_LEVELS.joinToString(",")} " +
+                        "activeSha256=$ACTIVE_SHA256 stockSha256=$STOCK_SHA256"
+                )
+                cases.forEach { (workload, variants) ->
+                    HOTSPOT_CONCURRENCY_LEVELS.forEach { concurrency ->
+                        variants.forEach { variant ->
+                            val key = CaseKey(workload, variant, concurrency)
+                            val measured = checkNotNull(batches[key])
+                            val executions = measured.flatMap(Batch::executions)
+                            val failures = executions.count { !succeeded(workload, it) }
+                            val residual = executions.count(Execution::residual)
+                            check(failures == 0) {
+                                "rf1430_${workload.label}_${variant.label}_${concurrency}_" +
+                                    executions.firstOrNull { !succeeded(workload, it) }?.reason
+                            }
+                            check(residual == 0) {
+                                "rf1430_residual_${workload.label}_${variant.label}_${concurrency}_$residual"
+                            }
+                            add(
+                                "status=ok suite=rf1430_proot_active_hotspot case=${workload.label} " +
+                                    "variant=${variant.label} concurrency=$concurrency rounds=$HOTSPOT_ROUNDS " +
+                                    "wallMedianMs=${median(measured.map(Batch::wallMs))} " +
+                                    "wallSamplesMs=${measured.joinToString(",") { it.wallMs.toString() }} " +
+                                    "p50Ms=${percentile(executions.map(Execution::durationMs), 0.50)} " +
+                                    "p95Ms=${percentile(executions.map(Execution::durationMs), 0.95)} " +
+                                    "failures=$failures residual=$residual"
+                            )
+                        }
+                    }
+                }
+                add(
+                    "status=telemetry_sink suite=rf1430_proot_active_hotspot " +
+                        "bytes=${workspace.hostTelemetryFile.length()} " +
+                        "rotations=${workspace.hostTelemetryFile.parentFile?.listFiles()?.count { it.name.startsWith(workspace.hostTelemetryFile.name + ".") } ?: 0}"
+                )
+                add(
+                    "status=complete suite=rf1430_proot_active_hotspot " +
+                        "cases=${cases.values.sumOf { it.size } * HOTSPOT_CONCURRENCY_LEVELS.size}"
+                )
+            }
+        } finally {
+            workspace.hostRoot.deleteRecursively()
+        }
+    }
+
+    private fun prepareWorkspace(context: Context, suiteDirectory: String): BenchmarkWorkspace {
         val container = WorkSurfaceRuntimeBridge.ensureDefaultContainer(context)
-        val hostRoot = File(container.workspacePath, ".kf/system/bench/proot-overhead-rf1420")
+        val hostRoot = File(container.workspacePath, ".kf/system/bench/$suiteDirectory")
             .absoluteFile.normalize()
         val allowed = File(container.workspacePath, ".kf/system/bench").absoluteFile.normalize()
         check(hostRoot.toPath().startsWith(allowed.toPath())) { "rf1420_workspace_invalid" }
@@ -248,7 +426,7 @@ private object ProotActiveRuntimeBenchmark {
             hostWriteRoot = writes,
             hostTelemetryFile = telemetry,
             hostRegistryRoot = registry,
-            containerRoot = "/workspace/.kf/system/bench/proot-overhead-rf1420",
+            containerRoot = "/workspace/.kf/system/bench/$suiteDirectory",
         )
     }
 
@@ -285,8 +463,13 @@ private object ProotActiveRuntimeBenchmark {
         return RuntimeAssets(active, stock, loader, loader32)
     }
 
-    private fun warmup(context: Context, workspace: BenchmarkWorkspace, assets: RuntimeAssets) {
-        Variant.entries.forEach { variant ->
+    private fun warmup(
+        context: Context,
+        workspace: BenchmarkWorkspace,
+        assets: RuntimeAssets,
+        variants: List<Variant> = BASE_VARIANTS,
+    ) {
+        variants.forEach { variant ->
             repeat(2) {
                 val config = prepareConfigs(
                     context = context,
@@ -311,14 +494,31 @@ private object ProotActiveRuntimeBenchmark {
         workload: Workload,
         variant: Variant,
         count: Int,
-    ): List<PreparedConfig> = List(count) {
+    ): List<PreparedConfig> = List(count) { processIndex ->
         val invocation = invocation(workspace, workload)
         val base = WorkSurfaceRuntimeBridge.buildArgvExecConfig(
             context = context,
             argv = invocation.first,
         )
         PreparedConfig(
-            config = applyVariant(base, assets, workspace, variant),
+            config = applyVariant(
+                base = base,
+                assets = assets,
+                workspace = workspace,
+                variant = variant,
+                telemetryShard = if (variant == Variant.ACTIVE_TELEMETRY_LOG_SHARDED) {
+                    File(
+                        workspace.hostRoot,
+                        "telemetry-shards/${sampleSequence.incrementAndGet()}-$processIndex.jsonl",
+                    ).also { shard ->
+                        check(shard.parentFile?.mkdirs() == true || shard.parentFile?.isDirectory == true) {
+                            "rf1430_telemetry_shard_root_failed"
+                        }
+                    }
+                } else {
+                    null
+                },
+            ),
             workload = workload,
             cleanupDirectory = invocation.second,
         )
@@ -369,6 +569,7 @@ private object ProotActiveRuntimeBenchmark {
         assets: RuntimeAssets,
         workspace: BenchmarkWorkspace,
         variant: Variant,
+        telemetryShard: File? = null,
     ): ContainerExecConfig {
         check(base.command.firstOrNull() == assets.active.absolutePath) { "rf1420_base_runtime_changed" }
         return when (variant) {
@@ -378,7 +579,35 @@ private object ProotActiveRuntimeBenchmark {
                     "KF_PROOT_ACTIVE_REGISTRY_ROOT" to workspace.hostRegistryRoot.absolutePath,
                 ),
             )
+            Variant.ACTIVE_TELEMETRY_LOG_ONLY -> base.copy(
+                env = (base.env - TELEMETRY_KEYS) + mapOf(
+                    "KF_PROOT_TELEMETRY_PATH" to workspace.hostTelemetryFile.absolutePath,
+                ),
+            )
+            Variant.ACTIVE_TELEMETRY_LOG_SHARDED -> base.copy(
+                env = (base.env - TELEMETRY_KEYS) + mapOf(
+                    "KF_PROOT_TELEMETRY_PATH" to checkNotNull(telemetryShard).absolutePath,
+                ),
+            )
             Variant.ACTIVE_NO_TELEMETRY -> base.copy(env = base.env - TELEMETRY_KEYS)
+            Variant.ACTIVE_NO_TELEMETRY_NO_PROCFS -> base.copy(
+                env = (base.env - TELEMETRY_KEYS) + mapOf("PROOT_NO_KF_PROCFS" to "1"),
+            )
+            Variant.ACTIVE_NO_TELEMETRY_NO_MOUNTINFO -> base.copy(
+                env = (base.env - TELEMETRY_KEYS) + mapOf("PROOT_NO_MOUNTINFO" to "1"),
+            )
+            Variant.ACTIVE_NO_TELEMETRY_MINIMAL -> base.copy(
+                env = (base.env - TELEMETRY_KEYS) + mapOf(
+                    "PROOT_NO_KF_PROCFS" to "1",
+                    "PROOT_NO_MOUNTINFO" to "1",
+                ),
+            )
+            Variant.ACTIVE_NO_TELEMETRY_EXTERNAL_LOADER -> base.copy(
+                env = (base.env - TELEMETRY_KEYS) + mapOf(
+                    "PROOT_LOADER" to assets.loader.absolutePath,
+                    "PROOT_LOADER_32" to assets.loader32.absolutePath,
+                ),
+            )
             Variant.STOCK_NO_TELEMETRY -> base.copy(
                 command = base.command.toMutableList().also { it[0] = assets.stock.absolutePath },
                 env = (base.env - TELEMETRY_KEYS) + mapOf(

@@ -782,6 +782,25 @@
 - 不为某个应用特判，不关闭强身份、停止确认或文件保护；
 - 候选改动必须能在默认无 View 路径上失败关闭，并保留现有生命周期事实。
 
+##### RF1431 固定热点拆分矩阵
+
+- [x] small-write 分别关闭 `kf_procfs`、`mountinfo`、两者，并对照 embedded/external loader；
+- [x] child-fanout 分离共享日志、无 registry、每进程日志和无 telemetry；
+- [x] OnePlus 8T 九轮矩阵确认默认扩展和 loader 不是 small-write 主因；
+- [x] lifecycle 增量属于每事件同步处理，不属于共享文件或 registry 竞争。
+
+##### RF1432 可复现源码与生命周期候选
+
+- 从 descriptor 的 `d30b988` 基线和仓库正式 patch 在忽略目录重建，不修改脏 KFShell 工作树；
+- 先证明重建资产与 v23 语义/身份可复现，再做无损的事件编码/写入候选；
+- 候选只部署到 Debug 私有路径，不替换正式 PRoot。
+
+##### RF1433 候选正确性与收益门
+
+- 同事件 schema、事件数、父子身份、退出事实和 active registry 内容逐项对照；
+- 复跑 RF1420/1431 固定矩阵，收益低于门槛、来源不可复现或语义变化即 no-go；
+- 只有候选与正式 patch 都可复算时，RF1440 才能讨论正式资产更新。
+
 #### RF1440 go/no-go 与父任务门
 
 - 有稳定收益且完整语义保持才改正式 PRoot；否则以“非 Kite PRoot 增量瓶颈”收口；

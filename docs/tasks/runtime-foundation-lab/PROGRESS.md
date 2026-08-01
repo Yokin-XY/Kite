@@ -78,7 +78,25 @@
 | RF1410 | 已完成 | 固定三资产身份、loader 等价、五类通用负载与双阈值 |
 | RF1420 | 已完成 | 两套隔离 sink 矩阵打开 small-write 与 c4 lifecycle 热点门 |
 | RF1430 | 进行中 | 定位默认关闭的文件 hook 与 lifecycle 并发写入成本 |
+| RF1431 | 已完成 | 九轮矩阵排除默认扩展、loader、共享日志和 registry 竞争 |
+| RF1432 | 进行中 | 从 d30b988 + 正式 patch 重建 v23，并研究无损 lifecycle 热路径候选 |
+| RF1433 | 待开始 | 候选事件语义、身份、退出、registry 与性能复算 |
 | RF1440 | 待开始 | go/no-go、全量门与生产范围审查 |
+
+## RF1431 验收
+
+- 新增固定 `PROOT_ACTIVE_RUNTIME_HOTSPOT` Debug 入口，不接受 ADB 参数；正式 PRoot、runtime descriptor、Provider、资源与 lane 均未改变。
+- small-write 在 OnePlus 8T 九轮矩阵中，active no-telemetry 相对 stock 的 wall 中位数为 `232/140ms`（并发 4）与 `303/199ms`（并发 8）。关闭 `kf_procfs`、关闭 `mountinfo`、同时关闭以及强制 external loader 均未缩小差值，因此四项均不是主因。
+- child-fanout 并发 4 的 wall 中位数为 active telemetry `214ms`、log-only `213ms`、每进程独立 log `215ms`、no-telemetry `123ms`、stock `118ms`。registry 与共享追加竞争被排除，热点落在每事件同步采集、JSON 格式化和写入总成本。
+- child-fanout 并发 8 的五组均为 `231～235ms`，说明设备已进入吞吐平台，不能靠继续放大并发获得收益。
+- 22 组、九轮全部语义成功、零残留。首次在应用完全后台触发时被 Android 拒绝普通 Service 并产生一次 Debug 进程 FATAL；探针现已捕获并报告 `requiresForeground=true`，有效矩阵在前台冷启动后重跑。
+- 源码边界确认：正式 descriptor 指向 Termux PRoot `d30b988` 与 v23 block-view patch；现有 KFShell 候选工作树含用户脏改，RF1432 只能在 `local-artifacts/` 隔离重建。
+
+## RF1432 开机与三问自检
+
+- 目标是什么？重建可复现的 v23 Debug 候选，并在不减少 lifecycle 事件、强身份、退出事实和 registry 的前提下减少每事件同步开销。
+- 完成后拿什么证明？源与 patch 身份、独立二进制、事件/registry 逐项对照、RF1431 性能复算；正式资产在 RF1440 前保持零差异。
+- 依赖是否满足？RF1431 已排除扩展、loader 和文件竞争伪因；`d30b988`、正式 patch 与 NDK 构建链均可读取，但必须避开 KFShell 脏工作树。
 
 ## RF110 开机与三问自检
 

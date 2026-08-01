@@ -39,6 +39,16 @@
             android:name="com.kite.app.foundation.runtime.ProotActiveRuntimeBenchmarkService"
             android:exported="false" />
         <receiver
+            android:name="com.kite.app.foundation.runtime.ProotActiveRuntimeHotspotReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.PROOT_ACTIVE_RUNTIME_HOTSPOT" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.ProotActiveRuntimeHotspotService"
+            android:exported="false" />
+        <receiver
             android:name="com.kite.app.foundation.runtime.HostGitBenchmarkReceiver"
             android:exported="true">
             <intent-filter>
