@@ -128,4 +128,5 @@ PRoot View 与三车道正交。普通 Node、Python、原生能力、终端和 
 6. 每个叶子任务独立验证和提交，父任务通过后才扩大覆盖面。
 
 分车道细则见：[通用依赖快速通道](managed-runtime-fast-path.md)、[Android/NDK 原生能力](native-capability-provider.md)和
-[Ubuntu/PRoot 兼容 Provider](proot-compatibility-provider.md)。
+[Ubuntu/PRoot 兼容 Provider](proot-compatibility-provider.md)。所有已经验证但尚未放行的能力统一登记在
+[混合运行底座兼容性债务总账](runtime-compatibility-backlog.md)，不得因单个样例成功而绕过对应边界。

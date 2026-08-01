@@ -526,3 +526,11 @@
 - 决定：RF1400 以生产 no-go 收口，正式 `proot-kf-lifecycle-arm64` 和 runtime descriptor 保持不变。仓库只新增固定补丁消融入口、可复现构建脚本和结论文档。
 - 原因：完整 v23 已逐字节复现。三套九轮消融中，无 patch 到完整 v23 在 8 并发 small-write 均为 `299～317ms`，stock 为 `204～209ms`，不存在 lifecycle/procfs/transaction/protection/View/block-View 台阶；编译时 external loader 与 NDK 28 也分别保持 `305～314ms`。差异在第一个 Kite patch 之前已存在，属于 `d30b988` Termux 源码线与来源未知库存资产的共同边界。
 - 影响：不能为了约 100ms 的高并发基准把来源未知、缺少 lifecycle/registry/保护/View 的 stock 升为正式 runtime。下一次重开必须有同源、同能力候选，先过语义再谈性能；OpenClaw 总启动时间也不能再归因给本轮已排除的 Kite patch、loader 或 NDK 代次。
+
+## ADR-RF-067 先保存兼容债务，再研究高频结构化只读验证
+
+- 状态：已接受，RF1500 进行中
+- 日期：2026-08-01
+- 决定：建立独立的三车道兼容性债务总账；已确认不支持或尚未放行的能力只记录当前兼容路线和未来候选方案，本阶段不修复。下一性能候选选择资源打开/获取共同使用的受管命令存在性校验，只研究默认环境下可由完整宿主文件身份精确证明的部分。
+- 原因：Python 子进程、Git helper、通用 relay 等问题都需要独立长期方案，继续在本轮细化会扩大范围。另一方面，资源打开首次 preflight 和获取计划都会创建 PRoot `command -v` 探针，而 Android 侧已经有运行时/PATH/符号链接文件身份和正向证据缓存，具备通用且可失败关闭的候选基础。
+- 影响：RF1510 不改代码。RF1520 必须先证明多个正式调用方、共同语义和收益；RF1530 只能把完整肯定式证明变成 Ready，未知事实仍走现有 PRoot。安装脚本内部校验、View、动态 shell PATH、别名、函数、版本输出和命令执行不属于本父任务。
