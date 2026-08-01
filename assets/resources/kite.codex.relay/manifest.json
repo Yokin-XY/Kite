@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "id": "kite.codex.relay",
+  "base": {
+    "name": "Codex 兼容协议桥",
+    "description": "把 Codex Responses 请求转换为兼容供应商接口",
+    "version": "0.5.5",
+    "icon": {
+      "type": "asset",
+      "value": "resources/kite.codex.cli/icon.png",
+      "fallbackText": "Rx"
+    }
+  },
+  "management": {
+    "mode": "managed_extension",
+    "managedCommands": ["codex-relay"],
+    "versionProbe": {
+      "command": "codex-relay --version",
+      "pattern": "([0-9]+(?:\\.[0-9]+)+)"
+    }
+  },
+  "display": {
+    "sections": ["foundation"],
+    "order": 180,
+    "category": "Agent",
+    "accent": "teal",
+    "sizeLabel": "网络包",
+    "longDescription": "Codex 只使用 Responses API；这张受管组件通过通用协议转换，让 Codex 能连接只提供 OpenAI Chat Completions 兼容接口的供应商。服务仅监听 127.0.0.1，并且只有当前 Codex 供应商需要转换时才启动。",
+    "recommendations": [
+      {
+        "resourceId": "kite.codex.cli",
+        "label": "上层 Agent"
+      },
+      {
+        "resourceId": "kite.python",
+        "label": "安装运行时"
+      }
+    ],
+    "tags": ["codex", "responses", "chat-completions", "relay", "agent"]
+  },
+  "relations": {
+    "provides": ["service.codex.responses-relay"],
+    "base": ["kite.python", "kite.uv"],
+    "defaults": [],
+    "extensions": ["kite.codex.cli"]
+  },
+  "source": {
+    "type": "pypi",
+    "package": "codex-relay",
+    "repository": "https://github.com/MetaFARS/codex-relay"
+  },
+  "paths": {
+    "cacheRoot": "/workspace/.kf/cache/resources/kite.codex.relay",
+    "installRoot": "/workspace/.kf/software/kite.codex.relay",
+    "binRoot": "/workspace/.kf/bin"
+  },
+  "actions": {
+    "install": [
+      {
+        "type": "managed",
+        "steps": [
+          {
+            "id": "install-codex-relay",
+            "type": "shell",
+            "cmd": "export UV_TOOL_DIR=\"$install_root/uv-tools\"\nexport UV_TOOL_BIN_DIR=\"$install_root/bin\"\nexport UV_CACHE_DIR=\"$install_root/uv-cache\"\nmkdir -p \"$UV_TOOL_BIN_DIR\"\nuv tool install --force --python /workspace/.kf/bin/python3 'codex-relay==0.5.5'"
+          }
+        ],
+        "managedCommands": ["codex-relay"],
+        "cleanInstallRoot": true,
+        "verify": [
+          {
+            "id": "codex-relay-command",
+            "cmd": "codex-relay --version"
+          }
+        ]
+      }
+    ],
+    "open": {
+      "runtime": "kite_recipe",
+      "recipe": {
+        "base": {
+          "id": "",
+          "name": "Codex 兼容协议桥",
+          "description": "检查本机协议桥版本",
+          "icon": {
+            "type": "builtin",
+            "name": "code"
+          }
+        },
+        "launch": {
+          "openInstance": true
+        },
+        "recipe": [
+          {
+            "type": "shell",
+            "cmd": "codex-relay --version",
+            "surfaceMode": "panel"
+          }
+        ]
+      }
+    }
+  },
+  "homeCards": []
+}

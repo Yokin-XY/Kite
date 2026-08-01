@@ -44,6 +44,9 @@ terms:
 - `org.tomlj:tomlj:1.1.1`: TOML parser used to validate Codex native
   `config.toml` while Kite performs narrow text-preserving edits; Apache
   License 2.0. Its declared runtime dependencies retain their own terms.
+- `codex-relay` 0.5.5: optional local Responses API to Chat Completions
+  protocol bridge installed from PyPI for compatible Codex providers;
+  MIT License, copyright (c) 2025 MetaFARS.
 - `AGENTS.md`: project coding-agent guidance adapted from Ponytail
   (https://github.com/DietrichGebert/ponytail), MIT License, copyright
   (c) 2026 DietrichGebert.

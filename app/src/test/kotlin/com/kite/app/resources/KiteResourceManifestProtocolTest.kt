@@ -249,7 +249,7 @@ class KiteResourceManifestProtocolTest {
         assertTrue(manifest.installActions.isEmpty())
         assertTrue(sourcePlan.generatedFromSource)
         assertTrue(sourcePlan.capabilities.update)
-        assertEquals(listOf("kite.nodejs", "kite.git"), manifest.baseRequirements)
+        assertEquals(listOf("kite.nodejs", "kite.git", "kite.codex.relay"), manifest.baseRequirements)
         assertEquals(KiteResourceInstallPlanCompiler.STEP_NPM, installStep.type)
         assertEquals(
             listOf("@openai/codex@latest", "@agentclientprotocol/codex-acp@latest"),
@@ -264,10 +264,38 @@ class KiteResourceManifestProtocolTest {
             listOf("@openai/codex", "@agentclientprotocol/codex-acp"),
             uninstallAction.npmUninstallPackages
         )
+        val dependency = manifest.agentProfiles.single().runtimeDependencies.single()
+        assertEquals("codex-responses-relay", dependency.id)
+        assertEquals(
+            "/workspace/.kf/secrets/kite.codex-relay-upstream",
+            dependency.activationFile,
+        )
+        assertEquals("127.0.0.1", dependency.bindAddress)
+        assertEquals(4453, dependency.bindPort)
+        assertTrue(dependency.argv.last().contains("exec codex-relay"))
         val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)
         assertEquals("agent", openStep?.optString("type"))
         assertEquals("codex", openStep?.optString("agentId"))
         assertEquals(openStep?.toString(), manifest.homeCards.single().recipe.optJSONArray("recipe")?.optJSONObject(0)?.toString())
+    }
+
+    @Test
+    fun codexRelayUsesIsolatedUvToolInstallation() {
+        val manifestFile = File(resourceRoot(), "kite.codex.relay/manifest.json")
+        val manifest = KiteResourceManifestLoader(context).parseManifestJson(manifestFile.readText())
+        val sourcePlan = KiteResourceSourcePlanFactory.plan(manifest)
+        val installAction = sourcePlan.installActions.single()
+        val installStep = installAction.installSteps.single()
+
+        assertEquals("pypi", manifest.sourceType)
+        assertEquals(listOf("kite.python", "kite.uv"), manifest.baseRequirements)
+        assertEquals(listOf("codex-relay"), manifest.management.managedCommands)
+        assertEquals(listOf("codex-relay"), installAction.managedCommands)
+        assertTrue(installStep.cmd.contains("UV_TOOL_DIR=\"\$install_root/uv-tools\""))
+        assertTrue(installStep.cmd.contains("codex-relay==0.5.5"))
+        assertTrue(installAction.verifications.single().cmd.contains("codex-relay --version"))
+        assertTrue(sourcePlan.capabilities.install)
+        assertTrue(sourcePlan.capabilities.uninstall)
     }
 
     @Test
@@ -535,7 +563,14 @@ class KiteResourceManifestProtocolTest {
             debugLayout?.sections?.first { it.id == "ai-vendor" }?.items
         )
         assertEquals(
-            listOf("kite.nodejs", "kite.python", "kite.git", "kite.uv", "kite.curl"),
+            listOf(
+                "kite.nodejs",
+                "kite.python",
+                "kite.git",
+                "kite.uv",
+                "kite.curl",
+                "kite.codex.relay",
+            ),
             debugLayout?.sections?.first { it.id == "foundation" }?.items
         )
         assertTrue(debugLayout?.sections?.none { it.id == "more" } == true)
@@ -571,7 +606,7 @@ class KiteResourceManifestProtocolTest {
             .filter { it.isFile }
             .sortedBy { it.parentFile?.name }
 
-        assertEquals(17, manifests.size)
+        assertEquals(18, manifests.size)
         manifests.forEach { manifestFile ->
             val resourceId = manifestFile.parentFile?.name.orEmpty()
             val loaded = loader.parseManifestJson(manifestFile.readText())

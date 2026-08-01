@@ -2224,7 +2224,11 @@ internal class CodexAgentConfigAdapter(
 ) : NativeAgentConfigAdapter(
     context,
     ADAPTER_ID,
-    linkedMapOf(CONFIG_KEY to CONFIG_PATH),
+    linkedMapOf(
+        CONFIG_KEY to CONFIG_PATH,
+        RELAY_UPSTREAM_KEY to RELAY_UPSTREAM_PATH,
+        RELAY_API_KEY_KEY to RELAY_API_KEY_PATH,
+    ),
     CONFIG_KEY,
     containerProvider,
     fileStore
@@ -2234,6 +2238,32 @@ internal class CodexAgentConfigAdapter(
     override fun displayName(): String = "Codex"
 
     override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.Codex
+
+    override fun normalizeSessionConfiguration(options: List<AgentConfigOption>): List<AgentConfigOption> =
+        super.normalizeSessionConfiguration(options).mapNotNull { option ->
+            if (
+                option !is AgentConfigOption.Select ||
+                option.id != NATIVE_MODE_OPTION_ID ||
+                option.category != AgentConfigCategory.Mode
+            ) return@mapNotNull option
+            val mappedChoices = option.choices.mapNotNull { choice ->
+                val level = CODEX_PERMISSION_LEVELS[choice.value] ?: return@mapNotNull null
+                choice.copy(
+                    name = level.displayName,
+                    description = level.description,
+                )
+            }
+            if (mappedChoices.size < 2 || mappedChoices.none { it.value == option.currentValue }) {
+                null
+            } else {
+                option.copy(
+                    name = "权限",
+                    description = "Codex 当前会话真实提供的沙箱与审批模式",
+                    category = AgentConfigCategory.Permission,
+                    choices = mappedChoices,
+                )
+            }
+        }
 
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {
         add(NativeAgentCoreDocumentSpec(
@@ -2303,15 +2333,21 @@ internal class CodexAgentConfigAdapter(
         require(!parsed.hasErrors()) { "Codex TOML 无法解析" }
         val active = parsed.getString("model_provider")
         val model = parsed.getString("model")
+        val relayUpstream = files.getValue(RELAY_UPSTREAM_KEY).toString(Charsets.UTF_8).trim()
+        val relayApiKey = files.getValue(RELAY_API_KEY_KEY).toString(Charsets.UTF_8).trim()
         val provider = active?.let { id ->
             val table = parsed.getTable("model_providers.${tomlPathKey(id)}")
             val token = table?.getString("experimental_bearer_token")
+            val configuredBaseUrl = table?.getString("base_url")
+            val usesKiteRelay = configuredBaseUrl?.trimEnd('/') == RELAY_BASE_URL
             AgentProviderSummary(
                 id = id,
                 displayName = table?.getString("name")?.takeIf(String::isNotBlank) ?: id,
-                baseUrl = table?.getString("base_url"),
+                baseUrl = relayUpstream.takeIf { usesKiteRelay && it.isNotBlank() } ?: configuredBaseUrl,
                 models = listOfNotNull(model?.let { AgentProviderModelSummary(it, it) }),
-                credentialPresence = if (!token.isNullOrBlank()) AgentCredentialPresence.Present else AgentCredentialPresence.Missing
+                credentialPresence = if (
+                    !token.isNullOrBlank() || usesKiteRelay && relayApiKey.isNotBlank()
+                ) AgentCredentialPresence.Present else AgentCredentialPresence.Missing
             )
         }?.let(::listOf).orEmpty()
         return NativeState(
@@ -2378,6 +2414,8 @@ internal class CodexAgentConfigAdapter(
 
     override fun mutate(files: Map<String, ByteArray>, changes: List<AgentPersistentConfigChange>): Map<String, ByteArray> {
         var editor = TomlTextEditor(files.getValue(CONFIG_KEY).toString(Charsets.UTF_8))
+        var relayUpstream = files.getValue(RELAY_UPSTREAM_KEY).toString(Charsets.UTF_8)
+        var relayApiKey = files.getValue(RELAY_API_KEY_KEY).toString(Charsets.UTF_8)
         changes.forEach { change ->
             when (change) {
                 is AgentPersistentConfigChange.SetDefaultModel -> editor = editor.setTopString("model", change.modelId)
@@ -2386,26 +2424,40 @@ internal class CodexAgentConfigAdapter(
                     .setTopString("model", change.modelId)
                 is AgentPersistentConfigChange.ConfigureProvider -> {
                     val provider = change.provider
+                    val before = Toml.parse(editor.text)
+                    val activeProviderId = before.getString("model_provider")
+                    val legacyToken = before
+                        .getTable("model_providers.${tomlPathKey(provider.id)}")
+                        ?.getString("experimental_bearer_token")
                     editor = editor
                         .setTopString("model_provider", provider.id)
                         .setTopString("model", provider.models.first().id.trim())
                         .setSectionString(provider.id, "name", provider.displayName?.trim()?.takeIf(String::isNotBlank) ?: provider.id)
-                        .setSectionString(provider.id, "base_url", provider.baseUrl.trim())
+                        .setSectionString(provider.id, "base_url", RELAY_BASE_URL)
                         .setSectionString(provider.id, "wire_api", "responses")
                         .setSectionBoolean(provider.id, "requires_openai_auth", false)
-                    editor = when (val credential = change.credential) {
-                        AgentProviderCredentialChange.Keep -> editor
-                        is AgentProviderCredentialChange.Replace ->
-                            editor.setSectionString(provider.id, "experimental_bearer_token", credential.secret)
-                        AgentProviderCredentialChange.Remove ->
-                            editor.setSectionString(provider.id, "experimental_bearer_token", null)
+                        .setSectionString(provider.id, "experimental_bearer_token", null)
+                    relayUpstream = provider.baseUrl.trim()
+                    relayApiKey = when (val credential = change.credential) {
+                        AgentProviderCredentialChange.Keep -> when {
+                            activeProviderId != provider.id -> ""
+                            relayApiKey.isNotBlank() -> relayApiKey
+                            !legacyToken.isNullOrBlank() -> legacyToken
+                            else -> ""
+                        }
+                        is AgentProviderCredentialChange.Replace -> credential.secret
+                        AgentProviderCredentialChange.Remove -> ""
                     }
                 }
                 is AgentPersistentConfigChange.RemoveProvider -> {
                     val parsed = Toml.parse(editor.text)
                     val wasActive = parsed.getString("model_provider") == change.providerId
                     editor = editor.removeProviderSection(change.providerId)
-                    if (wasActive) editor = editor.setTopString("model_provider", null).setTopString("model", null)
+                    if (wasActive) {
+                        editor = editor.setTopString("model_provider", null).setTopString("model", null)
+                        relayUpstream = ""
+                        relayApiKey = ""
+                    }
                 }
                 is AgentPersistentConfigChange.ConfigureMcpServer -> editor = editor.setMcpServer(change.server)
                 is AgentPersistentConfigChange.SetMcpEnabled ->
@@ -2418,12 +2470,33 @@ internal class CodexAgentConfigAdapter(
                 else -> Unit
             }
         }
-        return mapOf(CONFIG_KEY to editor.text.toByteArray(Charsets.UTF_8))
+        return mapOf(
+            CONFIG_KEY to editor.text.toByteArray(Charsets.UTF_8),
+            RELAY_UPSTREAM_KEY to relayUpstream.toByteArray(Charsets.UTF_8),
+            RELAY_API_KEY_KEY to relayApiKey.toByteArray(Charsets.UTF_8),
+        )
     }
 
     override fun validateBytes(key: String, bytes: ByteArray): String? {
-        val parsed = Toml.parse(bytes.toString(Charsets.UTF_8))
-        return if (parsed.hasErrors()) "Codex 原生 config.toml 格式无效" else null
+        val text = bytes.toString(Charsets.UTF_8)
+        return when (key) {
+            CONFIG_KEY -> if (Toml.parse(text).hasErrors()) "Codex 原生 config.toml 格式无效" else null
+            RELAY_UPSTREAM_KEY -> {
+                if (text.isBlank()) return null
+                val uri = runCatching { URI(text.trim()) }.getOrNull()
+                if (
+                    bytes.size > MAX_RELAY_UPSTREAM_BYTES ||
+                    uri == null ||
+                    uri.scheme !in setOf("http", "https") ||
+                    uri.host.isNullOrBlank() ||
+                    uri.userInfo != null
+                ) "Codex 协议桥上游 URL 无效" else null
+            }
+            RELAY_API_KEY_KEY -> if (bytes.size > MAX_RELAY_API_KEY_BYTES || text.any { it == '\u0000' }) {
+                "Codex 协议桥凭据格式无效"
+            } else null
+            else -> "Codex 配置文件类型无效"
+        }
     }
 
     private fun codexMcpServers(parsed: org.tomlj.TomlParseResult): List<AgentMcpSummary> {
@@ -2529,11 +2602,24 @@ internal class CodexAgentConfigAdapter(
         const val ADAPTER_ID = "codex"
         private const val CONFIG_KEY = "config"
         private const val CONFIG_PATH = "/root/.codex/config.toml"
+        private const val RELAY_UPSTREAM_KEY = "relay-upstream"
+        private const val RELAY_UPSTREAM_PATH = "/workspace/.kf/secrets/kite.codex-relay-upstream"
+        private const val RELAY_API_KEY_KEY = "relay-api-key"
+        private const val RELAY_API_KEY_PATH = "/workspace/.kf/secrets/kite.codex-relay-api-key"
+        private const val RELAY_BASE_URL = "http://127.0.0.1:4453/v1"
+        private const val NATIVE_MODE_OPTION_ID = "mode"
         private const val SKILL_ROOT = "/root/.agents/skills"
         private const val GLOBAL_AGENTS_PATH = "/root/.codex/AGENTS.md"
         private const val GLOBAL_OVERRIDE_PATH = "/root/.codex/AGENTS.override.md"
         private const val MAX_MCP_ITEMS = 64
         private const val MAX_MCP_TEXT = 2_048
+        private const val MAX_RELAY_UPSTREAM_BYTES = 4 * 1024
+        private const val MAX_RELAY_API_KEY_BYTES = 64 * 1024
+        private val CODEX_PERMISSION_LEVELS = mapOf(
+            "read-only" to AgentPermissionLevel.ReadOnly,
+            "agent" to AgentPermissionLevel.Approval,
+            "agent-full-access" to AgentPermissionLevel.Full,
+        )
         private val SAFE_IMPORT_REFERENCE = Regex("kite-import:import-[A-Za-z0-9-]{8,80}")
         private val SAFE_ENV_NAME = Regex("[A-Za-z_][A-Za-z0-9_]{0,127}")
         private fun tomlPathKey(value: String): String =

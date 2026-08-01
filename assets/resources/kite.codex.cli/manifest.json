@@ -36,6 +36,10 @@
         "label": "安装运行时"
       },
       {
+        "resourceId": "kite.codex.relay",
+        "label": "兼容供应商"
+      },
+      {
         "resourceId": "kite.claude.code",
         "label": "同类 Agent"
       },
@@ -63,7 +67,8 @@
     ],
     "base": [
       "kite.nodejs",
-      "kite.git"
+      "kite.git",
+      "kite.codex.relay"
     ],
     "defaults": [],
     "extensions": []
@@ -115,6 +120,24 @@
         "protocol": "acp",
         "transport": "stdio",
         "argv": ["codex-acp"],
+        "runtimeDependencies": [
+          {
+            "id": "codex-responses-relay",
+            "title": "Codex 兼容供应商协议桥",
+            "activationFile": "/workspace/.kf/secrets/kite.codex-relay-upstream",
+            "argv": [
+              "bash",
+              "-lc",
+              "set -eu\nupstream_file='/workspace/.kf/secrets/kite.codex-relay-upstream'\napi_key_file='/workspace/.kf/secrets/kite.codex-relay-api-key'\nupstream=\"$(tr -d '\\r\\n' < \"$upstream_file\")\"\nif [ -z \"$upstream\" ]; then echo 'Codex relay upstream missing' >&2; exit 2; fi\nexport CODEX_RELAY_UPSTREAM=\"$upstream\"\nif [ -s \"$api_key_file\" ]; then export CODEX_RELAY_API_KEY=\"$(cat \"$api_key_file\")\"; else unset CODEX_RELAY_API_KEY; fi\nexec codex-relay --bind 127.0.0.1 --port 4453"
+            ],
+            "workdir": "/workspace",
+            "bindAddress": "127.0.0.1",
+            "bindPort": 4453,
+            "startupTimeoutMs": 30000,
+            "restartPolicy": "on_failure",
+            "retentionClass": "interactive"
+          }
+        ],
         "title": "Codex"
       }
     }

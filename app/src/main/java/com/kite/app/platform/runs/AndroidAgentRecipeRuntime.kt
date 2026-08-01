@@ -5,6 +5,7 @@ import com.kite.app.agent.acp.AcpProcessAgentProvider
 import com.kite.app.agent.acp.AcpProcessChannelLauncher
 import com.kite.app.agent.acp.AcpProcessProviderDescriptor
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
+import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentSessionConfigurationOverlayProvider
 import com.kite.app.agent.config.defaultAgentConfigAdapters
@@ -115,6 +116,9 @@ internal fun interface ManagedAgentRuntimeDependencyPreparer {
 internal class AndroidManagedAgentRuntimeDependencyPreparer(context: Context) :
     ManagedAgentRuntimeDependencyPreparer {
     private val appContext = context.applicationContext
+    private val activationProjection = ContainerAgentConfigProjection {
+        WorkSurfaceRuntimeBridge.getSavedContainer(appContext)
+    }
 
     override suspend fun prepare(dependencies: List<KiteResourceAgentRuntimeDependency>) {
         if (dependencies.isEmpty()) return
@@ -122,6 +126,10 @@ internal class AndroidManagedAgentRuntimeDependencyPreparer(context: Context) :
             ?: KFWorkspaceManager.ensureActiveSpace(appContext)
         dependencies.forEach { dependency ->
             val runtimeId = "background-${space.id}-${dependency.id}"
+            if (!isActivated(dependency)) {
+                BackgroundRuntimeHost.stopRuntime(appContext, runtimeId)
+                return@forEach
+            }
             val definition = BackgroundRuntimeRecord(
                 id = runtimeId,
                 spaceId = space.id,
@@ -157,6 +165,18 @@ internal class AndroidManagedAgentRuntimeDependencyPreparer(context: Context) :
                 timeoutMs = dependency.startupTimeoutMs,
             ).getOrThrow()
         }
+    }
+
+    private fun isActivated(dependency: KiteResourceAgentRuntimeDependency): Boolean {
+        val activationFile = dependency.activationFile.takeIf(String::isNotBlank) ?: return true
+        return runCatching {
+            activationProjection.resolve(activationFile)
+                ?.readFile
+                ?.takeIf(File::isFile)
+                ?.readText()
+                ?.trim()
+                ?.isNotBlank() == true
+        }.getOrDefault(false)
     }
 
     private fun String.toRestartPolicy(): BackgroundRuntimeRestartPolicy = when (lowercase()) {

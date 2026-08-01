@@ -106,6 +106,8 @@ data class KiteResourceAgentRuntimeDependency(
     val id: String,
     val title: String,
     val argv: List<String>,
+    /** 非空时，仅在这个容器文件存在且内容非空时启动依赖。 */
+    val activationFile: String = "",
     val workdir: String = "/workspace",
     val environment: Map<String, String> = emptyMap(),
     val runtimeGuarantees: Set<String> = emptySet(),
@@ -839,12 +841,18 @@ class KiteResourceManifestLoader private constructor(
             val runtimeGuaranteeEvidence = RuntimeExecutionGuaranteeEvidenceCodec.normalize(
                 dependency.optJSONObject("runtimeGuaranteeEvidence").toStringMap()
             ) ?: return null
+            val activationFile = dependency.optString("activationFile").trim()
+            if (
+                activationFile.isNotBlank() &&
+                (!activationFile.startsWith('/') || activationFile.any(Char::isISOControl))
+            ) return null
             val port = dependency.optInt("bindPort", 0).takeIf { it in 1..65_535 }
             parsed +=
                 KiteResourceAgentRuntimeDependency(
                     id = id,
                     title = dependency.optString("title").trim().ifBlank { id },
                     argv = argv,
+                    activationFile = activationFile,
                     workdir = dependency.optString("workdir").trim().ifBlank { "/workspace" },
                     environment = dependency.optJSONObject("environment").toStringMap(),
                     runtimeGuarantees = runtimeGuarantees,

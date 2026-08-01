@@ -29,6 +29,7 @@ import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.SESSION_PERMISSION_CONFIG_ID
 import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.foundation.contracts.ContainerRecord
@@ -597,7 +598,85 @@ class NativeAgentConfigAdaptersTest {
         assertTrue(text.contains("approval_policy"))
         assertTrue(text.contains("[sandbox_workspace_write]"))
         assertTrue(text.contains("[model_providers.mimo]"))
+        assertTrue(text.contains("base_url = \"http://127.0.0.1:4453/v1\""))
+        assertEquals("https://api.xiaomimimo.com/v1", nativeFile("workspace/.kf/secrets/kite.codex-relay-upstream").readText())
+        assertEquals(SECRET, nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").readText())
+        assertFalse(text.contains("experimental_bearer_token"))
         assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
+    fun codexMigratesLegacyInlineCredentialIntoPrivateRelayFiles() = runTest {
+        val file = nativeFile("root/.codex/config.toml")
+        file.writeText(
+            """
+                model_provider = "zhipu-coding-plan"
+                model = "glm-5.2"
+
+                [model_providers.zhipu-coding-plan]
+                name = "智谱 GLM Coding Plan"
+                base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+                wire_api = "responses"
+                requires_openai_auth = false
+                experimental_bearer_token = "$SECRET"
+            """.trimIndent(),
+        )
+        val adapter = CodexAgentConfigAdapter(context, ::container)
+        val before = (adapter.readLive("codex") as AgentConfigReadResult.Ready).snapshot
+
+        val applied = adapter.apply(
+            AgentConfigApplyRequest(
+                agentId = "codex",
+                expectedRevision = before.revision,
+                changes = listOf(
+                    AgentPersistentConfigChange.ConfigureProvider(
+                        AgentProviderDraft(
+                            id = "zhipu-coding-plan",
+                            displayName = "智谱 GLM Coding Plan",
+                            baseUrl = "https://open.bigmodel.cn/api/coding/paas/v4",
+                            models = listOf(AgentProviderModelSummary("glm-5.2", "GLM-5.2")),
+                        ),
+                        AgentProviderCredentialChange.Keep,
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+
+        assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", applied.snapshot.providers.single().baseUrl)
+        assertEquals(AgentCredentialPresence.Present, applied.snapshot.credentialPresence)
+        assertEquals(SECRET, nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").readText())
+        assertEquals(
+            "https://open.bigmodel.cn/api/coding/paas/v4",
+            nativeFile("workspace/.kf/secrets/kite.codex-relay-upstream").readText(),
+        )
+        assertTrue(file.readText().contains("base_url = \"http://127.0.0.1:4453/v1\""))
+        assertFalse(file.readText().contains(SECRET))
+        assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
+    fun codexProjectsNativeModesIntoVerifiedPermissionLevels() {
+        val adapter = CodexAgentConfigAdapter(context, ::container)
+        val native = AgentConfigOption.Select(
+            id = "mode",
+            name = "Mode",
+            category = AgentConfigCategory.Mode,
+            currentValue = "agent",
+            choices = listOf(
+                AgentConfigChoice("read-only", "Read Only"),
+                AgentConfigChoice("agent", "Agent"),
+                AgentConfigChoice("agent-full-access", "Agent Full Access"),
+                AgentConfigChoice("future-mode", "Future Mode"),
+            ),
+        )
+
+        val permission = adapter.normalizeSessionConfiguration(listOf(native)).single() as AgentConfigOption.Select
+
+        assertEquals(AgentConfigCategory.Permission, permission.category)
+        assertEquals("权限", permission.name)
+        assertEquals(listOf("read-only", "agent", "agent-full-access"), permission.choices.map { it.value })
+        assertEquals(listOf("只读", "审批", "完全"), permission.choices.map { it.name })
+        assertEquals("agent", permission.currentValue)
     }
 
     @Test
