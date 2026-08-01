@@ -454,3 +454,11 @@
 - 决定：child relay 不以“最终命令输出相同”为充分条件。同步 ENOENT/EACCES、posix_spawn 返回值、fd/file actions、pgroup/signal、wait exit、取消和唯一 child 都属于发布合同；Debug 探针还必须证明每个 exec/spawn 家族入口实际被拦截。
 - 原因：把目标改写为 PRoot wrapper 后，wrapper 创建成功可能把原本同步的 exec/spawn 错误变成异步 exit；glibc 内部 hidden symbol 也可能绕过 LD_PRELOAD interpose。二者都会让表面成功的 demo 在真实调用方中改变控制流。
 - 影响：RF1320 必须先做入口命中与错误矩阵，再做 Git/Python 复算。若需要复制容器解析器、忽略同步差异或接受漏拦，RF1300 直接 no-go，不进入正式 compat 库。
+
+## ADR-RF-058 unrestricted relay no-go，窄 direct exec/spawn 合同进入复算
+
+- 状态：已接受，RF1320 已完成
+- 日期：2026-08-01
+- 决定：任意 glibc 父进程的 unrestricted child relay 不进入生产；`system/popen/fexecve` 漏拦与同步错误变化是明确阻断。RF1330 只验证入口无关的窄合同：调用方只使用已覆盖 direct exec/spawn 家族，并明确接受容器目标错误在 child 启动后以异步 exit 表达。
+- 原因：常规 exec/spawn 的 argv/env/cwd/fd/exit/signal 和 1/4/8 并发已证明可行，完全放弃会丢掉可复用价值；但把漏拦或 errno 差异藏起来又会制造假兼容。用显式能力要求分层，才能在进程创建前选择而不靠工具白名单。
+- 影响：RF1330 必须观察 Git/Python 的实际命中入口与最终状态，不因名称放行。Debug 资产继续独立部署；正式 compat、launcher、Provider、资源、lane 仍不变。若上层无法声明该合同，保持整条 PRoot。

@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1300` 通用 glibc child relay 可行性
-- 当前任务：`RF1320` Debug-only child relay 最小探针
+- 当前任务：`RF1330` Git/Python 通用反例复算
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -734,13 +734,16 @@
 
 #### RF1320 Debug-only 最小 relay 探针
 
-- 状态：进行中；
-- 仅在独立 Debug 资产中实现固定 child 探针，不覆盖正式 `libkite-glibc-compat.so`；
-- 对照直接 Host、Host+relay、独立 PRoot 三条路径；
-- 覆盖 argv/env/cwd、stdout/stderr/stdin、exit/signal、PATH、shebang、并发和递归保护。
+- 状态：已完成；unrestricted relay no-go，direct exec/spawn 候选可进入复算。
+- [x] 独立 C 源码与 ADB 部署资产不覆盖正式 `libkite-glibc-compat.so`；
+- [x] 对照 direct Host、Host+relay、独立 PRoot；
+- [x] 覆盖 argv/env/cwd、stdio、exit/signal、PATH/shebang、file actions 与 1/4/8 并发；
+- [x] 证明 system/popen/fexecve 漏拦和同步错误变化，不把局部成功冒充全兼容；
+- [x] 本地产物只进入 `local-artifacts` 和设备私有调试目录，不进入 APK/Git。
 
 #### RF1330 Git/Python 通用反例复算
 
+- 状态：进行中；
 - 用同一 relay 复算 RF1220 hook/filter/helper/submodule 和 RF250 Python subprocess；
 - 不允许按工具名、资源 ID、subcommand 或脚本内容做选择；
 - 只有状态和输出与独立 PRoot 一致后才比较性能。

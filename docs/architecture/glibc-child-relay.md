@@ -92,3 +92,15 @@ Debug-only 资产与正式 compat 库完全分离，比较直接 Host、Host+rel
 - 不允许只看 exit code，必须核验输出、文件状态、fd、signal 和残留；
 - 任一常见入口漏拦、同步错误不可接受、路径文本误改、双执行或递归即 no-go；
 - RF1320/1330 通过前，正式 launcher、compat、Provider、资源和运行 lane 全部不变。
+
+## RF1320 真机结论
+
+OnePlus 8T 固定矩阵得到分层结论，而不是一个笼统的“可用/不可用”：
+
+- `execve/execv/execvp/execvpe/execl/execlp/execle`、`posix_spawn/posix_spawnp`、fork 后 exec 均实际命中 relay；
+- argv/env/cwd、stdin/stdout/stderr、脚本 shebang、spawn file actions、exit 37 与 signal 15 和独立 PRoot 对照一致；
+- 1/4/8 并发三轮均零失败。8 并发 Host parent + relay batch wall 137ms，PRoot parent 为 209ms；relay 没有把 child 变快，但保留 Host parent 后减少了父层 PRoot 成本；
+- `system/popen/fexecve` 没有命中导出 exec/spawn interpose。用 Ubuntu-only `git --version` 反例后，system/popen 明确失败；fexecve 输出也与 PRoot 不同；
+- missing executable、missing spawn、EACCES 与坏 shebang 均从父进程的同步返回变为 PRoot wrapper 的异步失败，预设风险被证实。
+
+因此 unrestricted glibc child relay 为 no-go。RF1330 只允许验证一个更窄但仍通用的候选合同：调用方明确只使用已捕获的 direct exec/spawn 家族，并接受 child 创建成功后以异步 exit 报告容器目标失败。它仍不识别 Git/Python；若真实依赖进入 system/popen/fexecve 或依赖同步 errno，则整条 PRoot。

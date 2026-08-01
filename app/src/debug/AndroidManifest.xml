@@ -39,6 +39,16 @@
             android:name="com.kite.app.foundation.runtime.HostGitBenchmarkService"
             android:exported="false" />
         <receiver
+            android:name="com.kite.app.foundation.runtime.GlibcChildRelayBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.GLIBC_CHILD_RELAY_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.GlibcChildRelayBenchmarkService"
+            android:exported="false" />
+        <receiver
             android:name="com.kite.app.foundation.runtime.ManagedProotProductionGateReceiver"
             android:exported="true">
             <intent-filter>

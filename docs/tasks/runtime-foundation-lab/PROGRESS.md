@@ -71,8 +71,8 @@
 | RF1240 | 已完成 | 1464 项全量门、强制构建、双轮真机和生产范围审查通过 |
 | RF1300 | 进行中 | 研究入口无关的 glibc child relay，不为 Git/Python 写特判 |
 | RF1310 | 已完成 | 入口/观察语义与同步错误、hidden symbol 风险已固化 |
-| RF1320 | 进行中 | Debug-only relay 固定矩阵 |
-| RF1330 | 待开始 | 复算 Git/Python 子进程反例与性能 |
+| RF1320 | 已完成 | direct exec/spawn 正常语义与并发通过；漏拦和同步错误边界已证实 |
+| RF1330 | 进行中 | 复算 Git/Python 是否满足窄 direct exec/spawn 合同 |
 | RF1340 | 待开始 | go/no-go、全量门与生产范围审查 |
 
 ## RF110 开机与三问自检
@@ -378,6 +378,15 @@
 - argv/env/cwd 之外，fd/file actions、pgroup、signal mask/default、wait exit、取消与 child PID 都是兼容合同。额外 wrapper 不能形成第二业务进程或遗留 tracee。
 - 最大先验风险是同步错误：原生 exec/spawn 可直接返回 ENOENT/EACCES，而先启动 PRoot wrapper 会把它变成稍后的 exit 127。无法在不复制容器解析规则的条件下保持时，必须 no-go 或把 Provider 限制为调用方明确接受异步 child 的结构化合同。
 - RF1310 只新增架构合同，生产 launcher/compat/Provider/资源/lane 均不变。RF1320 使用独立 Debug 资产验证实际入口，不覆盖冻结资产。
+
+## RF1320 Debug-only child relay 固定矩阵
+
+- 新增独立 relay/probe C 源码和可复现 WSL 交叉编译脚本；产物只生成到 `local-artifacts/glibc-child-relay-rf1320`，经 ADB 放入应用私有 debug 目录，没有打包或进入 Git。正式 launcher 与 compat 库未修改。
+- execve/v/vp/vpe、补齐的 execl/lp/le、posix_spawn/p 与 fork 后 exec 均记录真实命中；argv/env/cwd、stdio、exit 37、signal 15、workspace shebang、spawn file actions 与独立 PRoot 完全一致。
+- system/popen/fexecve 没有命中。改用 Android 不具备的 `git --version` 后，system exit 127、popen 无输出，而 PRoot 均成功；fexecve 也出现同 exit 但输出不同，证明便携命令的偶然成功不能算覆盖。
+- missing exec/spawn、EACCES、坏 shebang 四类均改变同步错误：direct/PRoot parent 能得到 errno/return，Host+relay 先成功创建 PRoot wrapper，再以 exit 1 和 stderr 报错。unrestricted relay 因此 no-go。
+- 1/4/8 并发各三轮均零失败。Host parent + relay batch wall 中位数为 106/117/137ms，PRoot parent 为 124/161/209ms；P95 为 109/116/126ms 对 110/109/124ms。收益来自父进程留在 Host，不是把 PRoot child 本身加速。
+- RF1330 只复算窄的 `direct exec/spawn + async child failure accepted` 候选合同；不按工具名选择，任一真实 system/popen/fexecve 或同步 errno 依赖都失败关闭。
 
 ## RF710 开机与三问自检
 
