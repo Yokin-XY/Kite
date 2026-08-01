@@ -12,6 +12,7 @@ import com.kite.app.agent.config.mergeAgentSessionConfigurationOverlay
 import com.kite.app.agent.contract.AgentFailureCode
 import com.kite.app.agent.contract.AgentOperationResult
 import com.kite.app.agent.contract.AgentSessionPhase
+import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.KiteAgentProvider
 import com.kite.app.agent.registration.AgentConfigurationStatus
 import com.kite.app.agent.registration.AgentInstallationStatus
@@ -30,7 +31,9 @@ import com.kite.app.foundation.runtime.HostNodeExecutionRequest
 import com.kite.app.foundation.runtime.RuntimeExposureScope
 import com.kite.app.foundation.contracts.ContainerExecConfig
 import com.kite.app.agent.runtime.AgentRuntimeStatusSink
+import com.kite.app.agent.session.AgentSessionAdministrationAdapter
 import com.kite.app.agent.session.AgentSessionAdministrationAdapterRegistry
+import com.kite.app.agent.session.AgentSessionCommand
 import com.kite.app.agent.session.AgentSessionCommandExecutor
 import com.kite.app.agent.session.opencode.OpenCodeAgentSessionAdministrationAdapter
 import com.kite.app.agent.store.AgentDraftCapabilityCacheStore
@@ -398,7 +401,13 @@ internal class AndroidAgentRecipeRuntime(
                     .adapter(resolved.sessionAdapterId)
                     ?.let { adapter ->
                         { targetSessionId: String -> adapter.deleteSession(targetSessionId, cwd) }
-                    }
+                    },
+                sessionRename = sessionAdministrationAdapters
+                    .adapter(resolved.sessionAdapterId)
+                    ?.takeIf(AgentSessionAdministrationAdapter::supportsRename)
+                    ?.let { adapter ->
+                        { renameRequest: AgentSessionRenameRequest -> adapter.renameSession(renameRequest, cwd) }
+                    },
             )
             startConnection(
                 request = request,
@@ -791,14 +800,13 @@ internal class AndroidAgentRecipeRuntime(
     }
 
     private suspend fun executeSessionCommand(
-        argv: List<String>,
-        cwd: String
+        request: AgentSessionCommand,
     ): AgentOperationResult<Unit> = withContext(Dispatchers.IO) {
         val config = runCatching {
             WorkSurfaceRuntimeBridge.buildArgvExecConfig(
                 context = appContext,
-                workingDirectory = cwd,
-                argv = argv
+                workingDirectory = request.cwd,
+                argv = request.argv,
             )
         }.getOrElse { error ->
             return@withContext AgentOperationResult.Failure("会话管理命令准备失败：${error.message}", error)
@@ -812,12 +820,13 @@ internal class AndroidAgentRecipeRuntime(
             coroutineScope {
                 val stdout = async(Dispatchers.IO) { runCatching { process.stdoutLines.toList() }.getOrDefault(emptyList()) }
                 val stderr = async(Dispatchers.IO) { runCatching { process.stderrLines.toList() }.getOrDefault(emptyList()) }
+                request.stdinLine?.let { process.writeLine(it) }
                 val exitCode = withTimeoutOrNull(SESSION_COMMAND_TIMEOUT_MS) { process.awaitExit() }
                 if (exitCode == null) {
                     process.stop()
                     stdout.cancel()
                     stderr.cancel()
-                    AgentOperationResult.Failure("Agent 会话删除超时")
+                    AgentOperationResult.Failure("${request.operationLabel}超时")
                 } else {
                     val detail = stderr.await().joinToString(" ").trim().take(240)
                     stdout.await()
@@ -825,7 +834,7 @@ internal class AndroidAgentRecipeRuntime(
                         AgentOperationResult.Success(Unit)
                     } else {
                         AgentOperationResult.Failure(
-                            detail.ifBlank { "Agent 会话删除失败，exitCode=$exitCode" }
+                            detail.ifBlank { "${request.operationLabel}失败，exitCode=$exitCode" }
                         )
                     }
                 }

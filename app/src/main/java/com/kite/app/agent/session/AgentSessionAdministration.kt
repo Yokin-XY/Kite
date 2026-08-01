@@ -1,12 +1,16 @@
 package com.kite.app.agent.session
 
 import com.kite.app.agent.contract.AgentOperationResult
+import com.kite.app.agent.contract.AgentSessionRenameRequest
 
 /** Agent 原生会话的低频管理能力；归档不属于这里。 */
 interface AgentSessionAdministrationAdapter {
     val adapterId: String
+    val supportsRename: Boolean get() = false
 
     suspend fun deleteSession(sessionId: String, cwd: String): AgentOperationResult<Unit>
+    suspend fun renameSession(request: AgentSessionRenameRequest, cwd: String): AgentOperationResult<Unit> =
+        AgentOperationResult.Unsupported("session/rename")
 }
 
 class AgentSessionAdministrationAdapterRegistry(adapters: List<AgentSessionAdministrationAdapter>) {
@@ -28,6 +32,13 @@ class AgentSessionAdministrationAdapterRegistry(adapters: List<AgentSessionAdmin
     }
 }
 
+data class AgentSessionCommand(
+    val argv: List<String>,
+    val cwd: String,
+    val stdinLine: String? = null,
+    val operationLabel: String,
+)
+
 fun interface AgentSessionCommandExecutor {
-    suspend fun execute(argv: List<String>, cwd: String): AgentOperationResult<Unit>
+    suspend fun execute(command: AgentSessionCommand): AgentOperationResult<Unit>
 }

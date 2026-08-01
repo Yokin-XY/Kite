@@ -26,6 +26,7 @@ import com.kite.app.agent.contract.AgentSessionListRequest
 import com.kite.app.agent.contract.AgentSessionPage
 import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.contract.AgentSessionPhase
+import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSnapshot
 import com.kite.app.agent.contract.AgentStopReason
 import com.kite.app.agent.contract.AgentToolCallPatch
@@ -576,6 +577,31 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
+    fun `重命名通过 registry 转发给 Agent 真实能力`() = runTest {
+        val provider = FakeProvider(renameSupported = true)
+        AgentRuntimeRegistry.start(
+            request = AgentRuntimeStartRequest(
+                "instance-rename",
+                1L,
+                "fake",
+                "/workspace",
+                preferredSessionId = "session-1",
+            ),
+            provider = provider,
+            statusSink = AgentRuntimeStatusSink { _, _, _ -> },
+        ) as AgentOperationResult.Success
+
+        val request = AgentSessionRenameRequest("historical-1", "  新标题  ")
+        val renamed = AgentRuntimeRegistry.renameSession("instance-rename", 1L, request)
+
+        assertTrue(renamed is AgentOperationResult.Success)
+        assertEquals(
+            listOf(AgentSessionRenameRequest("historical-1", "新标题")),
+            provider.connection.renamedSessions,
+        )
+    }
+
+    @Test
     fun `配置变更和会话分支经过 registry 更新当前投影`() = runTest {
         val provider = FakeProvider(initialModes = listOf(AgentMode("build", "构建"), AgentMode("plan", "计划")))
         AgentRuntimeRegistry.start(
@@ -787,6 +813,7 @@ class AgentRuntimeRegistryTest {
         private val initialConfiguration: List<AgentConfigOption> = emptyList(),
         private val initialCommands: List<AgentCommand> = emptyList(),
         private val deleteSupported: Boolean = false,
+        private val renameSupported: Boolean = false,
         private val newSessionFailures: Int = 0,
         private val promptFailures: Int = 0,
         private val configurationFailures: Int = 0,
@@ -809,6 +836,7 @@ class AgentRuntimeRegistryTest {
                 initialConfiguration,
                 initialCommands,
                 deleteSupported,
+                renameSupported,
                 newSessionFailures,
                 promptFailures,
                 configurationFailures,
@@ -828,6 +856,7 @@ class AgentRuntimeRegistryTest {
         private val initialConfiguration: List<AgentConfigOption>,
         private val initialCommands: List<AgentCommand>,
         private val deleteSupported: Boolean,
+        private val renameSupported: Boolean,
         private var newSessionFailures: Int,
         private var promptFailures: Int,
         private var configurationFailures: Int,
@@ -847,6 +876,7 @@ class AgentRuntimeRegistryTest {
         val selectedModelValues = mutableListOf<String>()
         val callOrder = mutableListOf<String>()
         val deletedSessions = mutableListOf<String>()
+        val renamedSessions = mutableListOf<AgentSessionRenameRequest>()
         override val provider = AgentProviderInfo("fake", "Fake")
         override val capabilities = AgentCapabilities(
             sessions = AgentSessionCapabilities(
@@ -855,6 +885,7 @@ class AgentRuntimeRegistryTest {
                 resume = resumeSupported,
                 fork = true,
                 delete = deleteSupported,
+                rename = renameSupported,
                 additionalDirectories = additionalDirectoriesSupported
             )
         )
@@ -986,6 +1017,11 @@ class AgentRuntimeRegistryTest {
         override suspend fun deleteSession(sessionId: String): AgentOperationResult<Unit> {
             if (!deleteSupported) return unsupported()
             deletedSessions += sessionId
+            return AgentOperationResult.Success(Unit)
+        }
+        override suspend fun renameSession(request: AgentSessionRenameRequest): AgentOperationResult<Unit> {
+            if (!renameSupported) return unsupported()
+            renamedSessions += request
             return AgentOperationResult.Success(Unit)
         }
         override suspend fun setConfiguration(

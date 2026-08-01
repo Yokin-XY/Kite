@@ -39,6 +39,7 @@ import com.kite.app.agent.contract.AgentSessionEvent
 import com.kite.app.agent.contract.AgentSessionListRequest
 import com.kite.app.agent.contract.AgentSessionPage
 import com.kite.app.agent.contract.AgentSessionPhase
+import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSnapshot
 import com.kite.app.agent.contract.AgentTurnResult
 import com.kite.app.agent.contract.AgentTurnUsage
@@ -79,7 +80,8 @@ class AcpProcessAgentProvider(
     private val launcher: AcpProcessChannelLauncher,
     private val initializeTimeoutMs: Long = DEFAULT_INITIALIZE_TIMEOUT_MS,
     private val diagnosticSink: (String) -> Unit = {},
-    private val sessionDelete: (suspend (sessionId: String) -> AgentOperationResult<Unit>)? = null
+    private val sessionDelete: (suspend (sessionId: String) -> AgentOperationResult<Unit>)? = null,
+    private val sessionRename: (suspend (request: AgentSessionRenameRequest) -> AgentOperationResult<Unit>)? = null,
 ) : KiteAgentProvider {
     override val id: String = descriptor.id
 
@@ -126,8 +128,11 @@ class AcpProcessAgentProvider(
                 agentInfo.capabilities,
                 agentInfo.authMethods
             ).let { capabilities ->
-                if (sessionDelete == null) capabilities else capabilities.copy(
-                    sessions = capabilities.sessions.copy(delete = true)
+                capabilities.copy(
+                    sessions = capabilities.sessions.copy(
+                        delete = capabilities.sessions.delete || sessionDelete != null,
+                        rename = capabilities.sessions.rename || sessionRename != null,
+                    )
                 )
             }
             AgentOperationResult.Success(
@@ -145,7 +150,8 @@ class AcpProcessAgentProvider(
                         title = agentInfo.implementation?.title ?: descriptor.title
                     ),
                     capabilities = mappedCapabilities,
-                    sessionDelete = sessionDelete
+                    sessionDelete = sessionDelete,
+                    sessionRename = sessionRename,
                 )
             )
         } catch (error: Throwable) {
@@ -182,7 +188,8 @@ private class AcpProcessAgentConnection(
     private val endpoint: AgentClientEndpoint,
     override val provider: AgentProviderInfo,
     override val capabilities: AgentCapabilities,
-    private val sessionDelete: (suspend (sessionId: String) -> AgentOperationResult<Unit>)?
+    private val sessionDelete: (suspend (sessionId: String) -> AgentOperationResult<Unit>)?,
+    private val sessionRename: (suspend (request: AgentSessionRenameRequest) -> AgentOperationResult<Unit>)?,
 ) : KiteAgentConnection {
     private val sessions = ConcurrentHashMap<String, ClientSession>()
     private val disconnecting = AtomicBoolean(false)
@@ -277,6 +284,11 @@ private class AcpProcessAgentConnection(
             is AgentOperationResult.Failure -> deleted
             is AgentOperationResult.Unsupported -> deleted
         }
+    }
+
+    override suspend fun renameSession(request: AgentSessionRenameRequest): AgentOperationResult<Unit> {
+        val rename = sessionRename ?: return AgentOperationResult.Unsupported("session/rename")
+        return rename(request)
     }
 
     override suspend fun setMode(sessionId: String, modeId: String): AgentOperationResult<Unit> {

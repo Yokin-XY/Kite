@@ -101,6 +101,7 @@ data class AgentSessionCapabilities(
     val fork: Boolean = false,
     val close: Boolean = false,
     val delete: Boolean = false,
+    val rename: Boolean = false,
     val additionalDirectories: Boolean = false
 )
 
@@ -132,6 +133,11 @@ data class AgentConnectionRequest(
 data class AgentNewSessionRequest(
     val cwd: String,
     val additionalDirectories: List<String> = emptyList()
+)
+
+data class AgentSessionRenameRequest(
+    val sessionId: String,
+    val title: String,
 )
 
 data class AgentExistingSessionRequest(
@@ -526,6 +532,8 @@ interface KiteAgentConnection {
     suspend fun forkSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot>
     suspend fun closeSession(sessionId: String): AgentOperationResult<Unit>
     suspend fun deleteSession(sessionId: String): AgentOperationResult<Unit>
+    suspend fun renameSession(request: AgentSessionRenameRequest): AgentOperationResult<Unit> =
+        AgentOperationResult.Unsupported("session/rename")
     suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult>
     suspend fun setConfiguration(
         sessionId: String,

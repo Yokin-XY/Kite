@@ -17,6 +17,7 @@ import com.kite.app.agent.contract.AgentSessionEvent
 import com.kite.app.agent.contract.AgentSessionListRequest
 import com.kite.app.agent.contract.AgentSessionPage
 import com.kite.app.agent.contract.AgentSessionPhase
+import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSnapshot
 import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.contract.AgentNewSessionRequest
@@ -482,6 +483,24 @@ object AgentRuntimeRegistry {
             is AgentOperationResult.Failure -> deleted
             is AgentOperationResult.Unsupported -> deleted
         }
+    }
+
+    suspend fun renameSession(
+        instanceId: String,
+        generation: Long,
+        request: AgentSessionRenameRequest,
+    ): AgentOperationResult<Unit> {
+        val active = activeByInstance[instanceId]
+            ?.takeIf { it.session.generation == generation }
+            ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
+        if (!active.session.capabilities.sessions.rename) {
+            return AgentOperationResult.Unsupported("session/rename")
+        }
+        val title = request.title.trim()
+        if (request.sessionId.isBlank() || title.isBlank()) {
+            return AgentOperationResult.Failure("会话 ID 和名称不能为空")
+        }
+        return active.connection.renameSession(request.copy(title = title))
     }
 
     suspend fun loadSession(

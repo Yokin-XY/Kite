@@ -42,6 +42,7 @@ import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentPromptRequest
 import com.kite.app.agent.contract.AgentSessionEvent
 import com.kite.app.agent.contract.AgentSessionPhase
+import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentStopReason
 import com.kite.app.agent.process.AgentProcessChannel
 import kotlinx.coroutines.CompletableDeferred
@@ -70,6 +71,7 @@ class AcpProcessAgentProviderTest {
         val fixture = AcpAgentFixture()
         val events = mutableListOf<Pair<String, AgentSessionEvent>>()
         val deletedSessions = mutableListOf<String>()
+        val renamedSessions = mutableListOf<AgentSessionRenameRequest>()
         val provider = AcpProcessAgentProvider(
             descriptor = AcpProcessProviderDescriptor("fixture", "Fixture ACP"),
             launcher = AcpProcessChannelLauncher { fixture.start() },
@@ -77,7 +79,11 @@ class AcpProcessAgentProviderTest {
             sessionDelete = { sessionId ->
                 deletedSessions += sessionId
                 AgentOperationResult.Success(Unit)
-            }
+            },
+            sessionRename = { request ->
+                renamedSessions += request
+                AgentOperationResult.Success(Unit)
+            },
         )
 
         val connected = withTimeout(5_000L) {
@@ -96,6 +102,7 @@ class AcpProcessAgentProviderTest {
         val connection = (connected as AgentOperationResult.Success).value
         assertEquals("fixture-agent", connection.provider.name)
         assertTrue(connection.capabilities.sessions.delete)
+        assertTrue(connection.capabilities.sessions.rename)
         assertTrue(connection.capabilities.authentication.methods.single() is AgentAuthenticationMethod.AgentManaged)
         assertTrue(connection.capabilities.authentication.logout)
         assertTrue(connection.authenticate("login") is AgentOperationResult.Success)
@@ -149,6 +156,9 @@ class AcpProcessAgentProviderTest {
             while (!fixture.cancelled) yield()
         }
         waitingPrompt.cancelAndJoin()
+        val renameRequest = AgentSessionRenameRequest(sessionId, "新标题")
+        assertTrue(connection.renameSession(renameRequest) is AgentOperationResult.Success)
+        assertEquals(listOf(renameRequest), renamedSessions)
         assertTrue(connection.deleteSession(sessionId) is AgentOperationResult.Success)
         assertEquals(listOf(sessionId), deletedSessions)
         assertTrue(connection.logout() is AgentOperationResult.Success)

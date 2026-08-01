@@ -13,6 +13,7 @@ import com.kite.app.agent.contract.AgentProviderInfo
 import com.kite.app.agent.contract.AgentSessionEvent
 import com.kite.app.agent.contract.AgentSessionListRequest
 import com.kite.app.agent.contract.AgentSessionPage
+import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSnapshot
 import com.kite.app.agent.contract.AgentTurnResult
 import com.kite.app.agent.contract.KiteAgentConnection
@@ -176,6 +177,9 @@ class AgentSessionConfigurationOverlayProvider(
             permissionProfileBySession.remove(sessionId)
             return delegate.deleteSession(sessionId)
         }
+
+        override suspend fun renameSession(request: AgentSessionRenameRequest): AgentOperationResult<Unit> =
+            delegate.renameSession(request)
 
         override suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult> =
             delegate.prompt(request)
