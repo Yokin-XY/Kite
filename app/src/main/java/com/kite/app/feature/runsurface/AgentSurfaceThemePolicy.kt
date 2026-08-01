@@ -82,16 +82,17 @@ internal object AgentArchivedSelectionPolicy {
 }
 
 internal object AgentSelectionVisualPolicy {
-    const val INDICATOR_SIZE_DP = 22
+    const val INDICATOR_SIZE_DP = 18
     const val TOUCH_TARGET_DP = 44
-    const val INDICATOR_ICON_SIZE_DP = 14
+    const val CHECKED_DOT_SIZE_DP = 10
+    const val PARTIAL_DOT_SIZE_DP = 6
     const val ACTION_HEIGHT_DP = 48
     const val ACTION_RADIUS_DP = 16
 
     fun palette(isDark: Boolean): AgentSelectionPalette = if (isDark) {
         AgentSelectionPalette(
             selectedIndicator = android.graphics.Color.rgb(236, 236, 236),
-            selectedIndicatorContent = android.graphics.Color.rgb(20, 20, 20),
+            indicatorSurface = android.graphics.Color.rgb(47, 47, 47),
             unselectedIndicatorStroke = android.graphics.Color.rgb(94, 94, 94),
             selectedRow = android.graphics.Color.rgb(47, 47, 47),
             primaryAction = android.graphics.Color.rgb(236, 236, 236),
@@ -104,7 +105,7 @@ internal object AgentSelectionVisualPolicy {
     } else {
         AgentSelectionPalette(
             selectedIndicator = android.graphics.Color.rgb(32, 33, 35),
-            selectedIndicatorContent = android.graphics.Color.WHITE,
+            indicatorSurface = android.graphics.Color.WHITE,
             unselectedIndicatorStroke = android.graphics.Color.rgb(199, 199, 199),
             selectedRow = android.graphics.Color.rgb(247, 247, 248),
             primaryAction = android.graphics.Color.rgb(32, 33, 35),
@@ -119,7 +120,7 @@ internal object AgentSelectionVisualPolicy {
 
 internal data class AgentSelectionPalette(
     val selectedIndicator: Int,
-    val selectedIndicatorContent: Int,
+    val indicatorSurface: Int,
     val unselectedIndicatorStroke: Int,
     val selectedRow: Int,
     val primaryAction: Int,

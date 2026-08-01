@@ -10,7 +10,9 @@ import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.InsetDrawable
+import android.graphics.drawable.LayerDrawable
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.text.Editable
@@ -143,6 +145,54 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+internal fun renderArchivedSelectionIndicator(
+    indicator: ImageView,
+    ui: UiKit,
+    palette: AgentSelectionPalette,
+    state: AgentArchivedProjectSelectionState,
+) {
+    val outerInset = ui.dp(
+        (AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_SIZE_DP) / 2,
+    )
+    val layers = mutableListOf<Drawable>(
+        InsetDrawable(
+            ui.roundedBox(
+                palette.indicatorSurface,
+                palette.unselectedIndicatorStroke,
+                ui.dp(AgentSelectionVisualPolicy.INDICATOR_SIZE_DP / 2).toFloat(),
+                ui.dp(1),
+            ),
+            outerInset,
+        ),
+    )
+    val dotSize = when (state) {
+        AgentArchivedProjectSelectionState.Unchecked -> 0
+        AgentArchivedProjectSelectionState.Partial -> AgentSelectionVisualPolicy.PARTIAL_DOT_SIZE_DP
+        AgentArchivedProjectSelectionState.Checked -> AgentSelectionVisualPolicy.CHECKED_DOT_SIZE_DP
+    }
+    if (dotSize > 0) {
+        val dotInset = ui.dp((AgentSelectionVisualPolicy.TOUCH_TARGET_DP - dotSize) / 2)
+        layers += InsetDrawable(
+            ui.roundedBox(
+                palette.selectedIndicator,
+                android.graphics.Color.TRANSPARENT,
+                ui.dp(dotSize / 2).toFloat(),
+                0,
+            ),
+            dotInset,
+        )
+    }
+    indicator.setImageDrawable(null)
+    indicator.imageTintList = null
+    indicator.setPadding(0, 0, 0, 0)
+    indicator.background = LayerDrawable(layers.toTypedArray())
+    indicator.contentDescription = when (state) {
+        AgentArchivedProjectSelectionState.Unchecked -> "未选择"
+        AgentArchivedProjectSelectionState.Partial -> "已选择部分"
+        AgentArchivedProjectSelectionState.Checked -> "已选择"
+    }
+}
+
 internal class ArchivedSessionAdapter(
     private val context: Context,
     private val tokens: ThemeTokens,
@@ -214,27 +264,12 @@ internal class ArchivedSessionAdapter(
         indicator: ImageView,
         state: AgentArchivedProjectSelectionState,
     ) {
-        val selected = state != AgentArchivedProjectSelectionState.Unchecked
-        indicator.setImageResource(when (state) {
-            AgentArchivedProjectSelectionState.Unchecked -> 0
-            AgentArchivedProjectSelectionState.Partial -> R.drawable.ic_remove_light
-            AgentArchivedProjectSelectionState.Checked -> R.drawable.ic_check_light
-        })
-        indicator.imageTintList = ColorStateList.valueOf(selectionPalette.selectedIndicatorContent)
-        indicator.background = InsetDrawable(
-            ui.roundedBox(
-                if (selected) selectionPalette.selectedIndicator else android.graphics.Color.TRANSPARENT,
-                if (selected) android.graphics.Color.TRANSPARENT else selectionPalette.unselectedIndicatorStroke,
-                ui.dp(AgentSelectionVisualPolicy.INDICATOR_SIZE_DP / 2).toFloat(),
-                ui.dp(1),
-            ),
-            ui.dp((AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_SIZE_DP) / 2),
+        renderArchivedSelectionIndicator(
+            indicator = indicator,
+            ui = ui,
+            palette = selectionPalette,
+            state = state,
         )
-        val iconInset = ui.dp(
-            (AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_ICON_SIZE_DP) / 2,
-        )
-        indicator.setPadding(iconInset, iconInset, iconInset, iconInset)
-        indicator.contentDescription = if (selected) "已选择" else "未选择"
     }
 
     private fun renderSelectionIndicator(indicator: ImageView, selected: Boolean) {

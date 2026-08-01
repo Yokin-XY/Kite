@@ -2579,22 +2579,13 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun renderArchiveSelectionIndicator(indicator: ImageView, selected: Boolean) {
-        indicator.setImageResource(if (selected) R.drawable.ic_check_light else 0)
-        indicator.imageTintList = ColorStateList.valueOf(selectionPalette.selectedIndicatorContent)
-        indicator.background = InsetDrawable(
-            ui.roundedBox(
-                if (selected) selectionPalette.selectedIndicator else android.graphics.Color.TRANSPARENT,
-                if (selected) android.graphics.Color.TRANSPARENT else selectionPalette.unselectedIndicatorStroke,
-                ui.dp(AgentSelectionVisualPolicy.INDICATOR_SIZE_DP / 2).toFloat(),
-                ui.dp(1),
-            ),
-            ui.dp((AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_SIZE_DP) / 2),
+        renderArchivedSelectionIndicator(
+            indicator = indicator,
+            ui = ui,
+            palette = selectionPalette,
+            state = if (selected) AgentArchivedProjectSelectionState.Checked
+            else AgentArchivedProjectSelectionState.Unchecked,
         )
-        val iconInset = ui.dp(
-            (AgentSelectionVisualPolicy.TOUCH_TARGET_DP - AgentSelectionVisualPolicy.INDICATOR_ICON_SIZE_DP) / 2,
-        )
-        indicator.setPadding(iconInset, iconInset, iconInset, iconInset)
-        indicator.contentDescription = if (selected) "已选择" else "未选择"
     }
 
     private fun archiveBatchActionButton(label: String, onClick: () -> Unit): TextView =
