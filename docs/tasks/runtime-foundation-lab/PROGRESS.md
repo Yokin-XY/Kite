@@ -92,6 +92,26 @@
 | RF1552 | 已完成 | Quick/Stage/Full 实跑零失败，默认测试数最高减少 82.7% |
 | RF1553 | 已完成 | 独立工作进程持锁；外层中断后仍阻止 Gradle 重叠 |
 | RF1554 | 已完成 | Full、Debug 构建、互斥探针和范围审查全部通过 |
+| RF1600 | 进行中 | 已选受管包元数据版本探针；发布门已固定，等待 RF1620 基线 |
+| RF1610 | 已完成 | 5 个正式资源共享默认元数据探针；两类高风险调用面已排除 |
+| RF1620 | 待开始 | 固定 Debug/测试矩阵、现有 PRoot 路径与原生候选基线 |
+| RF1630 | 未触发 | 仅在 RF1620 正确性与收益门全部通过后实现最小生产样板 |
+| RF1640 | 未触发 | 真链、Full 和父任务 go/no-go 门 |
+
+## RF1600 开机与三问自检
+
+- 目标是什么？只优化默认 npm 来源的已安装版本元数据读取：把可由受控 JSON 文件完整表达的请求放到 Android 原生只读 Provider；任何自定义命令、未知文件事实或非共同语义在首个业务进程前保留现有 PRoot。
+- 完成后拿什么证明？不可由 ADB 改写当前样例的固定矩阵；三轮零差异和预设 p50/p95/批次收益门；至少两份正式清单合同、真实已安装资源唯一车道证据；Targeted/Quick/Stage、父门 Full、Debug 构建和生产范围审查。
+- 依赖是否满足？RF1500 已以 Full 1473 tests 和真实 OpenClaw `native=1/fallback=0` 收口，RF1550 已提供分层测试和跨 worktree Gradle 串行入口；冻结锚点 `8c046238b3c59094becc8f46df9857169a733649`、分支 `codex/runtime-foundation-lab`、工作树干净。
+- 红线：不重做 Node/Python/RF1500，不解析 shell，不迁移显式版本命令、远端版本请求、安装事务或取消清理；不新增 Store、不改 UI/PRoot View；只用 OnePlus 8T `3f8bbaad`，不触碰魅族、main、其他工作树、远端、版本或发布。
+
+## RF1610 候选与发布门审计
+
+- 正式调用面共有 7 个 npm 来源资源；其中 5 个没有自定义 `versionProbe`，统一由 `defaultInstalledVersionProbe()` 生成 `package.json.version` 读取，并在单项/批量“检查更新”中经 `AndroidResourceVersionGateway` 逐资源启动静默 PRoot + Node。这是多个正式资源复用的真实高频链，不是 Debug demo。
+- 第一名且唯一过初筛候选是“受管 JSON 元数据字符串字段读取”：输入可显式表达为容器路径、最大字节和字段；Android 已有 `/workspace` 物理映射、NOFOLLOW 文件事实和 JSON 能力；准备阶段可在无进程、无副作用前给出 Ready/Unsupported/Blocked。
+- 4 个显式 `命令 --version` 探针未进入候选，因为调用前不能完整证明 Linux ELF、Node 包闭包、子进程、环境和输出语义；取消安装清理未进入候选，因为当前命令同时修改活动安装根、停止软件、调用包管理器并含资源分支，正确性风险高且不是高频链。
+- RF1620 的固定门已经写入 PLAYBOOK：三轮零差异；原生 p50 每轮至少降低 70%、p95 每轮不高于 30ms；固定 5 请求批次 p50 至少降低 60%。门失败即 no-go，不写生产样板。
+- 本叶只修改 `PLAYBOOK/PROGRESS/DECISIONS`，没有改生产 Gateway、Provider、资源清单、测试、构建配置或设备状态。下一恢复指针为 RF1620。
 
 ## RF1500 开机与三问自检
 
