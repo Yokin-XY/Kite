@@ -367,7 +367,7 @@ internal class RunAgentSurfaceBinding(
         addView(buildComposerArea(context), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { setMargins(ui.dp(28), ui.dp(8), ui.dp(28), ui.dp(12)) })
+        ).apply { setMargins(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(12)) })
     }
 
     override val root: View = FrameLayout(context).apply {
@@ -784,40 +784,40 @@ internal class RunAgentSurfaceBinding(
                 )
             })
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(34)).apply {
-            setMargins(ui.dp(5), 0, ui.dp(5), ui.dp(6))
+            setMargins(ui.dp(4), 0, ui.dp(4), ui.dp(6))
         })
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = ui.dp(56)
+            minimumHeight = ui.dp(52)
             addView(iconButtonWithAnchor(context, R.drawable.ic_add_light, "扩展与工作模式") {
                 showComposerExtensionMenu()
             }.apply {
                 background = ui.roundedBox(
                     agentInputBackground,
                     android.graphics.Color.TRANSPARENT,
-                    ui.dp(27).toFloat(),
+                    ui.dp(25).toFloat(),
                 )
                 elevation = ui.dp(2).toFloat()
-            }, LinearLayout.LayoutParams(ui.dp(54), ui.dp(54)).apply {
-                marginEnd = ui.dp(6)
+            }, LinearLayout.LayoutParams(ui.dp(50), ui.dp(50)).apply {
+                marginEnd = ui.dp(8)
             })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                minimumHeight = ui.dp(56)
-                setPadding(ui.dp(12), ui.dp(3), ui.dp(5), ui.dp(3))
+                minimumHeight = ui.dp(52)
+                setPadding(ui.dp(14), ui.dp(3), ui.dp(2), ui.dp(3))
                 background = ui.roundedBox(
                     agentInputBackground,
                     android.graphics.Color.TRANSPARENT,
-                    ui.dp(28).toFloat(),
+                    ui.dp(26).toFloat(),
                 )
                 elevation = ui.dp(2).toFloat()
                 addView(input.apply {
                     hint = "给 Agent 发消息"
                     textSize = 16f
                     includeFontPadding = false
-                    minHeight = ui.dp(48)
+                    minHeight = ui.dp(44)
                     maxLines = 6
                     inputType = InputType.TYPE_CLASS_TEXT or
                         InputType.TYPE_TEXT_FLAG_MULTI_LINE or
@@ -826,7 +826,7 @@ internal class RunAgentSurfaceBinding(
                     setTextColor(tokens.textPrimary)
                     setHintTextColor(tokens.textTertiary)
                     setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                    setPadding(0, ui.dp(8), ui.dp(6), ui.dp(7))
+                    setPadding(0, ui.dp(6), ui.dp(7), ui.dp(6))
                     addTextChangedListener(object : TextWatcher {
                         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -839,7 +839,7 @@ internal class RunAgentSurfaceBinding(
                 addView(actionButton.apply {
                     contentDescription = "发送"
                     scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12))
+                    setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(14))
                     visibility = View.VISIBLE
                     setOnClickListener { submitOrCancel() }
                 }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
@@ -1165,10 +1165,13 @@ internal class RunAgentSurfaceBinding(
             else -> R.drawable.ic_arrow_up_light
         })
         actionButton.imageTintList = ColorStateList.valueOf(agentPageBackground)
-        actionButton.background = ui.roundedBox(
-            tokens.textPrimary,
-            android.graphics.Color.TRANSPARENT,
-            ui.dp(24).toFloat()
+        actionButton.background = InsetDrawable(
+            ui.roundedBox(
+                tokens.textPrimary,
+                android.graphics.Color.TRANSPARENT,
+                ui.dp(20).toFloat(),
+            ),
+            ui.dp(4),
         )
         actionButton.contentDescription = when {
             cancelling -> "停止生成"
