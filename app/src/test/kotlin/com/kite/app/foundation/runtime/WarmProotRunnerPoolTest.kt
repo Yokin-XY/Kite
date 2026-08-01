@@ -310,6 +310,7 @@ class WarmProotRunnerPoolTest {
             linkChain = emptyList(),
             lastModifiedMs = 1L,
             length = 100L,
+            executable = true,
         ),
     )
 

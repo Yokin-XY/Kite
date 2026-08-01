@@ -31,6 +31,7 @@ import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
 import com.kite.app.resources.KiteResourceInstallStore
+import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceManagementMode
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
@@ -588,7 +589,14 @@ internal class AndroidResourceActionGateway(
                 isInstalled = entry?.installed == true,
                 verificationBasis = verificationBasis,
             )
-            ResourceManagedCommandEvidenceRequest(requirement, identity)
+            ResourceManagedCommandEvidenceRequest(
+                requirement = requirement,
+                identity = identity,
+                nativeProof = buildResourceManagedCommandNativeProof(
+                    identity = identity,
+                    nativeEnvironmentEligible = environmentId == KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID,
+                ),
+            )
         }
         val missing = managedCommandEvidence.missingResourceIds(requests) { pendingRequirements ->
             installedStateProbe.missingResourceIds(pendingRequirements)

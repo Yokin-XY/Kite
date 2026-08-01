@@ -57,3 +57,23 @@ Debug 基准不接收 ADB 命令、路径、轮数、资源 ID 或环境参数�
 - 正式接入不新增 Store，不改变安装登记或页面状态拥有者。
 
 这里固定的是 RF1530 的确认门；RF1520 首轮数字只作为候选发现证据，不冒充预注册的生产验收。
+
+## RF1530 实施与确认
+
+正式实现只扩展既有事实链：
+
+- `ManagedCommandHostFileStamp` 明确携带 `executable`；
+- 宿主文件解析用 `readAttributes(NOFOLLOW_LINKS)` 一次读取类型、mtime 和长度，并按 Kite 真实 UID 调用 `Files.isExecutable()`；
+- `ResourceManagedCommandNativeProof` 只包装完整默认环境的肯定式身份；
+- 既有 `ResourceManagedCommandEvidenceCoordinator` 直接接受该证明，混合请求只把不能证明的资源交给原 PRoot Probe；
+- 证明与请求错配、非默认环境、文件缺失、断链或无执行位均失败关闭，不新增 Store。
+
+首个候选包在 OnePlus 8T 上正确性已通过，但原生 p95 为 `32.316ms`，超过预设 `30ms` 门，因此没有放宽阈值。随后把每个文件原先分散的 `exists/isFile/mtime/length` 查询合并为一次 `readAttributes`，重新构建、安装并从第一轮开始计数：
+
+| 确认轮次 | PRoot p50 | 原生 p50 | 原生 p95 | p50 减少 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 105ms | 10.683ms | 14.210ms | 89.8% |
+| 2 | 106ms | 10.394ms | 15.194ms | 90.2% |
+| 3 | 105ms | 11.930ms | 28.269ms | 88.6% |
+
+三轮的可执行、缺失、断链和无执行位结果均与 PRoot 完全一致；假阳性、假阴性、shell failure、残留、ANR 和 FATAL 均为零。RF1530 的候选门通过，RF1540 仍需验证真实资源打开/获取链和父任务 Full 门。

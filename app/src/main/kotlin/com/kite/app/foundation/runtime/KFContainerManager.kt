@@ -19,7 +19,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Paths
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.LinkedHashMap
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit
@@ -719,15 +721,23 @@ object KFContainerManager {
             val currentPath = current.toPath()
             val absolutePath = current.absolutePath
             if (!visited.add(absolutePath)) return null
-            if (!Files.isSymbolicLink(currentPath)) {
-                if (!current.exists() || !current.isFile) return null
+            val attributes = runCatching {
+                Files.readAttributes(
+                    currentPath,
+                    BasicFileAttributes::class.java,
+                    LinkOption.NOFOLLOW_LINKS,
+                )
+            }.getOrNull() ?: return null
+            if (!attributes.isSymbolicLink) {
+                if (!attributes.isRegularFile || !Files.isExecutable(currentPath)) return null
                 return ManagedCommandHostFileStamp(
                     command = command,
                     hostPath = initialFile.absolutePath,
                     canonicalPath = runCatching(current::getCanonicalPath).getOrDefault(current.absolutePath),
                     linkChain = linkChain.toList(),
-                    lastModifiedMs = current.lastModified(),
-                    length = current.length(),
+                    lastModifiedMs = attributes.lastModifiedTime().toMillis(),
+                    length = attributes.size(),
+                    executable = true,
                 )
             }
 

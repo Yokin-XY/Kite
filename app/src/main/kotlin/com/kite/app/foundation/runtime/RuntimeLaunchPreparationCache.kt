@@ -20,7 +20,8 @@ internal data class RuntimeLaunchPreparationIdentity(
 /**
  * 普通 PRoot PATH 中受管命令的轻量宿主文件身份。
  *
- * 它只描述已经存在的命令文件；缺失命令不会生成伪身份，也不会被当成可缓存的负向结论。
+ * 它只描述已经存在且当前 UID 可执行的命令文件；缺失或不可执行命令不会生成伪身份，
+ * 也不会被当成可缓存的负向结论。
  */
 internal data class ManagedCommandHostFileStamp(
     val command: String,
@@ -29,6 +30,7 @@ internal data class ManagedCommandHostFileStamp(
     val linkChain: List<String>,
     val lastModifiedMs: Long,
     val length: Long,
+    val executable: Boolean,
 )
 
 internal data class ManagedCommandVerificationBasis(
