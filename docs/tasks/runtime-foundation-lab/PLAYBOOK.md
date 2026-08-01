@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF1900` 下一候选审计
-- 当前任务：`RF1910` 重新筛选高复用候选
+- 当前阶段：`RF1900` 默认 Ubuntu 容器冷启动复用证明
+- 当前任务：`RF1920` 固定冷启动准备矩阵与基线
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 冻结锚点：`8c046238b3c59094becc8f46df9857169a733649`
 - 分支：`codex/runtime-foundation-lab`
@@ -1011,6 +1011,36 @@
 - [x] Targeted 16 tests、Quick 266 tests、Stage 278 tests、Debug 构建、固定夹具/进程清理、FATAL/ANR 和生产范围审查通过；
 - [x] RF1800 父门唯一一次 Full 为 289 suites、1503 tests、零失败/零错误、3 个既有平台跳过，production go；
 - [x] AI 会话、普通资源安装事务、资源清单、UI、PRoot View、魅族、main/其他工作树、远端、版本和发布保持不动。
+
+### RF1900 [P1 业务通用能力] 默认 Ubuntu 容器冷启动复用证明
+
+父任务目标：缩短 Kite 新进程第一次取得默认 Ubuntu 容器时的固定准备等待，不改变首次安装、修复、重置、显式 View/环境、Canary 容器或任意 PRoot 命令语义。现有普通启动候选已经用运行时资产、描述符代次、默认容器记录、rootfs 就绪标记/必需文件和工作区目录形成结构化身份；RF1900 只研究当这些事实全部 Ready 时，能否让 `ensureDefaultContainer()` 复用同一正式容器，而不是因进程内记忆为空再次执行完整镜像、容器和工作区维护。任一事实未知或不一致都在副作用前走原完整准备。
+
+#### RF1910 候选与发布门审计
+
+- 候选排序：第一名为默认 Ubuntu 容器冷启动复用证明；OnePlus 冷进程真实日志中 `ensureBaseImageReady(default-container)` 为 919ms、`ensureContainerFilesystem(ubuntu-main)` 为 787ms，后者包含工作区支持 309ms 和系统组件 181ms；现有普通 PRoot 启动已消费相同结构化候选，但 `ensureDefaultContainer()` 在进程内身份尚未建立时仍重做整轮；
+- 第二名“已安装内置工具链快速复用”复验热进程三轮仅 82/25/47ms，不以 RF1840 单次 2,301ms 外推稳定日常收益，判 no-go；第三名“运行状态校准波次合并”的受控 Supervisord 真机检查为 59ms，且遥测与健康 Store 已各自单飞/限频，判 no-go；
+- primary lane 为 Orchestrator/Ubuntu 兼容底座边界：Provider 只回答默认容器静态准备身份 Ready/Unsupported/Blocked，不启动 PRoot、不读取命令、不改变 Store；Ready 仍由现有容器记录持有事实，Unsupported/Blocked 整条进入原完整准备；
+- RF1920 先建立不可由 ADB 传入路径、标记、版本、容器、阈值或轮数的固定矩阵。正确性必须固定覆盖：默认候选完整、运行时描述符变化、rootfs 标记缺失/不匹配、必需文件缺失、容器记录不匹配、工作区缺失、显式 View/环境不复用，以及候选判断零文件写入；
+- 性能门预先固定：OnePlus 8T 三轮冷进程中，候选与原完整准备必须解析到同一容器身份；候选每轮至少减少 50% 且至少 700ms，候选 p95 不高于 500ms；端到端冷启动准备至少减少 20% 和 500ms。任一正确性、无副作用、清理或收益门失败即 no-go，不写生产补丁；
+- 生产范围门：只允许普通默认容器在结构化事实 Ready 时复用；首次安装、修复、重置、Canary、显式 View/环境、`refreshRuntimeFiles`、封存保护、动态网络、运行状态和命令执行全部保持原路径。RF1920/RF1930 只跑 Targeted/Quick/Stage，RF1940 父门才运行唯一一次 Full。
+
+#### RF1920 固定冷启动准备矩阵与基线
+
+- [ ] 建立纯判断 Provider 与固定反例；矩阵只读正式运行时/默认容器事实，ADB 只能触发；
+- [ ] OnePlus 三轮进程冷态复算原完整准备与候选判断，记录同一身份、阶段成本、候选 p50/p95、绝对/相对收益和零副作用；
+- [ ] 正确性、收益、清理、FATAL/ANR 与 Stage 全部门通过后才允许 RF1930 最小生产接入。
+
+#### RF1930 最小生产复用样板
+
+- [ ] 仅在 RF1920 全部门通过后，让 `ensureDefaultContainer()` 的普通默认候选 Ready 分支建立进程内身份并返回既有容器；其余分支原样进入完整准备；
+- [ ] 不新增平行 Store，不缓存动态网络/View/运行状态，不修改页面或普通 PRoot 启动语义；
+- [ ] Targeted/Quick/Stage、冷进程生产复验和范围审查通过。
+
+#### RF1940 go/no-go 与父任务门
+
+- [ ] OnePlus 真实冷启动、完整准备反例、当前容器/工作区事实、FATAL/ANR 和唯一 Full 全部通过；
+- [ ] 达门则 production go；未达门则回退样板并记录 no-go，不降低阈值。
 
 ## 每个叶子任务的固定闭环
 
