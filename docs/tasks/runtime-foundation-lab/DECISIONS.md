@@ -547,6 +547,6 @@
 
 - 状态：已接受，RF1550 已完成
 - 日期：2026-08-01
-- 决定：多个 Kite worktree 保留各自项目缓存和 build 输出，但本地脚本通过同一 Windows 命名 mutex 串行进入 Gradle；不使用 `gradlew --stop`，不清理其他 worktree，不复制用户级依赖缓存。CI 不使用本机锁。
+- 决定：多个 Kite worktree 保留各自项目缓存和 build 输出，但本地脚本通过同一 Windows 命名 mutex 串行进入 Gradle；mutex 必须由独立工作进程持有，外层调用器退出不能在实际 Gradle 结束前释放。不得使用 `gradlew --stop`、清理其他 worktree 或复制用户级依赖缓存。CI 不使用本机锁。
 - 原因：Android/Gradle 的输出目录已随 worktree 隔离，真实碰撞来自共享 daemon/cache 以及同机 CPU/内存。串行入口比为每个 worktree 复制几十 GiB 缓存更稳定，也不会干扰另一台手机已经开始的安装/验收。
-- 影响：使用统一包装器的构建会排队而不是争抢；设备操作继续按 serial 独立。外部直接运行 `gradlew` 无法被锁约束，因此工具链文档和自主任务必须统一入口。
+- 影响：使用统一包装器的构建会排队而不是争抢；即使测试调用器超时或被中断，后续构建仍等待在途 Gradle 完成。设备操作继续按 serial 独立。外部直接运行 `gradlew` 无法被锁约束，因此工具链文档和自主任务必须统一入口。

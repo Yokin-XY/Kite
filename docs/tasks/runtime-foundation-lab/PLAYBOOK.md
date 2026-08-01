@@ -858,14 +858,15 @@
 #### RF1553 跨 worktree Gradle 构建协调
 
 - 问题证据：worktree 自身 `.gradle` 和 `build/` 已隔离，但同机进程仍共享 `C:\Users\19437\.gradle`、Gradle daemon、Kotlin daemon、CPU 和内存；`--no-daemon` 仍会创建单次构建 daemon；
-- 解法：新增通用本地 Gradle 包装器，以 Windows 命名互斥锁串行化 Kite 重任务，自动附加 `--no-daemon --console=plain`，异常退出由系统释放锁；不复制依赖缓存，不杀其他 worktree 的 daemon；
-- 验收标准：同一时刻只允许一个包装器进入 Gradle；等待、超时和遗弃锁均明确报告；任意 Gradle 参数原样透传；CI 保持原入口；工具链文档统一要求本地长期任务使用包装器；
+- 解法：新增通用本地 Gradle 包装器，以独立工作进程持有 Windows 命名互斥锁并串行化 Kite 重任务，自动附加 `--no-daemon --console=plain`；外层调用器中断不能让实际 Gradle 逃逸到锁外，不复制依赖缓存，不杀其他 worktree 的 daemon；
+- 验收标准：同一时刻只允许一个工作进程进入 Gradle；等待、超时和遗弃锁均明确报告；主动终止外层协调器后，工作进程仍持锁到任务结束；任意 Gradle 参数原样透传；CI 保持原入口；工具链文档统一要求本地长期任务使用包装器；
 - 依赖：RF1551。
 
 #### RF1554 压缩与隔离父任务门
 
 - [x] Quick、Stage 和 Full 入口分别实跑；Quick 数量与耗时相对 Full 形成明确比例；
 - [x] 启动两个只读锁探针证明互斥，没有并行启动真实双 Gradle 重任务；
+- [x] 故障注入终止外层协调器，第二工作进程仍等待第一工作进程完成后才获锁；
 - [x] 脚本合同、全量测试与 Debug 构建通过；RF1520 从 stash 恢复后使用新测试入口。
 
 ## 每个叶子任务的固定闭环

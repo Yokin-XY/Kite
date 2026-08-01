@@ -8,6 +8,7 @@ import org.junit.Test
 class KiteTestProfileScriptContractTest {
     private val testRunner = File("../scripts/run-kite-tests.ps1").readText()
     private val gradleRunner = File("../scripts/invoke-kite-gradle.ps1").readText()
+    private val gradleWorker = File("../scripts/invoke-kite-gradle-worker.ps1").readText()
 
     @Test
     fun threeProfilesKeepFullAndRequireExplicitStageScope() {
@@ -29,13 +30,19 @@ class KiteTestProfileScriptContractTest {
 
     @Test
     fun localGradleRunnerSerializesWithoutStoppingOtherDaemons() {
-        assertTrue(gradleRunner.contains("Local\\KiteGradleBuildV1"))
-        assertTrue(gradleRunner.contains("AbandonedMutexException"))
-        assertTrue(gradleRunner.contains("--no-daemon"))
-        assertTrue(gradleRunner.contains("--console=plain"))
-        assertTrue(gradleRunner.contains("KITE_GRADLE_LOCK status=acquired"))
-        assertTrue(gradleRunner.contains("KITE_GRADLE_LOCK status=released"))
+        assertTrue(gradleRunner.contains("invoke-kite-gradle-worker.ps1"))
+        assertTrue(gradleRunner.contains("Start-Process"))
+        assertTrue(gradleRunner.contains("-Wait"))
+        assertTrue(gradleRunner.contains("实际 Gradle 结束前也不会提前放锁"))
+        assertTrue(gradleWorker.contains("Local\\KiteGradleBuildV1"))
+        assertTrue(gradleWorker.contains("AbandonedMutexException"))
+        assertTrue(gradleWorker.contains("--no-daemon"))
+        assertTrue(gradleWorker.contains("--console=plain"))
+        assertTrue(gradleWorker.contains("KITE_GRADLE_LOCK status=acquired"))
+        assertTrue(gradleWorker.contains("KITE_GRADLE_LOCK status=released"))
         assertFalse(gradleRunner.contains("gradlew --stop"))
         assertFalse(gradleRunner.contains("Remove-Item"))
+        assertFalse(gradleWorker.contains("gradlew --stop"))
+        assertFalse(gradleWorker.contains("Remove-Item"))
     }
 }

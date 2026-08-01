@@ -46,6 +46,6 @@ Git worktree 已天然隔离仓库 `.gradle`、模块 `build/`、APK 和测试�
 .\scripts\invoke-kite-gradle.ps1 -GradleArguments ':app:assembleDebug'
 ```
 
-包装器使用 `Local\KiteGradleBuildV1` Windows 命名 mutex。获取锁后才启动 Gradle，结束或异常退出后释放；遗弃锁由系统回收。它自动附加 `--no-daemon --console=plain`，不运行 `gradlew --stop`，不删除或复制其他 worktree 的缓存。
+包装器使用 `Local\KiteGradleBuildV1` Windows 命名 mutex。锁由独立工作进程持有，获取锁后才启动 Gradle；即使外层测试脚本或调用器被中断，工作进程仍会等实际 Gradle 结束再释放锁，下一条构建不会趁隙写入同一测试目录。工作进程自身异常终止时，遗弃锁由系统回收。包装器自动附加 `--no-daemon --console=plain`，不运行 `gradlew --stop`，不删除或复制其他 worktree 的缓存。
 
 该锁只协调使用包装器的本机 Kite 任务。CI 位于独立环境，继续运行原始全量命令。ADB 安装和真机操作不由 Gradle 锁代替，仍必须显式指定 serial；不同手机可以在构建结束后并行验收。

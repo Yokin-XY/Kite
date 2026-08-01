@@ -90,7 +90,7 @@
 | RF1550 | 已完成 | 保留全量覆盖；Quick 默认测试数减少 82.7%，本机构建统一排队 |
 | RF1551 | 已完成 | 276 类测试是覆盖累积，不是重复注册；共享 daemon/机器资源会碰撞 |
 | RF1552 | 已完成 | Quick/Stage/Full 实跑零失败，默认测试数最高减少 82.7% |
-| RF1553 | 已完成 | Windows 命名锁已通过等待、释放和超时双进程探针 |
+| RF1553 | 已完成 | 独立工作进程持锁；外层中断后仍阻止 Gradle 重叠 |
 | RF1554 | 已完成 | Full、Debug 构建、互斥探针和范围审查全部通过 |
 
 ## RF1500 开机与三问自检
@@ -126,6 +126,8 @@
 - Stage（Quick + `com.kite.app.platform.resources.*`）：55 suites、288 tests、零失败，墙钟 74.529 秒。它命中前一轮编译缓存，不能据此宣称 Stage 固有快于 Quick。
 - Full：277 suites、1467 tests、0 failure、0 error、2 skipped，墙钟 201.151 秒；完整语义未改变。相对 RF1440 强制 `--rerun-tasks` 的约 343 秒减少 41.4%。
 - 命名锁双进程探针中，第一进程持锁 3 秒，第二进程 `waitMs=2803` 后获得；1 秒超时探针 exit 1 并明确报告。所有临时输出位于忽略的 `local-artifacts/`。
+- 后续故障注入暴露旧版包装器的窄窗口：外层调用器被终止后，已启动的 Gradle 子进程仍可能继续，而父进程持有的 mutex 已释放。现改由独立工作进程持锁；强制终止协调器后工作进程仍存活，第二探针 `waitMs=4964`、总墙钟 6885ms，确认实际任务结束前不会重叠。
+- 加固后资源 Stage（Quick + `com.kite.app.platform.resources.*`）为 56 suites、289 tests、0 failure、0 error，墙钟 80.835 秒；同时验证新增 RF1520 Debug 合同能够正常编译，未再出现测试结果目录争写。
 - 测试输出仍有既有 Robolectric SQLite CloseGuard 警告，但 JUnit 为零失败；它属于测试资源释放债务，不在本阶段以静默屏蔽处理。
 
 ## RF1554 父任务门
