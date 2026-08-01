@@ -179,5 +179,15 @@
         <service
             android:name="com.kite.app.platform.resources.ResourceVersionProductionRouteProofService"
             android:exported="false" />
+        <receiver
+            android:name="com.kite.app.platform.resources.ResourceVersionBatchSchedulingBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.RESOURCE_VERSION_BATCH_SCHEDULING_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.platform.resources.ResourceVersionBatchSchedulingBenchmarkService"
+            android:exported="false" />
     </application>
 </manifest>

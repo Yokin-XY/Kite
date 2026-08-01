@@ -99,8 +99,8 @@
 | RF1640 | 已完成 | 真实动作链 native/proot 各一次；Full 1487 项零失败，production go |
 | RF1700 | 进行中 | 已选批量版本检查分车道有界并发；AI 会话冻结 |
 | RF1710 | 已完成 | 正式批量入口、三个候选与预设发布门已固定 |
-| RF1720 | 进行中 | 固定五请求顺序、并发、取消、失败和性能基线 |
-| RF1730 | 未触发 | 仅在 RF1720 判 go 后接最小生产调度样板 |
+| RF1720 | 已完成 | 固定矩阵三轮零差异，最小收益 58.4%，候选 p95 380ms，判 go |
+| RF1730 | 进行中 | 固定门已通过，开始最小生产调度样板 |
 | RF1740 | 未触发 | OnePlus 真实批量链、Full 与父任务门 |
 
 ## RF1700 开机与三问自检
@@ -116,6 +116,14 @@
 - 第二名“显式 `--version` 结构化迁移”虽然覆盖 4 份显式探针，但 CLI 版本可能不等于包元数据版本，且显式声明本身可能是业务覆盖，当前不能安全替换。第三名“Ubuntu `/run`/locale 小探针原生化”频率较高，但缺少 rootfs 权限、mount、owner 和启动时序闭包，均保留兼容路线。
 - RF1720 的门在生产改动前固定：五请求三轮零差异；输出顺序不变；原生/远端并发 `<=3`、兼容并发 `<=1`；检查中状态先写、失败隔离、取消无残留；批次 p50 每轮至少降低 40%、候选 p95 不高于 550ms。门失败即 no-go。
 - 本轮 primary lane 为 Orchestrator：Action Intake 只提交批量意图，`KiteResourceInstallStore` 仍是状态拥有者，`ResourceVersionCoordinator` 仍产出版本事实；禁止把并发选择放到页面、Store 或 Execution Core。AI 会话不参与调用链并被明确冻结。
+
+## RF1720 固定调度矩阵与基线
+
+- 新增 Debug-only 固定五请求矩阵：3 个 `STRUCTURED_NATIVE_REMOTE`、2 个 `PROOT_COMPATIBILITY`，其中固定包含成功、可更新、失败、不支持和本地领先结果；ADB 只能触发，不能传样例、延迟、轮数、槽位或阈值。
+- OnePlus 8T 三轮串行分别为 913/911/910ms，候选分别为 380/370/372ms，减少 58.4%/59.4%/59.1%；候选 p50 372ms、p95 380ms，超过每轮至少 40% 且 p95 不高于 550ms 的预设门。
+- 三轮结果差异为 0，输出顺序不变；结构化原生/远端最大活动数为 3，兼容最大活动数为 1；全部检查中先于首个探针，固定失败不抹掉其他结果，取消后活动数归零。
+- Targeted 4 tests、Quick 55 suites/261 tests、Stage 56 suites/264 tests 均零失败；Debug 构建、OnePlus 安装和固定广播通过，当前进程日志 `FATAL EXCEPTION`/`ANR in com.kite.app` 为 0。生产 `AndroidResourceActionGateway` 仍是串行，RF1720 只证明候选可进入 RF1730。
+- `kfshell-toolchain` 发现本机 `references/toolchain.md` 的默认魅族记录已落后于项目规范；实时确认 OnePlus `3f8bbaad` 在线后已把忽略跟踪的本机参考纠正为默认 OnePlus，未查询、启动或安装魅族。
 
 ## RF1600 开机与三问自检
 
