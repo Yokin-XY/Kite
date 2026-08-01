@@ -839,10 +839,10 @@ internal class RunAgentSurfaceBinding(
                 addView(actionButton.apply {
                     contentDescription = "发送"
                     scaleType = ImageView.ScaleType.CENTER_INSIDE
-                    setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10))
-                    visibility = View.GONE
+                    setPadding(ui.dp(12), ui.dp(12), ui.dp(12), ui.dp(12))
+                    visibility = View.VISIBLE
                     setOnClickListener { submitOrCancel() }
-                }, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
+                }, LinearLayout.LayoutParams(ui.dp(48), ui.dp(48)))
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
@@ -1158,22 +1158,17 @@ internal class RunAgentSurfaceBinding(
         if (composerPresentation == nextPresentation) return
         composerPresentation = nextPresentation
         input.isEnabled = phase == AgentSessionPhase.Ready
-        actionButton.visibility = if (cancelling || canSend) View.VISIBLE else View.GONE
+        actionButton.visibility = View.VISIBLE
         actionButton.isEnabled = cancelling || canSend
         actionButton.setImageResource(when {
             cancelling -> R.drawable.ic_terminal_interrupt
-            else -> R.drawable.ic_send_light
+            else -> R.drawable.ic_arrow_up_light
         })
-        actionButton.imageTintList = ColorStateList.valueOf(
-            if (cancelling || canSend) tokens.buttonText else tokens.textPrimary
-        )
+        actionButton.imageTintList = ColorStateList.valueOf(agentPageBackground)
         actionButton.background = ui.roundedBox(
-            when {
-                cancelling || canSend -> tokens.primaryStrong
-                else -> tokens.borderStrong
-            },
+            tokens.textPrimary,
             android.graphics.Color.TRANSPARENT,
-            ui.dp(22).toFloat()
+            ui.dp(24).toFloat()
         )
         actionButton.contentDescription = when {
             cancelling -> "停止生成"
