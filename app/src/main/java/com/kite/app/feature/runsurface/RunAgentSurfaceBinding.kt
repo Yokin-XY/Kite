@@ -1420,13 +1420,6 @@ internal class RunAgentSurfaceBinding(
                         setTextColor(tokens.textPrimary)
                         includeFontPadding = false
                     })
-                    addView(TextView(context).apply {
-                        text = agentId.orEmpty().ifBlank { "当前 Agent" }
-                        textSize = 12f
-                        setTextColor(tokens.textSecondary)
-                        includeFontPadding = false
-                        setPadding(0, ui.dp(5), 0, 0)
-                    })
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 addView(iconButton(context, R.drawable.ic_material_search, "搜索会话", ::showSessionSearch).apply {
                     background = ui.roundedBox(agentSettingsSurface, android.graphics.Color.TRANSPARENT, ui.dp(24).toFloat())
@@ -1888,10 +1881,7 @@ internal class RunAgentSurfaceBinding(
                     setTextColor(tokens.textPrimary)
                 })
                 addView(TextView(context).apply {
-                    text = buildString {
-                        append(selected.registration.definition.agentId)
-                        append(" · ").append(selected.primaryStatusLabel())
-                    }
+                    text = selected.primaryStatusLabel()
                     textSize = 12f
                     maxLines = 1
                     ellipsize = TextUtils.TruncateAt.END
