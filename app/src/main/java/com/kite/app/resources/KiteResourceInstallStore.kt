@@ -301,7 +301,10 @@ class KiteResourceInstallStore(
     }
 
     private fun reconcileOrphanedPreparingState(environmentId: String) {
-        val planResourceIds = planSnapshot(environmentId).resourceIds.toSet()
+        val plan = planSnapshot(environmentId)
+        val planResourceIds = (plan.resourceIds + plan.targetResourceId)
+            .filter(String::isNotBlank)
+            .toSet()
         val orphaned = registrySnapshot(environmentId = environmentId).values
             .filter { entry -> entry.preparing && entry.resourceId !in planResourceIds }
             .map(KiteResourceRegistryEntry::resourceId)
@@ -350,6 +353,42 @@ class KiteResourceInstallStore(
             affectedResourceIds = resourceIds + targetResourceId,
             environmentId = environmentId
         )
+    }
+
+    fun beginPreparingPlan(
+        targetResourceId: String,
+        environmentId: String = currentEnvironmentId()
+    ): Boolean {
+        val previous = registry.planSnapshot(environmentId)
+        val accepted = registry.beginPreparingPlan(targetResourceId, environmentId)
+        if (!accepted) return false
+        val plan = refreshPlanSnapshot(environmentId)
+        if (plan != previous) {
+            emitSignal(
+                reason = "beginPreparingPlan",
+                targetResourceId = plan.targetResourceId,
+                affectedResourceIds = listOf(plan.targetResourceId),
+                environmentId = environmentId
+            )
+        }
+        return true
+    }
+
+    fun activatePreparedPlan(
+        targetResourceId: String,
+        resourceIds: List<String>,
+        environmentId: String = currentEnvironmentId()
+    ): Boolean {
+        val activated = registry.activatePreparedPlan(targetResourceId, resourceIds, environmentId)
+        if (!activated) return false
+        val plan = refreshPlanSnapshot(environmentId)
+        emitSignal(
+            reason = "activatePreparedPlan",
+            targetResourceId = plan.targetResourceId,
+            affectedResourceIds = plan.resourceIds + plan.targetResourceId,
+            environmentId = environmentId
+        )
+        return true
     }
 
     fun pendingPlanResourceIds(environmentId: String = currentEnvironmentId()): List<String> =
@@ -575,5 +614,7 @@ class KiteResourceInstallStore(
         const val PLAN_STEP_RUNNING = KiteResourceRegistry.PLAN_STEP_RUNNING
         const val PLAN_STEP_FAILED = KiteResourceRegistry.PLAN_STEP_FAILED
         const val PLAN_STEP_BLOCKED = KiteResourceRegistry.PLAN_STEP_BLOCKED
+        const val PLAN_STATUS_PREPARING = KiteResourceRegistry.PLAN_STATUS_PREPARING
+        const val PLAN_STATUS_ACTIVE = KiteResourceRegistry.PLAN_STATUS_ACTIVE
     }
 }

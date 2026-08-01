@@ -36,6 +36,12 @@ data class KiteResourcePlanSnapshot(
     val pendingResourceIds: List<String> = emptyList(),
     val stepStatusByResourceId: Map<String, String> = emptyMap()
 ) {
+    val isPreparing: Boolean
+        get() = status == KiteResourceRegistry.PLAN_STATUS_PREPARING
+
+    val isActive: Boolean
+        get() = status == KiteResourceRegistry.PLAN_STATUS_ACTIVE
+
     fun stepStatus(resourceId: String): String =
         stepStatusByResourceId[resourceId.trim()].orEmpty()
 }
@@ -371,6 +377,103 @@ class KiteResourceRegistry(context: Context) {
         }
     }
 
+    /**
+     * 接受一个尚未完成依赖计算的安装计划。
+     *
+     * 同一环境只允许一个计划事实。相同目标的 PREPARING 写入视为幂等成功；
+     * 其他目标或已经进入 ACTIVE/FAILED 的计划不能被准备动作覆盖。
+     */
+    fun beginPreparingPlan(
+        targetResourceId: String,
+        environmentId: String = DEFAULT_ENVIRONMENT_ID
+    ): Boolean {
+        val normalizedTarget = targetResourceId.trim()
+            .takeIf(String::isNotBlank)
+            ?.let(::normalizeResourceId)
+            ?: return false
+        val activePlanId = planId(environmentId)
+        val now = System.currentTimeMillis()
+        var accepted = false
+        database.writableDatabase.runInTransaction {
+            val current = planTargetAndStatus(this, activePlanId)
+            when {
+                current == null -> {
+                    insertWithOnConflict(
+                        TABLE_PLAN,
+                        null,
+                        ContentValues().apply {
+                            put(COL_PLAN_ID, activePlanId)
+                            put(COL_TARGET_RESOURCE_ID, normalizedTarget)
+                            put(COL_STATUS, PLAN_STATUS_PREPARING)
+                            put(COL_CREATED_AT, now)
+                            put(COL_UPDATED_AT, now)
+                        },
+                        SQLiteDatabase.CONFLICT_REPLACE
+                    )
+                    accepted = true
+                }
+                current.first == normalizedTarget && current.second == PLAN_STATUS_PREPARING -> {
+                    accepted = true
+                }
+            }
+        }
+        return accepted
+    }
+
+    /**
+     * 把同一目标的 PREPARING 计划原子转换为可执行计划。
+     *
+     * 状态校验、步骤替换和 ACTIVE 写入处于同一事务中；迟到的准备结果不能覆盖
+     * 已取消、已失败、已激活或属于其他目标的计划。
+     */
+    fun activatePreparedPlan(
+        targetResourceId: String,
+        resourceIds: List<String>,
+        environmentId: String = DEFAULT_ENVIRONMENT_ID
+    ): Boolean {
+        val normalizedTarget = targetResourceId.trim()
+            .takeIf(String::isNotBlank)
+            ?.let(::normalizeResourceId)
+            ?: return false
+        val normalizedResourceIds = resourceIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .map(::normalizeResourceId)
+            .distinct()
+        val activePlanId = planId(environmentId)
+        val now = System.currentTimeMillis()
+        var activated = false
+        database.writableDatabase.runInTransaction {
+            val rows = update(
+                TABLE_PLAN,
+                ContentValues().apply {
+                    put(COL_STATUS, PLAN_STATUS_ACTIVE)
+                    put(COL_UPDATED_AT, now)
+                },
+                "$COL_PLAN_ID = ? AND $COL_TARGET_RESOURCE_ID = ? AND $COL_STATUS = ?",
+                arrayOf(activePlanId, normalizedTarget, PLAN_STATUS_PREPARING)
+            )
+            if (rows != 1) return@runInTransaction
+            delete(TABLE_PLAN_STEP, "$COL_PLAN_ID = ?", arrayOf(activePlanId))
+            normalizedResourceIds.forEachIndexed { index, resourceId ->
+                insertWithOnConflict(
+                    TABLE_PLAN_STEP,
+                    null,
+                    ContentValues().apply {
+                        put(COL_PLAN_ID, activePlanId)
+                        put(COL_STEP_INDEX, index)
+                        put(COL_RESOURCE_ID, resourceId)
+                        put(COL_STATUS, PLAN_STEP_PENDING)
+                        put(COL_UPDATED_AT, now)
+                    },
+                    SQLiteDatabase.CONFLICT_REPLACE
+                )
+            }
+            activated = true
+        }
+        return activated
+    }
+
     fun pendingPlanResourceIds(environmentId: String = DEFAULT_ENVIRONMENT_ID): List<String> =
         pendingPlanResourceIds(database.readableDatabase, planId(environmentId))
 
@@ -672,6 +775,24 @@ class KiteResourceRegistry(context: Context) {
             }.distinct()
         }
     }
+
+    private fun planTargetAndStatus(db: SQLiteDatabase, activePlanId: String): Pair<String, String>? =
+        db.query(
+            TABLE_PLAN,
+            arrayOf(COL_TARGET_RESOURCE_ID, COL_STATUS),
+            "$COL_PLAN_ID = ?",
+            arrayOf(activePlanId),
+            null,
+            null,
+            null,
+            "1"
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getString(0).orEmpty() to cursor.getString(1).orEmpty()
+            } else {
+                null
+            }
+        }
 
     private fun firstPendingStepIndex(db: SQLiteDatabase, activePlanId: String, resourceId: String): Int? =
         db.query(
@@ -996,7 +1117,8 @@ class KiteResourceRegistry(context: Context) {
         private const val COL_KEY = "key"
         private const val COL_VALUE = "value"
 
-        private const val PLAN_STATUS_ACTIVE = "active"
+        const val PLAN_STATUS_PREPARING = "preparing"
+        const val PLAN_STATUS_ACTIVE = "active"
         private const val PLAN_STEP_PENDING = "pending"
         const val PLAN_STEP_RUNNING = "running"
         const val PLAN_STEP_DONE = "done"

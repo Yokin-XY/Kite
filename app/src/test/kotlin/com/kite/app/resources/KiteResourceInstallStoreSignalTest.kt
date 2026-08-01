@@ -222,12 +222,14 @@ class KiteResourceInstallStoreSignalTest {
         registry.clear(planned, environmentId)
         registry.clearPlan(environmentId)
         registry.markPreparing(planned, environmentId)
-        registry.beginPlan(planned, listOf(planned), environmentId)
+        assertTrue(registry.beginPreparingPlan(planned, environmentId))
 
         val store = KiteResourceInstallStore(context, environmentId)
 
         assertTrue(store.isPreparing(planned, environmentId))
-        assertEquals(listOf(planned), store.planSnapshot(environmentId).resourceIds)
+        assertEquals(planned, store.planSnapshot(environmentId).targetResourceId)
+        assertTrue(store.planSnapshot(environmentId).isPreparing)
+        assertTrue(store.planSnapshot(environmentId).resourceIds.isEmpty())
         store.clear(planned, environmentId)
         store.clearPlan(environmentId)
     }
