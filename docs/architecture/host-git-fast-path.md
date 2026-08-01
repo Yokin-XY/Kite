@@ -51,4 +51,11 @@ Host 进程启动成功不等于矩阵通过。若只能通过按 subcommand 写
 
 ## 当前状态
 
-RF1210 只完成候选和边界审计。生产资源卡、Git shim、统一 Planner 和运行状态均未修改。
+RF1220 已在 OnePlus 8T 连续完成两套固定矩阵：
+
+- 1000 文件仓库的 `init/add/commit/rev-parse/status/log/diff` 输出、HEAD 与 index 和独立 PRoot 对照一致；
+- Host `status` 的顺序 P50 为 104～107ms，PRoot 为 105～407ms；8 并发 Host batch wall 为 128～132ms，PRoot 为 559～702ms，Host 尾延迟稳定得多；
+- shell alias、hook、external diff、clean filter、remote helper 和 submodule 均出现 Host 子进程能力缺口；其中 clean filter 甚至返回 0，但 marker 和 index 内容证明已经静默改变语义；
+- PRoot 对照在全部反例中均成功，并产生预期 marker/内容。
+
+因此，“rootfs Git 能在 Host 启动”与“任意 Git 命令可走 Host”是两件事。RF1230 必须判断是否存在不依赖 subcommand 白名单、配置猜测或静默降级的通用选择合同；在该合同成立前，生产资源卡、Git shim、统一 Planner 和运行状态保持不变。

@@ -29,6 +29,16 @@
             android:name="com.kite.app.foundation.runtime.ProotLaunchWindowBenchmarkService"
             android:exported="false" />
         <receiver
+            android:name="com.kite.app.foundation.runtime.HostGitBenchmarkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.HOST_GIT_BENCHMARK" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.foundation.runtime.HostGitBenchmarkService"
+            android:exported="false" />
+        <receiver
             android:name="com.kite.app.foundation.runtime.ManagedProotProductionGateReceiver"
             android:exported="true">
             <intent-filter>

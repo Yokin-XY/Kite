@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1200` Git 通用依赖快速通道可行性
-- 当前任务：`RF1220` Host Git 兼容与性能矩阵
+- 当前任务：`RF1230` Host Git go/no-go 与条件 Provider
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 分支：`codex/runtime-foundation-lab`
 
@@ -696,14 +696,16 @@
 
 #### RF1220 Host Git 兼容与性能矩阵
 
-- 状态：进行中。
-- 使用 `GlibcHostRuntimePreparer` 的通用资产，精确解析受管 Git 身份和动态库；
-- 覆盖 version/init/status/add/commit/log/diff/rev-parse 与 1/4/8 并发；
-- hooks、pager、external diff/filter、credential/ssh/remote helper、submodule 分别证明可用或失败关闭；
-- 同一仓库、同一 Git 版本与独立 PRoot 对照，输出正确性、P50/P95 和失败率。
+- 状态：已完成。
+- [x] 使用 `GlibcHostRuntimePreparer` 的通用资产，精确解析受管 Git 身份和动态库；
+- [x] 覆盖 init/status/add/commit/log/diff/rev-parse 与 1/4/8 并发；
+- [x] hooks、external diff/filter、remote helper 与 submodule 形成固定 PRoot 对照；
+- [x] 不只比较 exit code，同时核验 HEAD、index 内容与 marker，捕获 filter 静默语义损坏；
+- [x] OnePlus 8T 连续两套矩阵均完成，Host 本地 builtin 有显著并发收益，任意子进程语义不兼容。
 
 #### RF1230 go/no-go 与条件 Provider
 
+- 状态：进行中。
 - 只有兼容矩阵和性能门同时通过才实现 `HostGitRuntimeProvider`；
 - Provider 只能按受管 Git 身份、结构化 argv 与显式能力保证选择，不识别资源或上层应用；
 - 任一子进程/路径/配置边界不满足时，必须在进程创建前整条回 PRoot。

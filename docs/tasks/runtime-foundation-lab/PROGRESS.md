@@ -66,8 +66,8 @@
 | RF1140 | 未触发 | RF1130 no-go；未新增生产队列、状态或入口接线 |
 | RF1200 | 进行中 | Git 作为下一个通用依赖候选，先做兼容与性能 go/no-go |
 | RF1210 | 已完成 | 正式依赖覆盖与安全边界审计完成，Git 优先于 curl/uv |
-| RF1220 | 进行中 | Host Git 兼容与 PRoot 对照矩阵 |
-| RF1230 | 待开始 | 依据矩阵决定是否实现通用 Provider |
+| RF1220 | 已完成 | 两套真机矩阵：本地 builtin 明显受益，所有外部子进程类别均有缺口 |
+| RF1230 | 进行中 | 判断是否存在无需命令白名单和配置猜测的通用选择合同 |
 | RF1240 | 待开始 | 条件生产门或 no-go 收口 |
 
 ## RF110 开机与三问自检
@@ -340,6 +340,15 @@
 - 设备受管 Git 链为 `/workspace/.kf/bin/git -> /workspace/.kf/software/kite.git/bin/git -> /usr/bin/git`，最终身份属于当前 rootfs，不另带一份应用专用 Git。实验只复用 `GlibcHostRuntimePreparer` 的入口无关 launcher/loader/libc/compat 资产。
 - Git 本地 builtin 与远程/helper 不能一起宣称兼容。首轮矩阵分别覆盖本地 version/init/status/add/commit/log/diff/rev-parse；hooks、pager、external diff/filter、credential/ssh/remote helper 与 submodule 必须独立失败关闭或证明。
 - RF1210 完成，进入 RF1220 Debug 矩阵；不修改资源卡、shim、Planner 或正式入口。
+
+## RF1220 Host Git 兼容与性能矩阵
+
+- Debug 固定入口不接收 ADB 参数，精确解析 `/workspace/.kf/bin/git` 到当前 rootfs `/usr/bin/git`，只复用既有通用 glibc Host 资产；每轮在受控目录新建 Host/PRoot 两份 1000 文件仓库，结束后清理。
+- 连续两套 OnePlus 8T 矩阵中，`init/add/commit/rev-parse/status/log/diff` 的 HEAD、clean status、diff 与 index 语义全部一致。第一套 Host/PRoot 顺序 P50=104/105ms，第二套为 107/407ms。
+- 8 并发 Host batch wall 两套为 128/132ms，PRoot 为 702/559ms；Host P95 为 124/122ms，PRoot 为 622/511ms。核心本地路径存在稳定并发收益，PRoot 抖动明显。
+- shell alias Host exit 127；hook exit 1 且 marker 文件虽创建但内容为空；external diff exit 128；remote helper exit 128；submodule exit 127。对应 PRoot 全部 exit 0 且 marker 正确。
+- clean filter 是关键反例：Host `git add` 返回 0，但 filter marker 错误且 index 内容与 PRoot 不同，证明仅以返回码选择/验收会静默破坏仓库语义。
+- Debug 构建和覆盖安装通过，未发现匹配 FATAL。RF1220 完成；生产资源卡、Git shim、Planner、运行状态与正式入口均未修改。
 
 ## RF710 开机与三问自检
 

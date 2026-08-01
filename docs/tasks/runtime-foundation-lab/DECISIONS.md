@@ -422,3 +422,11 @@
 - 决定：在 Node/Python 已完成后，下一候选选择受管 Git，先做 Debug-only Host glibc 兼容与性能矩阵。curl 和 uv 暂不进入；不修改资源卡、Git shim、Planner 或生产入口。
 - 原因：正式清单中 Git 被 10 个资源依赖，curl 4、uv 1；Git 本地操作又对小文件路径访问敏感。curl 的静态 HTTPS 高价值范围已有 Android 原生 Provider，uv 的核心语义落在 Python 子进程/venv PRoot 边界。覆盖面必须与可验证能力同时考虑，不能只按工具知名度选择。
 - 影响：RF1220 必须把本地 builtin 与 hooks/pager/filter/remote/helper/submodule 分层，不得因 `git --version` 成功就开放。只有同版本同仓库语义一致且收益稳定时，RF1230 才能讨论 Provider；否则 no-go。
+
+## ADR-RF-054 Host Git 必须用输出和仓库状态验收，不能只看进程返回码
+
+- 状态：已接受，RF1220 已完成
+- 日期：2026-08-01
+- 决定：Host Git 矩阵同时核验 HEAD、status/diff 输出、index 内容和外部脚本 marker；PRoot 作为同二进制、同输入的独立控制组。Host 启动成功或 exit 0 均不构成能力兼容证明。
+- 原因：真机 clean filter 反例中，Host `git add` 返回 0，但 `/usr/bin` 子命令没有正确执行，marker 内容错误且写入 index 的内容与 PRoot 不同。alias、hook、external diff、remote helper 和 submodule 也分别证明 Git 会从 builtin 边界进入 shell/helper 子进程。
+- 影响：RF1230 不能用运行后失败回退，因为 Git 可能已经修改 index/工作树且错误可能静默；只能在任何 Git 进程创建前证明完整能力边界，否则整条选择 PRoot。任何依赖 subcommand 白名单、仓库配置猜测或忽略 stderr 的方案均为 no-go。
