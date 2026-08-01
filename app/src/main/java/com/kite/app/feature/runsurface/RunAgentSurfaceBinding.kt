@@ -120,6 +120,8 @@ import com.kite.app.agent.store.AgentConversationStore
 import com.kite.app.agent.store.AgentConversationTurn
 import com.kite.app.agent.store.AgentConversationTurnState
 import com.kite.app.agent.store.AgentDraftCapabilityCacheStore
+import com.kite.app.agent.store.AgentArchivedSessionMetadata
+import com.kite.app.agent.store.AgentArchivedSessionSourceState
 import com.kite.app.agent.store.AgentModelDisplayName
 import com.kite.app.agent.store.AgentModelLibraryStore
 import com.kite.app.agent.store.AgentProject
@@ -1940,9 +1942,9 @@ internal class RunAgentSurfaceBinding(
         navigationScreen = AgentNavigationScreen.ArchivedContent
         var editMode = false
         var archivedSessions = emptyList<AgentSessionSummary>()
-        var unavailableArchivedSessionIds = sessionMetadataStore
-            .archivedSessionIds(targetProviderId)
-            .sorted()
+        var unavailableArchivedSessions = sessionMetadataStore
+            .archivedSessions(targetProviderId)
+            .sortedBy(AgentArchivedSessionMetadata::sessionId)
         var archivedProjects = projectStore.archivedProjects(targetAgentId)
         var sessionStatusMessage: String? = "正在读取已归档会话…"
         val selectedIds = linkedSetOf<String>()
@@ -1977,12 +1979,12 @@ internal class RunAgentSurfaceBinding(
                     showArchivedSessionActions(selected, archivedSession, refreshArchivedContent)
                 }
             },
-            onUnavailableClick = { unavailableSessionId ->
-                showUnavailableArchivedSessionActions(selected, unavailableSessionId) {
-                    unavailableArchivedSessionIds = sessionMetadataStore
-                        .archivedSessionIds(targetProviderId)
-                        .filterNot { it in archivedSessions.map(AgentSessionSummary::id) }
-                        .sorted()
+            onUnavailableClick = { unavailableSession ->
+                showUnavailableArchivedSessionActions(selected, unavailableSession) {
+                    unavailableArchivedSessions = sessionMetadataStore
+                        .archivedSessions(targetProviderId)
+                        .filterNot { metadata -> metadata.sessionId in archivedSessions.map(AgentSessionSummary::id) }
+                        .sortedBy(AgentArchivedSessionMetadata::sessionId)
                     renderArchivedRows()
                     renderArchiveState()
                 }
@@ -2012,20 +2014,23 @@ internal class RunAgentSurfaceBinding(
                 projectStore.projects(targetAgentId) + archivedProjects,
             )
             if (!archiveExpansionSeeded &&
-                (archivedSessions.isNotEmpty() || unavailableArchivedSessionIds.isNotEmpty() || archivedProjects.isNotEmpty())
+                (archivedSessions.isNotEmpty() || unavailableArchivedSessions.isNotEmpty() || archivedProjects.isNotEmpty())
             ) {
                 when {
                     groups.defaultSessions.isNotEmpty() -> expandedArchivedCwds.add(groups.defaultCwd)
                     groups.projects.isNotEmpty() -> expandedArchivedCwds.add(groups.projects.first().cwd)
-                    unavailableArchivedSessionIds.isNotEmpty() ->
-                        expandedArchivedCwds.add(AgentSurfaceNavigationPolicy.UNAVAILABLE_ARCHIVE_GROUP_CWD)
+                    unavailableArchivedSessions.any {
+                        it.sourceState == AgentArchivedSessionSourceState.Deleted
+                    } -> expandedArchivedCwds.add(AgentSurfaceNavigationPolicy.DELETED_ARCHIVE_GROUP_CWD)
+                    unavailableArchivedSessions.isNotEmpty() ->
+                        expandedArchivedCwds.add(AgentSurfaceNavigationPolicy.UNCONFIRMED_ARCHIVE_GROUP_CWD)
                 }
                 archiveExpansionSeeded = true
             }
             archivedAdapter.submitList(buildList {
                 addAll(AgentSurfaceNavigationPolicy.archivedRows(groups, expandedArchivedCwds, archivedProjects))
                 addAll(AgentSurfaceNavigationPolicy.unavailableArchivedRows(
-                    unavailableArchivedSessionIds,
+                    unavailableArchivedSessions,
                     expandedArchivedCwds,
                 ))
             })
@@ -2125,7 +2130,7 @@ internal class RunAgentSurfaceBinding(
         }
         renderArchiveState = {
             val hasItems = archivedSessions.isNotEmpty() ||
-                unavailableArchivedSessionIds.isNotEmpty() ||
+                unavailableArchivedSessions.isNotEmpty() ||
                 archivedProjects.isNotEmpty()
             archivedList.visibility = if (hasItems) View.VISIBLE else View.GONE
             editAction.visibility = if (archivedSessions.isEmpty()) View.INVISIBLE else View.VISIBLE
@@ -2210,7 +2215,10 @@ internal class RunAgentSurfaceBinding(
                             archivedIds,
                         )
                         archivedSessions = projection.sessions
-                        unavailableArchivedSessionIds = projection.unavailableSessionIds
+                        unavailableArchivedSessions = sessionMetadataStore
+                            .archivedSessions(targetProviderId)
+                            .filter { it.sessionId in projection.unavailableSessionIds }
+                            .sortedBy(AgentArchivedSessionMetadata::sessionId)
                         selectedIds.retainAll(archivedSessions.mapTo(linkedSetOf(), AgentSessionSummary::id))
                         sessionStatusMessage = null
                         renderArchivedRows()
@@ -5141,21 +5149,26 @@ internal class RunAgentSurfaceBinding(
 
     private fun showUnavailableArchivedSessionActions(
         selected: AgentRegistryEntry,
-        sessionId: String,
+        archivedSession: AgentArchivedSessionMetadata,
         onChanged: () -> Unit,
     ) {
         val providerId = selected.registration.launch.providerId
         val runtime = AgentRuntimeRegistry.session(instanceId)
-        val canDeleteNatively = AgentSurfaceNavigationPolicy.canDeleteUnavailableSessionNatively(
+        val sourceDeleted = archivedSession.sourceState == AgentArchivedSessionSourceState.Deleted
+        val canDeleteNatively = !sourceDeleted && AgentSurfaceNavigationPolicy.canDeleteUnavailableSessionNatively(
             targetProviderId = providerId,
             runtimeProviderId = runtime?.providerId,
             deleteSupported = runtime?.capabilities?.sessions?.delete == true,
             currentSessionId = runtime?.sessionId,
-            targetSessionId = sessionId,
+            targetSessionId = archivedSession.sessionId,
         )
         showAgentDialogCard(
-            title = "暂时无法读取会话",
-            message = "Agent 未返回这条会话。你可以恢复到列表，或删除这条记录。",
+            title = if (sourceDeleted) "源会话已删除" else "尚未确认",
+            message = if (sourceDeleted) {
+                "Agent 中已找不到这条会话。"
+            } else {
+                "打开当前 Agent 并刷新后再试。"
+            },
             actions = listOf(
                 AgentDialogAction(
                     label = "恢复",
@@ -5163,14 +5176,17 @@ internal class RunAgentSurfaceBinding(
                     filledPrimary = true,
                 ) { dialog, _ ->
                     dialog.dismiss()
-                    sessionMetadataStore.restore(providerId, sessionId)
-                    onChanged()
+                    Toast.makeText(
+                        context,
+                        if (sourceDeleted) "源会话已删除，无法恢复" else "尚未确认源会话状态",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 },
                 AgentDialogAction("删除", UiActionRole.Danger) { dialog, _ ->
                     dialog.dismiss()
                     showUnavailableArchivedDeleteConfirmation(
                         selected = selected,
-                        sessionId = sessionId,
+                        sessionId = archivedSession.sessionId,
                         canDeleteNatively = canDeleteNatively,
                         onChanged = onChanged,
                     )
@@ -7718,8 +7734,8 @@ internal sealed interface AgentArchivedRow {
         override val key: String = "session:${summary.id}"
     }
 
-    data class UnavailableSession(val sessionId: String) : AgentArchivedRow {
-        override val key: String = "unavailable-session:$sessionId"
+    data class UnavailableSession(val metadata: AgentArchivedSessionMetadata) : AgentArchivedRow {
+        override val key: String = "unavailable-session:${metadata.sessionId}"
     }
 }
 

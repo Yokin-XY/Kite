@@ -121,6 +121,8 @@ import com.kite.app.agent.store.AgentConversationTurnState
 import com.kite.app.agent.store.AgentDraftCapabilityCacheStore
 import com.kite.app.agent.store.AgentModelLibraryStore
 import com.kite.app.agent.store.AgentProject
+import com.kite.app.agent.store.AgentArchivedSessionMetadata
+import com.kite.app.agent.store.AgentArchivedSessionSourceState
 import com.kite.app.agent.store.AgentProjectSaveResult
 import com.kite.app.agent.store.AgentProjectStore
 import com.kite.app.agent.store.AgentSessionMetadataStore
@@ -145,7 +147,7 @@ internal class ArchivedSessionAdapter(
     private val context: Context,
     private val tokens: ThemeTokens,
     private val onClick: (AgentSessionSummary) -> Unit,
-    private val onUnavailableClick: (String) -> Unit,
+    private val onUnavailableClick: (AgentArchivedSessionMetadata) -> Unit,
     private val onGroupToggle: (String) -> Unit,
     private val onProjectRestore: (AgentProject) -> Unit,
 ) : ListAdapter<AgentArchivedRow, RecyclerView.ViewHolder>(DIFF) {
@@ -190,7 +192,7 @@ internal class ArchivedSessionAdapter(
                 selectionMode,
                 row.summary.id in selectedIds
             )
-            is AgentArchivedRow.UnavailableSession -> (holder as Holder).bindUnavailable(row.sessionId)
+            is AgentArchivedRow.UnavailableSession -> (holder as Holder).bindUnavailable(row.metadata)
         }
     }
 
@@ -334,18 +336,19 @@ internal class ArchivedSessionAdapter(
             container.setOnClickListener { onClick(session) }
         }
 
-        fun bindUnavailable(sessionId: String) {
+        fun bindUnavailable(metadata: AgentArchivedSessionMetadata) {
+            val sourceDeleted = metadata.sourceState == AgentArchivedSessionSourceState.Deleted
             selector.visibility = View.GONE
-            title.text = "暂时无法读取的归档会话"
+            title.text = if (sourceDeleted) "源会话已删除" else "尚未确认的归档会话"
             title.typeface = Typeface.DEFAULT
-            subtitle.text = "会话 ID · $sessionId"
+            subtitle.text = "会话 ID · ${metadata.sessionId}"
             container.background = ui.roundedBox(
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
                 ui.dp(16).toFloat()
             )
-            container.contentDescription = "管理暂时无法读取的归档会话，$sessionId"
-            container.setOnClickListener { onUnavailableClick(sessionId) }
+            container.contentDescription = "管理${title.text}，${metadata.sessionId}"
+            container.setOnClickListener { onUnavailableClick(metadata) }
         }
     }
 

@@ -19,6 +19,8 @@ import com.kite.app.agent.auth.AgentOfficialAccountCommandResult
 import com.kite.app.agent.auth.AgentOfficialAccountManager
 import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.store.AgentProject
+import com.kite.app.agent.store.AgentArchivedSessionMetadata
+import com.kite.app.agent.store.AgentArchivedSessionSourceState
 import com.kite.app.agent.store.AgentModelLibraryProviderPreference
 import com.kite.app.agent.store.AgentModelLibrarySnapshot
 import com.kite.app.agent.registration.KiteAgentRegistry
@@ -302,21 +304,40 @@ class AgentSurfaceNavigationPolicyTest {
     }
 
     @Test
-    fun `暂时无法读取的归档会话以独立分组展示`() {
+    fun `已删除与尚未确认的归档会话分组展示`() {
+        val sessions = listOf(
+            AgentArchivedSessionMetadata(
+                sessionId = "session-a",
+                archivedAtMillis = 1L,
+                sourceState = AgentArchivedSessionSourceState.Deleted,
+                sourceCheckedAtMillis = 2L,
+            ),
+            AgentArchivedSessionMetadata(
+                sessionId = "session-b",
+                archivedAtMillis = 1L,
+                sourceState = AgentArchivedSessionSourceState.Unknown,
+                sourceCheckedAtMillis = 0L,
+            ),
+        )
         val collapsed = AgentSurfaceNavigationPolicy.unavailableArchivedRows(
-            listOf("session-a", "session-b"),
+            sessions,
             emptySet(),
         )
         val expanded = AgentSurfaceNavigationPolicy.unavailableArchivedRows(
-            listOf("session-a", "session-b"),
-            setOf(AgentSurfaceNavigationPolicy.UNAVAILABLE_ARCHIVE_GROUP_CWD),
+            sessions,
+            setOf(
+                AgentSurfaceNavigationPolicy.DELETED_ARCHIVE_GROUP_CWD,
+                AgentSurfaceNavigationPolicy.UNCONFIRMED_ARCHIVE_GROUP_CWD,
+            ),
         )
 
-        assertEquals(1, collapsed.size)
-        assertEquals("暂时无法读取", (collapsed.single() as AgentArchivedRow.GroupHeader).title)
+        assertEquals(
+            listOf("源会话已删除", "尚未确认"),
+            collapsed.filterIsInstance<AgentArchivedRow.GroupHeader>().map { it.title },
+        )
         assertEquals(
             listOf("session-a", "session-b"),
-            expanded.filterIsInstance<AgentArchivedRow.UnavailableSession>().map { it.sessionId },
+            expanded.filterIsInstance<AgentArchivedRow.UnavailableSession>().map { it.metadata.sessionId },
         )
     }
 

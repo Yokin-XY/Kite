@@ -5,11 +5,14 @@ import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentSessionSummary
+import com.kite.app.agent.store.AgentArchivedSessionMetadata
+import com.kite.app.agent.store.AgentArchivedSessionSourceState
 import com.kite.app.agent.store.AgentProject
 
 /** 页面分组、筛选和会话配置导航的纯计算策略。 */
 internal object AgentSurfaceNavigationPolicy {
-    const val UNAVAILABLE_ARCHIVE_GROUP_CWD = "kite://unavailable-archived-sessions"
+    const val DELETED_ARCHIVE_GROUP_CWD = "kite://deleted-archived-sessions"
+    const val UNCONFIRMED_ARCHIVE_GROUP_CWD = "kite://unconfirmed-archived-sessions"
 
     fun sessionListFailureMessage(rawMessage: String): String {
         val normalized = rawMessage.trim().lowercase()
@@ -148,21 +151,29 @@ internal object AgentSurfaceNavigationPolicy {
     }
 
     fun unavailableArchivedRows(
-        sessionIds: List<String>,
+        sessions: List<AgentArchivedSessionMetadata>,
         expandedCwds: Set<String>,
-    ): List<AgentArchivedRow> {
-        if (sessionIds.isEmpty()) return emptyList()
-        val expanded = UNAVAILABLE_ARCHIVE_GROUP_CWD in expandedCwds
-        return buildList {
+    ): List<AgentArchivedRow> = buildList {
+        val deleted = sessions.filter { it.sourceState == AgentArchivedSessionSourceState.Deleted }
+        val unconfirmed = sessions.filterNot { it.sourceState == AgentArchivedSessionSourceState.Deleted }
+        fun addGroup(
+            cwd: String,
+            title: String,
+            items: List<AgentArchivedSessionMetadata>,
+        ) {
+            if (items.isEmpty()) return
+            val expanded = cwd in expandedCwds
             add(AgentArchivedRow.GroupHeader(
-                cwd = UNAVAILABLE_ARCHIVE_GROUP_CWD,
-                title = "暂时无法读取",
-                subtitle = "${sessionIds.size} 个归档会话",
-                count = sessionIds.size,
+                cwd = cwd,
+                title = title,
+                subtitle = "${items.size} 个归档会话",
+                count = items.size,
                 expanded = expanded,
             ))
-            if (expanded) sessionIds.forEach { add(AgentArchivedRow.UnavailableSession(it)) }
+            if (expanded) items.forEach { add(AgentArchivedRow.UnavailableSession(it)) }
         }
+        addGroup(DELETED_ARCHIVE_GROUP_CWD, "源会话已删除", deleted)
+        addGroup(UNCONFIRMED_ARCHIVE_GROUP_CWD, "尚未确认", unconfirmed)
     }
 
     fun canDeleteUnavailableSessionNatively(
