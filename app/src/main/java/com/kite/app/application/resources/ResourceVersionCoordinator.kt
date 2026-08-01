@@ -23,6 +23,21 @@ internal interface ResourceVersionGateway {
     ): Result<String>
 }
 
+internal interface ResourceVersionBatchPreparationGateway {
+    suspend fun prepareInstalledVersion(
+        probe: KiteResourceVersionProbeSpec,
+    ): ResourceVersionInstalledPreparation
+}
+
+internal sealed interface ResourceVersionInstalledPreparation {
+    data class Ready(
+        val rawValue: String,
+        val reason: String,
+    ) : ResourceVersionInstalledPreparation
+    data class Unsupported(val reason: String) : ResourceVersionInstalledPreparation
+    data class Blocked(val reason: String) : ResourceVersionInstalledPreparation
+}
+
 internal sealed interface ResourceVersionCheckResult {
     val resourceId: String
 
@@ -51,10 +66,96 @@ internal sealed interface ResourceVersionCheckResult {
     ) : ResourceVersionCheckResult
 }
 
+internal sealed interface PreparedResourceVersionCheck {
+    val lane: ResourceVersionBatchLane
+
+    data class StructuredNativeRemote(
+        val manifest: KiteResourceManifest,
+        val environmentId: String,
+        val installedProbe: KiteResourceVersionProbeSpec,
+        val latestProbe: KiteResourceRemoteVersionProbe,
+        val installedRaw: String,
+    ) : PreparedResourceVersionCheck {
+        override val lane: ResourceVersionBatchLane = ResourceVersionBatchLane.STRUCTURED_NATIVE_REMOTE
+    }
+
+    data class ProotCompatibility(
+        val manifest: KiteResourceManifest,
+        val environmentId: String,
+    ) : PreparedResourceVersionCheck {
+        override val lane: ResourceVersionBatchLane = ResourceVersionBatchLane.PROOT_COMPATIBILITY
+    }
+
+    data class Completed(
+        val result: ResourceVersionCheckResult,
+        override val lane: ResourceVersionBatchLane,
+    ) : PreparedResourceVersionCheck
+}
+
 /** 只产出版本事实，不直接修改 Store 或页面。 */
 internal class ResourceVersionCoordinator(
     private val gateway: ResourceVersionGateway
 ) {
+    suspend fun prepareBatchCheck(
+        manifest: KiteResourceManifest,
+        environmentId: String = KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID,
+    ): PreparedResourceVersionCheck {
+        val plan = KiteResourceSourcePlanFactory.versionCheckPlan(manifest)
+        val installedProbe = plan.installed
+            ?: return PreparedResourceVersionCheck.Completed(
+                ResourceVersionCheckResult.Unsupported(manifest.id, "installed_version_probe_missing"),
+                ResourceVersionBatchLane.PROOT_COMPATIBILITY,
+            )
+        val latestProbe = plan.latest
+            ?: return PreparedResourceVersionCheck.Completed(
+                ResourceVersionCheckResult.Unsupported(manifest.id, "latest_version_probe_missing"),
+                ResourceVersionBatchLane.PROOT_COMPATIBILITY,
+            )
+        val preparationGateway = gateway as? ResourceVersionBatchPreparationGateway
+        if (installedProbe.structuredMetadata == null ||
+            latestProbe !is KiteResourceRemoteVersionProbe ||
+            preparationGateway == null
+        ) {
+            return PreparedResourceVersionCheck.ProotCompatibility(manifest, environmentId)
+        }
+        return when (val installed = preparationGateway.prepareInstalledVersion(installedProbe)) {
+            is ResourceVersionInstalledPreparation.Ready ->
+                PreparedResourceVersionCheck.StructuredNativeRemote(
+                    manifest = manifest,
+                    environmentId = environmentId,
+                    installedProbe = installedProbe,
+                    latestProbe = latestProbe,
+                    installedRaw = installed.rawValue,
+                )
+            is ResourceVersionInstalledPreparation.Unsupported ->
+                PreparedResourceVersionCheck.ProotCompatibility(manifest, environmentId)
+            is ResourceVersionInstalledPreparation.Blocked ->
+                PreparedResourceVersionCheck.Completed(
+                    ResourceVersionCheckResult.Failed(
+                        manifest.id,
+                        stage = "installed",
+                        reason = "installed_version_blocked:${installed.reason}",
+                    ),
+                    ResourceVersionBatchLane.STRUCTURED_NATIVE_REMOTE,
+                )
+        }
+    }
+
+    suspend fun check(prepared: PreparedResourceVersionCheck): ResourceVersionCheckResult = when (prepared) {
+        is PreparedResourceVersionCheck.StructuredNativeRemote -> finishCheck(
+            manifest = prepared.manifest,
+            environmentId = prepared.environmentId,
+            installedProbe = prepared.installedProbe,
+            latestProbe = prepared.latestProbe,
+            installedRaw = prepared.installedRaw,
+        )
+        is PreparedResourceVersionCheck.ProotCompatibility -> check(
+            prepared.manifest,
+            prepared.environmentId,
+        )
+        is PreparedResourceVersionCheck.Completed -> prepared.result
+    }
+
     suspend fun check(
         manifest: KiteResourceManifest,
         environmentId: String = KiteResourceRegistry.DEFAULT_ENVIRONMENT_ID
@@ -72,6 +173,16 @@ internal class ResourceVersionCoordinator(
                 reason = error.message ?: error.javaClass.simpleName
             )
         }
+        return finishCheck(manifest, environmentId, installedProbe, latestProbe, installedRaw)
+    }
+
+    private suspend fun finishCheck(
+        manifest: KiteResourceManifest,
+        environmentId: String,
+        installedProbe: KiteResourceVersionProbeSpec,
+        latestProbe: KiteResourceLatestVersionProbe,
+        installedRaw: String,
+    ): ResourceVersionCheckResult {
         val installed = ResourceVersionParser.installed(installedRaw, installedProbe)
             ?: return ResourceVersionCheckResult.Failed(manifest.id, "installed", "installed_version_unrecognized")
 

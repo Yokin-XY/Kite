@@ -7,21 +7,18 @@ import android.content.Intent
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
+import com.kite.app.application.resources.ResourceVersionBatchLane
+import com.kite.app.application.resources.ResourceVersionBatchScheduler
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 /** Debug-only 固定批量调度矩阵；ADB 只能触发，不能覆盖请求、延迟、轮数、槽位或阈值。 */
 class ResourceVersionBatchSchedulingBenchmarkReceiver : BroadcastReceiver() {
@@ -74,34 +71,22 @@ class ResourceVersionBatchSchedulingBenchmarkService : Service() {
     }
 }
 
-internal enum class DebugResourceVersionBatchLane {
-    STRUCTURED_NATIVE_REMOTE,
-    PROOT_COMPATIBILITY,
-}
+internal typealias DebugResourceVersionBatchLane = ResourceVersionBatchLane
 
-/** RF1720 的 Debug-only 候选；通过门后 RF1730 才允许把同一合同提升到生产。 */
+/** RF1720 的固定入口；RF1730 后只委托生产调度器，避免保留平行实现。 */
 internal object ResourceVersionBatchSchedulingCandidate {
-    const val STRUCTURED_NATIVE_REMOTE_LIMIT = 3
-    const val PROOT_COMPATIBILITY_LIMIT = 1
+    const val STRUCTURED_NATIVE_REMOTE_LIMIT = ResourceVersionBatchScheduler.STRUCTURED_NATIVE_REMOTE_LIMIT
+    const val PROOT_COMPATIBILITY_LIMIT = ResourceVersionBatchScheduler.PROOT_COMPATIBILITY_LIMIT
 
     suspend fun <T, R> executeOrdered(
         requests: List<T>,
         laneOf: (T) -> DebugResourceVersionBatchLane,
         execute: suspend (T) -> R,
-    ): List<R> = coroutineScope {
-        val structuredNativeRemote = Semaphore(STRUCTURED_NATIVE_REMOTE_LIMIT)
-        val prootCompatibility = Semaphore(PROOT_COMPATIBILITY_LIMIT)
-        requests.map { request ->
-            async {
-                when (laneOf(request)) {
-                    DebugResourceVersionBatchLane.STRUCTURED_NATIVE_REMOTE ->
-                        structuredNativeRemote.withPermit { execute(request) }
-                    DebugResourceVersionBatchLane.PROOT_COMPATIBILITY ->
-                        prootCompatibility.withPermit { execute(request) }
-                }
-            }
-        }.awaitAll()
-    }
+    ): List<R> = ResourceVersionBatchScheduler.executeOrdered(
+        requests = requests,
+        laneOf = laneOf,
+        execute = execute,
+    )
 }
 
 private object ResourceVersionBatchSchedulingBenchmark {
@@ -182,7 +167,7 @@ private object ResourceVersionBatchSchedulingBenchmark {
                 "status=complete suite=$SUITE sequentialP50Ms=${percentile(rounds.map { it.baseline.durationMs }, 0.50)} " +
                     "candidateP50Ms=${percentile(candidateDurations, 0.50)} candidateP95Ms=$candidateP95Ms " +
                     "minimumReductionPercent=${formatPercent(reductions.minOrNull() ?: 0.0)} " +
-                    "performanceGate=$performanceGate correctnessGate=$correctnessGate providerSource=debug_candidate",
+                    "performanceGate=$performanceGate correctnessGate=$correctnessGate providerSource=production_scheduler",
             )
         }
     }

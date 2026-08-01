@@ -5,6 +5,7 @@ import com.kite.app.resources.KiteResourceManagementMode
 import com.kite.app.resources.KiteResourceManagementSpec
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceLatestVersionProbe
+import com.kite.app.resources.KiteResourceMetadataVersionProbeSpec
 import com.kite.app.resources.KiteResourceRemoteVersionProbe
 import com.kite.app.resources.KiteResourceSourceSpec
 import com.kite.app.resources.KiteResourceVersionProbeSpec
@@ -139,6 +140,66 @@ class ResourceVersionCoordinatorTest {
         assertFalse(ResourceUpdateBatchPolicy.isEligible(withoutInstalledProbe, installed = true))
     }
 
+    @Test
+    fun `批量预检 Ready 后复用原生值且只读取远端版本`() = runTest {
+        val gateway = FakeGateway(
+            installed = "should-not-run",
+            latest = "{\"version\":\"1.3.0\"}",
+            preparation = ResourceVersionInstalledPreparation.Ready("1.2.3", "test_ready"),
+        )
+        val coordinator = ResourceVersionCoordinator(gateway)
+
+        val prepared = coordinator.prepareBatchCheck(structuredManifest(), "profile-ready")
+        val result = coordinator.check(prepared)
+
+        assertTrue(prepared is PreparedResourceVersionCheck.StructuredNativeRemote)
+        assertEquals(ResourceVersionBatchLane.STRUCTURED_NATIVE_REMOTE, prepared.lane)
+        assertTrue(result is ResourceVersionCheckResult.UpdateAvailable)
+        assertEquals(1, gateway.preparationCalls)
+        assertEquals(0, gateway.installedReadCount)
+        assertEquals(1, gateway.latestReadCount)
+        assertEquals(listOf("profile-ready"), gateway.observedEnvironmentIds)
+    }
+
+    @Test
+    fun `批量预检 Unsupported 会把整项交给兼容车道`() = runTest {
+        val gateway = FakeGateway(
+            installed = "1.2.3",
+            latest = "{\"version\":\"1.2.3\"}",
+            preparation = ResourceVersionInstalledPreparation.Unsupported("metadata_missing"),
+        )
+        val coordinator = ResourceVersionCoordinator(gateway)
+
+        val prepared = coordinator.prepareBatchCheck(structuredManifest())
+        val result = coordinator.check(prepared)
+
+        assertTrue(prepared is PreparedResourceVersionCheck.ProotCompatibility)
+        assertEquals(ResourceVersionBatchLane.PROOT_COMPATIBILITY, prepared.lane)
+        assertTrue(result is ResourceVersionCheckResult.Current)
+        assertEquals(1, gateway.installedReadCount)
+        assertEquals(1, gateway.latestReadCount)
+    }
+
+    @Test
+    fun `批量预检 Blocked 直接失败且不启动任何版本读取`() = runTest {
+        val gateway = FakeGateway(
+            installed = "should-not-run",
+            latest = "should-not-run",
+            preparation = ResourceVersionInstalledPreparation.Blocked("path_escape"),
+        )
+        val coordinator = ResourceVersionCoordinator(gateway)
+
+        val prepared = coordinator.prepareBatchCheck(structuredManifest())
+        val result = coordinator.check(prepared)
+
+        assertTrue(prepared is PreparedResourceVersionCheck.Completed)
+        assertEquals(ResourceVersionBatchLane.STRUCTURED_NATIVE_REMOTE, prepared.lane)
+        assertTrue(result is ResourceVersionCheckResult.Failed)
+        assertEquals("installed_version_blocked:path_escape", (result as ResourceVersionCheckResult.Failed).reason)
+        assertEquals(0, gateway.installedReadCount)
+        assertEquals(0, gateway.latestReadCount)
+    }
+
     private fun manifest() = KiteResourceManifest(
         id = "kite.example",
         name = "Example",
@@ -179,19 +240,48 @@ class ResourceVersionCoordinatorTest {
         rawJson = JSONObject()
     )
 
+    private fun structuredManifest(): KiteResourceManifest {
+        val base = manifest()
+        return base.copy(
+            management = base.management.copy(
+                versionProbe = KiteResourceVersionProbeSpec(
+                    command = "node-compatible-fallback",
+                    structuredMetadata = KiteResourceMetadataVersionProbeSpec(
+                        containerPath = "/workspace/software/example/package.json",
+                        maximumBytes = 4096L,
+                        jsonField = "version",
+                    ),
+                ),
+            ),
+        )
+    }
+
     private class FakeGateway(
         private val installed: String,
         private val latest: String,
         private val installedFailure: Throwable? = null,
-        private val latestFailure: Throwable? = null
-    ) : ResourceVersionGateway {
+        private val latestFailure: Throwable? = null,
+        private val preparation: ResourceVersionInstalledPreparation =
+            ResourceVersionInstalledPreparation.Unsupported("test_preparation_unavailable"),
+    ) : ResourceVersionGateway, ResourceVersionBatchPreparationGateway {
         val observedEnvironmentIds = mutableListOf<String>()
+        var preparationCalls = 0
+        var installedReadCount = 0
+        var latestReadCount = 0
+
+        override suspend fun prepareInstalledVersion(
+            probe: KiteResourceVersionProbeSpec,
+        ): ResourceVersionInstalledPreparation {
+            preparationCalls += 1
+            return preparation
+        }
 
         override suspend fun readInstalledVersion(
             resourceId: String,
             probe: KiteResourceVersionProbeSpec,
             environmentId: String
         ): Result<String> {
+            installedReadCount += 1
             observedEnvironmentIds += environmentId
             return installedFailure?.let(Result.Companion::failure) ?: Result.success(installed)
         }
@@ -201,6 +291,7 @@ class ResourceVersionCoordinatorTest {
             probe: KiteResourceLatestVersionProbe,
             environmentId: String
         ): Result<String> {
+            latestReadCount += 1
             observedEnvironmentIds += environmentId
             return latestFailure?.let(Result.Companion::failure) ?: Result.success(latest)
         }

@@ -18,6 +18,7 @@ import com.kite.app.application.packages.InstallApkCoordinator
 import com.kite.app.application.resources.ResourceRunCoordinator
 import com.kite.app.application.resources.ResourceActionWorkflowCoordinator
 import com.kite.app.application.resources.ResourceVersionCoordinator
+import com.kite.app.application.resources.ResourceVersionBatchSummary
 import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.runs.RunExecutionEffectBus
 import com.kite.app.application.runs.RunExecutionEnvironmentProvider
@@ -307,6 +308,15 @@ internal class KiteAppGraph private constructor(context: Context) {
                 recipeFeatureGateway = recipeFeatureGateway,
                 bridgeClient = bridgeClient,
                 diagnostics = diagnostics,
+                versionBatchObserver = { summary: ResourceVersionBatchSummary ->
+                    Log.i(
+                        "KiteVersionBatchRoute",
+                        "total=${summary.total} structuredNativeRemote=${summary.structuredNativeRemote} " +
+                            "prootCompatibility=${summary.prootCompatibility} " +
+                            "maxStructuredNativeRemote=${summary.maxStructuredNativeRemote} " +
+                            "maxProotCompatibility=${summary.maxProotCompatibility}",
+                    )
+                },
                 versionCoordinator = ResourceVersionCoordinator(
                     AndroidResourceVersionGateway(
                         bridgeClient = bridgeClient,

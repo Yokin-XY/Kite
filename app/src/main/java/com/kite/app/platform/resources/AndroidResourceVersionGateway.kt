@@ -1,6 +1,8 @@
 package com.kite.app.platform.resources
 
 import com.kite.app.application.resources.ResourceVersionGateway
+import com.kite.app.application.resources.ResourceVersionBatchPreparationGateway
+import com.kite.app.application.resources.ResourceVersionInstalledPreparation
 import com.kite.app.bridge.BridgeResult
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.foundation.runtime.AndroidNativeStructuredJsonStringProvider
@@ -49,19 +51,36 @@ internal class AndroidResourceVersionGateway(
     ) -> Unit = { recipe, environment, callback ->
         bridgeClient.runRecipe(recipe, extraEnv = environment, callback = callback)
     },
-) : ResourceVersionGateway {
+) : ResourceVersionGateway, ResourceVersionBatchPreparationGateway {
     override suspend fun readInstalledVersion(
         resourceId: String,
         probe: KiteResourceVersionProbeSpec,
         environmentId: String
     ): Result<String> {
-        val metadata = probe.structuredMetadata
-            ?: return fallbackToCommand(
+        return when (val preparation = prepareInstalledVersion(probe)) {
+            is ResourceVersionInstalledPreparation.Ready -> {
+                observe(InstalledVersionRoute.ANDROID_NATIVE, preparation.reason)
+                Result.success(preparation.rawValue)
+            }
+            is ResourceVersionInstalledPreparation.Unsupported -> fallbackToCommand(
                 resourceId,
                 probe,
                 environmentId,
-                reason = "structured_metadata_absent",
+                preparation.reason,
             )
+            is ResourceVersionInstalledPreparation.Blocked -> {
+                observe(InstalledVersionRoute.BLOCKED, preparation.reason)
+                Result.failure(IllegalArgumentException("installed_version_blocked:${preparation.reason}"))
+            }
+        }
+    }
+
+    /** 只做受控文件事实预检；不会启动命令、网络请求或 PRoot。 */
+    override suspend fun prepareInstalledVersion(
+        probe: KiteResourceVersionProbeSpec,
+    ): ResourceVersionInstalledPreparation {
+        val metadata = probe.structuredMetadata
+            ?: return ResourceVersionInstalledPreparation.Unsupported("structured_metadata_absent")
         val decision = withContext(Dispatchers.IO) {
             val nativeContext = runCatching { metadataContextProvider() }.getOrNull()
                 ?: return@withContext RuntimeProviderDecision.Unsupported(
@@ -85,20 +104,12 @@ internal class AndroidResourceVersionGateway(
             }
         }
         return when (decision) {
-            is RuntimeProviderDecision.Ready -> {
-                observe(InstalledVersionRoute.ANDROID_NATIVE, decision.reason)
-                Result.success(decision.plan.value)
-            }
-            is RuntimeProviderDecision.Unsupported -> fallbackToCommand(
-                resourceId,
-                probe,
-                environmentId,
-                decision.reason,
-            )
-            is RuntimeProviderDecision.Blocked -> {
-                observe(InstalledVersionRoute.BLOCKED, decision.reason)
-                Result.failure(IllegalArgumentException("installed_version_blocked:${decision.reason}"))
-            }
+            is RuntimeProviderDecision.Ready ->
+                ResourceVersionInstalledPreparation.Ready(decision.plan.value, decision.reason)
+            is RuntimeProviderDecision.Unsupported ->
+                ResourceVersionInstalledPreparation.Unsupported(decision.reason)
+            is RuntimeProviderDecision.Blocked ->
+                ResourceVersionInstalledPreparation.Blocked(decision.reason)
         }
     }
 

@@ -100,8 +100,8 @@
 | RF1700 | 进行中 | 已选批量版本检查分车道有界并发；AI 会话冻结 |
 | RF1710 | 已完成 | 正式批量入口、三个候选与预设发布门已固定 |
 | RF1720 | 已完成 | 固定矩阵三轮零差异，最小收益 58.4%，候选 p95 380ms，判 go |
-| RF1730 | 进行中 | 固定门已通过，开始最小生产调度样板 |
-| RF1740 | 未触发 | OnePlus 真实批量链、Full 与父任务门 |
+| RF1730 | 已完成 | 进程前预检、生产 3/1 调度、顺序与分层测试均通过 |
+| RF1740 | 进行中 | OnePlus 真实批量链、Full 与父任务门 |
 
 ## RF1700 开机与三问自检
 
@@ -124,6 +124,15 @@
 - 三轮结果差异为 0，输出顺序不变；结构化原生/远端最大活动数为 3，兼容最大活动数为 1；全部检查中先于首个探针，固定失败不抹掉其他结果，取消后活动数归零。
 - Targeted 4 tests、Quick 55 suites/261 tests、Stage 56 suites/264 tests 均零失败；Debug 构建、OnePlus 安装和固定广播通过，当前进程日志 `FATAL EXCEPTION`/`ANR in com.kite.app` 为 0。生产 `AndroidResourceActionGateway` 仍是串行，RF1720 只证明候选可进入 RF1730。
 - `kfshell-toolchain` 发现本机 `references/toolchain.md` 的默认魅族记录已落后于项目规范；实时确认 OnePlus `3f8bbaad` 在线后已把忽略跟踪的本机参考纠正为默认 OnePlus，未查询、启动或安装魅族。
+
+## RF1730 最小生产调度样板
+
+- 新增通用 `ResourceVersionBatchScheduler`：只接收调用方预先确定的 `ResourceVersionBatchLane`，固定结构化原生/远端 3 槽、PRoot 兼容 1 槽；分类在任何任务执行前全部完成，结果由 `awaitAll()` 按输入顺序返回，调度器不认识资源 ID、包名、命令或页面。
+- 为避免“结构化声明存在但本地事实临时不足”误入 3 槽并并发启动 PRoot，`ResourceVersionCoordinator.prepareBatchCheck()` 会先调用 Android 受控 JSON Provider：Ready 缓存已安装版本并只在 3 槽读取远端，Unsupported 整项进入 1 槽再走既有兼容路径，Blocked 直接返回失败且不启动命令。全部预检发生在所有 `markUpdateChecking()` 之后、首个业务进程之前。
+- `AndroidResourceActionGateway` 只把原串行 `targets.map` 替换为“批量预检＋生产调度”，既有 `applyUpdateCheckResult()`、汇总文案、输入顺序和 Store 所有权不变；`KiteAppGraph` 只记录总数、两类数量和实际最大活动数，不记录资源身份。
+- RF1720 Debug 候选已收缩为对生产调度器的薄委托。OnePlus 生产调度器固定矩阵三轮串行 909/910/910ms、候选 377/372/371ms，减少 58.5%/59.1%/59.2%，p95 377ms，零差异且 `providerSource=production_scheduler`。
+- Targeted 5 suites/21 tests、Quick 55 suites/261 tests、Stage 59 suites/281 tests 均零失败；Debug 构建和 OnePlus 安装/广播通过，当前日志 FATAL/ANR 为 0。未运行 Full，留给 RF1700 父门。
+- 生产范围只涉及版本批量 Orchestrator、版本事实预检 Provider、AppGraph 低基数观测及对应 Debug/测试；AI 会话、页面、Store、安装/更新事务、单项入口、PRoot View 和其他设备均未改。
 
 ## RF1600 开机与三问自检
 

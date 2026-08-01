@@ -4,7 +4,7 @@
 
 - 根任务：`RF000`
 - 当前阶段：`RF1700` 进行中
-- 当前任务：`RF1730` 最小生产调度样板
+- 当前任务：`RF1740` 真实批量链与父任务门
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 冻结锚点：`8c046238b3c59094becc8f46df9857169a733649`
 - 分支：`codex/runtime-foundation-lab`
@@ -956,6 +956,9 @@
 - 原生/远端任务上限 3，PRoot/显式命令上限 1；允许两类槽并行，但同一目标只能执行一次；结果按输入顺序交给既有 `applyUpdateCheckResult()`；
 - `KiteResourceInstallStore` 继续拥有检查状态，`ResourceVersionCoordinator` 继续拥有版本事实；页面不选择 lane、不新增轮询、不整页刷新；
 - 叶子使用 Targeted、Quick、Stage，不运行 Full。
+- [x] 全部目标先在首个业务进程前完成结构化预检：Ready 进入 3 槽原生/远端，Unsupported 整项进入 1 槽兼容，Blocked 不启动命令；
+- [x] 生产调度器只消费预先给出的 lane，固定矩阵改为委托同一生产实现；结果顺序、Store 写入和单项版本语义保持不变；
+- [x] 生产调度器固定矩阵三轮零差异，最小减少 58.5%、p95 377ms；Targeted 21 tests、Quick 261 tests、Stage 281 tests、Debug 构建和 FATAL/ANR 通过。
 
 #### RF1740 go/no-go 与父任务门
 

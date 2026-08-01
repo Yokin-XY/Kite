@@ -6,6 +6,8 @@ import com.kite.app.application.resources.ResourceActionEffect
 import com.kite.app.application.resources.ResourceActionGateway
 import com.kite.app.application.resources.ResourceDependencyGuard
 import com.kite.app.application.resources.ResourceVersionCheckResult
+import com.kite.app.application.resources.ResourceVersionBatchScheduler
+import com.kite.app.application.resources.ResourceVersionBatchSummary
 import com.kite.app.application.resources.ResourceVersionCoordinator
 import com.kite.app.application.resources.ResourceUpdateBatchPolicy
 import com.kite.app.application.resources.ResourceRunContinuation
@@ -62,6 +64,7 @@ internal class AndroidResourceActionGateway(
     private val bridgeClient: KiteBridgeClient,
     private val diagnostics: KiteDiagnostics,
     private val versionCoordinator: ResourceVersionCoordinator,
+    private val versionBatchObserver: (ResourceVersionBatchSummary) -> Unit = {},
     private val environmentFor: (String) -> Map<String, String> = { emptyMap() },
     private val installedStateProbe: ResourceInstalledStateProbe =
         AndroidResourceInstalledStateProbe(bridgeClient),
@@ -220,8 +223,16 @@ internal class AndroidResourceActionGateway(
         // 先一次性写入所有目标的乐观状态，再开始任何网络或命令探测。
         targets.forEach { target -> installStore.markUpdateChecking(target.id, environmentId) }
         val results = withContext(Dispatchers.IO) {
-            targets.map { target ->
-                target to versionCoordinator.check(target.manifest, environmentId)
+            // 所有车道先在业务进程前完成结构化预检；事实不足的整项进入单槽兼容队列。
+            val prepared = targets.map { target ->
+                target to versionCoordinator.prepareBatchCheck(target.manifest, environmentId)
+            }
+            ResourceVersionBatchScheduler.executeOrdered(
+                requests = prepared,
+                laneOf = { preparedRequest -> preparedRequest.second.lane },
+                observer = versionBatchObserver,
+            ) { preparedRequest ->
+                preparedRequest.first to versionCoordinator.check(preparedRequest.second)
             }
         }.map { (target, result) -> applyUpdateCheckResult(target, result, environmentId) }
 
