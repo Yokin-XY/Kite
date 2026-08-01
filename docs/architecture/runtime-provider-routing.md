@@ -23,6 +23,7 @@ Kite 同时保留三种执行能力，但不让资源卡、页面或最终应用
 当前已经具备：
 
 - `AndroidNativeDownloadCapabilityProvider` 与流式执行器，已能把封闭的 HTTPS 下载＋SHA-256 请求编译为原生计划；
+- `AndroidNativeStructuredJsonStringProvider` 已在默认 npm 已安装版本入口生产化；结构化文件事实完整时原生读取，事实不完整在首个业务进程前单次回到旧 PRoot 探针；
 - `HostNodeRuntimeProvider`、`HostPythonRuntimeProvider` 与 `ManagedRuntimeLaunchPlanner`，可在创建进程前选择 Host Node、Host Python 或 PRoot；
 - 终端、Agent、后台运行共用的受管运行时准备入口；终端命令文本仍保持 PRoot，结构化 Node/Python argv 才参与快速选择；
 - `runtimeLane`、`runtimeFallbackReason` 在 `CardRunStore` 与后台运行记录中的事实保存；

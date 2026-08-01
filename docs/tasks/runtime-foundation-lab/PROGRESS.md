@@ -92,11 +92,11 @@
 | RF1552 | 已完成 | Quick/Stage/Full 实跑零失败，默认测试数最高减少 82.7% |
 | RF1553 | 已完成 | 独立工作进程持锁；外层中断后仍阻止 Gradle 重叠 |
 | RF1554 | 已完成 | Full、Debug 构建、互斥探针和范围审查全部通过 |
-| RF1600 | 进行中 | 最小生产样板已通过，进入 RF1640 真链与父任务门 |
+| RF1600 | 已完成 | 默认 npm 元数据原生读取通过真实双车道链与 Full 1487 项父门 |
 | RF1610 | 已完成 | 5 个正式资源共享默认元数据探针；两类高风险调用面已排除 |
 | RF1620 | 已完成 | 三轮 13 类零差异；单请求和 5 请求批次收益门均通过 |
 | RF1630 | 已完成 | 生产 Provider、唯一回退、Stage 与 OnePlus 固定矩阵均通过 |
-| RF1640 | 待开始 | 真实资源唯一车道、Full 和父任务 go/no-go 门 |
+| RF1640 | 已完成 | 真实动作链 native/proot 各一次；Full 1487 项零失败，production go |
 
 ## RF1600 开机与三问自检
 
@@ -131,6 +131,14 @@
 - 最终 Stage 为 62 suites、315 tests、0 failure、0 error、1 skipped；跳过仍仅为 Windows 宿主无符号链接权限。固定网关测试证明 Ready `0` 次 recipe、Unsupported `1` 次、Blocked `0` 次、旧命令 `1` 次；静态护栏证明已安装版本选择不读取 `probe.command`，生产 Provider 不含资源/包/页面标识。
 - 最终 Debug 构建 60 tasks 成功；APK `247525656` bytes、SHA-256 `16C7FF592D8695C5F916CB199896CD86356B632AD414540CB7F178D382F201C3`，仅安装到 OnePlus 8T `3f8bbaad`。生产 Provider 固定矩阵为 13 类、`differences=0`、`correctnessGate=true`；单请求 PRoot/native p50 为 `208.897/3.121ms`，降低 `98.5%`，原生 p95 `7.414ms`；五请求批次 p50 为 `1352.117/8.938ms`，降低 `99.3%`，`providerSource=production` 且夹具清理为真；同一日志核对无 FATAL/ANR。
 - 曾有两次验收采集器假失败：第一次 `logcat -T` 的含空格时间被 PowerShell 拆参，第二次按历史行数截取新日志受环形缓冲变化影响；两次都没有改变生产代码、样例或阈值。第二次矩阵真实完成行已按专用标签和时间戳复核，不能把采集器超时解释成性能结果。RF1630 判 go，下一恢复指针为 RF1640。
+
+## RF1640 真实链与父任务 go
+
+- 新增 Debug-only `RESOURCE_VERSION_PRODUCTION_ROUTE_PROOF`，ADB 只能触发，不能提交资源 ID、路径或车道。入口从真实 `KiteResourceInstallStore.registrySnapshot()` 读取已安装登记，经正式 `KiteResourceSourcePlanFactory.versionCheckPlan()` 按结构化合同有/无各选第一项，并调用真实 `ResourceActionWorkflowCoordinator.dispatch(CheckUpdate)`；没有固定资源、包或命令白名单。
+- OnePlus 8T 的真实登记中有 2 个满足完整版本计划的已安装资源。正式动作链按时间顺序记录一次 `route=android_native reason=structured_json_string_ready` 和一次 `route=proot_fallback reason=structured_metadata_absent`，两次均返回 1 个正式 Effect；证明入口最终为 `nativeChecks=1 fallbackChecks=1 adbOverrides=false`。原生开始后没有 PRoot 重放，旧显式探针只执行兼容车道。
+- RF1640 Stage 为 63 suites、320 tests、零失败；独立 Quick 为 54 suites、260 tests、零失败。Debug 构建 60 tasks 成功；APK `247525656` bytes、SHA-256 `4540743460E420C26A071F6448AEE53B2E1D997F2A4E8E960561FB056C438092`，只覆盖安装到 OnePlus 8T `3f8bbaad`。
+- RF1600 父门唯一一次 Full 为 284 suites、1487 tests、0 failure、0 error、3 skipped，墙钟 `154.883s`。跳过项是 Windows 宿主符号链接权限、容器符号链接 fd wrapper 与真机 PRoot journal 夹具，均有既有平台/真机门，不是本轮失败。OnePlus 当前进程 PID `24429` 的 FATAL/ANR 计数为 0。
+- 生产范围审查确认没有修改正式资源清单、远端版本实现、安装/更新/取消事务、Store、UI、PRoot View、Node/Python/RF1500、版本或发布；没有操作魅族、main/其他工作树或远端。RF1600 判 production go，后续必须重新从兼容债务总账立新父任务，不得外推为任意版本命令或整个应用启动优化。
 
 ## RF1500 开机与三问自检
 

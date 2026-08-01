@@ -3,8 +3,8 @@
 ## 当前恢复指针
 
 - 根任务：`RF000`
-- 当前阶段：`RF1600` 进行中
-- 当前任务：`RF1640` go/no-go 与父任务门
+- 当前阶段：`RF1600` 已完成
+- 当前任务：等待从兼容债务总账选择下一候选
 - 基线：`main@8223ba02d2a75b5df86e3fb15914c6a30e8b3da2`
 - 冻结锚点：`8c046238b3c59094becc8f46df9857169a733649`
 - 分支：`codex/runtime-foundation-lab`
@@ -922,11 +922,11 @@
 
 #### RF1640 go/no-go 与父任务门
 
-- [ ] 至少两份正式资源清单生成同一结构化元数据合同，且没有资源/包/命令白名单；
-- [ ] OnePlus 8T 至少一个真实已安装资源检查更新命中 `native=1/fallback=0`，旧自定义探针证明 `native=0/fallback=1` 且回退发生在首个进程前；
-- [ ] 固定反例、三轮性能、Targeted、Quick、Stage、Debug 构建、ANR/FATAL 和生产范围审查全部通过；
-- [ ] RF1600 父门执行一次 Full，零失败后才可判定生产 go；否则回退生产样板并以 no-go 收口；
-- [ ] 不触碰 Node/Python/RF1500 历史矩阵、远端版本请求、安装事务、取消清理、PRoot View、魅族设备、main/其他工作树、远端、版本或发布。
+- [x] 至少两份正式资源清单生成同一结构化元数据合同，且没有资源/包/命令白名单；实际为 5 份；
+- [x] OnePlus 8T 真实已安装资源动作链依次命中 `android_native/structured_json_string_ready` 与 `proot_fallback/structured_metadata_absent`，各一次且无 ADB 样例覆盖；
+- [x] 固定反例、三轮性能、Targeted、Quick、Stage、Debug 构建、ANR/FATAL 和生产范围审查全部通过；
+- [x] RF1600 父门唯一一次 Full 为 284 suites、1487 tests、零失败，生产判 go；
+- [x] 未触碰 Node/Python/RF1500 历史矩阵、远端版本实现、安装事务、取消清理、PRoot View、魅族设备、main/其他工作树、远端、版本或发布。
 
 ## 每个叶子任务的固定闭环
 

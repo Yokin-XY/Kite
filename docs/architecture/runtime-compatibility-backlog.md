@@ -27,8 +27,9 @@
 | NATIVE-ARCHIVE-01 | 将资源 ZIP 默认迁到 Android 安全解包 | 正确性通过，但 OnePlus 8T 固定矩阵比 PRoot 慢约 202.8% | 资源安装继续现有 PRoot/事务链；原生 ZIP 只供显式受控调用 | 更换实现或平台能力后重跑同一固定矩阵 |
 | NATIVE-ARCHIVE-02 | tar、tar.gz、xz 等任意归档原生化 | 尚无统一安全解析、权限/链接语义和性能证据 | 继续 PRoot 工具链 | 仅在多个正式调用方和固定安全合同出现后立项 |
 | NATIVE-SHELL-01 | 把任意 shell 文本编译为 Android 原生动作 | shell 展开、管道、重定向、环境和副作用无法靠轻量解析等价复制 | 任意 shell 继续 PRoot | 只增加枚举化、结构化的单项原生能力 |
+| NATIVE-VERSION-01 | 显式 `命令 --version` 与任意版本输出原生化 | 启动前不能完整证明可执行文件、Linux ELF、解释器、子进程、环境和输出语义 | 无结构化元数据合同的探针继续 PRoot | 调用方直接声明受控文件/字段或完整 argv 与执行闭包后另立专项 |
 
-证据回指：[Android/NDK 原生能力](native-capability-provider.md)与任务 `RF300`。
+证据回指：[Android/NDK 原生能力](native-capability-provider.md)与任务 `RF300`、`RF1500`、`RF1600`。
 
 ## Ubuntu/PRoot 兼容与调度
 

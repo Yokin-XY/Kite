@@ -598,3 +598,11 @@
 - 决定：保留生产 `AndroidNativeStructuredJsonStringProvider` 和 `AndroidResourceVersionGateway` 的进程前选择样板，进入 RF1640 真实资源与父任务门。默认 npm 来源显式附带容器路径、256KiB 上限和 `version` 字段；Ready 直接返回，Unsupported 只回退一次原命令，Blocked 不回退。显式版本命令没有结构化合同，继续 PRoot；不得从 shell 文本推导合同。
 - 原因：5 份正式资源复用同一生成合同；网关单测固定 `0/1/0/1` 次 recipe 路由，最终 Stage 315 tests 零失败。OnePlus 上生产 Provider 的 13 类固定矩阵零差异，单请求 p50 从 208.897ms 降到 3.121ms，p95 7.414ms；五请求批次从 1352.117ms 降到 8.938ms，降低 99.3%，且固定夹具已清理。
 - 影响：RF1640 仍必须用一个真实已安装默认 npm 资源证明 `native=1/fallback=0`，并用旧显式探针证明 `native=0/fallback=1`；父门 Full 零失败后才能正式 go。远端版本、安装/更新/取消、Store、UI、PRoot View、Node/Python/RF1500、魅族、main 和远端继续不在范围内。
+
+## ADR-RF-076 默认 npm 包元数据原生版本探针进入生产
+
+- 状态：已接受，RF1640 与 RF1600 已完成
+- 日期：2026-08-01
+- 决定：保留默认 npm 已安装版本的结构化元数据原生路径作为生产行为。只有调用方显式提交授权容器路径、有界字节数和顶层字符串字段，且 Provider 完整证明普通文件与严格 JSON 事实时才返回原生结果；事实不完整在进程前单次回到原命令，非法合同 Blocked。显式版本命令、远端版本、完整 Linux 语义和未知来源继续 PRoot/既有实现。
+- 原因：5 份正式资源复用同一合同；OnePlus 固定矩阵 13 类零差异，单请求与五请求批次 p50 分别降低 98.5% 和 99.3%。真实安装登记动作链连续证明 `android_native/structured_json_string_ready` 与 `proot_fallback/structured_metadata_absent` 各一次，ADB 不可指定样例；最终 Full 1487 tests 零失败，当前进程无 FATAL/ANR。
+- 影响：收益只覆盖默认 npm 的本地 `package.json.version` 读取，不等于远端检查、整次检查更新、资源打开或应用启动缩短同一比例。Provider、安装登记、版本事实和页面继续由原拥有者持有，不新增 Store；后续候选重新立项，不得按资源/包/命令名扩大路由。

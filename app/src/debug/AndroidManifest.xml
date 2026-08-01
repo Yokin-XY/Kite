@@ -169,5 +169,15 @@
         <service
             android:name="com.kite.app.platform.resources.ManagedPackageVersionBenchmarkService"
             android:exported="false" />
+        <receiver
+            android:name="com.kite.app.platform.resources.ResourceVersionProductionRouteProofReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kite.app.debug.RESOURCE_VERSION_PRODUCTION_ROUTE_PROOF" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.kite.app.platform.resources.ResourceVersionProductionRouteProofService"
+            android:exported="false" />
     </application>
 </manifest>
