@@ -17,7 +17,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -31,6 +33,7 @@ object ToolchainPackInstaller {
     private const val LOG_FILE = "toolchain-install.log"
     private const val STATUS_FILE = "status.json"
     private const val INSTALL_TIMEOUT_SECONDS = 900L
+    private const val BOOTSTRAP_SETTLE_WAIT_MS = 120_000L
     private const val OUTPUT_LIMIT = 48_000
     private const val BOOTSTRAP_MAXIMUM_CONCURRENCY = 2
     const val BOOTSTRAP_RESOURCE_RUN_PREFIX = "bootstrap:"
@@ -191,6 +194,25 @@ object ToolchainPackInstaller {
             }
         }.getOrDefault(false)
     }
+
+    /**
+     * 资源获取计划只在后台调用：若启动工具包仍在登记系统组件，先等待这一轮有界结算，
+     * 避免把即将完成的内置组件重复加入用户获取队列。没有正在运行的准备任务时立即通过；
+     * 返回 false 只表示等待超时，调用方此时不能继续生成可能重复的安装计划。
+     */
+    suspend fun awaitBootstrapResourcesSettledIfRunning(
+        timeoutMs: Long = BOOTSTRAP_SETTLE_WAIT_MS,
+    ): Boolean {
+        if (!shouldAwaitBootstrapSettlement(state.value)) return true
+        return withTimeoutOrNull(timeoutMs.coerceAtLeast(1L)) {
+            state.first { snapshot -> !shouldAwaitBootstrapSettlement(snapshot) }
+            true
+        } ?: false
+    }
+
+    internal fun shouldAwaitBootstrapSettlement(state: ToolchainInstallState): Boolean =
+        state.phase == ToolchainInstallPhase.RUNNING &&
+            state.action.equals(ToolchainAction.PREPARE.name, ignoreCase = true)
 
     internal fun bootstrapResourceStatusSettled(status: String): Boolean =
         status == ToolchainResourcePort.STATUS_INSTALLED || status == ToolchainResourcePort.STATUS_FAILED

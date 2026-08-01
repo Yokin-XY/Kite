@@ -3,11 +3,30 @@ package com.kite.app.feature.runsurface
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunSurface
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CardRunTaskClosePolicyTest {
+    @Test
+    fun `安装向导普通导航只隐藏任务而不进入关闭策略`() {
+        val action = CardRunTaskNavigationPolicy.decide(
+            state(CardRunState.OWNER_KIND_INSTALL_WIZARD, CardRunSurface.InstallWizard)
+        )
+
+        assertEquals(CardRunTaskNavigationAction.HideTask, action)
+    }
+
+    @Test
+    fun `普通运行导航沿用关闭任务窗口语义`() {
+        val action = CardRunTaskNavigationPolicy.decide(
+            state(CardRunState.OWNER_KIND_CARD, CardRunSurface.Terminal)
+        )
+
+        assertEquals(CardRunTaskNavigationAction.CloseTask, action)
+    }
+
     @Test
     fun `完成计划退出时移除安装向导临时实例`() {
         val decision = decide(
@@ -22,7 +41,7 @@ class CardRunTaskClosePolicyTest {
     }
 
     @Test
-    fun `未开始计划退出时同时清理计划与向导根`() {
+    fun `显式移除未开始的向导任务时清理计划与向导根`() {
         val decision = decide(
             reason = CardRunTaskCloseReason.DismissSurface,
             hasInstallPlan = true,

@@ -5,6 +5,8 @@ import com.kite.app.application.recipes.RecipeFeatureGateway
 import com.kite.app.application.resources.ResourceActionEffect
 import com.kite.app.application.resources.ResourceActionGateway
 import com.kite.app.application.resources.ResourceDependencyGuard
+import com.kite.app.application.resources.ResourceInstallPreparationFlights
+import com.kite.app.application.resources.ResourceInstallPreparationToken
 import com.kite.app.application.resources.ResourceVersionCheckResult
 import com.kite.app.application.resources.ResourceVersionBatchScheduler
 import com.kite.app.application.resources.ResourceVersionBatchSummary
@@ -25,6 +27,7 @@ import com.kite.app.foundation.runtime.RuntimeOwnerIdentity
 import com.kite.app.foundation.runtime.RuntimeOwnerNamespace
 import com.kite.app.foundation.runtime.RuntimeLaunchTrace
 import com.kite.app.foundation.logging.Logger
+import com.kite.app.foundation.toolchain.ToolchainPackInstaller
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import com.kite.app.recipe.KiteExecution
 import com.kite.app.recipe.KiteLaunchConfig
@@ -38,11 +41,14 @@ import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceManagementMode
 import com.kite.app.resources.KiteResourceManifest
 import com.kite.app.resources.KiteResourceManifestLoader
+import com.kite.app.resources.KiteResourcePlanSnapshot
 import com.kite.app.resources.KiteResourceRequestPolicy
 import com.kite.app.resources.KiteResourceSourcePlanFactory
 import com.kite.app.run.CardRunState
 import com.kite.app.run.CardRunStatus
 import com.kite.app.run.CardRunStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -65,6 +71,7 @@ internal class AndroidResourceActionGateway(
     private val diagnostics: KiteDiagnostics,
     private val versionCoordinator: ResourceVersionCoordinator,
     private val versionBatchObserver: (ResourceVersionBatchSummary) -> Unit = {},
+    private val backgroundScope: CoroutineScope,
     private val environmentFor: (String) -> Map<String, String> = { emptyMap() },
     private val installedStateProbe: ResourceInstalledStateProbe =
         AndroidResourceInstalledStateProbe(bridgeClient),
@@ -78,6 +85,7 @@ internal class AndroidResourceActionGateway(
         installStore = installStore,
         installedStateProbe = installedStateProbe,
     )
+    private val preparationFlights = ResourceInstallPreparationFlights(backgroundScope)
 
     override suspend fun install(resourceId: String): List<ResourceActionEffect> {
         val environmentId = installStore.currentEnvironmentId()
@@ -90,31 +98,24 @@ internal class AndroidResourceActionGateway(
         ) {
             return uninstall(target, ResourceRunContinuation.Reinstall, environmentId)
         }
+
+        val currentPlan = installStore.planSnapshot(environmentId)
+        if (currentPlan.targetResourceId.isNotBlank()) {
+            return openCurrentInstallPlan(target, currentPlan, environmentId)
+        }
+        if (!installStore.beginPreparingPlan(target.id, environmentId)) {
+            return openCurrentInstallPlan(target, installStore.planSnapshot(environmentId), environmentId)
+        }
         installStore.markPreparing(target.id, environmentId)
-        return runCatching { withContext(Dispatchers.IO) { buildInstallPlan(target, environmentId) } }
-            .fold(
-                onSuccess = { plan -> acceptInstallPlan(target, plan, environmentId) },
-                onFailure = { error ->
-                    val reason = error.message ?: error.javaClass.simpleName
-                    installStore.markFailed(target.id, KiteResourceInstallStore.OP_INSTALL, null, reason, environmentId)
-                    message("执行队列准备失败：$reason")
-                }
-            )
+        val effect = installWizardEffect(target, emptyList(), environmentId)
+        launchInstallPreparation(target, effect, environmentId)
+        return listOf(effect)
     }
 
     override suspend fun reopenInstall(resourceId: String): List<ResourceActionEffect> {
         val target = target(resourceId) ?: return message("资源目录正在更新，请稍后重试")
         val plan = installStore.planSnapshot()
-        val ids = plan.resourceIds.ifEmpty { installStore.planResourceIds() }
-        val targetId = plan.targetResourceId.takeIf(String::isNotBlank)
-        return if (targetId != null && ids.isNotEmpty() &&
-            (target.id in ids || target.id == targetId)
-        ) {
-            val planTarget = target(targetId) ?: target
-            listOf(installWizardEffect(planTarget, ids))
-        } else {
-            message("${target.name} 正在处理，获取向导暂不可恢复")
-        }
+        return openCurrentInstallPlan(target, plan, installStore.currentEnvironmentId())
     }
 
     override suspend fun open(resourceId: String): List<ResourceActionEffect> {
@@ -346,6 +347,19 @@ internal class AndroidResourceActionGateway(
         planResourceIds: List<String>,
         environmentId: String
     ): List<ResourceActionEffect> {
+        val currentPlan = installStore.planSnapshot(environmentId)
+        if (currentPlan.isPreparing && currentPlan.targetResourceId == targetResourceId) {
+            preparationFlights.cancel(environmentId, currentPlan.targetResourceId)
+            if (!installStore.isInstalled(currentPlan.targetResourceId, environmentId)) {
+                installStore.clear(currentPlan.targetResourceId, environmentId)
+            }
+            clearInstallTask(
+                targetId = currentPlan.targetResourceId,
+                resourceIds = listOf(currentPlan.targetResourceId),
+                environmentId = environmentId,
+            )
+            return message("获取任务已取消")
+        }
         val resourceIds = planResourceIds.filter(String::isNotBlank)
             .ifEmpty { installStore.planResourceIds(environmentId) }
             .ifEmpty { listOfNotNull(targetResourceId.takeIf(String::isNotBlank)) }
@@ -419,22 +433,178 @@ internal class AndroidResourceActionGateway(
         }
     }
 
-    private fun acceptInstallPlan(
-        target: ResourceTarget,
-        plan: PreparedInstallPlan,
-        environmentId: String
+    private fun openCurrentInstallPlan(
+        requestedTarget: ResourceTarget,
+        plan: KiteResourcePlanSnapshot,
+        environmentId: String,
     ): List<ResourceActionEffect> {
-        if (plan.missing.isNotEmpty()) {
-            installStore.clear(target.id, environmentId)
-            return message("缺少可获取的基础层：${plan.missing.distinct().joinToString("、")}")
+        val targetId = plan.targetResourceId.takeIf(String::isNotBlank)
+            ?: return message("${requestedTarget.name} 当前没有可恢复的获取任务")
+        val belongsToPlan = requestedTarget.id == targetId || requestedTarget.id in plan.resourceIds
+        if (!belongsToPlan) {
+            val activeName = target(targetId)?.name ?: targetId
+            return message("$activeName 正在获取，请先完成或取消当前任务")
         }
-        if (plan.resourceIds.isEmpty()) {
-            installStore.clear(target.id, environmentId)
-            return message("${target.name} 已经就绪")
+        val planTarget = target(targetId) ?: requestedTarget
+        val effect = installWizardEffect(planTarget, plan.resourceIds, environmentId)
+        if (plan.isPreparing) {
+            launchInstallPreparation(planTarget, effect, environmentId)
         }
-        resetPlanTransientState(plan.resourceIds, environmentId)
-        installStore.beginPlan(target.id, plan.resourceIds, environmentId)
-        return listOf(installWizardEffect(target, plan.resourceIds, environmentId))
+        return listOf(effect)
+    }
+
+    private fun launchInstallPreparation(
+        target: ResourceTarget,
+        effect: ResourceActionEffect.OpenInstallWizard,
+        environmentId: String,
+    ) {
+        val wizard = CardRunStore.get(effect.instanceId)
+            ?.takeIf { state ->
+                state.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD &&
+                    state.stepId == target.id &&
+                    state.status !in INSTALL_WIZARD_ENDED_STATUSES
+            }
+            ?: return
+        val token = ResourceInstallPreparationToken(
+            environmentId = environmentId,
+            targetResourceId = target.id,
+            instanceId = wizard.instanceId,
+            generation = wizard.createdAt,
+        )
+        preparationFlights.launch(token) { current ->
+            prepareInstallPlan(target, current)
+        }
+    }
+
+    private suspend fun prepareInstallPlan(
+        target: ResourceTarget,
+        token: ResourceInstallPreparationToken,
+    ) {
+        try {
+            if (!ToolchainPackInstaller.awaitBootstrapResourcesSettledIfRunning()) {
+                commitPreparationFailure(token, target, "基础组件仍在准备，请稍后重试")
+                return
+            }
+            val plan = withContext(Dispatchers.IO) {
+                buildInstallPlan(target, token.environmentId)
+            }
+            preparationFlights.commitIfCurrent(token) {
+                if (!ownsPreparingPlan(token)) return@commitIfCurrent
+                acceptPreparedInstallPlan(target, token, plan)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            commitPreparationFailure(
+                token = token,
+                target = target,
+                reason = error.message ?: error.javaClass.simpleName,
+            )
+        }
+    }
+
+    private fun acceptPreparedInstallPlan(
+        target: ResourceTarget,
+        token: ResourceInstallPreparationToken,
+        plan: PreparedInstallPlan,
+    ) {
+        val recipe = CardRunSpecialRecipes.installWizard(target.id, target.name)
+        when {
+            plan.missing.isNotEmpty() -> {
+                val reason = "缺少可获取的基础层：${plan.missing.distinct().joinToString("、")}"
+                installStore.clearPlan(token.environmentId)
+                installStore.markFailed(
+                    target.id,
+                    KiteResourceInstallStore.OP_INSTALL,
+                    null,
+                    reason,
+                    token.environmentId,
+                )
+                CardRunStore.update(
+                    recipe = recipe,
+                    status = CardRunStatus.Failed,
+                    instanceId = token.instanceId,
+                    ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD,
+                    stepId = target.id,
+                    surface = com.kite.app.run.CardRunSurface.InstallWizard,
+                    lastMeaningfulOutput = reason,
+                    lastError = reason,
+                    environmentId = token.environmentId,
+                )
+            }
+
+            plan.resourceIds.isEmpty() -> {
+                installStore.clear(target.id, token.environmentId)
+                installStore.clearPlan(token.environmentId)
+                CardRunStore.update(
+                    recipe = recipe,
+                    status = CardRunStatus.Completed,
+                    instanceId = token.instanceId,
+                    ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD,
+                    stepId = target.id,
+                    surface = com.kite.app.run.CardRunSurface.InstallWizard,
+                    lastMeaningfulOutput = "${target.name} 已经就绪",
+                    environmentId = token.environmentId,
+                )
+            }
+
+            else -> {
+                resetPlanTransientState(plan.resourceIds, token.environmentId)
+                if (installStore.activatePreparedPlan(target.id, plan.resourceIds, token.environmentId)) {
+                    CardRunStore.update(
+                        recipe = recipe,
+                        status = CardRunStatus.Opened,
+                        instanceId = token.instanceId,
+                        ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD,
+                        stepId = target.id,
+                        surface = com.kite.app.run.CardRunSurface.InstallWizard,
+                        lastMeaningfulOutput = "获取内容已准备",
+                        environmentId = token.environmentId,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun commitPreparationFailure(
+        token: ResourceInstallPreparationToken,
+        target: ResourceTarget,
+        reason: String,
+    ) {
+        preparationFlights.commitIfCurrent(token) {
+            if (!ownsPreparingPlan(token)) return@commitIfCurrent
+            installStore.clearPlan(token.environmentId)
+            installStore.markFailed(
+                target.id,
+                KiteResourceInstallStore.OP_INSTALL,
+                null,
+                reason,
+                token.environmentId,
+            )
+            val recipe = CardRunSpecialRecipes.installWizard(target.id, target.name)
+            CardRunStore.update(
+                recipe = recipe,
+                status = CardRunStatus.Failed,
+                instanceId = token.instanceId,
+                ownerKind = CardRunState.OWNER_KIND_INSTALL_WIZARD,
+                stepId = target.id,
+                surface = com.kite.app.run.CardRunSurface.InstallWizard,
+                lastMeaningfulOutput = reason,
+                lastError = reason,
+                environmentId = token.environmentId,
+            )
+        }
+    }
+
+    private fun ownsPreparingPlan(token: ResourceInstallPreparationToken): Boolean {
+        val plan = installStore.planSnapshot(token.environmentId)
+        val wizard = CardRunStore.get(token.instanceId)
+        return plan.isPreparing &&
+            plan.targetResourceId == token.targetResourceId &&
+            wizard?.createdAt == token.generation &&
+            wizard.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD &&
+            wizard.stepId == token.targetResourceId &&
+            wizard.status !in INSTALL_WIZARD_ENDED_STATUSES
     }
 
     private fun installWizardEffect(
@@ -461,7 +631,7 @@ internal class AndroidResourceActionGateway(
                 stepId = target.id,
                 surface = com.kite.app.run.CardRunSurface.InstallWizard,
                 currentStepIndex = 0,
-                lastMeaningfulOutput = "等待获取确认",
+                lastMeaningfulOutput = "正在准备获取内容",
                 environmentId = environmentId
             )
         }

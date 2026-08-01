@@ -253,6 +253,92 @@ class ResourceInstallWizardScreenTest {
     }
 
     @Test
+    fun `准备计划没有步骤时显示正在准备而不是完成`() {
+        val screen = createScreen(seedResourceIds = listOf("stale-resource"))
+        attach(screen)
+        val context = screen.root.context
+
+        screen.render(
+            ResourceFeatureUiState(
+                phase = ResourceCatalogPhase.Ready,
+                items = listOf(item(ResourceItemPhase.Preparing)),
+                plan = ResourcePlanUiState(
+                    targetResourceId = "tool",
+                    isPreparing = true,
+                ),
+            )
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertTrue(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_detail_preparing)
+        })
+        val primary = screen.root.textViews().first {
+            it.text.toString() == context.getString(R.string.resource_state_preparing)
+        }
+        assertFalse(primary.isEnabled)
+        assertFalse(screen.root.textViews().any {
+            it.text.toString() == context.getString(R.string.resource_wizard_action_complete)
+        })
+    }
+
+    @Test
+    fun `活动计划优先使用事实步骤而不是启动时旧种子`() {
+        val context = ContextThemeWrapper(
+            ApplicationProvider.getApplicationContext(),
+            R.style.Theme_Kite
+        )
+        val state = ResourceFeatureUiState(
+            phase = ResourceCatalogPhase.Ready,
+            items = listOf(
+                item(ResourceItemPhase.NotInstalled, resourceId = "fact-dependency"),
+                item(ResourceItemPhase.NotInstalled, resourceId = "fact-target"),
+            ),
+            plan = ResourcePlanUiState(
+                targetResourceId = "fact-target",
+                isActive = true,
+                resourceIds = listOf("fact-dependency", "fact-target"),
+                pendingResourceIds = listOf("fact-dependency", "fact-target"),
+                steps = listOf(
+                    step("待获取", KiteResourceStepTone.Neutral, resourceId = "fact-dependency"),
+                    step("待获取", KiteResourceStepTone.Neutral, resourceId = "fact-target"),
+                ),
+            ),
+        )
+
+        val projected = ResourceInstallWizardPresenter.project(
+            context = context,
+            state = state,
+            requestedTargetResourceId = "stale-target",
+            seedResourceIds = listOf("stale-dependency", "stale-target"),
+        )
+
+        assertEquals("fact-target", projected.targetResourceId)
+        assertEquals(listOf("fact-dependency", "fact-target"), projected.rows.map { it.resourceId })
+    }
+
+    @Test
+    fun `准备失败清除计划后仍用请求目标展示失败而不是完成`() {
+        val context = ContextThemeWrapper(
+            ApplicationProvider.getApplicationContext(),
+            R.style.Theme_Kite
+        )
+        val projected = ResourceInstallWizardPresenter.project(
+            context = context,
+            state = ResourceFeatureUiState(
+                phase = ResourceCatalogPhase.Ready,
+                items = listOf(item(ResourceItemPhase.InstallFailed, resourceId = "tool")),
+            ),
+            requestedTargetResourceId = "tool",
+            seedResourceIds = emptyList(),
+        )
+
+        assertEquals(listOf("tool"), projected.rows.map { it.resourceId })
+        assertEquals(ResourceInstallWizardHeaderState.Failure, projected.headerState)
+        assertEquals(context.getString(R.string.resource_wizard_detail_failure), projected.detail)
+    }
+
+    @Test
     fun `活动计划不显示后台继续取消计划或报告入口`() {
         val screen = createScreen()
         attach(screen)
@@ -279,6 +365,7 @@ class ResourceInstallWizardScreenTest {
                 ),
                 plan = ResourcePlanUiState(
                     targetResourceId = "tool",
+                    isActive = true,
                     resourceIds = listOf("runtime", "tool"),
                     pendingResourceIds = listOf("tool"),
                     steps = listOf(
@@ -380,6 +467,7 @@ class ResourceInstallWizardScreenTest {
         items = listOf(item(ResourceItemPhase.NotInstalled)),
         plan = ResourcePlanUiState(
             targetResourceId = "tool",
+            isActive = true,
             resourceIds = listOf("tool"),
             pendingResourceIds = listOf("tool"),
             steps = listOf(step("待获取", KiteResourceStepTone.Neutral))
@@ -400,6 +488,7 @@ class ResourceInstallWizardScreenTest {
             items = listOf(item(ResourceItemPhase.Installing, run = run)),
             plan = ResourcePlanUiState(
                 targetResourceId = "tool",
+                isActive = true,
                 resourceIds = listOf("tool"),
                 runningResourceIds = listOf("tool"),
                 steps = listOf(step("获取中", KiteResourceStepTone.Primary, run = run))

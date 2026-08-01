@@ -68,6 +68,8 @@ internal data class ResourcePlanStepUiState(
 
 internal data class ResourcePlanUiState(
     val targetResourceId: String = "",
+    val isPreparing: Boolean = false,
+    val isActive: Boolean = false,
     val resourceIds: List<String> = emptyList(),
     val runningResourceIds: List<String> = emptyList(),
     val pendingResourceIds: List<String> = emptyList(),

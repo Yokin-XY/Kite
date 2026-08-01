@@ -11,6 +11,14 @@ class KiteResourceUiProjectorTest {
     fun `安装生命周期状态投影是确定的`() {
         assertProjection(installed = false, state = "未获取", action = "获取", enabled = true)
         assertProjection(preparing = true, state = "准备中", action = "准备中", enabled = false)
+        assertProjection(
+            preparing = true,
+            installPlanInProgress = true,
+            state = "获取中",
+            action = "获取中",
+            enabled = true,
+            secondary = "取消"
+        )
         assertProjection(installing = true, state = "获取中", action = "获取中", enabled = true, secondary = "取消")
         assertProjection(installed = true, state = "已获取", action = "打开", enabled = true, secondary = "卸载")
         assertProjection(uninstalling = true, state = "卸载中", action = "卸载中", enabled = false)
@@ -54,6 +62,7 @@ class KiteResourceUiProjectorTest {
         installed: Boolean = false,
         preparing: Boolean = false,
         installing: Boolean = false,
+        installPlanInProgress: Boolean = false,
         uninstalling: Boolean = false,
         failed: Boolean = false,
         failedOperation: String = KiteResourceInstallStore.OP_INSTALL,
@@ -62,7 +71,15 @@ class KiteResourceUiProjectorTest {
         enabled: Boolean,
         secondary: String? = null
     ) {
-        val projection = projection(installed, preparing, installing, uninstalling, failed, failedOperation)
+        val projection = projection(
+            installed = installed,
+            preparing = preparing,
+            installing = installing,
+            installPlanInProgress = installPlanInProgress,
+            uninstalling = uninstalling,
+            failed = failed,
+            failedOperation = failedOperation
+        )
         assertEquals(state, projection.stateLabel)
         assertEquals(action, projection.actionLabel)
         assertEquals(enabled, projection.actionEnabled)
@@ -73,6 +90,7 @@ class KiteResourceUiProjectorTest {
         installed: Boolean = false,
         preparing: Boolean = false,
         installing: Boolean = false,
+        installPlanInProgress: Boolean = false,
         uninstalling: Boolean = false,
         failed: Boolean = false,
         failedOperation: String = KiteResourceInstallStore.OP_INSTALL,
@@ -82,6 +100,7 @@ class KiteResourceUiProjectorTest {
             installed = installed,
             preparing = preparing,
             installing = installing,
+            installPlanInProgress = installPlanInProgress,
             uninstalling = uninstalling,
             failed = failed,
             failedOperation = failedOperation,

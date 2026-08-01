@@ -324,6 +324,7 @@ internal class KiteAppGraph private constructor(context: Context) {
                 recipeFeatureGateway = recipeFeatureGateway,
                 bridgeClient = bridgeClient,
                 diagnostics = diagnostics,
+                backgroundScope = processScope,
                 versionBatchObserver = { summary: ResourceVersionBatchSummary ->
                     Log.i(
                         "KiteVersionBatchRoute",

@@ -54,6 +54,7 @@ class ResourceFeatureControllerTest {
         val gateway = FakeGateway().apply {
             plan = KiteResourcePlanSnapshot(
                 targetResourceId = "tool",
+                status = KiteResourceInstallStore.PLAN_STATUS_ACTIVE,
                 resourceIds = listOf("tool"),
                 runningResourceIds = listOf("tool"),
                 stepStatusByResourceId = mapOf("tool" to KiteResourceInstallStore.PLAN_STEP_RUNNING)
@@ -69,6 +70,38 @@ class ResourceFeatureControllerTest {
         assertEquals(KiteResourceActionIntent.ReopenInstall, item.primaryIntent)
         assertEquals(KiteResourceActionIntent.CancelInstall, item.secondaryIntent)
         assertEquals("获取中", controller.state.value.plan.steps.single().projection.statusLabel)
+    }
+
+    @Test
+    fun `准备计划尚无步骤时卡片与详情仍可重开和取消`() = runTest {
+        val gateway = FakeGateway().apply {
+            plan = KiteResourcePlanSnapshot(
+                targetResourceId = "tool",
+                status = KiteResourceInstallStore.PLAN_STATUS_PREPARING,
+            )
+        }
+        val controller = ResourceFeatureController(gateway)
+
+        controller.dispatch(ResourceFeatureAction.Refresh())
+
+        val item = controller.state.value.item("tool")!!
+        assertEquals(ResourceItemPhase.Installing, item.phase)
+        assertEquals("获取中", item.projection.stateLabel)
+        assertEquals("获取中", item.projection.actionLabel)
+        assertTrue(item.projection.actionEnabled)
+        assertEquals(KiteResourceActionIntent.ReopenInstall, item.primaryIntent)
+        assertEquals(KiteResourceActionIntent.CancelInstall, item.secondaryIntent)
+        assertTrue(controller.state.value.plan.isPreparing)
+
+        val reopen = controller.dispatch(
+            ResourceFeatureAction.Primary("tool", KiteResourceActionSource.Card)
+        ) as ResourceFeatureEffect.ActionRequested
+        assertEquals(KiteResourceActionIntent.ReopenInstall, reopen.request.intent)
+
+        val cancel = controller.dispatch(
+            ResourceFeatureAction.Secondary("tool", KiteResourceActionSource.Detail)
+        ) as ResourceFeatureEffect.ActionRequested
+        assertEquals(KiteResourceActionIntent.CancelInstall, cancel.request.intent)
     }
 
     @Test

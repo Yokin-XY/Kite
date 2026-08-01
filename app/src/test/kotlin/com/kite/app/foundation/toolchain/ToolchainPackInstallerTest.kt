@@ -80,6 +80,25 @@ class ToolchainPackInstallerTest {
     }
 
     @Test
+    fun bootstrapSettlementWaitsOnlyForActivePrepareRun() {
+        assertTrue(
+            ToolchainPackInstaller.shouldAwaitBootstrapSettlement(
+                ToolchainInstallState(phase = ToolchainInstallPhase.RUNNING, action = "prepare")
+            )
+        )
+        assertFalse(
+            ToolchainPackInstaller.shouldAwaitBootstrapSettlement(
+                ToolchainInstallState(phase = ToolchainInstallPhase.RUNNING, action = "doctor")
+            )
+        )
+        assertFalse(
+            ToolchainPackInstaller.shouldAwaitBootstrapSettlement(
+                ToolchainInstallState(phase = ToolchainInstallPhase.SUCCEEDED, action = "prepare")
+            )
+        )
+    }
+
+    @Test
     fun bootstrapPhase_failsWhenAnyResourceFailed() {
         assertEquals(ToolchainInstallPhase.SUCCEEDED, ToolchainPackInstaller.resolveBootstrapPhase(0))
         assertEquals(ToolchainInstallPhase.FAILED, ToolchainPackInstaller.resolveBootstrapPhase(1))

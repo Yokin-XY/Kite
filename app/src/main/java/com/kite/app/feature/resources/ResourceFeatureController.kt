@@ -110,6 +110,7 @@ internal class ResourceFeatureController(
             installed = facts.installed,
             preparing = facts.preparing,
             installing = facts.installing,
+            installPlanInProgress = facts.installPlanInProgress,
             uninstalling = facts.uninstalling,
             failed = facts.failed,
             failedOperation = facts.failedOperation,
@@ -125,14 +126,13 @@ internal class ResourceFeatureController(
             facts.currentOperation.isNotBlank() -> facts.currentOperation
             else -> KiteResourceInstallStore.OP_INSTALL
         }
-        val inPlan = descriptor.id == plan.targetResourceId || descriptor.id in plan.resourceIds
         return ResourceItemUiState(
             descriptor = descriptor,
             phase = resourcePhase(facts, openRunStatus),
             projection = projection,
             primaryIntent = KiteResourceActionCoordinator.primaryIntent(
                 projection.actionLabel,
-                reopenInstall = inPlan
+                reopenInstall = facts.installPlanInProgress
             ),
             secondaryIntent = secondaryIntent(projection.secondaryActionLabel, facts),
             operation = operation,
@@ -174,6 +174,8 @@ internal class ResourceFeatureController(
         val byId = itemStates.associateBy(ResourceItemUiState::resourceId)
         return ResourcePlanUiState(
             targetResourceId = plan.targetResourceId,
+            isPreparing = plan.isPreparing,
+            isActive = plan.isActive,
             resourceIds = plan.resourceIds,
             runningResourceIds = plan.runningResourceIds,
             pendingResourceIds = plan.pendingResourceIds,
@@ -266,6 +268,7 @@ internal class ResourceFeatureController(
         facts: KiteResourceRuntimeFacts,
         openRunStatus: CardRunStatus?
     ): ResourceItemPhase = when {
+        facts.installPlanInProgress -> ResourceItemPhase.Installing
         facts.preparing -> ResourceItemPhase.Preparing
         facts.uninstalling -> ResourceItemPhase.Uninstalling
         facts.failed && facts.failedOperation == KiteResourceInstallStore.OP_UNINSTALL ->

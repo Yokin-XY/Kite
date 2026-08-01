@@ -9,6 +9,7 @@ class KiteResourceRuntimeFactsProjectorTest {
     fun `完整目录和增量绑定共享计划忙碌判断`() {
         val plan = KiteResourcePlanSnapshot(
             targetResourceId = "tool",
+            status = KiteResourceInstallStore.PLAN_STATUS_ACTIVE,
             resourceIds = listOf("tool"),
             pendingResourceIds = listOf("tool"),
             stepStatusByResourceId = mapOf("tool" to "pending")
@@ -17,7 +18,25 @@ class KiteResourceRuntimeFactsProjectorTest {
         val facts = KiteResourceRuntimeFactsProjector.project("tool", null, plan)
 
         assertTrue(facts.installing)
+        assertTrue(facts.installPlanInProgress)
         assertTrue(facts.extraBusy)
+        assertFalse(facts.failed)
+    }
+
+    @Test
+    fun `空步骤准备计划仍是可恢复的获取进程`() {
+        val facts = KiteResourceRuntimeFactsProjector.project(
+            resourceId = "tool",
+            registryEntry = null,
+            plan = KiteResourcePlanSnapshot(
+                targetResourceId = "tool",
+                status = KiteResourceInstallStore.PLAN_STATUS_PREPARING,
+            ),
+        )
+
+        assertTrue(facts.installPlanInProgress)
+        assertTrue(facts.extraBusy)
+        assertFalse(facts.installing)
         assertFalse(facts.failed)
     }
 

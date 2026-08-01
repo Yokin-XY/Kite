@@ -4,6 +4,7 @@ data class KiteResourceRuntimeFacts(
     val installed: Boolean,
     val preparing: Boolean,
     val installing: Boolean,
+    val installPlanInProgress: Boolean,
     val uninstalling: Boolean,
     val failed: Boolean,
     val failedOperation: String,
@@ -24,6 +25,7 @@ object KiteResourceRuntimeFactsProjector {
         val cleanId = KiteResourceInstallRecipes.safeId(resourceId)
         val inPlan = cleanId.isNotBlank() &&
             (cleanId == plan.targetResourceId || cleanId in plan.resourceIds)
+        val installPlanInProgress = inPlan && (plan.isPreparing || plan.isActive)
         val planStatus = plan.stepStatus(cleanId)
         val planFailed = inPlan && (
             planStatus == KiteResourceInstallStore.PLAN_STEP_FAILED ||
@@ -47,13 +49,14 @@ object KiteResourceRuntimeFactsProjector {
             installed = registryEntry?.installed == true || baselineInstalled,
             preparing = registryEntry?.preparing == true,
             installing = registryEntry?.installing == true || planBusy,
+            installPlanInProgress = installPlanInProgress,
             uninstalling = registryEntry?.uninstalling == true,
             failed = failed,
             failedOperation = registryEntry?.operation.orEmpty()
                 .ifBlank { if (failed) KiteResourceInstallStore.OP_INSTALL else "" },
             currentOperation = registryEntry?.operation.orEmpty(),
             idleStateLabel = idleStateLabel,
-            extraBusy = extraBusy || registryEntry?.busy == true || planBusy
+            extraBusy = extraBusy || registryEntry?.busy == true || planBusy || installPlanInProgress
         )
     }
 }

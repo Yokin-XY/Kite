@@ -9,6 +9,21 @@ internal enum class CardRunTaskCloseReason {
     StopConfirmed,
 }
 
+internal enum class CardRunTaskNavigationAction {
+    HideTask,
+    CloseTask,
+}
+
+/** 普通导航只决定显示面去向，不写运行或安装事实。 */
+internal object CardRunTaskNavigationPolicy {
+    fun decide(state: CardRunState?): CardRunTaskNavigationAction =
+        if (state?.ownerKind == CardRunState.OWNER_KIND_INSTALL_WIZARD) {
+            CardRunTaskNavigationAction.HideTask
+        } else {
+            CardRunTaskNavigationAction.CloseTask
+        }
+}
+
 internal data class CardRunTaskCloseDecision(
     val removeRunState: Boolean,
     val clearInstallPlan: Boolean,

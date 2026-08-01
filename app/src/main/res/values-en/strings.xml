@@ -817,6 +817,7 @@
     <string name="resource_wizard_detail_failure">Manual action required</string>
     <string name="resource_wizard_detail_pending">%1$d resources will be installed in order</string>
     <string name="resource_wizard_detail_completed">Queue completed</string>
+    <string name="resource_wizard_detail_preparing">Preparing the install plan</string>
     <string name="resource_wizard_detail_syncing">Synchronizing execution status</string>
     <string name="resource_wizard_status_syncing">Syncing</string>
     <string name="resource_wizard_action_start">Start installation</string>

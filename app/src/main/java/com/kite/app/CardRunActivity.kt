@@ -48,6 +48,8 @@ import com.kite.app.feature.runsurface.CardRunLaunchTarget
 import com.kite.app.feature.runsurface.CardRunMissingStatePolicy
 import com.kite.app.feature.runsurface.CardRunTaskCloseReason
 import com.kite.app.feature.runsurface.CardRunTaskClosePolicy
+import com.kite.app.feature.runsurface.CardRunTaskNavigationAction
+import com.kite.app.feature.runsurface.CardRunTaskNavigationPolicy
 import com.kite.app.application.runs.CardRunSpecialRecipes
 import com.kite.app.feature.runsurface.RunActivityChrome
 import com.kite.app.feature.runsurface.RunActivityChromeActions
@@ -121,7 +123,7 @@ class CardRunActivity : AppCompatActivity() {
         override fun handleOnBackPressed() {
             if (chrome?.handleBack() == true) return
             if (surfaceHost?.handleBack() == true) return
-            closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
+            navigateBackFromTask()
         }
     }
 
@@ -420,7 +422,7 @@ class CardRunActivity : AppCompatActivity() {
             },
             onUninstallFailedResource = ::confirmUninstallFailedResource,
             onOpenRun = ::openResourceRun,
-            onExit = { closeTaskWindow(CardRunTaskCloseReason.DismissSurface) },
+            onExit = ::navigateBackFromTask,
             onLiveTickRequired = ::scheduleTickIfNeeded
         )
     }
@@ -866,6 +868,13 @@ class CardRunActivity : AppCompatActivity() {
         currentChildren = emptyList()
         pendingCloseInstanceId = null
         pendingCloseGeneration = null
+    }
+
+    private fun navigateBackFromTask() {
+        when (CardRunTaskNavigationPolicy.decide(currentState)) {
+            CardRunTaskNavigationAction.HideTask -> moveTaskToBack(true)
+            CardRunTaskNavigationAction.CloseTask -> closeTaskWindow(CardRunTaskCloseReason.DismissSurface)
+        }
     }
 
     private fun closeTaskWindow(reason: CardRunTaskCloseReason) {

@@ -65,12 +65,22 @@ internal object ResourceInstallWizardPresenter {
         requestedTargetResourceId: String,
         seedResourceIds: List<String>
     ): ResourceInstallWizardViewState {
-        val targetResourceId = requestedTargetResourceId.ifBlank { state.plan.targetResourceId }
-        val resourceIds = seedResourceIds
-            .filter(String::isNotBlank)
-            .distinct()
-            .ifEmpty { state.plan.resourceIds }
-            .ifEmpty { state.plan.pendingResourceIds }
+        val factPlanOwnsPresentation = state.plan.isPreparing || state.plan.isActive
+        val targetResourceId = if (factPlanOwnsPresentation) {
+            state.plan.targetResourceId.ifBlank { requestedTargetResourceId }
+        } else {
+            requestedTargetResourceId.ifBlank { state.plan.targetResourceId }
+        }
+        val resourceIds = if (factPlanOwnsPresentation) {
+            state.plan.resourceIds
+        } else {
+            seedResourceIds
+                .filter(String::isNotBlank)
+                .distinct()
+                .ifEmpty { state.plan.resourceIds }
+                .ifEmpty { state.plan.pendingResourceIds }
+                .ifEmpty { listOfNotNull(targetResourceId.takeIf(String::isNotBlank)) }
+        }
         val stepsById = state.plan.steps.associateBy(ResourcePlanStepUiState::resourceId)
         val itemsById = state.items.associateBy(ResourceItemUiState::resourceId)
         val initialRows = resourceIds.mapIndexed { index, resourceId ->
@@ -104,7 +114,8 @@ internal object ResourceInstallWizardPresenter {
         }
         val hasUninstallingStep = initialRows.any { it.projection.uninstalling }
         val hasFailure = initialRows.any { it.projection.failed && !it.projection.uninstalling }
-        val isCalibrating = initialRows.any(ResourceInstallWizardRowViewState::isCalibrating)
+        val isPreparingPlan = state.plan.isPreparing
+        val isCalibrating = !isPreparingPlan && initialRows.any(ResourceInstallWizardRowViewState::isCalibrating)
         val pendingIds = state.plan.pendingResourceIds.filter(resourceIds::contains)
         val hasPending = pendingIds.isNotEmpty() && !hasFailure
         val activeResourceId = initialRows.firstOrNull { row ->
@@ -123,6 +134,7 @@ internal object ResourceInstallWizardPresenter {
         val targetName = itemsById[targetResourceId]?.presentation(context)?.name
             ?: targetResourceId.ifBlank { context.getString(R.string.resource_wizard_install_task) }
         val detail = when {
+            isPreparingPlan -> context.getString(R.string.resource_wizard_detail_preparing)
             isCalibrating -> context.getString(R.string.resource_wizard_detail_syncing)
             hasRunningStep -> context.getString(
                 R.string.resource_wizard_detail_installing,
@@ -149,6 +161,7 @@ internal object ResourceInstallWizardPresenter {
             completedCount = completedCount.coerceIn(0, resourceIds.size),
             totalCount = resourceIds.size,
             primaryLabel = when {
+                isPreparingPlan -> context.getString(R.string.resource_state_preparing)
                 isCalibrating -> context.getString(R.string.resource_wizard_status_syncing)
                 hasUninstallingStep -> context.getString(R.string.resource_state_uninstalling)
                 hasFailure -> context.getString(R.string.resource_wizard_detail_failure)
@@ -156,9 +169,10 @@ internal object ResourceInstallWizardPresenter {
                 hasPending -> context.getString(R.string.resource_wizard_action_start)
                 else -> context.getString(R.string.resource_wizard_action_complete)
             },
-            primaryEnabled = action.enabled && !isCalibrating,
-            primaryIntent = action.intent.takeUnless { isCalibrating },
+            primaryEnabled = action.enabled && !isPreparingPlan && !isCalibrating,
+            primaryIntent = action.intent.takeUnless { isPreparingPlan || isCalibrating },
             headerState = when {
+                isPreparingPlan -> ResourceInstallWizardHeaderState.Syncing
                 isCalibrating -> ResourceInstallWizardHeaderState.Syncing
                 hasRunningStep || hasUninstallingStep -> ResourceInstallWizardHeaderState.Running
                 hasFailure -> ResourceInstallWizardHeaderState.Failure

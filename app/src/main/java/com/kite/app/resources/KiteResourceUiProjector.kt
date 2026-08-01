@@ -20,9 +20,11 @@ object KiteResourceUiProjector {
         currentOperation: String = "",
         idleStateLabel: String,
         openRunStatus: CardRunStatus? = null,
-        extraBusy: Boolean = false
+        extraBusy: Boolean = false,
+        installPlanInProgress: Boolean = false,
     ): KiteResourceUiProjection {
         val labels = when {
+            installPlanInProgress -> "获取中" to "获取中"
             preparing -> "准备中" to "准备中"
             installing && currentOperation == KiteResourceInstallRecipes.OP_UPDATE -> "更新中" to "更新中"
             installing && currentOperation == KiteResourceInstallRecipes.OP_REINSTALL -> "重新安装中" to "重新安装中"
@@ -33,7 +35,8 @@ object KiteResourceUiProjector {
             installed -> openRunLabels(openRunStatus) ?: ("已获取" to "打开")
             else -> idleStateLabel to "获取"
         }
-        val busy = preparing || installing || uninstalling || extraBusy || openRunStatus == CardRunStatus.Starting || openRunStatus == CardRunStatus.Stopping
+        val busy = installPlanInProgress || preparing || installing || uninstalling || extraBusy ||
+            openRunStatus == CardRunStatus.Starting || openRunStatus == CardRunStatus.Stopping
         return KiteResourceUiProjection(
             stateLabel = labels.first,
             actionLabel = labels.second,
