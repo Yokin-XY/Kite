@@ -319,7 +319,7 @@ internal class ArchivedSessionAdapter(
             title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             subtitle.text = buildString {
                 append(session.cwd.ifBlank { session.id })
-                session.updatedAt?.takeIf(String::isNotBlank)?.let { append(" · ").append(it) }
+                append(" · ").append(AgentSessionRelativeTimeFormatter.format(session.updatedAt))
             }
             container.background = ui.roundedBox(
                 if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
@@ -544,7 +544,7 @@ internal class AgentSessionDrawerAdapter(
             )
             title.text = session.title?.takeIf(String::isNotBlank) ?: "未命名会话"
             title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            subtitle.text = session.updatedAt?.takeIf(String::isNotBlank) ?: session.id
+            subtitle.text = AgentSessionRelativeTimeFormatter.format(session.updatedAt)
             container.background = ui.roundedBox(
                 if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
@@ -642,7 +642,7 @@ internal class AgentSessionAdapter(
             title.typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             subtitle.text = buildString {
                 append(session.cwd.ifBlank { session.id })
-                session.updatedAt?.takeIf(String::isNotBlank)?.let { append(" · ").append(it) }
+                append(" · ").append(AgentSessionRelativeTimeFormatter.format(session.updatedAt))
             }
             container.background = ui.roundedBox(
                 if (selected) tokens.primarySubtle else android.graphics.Color.TRANSPARENT,
