@@ -84,6 +84,10 @@ class AcpProcessAgentProviderTest {
                 renamedSessions += request
                 AgentOperationResult.Success(Unit)
             },
+            sessionPathMapper = AcpSessionPathMapper(
+                toAgent = { path -> path.replace("/workspace", "/data/runtime/workspace") },
+                fromAgent = { path -> path.replace("/data/runtime/workspace", "/workspace") },
+            ),
         )
 
         val connected = withTimeout(5_000L) {
@@ -109,9 +113,14 @@ class AcpProcessAgentProviderTest {
         assertTrue(fixture.authenticated)
 
         val created = withTimeout(5_000L) {
-            connection.newSession(AgentNewSessionRequest("/workspace"))
+            connection.newSession(AgentNewSessionRequest("/workspace", listOf("/workspace/shared")))
         }
         assertTrue(created is AgentOperationResult.Success)
+        assertEquals("/data/runtime/workspace", fixture.createdSessionParameters?.cwd)
+        assertEquals(
+            listOf("/data/runtime/workspace/shared"),
+            fixture.createdSessionParameters?.additionalDirectories,
+        )
         val sessionId = (created as AgentOperationResult.Success).value.id
         val model = created.value.configuration.single { it.category == AgentConfigCategory.Model }
             as AgentConfigOption.Select
@@ -173,6 +182,7 @@ class AcpProcessAgentProviderTest {
         @Volatile var authenticated: Boolean = false
         @Volatile var loggedOut: Boolean = false
         @Volatile var selectedModel: String = "fixture-balanced"
+        @Volatile var createdSessionParameters: SessionCreationParameters? = null
         val promptStarted = CompletableDeferred<Unit>()
         private val releasePrompt = CompletableDeferred<Unit>()
 
@@ -199,7 +209,8 @@ class AcpProcessAgentProviderTest {
                     awaitPromptRelease = { releasePrompt.await() },
                     onAuthenticate = { authenticated = it == "login" },
                     onLogout = { loggedOut = true },
-                    onModelSelected = { selectedModel = it }
+                    onModelSelected = { selectedModel = it },
+                    onSessionCreated = { createdSessionParameters = it },
                 )
             )
             protocol.start()
@@ -222,7 +233,8 @@ class AcpProcessAgentProviderTest {
         private val awaitPromptRelease: suspend () -> Unit,
         private val onAuthenticate: (String) -> Unit,
         private val onLogout: () -> Unit,
-        private val onModelSelected: (String) -> Unit
+        private val onModelSelected: (String) -> Unit,
+        private val onSessionCreated: (SessionCreationParameters) -> Unit,
     ) : AgentSupport {
         override suspend fun initialize(clientInfo: ClientInfo): AgentInfo = AgentInfo(
             protocolVersion = LATEST_PROTOCOL_VERSION,
@@ -249,14 +261,16 @@ class AcpProcessAgentProviderTest {
             return LogoutResponse()
         }
 
-        override suspend fun createSession(sessionParameters: SessionCreationParameters): AgentSession =
-            FixtureSession(
+        override suspend fun createSession(sessionParameters: SessionCreationParameters): AgentSession {
+            onSessionCreated(sessionParameters)
+            return FixtureSession(
                 SessionId("session-fixture"),
                 onCancel,
                 onPromptStarted,
                 awaitPromptRelease,
                 onModelSelected
             )
+        }
     }
 
     private class FixtureSession(

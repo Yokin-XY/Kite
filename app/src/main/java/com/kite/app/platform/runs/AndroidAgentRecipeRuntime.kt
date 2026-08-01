@@ -4,6 +4,7 @@ import android.content.Context
 import com.kite.app.agent.acp.AcpProcessAgentProvider
 import com.kite.app.agent.acp.AcpProcessChannelLauncher
 import com.kite.app.agent.acp.AcpProcessProviderDescriptor
+import com.kite.app.agent.acp.AcpSessionPathMapper
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.AgentPersistentConfigChange
@@ -96,7 +97,38 @@ internal data class ManagedAgentProcessLaunch(
     val process: AgentProcessLaunch,
     val runtimeLane: String,
     val fallbackReason: String,
+    val sessionPathMapping: ManagedAgentSessionPathMapping = ManagedAgentSessionPathMapping(),
 )
+
+/** Host Agent 看物理工作区，PRoot Agent 看 `/workspace`；UI 和持久化始终保留后者。 */
+internal data class ManagedAgentSessionPathMapping(
+    val agentWorkspaceRoot: String? = null,
+) {
+    fun toAgent(rawPath: String): String = agentWorkspaceRoot
+        ?.let { mapRoot(rawPath, CONTAINER_WORKSPACE_ROOT, it) }
+        ?: rawPath
+
+    fun fromAgent(rawPath: String): String = agentWorkspaceRoot
+        ?.let { mapRoot(rawPath, it, CONTAINER_WORKSPACE_ROOT) }
+        ?: rawPath
+
+    fun toAcp(): AcpSessionPathMapper = AcpSessionPathMapper(::toAgent, ::fromAgent)
+
+    private fun mapRoot(rawPath: String, sourceRoot: String, targetRoot: String): String {
+        val path = rawPath.trim().replace('\\', '/')
+        val source = sourceRoot.trim().replace('\\', '/').trimEnd('/')
+        val target = targetRoot.trim().replace('\\', '/').trimEnd('/')
+        return when {
+            path == source -> target
+            path.startsWith("$source/") -> target + path.removePrefix(source)
+            else -> rawPath
+        }
+    }
+
+    private companion object {
+        const val CONTAINER_WORKSPACE_ROOT = "/workspace"
+    }
+}
 
 internal fun interface ManagedAgentProcessLaunchPlanner {
     fun plan(
@@ -226,9 +258,16 @@ internal class AndroidManagedAgentProcessLaunchPlanner(context: Context) : Manag
                 guaranteeEvidence = guaranteeEvidence,
             ),
         )
-        return ManagedAgentProcessLaunchSelector.select(runtimePlan) { plan ->
+        val selected = ManagedAgentProcessLaunchSelector.select(runtimePlan) { plan ->
             WorkSurfaceRuntimeBridge.buildProotExecConfig(appContext, plan)
         }
+        return selected.copy(
+            sessionPathMapping = if (runtimePlan is ManagedRuntimeLaunchPlan.Ready) {
+                ManagedAgentSessionPathMapping(activeEnvironment.workspacePath)
+            } else {
+                ManagedAgentSessionPathMapping()
+            }
+        )
     }
 
 }
@@ -448,6 +487,7 @@ internal class AndroidAgentRecipeRuntime(
                     ?.let { adapter ->
                         { renameRequest: AgentSessionRenameRequest -> adapter.renameSession(renameRequest, cwd) }
                     },
+                sessionPathMapper = processLaunch.sessionPathMapping.toAcp(),
             )
             startConnection(
                 request = request,

@@ -381,7 +381,109 @@ class NativeAgentConfigAdaptersTest {
         assertTrue(text.contains("KEEP_ME"))
         assertTrue(text.contains("permissions"))
         assertTrue(text.contains("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"))
+        assertTrue(text.contains("ANTHROPIC_API_KEY"))
+        assertFalse(text.contains("ANTHROPIC_AUTH_TOKEN"))
         assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
+    fun claudeRoutesZhipuCodingPlanThroughOfficialAnthropicEndpoint() = runTest {
+        val settings = nativeFile("root/.claude/settings.json")
+        settings.writeText("""{"permissions":{"allow":["Read"]},"env":{"KEEP_ME":"yes"}}""")
+        val state = nativeFile("root/.claude.json")
+        state.writeText("""{"other":true}""")
+        val adapter = ClaudeCodeAgentConfigAdapter(context, ::container)
+
+        val applied = configureModels(
+            adapter,
+            "claude-code",
+            "zhipu-coding-plan",
+            "https://open.bigmodel.cn/api/coding/paas/v4",
+            "glm-5.2",
+            "glm-4.7",
+        )
+
+        assertEquals("zhipu-coding-plan", applied.snapshot.activeProviderId)
+        assertEquals("glm-5.2", applied.snapshot.defaultModel)
+        assertEquals("智谱 GLM Coding Plan", applied.snapshot.providers.single().displayName)
+        val text = settings.readText()
+        assertTrue(text.contains("https://open.bigmodel.cn/api/anthropic"))
+        assertFalse(text.contains("/api/coding/paas/v4"))
+        assertTrue(text.contains("ANTHROPIC_AUTH_TOKEN"))
+        assertFalse(text.contains("ANTHROPIC_API_KEY"))
+        assertTrue(text.contains("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"))
+        assertTrue(text.contains("API_TIMEOUT_MS"))
+        assertTrue(text.contains("ANTHROPIC_DEFAULT_SONNET_MODEL"))
+        assertFalse(text.contains("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"))
+        assertFalse(text.contains("ANTHROPIC_CUSTOM_MODEL_OPTION"))
+        assertTrue(text.contains("KEEP_ME"))
+        assertTrue(state.readText().contains("hasCompletedOnboarding"))
+        assertTrue(state.readText().contains("other"))
+        assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
+    fun claudeClearsZhipuOnlyEnvironmentWhenSwitchingBackToGateway() = runTest {
+        val settings = nativeFile("root/.claude/settings.json")
+        val adapter = ClaudeCodeAgentConfigAdapter(context, ::container)
+
+        configure(
+            adapter,
+            "claude-code",
+            "zhipu-coding-plan",
+            "https://open.bigmodel.cn/api/coding/paas/v4",
+            "glm-5.2",
+        )
+        configure(
+            adapter,
+            "claude-code",
+            "gateway",
+            "https://gateway.example.com",
+            "deployment-sonnet",
+        )
+
+        val text = settings.readText()
+        assertTrue(text.contains("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"))
+        assertTrue(text.contains("ANTHROPIC_CUSTOM_MODEL_OPTION"))
+        assertFalse(text.contains("ANTHROPIC_DEFAULT_HAIKU_MODEL"))
+        assertFalse(text.contains("ANTHROPIC_DEFAULT_SONNET_MODEL"))
+        assertFalse(text.contains("ANTHROPIC_DEFAULT_OPUS_MODEL"))
+        assertFalse(text.contains("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"))
+        assertFalse(text.contains("API_TIMEOUT_MS"))
+    }
+
+    @Test
+    fun claudeProjectsPublishedModesIntoSixLevelPermissionSemantics() {
+        val adapter = ClaudeCodeAgentConfigAdapter(context, ::container)
+        val native = AgentConfigOption.Select(
+            id = "mode",
+            name = "Mode",
+            category = AgentConfigCategory.Mode,
+            currentValue = "default",
+            choices = listOf(
+                AgentConfigChoice("plan", "Plan Mode"),
+                AgentConfigChoice("dontAsk", "Don't Ask"),
+                AgentConfigChoice("default", "Manual"),
+                AgentConfigChoice("acceptEdits", "Accept Edits"),
+                AgentConfigChoice("auto", "Auto"),
+                AgentConfigChoice("bypassPermissions", "Bypass Permissions"),
+                AgentConfigChoice("future", "Future"),
+            ),
+        )
+
+        val permission = adapter.normalizeSessionConfiguration(listOf(native)).single() as AgentConfigOption.Select
+
+        assertEquals(AgentConfigCategory.Permission, permission.category)
+        assertEquals("权限", permission.name)
+        assertEquals(
+            listOf("plan", "dontAsk", "default", "acceptEdits", "auto", "bypassPermissions"),
+            permission.choices.map { it.value },
+        )
+        assertEquals(
+            listOf("只读", "受限", "审批", "宽松", "智能", "完全"),
+            permission.choices.map { it.name },
+        )
+        assertEquals("default", permission.currentValue)
     }
 
     @Test

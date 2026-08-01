@@ -118,7 +118,10 @@ object AgentReasoningControls {
                 AgentReasoningLevel.ExtraHigh,
                 AgentReasoningLevel.Maximum,
             )
-        ) + AgentReasoningNativeMapping("auto", AgentReasoningMode.Inherit)
+        ) + listOf(
+            AgentReasoningNativeMapping("default", AgentReasoningMode.Inherit),
+            AgentReasoningNativeMapping("auto", AgentReasoningMode.Inherit),
+        )
     )
 
     private fun levelMappings(
@@ -144,4 +147,3 @@ fun AgentConfigAdapter.normalizePublishedSessionConfiguration(
     return reasoningControl()?.normalize(normalized)
         ?: normalized.filterNot { it.category == AgentConfigCategory.ThoughtLevel }
 }
-

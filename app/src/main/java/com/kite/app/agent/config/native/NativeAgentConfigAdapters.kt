@@ -1832,6 +1832,32 @@ internal class ClaudeCodeAgentConfigAdapter(
 
     override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.ClaudeCode
 
+    override fun normalizeSessionConfiguration(options: List<AgentConfigOption>): List<AgentConfigOption> =
+        super.normalizeSessionConfiguration(options).mapNotNull { option ->
+            if (
+                option !is AgentConfigOption.Select ||
+                option.id != NATIVE_MODE_OPTION_ID ||
+                option.category != AgentConfigCategory.Mode
+            ) return@mapNotNull option
+            val mappedChoices = option.choices.mapNotNull { choice ->
+                val level = CLAUDE_PERMISSION_LEVELS[choice.value] ?: return@mapNotNull null
+                choice.copy(
+                    name = level.displayName,
+                    description = level.description,
+                )
+            }
+            if (mappedChoices.size < 2 || mappedChoices.none { it.value == option.currentValue }) {
+                null
+            } else {
+                option.copy(
+                    name = "权限",
+                    description = "Claude Code 当前会话真实提供的权限模式",
+                    category = AgentConfigCategory.Permission,
+                    choices = mappedChoices,
+                )
+            }
+        }
+
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {
         add(NativeAgentCoreDocumentSpec(
             id = "claude-global",
@@ -1977,7 +2003,7 @@ internal class ClaudeCodeAgentConfigAdapter(
                     else putPreserving(root, "model", JsonPrimitive.of(change.modelId))
                 is AgentPersistentConfigChange.SelectProvider ->
                     putPreserving(root, "model", JsonPrimitive.of(change.modelId))
-                is AgentPersistentConfigChange.ConfigureProvider -> configure(root, change.provider, change.credential)
+                is AgentPersistentConfigChange.ConfigureProvider -> configure(root, state, change.provider, change.credential)
                 is AgentPersistentConfigChange.RemoveProvider -> removeProvider(root)
                 is AgentPersistentConfigChange.ConfigureMcpServer -> configureClaudeMcp(state, change.server)
                 is AgentPersistentConfigChange.RemoveMcpServer -> {
@@ -2139,31 +2165,92 @@ internal class ClaudeCodeAgentConfigAdapter(
         if (!isSafeNativeId(value)) output += problem("changes[$index].$field", "ID 格式无效")
     }
 
-    private fun configure(root: JsonObject, provider: AgentProviderDraft, credential: AgentProviderCredentialChange) {
+    private fun configure(
+        root: JsonObject,
+        state: JsonObject,
+        provider: AgentProviderDraft,
+        credential: AgentProviderCredentialChange,
+    ) {
         val env = root.objectCopy("env")
-        putPreserving(env, "ANTHROPIC_BASE_URL", JsonPrimitive.of(provider.baseUrl.trim()))
-        putPreserving(env, "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", JsonPrimitive.of("1"))
+        val previousBaseUrl = env.string("ANTHROPIC_BASE_URL")
+        val baseUrl = claudeProviderBaseUrl(provider)
+        val sameEndpoint = sameClaudeEndpoint(previousBaseUrl, baseUrl)
+        val isZhipuCodingPlan = provider.id == ZHIPU_CODING_PLAN_PROVIDER_ID
+        putPreserving(env, "ANTHROPIC_BASE_URL", JsonPrimitive.of(baseUrl))
         val first = provider.models.first()
-        putPreserving(env, "ANTHROPIC_CUSTOM_MODEL_OPTION", JsonPrimitive.of(first.id.trim()))
-        if (first.displayName.isNotBlank()) {
-            putPreserving(env, "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME", JsonPrimitive.of(first.displayName.trim()))
-        }
-        when (credential) {
-            AgentProviderCredentialChange.Keep -> Unit
-            is AgentProviderCredentialChange.Replace -> {
-                putPreserving(env, "ANTHROPIC_API_KEY", JsonPrimitive.of(credential.secret))
-                env.remove("ANTHROPIC_AUTH_TOKEN")
+        if (isZhipuCodingPlan) {
+            listOf(
+                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+                "ANTHROPIC_CUSTOM_MODEL_OPTION",
+                "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+                "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION",
+            ).forEach(env::remove)
+            when (credential) {
+                AgentProviderCredentialChange.Keep -> {
+                    val existing = if (sameEndpoint) {
+                        env.string("ANTHROPIC_AUTH_TOKEN") ?: env.string("ANTHROPIC_API_KEY")
+                    } else {
+                        null
+                    }
+                    if (!existing.isNullOrBlank()) {
+                        putPreserving(env, "ANTHROPIC_AUTH_TOKEN", JsonPrimitive.of(existing))
+                    } else {
+                        env.remove("ANTHROPIC_AUTH_TOKEN")
+                    }
+                    env.remove("ANTHROPIC_API_KEY")
+                }
+                is AgentProviderCredentialChange.Replace -> {
+                    putPreserving(env, "ANTHROPIC_AUTH_TOKEN", JsonPrimitive.of(credential.secret))
+                    env.remove("ANTHROPIC_API_KEY")
+                }
+                AgentProviderCredentialChange.Remove -> {
+                    env.remove("ANTHROPIC_API_KEY")
+                    env.remove("ANTHROPIC_AUTH_TOKEN")
+                }
             }
-            AgentProviderCredentialChange.Remove -> {
-                env.remove("ANTHROPIC_API_KEY")
-                env.remove("ANTHROPIC_AUTH_TOKEN")
+            listOf(
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            ).forEach { key -> putPreserving(env, key, JsonPrimitive.of(first.id.trim())) }
+            putPreserving(env, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", JsonPrimitive.of("1"))
+            putPreserving(env, "API_TIMEOUT_MS", JsonPrimitive.of("3000000"))
+            putPreserving(state, "hasCompletedOnboarding", JsonPrimitive.of(true))
+        } else {
+            listOf(
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+                "API_TIMEOUT_MS",
+            ).forEach(env::remove)
+            putPreserving(env, "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", JsonPrimitive.of("1"))
+            putPreserving(env, "ANTHROPIC_CUSTOM_MODEL_OPTION", JsonPrimitive.of(first.id.trim()))
+            if (first.displayName.isNotBlank()) {
+                putPreserving(env, "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME", JsonPrimitive.of(first.displayName.trim()))
+            }
+            when (credential) {
+                AgentProviderCredentialChange.Keep -> if (!sameEndpoint) {
+                    env.remove("ANTHROPIC_API_KEY")
+                    env.remove("ANTHROPIC_AUTH_TOKEN")
+                }
+                is AgentProviderCredentialChange.Replace -> {
+                    putPreserving(env, "ANTHROPIC_API_KEY", JsonPrimitive.of(credential.secret))
+                    env.remove("ANTHROPIC_AUTH_TOKEN")
+                }
+                AgentProviderCredentialChange.Remove -> {
+                    env.remove("ANTHROPIC_API_KEY")
+                    env.remove("ANTHROPIC_AUTH_TOKEN")
+                }
             }
         }
         putPreserving(root, "env", env)
         val models = JsonArray()
         provider.models.forEach { models.add(JsonPrimitive.of(it.id.trim())) }
         putPreserving(root, "availableModels", models)
-        if (root.string("model").isNullOrBlank()) putPreserving(root, "model", JsonPrimitive.of(first.id.trim()))
+        if (provider.models.none { it.id.trim() == root.string("model") }) {
+            putPreserving(root, "model", JsonPrimitive.of(first.id.trim()))
+        }
     }
 
     private fun removeProvider(root: JsonObject) {
@@ -2175,23 +2262,43 @@ internal class ClaudeCodeAgentConfigAdapter(
             "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
             "ANTHROPIC_CUSTOM_MODEL_OPTION",
             "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
-            "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION"
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+            "API_TIMEOUT_MS",
         ).forEach(env::remove)
         putPreserving(root, "env", env)
         root.remove("availableModels")
         root.remove("model")
     }
 
-    private fun providerId(baseUrl: String?): String = runCatching {
+    private fun providerId(baseUrl: String?): String = if (isZhipuCodingPlanEndpoint(baseUrl)) {
+        ZHIPU_CODING_PLAN_PROVIDER_ID
+    } else runCatching {
         URI(baseUrl ?: "https://api.anthropic.com").host
             ?.lowercase()
             ?.replace(Regex("[^a-z0-9.-]"), "-")
             ?.take(64)
     }.getOrNull().orEmpty().ifBlank { "active" }
 
-    private fun providerName(baseUrl: String?): String = runCatching {
+    private fun providerName(baseUrl: String?): String = if (isZhipuCodingPlanEndpoint(baseUrl)) {
+        "智谱 GLM Coding Plan"
+    } else runCatching {
         URI(baseUrl ?: "https://api.anthropic.com").host
     }.getOrNull().orEmpty().ifBlank { "Claude 当前供应商" }
+
+    private fun claudeProviderBaseUrl(provider: AgentProviderDraft): String =
+        if (provider.id == ZHIPU_CODING_PLAN_PROVIDER_ID) ZHIPU_CODING_PLAN_CLAUDE_BASE_URL
+        else provider.baseUrl.trim()
+
+    private fun isZhipuCodingPlanEndpoint(baseUrl: String?): Boolean =
+        sameClaudeEndpoint(baseUrl, ZHIPU_CODING_PLAN_CLAUDE_BASE_URL)
+
+    private fun sameClaudeEndpoint(left: String?, right: String?): Boolean =
+        !left.isNullOrBlank() && !right.isNullOrBlank() &&
+            left.trim().trimEnd('/') == right.trim().trimEnd('/')
 
     companion object {
         const val ADAPTER_ID = "claude-code"
@@ -2202,6 +2309,17 @@ internal class ClaudeCodeAgentConfigAdapter(
         private const val SKILL_ROOT = "/root/.claude/skills"
         private const val GLOBAL_CLAUDE_PATH = "/root/.claude/CLAUDE.md"
         private const val MCP_KEY = "mcpServers"
+        private const val NATIVE_MODE_OPTION_ID = "mode"
+        private const val ZHIPU_CODING_PLAN_PROVIDER_ID = "zhipu-coding-plan"
+        private const val ZHIPU_CODING_PLAN_CLAUDE_BASE_URL = "https://open.bigmodel.cn/api/anthropic"
+        private val CLAUDE_PERMISSION_LEVELS = mapOf(
+            "plan" to AgentPermissionLevel.ReadOnly,
+            "dontAsk" to AgentPermissionLevel.Restricted,
+            "default" to AgentPermissionLevel.Approval,
+            "acceptEdits" to AgentPermissionLevel.Lenient,
+            "auto" to AgentPermissionLevel.Smart,
+            "bypassPermissions" to AgentPermissionLevel.Full,
+        )
         private const val SKILL_OVERRIDES_KEY = "skillOverrides"
         private const val MAX_MCP_ITEMS = 64
         private val SAFE_IMPORT_REFERENCE = Regex("kite-import:import-[A-Za-z0-9-]{8,80}")

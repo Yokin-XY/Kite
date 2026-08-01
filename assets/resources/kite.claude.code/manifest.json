@@ -118,7 +118,7 @@
         "providerId": "claude-code",
         "protocol": "acp",
         "transport": "stdio",
-        "argv": ["claude-agent-acp"],
+        "argv": ["/usr/bin/env", "claude-agent-acp"],
         "title": "Claude Code"
       }
     }

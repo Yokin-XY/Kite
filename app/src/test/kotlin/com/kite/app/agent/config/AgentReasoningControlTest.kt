@@ -49,12 +49,12 @@ class AgentReasoningControlTest {
     }
 
     @Test
-    fun claudeAutoMeansInheritAndUltracodeIsNotReasoningEffort() {
+    fun claudeDefaultMeansInheritAndUltracodeIsNotReasoningEffort() {
         val normalized = AgentReasoningControls.ClaudeCode.normalize(
             select(
-                current = "auto",
+                current = "default",
                 choices = listOf(
-                    AgentConfigChoice("auto", "Auto"),
+                    AgentConfigChoice("default", "Default"),
                     AgentConfigChoice("high", "High"),
                     AgentConfigChoice("max", "Max"),
                     AgentConfigChoice("ultracode", "Ultracode"),
@@ -62,7 +62,7 @@ class AgentReasoningControlTest {
             )
         ).single() as AgentConfigOption.Select
 
-        assertEquals(listOf("auto", "high", "max"), normalized.choices.map { it.value })
+        assertEquals(listOf("default", "high", "max"), normalized.choices.map { it.value })
         assertEquals(AgentReasoningMode.Inherit, normalized.choices.first().reasoning)
     }
 
@@ -126,4 +126,3 @@ class AgentReasoningControlTest {
         )
     )
 }
-

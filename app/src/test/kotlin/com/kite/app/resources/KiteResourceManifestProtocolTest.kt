@@ -388,12 +388,20 @@ class KiteResourceManifestProtocolTest {
             val agentId: String,
             val displayName: String,
             val argv: List<String>,
-            val configAdapterId: String
+            val configAdapterId: String,
+            val managedEntrypoint: String = argv.first(),
         )
 
         val expected = listOf(
             Expected("kite.codex.cli", "codex", "Codex", listOf("kite-codex-acp"), "codex"),
-            Expected("kite.claude.code", "claude-code", "Claude Code", listOf("claude-agent-acp"), "claude-code"),
+            Expected(
+                "kite.claude.code",
+                "claude-code",
+                "Claude Code",
+                listOf("/usr/bin/env", "claude-agent-acp"),
+                "claude-code",
+                "claude-agent-acp",
+            ),
             Expected("kite.hermes.core", "hermes", "Hermes", listOf("hermes", "acp"), "hermes"),
             Expected("kite.kimi.code", "kimi", "Kimi Code", listOf("kimi", "acp"), "kimi-code"),
             Expected("kite.mimo.code", "mimo", "MiMo Code", listOf("mimo", "acp"), "mimo-code"),
@@ -434,8 +442,8 @@ class KiteResourceManifestProtocolTest {
             assertEquals(item.configAdapterId, profile.configAdapterId)
             assertFalse(profile.configurationRequired)
             assertTrue(
-                "${item.resourceId} does not install the declared managed ACP entrypoint ${item.argv.first()}",
-                item.argv.first() in installedCommands,
+                "${item.resourceId} does not install the declared managed ACP entrypoint ${item.managedEntrypoint}",
+                item.managedEntrypoint in installedCommands,
             )
             assertEquals(item.agentId, registration.definition.agentId)
             assertEquals(item.configAdapterId, registration.configAdapterId)

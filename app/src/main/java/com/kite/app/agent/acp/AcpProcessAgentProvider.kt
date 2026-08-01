@@ -67,6 +67,15 @@ data class AcpProcessProviderDescriptor(
     val version: String? = null
 )
 
+/**
+ * ACP 的 cwd 必须属于实际运行 Agent 进程的文件系统视图。Kite 页面继续使用稳定的
+ * `/workspace` 语义；Host runtime 只在协议边界映射到物理目录。
+ */
+data class AcpSessionPathMapper(
+    val toAgent: (String) -> String = { it },
+    val fromAgent: (String) -> String = { it },
+)
+
 fun interface AcpProcessChannelLauncher {
     suspend fun launch(): AgentProcessChannel
 }
@@ -82,6 +91,7 @@ class AcpProcessAgentProvider(
     private val diagnosticSink: (String) -> Unit = {},
     private val sessionDelete: (suspend (sessionId: String) -> AgentOperationResult<Unit>)? = null,
     private val sessionRename: (suspend (request: AgentSessionRenameRequest) -> AgentOperationResult<Unit>)? = null,
+    private val sessionPathMapper: AcpSessionPathMapper = AcpSessionPathMapper(),
 ) : KiteAgentProvider {
     override val id: String = descriptor.id
 
@@ -152,6 +162,7 @@ class AcpProcessAgentProvider(
                     capabilities = mappedCapabilities,
                     sessionDelete = sessionDelete,
                     sessionRename = sessionRename,
+                    sessionPathMapper = sessionPathMapper,
                 )
             )
         } catch (error: Throwable) {
@@ -190,6 +201,7 @@ private class AcpProcessAgentConnection(
     override val capabilities: AgentCapabilities,
     private val sessionDelete: (suspend (sessionId: String) -> AgentOperationResult<Unit>)?,
     private val sessionRename: (suspend (request: AgentSessionRenameRequest) -> AgentOperationResult<Unit>)?,
+    private val sessionPathMapper: AcpSessionPathMapper,
 ) : KiteAgentConnection {
     private val sessions = ConcurrentHashMap<String, ClientSession>()
     private val disconnecting = AtomicBoolean(false)
@@ -213,7 +225,11 @@ private class AcpProcessAgentConnection(
 
     override suspend fun newSession(request: AgentNewSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
         createSession(request.cwd, request.additionalDirectories) {
-            client.newSession(SessionCreationParameters(request.cwd, emptyList(), request.additionalDirectories)) {
+            client.newSession(SessionCreationParameters(
+                sessionPathMapper.toAgent(request.cwd),
+                emptyList(),
+                request.additionalDirectories.map(sessionPathMapper.toAgent),
+            )) {
                     sessionId, response ->
                 AcpClientOperations(sessionId.value, endpoint)
             }
@@ -224,7 +240,11 @@ private class AcpProcessAgentConnection(
         return createSession(request.cwd, request.additionalDirectories, request.sessionId) {
             client.loadSession(
                 SessionId(request.sessionId),
-                SessionCreationParameters(request.cwd, emptyList(), request.additionalDirectories)
+                SessionCreationParameters(
+                    sessionPathMapper.toAgent(request.cwd),
+                    emptyList(),
+                    request.additionalDirectories.map(sessionPathMapper.toAgent),
+                )
             ) { sessionId, _ -> AcpClientOperations(sessionId.value, endpoint) }
         }
     }
@@ -232,8 +252,13 @@ private class AcpProcessAgentConnection(
     override suspend fun listSessions(request: AgentSessionListRequest): AgentOperationResult<AgentSessionPage> {
         if (!capabilities.sessions.list) return AgentOperationResult.Unsupported("session/list")
         return operation("列出会话") {
-            val sessions = client.listSessions(request.cwd, emptyList()).toList()
-            AgentSessionPage(sessions = sessions.map(AcpAgentMapper::sessionSummary))
+            val sessions = client.listSessions(request.cwd?.let(sessionPathMapper.toAgent), emptyList()).toList()
+            AgentSessionPage(sessions = sessions.map(AcpAgentMapper::sessionSummary).map { summary ->
+                summary.copy(
+                    cwd = sessionPathMapper.fromAgent(summary.cwd),
+                    additionalDirectories = summary.additionalDirectories.map(sessionPathMapper.fromAgent),
+                )
+            })
         }
     }
 
@@ -242,7 +267,11 @@ private class AcpProcessAgentConnection(
         return createSession(request.cwd, request.additionalDirectories, request.sessionId) {
             client.resumeSession(
                 SessionId(request.sessionId),
-                SessionCreationParameters(request.cwd, emptyList(), request.additionalDirectories)
+                SessionCreationParameters(
+                    sessionPathMapper.toAgent(request.cwd),
+                    emptyList(),
+                    request.additionalDirectories.map(sessionPathMapper.toAgent),
+                )
             ) { sessionId, _ -> AcpClientOperations(sessionId.value, endpoint) }
         }
     }
@@ -252,7 +281,11 @@ private class AcpProcessAgentConnection(
         return createSession(request.cwd, request.additionalDirectories) {
             client.forkSession(
                 SessionId(request.sessionId),
-                SessionCreationParameters(request.cwd, emptyList(), request.additionalDirectories)
+                SessionCreationParameters(
+                    sessionPathMapper.toAgent(request.cwd),
+                    emptyList(),
+                    request.additionalDirectories.map(sessionPathMapper.toAgent),
+                )
             ) { sessionId, _ -> AcpClientOperations(sessionId.value, endpoint) }
         }
     }

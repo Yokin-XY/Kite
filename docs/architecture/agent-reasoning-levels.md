@@ -45,7 +45,7 @@ Kite 的推理强度入口使用稳定的用户语义，Agent、Provider 和 Mod
 - OpenClaw：支持 Provider/Model profile 公布的有序档位、二值开启和 `adaptive`；带编排的 `ultra` 不进入本目录。
 - Hermes：CLI 能接受某个字符串不等于当前 Provider/Model 能兑现；仍以会话实际公布的子集为准。
 - Codex：映射当前模型目录实际提供的 `minimal` 至 `max` 子集；`ultra` 单独建模。
-- Claude Code：按模型映射 `low` 至 `max` 子集；`auto` 映射为 `inherit`，`ultracode` 单独建模。
+- Claude Code：按模型映射 `low` 至 `max` 子集；ACP 的 `default`（旧版本可能为 `auto`）映射为 `inherit`，`ultracode` 单独建模。
 
 ## 参考事实
 
