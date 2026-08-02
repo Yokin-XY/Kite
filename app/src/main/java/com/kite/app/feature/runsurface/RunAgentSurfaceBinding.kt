@@ -5765,7 +5765,11 @@ internal class RunAgentSurfaceBinding(
                         state = selectionState,
                         description = when (providerLibraryMode) {
                             AgentProviderLibraryMode.Visibility ->
-                                if (projection.visibleInConversation) "隐藏 ${projection.name}" else "显示 ${projection.name}"
+                                if (visibilityState == AgentArchivedProjectSelectionState.Checked) {
+                                    "隐藏 ${projection.name}"
+                                } else {
+                                    "显示 ${projection.name}"
+                                }
                             AgentProviderLibraryMode.Delete ->
                                 if (selectedForBatch) "取消选择 ${projection.name}" else "选择删除 ${projection.name}"
                             AgentProviderLibraryMode.Browse -> projection.name
@@ -5773,11 +5777,25 @@ internal class RunAgentSurfaceBinding(
                         onClick = {
                             when (providerLibraryMode) {
                                 AgentProviderLibraryMode.Visibility -> {
-                                    modelLibraryStore.setProviderVisible(
-                                        selected.registration.definition.agentId,
-                                        projection.id,
-                                        !projection.visibleInConversation,
-                                    )
+                                    val modelIds = projection.models.map(AgentConfigChoice::value)
+                                    if (modelIds.isEmpty()) {
+                                        modelLibraryStore.setProviderVisible(
+                                            selected.registration.definition.agentId,
+                                            projection.id,
+                                            !projection.visibleInConversation,
+                                        )
+                                    } else {
+                                        modelLibraryStore.setProviderModelSelection(
+                                            selected.registration.definition.agentId,
+                                            projection.id,
+                                            modelIds,
+                                            if (visibilityState == AgentArchivedProjectSelectionState.Checked) {
+                                                emptySet()
+                                            } else {
+                                                modelIds
+                                            },
+                                        )
+                                    }
                                     showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
                                 }
                                 AgentProviderLibraryMode.Delete ->
@@ -5931,21 +5949,26 @@ internal class RunAgentSurfaceBinding(
                         AgentProviderLibraryMode.Visibility -> modelVisibilityRow(
                             provider = projection,
                             model = model,
-                            visible = library.isModelVisible(projection.id, model.value),
+                            visible = projection.visibleInConversation &&
+                                library.isModelVisible(projection.id, model.value),
                             onClick = {
-                                modelLibraryStore.setModelVisible(
+                                val modelIds = projection.models.map(AgentConfigChoice::value)
+                                val visibleModelIds = if (projection.visibleInConversation) {
+                                    modelIds.filterTo(mutableSetOf()) {
+                                        library.isModelVisible(projection.id, it)
+                                    }
+                                } else {
+                                    mutableSetOf()
+                                }
+                                if (!visibleModelIds.add(model.value)) {
+                                    visibleModelIds.remove(model.value)
+                                }
+                                modelLibraryStore.setProviderModelSelection(
                                     selected.registration.definition.agentId,
                                     projection.id,
-                                    model.value,
-                                    !library.isModelVisible(projection.id, model.value),
+                                    modelIds,
+                                    visibleModelIds,
                                 )
-                                if (!projection.visibleInConversation) {
-                                    modelLibraryStore.setProviderVisible(
-                                        selected.registration.definition.agentId,
-                                        projection.id,
-                                        true,
-                                    )
-                                }
                                 showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
                             },
                         )
@@ -6289,11 +6312,11 @@ internal class RunAgentSurfaceBinding(
         library: AgentModelLibrarySnapshot,
     ): AgentArchivedProjectSelectionState {
         if (!provider.visibleInConversation) return AgentArchivedProjectSelectionState.Unchecked
-        val visibleModels = provider.models.count { library.isModelVisible(provider.id, it.value) }
-        return when {
-            provider.models.isEmpty() || visibleModels == provider.models.size ->
-                AgentArchivedProjectSelectionState.Checked
-            else -> AgentArchivedProjectSelectionState.Partial
+        if (provider.models.isEmpty()) return AgentArchivedProjectSelectionState.Checked
+        return if (provider.models.any { library.isModelVisible(provider.id, it.value) }) {
+            AgentArchivedProjectSelectionState.Checked
+        } else {
+            AgentArchivedProjectSelectionState.Unchecked
         }
     }
 

@@ -34,17 +34,26 @@ class AgentModelLibraryStoreTest {
     }
 
     @Test
-    fun `单模型显示偏好和供应商显示偏好独立保存`() {
-        assertTrue(store.setModelVisible("opencode", "zhipu", "zhipu/glm-5.0", false))
-        assertTrue(store.setProviderVisible("opencode", "zhipu", false))
+    fun `供应商模型选择按至少一个可见的二态关系原子保存`() {
+        val models = listOf("zhipu/glm-5.2", "zhipu/glm-5.0")
 
-        val snapshot = AgentModelLibraryStore(context).snapshot("opencode")
+        assertTrue(store.setProviderModelSelection("opencode", "zhipu", models, listOf(models.first())))
+        var snapshot = AgentModelLibraryStore(context).snapshot("opencode")
+        assertTrue(snapshot.isProviderVisible("zhipu"))
+        assertTrue(snapshot.isModelVisible("zhipu", models.first()))
+        assertFalse(snapshot.isModelVisible("zhipu", models.last()))
+
+        assertTrue(store.setProviderModelSelection("opencode", "zhipu", models, emptyList()))
+        snapshot = AgentModelLibraryStore(context).snapshot("opencode")
         assertFalse(snapshot.isProviderVisible("zhipu"))
-        assertTrue(snapshot.isModelVisible("zhipu", "zhipu/glm-5.2"))
-        assertFalse(snapshot.isModelVisible("zhipu", "zhipu/glm-5.0"))
+        assertFalse(snapshot.isModelVisible("zhipu", models.first()))
+        assertFalse(snapshot.isModelVisible("zhipu", models.last()))
 
-        assertTrue(store.setProviderVisible("opencode", "zhipu", true))
-        assertFalse(store.snapshot("opencode").isModelVisible("zhipu", "zhipu/glm-5.0"))
+        assertTrue(store.setProviderModelSelection("opencode", "zhipu", models, models))
+        snapshot = AgentModelLibraryStore(context).snapshot("opencode")
+        assertTrue(snapshot.isProviderVisible("zhipu"))
+        assertTrue(snapshot.isModelVisible("zhipu", models.first()))
+        assertTrue(snapshot.isModelVisible("zhipu", models.last()))
     }
 
     @Test

@@ -145,26 +145,40 @@ class AgentModelLibraryStore(context: Context) {
         }
     }
 
-    fun setModelVisible(
+    /**
+     * 原子保存供应商当前目录中的模型显示选择。
+     *
+     * 供应商只使用二态指示：只要至少一个模型显示，供应商即为显示；
+     * 没有模型显示时供应商同时隐藏。目录外的休眠模型偏好保持不变。
+     */
+    fun setProviderModelSelection(
         agentId: String,
         providerId: String,
-        modelId: String,
-        visible: Boolean,
+        modelIds: Collection<String>,
+        visibleModelIds: Collection<String>,
     ): Boolean {
-        val normalizedModelId = modelId.trim()
-        if (agentId.isBlank() || providerId.isBlank() || normalizedModelId.isBlank()) return false
+        if (agentId.isBlank() || providerId.isBlank()) return false
+        val normalizedModelIds = modelIds.map(String::trim).filter(String::isNotBlank).toSet()
+        if (normalizedModelIds.isEmpty()) return false
+        val normalizedVisibleIds = visibleModelIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .toSet()
+            .intersect(normalizedModelIds)
         return update(agentId) { current ->
             val existing = current.providers[providerId] ?: AgentModelLibraryProviderPreference()
-            val hidden = existing.hiddenModelIds.toMutableSet()
-            val changed = if (visible) hidden.remove(normalizedModelId) else hidden.add(normalizedModelId)
-            if (!changed) {
+            val hidden = existing.hiddenModelIds.toMutableSet().apply {
+                removeAll(normalizedModelIds)
+                addAll(normalizedModelIds - normalizedVisibleIds)
+            }
+            val updated = existing.copy(
+                visibleInConversation = normalizedVisibleIds.isNotEmpty(),
+                hiddenModelIds = hidden,
+            )
+            if (updated == existing) {
                 current to false
             } else {
-                current.copy(
-                    providers = current.providers + (
-                        providerId to existing.copy(hiddenModelIds = hidden)
-                    )
-                ).normalized() to true
+                current.copy(providers = current.providers + (providerId to updated)).normalized() to true
             }
         }
     }
