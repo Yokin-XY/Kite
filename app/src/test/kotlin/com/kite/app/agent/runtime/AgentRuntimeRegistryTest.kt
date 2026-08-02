@@ -44,6 +44,7 @@ import com.kite.app.agent.config.AgentSessionModelSelection
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.sdk.configuration.AgentProviderPreparationResult
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
@@ -190,6 +191,46 @@ class AgentRuntimeRegistryTest {
         assertTrue(defaultDraft.value.isDraft)
         assertEquals("/workspace", defaultDraft.value.cwd)
         assertEquals(0, provider.connection.newSessionCalls)
+    }
+
+    @Test
+    fun `冷草稿创建原生会话前立即回显用户消息并在成功后迁移`() = runTest {
+        val newSessionGate = CompletableDeferred<Unit>()
+        val provider = FakeProvider(requestPermission = false, newSessionGate = newSessionGate)
+        start(provider, request("instance-optimistic", generation = 9L))
+        val draftSessionId = requireNotNull(
+            AgentRuntimeRegistry.conversationProjectionSessionId("instance-optimistic", 9L),
+        )
+        val draftKey = AgentConversationKey("fake", draftSessionId)
+
+        val prompt = async {
+            AgentRuntimeRegistry.prompt(
+                "instance-optimistic",
+                9L,
+                listOf(AgentContent.Text("立即显示")),
+            )
+        }
+        testScheduler.runCurrent()
+
+        val optimistic = requireNotNull(AgentConversationStore.snapshot(draftKey))
+        val optimisticMessage = optimistic.timeline
+            .filterIsInstance<com.kite.app.agent.store.AgentConversationItem.Message>()
+            .single()
+        assertEquals(listOf(AgentContent.Text("立即显示")), optimisticMessage.content)
+        assertEquals(AgentSessionPhase.Preparing, optimistic.phase)
+        assertEquals(1, provider.connection.newSessionCalls)
+
+        newSessionGate.complete(Unit)
+        assertTrue(prompt.await() is AgentOperationResult.Success)
+
+        assertEquals(null, AgentConversationStore.snapshot(draftKey))
+        val native = requireNotNull(
+            AgentConversationStore.snapshot(AgentConversationKey("fake", "session-1")),
+        )
+        val nativeMessage = native.timeline
+            .filterIsInstance<com.kite.app.agent.store.AgentConversationItem.Message>()
+            .first { it.role == AgentMessageRole.User }
+        assertEquals(listOf(AgentContent.Text("立即显示")), nativeMessage.content)
     }
 
     @Test
@@ -1060,6 +1101,7 @@ class AgentRuntimeRegistryTest {
         private val requestPermission: Boolean = true,
         private val modelPreviews: Map<Pair<String, String>, AgentDraftConfigurationPreview> = emptyMap(),
         private val newSessionFailuresByConnection: List<Int>? = null,
+        private val newSessionGate: CompletableDeferred<Unit>? = null,
     ) : KiteAgentProvider {
         lateinit var connection: FakeConnection
         val connections = mutableListOf<FakeConnection>()
@@ -1085,6 +1127,7 @@ class AgentRuntimeRegistryTest {
                 additionalDirectoriesSupported,
                 requestPermission,
                 modelPreviews,
+                newSessionGate,
             )
             connections += connection
             return AgentOperationResult.Success(connection)
@@ -1107,6 +1150,7 @@ class AgentRuntimeRegistryTest {
         additionalDirectoriesSupported: Boolean,
         private val requestPermission: Boolean,
         private val modelPreviews: Map<Pair<String, String>, AgentDraftConfigurationPreview>,
+        private val newSessionGate: CompletableDeferred<Unit>?,
     ) : KiteAgentConnection {
         val disconnected = AtomicBoolean(false)
         var newSessionCalls = 0
@@ -1141,6 +1185,7 @@ class AgentRuntimeRegistryTest {
             newSessionCalls++
             lastNewSessionRequest = request
             callOrder += "new"
+            newSessionGate?.await()
             if (newSessionFailures > 0) {
                 newSessionFailures--
                 return AgentOperationResult.Failure("创建失败")

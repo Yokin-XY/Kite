@@ -949,11 +949,13 @@ internal class RunAgentSurfaceBinding(
         observation = null
         observedKey = key
         currentSnapshot = null
-        adapter.submitList(emptyList())
         historyStatusText.visibility = View.GONE
         renderPermission(null)
         renderSessionConfigurationControls()
-        if (key == null) return
+        if (key == null) {
+            adapter.submitList(emptyList())
+            return
+        }
         observation = lifecycleOwner.lifecycleScope.launch {
             lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 AgentConversationStore.observe(key).collect { snapshot ->
@@ -1255,7 +1257,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun enterDraftUi() {
         sessionId = null
-        subscribe(providerId, null)
+        subscribe(providerId, observableSessionId(null))
         input.setText("")
         pendingAttachments.clear()
         selectedSkills.clear()
@@ -1267,9 +1269,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun observableSessionId(visibleSessionId: String?): String? {
         if (!visibleSessionId.isNullOrBlank()) return visibleSessionId
-        return AgentRuntimeRegistry.session(instanceId)
-            ?.takeIf { it.generation == generation && it.isDraft }
-            ?.sessionId
+        return AgentRuntimeRegistry.conversationProjectionSessionId(instanceId, generation)
     }
 
     private fun loadDraftModelCatalog(force: Boolean = false) {

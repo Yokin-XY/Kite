@@ -143,6 +143,7 @@ fun interface AgentRuntimeStatusSink {
  */
 object AgentRuntimeRegistry {
     private const val MAX_SESSION_LIST_PAGES = 100
+    private const val DRAFT_CONVERSATION_PREFIX = "kite-draft:"
 
     private class ActiveRuntime(
         @Volatile var session: AgentRuntimeSession,
@@ -419,6 +420,13 @@ object AgentRuntimeRegistry {
             connection.disconnect()
             return AgentOperationResult.Failure("Agent 运行实例连接发生冲突")
         }
+        if (session.isDraft) {
+            AgentConversationStore.bind(
+                request.instanceId,
+                AgentConversationKey(request.providerId, draftConversationId(request.instanceId, request.generation)),
+                AgentSessionPhase.Ready,
+            )
+        }
         if (session.sessionId != null) runtime.publishDraftPreferences(updateAgentDefault = false)
         statusSink.onStatus(
             session.sessionId.takeUnless { session.isDraft },
@@ -429,6 +437,14 @@ object AgentRuntimeRegistry {
     }
 
     fun session(instanceId: String): AgentRuntimeSession? = activeByInstance[instanceId]?.session
+
+    fun conversationProjectionSessionId(instanceId: String, generation: Long): String? =
+        activeByInstance[instanceId]
+            ?.takeIf { it.session.generation == generation }
+            ?.session
+            ?.let { session ->
+                session.sessionId ?: draftConversationId(instanceId, generation)
+            }
 
     fun defaultCwd(instanceId: String, generation: Long): String? = activeByInstance[instanceId]
         ?.takeIf { it.session.generation == generation }
@@ -741,22 +757,59 @@ object AgentRuntimeRegistry {
             return AgentOperationResult.Failure("Skill 草稿未能转换为 Agent 输入")
         }
         return active.sessionOperationMutex.withLock {
-            val sessionId = when (val prepared = active.prepareDraftRequest()) {
-                is AgentOperationResult.Success -> prepared.value
-                is AgentOperationResult.Failure -> return@withLock prepared
-                is AgentOperationResult.Unsupported -> return@withLock prepared
-            }
-            val key = AgentConversationKey(active.session.providerId, sessionId)
             val localMessageId = "local-${System.currentTimeMillis()}"
+            val optimisticKey = AgentConversationKey(
+                active.session.providerId,
+                active.session.sessionId ?: draftConversationId(instanceId, generation),
+            )
+            AgentConversationStore.bind(active.session.instanceId, optimisticKey, AgentSessionPhase.Ready)
             visibleContent.forEach { block ->
                 AgentConversationStore.applyEvent(
-                    key,
+                    optimisticKey,
                     AgentSessionEvent.MessageChunk(
                         role = com.kite.app.agent.contract.AgentMessageRole.User,
                         content = block,
                         messageId = localMessageId
                     )
                 )
+            }
+            AgentConversationStore.applyEvent(
+                optimisticKey,
+                AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Preparing),
+            )
+            val sessionId = when (val prepared = active.prepareDraftRequest()) {
+                is AgentOperationResult.Success -> prepared.value
+                is AgentOperationResult.Failure -> {
+                    AgentConversationStore.discardLocalMessage(optimisticKey, localMessageId)
+                    AgentConversationStore.applyEvent(
+                        optimisticKey,
+                        AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready),
+                    )
+                    return@withLock prepared
+                }
+                is AgentOperationResult.Unsupported -> {
+                    AgentConversationStore.discardLocalMessage(optimisticKey, localMessageId)
+                    AgentConversationStore.applyEvent(
+                        optimisticKey,
+                        AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready),
+                    )
+                    return@withLock prepared
+                }
+            }
+            val key = AgentConversationKey(active.session.providerId, sessionId)
+            if (key != optimisticKey) {
+                AgentConversationStore.bind(active.session.instanceId, key, AgentSessionPhase.Ready)
+                visibleContent.forEach { block ->
+                    AgentConversationStore.applyEvent(
+                        key,
+                        AgentSessionEvent.MessageChunk(
+                            role = com.kite.app.agent.contract.AgentMessageRole.User,
+                            content = block,
+                            messageId = localMessageId,
+                        ),
+                    )
+                }
+                AgentConversationStore.remove(optimisticKey)
             }
             val result = active.connection.prompt(AgentPromptRequest(sessionId, transportContent))
             if (result !is AgentOperationResult.Success) {
@@ -869,6 +922,12 @@ object AgentRuntimeRegistry {
             state = AgentRuntimeSessionState.ColdDraft,
         )
         session = next
+        val draftKey = AgentConversationKey(
+            next.providerId,
+            draftConversationId(next.instanceId, next.generation),
+        )
+        AgentConversationStore.remove(draftKey)
+        AgentConversationStore.bind(next.instanceId, draftKey, AgentSessionPhase.Ready)
         restoreDraftPreferences(sessionId = null)
         draftModeId = defaultDraftModeId?.takeIf { id -> draftCatalog.modes.any { it.id == id } }
         statusSink.onStatus(null, AgentSessionPhase.Ready, "可以开始新会话")
@@ -1316,6 +1375,9 @@ object AgentRuntimeRegistry {
             AgentConversationStore.applyEvent(key, AgentSessionEvent.CurrentModeChanged(modeId))
         }
     }
+
+    private fun draftConversationId(instanceId: String, generation: Long): String =
+        "$DRAFT_CONVERSATION_PREFIX$instanceId:$generation"
 
     private suspend fun restoreExistingSession(
         connection: KiteAgentConnection,
