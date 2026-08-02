@@ -378,6 +378,43 @@ class AgentModelLibraryPolicyTest {
     }
 
     @Test
+    fun `单一官方账号接管旧缓存中缺少来源和分组的模型`() {
+        val account = AgentOfficialAccountSpec(
+            id = "chatgpt",
+            displayName = "ChatGPT 官方",
+            modelGroupIds = listOf("codex", "openai"),
+            login = AgentOfficialAccountCommand(listOf("codex", "login")),
+        )
+        val option = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "gpt-5.6-sol[low]",
+            choices = listOf(
+                AgentConfigChoice("gpt-5.6-sol[low]", "GPT-5.6-Sol (low)"),
+                AgentConfigChoice("gpt-5.6-sol[high]", "GPT-5.6-Sol (high)"),
+            ),
+        )
+
+        val providers = AgentModelLibraryPolicy.projectProviders(
+            snapshot = AgentLiveConfigSnapshot("codex", "codex", "1", "/config"),
+            modelOption = option,
+            library = AgentModelLibrarySnapshot(),
+            officialAccounts = listOf(account),
+        )
+
+        val official = providers.single()
+        assertEquals(AgentModelSource.Official, official.source)
+        assertEquals("__kite_official__:chatgpt", official.id)
+        assertEquals(option.choices.map { it.value }, official.models.map { it.value })
+        assertFalse(providers.any { it.source == AgentModelSource.Free })
+        assertEquals(
+            "__kite_official__:chatgpt",
+            AgentModelLibraryPolicy.sourceIdForChoice(option.choices.first(), listOf(account)),
+        )
+    }
+
+    @Test
     fun `免费来源显示名称只替换文案并保留真实选择值`() {
         val library = AgentModelLibrarySnapshot(
             providers = mapOf(

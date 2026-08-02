@@ -63,9 +63,22 @@ internal object AgentModelLibraryPolicy {
         }
         val configuredIds = configured.mapTo(linkedSetOf()) { it.id }
         val officialGroupIds = officialAccounts.flatMapTo(linkedSetOf()) { it.modelGroupIds }
+        val legacyOfficialAccount = officialAccounts.singleOrNull()
+        val legacyOfficialChoices = if (legacyOfficialAccount == null) {
+            emptyList()
+        } else {
+            modelOption?.choices.orEmpty().filter { choice ->
+                choice.modelSource == null && choice.providerGroupId() == null
+            }
+        }
         val official = officialAccounts.map { account ->
-            val choices = account.modelGroupIds
+            val declaredChoices = account.modelGroupIds
                 .flatMap { groupId -> choicesByGroup[groupId].orEmpty() }
+            val choices = if (account == legacyOfficialAccount) {
+                declaredChoices + legacyOfficialChoices
+            } else {
+                declaredChoices
+            }
             val providerId = officialProviderId(account.id)
             val displayChoices = choices.map { choice -> withDisplayName(choice, library, providerId) }
             val selectedModel = selectedModelValue(snapshot, providerId, displayChoices)
@@ -82,6 +95,7 @@ internal object AgentModelLibraryPolicy {
             )
         }
         val discovered = modelOption?.choices.orEmpty()
+            .filterNot { it in legacyOfficialChoices }
             .groupBy { choice ->
                 val groupId = choice.groupId ?: choice.groupName ?: UNGROUPED_ID
                 groupId to (choice.modelSource ?: AgentModelSource.Free)
@@ -135,7 +149,10 @@ internal object AgentModelLibraryPolicy {
         choice: AgentConfigChoice,
         officialAccounts: List<AgentOfficialAccountSpec>
     ): String? {
-        val groupId = choice.providerGroupId() ?: return null
+        val groupId = choice.providerGroupId()
+            ?: return officialAccounts.singleOrNull()
+                ?.takeIf { choice.modelSource == null }
+                ?.let { officialProviderId(it.id) }
         val official = officialAccounts.firstOrNull { groupId in it.modelGroupIds }
         return official?.let { officialProviderId(it.id) } ?: groupId
     }
