@@ -449,6 +449,38 @@ class AgentConversationPresentationTest {
     }
 
     @Test
+    fun `用户图片从当前或历史会话加载时保持图片预览语义`() {
+        val source = listOf(
+            AgentConversationItem.Message(
+                id = "user-media",
+                role = AgentMessageRole.User,
+                content = listOf(
+                    AgentContent.Text("看看这张图"),
+                    AgentContent.Image("aGVsbG8=", "image/png"),
+                ),
+                turnOrdinal = 9L,
+            ),
+            AgentConversationItem.Message(
+                id = "answer",
+                role = AgentMessageRole.Assistant,
+                content = listOf(AgentContent.Text("已经收到图片")),
+                turnOrdinal = 9L,
+            ),
+        )
+
+        val items = AgentConversationPresentation.composeTurns(source, emptyList())
+
+        val message = items[0] as AgentConversationDisplayItem.UserMessage
+        assertEquals("看看这张图", message.text)
+        assertFalse(message.text.contains("image/png"))
+        val image = items[1] as AgentConversationDisplayItem.Image
+        assertEquals("image/png", image.mimeType)
+        assertEquals(AgentImageSource.InlineBase64("aGVsbG8="), image.source)
+        assertTrue(image.userAuthored)
+        assertTrue(items[2] is AgentConversationDisplayItem.AssistantText)
+    }
+
+    @Test
     fun `媒体边界先按编码长度拒绝超限数据并限制可委托协议`() {
         assertEquals(6L, AgentMediaPolicy.estimatedDecodedBytes("aGVsbG8="))
         assertTrue(AgentMediaPolicy.canDelegateUri("https://example.com/a.png"))

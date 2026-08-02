@@ -122,7 +122,8 @@ internal sealed interface AgentConversationDisplayItem {
         override val id: String,
         val title: String,
         val mimeType: String,
-        val source: AgentImageSource
+        val source: AgentImageSource,
+        val userAuthored: Boolean = false,
     ) : AgentConversationDisplayItem
 
     data class Attachment(
@@ -130,7 +131,8 @@ internal sealed interface AgentConversationDisplayItem {
         val title: String,
         val detail: String,
         val mimeType: String?,
-        val source: AgentFileSource
+        val source: AgentFileSource,
+        val userAuthored: Boolean = false,
     ) : AgentConversationDisplayItem
 }
 
@@ -206,7 +208,7 @@ internal object AgentConversationPresentation {
                 }
                 var processAdded = false
                 visibleEntries.forEach { block ->
-                    if (!processAdded && block !is AgentConversationDisplayItem.UserMessage) {
+                    if (!processAdded && !block.isUserAuthored()) {
                         process?.let(::add)
                         processAdded = true
                     }
@@ -222,6 +224,13 @@ internal object AgentConversationPresentation {
             block is AgentConversationDisplayItem.Tool ||
             block is AgentConversationDisplayItem.Plan
 
+    private fun AgentConversationDisplayItem.isUserAuthored(): Boolean = when (this) {
+        is AgentConversationDisplayItem.UserMessage -> true
+        is AgentConversationDisplayItem.Image -> userAuthored
+        is AgentConversationDisplayItem.Attachment -> userAuthored
+        else -> false
+    }
+
     fun parseInlineMarkdown(value: String): List<AgentInlineTextSegment> =
         AgentMarkdownParser.parseInline(value)
 
@@ -229,16 +238,24 @@ internal object AgentConversationPresentation {
         message: AgentConversationItem.Message
     ) {
         if (message.role == AgentMessageRole.User) {
-            add(
-                AgentConversationDisplayItem.UserMessage(
-                    id = message.id,
-                    text = message.content
-                        .filterNot { it is AgentContent.SkillReference }
-                        .joinToString("\n") { it.fallbackText() },
-                    skills = message.content.filterIsInstance<AgentContent.SkillReference>()
-                        .map(AgentContent.SkillReference::displayName),
+            val text = message.content.filterIsInstance<AgentContent.Text>()
+                .joinToString("\n", transform = AgentContent.Text::text)
+            val skills = message.content.filterIsInstance<AgentContent.SkillReference>()
+                .map(AgentContent.SkillReference::displayName)
+            if (text.isNotBlank() || skills.isNotEmpty()) {
+                add(
+                    AgentConversationDisplayItem.UserMessage(
+                        id = message.id,
+                        text = text,
+                        skills = skills,
+                    )
                 )
-            )
+            }
+            message.content.forEachIndexed { contentIndex, content ->
+                if (content !is AgentContent.Text && content !is AgentContent.SkillReference) {
+                    add(content.toMedia("${message.id}:attachment:$contentIndex", userAuthored = true))
+                }
+            }
             return
         }
         if (message.role == AgentMessageRole.Thought) {
@@ -319,19 +336,24 @@ internal object AgentConversationPresentation {
         )
     }
 
-    private fun AgentContent.toMedia(id: String): AgentConversationDisplayItem = when (this) {
+    private fun AgentContent.toMedia(
+        id: String,
+        userAuthored: Boolean = false,
+    ): AgentConversationDisplayItem = when (this) {
         is AgentContent.Image -> AgentConversationDisplayItem.Image(
             id = id,
             title = "图片",
             mimeType = mimeType,
-            source = AgentImageSource.InlineBase64(data)
+            source = AgentImageSource.InlineBase64(data),
+            userAuthored = userAuthored,
         )
         is AgentContent.Audio -> AgentConversationDisplayItem.Attachment(
             id = id,
             title = AgentMediaPolicy.safeDisplayName(null, "音频", mimeType),
             detail = mimeType,
             mimeType = mimeType,
-            source = AgentFileSource.InlineBase64(data)
+            source = AgentFileSource.InlineBase64(data),
+            userAuthored = userAuthored,
         )
         is AgentContent.ResourceLink -> AgentConversationDisplayItem.Attachment(
             id = id,
@@ -340,14 +362,16 @@ internal object AgentConversationPresentation {
                 .joinToString(" · ")
                 .ifBlank { uri },
             mimeType = mimeType,
-            source = AgentFileSource.Link(uri)
+            source = AgentFileSource.Link(uri),
+            userAuthored = userAuthored,
         )
         is AgentContent.EmbeddedBlob -> if (mimeType?.startsWith("image/") == true) {
             AgentConversationDisplayItem.Image(
                 id = id,
                 title = AgentMediaPolicy.safeDisplayName(uri, "图片", mimeType),
                 mimeType = mimeType,
-                source = AgentImageSource.InlineBase64(data)
+                source = AgentImageSource.InlineBase64(data),
+                userAuthored = userAuthored,
             )
         } else {
             AgentConversationDisplayItem.Attachment(
@@ -355,7 +379,8 @@ internal object AgentConversationPresentation {
                 title = AgentMediaPolicy.safeDisplayName(uri, "文件", mimeType),
                 detail = mimeType ?: "嵌入文件",
                 mimeType = mimeType,
-                source = AgentFileSource.InlineBase64(data)
+                source = AgentFileSource.InlineBase64(data),
+                userAuthored = userAuthored,
             )
         }
         is AgentContent.EmbeddedText -> AgentConversationDisplayItem.Attachment(
@@ -363,14 +388,16 @@ internal object AgentConversationPresentation {
             title = AgentMediaPolicy.safeDisplayName(uri, "文本", mimeType),
             detail = listOfNotNull(mimeType, "${text.toByteArray().size} B").joinToString(" · "),
             mimeType = mimeType ?: "text/plain",
-            source = AgentFileSource.InlineText(text)
+            source = AgentFileSource.InlineText(text),
+            userAuthored = userAuthored,
         )
         is AgentContent.Text -> AgentConversationDisplayItem.Attachment(
             id = id,
             title = "文本",
             detail = "text/plain",
             mimeType = "text/plain",
-            source = AgentFileSource.InlineText(text)
+            source = AgentFileSource.InlineText(text),
+            userAuthored = userAuthored,
         )
         is AgentContent.SkillReference -> AgentConversationDisplayItem.Attachment(
             id = id,
@@ -378,6 +405,7 @@ internal object AgentConversationPresentation {
             detail = "Skill",
             mimeType = "text/plain",
             source = AgentFileSource.InlineText(displayName),
+            userAuthored = userAuthored,
         )
     }
 
