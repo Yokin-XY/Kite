@@ -33,6 +33,10 @@ import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
 import com.kite.app.agent.config.NativeAgentManagedOutputFormat
 import com.kite.app.agent.config.NativeAgentCoreDocumentStore
 import com.kite.app.agent.config.native.openclaw.openClawReasoningControl
+import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentMode
+import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.io.File
@@ -61,6 +65,46 @@ internal class OpenClawAgentConfigAdapter(
     override fun displayName(): String = "OpenClaw"
 
     override fun reasoningControl(): AgentReasoningControl = openClawReasoningControl
+
+    /** OpenClaw ACP 的 modes 与 thought_level 是同一组思考强度，不是独立工作模式。 */
+    override fun normalizeSessionModes(modes: List<AgentMode>): List<AgentMode> = emptyList()
+
+    override fun normalizeSessionConfiguration(options: List<AgentConfigOption>): List<AgentConfigOption> =
+        super.normalizeSessionConfiguration(options).mapNotNull { option ->
+            if (option !is AgentConfigOption.Select || option.id != ELEVATED_LEVEL_CONFIG_ID) {
+                return@mapNotNull option
+            }
+            // OpenClaw 明确把 ask 定义为 on 的别名；保留当前原生值，但只展示一个审批语义。
+            val approvalValue = when {
+                option.currentValue in ELEVATED_APPROVAL_VALUES -> option.currentValue
+                option.choices.any { it.value == ELEVATED_ON_VALUE } -> ELEVATED_ON_VALUE
+                option.choices.any { it.value == ELEVATED_ASK_VALUE } -> ELEVATED_ASK_VALUE
+                else -> null
+            }
+            val levels = buildMap {
+                put(ELEVATED_OFF_VALUE, AgentPermissionLevel.Restricted)
+                approvalValue?.let { put(it, AgentPermissionLevel.Approval) }
+                put(ELEVATED_FULL_VALUE, AgentPermissionLevel.Full)
+            }
+            val mappedChoices = option.choices.mapNotNull { choice ->
+                val level = levels[choice.value] ?: return@mapNotNull null
+                choice.copy(
+                    name = level.displayName,
+                    description = level.description,
+                    permission = level,
+                )
+            }
+            if (mappedChoices.size < 2 || mappedChoices.none { it.value == option.currentValue }) {
+                null
+            } else {
+                option.copy(
+                    name = "权限",
+                    description = "控制 OpenClaw 当前会话的 elevated 执行；仍受工具策略、主机策略和允许名单约束",
+                    category = AgentConfigCategory.Permission,
+                    choices = mappedChoices,
+                )
+            }
+        }
 
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> {
         val workspace = openClawWorkspacePath()
@@ -606,6 +650,12 @@ internal class OpenClawAgentConfigAdapter(
             "Bearer\\s+\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}",
             RegexOption.IGNORE_CASE,
         )
+        private const val ELEVATED_LEVEL_CONFIG_ID = "elevated_level"
+        private const val ELEVATED_OFF_VALUE = "off"
+        private const val ELEVATED_ON_VALUE = "on"
+        private const val ELEVATED_ASK_VALUE = "ask"
+        private const val ELEVATED_FULL_VALUE = "full"
+        private val ELEVATED_APPROVAL_VALUES = setOf(ELEVATED_ON_VALUE, ELEVATED_ASK_VALUE)
         private val OPENCLAW_JSON_SKILL_KEY = Regex(
             "[\\\"']skillKey[\\\"']\\s*:\\s*[\\\"']([A-Za-z0-9][A-Za-z0-9._-]{0,127})[\\\"']",
         )

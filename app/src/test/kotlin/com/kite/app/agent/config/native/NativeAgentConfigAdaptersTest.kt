@@ -11,6 +11,7 @@ import com.kite.app.agent.config.AgentCoreDocumentListResult
 import com.kite.app.agent.config.AgentCoreDocumentReadResult
 import com.kite.app.agent.config.AgentCoreDocumentSemantics
 import com.kite.app.agent.config.AgentConfigScope
+import com.kite.app.agent.config.normalizePublishedSessionConfiguration
 import com.kite.app.agent.config.AgentSessionConfigurationApplyResult
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AgentCoreDocumentWriteRequest
@@ -34,6 +35,8 @@ import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentModelSource
+import com.kite.app.agent.contract.AgentMode
+import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.contracts.ContainerStatus
 import java.io.File
@@ -282,6 +285,46 @@ class NativeAgentConfigAdaptersTest {
         assertTrue(text.contains("telegram"))
         assertTrue(text.contains("local/local-model"))
         assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
+    fun openClawSeparatesThoughtLevelFromElevatedPermissionWithoutDuplicateModes() {
+        val adapter = OpenClawAgentConfigAdapter(context, ::container)
+        val thought = AgentConfigOption.Select(
+            id = "thought_level",
+            name = "Thought level",
+            category = AgentConfigCategory.ThoughtLevel,
+            currentValue = "high",
+            choices = listOf(
+                AgentConfigChoice("adaptive", "Adaptive"),
+                AgentConfigChoice("low", "Low"),
+                AgentConfigChoice("high", "High"),
+            ),
+        )
+        val elevated = AgentConfigOption.Select(
+            id = "elevated_level",
+            name = "Elevated actions",
+            currentValue = "ask",
+            choices = listOf(
+                AgentConfigChoice("off", "Off"),
+                AgentConfigChoice("on", "On"),
+                AgentConfigChoice("ask", "Ask"),
+                AgentConfigChoice("full", "Full"),
+            ),
+        )
+
+        val normalized = adapter.normalizePublishedSessionConfiguration(listOf(thought, elevated))
+        val reasoning = normalized.single { it.category == AgentConfigCategory.ThoughtLevel } as AgentConfigOption.Select
+        val permission = normalized.single { it.category == AgentConfigCategory.Permission } as AgentConfigOption.Select
+
+        assertEquals(listOf("adaptive", "low", "high"), reasoning.choices.map { it.value })
+        assertEquals(listOf("off", "ask", "full"), permission.choices.map { it.value })
+        assertEquals(
+            listOf(AgentPermissionLevel.Restricted, AgentPermissionLevel.Approval, AgentPermissionLevel.Full),
+            permission.choices.map { it.permission },
+        )
+        assertEquals("ask", permission.currentValue)
+        assertTrue(adapter.normalizeSessionModes(listOf(AgentMode("high", "High"))).isEmpty())
     }
 
     @Test
