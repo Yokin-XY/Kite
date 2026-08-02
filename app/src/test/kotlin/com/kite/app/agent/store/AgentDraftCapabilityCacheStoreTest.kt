@@ -11,6 +11,7 @@ import com.kite.app.agent.runtime.AgentDraftCapabilityCatalog
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,7 +33,7 @@ class AgentDraftCapabilityCacheStoreTest {
     }
 
     @Test
-    fun `通用缓存不再重复保存权限和推理强度`() {
+    fun `通用缓存不再重复保存权限推理强度和工作模式`() {
         store.put(
             "opencode",
             AgentDraftCapabilityCatalog(
@@ -64,8 +65,8 @@ class AgentDraftCapabilityCacheStoreTest {
         val restored = store.catalog("opencode")!!
 
         assertEquals(listOf("language"), restored.configuration.map { it.id })
-        assertEquals(listOf("build", "plan"), restored.modes.map { it.id })
-        assertEquals("build", restored.currentModeId)
+        assertTrue(restored.modes.isEmpty())
+        assertEquals(null, restored.currentModeId)
         assertEquals(listOf("review"), restored.commands.map { it.name })
         val raw = context.getSharedPreferences(
             "kite_agent_draft_capability_cache",
@@ -73,16 +74,16 @@ class AgentDraftCapabilityCacheStoreTest {
         ).getString("payload", "").orEmpty()
         assertFalse(raw.contains("sessionId"))
         assertFalse(raw.contains("apiKey", ignoreCase = true))
+        assertFalse(raw.contains("\"modes\""))
+        assertFalse(raw.contains("currentModeId"))
     }
 
     @Test
-    fun `真实空目录会清除旧缓存`() {
+    fun `只有工作模式时不再创建第二份旧缓存`() {
         store.put(
             "opencode",
             AgentDraftCapabilityCatalog(modes = listOf(AgentMode("build", "构建")))
         )
-
-        store.put("opencode", AgentDraftCapabilityCatalog())
 
         assertEquals(null, store.catalog("opencode"))
     }

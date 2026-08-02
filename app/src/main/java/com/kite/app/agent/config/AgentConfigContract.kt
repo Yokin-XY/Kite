@@ -9,6 +9,7 @@ import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentPermissionRequest
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentPermissionLevel
+import com.kite.app.agent.contract.AgentMode
 
 /** Agent 原生持久配置可由适配器安全管理的能力。 */
 enum class AgentPersistentConfigCapability {
@@ -584,6 +585,12 @@ data class AgentFreeProviderCatalog(
     val providers: List<AgentProviderSummary>,
 )
 
+/** 随 Adapter 发布的已核验工作模式目录；ID 始终保持 Agent 原生值。 */
+data class AgentWorkModeCatalog(
+    val modes: List<AgentMode>,
+    val defaultModeId: String? = null,
+)
+
 sealed interface AgentFreeProviderCatalogResult {
     data class Ready(val catalog: AgentFreeProviderCatalog, val warning: String? = null) :
         AgentFreeProviderCatalogResult
@@ -607,6 +614,13 @@ interface AgentConfigAdapter {
 
     /** 随应用发布的首屏免费目录，只用于本地目录尚无该来源时初始化，不替代人工刷新。 */
     fun bundledFreeProviderCatalog(agentId: String): AgentFreeProviderCatalog? = null
+
+    /**
+     * 随应用发布的工作模式快照，只提供 Kite 草稿选项，不在加载阶段修改 Agent 状态。
+     *
+     * 只有已经确认能够在发送阶段映射到 Agent 原生模式的 Adapter 才能声明。
+     */
+    fun bundledWorkModeCatalog(agentId: String): AgentWorkModeCatalog? = null
 
     /** 用户下拉刷新时扫描无需登录免费目录；普通页面打开、绑定和会话加载不得调用。 */
     suspend fun scanFreeProviderCatalog(agentId: String): AgentFreeProviderCatalogResult =
@@ -658,6 +672,9 @@ interface AgentConfigAdapter {
     fun normalizeSessionConfiguration(
         options: List<AgentConfigOption>
     ): List<AgentConfigOption> = options
+
+    /** 把协议公布的原生工作模式补充为 Kite 显示语义；不得改变原生 ID。 */
+    fun normalizeSessionModes(modes: List<AgentMode>): List<AgentMode> = modes
 
     /**
      * 声明当前 Agent 能够把哪些原生推理值安全映射到 Kite 统一语义。

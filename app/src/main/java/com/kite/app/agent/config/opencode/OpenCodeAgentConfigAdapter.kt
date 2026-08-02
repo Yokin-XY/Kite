@@ -53,6 +53,7 @@ import com.kite.app.agent.config.AgentSkillSummary
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AgentUserProviderImport
 import com.kite.app.agent.config.AgentUserProviderImportResult
+import com.kite.app.agent.config.AgentWorkModeCatalog
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.AtomicConfigFileUpdate
 import com.kite.app.agent.config.AtomicConfigFileWriteResult
@@ -67,6 +68,7 @@ import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
+import com.kite.app.agent.contract.AgentMode
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.runtime.ProotViewRuntime
 import com.kite.app.foundation.runtime.ProotViewStore
@@ -142,6 +144,12 @@ internal class OpenCodeAgentConfigAdapter(
 
     override fun bundledFreeProviderCatalog(agentId: String): AgentFreeProviderCatalog =
         openCodeBundledFreeProviderCatalog()
+
+    override fun bundledWorkModeCatalog(agentId: String): AgentWorkModeCatalog =
+        openCodeWorkModeCatalog()
+
+    override fun normalizeSessionModes(modes: List<AgentMode>): List<AgentMode> =
+        normalizeOpenCodeWorkModes(modes)
 
     override suspend fun readUserProviderImport(agentId: String): AgentUserProviderImportResult = runCatching {
         val state = readState(agentId)

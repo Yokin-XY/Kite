@@ -14,9 +14,9 @@ import org.json.JSONObject
  * 最近一次由 Agent 公布的草稿可选项缓存。
  *
  * 这不是会话或用户配置事实源：不保存 sessionId、消息、密钥或草稿选择，只让输入草稿在不修改
- * Agent 状态的前提下先展示已知的模式、即时配置和命令。缓存只保存 Agent 真实公布且已经过
- * Adapter 映射的选项；权限和推理强度固定归 [AgentProviderCatalogStore]，这里仅保留模型、模式、
- * 命令和其他协议能力。发送时仍会由当前连接复核并应用，不把缓存当成 Agent 状态。
+ * Agent 状态的前提下先展示已知的即时配置和命令。权限、推理强度与工作模式固定归
+ * [AgentProviderCatalogStore]；这里只保留尚未进入统一目录的协议能力。读取逻辑继续兼容旧版
+ * 模式字段，供启动时一次性迁移，后续写入不再复制第二份工作模式事实。
  */
 class AgentDraftCapabilityCacheStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -73,16 +73,6 @@ class AgentDraftCapabilityCacheStore(context: Context) {
                 .take(MAX_CONFIGURATION)
                 .forEach { option -> put(option.toJson()) }
         })
-        put(KEY_MODES, JSONArray().apply {
-            modes.take(MAX_MODES).forEach { mode ->
-                put(JSONObject().apply {
-                    put(KEY_ID, mode.id.safe(MAX_ID))
-                    put(KEY_NAME, mode.name.safe(MAX_TEXT))
-                    mode.description?.safe(MAX_DESCRIPTION)?.let { put(KEY_DESCRIPTION, it) }
-                })
-            }
-        })
-        currentModeId?.safe(MAX_ID)?.let { put(KEY_CURRENT_MODE, it) }
         put(KEY_COMMANDS, JSONArray().apply {
             commands.take(MAX_COMMANDS).forEach { command ->
                 put(JSONObject().apply {
@@ -192,7 +182,7 @@ class AgentDraftCapabilityCacheStore(context: Context) {
     }
 
     private fun AgentDraftCapabilityCatalog.isEmpty(): Boolean =
-        configuration.isEmpty() && modes.isEmpty() && commands.isEmpty()
+        configuration.isEmpty() && commands.isEmpty()
 
     private fun String.safe(maxLength: Int): String = trim().take(maxLength)
 
@@ -220,12 +210,11 @@ class AgentDraftCapabilityCacheStore(context: Context) {
         const val KEY_INPUT_HINT = "inputHint"
         const val TYPE_SELECT = "select"
         const val TYPE_TOGGLE = "toggle"
-        // v6 把权限与推理强度移入统一 Provider 目录；这里只缓存其余协议能力。
+        // v6 旧数据可能含模式；读取后迁移到统一 Provider 目录，新的写入不再保留模式。
         const val VERSION = 6
         const val MAX_CONFIGURATION = 32
         const val MAX_CATALOGS = 32
         const val MAX_CHOICES = 256
-        const val MAX_MODES = 64
         const val MAX_COMMANDS = 256
         const val MAX_ID = 160
         const val MAX_TEXT = 240

@@ -2,7 +2,7 @@
 
 ## 目标
 
-Kite 只维护一套模型、权限和推理强度的显示语义，也只开放一套 SDK 配置端口。具体 Agent 的协议、原生 ID、配置文件和能力差异全部留在 ACP 或专用 Adapter 中。
+Kite 只维护一套模型、权限、推理强度和工作模式的显示语义，也只开放一套 SDK 配置端口。具体 Agent 的协议、原生 ID、配置文件和能力差异全部留在 ACP 或专用 Adapter 中。
 
 以后增加或调优一个 Agent 时，正常改动范围应当位于该 Agent 的兼容目录。若必须修改公共合同，先证明是所有 Agent 都需要的新语义，而不是当前工具的特殊值。
 
@@ -12,8 +12,8 @@ Kite 只维护一套模型、权限和推理强度的显示语义，也只开放
 Agent 会话与设置 UI
         ↓ 只提交本轮输入草稿或持久配置意图
 Kite Agent SDK
-  - AgentSessionControlApi：本轮输入草稿中的模型、权限、推理强度
-  - AgentProviderCatalogApi：Kite 保存的 Provider、模型、凭据、权限与推理目录
+  - AgentSessionControlApi：本轮输入草稿中的模型、权限、推理强度、工作模式
+  - AgentProviderCatalogApi：Kite 保存的 Provider、模型、凭据、权限、推理与工作模式目录
   - AgentConfigurationApi：MCP、Skill、核心文档等 Agent 原生配置
         ↓ 点击发送后，按稳定 ID 把本轮草稿映射为原生动作
 ACP 或 AdapterBackedAgentConfigurationApi
@@ -21,7 +21,7 @@ ACP 或 AdapterBackedAgentConfigurationApi
 具体 Agent / Provider / Model
 ```
 
-会话输入器整体视为 Kite 管理的本轮草稿：文字、附件、模型、权限和推理强度在发送前都只改变本地草稿。点击发送后，运行层先把模型、推理强度和权限映射为当前 Agent 的原生值或动作，再提交消息。草稿选择保留给下一轮，远端会话加载态和消息返回不能决定固定入口是否存在。
+会话输入器整体视为 Kite 管理的本轮草稿：文字、附件、模型、权限、推理强度和工作模式在发送前都只改变本地草稿。点击发送后，运行层才把这些选择映射为当前 Agent 的原生值或动作，再提交消息。草稿选择保留给下一轮，远端会话加载态和消息返回不能决定固定入口是否存在。
 
 显示层不能引用 `AgentConfigAdapter`、`AgentConfigAdapterRegistry`、`AgentConfigApplyRequest`、`AgentPersistentConfigChange` 或供应商预设目录。该限制由 `AgentConfigurationArchitectureTest` 自动检查。
 
@@ -58,6 +58,14 @@ ACP 或 AdapterBackedAgentConfigurationApi
 - 不提供“跟随默认”。清除覆盖是独立恢复动作。
 - `ultra`、`ultracode` 等同时改变编排或工作流的值不能冒充纯推理强度。
 
+### 工作模式
+
+- 工作模式目录和 Kite 草稿默认选择保存到 `AgentProviderCatalogStore`，页面打开时只读本地快照。
+- Adapter 保留 Agent 原生模式 ID，只负责补充 Kite 显示名称、说明和已核验的随应用预设。
+- ACP 公布真实模式时经过同一 Adapter 映射后更新目录；ACP 没有模式目录但 Adapter 已核验发送映射时，可以使用随应用快照。
+- 选择工作模式只更新 Kite 草稿；发送时才通过统一运行端口调用 ACP `session.setMode` 或专用 Adapter 动作。
+- 原生配置中名为 `Mode` 的字段不当然是工作模式。权限模式必须先由 Adapter 归类为权限，不能写入工作模式目录。
+
 ## 代码目录与职责
 
 ```text
@@ -86,7 +94,7 @@ feature/runsurface/
 ```
 
 `AgentProviderCatalogStore` 是 Provider 名称、URL、模型 ID、模型名称、凭据存在性、默认选择、
-权限目录和推理目录的唯一持久事实源。API Key 使用 Android Keystore 主密钥加密，不进入公开快照、
+权限目录、推理目录、工作模式目录和工作模式草稿默认值的唯一持久事实源。API Key 使用 Android Keystore 主密钥加密，不进入公开快照、
 页面状态、日志或普通 JSON。`AgentModelLibraryStore` 只保存分组、会话可见性和显示别名。
 
 ## 文件拆分规则
@@ -99,7 +107,7 @@ feature/runsurface/
 
 ## 状态与交互
 
-- 页面提交用户意图；长期 Provider 与能力事实只保存到统一目录，当前本轮草稿由运行注册表统一持有。
+- 页面提交用户意图；长期 Provider 与能力事实只保存到统一目录。工作模式默认草稿选择也由统一目录保存，当前会话覆盖由运行注册表持有。
 - 选择模型、权限、推理强度或工作模式时只更新本轮草稿，不调用 Agent，不写原生配置。
 - 点击发送时，运行层先从统一目录读取选中 Provider 的 URL、API Key 和模型，再由 Adapter 完成必要的原生配置与重连，然后按模型、推理强度、权限、其他配置、工作模式、消息的顺序应用草稿。
 - 消息发送完成后保留本轮选择供下一轮继续使用；切换到另一条历史会话时，再用该会话公布的当前值初始化它的输入草稿。
@@ -117,8 +125,8 @@ Provider 目录只有三种更新入口：用户自定义由 Kite 编辑页直�
 ## 新 Agent 接入顺序
 
 1. 登记稳定 `agentId`、`adapterId` 和连接方式；ACP 可用时优先 ACP。
-2. 读取真实模型来源、模型 ID、权限和推理能力，不从产品文案猜测。
-3. 在该 Agent 目录声明模型、权限和推理映射；没有的能力不声明。
+2. 读取真实模型来源、模型 ID、权限、推理能力和工作模式，不从产品文案猜测。
+3. 在该 Agent 目录声明模型、权限、推理和工作模式映射；没有的能力不声明。
 4. Adapter 把 SDK 意图翻译为原生配置或协议请求，并在写入后重新读取事实。
 5. 运行 Adapter 合同测试、架构守卫、完整单测和 Debug 构建。
 6. 最后按真实启动、配置、发消息和能力切换路径进行真机验收。

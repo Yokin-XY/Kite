@@ -7,6 +7,7 @@ import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
+import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.sdk.configuration.AgentControlCatalogProjector
@@ -229,6 +230,37 @@ class AgentProviderCatalogStoreTest {
             restored.controls.mapNotNull(AgentConfigOption::category).toSet(),
         )
         assertTrue(store.hasCompletedImport("opencode", "opencode-config-v1"))
+    }
+
+    @Test
+    fun `工作模式目录和草稿选择持久化且目录更新只淘汰失效选择`() {
+        val seeded = store.seedWorkModesIfAbsent(
+            "opencode",
+            modes = listOf(AgentMode("build", "执行"), AgentMode("plan", "规划")),
+            defaultModeId = "build",
+        )
+        assertEquals("build", seeded.selectedWorkModeId)
+        assertTrue(store.selectWorkMode("opencode", "plan"))
+
+        val restored = AgentProviderCatalogStore(context, vault).snapshot("opencode")
+        assertEquals(listOf("build", "plan"), restored.workModes.map { it.id })
+        assertEquals("plan", restored.selectedWorkModeId)
+
+        val updated = store.replaceWorkModes(
+            "opencode",
+            modes = listOf(AgentMode("build", "执行新版"), AgentMode("plan", "规划新版")),
+            currentModeId = "build",
+        )
+        assertEquals("plan", updated.selectedWorkModeId)
+        assertEquals("执行新版", updated.workModes.first().name)
+
+        val removed = store.replaceWorkModes(
+            "opencode",
+            modes = listOf(AgentMode("build", "执行")),
+            currentModeId = "build",
+        )
+        assertEquals("build", removed.selectedWorkModeId)
+        assertFalse(store.selectWorkMode("opencode", "missing"))
     }
 
     private fun provider(

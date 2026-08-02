@@ -281,6 +281,7 @@ internal class RunAgentSurfaceBinding(
     private var coreDocumentEditorInput: EditText? = null
     private var draftModelAgentId: String? = null
     private var draftModelSnapshot: AgentLiveConfigSnapshot? = null
+    private var draftProviderCatalogTarget: AgentConfigurationTarget? = null
     private var draftProviderCatalogSnapshot: AgentProviderCatalogSnapshot? = null
     private var draftModelOfficialAccounts: List<AgentOfficialAccountSpec> = emptyList()
     private var draftModelLoadRevision: Long = 0L
@@ -1191,7 +1192,7 @@ internal class RunAgentSurfaceBinding(
                 val catalog = target?.let(agentProviderCatalogApi::snapshot)
                 Triple(
                     entry?.registration?.officialAccounts.orEmpty(),
-                    catalog,
+                    target?.let { it to catalog },
                     if (target == null || catalog == null) null else catalog.toConfigurationProjection(target),
                 )
             }
@@ -1200,7 +1201,8 @@ internal class RunAgentSurfaceBinding(
                 agentId != targetAgentId
             ) return@launch
             draftModelOfficialAccounts = loaded.first
-            draftProviderCatalogSnapshot = loaded.second
+            draftProviderCatalogTarget = loaded.second?.first
+            draftProviderCatalogSnapshot = loaded.second?.second
             val snapshot = loaded.third
             draftModelSnapshot = snapshot
             if (snapshot != null) {
@@ -1231,7 +1233,10 @@ internal class RunAgentSurfaceBinding(
         draftModelAgentId = targetAgentId
         draftModelSnapshot = snapshot
         val target = settingsRegistrySnapshot?.entry(targetAgentId)?.configurationTarget()
-        if (target != null) draftProviderCatalogSnapshot = agentProviderCatalogApi.snapshot(target)
+        if (target != null) {
+            draftProviderCatalogTarget = target
+            draftProviderCatalogSnapshot = agentProviderCatalogApi.snapshot(target)
+        }
         AgentDraftModelPolicy.defaultSelection(snapshot)?.let {
             AgentRuntimeRegistry.selectDraftModel(runtime.instanceId, runtime.generation, it)
         }
@@ -6684,10 +6689,28 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun composerModeOptions(): List<AgentComposerModeOption> {
-        val runtime = AgentRuntimeRegistry.session(instanceId) ?: return emptyList()
-        val configuration = runtime.takeIf { it.generation == generation }
-            ?.let(::draftSessionConfigurationOptions)
-            .orEmpty()
+        val runtime = AgentRuntimeRegistry.session(instanceId)?.takeIf { it.generation == generation }
+        val runtimeCatalog = runtime?.let {
+            AgentRuntimeRegistry.draftCapabilityCatalog(it.instanceId, it.generation)
+        }
+        val modes = runtimeCatalog?.modes?.takeIf { it.isNotEmpty() }
+            ?: draftProviderCatalogSnapshot?.workModes.orEmpty()
+        if (modes.isNotEmpty()) {
+            val currentModeId = runtime?.let {
+                AgentRuntimeRegistry.draftPreferences(it.instanceId, it.generation)?.modeId
+            } ?: runtimeCatalog?.currentModeId
+                ?: draftProviderCatalogSnapshot?.selectedWorkModeId
+            return modes.map { mode ->
+                AgentComposerModeOption(
+                    id = mode.id,
+                    name = mode.name,
+                    description = mode.description,
+                    selected = mode.id == currentModeId,
+                    configId = null,
+                )
+            }
+        }
+        val configuration = runtime?.let(::draftSessionConfigurationOptions).orEmpty()
         val configMode = configuration
             .filterIsInstance<AgentConfigOption.Select>()
             .firstOrNull { it.category == AgentConfigCategory.Mode }
@@ -6702,19 +6725,7 @@ internal class RunAgentSurfaceBinding(
                 )
             }
         }
-        val catalog = AgentRuntimeRegistry.draftCapabilityCatalog(runtime.instanceId, runtime.generation)
-            ?: return emptyList()
-        val currentModeId = AgentRuntimeRegistry.draftPreferences(runtime.instanceId, runtime.generation)?.modeId
-            ?: catalog.currentModeId
-        return catalog.modes.map { mode ->
-            AgentComposerModeOption(
-                id = mode.id,
-                name = mode.name,
-                description = mode.description,
-                selected = mode.id == currentModeId,
-                configId = null
-            )
-        }
+        return emptyList()
     }
 
     private fun composerPermissionOption(): AgentConfigOption.Select? {
@@ -7364,8 +7375,18 @@ internal class RunAgentSurfaceBinding(
         if (draftPreparationPending) return
         val runtime = AgentRuntimeRegistry.session(instanceId)
             ?.takeIf { it.generation == generation }
-            ?: return
-        when (val result = agentSessionControlApi.selectMode(instanceId, generation, modeId)) {
+        val result = if (runtime != null) {
+            agentSessionControlApi.selectMode(instanceId, generation, modeId)
+        } else {
+            val target = draftProviderCatalogTarget ?: return
+            if (agentProviderCatalogApi.selectWorkMode(target, modeId)) {
+                draftProviderCatalogSnapshot = agentProviderCatalogApi.snapshot(target)
+                AgentOperationResult.Success(Unit)
+            } else {
+                AgentOperationResult.Failure("当前 Agent 未提供该工作模式")
+            }
+        }
+        when (result) {
             is AgentOperationResult.Success -> {
                 renderSessionConfigurationControls()
                 Toast.makeText(context, "已为本轮消息预选工作模式", Toast.LENGTH_SHORT).show()

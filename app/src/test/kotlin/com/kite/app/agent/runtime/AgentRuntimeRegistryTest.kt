@@ -723,6 +723,43 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
+    fun `数据库预选工作模式在发送前不生效且新草稿继续使用`() = runTest {
+        val provider = FakeProvider(requestPermission = false)
+        AgentRuntimeRegistry.start(
+            request = AgentRuntimeStartRequest(
+                instanceId = "instance-cached-mode",
+                generation = 1L,
+                providerId = "fake",
+                cwd = "/workspace",
+                initialDraftCatalog = AgentDraftCapabilityCatalog(
+                    modes = listOf(AgentMode("build", "执行"), AgentMode("plan", "规划")),
+                    currentModeId = "plan",
+                ),
+                initialDraftModeId = "plan",
+            ),
+            provider = provider,
+            statusSink = AgentRuntimeStatusSink { _, _, _ -> },
+        ) as AgentOperationResult.Success
+
+        assertEquals("plan", AgentRuntimeRegistry.draftPreferences("instance-cached-mode", 1L)?.modeId)
+        assertEquals(null, provider.connection.selectedModeId)
+        assertEquals(0, provider.connection.newSessionCalls)
+
+        val prompted = AgentRuntimeRegistry.prompt(
+            "instance-cached-mode",
+            1L,
+            listOf(AgentContent.Text("Ping")),
+        )
+
+        assertTrue(prompted is AgentOperationResult.Success)
+        assertEquals(listOf("new", "mode", "prompt"), provider.connection.callOrder)
+        assertEquals("plan", provider.connection.selectedModeId)
+
+        AgentRuntimeRegistry.prepareNewSession("instance-cached-mode", 1L)
+        assertEquals("plan", AgentRuntimeRegistry.draftPreferences("instance-cached-mode", 1L)?.modeId)
+    }
+
+    @Test
     fun `权限类别沿用通用草稿配置并在首发前应用`() = runTest {
         val permissionOption = AgentConfigOption.Select(
             id = "approval-policy",

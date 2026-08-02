@@ -22,6 +22,8 @@ import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AgentUserProviderImport
 import com.kite.app.agent.config.AgentUserProviderImportResult
+import com.kite.app.agent.config.AgentWorkModeCatalog
+import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.store.AgentCatalogModel
@@ -189,12 +191,29 @@ class AgentProviderCatalogApiTest {
         assertEquals(1, adapter.applyCalls)
     }
 
+    @Test
+    fun `工作模式预设和选择只进入统一目录不会写Agent`() {
+        adapter.bundledModes = AgentWorkModeCatalog(
+            modes = listOf(AgentMode("build", "Build"), AgentMode("plan", "Plan")),
+            defaultModeId = "build",
+        )
+
+        val initial = api.snapshot(target)
+        assertEquals(listOf("映射-Build", "映射-Plan"), initial.workModes.map { it.name })
+        assertEquals("build", initial.selectedWorkModeId)
+        assertTrue(api.selectWorkMode(target, "plan"))
+
+        assertEquals("plan", api.snapshot(target).selectedWorkModeId)
+        assertEquals(0, adapter.applyCalls)
+    }
+
     private class FakeAdapter : AgentConfigAdapter {
         override val adapterId: String = "fake"
         var importCalls = 0
         var freeScanCalls = 0
         var applyCalls = 0
         var bundled: AgentFreeProviderCatalog? = null
+        var bundledModes: AgentWorkModeCatalog? = null
         private var revision = 1
         private val providers = linkedMapOf<String, AgentProviderSummary>()
 
@@ -221,6 +240,11 @@ class AgentProviderCatalogApiTest {
         }
 
         override fun bundledFreeProviderCatalog(agentId: String): AgentFreeProviderCatalog? = bundled
+
+        override fun bundledWorkModeCatalog(agentId: String): AgentWorkModeCatalog? = bundledModes
+
+        override fun normalizeSessionModes(modes: List<AgentMode>): List<AgentMode> =
+            modes.map { it.copy(name = "映射-${it.name}") }
 
         override suspend fun scanFreeProviderCatalog(agentId: String): AgentFreeProviderCatalogResult {
             freeScanCalls++

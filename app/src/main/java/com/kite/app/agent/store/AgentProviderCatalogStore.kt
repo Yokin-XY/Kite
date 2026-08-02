@@ -8,6 +8,7 @@ import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
+import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentPermissionLevel
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentReasoningMode
@@ -54,6 +55,8 @@ data class AgentProviderCatalogSnapshot(
     val selectedModelId: String? = null,
     val providers: List<AgentCatalogProvider> = emptyList(),
     val controls: List<AgentConfigOption> = emptyList(),
+    val workModes: List<AgentMode> = emptyList(),
+    val selectedWorkModeId: String? = null,
     val completedImports: Set<String> = emptySet(),
     val pendingNativeProviderIds: Set<String> = emptySet(),
 ) {
@@ -82,7 +85,7 @@ class AgentCatalogCredential internal constructor(internal val secret: String) {
 }
 
 /**
- * Kite 自有的 Provider、模型、权限与推理能力事实源。
+ * Kite 自有的 Provider、模型、权限、推理与工作模式能力事实源。
  *
  * 普通目录不保存 API Key；凭据由 [AgentProviderCredentialVault] 加密保存。免费目录通过
  * [syncFreeProviders] 增量替换，官方目录只通过 [saveOfficialVersion] 保存登录成功后的版本。
@@ -182,7 +185,7 @@ class AgentProviderCatalogStore private constructor(
                         it.policy == AgentProviderCatalogPolicy.FreeScan && it.ownerId == scanSourceId
                     } + scanned
                     ).sortedBy(AgentCatalogProvider::id),
-            ).dropInvalidSelection()
+            ).dropInvalidSelections()
             next to Unit
         }
         return snapshot(agentId)
@@ -245,7 +248,7 @@ class AgentProviderCatalogStore private constructor(
                         it.policy == AgentProviderCatalogPolicy.OfficialLoginVersion && it.ownerId == accountId
                     } + official
                     ).sortedBy(AgentCatalogProvider::id),
-            ).dropInvalidSelection()
+            ).dropInvalidSelections()
             next to Unit
         }
         return snapshot(agentId)
@@ -257,6 +260,43 @@ class AgentProviderCatalogStore private constructor(
         }
         if (!accepted) current to false
         else current.copy(selectedProviderId = providerId, selectedModelId = modelId) to true
+    }
+
+    /** 首次只写入 Adapter 随应用发布的已核验工作模式，并建立可用的草稿默认值。 */
+    fun seedWorkModesIfAbsent(
+        agentId: String,
+        modes: List<AgentMode>,
+        defaultModeId: String?,
+    ): AgentProviderCatalogSnapshot {
+        update(agentId) { current ->
+            if (current.workModes.isNotEmpty()) return@update current to Unit
+            val normalized = modes.mapNotNull { it.normalized() }.distinctBy(AgentMode::id)
+            if (normalized.isEmpty()) return@update current to Unit
+            val selected = defaultModeId?.takeIf { id -> normalized.any { it.id == id } }
+                ?: normalized.first().id
+            current.copy(workModes = normalized, selectedWorkModeId = selected) to Unit
+        }
+        return snapshot(agentId)
+    }
+
+    /** 保存 Adapter 已映射的真实工作模式目录；保留仍有效的用户草稿选择。 */
+    fun replaceWorkModes(
+        agentId: String,
+        modes: List<AgentMode>,
+        currentModeId: String?,
+    ): AgentProviderCatalogSnapshot = update(agentId) { current ->
+        val normalized = modes.mapNotNull { it.normalized() }.distinctBy(AgentMode::id)
+        val selected = current.selectedWorkModeId?.takeIf { id -> normalized.any { it.id == id } }
+            ?: currentModeId?.takeIf { id -> normalized.any { it.id == id } }
+        val next = current.copy(workModes = normalized, selectedWorkModeId = selected)
+        next to next
+    }
+
+    /** 只更新 Kite 草稿选择；不接触 Agent、连接或原生会话。 */
+    fun selectWorkMode(agentId: String, modeId: String): Boolean = update(agentId) { current ->
+        val accepted = current.workModes.any { it.id == modeId }
+        if (!accepted) current to false
+        else current.copy(selectedWorkModeId = modeId) to true
     }
 
     /** 保存 Adapter 已映射的权限和推理目录；不接收模型、模式或未分类配置。 */
@@ -364,12 +404,26 @@ class AgentProviderCatalogStore private constructor(
                 array.optJSONObject(index)?.toControl()?.let(::add)
             }
         }
+        val workModes = buildList {
+            val array = optJSONArray(KEY_WORK_MODES) ?: JSONArray()
+            for (index in 0 until array.length()) {
+                val mode = array.optJSONObject(index) ?: continue
+                AgentMode(
+                    id = mode.optString(KEY_ID),
+                    name = mode.optString(KEY_NAME),
+                    description = mode.optString(KEY_DESCRIPTION).takeIf(String::isNotBlank),
+                ).normalized()?.let(::add)
+            }
+        }.distinctBy(AgentMode::id)
         return AgentProviderCatalogSnapshot(
             revision = optLong(KEY_REVISION),
             selectedProviderId = optString(KEY_SELECTED_PROVIDER).takeIf(String::isNotBlank),
             selectedModelId = optString(KEY_SELECTED_MODEL).takeIf(String::isNotBlank),
             providers = providers,
             controls = controls,
+            workModes = workModes,
+            selectedWorkModeId = optString(KEY_SELECTED_WORK_MODE).trim()
+                .take(MAX_ID).takeIf(String::isNotBlank),
             completedImports = buildSet {
                 val array = optJSONArray(KEY_COMPLETED_IMPORTS) ?: JSONArray()
                 for (index in 0 until array.length()) {
@@ -382,7 +436,7 @@ class AgentProviderCatalogStore private constructor(
                     array.optString(index).trim().take(MAX_ID).takeIf(String::isNotBlank)?.let(::add)
                 }
             },
-        ).dropInvalidSelection()
+        ).dropInvalidSelections()
     }
 
     private fun AgentProviderCatalogSnapshot.toJson(): JSONObject = JSONObject().apply {
@@ -391,6 +445,16 @@ class AgentProviderCatalogStore private constructor(
         selectedModelId?.let { put(KEY_SELECTED_MODEL, it) }
         put(KEY_PROVIDERS, JSONArray().apply { providers.forEach { put(it.toJson()) } })
         put(KEY_CONTROLS, JSONArray().apply { controls.forEach { put(it.toJson()) } })
+        put(KEY_WORK_MODES, JSONArray().apply {
+            workModes.forEach { mode ->
+                put(JSONObject().apply {
+                    put(KEY_ID, mode.id)
+                    put(KEY_NAME, mode.name)
+                    mode.description?.let { put(KEY_DESCRIPTION, it) }
+                })
+            }
+        })
+        selectedWorkModeId?.let { put(KEY_SELECTED_WORK_MODE, it) }
         put(KEY_COMPLETED_IMPORTS, JSONArray().apply { completedImports.sorted().forEach(::put) })
         put(KEY_PENDING_NATIVE_PROVIDERS, JSONArray().apply {
             pendingNativeProviderIds.sorted().forEach(::put)
@@ -541,12 +605,26 @@ class AgentProviderCatalogStore private constructor(
         )
     }
 
-    private fun AgentProviderCatalogSnapshot.dropInvalidSelection(): AgentProviderCatalogSnapshot {
-        val valid = providers.any { provider ->
+    private fun AgentMode.normalized(): AgentMode? {
+        val modeId = id.trim().take(MAX_ID)
+        val modeName = name.trim().take(MAX_DISPLAY_NAME)
+        if (modeId.isBlank() || modeName.isBlank()) return null
+        return copy(
+            id = modeId,
+            name = modeName,
+            description = description?.trim()?.take(MAX_DESCRIPTION)?.takeIf(String::isNotBlank),
+        )
+    }
+
+    private fun AgentProviderCatalogSnapshot.dropInvalidSelections(): AgentProviderCatalogSnapshot {
+        val validModel = providers.any { provider ->
             provider.id == selectedProviderId && provider.models.any { it.id == selectedModelId }
         }
-        return if (valid || (selectedProviderId == null && selectedModelId == null)) this
+        val modelSafe = if (validModel || (selectedProviderId == null && selectedModelId == null)) this
         else copy(selectedProviderId = null, selectedModelId = null)
+        val validMode = modelSafe.selectedWorkModeId == null ||
+            modelSafe.workModes.any { it.id == modelSafe.selectedWorkModeId }
+        return if (validMode) modelSafe else modelSafe.copy(selectedWorkModeId = null)
     }
 
     private fun credentialKey(agentId: String, providerId: String): String =
@@ -571,6 +649,8 @@ class AgentProviderCatalogStore private constructor(
         const val KEY_SELECTED_MODEL = "selectedModelId"
         const val KEY_PROVIDERS = "providers"
         const val KEY_CONTROLS = "controls"
+        const val KEY_WORK_MODES = "workModes"
+        const val KEY_SELECTED_WORK_MODE = "selectedWorkModeId"
         const val KEY_COMPLETED_IMPORTS = "completedImports"
         const val KEY_PENDING_NATIVE_PROVIDERS = "pendingNativeProviderIds"
         const val KEY_ID = "id"

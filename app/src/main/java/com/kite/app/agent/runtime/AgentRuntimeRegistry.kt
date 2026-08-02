@@ -22,6 +22,7 @@ import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSnapshot
 import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.contract.AgentNewSessionRequest
+import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentTurnResult
 import com.kite.app.agent.contract.KiteAgentConnection
 import com.kite.app.agent.contract.KiteAgentProvider
@@ -43,6 +44,7 @@ data class AgentRuntimeStartRequest(
     val additionalDirectories: List<String> = emptyList(),
     val preferredSessionId: String? = null,
     val normalizeConfiguration: (List<AgentConfigOption>) -> List<AgentConfigOption> = { it },
+    val normalizeModes: (List<AgentMode>) -> List<AgentMode> = { it },
     val resolveDraftModelSelection: (
         target: AgentDraftModelSelection,
         options: List<AgentConfigOption>
@@ -53,7 +55,9 @@ data class AgentRuntimeStartRequest(
         AgentProviderPreparationResult.Ready()
     },
     val initialDraftCatalog: AgentDraftCapabilityCatalog = AgentDraftCapabilityCatalog(),
-    val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {}
+    val initialDraftModeId: String? = null,
+    val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {},
+    val onDraftModeSelected: (String) -> Unit = {},
 )
 
 /** 当前输入草稿的瞬时模型目标；点击选择时不写 Agent，发送本轮消息前才应用。 */
@@ -115,6 +119,7 @@ object AgentRuntimeRegistry {
         val endpoint: AgentClientEndpoint,
         val statusSink: AgentRuntimeStatusSink,
         val normalizeConfiguration: (List<AgentConfigOption>) -> List<AgentConfigOption>,
+        val normalizeModes: (List<AgentMode>) -> List<AgentMode>,
         val resolveDraftModelSelection: (
             target: AgentDraftModelSelection,
             options: List<AgentConfigOption>
@@ -128,7 +133,9 @@ object AgentRuntimeRegistry {
         val draftCatalogLock: Any = Any(),
         val draftConfiguration: LinkedHashMap<String, AgentConfigValue> = linkedMapOf(),
         @Volatile var draftModeId: String? = null,
-        val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {}
+        @Volatile var defaultDraftModeId: String? = null,
+        val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {},
+        val onDraftModeSelected: (String) -> Unit = {},
     )
 
     private data class PendingPermission(
@@ -153,7 +160,9 @@ object AgentRuntimeRegistry {
             existing.connection.disconnect()
         }
 
-        var observedCatalog = request.initialDraftCatalog
+        var observedCatalog = request.initialDraftCatalog.copy(
+            modes = request.normalizeModes(request.initialDraftCatalog.modes).distinctBy(AgentMode::id),
+        )
         val catalogLock = Any()
         fun updateObservedCatalog(
             transform: (AgentDraftCapabilityCatalog) -> AgentDraftCapabilityCatalog
@@ -281,7 +290,10 @@ object AgentRuntimeRegistry {
                     configuration = mergeDraftConfigurationCatalog(
                         request.initialDraftCatalog.configuration,
                         request.normalizeConfiguration(opened.value.configuration),
-                    )
+                    ),
+                    modes = request.normalizeModes(opened.value.modes)
+                        .ifEmpty { observedCatalog.modes }
+                        .distinctBy(AgentMode::id),
                 )
                 is AgentOperationResult.Failure -> {
                     connection.disconnect()
@@ -301,7 +313,7 @@ object AgentRuntimeRegistry {
                 snapshot = openedSnapshot,
                 capabilities = connection.capabilities
             ).also {
-                updateObservedCatalog { current -> current.withSnapshot(openedSnapshot) }
+                updateObservedCatalog { current -> current.withSnapshot(openedSnapshot, request.normalizeModes) }
                 bindSnapshot(it, openedSnapshot)
             }
         }
@@ -315,10 +327,16 @@ object AgentRuntimeRegistry {
             endpoint = endpoint,
             statusSink = statusSink,
             normalizeConfiguration = request.normalizeConfiguration,
+            normalizeModes = request.normalizeModes,
             resolveDraftModelSelection = request.resolveDraftModelSelection,
             prepareDraftModelSelection = request.prepareDraftModelSelection,
             draftCatalog = observedCatalog,
+            draftModeId = request.initialDraftModeId
+                ?.takeIf { id -> session.isDraft && observedCatalog.modes.any { it.id == id } },
+            defaultDraftModeId = request.initialDraftModeId
+                ?.takeIf { id -> observedCatalog.modes.any { it.id == id } },
             onDraftCatalogChanged = request.onDraftCatalogChanged,
+            onDraftModeSelected = request.onDraftModeSelected,
         )
         val previous = synchronized(catalogLock) {
             runtime.draftCatalog = observedCatalog
@@ -421,6 +439,8 @@ object AgentRuntimeRegistry {
             return AgentOperationResult.Failure("当前 Agent 未提供该工作模式")
         }
         active.draftModeId = modeId
+        active.defaultDraftModeId = modeId
+        active.onDraftModeSelected(modeId)
         return AgentOperationResult.Success(
             AgentDraftPreferences(
                 configuration = synchronized(active.draftConfiguration) {
@@ -721,7 +741,8 @@ object AgentRuntimeRegistry {
             configuration = mergeDraftConfigurationCatalog(
                 draftCatalog.configuration,
                 normalizeConfiguration(snapshot.configuration),
-            )
+            ),
+            modes = normalizeModes(snapshot.modes).ifEmpty { draftCatalog.modes }.distinctBy(AgentMode::id),
         )
         val next = AgentRuntimeSession(
             instanceId = session.instanceId,
@@ -738,19 +759,19 @@ object AgentRuntimeRegistry {
             synchronized(draftConfiguration) { draftConfiguration.clear() }
             draftModeId = null
         }
-        publishDraftCatalog(draftCatalog.withSnapshot(normalizedSnapshot))
+        publishDraftCatalog(draftCatalog.withSnapshot(normalizedSnapshot, normalizeModes))
         bindSnapshot(next, normalizedSnapshot)
         statusSink.onStatus(next.sessionId, AgentSessionPhase.Ready, "准备就绪")
         return next
     }
 
     private fun ActiveRuntime.enterDraft(cwd: String): AgentRuntimeSession {
-        session.snapshot?.let { snapshot -> publishDraftCatalog(draftCatalog.withSnapshot(snapshot)) }
+        session.snapshot?.let { snapshot -> publishDraftCatalog(draftCatalog.withSnapshot(snapshot, normalizeModes)) }
         val next = session.copy(sessionId = null, cwd = cwd, snapshot = null)
         session = next
         draftModelSelection = null
         synchronized(draftConfiguration) { draftConfiguration.clear() }
-        draftModeId = null
+        draftModeId = defaultDraftModeId?.takeIf { id -> draftCatalog.modes.any { it.id == id } }
         statusSink.onStatus(null, AgentSessionPhase.Ready, "可以开始新会话")
         return next
     }
@@ -861,13 +882,16 @@ object AgentRuntimeRegistry {
             ?: return AgentOperationResult.Unsupported("session/set_mode-draft")
         val snapshot = session.snapshot
             ?: return AgentOperationResult.Failure("Agent 会话状态不可用")
-        val mode = snapshot.modes.firstOrNull { it.id == modeId }
+        val mode = snapshot.modes.ifEmpty { draftCatalog.modes }.firstOrNull { it.id == modeId }
             ?: return AgentOperationResult.Failure("当前 Agent 未提供本轮预选工作模式")
         return when (val result = connection.setMode(sessionId, mode.id)) {
             is AgentOperationResult.Success -> {
                 val key = AgentConversationKey(session.providerId, sessionId)
                 AgentConversationStore.applyEvent(key, AgentSessionEvent.CurrentModeChanged(mode.id))
-                session = session.copy(snapshot = snapshot.copy(currentModeId = mode.id))
+                session = session.copy(snapshot = snapshot.copy(
+                    modes = snapshot.modes.ifEmpty { draftCatalog.modes },
+                    currentModeId = mode.id,
+                ))
                 publishDraftCatalog(draftCatalog.copy(currentModeId = mode.id))
                 result
             }
@@ -883,12 +907,19 @@ object AgentRuntimeRegistry {
         else -> false
     }
 
-    private fun AgentDraftCapabilityCatalog.withSnapshot(snapshot: AgentSessionSnapshot): AgentDraftCapabilityCatalog =
-        copy(
+    private fun AgentDraftCapabilityCatalog.withSnapshot(
+        snapshot: AgentSessionSnapshot,
+        normalizeModes: (List<AgentMode>) -> List<AgentMode>,
+    ): AgentDraftCapabilityCatalog {
+        val publishedModes = normalizeModes(snapshot.modes).distinctBy(AgentMode::id)
+        val nextModes = publishedModes.ifEmpty { modes }
+        return copy(
             configuration = mergeDraftConfigurationCatalog(configuration, snapshot.configuration),
-            modes = snapshot.modes,
-            currentModeId = snapshot.currentModeId
+            modes = nextModes,
+            currentModeId = snapshot.currentModeId?.takeIf { id -> nextModes.any { it.id == id } }
+                ?: currentModeId?.takeIf { id -> nextModes.any { it.id == id } },
         )
+    }
 
     private fun mergeDraftConfigurationCatalog(
         current: List<AgentConfigOption>,
@@ -966,8 +997,20 @@ object AgentRuntimeRegistry {
         return AgentOperationResult.Success(Unit)
     }
 
-    private fun ActiveRuntime.publishDraftCatalog(next: AgentDraftCapabilityCatalog) =
-        updateDraftCatalog { next }
+    private fun ActiveRuntime.publishDraftCatalog(next: AgentDraftCapabilityCatalog) {
+        val modes = normalizeModes(next.modes).distinctBy(AgentMode::id)
+        val normalized = next.copy(
+            modes = modes,
+            currentModeId = next.currentModeId?.takeIf { id -> modes.any { it.id == id } },
+        )
+        if (defaultDraftModeId?.let { id -> modes.none { it.id == id } } == true) {
+            defaultDraftModeId = normalized.currentModeId
+        }
+        if (draftModeId?.let { id -> modes.none { it.id == id } } == true) {
+            draftModeId = if (session.isDraft) defaultDraftModeId else null
+        }
+        updateDraftCatalog { normalized }
+    }
 
     private fun ActiveRuntime.updateDraftCatalog(
         transform: (AgentDraftCapabilityCatalog) -> AgentDraftCapabilityCatalog

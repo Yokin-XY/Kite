@@ -15,6 +15,7 @@ import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
+import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.store.AgentCatalogCredentialChange
 import com.kite.app.agent.store.AgentCatalogModel
@@ -72,6 +73,16 @@ interface AgentProviderCatalogApi {
     ): AgentProviderCatalogSnapshot
 
     fun recordMappedControls(target: AgentConfigurationTarget, options: List<AgentConfigOption>)
+
+    /** 保存 Adapter 已映射的工作模式目录；只更新 Kite 本地事实。 */
+    fun recordMappedWorkModes(
+        target: AgentConfigurationTarget,
+        modes: List<AgentMode>,
+        currentModeId: String?,
+    )
+
+    /** 更新工作模式草稿选择；不连接或修改 Agent。 */
+    fun selectWorkMode(target: AgentConfigurationTarget, modeId: String): Boolean
 
     /** 发送前读取 Kite 选择并把必要配置翻译到 Agent；页面不调用。 */
     suspend fun prepareSelectedProvider(
@@ -243,6 +254,17 @@ class StoreBackedAgentProviderCatalogApi(
         store.mergeMappedControls(target.agentId, options)
     }
 
+    override fun recordMappedWorkModes(
+        target: AgentConfigurationTarget,
+        modes: List<AgentMode>,
+        currentModeId: String?,
+    ) {
+        store.replaceWorkModes(target.agentId, modes, currentModeId)
+    }
+
+    override fun selectWorkMode(target: AgentConfigurationTarget, modeId: String): Boolean =
+        store.selectWorkMode(target.agentId, modeId)
+
     override suspend fun prepareSelectedProvider(
         target: AgentConfigurationTarget,
         selection: AgentDraftModelSelection,
@@ -323,6 +345,10 @@ class StoreBackedAgentProviderCatalogApi(
         val adapter = adapters.adapter(target.adapterId) ?: return
         adapter.sessionPermissionControl()?.option()?.let { option ->
             store.mergeMappedControls(target.agentId, listOf(option))
+        }
+        adapter.bundledWorkModeCatalog(target.agentId)?.let { bundled ->
+            val modes = adapter.normalizeSessionModes(bundled.modes)
+            store.seedWorkModesIfAbsent(target.agentId, modes, bundled.defaultModeId)
         }
         adapter.bundledFreeProviderCatalog(target.agentId)?.let { bundled ->
             store.seedFreeProvidersIfAbsent(

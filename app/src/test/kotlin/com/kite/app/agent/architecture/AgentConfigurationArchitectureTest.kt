@@ -112,6 +112,26 @@ class AgentConfigurationArchitectureTest {
     }
 
     @Test
+    fun `work mode mappings live beside their agent adapters`() {
+        val profile = source(
+            "app/src/main/java/com/kite/app/agent/config/opencode/OpenCodeWorkModeProfile.kt",
+        )
+        assertTrue("缺少 OpenCode 独立工作模式映射", profile.isFile)
+        assertTrue(profile.readText().contains("openCodeWorkModeCatalog"))
+
+        val sharedSources = kotlinSources("app/src/main/java/com/kite/app/agent/sdk/configuration") +
+            kotlinSources("app/src/main/java/com/kite/app/feature/runsurface")
+        val violations = sharedSources.filter { file ->
+            val source = file.readText()
+            source.contains("OpenCodeWorkMode") || source.contains("\"build\"") || source.contains("\"plan\"")
+        }
+        assertTrue(
+            "公共 SDK 与显示层不得写入 OpenCode 工作模式 ID：${violations.map { it.name }}",
+            violations.isEmpty(),
+        )
+    }
+
+    @Test
     fun `native agent adapters remain physically split by tool`() {
         val adapterFiles = listOf(
             "app/src/main/java/com/kite/app/agent/config/native/kimi/KimiCodeAgentConfigAdapter.kt",

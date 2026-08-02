@@ -588,7 +588,26 @@ internal class AndroidAgentRecipeRuntime(
         configAdapter?.sessionPermissionControl()?.option()?.let { option ->
             agentProviderCatalogApi.recordMappedControls(catalogTarget, listOf(option))
         }
-        val storedControls = agentProviderCatalogApi.snapshot(catalogTarget).controls
+        val draftCatalogKey = resolved.agentId ?: providerId
+        val cachedDraftCatalog = draftCapabilityCache.catalog(draftCatalogKey)
+            ?: AgentDraftCapabilityCatalog()
+        var storedCatalog = agentProviderCatalogApi.snapshot(catalogTarget)
+        if (storedCatalog.workModes.isEmpty() && cachedDraftCatalog.modes.isNotEmpty() && configAdapter != null) {
+            val migratedModes = configAdapter.normalizeSessionModes(cachedDraftCatalog.modes)
+            agentProviderCatalogApi.recordMappedWorkModes(
+                catalogTarget,
+                migratedModes,
+                cachedDraftCatalog.currentModeId,
+            )
+            storedCatalog = agentProviderCatalogApi.snapshot(catalogTarget)
+        }
+        if (cachedDraftCatalog.modes.isNotEmpty() || cachedDraftCatalog.currentModeId != null) {
+            draftCapabilityCache.put(
+                draftCatalogKey,
+                cachedDraftCatalog.copy(modes = emptyList(), currentModeId = null),
+            )
+        }
+        val storedControls = storedCatalog.controls
         val nativeSessionConfiguration = configAdapter
             ?.readSessionConfiguration(resolved.agentId ?: providerId)
             ?.filterNot { option ->
@@ -606,9 +625,6 @@ internal class AndroidAgentRecipeRuntime(
                 initialConfiguration = nativeSessionConfiguration,
             )
         }
-        val draftCatalogKey = resolved.agentId ?: providerId
-        val cachedDraftCatalog = draftCapabilityCache.catalog(draftCatalogKey)
-            ?: AgentDraftCapabilityCatalog()
         val initialDraftCatalog = cachedDraftCatalog.copy(
             configuration = mergeAgentSessionConfigurationOverlay(
                 options = cachedDraftCatalog.configuration,
@@ -617,6 +633,8 @@ internal class AndroidAgentRecipeRuntime(
                 configAdapter?.normalizePublishedSessionConfiguration(options)
                     ?: options.filterNot { it.category == AgentConfigCategory.ThoughtLevel }
             },
+            modes = storedCatalog.workModes,
+            currentModeId = storedCatalog.selectedWorkModeId,
         )
         when (val result = AgentRuntimeRegistry.start(
             request = AgentRuntimeStartRequest(
@@ -630,6 +648,7 @@ internal class AndroidAgentRecipeRuntime(
                     configAdapter?.normalizePublishedSessionConfiguration(options)
                         ?: options.filterNot { it.category == AgentConfigCategory.ThoughtLevel }
                 },
+                normalizeModes = { modes -> configAdapter?.normalizeSessionModes(modes) ?: modes },
                 resolveDraftModelSelection = { target: AgentDraftModelSelection, options ->
                     configAdapter?.sessionModelSelection(
                         AgentPersistentConfigChange.SelectProvider(target.providerId, target.modelId),
@@ -640,10 +659,19 @@ internal class AndroidAgentRecipeRuntime(
                     agentProviderCatalogApi.prepareSelectedProvider(catalogTarget, selection)
                 },
                 initialDraftCatalog = initialDraftCatalog,
+                initialDraftModeId = storedCatalog.selectedWorkModeId,
                 onDraftCatalogChanged = { catalog ->
                     draftCapabilityCache.put(draftCatalogKey, catalog)
                     agentProviderCatalogApi.recordMappedControls(catalogTarget, catalog.configuration)
-                }
+                    agentProviderCatalogApi.recordMappedWorkModes(
+                        catalogTarget,
+                        catalog.modes,
+                        catalog.currentModeId,
+                    )
+                },
+                onDraftModeSelected = { modeId ->
+                    agentProviderCatalogApi.selectWorkMode(catalogTarget, modeId)
+                },
             ),
             provider = runtimeProvider,
             statusSink = statusSink
