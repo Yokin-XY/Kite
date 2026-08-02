@@ -86,4 +86,17 @@ class AgentDraftCapabilityCacheStoreTest {
 
         assertEquals(null, store.catalog("opencode"))
     }
+
+    @Test
+    fun `合同升级后不会回放缺少来源和新权限档位的旧缓存`() {
+        context.getSharedPreferences(
+            "kite_agent_draft_capability_cache",
+            Context.MODE_PRIVATE,
+        ).edit().putString(
+            "payload",
+            """{"version":2,"catalogs":{"codex":{"configuration":[]}}}""",
+        ).commit()
+
+        assertEquals(null, store.catalog("codex"))
+    }
 }

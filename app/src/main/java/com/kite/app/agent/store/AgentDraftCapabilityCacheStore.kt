@@ -216,7 +216,7 @@ class AgentDraftCapabilityCacheStore(context: Context) {
         const val KEY_INPUT_HINT = "inputHint"
         const val TYPE_SELECT = "select"
         const val TYPE_TOGGLE = "toggle"
-        const val VERSION = 2
+        const val VERSION = 3
         const val MAX_CONFIGURATION = 32
         const val MAX_CATALOGS = 32
         const val MAX_CHOICES = 256

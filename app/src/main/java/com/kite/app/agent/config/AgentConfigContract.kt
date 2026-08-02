@@ -1,6 +1,7 @@
 package com.kite.app.agent.config
 
 import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AGENT_SESSION_PERMISSION_CONFIG_ID
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentPermissionKind
@@ -750,7 +751,7 @@ interface AgentConfigAdapter {
 }
 
 const val NATIVE_MODEL_CONFIG_ID = "kite.default_model"
-const val SESSION_PERMISSION_CONFIG_ID = "kite.session_permission"
+const val SESSION_PERMISSION_CONFIG_ID = AGENT_SESSION_PERMISSION_CONFIG_ID
 
 private const val NATIVE_UNSELECTED_MODEL_VALUE = "kite.model.unselected"
 

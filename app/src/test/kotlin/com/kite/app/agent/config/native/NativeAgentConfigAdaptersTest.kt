@@ -884,6 +884,28 @@ class NativeAgentConfigAdaptersTest {
     }
 
     @Test
+    fun codexDraftUsesTheSameFourPermissionChoicesAsAppServer() = runTest {
+        nativeFile("root/.codex/config.toml").writeText(
+            """
+            model_provider = "zhipu-coding-plan"
+            model = "glm-5.2"
+            """.trimIndent(),
+        )
+        val adapter = CodexAgentConfigAdapter(context, ::container)
+
+        val permission = adapter.readSessionConfiguration("codex")
+            .filterIsInstance<AgentConfigOption.Select>()
+            .single { it.category == AgentConfigCategory.Permission }
+
+        assertEquals(SESSION_PERMISSION_CONFIG_ID, permission.id)
+        assertEquals("codex.permission.custom", permission.currentValue)
+        assertEquals(
+            listOf("请求批准", "替我审批", "完全访问权限", "自定义"),
+            permission.choices.map { it.name },
+        )
+    }
+
+    @Test
     fun codexHidesFallbackEffortSuffixWhenCustomModelHasNoVerifiedChoice() {
         val adapter = CodexAgentConfigAdapter(context, ::container)
         val customModel = AgentConfigOption.Select(

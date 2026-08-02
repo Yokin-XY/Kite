@@ -3,6 +3,7 @@ package com.kite.app.agent.codex
 import com.kite.app.agent.contract.AgentClientEndpoint
 import com.kite.app.agent.contract.AgentClientInfo
 import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AGENT_SESSION_PERMISSION_CONFIG_ID
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentConnectionRequest
@@ -49,6 +50,7 @@ class CodexAppServerAgentProviderTest {
         val model = snapshot.configuration.select(AgentConfigCategory.Model)
         val effort = snapshot.configuration.select(AgentConfigCategory.ThoughtLevel)
         val permission = snapshot.configuration.select(AgentConfigCategory.Permission)
+        assertEquals(AGENT_SESSION_PERMISSION_CONFIG_ID, permission.id)
 
         assertEquals(listOf("gpt-5.6-sol", "gpt-5.6-terra"), model.choices.map { it.value })
         assertTrue(model.choices.all { it.modelSource == AgentModelSource.Official })

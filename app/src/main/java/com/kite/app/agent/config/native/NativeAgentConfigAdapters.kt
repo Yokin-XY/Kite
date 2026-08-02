@@ -53,6 +53,8 @@ import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
 import com.kite.app.agent.config.NativeAgentCoreDocumentStore
 import com.kite.app.agent.config.mediatedSessionPermissionControl
+import com.kite.app.agent.codex.CodexPermission
+import com.kite.app.agent.codex.codexPermissionOption
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -2357,6 +2359,11 @@ internal class CodexAgentConfigAdapter(
     override fun displayName(): String = "Codex"
 
     override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.Codex
+
+    override suspend fun readSessionConfiguration(agentId: String): List<AgentConfigOption> =
+        super.readSessionConfiguration(agentId)
+            .filterNot { it.category == AgentConfigCategory.Permission } +
+            codexPermissionOption(CodexPermission.Custom)
 
     override fun defaultModelChange(
         option: AgentConfigOption.Select,

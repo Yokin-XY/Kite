@@ -280,6 +280,9 @@ value class AgentConfigCategory(val value: String) {
     }
 }
 
+/** Kite SDK 统一的当前会话权限配置 ID；协议适配器与启动前草稿必须使用同一键。 */
+const val AGENT_SESSION_PERMISSION_CONFIG_ID = "kite.session_permission"
+
 /**
  * Kite 对外稳定的推理强度语义。
  *
