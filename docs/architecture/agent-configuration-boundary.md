@@ -10,15 +10,17 @@ Kite 只维护一套模型、权限和推理强度的显示语义，也只开放
 
 ```text
 Agent 会话与设置 UI
-        ↓ 只提交统一选择或配置意图
+        ↓ 只提交本轮输入草稿或持久配置意图
 Kite Agent SDK
-  - AgentSessionControlApi：当前会话模型、权限、推理强度
+  - AgentSessionControlApi：本轮输入草稿中的模型、权限、推理强度
   - AgentConfigurationApi：默认模型、Provider、MCP、Skill、核心文档
-        ↓ 只传稳定 ID、能力目录和统一意图
+        ↓ 点击发送后，按稳定 ID 把本轮草稿映射为原生动作
 ACP 或 AdapterBackedAgentConfigurationApi
         ↓ 翻译原生协议、命令、配置文件和 ID
 具体 Agent / Provider / Model
 ```
+
+会话输入器整体视为 Kite 管理的本轮草稿：文字、附件、模型、权限和推理强度在发送前都只改变本地草稿。点击发送后，运行层先把模型、推理强度和权限映射为当前 Agent 的原生值或动作，再提交消息。草稿选择保留给下一轮，远端会话加载态和消息返回不能决定固定入口是否存在。
 
 显示层不能引用 `AgentConfigAdapter`、`AgentConfigAdapterRegistry`、`AgentConfigApplyRequest`、`AgentPersistentConfigChange` 或供应商预设目录。该限制由 `AgentConfigurationArchitectureTest` 自动检查。
 
@@ -42,14 +44,14 @@ ACP 或 AdapterBackedAgentConfigurationApi
 
 - Agent 只能公布自己能够真实兑现的子集，不能为了凑齐七项而生成选项。
 - `自定义`目前只表示读取并保留用户的 Agent 原生权限配置，不代表 Kite 已经提供统一编辑器。
-- 当前会话权限与新会话默认权限是两个作用域，但使用同一语义目录。
+- 默认权限与会话中的本轮权限草稿是两个作用域，但使用同一语义目录；选择本轮权限时不提前修改 Agent 状态。
 
 ### 推理强度
 
 有序档位固定为：`关闭`、`最低`、`低`、`中`、`高`、`极高`、`最高`。非有序控制固定为：`自动`、`开启`。
 
 - 没有推理控制能力时不显示。
-- Agent、Provider、Model 只显示当前真实支持且已经映射的子集。
+- UI 只消费 Agent 经 ACP 或 Adapter 公布并映射后的子集，不自行判断某个模型应有哪些档位。
 - 只有一个不可切换值时不显示选择器；原生 Toggle 可以显示为开关。
 - 当前值无法映射时隐藏，不选择第一个值，不静默降档。
 - 不提供“跟随默认”。清除覆盖是独立恢复动作。
@@ -63,7 +65,7 @@ agent/contract/
 
 agent/sdk/configuration/
   AgentControlCatalog.kt       固定控件消费的类型化目录
-  AgentSessionControlApi.kt    当前会话控制端口
+  AgentSessionControlApi.kt    本轮输入草稿控制端口
   AgentConfigurationApi.kt     持久配置端口和统一意图
 
 agent/config/
@@ -92,8 +94,11 @@ feature/runsurface/
 
 ## 状态与交互
 
-- 页面提交用户意图，不保存第二份长期配置事实。
-- SDK 写入后统一返回操作结果和重新读取的当前事实；页面不自行调用 Adapter 回填。
+- 页面提交用户意图，不保存第二份长期配置事实；当前本轮草稿由运行注册表统一持有。
+- 选择模型、权限、推理强度或工作模式时只更新本轮草稿，不调用 Agent，不写原生配置。
+- 点击发送时，运行层按模型、推理强度、权限、其他配置、工作模式、消息的顺序应用草稿；具体原生值和动作由 ACP 或 Adapter 映射。
+- 消息发送完成后保留本轮选择供下一轮继续使用；切换到另一条历史会话时，再用该会话公布的当前值初始化它的输入草稿。
+- Agent 返回局部配置更新时，只替换它实际公布的配置项或类别，不能删除未包含在本次更新中的固定能力目录。
 - 配置缺失时隐藏对应组件，不显示“适配通过/失败”给用户。
 - 状态更新只刷新相关控件，不清空会话、不重建输入器、不改变滚动位置。
 - 页面绘制和列表绑定期间不得扫描文件、探测进程或检查网络。

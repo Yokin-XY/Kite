@@ -772,6 +772,132 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
+    fun `已有会话的模型推理和权限只在发送时应用并保留到下一轮`() = runTest {
+        val modelOption = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "opencode/default",
+            choices = listOf(
+                AgentConfigChoice("opencode/default", "Default"),
+                AgentConfigChoice("zhipu/glm-5.2", "GLM-5.2"),
+            ),
+        )
+        val thoughtOption = AgentConfigOption.Select(
+            id = "thought",
+            name = "推理强度",
+            category = AgentConfigCategory.ThoughtLevel,
+            currentValue = "medium",
+            choices = listOf(
+                AgentConfigChoice("medium", "中"),
+                AgentConfigChoice("high", "高"),
+            ),
+        )
+        val permissionOption = AgentConfigOption.Select(
+            id = "approval-policy",
+            name = "权限",
+            category = AgentConfigCategory.Permission,
+            currentValue = "ask",
+            choices = listOf(
+                AgentConfigChoice("ask", "请求批准"),
+                AgentConfigChoice("trusted", "已信任"),
+            ),
+        )
+        val provider = FakeProvider(
+            initialConfiguration = listOf(modelOption, thoughtOption, permissionOption),
+            requestPermission = false,
+        )
+        AgentRuntimeRegistry.start(
+            request = AgentRuntimeStartRequest(
+                instanceId = "instance-active-draft",
+                generation = 1L,
+                providerId = "fake",
+                cwd = "/workspace",
+                preferredSessionId = "historical-1",
+                resolveDraftModelSelection = { target, _ ->
+                    AgentSessionModelSelection("model", "${target.providerId}/${target.modelId}")
+                },
+            ),
+            provider = provider,
+            statusSink = AgentRuntimeStatusSink { _, _, _ -> },
+        ) as AgentOperationResult.Success
+
+        val model = AgentRuntimeRegistry.selectDraftModel(
+            "instance-active-draft",
+            1L,
+            AgentDraftModelSelection("zhipu", "glm-5.2", usesAgentDefault = false),
+        )
+        val thought = AgentRuntimeRegistry.selectDraftConfiguration(
+            "instance-active-draft",
+            1L,
+            "thought",
+            AgentConfigValue.Select("high"),
+        )
+        val permission = AgentRuntimeRegistry.selectDraftConfiguration(
+            "instance-active-draft",
+            1L,
+            "approval-policy",
+            AgentConfigValue.Select("trusted"),
+        )
+
+        assertTrue(model is AgentOperationResult.Success)
+        assertTrue(thought is AgentOperationResult.Success)
+        assertTrue(permission is AgentOperationResult.Success)
+        assertTrue(provider.connection.selectedModelValues.isEmpty())
+        assertEquals(0, provider.connection.promptCalls)
+
+        val first = AgentRuntimeRegistry.prompt(
+            "instance-active-draft",
+            1L,
+            listOf(AgentContent.Text("第一轮")),
+        )
+
+        assertTrue(first is AgentOperationResult.Success)
+        assertEquals(
+            listOf("zhipu/glm-5.2", "high", "trusted"),
+            provider.connection.selectedModelValues,
+        )
+        assertEquals(
+            listOf("model", "model", "model", "prompt"),
+            provider.connection.callOrder,
+        )
+        assertEquals(
+            listOf("model", "thought", "approval-policy"),
+            AgentRuntimeRegistry.draftCapabilityCatalog("instance-active-draft", 1L)
+                ?.configuration
+                ?.map { it.id },
+        )
+        assertEquals(
+            mapOf(
+                "thought" to AgentConfigValue.Select("high"),
+                "approval-policy" to AgentConfigValue.Select("trusted"),
+            ),
+            AgentRuntimeRegistry.draftPreferences("instance-active-draft", 1L)?.configuration,
+        )
+        assertEquals(
+            AgentDraftModelSelection("zhipu", "glm-5.2", usesAgentDefault = false),
+            AgentRuntimeRegistry.draftModelSelection("instance-active-draft", 1L),
+        )
+
+        val second = AgentRuntimeRegistry.prompt(
+            "instance-active-draft",
+            1L,
+            listOf(AgentContent.Text("第二轮")),
+        )
+
+        assertTrue(second is AgentOperationResult.Success)
+        assertEquals(
+            listOf("zhipu/glm-5.2", "high", "trusted", "high", "trusted"),
+            provider.connection.selectedModelValues,
+        )
+        assertEquals(
+            listOf("model", "model", "model", "prompt", "model", "model", "prompt"),
+            provider.connection.callOrder,
+        )
+        assertEquals(2, provider.connection.promptCalls)
+    }
+
+    @Test
     fun `支持附加目录的 Agent 在首发创建会话时收到安卓真实路径`() = runTest {
         val provider = FakeProvider(
             additionalDirectoriesSupported = true,

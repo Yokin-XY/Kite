@@ -7,6 +7,7 @@ import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentCapabilities
 import com.kite.app.agent.contract.AgentContent
+import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentExistingSessionRequest
@@ -48,7 +49,7 @@ data class AgentRuntimeStartRequest(
     val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {}
 )
 
-/** 当前空白页的瞬时模型目标；不写 Agent 原生默认，也不属于任何已创建会话。 */
+/** 当前输入草稿的瞬时模型目标；点击选择时不写 Agent，发送本轮消息前才应用。 */
 data class AgentDraftModelSelection(
     val providerId: String,
     val modelId: String,
@@ -56,9 +57,9 @@ data class AgentDraftModelSelection(
 )
 
 /**
- * 最近一次真实会话公布的可选能力目录。
+ * 当前 Agent 已公布并由 Adapter 映射的输入草稿能力目录。
  *
- * 它只给当前运行实例的空白草稿提供预选项，不包含消息、会话 ID、密钥或持久默认值。
+ * 空白会话和已有会话的下一轮输入共用这一目录；不包含消息、会话 ID、密钥或持久默认值。
  */
 data class AgentDraftCapabilityCatalog(
     val configuration: List<AgentConfigOption> = emptyList(),
@@ -172,7 +173,10 @@ object AgentRuntimeRegistry {
                 }
                 when (normalizedEvent) {
                     is AgentSessionEvent.ConfigurationUpdated -> updateObservedCatalog { current ->
-                        current.copy(configuration = normalizedEvent.options)
+                        current.copy(configuration = mergeDraftConfigurationCatalog(
+                            current.configuration,
+                            normalizedEvent.options,
+                        ))
                     }
                     is AgentSessionEvent.CommandsUpdated -> updateObservedCatalog { current ->
                         current.copy(commands = normalizedEvent.commands)
@@ -263,7 +267,10 @@ object AgentRuntimeRegistry {
             )
             val openedSnapshot = when (opened) {
                 is AgentOperationResult.Success -> opened.value.copy(
-                    configuration = request.normalizeConfiguration(opened.value.configuration)
+                    configuration = mergeDraftConfigurationCatalog(
+                        request.initialDraftCatalog.configuration,
+                        request.normalizeConfiguration(opened.value.configuration),
+                    )
                 )
                 is AgentOperationResult.Failure -> {
                     connection.disconnect()
@@ -322,17 +329,17 @@ object AgentRuntimeRegistry {
 
     fun draftModelSelection(instanceId: String, generation: Long): AgentDraftModelSelection? =
         activeByInstance[instanceId]
-            ?.takeIf { it.session.generation == generation && it.session.isDraft }
+            ?.takeIf { it.session.generation == generation }
             ?.draftModelSelection
 
     fun draftCapabilityCatalog(instanceId: String, generation: Long): AgentDraftCapabilityCatalog? =
         activeByInstance[instanceId]
-            ?.takeIf { it.session.generation == generation && it.session.isDraft }
+            ?.takeIf { it.session.generation == generation }
             ?.draftCatalog
 
     fun draftPreferences(instanceId: String, generation: Long): AgentDraftPreferences? =
         activeByInstance[instanceId]
-            ?.takeIf { it.session.generation == generation && it.session.isDraft }
+            ?.takeIf { it.session.generation == generation }
             ?.let { active ->
                 AgentDraftPreferences(
                     configuration = synchronized(active.draftConfiguration) {
@@ -350,12 +357,9 @@ object AgentRuntimeRegistry {
         val active = activeByInstance[instanceId]
             ?.takeIf { it.session.generation == generation }
             ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
-        if (!active.session.isDraft) {
-            return AgentOperationResult.Unsupported("session/draft-model-active-session")
-        }
         active.draftModelSelection = selection
         active.draftCatalog.configuration
-            .filter { it.category == com.kite.app.agent.contract.AgentConfigCategory.Model }
+            .filter { it.category == AgentConfigCategory.Model }
             .forEach { option -> synchronized(active.draftConfiguration) { active.draftConfiguration.remove(option.id) } }
         return AgentOperationResult.Success(selection)
     }
@@ -369,18 +373,15 @@ object AgentRuntimeRegistry {
         val active = activeByInstance[instanceId]
             ?.takeIf { it.session.generation == generation }
             ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
-        if (!active.session.isDraft) {
-            return AgentOperationResult.Unsupported("session/draft-config-active-session")
-        }
         val option = active.draftCatalog.configuration.firstOrNull { it.id == configId }
-            ?: return AgentOperationResult.Failure("当前 Agent 未提供该草稿配置")
+            ?: return AgentOperationResult.Failure("当前 Agent 未提供该输入配置")
         if (!option.accepts(value)) {
-            return AgentOperationResult.Failure("当前 Agent 不接受该草稿配置值")
+            return AgentOperationResult.Failure("当前 Agent 不接受该输入配置值")
         }
         synchronized(active.draftConfiguration) {
             active.draftConfiguration[configId] = value
         }
-        if (option.category == com.kite.app.agent.contract.AgentConfigCategory.Model) {
+        if (option.category == AgentConfigCategory.Model) {
             active.draftModelSelection = null
         }
         return AgentOperationResult.Success(
@@ -401,9 +402,6 @@ object AgentRuntimeRegistry {
         val active = activeByInstance[instanceId]
             ?.takeIf { it.session.generation == generation }
             ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
-        if (!active.session.isDraft) {
-            return AgentOperationResult.Unsupported("session/draft-mode-active-session")
-        }
         if (active.draftCatalog.modes.none { it.id == modeId }) {
             return AgentOperationResult.Failure("当前 Agent 未提供该工作模式")
         }
@@ -523,7 +521,7 @@ object AgentRuntimeRegistry {
                 additionalDirectories = active.additionalDirectories
             )) {
                 is AgentOperationResult.Success -> AgentOperationResult.Success(
-                    active.activate(loaded.value, nextCwd)
+                    active.activate(loaded.value, nextCwd, preserveDraftPreferences = false)
                 )
                 is AgentOperationResult.Failure -> loaded
                 is AgentOperationResult.Unsupported -> loaded
@@ -549,7 +547,7 @@ object AgentRuntimeRegistry {
                 )
             )) {
                 is AgentOperationResult.Success -> AgentOperationResult.Success(
-                    active.activate(forked.value, active.session.cwd)
+                    active.activate(forked.value, active.session.cwd, preserveDraftPreferences = false)
                 )
                 is AgentOperationResult.Failure -> forked
                 is AgentOperationResult.Unsupported -> forked
@@ -600,7 +598,11 @@ object AgentRuntimeRegistry {
                 when (val created = active.connection.newSession(
                     AgentNewSessionRequest(active.session.cwd, active.additionalDirectories)
                 )) {
-                    is AgentOperationResult.Success -> active.activate(created.value, active.session.cwd)
+                    is AgentOperationResult.Success -> active.activate(
+                        created.value,
+                        active.session.cwd,
+                        preserveDraftPreferences = true,
+                    )
                     is AgentOperationResult.Failure -> return@withLock created
                     is AgentOperationResult.Unsupported -> return@withLock created
                 }
@@ -690,9 +692,16 @@ object AgentRuntimeRegistry {
         activeByInstance.clear()
     }
 
-    private suspend fun ActiveRuntime.activate(snapshot: AgentSessionSnapshot, cwd: String): AgentRuntimeSession {
+    private suspend fun ActiveRuntime.activate(
+        snapshot: AgentSessionSnapshot,
+        cwd: String,
+        preserveDraftPreferences: Boolean,
+    ): AgentRuntimeSession {
         val normalizedSnapshot = snapshot.copy(
-            configuration = normalizeConfiguration(snapshot.configuration)
+            configuration = mergeDraftConfigurationCatalog(
+                draftCatalog.configuration,
+                normalizeConfiguration(snapshot.configuration),
+            )
         )
         val next = AgentRuntimeSession(
             instanceId = session.instanceId,
@@ -704,6 +713,11 @@ object AgentRuntimeRegistry {
             capabilities = connection.capabilities
         )
         session = next
+        if (!preserveDraftPreferences) {
+            draftModelSelection = null
+            synchronized(draftConfiguration) { draftConfiguration.clear() }
+            draftModeId = null
+        }
         publishDraftCatalog(draftCatalog.withSnapshot(normalizedSnapshot))
         bindSnapshot(next, normalizedSnapshot)
         statusSink.onStatus(next.sessionId, AgentSessionPhase.Ready, "准备就绪")
@@ -728,16 +742,14 @@ object AgentRuntimeRegistry {
         val mapped = resolveDraftModelSelection(target, snapshot.configuration)
         if (mapped == null) {
             if (target.usesAgentDefault) {
-                draftModelSelection = null
                 return AgentOperationResult.Success(Unit)
             }
-            return AgentOperationResult.Failure("当前 Agent 未提供该新会话模型，请选择默认模型后重试")
+            return AgentOperationResult.Failure("当前 Agent 未提供该本轮模型，请重新选择后发送")
         }
         val current = snapshot.configuration
             .filterIsInstance<AgentConfigOption.Select>()
             .firstOrNull { it.id == mapped.configId }
         if (current?.currentValue == mapped.value) {
-            draftModelSelection = null
             return AgentOperationResult.Success(Unit)
         }
         return when (val result = connection.setConfiguration(
@@ -747,11 +759,16 @@ object AgentRuntimeRegistry {
         )) {
             is AgentOperationResult.Success -> {
                 val normalized = normalizeConfiguration(result.value)
+                val complete = mergeDraftConfigurationCatalog(snapshot.configuration, normalized)
                 val key = AgentConversationKey(session.providerId, snapshot.id)
-                AgentConversationStore.applyEvent(key, AgentSessionEvent.ConfigurationUpdated(normalized))
-                session = session.copy(snapshot = snapshot.copy(configuration = normalized))
-                publishDraftCatalog(draftCatalog.copy(configuration = normalized))
-                draftModelSelection = null
+                AgentConversationStore.applyEvent(key, AgentSessionEvent.ConfigurationUpdated(complete))
+                session = session.copy(snapshot = snapshot.copy(configuration = complete))
+                publishDraftCatalog(draftCatalog.copy(
+                    configuration = mergeDraftConfigurationCatalog(
+                        draftCatalog.configuration,
+                        complete,
+                    )
+                ))
                 AgentOperationResult.Success(Unit)
             }
             is AgentOperationResult.Failure -> result
@@ -761,14 +778,20 @@ object AgentRuntimeRegistry {
 
     private suspend fun ActiveRuntime.applyDraftConfiguration(): AgentOperationResult<Unit> {
         val pending = synchronized(draftConfiguration) { draftConfiguration.toList() }
+            .sortedBy { (configId, _) ->
+                when (session.snapshot?.configuration?.firstOrNull { it.id == configId }?.category) {
+                    AgentConfigCategory.Model -> 0
+                    AgentConfigCategory.ThoughtLevel -> 1
+                    AgentConfigCategory.Permission -> 2
+                    else -> 3
+                }
+            }
         pending.forEach { (configId, value) ->
             if (session.snapshot?.configuration?.none { it.id == configId && it.accepts(value) } != false) {
-                return AgentOperationResult.Failure("新会话未提供预选配置：$configId")
+                return AgentOperationResult.Failure("当前 Agent 未提供本轮预选配置：$configId")
             }
             when (val result = applySessionConfiguration(configId, value)) {
-                is AgentOperationResult.Success -> synchronized(draftConfiguration) {
-                    draftConfiguration.remove(configId)
-                }
+                is AgentOperationResult.Success -> Unit
                 is AgentOperationResult.Failure -> return result
                 is AgentOperationResult.Unsupported -> return result
             }
@@ -779,10 +802,7 @@ object AgentRuntimeRegistry {
     private suspend fun ActiveRuntime.applyDraftMode(): AgentOperationResult<Unit> {
         val target = draftModeId ?: return AgentOperationResult.Success(Unit)
         return when (val result = applySessionMode(target)) {
-            is AgentOperationResult.Success -> {
-                draftModeId = null
-                result
-            }
+            is AgentOperationResult.Success -> result
             is AgentOperationResult.Failure -> result
             is AgentOperationResult.Unsupported -> result
         }
@@ -799,11 +819,17 @@ object AgentRuntimeRegistry {
         return when (val result = connection.setConfiguration(sessionId, configId, value)) {
             is AgentOperationResult.Success -> {
                 val normalized = normalizeConfiguration(result.value)
+                val complete = mergeDraftConfigurationCatalog(snapshot.configuration, normalized)
                 val key = AgentConversationKey(session.providerId, sessionId)
-                AgentConversationStore.applyEvent(key, AgentSessionEvent.ConfigurationUpdated(normalized))
-                session = session.copy(snapshot = snapshot.copy(configuration = normalized))
-                publishDraftCatalog(draftCatalog.copy(configuration = normalized))
-                AgentOperationResult.Success(normalized)
+                AgentConversationStore.applyEvent(key, AgentSessionEvent.ConfigurationUpdated(complete))
+                session = session.copy(snapshot = snapshot.copy(configuration = complete))
+                publishDraftCatalog(draftCatalog.copy(
+                    configuration = mergeDraftConfigurationCatalog(
+                        draftCatalog.configuration,
+                        complete,
+                    )
+                ))
+                AgentOperationResult.Success(complete)
             }
             is AgentOperationResult.Failure -> result
             is AgentOperationResult.Unsupported -> result
@@ -816,7 +842,7 @@ object AgentRuntimeRegistry {
         val snapshot = session.snapshot
             ?: return AgentOperationResult.Failure("Agent 会话状态不可用")
         val mode = snapshot.modes.firstOrNull { it.id == modeId }
-            ?: return AgentOperationResult.Failure("新会话未提供预选工作模式")
+            ?: return AgentOperationResult.Failure("当前 Agent 未提供本轮预选工作模式")
         return when (val result = connection.setMode(sessionId, mode.id)) {
             is AgentOperationResult.Success -> {
                 val key = AgentConversationKey(session.providerId, sessionId)
@@ -839,10 +865,24 @@ object AgentRuntimeRegistry {
 
     private fun AgentDraftCapabilityCatalog.withSnapshot(snapshot: AgentSessionSnapshot): AgentDraftCapabilityCatalog =
         copy(
-            configuration = snapshot.configuration,
+            configuration = mergeDraftConfigurationCatalog(configuration, snapshot.configuration),
             modes = snapshot.modes,
             currentModeId = snapshot.currentModeId
         )
+
+    private fun mergeDraftConfigurationCatalog(
+        current: List<AgentConfigOption>,
+        published: List<AgentConfigOption>,
+    ): List<AgentConfigOption> {
+        if (current.isEmpty()) return published
+        if (published.isEmpty()) return current
+        val publishedIds = published.mapTo(hashSetOf(), AgentConfigOption::id)
+        val publishedCategories = published.mapNotNullTo(hashSetOf(), AgentConfigOption::category)
+        return current.filterNot { option ->
+            option.id in publishedIds ||
+                (option.category != null && option.category in publishedCategories)
+        } + published
+    }
 
     private fun ActiveRuntime.publishDraftCatalog(next: AgentDraftCapabilityCatalog) =
         updateDraftCatalog { next }

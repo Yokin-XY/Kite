@@ -284,14 +284,13 @@ internal class RunAgentSurfaceBinding(
     private var providerLibraryGroupId: String = AgentModelLibraryStore.ALL_GROUP_ID
     private val expandedProviderIds = linkedSetOf<String>()
     private val selectedProviderIds = linkedSetOf<String>()
-    private var pendingSessionConfigId: String? = null
     private val sessionConfigurationPanel by lazy(LazyThreadSafetyMode.NONE) {
         AgentSessionConfigurationPanel(
             context = context,
             tokens = tokens,
             overlay = sessionConfigurationOverlay,
             optionsProvider = ::sessionConfigurationOptions,
-            pendingProvider = { pendingSessionConfigId != null },
+            pendingProvider = { false },
             viewportProvider = {
                 AgentSessionConfigurationViewport(
                     availableWidth = root.width.takeIf { it > 0 }
@@ -907,8 +906,7 @@ internal class RunAgentSurfaceBinding(
         val options = sessionConfigurationOptions()
         val permission = composerPermissionOption()
         val catalog = agentSessionControlApi.project(options + listOfNotNull(permission)).catalog
-        val pending = pendingSessionConfigId != null
-        fixedSessionControls.render(catalog, pending)
+        fixedSessionControls.render(catalog, pending = false)
         if (sessionConfigurationOverlay.visibility == View.VISIBLE) {
             rebuildSessionConfigurationPanel(animateContent = false)
         }
@@ -6539,13 +6537,8 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun sessionConfigurationOptions(): List<AgentConfigOption> {
-        currentSnapshot?.let { snapshot ->
-            return filterModelLibraryChoices(snapshot.configuration.filterNot {
-                it.category == AgentConfigCategory.Mode || it.category == AgentConfigCategory.Permission
-            })
-        }
         val runtime = AgentRuntimeRegistry.session(instanceId)
-            ?.takeIf { it.generation == generation && it.isDraft }
+            ?.takeIf { it.generation == generation }
             ?: return emptyList()
         return filterModelLibraryChoices(draftSessionConfigurationOptions(runtime))
             .filterNot {
@@ -6669,10 +6662,9 @@ internal class RunAgentSurfaceBinding(
 
     private fun composerModeOptions(): List<AgentComposerModeOption> {
         val runtime = AgentRuntimeRegistry.session(instanceId) ?: return emptyList()
-        val configuration = currentSnapshot?.configuration
-            ?: runtime.takeIf { it.generation == generation && it.isDraft }
-                ?.let(::draftSessionConfigurationOptions)
-                .orEmpty()
+        val configuration = runtime.takeIf { it.generation == generation }
+            ?.let(::draftSessionConfigurationOptions)
+            .orEmpty()
         val configMode = configuration
             .filterIsInstance<AgentConfigOption.Select>()
             .firstOrNull { it.category == AgentConfigCategory.Mode }
@@ -6687,23 +6679,10 @@ internal class RunAgentSurfaceBinding(
                 )
             }
         }
-        val catalog = if (runtime.isDraft) {
-            AgentRuntimeRegistry.draftCapabilityCatalog(runtime.instanceId, runtime.generation)
-        } else {
-            runtime.snapshot?.let { snapshot ->
-                AgentDraftCapabilityCatalog(
-                    configuration = snapshot.configuration,
-                    modes = snapshot.modes,
-                    currentModeId = snapshot.currentModeId
-                )
-            }
-        } ?: return emptyList()
-        val currentModeId = if (runtime.isDraft) {
-            AgentRuntimeRegistry.draftPreferences(runtime.instanceId, runtime.generation)?.modeId
-                ?: catalog.currentModeId
-        } else {
-            currentSnapshot?.currentModeId ?: catalog.currentModeId
-        }
+        val catalog = AgentRuntimeRegistry.draftCapabilityCatalog(runtime.instanceId, runtime.generation)
+            ?: return emptyList()
+        val currentModeId = AgentRuntimeRegistry.draftPreferences(runtime.instanceId, runtime.generation)?.modeId
+            ?: catalog.currentModeId
         return catalog.modes.map { mode ->
             AgentComposerModeOption(
                 id = mode.id,
@@ -6717,10 +6696,9 @@ internal class RunAgentSurfaceBinding(
 
     private fun composerPermissionOption(): AgentConfigOption.Select? {
         val runtime = AgentRuntimeRegistry.session(instanceId) ?: return null
-        val configuration = currentSnapshot?.configuration
-            ?: runtime.takeIf { it.generation == generation && it.isDraft }
-                ?.let(::draftSessionConfigurationOptions)
-                .orEmpty()
+        val configuration = runtime.takeIf { it.generation == generation }
+            ?.let(::draftSessionConfigurationOptions)
+            .orEmpty()
         return AgentSurfaceNavigationPolicy.permissionOption(configuration)
     }
 
@@ -7187,7 +7165,6 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun showSessionConfigurationPanel() {
-        if (pendingSessionConfigId != null) return
         closeCommandPalette(animate = false)
         closeComposerExtensionMenu(animate = false)
         sessionConfigurationPanel.show()
@@ -7271,9 +7248,9 @@ internal class RunAgentSurfaceBinding(
             }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
         }
         this.contentDescription = contentDescription
-        isClickable = pendingSessionConfigId == null
+        isClickable = true
         isFocusable = true
-        alpha = if (pendingSessionConfigId == null) 1f else 0.55f
+        alpha = 1f
         setOnClickListener { onClick() }
     }.also { row ->
         row.layoutParams = LinearLayout.LayoutParams(
@@ -7323,9 +7300,9 @@ internal class RunAgentSurfaceBinding(
             }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
         }
         this.contentDescription = contentDescription
-        isClickable = pendingSessionConfigId == null
+        isClickable = true
         isFocusable = true
-        alpha = if (pendingSessionConfigId == null) 1f else 0.55f
+        alpha = 1f
         setOnClickListener { onClick() }
     }.also { row ->
         row.layoutParams = LinearLayout.LayoutParams(
@@ -7341,68 +7318,43 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun updateConfiguration(configId: String, value: AgentConfigValue) {
-        if (pendingSessionConfigId != null || draftPreparationPending) return
+        if (draftPreparationPending) return
         val runtime = AgentRuntimeRegistry.session(instanceId)
-        if (runtime?.generation == generation && runtime.isDraft) {
-            val result = if (configId == AgentDraftModelPolicy.CONFIG_ID && value is AgentConfigValue.Select) {
-                val snapshot = draftModelSnapshot ?: return
-                val modelChoices = draftSessionConfigurationOptions(runtime)
-                    .filterIsInstance<AgentConfigOption.Select>()
-                    .firstOrNull { it.id == AgentDraftModelPolicy.CONFIG_ID }
-                    ?.choices
-                    .orEmpty()
-                val selection = AgentDraftModelPolicy.selection(snapshot, value.value, modelChoices) ?: return
-                AgentRuntimeRegistry.selectDraftModel(instanceId, generation, selection)
-            } else {
-                AgentRuntimeRegistry.selectDraftConfiguration(instanceId, generation, configId, value)
-            }
-            when (result) {
-                is AgentOperationResult.Success -> {
-                    sessionConfigurationPanel.showOverview(animateContent = true)
-                    renderSessionConfigurationControls()
-                    Toast.makeText(context, "已为本次新会话预选", Toast.LENGTH_SHORT).show()
-                }
-                else -> showOperationResult(result, null)
-            }
-            return
+            ?.takeIf { it.generation == generation }
+            ?: return
+        val result = if (configId == AgentDraftModelPolicy.CONFIG_ID && value is AgentConfigValue.Select) {
+            val snapshot = draftModelSnapshot ?: return
+            val modelChoices = draftSessionConfigurationOptions(runtime)
+                .filterIsInstance<AgentConfigOption.Select>()
+                .firstOrNull { it.id == AgentDraftModelPolicy.CONFIG_ID }
+                ?.choices
+                .orEmpty()
+            val selection = AgentDraftModelPolicy.selection(snapshot, value.value, modelChoices) ?: return
+            agentSessionControlApi.selectModel(instanceId, generation, selection)
+        } else {
+            agentSessionControlApi.selectConfiguration(instanceId, generation, configId, value)
         }
-        pendingSessionConfigId = configId
-        renderSessionConfigurationControls()
-        if (sessionConfigurationOverlay.visibility == View.VISIBLE) {
-            rebuildSessionConfigurationPanel(animateContent = false)
-        }
-        lifecycleOwner.lifecycleScope.launch {
-            val result = agentSessionControlApi.apply(instanceId, generation, configId, value)
-            pendingSessionConfigId = null
-            if (result is AgentOperationResult.Success && result.value.options != currentSnapshot?.configuration) {
-                currentSnapshot = currentSnapshot?.copy(configuration = result.value.options)
+        when (result) {
+            is AgentOperationResult.Success -> {
+                sessionConfigurationPanel.showOverview(animateContent = true)
+                renderSessionConfigurationControls()
+                Toast.makeText(context, "已为本轮消息预选", Toast.LENGTH_SHORT).show()
             }
-            renderSessionConfigurationControls()
-            if (sessionConfigurationOverlay.visibility == View.VISIBLE) {
-                rebuildSessionConfigurationPanel(animateContent = true)
-            }
-            showOperationResult(result, "当前会话配置已更新")
+            else -> showOperationResult(result, null)
         }
     }
 
     private fun updateLegacyMode(modeId: String) {
-        if (pendingSessionConfigId != null || draftPreparationPending) return
+        if (draftPreparationPending) return
         val runtime = AgentRuntimeRegistry.session(instanceId)
-        if (runtime?.generation == generation && runtime.isDraft) {
-            when (val result = AgentRuntimeRegistry.selectDraftMode(instanceId, generation, modeId)) {
-                is AgentOperationResult.Success -> {
-                    renderSessionConfigurationControls()
-                    Toast.makeText(context, "已为本次新会话预选工作模式", Toast.LENGTH_SHORT).show()
-                }
-                else -> showOperationResult(result, null)
+            ?.takeIf { it.generation == generation }
+            ?: return
+        when (val result = agentSessionControlApi.selectMode(instanceId, generation, modeId)) {
+            is AgentOperationResult.Success -> {
+                renderSessionConfigurationControls()
+                Toast.makeText(context, "已为本轮消息预选工作模式", Toast.LENGTH_SHORT).show()
             }
-            return
-        }
-        pendingSessionConfigId = LEGACY_MODE_PENDING_ID
-        lifecycleOwner.lifecycleScope.launch {
-            val result = AgentRuntimeRegistry.setMode(instanceId, generation, modeId)
-            pendingSessionConfigId = null
-            showOperationResult(result, "工作模式已更新")
+            else -> showOperationResult(result, null)
         }
     }
 
@@ -7539,7 +7491,6 @@ internal class RunAgentSurfaceBinding(
         const val SESSION_SEARCH_WATCHER_TAG = "agent-session-search-watcher"
         const val COPY_BUFFER_SIZE = 8 * 1024
         const val MAX_INLINE_IMAGE_BYTES = 12 * 1024 * 1024
-        const val LEGACY_MODE_PENDING_ID = "__kite_legacy_mode__"
         const val SESSION_LOADING_FEEDBACK_DELAY_MS = 140L
     }
 }
