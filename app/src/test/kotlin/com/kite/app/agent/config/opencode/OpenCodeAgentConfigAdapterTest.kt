@@ -973,6 +973,29 @@ class OpenCodeAgentConfigAdapterTest {
     }
 
     @Test
+    fun bundlesAnImmediatelyUsableFreeCatalogWithoutScanningOpenCode() {
+        val catalog = requireNotNull(adapter.bundledFreeProviderCatalog(AGENT_ID))
+        val provider = catalog.providers.single()
+
+        assertEquals("opencode-public", catalog.sourceId)
+        assertEquals("opencode", provider.id)
+        assertEquals(AgentModelSource.Free, provider.source)
+        assertEquals(AgentCredentialPresence.NotApplicable, provider.credentialPresence)
+        assertEquals(
+            listOf(
+                "big-pickle",
+                "deepseek-v4-flash-free",
+                "mimo-v2.5-free",
+                "laguna-s-2.1-free",
+                "ling-3.0-flash-free",
+                "north-mini-code-free",
+                "nemotron-3-ultra-free",
+            ),
+            provider.models.map { it.id },
+        )
+    }
+
+    @Test
     fun capabilitiesMatchImplementedPersistentOperations() {
         val capabilities = adapter.capabilities()
         val supported = capabilities.supported

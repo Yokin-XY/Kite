@@ -103,10 +103,13 @@ class AgentProviderCatalogStore private constructor(
         PREFERENCES,
         Context.MODE_PRIVATE,
     )
+    private val snapshotCache = mutableMapOf<String, AgentProviderCatalogSnapshot>()
 
     fun snapshot(agentId: String): AgentProviderCatalogSnapshot = synchronized(LOCK) {
         if (agentId.isBlank()) return@synchronized AgentProviderCatalogSnapshot()
-        readAgents().optJSONObject(agentId)?.toSnapshot(agentId) ?: AgentProviderCatalogSnapshot()
+        snapshotCache.getOrPut(agentId) {
+            readAgents().optJSONObject(agentId)?.toSnapshot(agentId) ?: AgentProviderCatalogSnapshot()
+        }
     }
 
     fun saveUserProvider(
@@ -181,6 +184,41 @@ class AgentProviderCatalogStore private constructor(
                     ).sortedBy(AgentCatalogProvider::id),
             ).dropInvalidSelection()
             next to Unit
+        }
+        return snapshot(agentId)
+    }
+
+    /** 首次仅在该免费来源完全不存在时写入随应用发布的快照，并给空目录选定可直接使用的默认模型。 */
+    fun seedFreeProvidersIfAbsent(
+        agentId: String,
+        sourceId: String,
+        sourceVersion: String,
+        providers: List<AgentCatalogProvider>,
+    ): AgentProviderCatalogSnapshot {
+        update(agentId) { current ->
+            if (current.providers.any {
+                    it.policy == AgentProviderCatalogPolicy.FreeScan && it.ownerId == sourceId
+                }) {
+                return@update current to Unit
+            }
+            val seeded = providers.mapNotNull { candidate ->
+                candidate.normalized(
+                    source = AgentModelSource.Free,
+                    policy = AgentProviderCatalogPolicy.FreeScan,
+                    ownerId = sourceId,
+                    sourceVersion = sourceVersion,
+                )
+            }.filterNot { candidate -> current.providers.any { it.id == candidate.id } }
+                .distinctBy(AgentCatalogProvider::id)
+            if (seeded.isEmpty()) return@update current to Unit
+            val first = seeded.first()
+            val firstModel = first.models.first()
+            current.copy(
+                providers = (current.providers + seeded).distinctBy(AgentCatalogProvider::id)
+                    .sortedBy(AgentCatalogProvider::id),
+                selectedProviderId = current.selectedProviderId ?: first.id,
+                selectedModelId = current.selectedModelId ?: firstModel.id,
+            ) to Unit
         }
         return snapshot(agentId)
     }
@@ -275,6 +313,7 @@ class AgentProviderCatalogStore private constructor(
     internal fun resetForTest() = synchronized(LOCK) {
         preferences.edit().clear().commit()
         credentialVault.clear()
+        snapshotCache.clear()
     }
 
     private fun <T> update(
@@ -283,12 +322,17 @@ class AgentProviderCatalogStore private constructor(
     ): T = synchronized(LOCK) {
         require(agentId.isNotBlank()) { "Agent ID 不能为空" }
         val agents = readAgents()
-        val current = agents.optJSONObject(agentId)?.toSnapshot(agentId) ?: AgentProviderCatalogSnapshot()
+        val current = snapshotCache[agentId]
+            ?: agents.optJSONObject(agentId)?.toSnapshot(agentId)
+            ?: AgentProviderCatalogSnapshot()
         val (candidate, result) = transform(current)
         if (candidate != current) {
             val next = candidate.copy(revision = current.revision + 1)
             agents.put(agentId, next.toJson())
             writeAgents(agents)
+            snapshotCache[agentId] = next
+        } else {
+            snapshotCache.putIfAbsent(agentId, current)
         }
         result
     }

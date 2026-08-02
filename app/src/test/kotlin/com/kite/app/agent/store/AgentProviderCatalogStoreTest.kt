@@ -94,6 +94,30 @@ class AgentProviderCatalogStoreTest {
     }
 
     @Test
+    fun `首次免费预设立即建立默认选择且不能覆盖已有扫描版本`() {
+        val first = store.seedFreeProvidersIfAbsent(
+            "opencode",
+            sourceId = "opencode-public",
+            sourceVersion = "bundled-v1",
+            providers = listOf(provider("opencode", "OpenCode", null, "big-pickle")),
+        )
+
+        assertEquals("opencode", first.selectedProviderId)
+        assertEquals("big-pickle", first.selectedModelId)
+        assertEquals("bundled-v1", first.providers.single().sourceVersion)
+
+        val unchanged = store.seedFreeProvidersIfAbsent(
+            "opencode",
+            sourceId = "opencode-public",
+            sourceVersion = "bundled-v2",
+            providers = listOf(provider("opencode", "OpenCode", null, "different")),
+        )
+
+        assertEquals("bundled-v1", unchanged.providers.single().sourceVersion)
+        assertEquals(listOf("big-pickle"), unchanged.providers.single().models.map { it.id })
+    }
+
+    @Test
     fun `官方目录只在保存登录版本时替换且不受免费扫描影响`() {
         val v1 = store.saveOfficialVersion(
             "codex",

@@ -28,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
 data class AgentProviderCatalogOpenResult(
     val snapshot: AgentProviderCatalogSnapshot,
     val warnings: List<String> = emptyList(),
+    val refreshed: Boolean = false,
 )
 
 sealed interface AgentProviderPreparationResult {
@@ -43,8 +44,11 @@ sealed interface AgentProviderPreparationResult {
 interface AgentProviderCatalogApi {
     fun snapshot(target: AgentConfigurationTarget): AgentProviderCatalogSnapshot
 
-    /** 仅 Provider 管理页打开时调用：一次性迁移旧自定义项，并显式更新免费目录。 */
+    /** 打开管理页只返回本地目录；不得扫描 Agent 或改写官方登录版本。 */
     suspend fun openProviderManager(target: AgentConfigurationTarget): AgentProviderCatalogOpenResult
+
+    /** 仅由供应商页人工下拉触发；只刷新 Adapter 明确支持的免费来源。 */
+    suspend fun refreshFreeProviderCatalog(target: AgentConfigurationTarget): AgentProviderCatalogOpenResult
 
     /** 升级兼容：只在迁移标记缺失时吸收旧版原生自定义 Provider，不扫描免费或官方目录。 */
     suspend fun migrateLegacyUserProviders(target: AgentConfigurationTarget): List<String>
@@ -111,21 +115,28 @@ class StoreBackedAgentProviderCatalogApi(
     private val adapters: AgentConfigAdapterRegistry,
 ) : AgentProviderCatalogApi {
     private val preparedFingerprints = ConcurrentHashMap<String, String>()
+    private val initializedTargets = ConcurrentHashMap.newKeySet<String>()
 
-    override fun snapshot(target: AgentConfigurationTarget): AgentProviderCatalogSnapshot =
-        store.snapshot(target.agentId)
+    override fun snapshot(target: AgentConfigurationTarget): AgentProviderCatalogSnapshot {
+        ensureBundledCatalog(target)
+        return store.snapshot(target.agentId)
+    }
 
     override suspend fun openProviderManager(
         target: AgentConfigurationTarget,
     ): AgentProviderCatalogOpenResult {
+        ensureBundledCatalog(target)
+        return AgentProviderCatalogOpenResult(snapshot(target))
+    }
+
+    override suspend fun refreshFreeProviderCatalog(
+        target: AgentConfigurationTarget,
+    ): AgentProviderCatalogOpenResult {
+        ensureBundledCatalog(target)
         val adapter = adapters.adapter(target.adapterId)
             ?: return AgentProviderCatalogOpenResult(snapshot(target), listOf("当前 Agent 没有可用的配置 Adapter"))
-        adapter.sessionPermissionControl()?.option()?.let { option ->
-            store.mergeMappedControls(target.agentId, listOf(option))
-        }
-
-        val warnings = migrateLegacyUserProviders(target).toMutableList()
-
+        val warnings = mutableListOf<String>()
+        var refreshed = false
         when (val free = adapter.scanFreeProviderCatalog(target.agentId)) {
             is AgentFreeProviderCatalogResult.Ready -> {
                 store.syncFreeProviders(
@@ -142,11 +153,12 @@ class StoreBackedAgentProviderCatalogApi(
                     },
                 )
                 free.warning?.let(warnings::add)
+                refreshed = free.warning == null
             }
             is AgentFreeProviderCatalogResult.Failed -> warnings += free.message
-            AgentFreeProviderCatalogResult.Unsupported -> Unit
+            AgentFreeProviderCatalogResult.Unsupported -> warnings += "当前 Agent 没有可手动更新的免费模型目录"
         }
-        return AgentProviderCatalogOpenResult(snapshot(target), warnings.distinct())
+        return AgentProviderCatalogOpenResult(snapshot(target), warnings.distinct(), refreshed)
     }
 
     override suspend fun migrateLegacyUserProviders(target: AgentConfigurationTarget): List<String> {
@@ -303,6 +315,31 @@ class StoreBackedAgentProviderCatalogApi(
 
     private fun preparedKey(target: AgentConfigurationTarget, providerId: String): String =
         "${target.agentId}\u0000${target.adapterId.orEmpty()}\u0000$providerId"
+
+    /** 只合入轻量静态能力和随应用发布的首版目录；不读取 Agent 文件或执行命令。 */
+    private fun ensureBundledCatalog(target: AgentConfigurationTarget) {
+        val key = "${target.agentId}\u0000${target.adapterId.orEmpty()}"
+        if (!initializedTargets.add(key)) return
+        val adapter = adapters.adapter(target.adapterId) ?: return
+        adapter.sessionPermissionControl()?.option()?.let { option ->
+            store.mergeMappedControls(target.agentId, listOf(option))
+        }
+        adapter.bundledFreeProviderCatalog(target.agentId)?.let { bundled ->
+            store.seedFreeProvidersIfAbsent(
+                target.agentId,
+                bundled.sourceId,
+                bundled.sourceVersion,
+                bundled.providers.map { provider ->
+                    provider.toCatalogProvider(
+                        policy = AgentProviderCatalogPolicy.FreeScan,
+                        source = AgentModelSource.Free,
+                        ownerId = bundled.sourceId,
+                        sourceVersion = bundled.sourceVersion,
+                    )
+                },
+            )
+        }
+    }
 
     private fun providerFingerprint(provider: AgentCatalogProvider, credentialPresent: Boolean): String {
         val digest = MessageDigest.getInstance("SHA-256")

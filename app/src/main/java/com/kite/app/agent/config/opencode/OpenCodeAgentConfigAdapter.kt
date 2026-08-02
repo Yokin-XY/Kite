@@ -140,6 +140,9 @@ internal class OpenCodeAgentConfigAdapter(
     override fun providerConfigurationEffect(): AgentSessionConfigurationEffect =
         AgentSessionConfigurationEffect.Reconnect
 
+    override fun bundledFreeProviderCatalog(agentId: String): AgentFreeProviderCatalog =
+        openCodeBundledFreeProviderCatalog()
+
     override suspend fun readUserProviderImport(agentId: String): AgentUserProviderImportResult = runCatching {
         val state = readState(agentId)
         val auth = readAuthCredentials(state.paths)

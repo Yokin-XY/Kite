@@ -51,6 +51,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.kite.app.R
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentCommand
@@ -127,6 +128,7 @@ import com.kite.app.agent.store.AgentArchivedSessionMetadata
 import com.kite.app.agent.store.AgentArchivedSessionSourceState
 import com.kite.app.agent.store.AgentModelDisplayName
 import com.kite.app.agent.store.AgentModelLibraryStore
+import com.kite.app.agent.store.AgentProviderCatalogSnapshot
 import com.kite.app.agent.store.AgentProject
 import com.kite.app.agent.store.AgentProjectSaveResult
 import com.kite.app.agent.store.AgentProjectStore
@@ -252,6 +254,7 @@ internal class RunAgentSurfaceBinding(
     private var providerPageTarget: AgentConfigurationTarget? = null
     private var providerPageSnapshot: AgentLiveConfigSnapshot? = null
     private var providerCatalogLoadRevision: Long = 0L
+    private var providerCatalogRefreshJob: Job? = null
     private var skillPageAgentId: String? = null
     private var skillPageTarget: AgentConfigurationTarget? = null
     private var skillPageSnapshot: AgentLiveConfigSnapshot? = null
@@ -278,6 +281,7 @@ internal class RunAgentSurfaceBinding(
     private var coreDocumentEditorInput: EditText? = null
     private var draftModelAgentId: String? = null
     private var draftModelSnapshot: AgentLiveConfigSnapshot? = null
+    private var draftProviderCatalogSnapshot: AgentProviderCatalogSnapshot? = null
     private var draftModelOfficialAccounts: List<AgentOfficialAccountSpec> = emptyList()
     private var draftModelLoadRevision: Long = 0L
     private var draftModelLoadJob: Job? = null
@@ -396,6 +400,9 @@ internal class RunAgentSurfaceBinding(
         generation = state.createdAt
         if (agentId != content.agentId) {
             draftModelOfficialAccounts = emptyList()
+            draftModelSnapshot = null
+            draftProviderCatalogSnapshot = null
+            draftModelAgentId = null
         }
         agentId = content.agentId
         agentDisplayName = state.title.ifBlank { content.agentId ?: "Agent" }
@@ -405,9 +412,9 @@ internal class RunAgentSurfaceBinding(
         statusText.setTextIfChanged(content.statusMessage
             ?: content.connectionStatus?.let(::connectionStatusLabel)
             ?: state.statusLabel)
+        loadDraftModelCatalog()
         if (prepareInitialEntryDraftIfNeeded()) return
         subscribe(content.providerId, content.sessionId)
-        loadDraftModelCatalog()
         updateComposer()
     }
 
@@ -430,6 +437,8 @@ internal class RunAgentSurfaceBinding(
         officialAccountObservedAgentId = null
         navigationJob?.cancel()
         navigationJob = null
+        providerCatalogRefreshJob?.cancel()
+        providerCatalogRefreshJob = null
         draftModelLoadJob?.cancel()
         draftModelLoadJob = null
         projectEditorDialog?.dismiss()
@@ -908,7 +917,8 @@ internal class RunAgentSurfaceBinding(
         val options = sessionConfigurationOptions()
         val permission = composerPermissionOption()
         val catalog = agentSessionControlApi.project(options + listOfNotNull(permission)).catalog
-        fixedSessionControls.render(catalog, pending = false)
+        val runtimeReady = AgentRuntimeRegistry.session(instanceId)?.generation == generation
+        fixedSessionControls.render(catalog, pending = !runtimeReady || draftPreparationPending)
         if (sessionConfigurationOverlay.visibility == View.VISIBLE) {
             rebuildSessionConfigurationPanel(animateContent = false)
         }
@@ -1152,11 +1162,6 @@ internal class RunAgentSurfaceBinding(
 
     private fun enterDraftUi() {
         sessionId = null
-        draftModelLoadRevision++
-        draftModelLoadJob?.cancel()
-        draftModelLoadJob = null
-        draftModelSnapshot = null
-        draftModelAgentId = agentId
         subscribe(providerId, null)
         input.setText("")
         pendingAttachments.clear()
@@ -1172,6 +1177,8 @@ internal class RunAgentSurfaceBinding(
             draftModelAgentId == targetAgentId &&
             (draftModelSnapshot != null || draftModelLoadJob?.isActive == true)
         ) {
+            draftModelSnapshot?.let { applyDraftModelDefault(targetAgentId, it) }
+            renderSessionConfigurationControls()
             return
         }
         val requestRevision = ++draftModelLoadRevision
@@ -1181,32 +1188,39 @@ internal class RunAgentSurfaceBinding(
             val loaded = withContext(Dispatchers.IO) {
                 val entry = agentRegistry.snapshot().entry(targetAgentId)
                 val target = entry?.configurationTarget()
-                entry?.registration?.officialAccounts.orEmpty() to target?.let { configurationTarget ->
-                    agentProviderCatalogApi.snapshot(configurationTarget)
-                        .toConfigurationProjection(configurationTarget)
-                }
+                val catalog = target?.let(agentProviderCatalogApi::snapshot)
+                Triple(
+                    entry?.registration?.officialAccounts.orEmpty(),
+                    catalog,
+                    if (target == null || catalog == null) null else catalog.toConfigurationProjection(target),
+                )
             }
             if (
                 requestRevision != draftModelLoadRevision ||
                 agentId != targetAgentId
             ) return@launch
             draftModelOfficialAccounts = loaded.first
-            val snapshot = loaded.second
+            draftProviderCatalogSnapshot = loaded.second
+            val snapshot = loaded.third
             draftModelSnapshot = snapshot
             if (snapshot != null) {
-                val current = AgentRuntimeRegistry.draftModelSelection(instanceId, generation)
-                val available = AgentDraftModelPolicy.option(
-                    snapshot,
-                    current,
-                    modelLibraryStore.snapshot(targetAgentId),
-                    draftModelOfficialAccounts,
-                )
-                val next = current?.takeIf { AgentDraftModelPolicy.contains(available, it) }
-                    ?: AgentDraftModelPolicy.defaultSelection(snapshot)
-                next?.let { AgentRuntimeRegistry.selectDraftModel(instanceId, generation, it) }
+                applyDraftModelDefault(targetAgentId, snapshot)
             }
             renderSessionConfigurationControls()
         }
+    }
+
+    private fun applyDraftModelDefault(targetAgentId: String, snapshot: AgentLiveConfigSnapshot) {
+        val current = AgentRuntimeRegistry.draftModelSelection(instanceId, generation)
+        val available = AgentDraftModelPolicy.option(
+            snapshot,
+            current,
+            modelLibraryStore.snapshot(targetAgentId),
+            draftModelOfficialAccounts,
+        )
+        val next = current?.takeIf { AgentDraftModelPolicy.contains(available, it) }
+            ?: AgentDraftModelPolicy.defaultSelection(snapshot)
+        next?.let { AgentRuntimeRegistry.selectDraftModel(instanceId, generation, it) }
     }
 
     private fun usePersistentSnapshotAsDraftDefault(targetAgentId: String, snapshot: AgentLiveConfigSnapshot) {
@@ -1216,6 +1230,8 @@ internal class RunAgentSurfaceBinding(
             ?: return
         draftModelAgentId = targetAgentId
         draftModelSnapshot = snapshot
+        val target = settingsRegistrySnapshot?.entry(targetAgentId)?.configurationTarget()
+        if (target != null) draftProviderCatalogSnapshot = agentProviderCatalogApi.snapshot(target)
         AgentDraftModelPolicy.defaultSelection(snapshot)?.let {
             AgentRuntimeRegistry.selectDraftModel(runtime.instanceId, runtime.generation, it)
         }
@@ -3399,43 +3415,47 @@ internal class RunAgentSurfaceBinding(
         target: AgentConfigurationTarget,
     ) {
         val targetAgentId = selected.registration.definition.agentId
+        val catalog = agentProviderCatalogApi.snapshot(target)
+        val projection = catalog.toConfigurationProjection(target)
+        if (targetAgentId == agentId) {
+            draftProviderCatalogSnapshot = catalog
+            draftModelSnapshot = projection
+        }
+        showProviderManager(selected, target, projection)
+        renderSessionConfigurationControls()
+    }
+
+    private fun refreshProviderCatalog(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        refresh: SwipeRefreshLayout,
+    ) {
+        if (providerCatalogRefreshJob?.isActive == true) return
+        val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++providerCatalogLoadRevision
-        navigationScreen = AgentNavigationScreen.ProviderList
-        navigationHost.removeAllViews()
-        navigationHost.addView(
-            LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(agentPageBackground)
-                addView(buildAgentSubpageHeader(
-                    title = "模型库",
-                    backDescription = "返回 Agent 设置",
-                    onBack = ::returnFromProviderManager,
-                ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
-                addView(settingsMessage("正在更新免费模型目录…"), LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    0,
-                    1f,
-                ))
-            },
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
-        )
-        navigationHost.visibility = View.VISIBLE
-        navigationJob?.cancel()
-        navigationJob = lifecycleOwner.lifecycleScope.launch {
-            val opened = withContext(Dispatchers.IO) {
-                agentProviderCatalogApi.openProviderManager(target)
+        refresh.isRefreshing = true
+        providerCatalogRefreshJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                agentProviderCatalogApi.refreshFreeProviderCatalog(target)
             }
+            refresh.isRefreshing = false
             if (
                 requestRevision != providerCatalogLoadRevision ||
-                selectedSettingsAgentId != targetAgentId
+                navigationScreen != AgentNavigationScreen.ProviderList ||
+                providerPageAgentId != targetAgentId
             ) return@launch
-            val projection = opened.snapshot.toConfigurationProjection(target)
-            if (targetAgentId == agentId) draftModelSnapshot = projection
-            showProviderManager(selected, target, projection)
-            opened.warnings.firstOrNull()?.let { warning ->
-                Toast.makeText(context, warning, Toast.LENGTH_SHORT).show()
+            val projection = result.snapshot.toConfigurationProjection(target)
+            providerPageSnapshot = projection
+            if (targetAgentId == agentId) {
+                draftProviderCatalogSnapshot = result.snapshot
+                draftModelSnapshot = projection
+                applyDraftModelDefault(targetAgentId, projection)
             }
+            showProviderManager(selected, target, projection)
             renderSessionConfigurationControls()
+            val message = result.warnings.firstOrNull()
+                ?: if (result.refreshed) "免费模型目录已更新" else "本地模型目录已是最新状态"
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -5122,7 +5142,7 @@ internal class RunAgentSurfaceBinding(
                 showProviderEditor(selected, target, snapshot, existing = null, preset = null)
             }) else null,
         ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
-        addView(ScrollView(context).apply {
+        val providerScroll = ScrollView(context).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
             addView(LinearLayout(context).apply {
@@ -5190,6 +5210,15 @@ internal class RunAgentSurfaceBinding(
                     }
                 }
             }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        addView(SwipeRefreshLayout(context).apply {
+            setColorSchemeColors(tokens.textPrimary)
+            setProgressBackgroundColorSchemeColor(agentSettingsSurface)
+            addView(providerScroll, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            setOnRefreshListener { refreshProviderCatalog(selected, target, this) }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         if (selectedProviderIds.isNotEmpty()) {
             addView(buildProviderBatchBar(selected, target, snapshot, providers), LinearLayout.LayoutParams(
@@ -6536,7 +6565,6 @@ internal class RunAgentSurfaceBinding(
     private fun sessionConfigurationOptions(): List<AgentConfigOption> {
         val runtime = AgentRuntimeRegistry.session(instanceId)
             ?.takeIf { it.generation == generation }
-            ?: return emptyList()
         return filterModelLibraryChoices(draftSessionConfigurationOptions(runtime))
             .filterNot {
                 it.category == AgentConfigCategory.Mode || it.category == AgentConfigCategory.Permission
@@ -6612,17 +6640,30 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun draftSessionConfigurationOptions(
-        runtime: AgentRuntimeSession
+        runtime: AgentRuntimeSession?
     ): List<AgentConfigOption> {
-        val preferences = AgentRuntimeRegistry.draftPreferences(runtime.instanceId, runtime.generation)
-        val cached = AgentRuntimeRegistry.draftCapabilityCatalog(runtime.instanceId, runtime.generation)
+        val preferences = runtime?.let {
+            AgentRuntimeRegistry.draftPreferences(it.instanceId, it.generation)
+        }
+        val runtimeOptions = runtime?.let {
+            AgentRuntimeRegistry.draftCapabilityCatalog(it.instanceId, it.generation)
+        }
             ?.configuration
             .orEmpty()
             .map { option -> option.withDraftValue(preferences?.configuration?.get(option.id)) }
+        val runtimeCategories = runtimeOptions.mapNotNullTo(hashSetOf(), AgentConfigOption::category)
+        val storedControls = draftProviderCatalogSnapshot
+            ?.controls
+            .orEmpty()
+            .filterNot { it.category in runtimeCategories }
+            .map { option -> option.withDraftValue(preferences?.configuration?.get(option.id)) }
+        val cached = storedControls + runtimeOptions
         val persistentModel = draftModelSnapshot?.let { snapshot ->
             AgentDraftModelPolicy.option(
                 snapshot,
-                AgentRuntimeRegistry.draftModelSelection(runtime.instanceId, runtime.generation),
+                runtime?.let {
+                    AgentRuntimeRegistry.draftModelSelection(it.instanceId, it.generation)
+                },
                 agentId?.let(modelLibraryStore::snapshot) ?: com.kite.app.agent.store.AgentModelLibrarySnapshot(),
                 modelLibraryOfficialAccounts(agentId),
             )
@@ -6677,10 +6718,8 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun composerPermissionOption(): AgentConfigOption.Select? {
-        val runtime = AgentRuntimeRegistry.session(instanceId) ?: return null
-        val configuration = runtime.takeIf { it.generation == generation }
-            ?.let(::draftSessionConfigurationOptions)
-            .orEmpty()
+        val runtime = AgentRuntimeRegistry.session(instanceId)?.takeIf { it.generation == generation }
+        val configuration = draftSessionConfigurationOptions(runtime)
         return AgentSurfaceNavigationPolicy.permissionOption(configuration)
     }
 

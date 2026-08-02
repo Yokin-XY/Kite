@@ -55,6 +55,14 @@ class AgentConfigurationArchitectureTest {
             "显示层必须依赖统一 Provider 目录端口",
             source.contains("AgentProviderCatalogApi"),
         )
+        assertFalse(
+            "显示层不得直接扫描 Agent 免费目录",
+            source.contains("scanFreeProviderCatalog"),
+        )
+        assertTrue(
+            "供应商页下拉刷新必须经过统一 Provider 目录端口",
+            source.contains("agentProviderCatalogApi.refreshFreeProviderCatalog(target)"),
+        )
     }
 
     @Test

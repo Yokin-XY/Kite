@@ -61,16 +61,51 @@ class AgentProviderCatalogApiTest {
     }
 
     @Test
-    fun `管理页只迁移一次自定义目录但每次显式更新免费目录`() = runTest {
+    fun `管理页打开只读缓存且人工刷新才扫描免费目录`() = runTest {
         val first = api.openProviderManager(target)
         val second = api.openProviderManager(target)
 
+        assertEquals(0, adapter.importCalls)
+        assertEquals(0, adapter.freeScanCalls)
+        assertTrue(first.snapshot.providers.isEmpty())
+        assertTrue(second.snapshot.providers.isEmpty())
+
+        api.migrateLegacyUserProviders(target)
+        api.migrateLegacyUserProviders(target)
+
+        val migrated = api.snapshot(target)
         assertEquals(1, adapter.importCalls)
-        assertEquals(2, adapter.freeScanCalls)
-        assertEquals(setOf("zhipu", "opencode"), second.snapshot.providers.map { it.id }.toSet())
-        assertEquals(AgentModelSource.UserConfigured, first.snapshot.providers.single { it.id == "zhipu" }.source)
+        assertEquals(AgentModelSource.UserConfigured, migrated.providers.single { it.id == "zhipu" }.source)
         assertEquals("legacy-key", store.credential("opencode", "zhipu")?.secret)
-        assertFalse("zhipu" in second.snapshot.pendingNativeProviderIds)
+        assertFalse("zhipu" in migrated.pendingNativeProviderIds)
+
+        api.refreshFreeProviderCatalog(target)
+        api.refreshFreeProviderCatalog(target)
+
+        assertEquals(2, adapter.freeScanCalls)
+        assertEquals(setOf("zhipu", "opencode"), api.snapshot(target).providers.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `无缓存时使用Adapter随应用发布的免费目录且不会执行扫描`() {
+        adapter.bundled = AgentFreeProviderCatalog(
+            sourceId = "bundled-free",
+            sourceVersion = "app-v1",
+            providers = listOf(
+                AgentProviderSummary(
+                    id = "opencode",
+                    displayName = "OpenCode",
+                    models = listOf(AgentProviderModelSummary("big-pickle")),
+                    source = AgentModelSource.Free,
+                ),
+            ),
+        )
+
+        val snapshot = api.snapshot(target)
+
+        assertEquals(0, adapter.freeScanCalls)
+        assertEquals("big-pickle", snapshot.selectedModelId)
+        assertEquals("app-v1", snapshot.providers.single().sourceVersion)
     }
 
     @Test
@@ -115,7 +150,7 @@ class AgentProviderCatalogApiTest {
             ),
         )
 
-        val opened = api.openProviderManager(target)
+        val opened = api.refreshFreeProviderCatalog(target)
 
         val official = opened.snapshot.providers.single { it.id == "official" }
         assertEquals("login-v1", official.sourceVersion)
@@ -159,6 +194,7 @@ class AgentProviderCatalogApiTest {
         var importCalls = 0
         var freeScanCalls = 0
         var applyCalls = 0
+        var bundled: AgentFreeProviderCatalog? = null
         private var revision = 1
         private val providers = linkedMapOf<String, AgentProviderSummary>()
 
@@ -183,6 +219,8 @@ class AgentProviderCatalogApiTest {
                 ),
             )
         }
+
+        override fun bundledFreeProviderCatalog(agentId: String): AgentFreeProviderCatalog? = bundled
 
         override suspend fun scanFreeProviderCatalog(agentId: String): AgentFreeProviderCatalogResult {
             freeScanCalls++

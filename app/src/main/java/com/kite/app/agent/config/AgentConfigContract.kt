@@ -605,7 +605,10 @@ interface AgentConfigAdapter {
     suspend fun readUserProviderImport(agentId: String): AgentUserProviderImportResult =
         AgentUserProviderImportResult.Unsupported
 
-    /** 显式刷新无需登录免费目录；普通 readLive、页面绑定和会话加载不得调用。 */
+    /** 随应用发布的首屏免费目录，只用于本地目录尚无该来源时初始化，不替代人工刷新。 */
+    fun bundledFreeProviderCatalog(agentId: String): AgentFreeProviderCatalog? = null
+
+    /** 用户下拉刷新时扫描无需登录免费目录；普通页面打开、绑定和会话加载不得调用。 */
     suspend fun scanFreeProviderCatalog(agentId: String): AgentFreeProviderCatalogResult =
         AgentFreeProviderCatalogResult.Unsupported
 
