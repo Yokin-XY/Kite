@@ -33,15 +33,23 @@ internal fun mergeAgentSessionConfigurationOverlay(
     options: List<AgentConfigOption>,
     native: List<AgentConfigOption>,
     protocolCategoriesPublished: Set<AgentConfigCategory> = emptySet(),
+    matchingNativeIdsAreProtocol: Boolean = true,
 ): AgentSessionConfigurationOverlayMerge {
     val nativeIds = native.mapTo(hashSetOf(), AgentConfigOption::id)
     val nativeCategories = native.mapNotNullTo(hashSetOf(), AgentConfigOption::category)
     val protocolPublishedNow = options.asSequence()
-        .filter { it.id !in nativeIds && it.category in nativeCategories }
+        .filter { option ->
+            option.category in nativeCategories &&
+                (matchingNativeIdsAreProtocol || option.id !in nativeIds)
+        }
         .mapNotNull(AgentConfigOption::category)
         .toSet()
     val protocolPublished = protocolCategoriesPublished + protocolPublishedNow
-    val withoutStaleNative = options.filterNot { it.id in nativeIds }
+    val withoutStaleNative = if (matchingNativeIdsAreProtocol) {
+        options
+    } else {
+        options.filterNot { it.id in nativeIds }
+    }
     return AgentSessionConfigurationOverlayMerge(
         options = withoutStaleNative + native.filterNot { it.category in protocolPublished },
         protocolCategoriesPublished = protocolPublished,
@@ -77,7 +85,11 @@ class AgentSessionConfigurationOverlayProvider(
                 permissionControl?.profiles?.any { it.id == current } == true
             } ?: permissionControl?.initialProfileId ?: option.currentValue
 
-        fun merge(options: List<AgentConfigOption>, sessionId: String? = null): List<AgentConfigOption> {
+        fun merge(
+            options: List<AgentConfigOption>,
+            sessionId: String? = null,
+            protocolResponse: Boolean = true,
+        ): List<AgentConfigOption> {
             val sessionOverlay = overlay.get().map { option ->
                 if (
                     option.id == SESSION_PERMISSION_CONFIG_ID &&
@@ -97,6 +109,7 @@ class AgentSessionConfigurationOverlayProvider(
                 options = options,
                 native = sessionOverlay,
                 protocolCategoriesPublished = actualCategoriesPublished.get(),
+                matchingNativeIdsAreProtocol = protocolResponse,
             )
             actualCategoriesPublished.set(merged.protocolCategoriesPublished)
             return merged.options
@@ -150,7 +163,7 @@ class AgentSessionConfigurationOverlayProvider(
         private val configurationBySession: ConcurrentHashMap<String, List<AgentConfigOption>>,
         private val permissionProfileBySession: ConcurrentHashMap<String, String>,
         private val permissionControl: AgentSessionPermissionControl?,
-        private val merge: (List<AgentConfigOption>, String?) -> List<AgentConfigOption>,
+        private val merge: (List<AgentConfigOption>, String?, Boolean) -> List<AgentConfigOption>,
     ) : KiteAgentConnection {
         override val provider: AgentProviderInfo get() = delegate.provider
         override val capabilities get() = delegate.capabilities
@@ -204,7 +217,7 @@ class AgentSessionConfigurationOverlayProvider(
                 permissionProfileBySession[sessionId] = selected
                 val current = configurationBySession[sessionId].orEmpty()
                 return AgentOperationResult.Success(
-                    merge(current, sessionId).also { configurationBySession[sessionId] = it }
+                    merge(current, sessionId, false).also { configurationBySession[sessionId] = it }
                 )
             }
             return when (val result = adapter.applySessionConfiguration(agentId, configId, value)) {
@@ -212,7 +225,7 @@ class AgentSessionConfigurationOverlayProvider(
                     overlay.set(result.options)
                     val current = configurationBySession[sessionId].orEmpty()
                     AgentOperationResult.Success(
-                        merge(current, sessionId).also { configurationBySession[sessionId] = it }
+                        merge(current, sessionId, false).also { configurationBySession[sessionId] = it }
                     )
                 }
                 is AgentSessionConfigurationApplyResult.Failed -> AgentOperationResult.Failure(result.message)
@@ -239,7 +252,7 @@ class AgentSessionConfigurationOverlayProvider(
             when (this) {
                 is AgentOperationResult.Success -> AgentOperationResult.Success(
                     value.copy(
-                        configuration = merge(value.configuration, value.id).also {
+                        configuration = merge(value.configuration, value.id, true).also {
                             configurationBySession[value.id] = it
                         }
                     )
@@ -252,7 +265,7 @@ class AgentSessionConfigurationOverlayProvider(
             sessionId: String
         ): AgentOperationResult<List<AgentConfigOption>> = when (this) {
             is AgentOperationResult.Success -> AgentOperationResult.Success(
-                merge(value, sessionId).also { configurationBySession[sessionId] = it }
+                merge(value, sessionId, true).also { configurationBySession[sessionId] = it }
             )
             is AgentOperationResult.Failure -> this
             is AgentOperationResult.Unsupported -> this

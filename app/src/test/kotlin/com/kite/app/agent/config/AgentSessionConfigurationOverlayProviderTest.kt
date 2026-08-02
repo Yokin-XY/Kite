@@ -110,6 +110,25 @@ class AgentSessionConfigurationOverlayProviderTest {
     }
 
     @Test
+    fun protocolPermissionStillWinsWhenItUsesTheUnifiedDraftId() = runTest {
+        val protocolPermission = permissionOption(SESSION_PERMISSION_CONFIG_ID, "ask")
+        val adapter = FakeAdapter()
+        val delegate = FakeProvider(listOf(protocolPermission))
+        val connection = connect(delegate, adapter)
+
+        val opened = connection.newSession(AgentNewSessionRequest("/workspace")) as AgentOperationResult.Success
+        assertEquals(listOf(SESSION_PERMISSION_CONFIG_ID), opened.value.configuration.map { it.id })
+
+        connection.setConfiguration(
+            opened.value.id,
+            SESSION_PERMISSION_CONFIG_ID,
+            AgentConfigValue.Select("allow"),
+        ) as AgentOperationResult.Success
+
+        assertEquals(1, delegate.connection.setConfigurationCount)
+    }
+
+    @Test
     fun fullSessionPermissionSelectsAllowOnceButNeverAllowAlways() = runTest {
         val adapter = FakeAdapter()
         val delegate = FakeProvider(emptyList())
