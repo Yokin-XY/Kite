@@ -12,9 +12,9 @@ import org.junit.Test
 
 class AgentReasoningControlTest {
     @Test
-    fun stableReasoningAxisHasSevenOrderedLevels() {
+    fun stableReasoningAxisIncludesCodexUltraAboveMaximum() {
         assertEquals(
-            listOf("off", "minimal", "low", "medium", "high", "xhigh", "max"),
+            listOf("off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
             AgentReasoningLevel.entries.sortedBy { it.order }.map { it.id },
         )
     }
@@ -85,7 +85,7 @@ class AgentReasoningControlTest {
             )
         ).isEmpty())
 
-        assertNull(AgentReasoningControls.Codex.normalize(
+        val codex = AgentReasoningControls.Codex.normalize(
             select(
                 current = "ultra",
                 choices = listOf(
@@ -93,7 +93,9 @@ class AgentReasoningControlTest {
                     AgentConfigChoice("ultra", "Ultra"),
                 ),
             )
-        ).singleOrNull())
+        ).single() as AgentConfigOption.Select
+        assertEquals(listOf("high", "ultra"), codex.choices.map { it.value })
+        assertEquals(AgentReasoningLevel.Ultra, codex.choices.last().reasoning)
     }
 
     @Test

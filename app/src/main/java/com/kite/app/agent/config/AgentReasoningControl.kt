@@ -106,7 +106,7 @@ object AgentReasoningControls {
 
     val Hermes = AgentReasoningControl(levelMappings())
 
-    val Codex = AgentReasoningControl(levelMappings())
+    val Codex = AgentReasoningControl(levelMappings(AgentReasoningLevel.entries.toSet()))
 
     val ClaudeCode = AgentReasoningControl(
         levelMappings(
@@ -125,7 +125,9 @@ object AgentReasoningControls {
     )
 
     private fun levelMappings(
-        levels: Set<AgentReasoningLevel> = AgentReasoningLevel.entries.toSet(),
+        levels: Set<AgentReasoningLevel> = AgentReasoningLevel.entries
+            .filterNot { it == AgentReasoningLevel.Ultra }
+            .toSet(),
     ): List<AgentReasoningNativeMapping> = buildList {
         levels.forEach { level -> add(AgentReasoningNativeMapping(level.id, level)) }
         if (AgentReasoningLevel.Off in levels) {

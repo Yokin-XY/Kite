@@ -5,6 +5,9 @@ import com.kite.app.agent.acp.AcpProcessAgentProvider
 import com.kite.app.agent.acp.AcpProcessChannelLauncher
 import com.kite.app.agent.acp.AcpProcessProviderDescriptor
 import com.kite.app.agent.acp.AcpSessionPathMapper
+import com.kite.app.agent.codex.CodexAppServerAgentProvider
+import com.kite.app.agent.codex.CodexAppServerProcessLauncher
+import com.kite.app.agent.codex.CodexAppServerProviderDescriptor
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.AgentPersistentConfigChange
@@ -423,7 +426,7 @@ internal class AndroidAgentRecipeRuntime(
             )
             return
         }
-        if (resolved.protocol != PROTOCOL_ACP || resolved.transport != TRANSPORT_STDIO) {
+        if (resolved.protocol !in MANAGED_PROTOCOLS || resolved.transport != TRANSPORT_STDIO) {
             callback(
                 request.failedAgent(
                     "暂不支持 Agent provider：${resolved.protocol}/${resolved.transport}",
@@ -466,29 +469,43 @@ internal class AndroidAgentRecipeRuntime(
                 )
                 return@launch
             }
-            val provider = AcpProcessAgentProvider(
-                descriptor = AcpProcessProviderDescriptor(
-                    id = providerId,
-                    name = resolved.displayName,
-                    title = resolved.title,
-                    version = resolved.version
-                ),
-                launcher = AcpProcessChannelLauncher {
-                    processFactory.start(processLaunch.process)
-                },
-                sessionDelete = sessionAdministrationAdapters
-                    .adapter(resolved.sessionAdapterId)
-                    ?.let { adapter ->
-                        { targetSessionId: String -> adapter.deleteSession(targetSessionId, cwd) }
+            val provider: KiteAgentProvider = when (resolved.protocol) {
+                PROTOCOL_ACP -> AcpProcessAgentProvider(
+                    descriptor = AcpProcessProviderDescriptor(
+                        id = providerId,
+                        name = resolved.displayName,
+                        title = resolved.title,
+                        version = resolved.version
+                    ),
+                    launcher = AcpProcessChannelLauncher {
+                        processFactory.start(processLaunch.process)
                     },
-                sessionRename = sessionAdministrationAdapters
-                    .adapter(resolved.sessionAdapterId)
-                    ?.takeIf(AgentSessionAdministrationAdapter::supportsRename)
-                    ?.let { adapter ->
-                        { renameRequest: AgentSessionRenameRequest -> adapter.renameSession(renameRequest, cwd) }
+                    sessionDelete = sessionAdministrationAdapters
+                        .adapter(resolved.sessionAdapterId)
+                        ?.let { adapter ->
+                            { targetSessionId: String -> adapter.deleteSession(targetSessionId, cwd) }
+                        },
+                    sessionRename = sessionAdministrationAdapters
+                        .adapter(resolved.sessionAdapterId)
+                        ?.takeIf(AgentSessionAdministrationAdapter::supportsRename)
+                        ?.let { adapter ->
+                            { renameRequest: AgentSessionRenameRequest -> adapter.renameSession(renameRequest, cwd) }
+                        },
+                    sessionPathMapper = processLaunch.sessionPathMapping.toAcp(),
+                )
+                PROTOCOL_CODEX_APP_SERVER -> CodexAppServerAgentProvider(
+                    descriptor = CodexAppServerProviderDescriptor(
+                        id = providerId,
+                        name = resolved.displayName,
+                        title = resolved.title,
+                        version = resolved.version,
+                    ),
+                    launcher = CodexAppServerProcessLauncher {
+                        processFactory.start(processLaunch.process)
                     },
-                sessionPathMapper = processLaunch.sessionPathMapping.toAcp(),
-            )
+                )
+                else -> error("已由 managed protocol 校验限制协议")
+            }
             startConnection(
                 request = request,
                 resolved = resolved,
@@ -941,11 +958,13 @@ internal class AndroidAgentRecipeRuntime(
 
     private companion object {
         const val PROTOCOL_ACP = "acp"
+        const val PROTOCOL_CODEX_APP_SERVER = "codex-app-server"
         const val TRANSPORT_STDIO = "stdio"
         const val LAUNCH_MODE_MANAGED = "managed"
         const val LAUNCH_MODE_ATTACH = "attach"
         const val DEFAULT_WORKDIR = "/workspace"
         const val SESSION_COMMAND_TIMEOUT_MS = 20_000L
         val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
+        val MANAGED_PROTOCOLS = setOf(PROTOCOL_ACP, PROTOCOL_CODEX_APP_SERVER)
     }
 }

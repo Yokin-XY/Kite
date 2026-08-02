@@ -482,7 +482,16 @@ sealed interface AgentConfigValue {
 }
 
 sealed interface AgentPersistentConfigChange {
-    data class SetDefaultModel(val modelId: String?) : AgentPersistentConfigChange
+    /**
+     * 保存 Agent 默认模型。
+     *
+     * [clearProviderOverride] 只由确认“官方模型由 Agent 默认 Provider 提供”的适配器设置；
+     * 显示层不根据 Agent 名称或模型名称猜测是否需要退出当前自定义 Provider。
+     */
+    data class SetDefaultModel(
+        val modelId: String?,
+        val clearProviderOverride: Boolean = false,
+    ) : AgentPersistentConfigChange
     data class SelectProvider(
         val providerId: String,
         val modelId: String
@@ -754,7 +763,8 @@ private fun AgentLiveConfigSnapshot.modelOption(): AgentConfigOption.Select? {
                 name = model.displayName,
                 description = null,
                 groupId = provider.id,
-                groupName = provider.displayName
+                groupName = provider.displayName,
+                modelSource = provider.source,
             )
         }
     }

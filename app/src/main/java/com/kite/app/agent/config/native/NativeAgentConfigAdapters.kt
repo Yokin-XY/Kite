@@ -56,6 +56,7 @@ import com.kite.app.agent.config.mediatedSessionPermissionControl
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import org.tomlj.Toml
@@ -2357,6 +2358,15 @@ internal class CodexAgentConfigAdapter(
 
     override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.Codex
 
+    override fun defaultModelChange(
+        option: AgentConfigOption.Select,
+    ): AgentPersistentConfigChange.SetDefaultModel? {
+        val change = super.defaultModelChange(option) ?: return null
+        val selected = option.choices.firstOrNull { it.value == option.currentValue } ?: return null
+        if (selected.modelSource != AgentModelSource.Official) return null
+        return change.copy(clearProviderOverride = true)
+    }
+
     override fun normalizeSessionConfiguration(options: List<AgentConfigOption>): List<AgentConfigOption> =
         super.normalizeSessionConfiguration(options).mapNotNull { option ->
             if (
@@ -2545,7 +2555,12 @@ internal class CodexAgentConfigAdapter(
         var relayApiKey = files.getValue(RELAY_API_KEY_KEY).toString(Charsets.UTF_8)
         changes.forEach { change ->
             when (change) {
-                is AgentPersistentConfigChange.SetDefaultModel -> editor = editor.setTopString("model", change.modelId)
+                is AgentPersistentConfigChange.SetDefaultModel -> {
+                    if (change.clearProviderOverride) {
+                        editor = editor.setTopString("model_provider", null)
+                    }
+                    editor = editor.setTopString("model", change.modelId)
+                }
                 is AgentPersistentConfigChange.SelectProvider -> editor = editor
                     .setTopString("model_provider", change.providerId)
                     .setTopString("model", change.modelId)

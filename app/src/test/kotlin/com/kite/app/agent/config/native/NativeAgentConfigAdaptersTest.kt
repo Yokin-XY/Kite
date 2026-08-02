@@ -32,6 +32,7 @@ import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.contracts.ContainerStatus
 import java.io.File
@@ -705,6 +706,60 @@ class NativeAgentConfigAdaptersTest {
         assertEquals(SECRET, nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").readText())
         assertFalse(text.contains("experimental_bearer_token"))
         assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
+    fun codexSelectingOfficialModelExitsCustomProviderWithoutDeletingIt() = runTest {
+        val file = nativeFile("root/.codex/config.toml")
+        file.writeText(
+            """
+                model_provider = "zhipu-coding-plan"
+                model = "glm-5.2"
+
+                [model_providers.zhipu-coding-plan]
+                name = "智谱 GLM Coding Plan"
+                base_url = "http://127.0.0.1:4453/v1"
+                wire_api = "responses"
+                requires_openai_auth = false
+            """.trimIndent(),
+        )
+        nativeFile("workspace/.kf/secrets/kite.codex-relay-upstream")
+            .writeText("https://open.bigmodel.cn/api/coding/paas/v4")
+        nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").writeText(SECRET)
+        val adapter = CodexAgentConfigAdapter(context, ::container)
+        val before = (adapter.readLive("codex") as AgentConfigReadResult.Ready).snapshot
+        val officialOption = AgentConfigOption.Select(
+            id = "model",
+            name = "模型",
+            category = AgentConfigCategory.Model,
+            currentValue = "gpt-5.6-sol",
+            choices = listOf(
+                AgentConfigChoice(
+                    value = "gpt-5.6-sol",
+                    name = "GPT-5.6-Sol",
+                    groupId = "openai",
+                    groupName = "OpenAI",
+                    modelSource = AgentModelSource.Official,
+                ),
+            ),
+        )
+
+        val change = requireNotNull(adapter.defaultModelChange(officialOption))
+        assertTrue(change.clearProviderOverride)
+        val applied = adapter.apply(
+            AgentConfigApplyRequest("codex", before.revision, listOf(change)),
+        ) as AgentConfigApplyResult.Applied
+
+        assertEquals(null, applied.snapshot.activeProviderId)
+        assertEquals("gpt-5.6-sol", applied.snapshot.defaultModel)
+        val text = file.readText()
+        assertFalse(text.contains("model_provider = \"zhipu-coding-plan\""))
+        assertTrue(text.contains("[model_providers.zhipu-coding-plan]"))
+        assertEquals(
+            "https://open.bigmodel.cn/api/coding/paas/v4",
+            nativeFile("workspace/.kf/secrets/kite.codex-relay-upstream").readText(),
+        )
+        assertEquals(SECRET, nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").readText())
     }
 
     @Test

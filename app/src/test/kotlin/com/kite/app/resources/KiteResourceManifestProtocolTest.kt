@@ -252,21 +252,21 @@ class KiteResourceManifestProtocolTest {
         assertEquals(listOf("kite.nodejs", "kite.git", "kite.codex.relay"), manifest.baseRequirements)
         assertEquals(KiteResourceInstallPlanCompiler.STEP_NPM, installStep.type)
         assertEquals(
-            listOf("@openai/codex@latest", "@agentclientprotocol/codex-acp@latest"),
+            listOf("@openai/codex@latest"),
             installStep.packages
         )
         assertEquals(5, installStep.retryAttempts)
         assertEquals(3, installStep.retryDelaySeconds)
-        assertEquals(listOf("codex", "codex-acp"), installAction.managedCommands)
+        assertEquals(listOf("codex"), installAction.managedCommands)
         assertTrue(installAction.verifications.any { it.cmd.contains("codex --version") })
-        assertTrue(installAction.verifications.any { it.cmd.contains("command -v 'codex-acp'") })
         assertEquals(
-            listOf("@openai/codex", "@agentclientprotocol/codex-acp"),
+            listOf("@openai/codex"),
             uninstallAction.npmUninstallPackages
         )
         val profile = manifest.agentProfiles.single()
         assertTrue(profile.runtimeDependencies.isEmpty())
-        assertEquals(listOf("kite-codex-acp"), profile.argv)
+        assertEquals("codex-app-server", profile.protocol)
+        assertEquals(listOf("kite-codex-app-server"), profile.argv)
         val openStep = manifest.openRecipe?.optJSONArray("recipe")?.optJSONObject(0)
         assertEquals("agent", openStep?.optString("type"))
         assertEquals("codex", openStep?.optString("agentId"))
@@ -281,11 +281,15 @@ class KiteResourceManifestProtocolTest {
         val installAction = sourcePlan.installActions.single()
         val installRelayStep = installAction.installSteps.single { it.id == "install-codex-relay" }
         val installLauncherStep = installAction.installSteps.single { it.id == "install-kite-codex-launcher" }
+        val installAppServerStep = installAction.installSteps.single { it.id == "install-kite-codex-app-server" }
 
         assertEquals("pypi", manifest.sourceType)
         assertEquals(listOf("kite.python", "kite.uv"), manifest.baseRequirements)
-        assertEquals(listOf("codex-relay", "kite-codex-acp"), manifest.management.managedCommands)
-        assertEquals(listOf("codex-relay", "kite-codex-acp"), installAction.managedCommands)
+        assertEquals(
+            listOf("codex-relay", "kite-codex-acp", "kite-codex-app-server"),
+            manifest.management.managedCommands,
+        )
+        assertEquals(manifest.management.managedCommands, installAction.managedCommands)
         assertTrue(installRelayStep.cmd.contains("UV_TOOL_DIR=\"\$install_root/uv-tools\""))
         assertTrue(installRelayStep.cmd.contains("codex-relay==0.5.5"))
         assertTrue(installLauncherStep.cmd.contains("codex-relay --bind 127.0.0.1 --port 4453"))
@@ -294,6 +298,8 @@ class KiteResourceManifestProtocolTest {
         assertTrue(installLauncherStep.cmd.contains("KITE_CODEX_UPSTREAM=\"\$upstream\""))
         assertTrue(installLauncherStep.cmd.contains("require('https')"))
         assertFalse(installLauncherStep.cmd.contains("rejectUnauthorized: false"))
+        assertTrue(installAppServerStep.cmd.contains("codex app-server \"\$@\""))
+        assertTrue(installAppServerStep.cmd.contains("codex-relay --bind 127.0.0.1 --port 4453"))
         assertTrue(installAction.verifications.single().cmd.contains("codex-relay --version"))
         assertTrue(sourcePlan.capabilities.install)
         assertTrue(sourcePlan.capabilities.uninstall)
@@ -382,7 +388,7 @@ class KiteResourceManifestProtocolTest {
     }
 
     @Test
-    fun mainstreamAgentResourcesExposeManagedAcpProfilesAndAgentCards() {
+    fun mainstreamAgentResourcesExposeManagedSdkProfilesAndAgentCards() {
         data class Expected(
             val resourceId: String,
             val agentId: String,
@@ -390,10 +396,19 @@ class KiteResourceManifestProtocolTest {
             val argv: List<String>,
             val configAdapterId: String,
             val managedEntrypoint: String = argv.first(),
+            val protocol: String = "acp",
         )
 
         val expected = listOf(
-            Expected("kite.codex.cli", "codex", "Codex", listOf("kite-codex-acp"), "codex"),
+            Expected(
+                "kite.codex.cli",
+                "codex",
+                "Codex",
+                listOf("kite-codex-app-server"),
+                "codex",
+                "kite-codex-app-server",
+                "codex-app-server",
+            ),
             Expected(
                 "kite.claude.code",
                 "claude-code",
@@ -436,13 +451,13 @@ class KiteResourceManifestProtocolTest {
             assertEquals(item.displayName, profile.displayName)
             assertEquals("managed", profile.launchMode)
             assertEquals(item.agentId, profile.providerId)
-            assertEquals("acp", profile.protocol)
+            assertEquals(item.protocol, profile.protocol)
             assertEquals("stdio", profile.transport)
             assertEquals(item.argv, profile.argv)
             assertEquals(item.configAdapterId, profile.configAdapterId)
             assertFalse(profile.configurationRequired)
             assertTrue(
-                "${item.resourceId} does not install the declared managed ACP entrypoint ${item.managedEntrypoint}",
+                "${item.resourceId} does not install the declared managed Agent entrypoint ${item.managedEntrypoint}",
                 item.managedEntrypoint in installedCommands,
             )
             assertEquals(item.agentId, registration.definition.agentId)

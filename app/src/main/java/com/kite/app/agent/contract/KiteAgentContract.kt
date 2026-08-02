@@ -299,6 +299,7 @@ enum class AgentReasoningLevel(
     High("high", "高", "为复杂任务使用更深的推理", 50),
     ExtraHigh("xhigh", "极高", "使用模型提供的额外高强度推理", 60),
     Maximum("max", "最高", "使用模型提供的最高纯推理强度", 70),
+    Ultra("ultra", "超强", "使用模型提供的 Ultra 推理与主动编排能力", 80),
 }
 
 /** 不属于有序强度轴、但可以由 Agent 原生能力明确提供的控制语义。 */

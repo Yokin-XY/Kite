@@ -13,7 +13,7 @@
   },
   "management": {
     "mode": "managed_extension",
-    "managedCommands": ["codex", "codex-acp"],
+    "managedCommands": ["codex"],
     "versionProbe": {
       "command": "codex --version",
       "pattern": "([0-9]+(?:\\.[0-9]+)+)"
@@ -76,7 +76,6 @@
   "source": {
     "type": "npm",
     "package": "@openai/codex",
-    "companionPackages": ["@agentclientprotocol/codex-acp"],
     "repository": "https://github.com/openai/codex"
   },
   "paths": {
@@ -88,7 +87,7 @@
     {
       "id": "codex",
       "name": "Codex",
-      "description": "Codex 的 ACP 会话",
+      "description": "Codex 官方 App Server 会话",
       "configuration": {
         "required": false,
         "adapter": "codex"
@@ -117,9 +116,9 @@
       "launch": {
         "mode": "managed",
         "providerId": "codex",
-        "protocol": "acp",
+        "protocol": "codex-app-server",
         "transport": "stdio",
-        "argv": ["kite-codex-acp"],
+        "argv": ["kite-codex-app-server"],
         "title": "Codex"
       }
     }
