@@ -184,6 +184,28 @@ class CodexAppServerAgentProviderTest {
     }
 
     @Test
+    fun `恢复既有会话时把当前供应商模型作为原生覆盖而不新建thread`() = runBlocking {
+        val fixture = CodexAppServerFixture(modelProvider = "zhipu-coding-plan", selectedModel = "glm-5")
+        val connection = connect(
+            fixture,
+            mutableListOf(),
+            sessionConfigurationOverride = {
+                CodexSessionConfigurationOverride("zhipu-coding-plan", "glm-5")
+            },
+        )
+
+        val loaded = connection.resumeSession(AgentExistingSessionRequest("thread-1", "/workspace"))
+
+        assertTrue(loaded is AgentOperationResult.Success)
+        assertEquals(0, fixture.threadStartParams.size)
+        assertEquals(1, fixture.threadResumeParams.size)
+        assertEquals("thread-1", fixture.threadResumeParams.single().getString("threadId"))
+        assertEquals("zhipu-coding-plan", fixture.threadResumeParams.single().getString("modelProvider"))
+        assertEquals("glm-5", fixture.threadResumeParams.single().getString("model"))
+        connection.disconnect()
+    }
+
+    @Test
     fun `恢复会话时按真实沙箱和审批参数匹配权限档位`() = runBlocking {
         val fixture = CodexAppServerFixture(
             modelProvider = "openai",
@@ -315,12 +337,14 @@ class CodexAppServerAgentProviderTest {
         events: MutableList<Pair<String, AgentSessionEvent>>,
         permissionHandler: suspend () -> AgentPermissionOutcome = { AgentPermissionOutcome.Cancelled },
         officialCatalogSink: (CodexOfficialModelCatalog) -> Unit = {},
+        sessionConfigurationOverride: () -> CodexSessionConfigurationOverride? = { null },
     ) = withTimeout(5_000L) {
         val provider = CodexAppServerAgentProvider(
             descriptor = CodexAppServerProviderDescriptor("codex", "Codex"),
             launcher = CodexAppServerProcessLauncher { fixture.start() },
             initializeTimeoutMs = 2_000L,
             officialModelCatalogSink = CodexOfficialModelCatalogSink(officialCatalogSink),
+            sessionConfigurationOverride = sessionConfigurationOverride,
         )
         val result = provider.connect(
             AgentConnectionRequest(AgentClientInfo("kite", "test", "Kite Test")),
@@ -348,6 +372,8 @@ class CodexAppServerAgentProviderTest {
     ) {
         val settingsUpdates = mutableListOf<JSONObject>()
         val turnInputs = mutableListOf<JSONArray>()
+        val threadStartParams = mutableListOf<JSONObject>()
+        val threadResumeParams = mutableListOf<JSONObject>()
         private val clientToServer = Channel<String>(Channel.UNLIMITED)
         private val serverToClient = Channel<String>(Channel.UNLIMITED)
         private val exit = CompletableDeferred<Int>()
@@ -399,8 +425,14 @@ class CodexAppServerAgentProviderTest {
                 )
                 "model/list" -> respond(id, modelList())
                 "collaborationMode/list" -> respond(id, collaborationModes())
-                "thread/start" -> respond(id, threadResponse())
-                "thread/resume" -> respond(id, threadResponse())
+                "thread/start" -> {
+                    threadStartParams += JSONObject(params.toString())
+                    respond(id, threadResponse())
+                }
+                "thread/resume" -> {
+                    threadResumeParams += JSONObject(params.toString())
+                    respond(id, threadResponse())
+                }
                 "thread/settings/update" -> {
                     settingsUpdates += JSONObject(params.toString())
                     respond(id, JSONObject())

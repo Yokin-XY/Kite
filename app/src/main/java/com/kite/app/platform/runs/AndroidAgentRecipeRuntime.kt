@@ -10,6 +10,7 @@ import com.kite.app.agent.codex.CodexAppServerAgentProvider
 import com.kite.app.agent.codex.CodexAppServerProcessLauncher
 import com.kite.app.agent.codex.CodexAppServerProviderDescriptor
 import com.kite.app.agent.codex.CodexOfficialModelCatalogSink
+import com.kite.app.agent.codex.CodexSessionConfigurationOverride
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.AgentPersistentConfigChange
@@ -532,6 +533,19 @@ internal class AndroidAgentRecipeRuntime(
                     initializeTimeoutMs = resolved.initializeTimeoutMs,
                     diagnosticSink = { line ->
                         Log.w(TAG, "Agent ${resolved.providerId}: $line")
+                    },
+                    sessionConfigurationOverride = {
+                        val target = AgentConfigurationTarget(
+                            agentId = resolved.agentId ?: providerId,
+                            adapterId = resolved.configAdapterId,
+                        )
+                        agentProviderCatalogApi.snapshot(target).let { catalog ->
+                            val selectedProvider = catalog.selectedProviderId
+                            val selectedModel = catalog.selectedModelId
+                            if (selectedProvider == null || selectedModel == null) null else {
+                                CodexSessionConfigurationOverride(selectedProvider, selectedModel)
+                            }
+                        }
                     },
                     officialModelCatalogSink = CodexOfficialModelCatalogSink { catalog ->
                         val target = AgentConfigurationTarget(

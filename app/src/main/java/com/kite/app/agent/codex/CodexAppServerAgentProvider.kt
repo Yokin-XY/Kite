@@ -75,6 +75,11 @@ data class CodexOfficialModelCatalog(
     val models: List<CodexOfficialModelSummary>,
 )
 
+data class CodexSessionConfigurationOverride(
+    val providerId: String,
+    val modelId: String,
+)
+
 fun interface CodexOfficialModelCatalogSink {
     fun onCatalog(catalog: CodexOfficialModelCatalog)
 }
@@ -90,6 +95,7 @@ class CodexAppServerAgentProvider(
     private val initializeTimeoutMs: Long = DEFAULT_INITIALIZE_TIMEOUT_MS,
     private val diagnosticSink: (String) -> Unit = {},
     private val officialModelCatalogSink: CodexOfficialModelCatalogSink? = null,
+    private val sessionConfigurationOverride: () -> CodexSessionConfigurationOverride? = { null },
 ) : KiteAgentProvider {
     override val id: String = descriptor.id
 
@@ -140,6 +146,7 @@ class CodexAppServerAgentProvider(
                 endpoint = client,
                 models = models,
                 modes = modes,
+                sessionConfigurationOverride = sessionConfigurationOverride,
             )
             rpc.notificationHandler = connection::onNotification
             rpc.serverRequestHandler = connection::onServerRequest
@@ -250,6 +257,7 @@ private class CodexAppServerConnection(
     private val endpoint: AgentClientEndpoint,
     models: List<CodexModel>,
     modes: List<CodexCollaborationMode>,
+    private val sessionConfigurationOverride: () -> CodexSessionConfigurationOverride?,
 ) : KiteAgentConnection {
     override val provider: AgentProviderInfo = AgentProviderInfo(
         id = descriptor.id,
@@ -305,13 +313,15 @@ private class CodexAppServerConnection(
 
     override suspend fun newSession(request: AgentNewSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
         operation("创建会话") {
+            val override = sessionConfigurationOverride()
             val response = rpc.request(
                 "thread/start",
                 JSONObject()
                     .put("cwd", request.cwd)
-                    .put("serviceName", "kite"),
+                    .put("serviceName", "kite")
+                    .applyOverride(override),
             )
-            registerSession(response, request.cwd)
+            registerSession(response, request.cwd, configurationOverride = override)
         }
 
     override suspend fun loadSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
@@ -325,24 +335,28 @@ private class CodexAppServerConnection(
         replayHistory: Boolean,
     ): AgentOperationResult<AgentSessionSnapshot> =
         operation("恢复会话") {
+            val override = sessionConfigurationOverride()
             val response = rpc.request(
                 "thread/resume",
                 JSONObject()
                     .put("threadId", request.sessionId)
-                    .put("cwd", request.cwd),
+                    .put("cwd", request.cwd)
+                    .applyOverride(override),
             )
-            registerSession(response, request.cwd, replayHistory)
+            registerSession(response, request.cwd, replayHistory, override)
         }
 
     override suspend fun forkSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
         operation("分叉会话") {
+            val override = sessionConfigurationOverride()
             val response = rpc.request(
                 "thread/fork",
                 JSONObject()
                     .put("threadId", request.sessionId)
-                    .put("cwd", request.cwd),
+                    .put("cwd", request.cwd)
+                    .applyOverride(override),
             )
-            registerSession(response, request.cwd)
+            registerSession(response, request.cwd, configurationOverride = override)
         }
 
     override suspend fun listSessions(request: AgentSessionListRequest): AgentOperationResult<AgentSessionPage> =
@@ -766,15 +780,19 @@ private class CodexAppServerConnection(
         response: JSONObject,
         requestedCwd: String,
         replayHistory: Boolean = false,
+        configurationOverride: CodexSessionConfigurationOverride? = null,
     ): AgentSessionSnapshot {
         val thread = response.getJSONObject("thread")
         val nativePermission = response.toNativePermissionSettings()
         val session = CodexSession(
             id = thread.getString("id"),
             cwd = response.optString("cwd", requestedCwd).ifBlank { requestedCwd },
-            modelProvider = response.optString("modelProvider", OFFICIAL_PROVIDER_ID),
+            modelProvider = response.optString("modelProvider").trim().ifBlank {
+                configurationOverride?.providerId ?: OFFICIAL_PROVIDER_ID
+            },
             modelId = response.optString("model").ifBlank {
-                models.values.firstOrNull(CodexModel::isDefault)?.id
+                configurationOverride?.modelId
+                    ?: models.values.firstOrNull(CodexModel::isDefault)?.id
                     ?: models.values.firstOrNull()?.id.orEmpty()
             },
             effort = response.nullableString("reasoningEffort"),
@@ -962,6 +980,14 @@ private class CodexAppServerConnection(
         "default" -> "直接执行当前任务"
         "plan" -> "先形成计划，再按计划推进"
         else -> null
+    }
+
+    private fun JSONObject.applyOverride(
+        override: CodexSessionConfigurationOverride?,
+    ): JSONObject = apply {
+        override ?: return@apply
+        put("modelProvider", override.providerId)
+        put("model", override.modelId)
     }
 
     private fun CodexPermission.applyTo(

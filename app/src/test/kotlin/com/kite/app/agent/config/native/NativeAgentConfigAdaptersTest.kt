@@ -772,7 +772,7 @@ class NativeAgentConfigAdaptersTest {
         nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").writeText(SECRET)
         val adapter = CodexAgentConfigAdapter(context, ::container)
         assertEquals(
-            AgentSessionConfigurationEffect.ReconnectNewSession,
+            AgentSessionConfigurationEffect.Reconnect,
             adapter.providerConfigurationEffect(),
         )
         val before = (adapter.readLive("codex") as AgentConfigReadResult.Ready).snapshot

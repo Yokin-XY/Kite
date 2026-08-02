@@ -67,7 +67,7 @@ internal class CodexAgentConfigAdapter(
     override fun reasoningControl(): AgentReasoningControl = codexReasoningControl
 
     override fun providerConfigurationEffect(): AgentSessionConfigurationEffect =
-        AgentSessionConfigurationEffect.ReconnectNewSession
+        AgentSessionConfigurationEffect.Reconnect
 
     override suspend fun readUserProviderImport(agentId: String): AgentUserProviderImportResult = runCatching {
         val config = projection.resolve(CONFIG_PATH)
