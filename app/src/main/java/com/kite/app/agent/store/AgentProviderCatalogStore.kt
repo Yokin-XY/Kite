@@ -109,6 +109,10 @@ class AgentProviderCatalogStore private constructor(
     )
     private val snapshotCache = mutableMapOf<String, AgentProviderCatalogSnapshot>()
 
+    internal fun cachedSnapshot(agentId: String): AgentProviderCatalogSnapshot? = synchronized(LOCK) {
+        snapshotCache[agentId]
+    }
+
     fun snapshot(agentId: String): AgentProviderCatalogSnapshot = synchronized(LOCK) {
         if (agentId.isBlank()) return@synchronized AgentProviderCatalogSnapshot()
         snapshotCache.getOrPut(agentId) {

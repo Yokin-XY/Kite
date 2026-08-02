@@ -3,11 +3,13 @@ package com.kite.app.shell
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import kotlinx.coroutines.runBlocking
 
 @RunWith(RobolectricTestRunner::class)
 class KiteAppGraphTest {
@@ -46,5 +48,14 @@ class KiteAppGraphTest {
             setOf("opencode", "codex", "claude-code", "hermes", "openclaw", "kimi-code", "mimo-code"),
             graph.agentConfigAdapterRegistry.adapterIds()
         )
+    }
+
+    @Test
+    fun `进程预载会把 Agent 统一能力目录放入内存缓存`() = runBlocking {
+        val graph = KiteAppGraph.from(ApplicationProvider.getApplicationContext())
+
+        graph.preloadAgentConversationCatalogs().join()
+
+        assertNotNull(graph.agentProviderCatalogStore.cachedSnapshot("codex"))
     }
 }

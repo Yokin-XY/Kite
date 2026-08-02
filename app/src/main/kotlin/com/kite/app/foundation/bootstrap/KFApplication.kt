@@ -151,7 +151,10 @@ class KFApplication : Application(), ResourceFeatureDependenciesOwner, RecipeFea
             applicationScope.launch(start = CoroutineStart.UNDISPATCHED) {
                 TaskManagerStore.confirmedStoppedOwnerEvents.collect(CardRunStore::confirmRuntimeOwnersStopped)
             }
-            KiteAppGraph.from(this).runNotificationCoordinator.start()
+            KiteAppGraph.from(this).also { graph ->
+                graph.preloadAgentConversationCatalogs()
+                graph.runNotificationCoordinator.start()
+            }
         }
         markLaunchStage("App", "通知通道就绪")
     }

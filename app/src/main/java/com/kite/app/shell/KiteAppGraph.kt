@@ -16,6 +16,7 @@ import com.kite.app.agent.sdk.configuration.AgentProviderCatalogApi
 import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.RuntimeBackedAgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.StoreBackedAgentProviderCatalogApi
+import com.kite.app.agent.sdk.configuration.configurationTarget
 import com.kite.app.agent.store.AgentProviderCatalogStore
 import com.kite.app.bridge.KiteBridgeClient
 import com.kite.app.application.resources.ResourceFeatureGateway
@@ -88,7 +89,9 @@ import com.kite.app.run.CardRunStore
 import com.kite.app.run.CardRunStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Kite 进程级组合根。这里只装配已有能力，不承载页面状态或业务流程。
@@ -96,6 +99,8 @@ import kotlinx.coroutines.SupervisorJob
 internal class KiteAppGraph private constructor(context: Context) {
     private val appContext = context.applicationContext
     private val processScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile
+    private var agentCatalogPreloadJob: Job? = null
 
     val diagnostics: KiteDiagnostics by lazy { KiteDiagnostics(appContext) }
     val bridgeClient: KiteBridgeClient by lazy { KiteBridgeClient(diagnostics, appContext) }
@@ -164,6 +169,29 @@ internal class KiteAppGraph private constructor(context: Context) {
     val agentProviderCatalogApi: AgentProviderCatalogApi by lazy {
         StoreBackedAgentProviderCatalogApi(agentProviderCatalogStore, agentConfigAdapterRegistry)
     }
+
+    /**
+     * 在页面出现前把 Kite 自有的 Agent 能力目录读入进程缓存。
+     * 这里只读取本地目录和随应用发布的静态能力，不扫描 Agent 文件、进程或网络。
+     */
+    fun preloadAgentConversationCatalogs(): Job =
+        agentCatalogPreloadJob ?: synchronized(this) {
+            agentCatalogPreloadJob ?: processScope.launch {
+                runCatching { agentRegistry.snapshot().entries }
+                    .getOrDefault(emptyList())
+                    .forEach { entry ->
+                        runCatching {
+                            agentProviderCatalogApi.snapshot(entry.configurationTarget())
+                        }.onFailure { error ->
+                            Log.w(
+                                TAG,
+                                "Agent catalog preload failed: ${entry.registration.definition.agentId}",
+                                error,
+                            )
+                        }
+                    }
+            }.also { agentCatalogPreloadJob = it }
+        }
     val agentOfficialAccountManager: AgentOfficialAccountManager by lazy {
         AgentOfficialAccountManager(
             scope = processScope,
@@ -438,6 +466,7 @@ internal class KiteAppGraph private constructor(context: Context) {
         recipeLoader.loadAllRecipes().firstOrNull { it.id == recipeId }
 
     companion object {
+        private const val TAG = "KiteAppGraph"
         private val INSTALL_WIZARD_ENDED_STATUSES = setOf(
             CardRunStatus.Unknown,
             CardRunStatus.Stopped,

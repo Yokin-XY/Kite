@@ -426,6 +426,7 @@ internal class AndroidAgentRecipeRuntime(
                 return
             }
             scope.launch {
+                warmProviderCatalog(resolved)
                 startConnection(
                     request = request,
                     resolved = resolved,
@@ -460,6 +461,7 @@ internal class AndroidAgentRecipeRuntime(
             return
         }
         scope.launch {
+            warmProviderCatalog(resolved)
             runCatching(prepareManagedRuntime).getOrElse { error ->
                 callback(
                     request.failedAgent(
@@ -583,6 +585,17 @@ internal class AndroidAgentRecipeRuntime(
                 callback = callback
             )
         }
+    }
+
+    private fun warmProviderCatalog(resolved: ResolvedLaunch) {
+        val target = AgentConfigurationTarget(
+            agentId = resolved.agentId ?: resolved.providerId,
+            adapterId = resolved.configAdapterId,
+        )
+        runCatching { agentProviderCatalogApi.snapshot(target) }
+            .onFailure { error ->
+                Log.w(TAG, "Agent ${target.agentId} catalog preload failed", error)
+            }
     }
 
     private suspend fun startConnection(
