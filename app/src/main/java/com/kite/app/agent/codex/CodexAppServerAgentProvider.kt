@@ -12,6 +12,7 @@ import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentExistingSessionRequest
 import com.kite.app.agent.contract.AgentMessageRole
+import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentNewSessionRequest
 import com.kite.app.agent.contract.AgentOperationResult
@@ -23,8 +24,6 @@ import com.kite.app.agent.contract.AgentPlanEntry
 import com.kite.app.agent.contract.AgentPromptCapabilities
 import com.kite.app.agent.contract.AgentPromptRequest
 import com.kite.app.agent.contract.AgentProviderInfo
-import com.kite.app.agent.contract.AgentReasoningLevel
-import com.kite.app.agent.contract.AgentReasoningSemantics
 import com.kite.app.agent.contract.AgentSessionCapabilities
 import com.kite.app.agent.contract.AgentSessionEvent
 import com.kite.app.agent.contract.AgentSessionListRequest
@@ -34,10 +33,7 @@ import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSnapshot
 import com.kite.app.agent.contract.AgentSessionSummary
 import com.kite.app.agent.contract.AgentStopReason
-import com.kite.app.agent.contract.AgentToolCall
 import com.kite.app.agent.contract.AgentToolCallPatch
-import com.kite.app.agent.contract.AgentToolKind
-import com.kite.app.agent.contract.AgentToolStatus
 import com.kite.app.agent.contract.AgentTurnResult
 import com.kite.app.agent.contract.AgentTurnUsage
 import com.kite.app.agent.contract.KiteAgentConnection
@@ -50,7 +46,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
@@ -58,7 +53,6 @@ import org.json.JSONObject
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 
 data class CodexAppServerProviderDescriptor(
     val id: String,
@@ -131,6 +125,7 @@ class CodexAppServerAgentProvider(
             }
             rpc.notify("initialized", JSONObject())
             val models = loadModels(rpc)
+            val modes = loadCollaborationModes(rpc)
             if (models.isNotEmpty() && isChatGptManagedAccount(rpc)) {
                 runCatching { officialModelCatalogSink?.onCatalog(models.toOfficialCatalog()) }
                     .onFailure { error ->
@@ -144,6 +139,7 @@ class CodexAppServerAgentProvider(
                 rpc = rpc,
                 endpoint = client,
                 models = models,
+                modes = modes,
             )
             rpc.notificationHandler = connection::onNotification
             rpc.serverRequestHandler = connection::onServerRequest
@@ -192,6 +188,26 @@ class CodexAppServerAgentProvider(
         ).optJSONObject("account")?.optString("type") == CHATGPT_ACCOUNT_TYPE
     }.getOrDefault(false)
 
+    private suspend fun loadCollaborationModes(rpc: CodexAppServerRpc): List<CodexCollaborationMode> =
+        runCatching {
+            rpc.request("collaborationMode/list", JSONObject())
+                .optJSONArray("data")
+                .objects()
+                .mapNotNull { item ->
+                    val id = item.optString("mode").trim().takeIf(String::isNotBlank)
+                        ?: return@mapNotNull null
+                    CodexCollaborationMode(
+                        id = id,
+                        name = item.optString("name", id).trim().ifBlank { id },
+                        model = item.nullableString("model"),
+                        reasoningEffort = item.nullableString("reasoning_effort"),
+                    )
+                }
+                .distinctBy(CodexCollaborationMode::id)
+        }.onFailure { error ->
+            diagnosticSink("Codex 工作模式目录读取失败: ${error.message}")
+        }.getOrDefault(emptyList())
+
     private fun List<CodexModel>.toOfficialCatalog(): CodexOfficialModelCatalog {
         val summaries = map { model -> CodexOfficialModelSummary(model.id, model.displayName) }
         val digest = MessageDigest.getInstance("SHA-256")
@@ -214,21 +230,6 @@ class CodexAppServerAgentProvider(
     }
 }
 
-private data class CodexEffort(
-    val value: String,
-    val description: String?,
-    val semantics: AgentReasoningSemantics,
-)
-
-private data class CodexModel(
-    val id: String,
-    val displayName: String,
-    val description: String?,
-    val defaultEffort: String?,
-    val efforts: List<CodexEffort>,
-    val isDefault: Boolean,
-)
-
 private data class CodexSession(
     val id: String,
     val cwd: String,
@@ -236,6 +237,9 @@ private data class CodexSession(
     var modelId: String,
     var effort: String?,
     var permission: CodexPermission,
+    val nativePermission: CodexNativePermissionSettings,
+    var currentModeId: String?,
+    var hasExplicitEffort: Boolean = false,
 )
 
 private class CodexAppServerConnection(
@@ -245,6 +249,7 @@ private class CodexAppServerConnection(
     private val rpc: CodexAppServerRpc,
     private val endpoint: AgentClientEndpoint,
     models: List<CodexModel>,
+    modes: List<CodexCollaborationMode>,
 ) : KiteAgentConnection {
     override val provider: AgentProviderInfo = AgentProviderInfo(
         id = descriptor.id,
@@ -253,7 +258,11 @@ private class CodexAppServerConnection(
         title = descriptor.title,
     )
     override val capabilities: AgentCapabilities = AgentCapabilities(
-        prompt = AgentPromptCapabilities(text = true, resourceLinks = false, images = false),
+        prompt = AgentPromptCapabilities(
+            text = true,
+            resourceLinks = false,
+            images = true,
+        ),
         sessions = AgentSessionCapabilities(
             load = true,
             list = true,
@@ -265,11 +274,13 @@ private class CodexAppServerConnection(
         ),
     )
     private val models = models.associateBy(CodexModel::id)
+    private val modes = modes.associateBy(CodexCollaborationMode::id)
     private val sessions = ConcurrentHashMap<String, CodexSession>()
     private val activeTurns = ConcurrentHashMap<String, CompletableDeferred<AgentTurnResult>>()
     private val activeTurnIds = ConcurrentHashMap<String, String>()
     private val lastUsage = ConcurrentHashMap<String, AgentTurnUsage>()
     private val streamedMessages = ConcurrentHashMap.newKeySet<String>()
+    private val streamedThoughts = ConcurrentHashMap.newKeySet<String>()
     private val disconnecting = AtomicBoolean(false)
 
     init {
@@ -304,12 +315,15 @@ private class CodexAppServerConnection(
         }
 
     override suspend fun loadSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
-        resume(request)
+        resume(request, replayHistory = true)
 
     override suspend fun resumeSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
-        resume(request)
+        resume(request, replayHistory = false)
 
-    private suspend fun resume(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
+    private suspend fun resume(
+        request: AgentExistingSessionRequest,
+        replayHistory: Boolean,
+    ): AgentOperationResult<AgentSessionSnapshot> =
         operation("恢复会话") {
             val response = rpc.request(
                 "thread/resume",
@@ -317,7 +331,7 @@ private class CodexAppServerConnection(
                     .put("threadId", request.sessionId)
                     .put("cwd", request.cwd),
             )
-            registerSession(response, request.cwd)
+            registerSession(response, request.cwd, replayHistory)
         }
 
     override suspend fun forkSession(request: AgentExistingSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
@@ -381,7 +395,7 @@ private class CodexAppServerConnection(
         val session = sessions[request.sessionId]
             ?: return AgentOperationResult.Failure("会话不存在: ${request.sessionId}")
         val input = request.content.toCodexInput()
-            ?: return AgentOperationResult.Unsupported("codex-app-server-non-text-input")
+            ?: return AgentOperationResult.Unsupported("codex-app-server-unsupported-input")
         endpoint.eventSink.onEvent(
             request.sessionId,
             AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Prompting),
@@ -440,6 +454,7 @@ private class CodexAppServerConnection(
                     rpc.request("thread/settings/update", params)
                     session.modelId = model.id
                     session.effort = nextEffort
+                    session.hasExplicitEffort = false
                 }
                 EFFORT_CONFIG_ID -> {
                     val model = availableModels(session).firstOrNull { it.id == session.modelId }
@@ -448,11 +463,12 @@ private class CodexAppServerConnection(
                     params.put("effort", selected)
                     rpc.request("thread/settings/update", params)
                     session.effort = selected
+                    session.hasExplicitEffort = true
                 }
                 PERMISSION_CONFIG_ID -> {
                     val permission = CodexPermission.entries.firstOrNull { it.id == selected }
                         ?: error("Codex 未提供该权限选项")
-                    permission.applyTo(params)
+                    permission.applyTo(params, session.nativePermission)
                     rpc.request("thread/settings/update", params)
                     session.permission = permission
                 }
@@ -461,6 +477,44 @@ private class CodexAppServerConnection(
             configuration(session).also { options ->
                 endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.ConfigurationUpdated(options))
             }
+        }
+    }
+
+    override suspend fun setMode(sessionId: String, modeId: String): AgentOperationResult<Unit> {
+        val session = sessions[sessionId] ?: return AgentOperationResult.Failure("会话不存在: $sessionId")
+        val mode = modes[modeId] ?: return AgentOperationResult.Unsupported("codex-app-server-mode:$modeId")
+        return operation("更新 Codex 工作模式") {
+            val modeModel = mode.model ?: session.modelId
+            val selectedEffort = if (session.hasExplicitEffort) {
+                session.effort
+            } else {
+                mode.reasoningEffort
+                    ?: models[modeModel]?.defaultEffort
+                    ?: session.effort
+            }
+            val settings = JSONObject()
+                .put("model", modeModel)
+                .put("reasoning_effort", selectedEffort ?: JSONObject.NULL)
+                .put("developer_instructions", JSONObject.NULL)
+            rpc.request(
+                "thread/settings/update",
+                JSONObject()
+                    .put("threadId", sessionId)
+                    .put(
+                        "collaborationMode",
+                        JSONObject()
+                            .put("mode", mode.id)
+                            .put("settings", settings),
+                    ),
+            )
+            session.modelId = modeModel
+            session.effort = selectedEffort
+            session.currentModeId = mode.id
+            endpoint.eventSink.onEvent(
+                sessionId,
+                AgentSessionEvent.ConfigurationUpdated(configuration(session)),
+            )
+            endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.CurrentModeChanged(mode.id))
         }
     }
 
@@ -501,6 +555,8 @@ private class CodexAppServerConnection(
             endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Closed))
         }
         sessions.clear()
+        streamedMessages.clear()
+        streamedThoughts.clear()
         rpc.close()
         process.stop()
         scope.cancel("Codex App Server disconnected")
@@ -527,6 +583,7 @@ private class CodexAppServerConnection(
                 )
             }
             "item/reasoning/summaryTextDelta", "item/reasoning/textDelta" -> sessionId?.let { id ->
+                params.optString("itemId").takeIf(String::isNotBlank)?.let(streamedThoughts::add)
                 endpoint.eventSink.onEvent(
                     id,
                     AgentSessionEvent.MessageChunk(
@@ -570,6 +627,21 @@ private class CodexAppServerConnection(
                         )
                     }
                     streamedMessages.remove(itemId)
+                } else if (item.optString("type") == "reasoning") {
+                    val itemId = item.optString("id")
+                    if (itemId !in streamedThoughts) {
+                        item.reasoningText()?.let { text ->
+                            endpoint.eventSink.onEvent(
+                                id,
+                                AgentSessionEvent.MessageChunk(
+                                    role = AgentMessageRole.Thought,
+                                    content = AgentContent.Text(text),
+                                    messageId = itemId.takeIf(String::isNotBlank),
+                                ),
+                            )
+                        }
+                    }
+                    streamedThoughts.remove(itemId)
                 } else {
                     item.toToolPatch()?.let { patch ->
                         endpoint.eventSink.onEvent(id, AgentSessionEvent.ToolCallUpdated(patch))
@@ -600,6 +672,24 @@ private class CodexAppServerConnection(
                 endpoint.eventSink.onEvent(
                     id,
                     AgentSessionEvent.SessionInfoChanged(title = params.nullableString("name")),
+                )
+            }
+            "thread/settings/updated" -> sessionId?.let { id ->
+                val session = sessions[id] ?: return@let
+                val settings = params.optJSONObject("threadSettings") ?: return@let
+                settings.nullableString("model")?.let { session.modelId = it }
+                settings.nullableString("modelProvider")?.let { session.modelProvider = it }
+                session.effort = settings.nullableString("effort")
+                session.permission = permissionFromResponse(settings)
+                val modeId = settings.optJSONObject("collaborationMode")
+                    ?.nullableString("mode")
+                if (modeId != null && modeId in modes) {
+                    session.currentModeId = modeId
+                    endpoint.eventSink.onEvent(id, AgentSessionEvent.CurrentModeChanged(modeId))
+                }
+                endpoint.eventSink.onEvent(
+                    id,
+                    AgentSessionEvent.ConfigurationUpdated(configuration(session)),
                 )
             }
         }
@@ -672,8 +762,13 @@ private class CodexAppServerConnection(
         else -> throw UnsupportedOperationException("Codex App Server 请求暂不支持: $method")
     }
 
-    private fun registerSession(response: JSONObject, requestedCwd: String): AgentSessionSnapshot {
+    private fun registerSession(
+        response: JSONObject,
+        requestedCwd: String,
+        replayHistory: Boolean = false,
+    ): AgentSessionSnapshot {
         val thread = response.getJSONObject("thread")
+        val nativePermission = response.toNativePermissionSettings()
         val session = CodexSession(
             id = thread.getString("id"),
             cwd = response.optString("cwd", requestedCwd).ifBlank { requestedCwd },
@@ -684,8 +779,11 @@ private class CodexAppServerConnection(
             },
             effort = response.nullableString("reasoningEffort"),
             permission = permissionFromResponse(response),
+            nativePermission = nativePermission,
+            currentModeId = modes[DEFAULT_MODE_ID]?.id ?: modes.values.firstOrNull()?.id,
         )
         sessions[session.id] = session
+        if (replayHistory) replayHistory(session.id, thread)
         endpoint.eventSink.onEvent(
             session.id,
             AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Ready, "准备就绪"),
@@ -696,7 +794,52 @@ private class CodexAppServerConnection(
     private fun snapshot(session: CodexSession): AgentSessionSnapshot = AgentSessionSnapshot(
         id = session.id,
         configuration = configuration(session),
+        modes = modes.values.map { mode ->
+            AgentMode(
+                id = mode.id,
+                name = codexModeDisplayName(mode),
+                description = codexModeDescription(mode),
+            )
+        },
+        currentModeId = session.currentModeId,
     )
+
+    private fun replayHistory(sessionId: String, thread: JSONObject) {
+        thread.optJSONArray("turns").objects().forEach { turn ->
+            turn.optJSONArray("items").objects().forEach { item ->
+                emitPersistedItem(sessionId, item)
+            }
+        }
+    }
+
+    private fun emitPersistedItem(sessionId: String, item: JSONObject) {
+        val itemId = item.nullableString("id")
+        when (item.optString("type")) {
+            "userMessage" -> item.optJSONArray("content").objects()
+                .mapNotNull(JSONObject::toAgentUserContent)
+                .forEach { content ->
+                    endpoint.eventSink.onEvent(
+                        sessionId,
+                        AgentSessionEvent.MessageChunk(AgentMessageRole.User, content, itemId),
+                    )
+                }
+            "agentMessage", "plan" -> item.nullableString("text")?.let { text ->
+                endpoint.eventSink.onEvent(
+                    sessionId,
+                    AgentSessionEvent.MessageChunk(AgentMessageRole.Assistant, AgentContent.Text(text), itemId),
+                )
+            }
+            "reasoning" -> item.reasoningText()?.let { text ->
+                endpoint.eventSink.onEvent(
+                    sessionId,
+                    AgentSessionEvent.MessageChunk(AgentMessageRole.Thought, AgentContent.Text(text), itemId),
+                )
+            }
+            else -> item.toToolCall()?.let { call ->
+                endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.ToolCallStarted(call))
+            }
+        }
+    }
 
     private fun configuration(session: CodexSession): List<AgentConfigOption> = buildList {
         val available = availableModels(session)
@@ -809,8 +952,22 @@ private class CodexAppServerConnection(
     private fun CodexSession.modelGroupName(): String =
         if (modelSource() == AgentModelSource.OfficialLogin) "OpenAI" else modelProvider
 
-    private fun CodexPermission.applyTo(params: JSONObject) {
-        params.put("permissions", JSONObject.NULL)
+    private fun codexModeDisplayName(mode: CodexCollaborationMode): String = when (mode.id) {
+        "default" -> "默认"
+        "plan" -> "计划"
+        else -> mode.name
+    }
+
+    private fun codexModeDescription(mode: CodexCollaborationMode): String? = when (mode.id) {
+        "default" -> "直接执行当前任务"
+        "plan" -> "先形成计划，再按计划推进"
+        else -> null
+    }
+
+    private fun CodexPermission.applyTo(
+        params: JSONObject,
+        nativePermission: CodexNativePermissionSettings,
+    ) {
         when (this) {
             CodexPermission.Ask -> params
                 .put("approvalPolicy", "on-request")
@@ -825,10 +982,26 @@ private class CodexAppServerConnection(
                 .put("approvalsReviewer", "user")
                 .put("sandboxPolicy", JSONObject().put("type", "dangerFullAccess"))
             CodexPermission.Custom -> params
-                .put("approvalPolicy", JSONObject.NULL)
-                .put("approvalsReviewer", JSONObject.NULL)
-                .put("sandboxPolicy", JSONObject.NULL)
+                .put("approvalPolicy", nativePermission.approvalPolicy.jsonCopy())
+                .put("approvalsReviewer", nativePermission.approvalsReviewer)
+                .put("sandboxPolicy", JSONObject(nativePermission.sandboxPolicy.toString()))
         }
+    }
+
+    private fun JSONObject.toNativePermissionSettings(): CodexNativePermissionSettings {
+        val approval = opt("approvalPolicy")
+            ?.takeUnless { it == JSONObject.NULL }
+            ?: error("Codex 未返回原生 approvalPolicy")
+        val reviewer = optString("approvalsReviewer").takeIf(String::isNotBlank)
+            ?: error("Codex 未返回原生 approvalsReviewer")
+        val sandbox = optJSONObject("sandbox")
+            ?: optJSONObject("sandboxPolicy")
+            ?: error("Codex 未返回原生 sandboxPolicy")
+        return CodexNativePermissionSettings(
+            approvalPolicy = approval.jsonCopy(),
+            approvalsReviewer = reviewer,
+            sandboxPolicy = JSONObject(sandbox.toString()),
+        )
     }
 
     private fun permissionFromResponse(response: JSONObject): CodexPermission {
@@ -852,182 +1025,8 @@ private class CodexAppServerConnection(
         private const val EFFORT_CONFIG_ID = "codex.app_server.effort"
         private const val PERMISSION_CONFIG_ID = AGENT_SESSION_PERMISSION_CONFIG_ID
         private const val OFFICIAL_PROVIDER_ID = "openai"
+        private const val DEFAULT_MODE_ID = "default"
         private const val THREAD_PAGE_SIZE = 50
         private val APPROVAL_DECISIONS = listOf("accept", "acceptForSession", "decline", "cancel")
     }
 }
-
-private class CodexAppServerRpc(
-    private val process: AgentProcessChannel,
-    private val scope: CoroutineScope,
-    private val diagnosticSink: (String) -> Unit,
-) {
-    private val sequence = AtomicLong(0L)
-    private val pending = ConcurrentHashMap<Long, CompletableDeferred<JSONObject>>()
-    private val closed = AtomicBoolean(false)
-    var notificationHandler: suspend (String, JSONObject) -> Unit = { _, _ -> }
-    var serverRequestHandler: suspend (String, JSONObject) -> JSONObject = { method, _ ->
-        throw UnsupportedOperationException("Codex App Server 请求暂不支持: $method")
-    }
-
-    fun start() {
-        scope.launch(Dispatchers.IO + CoroutineName("codex-app-server-stdout")) {
-            process.stdoutLines.collect { line -> handleLine(line) }
-        }
-        scope.launch(Dispatchers.IO + CoroutineName("codex-app-server-stderr")) {
-            process.stderrLines.collect(diagnosticSink)
-        }
-    }
-
-    suspend fun request(method: String, params: JSONObject): JSONObject {
-        check(!closed.get()) { "Codex App Server 连接已关闭" }
-        val id = sequence.incrementAndGet()
-        val response = CompletableDeferred<JSONObject>()
-        pending[id] = response
-        try {
-            process.writeLine(
-                JSONObject().put("method", method).put("id", id).put("params", params).toString()
-            )
-            return response.await()
-        } finally {
-            pending.remove(id, response)
-        }
-    }
-
-    suspend fun notify(method: String, params: JSONObject) {
-        check(!closed.get()) { "Codex App Server 连接已关闭" }
-        process.writeLine(JSONObject().put("method", method).put("params", params).toString())
-    }
-
-    fun close(cause: Throwable? = null) {
-        if (!closed.compareAndSet(false, true)) return
-        val error = cause ?: CancellationException("Codex App Server 连接已关闭")
-        pending.values.forEach { it.completeExceptionally(error) }
-        pending.clear()
-    }
-
-    private fun handleLine(line: String) {
-        val message = runCatching { JSONObject(line) }.getOrElse {
-            diagnosticSink("Codex App Server 输出了无效 JSON")
-            return
-        }
-        val rawId = message.opt("id")?.takeUnless { it == JSONObject.NULL }
-        val responseId = when (rawId) {
-            is Number -> rawId.toLong()
-            is String -> rawId.toLongOrNull()
-            else -> null
-        }
-        if (responseId != null && (message.has("result") || message.has("error"))) {
-            val deferred = pending.remove(responseId) ?: return
-            val error = message.optJSONObject("error")
-            if (error != null) {
-                deferred.completeExceptionally(
-                    IllegalStateException(error.optString("message").ifBlank { "Codex App Server 请求失败" })
-                )
-            } else {
-                deferred.complete(message.optJSONObject("result") ?: JSONObject())
-            }
-            return
-        }
-        val method = message.optString("method").takeIf(String::isNotBlank) ?: return
-        val params = message.optJSONObject("params") ?: JSONObject()
-        if (rawId != null) {
-            scope.launch {
-                runCatching { serverRequestHandler(method, params) }
-                    .onSuccess { result ->
-                        process.writeLine(JSONObject().put("id", rawId).put("result", result).toString())
-                    }
-                    .onFailure { error ->
-                        process.writeLine(
-                            JSONObject().put("id", rawId).put(
-                                "error",
-                                JSONObject().put("code", -32601).put("message", error.message),
-                            ).toString()
-                        )
-                    }
-            }
-        } else {
-            scope.launch { notificationHandler(method, params) }
-        }
-    }
-}
-
-private fun codexReasoningSemantics(value: String): AgentReasoningSemantics? = when (value.lowercase()) {
-    "none", "off" -> AgentReasoningLevel.Off
-    "minimal" -> AgentReasoningLevel.Minimal
-    "low" -> AgentReasoningLevel.Low
-    "medium" -> AgentReasoningLevel.Medium
-    "high" -> AgentReasoningLevel.High
-    "xhigh", "x-high", "x_high", "extra-high" -> AgentReasoningLevel.ExtraHigh
-    "max", "ultra" -> AgentReasoningLevel.Maximum
-    else -> null
-}
-
-private fun List<AgentContent>.toCodexInput(): JSONArray? {
-    if (any { it !is AgentContent.Text }) return null
-    return JSONArray().apply {
-        this@toCodexInput.filterIsInstance<AgentContent.Text>().forEach { content ->
-            put(JSONObject().put("type", "text").put("text", content.text))
-        }
-    }
-}
-
-private fun JSONObject.toToolCall(): AgentToolCall? {
-    val type = optString("type")
-    val id = optString("id").takeIf(String::isNotBlank) ?: return null
-    val title = when (type) {
-        "commandExecution" -> optString("command").ifBlank { "执行命令" }
-        "fileChange" -> "修改文件"
-        "mcpToolCall" -> listOf(optString("server"), optString("tool")).filter(String::isNotBlank).joinToString("/")
-        "webSearch" -> optString("query").ifBlank { "搜索网页" }
-        else -> return null
-    }
-    return AgentToolCall(
-        id = id,
-        title = title,
-        kind = AgentToolKind(type),
-        status = AgentToolStatus(optString("status", "inProgress")),
-        rawInput = opt("arguments")?.takeUnless { it == JSONObject.NULL }?.toString(),
-        rawOutput = nullableString("aggregatedOutput"),
-    )
-}
-
-private fun JSONObject.toToolPatch(): AgentToolCallPatch? {
-    val call = toToolCall() ?: return null
-    return AgentToolCallPatch(
-        id = call.id,
-        title = call.title,
-        kind = call.kind,
-        status = call.status,
-        rawInput = call.rawInput,
-        rawOutput = call.rawOutput,
-    )
-}
-
-private fun JSONObject.toTurnUsage(): AgentTurnUsage = AgentTurnUsage(
-    inputTokens = optLong("inputTokens"),
-    outputTokens = optLong("outputTokens"),
-    totalTokens = optLong("totalTokens"),
-    thoughtTokens = optLong("reasoningOutputTokens"),
-    cachedReadTokens = optLong("cachedInputTokens"),
-    cachedWriteTokens = optLong("cacheWriteInputTokens"),
-)
-
-private fun approvalOption(decision: String): AgentPermissionOption = when (decision) {
-    "accept" -> AgentPermissionOption(decision, "允许一次", AgentPermissionKind.AllowOnce)
-    "acceptForSession" -> AgentPermissionOption(decision, "本次会话允许", AgentPermissionKind.AllowAlways)
-    "decline" -> AgentPermissionOption(decision, "拒绝一次", AgentPermissionKind.RejectOnce)
-    else -> AgentPermissionOption(decision, "拒绝并停止", AgentPermissionKind.RejectAlways)
-}
-
-private fun JSONArray?.objects(): List<JSONObject> = buildList {
-    val source = this@objects ?: return@buildList
-    repeat(source.length()) { index -> source.optJSONObject(index)?.let(::add) }
-}
-
-private fun JSONArray.strings(): List<String> = buildList {
-    repeat(length()) { index -> optString(index).takeIf(String::isNotBlank)?.let(::add) }
-}
-
-private fun JSONObject.nullableString(key: String): String? =
-    opt(key)?.takeUnless { it == JSONObject.NULL }?.toString()?.trim()?.takeIf(String::isNotBlank)

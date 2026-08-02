@@ -8,6 +8,7 @@ import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentContent
+import com.kite.app.agent.contract.AgentExistingSessionRequest
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentNewSessionRequest
 import com.kite.app.agent.contract.AgentOperationResult
@@ -68,6 +69,9 @@ class CodexAppServerAgentProviderTest {
             permission.choices.map { it.name },
         )
         assertEquals("codex.permission.custom", permission.currentValue)
+        assertEquals(listOf("plan", "default"), snapshot.modes.map { it.id })
+        assertEquals(listOf("计划", "默认"), snapshot.modes.map { it.name })
+        assertEquals("default", snapshot.currentModeId)
 
         val terraPreview = connection.previewDraftModelConfiguration("openai", "gpt-5.6-terra")
         assertEquals(setOf(AgentConfigCategory.ThoughtLevel), terraPreview?.replaceCategories)
@@ -93,9 +97,10 @@ class CodexAppServerAgentProviderTest {
         )
         assertTrue(custom is AgentOperationResult.Success)
         val customParams = fixture.settingsUpdates.last()
-        assertTrue(customParams.isNull("approvalPolicy"))
-        assertTrue(customParams.isNull("approvalsReviewer"))
-        assertTrue(customParams.isNull("sandboxPolicy"))
+        assertEquals("untrusted", customParams.getString("approvalPolicy"))
+        assertEquals("user", customParams.getString("approvalsReviewer"))
+        assertEquals("readOnly", customParams.getJSONObject("sandboxPolicy").getString("type"))
+        assertTrue(!customParams.has("permissions"))
 
         val switched = connection.setConfiguration(
             snapshot.id,
@@ -105,6 +110,21 @@ class CodexAppServerAgentProviderTest {
         val switchedEffort = switched.value.select(AgentConfigCategory.ThoughtLevel)
         assertEquals(listOf("medium", "max"), switchedEffort.choices.map { it.value })
         assertEquals("medium", switchedEffort.currentValue)
+
+        val selectedEffort = connection.setConfiguration(
+            snapshot.id,
+            switchedEffort.id,
+            AgentConfigValue.Select("max"),
+        )
+        assertTrue(selectedEffort is AgentOperationResult.Success)
+        val planMode = connection.setMode(snapshot.id, "plan")
+        assertTrue(planMode is AgentOperationResult.Success)
+        val collaborationMode = fixture.settingsUpdates.last().getJSONObject("collaborationMode")
+        assertEquals("plan", collaborationMode.getString("mode"))
+        val modeSettings = collaborationMode.getJSONObject("settings")
+        assertEquals("gpt-5.6-terra", modeSettings.getString("model"))
+        assertEquals("max", modeSettings.getString("reasoning_effort"))
+        assertTrue(modeSettings.isNull("developer_instructions"))
 
         val prompted = withTimeout(5_000L) {
             connection.prompt(AgentPromptRequest(snapshot.id, listOf(AgentContent.Text("你好"))))
@@ -181,6 +201,83 @@ class CodexAppServerAgentProviderTest {
     }
 
     @Test
+    fun `图片不做模型预判并转换为App Server内联输入`() = runBlocking {
+        val fixture = CodexAppServerFixture(modelProvider = "openai", selectedModel = "gpt-5.6-sol")
+        val connection = connect(fixture, mutableListOf())
+        val created = connection.newSession(AgentNewSessionRequest("/workspace")) as AgentOperationResult.Success
+
+        assertTrue(connection.capabilities.prompt.images)
+        val prompted = withTimeout(5_000L) {
+            connection.prompt(
+                AgentPromptRequest(
+                    created.value.id,
+                    listOf(AgentContent.Image(data = "AQID", mimeType = "image/png")),
+                )
+            )
+        }
+
+        assertTrue(prompted is AgentOperationResult.Success)
+        val image = fixture.turnInputs.single().getJSONObject(0)
+        assertEquals("image", image.getString("type"))
+        assertEquals("data:image/png;base64,AQID", image.getString("url"))
+        connection.disconnect()
+    }
+
+    @Test
+    fun `加载已有会话会回放原生消息思考与工具记录`() = runBlocking {
+        val history = JSONArray()
+            .put(
+                JSONObject()
+                    .put("id", "user-1")
+                    .put("type", "userMessage")
+                    .put(
+                        "content",
+                        JSONArray()
+                            .put(JSONObject().put("type", "text").put("text", "旧问题"))
+                            .put(JSONObject().put("type", "image").put("url", "data:image/png;base64,AQID")),
+                    ),
+            )
+            .put(
+                JSONObject()
+                    .put("id", "reasoning-1")
+                    .put("type", "reasoning")
+                    .put("summary", JSONArray().put("先检查现状"))
+                    .put("content", JSONArray()),
+            )
+            .put(
+                JSONObject()
+                    .put("id", "command-1")
+                    .put("type", "commandExecution")
+                    .put("command", "git status")
+                    .put("status", "completed")
+                    .put("aggregatedOutput", "clean"),
+            )
+            .put(JSONObject().put("id", "assistant-1").put("type", "agentMessage").put("text", "旧回答"))
+        val fixture = CodexAppServerFixture(
+            modelProvider = "openai",
+            selectedModel = "gpt-5.6-sol",
+            historyItems = history,
+        )
+        val events = mutableListOf<Pair<String, AgentSessionEvent>>()
+        val connection = connect(fixture, events)
+
+        val loaded = connection.loadSession(AgentExistingSessionRequest("thread-1", "/workspace"))
+
+        assertTrue(loaded is AgentOperationResult.Success)
+        val messages = events.mapNotNull { it.second as? AgentSessionEvent.MessageChunk }
+        assertEquals(listOf("旧问题", "先检查现状", "旧回答"), messages.mapNotNull {
+            (it.content as? AgentContent.Text)?.text
+        })
+        val restoredImage = messages.mapNotNull { it.content as? AgentContent.Image }.single()
+        assertEquals("AQID", restoredImage.data)
+        assertEquals("image/png", restoredImage.mimeType)
+        val tool = events.mapNotNull { it.second as? AgentSessionEvent.ToolCallStarted }.single().call
+        assertEquals("git status", tool.title)
+        assertEquals("clean", tool.rawOutput)
+        connection.disconnect()
+    }
+
+    @Test
     fun `额外权限请求按本轮或会话范围返回真实授权结构`() = runBlocking {
         val fixture = CodexAppServerFixture(modelProvider = "openai", selectedModel = "gpt-5.6-sol")
         val connection = connect(
@@ -233,8 +330,10 @@ class CodexAppServerAgentProviderTest {
         private val approvalsReviewer: String = "user",
         private val sandboxType: String = "readOnly",
         private val accountType: String? = if (modelProvider == "openai") "chatgpt" else null,
+        private val historyItems: JSONArray = JSONArray(),
     ) {
         val settingsUpdates = mutableListOf<JSONObject>()
+        val turnInputs = mutableListOf<JSONArray>()
         private val clientToServer = Channel<String>(Channel.UNLIMITED)
         private val serverToClient = Channel<String>(Channel.UNLIMITED)
         private val exit = CompletableDeferred<Int>()
@@ -285,12 +384,16 @@ class CodexAppServerAgentProviderTest {
                     ),
                 )
                 "model/list" -> respond(id, modelList())
+                "collaborationMode/list" -> respond(id, collaborationModes())
                 "thread/start" -> respond(id, threadResponse())
+                "thread/resume" -> respond(id, threadResponse())
                 "thread/settings/update" -> {
                     settingsUpdates += JSONObject(params.toString())
                     respond(id, JSONObject())
                 }
                 "turn/start" -> {
+                    val input = JSONArray(params.getJSONArray("input").toString())
+                    turnInputs += input
                     respond(
                         id,
                         JSONObject().put(
@@ -298,7 +401,14 @@ class CodexAppServerAgentProviderTest {
                             JSONObject().put("id", "turn-1").put("status", "inProgress").put("items", JSONArray()),
                         ),
                     )
-                    val text = params.getJSONArray("input").getJSONObject(0).getString("text")
+                    val text = buildList {
+                        repeat(input.length()) { index ->
+                            input.optJSONObject(index)
+                                ?.takeIf { it.optString("type") == "text" }
+                                ?.optString("text")
+                                ?.let(::add)
+                        }
+                    }.joinToString("\n")
                     notify(
                         "item/agentMessage/delta",
                         JSONObject()
@@ -354,6 +464,25 @@ class CodexAppServerAgentProviderTest {
             )
             .put("nextCursor", JSONObject.NULL)
 
+        private fun collaborationModes(): JSONObject = JSONObject().put(
+            "data",
+            JSONArray()
+                .put(
+                    JSONObject()
+                        .put("name", "Plan")
+                        .put("mode", "plan")
+                        .put("model", JSONObject.NULL)
+                        .put("reasoning_effort", "medium"),
+                )
+                .put(
+                    JSONObject()
+                        .put("name", "Default")
+                        .put("mode", "default")
+                        .put("model", JSONObject.NULL)
+                        .put("reasoning_effort", JSONObject.NULL),
+                ),
+        )
+
         private fun model(
             id: String,
             displayName: String,
@@ -375,7 +504,20 @@ class CodexAppServerAgentProviderTest {
             )
 
         private fun threadResponse(): JSONObject = JSONObject()
-            .put("thread", JSONObject().put("id", "thread-1"))
+            .put(
+                "thread",
+                JSONObject()
+                    .put("id", "thread-1")
+                    .put(
+                        "turns",
+                        if (historyItems.length() == 0) JSONArray() else JSONArray().put(
+                            JSONObject()
+                                .put("id", "turn-history")
+                                .put("status", "completed")
+                                .put("items", JSONArray(historyItems.toString())),
+                        ),
+                    ),
+            )
             .put("cwd", "/workspace")
             .put("modelProvider", modelProvider)
             .put("model", selectedModel)

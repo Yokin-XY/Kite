@@ -100,7 +100,7 @@ class AgentReasoningControlTest {
             )
         ).isEmpty())
 
-        assertTrue(codexReasoningControl.normalize(
+        val ultra = codexReasoningControl.normalize(
             select(
                 current = "ultra",
                 choices = listOf(
@@ -108,7 +108,8 @@ class AgentReasoningControlTest {
                     AgentConfigChoice("ultra", "Ultra"),
                 ),
             )
-        ).isEmpty())
+        ).single() as AgentConfigOption.Select
+        assertEquals(AgentReasoningLevel.Maximum, ultra.choices.last().reasoning)
     }
 
     @Test
