@@ -7,8 +7,8 @@ import org.json.JSONObject
 /**
  * Kite 对 Agent 原生会话附加的轻量用户元数据。
  *
- * 这里只保存 Kite 自有的归档标记，不复制消息、标题、工作目录、运行状态或 Agent 当前配置。
- * Agent 会话内容和模型状态仍由 Agent 自己拥有。
+ * 这里只保存 Kite 自有的归档标记，以及模型、权限这两个输入草稿偏好；不复制消息、标题、
+ * 工作目录、运行状态或 Agent 当前配置。偏好只在发送时由 SDK 映射，不提前修改 Agent。
  */
 class AgentSessionMetadataStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(
@@ -77,6 +77,29 @@ class AgentSessionMetadataStore(context: Context) {
         next to (next != current)
     }
 
+    fun draftPreferences(providerId: String, sessionId: String): AgentSessionDraftPreferences? =
+        synchronized(LOCK) {
+            readRecords()
+                .firstOrNull { it.providerId == providerId && it.sessionId == sessionId }
+                ?.toDraftPreferences()
+                ?.takeUnless(AgentSessionDraftPreferences::isEmpty)
+        }
+
+    fun saveDraftPreferences(
+        providerId: String,
+        sessionId: String,
+        preferences: AgentSessionDraftPreferences,
+    ): Boolean = update(providerId, sessionId) { current ->
+        val next = current.copy(
+            modelProviderId = preferences.modelProviderId?.normalizedOrNull(),
+            modelId = preferences.modelId?.normalizedOrNull(),
+            modelUsesAgentDefault = preferences.modelUsesAgentDefault,
+            permissionConfigId = preferences.permissionConfigId?.normalizedOrNull(),
+            permissionValue = preferences.permissionValue?.normalizedOrNull(),
+        ).normalizedDraftPreferences()
+        next to (next != current)
+    }
+
     fun remove(providerId: String, sessionId: String): Boolean = synchronized(LOCK) {
         val records = readRecords().toMutableList()
         val removed = records.removeAll { it.providerId == providerId && it.sessionId == sessionId }
@@ -124,14 +147,25 @@ class AgentSessionMetadataStore(context: Context) {
                 val sessionId = json.optString(KEY_SESSION_ID).trim()
                 if (providerId.isBlank() || sessionId.isBlank()) continue
                 val archivedAtMillis = json.optLong(KEY_ARCHIVED_AT, 0L).takeIf { it > 0L }
-                    ?: continue
                 val sourceState = when (json.optString(KEY_SOURCE_STATE)) {
                     SOURCE_AVAILABLE -> AgentArchivedSessionSourceState.Available
                     SOURCE_DELETED -> AgentArchivedSessionSourceState.Deleted
                     else -> AgentArchivedSessionSourceState.Unknown
                 }
                 val sourceCheckedAtMillis = json.optLong(KEY_SOURCE_CHECKED_AT, 0L).coerceAtLeast(0L)
-                add(Record(providerId, sessionId, archivedAtMillis, sourceState, sourceCheckedAtMillis))
+                val record = Record(
+                    providerId = providerId,
+                    sessionId = sessionId,
+                    archivedAtMillis = archivedAtMillis,
+                    sourceState = sourceState,
+                    sourceCheckedAtMillis = sourceCheckedAtMillis,
+                    modelProviderId = json.optString(KEY_DRAFT_MODEL_PROVIDER_ID).normalizedOrNull(),
+                    modelId = json.optString(KEY_DRAFT_MODEL_ID).normalizedOrNull(),
+                    modelUsesAgentDefault = json.optBoolean(KEY_DRAFT_MODEL_USES_AGENT_DEFAULT),
+                    permissionConfigId = json.optString(KEY_DRAFT_PERMISSION_CONFIG_ID).normalizedOrNull(),
+                    permissionValue = json.optString(KEY_DRAFT_PERMISSION_VALUE).normalizedOrNull(),
+                ).normalizedDraftPreferences()
+                if (!record.isEmpty()) add(record)
             }
         }
     }
@@ -155,6 +189,13 @@ class AgentSessionMetadataStore(context: Context) {
                         record.sourceCheckedAtMillis.takeIf { it > 0L }?.let {
                             put(KEY_SOURCE_CHECKED_AT, it)
                         }
+                        record.modelProviderId?.let { put(KEY_DRAFT_MODEL_PROVIDER_ID, it) }
+                        record.modelId?.let { put(KEY_DRAFT_MODEL_ID, it) }
+                        if (record.modelProviderId != null && record.modelId != null) {
+                            put(KEY_DRAFT_MODEL_USES_AGENT_DEFAULT, record.modelUsesAgentDefault)
+                        }
+                        record.permissionConfigId?.let { put(KEY_DRAFT_PERMISSION_CONFIG_ID, it) }
+                        record.permissionValue?.let { put(KEY_DRAFT_PERMISSION_VALUE, it) }
                     })
                 }
             })
@@ -167,9 +208,37 @@ class AgentSessionMetadataStore(context: Context) {
         val archivedAtMillis: Long? = null,
         val sourceState: AgentArchivedSessionSourceState = AgentArchivedSessionSourceState.Unknown,
         val sourceCheckedAtMillis: Long = 0L,
+        val modelProviderId: String? = null,
+        val modelId: String? = null,
+        val modelUsesAgentDefault: Boolean = false,
+        val permissionConfigId: String? = null,
+        val permissionValue: String? = null,
     ) {
-        fun isEmpty(): Boolean = archivedAtMillis == null
+        fun normalizedDraftPreferences(): Record {
+            val hasModel = modelProviderId != null && modelId != null
+            val hasPermission = permissionConfigId != null && permissionValue != null
+            return copy(
+                modelProviderId = modelProviderId.takeIf { hasModel },
+                modelId = modelId.takeIf { hasModel },
+                modelUsesAgentDefault = modelUsesAgentDefault && hasModel,
+                permissionConfigId = permissionConfigId.takeIf { hasPermission },
+                permissionValue = permissionValue.takeIf { hasPermission },
+            )
+        }
+
+        fun toDraftPreferences() = AgentSessionDraftPreferences(
+            modelProviderId = modelProviderId,
+            modelId = modelId,
+            modelUsesAgentDefault = modelUsesAgentDefault,
+            permissionConfigId = permissionConfigId,
+            permissionValue = permissionValue,
+        )
+
+        fun isEmpty(): Boolean = archivedAtMillis == null &&
+            modelProviderId == null && permissionConfigId == null
     }
+
+    private fun String.normalizedOrNull(): String? = trim().take(MAX_DRAFT_VALUE).takeIf(String::isNotBlank)
 
     private companion object {
         val LOCK = Any()
@@ -182,10 +251,27 @@ class AgentSessionMetadataStore(context: Context) {
         const val KEY_ARCHIVED_AT = "archivedAt"
         const val KEY_SOURCE_STATE = "sourceState"
         const val KEY_SOURCE_CHECKED_AT = "sourceCheckedAt"
+        const val KEY_DRAFT_MODEL_PROVIDER_ID = "draftModelProviderId"
+        const val KEY_DRAFT_MODEL_ID = "draftModelId"
+        const val KEY_DRAFT_MODEL_USES_AGENT_DEFAULT = "draftModelUsesAgentDefault"
+        const val KEY_DRAFT_PERMISSION_CONFIG_ID = "draftPermissionConfigId"
+        const val KEY_DRAFT_PERMISSION_VALUE = "draftPermissionValue"
         const val SOURCE_AVAILABLE = "available"
         const val SOURCE_DELETED = "deleted"
-        const val VERSION = 3
+        const val VERSION = 4
+        const val MAX_DRAFT_VALUE = 512
     }
+}
+
+data class AgentSessionDraftPreferences(
+    val modelProviderId: String? = null,
+    val modelId: String? = null,
+    val modelUsesAgentDefault: Boolean = false,
+    val permissionConfigId: String? = null,
+    val permissionValue: String? = null,
+) {
+    fun isEmpty(): Boolean = (modelProviderId == null || modelId == null) &&
+        (permissionConfigId == null || permissionValue == null)
 }
 
 data class AgentArchivedSessionMetadata(

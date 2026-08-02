@@ -6,6 +6,7 @@ import com.kite.app.agent.contract.AGENT_SESSION_PERMISSION_CONFIG_ID
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentPermissionLevel
@@ -194,6 +195,40 @@ class AgentProviderCatalogStoreTest {
                 ?.choices
                 ?.map { it.semantics },
         )
+    }
+
+    @Test
+    fun `权限最近选择持久化且能力目录更新不会把它改回Agent默认值`() {
+        fun permission(current: String) = AgentConfigOption.Select(
+            id = AGENT_SESSION_PERMISSION_CONFIG_ID,
+            name = "权限",
+            category = AgentConfigCategory.Permission,
+            currentValue = current,
+            choices = listOf(
+                AgentConfigChoice("deny", "受限", permission = AgentPermissionLevel.Restricted),
+                AgentConfigChoice("ask", "审批", permission = AgentPermissionLevel.Approval),
+                AgentConfigChoice("allow", "完全", permission = AgentPermissionLevel.Full),
+            ),
+        )
+        store.replaceMappedControls("opencode", listOf(permission("ask")))
+
+        assertTrue(store.selectControl(
+            "opencode",
+            AGENT_SESSION_PERMISSION_CONFIG_ID,
+            AgentConfigValue.Select("allow"),
+        ))
+        store.mergeMappedControls("opencode", listOf(permission("ask")))
+
+        val restored = AgentProviderCatalogStore(context, vault).snapshot("opencode")
+        assertEquals(
+            "allow",
+            (restored.controls.single() as AgentConfigOption.Select).currentValue,
+        )
+        assertFalse(store.selectControl(
+            "opencode",
+            AGENT_SESSION_PERMISSION_CONFIG_ID,
+            AgentConfigValue.Select("missing"),
+        ))
     }
 
     @Test

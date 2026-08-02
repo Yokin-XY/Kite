@@ -7,6 +7,7 @@ import android.util.Base64
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentPermissionLevel
@@ -262,6 +263,20 @@ class AgentProviderCatalogStore private constructor(
         else current.copy(selectedProviderId = providerId, selectedModelId = modelId) to true
     }
 
+    /** 保存某个已映射控件的最近选择；只更新 Kite 草稿默认值，不触碰 Agent。 */
+    fun selectControl(agentId: String, configId: String, value: AgentConfigValue): Boolean =
+        update(agentId) { current ->
+            val index = current.controls.indexOfFirst { it.id == configId }
+            val selected = current.controls.getOrNull(index)?.withSelectedValue(value)
+            if (selected == null) {
+                current to false
+            } else {
+                current.copy(
+                    controls = current.controls.toMutableList().apply { this[index] = selected },
+                ) to true
+            }
+        }
+
     /** 首次只写入 Adapter 随应用发布的已核验工作模式，并建立可用的草稿默认值。 */
     fun seedWorkModesIfAbsent(
         agentId: String,
@@ -306,7 +321,7 @@ class AgentProviderCatalogStore private constructor(
                 option.category == AgentConfigCategory.Permission ||
                     option.category == AgentConfigCategory.ThoughtLevel
             }
-            val next = current.copy(controls = mapped)
+            val next = current.copy(controls = mapped.map { it.keepSelectionFrom(current.controls) })
             next to next
         }
 
@@ -320,7 +335,8 @@ class AgentProviderCatalogStore private constructor(
         val categories = mapped.mapNotNullTo(linkedSetOf(), AgentConfigOption::category)
         update(agentId) { current ->
             val next = current.copy(
-                controls = (current.controls.filterNot { it.category in categories } + mapped)
+                controls = (current.controls.filterNot { it.category in categories } +
+                    mapped.map { it.keepSelectionFrom(current.controls) })
                     .distinctBy(AgentConfigOption::id),
             )
             next to Unit
@@ -614,6 +630,26 @@ class AgentProviderCatalogStore private constructor(
             name = modeName,
             description = description?.trim()?.take(MAX_DESCRIPTION)?.takeIf(String::isNotBlank),
         )
+    }
+
+    private fun AgentConfigOption.keepSelectionFrom(
+        previous: List<AgentConfigOption>,
+    ): AgentConfigOption {
+        val stored = previous.firstOrNull { it.id == id && it.category == category } ?: return this
+        return when {
+            this is AgentConfigOption.Select && stored is AgentConfigOption.Select &&
+                choices.any { it.value == stored.currentValue } -> copy(currentValue = stored.currentValue)
+            this is AgentConfigOption.Toggle && stored is AgentConfigOption.Toggle ->
+                copy(currentValue = stored.currentValue)
+            else -> this
+        }
+    }
+
+    private fun AgentConfigOption.withSelectedValue(value: AgentConfigValue): AgentConfigOption? = when {
+        this is AgentConfigOption.Select && value is AgentConfigValue.Select &&
+            choices.any { it.value == value.value } -> copy(currentValue = value.value)
+        this is AgentConfigOption.Toggle && value is AgentConfigValue.Toggle -> copy(currentValue = value.value)
+        else -> null
     }
 
     private fun AgentProviderCatalogSnapshot.dropInvalidSelections(): AgentProviderCatalogSnapshot {

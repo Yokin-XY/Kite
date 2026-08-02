@@ -61,6 +61,32 @@ class AgentSessionMetadataStoreTest {
     }
 
     @Test
+    fun `不同会话分别保存最后模型和权限且删除时一起清理`() {
+        val first = AgentSessionDraftPreferences(
+            modelProviderId = "zhipu",
+            modelId = "glm-5.2",
+            permissionConfigId = "kite.session_permission",
+            permissionValue = "full",
+        )
+        val second = AgentSessionDraftPreferences(
+            modelProviderId = "opencode",
+            modelId = "mimo-v2.5-free",
+            permissionConfigId = "kite.session_permission",
+            permissionValue = "approval",
+        )
+
+        assertTrue(store.saveDraftPreferences("opencode", "session-a", first))
+        assertTrue(store.saveDraftPreferences("opencode", "session-b", second))
+
+        val restored = AgentSessionMetadataStore(context)
+        assertEquals(first, restored.draftPreferences("opencode", "session-a"))
+        assertEquals(second, restored.draftPreferences("opencode", "session-b"))
+        assertTrue(restored.remove("opencode", "session-a"))
+        assertEquals(null, restored.draftPreferences("opencode", "session-a"))
+        assertEquals(second, restored.draftPreferences("opencode", "session-b"))
+    }
+
+    @Test
     fun `完整源目录只把确实缺失的归档会话标记为已删除`() {
         store.archive("opencode", "session-present", 100L)
         store.archive("opencode", "session-missing", 100L)

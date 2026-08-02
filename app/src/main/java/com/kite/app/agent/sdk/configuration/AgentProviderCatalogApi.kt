@@ -17,6 +17,7 @@ import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
+import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.runtime.AgentDraftModelSelection
@@ -76,6 +77,9 @@ interface AgentProviderCatalogApi {
     ): AgentProviderCatalogSnapshot
 
     fun recordMappedControls(target: AgentConfigurationTarget, options: List<AgentConfigOption>)
+
+    /** 更新该 Agent 最近使用的统一控件值；不会提前修改 Agent 或会话。 */
+    fun selectControl(target: AgentConfigurationTarget, configId: String, value: AgentConfigValue): Boolean
 
     /** 保存 Adapter 已映射的工作模式目录；只更新 Kite 本地事实。 */
     fun recordMappedWorkModes(
@@ -256,6 +260,12 @@ class StoreBackedAgentProviderCatalogApi(
     override fun recordMappedControls(target: AgentConfigurationTarget, options: List<AgentConfigOption>) {
         store.mergeMappedControls(target.agentId, options)
     }
+
+    override fun selectControl(
+        target: AgentConfigurationTarget,
+        configId: String,
+        value: AgentConfigValue,
+    ): Boolean = store.selectControl(target.agentId, configId, value)
 
     override fun recordMappedWorkModes(
         target: AgentConfigurationTarget,

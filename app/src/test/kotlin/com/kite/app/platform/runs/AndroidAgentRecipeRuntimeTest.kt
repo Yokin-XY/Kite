@@ -176,7 +176,7 @@ class AndroidAgentRecipeRuntimeTest {
         assertEquals("remote-provider", ready.mutation.agentBinding?.providerId)
         assertEquals(null, ready.mutation.agentBinding?.sessionId)
         assertEquals("可以开始新会话", ready.mutation.agentBinding?.statusMessage)
-        assertEquals(1, provider.connection.newSessionCalls)
+        assertEquals(0, provider.connection.newSessionCalls)
         assertEquals(null, ready.mutation.runtimeRootOwnerId)
         assertEquals(null, ready.mutation.runtimeOwnerId)
         assertEquals(emptyList<String>(), ready.mutation.ownedRuntimeOwnerIds)
@@ -222,7 +222,7 @@ class AndroidAgentRecipeRuntimeTest {
         assertEquals(null, preparing.mutation.agentBinding?.sessionId)
         assertEquals(null, ready.mutation.agentBinding?.sessionId)
         assertEquals("可以开始新会话", ready.mutation.agentBinding?.statusMessage)
-        assertEquals(1, provider.connection.newSessionCalls)
+        assertEquals(0, provider.connection.newSessionCalls)
         assertEquals(0, provider.connection.resumeSessionCalls)
     }
 
@@ -256,7 +256,7 @@ class AndroidAgentRecipeRuntimeTest {
         val ready = events.filterIsInstance<RecipeExecutionEvent.AwaitingUser>().single()
         assertEquals(null, ready.mutation.agentBinding?.sessionId)
         assertEquals(0, provider.connection.resumeSessionCalls)
-        assertEquals(1, provider.connection.newSessionCalls)
+        assertEquals(0, provider.connection.newSessionCalls)
     }
 
     @Test

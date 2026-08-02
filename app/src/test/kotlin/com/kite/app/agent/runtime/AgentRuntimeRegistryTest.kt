@@ -557,6 +557,90 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
+    fun `新草稿继承Agent最近选择而已有会话恢复自己的模型和权限`() = runTest {
+        val permissionOption = selectOption(
+            "approval-policy", "权限", AgentConfigCategory.Permission, "ask",
+            "ask" to "请求批准", "full" to "完全访问",
+        )
+        val global = AgentDraftPersistenceSnapshot(
+            modelSelection = AgentDraftModelSelection("opencode", "mimo", false),
+            permissionSelection = AgentDraftConfigurationSelection(
+                "approval-policy",
+                AgentConfigValue.Select("ask"),
+            ),
+        )
+        val perSession = AgentDraftPersistenceSnapshot(
+            modelSelection = AgentDraftModelSelection("zhipu", "glm-5.2", false),
+            permissionSelection = AgentDraftConfigurationSelection(
+                "approval-policy",
+                AgentConfigValue.Select("full"),
+            ),
+        )
+        val publications = mutableListOf<Triple<String?, AgentDraftPersistenceSnapshot, Boolean>>()
+        val provider = FakeProvider(
+            initialConfiguration = listOf(permissionOption),
+            requestPermission = false,
+        )
+        start(
+            provider,
+            request("instance-inherited-draft").copy(
+                initialDraftCatalog = AgentDraftCapabilityCatalog(
+                    configuration = listOf(permissionOption),
+                ),
+                initialDraftPreferences = global,
+                loadSessionDraftPreferences = { sessionId ->
+                    perSession.takeIf { sessionId == "historical-1" }
+                },
+                onDraftPreferencesChanged = { sessionId, preferences, updateDefault ->
+                    publications += Triple(sessionId, preferences, updateDefault)
+                },
+            ),
+        )
+
+        assertEquals(global.modelSelection, AgentRuntimeRegistry.draftModelSelection("instance-inherited-draft", 1L))
+        assertEquals(
+            mapOf("approval-policy" to AgentConfigValue.Select("ask")),
+            AgentRuntimeRegistry.draftPreferences("instance-inherited-draft", 1L)?.configuration,
+        )
+
+        AgentRuntimeRegistry.loadSession("instance-inherited-draft", 1L, "historical-1")
+
+        assertEquals(perSession.modelSelection, AgentRuntimeRegistry.draftModelSelection("instance-inherited-draft", 1L))
+        assertEquals(
+            mapOf("approval-policy" to AgentConfigValue.Select("full")),
+            AgentRuntimeRegistry.draftPreferences("instance-inherited-draft", 1L)?.configuration,
+        )
+        assertTrue(publications.any { (sessionId, preferences, updateDefault) ->
+            sessionId == "historical-1" && preferences == perSession && !updateDefault
+        })
+
+        AgentRuntimeRegistry.prepareNewSession("instance-inherited-draft", 1L)
+        assertEquals(global.modelSelection, AgentRuntimeRegistry.draftModelSelection("instance-inherited-draft", 1L))
+        assertEquals(
+            mapOf("approval-policy" to AgentConfigValue.Select("ask")),
+            AgentRuntimeRegistry.draftPreferences("instance-inherited-draft", 1L)?.configuration,
+        )
+        AgentRuntimeRegistry.loadSession("instance-inherited-draft", 1L, "historical-1")
+
+        val latestModel = AgentDraftModelSelection("opencode", "big-pickle", false)
+        AgentRuntimeRegistry.selectDraftModel("instance-inherited-draft", 1L, latestModel)
+        AgentRuntimeRegistry.selectDraftConfiguration(
+            "instance-inherited-draft",
+            1L,
+            "approval-policy",
+            AgentConfigValue.Select("ask"),
+        )
+        AgentRuntimeRegistry.prepareNewSession("instance-inherited-draft", 1L)
+
+        assertEquals(latestModel, AgentRuntimeRegistry.draftModelSelection("instance-inherited-draft", 1L))
+        assertEquals(
+            mapOf("approval-policy" to AgentConfigValue.Select("ask")),
+            AgentRuntimeRegistry.draftPreferences("instance-inherited-draft", 1L)?.configuration,
+        )
+        assertTrue(publications.count { it.third } >= 2)
+    }
+
+    @Test
     fun `已有会话的模型推理和权限只在发送时应用并保留到下一轮`() = runTest {
         val modelOption = selectOption(
             "model", "模型", AgentConfigCategory.Model, "opencode/default",

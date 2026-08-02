@@ -17,6 +17,8 @@ import com.kite.app.agent.config.defaultAgentConfigAdapters
 import com.kite.app.agent.config.mergeAgentSessionConfigurationOverlay
 import com.kite.app.agent.config.normalizePublishedSessionConfiguration
 import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentFailureCode
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentOperationResult
@@ -32,7 +34,9 @@ import com.kite.app.agent.process.AgentProcessLaunch
 import com.kite.app.agent.process.JavaAgentProcessFactory
 import com.kite.app.agent.runtime.AgentAttachProviderRegistry
 import com.kite.app.agent.runtime.AgentDraftCapabilityCatalog
+import com.kite.app.agent.runtime.AgentDraftConfigurationSelection
 import com.kite.app.agent.runtime.AgentDraftModelSelection
+import com.kite.app.agent.runtime.AgentDraftPersistenceSnapshot
 import com.kite.app.agent.runtime.AgentRuntimeRegistry
 import com.kite.app.agent.runtime.AgentRuntimeStartRequest
 import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
@@ -57,6 +61,8 @@ import com.kite.app.agent.store.AgentCatalogModel
 import com.kite.app.agent.store.AgentCatalogProvider
 import com.kite.app.agent.store.AgentProviderCatalogPolicy
 import com.kite.app.agent.store.AgentProviderCatalogStore
+import com.kite.app.agent.store.AgentSessionDraftPreferences
+import com.kite.app.agent.store.AgentSessionMetadataStore
 import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeStepExecutionRequest
 import com.kite.app.application.runs.RunStateMutation
@@ -368,6 +374,7 @@ internal class AndroidAgentRecipeRuntime(
         )
     private val manifestLoader = KiteResourceManifestLoader(appContext)
     private val draftCapabilityCache = AgentDraftCapabilityCacheStore(appContext)
+    private val sessionMetadataStore = AgentSessionMetadataStore(appContext)
     private val managedProcessLaunchPlanner = managedProcessLaunchPlanner
         ?: AndroidManagedAgentProcessLaunchPlanner(appContext)
     private val managedRuntimeDependencyPreparer = managedRuntimeDependencyPreparer
@@ -688,6 +695,17 @@ internal class AndroidAgentRecipeRuntime(
             modes = storedCatalog.workModes,
             currentModeId = storedCatalog.selectedWorkModeId,
         )
+        val initialDraftPreferences = AgentDraftPersistenceSnapshot(
+            modelSelection = storedCatalog.selectedProviderId?.let { selectedProviderId ->
+                storedCatalog.selectedModelId?.let { selectedModelId ->
+                    AgentDraftModelSelection(selectedProviderId, selectedModelId, usesAgentDefault = false)
+                }
+            },
+            permissionSelection = initialDraftCatalog.configuration
+                .filterIsInstance<AgentConfigOption.Select>()
+                .firstOrNull { it.category == AgentConfigCategory.Permission }
+                ?.let { AgentDraftConfigurationSelection(it.id, AgentConfigValue.Select(it.currentValue)) },
+        )
         when (val result = AgentRuntimeRegistry.start(
             request = AgentRuntimeStartRequest(
                 instanceId = request.instanceId,
@@ -712,6 +730,50 @@ internal class AndroidAgentRecipeRuntime(
                 },
                 initialDraftCatalog = initialDraftCatalog,
                 initialDraftModeId = storedCatalog.selectedWorkModeId,
+                initialDraftPreferences = initialDraftPreferences,
+                loadSessionDraftPreferences = { sessionId ->
+                    sessionMetadataStore.draftPreferences(providerId, sessionId)?.toRuntimePreferences()
+                },
+                onDraftPreferencesChanged = { sessionId, preferences, updateAgentDefault ->
+                    val catalog = agentProviderCatalogApi.snapshot(catalogTarget)
+                    val model = preferences.modelSelection?.takeIf { selection ->
+                        catalog.providers.any { provider ->
+                            provider.id == selection.providerId &&
+                                provider.models.any { it.id == selection.modelId }
+                        }
+                    }
+                    val permission = preferences.permissionSelection
+                        ?.takeIf { it.value is AgentConfigValue.Select }
+                    if (updateAgentDefault) {
+                        model?.let { selection ->
+                            agentProviderCatalogApi.selectModel(
+                                catalogTarget,
+                                selection.providerId,
+                                selection.modelId,
+                            )
+                        }
+                        permission?.let { selection ->
+                            agentProviderCatalogApi.selectControl(
+                                catalogTarget,
+                                selection.configId,
+                                selection.value,
+                            )
+                        }
+                    }
+                    sessionId?.let { id ->
+                        sessionMetadataStore.saveDraftPreferences(
+                            providerId,
+                            id,
+                            AgentSessionDraftPreferences(
+                                modelProviderId = model?.providerId,
+                                modelId = model?.modelId,
+                                modelUsesAgentDefault = model?.usesAgentDefault ?: false,
+                                permissionConfigId = permission?.configId,
+                                permissionValue = (permission?.value as? AgentConfigValue.Select)?.value,
+                            ),
+                        )
+                    }
+                },
                 onDraftCatalogChanged = { catalog ->
                     draftCapabilityCache.put(draftCatalogKey, catalog)
                     agentProviderCatalogApi.recordMappedControls(catalogTarget, catalog.configuration)
@@ -1076,4 +1138,16 @@ internal class AndroidAgentRecipeRuntime(
         val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
         val MANAGED_PROTOCOLS = setOf(PROTOCOL_ACP, PROTOCOL_CODEX_APP_SERVER)
     }
+
+    private fun AgentSessionDraftPreferences.toRuntimePreferences(): AgentDraftPersistenceSnapshot =
+        AgentDraftPersistenceSnapshot(
+            modelSelection = modelProviderId?.let { provider ->
+                modelId?.let { model -> AgentDraftModelSelection(provider, model, modelUsesAgentDefault) }
+            },
+            permissionSelection = permissionConfigId?.let { configId ->
+                permissionValue?.let { value ->
+                    AgentDraftConfigurationSelection(configId, AgentConfigValue.Select(value))
+                }
+            },
+        )
 }

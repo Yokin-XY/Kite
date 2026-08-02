@@ -1323,7 +1323,9 @@ internal class RunAgentSurfaceBinding(
         )
         val next = current?.takeIf { AgentDraftModelPolicy.contains(available, it) }
             ?: AgentDraftModelPolicy.defaultSelection(snapshot)
-        next?.let { AgentRuntimeRegistry.selectDraftModel(instanceId, generation, it) }
+        if (next != null && next != current) {
+            AgentRuntimeRegistry.selectDraftModel(instanceId, generation, next)
+        }
     }
 
     private fun usePersistentSnapshotAsDraftDefault(targetAgentId: String, snapshot: AgentLiveConfigSnapshot) {

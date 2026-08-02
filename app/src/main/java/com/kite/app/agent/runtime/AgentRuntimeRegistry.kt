@@ -59,6 +59,13 @@ data class AgentRuntimeStartRequest(
     },
     val initialDraftCatalog: AgentDraftCapabilityCatalog = AgentDraftCapabilityCatalog(),
     val initialDraftModeId: String? = null,
+    val initialDraftPreferences: AgentDraftPersistenceSnapshot = AgentDraftPersistenceSnapshot(),
+    val loadSessionDraftPreferences: (String) -> AgentDraftPersistenceSnapshot? = { null },
+    val onDraftPreferencesChanged: (
+        sessionId: String?,
+        preferences: AgentDraftPersistenceSnapshot,
+        updateAgentDefault: Boolean,
+    ) -> Unit = { _, _, _ -> },
     val composeSkillPrompt: (AgentPromptDraft) -> List<AgentContent> = AgentSkillPromptComposer::compose,
     val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {},
     val onDraftModeSelected: (String) -> Unit = {},
@@ -88,6 +95,16 @@ data class AgentDraftCapabilityCatalog(
 data class AgentDraftPreferences(
     val configuration: Map<String, AgentConfigValue> = emptyMap(),
     val modeId: String? = null
+)
+
+data class AgentDraftConfigurationSelection(
+    val configId: String,
+    val value: AgentConfigValue,
+)
+
+data class AgentDraftPersistenceSnapshot(
+    val modelSelection: AgentDraftModelSelection? = null,
+    val permissionSelection: AgentDraftConfigurationSelection? = null,
 )
 
 enum class AgentRuntimeSessionState {
@@ -148,15 +165,19 @@ object AgentRuntimeRegistry {
         val composeSkillPrompt: (AgentPromptDraft) -> List<AgentContent>,
         val sessionOperationMutex: Mutex = Mutex(),
         @Volatile var draftModelSelection: AgentDraftModelSelection? = null,
+        @Volatile var defaultDraftModelSelection: AgentDraftModelSelection? = null,
         @Volatile var draftCatalog: AgentDraftCapabilityCatalog = AgentDraftCapabilityCatalog(),
         val draftCatalogLock: Any = Any(),
         val draftConfiguration: LinkedHashMap<String, AgentConfigValue> = linkedMapOf(),
+        @Volatile var defaultDraftPermissionSelection: AgentDraftConfigurationSelection? = null,
         @Volatile var draftModeId: String? = null,
         @Volatile var defaultDraftModeId: String? = null,
         @Volatile var preparingWarmDraft: Boolean = false,
         @Volatile var pendingProviderConfigurationEffect: AgentSessionConfigurationEffect? = null,
         val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {},
         val onDraftModeSelected: (String) -> Unit = {},
+        val loadSessionDraftPreferences: (String) -> AgentDraftPersistenceSnapshot? = { null },
+        val onDraftPreferencesChanged: (String?, AgentDraftPersistenceSnapshot, Boolean) -> Unit = { _, _, _ -> },
     )
 
     private data class PendingPermission(
@@ -350,6 +371,15 @@ object AgentRuntimeRegistry {
                 bindSnapshot(it, openedSnapshot)
             }
         }
+        val defaultPermission = observedCatalog.acceptedPermissionSelection(
+            request.initialDraftPreferences.permissionSelection,
+        )
+        val restoredPreferences = session.sessionId
+            ?.takeUnless { session.isDraft }
+            ?.let { sessionId -> runCatching { request.loadSessionDraftPreferences(sessionId) }.getOrNull() }
+        val restoredPermission = observedCatalog.acceptedPermissionSelection(
+            restoredPreferences?.permissionSelection,
+        ) ?: defaultPermission
         val runtime = ActiveRuntime(
             session = session,
             defaultCwd = request.cwd,
@@ -364,13 +394,22 @@ object AgentRuntimeRegistry {
             resolveDraftModelSelection = request.resolveDraftModelSelection,
             prepareDraftModelSelection = request.prepareDraftModelSelection,
             composeSkillPrompt = request.composeSkillPrompt,
+            draftModelSelection = restoredPreferences?.modelSelection
+                ?: request.initialDraftPreferences.modelSelection,
+            defaultDraftModelSelection = request.initialDraftPreferences.modelSelection,
             draftCatalog = observedCatalog,
+            draftConfiguration = linkedMapOf<String, AgentConfigValue>().apply {
+                restoredPermission?.let { put(it.configId, it.value) }
+            },
+            defaultDraftPermissionSelection = defaultPermission,
             draftModeId = request.initialDraftModeId
                 ?.takeIf { id -> session.isDraft && observedCatalog.modes.any { it.id == id } },
             defaultDraftModeId = request.initialDraftModeId
                 ?.takeIf { id -> observedCatalog.modes.any { it.id == id } },
             onDraftCatalogChanged = request.onDraftCatalogChanged,
             onDraftModeSelected = request.onDraftModeSelected,
+            loadSessionDraftPreferences = request.loadSessionDraftPreferences,
+            onDraftPreferencesChanged = request.onDraftPreferencesChanged,
         )
         val previous = synchronized(catalogLock) {
             runtime.draftCatalog = observedCatalog
@@ -380,6 +419,7 @@ object AgentRuntimeRegistry {
             connection.disconnect()
             return AgentOperationResult.Failure("Agent 运行实例连接发生冲突")
         }
+        if (session.sessionId != null) runtime.publishDraftPreferences(updateAgentDefault = false)
         statusSink.onStatus(
             session.sessionId.takeUnless { session.isDraft },
             AgentSessionPhase.Ready,
@@ -425,11 +465,13 @@ object AgentRuntimeRegistry {
             ?.takeIf { it.session.generation == generation }
             ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
         active.draftModelSelection = selection
+        active.defaultDraftModelSelection = selection
         active.draftCatalog.configuration
             .filter { it.category == AgentConfigCategory.Model }
             .forEach { option -> synchronized(active.draftConfiguration) { active.draftConfiguration.remove(option.id) } }
         active.connection.previewDraftModelConfiguration(selection.providerId, selection.modelId)
             ?.let { preview -> active.applyDraftConfigurationPreview(preview) }
+        active.publishDraftPreferences(updateAgentDefault = true)
         return AgentOperationResult.Success(selection)
     }
 
@@ -450,6 +492,9 @@ object AgentRuntimeRegistry {
         synchronized(active.draftConfiguration) {
             active.draftConfiguration[configId] = value
         }
+        if (option.category == AgentConfigCategory.Permission) {
+            active.defaultDraftPermissionSelection = AgentDraftConfigurationSelection(configId, value)
+        }
         if (option.category == AgentConfigCategory.Model) {
             active.draftModelSelection = null
             val choice = (option as? AgentConfigOption.Select)
@@ -463,6 +508,9 @@ object AgentRuntimeRegistry {
                 active.connection.previewDraftModelConfiguration(providerId, modelId)
                     ?.let { preview -> active.applyDraftConfigurationPreview(preview) }
             }
+        }
+        if (option.category == AgentConfigCategory.Permission) {
+            active.publishDraftPreferences(updateAgentDefault = true)
         }
         return AgentOperationResult.Success(
             AgentDraftPreferences(
@@ -794,15 +842,14 @@ object AgentRuntimeRegistry {
             state = state,
         )
         session = next
-        if (!preserveDraftPreferences) {
-            draftModelSelection = null
-            synchronized(draftConfiguration) { draftConfiguration.clear() }
-        }
         publishDraftCatalog(draftCatalog.withSnapshot(normalizedSnapshot, normalizeModes))
         if (!preserveDraftPreferences) {
+            restoreDraftPreferences(normalizedSnapshot.id)
             draftModeId = defaultDraftModeId?.takeIf { id -> draftCatalog.modes.any { it.id == id } }
         }
+        sanitizeDraftPermissionSelection()
         bindSnapshot(next, normalizedSnapshot)
+        publishDraftPreferences(updateAgentDefault = false)
         statusSink.onStatus(
             next.sessionId.takeUnless { next.isDraft },
             AgentSessionPhase.Ready,
@@ -822,8 +869,7 @@ object AgentRuntimeRegistry {
             state = AgentRuntimeSessionState.ColdDraft,
         )
         session = next
-        draftModelSelection = null
-        synchronized(draftConfiguration) { draftConfiguration.clear() }
+        restoreDraftPreferences(sessionId = null)
         draftModeId = defaultDraftModeId?.takeIf { id -> draftCatalog.modes.any { it.id == id } }
         statusSink.onStatus(null, AgentSessionPhase.Ready, "可以开始新会话")
         return next
@@ -1028,6 +1074,63 @@ object AgentRuntimeRegistry {
             choices.any { it.value == value.value }
         this is AgentConfigOption.Toggle && value is AgentConfigValue.Toggle -> true
         else -> false
+    }
+
+    private fun AgentDraftCapabilityCatalog.acceptedPermissionSelection(
+        selection: AgentDraftConfigurationSelection?,
+    ): AgentDraftConfigurationSelection? {
+        selection ?: return null
+        val option = configuration.firstOrNull {
+            it.id == selection.configId && it.category == AgentConfigCategory.Permission
+        }
+        return selection.takeIf { option?.accepts(selection.value) == true }
+    }
+
+    private fun ActiveRuntime.restoreDraftPreferences(sessionId: String?) {
+        val restored = sessionId
+            ?.let { runCatching { loadSessionDraftPreferences(it) }.getOrNull() }
+        draftModelSelection = restored?.modelSelection ?: defaultDraftModelSelection
+        val permission = draftCatalog.acceptedPermissionSelection(restored?.permissionSelection)
+            ?: draftCatalog.acceptedPermissionSelection(defaultDraftPermissionSelection)
+        synchronized(draftConfiguration) {
+            draftConfiguration.clear()
+            permission?.let { draftConfiguration[it.configId] = it.value }
+        }
+    }
+
+    private fun ActiveRuntime.sanitizeDraftPermissionSelection() {
+        synchronized(draftConfiguration) {
+            val permissionIds = draftCatalog.configuration
+                .filter { it.category == AgentConfigCategory.Permission }
+                .mapTo(hashSetOf(), AgentConfigOption::id)
+            draftConfiguration.keys
+                .filter { it in permissionIds }
+                .filter { configId ->
+                    val value = draftConfiguration[configId] ?: return@filter false
+                    draftCatalog.configuration.none { it.id == configId && it.accepts(value) }
+                }
+                .forEach(draftConfiguration::remove)
+        }
+    }
+
+    private fun ActiveRuntime.publishDraftPreferences(updateAgentDefault: Boolean) {
+        val permission = synchronized(draftConfiguration) {
+            draftCatalog.configuration
+                .firstOrNull { option ->
+                    option.category == AgentConfigCategory.Permission &&
+                        draftConfiguration[option.id]?.let { value -> option.accepts(value) } == true
+                }
+                ?.let { option ->
+                    AgentDraftConfigurationSelection(option.id, checkNotNull(draftConfiguration[option.id]))
+                }
+        }
+        runCatching {
+            onDraftPreferencesChanged(
+                session.sessionId,
+                AgentDraftPersistenceSnapshot(draftModelSelection, permission),
+                updateAgentDefault,
+            )
+        }
     }
 
     private fun AgentDraftCapabilityCatalog.withSnapshot(
