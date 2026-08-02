@@ -13,7 +13,7 @@ internal sealed interface AgentMcpDraftBuildResult {
     data class Invalid(val message: String) : AgentMcpDraftBuildResult
 }
 
-/** MCP 编辑页的纯表单规则；不认识 OpenCode JSON，也不接触 Header 或环境变量真值。 */
+/** MCP 编辑页的纯表单规则；不认识任何 Agent 原生格式，也不接触 Header 或环境变量真值。 */
 internal object AgentMcpEditorPolicy {
     fun buildDraft(
         id: String,

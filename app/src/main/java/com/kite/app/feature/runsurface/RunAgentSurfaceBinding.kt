@@ -3849,7 +3849,7 @@ internal class RunAgentSurfaceBinding(
         }.also { mcpEditorStatusText = it }
         content.addView(status)
 
-        content.addView(sectionTitle("连接方式", "OpenCode 会为远程地址自动尝试 HTTP 与 SSE。"))
+        content.addView(sectionTitle("连接方式", "远程地址会由当前 Agent 的兼容层翻译为它实际支持的传输方式。"))
         val transportRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -4935,7 +4935,7 @@ internal class RunAgentSurfaceBinding(
         val displayNameField = providerEditorField(
             content,
             label = "显示名称",
-            hintText = "例如 MiMo V2 Pro",
+            hintText = "例如自定义模型",
             value = model?.displayName.orEmpty()
         )
         content.addView(TextView(context).apply {

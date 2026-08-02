@@ -40,7 +40,6 @@ import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentReasoningControl
-import com.kite.app.agent.config.AgentReasoningControls
 import com.kite.app.agent.config.AgentSkillSummary
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
@@ -1268,7 +1267,7 @@ internal class OpenClawAgentConfigAdapter(
 
     override fun displayName(): String = "OpenClaw"
 
-    override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.OpenClaw
+    override fun reasoningControl(): AgentReasoningControl = openClawReasoningControl
 
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> {
         val workspace = openClawWorkspacePath()
@@ -1833,7 +1832,7 @@ internal class ClaudeCodeAgentConfigAdapter(
 
     override fun displayName(): String = "Claude Code"
 
-    override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.ClaudeCode
+    override fun reasoningControl(): AgentReasoningControl = claudeCodeReasoningControl
 
     override fun normalizeSessionConfiguration(options: List<AgentConfigOption>): List<AgentConfigOption> =
         super.normalizeSessionConfiguration(options).mapNotNull { option ->
@@ -2358,7 +2357,7 @@ internal class CodexAgentConfigAdapter(
 
     override fun displayName(): String = "Codex"
 
-    override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.Codex
+    override fun reasoningControl(): AgentReasoningControl = codexReasoningControl
 
     override suspend fun readSessionConfiguration(agentId: String): List<AgentConfigOption> =
         super.readSessionConfiguration(agentId)
@@ -2998,7 +2997,7 @@ internal class HermesAgentConfigAdapter(
 
     override fun displayName(): String = "Hermes"
 
-    override fun reasoningControl(): AgentReasoningControl = AgentReasoningControls.Hermes
+    override fun reasoningControl(): AgentReasoningControl = hermesReasoningControl
 
     override fun sessionPermissionControl(): AgentSessionPermissionControl =
         mediatedSessionPermissionControl(

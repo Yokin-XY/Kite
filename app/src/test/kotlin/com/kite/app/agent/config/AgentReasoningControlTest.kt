@@ -5,6 +5,11 @@ import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentReasoningMode
+import com.kite.app.agent.config.native.claudeCodeReasoningControl
+import com.kite.app.agent.config.native.codexReasoningControl
+import com.kite.app.agent.config.native.hermesReasoningControl
+import com.kite.app.agent.config.native.openClawReasoningControl
+import com.kite.app.agent.config.opencode.openCodeReasoningControl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -21,7 +26,7 @@ class AgentReasoningControlTest {
 
     @Test
     fun openClawKeepsPublishedSubsetAndProjectsBinaryAndAdaptiveSemantics() {
-        val normalized = AgentReasoningControls.OpenClaw.normalize(
+        val normalized = openClawReasoningControl.normalize(
             select(
                 current = "high",
                 choices = listOf(
@@ -50,7 +55,7 @@ class AgentReasoningControlTest {
 
     @Test
     fun claudeDefaultIsNotPublishedAndAutoUsesTheConfirmedAdaptiveMeaning() {
-        assertTrue(AgentReasoningControls.ClaudeCode.normalize(
+        assertTrue(claudeCodeReasoningControl.normalize(
             select(
                 current = "default",
                 choices = listOf(
@@ -62,7 +67,7 @@ class AgentReasoningControlTest {
             )
         ).isEmpty())
 
-        val normalized = AgentReasoningControls.ClaudeCode.normalize(
+        val normalized = claudeCodeReasoningControl.normalize(
             select(
                 current = "auto",
                 choices = listOf(
@@ -78,7 +83,7 @@ class AgentReasoningControlTest {
 
     @Test
     fun unmappedOrNonSelectableReasoningDoesNotPublishASelector() {
-        assertTrue(AgentReasoningControls.OpenCode.normalize(
+        assertTrue(openCodeReasoningControl.normalize(
             select(
                 current = "fast",
                 choices = listOf(
@@ -88,14 +93,14 @@ class AgentReasoningControlTest {
             )
         ).isEmpty())
 
-        assertTrue(AgentReasoningControls.Codex.normalize(
+        assertTrue(codexReasoningControl.normalize(
             select(
                 current = "medium",
                 choices = listOf(AgentConfigChoice("medium", "Medium")),
             )
         ).isEmpty())
 
-        assertTrue(AgentReasoningControls.Codex.normalize(
+        assertTrue(codexReasoningControl.normalize(
             select(
                 current = "ultra",
                 choices = listOf(
@@ -108,7 +113,7 @@ class AgentReasoningControlTest {
 
     @Test
     fun binaryThoughtToggleRemainsAvailable() {
-        val normalized = AgentReasoningControls.Hermes.normalize(
+        val normalized = hermesReasoningControl.normalize(
             listOf(
                 AgentConfigOption.Toggle(
                     id = "thinking",

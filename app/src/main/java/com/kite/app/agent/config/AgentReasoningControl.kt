@@ -4,7 +4,6 @@ import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentReasoningLevel
-import com.kite.app.agent.contract.AgentReasoningMode
 import com.kite.app.agent.contract.AgentReasoningSemantics
 
 /** 一个 Agent 原生推理选项到 Kite 稳定语义的显式映射。 */
@@ -90,53 +89,18 @@ class AgentReasoningControl(
     private fun String.normalizedKey(): String = trim().lowercase()
 }
 
-/**
- * 兼容期映射词表；它们不会替 Agent 补造当前模型未公布的选项。
- *
- * 产品映射将在统一 SDK 门面落地后迁回各自 Adapter；这里不再公开“跟随默认”或工作流编排档位。
- */
-object AgentReasoningControls {
-    val OpenCode = AgentReasoningControl(levelMappings())
-
-    val OpenClaw = AgentReasoningControl(
-        levelMappings() + listOf(
-            AgentReasoningNativeMapping("adaptive", AgentReasoningMode.Adaptive),
-            AgentReasoningNativeMapping("on", AgentReasoningMode.Enabled),
-            AgentReasoningNativeMapping("enabled", AgentReasoningMode.Enabled),
-            // OpenClaw 的二值 Provider profile 保留 low 作为 ID，并把显示标签声明为 on。
-            AgentReasoningNativeMapping("low", AgentReasoningMode.Enabled, nativeLabel = "on"),
-        )
-    )
-
-    val Hermes = AgentReasoningControl(levelMappings())
-
-    val Codex = AgentReasoningControl(levelMappings())
-
-    val ClaudeCode = AgentReasoningControl(
-        levelMappings(
-            levels = setOf(
-                AgentReasoningLevel.Off,
-                AgentReasoningLevel.Low,
-                AgentReasoningLevel.Medium,
-                AgentReasoningLevel.High,
-                AgentReasoningLevel.ExtraHigh,
-                AgentReasoningLevel.Maximum,
-            )
-        ) + AgentReasoningNativeMapping("auto", AgentReasoningMode.Adaptive)
-    )
-
-    private fun levelMappings(
-        levels: Set<AgentReasoningLevel> = AgentReasoningLevel.entries.toSet(),
-    ): List<AgentReasoningNativeMapping> = buildList {
-        levels.forEach { level -> add(AgentReasoningNativeMapping(level.id, level)) }
-        if (AgentReasoningLevel.Off in levels) {
-            add(AgentReasoningNativeMapping("none", AgentReasoningLevel.Off))
-        }
-        if (AgentReasoningLevel.ExtraHigh in levels) {
-            add(AgentReasoningNativeMapping("x-high", AgentReasoningLevel.ExtraHigh))
-            add(AgentReasoningNativeMapping("x_high", AgentReasoningLevel.ExtraHigh))
-            add(AgentReasoningNativeMapping("extra-high", AgentReasoningLevel.ExtraHigh))
-        }
+/** Adapter 可复用的七档基础值；额外别名和模式必须在对应工具的兼容文件中声明。 */
+internal fun standardReasoningLevelMappings(
+    levels: Set<AgentReasoningLevel> = AgentReasoningLevel.entries.toSet(),
+): List<AgentReasoningNativeMapping> = buildList {
+    levels.forEach { level -> add(AgentReasoningNativeMapping(level.id, level)) }
+    if (AgentReasoningLevel.Off in levels) {
+        add(AgentReasoningNativeMapping("none", AgentReasoningLevel.Off))
+    }
+    if (AgentReasoningLevel.ExtraHigh in levels) {
+        add(AgentReasoningNativeMapping("x-high", AgentReasoningLevel.ExtraHigh))
+        add(AgentReasoningNativeMapping("x_high", AgentReasoningLevel.ExtraHigh))
+        add(AgentReasoningNativeMapping("extra-high", AgentReasoningLevel.ExtraHigh))
     }
 }
 
