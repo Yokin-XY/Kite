@@ -84,6 +84,12 @@ data class AgentDraftPreferences(
     val modeId: String? = null
 )
 
+enum class AgentRuntimeSessionState {
+    ColdDraft,
+    WarmDraft,
+    Active,
+}
+
 data class AgentRuntimeSession(
     val instanceId: String,
     val generation: Long,
@@ -91,9 +97,15 @@ data class AgentRuntimeSession(
     val sessionId: String?,
     val cwd: String,
     val snapshot: AgentSessionSnapshot?,
-    val capabilities: AgentCapabilities
+    val capabilities: AgentCapabilities,
+    val state: AgentRuntimeSessionState = if (sessionId == null) {
+        AgentRuntimeSessionState.ColdDraft
+    } else {
+        AgentRuntimeSessionState.Active
+    },
 ) {
-    val isDraft: Boolean get() = sessionId == null
+    val isDraft: Boolean get() = state != AgentRuntimeSessionState.Active
+    val hasNativeSession: Boolean get() = sessionId != null
 }
 
 fun interface AgentRuntimeStatusSink {
@@ -134,6 +146,7 @@ object AgentRuntimeRegistry {
         val draftConfiguration: LinkedHashMap<String, AgentConfigValue> = linkedMapOf(),
         @Volatile var draftModeId: String? = null,
         @Volatile var defaultDraftModeId: String? = null,
+        @Volatile var preparingWarmDraft: Boolean = false,
         val onDraftCatalogChanged: (AgentDraftCapabilityCatalog) -> Unit = {},
         val onDraftModeSelected: (String) -> Unit = {},
     )
@@ -160,6 +173,7 @@ object AgentRuntimeRegistry {
             existing.connection.disconnect()
         }
 
+        val preferredSessionId = request.preferredSessionId?.trim()?.takeIf(String::isNotBlank)
         var observedCatalog = request.initialDraftCatalog.copy(
             modes = request.normalizeModes(request.initialDraftCatalog.modes).distinctBy(AgentMode::id),
         )
@@ -216,7 +230,14 @@ object AgentRuntimeRegistry {
                 }
                 AgentConversationStore.applyEvent(key, normalizedEvent)
                 if (normalizedEvent is AgentSessionEvent.LifecycleChanged) {
-                    statusSink.onStatus(sessionId, normalizedEvent.phase, normalizedEvent.message)
+                    val active = activeByInstance[request.instanceId]
+                        ?.takeIf { it.session.generation == request.generation }
+                    val visibleSessionId = sessionId.takeUnless {
+                        active?.session?.isDraft == true ||
+                            active?.preparingWarmDraft == true ||
+                            (active == null && preferredSessionId == null)
+                    }
+                    statusSink.onStatus(visibleSessionId, normalizedEvent.phase, normalizedEvent.message)
                 }
             },
             permissionHandler = { permission ->
@@ -259,7 +280,6 @@ object AgentRuntimeRegistry {
             is AgentOperationResult.Failure -> return connected
             is AgentOperationResult.Unsupported -> return connected
         }
-        val preferredSessionId = request.preferredSessionId?.trim()?.takeIf(String::isNotBlank)
         val additionalDirectories = request.additionalDirectories
             .map(String::trim)
             .filter(String::isNotBlank)
@@ -267,15 +287,48 @@ object AgentRuntimeRegistry {
             .takeIf { connection.capabilities.sessions.additionalDirectories }
             .orEmpty()
         val session = if (preferredSessionId == null) {
-            AgentRuntimeSession(
-                instanceId = request.instanceId,
-                generation = request.generation,
-                providerId = request.providerId,
-                sessionId = null,
-                cwd = request.cwd,
-                snapshot = null,
-                capabilities = connection.capabilities
+            val created = connection.newSession(
+                AgentNewSessionRequest(request.cwd, additionalDirectories)
             )
+            val createdSnapshot = when (created) {
+                is AgentOperationResult.Success -> created.value.copy(
+                    configuration = mergeDraftConfigurationCatalog(
+                        request.initialDraftCatalog.configuration,
+                        request.normalizeConfiguration(created.value.configuration),
+                    ),
+                    modes = request.normalizeModes(created.value.modes)
+                        .ifEmpty { observedCatalog.modes }
+                        .distinctBy(AgentMode::id),
+                )
+                is AgentOperationResult.Failure,
+                is AgentOperationResult.Unsupported -> null
+            }
+            if (createdSnapshot == null) {
+                AgentRuntimeSession(
+                    instanceId = request.instanceId,
+                    generation = request.generation,
+                    providerId = request.providerId,
+                    sessionId = null,
+                    cwd = request.cwd,
+                    snapshot = null,
+                    capabilities = connection.capabilities,
+                    state = AgentRuntimeSessionState.ColdDraft,
+                )
+            } else {
+                AgentRuntimeSession(
+                    instanceId = request.instanceId,
+                    generation = request.generation,
+                    providerId = request.providerId,
+                    sessionId = createdSnapshot.id,
+                    cwd = request.cwd,
+                    snapshot = createdSnapshot,
+                    capabilities = connection.capabilities,
+                    state = AgentRuntimeSessionState.WarmDraft,
+                ).also {
+                    updateObservedCatalog { current -> current.withSnapshot(createdSnapshot, request.normalizeModes) }
+                    bindSnapshot(it, createdSnapshot)
+                }
+            }
         } else {
             val opened = restoreExistingSession(
                 connection = connection,
@@ -311,7 +364,8 @@ object AgentRuntimeRegistry {
                 sessionId = openedSnapshot.id,
                 cwd = request.cwd,
                 snapshot = openedSnapshot,
-                capabilities = connection.capabilities
+                capabilities = connection.capabilities,
+                state = AgentRuntimeSessionState.Active,
             ).also {
                 updateObservedCatalog { current -> current.withSnapshot(openedSnapshot, request.normalizeModes) }
                 bindSnapshot(it, openedSnapshot)
@@ -347,7 +401,7 @@ object AgentRuntimeRegistry {
             return AgentOperationResult.Failure("Agent 运行实例连接发生冲突")
         }
         statusSink.onStatus(
-            session.sessionId,
+            session.sessionId.takeUnless { session.isDraft },
             AgentSessionPhase.Ready,
             if (session.isDraft) "可以开始新会话" else "准备就绪"
         )
@@ -461,7 +515,7 @@ object AgentRuntimeRegistry {
             ?: return AgentOperationResult.Failure("Agent 会话尚未连接")
         val nextCwd = cwd?.trim()?.takeIf(String::isNotBlank) ?: active.session.cwd
         return active.sessionOperationMutex.withLock {
-            AgentOperationResult.Success(active.enterDraft(nextCwd))
+            active.createWarmDraft(nextCwd, preserveDraftPreferences = false)
         }
     }
 
@@ -634,7 +688,7 @@ object AgentRuntimeRegistry {
                 is AgentOperationResult.Failure -> return@withLock prepared
                 is AgentOperationResult.Unsupported -> return@withLock prepared
             }
-            if (active.session.isDraft) {
+            if (!active.session.hasNativeSession) {
                 when (val created = active.connection.newSession(
                     AgentNewSessionRequest(active.session.cwd, active.additionalDirectories)
                 )) {
@@ -642,6 +696,7 @@ object AgentRuntimeRegistry {
                         created.value,
                         active.session.cwd,
                         preserveDraftPreferences = true,
+                        state = AgentRuntimeSessionState.WarmDraft,
                     )
                     is AgentOperationResult.Failure -> return@withLock created
                     is AgentOperationResult.Unsupported -> return@withLock created
@@ -664,6 +719,7 @@ object AgentRuntimeRegistry {
             }
             val sessionId = active.session.sessionId
                 ?: return@withLock AgentOperationResult.Failure("Agent 会话创建后未返回会话 ID")
+            active.promoteWarmDraft()
             val key = AgentConversationKey(active.session.providerId, sessionId)
             val localMessageId = "local-${System.currentTimeMillis()}"
             content.forEach { block ->
@@ -721,7 +777,11 @@ object AgentRuntimeRegistry {
                 AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Closed, "Agent 会话已关闭")
             )
         }
-        active.statusSink.onStatus(active.session.sessionId, AgentSessionPhase.Closed, "Agent 会话已关闭")
+        active.statusSink.onStatus(
+            active.session.sessionId.takeUnless { active.session.isDraft },
+            AgentSessionPhase.Closed,
+            "Agent 会话已关闭",
+        )
         return true
     }
 
@@ -736,6 +796,7 @@ object AgentRuntimeRegistry {
         snapshot: AgentSessionSnapshot,
         cwd: String,
         preserveDraftPreferences: Boolean,
+        state: AgentRuntimeSessionState = AgentRuntimeSessionState.Active,
     ): AgentRuntimeSession {
         val normalizedSnapshot = snapshot.copy(
             configuration = mergeDraftConfigurationCatalog(
@@ -751,29 +812,71 @@ object AgentRuntimeRegistry {
             sessionId = normalizedSnapshot.id,
             cwd = cwd,
             snapshot = normalizedSnapshot,
-            capabilities = connection.capabilities
+            capabilities = connection.capabilities,
+            state = state,
         )
         session = next
         if (!preserveDraftPreferences) {
             draftModelSelection = null
             synchronized(draftConfiguration) { draftConfiguration.clear() }
-            draftModeId = null
         }
         publishDraftCatalog(draftCatalog.withSnapshot(normalizedSnapshot, normalizeModes))
+        if (!preserveDraftPreferences) {
+            draftModeId = defaultDraftModeId?.takeIf { id -> draftCatalog.modes.any { it.id == id } }
+        }
         bindSnapshot(next, normalizedSnapshot)
-        statusSink.onStatus(next.sessionId, AgentSessionPhase.Ready, "准备就绪")
+        statusSink.onStatus(
+            next.sessionId.takeUnless { next.isDraft },
+            AgentSessionPhase.Ready,
+            if (next.isDraft) "可以开始新会话" else "准备就绪",
+        )
         return next
     }
 
     private fun ActiveRuntime.enterDraft(cwd: String): AgentRuntimeSession {
         session.snapshot?.let { snapshot -> publishDraftCatalog(draftCatalog.withSnapshot(snapshot, normalizeModes)) }
-        val next = session.copy(sessionId = null, cwd = cwd, snapshot = null)
+        val next = session.copy(
+            sessionId = null,
+            cwd = cwd,
+            snapshot = null,
+            state = AgentRuntimeSessionState.ColdDraft,
+        )
         session = next
         draftModelSelection = null
         synchronized(draftConfiguration) { draftConfiguration.clear() }
         draftModeId = defaultDraftModeId?.takeIf { id -> draftCatalog.modes.any { it.id == id } }
         statusSink.onStatus(null, AgentSessionPhase.Ready, "可以开始新会话")
         return next
+    }
+
+    private suspend fun ActiveRuntime.createWarmDraft(
+        cwd: String,
+        preserveDraftPreferences: Boolean,
+    ): AgentOperationResult<AgentRuntimeSession> {
+        preparingWarmDraft = true
+        val created = try {
+            connection.newSession(AgentNewSessionRequest(cwd, additionalDirectories))
+        } finally {
+            preparingWarmDraft = false
+        }
+        return when (created) {
+            is AgentOperationResult.Success -> AgentOperationResult.Success(
+                activate(
+                    created.value,
+                    cwd,
+                    preserveDraftPreferences = preserveDraftPreferences,
+                    state = AgentRuntimeSessionState.WarmDraft,
+                )
+            )
+            is AgentOperationResult.Failure -> created
+            is AgentOperationResult.Unsupported -> created
+        }
+    }
+
+    private fun ActiveRuntime.promoteWarmDraft() {
+        if (session.state != AgentRuntimeSessionState.WarmDraft) return
+        session = session.copy(state = AgentRuntimeSessionState.Active)
+        statusSink.onStatus(session.sessionId, AgentSessionPhase.Ready, "准备就绪")
     }
 
     private suspend fun ActiveRuntime.applyDraftModelSelection(): AgentOperationResult<Unit> {
@@ -942,10 +1045,12 @@ object AgentRuntimeRegistry {
             is AgentProviderPreparationResult.Ready -> when {
                 !prepared.nativeConfigurationChanged -> AgentOperationResult.Success(Unit)
                 prepared.effect == AgentSessionConfigurationEffect.Reconnect -> reconnectForProviderSelection()
-                prepared.effect == AgentSessionConfigurationEffect.NewSession && !session.isDraft -> {
-                    enterDraft(session.cwd)
-                    AgentOperationResult.Success(Unit)
-                }
+                prepared.effect == AgentSessionConfigurationEffect.NewSession ->
+                    when (val warmed = createWarmDraft(session.cwd, preserveDraftPreferences = true)) {
+                        is AgentOperationResult.Success -> AgentOperationResult.Success(Unit)
+                        is AgentOperationResult.Failure -> warmed
+                        is AgentOperationResult.Unsupported -> warmed
+                    }
                 else -> AgentOperationResult.Success(Unit)
             }
         }
@@ -961,15 +1066,25 @@ object AgentRuntimeRegistry {
         }
         val previousConnection = connection
         val previousSessionId = session.sessionId
-        val restored = previousSessionId?.let { sessionId ->
-            restoreExistingSession(
-                connection = nextConnection,
-                instanceId = session.instanceId,
-                providerId = session.providerId,
-                sessionId = sessionId,
-                cwd = session.cwd,
-                additionalDirectories = additionalDirectories,
-            )
+        val wasDraft = session.isDraft
+        val restored = if (wasDraft) {
+            preparingWarmDraft = true
+            try {
+                nextConnection.newSession(AgentNewSessionRequest(session.cwd, additionalDirectories))
+            } finally {
+                preparingWarmDraft = false
+            }
+        } else {
+            previousSessionId?.let { sessionId ->
+                restoreExistingSession(
+                    connection = nextConnection,
+                    instanceId = session.instanceId,
+                    providerId = session.providerId,
+                    sessionId = sessionId,
+                    cwd = session.cwd,
+                    additionalDirectories = additionalDirectories,
+                )
+            }
         }
         val restoredSnapshot = when (restored) {
             null -> null
@@ -990,9 +1105,15 @@ object AgentRuntimeRegistry {
                 sessionId = null,
                 snapshot = null,
                 capabilities = nextConnection.capabilities,
+                state = AgentRuntimeSessionState.ColdDraft,
             )
         } else {
-            activate(restoredSnapshot, session.cwd, preserveDraftPreferences = true)
+            activate(
+                restoredSnapshot,
+                session.cwd,
+                preserveDraftPreferences = true,
+                state = if (wasDraft) AgentRuntimeSessionState.WarmDraft else AgentRuntimeSessionState.Active,
+            )
         }
         return AgentOperationResult.Success(Unit)
     }

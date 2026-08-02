@@ -676,45 +676,45 @@ internal class AndroidAgentRecipeRuntime(
             provider = runtimeProvider,
             statusSink = statusSink
         )) {
-                is AgentOperationResult.Success -> callback(
-                    RecipeExecutionEvent.AwaitingUser(
-                        request.instanceId,
-                        request.generation,
-                        request.stepIndex,
-                        request.agentMutation(
-                            agentId = resolved.agentId,
-                            providerId = providerId,
-                            sessionId = result.value.sessionId,
-                            connectionStatus = CardRunAgentConnectionStatus.Ready,
-                            message = if (result.value.isDraft) "可以开始新会话" else "准备就绪",
-                            managedOwnership = managedOwnership,
-                            runtimeLane = runtimeLane,
-                            runtimeFallbackReason = runtimeFallbackReason,
-                        )
+            is AgentOperationResult.Success -> callback(
+                RecipeExecutionEvent.AwaitingUser(
+                    request.instanceId,
+                    request.generation,
+                    request.stepIndex,
+                    request.agentMutation(
+                        agentId = resolved.agentId,
+                        providerId = providerId,
+                        sessionId = result.value.sessionId.takeUnless { result.value.isDraft },
+                        connectionStatus = CardRunAgentConnectionStatus.Ready,
+                        message = if (result.value.isDraft) "可以开始新会话" else "准备就绪",
+                        managedOwnership = managedOwnership,
+                        runtimeLane = runtimeLane,
+                        runtimeFallbackReason = runtimeFallbackReason,
                     )
                 )
-                is AgentOperationResult.Failure -> {
-                    val authenticationRequired = result.code == AgentFailureCode.AuthenticationRequired
-                    callback(
-                        request.failedAgent(
-                            message = if (authenticationRequired) {
-                                "请先登录 ${resolved.displayName}"
-                            } else {
-                                result.message
-                            },
-                            providerId = providerId,
-                            agentId = resolved.agentId,
-                            causeMessage = result.cause?.message.takeUnless { authenticationRequired }
-                        )
-                    )
-                }
-                is AgentOperationResult.Unsupported -> callback(
+            )
+            is AgentOperationResult.Failure -> {
+                val authenticationRequired = result.code == AgentFailureCode.AuthenticationRequired
+                callback(
                     request.failedAgent(
-                        "Agent 不支持必要操作：${result.operation}",
-                        providerId,
-                        agentId = resolved.agentId
+                        message = if (authenticationRequired) {
+                            "请先登录 ${resolved.displayName}"
+                        } else {
+                            result.message
+                        },
+                        providerId = providerId,
+                        agentId = resolved.agentId,
+                        causeMessage = result.cause?.message.takeUnless { authenticationRequired }
                     )
                 )
+            }
+            is AgentOperationResult.Unsupported -> callback(
+                request.failedAgent(
+                    "Agent 不支持必要操作：${result.operation}",
+                    providerId,
+                    agentId = resolved.agentId
+                )
+            )
         }
     }
 

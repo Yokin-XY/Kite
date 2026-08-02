@@ -67,16 +67,22 @@ class AgentRuntimeRegistryTest {
     fun `启动 权限 消息和停止都保持同一实例代次`() = runTest {
         val provider = FakeProvider()
         val phases = mutableListOf<AgentSessionPhase>()
+        val visibleSessionIds = mutableListOf<String?>()
         val started = AgentRuntimeRegistry.start(
             request = AgentRuntimeStartRequest("instance-1", 42L, "fake", "/workspace"),
             provider = provider,
-            statusSink = AgentRuntimeStatusSink { _, phase, _ -> phases += phase }
+            statusSink = AgentRuntimeStatusSink { sessionId, phase, _ ->
+                visibleSessionIds += sessionId
+                phases += phase
+            }
         )
         val session = (started as AgentOperationResult.Success).value
 
-        assertEquals(null, session.sessionId)
+        assertEquals("session-1", session.sessionId)
         assertTrue(session.isDraft)
-        assertEquals(0, provider.connection.newSessionCalls)
+        assertEquals(AgentRuntimeSessionState.WarmDraft, session.state)
+        assertEquals(1, provider.connection.newSessionCalls)
+        assertTrue(visibleSessionIds.all { it == null })
 
         val prompt = async {
             AgentRuntimeRegistry.prompt(
@@ -103,6 +109,7 @@ class AgentRuntimeRegistryTest {
         assertNotNull(conversation)
         assertTrue(conversation!!.timeline.isNotEmpty())
         assertTrue(phases.contains(AgentSessionPhase.WaitingPermission))
+        assertTrue(visibleSessionIds.contains("session-1"))
 
         assertFalse(AgentRuntimeRegistry.stop("instance-1", 41L))
         assertTrue(AgentRuntimeRegistry.stop("instance-1", 42L))
@@ -128,9 +135,11 @@ class AgentRuntimeRegistryTest {
             "/workspace/old"
         ) as AgentOperationResult.Success
 
-        assertEquals(null, started.value.sessionId)
-        assertEquals(null, created.value.sessionId)
-        assertEquals(0, provider.connection.newSessionCalls)
+        assertEquals("session-1", started.value.sessionId)
+        assertTrue(started.value.isDraft)
+        assertEquals("session-2", created.value.sessionId)
+        assertTrue(created.value.isDraft)
+        assertEquals(2, provider.connection.newSessionCalls)
         assertEquals(listOf("historical-1"), listed.value.sessions.map { it.id })
         assertEquals(null, provider.connection.lastListRequest?.cwd)
         assertEquals("historical-1", loaded.value.sessionId)
@@ -143,9 +152,10 @@ class AgentRuntimeRegistryTest {
             88L,
             AgentRuntimeRegistry.defaultCwd("instance-sessions", 88L)
         ) as AgentOperationResult.Success
-        assertEquals(null, defaultDraft.value.sessionId)
+        assertEquals("session-3", defaultDraft.value.sessionId)
+        assertTrue(defaultDraft.value.isDraft)
         assertEquals("/workspace", defaultDraft.value.cwd)
-        assertEquals(0, provider.connection.newSessionCalls)
+        assertEquals(3, provider.connection.newSessionCalls)
     }
 
     @Test
@@ -206,10 +216,7 @@ class AgentRuntimeRegistryTest {
             statusSink = AgentRuntimeStatusSink { _, _, _ -> }
         ) as AgentOperationResult.Success
 
-        repeat(3) {
-            AgentRuntimeRegistry.prepareNewSession("instance-first-send", 1L) as AgentOperationResult.Success
-        }
-        assertEquals(0, provider.connection.newSessionCalls)
+        assertEquals(1, provider.connection.newSessionCalls)
 
         val first = AgentRuntimeRegistry.prompt(
             "instance-first-send",
@@ -243,7 +250,7 @@ class AgentRuntimeRegistryTest {
 
     @Test
     fun `首发创建失败保持草稿且重试只绑定成功创建的会话`() = runTest {
-        val provider = FakeProvider(newSessionFailures = 1, requestPermission = false)
+        val provider = FakeProvider(newSessionFailures = 2, requestPermission = false)
         AgentRuntimeRegistry.start(
             request = AgentRuntimeStartRequest("instance-create-failure", 1L, "fake", "/workspace"),
             provider = provider,
@@ -257,7 +264,7 @@ class AgentRuntimeRegistryTest {
         )
         assertTrue(failed is AgentOperationResult.Failure)
         assertTrue(AgentRuntimeRegistry.session("instance-create-failure")?.isDraft == true)
-        assertEquals(1, provider.connection.newSessionCalls)
+        assertEquals(2, provider.connection.newSessionCalls)
         assertEquals(0, provider.connection.promptCalls)
 
         val retried = AgentRuntimeRegistry.prompt(
@@ -268,7 +275,7 @@ class AgentRuntimeRegistryTest {
 
         assertTrue(retried is AgentOperationResult.Success)
         assertEquals("session-1", AgentRuntimeRegistry.session("instance-create-failure")?.sessionId)
-        assertEquals(2, provider.connection.newSessionCalls)
+        assertEquals(3, provider.connection.newSessionCalls)
         assertEquals(1, provider.connection.promptCalls)
     }
 
@@ -458,7 +465,7 @@ class AgentRuntimeRegistryTest {
         )
 
         assertTrue(selected is AgentOperationResult.Success)
-        assertEquals(0, provider.connection.newSessionCalls)
+        assertEquals(1, provider.connection.newSessionCalls)
         assertTrue(provider.connection.selectedModelValues.isEmpty())
         assertEquals(0, provider.connection.promptCalls)
 
@@ -705,7 +712,7 @@ class AgentRuntimeRegistryTest {
         )
         assertTrue(configuration is AgentOperationResult.Success)
         assertTrue(mode is AgentOperationResult.Success)
-        assertEquals(0, provider.connection.newSessionCalls)
+        assertEquals(1, provider.connection.newSessionCalls)
         assertEquals(0, provider.connection.promptCalls)
         assertTrue(provider.connection.selectedModelValues.isEmpty())
         assertEquals(null, provider.connection.selectedModeId)
@@ -743,7 +750,7 @@ class AgentRuntimeRegistryTest {
 
         assertEquals("plan", AgentRuntimeRegistry.draftPreferences("instance-cached-mode", 1L)?.modeId)
         assertEquals(null, provider.connection.selectedModeId)
-        assertEquals(0, provider.connection.newSessionCalls)
+        assertEquals(1, provider.connection.newSessionCalls)
 
         val prompted = AgentRuntimeRegistry.prompt(
             "instance-cached-mode",
@@ -796,7 +803,7 @@ class AgentRuntimeRegistryTest {
         )
 
         assertTrue(selected is AgentOperationResult.Success)
-        assertEquals(0, provider.connection.newSessionCalls)
+        assertEquals(1, provider.connection.newSessionCalls)
         assertTrue(provider.connection.selectedModelValues.isEmpty())
 
         val prompted = AgentRuntimeRegistry.prompt(

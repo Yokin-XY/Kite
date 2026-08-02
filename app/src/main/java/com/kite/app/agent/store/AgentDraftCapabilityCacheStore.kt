@@ -1,7 +1,6 @@
 package com.kite.app.agent.store
 
 import android.content.Context
-import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -14,9 +13,9 @@ import org.json.JSONObject
  * 最近一次由 Agent 公布的草稿可选项缓存。
  *
  * 这不是会话或用户配置事实源：不保存 sessionId、消息、密钥或草稿选择，只让输入草稿在不修改
- * Agent 状态的前提下先展示已知的即时配置和命令。权限、推理强度与工作模式固定归
- * [AgentProviderCatalogStore]；这里只保留尚未进入统一目录的协议能力。读取逻辑继续兼容旧版
- * 模式字段，供启动时一次性迁移，后续写入不再复制第二份工作模式事实。
+ * Agent 状态的前提下先展示尚未归入统一目录的即时配置。权限、推理强度与工作模式固定归
+ * [AgentProviderCatalogStore]；斜杠命令由暖草稿的实时 Agent 会话提供，不在本地持久化。读取逻辑
+ * 继续兼容旧版模式字段，供启动时一次性迁移，后续写入不再复制第二份工作模式事实。
  */
 class AgentDraftCapabilityCacheStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -73,15 +72,6 @@ class AgentDraftCapabilityCacheStore(context: Context) {
                 .take(MAX_CONFIGURATION)
                 .forEach { option -> put(option.toJson()) }
         })
-        put(KEY_COMMANDS, JSONArray().apply {
-            commands.take(MAX_COMMANDS).forEach { command ->
-                put(JSONObject().apply {
-                    put(KEY_NAME, command.name.safe(MAX_ID))
-                    put(KEY_DESCRIPTION, command.description.safe(MAX_DESCRIPTION))
-                    command.inputHint?.safe(MAX_DESCRIPTION)?.let { put(KEY_INPUT_HINT, it) }
-                })
-            }
-        })
     }
 
     private fun AgentConfigOption.toJson(): JSONObject = JSONObject().apply {
@@ -123,13 +113,6 @@ class AgentDraftCapabilityCacheStore(context: Context) {
             )
         }.filter { it.id.isNotBlank() && it.name.isNotBlank() },
         currentModeId = optString(KEY_CURRENT_MODE).trim().takeIf(String::isNotBlank),
-        commands = optJSONArray(KEY_COMMANDS).mapObjects { command ->
-            AgentCommand(
-                name = command.optString(KEY_NAME).trim(),
-                description = command.optString(KEY_DESCRIPTION).trim(),
-                inputHint = command.optString(KEY_INPUT_HINT).trim().takeIf(String::isNotBlank)
-            )
-        }.filter { it.name.isNotBlank() }
     )
 
     private fun JSONObject.toConfigOption(): AgentConfigOption? {
@@ -181,8 +164,7 @@ class AgentDraftCapabilityCacheStore(context: Context) {
         }
     }
 
-    private fun AgentDraftCapabilityCatalog.isEmpty(): Boolean =
-        configuration.isEmpty() && commands.isEmpty()
+    private fun AgentDraftCapabilityCatalog.isEmpty(): Boolean = configuration.isEmpty()
 
     private fun String.safe(maxLength: Int): String = trim().take(maxLength)
 
@@ -194,7 +176,6 @@ class AgentDraftCapabilityCacheStore(context: Context) {
         const val KEY_VERSION = "version"
         const val KEY_CONFIGURATION = "configuration"
         const val KEY_MODES = "modes"
-        const val KEY_COMMANDS = "commands"
         const val KEY_CURRENT_MODE = "currentModeId"
         const val KEY_TYPE = "type"
         const val KEY_ID = "id"
@@ -207,15 +188,13 @@ class AgentDraftCapabilityCacheStore(context: Context) {
         const val KEY_GROUP_ID = "groupId"
         const val KEY_GROUP_NAME = "groupName"
         const val KEY_MODEL_SOURCE = "modelSource"
-        const val KEY_INPUT_HINT = "inputHint"
         const val TYPE_SELECT = "select"
         const val TYPE_TOGGLE = "toggle"
-        // v6 旧数据可能含模式；读取后迁移到统一 Provider 目录，新的写入不再保留模式。
-        const val VERSION = 6
+        // v7 不再持久化斜杠命令；命令由暖草稿的实时 Agent 会话提供。
+        const val VERSION = 7
         const val MAX_CONFIGURATION = 32
         const val MAX_CATALOGS = 32
         const val MAX_CHOICES = 256
-        const val MAX_COMMANDS = 256
         const val MAX_ID = 160
         const val MAX_TEXT = 240
         const val MAX_DESCRIPTION = 640

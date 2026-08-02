@@ -33,7 +33,7 @@ class AgentDraftCapabilityCacheStoreTest {
     }
 
     @Test
-    fun `通用缓存不再重复保存权限推理强度和工作模式`() {
+    fun `通用缓存不再重复保存权限推理强度工作模式和斜杠命令`() {
         store.put(
             "opencode",
             AgentDraftCapabilityCatalog(
@@ -67,7 +67,7 @@ class AgentDraftCapabilityCacheStoreTest {
         assertEquals(listOf("language"), restored.configuration.map { it.id })
         assertTrue(restored.modes.isEmpty())
         assertEquals(null, restored.currentModeId)
-        assertEquals(listOf("review"), restored.commands.map { it.name })
+        assertTrue(restored.commands.isEmpty())
         val raw = context.getSharedPreferences(
             "kite_agent_draft_capability_cache",
             Context.MODE_PRIVATE
@@ -76,6 +76,8 @@ class AgentDraftCapabilityCacheStoreTest {
         assertFalse(raw.contains("apiKey", ignoreCase = true))
         assertFalse(raw.contains("\"modes\""))
         assertFalse(raw.contains("currentModeId"))
+        assertFalse(raw.contains("review"))
+        assertFalse(raw.contains("commands"))
     }
 
     @Test

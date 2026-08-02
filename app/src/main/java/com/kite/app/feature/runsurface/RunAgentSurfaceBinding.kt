@@ -415,7 +415,7 @@ internal class RunAgentSurfaceBinding(
             ?: state.statusLabel)
         loadDraftModelCatalog()
         if (prepareInitialEntryDraftIfNeeded()) return
-        subscribe(content.providerId, content.sessionId)
+        subscribe(content.providerId, observableSessionId(content.sessionId))
         updateComposer()
     }
 
@@ -1100,6 +1100,7 @@ internal class RunAgentSurfaceBinding(
                 is AgentOperationResult.Success -> {
                     draftPreparationPending = false
                     statusText.text = "可以开始新会话"
+                    subscribe(providerId, result.value.sessionId)
                     loadDraftModelCatalog(force = true)
                     input.requestFocus()
                     updateComposer()
@@ -1136,6 +1137,7 @@ internal class RunAgentSurfaceBinding(
                 is AgentOperationResult.Success -> {
                     draftPreparationPending = false
                     statusText.text = "可以开始新会话"
+                    subscribe(providerId, result.value.sessionId)
                     loadDraftModelCatalog(force = true)
                     updateComposer()
                 }
@@ -1169,6 +1171,13 @@ internal class RunAgentSurfaceBinding(
         renderAttachments()
         statusText.text = "可以开始新会话"
         updateComposer()
+    }
+
+    private fun observableSessionId(visibleSessionId: String?): String? {
+        if (!visibleSessionId.isNullOrBlank()) return visibleSessionId
+        return AgentRuntimeRegistry.session(instanceId)
+            ?.takeIf { it.generation == generation && it.isDraft }
+            ?.sessionId
     }
 
     private fun loadDraftModelCatalog(force: Boolean = false) {
