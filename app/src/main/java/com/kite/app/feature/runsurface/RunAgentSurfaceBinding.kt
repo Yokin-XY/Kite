@@ -26,7 +26,6 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.util.Base64
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -50,9 +49,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.kite.app.R
 import com.kite.app.agent.contract.AgentContent
@@ -113,6 +110,9 @@ import com.kite.app.agent.auth.AgentOfficialAccountManager
 import com.kite.app.agent.auth.AgentOfficialAccountStatus
 import com.kite.app.agent.runtime.AgentDraftCapabilityCatalog
 import com.kite.app.agent.runtime.AgentDraftModelSelection
+import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
+import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
+import com.kite.app.agent.sdk.configuration.RuntimeBackedAgentSessionControlApi
 import com.kite.app.agent.runtime.AgentRuntimeRegistry
 import com.kite.app.agent.runtime.AgentRuntimeSession
 import com.kite.app.agent.store.AgentConversationItem
@@ -158,6 +158,8 @@ internal class RunAgentSurfaceBinding(
     private val agentRegistry: KiteAgentRegistry,
     private val agentConfigAdapters: AgentConfigAdapterRegistry,
     private val officialAccountManager: AgentOfficialAccountManager,
+    private val agentConfigurationApi: AgentConfigurationApi? = null,
+    private val agentSessionControlApi: AgentSessionControlApi = RuntimeBackedAgentSessionControlApi(),
 ) : RunSurfaceBinding {
     private val isDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
         Configuration.UI_MODE_NIGHT_YES
@@ -183,14 +185,6 @@ internal class RunAgentSurfaceBinding(
     private val composerArea = LinearLayout(context)
     private val attachmentHost = LinearLayout(context)
     private val composer = LinearLayout(context)
-    private val sessionPermissionHost = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-    }
-    private val sessionConfigurationHost = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-    }
     private val sessionConfigurationOverlay = FrameLayout(context).apply {
         visibility = View.GONE
         isClickable = true
@@ -205,17 +199,11 @@ internal class RunAgentSurfaceBinding(
     }
     private val input = EditText(context)
     private val actionButton = ImageButton(context)
-    private val sessionModelEntry = fixedComposerEntry(
-        label = "模型",
-        contentDescription = "模型，当前尚无可选项",
-        maximumWidth = ui.dp(118),
-        onClick = ::showSessionConfigurationPanel,
-    )
-    private val sessionPermissionEntry = fixedComposerEntry(
-        label = "权限",
-        contentDescription = "权限，当前尚无可选策略",
-        maximumWidth = ui.dp(104),
-        onClick = { showComposerExtensionMenu(ComposerExtensionRoute.Permissions) },
+    private val fixedSessionControls = AgentFixedSessionControlStrip(
+        context = context,
+        tokens = this.tokens,
+        onModelClick = ::showSessionConfigurationPanel,
+        onPermissionClick = { showComposerExtensionMenu(ComposerExtensionRoute.Permissions) },
     )
     private val adapter = ConversationAdapter(context, tokens, lifecycleOwner.lifecycleScope)
     private val navigationHost = FrameLayout(context)
@@ -533,10 +521,10 @@ internal class RunAgentSurfaceBinding(
     internal fun navigationScreenForTesting(): String = navigationScreen.name
 
     internal fun sessionControlIdentityForTesting(): Pair<Int, Int> =
-        System.identityHashCode(sessionModelEntry) to System.identityHashCode(sessionPermissionEntry)
+        fixedSessionControls.identities()
 
     internal fun sessionControlChildCountsForTesting(): Pair<Int, Int> =
-        sessionConfigurationHost.childCount to sessionPermissionHost.childCount
+        fixedSessionControls.childCounts()
 
     internal fun refreshSessionControlsForTesting() = renderSessionConfigurationControls()
 
@@ -768,30 +756,10 @@ internal class RunAgentSurfaceBinding(
     private fun buildComposer(context: Context): View = composer.apply {
         orientation = LinearLayout.VERTICAL
         background = ColorDrawable(android.graphics.Color.TRANSPARENT)
-        addView(LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(sessionConfigurationHost, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ui.dp(34)
-            ).also {
-                sessionConfigurationHost.addView(
-                    sessionModelEntry,
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34)),
-                )
-            })
-            addView(sessionPermissionHost, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ui.dp(34)
-            ).apply {
-                marginStart = ui.dp(5)
-            }.also {
-                sessionPermissionHost.addView(
-                    sessionPermissionEntry,
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34)),
-                )
-            })
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(34)).apply {
+        addView(fixedSessionControls.view, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ui.dp(34),
+        ).apply {
             setMargins(ui.dp(4), 0, ui.dp(4), ui.dp(6))
         })
         addView(LinearLayout(context).apply {
@@ -937,94 +905,14 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun renderSessionConfigurationControls() {
-        renderSessionPermissionControl()
         val options = sessionConfigurationOptions()
+        val permission = composerPermissionOption()
+        val catalog = agentSessionControlApi.project(options + listOfNotNull(permission)).catalog
         val pending = pendingSessionConfigId != null
-        val modelLabel = AgentSurfaceNavigationPolicy.composerModelLabel(options)
-        val modelTextStyle = AgentSurfaceNavigationPolicy.composerModelTextStyle(modelLabel)
-        sessionConfigurationHost.visibility = View.VISIBLE
-        bindFixedComposerEntry(
-            view = sessionModelEntry,
-            label = modelLabel,
-            contentDescription = if (options.isEmpty()) {
-                "模型，当前尚无可选项"
-            } else {
-                "选择模型，当前$modelLabel"
-            },
-            pending = pending,
-            maximumWidth = ui.dp(modelTextStyle.maximumWidthDp),
-            textSizeSp = modelTextStyle.textSizeSp,
-        )
+        fixedSessionControls.render(catalog, pending)
         if (sessionConfigurationOverlay.visibility == View.VISIBLE) {
             rebuildSessionConfigurationPanel(animateContent = false)
         }
-    }
-
-    private fun renderSessionPermissionControl() {
-        val option = composerPermissionOption()
-        val pending = pendingSessionConfigId != null
-        sessionPermissionHost.visibility = View.VISIBLE
-        bindFixedComposerEntry(
-            view = sessionPermissionEntry,
-            label = AgentSurfaceNavigationPolicy.composerPermissionLabel(option),
-            contentDescription = if (option == null) "权限，当前尚无可选策略" else "选择权限策略",
-            pending = pending,
-            maximumWidth = ui.dp(104),
-        )
-    }
-
-    private fun fixedComposerEntry(
-        label: String,
-        contentDescription: String,
-        maximumWidth: Int,
-        textSizeSp: Float = 13f,
-        onClick: () -> Unit
-    ): TextView = TextView(context).apply {
-        text = label
-        textSize = textSizeSp
-        typeface = Typeface.DEFAULT_BOLD
-        minWidth = ui.dp(58)
-        maxWidth = maximumWidth
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        gravity = Gravity.CENTER
-        setTextColor(tokens.textPrimary)
-        setPadding(ui.dp(13), 0, ui.dp(13), 0)
-        background = ui.roundedBox(
-            agentSettingsSurface,
-            android.graphics.Color.TRANSPARENT,
-            ui.dp(18).toFloat()
-        )
-        this.contentDescription = contentDescription
-        isClickable = true
-        isFocusable = true
-        setOnClickListener { onClick() }
-    }
-
-    private fun bindFixedComposerEntry(
-        view: TextView,
-        label: String,
-        contentDescription: String,
-        pending: Boolean,
-        maximumWidth: Int,
-        textSizeSp: Float = 13f,
-    ) {
-        view.setTextIfChanged(label)
-        val expectedTextSizePx = TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_SP,
-            textSizeSp,
-            context.resources.displayMetrics,
-        )
-        if (view.textSize != expectedTextSizePx) view.textSize = textSizeSp
-        if (view.maxWidth != maximumWidth) view.maxWidth = maximumWidth
-        if (view.contentDescription != contentDescription) view.contentDescription = contentDescription
-        if (view.isClickable == pending) view.isClickable = !pending
-        val nextAlpha = if (pending) 0.55f else 1f
-        if (view.alpha != nextAlpha) view.alpha = nextAlpha
-    }
-
-    private fun TextView.setTextIfChanged(value: CharSequence) {
-        if (!TextUtils.equals(text, value)) text = value
     }
 
     private fun renderPermission(snapshot: AgentConversationSnapshot?) {
@@ -7518,10 +7406,10 @@ internal class RunAgentSurfaceBinding(
             rebuildSessionConfigurationPanel(animateContent = false)
         }
         lifecycleOwner.lifecycleScope.launch {
-            val result = AgentRuntimeRegistry.setConfiguration(instanceId, generation, configId, value)
+            val result = agentSessionControlApi.apply(instanceId, generation, configId, value)
             pendingSessionConfigId = null
-            if (result is AgentOperationResult.Success && result.value != currentSnapshot?.configuration) {
-                currentSnapshot = currentSnapshot?.copy(configuration = result.value)
+            if (result is AgentOperationResult.Success && result.value.options != currentSnapshot?.configuration) {
+                currentSnapshot = currentSnapshot?.copy(configuration = result.value.options)
             }
             renderSessionConfigurationControls()
             if (sessionConfigurationOverlay.visibility == View.VISIBLE) {
@@ -7689,7 +7577,6 @@ internal class RunAgentSurfaceBinding(
         const val SESSION_LOADING_FEEDBACK_DELAY_MS = 140L
     }
 }
-
 private data class AgentComposerModeOption(
     val id: String,
     val name: String,
@@ -7757,413 +7644,5 @@ internal object AgentCoreDocumentUiPolicy {
         if (!document.writable) append(" · 只读")
         append(" · ")
         append(semanticsLabel(document.semantics))
-    }
-}
-
-private data class AgentMcpListItem(
-    val server: AgentMcpSummary,
-    val connectionState: AgentMcpConnectionState,
-    val connectionMessage: String?,
-    val pending: Boolean,
-)
-
-private class AgentMcpListAdapter(
-    private val context: Context,
-    private val tokens: ThemeTokens,
-    private val onClick: (AgentMcpListItem) -> Unit,
-    private val onConnectionCheck: (AgentMcpListItem) -> Unit,
-) : ListAdapter<AgentMcpListItem, AgentMcpListAdapter.Holder>(Diff) {
-    private val ui = UiKit(context, tokens)
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
-        val title = TextView(context)
-        val summary = TextView(context)
-        val detail = TextView(context)
-        val checkAction = TextView(context)
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(15), 0, ui.dp(9), 0)
-            background = ui.roundedBox(
-                tokens.cardBackground,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(21).toFloat(),
-            )
-            addView(ImageView(context).apply {
-                setImageResource(R.drawable.ic_mcp_light)
-                imageTintList = ColorStateList.valueOf(tokens.textSecondary)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                setPadding(ui.dp(9), ui.dp(9), ui.dp(9), ui.dp(9))
-                background = ui.roundedBox(
-                    tokens.inputBackground,
-                    android.graphics.Color.TRANSPARENT,
-                    ui.dp(20).toFloat(),
-                )
-            }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    addView(title.apply {
-                        textSize = 14.5f
-                        typeface = Typeface.DEFAULT_BOLD
-                        maxLines = 1
-                        ellipsize = TextUtils.TruncateAt.END
-                        setTextColor(tokens.textPrimary)
-                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                    addView(summary.apply {
-                        textSize = 11.5f
-                        maxLines = 1
-                        setTextColor(tokens.textSecondary)
-                        setPadding(ui.dp(8), 0, 0, 0)
-                    })
-                })
-                addView(detail.apply {
-                    textSize = 12f
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, ui.dp(3), 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                setMargins(ui.dp(13), 0, ui.dp(4), 0)
-            })
-            addView(checkAction.apply {
-                text = "检查"
-                textSize = 12.5f
-                typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                setTextColor(tokens.primaryStrong)
-                setPadding(ui.dp(8), ui.dp(7), ui.dp(8), ui.dp(7))
-                isClickable = true
-                isFocusable = true
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(40)))
-            addView(ImageView(context).apply {
-                setImageResource(R.drawable.ic_chevron_right_light)
-                imageTintList = ColorStateList.valueOf(tokens.textTertiary)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                contentDescription = null
-            }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-            isClickable = true
-            isFocusable = true
-        }
-        row.layoutParams = RecyclerView.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ui.dp(74),
-        ).apply { setMargins(0, ui.dp(4), 0, ui.dp(4)) }
-        return Holder(row, title, summary, detail, checkAction)
-    }
-
-    override fun onBindViewHolder(holder: Holder, position: Int) {
-        val item = getItem(position)
-        val server = item.server
-        holder.title.text = server.id
-        holder.summary.text = AgentMcpUiPolicy.transportLabel(server)
-        holder.detail.text = if (item.pending) {
-            "正在更新…"
-        } else {
-            val status = AgentMcpUiPolicy.connectionLabel(server, item.connectionState)
-            item.connectionMessage?.let { "$status · $it" } ?: status
-        }
-        holder.itemView.isEnabled = !item.pending
-        holder.itemView.alpha = if (item.pending) 0.68f else 1f
-        holder.itemView.contentDescription = "${server.id}，${holder.summary.text}，${holder.detail.text}"
-        holder.itemView.setOnClickListener { if (!item.pending) onClick(item) }
-        holder.checkAction.visibility = if (
-            !item.pending && AgentMcpUiPolicy.supportsConnectionCheck(server)
-        ) View.VISIBLE else View.GONE
-        holder.checkAction.contentDescription = "检查 ${server.id} 的连接"
-        holder.checkAction.setOnClickListener {
-            if (!item.pending && AgentMcpUiPolicy.supportsConnectionCheck(server)) onConnectionCheck(item)
-        }
-    }
-
-    class Holder(
-        itemView: View,
-        val title: TextView,
-        val summary: TextView,
-        val detail: TextView,
-        val checkAction: TextView,
-    ) : RecyclerView.ViewHolder(itemView)
-
-    private object Diff : DiffUtil.ItemCallback<AgentMcpListItem>() {
-        override fun areItemsTheSame(oldItem: AgentMcpListItem, newItem: AgentMcpListItem): Boolean =
-            oldItem.server.id == newItem.server.id
-
-        override fun areContentsTheSame(oldItem: AgentMcpListItem, newItem: AgentMcpListItem): Boolean =
-            oldItem == newItem
-    }
-}
-
-private class AgentSkillListAdapter(
-    private val context: Context,
-    private val tokens: ThemeTokens,
-    private val onClick: (AgentSkillSummary) -> Unit,
-) : ListAdapter<AgentSkillSummary, AgentSkillListAdapter.Holder>(Diff) {
-    private val ui = UiKit(context, tokens)
-    private var pendingSkillId: String? = null
-
-    fun submit(skills: List<AgentSkillSummary>, pendingSkillId: String?) {
-        this.pendingSkillId = pendingSkillId
-        submitList(skills.sortedBy { it.displayName.lowercase() }) {
-            notifyDataSetChanged()
-        }
-    }
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
-        val title = TextView(context)
-        val summary = TextView(context)
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(ui.dp(15), 0, ui.dp(9), 0)
-            background = ui.roundedBox(
-                tokens.cardBackground,
-                android.graphics.Color.TRANSPARENT,
-                ui.dp(21).toFloat(),
-            )
-            addView(ImageView(context).apply {
-                setImageResource(R.drawable.ic_skill_light)
-                imageTintList = ColorStateList.valueOf(tokens.textSecondary)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10))
-                background = ui.roundedBox(
-                    tokens.inputBackground,
-                    android.graphics.Color.TRANSPARENT,
-                    ui.dp(20).toFloat(),
-                )
-            }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_VERTICAL
-                addView(title.apply {
-                    textSize = 14.5f
-                    typeface = Typeface.DEFAULT_BOLD
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(tokens.textPrimary)
-                })
-                addView(summary.apply {
-                    textSize = 12f
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setTextColor(tokens.textSecondary)
-                    setPadding(0, ui.dp(3), 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                setMargins(ui.dp(13), 0, ui.dp(4), 0)
-            })
-            addView(ImageView(context).apply {
-                setImageResource(R.drawable.ic_chevron_right_light)
-                imageTintList = ColorStateList.valueOf(tokens.textTertiary)
-                scaleType = ImageView.ScaleType.CENTER_INSIDE
-                contentDescription = null
-            }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-            isClickable = true
-            isFocusable = true
-        }
-        row.layoutParams = RecyclerView.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ui.dp(70),
-        ).apply { setMargins(0, ui.dp(4), 0, ui.dp(4)) }
-        return Holder(row, title, summary)
-    }
-
-    override fun onBindViewHolder(holder: Holder, position: Int) {
-        val skill = getItem(position)
-        val pending = pendingSkillId == skill.id
-        val operationPending = pendingSkillId != null
-        holder.title.text = skill.displayName
-        holder.summary.text = if (pending) "正在更新…" else AgentSkillUiPolicy.summary(skill)
-        holder.itemView.isEnabled = !operationPending
-        holder.itemView.alpha = if (operationPending && !pending) 0.55f else 1f
-        holder.itemView.contentDescription = "${skill.displayName}，${holder.summary.text}"
-        holder.itemView.setOnClickListener { if (!operationPending) onClick(skill) }
-    }
-
-    class Holder(
-        itemView: View,
-        val title: TextView,
-        val summary: TextView,
-    ) : RecyclerView.ViewHolder(itemView)
-
-    private object Diff : DiffUtil.ItemCallback<AgentSkillSummary>() {
-        override fun areItemsTheSame(oldItem: AgentSkillSummary, newItem: AgentSkillSummary): Boolean =
-            oldItem.id == newItem.id
-
-        override fun areContentsTheSame(oldItem: AgentSkillSummary, newItem: AgentSkillSummary): Boolean =
-            oldItem == newItem
-    }
-}
-
-private class MaxHeightScrollView(
-    context: Context,
-    private val maximumHeight: Int
-) : ScrollView(context) {
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val cappedHeightSpec = View.MeasureSpec.makeMeasureSpec(maximumHeight, View.MeasureSpec.AT_MOST)
-        super.onMeasure(widthMeasureSpec, cappedHeightSpec)
-    }
-}
-
-private enum class ComposerExtensionRoute {
-    Main,
-    Modes,
-    Permissions,
-}
-
-private enum class AgentNavigationScreen {
-    Main,
-    Drawer,
-    SessionSearch,
-    Settings,
-    DefaultPermission,
-    ProviderList,
-    ProviderEditor,
-    ProviderPresetPicker,
-    ProviderModelEditor,
-    SkillList,
-    McpList,
-    McpEditor,
-    CoreDocumentList,
-    CoreDocumentEditor,
-    ArchivedContent
-}
-
-internal data class AgentSessionProjectGroup(
-    val cwd: String,
-    val name: String,
-    val sessions: List<AgentSessionSummary>
-)
-
-private data class ComposerPresentation(
-    val phase: AgentSessionPhase?,
-    val cancelling: Boolean,
-    val canSend: Boolean,
-)
-
-internal data class ComposerModelTextStyle(
-    val textSizeSp: Float,
-    val maximumWidthDp: Int,
-)
-
-internal data class AgentSessionGrouping(
-    val defaultCwd: String,
-    val defaultSessions: List<AgentSessionSummary>,
-    val projects: List<AgentSessionProjectGroup>
-)
-
-internal sealed interface AgentDrawerAction {
-    data class NewDraft(val cwd: String) : AgentDrawerAction
-    data object ChooseProject : AgentDrawerAction
-}
-
-internal sealed interface AgentDrawerRow {
-    val key: String
-
-    data class SectionHeader(
-        val title: String,
-        val actionDescription: String,
-        val action: AgentDrawerAction,
-        override val key: String
-    ) : AgentDrawerRow
-
-    data class ProjectHeader(
-        val project: AgentSessionProjectGroup,
-        val expanded: Boolean
-    ) : AgentDrawerRow {
-        override val key: String = "project:${project.cwd}"
-    }
-
-    data class Session(
-        val summary: AgentSessionSummary,
-        val inProject: Boolean
-    ) : AgentDrawerRow {
-        override val key: String = "session:${summary.id}"
-    }
-
-    data class Empty(
-        val label: String,
-        override val key: String
-    ) : AgentDrawerRow
-}
-
-internal sealed interface AgentArchivedRow {
-    val key: String
-
-    data class GroupHeader(
-        val cwd: String,
-        val title: String,
-        val subtitle: String?,
-        val count: Int,
-        val expanded: Boolean,
-        val archivedProject: AgentProject? = null,
-        val selectableSessionIds: Set<String> = emptySet(),
-    ) : AgentArchivedRow {
-        override val key: String = "group:$cwd"
-    }
-
-    data class Session(val summary: AgentSessionSummary) : AgentArchivedRow {
-        override val key: String = "session:${summary.id}"
-    }
-
-    data class UnavailableSession(val metadata: AgentArchivedSessionMetadata) : AgentArchivedRow {
-        override val key: String = "unavailable-session:${metadata.sessionId}"
-    }
-}
-
-internal sealed interface AgentDrawerSessionMenuAction {
-    data object Rename : AgentDrawerSessionMenuAction
-    data object Archive : AgentDrawerSessionMenuAction
-    data class Delete(val enabled: Boolean) : AgentDrawerSessionMenuAction
-}
-
-
-private class ProviderCredentialFieldBinding(
-    val field: EditText,
-    val pasteAction: ImageButton,
-    private val deleteAction: ImageButton,
-    private val credentialPresent: Boolean,
-    private val emptyHint: String
-) {
-    private var removeRequested: Boolean = false
-
-    fun markForRemoval() {
-        removeRequested = true
-        field.setText("")
-        field.hint = AgentProviderCredentialInputPolicy.displayHint(
-            credentialPresent = credentialPresent,
-            removeRequested = true,
-            emptyHint = emptyHint
-        )
-        deleteAction.visibility = View.GONE
-    }
-
-    fun onInputChanged(value: CharSequence?) {
-        if (!value.isNullOrBlank()) {
-            removeRequested = false
-        }
-        field.hint = AgentProviderCredentialInputPolicy.displayHint(
-            credentialPresent = credentialPresent,
-            removeRequested = removeRequested,
-            emptyHint = emptyHint
-        )
-        deleteAction.visibility = if (credentialPresent && !removeRequested) View.VISIBLE else View.GONE
-    }
-
-    fun credentialChange(): AgentProviderCredentialChange = AgentProviderCredentialInputPolicy.credentialChange(
-        removeRequested = removeRequested,
-        value = field.text
-    )
-
-    fun setEnabledState(enabled: Boolean) {
-        field.isEnabled = enabled
-        field.alpha = if (enabled) 1f else 0.45f
-        pasteAction.isEnabled = enabled
-        pasteAction.alpha = if (enabled) 1f else 0.45f
-        deleteAction.isEnabled = enabled
-        deleteAction.alpha = if (enabled) 1f else 0.45f
     }
 }

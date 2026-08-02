@@ -420,6 +420,8 @@ class CardRunActivity : AppCompatActivity() {
             agentRegistry = graph.agentRegistry,
             agentConfigAdapters = graph.agentConfigAdapterRegistry,
             officialAccountManager = graph.agentOfficialAccountManager,
+            agentConfigurationApi = graph.agentConfigurationApi,
+            agentSessionControlApi = graph.agentSessionControlApi,
         ).also { agentSurfaceBinding = it }
         RunSurfaceContent.InstallWizard -> createInstallWizardBinding()
         else -> StaticRunSurfaceBinding(placeholder(state.title, state.statusLabel))
