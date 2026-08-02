@@ -71,7 +71,8 @@ agent/config/
   AdapterBackedAgentConfigurationApi.kt  SDK 到 Adapter 的唯一桥
   AgentReasoningControl.kt                无产品名的通用正规化逻辑
   opencode/                               OpenCode 兼容实现与能力 profile
-  native/<agent>/                         各原生 Agent 的独立能力 profile
+  native/NativeAgentConfigAdapterCore.kt  原生文件 Adapter 的共享机制
+  native/<agent>/                         每个原生 Agent 独立的 Adapter 与能力 profile
 
 feature/runsurface/
   AgentFixedSessionControlStrip.kt  固定模型与权限入口

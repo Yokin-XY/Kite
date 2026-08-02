@@ -81,6 +81,27 @@ class AgentConfigurationArchitectureTest {
         }
     }
 
+    @Test
+    fun `native agent adapters remain physically split by tool`() {
+        val adapterFiles = listOf(
+            "app/src/main/java/com/kite/app/agent/config/native/kimi/KimiCodeAgentConfigAdapter.kt",
+            "app/src/main/java/com/kite/app/agent/config/native/mimo/MiMoCodeAgentConfigAdapter.kt",
+            "app/src/main/java/com/kite/app/agent/config/native/openclaw/OpenClawAgentConfigAdapter.kt",
+            "app/src/main/java/com/kite/app/agent/config/native/claudecode/ClaudeCodeAgentConfigAdapter.kt",
+            "app/src/main/java/com/kite/app/agent/config/native/codex/CodexAgentConfigAdapter.kt",
+            "app/src/main/java/com/kite/app/agent/config/native/hermes/HermesAgentConfigAdapter.kt",
+        )
+        adapterFiles.forEach { path ->
+            val file = source(path)
+            assertTrue("缺少独立 Agent Adapter 文件：$path", file.isFile)
+            assertTrue("单个 Agent Adapter 文件应继续拆分：$path", file.readLines().size < 800)
+        }
+        assertFalse(
+            "不得恢复多个工具共用的 NativeAgentConfigAdapters.kt",
+            source("app/src/main/java/com/kite/app/agent/config/native/NativeAgentConfigAdapters.kt").exists(),
+        )
+    }
+
     private fun kotlinSources(relativeDirectory: String): List<File> =
         source(relativeDirectory).walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
 
