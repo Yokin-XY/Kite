@@ -28,6 +28,7 @@ import com.kite.app.agent.registration.KiteAgentRegistry
 import com.kite.app.agent.registration.AgentOfficialAccountCommand
 import com.kite.app.agent.registration.AgentOfficialAccountSpec
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
+import com.kite.app.agent.config.AdapterBackedAgentConfigurationApi
 import com.kite.app.theme.KiteTheme
 import androidx.appcompat.app.AppCompatActivity
 import org.junit.Assert.assertEquals
@@ -1014,7 +1015,7 @@ class AgentSurfaceNavigationPolicyTest {
                 registry = agentRegistry,
                 commandRunner = { AgentOfficialAccountCommandResult(0, "") },
             ),
-            agentConfigAdapters = AgentConfigAdapterRegistry(emptyList())
+            agentConfigurationApi = AdapterBackedAgentConfigurationApi(AgentConfigAdapterRegistry(emptyList())),
         )
 
         binding.showSessionDrawerForTesting()
@@ -1057,7 +1058,7 @@ class AgentSurfaceNavigationPolicyTest {
                 registry = agentRegistry,
                 commandRunner = { AgentOfficialAccountCommandResult(0, "") },
             ),
-            agentConfigAdapters = AgentConfigAdapterRegistry(emptyList()),
+            agentConfigurationApi = AdapterBackedAgentConfigurationApi(AgentConfigAdapterRegistry(emptyList())),
         )
         val identities = binding.sessionControlIdentityForTesting()
 

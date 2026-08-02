@@ -64,9 +64,6 @@ import com.kite.app.agent.contract.AgentOperationResult
 import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentSessionSummary
-import com.kite.app.agent.config.AgentConfigAdapterRegistry
-import com.kite.app.agent.config.AgentConfigAdapter
-import com.kite.app.agent.config.AgentConfigApplyRequest
 import com.kite.app.agent.config.AgentConfigApplyResult
 import com.kite.app.agent.config.AgentConfigReadResult
 import com.kite.app.agent.config.AgentConfigScope
@@ -86,13 +83,11 @@ import com.kite.app.agent.config.AgentMcpOperation
 import com.kite.app.agent.config.AgentMcpSummary
 import com.kite.app.agent.config.AgentMcpTransport
 import com.kite.app.agent.config.AgentPersistentConfigCapability
-import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentPermissionProfileSummary
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderPreset
-import com.kite.app.agent.config.AgentProviderPresetCatalog
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillImportStager

@@ -11,12 +11,20 @@ import com.kite.app.agent.config.AgentMcpConnectionCheckResult
 import com.kite.app.agent.config.AgentMcpDraft
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
+import com.kite.app.agent.config.AgentProviderPreset
 import com.kite.app.agent.config.AgentSkillActivation
+import com.kite.app.agent.registration.AgentRegistryEntry
 
 /** 只携带稳定 ID；显示名称和产品名称不参与 Adapter 选择。 */
 data class AgentConfigurationTarget(
     val agentId: String,
     val adapterId: String?,
+)
+
+/** 从登记事实生成 SDK 目标；页面不需要持有或查找 Adapter 实例。 */
+fun AgentRegistryEntry.configurationTarget(): AgentConfigurationTarget = AgentConfigurationTarget(
+    agentId = registration.definition.agentId,
+    adapterId = registration.configAdapterId,
 )
 
 /** 页面提交的统一配置意图；原生配置结构不会越过 SDK。 */
@@ -47,6 +55,7 @@ data class AgentConfigurationMutation(
 
 interface AgentConfigurationApi {
     fun capabilities(target: AgentConfigurationTarget): AgentConfigCapabilities?
+    fun providerPresets(target: AgentConfigurationTarget): List<AgentProviderPreset> = emptyList()
     suspend fun read(target: AgentConfigurationTarget): AgentConfigReadResult
     suspend fun apply(
         target: AgentConfigurationTarget,

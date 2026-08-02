@@ -64,9 +64,6 @@ import com.kite.app.agent.contract.AgentPermissionOutcome
 import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentSessionRenameRequest
 import com.kite.app.agent.contract.AgentSessionSummary
-import com.kite.app.agent.config.AgentConfigAdapterRegistry
-import com.kite.app.agent.config.AgentConfigAdapter
-import com.kite.app.agent.config.AgentConfigApplyRequest
 import com.kite.app.agent.config.AgentConfigApplyResult
 import com.kite.app.agent.config.AgentConfigReadResult
 import com.kite.app.agent.config.AgentConfigScope
@@ -86,13 +83,11 @@ import com.kite.app.agent.config.AgentMcpOperation
 import com.kite.app.agent.config.AgentMcpSummary
 import com.kite.app.agent.config.AgentMcpTransport
 import com.kite.app.agent.config.AgentPersistentConfigCapability
-import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentPermissionProfileSummary
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderPreset
-import com.kite.app.agent.config.AgentProviderPresetCatalog
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillImportStager
@@ -111,8 +106,12 @@ import com.kite.app.agent.auth.AgentOfficialAccountStatus
 import com.kite.app.agent.runtime.AgentDraftCapabilityCatalog
 import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.sdk.configuration.AgentConfigurationApi
+import com.kite.app.agent.sdk.configuration.AgentConfigurationIntent
+import com.kite.app.agent.sdk.configuration.AgentConfigurationTarget
+import com.kite.app.agent.sdk.configuration.AgentModelSelection
 import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.RuntimeBackedAgentSessionControlApi
+import com.kite.app.agent.sdk.configuration.configurationTarget
 import com.kite.app.agent.runtime.AgentRuntimeRegistry
 import com.kite.app.agent.runtime.AgentRuntimeSession
 import com.kite.app.agent.store.AgentConversationItem
@@ -156,9 +155,8 @@ internal class RunAgentSurfaceBinding(
     private val onPickImages: () -> Unit,
     private val onPickFiles: () -> Unit,
     private val agentRegistry: KiteAgentRegistry,
-    private val agentConfigAdapters: AgentConfigAdapterRegistry,
     private val officialAccountManager: AgentOfficialAccountManager,
-    private val agentConfigurationApi: AgentConfigurationApi? = null,
+    private val agentConfigurationApi: AgentConfigurationApi,
     private val agentSessionControlApi: AgentSessionControlApi = RuntimeBackedAgentSessionControlApi(),
 ) : RunSurfaceBinding {
     private val isDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
@@ -249,16 +247,16 @@ internal class RunAgentSurfaceBinding(
     private var settingsRegistrySnapshot: AgentRegistrySnapshot? = null
     private var settingsLoadRevision: Long = 0L
     private var providerPageAgentId: String? = null
-    private var providerPageAdapter: AgentConfigAdapter? = null
+    private var providerPageTarget: AgentConfigurationTarget? = null
     private var providerPageSnapshot: AgentLiveConfigSnapshot? = null
     private var skillPageAgentId: String? = null
-    private var skillPageAdapter: AgentConfigAdapter? = null
+    private var skillPageTarget: AgentConfigurationTarget? = null
     private var skillPageSnapshot: AgentLiveConfigSnapshot? = null
     private var skillPageListAdapter: AgentSkillListAdapter? = null
     private var skillPageListView: RecyclerView? = null
     private var skillPageStatusText: TextView? = null
     private var mcpPageAgentId: String? = null
-    private var mcpPageAdapter: AgentConfigAdapter? = null
+    private var mcpPageTarget: AgentConfigurationTarget? = null
     private var mcpPageSnapshot: AgentLiveConfigSnapshot? = null
     private var mcpPageListAdapter: AgentMcpListAdapter? = null
     private var mcpPageListView: RecyclerView? = null
@@ -268,7 +266,7 @@ internal class RunAgentSurfaceBinding(
     private var mcpEditorStatusText: TextView? = null
     private var mcpEditorSaveAction: TextView? = null
     private var coreDocumentPageAgentId: String? = null
-    private var coreDocumentPageAdapter: AgentConfigAdapter? = null
+    private var coreDocumentPageTarget: AgentConfigurationTarget? = null
     private var coreDocumentWorkspacePath: String? = null
     private var coreDocumentDescriptors: List<AgentCoreDocumentDescriptor> = emptyList()
     private var coreDocumentListHost: LinearLayout? = null
@@ -1183,10 +1181,10 @@ internal class RunAgentSurfaceBinding(
         draftModelLoadJob?.cancel()
         draftModelLoadJob = lifecycleOwner.lifecycleScope.launch {
             val loaded = withContext(Dispatchers.IO) {
-                val registration = agentRegistry.snapshot().entry(targetAgentId)?.registration
-                registration?.officialAccounts.orEmpty() to registration
-                    ?.let(agentConfigAdapters::adapterFor)
-                    ?.readLive(targetAgentId)
+                val entry = agentRegistry.snapshot().entry(targetAgentId)
+                entry?.registration?.officialAccounts.orEmpty() to entry
+                    ?.configurationTarget()
+                    ?.let { agentConfigurationApi.read(it) }
             }
             if (
                 requestRevision != draftModelLoadRevision ||
@@ -1874,11 +1872,9 @@ internal class RunAgentSurfaceBinding(
                 val selected = snapshot.entry(requestedAgentId.orEmpty())
                     ?: snapshot.entry(agentId.orEmpty())
                     ?: snapshot.entries.firstOrNull()
-                val registration = selected?.registration
-                val configResult = registration
-                    ?.let(agentConfigAdapters::adapterFor)
-                    ?.readLive(registration.definition.agentId)
-                AgentSettingsLoad(snapshot, registration?.definition?.agentId, configResult)
+                val target = selected?.configurationTarget()
+                val configResult = target?.let { agentConfigurationApi.read(it) }
+                AgentSettingsLoad(snapshot, target?.agentId, configResult)
             }
             if (
                 navigationScreen == AgentNavigationScreen.Settings &&
@@ -2783,7 +2779,8 @@ internal class RunAgentSurfaceBinding(
 
     private fun persistentConfigurationRows(selected: AgentRegistryEntry): List<SettingsRow> {
         val registration = selected.registration
-        val adapter = agentConfigAdapters.adapterFor(registration)
+        val target = selected.configurationTarget()
+        val capabilities = agentConfigurationApi.capabilities(target)
             ?: return listOf(
                 SettingsRow("供应商配置", if (registration.configAdapterId == null) {
                     "当前 Agent 暂不支持在 Kite 中配置"
@@ -2801,16 +2798,17 @@ internal class RunAgentSurfaceBinding(
             is AgentConfigReadResult.Failed -> listOf(
                 SettingsRow("供应商配置", result.message)
             )
-            is AgentConfigReadResult.Ready -> persistentSnapshotRows(selected, adapter, result.snapshot)
+            is AgentConfigReadResult.Ready -> persistentSnapshotRows(selected, target, result.snapshot)
         }
     }
 
     private fun persistentSnapshotRows(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot
     ): List<SettingsRow> = buildList {
-        val supportsProviders = adapter.capabilities().supports(AgentPersistentConfigCapability.Provider)
+        val capabilities = agentConfigurationApi.capabilities(target) ?: return@buildList
+        val supportsProviders = capabilities.supports(AgentPersistentConfigCapability.Provider)
         val officialAccounts = selected.registration.officialAccounts
         if (supportsProviders || officialAccounts.isNotEmpty()) {
             val providerSummary = snapshot.providers.takeIf { it.isNotEmpty() }
@@ -2831,14 +2829,14 @@ internal class RunAgentSurfaceBinding(
                 subtitle = listOfNotNull(providerSummary, accountSummary).joinToString("、")
                     .ifBlank { "尚未配置供应商" },
                 onClick = if (
-                    adapter.capabilities().supports(AgentPersistentConfigCapability.ProviderProfiles) ||
+                    capabilities.supports(AgentPersistentConfigCapability.ProviderProfiles) ||
                     officialAccounts.isNotEmpty()
                 ) {
-                    { showProviderManager(selected, adapter, snapshot) }
+                    { showProviderManager(selected, target, snapshot) }
                 } else null
             ))
         }
-        if (adapter.capabilities().supports(AgentPersistentConfigCapability.PermissionProfiles)) {
+        if (capabilities.supports(AgentPersistentConfigCapability.PermissionProfiles)) {
             val active = snapshot.permissionProfiles.firstOrNull {
                 it.id == snapshot.activePermissionProfileId
             }
@@ -2848,33 +2846,33 @@ internal class RunAgentSurfaceBinding(
                     "${profile.level?.displayName ?: profile.displayName}·以后新建或重连的会话"
                 } ?: "使用 Agent 默认或自定义规则",
                 onClick = snapshot.permissionProfiles.takeIf { it.isNotEmpty() }?.let {
-                    { showDefaultPermissionManager(selected, adapter, snapshot) }
+                    { showDefaultPermissionManager(selected, target, snapshot) }
                 },
             ))
         }
-        if (adapter.capabilities().supports(AgentPersistentConfigCapability.Mcp)) {
+        if (capabilities.supports(AgentPersistentConfigCapability.Mcp)) {
             add(SettingsRow(
                 "MCP",
                 snapshot.mcpServers.takeIf { it.isNotEmpty() }
                     ?.joinToString("、") { "${it.id}（${if (it.enabled) "启用" else "停用"}）" }
                     ?: "尚未配置 MCP",
-                onClick = { showMcpManager(selected, adapter, snapshot) }
+                onClick = { showMcpManager(selected, target, snapshot) }
             ))
         }
-        if (adapter.capabilities().supports(AgentPersistentConfigCapability.Skill)) {
+        if (capabilities.supports(AgentPersistentConfigCapability.Skill)) {
             add(SettingsRow(
                 "Skill",
                 snapshot.skills.takeIf { it.isNotEmpty() }
                     ?.joinToString("、") { it.displayName }
                     ?: "尚未安装 Skill",
-                onClick = { showSkillManager(selected, adapter, snapshot) }
+                onClick = { showSkillManager(selected, target, snapshot) }
             ))
         }
-        if (adapter.capabilities().supports(AgentPersistentConfigCapability.CoreDocuments)) {
+        if (capabilities.supports(AgentPersistentConfigCapability.CoreDocuments)) {
             add(SettingsRow(
                 "核心设定",
                 "管理当前 Agent 的全局说明、人格或固定工作区规则",
-                onClick = { showCoreDocumentManager(selected, adapter) }
+                onClick = { showCoreDocumentManager(selected, target) }
             ))
         }
         snapshot.warnings.firstOrNull()?.let { add(SettingsRow("注意", it)) }
@@ -2882,7 +2880,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun showDefaultPermissionManager(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
     ) {
         navigationScreen = AgentNavigationScreen.DefaultPermission
@@ -2927,7 +2925,7 @@ internal class RunAgentSurfaceBinding(
                                 selected = profile.id == snapshot.activePermissionProfileId,
                                 contentDescription = "默认权限，${profile.level?.displayName ?: profile.displayName}",
                                 onClick = {
-                                    applyDefaultPermissionProfile(selected, adapter, snapshot, profile)
+                                    applyDefaultPermissionProfile(selected, target, snapshot, profile)
                                 },
                             ).apply {
                                 isClickable = defaultPermissionPendingProfileId == null
@@ -2956,7 +2954,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun applyDefaultPermissionProfile(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         profile: AgentPermissionProfileSummary,
     ) {
@@ -2966,36 +2964,29 @@ internal class RunAgentSurfaceBinding(
         defaultPermissionPendingProfileId = profile.id
         showDefaultPermissionManager(
             selected,
-            adapter,
+            target,
             snapshot.copy(activePermissionProfileId = profile.id),
         )
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val outcome = withContext(Dispatchers.IO) {
-                val result = adapter.apply(
-                    AgentConfigApplyRequest(
-                        agentId = targetAgentId,
-                        expectedRevision = snapshot.revision,
-                        changes = listOf(AgentPersistentConfigChange.SetPermissionProfile(profile.id)),
-                    )
+                agentConfigurationApi.apply(
+                    target = target,
+                    expectedRevision = snapshot.revision,
+                    intents = listOf(AgentConfigurationIntent.SetPermission(profile.id)),
                 )
-                val refreshed = when (result) {
-                    is AgentConfigApplyResult.Applied -> AgentConfigReadResult.Ready(result.snapshot)
-                    else -> adapter.backfill(targetAgentId)
-                }
-                result to refreshed
             }
             if (requestRevision != settingsLoadRevision || navigationScreen != AgentNavigationScreen.DefaultPermission) {
                 return@launch
             }
             defaultPermissionPendingProfileId = null
             persistentConfigAgentId = targetAgentId
-            persistentConfigResult = outcome.second
-            val refreshedSnapshot = (outcome.second as? AgentConfigReadResult.Ready)?.snapshot
-            when (val result = outcome.first) {
+            persistentConfigResult = outcome.current
+            val refreshedSnapshot = (outcome.current as? AgentConfigReadResult.Ready)?.snapshot
+            when (val result = outcome.result) {
                 is AgentConfigApplyResult.Applied -> {
                     val applied = refreshedSnapshot ?: result.snapshot
-                    showDefaultPermissionManager(selected, adapter, applied)
+                    showDefaultPermissionManager(selected, target, applied)
                     Toast.makeText(
                         context,
                         "默认权限已保存；当前会话保持不变",
@@ -3003,7 +2994,7 @@ internal class RunAgentSurfaceBinding(
                     ).show()
                 }
                 else -> {
-                    showDefaultPermissionManager(selected, adapter, refreshedSnapshot ?: snapshot)
+                    showDefaultPermissionManager(selected, target, refreshedSnapshot ?: snapshot)
                     Toast.makeText(
                         context,
                         result.userMessage("默认权限已保存"),
@@ -3016,11 +3007,11 @@ internal class RunAgentSurfaceBinding(
 
     private fun showCoreDocumentManager(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         reload: Boolean = true,
     ) {
         coreDocumentPageAgentId = selected.registration.definition.agentId
-        coreDocumentPageAdapter = adapter
+        coreDocumentPageTarget = target
         // 通用设置没有绑定具体项目，不能把实例默认 cwd 伪装成“当前项目”。
         // 需要项目文件时，必须由未来明确绑定项目的入口把 workspacePath 传进来。
         coreDocumentWorkspacePath = null
@@ -3036,7 +3027,7 @@ internal class RunAgentSurfaceBinding(
             ),
         )
         navigationHost.visibility = View.VISIBLE
-        if (reload) loadCoreDocuments(selected, adapter) else renderCoreDocuments(coreDocumentDescriptors)
+        if (reload) loadCoreDocuments(selected, target) else renderCoreDocuments(coreDocumentDescriptors)
     }
 
     private fun buildCoreDocumentListPage(selected: AgentRegistryEntry): View {
@@ -3080,7 +3071,7 @@ internal class RunAgentSurfaceBinding(
         }
     }
 
-    private fun loadCoreDocuments(selected: AgentRegistryEntry, adapter: AgentConfigAdapter) {
+    private fun loadCoreDocuments(selected: AgentRegistryEntry, target: AgentConfigurationTarget) {
         val host = coreDocumentListHost ?: return
         host.removeAllViews()
         host.addView(settingsMessage("正在读取核心设定目录…"))
@@ -3090,7 +3081,7 @@ internal class RunAgentSurfaceBinding(
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                adapter.listCoreDocuments(targetAgentId, workspacePath)
+                agentConfigurationApi.listCoreDocuments(target, workspacePath)
             }
             if (
                 requestRevision != coreDocumentLoadRevision ||
@@ -3140,9 +3131,9 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun showCoreDocumentEditor(descriptor: AgentCoreDocumentDescriptor) {
-        val adapter = coreDocumentPageAdapter
+        val target = coreDocumentPageTarget
         val targetAgentId = coreDocumentPageAgentId
-        if (adapter == null || targetAgentId == null) {
+        if (target == null || targetAgentId == null) {
             returnToAgentSettings()
             return
         }
@@ -3158,7 +3149,7 @@ internal class RunAgentSurfaceBinding(
         val requestRevision = ++coreDocumentLoadRevision
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                adapter.readCoreDocument(targetAgentId, descriptor.id, coreDocumentWorkspacePath)
+                agentConfigurationApi.readCoreDocument(target, descriptor.id, coreDocumentWorkspacePath)
             }
             if (
                 requestRevision != coreDocumentLoadRevision ||
@@ -3166,7 +3157,7 @@ internal class RunAgentSurfaceBinding(
                 coreDocumentPageAgentId != targetAgentId
             ) return@launch
             when (result) {
-                is AgentCoreDocumentReadResult.Ready -> renderCoreDocumentEditor(adapter, result.snapshot)
+                is AgentCoreDocumentReadResult.Ready -> renderCoreDocumentEditor(target, result.snapshot)
                 is AgentCoreDocumentReadResult.Missing -> renderCoreDocumentEditorError(descriptor, result.message)
                 is AgentCoreDocumentReadResult.Unavailable -> renderCoreDocumentEditorError(
                     descriptor,
@@ -3193,7 +3184,7 @@ internal class RunAgentSurfaceBinding(
             ))
         }
 
-    private fun renderCoreDocumentEditor(adapter: AgentConfigAdapter, snapshot: AgentCoreDocumentSnapshot) {
+    private fun renderCoreDocumentEditor(target: AgentConfigurationTarget, snapshot: AgentCoreDocumentSnapshot) {
         coreDocumentEditorSnapshot = snapshot
         val status = TextView(context).apply {
             text = if (snapshot.descriptor.exists) "" else "保存后会创建此 Agent 原生文件"
@@ -3227,7 +3218,7 @@ internal class RunAgentSurfaceBinding(
             alpha = if (isEnabled) 1f else 0.38f
             isClickable = true
             isFocusable = true
-            setOnClickListener { saveCoreDocument(adapter, this, status) }
+            setOnClickListener { saveCoreDocument(target, this, status) }
         }
         val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -3294,7 +3285,7 @@ internal class RunAgentSurfaceBinding(
         }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
-    private fun saveCoreDocument(adapter: AgentConfigAdapter, saveAction: TextView, status: TextView) {
+    private fun saveCoreDocument(target: AgentConfigurationTarget, saveAction: TextView, status: TextView) {
         val snapshot = coreDocumentEditorSnapshot ?: return
         val content = coreDocumentEditorInput?.text?.toString() ?: return
         val targetAgentId = coreDocumentPageAgentId ?: return
@@ -3308,7 +3299,8 @@ internal class RunAgentSurfaceBinding(
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                adapter.writeCoreDocument(
+                agentConfigurationApi.writeCoreDocument(
+                    target,
                     AgentCoreDocumentWriteRequest(
                         agentId = targetAgentId,
                         documentId = snapshot.descriptor.id,
@@ -3401,17 +3393,17 @@ internal class RunAgentSurfaceBinding(
 
     private fun showCurrentCoreDocumentList() {
         val selected = settingsRegistrySnapshot?.entry(coreDocumentPageAgentId.orEmpty())
-        val adapter = coreDocumentPageAdapter
-        if (selected == null || adapter == null) {
+        val target = coreDocumentPageTarget
+        if (selected == null || target == null) {
             returnToAgentSettings()
             return
         }
-        showCoreDocumentManager(selected, adapter, reload = false)
+        showCoreDocumentManager(selected, target, reload = false)
     }
 
     private fun showProviderManager(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot
     ) {
         val targetAgentId = selected.registration.definition.agentId
@@ -3421,13 +3413,13 @@ internal class RunAgentSurfaceBinding(
             selectedProviderIds.clear()
         }
         providerPageAgentId = targetAgentId
-        providerPageAdapter = adapter
+        providerPageTarget = target
         providerPageSnapshot = snapshot
-        observeOfficialAccounts(targetAgentId, selected, adapter)
+        observeOfficialAccounts(targetAgentId, selected, target)
         navigationScreen = AgentNavigationScreen.ProviderList
         navigationHost.removeAllViews()
         navigationHost.addView(
-            buildProviderListPage(selected, adapter, snapshot),
+            buildProviderListPage(selected, target, snapshot),
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
         navigationHost.visibility = View.VISIBLE
@@ -3436,7 +3428,7 @@ internal class RunAgentSurfaceBinding(
     private fun observeOfficialAccounts(
         targetAgentId: String,
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
     ) {
         if (officialAccountObservedAgentId != targetAgentId) {
             officialAccountObservation?.cancel()
@@ -3454,7 +3446,7 @@ internal class RunAgentSurfaceBinding(
                         ) {
                             showProviderManager(
                                 selected,
-                                adapter,
+                                target,
                                 providerPageSnapshot ?: return@collect,
                             )
                         }
@@ -3471,19 +3463,19 @@ internal class RunAgentSurfaceBinding(
 
     private fun showMcpManager(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
     ) {
         val targetAgentId = selected.registration.definition.agentId
         mcpPageAgentId = targetAgentId
-        mcpPageAdapter = adapter
+        mcpPageTarget = target
         mcpPageSnapshot = snapshot
         mcpConnectionStates.keys.retainAll(snapshot.mcpServers.map(AgentMcpSummary::id).toSet())
         mcpConnectionMessages.keys.retainAll(snapshot.mcpServers.map(AgentMcpSummary::id).toSet())
         navigationScreen = AgentNavigationScreen.McpList
         navigationHost.removeAllViews()
         navigationHost.addView(
-            buildMcpListPage(selected, adapter),
+            buildMcpListPage(selected, target),
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -3491,7 +3483,7 @@ internal class RunAgentSurfaceBinding(
         )
         navigationHost.visibility = View.VISIBLE
         renderMcpSnapshot(snapshot)
-        refreshMcpSnapshot(selected, adapter)
+        refreshMcpSnapshot(selected, target)
     }
 
     /**
@@ -3500,13 +3492,13 @@ internal class RunAgentSurfaceBinding(
      */
     private fun refreshMcpSnapshot(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
     ) {
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { adapter.backfill(targetAgentId) }
+            val result = withContext(Dispatchers.IO) { agentConfigurationApi.read(target) }
             if (
                 requestRevision != settingsLoadRevision ||
                 navigationScreen != AgentNavigationScreen.McpList ||
@@ -3536,14 +3528,14 @@ internal class RunAgentSurfaceBinding(
 
     private fun buildMcpListPage(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
     ): View {
         val targetAgentId = selected.registration.definition.agentId
         val listAdapter = AgentMcpListAdapter(
             context = context,
             tokens = tokens,
-            onClick = { item -> showMcpActions(selected, adapter, item.server) },
-            onConnectionCheck = { item -> checkMcpConnection(selected, adapter, item.server) },
+            onClick = { item -> showMcpActions(selected, target, item.server) },
+            onConnectionCheck = { item -> checkMcpConnection(selected, target, item.server) },
         ).also { mcpPageListAdapter = it }
         val status = TextView(context).apply {
             textSize = 13.5f
@@ -3570,8 +3562,9 @@ internal class RunAgentSurfaceBinding(
                 Gravity.CENTER,
             ))
         }
-        val canCreate = AgentMcpOperation.Create in adapter.capabilities().mcpOperations &&
-            adapter.capabilities().mcpTransports.isNotEmpty()
+        val capabilities = agentConfigurationApi.capabilities(target)
+        val canCreate = AgentMcpOperation.Create in capabilities?.mcpOperations.orEmpty() &&
+            capabilities?.mcpTransports.orEmpty().isNotEmpty()
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(agentPageBackground)
@@ -3582,7 +3575,7 @@ internal class RunAgentSurfaceBinding(
                 actionIcon = R.drawable.ic_add_light.takeIf { canCreate },
                 actionDescription = "新建 MCP",
                 onAction = if (canCreate) {
-                    { mcpPageSnapshot?.let { current -> showMcpEditor(selected, adapter, current, null) } }
+                    { mcpPageSnapshot?.let { current -> showMcpEditor(selected, target, current, null) } }
                 } else null,
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
             addView(LinearLayout(context).apply {
@@ -3595,7 +3588,7 @@ internal class RunAgentSurfaceBinding(
                     contentDescription = "$targetAgentId 的 MCP"
                 })
                 addView(TextView(context).apply {
-                    text = if (AgentMcpOperation.CheckConnection in adapter.capabilities().mcpOperations) {
+                    text = if (AgentMcpOperation.CheckConnection in capabilities?.mcpOperations.orEmpty()) {
                         "保存只更新 Agent 原生配置；当前实例不承诺热加载。支持的项目可单独检查连接。"
                     } else {
                         "保存只更新 Agent 原生配置；连接和当前实例加载状态由 Agent 自身确认。"
@@ -3638,22 +3631,22 @@ internal class RunAgentSurfaceBinding(
 
     private fun showMcpActions(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         server: AgentMcpSummary,
     ) {
         val actions = buildList {
             if (AgentMcpOperation.Edit in server.allowedOperations) {
                 add(AgentChoiceAction("编辑") {
-                    mcpPageSnapshot?.let { current -> showMcpEditor(selected, adapter, current, server) }
+                    mcpPageSnapshot?.let { current -> showMcpEditor(selected, target, current, server) }
                 })
             }
             if (server.enabled && AgentMcpOperation.Disable in server.allowedOperations) {
                 add(AgentChoiceAction("停用") {
                     applyMcpChange(
                         selected,
-                        adapter,
+                        target,
                         server.id,
-                        AgentPersistentConfigChange.SetMcpEnabled(server.id, false),
+                        AgentConfigurationIntent.SetMcpEnabled(server.id, false),
                         "已停用 ${server.id}",
                     )
                 })
@@ -3661,21 +3654,21 @@ internal class RunAgentSurfaceBinding(
                 add(AgentChoiceAction("启用") {
                     applyMcpChange(
                         selected,
-                        adapter,
+                        target,
                         server.id,
-                        AgentPersistentConfigChange.SetMcpEnabled(server.id, true),
+                        AgentConfigurationIntent.SetMcpEnabled(server.id, true),
                         "已启用 ${server.id}",
                     )
                 })
             }
             if (server.enabled && AgentMcpOperation.CheckConnection in server.allowedOperations) {
-                add(AgentChoiceAction("检查连接") { checkMcpConnection(selected, adapter, server) })
+                add(AgentChoiceAction("检查连接") { checkMcpConnection(selected, target, server) })
             }
             if (AgentMcpOperation.Remove in server.allowedOperations) {
                 add(AgentChoiceAction(
                     label = "移除",
                     role = UiActionRole.Danger,
-                    onClick = { showMcpRemoveConfirmation(selected, adapter, server) },
+                    onClick = { showMcpRemoveConfirmation(selected, target, server) },
                 ))
             }
         }
@@ -3699,7 +3692,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun checkMcpConnection(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         server: AgentMcpSummary,
     ) {
         val targetAgentId = selected.registration.definition.agentId
@@ -3709,7 +3702,7 @@ internal class RunAgentSurfaceBinding(
         mcpPageSnapshot?.let { renderMcpSnapshot(it, pendingServerId = server.id) }
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { adapter.checkMcpServer(targetAgentId, server.id) }
+            val result = withContext(Dispatchers.IO) { agentConfigurationApi.checkMcp(target, server.id) }
             if (requestRevision != settingsLoadRevision ||
                 navigationScreen != AgentNavigationScreen.McpList ||
                 mcpPageAgentId != targetAgentId
@@ -3734,9 +3727,9 @@ internal class RunAgentSurfaceBinding(
 
     private fun applyMcpChange(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         serverId: String,
-        change: AgentPersistentConfigChange,
+        intent: AgentConfigurationIntent,
         successMessage: String,
     ) {
         val snapshot = mcpPageSnapshot ?: return
@@ -3747,45 +3740,38 @@ internal class RunAgentSurfaceBinding(
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val outcome = withContext(Dispatchers.IO) {
-                val result = adapter.apply(
-                    AgentConfigApplyRequest(targetAgentId, snapshot.revision, listOf(change)),
-                )
-                val refreshed = when (result) {
-                    is AgentConfigApplyResult.Applied -> AgentConfigReadResult.Ready(result.snapshot)
-                    else -> adapter.backfill(targetAgentId)
-                }
-                result to refreshed
+                agentConfigurationApi.apply(target, snapshot.revision, listOf(intent))
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
             persistentConfigAgentId = targetAgentId
-            persistentConfigResult = outcome.second
-            val refreshedSnapshot = (outcome.second as? AgentConfigReadResult.Ready)?.snapshot
-                ?: (outcome.first as? AgentConfigApplyResult.Applied)?.snapshot
+            persistentConfigResult = outcome.current
+            val refreshedSnapshot = (outcome.current as? AgentConfigReadResult.Ready)?.snapshot
+                ?: (outcome.result as? AgentConfigApplyResult.Applied)?.snapshot
                 ?: snapshot
-            if (outcome.first is AgentConfigApplyResult.Applied) {
+            if (outcome.result is AgentConfigApplyResult.Applied) {
                 mcpConnectionStates.remove(serverId)
                 mcpConnectionMessages.remove(serverId)
                 mcpEditorSaveAction = null
                 mcpEditorStatusText = null
-                showMcpManager(selected, adapter, refreshedSnapshot)
+                showMcpManager(selected, target, refreshedSnapshot)
                 Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
             } else {
                 mcpPageSnapshot = refreshedSnapshot
                 mcpEditorSaveAction?.apply { isEnabled = true; alpha = 1f }
                 mcpEditorStatusText?.apply {
-                    text = outcome.first.userMessage(successMessage)
+                    text = outcome.result.userMessage(successMessage)
                     setTextColor(android.graphics.Color.rgb(198, 40, 40))
                     visibility = View.VISIBLE
                 }
                 if (navigationScreen == AgentNavigationScreen.McpList) renderMcpSnapshot(refreshedSnapshot)
-                Toast.makeText(context, outcome.first.userMessage(successMessage), Toast.LENGTH_LONG).show()
+                Toast.makeText(context, outcome.result.userMessage(successMessage), Toast.LENGTH_LONG).show()
             }
         }
     }
 
     private fun showMcpRemoveConfirmation(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         server: AgentMcpSummary,
     ) {
         showAgentDialogCard(
@@ -3797,9 +3783,9 @@ internal class RunAgentSurfaceBinding(
                     dialog.dismiss()
                     applyMcpChange(
                         selected,
-                        adapter,
+                        target,
                         server.id,
-                        AgentPersistentConfigChange.RemoveMcpServer(server.id),
+                        AgentConfigurationIntent.RemoveMcp(server.id),
                         "已移除 ${server.id}",
                     )
                 },
@@ -3810,30 +3796,30 @@ internal class RunAgentSurfaceBinding(
     private fun showCurrentMcpList() {
         val targetAgentId = mcpPageAgentId ?: selectedSettingsAgentId
         val selected = settingsRegistrySnapshot?.entry(targetAgentId.orEmpty())
-        val adapter = mcpPageAdapter
+        val target = mcpPageTarget
         val snapshot = mcpPageSnapshot
-        if (selected == null || adapter == null || snapshot == null) {
+        if (selected == null || target == null || snapshot == null) {
             returnToAgentSettings()
             return
         }
         mcpEditorSaveAction = null
         mcpEditorStatusText = null
-        showMcpManager(selected, adapter, snapshot)
+        showMcpManager(selected, target, snapshot)
     }
 
     private fun showMcpEditor(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         existing: AgentMcpSummary?,
     ) {
         mcpPageAgentId = selected.registration.definition.agentId
-        mcpPageAdapter = adapter
+        mcpPageTarget = target
         mcpPageSnapshot = snapshot
         navigationScreen = AgentNavigationScreen.McpEditor
         navigationHost.removeAllViews()
         navigationHost.addView(
-            buildMcpEditorPage(selected, adapter, existing),
+            buildMcpEditorPage(selected, target, existing),
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -3844,10 +3830,10 @@ internal class RunAgentSurfaceBinding(
 
     private fun buildMcpEditorPage(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         existing: AgentMcpSummary?,
     ): View {
-        val supportedTransports = adapter.capabilities().mcpTransports
+        val supportedTransports = agentConfigurationApi.capabilities(target)?.mcpTransports.orEmpty()
         var transport = existing?.transport?.takeIf(supportedTransports::contains)
             ?: supportedTransports.firstOrNull()
             ?: AgentMcpTransport.Unknown
@@ -4033,9 +4019,9 @@ internal class RunAgentSurfaceBinding(
                         mcpEditorSaveAction = this
                         applyMcpChange(
                             selected,
-                            adapter,
+                            target,
                             result.draft.id,
-                            AgentPersistentConfigChange.ConfigureMcpServer(result.draft),
+                            AgentConfigurationIntent.ConfigureMcp(result.draft),
                             "MCP 配置已保存，尚未检查连接",
                         )
                     }
@@ -4100,16 +4086,16 @@ internal class RunAgentSurfaceBinding(
 
     private fun showSkillManager(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
     ) {
         skillPageAgentId = selected.registration.definition.agentId
-        skillPageAdapter = adapter
+        skillPageTarget = target
         skillPageSnapshot = snapshot
         navigationScreen = AgentNavigationScreen.SkillList
         navigationHost.removeAllViews()
         navigationHost.addView(
-            buildSkillListPage(selected, adapter),
+            buildSkillListPage(selected, target),
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -4117,19 +4103,19 @@ internal class RunAgentSurfaceBinding(
         )
         navigationHost.visibility = View.VISIBLE
         renderSkillSnapshot(snapshot)
-        refreshSkillSnapshot(selected, adapter)
+        refreshSkillSnapshot(selected, target)
     }
 
     /** Skill 与 MCP 使用同一刷新边界：进入页面时回填一次，列表只消费完成后的快照。 */
     private fun refreshSkillSnapshot(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
     ) {
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { adapter.backfill(targetAgentId) }
+            val result = withContext(Dispatchers.IO) { agentConfigurationApi.read(target) }
             if (
                 requestRevision != settingsLoadRevision ||
                 navigationScreen != AgentNavigationScreen.SkillList ||
@@ -4154,13 +4140,13 @@ internal class RunAgentSurfaceBinding(
 
     private fun buildSkillListPage(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
     ): View {
         val targetAgentId = selected.registration.definition.agentId
         val listAdapter = AgentSkillListAdapter(
             context = context,
             tokens = tokens,
-            onClick = { skill -> showSkillActions(selected, adapter, skill) },
+            onClick = { skill -> showSkillActions(selected, target, skill) },
         ).also { skillPageListAdapter = it }
         val status = TextView(context).apply {
             textSize = 13.5f
@@ -4195,11 +4181,11 @@ internal class RunAgentSurfaceBinding(
                 backDescription = "返回 Agent 设置",
                 onBack = ::returnToAgentSettings,
                 actionIcon = R.drawable.ic_add_light.takeIf {
-                    AgentSkillOperation.Import in adapter.capabilities().skillOperations
+                    AgentSkillOperation.Import in agentConfigurationApi.capabilities(target)?.skillOperations.orEmpty()
                 },
                 actionDescription = "导入 Skill",
-                onAction = if (AgentSkillOperation.Import in adapter.capabilities().skillOperations) {
-                    { showSkillImportPicker(selected, adapter) }
+                onAction = if (AgentSkillOperation.Import in agentConfigurationApi.capabilities(target)?.skillOperations.orEmpty()) {
+                    { showSkillImportPicker(selected, target) }
                 } else null,
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
             addView(TextView(context).apply {
@@ -4233,7 +4219,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun showSkillActions(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         skill: AgentSkillSummary,
     ) {
         val actions = buildList {
@@ -4244,8 +4230,8 @@ internal class RunAgentSurfaceBinding(
                     label = "启用",
                     selected = skill.activation == AgentSkillActivation.Enabled,
                     onClick = {
-                        applySkillChange(selected, adapter, skill,
-                            AgentPersistentConfigChange.SetSkillActivation(
+                        applySkillChange(selected, target, skill,
+                            AgentConfigurationIntent.SetSkillActivation(
                                 skill.id,
                                 AgentSkillActivation.Enabled,
                             ), "已启用 ${skill.displayName}")
@@ -4259,8 +4245,8 @@ internal class RunAgentSurfaceBinding(
                     label = "每次确认",
                     selected = skill.activation == AgentSkillActivation.ApprovalRequired,
                     onClick = {
-                        applySkillChange(selected, adapter, skill,
-                            AgentPersistentConfigChange.SetSkillActivation(
+                        applySkillChange(selected, target, skill,
+                            AgentConfigurationIntent.SetSkillActivation(
                                 skill.id,
                                 AgentSkillActivation.ApprovalRequired,
                             ), "${skill.displayName} 已设为每次确认")
@@ -4274,8 +4260,8 @@ internal class RunAgentSurfaceBinding(
                     label = "仅手动",
                     selected = skill.activation == AgentSkillActivation.ManualOnly,
                     onClick = {
-                        applySkillChange(selected, adapter, skill,
-                            AgentPersistentConfigChange.SetSkillActivation(
+                        applySkillChange(selected, target, skill,
+                            AgentConfigurationIntent.SetSkillActivation(
                                 skill.id,
                                 AgentSkillActivation.ManualOnly,
                             ), "${skill.displayName} 已设为仅手动")
@@ -4289,8 +4275,8 @@ internal class RunAgentSurfaceBinding(
                     label = "停用",
                     selected = skill.activation == AgentSkillActivation.Disabled,
                     onClick = {
-                        applySkillChange(selected, adapter, skill,
-                            AgentPersistentConfigChange.SetSkillActivation(
+                        applySkillChange(selected, target, skill,
+                            AgentConfigurationIntent.SetSkillActivation(
                                 skill.id,
                                 AgentSkillActivation.Disabled,
                             ), "已停用 ${skill.displayName}")
@@ -4301,7 +4287,7 @@ internal class RunAgentSurfaceBinding(
                 add(AgentChoiceAction(
                     label = "移除",
                     role = UiActionRole.Danger,
-                    onClick = { showSkillRemoveConfirmation(selected, adapter, skill) },
+                    onClick = { showSkillRemoveConfirmation(selected, target, skill) },
                 ))
             }
         }
@@ -4324,9 +4310,9 @@ internal class RunAgentSurfaceBinding(
 
     private fun applySkillChange(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         skill: AgentSkillSummary,
-        change: AgentPersistentConfigChange,
+        intent: AgentConfigurationIntent,
         successMessage: String,
     ) {
         val snapshot = skillPageSnapshot ?: return
@@ -4337,17 +4323,10 @@ internal class RunAgentSurfaceBinding(
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val outcome = withContext(Dispatchers.IO) {
-                val result = adapter.apply(
-                    AgentConfigApplyRequest(targetAgentId, snapshot.revision, listOf(change)),
-                )
-                val refreshed = when (result) {
-                    is AgentConfigApplyResult.Applied -> AgentConfigReadResult.Ready(result.snapshot)
-                    else -> adapter.backfill(targetAgentId)
-                }
-                result to refreshed
+                agentConfigurationApi.apply(target, snapshot.revision, listOf(intent))
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
-            consumeSkillApplyOutcome(targetAgentId, outcome.first, outcome.second, successMessage)
+            consumeSkillApplyOutcome(targetAgentId, outcome.result, outcome.current, successMessage)
         }
     }
 
@@ -4380,7 +4359,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun showSkillRemoveConfirmation(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         skill: AgentSkillSummary,
     ) {
         showAgentDialogCard(
@@ -4392,9 +4371,9 @@ internal class RunAgentSurfaceBinding(
                     dialog.dismiss()
                     applySkillChange(
                         selected,
-                        adapter,
+                        target,
                         skill,
-                        AgentPersistentConfigChange.RemoveSkill(skill.id),
+                        AgentConfigurationIntent.RemoveSkill(skill.id),
                         "已移除 ${skill.displayName}",
                     )
                 },
@@ -4404,7 +4383,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun showSkillImportPicker(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
     ) {
         skillDirectoryPickerDialog?.dismiss()
         skillDirectoryPickerDialog = WorkspaceDirectoryPickerDialog(
@@ -4419,14 +4398,14 @@ internal class RunAgentSurfaceBinding(
             allowCreateDirectory = false,
             onSelected = { selectedPath ->
                 skillDirectoryPickerDialog = null
-                importSkill(selected, adapter, selectedPath)
+                importSkill(selected, target, selectedPath)
             },
         ).also(WorkspaceDirectoryPickerDialog::show)
     }
 
     private fun importSkill(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         selectedPath: String,
     ) {
         val snapshot = skillPageSnapshot ?: return
@@ -4445,21 +4424,15 @@ internal class RunAgentSurfaceBinding(
                         KFContainerManager.resolveWorkspaceDirectory(context),
                     ).stage(selectedPath)
                     try {
-                        val result = adapter.apply(
-                            AgentConfigApplyRequest(
-                                targetAgentId,
-                                snapshot.revision,
-                                listOf(AgentPersistentConfigChange.InstallSkill(
+                        val mutation = agentConfigurationApi.apply(
+                            target,
+                            snapshot.revision,
+                            listOf(AgentConfigurationIntent.InstallSkill(
                                     stage.skillId,
                                     stage.sourceReference,
                                 )),
-                            ),
-                        )
-                        val refreshed = when (result) {
-                            is AgentConfigApplyResult.Applied -> AgentConfigReadResult.Ready(result.snapshot)
-                            else -> adapter.backfill(targetAgentId)
-                        }
-                        SkillImportOutcome(result, refreshed, null)
+                            )
+                        SkillImportOutcome(mutation.result, mutation.current, null)
                     } finally {
                         stage.discard()
                     }
@@ -4486,13 +4459,13 @@ internal class RunAgentSurfaceBinding(
     private fun showCurrentProviderList() {
         val targetAgentId = providerPageAgentId ?: selectedSettingsAgentId
         val selected = settingsRegistrySnapshot?.entry(targetAgentId.orEmpty())
-        val adapter = providerPageAdapter
+        val target = providerPageTarget
         val snapshot = providerPageSnapshot
-        if (selected == null || adapter == null || snapshot == null) {
+        if (selected == null || target == null || snapshot == null) {
             returnToAgentSettings()
             return
         }
-        showProviderManager(selected, adapter, snapshot)
+        showProviderManager(selected, target, snapshot)
     }
 
     private fun buildAgentSubpageHeader(
@@ -4628,7 +4601,10 @@ internal class RunAgentSurfaceBinding(
             setOnClickListener { onClick() }
         }
 
-    private fun showProviderPresetPicker(onSelected: (AgentProviderPreset?) -> Unit) {
+    private fun showProviderPresetPicker(
+        target: AgentConfigurationTarget,
+        onSelected: (AgentProviderPreset?) -> Unit,
+    ) {
         val grid = GridLayout(context).apply {
             columnCount = 2
             alignmentMode = GridLayout.ALIGN_BOUNDS
@@ -4651,7 +4627,7 @@ internal class RunAgentSurfaceBinding(
             val normalized = query.trim().lowercase()
             val entries = buildList<AgentProviderPreset?> {
                 add(null)
-                addAll(AgentProviderPresetCatalog.presets)
+                addAll(agentConfigurationApi.providerPresets(target))
             }.filter { preset ->
                 normalized.isEmpty() || preset == null && "自定义".contains(normalized) ||
                     preset?.displayName?.lowercase()?.contains(normalized) == true ||
@@ -5064,7 +5040,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun buildProviderListPage(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot
     ): View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -5079,9 +5055,9 @@ internal class RunAgentSurfaceBinding(
         )
         val freeProviders = providers.filter { it.source == AgentModelSource.Free }
         val officialProviders = providers.filter { it.source == AgentModelSource.OfficialLogin }
-        val canEditProviders = adapter.capabilities().supports(
+        val canEditProviders = agentConfigurationApi.capabilities(target)?.supports(
             AgentPersistentConfigCapability.ProviderProfiles
-        )
+        ) == true
         if (providerLibraryGroupId == AgentModelLibraryStore.FREE_GROUP_ID && freeProviders.isEmpty()) {
             providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
         }
@@ -5105,7 +5081,7 @@ internal class RunAgentSurfaceBinding(
             actionIcon = R.drawable.ic_add_light.takeIf { canEditProviders },
             actionDescription = "添加供应商".takeIf { canEditProviders },
             onAction = if (canEditProviders) ({
-                showProviderEditor(selected, adapter, snapshot, existing = null, preset = null)
+                showProviderEditor(selected, target, snapshot, existing = null, preset = null)
             }) else null,
         ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
         addView(ScrollView(context).apply {
@@ -5128,7 +5104,7 @@ internal class RunAgentSurfaceBinding(
                 })
                 addView(buildProviderGroupStrip(
                     selected,
-                    adapter,
+                    target,
                     snapshot,
                     library,
                     hasOfficialProviders = officialProviders.isNotEmpty(),
@@ -5159,7 +5135,7 @@ internal class RunAgentSurfaceBinding(
                         })
                         if (canEditProviders) {
                             addView(actionTextButton("添加供应商") {
-                                showProviderEditor(selected, adapter, snapshot, existing = null, preset = null)
+                                showProviderEditor(selected, target, snapshot, existing = null, preset = null)
                             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(48)))
                         }
                     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -5167,7 +5143,7 @@ internal class RunAgentSurfaceBinding(
                     visibleProviders.forEach { provider ->
                         addView(buildProviderLibraryCard(
                             selected = selected,
-                            adapter = adapter,
+                            target = target,
                             snapshot = snapshot,
                             projection = provider,
                         ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -5178,7 +5154,7 @@ internal class RunAgentSurfaceBinding(
             }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         if (selectedProviderIds.isNotEmpty()) {
-            addView(buildProviderBatchBar(selected, adapter, snapshot, providers), LinearLayout.LayoutParams(
+            addView(buildProviderBatchBar(selected, target, snapshot, providers), LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ui.dp(70)
             ))
@@ -5199,7 +5175,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun buildProviderGroupStrip(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         library: com.kite.app.agent.store.AgentModelLibrarySnapshot,
         hasOfficialProviders: Boolean,
@@ -5229,11 +5205,11 @@ internal class RunAgentSurfaceBinding(
                     setOnClickListener {
                         providerLibraryGroupId = id
                         selectedProviderIds.clear()
-                        showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+                        showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
                     }
                     if (removable) {
                         setOnLongClickListener {
-                            confirmDeleteModelGroup(selected, adapter, snapshot, id, name)
+                            confirmDeleteModelGroup(selected, target, snapshot, id, name)
                             true
                         }
                     }
@@ -5246,7 +5222,7 @@ internal class RunAgentSurfaceBinding(
             if (hasFreeProviders) addGroup(AgentModelLibraryStore.FREE_GROUP_ID, "免费")
             library.groups.forEach { group -> addGroup(group.id, group.name, removable = true) }
             addView(iconButton(context, R.drawable.ic_add_light, "新建分组") {
-                showCreateModelGroupDialog(selected, adapter, snapshot)
+                showCreateModelGroupDialog(selected, target, snapshot)
             }.apply {
                 background = ui.roundedBox(agentSurface, tokens.border, ui.dp(18).toFloat(), ui.dp(1))
                 imageTintList = ColorStateList.valueOf(tokens.textSecondary)
@@ -5261,7 +5237,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun buildProviderLibraryCard(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         projection: AgentModelProviderProjection
     ): View {
@@ -5334,7 +5310,7 @@ internal class RunAgentSurfaceBinding(
                         if (projection.editableProvider != null) {
                             showProviderEditor(
                                 selected,
-                                adapter,
+                                target,
                                 providerPageSnapshot ?: snapshot,
                                 projection.editableProvider,
                                 preset = null
@@ -5342,7 +5318,7 @@ internal class RunAgentSurfaceBinding(
                         } else {
                             showSystemModelDisplayNameEditor(
                                 selected,
-                                adapter,
+                                target,
                                 providerPageSnapshot ?: snapshot,
                                 projection,
                             )
@@ -5372,14 +5348,14 @@ internal class RunAgentSurfaceBinding(
                 isFocusable = true
                 setOnClickListener {
                     if (selectedProviderIds.isNotEmpty()) {
-                        toggleProviderBatchSelection(selected, adapter, snapshot, projection.id)
+                        toggleProviderBatchSelection(selected, target, snapshot, projection.id)
                     } else {
                         if (!expandedProviderIds.add(projection.id)) expandedProviderIds.remove(projection.id)
-                        showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+                        showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
                     }
                 }
                 setOnLongClickListener {
-                    toggleProviderBatchSelection(selected, adapter, snapshot, projection.id)
+                    toggleProviderBatchSelection(selected, target, snapshot, projection.id)
                     true
                 }
             }
@@ -5397,7 +5373,7 @@ internal class RunAgentSurfaceBinding(
                         contentDescription = "设为默认模型 ${model.name}",
                         useSelectionDot = true,
                         onClick = {
-                            selectPersistentModel(selected, adapter, snapshot, projection, model)
+                            selectPersistentModel(selected, target, snapshot, projection, model)
                         }
                     ), LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -5512,12 +5488,12 @@ internal class RunAgentSurfaceBinding(
 
     private fun showSystemModelDisplayNameEditor(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         projection: AgentModelProviderProjection,
     ) {
         providerPageAgentId = selected.registration.definition.agentId
-        providerPageAdapter = adapter
+        providerPageTarget = target
         providerPageSnapshot = snapshot
         navigationScreen = AgentNavigationScreen.ProviderEditor
         navigationHost.removeAllViews()
@@ -5723,17 +5699,17 @@ internal class RunAgentSurfaceBinding(
 
     private fun toggleProviderBatchSelection(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         providerId: String
     ) {
         if (!selectedProviderIds.add(providerId)) selectedProviderIds.remove(providerId)
-        showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+        showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
     }
 
     private fun buildProviderBatchBar(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         providers: List<AgentModelProviderProjection>
     ): View = LinearLayout(context).apply {
@@ -5748,7 +5724,7 @@ internal class RunAgentSurfaceBinding(
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addView(providerBatchAction("取消", UiActionRole.Secondary) {
             selectedProviderIds.clear()
-            showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+            showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
         })
         addView(providerBatchAction("会话选择模型", UiActionRole.Primary) {
             val selectedProviders = providers.filter { it.id in selectedProviderIds }
@@ -5762,7 +5738,7 @@ internal class RunAgentSurfaceBinding(
                 )
             }
             selectedProviderIds.clear()
-            showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+            showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
         })
         val removable = providers.filter {
             it.id in selectedProviderIds &&
@@ -5771,7 +5747,7 @@ internal class RunAgentSurfaceBinding(
         }
         if (removable.isNotEmpty()) {
             addView(providerBatchAction("删除", UiActionRole.Danger) {
-                confirmRemoveSelectedProviders(selected, adapter, snapshot, removable)
+                confirmRemoveSelectedProviders(selected, target, snapshot, removable)
             })
         }
     }
@@ -5808,7 +5784,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun showCreateModelGroupDialog(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot
     ) {
         val dialog = Dialog(context)
@@ -5867,7 +5843,7 @@ internal class RunAgentSurfaceBinding(
                     } else {
                         providerLibraryGroupId = group.id
                         dialog.dismiss()
-                        showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+                        showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
                     }
                 }, LinearLayout.LayoutParams(0, ui.dp(46), 1f).apply { marginStart = ui.dp(8) })
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -5889,7 +5865,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun confirmDeleteModelGroup(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         groupId: String,
         groupName: String
@@ -5903,7 +5879,7 @@ internal class RunAgentSurfaceBinding(
                     modelLibraryStore.deleteGroup(selected.registration.definition.agentId, groupId)
                     providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
                     dialog.dismiss()
-                    showProviderManager(selected, adapter, providerPageSnapshot ?: snapshot)
+                    showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
                 }
             )
         )
@@ -5911,7 +5887,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun confirmRemoveSelectedProviders(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         providers: List<AgentModelProviderProjection>
     ) {
@@ -5927,9 +5903,9 @@ internal class RunAgentSurfaceBinding(
                     dialog.dismiss()
                     applyPersistentProviderChanges(
                         selected,
-                        adapter,
+                        target,
                         snapshot,
-                        providers.map { AgentPersistentConfigChange.RemoveProvider(it.id, removeCredential = true) },
+                        providers.map { AgentConfigurationIntent.RemoveProvider(it.id, removeCredential = true) },
                         "供应商资料已删除"
                     )
                 }
@@ -5939,18 +5915,18 @@ internal class RunAgentSurfaceBinding(
 
     private fun showProviderEditor(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         existing: AgentProviderSummary?,
         preset: AgentProviderPreset?
     ) {
         providerPageAgentId = selected.registration.definition.agentId
-        providerPageAdapter = adapter
+        providerPageTarget = target
         providerPageSnapshot = snapshot
         navigationScreen = AgentNavigationScreen.ProviderEditor
         navigationHost.removeAllViews()
         navigationHost.addView(
-            buildProviderEditorPage(selected, adapter, snapshot, existing, preset),
+            buildProviderEditorPage(selected, target, snapshot, existing, preset),
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         )
         navigationHost.visibility = View.VISIBLE
@@ -5958,7 +5934,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun buildProviderEditorPage(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         existing: AgentProviderSummary?,
         initialPreset: AgentProviderPreset?
@@ -6082,7 +6058,7 @@ internal class RunAgentSurfaceBinding(
                 text = initialPreset?.displayName ?: "自定义配置"
             }
             content.addView(providerPresetSelectionRow(presetValue) {
-                showProviderPresetPicker { preset ->
+                showProviderPresetPicker(target) { preset ->
                     if (preset == null) {
                         presetValue.text = "自定义配置"
                         idInput.setText("")
@@ -6205,7 +6181,7 @@ internal class RunAgentSurfaceBinding(
 
         if (existing != null) {
             content.addView(actionDangerButton("删除供应商") {
-                confirmRemoveProvider(selected, adapter, snapshot, existing)
+                confirmRemoveProvider(selected, target, snapshot, existing)
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(50)).apply {
                 setMargins(0, ui.dp(16), 0, 0)
             })
@@ -6243,9 +6219,9 @@ internal class RunAgentSurfaceBinding(
                 keyInput.setText("")
                 applyPersistentProviderChange(
                     selected = selected,
-                    adapter = adapter,
+                    target = target,
                     snapshot = snapshot,
-                    change = AgentPersistentConfigChange.ConfigureProvider(
+                    intent = AgentConfigurationIntent.ConfigureProvider(
                         provider = AgentProviderDraft(
                             id = id,
                             displayName = name,
@@ -6289,7 +6265,7 @@ internal class RunAgentSurfaceBinding(
 
     private fun confirmRemoveProvider(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         provider: AgentProviderSummary
     ) {
@@ -6302,9 +6278,9 @@ internal class RunAgentSurfaceBinding(
                     dialog.dismiss()
                 applyPersistentProviderChange(
                     selected,
-                    adapter,
+                    target,
                     snapshot,
-                    AgentPersistentConfigChange.RemoveProvider(provider.id, removeCredential = true),
+                    AgentConfigurationIntent.RemoveProvider(provider.id, removeCredential = true),
                     "供应商资料已删除"
                 )
                 }
@@ -6314,52 +6290,49 @@ internal class RunAgentSurfaceBinding(
 
     private fun selectPersistentModel(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
         provider: AgentModelProviderProjection,
         model: AgentConfigChoice
     ) {
-        val selection = if (provider.source == AgentModelSource.UserConfigured) {
-            val modelId = model.value.removePrefix("${provider.id}/")
-            AgentPersistentConfigChange.SelectProvider(provider.id, modelId)
-        } else {
-            val option = providerManagerModelOption(selected.registration.definition.agentId)
-                ?.copy(currentValue = model.value)
-            option?.let(adapter::defaultModelChange)
-        }
-        if (selection == null) {
+        val option = providerManagerModelOption(selected.registration.definition.agentId)
+        if (option == null) {
             Toast.makeText(context, "当前 Agent 不能把这个模型保存为默认", Toast.LENGTH_SHORT).show()
             return
         }
+        val selection = AgentModelSelection(
+            configId = option.id,
+            sourceId = provider.id,
+            modelId = model.value.removePrefix("${provider.id}/"),
+            nativeValue = model.value,
+            source = provider.source,
+        )
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val outcome = withContext(Dispatchers.IO) {
-                val result = adapter.apply(
-                    AgentConfigApplyRequest(targetAgentId, snapshot.revision, listOf(selection))
+                agentConfigurationApi.apply(
+                    target,
+                    snapshot.revision,
+                    listOf(AgentConfigurationIntent.SelectModel(selection)),
                 )
-                val refreshed = when (result) {
-                    is AgentConfigApplyResult.Applied -> AgentConfigReadResult.Ready(result.snapshot)
-                    else -> adapter.backfill(targetAgentId)
-                }
-                result to refreshed
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
             persistentConfigAgentId = targetAgentId
-            persistentConfigResult = outcome.second
-            val refreshedSnapshot = when (val refreshed = outcome.second) {
+            persistentConfigResult = outcome.current
+            val refreshedSnapshot = when (val refreshed = outcome.current) {
                 is AgentConfigReadResult.Ready -> refreshed.snapshot
                 else -> null
             }
             if (refreshedSnapshot != null) providerPageSnapshot = refreshedSnapshot
-            when (val applyResult = outcome.first) {
+            when (val applyResult = outcome.result) {
                 is AgentConfigApplyResult.Applied -> {
                     usePersistentSnapshotAsDraftDefault(
                         targetAgentId,
                         refreshedSnapshot ?: applyResult.snapshot
                     )
-                    showProviderManager(selected, adapter, refreshedSnapshot ?: applyResult.snapshot)
+                    showProviderManager(selected, target, refreshedSnapshot ?: applyResult.snapshot)
                     val message = AgentPersistentDefaultPolicy.savedMessage(
                         model.name,
                         targetAgentId == agentId
@@ -6367,7 +6340,7 @@ internal class RunAgentSurfaceBinding(
                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 }
                 else -> {
-                    showProviderManager(selected, adapter, refreshedSnapshot ?: snapshot)
+                    showProviderManager(selected, target, refreshedSnapshot ?: snapshot)
                     Toast.makeText(
                         context,
                         applyResult.userMessage("默认模型已更新"),
@@ -6380,9 +6353,9 @@ internal class RunAgentSurfaceBinding(
 
     private fun applyPersistentProviderChange(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
-        change: AgentPersistentConfigChange,
+        intent: AgentConfigurationIntent,
         successMessage: String,
         onApplied: ((String) -> Unit)? = null
     ) {
@@ -6390,36 +6363,29 @@ internal class RunAgentSurfaceBinding(
         val requestRevision = ++settingsLoadRevision
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val outcome = withContext(Dispatchers.IO) {
-                val result = adapter.apply(
-                    AgentConfigApplyRequest(targetAgentId, snapshot.revision, listOf(change))
-                )
-                val refreshed = when (result) {
-                    is AgentConfigApplyResult.Applied -> AgentConfigReadResult.Ready(result.snapshot)
-                    else -> adapter.backfill(targetAgentId)
-                }
-                result to refreshed
+                agentConfigurationApi.apply(target, snapshot.revision, listOf(intent))
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
             persistentConfigAgentId = targetAgentId
-            persistentConfigResult = outcome.second
-            val refreshedSnapshot = when (val refreshed = outcome.second) {
+            persistentConfigResult = outcome.current
+            val refreshedSnapshot = when (val refreshed = outcome.current) {
                 is AgentConfigReadResult.Ready -> refreshed.snapshot
                 else -> null
             }
             if (refreshedSnapshot != null) providerPageSnapshot = refreshedSnapshot
-            when (val applyResult = outcome.first) {
+            when (val applyResult = outcome.result) {
                 is AgentConfigApplyResult.Applied -> {
                     providerEditorSaveAction = null
                     providerEditorStatusText = null
                     val appliedSnapshot = refreshedSnapshot ?: applyResult.snapshot
-                    val appliedProviderId = when (change) {
-                        is AgentPersistentConfigChange.ConfigureProvider -> change.provider.id
-                        is AgentPersistentConfigChange.SelectProvider -> change.providerId
+                    val appliedProviderId = when (intent) {
+                        is AgentConfigurationIntent.ConfigureProvider -> intent.provider.id
+                        is AgentConfigurationIntent.SelectModel -> intent.selection.sourceId
                         else -> null
                     }
                     if (appliedProviderId != null) onApplied?.invoke(appliedProviderId)
                     usePersistentSnapshotAsDraftDefault(targetAgentId, appliedSnapshot)
-                    showProviderManager(selected, adapter, appliedSnapshot)
+                    showProviderManager(selected, target, appliedSnapshot)
                     Toast.makeText(
                         context,
                         AgentPersistentDefaultPolicy.configurationSavedMessage(
@@ -6432,7 +6398,7 @@ internal class RunAgentSurfaceBinding(
                 else -> {
                     Toast.makeText(
                         context,
-                        outcome.first.userMessage(successMessage),
+                        outcome.result.userMessage(successMessage),
                         Toast.LENGTH_SHORT
                     ).show()
                     providerEditorSaveAction?.apply {
@@ -6440,7 +6406,7 @@ internal class RunAgentSurfaceBinding(
                         alpha = 1f
                     }
                     providerEditorStatusText?.apply {
-                        text = outcome.first.userMessage(successMessage)
+                        text = outcome.result.userMessage(successMessage)
                         setTextColor(android.graphics.Color.rgb(198, 40, 40))
                         visibility = View.VISIBLE
                     }
@@ -6626,42 +6592,37 @@ internal class RunAgentSurfaceBinding(
 
     private fun applyPersistentProviderChanges(
         selected: AgentRegistryEntry,
-        adapter: AgentConfigAdapter,
+        target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
-        changes: List<AgentPersistentConfigChange>,
+        intents: List<AgentConfigurationIntent>,
         successMessage: String
     ) {
-        if (changes.isEmpty()) return
+        if (intents.isEmpty()) return
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val outcome = withContext(Dispatchers.IO) {
-                val result = adapter.apply(AgentConfigApplyRequest(targetAgentId, snapshot.revision, changes))
-                val refreshed = when (result) {
-                    is AgentConfigApplyResult.Applied -> AgentConfigReadResult.Ready(result.snapshot)
-                    else -> adapter.backfill(targetAgentId)
-                }
-                result to refreshed
+                agentConfigurationApi.apply(target, snapshot.revision, intents)
             }
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
             persistentConfigAgentId = targetAgentId
-            persistentConfigResult = outcome.second
-            val refreshedSnapshot = (outcome.second as? AgentConfigReadResult.Ready)?.snapshot
-            when (val result = outcome.first) {
+            persistentConfigResult = outcome.current
+            val refreshedSnapshot = (outcome.current as? AgentConfigReadResult.Ready)?.snapshot
+            when (val result = outcome.result) {
                 is AgentConfigApplyResult.Applied -> {
                     val applied = refreshedSnapshot ?: result.snapshot
                     providerPageSnapshot = applied
                     selectedProviderIds.clear()
                     expandedProviderIds.retainAll(applied.providers.map { it.id }.toSet())
                     usePersistentSnapshotAsDraftDefault(targetAgentId, applied)
-                    showProviderManager(selected, adapter, applied)
+                    showProviderManager(selected, target, applied)
                     Toast.makeText(context, successMessage, Toast.LENGTH_SHORT).show()
                 }
                 else -> {
                     if (refreshedSnapshot != null) providerPageSnapshot = refreshedSnapshot
                     selectedProviderIds.clear()
-                    showProviderManager(selected, adapter, refreshedSnapshot ?: snapshot)
+                    showProviderManager(selected, target, refreshedSnapshot ?: snapshot)
                     Toast.makeText(context, result.userMessage(successMessage), Toast.LENGTH_SHORT).show()
                 }
             }

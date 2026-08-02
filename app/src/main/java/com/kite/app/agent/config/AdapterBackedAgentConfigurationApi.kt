@@ -13,6 +13,9 @@ class AdapterBackedAgentConfigurationApi(
     override fun capabilities(target: AgentConfigurationTarget): AgentConfigCapabilities? =
         adapters.adapter(target.adapterId)?.capabilities()
 
+    override fun providerPresets(target: AgentConfigurationTarget): List<AgentProviderPreset> =
+        adapters.adapter(target.adapterId)?.let { AgentProviderPresetCatalog.presets }.orEmpty()
+
     override suspend fun read(target: AgentConfigurationTarget): AgentConfigReadResult =
         adapters.adapter(target.adapterId)?.readLive(target.agentId)
             ?: AgentConfigReadResult.Unavailable(target.unsupportedDiscovery())
