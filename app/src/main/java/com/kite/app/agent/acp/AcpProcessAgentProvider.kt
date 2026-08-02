@@ -575,10 +575,14 @@ private class AcpClientOperations(
 }
 
 @OptIn(UnstableApi::class)
-private fun AgentContent.toAcp(): ContentBlock = when (this) {
+internal fun AgentContent.toAcp(): ContentBlock = when (this) {
     is AgentContent.Text -> ContentBlock.Text(text = text)
     is AgentContent.SkillReference -> error("SkillReference 必须在进入 ACP 前转换为文本")
-    is AgentContent.Image -> ContentBlock.Image(data = data, mimeType = mimeType, uri = uri)
+    is AgentContent.Image -> ContentBlock.Image(
+        data = data,
+        mimeType = mimeType,
+        uri = uri.toAgentVisibleMediaUri(),
+    )
     is AgentContent.Audio -> ContentBlock.Audio(data = data, mimeType = mimeType)
     is AgentContent.ResourceLink -> ContentBlock.ResourceLink(
         name = name,
@@ -595,3 +599,12 @@ private fun AgentContent.toAcp(): ContentBlock = when (this) {
         EmbeddedResourceResource.BlobResourceContents(blob = data, uri = uri, mimeType = mimeType)
     )
 }
+
+/** Android 内容提供器地址只对 Kite 进程有效，不能作为 Agent 可访问的媒体地址。 */
+private fun String?.toAgentVisibleMediaUri(): String? {
+    val normalized = this?.trim()?.takeIf(String::isNotBlank) ?: return null
+    val scheme = normalized.substringBefore(':', missingDelimiterValue = "").lowercase()
+    return normalized.takeUnless { scheme in ANDROID_PRIVATE_MEDIA_URI_SCHEMES }
+}
+
+private val ANDROID_PRIVATE_MEDIA_URI_SCHEMES = setOf("content", "android.resource", "msf")

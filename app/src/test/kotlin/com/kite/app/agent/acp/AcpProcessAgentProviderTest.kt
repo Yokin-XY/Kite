@@ -70,10 +70,28 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AcpProcessAgentProviderTest {
+    @Test
+    fun androidPrivateImageUriIsNotPublishedToAcpAgent() {
+        val privateImage = AgentContent.Image(
+            data = "aGVsbG8=",
+            mimeType = "image/png",
+            uri = "content://com.meizu.fileprovider/document/msf%3A1000006734",
+        ).toAcp() as ContentBlock.Image
+        val agentVisibleImage = AgentContent.Image(
+            data = "aGVsbG8=",
+            mimeType = "image/png",
+            uri = "file:///workspace/reference.png",
+        ).toAcp() as ContentBlock.Image
+
+        assertNull(privateImage.uri)
+        assertEquals("file:///workspace/reference.png", agentVisibleImage.uri)
+    }
+
     @Test
     fun officialSdkCompletesInitializeSessionPromptCancelAndStopOverLineChannel() = runBlocking {
         val fixture = AcpAgentFixture()

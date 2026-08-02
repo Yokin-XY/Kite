@@ -133,6 +133,45 @@ class AgentModelLibraryPolicyTest {
     }
 
     @Test
+    fun `草稿模型选择使用稳定模型ID并服从显示管理`() {
+        val snapshot = AgentLiveConfigSnapshot(
+            agentId = "opencode",
+            adapterId = "test",
+            revision = "1",
+            displayLocation = "/config",
+            activeProviderId = "opencode",
+            defaultModel = "mimo-v2.5-free",
+            providers = listOf(
+                AgentProviderSummary(
+                    id = "opencode",
+                    displayName = "OpenCode Zen",
+                    source = AgentModelSource.Free,
+                    models = listOf(
+                        AgentProviderModelSummary("big-pickle", "Big Pickle"),
+                        AgentProviderModelSummary("deepseek-v4-flash-free", "DeepSeek V4 Flash Free"),
+                        AgentProviderModelSummary("mimo-v2.5-free", "MiMo V2.5 Free"),
+                    ),
+                )
+            ),
+        )
+        val library = AgentModelLibrarySnapshot(
+            providers = mapOf(
+                "opencode" to AgentModelLibraryProviderPreference(
+                    hiddenModelIds = setOf("opencode/big-pickle")
+                )
+            )
+        )
+        val option = AgentDraftModelPolicy.option(snapshot, selected = null, library = library)!!
+
+        val filtered = AgentModelLibraryPolicy.filterConversationModelOption(option, library)
+
+        assertEquals(
+            listOf("opencode/deepseek-v4-flash-free", "opencode/mimo-v2.5-free"),
+            filtered.choices.map(AgentConfigChoice::value),
+        )
+    }
+
+    @Test
     fun `自定义模型名称只替换展示文案而不改变请求值`() {
         val library = AgentModelLibrarySnapshot(
             providers = mapOf(

@@ -102,5 +102,5 @@ internal object AgentDraftModelPolicy {
         choices.any { it.value == choiceValue(selection.providerId, selection.modelId) }
 
     private fun choiceValue(providerId: String, modelId: String): String =
-        "${providerId.length}:$providerId$modelId"
+        modelId.takeIf { it.startsWith("$providerId/") } ?: "$providerId/$modelId"
 }
