@@ -2282,9 +2282,8 @@ object KFContainerManager {
 
         // 环境命令优先：.kf/bin（环境变化层，用户/资源安装）排在共享目录之前，
         // 避免共享 wrapper 错误覆盖用户安装的同名命令。
-        if (WorkspaceBuildSupport.helperBinDir(workspaceDir).exists()) {
-            extraPaths += WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
-        }
+        // 受管命令目录即使尚未创建也必须进入 PATH；资源稍后安装后，既有终端即可直接发现命令。
+        extraPaths += WorkspaceBuildSupport.CONTAINER_HELPER_BIN_PATH
 
         if (WorkspaceBuildSupport.helperSystemBinDir(workspaceDir).exists()) {
             extraPaths += WorkspaceBuildSupport.CONTAINER_HELPER_SYSTEM_BIN_PATH

@@ -355,6 +355,17 @@ class KiteResourceInstallStore(
         )
     }
 
+    fun invalidateChangedInstallations(
+        resourceIds: Collection<String>,
+        environmentId: String = currentEnvironmentId()
+    ) {
+        clearResourceFacts(
+            resourceIds = resourceIds,
+            reason = "invalidateChangedInstallations",
+            environmentId = environmentId
+        )
+    }
+
     fun beginPreparingPlan(
         targetResourceId: String,
         environmentId: String = currentEnvironmentId()

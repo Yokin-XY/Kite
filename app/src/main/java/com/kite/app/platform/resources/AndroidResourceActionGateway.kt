@@ -38,6 +38,7 @@ import com.kite.app.recipe.KiteRecipeIcon
 import com.kite.app.recipe.KiteRecipeLoader
 import com.kite.app.recipe.KiteRecipeStep
 import com.kite.app.resources.KiteResourceInstallRecipes
+import com.kite.app.resources.KiteResourceInstallContract
 import com.kite.app.resources.KiteResourceInstallStore
 import com.kite.app.resources.KiteResourceRegistry
 import com.kite.app.resources.KiteResourceManagementMode
@@ -86,6 +87,14 @@ internal class AndroidResourceActionGateway(
         val accepted: Boolean,
         val effects: List<ResourceActionEffect>,
     )
+
+    private data class OpenInstallPreflight(
+        val repairResourceIds: Set<String>,
+        val unresolvedRequirements: Set<String>,
+    ) {
+        val requiresRepair: Boolean
+            get() = repairResourceIds.isNotEmpty() || unresolvedRequirements.isNotEmpty()
+    }
 
     private val appContext = context.applicationContext
     private val systemManagedResourceFactsReconciler = SystemManagedResourceFactsReconciler(
@@ -172,13 +181,13 @@ internal class AndroidResourceActionGateway(
             )
         }
         RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.RESOURCE_PREFLIGHT_STARTED)
-        val invalidated = withContext(Dispatchers.IO) {
-            reconcileInstalledResources(listOf(target.manifest), environmentId)
+        val preflight = withContext(Dispatchers.IO) {
+            reconcileOpenInstallation(target, environmentId)
         }
         RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.RESOURCE_PREFLIGHT_COMPLETED)
-        if (target.id in invalidated) {
+        if (preflight.requiresRepair) {
             RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.RESOURCE_PREFLIGHT_INVALIDATED)
-            return listOf(ResourceActionEffect.Message("检测到 ${target.name} 的安装内容缺失，正在准备修复")) +
+            return listOf(ResourceActionEffect.Message("检测到 ${target.name} 的安装内容或运行依赖需要修复，正在准备")) +
                 install(target.id)
         }
         RuntimeLaunchTrace.mark(instanceId, RuntimeLaunchTrace.ACTION_DISPATCHED)
@@ -922,6 +931,44 @@ internal class AndroidResourceActionGateway(
             installStore.invalidateMissingInstallations(missing, environmentId)
         }
         return missing
+    }
+
+    private suspend fun reconcileOpenInstallation(
+        target: ResourceTarget,
+        environmentId: String,
+    ): OpenInstallPreflight {
+        manifestLoader.invalidate()
+        val manifests = manifestLoader.manifests().values
+        val installedResourceIds = manifests.asSequence()
+            .filter { manifest -> installStore.isInstalled(manifest.id, environmentId) }
+            .mapTo(linkedSetOf(), KiteResourceManifest::id)
+        val closure = ResourceOpenDependencyResolver.resolve(
+            targetResourceId = target.id,
+            manifests = manifests,
+            installedResourceIds = installedResourceIds,
+            relationTargetsFor = manifestLoader::requestRelationTargets,
+        )
+        val changedContracts = closure.manifests.asSequence()
+            .filter { manifest -> manifest.id in installedResourceIds }
+            .filter { manifest -> manifest.management.userLifecycleEnabled }
+            .filter { manifest ->
+                KiteResourceInstallContract.hasDrift(
+                    currentManifest = manifest.rawJson,
+                    installedManifestJson = installStore.installedSnapshotManifestJson(manifest.id, environmentId),
+                )
+            }
+            .mapTo(linkedSetOf(), KiteResourceManifest::id)
+        if (changedContracts.isNotEmpty()) {
+            installStore.invalidateChangedInstallations(changedContracts, environmentId)
+        }
+        val missingCommands = reconcileInstalledResources(
+            manifests = closure.manifests,
+            environmentId = environmentId,
+        )
+        return OpenInstallPreflight(
+            repairResourceIds = closure.missingInstalledResourceIds + changedContracts + missingCommands,
+            unresolvedRequirements = closure.unresolvedRequirements,
+        )
     }
 
     private fun isInstalled(
