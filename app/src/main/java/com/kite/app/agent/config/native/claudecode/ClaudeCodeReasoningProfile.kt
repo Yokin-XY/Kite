@@ -1,4 +1,4 @@
-package com.kite.app.agent.config.native
+package com.kite.app.agent.config.native.claudecode
 
 import com.kite.app.agent.config.AgentReasoningControl
 import com.kite.app.agent.config.AgentReasoningNativeMapping

@@ -60,13 +60,13 @@ class AgentConfigurationArchitectureTest {
         val profiles = mapOf(
             "app/src/main/java/com/kite/app/agent/config/opencode/OpenCodeReasoningProfile.kt" to
                 "openCodeReasoningControl",
-            "app/src/main/java/com/kite/app/agent/config/native/OpenClawReasoningProfile.kt" to
+            "app/src/main/java/com/kite/app/agent/config/native/openclaw/OpenClawReasoningProfile.kt" to
                 "openClawReasoningControl",
-            "app/src/main/java/com/kite/app/agent/config/native/ClaudeCodeReasoningProfile.kt" to
+            "app/src/main/java/com/kite/app/agent/config/native/claudecode/ClaudeCodeReasoningProfile.kt" to
                 "claudeCodeReasoningControl",
-            "app/src/main/java/com/kite/app/agent/config/native/CodexReasoningProfile.kt" to
+            "app/src/main/java/com/kite/app/agent/config/native/codex/CodexReasoningProfile.kt" to
                 "codexReasoningControl",
-            "app/src/main/java/com/kite/app/agent/config/native/HermesReasoningProfile.kt" to
+            "app/src/main/java/com/kite/app/agent/config/native/hermes/HermesReasoningProfile.kt" to
                 "hermesReasoningControl",
         )
         profiles.forEach { (path, declaration) ->

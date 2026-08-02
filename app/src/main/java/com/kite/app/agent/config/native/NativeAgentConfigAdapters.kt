@@ -52,6 +52,10 @@ import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
 import com.kite.app.agent.config.NativeAgentCoreDocumentStore
 import com.kite.app.agent.config.mediatedSessionPermissionControl
+import com.kite.app.agent.config.native.claudecode.claudeCodeReasoningControl
+import com.kite.app.agent.config.native.codex.codexReasoningControl
+import com.kite.app.agent.config.native.hermes.hermesReasoningControl
+import com.kite.app.agent.config.native.openclaw.openClawReasoningControl
 import com.kite.app.agent.codex.CodexPermission
 import com.kite.app.agent.codex.codexPermissionOption
 import com.kite.app.agent.contract.AgentConfigCategory

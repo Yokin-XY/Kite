@@ -5,10 +5,10 @@ import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentReasoningMode
-import com.kite.app.agent.config.native.claudeCodeReasoningControl
-import com.kite.app.agent.config.native.codexReasoningControl
-import com.kite.app.agent.config.native.hermesReasoningControl
-import com.kite.app.agent.config.native.openClawReasoningControl
+import com.kite.app.agent.config.native.claudecode.claudeCodeReasoningControl
+import com.kite.app.agent.config.native.codex.codexReasoningControl
+import com.kite.app.agent.config.native.hermes.hermesReasoningControl
+import com.kite.app.agent.config.native.openclaw.openClawReasoningControl
 import com.kite.app.agent.config.opencode.openCodeReasoningControl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
