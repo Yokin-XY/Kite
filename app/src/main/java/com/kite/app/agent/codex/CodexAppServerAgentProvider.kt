@@ -684,7 +684,7 @@ private class CodexAppServerConnection(
     }
 
     private fun availableModels(session: CodexSession): List<CodexModel> {
-        if (session.modelSource() == AgentModelSource.Official) return models.values.toList()
+        if (session.modelSource() == AgentModelSource.OfficialLogin) return models.values.toList()
         return listOf(models[session.modelId] ?: CodexModel(
             id = session.modelId,
             displayName = session.modelId,
@@ -734,16 +734,16 @@ private class CodexAppServerConnection(
 
     private fun CodexSession.modelSource(): AgentModelSource =
         if (modelProvider.isBlank() || modelProvider == OFFICIAL_PROVIDER_ID) {
-            AgentModelSource.Official
+            AgentModelSource.OfficialLogin
         } else {
             AgentModelSource.UserConfigured
         }
 
     private fun CodexSession.modelGroupId(): String =
-        if (modelSource() == AgentModelSource.Official) OFFICIAL_PROVIDER_ID else modelProvider
+        if (modelSource() == AgentModelSource.OfficialLogin) OFFICIAL_PROVIDER_ID else modelProvider
 
     private fun CodexSession.modelGroupName(): String =
-        if (modelSource() == AgentModelSource.Official) "OpenAI" else modelProvider
+        if (modelSource() == AgentModelSource.OfficialLogin) "OpenAI" else modelProvider
 
     private fun CodexPermission.applyTo(params: JSONObject) {
         params.put("permissions", JSONObject.NULL)
@@ -896,7 +896,6 @@ private fun codexReasoningSemantics(value: String): AgentReasoningSemantics? = w
     "high" -> AgentReasoningLevel.High
     "xhigh", "x-high", "x_high", "extra-high" -> AgentReasoningLevel.ExtraHigh
     "max" -> AgentReasoningLevel.Maximum
-    "ultra" -> AgentReasoningLevel.Ultra
     else -> null
 }
 

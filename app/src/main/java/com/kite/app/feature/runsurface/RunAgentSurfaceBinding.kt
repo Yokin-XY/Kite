@@ -5190,7 +5190,7 @@ internal class RunAgentSurfaceBinding(
             officialAccounts = selected.registration.officialAccounts,
         )
         val freeProviders = providers.filter { it.source == AgentModelSource.Free }
-        val officialProviders = providers.filter { it.source == AgentModelSource.Official }
+        val officialProviders = providers.filter { it.source == AgentModelSource.OfficialLogin }
         val canEditProviders = adapter.capabilities().supports(
             AgentPersistentConfigCapability.ProviderProfiles
         )
@@ -5420,8 +5420,7 @@ internal class RunAgentSurfaceBinding(
                     addView(TextView(context).apply {
                         text = buildString {
                             if (projection.source == AgentModelSource.Free) append("免费 · ")
-                            if (projection.source == AgentModelSource.Official) append("官方 · ")
-                            if (projection.source == AgentModelSource.AgentBuiltIn) append("Agent 内置 · ")
+                            if (projection.source == AgentModelSource.OfficialLogin) append("官方登录 · ")
                             if (projection.source == AgentModelSource.UserConfigured) append("用户自定义 · ")
                             if (isDefault) append("当前默认 · ")
                             if (officialState != null) {
@@ -5659,12 +5658,10 @@ internal class RunAgentSurfaceBinding(
             addView(sectionTitle(
                 projection.name,
                 when (projection.source) {
-                    AgentModelSource.Official ->
+                    AgentModelSource.OfficialLogin ->
                         "官方模型目录与登录状态由系统管理；这里只修改 Kite 显示名称。"
                     AgentModelSource.Free ->
                         "免费模型目录由 Agent 提供；这里只修改 Kite 显示名称。"
-                    AgentModelSource.AgentBuiltIn ->
-                        "Agent 内置模型目录由 Agent 提供；这里只修改 Kite 显示名称。"
                     AgentModelSource.UserConfigured ->
                         "显示名称只影响 Kite 界面。"
                 }

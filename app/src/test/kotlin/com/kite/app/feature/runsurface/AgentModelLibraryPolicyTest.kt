@@ -37,7 +37,7 @@ class AgentModelLibraryPolicyTest {
     }
 
     @Test
-    fun `Agent发现但未进入持久供应商的分组投影为免费只读来源`() {
+    fun `只有显式免费来源会进入免费目录`() {
         val snapshot = AgentLiveConfigSnapshot(
             agentId = "opencode",
             adapterId = "test",
@@ -55,14 +55,14 @@ class AgentModelLibraryPolicyTest {
 
         val providers = AgentModelLibraryPolicy.projectProviders(snapshot, modelOption(), AgentModelLibrarySnapshot())
 
-        assertEquals(listOf("zhipu", "mimo", "builtin"), providers.map { it.id })
+        assertEquals(listOf("zhipu", "builtin"), providers.map { it.id })
         assertEquals(AgentModelSource.UserConfigured, providers.first().source)
-        assertTrue(providers.drop(1).all { it.source == AgentModelSource.Free })
+        assertEquals(AgentModelSource.Free, providers.last().source)
         assertTrue(providers.last().editableProvider == null)
     }
 
     @Test
-    fun `显式声明的Agent内置模型不会被兼容回退标成免费`() {
+    fun `没有明确来源的模型不会被猜成免费`() {
         val option = AgentConfigOption.Select(
             id = "model",
             name = "模型",
@@ -74,19 +74,17 @@ class AgentModelLibraryPolicyTest {
                     name = "Codex 默认",
                     groupId = "codex",
                     groupName = "Codex",
-                    modelSource = AgentModelSource.AgentBuiltIn,
                 )
             ),
         )
 
-        val provider = AgentModelLibraryPolicy.projectProviders(
+        val providers = AgentModelLibraryPolicy.projectProviders(
             snapshot = AgentLiveConfigSnapshot("codex", "codex", "1", "/config"),
             modelOption = option,
             library = AgentModelLibrarySnapshot(),
-        ).single()
+        )
 
-        assertEquals(AgentModelSource.AgentBuiltIn, provider.source)
-        assertFalse(provider.source == AgentModelSource.Free)
+        assertTrue(providers.isEmpty())
     }
 
     @Test
@@ -324,7 +322,7 @@ class AgentModelLibraryPolicyTest {
             officialAccounts = listOf(account),
         )
 
-        val official = providers.single { it.source == AgentModelSource.Official }
+        val official = providers.single { it.source == AgentModelSource.OfficialLogin }
         assertEquals("__kite_official__:chatgpt", official.id)
         assertEquals("ChatGPT 官方", official.name)
         assertEquals(listOf("openai/gpt-5.6"), official.models.map { it.value })
@@ -404,7 +402,7 @@ class AgentModelLibraryPolicyTest {
         )
 
         val official = providers.single()
-        assertEquals(AgentModelSource.Official, official.source)
+        assertEquals(AgentModelSource.OfficialLogin, official.source)
         assertEquals("__kite_official__:chatgpt", official.id)
         assertEquals(option.choices.map { it.value }, official.models.map { it.value })
         assertFalse(providers.any { it.source == AgentModelSource.Free })
@@ -441,10 +439,10 @@ class AgentModelLibraryPolicyTest {
         category = AgentConfigCategory.Model,
         currentValue = current,
         choices = listOf(
-            AgentConfigChoice("zhipu/glm-5.2", "GLM-5.2", groupId = "zhipu", groupName = "智谱 GLM"),
-            AgentConfigChoice("zhipu/glm-5.0", "GLM-5.0", groupId = "zhipu", groupName = "智谱 GLM"),
-            AgentConfigChoice("mimo/mimo-v2", "MiMo V2", groupId = "mimo", groupName = "小米 MiMo"),
-            AgentConfigChoice("free/free-small", "Free Small", groupId = "builtin", groupName = "免费模型")
+            AgentConfigChoice("zhipu/glm-5.2", "GLM-5.2", groupId = "zhipu", groupName = "智谱 GLM", modelSource = AgentModelSource.UserConfigured),
+            AgentConfigChoice("zhipu/glm-5.0", "GLM-5.0", groupId = "zhipu", groupName = "智谱 GLM", modelSource = AgentModelSource.UserConfigured),
+            AgentConfigChoice("mimo/mimo-v2", "MiMo V2", groupId = "mimo", groupName = "小米 MiMo", modelSource = AgentModelSource.UserConfigured),
+            AgentConfigChoice("free/free-small", "Free Small", groupId = "builtin", groupName = "免费模型", modelSource = AgentModelSource.Free)
         )
     )
 }

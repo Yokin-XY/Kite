@@ -87,36 +87,33 @@ internal object AgentModelLibraryPolicy {
                 id = providerId,
                 name = account.displayName,
                 models = displayChoices,
-                source = AgentModelSource.Official,
+                source = AgentModelSource.OfficialLogin,
                 officialAccount = account,
                 selectedModelValue = selectedModel,
                 libraryGroupId = AgentModelLibraryStore.OFFICIAL_GROUP_ID,
                 visibleInConversation = selectedModel != null || library.isProviderVisible(providerId),
             )
         }
-        val discovered = modelOption?.choices.orEmpty()
+        val free = modelOption?.choices.orEmpty()
             .filterNot { it in legacyOfficialChoices }
-            .groupBy { choice ->
-                val groupId = choice.groupId ?: choice.groupName ?: UNGROUPED_ID
-                groupId to (choice.modelSource ?: AgentModelSource.Free)
-            }
-            .filterKeys { (groupId, _) -> groupId !in configuredIds && groupId !in officialGroupIds }
-            .map { (sourceKey, choices) ->
-                val (groupId, source) = sourceKey
-                val providerId = groupId.ifBlank { UNGROUPED_ID }
+            .filter { it.modelSource == AgentModelSource.Free }
+            .groupBy { choice -> choice.groupId ?: choice.groupName ?: FREE_PROVIDER_ID }
+            .filterKeys { groupId -> groupId !in configuredIds && groupId !in officialGroupIds }
+            .map { (groupId, choices) ->
+                val providerId = groupId.ifBlank { FREE_PROVIDER_ID }
                 val displayChoices = choices.map { choice -> withDisplayName(choice, library, providerId) }
                 val selectedModel = selectedModelValue(snapshot, providerId, displayChoices)
                 AgentModelProviderProjection(
                     id = providerId,
                     name = choices.firstOrNull()?.groupName?.takeIf(String::isNotBlank)
-                        ?: source.defaultProviderName(),
+                        ?: "免费模型",
                     models = displayChoices,
-                    source = source,
+                    source = AgentModelSource.Free,
                     selectedModelValue = selectedModel,
                     visibleInConversation = selectedModel != null || library.isProviderVisible(providerId)
                 )
             }
-        return configured + official + discovered
+        return configured + official + free
     }
 
     fun filterConversationModelOption(
@@ -204,13 +201,6 @@ internal object AgentModelLibraryPolicy {
     private fun AgentConfigChoice.providerGroupId(): String? =
         groupId?.takeIf(String::isNotBlank) ?: groupName?.takeIf(String::isNotBlank)
 
-    private const val UNGROUPED_ID = "__kite_agent_builtin__"
+    private const val FREE_PROVIDER_ID = "__kite_free__"
     internal fun officialProviderId(accountId: String): String = "__kite_official__:$accountId"
-
-    private fun AgentModelSource.defaultProviderName(): String = when (this) {
-        AgentModelSource.Free -> "免费模型"
-        AgentModelSource.Official -> "官方模型"
-        AgentModelSource.AgentBuiltIn -> "Agent 内置"
-        AgentModelSource.UserConfigured -> "用户自定义"
-    }
 }

@@ -12,9 +12,9 @@ import org.junit.Test
 
 class AgentReasoningControlTest {
     @Test
-    fun stableReasoningAxisIncludesCodexUltraAboveMaximum() {
+    fun stableReasoningAxisContainsOnlyTheSevenConfirmedLevels() {
         assertEquals(
-            listOf("off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
+            listOf("off", "minimal", "low", "medium", "high", "xhigh", "max"),
             AgentReasoningLevel.entries.sortedBy { it.order }.map { it.id },
         )
     }
@@ -49,8 +49,8 @@ class AgentReasoningControlTest {
     }
 
     @Test
-    fun claudeDefaultMeansInheritAndUltracodeIsNotReasoningEffort() {
-        val normalized = AgentReasoningControls.ClaudeCode.normalize(
+    fun claudeDefaultIsNotPublishedAndAutoUsesTheConfirmedAdaptiveMeaning() {
+        assertTrue(AgentReasoningControls.ClaudeCode.normalize(
             select(
                 current = "default",
                 choices = listOf(
@@ -60,10 +60,20 @@ class AgentReasoningControlTest {
                     AgentConfigChoice("ultracode", "Ultracode"),
                 ),
             )
-        ).single() as AgentConfigOption.Select
+        ).isEmpty())
 
-        assertEquals(listOf("default", "high", "max"), normalized.choices.map { it.value })
-        assertEquals(AgentReasoningMode.Inherit, normalized.choices.first().reasoning)
+        val normalized = AgentReasoningControls.ClaudeCode.normalize(
+            select(
+                current = "auto",
+                choices = listOf(
+                    AgentConfigChoice("auto", "Auto"),
+                    AgentConfigChoice("high", "High"),
+                    AgentConfigChoice("ultracode", "Ultracode"),
+                ),
+            )
+        ).single() as AgentConfigOption.Select
+        assertEquals(listOf("auto", "high"), normalized.choices.map { it.value })
+        assertEquals(AgentReasoningMode.Adaptive, normalized.choices.first().reasoning)
     }
 
     @Test
@@ -85,7 +95,7 @@ class AgentReasoningControlTest {
             )
         ).isEmpty())
 
-        val codex = AgentReasoningControls.Codex.normalize(
+        assertTrue(AgentReasoningControls.Codex.normalize(
             select(
                 current = "ultra",
                 choices = listOf(
@@ -93,9 +103,7 @@ class AgentReasoningControlTest {
                     AgentConfigChoice("ultra", "Ultra"),
                 ),
             )
-        ).single() as AgentConfigOption.Select
-        assertEquals(listOf("high", "ultra"), codex.choices.map { it.value })
-        assertEquals(AgentReasoningLevel.Ultra, codex.choices.last().reasoning)
+        ).isEmpty())
     }
 
     @Test

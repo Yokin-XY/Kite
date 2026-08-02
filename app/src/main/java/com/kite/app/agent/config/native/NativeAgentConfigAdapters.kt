@@ -2370,7 +2370,7 @@ internal class CodexAgentConfigAdapter(
     ): AgentPersistentConfigChange.SetDefaultModel? {
         val change = super.defaultModelChange(option) ?: return null
         val selected = option.choices.firstOrNull { it.value == option.currentValue } ?: return null
-        if (selected.modelSource != AgentModelSource.Official) return null
+        if (selected.modelSource != AgentModelSource.OfficialLogin) return null
         return change.copy(clearProviderOverride = true)
     }
 

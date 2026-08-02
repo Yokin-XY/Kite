@@ -53,10 +53,10 @@ class CodexAppServerAgentProviderTest {
         assertEquals(AGENT_SESSION_PERMISSION_CONFIG_ID, permission.id)
 
         assertEquals(listOf("gpt-5.6-sol", "gpt-5.6-terra"), model.choices.map { it.value })
-        assertTrue(model.choices.all { it.modelSource == AgentModelSource.Official })
-        assertEquals(listOf("low", "high", "ultra"), effort.choices.map { it.value })
+        assertTrue(model.choices.all { it.modelSource == AgentModelSource.OfficialLogin })
+        assertEquals(listOf("low", "high"), effort.choices.map { it.value })
         assertEquals(
-            listOf(AgentReasoningLevel.Low, AgentReasoningLevel.High, AgentReasoningLevel.Ultra),
+            listOf(AgentReasoningLevel.Low, AgentReasoningLevel.High),
             effort.choices.map { it.reasoning },
         )
         assertEquals(

@@ -739,7 +739,7 @@ class NativeAgentConfigAdaptersTest {
                     name = "GPT-5.6-Sol",
                     groupId = "openai",
                     groupName = "OpenAI",
-                    modelSource = AgentModelSource.Official,
+                    modelSource = AgentModelSource.OfficialLogin,
                 ),
             ),
         )

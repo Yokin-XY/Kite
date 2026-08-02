@@ -90,7 +90,11 @@ class AgentReasoningControl(
     private fun String.normalizedKey(): String = trim().lowercase()
 }
 
-/** 五个正式 Agent 的映射词表；它们不会替 Agent 补造当前模型未公布的选项。 */
+/**
+ * 兼容期映射词表；它们不会替 Agent 补造当前模型未公布的选项。
+ *
+ * 产品映射将在统一 SDK 门面落地后迁回各自 Adapter；这里不再公开“跟随默认”或工作流编排档位。
+ */
 object AgentReasoningControls {
     val OpenCode = AgentReasoningControl(levelMappings())
 
@@ -106,7 +110,7 @@ object AgentReasoningControls {
 
     val Hermes = AgentReasoningControl(levelMappings())
 
-    val Codex = AgentReasoningControl(levelMappings(AgentReasoningLevel.entries.toSet()))
+    val Codex = AgentReasoningControl(levelMappings())
 
     val ClaudeCode = AgentReasoningControl(
         levelMappings(
@@ -118,16 +122,11 @@ object AgentReasoningControls {
                 AgentReasoningLevel.ExtraHigh,
                 AgentReasoningLevel.Maximum,
             )
-        ) + listOf(
-            AgentReasoningNativeMapping("default", AgentReasoningMode.Inherit),
-            AgentReasoningNativeMapping("auto", AgentReasoningMode.Inherit),
-        )
+        ) + AgentReasoningNativeMapping("auto", AgentReasoningMode.Adaptive)
     )
 
     private fun levelMappings(
-        levels: Set<AgentReasoningLevel> = AgentReasoningLevel.entries
-            .filterNot { it == AgentReasoningLevel.Ultra }
-            .toSet(),
+        levels: Set<AgentReasoningLevel> = AgentReasoningLevel.entries.toSet(),
     ): List<AgentReasoningNativeMapping> = buildList {
         levels.forEach { level -> add(AgentReasoningNativeMapping(level.id, level)) }
         if (AgentReasoningLevel.Off in levels) {
