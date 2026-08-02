@@ -4,6 +4,7 @@ import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentMessageRole
 import com.kite.app.agent.contract.AgentPlanEntry
 import com.kite.app.agent.contract.AgentToolCall
+import com.kite.app.agent.contract.AgentToolContent
 import com.kite.app.agent.contract.AgentToolLocation
 import com.kite.app.agent.contract.AgentToolStatus
 import com.kite.app.agent.store.AgentConversationItem
@@ -446,6 +447,51 @@ class AgentConversationPresentationTest {
         val link = items[3] as AgentConversationDisplayItem.Attachment
         assertEquals("application/pdf · 2.0 KB", link.detail)
         assertTrue(link.source is AgentFileSource.Link)
+    }
+
+    @Test
+    fun `图片地址和工具返回图片都会投影为可见预览`() {
+        val items = AgentConversationPresentation.project(
+            listOf(
+                AgentConversationItem.Message(
+                    id = "linked-image",
+                    role = AgentMessageRole.Assistant,
+                    content = listOf(
+                        AgentContent.Image("", "image/png", uri = "/workspace/result.png"),
+                        AgentContent.ResourceLink(
+                            name = "remote.png",
+                            uri = "https://example.com/remote.png",
+                            mimeType = "image/png",
+                        ),
+                    ),
+                ),
+                AgentConversationItem.Tool(
+                    id = "generate-image",
+                    call = AgentToolCall(
+                        id = "generate-image",
+                        title = "生成图片",
+                        content = listOf(
+                            AgentToolContent.Content(AgentContent.Image("AQID", "image/png")),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(4, items.size)
+        assertEquals(
+            AgentImageSource.Link("/workspace/result.png"),
+            (items[0] as AgentConversationDisplayItem.Image).source,
+        )
+        assertEquals(
+            AgentImageSource.Link("https://example.com/remote.png"),
+            (items[1] as AgentConversationDisplayItem.Image).source,
+        )
+        assertTrue(items[2] is AgentConversationDisplayItem.Tool)
+        assertEquals(
+            AgentImageSource.InlineBase64("AQID"),
+            (items[3] as AgentConversationDisplayItem.Image).source,
+        )
     }
 
     @Test

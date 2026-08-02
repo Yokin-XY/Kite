@@ -7,6 +7,7 @@ import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentReasoningSemantics
 import com.kite.app.agent.contract.AgentToolCall
 import com.kite.app.agent.contract.AgentToolCallPatch
+import com.kite.app.agent.contract.AgentToolContent
 import com.kite.app.agent.contract.AgentToolKind
 import com.kite.app.agent.contract.AgentToolStatus
 import com.kite.app.agent.contract.AgentTurnUsage
@@ -274,9 +275,30 @@ internal fun JSONObject.toToolCall(): AgentToolCall? {
         title = title,
         kind = AgentToolKind(type),
         status = AgentToolStatus(optString("status", if (staticItem) "completed" else "inProgress")),
+        content = if (type == "imageGeneration") {
+            generatedImageContent()?.let { listOf(AgentToolContent.Content(it)) }.orEmpty()
+        } else {
+            emptyList()
+        },
         rawInput = rawInput,
         rawOutput = rawOutput,
     )
+}
+
+private fun JSONObject.generatedImageContent(): AgentContent.Image? {
+    nullableString("savedPath")?.let { path ->
+        return AgentContent.Image(data = "", mimeType = path.inferredImageMimeType(), uri = path)
+    }
+    val result = nullableString("result") ?: return null
+    val dataUrl = DATA_URL_PATTERN.matchEntire(result)
+    return if (dataUrl != null) {
+        AgentContent.Image(
+            data = dataUrl.groupValues[2],
+            mimeType = dataUrl.groupValues[1].ifBlank { "image/png" },
+        )
+    } else {
+        AgentContent.Image(data = result, mimeType = "image/png")
+    }
 }
 
 internal fun JSONObject.toToolPatch(): AgentToolCallPatch? {

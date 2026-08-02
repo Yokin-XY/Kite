@@ -144,7 +144,7 @@ internal object AgentConversationPresentation {
         items.forEach { item ->
             when (item) {
                 is AgentConversationItem.Message -> addMessage(item)
-                is AgentConversationItem.Tool -> add(item.toDisplay())
+                is AgentConversationItem.Tool -> addTool(item)
                 is AgentConversationItem.Plan -> add(
                     AgentConversationDisplayItem.Plan(item.id, item.entries)
                 )
@@ -336,6 +336,25 @@ internal object AgentConversationPresentation {
         )
     }
 
+    private fun MutableList<AgentConversationDisplayItem>.addTool(
+        tool: AgentConversationItem.Tool,
+    ) {
+        add(tool.toDisplay())
+        tool.call.content.forEachIndexed { index, content ->
+            val media = (content as? AgentToolContent.Content)
+                ?.content
+                ?.toToolMedia("${tool.id}:output:$index")
+            if (media != null) add(media)
+        }
+    }
+
+    private fun AgentContent.toToolMedia(id: String): AgentConversationDisplayItem? = when (this) {
+        is AgentContent.Image -> toMedia(id)
+        is AgentContent.ResourceLink -> takeIf { mimeType?.startsWith("image/") == true }?.toMedia(id)
+        is AgentContent.EmbeddedBlob -> takeIf { mimeType?.startsWith("image/") == true }?.toMedia(id)
+        else -> null
+    }
+
     private fun AgentContent.toMedia(
         id: String,
         userAuthored: Boolean = false,
@@ -344,7 +363,10 @@ internal object AgentConversationPresentation {
             id = id,
             title = "图片",
             mimeType = mimeType,
-            source = AgentImageSource.InlineBase64(data),
+            source = data.takeIf(String::isNotBlank)
+                ?.let(AgentImageSource::InlineBase64)
+                ?: uri?.takeIf(String::isNotBlank)?.let(AgentImageSource::Link)
+                ?: AgentImageSource.InlineBase64(data),
             userAuthored = userAuthored,
         )
         is AgentContent.Audio -> AgentConversationDisplayItem.Attachment(
@@ -355,16 +377,26 @@ internal object AgentConversationPresentation {
             source = AgentFileSource.InlineBase64(data),
             userAuthored = userAuthored,
         )
-        is AgentContent.ResourceLink -> AgentConversationDisplayItem.Attachment(
-            id = id,
-            title = title ?: name,
-            detail = listOfNotNull(mimeType, size?.let(::formatBytes), description)
-                .joinToString(" · ")
-                .ifBlank { uri },
-            mimeType = mimeType,
-            source = AgentFileSource.Link(uri),
-            userAuthored = userAuthored,
-        )
+        is AgentContent.ResourceLink -> if (mimeType?.startsWith("image/") == true) {
+            AgentConversationDisplayItem.Image(
+                id = id,
+                title = title ?: name,
+                mimeType = mimeType,
+                source = AgentImageSource.Link(uri),
+                userAuthored = userAuthored,
+            )
+        } else {
+            AgentConversationDisplayItem.Attachment(
+                id = id,
+                title = title ?: name,
+                detail = listOfNotNull(mimeType, size?.let(::formatBytes), description)
+                    .joinToString(" · ")
+                    .ifBlank { uri },
+                mimeType = mimeType,
+                source = AgentFileSource.Link(uri),
+                userAuthored = userAuthored,
+            )
+        }
         is AgentContent.EmbeddedBlob -> if (mimeType?.startsWith("image/") == true) {
             AgentConversationDisplayItem.Image(
                 id = id,

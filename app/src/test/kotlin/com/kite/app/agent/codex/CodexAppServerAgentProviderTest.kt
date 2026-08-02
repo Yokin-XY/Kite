@@ -17,6 +17,7 @@ import com.kite.app.agent.contract.AgentPromptRequest
 import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentSessionEvent
 import com.kite.app.agent.contract.AgentStopReason
+import com.kite.app.agent.contract.AgentToolContent
 import com.kite.app.agent.process.AgentProcessChannel
 import com.kite.app.agent.config.native.codex.codexReasoningControl
 import kotlinx.coroutines.CompletableDeferred
@@ -252,6 +253,14 @@ class CodexAppServerAgentProviderTest {
                     .put("status", "completed")
                     .put("aggregatedOutput", "clean"),
             )
+            .put(
+                JSONObject()
+                    .put("id", "image-1")
+                    .put("type", "imageGeneration")
+                    .put("status", "completed")
+                    .put("result", "AQID")
+                    .put("savedPath", JSONObject.NULL),
+            )
             .put(JSONObject().put("id", "assistant-1").put("type", "agentMessage").put("text", "旧回答"))
         val fixture = CodexAppServerFixture(
             modelProvider = "openai",
@@ -271,9 +280,14 @@ class CodexAppServerAgentProviderTest {
         val restoredImage = messages.mapNotNull { it.content as? AgentContent.Image }.single()
         assertEquals("AQID", restoredImage.data)
         assertEquals("image/png", restoredImage.mimeType)
-        val tool = events.mapNotNull { it.second as? AgentSessionEvent.ToolCallStarted }.single().call
-        assertEquals("git status", tool.title)
-        assertEquals("clean", tool.rawOutput)
+        val tools = events.mapNotNull { it.second as? AgentSessionEvent.ToolCallStarted }.map { it.call }
+        val command = tools.first { it.id == "command-1" }
+        assertEquals("git status", command.title)
+        assertEquals("clean", command.rawOutput)
+        val generated = tools.first { it.id == "image-1" }
+        val generatedImage = (generated.content.single() as AgentToolContent.Content).content as AgentContent.Image
+        assertEquals("AQID", generatedImage.data)
+        assertEquals("image/png", generatedImage.mimeType)
         connection.disconnect()
     }
 
