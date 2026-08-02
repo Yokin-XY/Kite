@@ -559,6 +559,38 @@ sealed interface AgentMcpConnectionCheckResult {
         AgentMcpConnectionCheckResult
 }
 
+/** 旧版原生 Provider 只允许在一次性迁移中进入 Kite 目录。 */
+data class AgentUserProviderImport(
+    val providers: List<AgentProviderSummary>,
+    val activeProviderId: String? = null,
+    val defaultModel: String? = null,
+    val credentials: Map<String, AgentProviderCredentialChange> = emptyMap(),
+) {
+    override fun toString(): String =
+        "AgentUserProviderImport(providers=${providers.size}, activeProviderId=$activeProviderId, " +
+            "defaultModel=$defaultModel, credentialProviderIds=${credentials.keys})"
+}
+
+sealed interface AgentUserProviderImportResult {
+    data class Ready(val import: AgentUserProviderImport) : AgentUserProviderImportResult
+    data object Unsupported : AgentUserProviderImportResult
+    data class Failed(val message: String) : AgentUserProviderImportResult
+}
+
+/** 只有用户打开 Provider 管理页时才调用的无需登录免费目录扫描结果。 */
+data class AgentFreeProviderCatalog(
+    val sourceId: String,
+    val sourceVersion: String,
+    val providers: List<AgentProviderSummary>,
+)
+
+sealed interface AgentFreeProviderCatalogResult {
+    data class Ready(val catalog: AgentFreeProviderCatalog, val warning: String? = null) :
+        AgentFreeProviderCatalogResult
+    data object Unsupported : AgentFreeProviderCatalogResult
+    data class Failed(val message: String) : AgentFreeProviderCatalogResult
+}
+
 /**
  * 每种 Agent 原生配置的最小适配合同。
  *
@@ -568,6 +600,18 @@ interface AgentConfigAdapter {
     val adapterId: String
 
     fun capabilities(): AgentConfigCapabilities
+
+    /** 一次性吸收旧版直接写入 Agent 原生目录的用户自定义 Provider。 */
+    suspend fun readUserProviderImport(agentId: String): AgentUserProviderImportResult =
+        AgentUserProviderImportResult.Unsupported
+
+    /** 显式刷新无需登录免费目录；普通 readLive、页面绑定和会话加载不得调用。 */
+    suspend fun scanFreeProviderCatalog(agentId: String): AgentFreeProviderCatalogResult =
+        AgentFreeProviderCatalogResult.Unsupported
+
+    /** Provider 配置真的写入 Agent 后，当前连接需要执行的最小生命周期动作。 */
+    fun providerConfigurationEffect(): AgentSessionConfigurationEffect =
+        AgentSessionConfigurationEffect.Immediate
 
     /**
      * 把 Agent 当前会话的模型值转换成该 Agent 原生配置可接受的默认模型变更。

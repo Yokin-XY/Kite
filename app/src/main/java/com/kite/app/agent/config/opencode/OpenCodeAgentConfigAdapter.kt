@@ -24,6 +24,8 @@ import com.kite.app.agent.config.AgentCoreDocumentSemantics
 import com.kite.app.agent.config.AgentCoreDocumentWriteRequest
 import com.kite.app.agent.config.AgentCoreDocumentWriteResult
 import com.kite.app.agent.config.AgentConfigValidationProblem
+import com.kite.app.agent.config.AgentFreeProviderCatalog
+import com.kite.app.agent.config.AgentFreeProviderCatalogResult
 import com.kite.app.agent.config.AgentConfigValue
 import com.kite.app.agent.config.AgentCredentialOwnership
 import com.kite.app.agent.config.AgentCredentialPresence
@@ -49,6 +51,8 @@ import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentSkillSummary
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
+import com.kite.app.agent.config.AgentUserProviderImport
+import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.AtomicConfigFileUpdate
 import com.kite.app.agent.config.AtomicConfigFileWriteResult
@@ -74,8 +78,8 @@ import java.security.MessageDigest
 /**
  * OpenCode 原生全局配置适配器。
  *
- * 配置的事实源始终是 PRoot 内的 OpenCode 文件；Kite 只做安全读取、定点修改和回填，不保存镜像副本。
- * auth.json 只解析供应商是否存在凭据；密钥值不会进入安全投影、日志或页面状态。
+ * Kite 目录拥有 Provider、模型与凭据事实；这里仅负责一次性吸收旧配置，并在发送准备阶段把
+ * Kite 选择翻译为 OpenCode 原生文件。auth.json 密钥只在迁移或发送准备调用栈中短暂存在。
  */
 internal class OpenCodeAgentConfigAdapter(
     context: Context,
@@ -132,6 +136,46 @@ internal class OpenCodeAgentConfigAdapter(
         )
 
     override fun reasoningControl(): AgentReasoningControl = openCodeReasoningControl
+
+    override fun providerConfigurationEffect(): AgentSessionConfigurationEffect =
+        AgentSessionConfigurationEffect.Reconnect
+
+    override suspend fun readUserProviderImport(agentId: String): AgentUserProviderImportResult = runCatching {
+        val state = readState(agentId)
+        val auth = readAuthCredentials(state.paths)
+        AgentUserProviderImportResult.Ready(
+            AgentUserProviderImport(
+                providers = state.snapshot.providers.filter { it.source == AgentModelSource.UserConfigured },
+                activeProviderId = state.snapshot.activeProviderId,
+                defaultModel = state.snapshot.defaultModel,
+                credentials = auth.mapValues { (_, secret) -> AgentProviderCredentialChange.replace(secret) },
+            ),
+        )
+    }.getOrElse { AgentUserProviderImportResult.Failed("无法迁移 OpenCode 原生供应商配置") }
+
+    override suspend fun scanFreeProviderCatalog(agentId: String): AgentFreeProviderCatalogResult =
+        when (val result = modelCatalogReader.read()) {
+            OpenCodeModelCatalogReadResult.Unsupported -> AgentFreeProviderCatalogResult.Unsupported
+            is OpenCodeModelCatalogReadResult.Failed -> AgentFreeProviderCatalogResult.Failed(result.message)
+            is OpenCodeModelCatalogReadResult.Ready -> AgentFreeProviderCatalogResult.Ready(
+                catalog = AgentFreeProviderCatalog(
+                    sourceId = OPEN_CODE_FREE_SCAN_SOURCE_ID,
+                    sourceVersion = freeCatalogVersion(result.models),
+                    providers = listOf(
+                        AgentProviderSummary(
+                            id = OPEN_CODE_PUBLIC_PROVIDER_ID,
+                            displayName = OPEN_CODE_PUBLIC_PROVIDER_NAME,
+                            models = result.models.map { model ->
+                                AgentProviderModelSummary(model.modelId, model.displayName)
+                            },
+                            credentialPresence = AgentCredentialPresence.NotApplicable,
+                            source = AgentModelSource.Free,
+                        ),
+                    ).filter { it.models.isNotEmpty() },
+                ),
+                warning = result.warning,
+            )
+        }
 
     override fun defaultModelChange(
         option: AgentConfigOption.Select
@@ -282,56 +326,10 @@ internal class OpenCodeAgentConfigAdapter(
             return AgentConfigReadResult.Unavailable(discovery)
         }
         return runCatching {
-            AgentConfigReadResult.Ready(enrichPublicModelCatalog(readState(agentId).snapshot))
+            AgentConfigReadResult.Ready(readState(agentId).snapshot)
         }.getOrElse {
             AgentConfigReadResult.Failed("无法读取 OpenCode 原生配置")
         }
-    }
-
-    private suspend fun enrichPublicModelCatalog(
-        snapshot: AgentLiveConfigSnapshot,
-    ): AgentLiveConfigSnapshot = when (val catalog = modelCatalogReader.read()) {
-        OpenCodeModelCatalogReadResult.Unsupported -> snapshot
-        is OpenCodeModelCatalogReadResult.Failed -> snapshot.copy(
-            warnings = (snapshot.warnings + catalog.message).distinct(),
-        )
-        is OpenCodeModelCatalogReadResult.Ready -> snapshot.withPublicModelCatalog(
-            models = catalog.models,
-            warning = catalog.warning,
-        )
-    }
-
-    private fun AgentLiveConfigSnapshot.withPublicModelCatalog(
-        models: List<OpenCodeCatalogModel>,
-        warning: String?,
-    ): AgentLiveConfigSnapshot {
-        if (models.isEmpty()) {
-            return warning?.let { copy(warnings = (warnings + it).distinct()) } ?: this
-        }
-        val publicProvider = AgentProviderSummary(
-            id = OPEN_CODE_PUBLIC_PROVIDER_ID,
-            displayName = OPEN_CODE_PUBLIC_PROVIDER_NAME,
-            models = models.map { model ->
-                AgentProviderModelSummary(model.modelId, model.displayName)
-            },
-            credentialPresence = AgentCredentialPresence.Missing,
-            source = AgentModelSource.Free,
-        )
-        val existingIndex = providers.indexOfFirst { it.id == OPEN_CODE_PUBLIC_PROVIDER_ID }
-        val nextProviders = if (existingIndex >= 0) {
-            providers.toMutableList().also { it[existingIndex] = publicProvider }
-        } else {
-            providers + publicProvider
-        }
-        val defaultProviderId = defaultModel
-            ?.substringBefore('/')
-            ?.takeIf { providerId -> nextProviders.any { it.id == providerId } }
-        return copy(
-            activeProviderId = defaultProviderId,
-            providerIds = nextProviders.map(AgentProviderSummary::id),
-            providers = nextProviders,
-            warnings = (warnings + listOfNotNull(warning)).distinct(),
-        )
     }
 
     override fun validate(request: AgentConfigApplyRequest): List<AgentConfigValidationProblem> = buildList {
@@ -393,13 +391,7 @@ internal class OpenCodeAgentConfigAdapter(
         }
     }
 
-    override suspend fun apply(request: AgentConfigApplyRequest): AgentConfigApplyResult =
-        when (val result = applyNative(request)) {
-            is AgentConfigApplyResult.Applied -> result.copy(
-                snapshot = enrichPublicModelCatalog(result.snapshot),
-            )
-            else -> result
-        }
+    override suspend fun apply(request: AgentConfigApplyRequest): AgentConfigApplyResult = applyNative(request)
 
     private suspend fun applyNative(request: AgentConfigApplyRequest): AgentConfigApplyResult {
         val problems = validate(request)
@@ -1123,6 +1115,31 @@ internal class OpenCodeAgentConfigAdapter(
         }
     }
 
+    /** 仅供一次性迁移读取；返回值不会进入快照、日志或页面。 */
+    private fun readAuthCredentials(paths: OpenCodePaths): Map<String, String> {
+        if (!paths.authFile.readFile.isFile) return emptyMap()
+        val document = parseAuthDocument(fileStore.read(paths.authFile.readFile).bytes)
+        return document.entries.mapNotNull { (providerId, rawEntry) ->
+            val entry = rawEntry as? JsonObject ?: return@mapNotNull null
+            val secret = (entry[AUTH_KEY_KEY] as? JsonPrimitive)
+                ?.stringValue()
+                ?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            providerId to secret
+        }.toMap()
+    }
+
+    private fun freeCatalogVersion(models: List<OpenCodeCatalogModel>): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        models.sortedBy(OpenCodeCatalogModel::nativeValue).forEach { model ->
+            digest.update(model.nativeValue.toByteArray(Charsets.UTF_8))
+            digest.update(0)
+            digest.update(model.displayName.toByteArray(Charsets.UTF_8))
+            digest.update(0)
+        }
+        return "sha256:" + digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+    }
+
     private fun mcpSummaries(section: JsonObject?): List<AgentMcpSummary> = section?.entries
         ?.map { (id, value) ->
             val config = value as? JsonObject
@@ -1641,6 +1658,7 @@ internal class OpenCodeAgentConfigAdapter(
         private const val MODEL_KEY = "model"
         private const val OPEN_CODE_PUBLIC_PROVIDER_ID = "opencode"
         private const val OPEN_CODE_PUBLIC_PROVIDER_NAME = "OpenCode"
+        private const val OPEN_CODE_FREE_SCAN_SOURCE_ID = "opencode-public"
         private const val PROVIDER_KEY = "provider"
         private const val MCP_KEY = "mcp"
         private const val ENABLED_KEY = "enabled"

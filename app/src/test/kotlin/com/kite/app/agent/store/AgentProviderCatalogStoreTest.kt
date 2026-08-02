@@ -171,6 +171,42 @@ class AgentProviderCatalogStoreTest {
         )
     }
 
+    @Test
+    fun `局部能力更新不会删除另一类固定控件且原生导入只需完成一次`() {
+        store.replaceMappedControls(
+            "opencode",
+            listOf(
+                AgentConfigOption.Select(
+                    id = AGENT_SESSION_PERMISSION_CONFIG_ID,
+                    name = "权限",
+                    category = AgentConfigCategory.Permission,
+                    currentValue = "ask",
+                    choices = listOf(AgentConfigChoice("ask", "审批", permission = AgentPermissionLevel.Approval)),
+                ),
+            ),
+        )
+        store.mergeMappedControls(
+            "opencode",
+            listOf(
+                AgentConfigOption.Select(
+                    id = "effort",
+                    name = "推理强度",
+                    category = AgentConfigCategory.ThoughtLevel,
+                    currentValue = "high",
+                    choices = listOf(AgentConfigChoice("high", "高", reasoning = AgentReasoningLevel.High)),
+                ),
+            ),
+        )
+        store.markImportCompleted("opencode", "opencode-config-v1")
+
+        val restored = AgentProviderCatalogStore(context, vault).snapshot("opencode")
+        assertEquals(
+            setOf(AgentConfigCategory.Permission, AgentConfigCategory.ThoughtLevel),
+            restored.controls.mapNotNull(AgentConfigOption::category).toSet(),
+        )
+        assertTrue(store.hasCompletedImport("opencode", "opencode-config-v1"))
+    }
+
     private fun provider(
         id: String,
         name: String,

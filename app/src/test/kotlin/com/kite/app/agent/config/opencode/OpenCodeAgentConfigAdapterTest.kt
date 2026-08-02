@@ -13,6 +13,7 @@ import com.kite.app.agent.config.AgentCoreDocumentWriteRequest
 import com.kite.app.agent.config.AgentCoreDocumentWriteResult
 import com.kite.app.agent.config.AgentConfigValue
 import com.kite.app.agent.config.AgentCredentialPresence
+import com.kite.app.agent.config.AgentFreeProviderCatalogResult
 import com.kite.app.agent.config.AgentMcpOperation
 import com.kite.app.agent.config.AgentMcpConnectionCheckResult
 import com.kite.app.agent.config.AgentMcpDraft
@@ -904,7 +905,7 @@ class OpenCodeAgentConfigAdapterTest {
     }
 
     @Test
-    fun discoversPublicModelsBeforeAnySessionAndKeepsNativeDefaultValue() = runTest {
+    fun scansPublicModelsOnlyWhenProviderManagerExplicitlyRequestsIt() = runTest {
         val commands = mutableListOf<List<String>>()
         val catalogAdapter = OpenCodeAgentConfigAdapter(
             context = context,
@@ -927,20 +928,17 @@ class OpenCodeAgentConfigAdapterTest {
         )
 
         val before = (catalogAdapter.readLive(AGENT_ID) as AgentConfigReadResult.Ready).snapshot
-        val provider = before.providers.single()
+        assertTrue(before.providers.isEmpty())
+        assertTrue(commands.isEmpty())
+
+        val scanned = catalogAdapter.scanFreeProviderCatalog(AGENT_ID) as AgentFreeProviderCatalogResult.Ready
+        val provider = scanned.catalog.providers.single()
         assertEquals("opencode", provider.id)
         assertEquals(AgentModelSource.Free, provider.source)
         assertEquals(listOf("big-pickle", "mimo-v2.5-free"), provider.models.map { it.id })
         assertTrue(commands.single().containsAll(listOf("--pure", "models", "opencode", "--verbose")))
 
-        val option = catalogAdapter.readSessionConfiguration(AGENT_ID)
-            .filterIsInstance<AgentConfigOption.Select>()
-            .single { it.category == AgentConfigCategory.Model }
-        assertEquals(
-            listOf("opencode/big-pickle", "opencode/mimo-v2.5-free"),
-            option.choices.map { it.value },
-        )
-        assertTrue(option.choices.all { it.modelSource == AgentModelSource.Free })
+        catalogAdapter.readSessionConfiguration(AGENT_ID)
         assertEquals(1, commands.size)
 
         val normalizedAcpOption = catalogAdapter.normalizeSessionConfiguration(
@@ -969,7 +967,7 @@ class OpenCodeAgentConfigAdapterTest {
                 listOf(AgentPersistentConfigChange.SetDefaultModel("opencode/big-pickle")),
             )
         ) as AgentConfigApplyResult.Applied
-        assertEquals("opencode", applied.snapshot.activeProviderId)
+        assertNull(applied.snapshot.activeProviderId)
         assertEquals("opencode/big-pickle", applied.snapshot.defaultModel)
         assertTrue(File(configDir, "opencode.jsonc").readText().contains("opencode/big-pickle"))
     }

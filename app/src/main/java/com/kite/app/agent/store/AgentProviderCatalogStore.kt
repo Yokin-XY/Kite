@@ -54,6 +54,8 @@ data class AgentProviderCatalogSnapshot(
     val selectedModelId: String? = null,
     val providers: List<AgentCatalogProvider> = emptyList(),
     val controls: List<AgentConfigOption> = emptyList(),
+    val completedImports: Set<String> = emptySet(),
+    val pendingNativeProviderIds: Set<String> = emptySet(),
 ) {
     fun selectedProvider(): AgentCatalogProvider? = providers.firstOrNull { provider ->
         provider.id == selectedProviderId && provider.models.any { it.id == selectedModelId }
@@ -118,6 +120,8 @@ class AgentProviderCatalogStore private constructor(
             ownerId = null,
             sourceVersion = null,
         ) ?: return null
+        val occupied = snapshot(agentId).providers.firstOrNull { it.id == normalized.id }
+        if (occupied != null && occupied.policy != AgentProviderCatalogPolicy.UserManaged) return null
         val credentialKey = credentialKey(agentId, normalized.id)
         when (credential) {
             AgentCatalogCredentialChange.Keep -> Unit
@@ -130,7 +134,10 @@ class AgentProviderCatalogStore private constructor(
         return update(agentId) { current ->
             val stored = normalized.copy(credentialPresent = credentialVault.contains(credentialKey))
             val nextProviders = current.providers.filterNot { it.id == stored.id } + stored
-            current.copy(providers = nextProviders.sortedBy(AgentCatalogProvider::id)) to stored
+            current.copy(
+                providers = nextProviders.sortedBy(AgentCatalogProvider::id),
+                pendingNativeProviderIds = current.pendingNativeProviderIds + stored.id,
+            ) to stored
         }
     }
 
@@ -145,6 +152,7 @@ class AgentProviderCatalogStore private constructor(
                 providers = providers,
                 selectedProviderId = snapshot.selectedProviderId.takeUnless { it == providerId },
                 selectedModelId = snapshot.selectedModelId.takeUnless { snapshot.selectedProviderId == providerId },
+                pendingNativeProviderIds = snapshot.pendingNativeProviderIds - providerId,
             ) to true
         }
     }
@@ -224,6 +232,43 @@ class AgentProviderCatalogStore private constructor(
             next to next
         }
 
+    /** 只替换本次真实公布到的类别，避免一次局部更新误删另一类固定控件。 */
+    fun mergeMappedControls(agentId: String, options: List<AgentConfigOption>): AgentProviderCatalogSnapshot {
+        val mapped = options.filter { option ->
+            option.category == AgentConfigCategory.Permission ||
+                option.category == AgentConfigCategory.ThoughtLevel
+        }
+        if (mapped.isEmpty()) return snapshot(agentId)
+        val categories = mapped.mapNotNullTo(linkedSetOf(), AgentConfigOption::category)
+        update(agentId) { current ->
+            val next = current.copy(
+                controls = (current.controls.filterNot { it.category in categories } + mapped)
+                    .distinctBy(AgentConfigOption::id),
+            )
+            next to Unit
+        }
+        return snapshot(agentId)
+    }
+
+    fun hasCompletedImport(agentId: String, importId: String): Boolean =
+        importId.isNotBlank() && importId in snapshot(agentId).completedImports
+
+    fun markImportCompleted(agentId: String, importId: String): AgentProviderCatalogSnapshot {
+        val normalized = importId.trim().take(MAX_ID)
+        require(normalized.isNotBlank()) { "导入 ID 不能为空" }
+        update(agentId) { current ->
+            current.copy(completedImports = current.completedImports + normalized) to Unit
+        }
+        return snapshot(agentId)
+    }
+
+    fun markProviderPrepared(agentId: String, providerId: String): AgentProviderCatalogSnapshot {
+        update(agentId) { current ->
+            current.copy(pendingNativeProviderIds = current.pendingNativeProviderIds - providerId) to Unit
+        }
+        return snapshot(agentId)
+    }
+
     internal fun credential(agentId: String, providerId: String): AgentCatalogCredential? =
         credentialVault.read(credentialKey(agentId, providerId))?.let(::AgentCatalogCredential)
 
@@ -281,6 +326,18 @@ class AgentProviderCatalogStore private constructor(
             selectedModelId = optString(KEY_SELECTED_MODEL).takeIf(String::isNotBlank),
             providers = providers,
             controls = controls,
+            completedImports = buildSet {
+                val array = optJSONArray(KEY_COMPLETED_IMPORTS) ?: JSONArray()
+                for (index in 0 until array.length()) {
+                    array.optString(index).trim().take(MAX_ID).takeIf(String::isNotBlank)?.let(::add)
+                }
+            },
+            pendingNativeProviderIds = buildSet {
+                val array = optJSONArray(KEY_PENDING_NATIVE_PROVIDERS) ?: JSONArray()
+                for (index in 0 until array.length()) {
+                    array.optString(index).trim().take(MAX_ID).takeIf(String::isNotBlank)?.let(::add)
+                }
+            },
         ).dropInvalidSelection()
     }
 
@@ -290,6 +347,10 @@ class AgentProviderCatalogStore private constructor(
         selectedModelId?.let { put(KEY_SELECTED_MODEL, it) }
         put(KEY_PROVIDERS, JSONArray().apply { providers.forEach { put(it.toJson()) } })
         put(KEY_CONTROLS, JSONArray().apply { controls.forEach { put(it.toJson()) } })
+        put(KEY_COMPLETED_IMPORTS, JSONArray().apply { completedImports.sorted().forEach(::put) })
+        put(KEY_PENDING_NATIVE_PROVIDERS, JSONArray().apply {
+            pendingNativeProviderIds.sorted().forEach(::put)
+        })
     }
 
     private fun JSONObject.toProvider(agentId: String): AgentCatalogProvider? {
@@ -466,6 +527,8 @@ class AgentProviderCatalogStore private constructor(
         const val KEY_SELECTED_MODEL = "selectedModelId"
         const val KEY_PROVIDERS = "providers"
         const val KEY_CONTROLS = "controls"
+        const val KEY_COMPLETED_IMPORTS = "completedImports"
+        const val KEY_PENDING_NATIVE_PROVIDERS = "pendingNativeProviderIds"
         const val KEY_ID = "id"
         const val KEY_NAME = "name"
         const val KEY_BASE_URL = "baseUrl"
