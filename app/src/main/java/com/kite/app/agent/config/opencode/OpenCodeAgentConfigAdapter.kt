@@ -48,6 +48,10 @@ import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentReasoningControl
 import com.kite.app.agent.config.AgentSkillActivation
+import com.kite.app.agent.config.AgentSkillDocumentReadResult
+import com.kite.app.agent.config.AgentSkillDocumentSnapshot
+import com.kite.app.agent.config.AgentSkillDocumentWriteRequest
+import com.kite.app.agent.config.AgentSkillDocumentWriteResult
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentSkillSummary
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
@@ -62,6 +66,8 @@ import com.kite.app.agent.config.ConfigFileRevision
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
 import com.kite.app.agent.config.NativeAgentCoreDocumentStore
+import com.kite.app.agent.config.NativeAgentManagedOutputFormat
+import com.kite.app.agent.config.NativeAgentManagedOutputSyncResult
 import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.mediatedSessionPermissionControl
 import com.kite.app.agent.contract.AgentConfigCategory
@@ -308,6 +314,89 @@ internal class OpenCodeAgentConfigAdapter(
             .getOrElse { AgentCoreDocumentWriteResult.Failed("无法写入 OpenCode 核心设定", restored = true) }
     }
 
+    override suspend fun ensureManagedOutputFormat(agentId: String, workspacePath: String?): String? {
+        val discovery = discover(agentId)
+        if (discovery.state != AgentConfigDiscoveryState.Ready) {
+            return discovery.warnings.firstOrNull() ?: "OpenCode 原生设定当前不可用"
+        }
+        return when (val result = runCatching {
+            coreDocumentStore.ensureManagedOutputFormat(coreDocuments(workspacePath))
+        }.getOrElse { return "无法同步 OpenCode 输出格式协议" }) {
+            NativeAgentManagedOutputSyncResult.Ready -> null
+            is NativeAgentManagedOutputSyncResult.Failed -> result.message
+        }
+    }
+
+    override suspend fun readSkillDocument(
+        agentId: String,
+        skillId: String,
+    ): AgentSkillDocumentReadResult {
+        val discovery = discover(agentId)
+        if (discovery.state != AgentConfigDiscoveryState.Ready) {
+            return AgentSkillDocumentReadResult.Unavailable(discovery)
+        }
+        return runCatching {
+            val paths = requireNotNull(resolvePaths())
+            val file = discoverSkillFiles(paths).firstOrNull { skillMetadata(it).first == skillId }
+                ?: return AgentSkillDocumentReadResult.Missing()
+            AgentSkillDocumentReadResult.Ready(skillDocumentSnapshot(paths, file))
+        }.getOrElse { AgentSkillDocumentReadResult.Failed("无法读取 OpenCode Skill") }
+    }
+
+    override suspend fun writeSkillDocument(
+        request: AgentSkillDocumentWriteRequest,
+    ): AgentSkillDocumentWriteResult {
+        val discovery = discover(request.agentId)
+        if (discovery.state != AgentConfigDiscoveryState.Ready) {
+            return AgentSkillDocumentWriteResult.Unavailable(discovery)
+        }
+        val nextBytes = request.content.toByteArray(Charsets.UTF_8)
+        if (nextBytes.size.toLong() > MAX_SKILL_BYTES || nextBytes.any { it == 0.toByte() }) {
+            return AgentSkillDocumentWriteResult.Rejected(
+                listOf(problem("content", "SKILL.md 为空字节或超过大小限制"))
+            )
+        }
+        return runCatching {
+            val paths = requireNotNull(resolvePaths())
+            val file = discoverSkillFiles(paths).firstOrNull { skillMetadata(it).first == request.skillId }
+                ?: return AgentSkillDocumentWriteResult.Conflict("skill:missing", "Skill 已不存在，请重新读取")
+            val writableFile = File(paths.configDirectory, "skills/${request.skillId}/$SKILL_FILE").canonicalFile
+            if (file.canonicalFile != writableFile) {
+                return AgentSkillDocumentWriteResult.Rejected(
+                    listOf(problem("skillId", "当前 Skill 来自共享或只读目录，不能编辑"))
+                )
+            }
+            val before = fileStore.read(file)
+            if (before.revision.value != request.expectedRevision) {
+                return AgentSkillDocumentWriteResult.Conflict(before.revision.value)
+            }
+            when (val result = fileStore.replace(
+                target = file,
+                expectedRevision = before.revision,
+                nextBytes = nextBytes,
+                validate = { bytes ->
+                    when {
+                        bytes.size.toLong() > MAX_SKILL_BYTES -> "SKILL.md 超过大小限制"
+                        bytes.any { it == 0.toByte() } -> "SKILL.md 不能包含空字节"
+                        else -> null
+                    }
+                },
+            )) {
+                is AtomicConfigFileWriteResult.Applied -> AgentSkillDocumentWriteResult.Applied(
+                    skillDocumentSnapshot(paths, file),
+                    result.backupReference,
+                )
+                is AtomicConfigFileWriteResult.Conflict ->
+                    AgentSkillDocumentWriteResult.Conflict(result.actualRevision.value)
+                is AtomicConfigFileWriteResult.Rejected -> AgentSkillDocumentWriteResult.Rejected(
+                    listOf(problem("content", result.message))
+                )
+                is AtomicConfigFileWriteResult.Failed ->
+                    AgentSkillDocumentWriteResult.Failed(result.message, result.restored)
+            }
+        }.getOrElse { AgentSkillDocumentWriteResult.Failed("无法写入 OpenCode Skill", restored = true) }
+    }
+
     private fun coreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {
         add(NativeAgentCoreDocumentSpec(
             id = "opencode-global-agents",
@@ -317,6 +406,7 @@ internal class OpenCodeAgentConfigAdapter(
             scope = AgentConfigScope.User,
             semantics = AgentCoreDocumentSemantics.SupplementalInstructions,
             priorityDescription = "所有 OpenCode 工作区优先读取的用户级说明",
+            managedOutputFormat = NativeAgentManagedOutputFormat.CreateOrUpdate,
         ))
         NativeAgentCoreDocumentStore.projectPath(workspacePath, "AGENTS.md")?.let { path ->
             add(NativeAgentCoreDocumentSpec(
@@ -1291,6 +1381,20 @@ internal class OpenCodeAgentConfigAdapter(
             ?.takeIf(String::isNotBlank)
             ?: name
         return name to display
+    }
+
+    private fun skillDocumentSnapshot(paths: OpenCodePaths, file: File): AgentSkillDocumentSnapshot {
+        val (id, displayName) = skillMetadata(file)
+        val stored = fileStore.read(file)
+        val writableFile = File(paths.configDirectory, "skills/$id/$SKILL_FILE").canonicalFile
+        return AgentSkillDocumentSnapshot(
+            skillId = id,
+            displayName = displayName,
+            location = paths.toContainerPath(file),
+            revision = stored.revision.value,
+            content = stored.bytes.toString(Charsets.UTF_8),
+            writable = file.canonicalFile == writableFile,
+        )
     }
 
     private fun skillRevision(file: File): String {

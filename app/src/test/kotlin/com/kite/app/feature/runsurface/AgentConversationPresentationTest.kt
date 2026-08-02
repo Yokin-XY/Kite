@@ -87,6 +87,46 @@ class AgentConversationPresentationTest {
     }
 
     @Test
+    fun `整条回答复制保留原始 GFM 并排除思考和工具过程`() {
+        val source = listOf(
+            AgentConversationItem.Message(
+                id = "user",
+                role = AgentMessageRole.User,
+                content = listOf(AgentContent.Text("检查")),
+                turnOrdinal = 8L,
+            ),
+            AgentConversationItem.Message(
+                id = "progress",
+                role = AgentMessageRole.Assistant,
+                content = listOf(AgentContent.Text("正在检查")),
+                turnOrdinal = 8L,
+            ),
+            AgentConversationItem.Tool(
+                id = "tool",
+                call = AgentToolCall(id = "tool", title = "读取文件"),
+                turnOrdinal = 8L,
+            ),
+            AgentConversationItem.Message(
+                id = "answer",
+                role = AgentMessageRole.Assistant,
+                content = listOf(AgentContent.Text("## 结果\n\n**已经完成**")),
+                turnOrdinal = 8L,
+            ),
+        )
+
+        val items = AgentConversationPresentation.composeTurns(
+            source,
+            listOf(AgentConversationTurn(8L, AgentConversationTurnState.Completed, 1_000L, 2_000L)),
+        )
+
+        val copies = items.filterIsInstance<AgentConversationDisplayItem.AnswerCopy>()
+        assertEquals(1, copies.size)
+        assertEquals("## 结果\n\n**已经完成**", copies.single().copyText)
+        assertFalse(copies.single().copyText.contains("正在检查"))
+        assertFalse(copies.single().copyText.contains("读取文件"))
+    }
+
+    @Test
     fun `编号分隔线和简单表格保留独立展示语义`() {
         val items = AgentConversationPresentation.project(
             listOf(
@@ -121,6 +161,105 @@ class AgentConversationPresentationTest {
         assertEquals(listOf("项目", "状态"), table.headers)
         assertEquals(listOf("SDK", "完成"), table.rows.single())
         assertTrue(table.copyText.contains("| SDK | 完成 |"))
+    }
+
+    @Test
+    fun `GFM 六级标题与嵌套行内样式由 AST 保留`() {
+        val items = AgentConversationPresentation.project(
+            listOf(
+                AgentConversationItem.Message(
+                    id = "gfm-headings",
+                    role = AgentMessageRole.Assistant,
+                    content = listOf(
+                        AgentContent.Text(
+                            """
+                                #### 四级标题
+                                ##### 五级标题
+                                ###### 六级标题
+
+                                ***粗斜体*** 与 ~~删除内容~~
+                            """.trimIndent()
+                        )
+                    )
+                )
+            )
+        )
+
+        assertEquals(AgentTextBlockStyle.Heading4, (items[0] as AgentConversationDisplayItem.AssistantText).style)
+        assertEquals(AgentTextBlockStyle.Heading5, (items[1] as AgentConversationDisplayItem.AssistantText).style)
+        assertEquals(AgentTextBlockStyle.Heading6, (items[2] as AgentConversationDisplayItem.AssistantText).style)
+        val paragraph = items[3] as AgentConversationDisplayItem.AssistantText
+        val combined = paragraph.inline.first { it.text == "粗斜体" }
+        assertTrue(AgentInlineTextSegment.Style.Strong in combined.styles)
+        assertTrue(AgentInlineTextSegment.Style.Emphasis in combined.styles)
+        assertTrue(paragraph.inline.any {
+            it.text == "删除内容" && AgentInlineTextSegment.Style.Strike in it.styles
+        })
+    }
+
+    @Test
+    fun `GFM 任务项嵌套列表和自动链接保持结构`() {
+        val items = AgentConversationPresentation.project(
+            listOf(
+                AgentConversationItem.Message(
+                    id = "gfm-list",
+                    role = AgentMessageRole.Assistant,
+                    content = listOf(
+                        AgentContent.Text(
+                            """
+                                - [x] 已完成
+                                  - [ ] 子任务
+                                - 查看 https://example.com/docs
+                            """.trimIndent()
+                        )
+                    )
+                )
+            )
+        ).filterIsInstance<AgentConversationDisplayItem.AssistantText>()
+
+        assertEquals("☑ 已完成", items[0].text)
+        assertEquals(true, items[0].taskChecked)
+        assertEquals("☐ 子任务", items[1].text)
+        assertEquals(1, items[1].listDepth)
+        assertEquals(false, items[1].taskChecked)
+        assertTrue(items[2].inline.any {
+            it.link == "https://example.com/docs" && AgentInlineTextSegment.Style.Link in it.styles
+        })
+    }
+
+    @Test
+    fun `GFM 图片表格和原始 HTML 不会降级成普通段落或执行节点`() {
+        val items = AgentConversationPresentation.project(
+            listOf(
+                AgentConversationItem.Message(
+                    id = "gfm-rich",
+                    role = AgentMessageRole.Assistant,
+                    content = listOf(
+                        AgentContent.Text(
+                            """
+                                ![架构图](https://example.com/diagram.png)
+
+                                | 名称 | 说明 |
+                                | --- | --- |
+                                | A \| B | **保留文字** |
+
+                                <script>alert('no')</script>
+                            """.trimIndent()
+                        )
+                    )
+                )
+            )
+        )
+
+        val image = items[0] as AgentConversationDisplayItem.Image
+        assertEquals("架构图", image.title)
+        assertEquals(AgentImageSource.Link("https://example.com/diagram.png"), image.source)
+        val table = items[1] as AgentConversationDisplayItem.Table
+        assertEquals("A | B", table.rows.single()[0])
+        assertEquals("保留文字", table.rows.single()[1])
+        val html = items[2] as AgentConversationDisplayItem.Code
+        assertEquals("html", html.language)
+        assertTrue(html.code.contains("<script>"))
     }
 
     @Test

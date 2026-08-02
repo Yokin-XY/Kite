@@ -11,7 +11,8 @@ internal data class NativeAgentCoreDocumentSpec(
     val scope: AgentConfigScope,
     val semantics: AgentCoreDocumentSemantics,
     val priorityDescription: String,
-    val warning: String? = null
+    val warning: String? = null,
+    val managedOutputFormat: NativeAgentManagedOutputFormat = NativeAgentManagedOutputFormat.Disabled,
 )
 
 /**
@@ -52,7 +53,8 @@ internal class NativeAgentCoreDocumentStore(
         if (before.revision != request.expectedRevision) {
             return AgentCoreDocumentWriteResult.Conflict(before.revision)
         }
-        val nextBytes = request.content.toByteArray(Charsets.UTF_8)
+        val nextContent = spec.projectForAgent(request.content)
+        val nextBytes = nextContent.toByteArray(Charsets.UTF_8)
         return when (val result = fileStore.replace(
             target = before.projection.writeFile,
             expectedRevision = before.writeRevision,
@@ -77,6 +79,46 @@ internal class NativeAgentCoreDocumentStore(
         }
     }
 
+    fun ensureManagedOutputFormat(
+        specs: List<NativeAgentCoreDocumentSpec>,
+    ): NativeAgentManagedOutputSyncResult {
+        specs.filter { it.managedOutputFormat != NativeAgentManagedOutputFormat.Disabled }
+            .forEach { spec ->
+                val before = runCatching { state(spec) }.getOrElse {
+                    return NativeAgentManagedOutputSyncResult.Failed("无法读取 ${spec.displayName}")
+                }
+                val userContent = spec.projectForEditor(before.rawContent)
+                val shouldCreate = when (spec.managedOutputFormat) {
+                    NativeAgentManagedOutputFormat.Disabled -> false
+                    NativeAgentManagedOutputFormat.CreateOrUpdate -> true
+                    NativeAgentManagedOutputFormat.ExistingNonBlankOnly ->
+                        before.descriptor.exists && userContent.isNotBlank()
+                }
+                if (!shouldCreate || KiteAgentOutputFormatPolicy.isCurrent(before.rawContent)) {
+                    return@forEach
+                }
+                if (!before.descriptor.writable) {
+                    return NativeAgentManagedOutputSyncResult.Failed("${spec.displayName} 当前不可写")
+                }
+                val nextBytes = spec.projectForAgent(userContent).toByteArray(Charsets.UTF_8)
+                when (val result = fileStore.replace(
+                    target = before.projection.writeFile,
+                    expectedRevision = before.writeRevision,
+                    nextBytes = nextBytes,
+                    validate = ::validateBytes,
+                )) {
+                    is AtomicConfigFileWriteResult.Applied -> Unit
+                    is AtomicConfigFileWriteResult.Conflict ->
+                        return NativeAgentManagedOutputSyncResult.Failed("${spec.displayName} 已被其他进程修改")
+                    is AtomicConfigFileWriteResult.Rejected ->
+                        return NativeAgentManagedOutputSyncResult.Failed(result.message)
+                    is AtomicConfigFileWriteResult.Failed ->
+                        return NativeAgentManagedOutputSyncResult.Failed(result.message)
+                }
+            }
+        return NativeAgentManagedOutputSyncResult.Ready
+    }
+
     private fun state(spec: NativeAgentCoreDocumentSpec): CoreDocumentState {
         val projection = requireNotNull(resolve(spec.containerPath)) { "Kite 运行容器尚未创建" }
         val visible = fileStore.read(projection.readFile)
@@ -87,7 +129,8 @@ internal class NativeAgentCoreDocumentStore(
             visible.revision,
             writable.revision
         )
-        val content = decode(visible.bytes)
+        val rawContent = decode(visible.bytes)
+        val content = spec.projectForEditor(rawContent)
         val descriptor = AgentCoreDocumentDescriptor(
             id = spec.id,
             displayName = spec.displayName,
@@ -105,9 +148,18 @@ internal class NativeAgentCoreDocumentStore(
             writeRevision = writable.revision,
             descriptor = descriptor,
             revision = revision,
-            snapshot = AgentCoreDocumentSnapshot(descriptor, revision, content)
+            snapshot = AgentCoreDocumentSnapshot(descriptor, revision, content),
+            rawContent = rawContent,
         )
     }
+
+    private fun NativeAgentCoreDocumentSpec.projectForEditor(rawContent: String): String =
+        if (managedOutputFormat == NativeAgentManagedOutputFormat.Disabled) rawContent
+        else KiteAgentOutputFormatPolicy.userContent(rawContent)
+
+    private fun NativeAgentCoreDocumentSpec.projectForAgent(userContent: String): String =
+        if (managedOutputFormat == NativeAgentManagedOutputFormat.Disabled) userContent
+        else KiteAgentOutputFormatPolicy.merge(userContent)
 
     private fun canWrite(projection: ContainerAgentConfigProjection.FileProjection): Boolean {
         val target = projection.writeFile
@@ -164,7 +216,8 @@ internal class NativeAgentCoreDocumentStore(
         val writeRevision: ConfigFileRevision,
         val descriptor: AgentCoreDocumentDescriptor,
         val revision: String,
-        val snapshot: AgentCoreDocumentSnapshot
+        val snapshot: AgentCoreDocumentSnapshot,
+        val rawContent: String,
     )
 
     companion object {

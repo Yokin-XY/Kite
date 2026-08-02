@@ -219,6 +219,14 @@ sealed interface AgentContent {
         override val extension: AgentProtocolExtension? = null
     ) : AgentContent
 
+    /** 仅用于 Kite 本地草稿和会话显示；运行层发送前必须转换为普通文本提示。 */
+    data class SkillReference(
+        val skillId: String,
+        val displayName: String,
+        override val annotations: AgentContentAnnotations? = null,
+        override val extension: AgentProtocolExtension? = null,
+    ) : AgentContent
+
     data class Image(
         val data: String,
         val mimeType: String,
@@ -373,6 +381,16 @@ data class AgentConfigChoice(
     val permission: AgentPermissionLevel? = null,
     /** 模型选项才使用；为 null 表示旧适配器尚未声明来源。 */
     val modelSource: AgentModelSource? = null,
+)
+
+/**
+ * 模型草稿变化对其他配置类别的纯能力预览。
+ *
+ * 这里只替换 Kite 草稿目录，不调用 Agent；空 [options] 表示该模型没有可选择的对应能力。
+ */
+data class AgentDraftConfigurationPreview(
+    val replaceCategories: Set<AgentConfigCategory>,
+    val options: List<AgentConfigOption>,
 )
 
 sealed interface AgentConfigValue {
@@ -599,6 +617,11 @@ interface KiteAgentConnection {
         configId: String,
         value: AgentConfigValue
     ): AgentOperationResult<List<AgentConfigOption>>
+    /** 发送前按模型预览关联能力；默认不声明，且实现不得修改 Agent 状态。 */
+    fun previewDraftModelConfiguration(
+        providerId: String,
+        modelId: String,
+    ): AgentDraftConfigurationPreview? = null
     suspend fun setMode(sessionId: String, modeId: String): AgentOperationResult<Unit> =
         AgentOperationResult.Unsupported("session/set_mode")
     suspend fun authenticate(methodId: String): AgentOperationResult<Unit> =

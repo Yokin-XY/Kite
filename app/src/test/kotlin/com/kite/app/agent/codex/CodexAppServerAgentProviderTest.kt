@@ -17,6 +17,7 @@ import com.kite.app.agent.contract.AgentReasoningLevel
 import com.kite.app.agent.contract.AgentSessionEvent
 import com.kite.app.agent.contract.AgentStopReason
 import com.kite.app.agent.process.AgentProcessChannel
+import com.kite.app.agent.config.native.codex.codexReasoningControl
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,7 @@ import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -54,16 +56,24 @@ class CodexAppServerAgentProviderTest {
 
         assertEquals(listOf("gpt-5.6-sol", "gpt-5.6-terra"), model.choices.map { it.value })
         assertTrue(model.choices.all { it.modelSource == AgentModelSource.OfficialLogin })
-        assertEquals(listOf("low", "high"), effort.choices.map { it.value })
+        assertEquals(listOf("low", "high", "ultra"), effort.choices.map { it.value })
         assertEquals(
-            listOf(AgentReasoningLevel.Low, AgentReasoningLevel.High),
+            listOf(AgentReasoningLevel.Low, AgentReasoningLevel.High, AgentReasoningLevel.Maximum),
             effort.choices.map { it.reasoning },
         )
+        val normalizedEffort = requireNotNull(codexReasoningControl.normalize(effort)) as AgentConfigOption.Select
+        assertEquals(listOf("low", "high", "ultra"), normalizedEffort.choices.map { it.value })
         assertEquals(
             listOf("请求批准", "替我审批", "完全访问权限", "自定义"),
             permission.choices.map { it.name },
         )
         assertEquals("codex.permission.custom", permission.currentValue)
+
+        val terraPreview = connection.previewDraftModelConfiguration("openai", "gpt-5.6-terra")
+        assertEquals(setOf(AgentConfigCategory.ThoughtLevel), terraPreview?.replaceCategories)
+        val terraEffort = terraPreview?.options.orEmpty().select(AgentConfigCategory.ThoughtLevel)
+        assertEquals(listOf("medium", "max"), terraEffort.choices.map { it.value })
+        assertEquals("medium", terraEffort.currentValue)
 
         val autoReview = connection.setConfiguration(
             snapshot.id,
@@ -109,6 +119,33 @@ class CodexAppServerAgentProviderTest {
     }
 
     @Test
+    fun `ChatGPT登录连接会发布官方模型目录而自定义连接不会`() = runBlocking {
+        var officialCatalog: CodexOfficialModelCatalog? = null
+        val official = CodexAppServerFixture(
+            modelProvider = "openai",
+            selectedModel = "gpt-5.6-sol",
+            accountType = "chatgpt",
+        )
+        connect(official, mutableListOf(), officialCatalogSink = { officialCatalog = it }).disconnect()
+
+        assertNotNull(officialCatalog)
+        assertEquals(
+            listOf("gpt-5.6-sol", "gpt-5.6-terra"),
+            officialCatalog?.models?.map { it.id },
+        )
+        assertTrue(officialCatalog?.sourceVersion?.startsWith("sha256:") == true)
+
+        var customCatalog: CodexOfficialModelCatalog? = null
+        val custom = CodexAppServerFixture(
+            modelProvider = "zhipu-coding-plan",
+            selectedModel = "glm-5",
+            accountType = null,
+        )
+        connect(custom, mutableListOf(), officialCatalogSink = { customCatalog = it }).disconnect()
+        assertEquals(null, customCatalog)
+    }
+
+    @Test
     fun `用户自定义供应商不会混入官方模型目录`() = runBlocking {
         val fixture = CodexAppServerFixture(modelProvider = "zhipu-coding-plan", selectedModel = "glm-5")
         val connection = connect(fixture, mutableListOf())
@@ -119,6 +156,9 @@ class CodexAppServerAgentProviderTest {
         assertEquals(listOf("glm-5"), model.choices.map { it.value })
         assertEquals(listOf(AgentModelSource.UserConfigured), model.choices.map { it.modelSource })
         assertEquals(listOf("zhipu-coding-plan"), model.choices.map { it.groupId })
+        val preview = connection.previewDraftModelConfiguration("zhipu-coding-plan", "glm-5")
+        assertEquals(setOf(AgentConfigCategory.ThoughtLevel), preview?.replaceCategories)
+        assertTrue(preview?.options.isNullOrEmpty())
         connection.disconnect()
     }
 
@@ -163,11 +203,13 @@ class CodexAppServerAgentProviderTest {
         fixture: CodexAppServerFixture,
         events: MutableList<Pair<String, AgentSessionEvent>>,
         permissionHandler: suspend () -> AgentPermissionOutcome = { AgentPermissionOutcome.Cancelled },
+        officialCatalogSink: (CodexOfficialModelCatalog) -> Unit = {},
     ) = withTimeout(5_000L) {
         val provider = CodexAppServerAgentProvider(
             descriptor = CodexAppServerProviderDescriptor("codex", "Codex"),
             launcher = CodexAppServerProcessLauncher { fixture.start() },
             initializeTimeoutMs = 2_000L,
+            officialModelCatalogSink = CodexOfficialModelCatalogSink(officialCatalogSink),
         )
         val result = provider.connect(
             AgentConnectionRequest(AgentClientInfo("kite", "test", "Kite Test")),
@@ -190,6 +232,7 @@ class CodexAppServerAgentProviderTest {
         private val approvalPolicy: String = "untrusted",
         private val approvalsReviewer: String = "user",
         private val sandboxType: String = "readOnly",
+        private val accountType: String? = if (modelProvider == "openai") "chatgpt" else null,
     ) {
         val settingsUpdates = mutableListOf<JSONObject>()
         private val clientToServer = Channel<String>(Channel.UNLIMITED)
@@ -234,6 +277,13 @@ class CodexAppServerAgentProviderTest {
             val params = message.optJSONObject("params") ?: JSONObject()
             when (message.getString("method")) {
                 "initialize" -> respond(id, JSONObject())
+                "account/read" -> respond(
+                    id,
+                    JSONObject().put(
+                        "account",
+                        accountType?.let { JSONObject().put("type", it) } ?: JSONObject.NULL,
+                    ),
+                )
                 "model/list" -> respond(id, modelList())
                 "thread/start" -> respond(id, threadResponse())
                 "thread/settings/update" -> {

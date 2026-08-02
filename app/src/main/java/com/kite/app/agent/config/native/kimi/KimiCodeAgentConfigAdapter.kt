@@ -25,6 +25,7 @@ import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
+import com.kite.app.agent.config.NativeAgentManagedOutputFormat
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.io.File
@@ -60,6 +61,7 @@ internal class KimiCodeAgentConfigAdapter(
             scope = AgentConfigScope.User,
             semantics = AgentCoreDocumentSemantics.SupplementalInstructions,
             priorityDescription = "Kimi Code 跨工作区加载的专属说明",
+            managedOutputFormat = NativeAgentManagedOutputFormat.CreateOrUpdate,
         ))
         add(NativeAgentCoreDocumentSpec(
             id = "kimi-system",
@@ -175,6 +177,12 @@ internal class KimiCodeAgentConfigAdapter(
     }
 
     override fun nativeRevisionInputs(): List<Pair<String, String>> = skillDirectory.revisionInputs()
+
+    override suspend fun readSkillDocument(agentId: String, skillId: String) =
+        skillDirectory.readDocument(skillId)
+
+    override suspend fun writeSkillDocument(request: com.kite.app.agent.config.AgentSkillDocumentWriteRequest) =
+        skillDirectory.writeDocument(request)
 
     override fun mutate(
         files: Map<String, ByteArray>,

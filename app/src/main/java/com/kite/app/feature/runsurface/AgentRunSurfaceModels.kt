@@ -18,6 +18,7 @@ internal enum class ComposerExtensionRoute {
     Main,
     Modes,
     Permissions,
+    Skills,
 }
 
 internal enum class AgentNavigationScreen {
@@ -31,6 +32,7 @@ internal enum class AgentNavigationScreen {
     ProviderPresetPicker,
     ProviderModelEditor,
     SkillList,
+    SkillDocumentEditor,
     McpList,
     McpEditor,
     CoreDocumentList,

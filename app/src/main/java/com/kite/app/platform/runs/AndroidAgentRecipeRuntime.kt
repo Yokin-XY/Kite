@@ -8,6 +8,7 @@ import com.kite.app.agent.acp.AcpSessionPathMapper
 import com.kite.app.agent.codex.CodexAppServerAgentProvider
 import com.kite.app.agent.codex.CodexAppServerProcessLauncher
 import com.kite.app.agent.codex.CodexAppServerProviderDescriptor
+import com.kite.app.agent.codex.CodexOfficialModelCatalogSink
 import com.kite.app.agent.config.AgentConfigAdapterRegistry
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.AgentPersistentConfigChange
@@ -17,6 +18,7 @@ import com.kite.app.agent.config.mergeAgentSessionConfigurationOverlay
 import com.kite.app.agent.config.normalizePublishedSessionConfiguration
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentFailureCode
+import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentOperationResult
 import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentSessionRenameRequest
@@ -51,6 +53,9 @@ import com.kite.app.agent.session.AgentSessionCommand
 import com.kite.app.agent.session.AgentSessionCommandExecutor
 import com.kite.app.agent.session.opencode.OpenCodeAgentSessionAdministrationAdapter
 import com.kite.app.agent.store.AgentDraftCapabilityCacheStore
+import com.kite.app.agent.store.AgentCatalogModel
+import com.kite.app.agent.store.AgentCatalogProvider
+import com.kite.app.agent.store.AgentProviderCatalogPolicy
 import com.kite.app.agent.store.AgentProviderCatalogStore
 import com.kite.app.application.runs.RecipeExecutionEvent
 import com.kite.app.application.runs.RecipeStepExecutionRequest
@@ -511,6 +516,28 @@ internal class AndroidAgentRecipeRuntime(
                     launcher = CodexAppServerProcessLauncher {
                         processFactory.start(processLaunch.process)
                     },
+                    officialModelCatalogSink = CodexOfficialModelCatalogSink { catalog ->
+                        val target = AgentConfigurationTarget(
+                            agentId = resolved.agentId ?: providerId,
+                            adapterId = resolved.configAdapterId,
+                        )
+                        agentProviderCatalogApi.saveOfficialVersion(
+                            target = target,
+                            accountId = CODEX_CHATGPT_ACCOUNT_ID,
+                            sourceVersion = catalog.sourceVersion,
+                            providers = listOf(
+                                AgentCatalogProvider(
+                                    id = CODEX_OFFICIAL_PROVIDER_ID,
+                                    displayName = "OpenAI",
+                                    models = catalog.models.map { model ->
+                                        AgentCatalogModel(model.id, model.displayName)
+                                    },
+                                    source = AgentModelSource.OfficialLogin,
+                                    policy = AgentProviderCatalogPolicy.OfficialLoginVersion,
+                                )
+                            ),
+                        )
+                    },
                 )
                 else -> error("已由 managed protocol 校验限制协议")
             }
@@ -580,6 +607,28 @@ internal class AndroidAgentRecipeRuntime(
             )
         }
         val configAdapter = agentConfigAdapters.adapter(resolved.configAdapterId)
+        configAdapter?.ensureManagedOutputFormat(
+            agentId = resolved.agentId ?: providerId,
+            workspacePath = cwd,
+        )?.let { warning ->
+            callback(
+                RecipeExecutionEvent.Progress(
+                    request.instanceId,
+                    request.generation,
+                    request.stepIndex,
+                    request.agentMutation(
+                        agentId = resolved.agentId,
+                        providerId = providerId,
+                        sessionId = null,
+                        connectionStatus = CardRunAgentConnectionStatus.Preparing,
+                        message = "输出格式协议未同步：$warning；将继续使用现有设定",
+                        managedOwnership = managedOwnership,
+                        runtimeLane = runtimeLane,
+                        runtimeFallbackReason = runtimeFallbackReason,
+                    )
+                )
+            )
+        }
         val catalogTarget = AgentConfigurationTarget(
             agentId = resolved.agentId ?: providerId,
             adapterId = resolved.configAdapterId,
@@ -608,13 +657,14 @@ internal class AndroidAgentRecipeRuntime(
             )
         }
         val storedControls = storedCatalog.controls
-        val nativeSessionConfiguration = configAdapter
+        val adapterSessionConfiguration = configAdapter
             ?.readSessionConfiguration(resolved.agentId ?: providerId)
-            ?.filterNot { option ->
+            .orEmpty()
+        val nativeSessionConfiguration = adapterSessionConfiguration
+            .filterNot { option ->
                 option.category == AgentConfigCategory.Permission ||
                     option.category == AgentConfigCategory.ThoughtLevel
             }
-            .orEmpty()
         val runtimeProvider = if (configAdapter == null) {
             provider
         } else {
@@ -622,7 +672,9 @@ internal class AndroidAgentRecipeRuntime(
                 delegate = provider,
                 agentId = resolved.agentId ?: providerId,
                 adapter = configAdapter,
-                initialConfiguration = nativeSessionConfiguration,
+                // 连接装饰层必须持有完整的 Adapter 映射，发送时才能在 SDK 内消费
+                // kite.session_permission 等统一键，而不是把它们误传给 Agent 协议。
+                initialConfiguration = adapterSessionConfiguration,
             )
         }
         val initialDraftCatalog = cachedDraftCatalog.copy(
@@ -1014,6 +1066,8 @@ internal class AndroidAgentRecipeRuntime(
     private companion object {
         const val PROTOCOL_ACP = "acp"
         const val PROTOCOL_CODEX_APP_SERVER = "codex-app-server"
+        const val CODEX_CHATGPT_ACCOUNT_ID = "chatgpt"
+        const val CODEX_OFFICIAL_PROVIDER_ID = "openai"
         const val TRANSPORT_STDIO = "stdio"
         const val LAUNCH_MODE_MANAGED = "managed"
         const val LAUNCH_MODE_ATTACH = "attach"

@@ -25,5 +25,6 @@ class OpenCodeWorkModeProfileTest {
 
         assertEquals("规划", normalized.first().name)
         assertEquals(AgentMode("review", "Review", "custom"), normalized.last())
+
     }
 }

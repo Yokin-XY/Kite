@@ -38,6 +38,7 @@ import com.kite.app.agent.config.ConfigFileRevision
 import com.kite.app.agent.config.ContainerAgentConfigProjection
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
 import com.kite.app.agent.config.NativeAgentCoreDocumentStore
+import com.kite.app.agent.config.NativeAgentManagedOutputSyncResult
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -169,6 +170,19 @@ internal abstract class NativeAgentConfigAdapter(
     }
 
     protected open fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = emptyList()
+
+    override suspend fun ensureManagedOutputFormat(agentId: String, workspacePath: String?): String? {
+        val discovery = discover(agentId)
+        if (discovery.state != AgentConfigDiscoveryState.Ready) {
+            return discovery.warnings.firstOrNull() ?: "${displayName()} 原生设定当前不可用"
+        }
+        return when (val result = runCatching {
+            coreDocumentStore.ensureManagedOutputFormat(nativeCoreDocuments(workspacePath))
+        }.getOrElse { return "无法同步 ${displayName()} 输出格式协议" }) {
+            NativeAgentManagedOutputSyncResult.Ready -> null
+            is NativeAgentManagedOutputSyncResult.Failed -> result.message
+        }
+    }
 
     override suspend fun listCoreDocuments(
         agentId: String,

@@ -13,6 +13,9 @@ import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderPreset
 import com.kite.app.agent.config.AgentSkillActivation
+import com.kite.app.agent.config.AgentSkillDocumentReadResult
+import com.kite.app.agent.config.AgentSkillDocumentWriteRequest
+import com.kite.app.agent.config.AgentSkillDocumentWriteResult
 import com.kite.app.agent.registration.AgentRegistryEntry
 
 /** 只携带稳定 ID；显示名称和产品名称不参与 Adapter 选择。 */
@@ -75,6 +78,14 @@ interface AgentConfigurationApi {
         target: AgentConfigurationTarget,
         request: AgentCoreDocumentWriteRequest,
     ): AgentCoreDocumentWriteResult
+    suspend fun readSkillDocument(
+        target: AgentConfigurationTarget,
+        skillId: String,
+    ): AgentSkillDocumentReadResult
+    suspend fun writeSkillDocument(
+        target: AgentConfigurationTarget,
+        request: AgentSkillDocumentWriteRequest,
+    ): AgentSkillDocumentWriteResult
     suspend fun checkMcp(
         target: AgentConfigurationTarget,
         serverId: String,

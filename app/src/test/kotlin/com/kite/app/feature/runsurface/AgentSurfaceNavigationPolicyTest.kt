@@ -8,7 +8,6 @@ import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentReasoningLevel
-import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
@@ -426,28 +425,6 @@ class AgentSurfaceNavigationPolicyTest {
                 currentSessionId = "missing",
                 targetSessionId = "missing",
             ),
-        )
-    }
-
-    @Test
-    fun `首字符斜杠触发原生命令过滤而普通消息不触发`() {
-        val commands = listOf(
-            AgentCommand("model", "切换模型"),
-            AgentCommand("mcp", "显示 MCP 服务器状态"),
-            AgentCommand("review", "代码审查")
-        )
-
-        assertEquals("", AgentSurfaceNavigationPolicy.slashCommandQuery("/"))
-        assertEquals("mo", AgentSurfaceNavigationPolicy.slashCommandQuery("/Mo"))
-        assertEquals(null, AgentSurfaceNavigationPolicy.slashCommandQuery("你好 /model"))
-        assertEquals(null, AgentSurfaceNavigationPolicy.slashCommandQuery("/model glm"))
-        assertEquals(
-            listOf("model"),
-            AgentSurfaceNavigationPolicy.filterCommands(commands, "mo").map(AgentCommand::name)
-        )
-        assertEquals(
-            listOf("mcp"),
-            AgentSurfaceNavigationPolicy.filterCommands(commands, "服务器").map(AgentCommand::name)
         )
     }
 

@@ -7,6 +7,7 @@ import com.kite.app.agent.config.AgentConfigReadResult
 import com.kite.app.agent.config.AgentCredentialPresence
 import com.kite.app.agent.config.AgentFreeProviderCatalogResult
 import com.kite.app.agent.config.AgentLiveConfigSnapshot
+import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
@@ -14,6 +15,8 @@ import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.contract.AgentConfigOption
+import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.runtime.AgentDraftModelSelection
@@ -229,13 +232,13 @@ class StoreBackedAgentProviderCatalogApi(
             ),
             credential.toCatalogCredentialChange(),
         )
-        if (saved != null) preparedFingerprints.remove(preparedKey(target, provider.id))
+        if (saved != null) preparedFingerprints.remove(preparedKey(target))
         return saved
     }
 
     override fun removeUserProvider(target: AgentConfigurationTarget, providerId: String): Boolean {
         val removed = store.removeUserProvider(target.agentId, providerId)
-        if (removed) preparedFingerprints.remove(preparedKey(target, providerId))
+        if (removed) preparedFingerprints.remove(preparedKey(target))
         return removed
     }
 
@@ -272,14 +275,17 @@ class StoreBackedAgentProviderCatalogApi(
         val selected = store.snapshot(target.agentId).providers.firstOrNull { provider ->
             provider.id == selection.providerId && provider.models.any { it.id == selection.modelId }
         } ?: return AgentProviderPreparationResult.Failed("Kite 目录中已没有这个模型，请重新选择")
-        if (selected.policy != AgentProviderCatalogPolicy.UserManaged) {
+        if (
+            selected.policy != AgentProviderCatalogPolicy.UserManaged &&
+            selected.policy != AgentProviderCatalogPolicy.OfficialLoginVersion
+        ) {
             return AgentProviderPreparationResult.Ready()
         }
         val adapter = adapters.adapter(target.adapterId)
             ?: return AgentProviderPreparationResult.Failed("当前 Agent 没有可用的配置 Adapter")
         val credential = store.credential(target.agentId, selected.id)
-        val fingerprint = providerFingerprint(selected, credential != null)
-        val preparedKey = preparedKey(target, selected.id)
+        val fingerprint = providerFingerprint(selected, selection.modelId, credential != null)
+        val preparedKey = preparedKey(target)
         if (preparedFingerprints[preparedKey] == fingerprint) {
             return AgentProviderPreparationResult.Ready()
         }
@@ -290,10 +296,37 @@ class StoreBackedAgentProviderCatalogApi(
                 read.discovery.warnings.firstOrNull() ?: "当前无法准备 Agent 配置",
             )
         }
+        if (selected.policy == AgentProviderCatalogPolicy.OfficialLoginVersion) {
+            val option = AgentConfigOption.Select(
+                id = NATIVE_MODEL_CONFIG_ID,
+                name = "模型",
+                category = AgentConfigCategory.Model,
+                currentValue = selection.modelId,
+                choices = listOf(
+                    AgentConfigChoice(
+                        value = selection.modelId,
+                        name = selected.models.first { it.id == selection.modelId }.displayName,
+                        groupId = selected.id,
+                        groupName = selected.displayName,
+                        modelSource = AgentModelSource.OfficialLogin,
+                    )
+                ),
+            )
+            val change = adapter.defaultModelChange(option)
+                ?: return AgentProviderPreparationResult.Ready()
+            val alreadySelected = before.defaultModel == change.modelId &&
+                (!change.clearProviderOverride || before.activeProviderId.isNullOrBlank())
+            if (alreadySelected) {
+                preparedFingerprints[preparedKey] = fingerprint
+                return AgentProviderPreparationResult.Ready()
+            }
+            return applyProviderSelection(target, adapter, before, change, preparedKey, fingerprint)
+        }
         val existing = before.providers.firstOrNull { it.id == selected.id }
         val samePublicConfiguration = existing?.let { native ->
             native.baseUrl == selected.baseUrl &&
-                native.models.map { it.id to it.displayName } == selected.models.map { it.id to it.displayName } &&
+                native.models.associate { it.id to it.displayName } ==
+                selected.models.associate { it.id to it.displayName } &&
                 native.credentialPresence == if (credential == null) {
                     AgentCredentialPresence.Missing
                 } else {
@@ -302,23 +335,51 @@ class StoreBackedAgentProviderCatalogApi(
         } == true
         val pendingNativeWrite = selected.id in store.snapshot(target.agentId).pendingNativeProviderIds
         if (!pendingNativeWrite && samePublicConfiguration) {
-            preparedFingerprints[preparedKey] = fingerprint
-            return AgentProviderPreparationResult.Ready()
+            val activeModelMatches = before.activeProviderId == selected.id &&
+                (before.defaultModel == selection.modelId ||
+                    before.defaultModel == "${selected.id}/${selection.modelId}")
+            if (activeModelMatches) {
+                preparedFingerprints[preparedKey] = fingerprint
+                return AgentProviderPreparationResult.Ready()
+            }
+            return applyProviderSelection(
+                target,
+                adapter,
+                before,
+                AgentPersistentConfigChange.SelectProvider(selected.id, selection.modelId),
+                preparedKey,
+                fingerprint,
+            )
         }
+        val selectedModel = selected.models.first { it.id == selection.modelId }
         val change = AgentPersistentConfigChange.ConfigureProvider(
             provider = AgentProviderDraft(
                 id = selected.id,
                 displayName = selected.displayName,
                 baseUrl = selected.baseUrl.orEmpty(),
-                models = selected.models.map { AgentProviderModelSummary(it.id, it.displayName) },
+                models = listOf(selectedModel).plus(selected.models.filterNot { it.id == selectedModel.id })
+                    .map { AgentProviderModelSummary(it.id, it.displayName) },
             ),
             credential = credential?.let { AgentProviderCredentialChange.replace(it.secret) }
                 ?: AgentProviderCredentialChange.Remove,
         )
-        return when (val applied = adapter.apply(AgentConfigApplyRequest(target.agentId, before.revision, listOf(change)))) {
+        return applyProviderSelection(target, adapter, before, change, preparedKey, fingerprint)
+    }
+
+    private suspend fun applyProviderSelection(
+        target: AgentConfigurationTarget,
+        adapter: com.kite.app.agent.config.AgentConfigAdapter,
+        before: AgentLiveConfigSnapshot,
+        change: AgentPersistentConfigChange,
+        preparedKey: String,
+        fingerprint: String,
+    ): AgentProviderPreparationResult =
+        when (val applied = adapter.apply(AgentConfigApplyRequest(target.agentId, before.revision, listOf(change)))) {
             is AgentConfigApplyResult.Applied -> {
                 preparedFingerprints[preparedKey] = fingerprint
-                store.markProviderPrepared(target.agentId, selected.id)
+                if (change is AgentPersistentConfigChange.ConfigureProvider) {
+                    store.markProviderPrepared(target.agentId, change.provider.id)
+                }
                 AgentProviderPreparationResult.Ready(
                     effect = adapter.providerConfigurationEffect(),
                     nativeConfigurationChanged = true,
@@ -333,10 +394,9 @@ class StoreBackedAgentProviderCatalogApi(
             )
             is AgentConfigApplyResult.Failed -> AgentProviderPreparationResult.Failed(applied.message)
         }
-    }
 
-    private fun preparedKey(target: AgentConfigurationTarget, providerId: String): String =
-        "${target.agentId}\u0000${target.adapterId.orEmpty()}\u0000$providerId"
+    private fun preparedKey(target: AgentConfigurationTarget): String =
+        "${target.agentId}\u0000${target.adapterId.orEmpty()}"
 
     /** 只合入轻量静态能力和随应用发布的首版目录；不读取 Agent 文件或执行命令。 */
     private fun ensureBundledCatalog(target: AgentConfigurationTarget) {
@@ -367,12 +427,17 @@ class StoreBackedAgentProviderCatalogApi(
         }
     }
 
-    private fun providerFingerprint(provider: AgentCatalogProvider, credentialPresent: Boolean): String {
+    private fun providerFingerprint(
+        provider: AgentCatalogProvider,
+        selectedModelId: String,
+        credentialPresent: Boolean,
+    ): String {
         val digest = MessageDigest.getInstance("SHA-256")
         listOf(
             provider.id,
             provider.displayName,
             provider.baseUrl.orEmpty(),
+            selectedModelId,
             credentialPresent.toString(),
         ).forEach { value -> digest.update(value.toByteArray()); digest.update(0) }
         provider.models.forEach { model ->

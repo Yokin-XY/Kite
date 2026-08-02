@@ -118,6 +118,33 @@ internal object AgentSelectionVisualPolicy {
     }
 }
 
+/** Skill 胶囊使用 ChatGPT 会话控件的中性灰层级，并在所有会话表面保持同一尺寸。 */
+internal object AgentSkillChipVisualPolicy {
+    const val HEIGHT_DP = 28
+    const val MAX_WIDTH_DP = 168
+    const val REMOVE_ACTION_SIZE_DP = 28
+
+    fun palette(isDark: Boolean): AgentSkillChipPalette = if (isDark) {
+        AgentSkillChipPalette(
+            fill = android.graphics.Color.rgb(47, 47, 47),
+            border = android.graphics.Color.rgb(64, 64, 64),
+            text = android.graphics.Color.rgb(242, 242, 242),
+        )
+    } else {
+        AgentSkillChipPalette(
+            fill = android.graphics.Color.rgb(247, 247, 248),
+            border = android.graphics.Color.rgb(225, 225, 227),
+            text = android.graphics.Color.rgb(47, 47, 47),
+        )
+    }
+}
+
+internal data class AgentSkillChipPalette(
+    val fill: Int,
+    val border: Int,
+    val text: Int,
+)
+
 internal data class AgentSelectionPalette(
     val selectedIndicator: Int,
     val indicatorSurface: Int,

@@ -21,9 +21,11 @@ import android.text.Spanned
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.BackgroundColorSpan
+import android.text.style.ClickableSpan
 import android.text.style.StyleSpan
+import android.text.style.StrikethroughSpan
 import android.text.style.TypefaceSpan
-import android.text.style.URLSpan
+import android.text.TextPaint
 import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
@@ -112,7 +114,6 @@ import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationSnapshot
 import com.kite.app.agent.store.AgentConversationStore
 import com.kite.app.agent.store.AgentConversationTurn
-import com.kite.app.agent.store.AgentConversationTurnState
 import com.kite.app.agent.store.AgentDraftCapabilityCacheStore
 import com.kite.app.agent.store.AgentModelLibraryStore
 import com.kite.app.agent.store.AgentProject
@@ -142,9 +143,12 @@ internal class ConversationAdapter(
     private val scope: CoroutineScope
 ) : ListAdapter<AgentConversationDisplayItem, ConversationAdapter.DisplayHolder>(DIFF) {
     private val ui = UiKit(context, tokens)
+    private val skillChipPalette = AgentSkillChipVisualPolicy.palette(
+        context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+    )
     private val mediaRepository = AgentConversationMediaRepository(context)
     private val projectionCache = linkedMapOf<String, Pair<AgentConversationItem, List<AgentConversationDisplayItem>>>()
-    private val processExpansionOverrides = mutableMapOf<String, Boolean>()
     private val expandedThoughtIds = mutableSetOf<String>()
     private val expandedToolIds = mutableSetOf<String>()
     private val toolGroupExpansionOverrides = mutableMapOf<String, Boolean>()
@@ -168,10 +172,6 @@ internal class ConversationAdapter(
         val projected = AgentConversationPresentation.composeTurns(items, turns) { item ->
             projectedById[item.id].orEmpty()
         }
-        val activeProcessIds = projected
-            .filterIsInstance<AgentConversationDisplayItem.Process>()
-            .mapTo(linkedSetOf()) { it.id }
-        processExpansionOverrides.keys.retainAll(activeProcessIds)
         submitList(projected, committed)
     }
 
@@ -181,6 +181,7 @@ internal class ConversationAdapter(
         is AgentConversationDisplayItem.Code -> TYPE_CODE
         is AgentConversationDisplayItem.Rule -> TYPE_RULE
         is AgentConversationDisplayItem.Table -> TYPE_TABLE
+        is AgentConversationDisplayItem.AnswerCopy -> TYPE_ANSWER_COPY
         is AgentConversationDisplayItem.Process -> TYPE_PROCESS
         is AgentConversationDisplayItem.Thought -> TYPE_THOUGHT
         is AgentConversationDisplayItem.Tool -> TYPE_TOOL
@@ -195,6 +196,7 @@ internal class ConversationAdapter(
         TYPE_CODE -> CodeHolder()
         TYPE_RULE -> RuleHolder()
         TYPE_TABLE -> TableHolder()
+        TYPE_ANSWER_COPY -> AnswerCopyHolder()
         TYPE_PROCESS -> ProcessHolder()
         TYPE_THOUGHT -> ThoughtHolder()
         TYPE_TOOL -> ToolHolder()
@@ -221,6 +223,20 @@ internal class ConversationAdapter(
         FrameLayout(context).apply { layoutParams = rowParams(top = 8, bottom = 12) }
     ) {
         private val frame = itemView as FrameLayout
+        private val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+        }.also {
+            frame.addView(it, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.END,
+            ))
+        }
+        private val skillHost = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+        }.also(content::addView)
         private val text = messageTextView().apply {
             textSize = 15f
             setLineSpacing(0f, 1.3f)
@@ -228,15 +244,39 @@ internal class ConversationAdapter(
             maxWidth = context.resources.displayMetrics.widthPixels - ui.dp(72)
             setPadding(ui.dp(15), ui.dp(10), ui.dp(15), ui.dp(10))
             background = ui.roundedBox(tokens.surfaceElevated, tokens.border, ui.dp(20).toFloat(), ui.dp(1))
-        }.also { frame.addView(it) }
+        }.also(content::addView)
 
         override fun bind(item: AgentConversationDisplayItem) {
             item as AgentConversationDisplayItem.UserMessage
+            skillHost.removeAllViews()
+            item.skills.forEach { skillName ->
+                skillHost.addView(TextView(context).apply {
+                    text = skillName
+                    textSize = 12.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    includeFontPadding = false
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    maxWidth = ui.dp(AgentSkillChipVisualPolicy.MAX_WIDTH_DP)
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(skillChipPalette.text)
+                    setPadding(ui.dp(12), 0, ui.dp(12), 0)
+                    background = ui.roundedBox(
+                        skillChipPalette.fill,
+                        skillChipPalette.border,
+                        ui.dp(AgentSkillChipVisualPolicy.HEIGHT_DP / 2).toFloat(),
+                        ui.dp(1),
+                    )
+                }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ui.dp(AgentSkillChipVisualPolicy.HEIGHT_DP),
+                ).apply { bottomMargin = ui.dp(5) })
+            }
             text.text = item.text
-            text.layoutParams = FrameLayout.LayoutParams(
+            text.visibility = if (item.text.isBlank()) View.GONE else View.VISIBLE
+            text.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.END
             )
         }
     }
@@ -271,7 +311,7 @@ internal class ConversationAdapter(
             item as AgentConversationDisplayItem.AssistantText
             label.visibility = View.GONE
             text.text = styledInlineText(item.inline)
-            text.movementMethod = if (item.inline.any { it.style == AgentInlineTextSegment.Style.Link }) {
+            text.movementMethod = if (item.inline.any { AgentInlineTextSegment.Style.Link in it.styles }) {
                 LinkMovementMethod.getInstance()
             } else {
                 null
@@ -296,6 +336,19 @@ internal class ConversationAdapter(
                     container.layoutParams = rowParams(top = 14, bottom = 5)
                     setTextStyle(16.5f, Typeface.DEFAULT_BOLD, 1.22f)
                 }
+                AgentTextBlockStyle.Heading4 -> {
+                    container.layoutParams = rowParams(top = 12, bottom = 5)
+                    setTextStyle(15.5f, Typeface.DEFAULT_BOLD, 1.24f)
+                }
+                AgentTextBlockStyle.Heading5 -> {
+                    container.layoutParams = rowParams(top = 10, bottom = 4)
+                    setTextStyle(14.5f, Typeface.DEFAULT_BOLD, 1.26f)
+                }
+                AgentTextBlockStyle.Heading6 -> {
+                    container.layoutParams = rowParams(top = 9, bottom = 4)
+                    setTextStyle(13.5f, Typeface.DEFAULT_BOLD, 1.28f)
+                    text.setTextColor(tokens.textSecondary)
+                }
                 AgentTextBlockStyle.Quote -> {
                     container.layoutParams = rowParams(top = 8, bottom = 13)
                     setTextStyle(14.5f, assistantBodyTypeface, 1.36f, BODY_LETTER_SPACING)
@@ -307,7 +360,7 @@ internal class ConversationAdapter(
                 AgentTextBlockStyle.Ordered -> {
                     container.layoutParams = rowParams(top = 2, bottom = 5)
                     setTextStyle(14.5f, assistantBodyTypeface, 1.36f, BODY_LETTER_SPACING)
-                    text.setPadding(ui.dp(2), 0, 0, 0)
+                    text.setPadding(ui.dp(2 + item.listDepth * 16), 0, 0, 0)
                 }
                 AgentTextBlockStyle.Paragraph -> {
                     container.layoutParams = rowParams(top = 3, bottom = 13)
@@ -347,13 +400,9 @@ internal class ConversationAdapter(
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(tokens.textSecondary)
         }.also { header.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-        private val copy = TextView(context).apply {
-            text = "复制"
-            textSize = 12f
-            setTextColor(tokens.primaryStrong)
-            gravity = Gravity.CENTER
-            setPadding(ui.dp(10), ui.dp(5), ui.dp(10), ui.dp(5))
-        }.also(header::addView)
+        private val copy = copyIconButton("复制代码").also {
+            header.addView(it, copyButtonLayoutParams())
+        }
         private val code = messageTextView().apply {
             textSize = 14f
             typeface = Typeface.MONOSPACE
@@ -371,7 +420,6 @@ internal class ConversationAdapter(
             }
             code.text = item.code
             copy.setOnClickListener { copyText("Agent 代码", item.code) }
-            copy.contentDescription = "复制代码"
         }
     }
 
@@ -402,13 +450,9 @@ internal class ConversationAdapter(
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(tokens.textSecondary)
         }.also { header.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-        private val copy = TextView(context).apply {
-            text = "复制"
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(tokens.primaryStrong)
-            setPadding(ui.dp(10), ui.dp(5), ui.dp(10), ui.dp(5))
-        }.also(header::addView)
+        private val copy = copyIconButton("复制表格").also {
+            header.addView(it, copyButtonLayoutParams())
+        }
         private val table = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -429,7 +473,6 @@ internal class ConversationAdapter(
             item as AgentConversationDisplayItem.Table
             label.text = "表格"
             copy.setOnClickListener { copyText("Agent 表格", item.copyText) }
-            copy.contentDescription = "复制表格"
             table.removeAllViews()
             table.addView(tableRow(item.headers, header = true))
             item.rows.forEach { row -> table.addView(tableRow(row, header = false)) }
@@ -459,89 +502,17 @@ internal class ConversationAdapter(
     inner class ProcessHolder : DisplayHolder(
         LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 9, bottom = 9)
+            layoutParams = rowParams(top = 5, bottom = 7)
         }
     ) {
         private val container = itemView as LinearLayout
-        private val header = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            isClickable = true
-            isFocusable = true
-            setPadding(0, ui.dp(5), 0, ui.dp(5))
-        }.also(container::addView)
-        private val title = TextView(context).apply {
-            textSize = 13.5f
-            typeface = Typeface.DEFAULT_BOLD
-            includeFontPadding = false
-            setTextColor(tokens.textPrimary)
-        }.also { header.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-        private val chevron = ImageView(context).apply {
-            setImageResource(R.drawable.ic_chevron_right_light)
-            setColorFilter(tokens.textSecondary)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            contentDescription = null
-        }.also { header.addView(it, LinearLayout.LayoutParams(ui.dp(20), ui.dp(20))) }
         private val entries = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, ui.dp(4), 0, 0)
         }.also(container::addView)
-        private var ticker: Runnable? = null
-        private var boundItem: AgentConversationDisplayItem.Process? = null
 
         override fun bind(item: AgentConversationDisplayItem) {
             item as AgentConversationDisplayItem.Process
-            stopTicker()
-            boundItem = item
-            val expanded = processExpansionOverrides[item.id]
-                ?: (item.state == AgentConversationTurnState.Running)
-            updateTitle(item)
-            chevron.rotation = if (expanded) 90f else 0f
-            entries.visibility = if (expanded) View.VISIBLE else View.GONE
-            if (expanded) rebuildEntries(item) else entries.removeAllViews()
-            header.contentDescription = if (expanded) "收起处理过程" else "展开处理过程"
-            header.setOnClickListener {
-                processExpansionOverrides[item.id] = !expanded
-                bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
-            }
-            if (item.state == AgentConversationTurnState.Running && item.startedAtMillis != null) startTicker(item)
-        }
-
-        private fun updateTitle(item: AgentConversationDisplayItem.Process) {
-            title.text = when (item.state) {
-                AgentConversationTurnState.Running -> {
-                    val elapsed = item.startedAtMillis
-                        ?.let { (System.currentTimeMillis() - it).coerceAtLeast(0L) }
-                        ?: 0L
-                    "思考中 ${formatProcessDuration(elapsed)}"
-                }
-                AgentConversationTurnState.Completed -> item.durationMillis
-                    ?.let { "思考了 ${formatProcessDuration(it)}" }
-                    ?: "已处理"
-                AgentConversationTurnState.Failed -> "处理失败"
-                AgentConversationTurnState.Cancelled -> "已取消"
-                AgentConversationTurnState.Historical -> "已处理"
-            }
-            title.setTextColor(
-                if (item.state == AgentConversationTurnState.Failed) tokens.danger else tokens.textPrimary
-            )
-        }
-
-        private fun startTicker(item: AgentConversationDisplayItem.Process) {
-            val runnable = object : Runnable {
-                override fun run() {
-                    if (boundItem?.id != item.id || !itemView.isAttachedToWindow) return
-                    updateTitle(item)
-                    itemView.postDelayed(this, PROCESS_TICK_MS)
-                }
-            }
-            ticker = runnable
-            itemView.postDelayed(runnable, PROCESS_TICK_MS)
-        }
-
-        private fun stopTicker() {
-            ticker?.let(itemView::removeCallbacks)
-            ticker = null
+            rebuildEntries(item)
         }
 
         private fun rebuildEntries(item: AgentConversationDisplayItem.Process) {
@@ -570,15 +541,14 @@ internal class ConversationAdapter(
             }
         }
 
-        private fun thoughtRow(item: AgentConversationDisplayItem.Thought): View = TextView(context).apply {
-            text = item.text
-            textSize = 14.5f
-            includeFontPadding = false
-            setLineSpacing(0f, 1.28f)
-            letterSpacing = CONVERSATION_LETTER_SPACING
-            setTextColor(tokens.textPrimary)
-            setPadding(0, ui.dp(5), 0, ui.dp(7))
-        }
+        private fun thoughtRow(item: AgentConversationDisplayItem.Thought): View =
+            AgentThoughtRowView(context, tokens).apply {
+                val expanded = item.id in expandedThoughtIds
+                bind(item.text, expanded) {
+                    if (expanded) expandedThoughtIds.remove(item.id) else expandedThoughtIds.add(item.id)
+                    bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
+                }
+            }
 
         private fun toolRow(item: AgentConversationDisplayItem.Tool): View = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -704,36 +674,35 @@ internal class ConversationAdapter(
         }
 
         override fun recycle() {
-            stopTicker()
-            boundItem = null
             entries.removeAllViews()
         }
     }
 
-    inner class ThoughtHolder : DisplayHolder(
-        LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = rowParams(top = 5, bottom = 7)
-            setPadding(ui.dp(13), ui.dp(10), ui.dp(13), ui.dp(11))
-            background = ui.roundedBox(tokens.primarySubtle, tokens.border, ui.dp(14).toFloat(), ui.dp(1))
+    inner class AnswerCopyHolder : DisplayHolder(
+        FrameLayout(context).apply {
+            layoutParams = rowParams(top = 0, bottom = 8)
         }
     ) {
-        private val container = itemView as LinearLayout
-        private val label = sectionLabel().also(container::addView)
-        private val text = messageTextView().apply {
-            textSize = 14.5f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-            setTextColor(tokens.textSecondary)
-        }.also(container::addView)
+        private val copy = copyIconButton("复制回答").also { button ->
+            (itemView as FrameLayout).addView(
+                button,
+                FrameLayout.LayoutParams(ui.dp(COPY_BUTTON_SIZE_DP), ui.dp(COPY_BUTTON_SIZE_DP), Gravity.START),
+            )
+        }
 
+        override fun bind(item: AgentConversationDisplayItem) {
+            item as AgentConversationDisplayItem.AnswerCopy
+            copy.setOnClickListener { copyText("Agent 回答", item.copyText) }
+        }
+    }
+
+    inner class ThoughtHolder : DisplayHolder(
+        AgentThoughtRowView(context, tokens).apply { layoutParams = rowParams(top = 5, bottom = 7) }
+    ) {
         override fun bind(item: AgentConversationDisplayItem) {
             item as AgentConversationDisplayItem.Thought
             val expanded = item.id in expandedThoughtIds
-            label.text = if (expanded) "思考过程 · 点击收起" else "思考过程 · 点击展开"
-            text.text = item.text
-            text.maxLines = if (expanded) Int.MAX_VALUE else COLLAPSED_THOUGHT_LINES
-            text.ellipsize = if (expanded) null else TextUtils.TruncateAt.END
-            container.setOnClickListener {
+            (itemView as AgentThoughtRowView).bind(item.text, expanded) {
                 if (expanded) expandedThoughtIds.remove(item.id) else expandedThoughtIds.add(item.id)
                 bindingAdapterPosition.takeIf { it != RecyclerView.NO_POSITION }?.let(::notifyItemChanged)
             }
@@ -998,6 +967,22 @@ internal class ConversationAdapter(
             setMargins(ui.dp(18), ui.dp(top), ui.dp(18), ui.dp(bottom))
         }
 
+    private fun copyIconButton(description: String): ImageButton = ImageButton(context).apply {
+        setImageResource(R.drawable.ic_paste_light)
+        imageTintList = ColorStateList.valueOf(tokens.textSecondary)
+        scaleType = ImageView.ScaleType.CENTER_INSIDE
+        setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
+        background = null
+        contentDescription = description
+        minimumWidth = 0
+        minimumHeight = 0
+    }
+
+    private fun copyButtonLayoutParams(): LinearLayout.LayoutParams = LinearLayout.LayoutParams(
+        ui.dp(COPY_BUTTON_SIZE_DP),
+        ui.dp(COPY_BUTTON_SIZE_DP),
+    )
+
     private fun copyText(label: String, value: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
@@ -1024,15 +1009,25 @@ internal class ConversationAdapter(
             val start = result.length
             result.append(segment.text)
             val end = result.length
-            when (segment.style) {
-                AgentInlineTextSegment.Style.Plain -> Unit
-                AgentInlineTextSegment.Style.Strong -> result.setSpan(
+            if (AgentInlineTextSegment.Style.Strong in segment.styles) result.setSpan(
                     StyleSpan(Typeface.BOLD),
                     start,
                     end,
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
-                AgentInlineTextSegment.Style.Code -> {
+            if (AgentInlineTextSegment.Style.Emphasis in segment.styles) result.setSpan(
+                StyleSpan(Typeface.ITALIC),
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            if (AgentInlineTextSegment.Style.Strike in segment.styles) result.setSpan(
+                StrikethroughSpan(),
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+            if (AgentInlineTextSegment.Style.Code in segment.styles) {
                     result.setSpan(
                         TypefaceSpan("monospace"),
                         start,
@@ -1045,15 +1040,23 @@ internal class ConversationAdapter(
                         end,
                         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                     )
-                }
-                AgentInlineTextSegment.Style.Link -> segment.link?.let { url ->
+            }
+            if (AgentInlineTextSegment.Style.Link in segment.styles) segment.link?.let { url ->
                     result.setSpan(
-                        URLSpan(url),
+                        object : ClickableSpan() {
+                            override fun onClick(widget: View) {
+                                AgentMarkdownLinkRouter.open(widget.context, url)
+                            }
+
+                            override fun updateDrawState(drawState: TextPaint) {
+                                drawState.color = tokens.primaryStrong
+                                drawState.isUnderlineText = false
+                            }
+                        },
                         start,
                         end,
                         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
                     )
-                }
             }
         }
         return result
@@ -1064,13 +1067,6 @@ internal class ConversationAdapter(
         "in_progress", "running" -> "◉"
         "failed", "error" -> "!"
         else -> "○"
-    }
-
-    private fun formatProcessDuration(durationMillis: Long): String {
-        val totalSeconds = (durationMillis / 1_000L).coerceAtLeast(0L)
-        val minutes = totalSeconds / 60L
-        val seconds = totalSeconds % 60L
-        return if (minutes > 0L) "${minutes}m ${seconds}s" else "${seconds}s"
     }
 
     private companion object {
@@ -1085,10 +1081,10 @@ internal class ConversationAdapter(
         const val TYPE_RULE = 9
         const val TYPE_TABLE = 10
         const val TYPE_PROCESS = 11
+        const val TYPE_ANSWER_COPY = 12
+        const val COPY_BUTTON_SIZE_DP = 36
         const val PLAN_ROWS = 6
-        const val COLLAPSED_THOUGHT_LINES = 4
         const val COLLAPSED_TOOL_LINES = 4
-        const val PROCESS_TICK_MS = 1_000L
         const val BODY_TEXT_WEIGHT = 450
         const val CONVERSATION_LETTER_SPACING = 0.025f
         const val BODY_LETTER_SPACING = 0.03f

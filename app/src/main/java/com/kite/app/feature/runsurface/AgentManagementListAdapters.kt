@@ -163,12 +163,19 @@ internal class AgentSkillListAdapter(
     private val context: Context,
     private val tokens: ThemeTokens,
     private val onClick: (AgentSkillSummary) -> Unit,
+    private val onLongClick: (AgentSkillSummary) -> Unit,
 ) : ListAdapter<AgentSkillSummary, AgentSkillListAdapter.Holder>(Diff) {
     private val ui = UiKit(context, tokens)
     private var pendingSkillId: String? = null
+    private var selectedSkillIds: Set<String> = emptySet()
 
-    fun submit(skills: List<AgentSkillSummary>, pendingSkillId: String?) {
+    fun submit(
+        skills: List<AgentSkillSummary>,
+        pendingSkillId: String?,
+        selectedSkillIds: Set<String> = emptySet(),
+    ) {
         this.pendingSkillId = pendingSkillId
+        this.selectedSkillIds = selectedSkillIds
         submitList(skills.sortedBy { it.displayName.lowercase() }) {
             notifyDataSetChanged()
         }
@@ -177,6 +184,12 @@ internal class AgentSkillListAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val title = TextView(context)
         val summary = TextView(context)
+        val selection = TextView(context).apply {
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textPrimary)
+            visibility = View.GONE
+        }
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -186,6 +199,9 @@ internal class AgentSkillListAdapter(
                 android.graphics.Color.TRANSPARENT,
                 ui.dp(21).toFloat(),
             )
+            addView(selection, LinearLayout.LayoutParams(ui.dp(34), ui.dp(34)).apply {
+                marginEnd = ui.dp(4)
+            })
             addView(ImageView(context).apply {
                 setImageResource(R.drawable.ic_skill_light)
                 imageTintList = ColorStateList.valueOf(tokens.textSecondary)
@@ -230,25 +246,44 @@ internal class AgentSkillListAdapter(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ui.dp(70),
         ).apply { setMargins(0, ui.dp(4), 0, ui.dp(4)) }
-        return Holder(row, title, summary)
+        return Holder(row, title, summary, selection)
     }
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val skill = getItem(position)
         val pending = pendingSkillId == skill.id
         val operationPending = pendingSkillId != null
+        val selectionMode = selectedSkillIds.isNotEmpty()
+        val selected = skill.id in selectedSkillIds
         holder.title.text = skill.displayName
         holder.summary.text = if (pending) "正在更新…" else AgentSkillUiPolicy.summary(skill)
+        holder.selection.apply {
+            visibility = if (selectionMode) View.VISIBLE else View.GONE
+            text = if (selected) "●" else ""
+            background = ui.roundedBox(
+                android.graphics.Color.TRANSPARENT,
+                if (selected) tokens.textPrimary else tokens.borderStrong,
+                ui.dp(17).toFloat(),
+                ui.dp(1),
+            )
+        }
         holder.itemView.isEnabled = !operationPending
         holder.itemView.alpha = if (operationPending && !pending) 0.55f else 1f
         holder.itemView.contentDescription = "${skill.displayName}，${holder.summary.text}"
         holder.itemView.setOnClickListener { if (!operationPending) onClick(skill) }
+        holder.itemView.setOnLongClickListener {
+            if (operationPending) false else {
+                onLongClick(skill)
+                true
+            }
+        }
     }
 
     internal class Holder(
         itemView: View,
         val title: TextView,
         val summary: TextView,
+        val selection: TextView,
     ) : RecyclerView.ViewHolder(itemView)
 
     private object Diff : DiffUtil.ItemCallback<AgentSkillSummary>() {

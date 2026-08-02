@@ -26,6 +26,8 @@ import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.transport.StdioTransport
 import com.kite.app.agent.contract.AgentCapabilities
 import com.kite.app.agent.contract.AgentClientEndpoint
+import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentContent
@@ -326,6 +328,27 @@ private class AcpProcessAgentConnection(
 
     override suspend fun setMode(sessionId: String, modeId: String): AgentOperationResult<Unit> {
         val session = sessions[sessionId] ?: return AgentOperationResult.Failure("会话不存在: $sessionId")
+        val configMode = session.configuration()
+            .filterIsInstance<AgentConfigOption.Select>()
+            .firstOrNull { it.category == AgentConfigCategory.Mode }
+        if (configMode != null) {
+            if (configMode.choices.none { it.value == modeId }) {
+                return AgentOperationResult.Failure("Agent 未提供该工作模式")
+            }
+            if (configMode.currentValue == modeId) return AgentOperationResult.Success(Unit)
+            return operation("切换工作模式") {
+                val response = session.setConfigOption(
+                    SessionConfigId(configMode.id),
+                    SessionConfigOptionValue.StringValue(modeId),
+                )
+                val configuration = session.configuration(
+                    configOptions = AcpAgentMapper.configOptions(response.configOptions),
+                )
+                endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.ConfigurationUpdated(configuration))
+                endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.CurrentModeChanged(modeId))
+                Unit
+            }
+        }
         if (!session.modesSupported) return AgentOperationResult.Unsupported("session/set_mode")
         if (session.availableModes.none { it.id.value == modeId }) {
             return AgentOperationResult.Failure("Agent 未提供该工作模式")
@@ -554,6 +577,7 @@ private class AcpClientOperations(
 @OptIn(UnstableApi::class)
 private fun AgentContent.toAcp(): ContentBlock = when (this) {
     is AgentContent.Text -> ContentBlock.Text(text = text)
+    is AgentContent.SkillReference -> error("SkillReference 必须在进入 ACP 前转换为文本")
     is AgentContent.Image -> ContentBlock.Image(data = data, mimeType = mimeType, uri = uri)
     is AgentContent.Audio -> ContentBlock.Audio(data = data, mimeType = mimeType)
     is AgentContent.ResourceLink -> ContentBlock.ResourceLink(

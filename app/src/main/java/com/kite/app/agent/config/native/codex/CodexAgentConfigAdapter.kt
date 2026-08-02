@@ -23,10 +23,14 @@ import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentReasoningControl
+import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
+import com.kite.app.agent.config.AgentUserProviderImport
+import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
+import com.kite.app.agent.config.NativeAgentManagedOutputFormat
 import com.kite.app.agent.config.native.codex.codexReasoningControl
 import com.kite.app.agent.codex.CodexPermission
 import com.kite.app.agent.codex.codexPermissionOption
@@ -61,6 +65,63 @@ internal class CodexAgentConfigAdapter(
     override fun displayName(): String = "Codex"
 
     override fun reasoningControl(): AgentReasoningControl = codexReasoningControl
+
+    override fun providerConfigurationEffect(): AgentSessionConfigurationEffect =
+        AgentSessionConfigurationEffect.ReconnectNewSession
+
+    override suspend fun readUserProviderImport(agentId: String): AgentUserProviderImportResult = runCatching {
+        val config = projection.resolve(CONFIG_PATH)
+            ?: return@runCatching AgentUserProviderImportResult.Unsupported
+        val parsed = Toml.parse(fileStore.read(config.readFile).bytes.toString(Charsets.UTF_8))
+        require(!parsed.hasErrors()) { "Codex TOML 无法解析" }
+        val providerId = parsed.getString("model_provider")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() && it != OFFICIAL_PROVIDER_ID }
+            ?: return@runCatching AgentUserProviderImportResult.Ready(AgentUserProviderImport(emptyList()))
+        val modelId = parsed.getString("model")
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+            ?: return@runCatching AgentUserProviderImportResult.Ready(AgentUserProviderImport(emptyList()))
+        val provider = parsed.getTable("model_providers.${tomlPathKey(providerId)}")
+            ?: return@runCatching AgentUserProviderImportResult.Ready(AgentUserProviderImport(emptyList()))
+        val configuredBaseUrl = provider.getString("base_url")?.trim()?.takeIf(String::isNotBlank)
+        val relayUpstream = projectedText(RELAY_UPSTREAM_PATH)
+        val usesKiteRelay = configuredBaseUrl?.trimEnd('/') == RELAY_BASE_URL
+        val baseUrl = if (usesKiteRelay) {
+            relayUpstream.takeIf(String::isNotBlank)
+        } else {
+            configuredBaseUrl
+        }
+            ?: return@runCatching AgentUserProviderImportResult.Ready(AgentUserProviderImport(emptyList()))
+        val credential = if (usesKiteRelay) {
+            projectedText(RELAY_API_KEY_PATH)
+        } else {
+            provider.getString("experimental_bearer_token").orEmpty().trim()
+        }
+        AgentUserProviderImportResult.Ready(
+            AgentUserProviderImport(
+                providers = listOf(
+                    AgentProviderSummary(
+                        id = providerId,
+                        displayName = provider.getString("name")?.trim()?.takeIf(String::isNotBlank) ?: providerId,
+                        baseUrl = baseUrl,
+                        models = listOf(AgentProviderModelSummary(modelId, modelId)),
+                        credentialPresence = if (credential.isBlank()) {
+                            AgentCredentialPresence.Missing
+                        } else {
+                            AgentCredentialPresence.Present
+                        },
+                        source = AgentModelSource.UserConfigured,
+                    )
+                ),
+                activeProviderId = providerId,
+                defaultModel = "$providerId/$modelId",
+                credentials = credential.takeIf(String::isNotBlank)?.let { secret ->
+                    mapOf(providerId to AgentProviderCredentialChange.replace(secret))
+                }.orEmpty(),
+            )
+        )
+    }.getOrElse { AgentUserProviderImportResult.Failed("无法迁移 Codex 原生供应商配置") }
 
     override suspend fun readSessionConfiguration(agentId: String): List<AgentConfigOption> =
         super.readSessionConfiguration(agentId)
@@ -120,6 +181,7 @@ internal class CodexAgentConfigAdapter(
             scope = AgentConfigScope.User,
             semantics = AgentCoreDocumentSemantics.SupplementalInstructions,
             priorityDescription = "所有 Codex 工作区都会读取的用户级说明",
+            managedOutputFormat = NativeAgentManagedOutputFormat.CreateOrUpdate,
         ))
         add(NativeAgentCoreDocumentSpec(
             id = "codex-global-override",
@@ -129,6 +191,7 @@ internal class CodexAgentConfigAdapter(
             scope = AgentConfigScope.User,
             semantics = AgentCoreDocumentSemantics.SupplementalInstructions,
             priorityDescription = "非空时替代同级全局 AGENTS.md",
+            managedOutputFormat = NativeAgentManagedOutputFormat.ExistingNonBlankOnly,
         ))
         projectCoreDocument(
             workspacePath,
@@ -257,6 +320,12 @@ internal class CodexAgentConfigAdapter(
     }
 
     override fun nativeRevisionInputs(): List<Pair<String, String>> = skillDirectory.revisionInputs()
+
+    override suspend fun readSkillDocument(agentId: String, skillId: String) =
+        skillDirectory.readDocument(skillId)
+
+    override suspend fun writeSkillDocument(request: com.kite.app.agent.config.AgentSkillDocumentWriteRequest) =
+        skillDirectory.writeDocument(request)
 
     override fun mutate(files: Map<String, ByteArray>, changes: List<AgentPersistentConfigChange>): Map<String, ByteArray> {
         var editor = TomlTextEditor(files.getValue(CONFIG_KEY).toString(Charsets.UTF_8))
@@ -408,6 +477,14 @@ internal class CodexAgentConfigAdapter(
         }.sortedBy(AgentMcpSummary::id)
     }
 
+    private fun projectedText(containerPath: String): String = projection.resolve(containerPath)
+        ?.readFile
+        ?.let(fileStore::read)
+        ?.bytes
+        ?.toString(Charsets.UTF_8)
+        ?.trim()
+        .orEmpty()
+
     private fun codexSkillActivation(parsed: org.tomlj.TomlParseResult, path: String): AgentSkillActivation {
         val overrides = parsed.getArray("skills.config") ?: return AgentSkillActivation.Enabled
         repeat(overrides.size()) { index ->
@@ -474,6 +551,7 @@ internal class CodexAgentConfigAdapter(
         private const val RELAY_API_KEY_PATH = "/workspace/.kf/secrets/kite.codex-relay-api-key"
         private const val RELAY_BASE_URL = "http://127.0.0.1:4453/v1"
         private const val NATIVE_MODE_OPTION_ID = "mode"
+        private const val OFFICIAL_PROVIDER_ID = "openai"
         private const val SKILL_ROOT = "/root/.agents/skills"
         private const val GLOBAL_AGENTS_PATH = "/root/.codex/AGENTS.md"
         private const val GLOBAL_OVERRIDE_PATH = "/root/.codex/AGENTS.override.md"

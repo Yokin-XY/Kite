@@ -26,6 +26,9 @@ import com.kite.app.agent.config.AgentProviderCredentialChange
 import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentSkillActivation
+import com.kite.app.agent.config.AgentSkillDocumentReadResult
+import com.kite.app.agent.config.AgentSkillDocumentWriteRequest
+import com.kite.app.agent.config.AgentSkillDocumentWriteResult
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
@@ -790,10 +793,22 @@ class OpenCodeAgentConfigAdapterTest {
         val installedSnapshot = (installed as AgentConfigApplyResult.Applied).snapshot
         assertEquals(listOf("imported-skill"), installedSnapshot.skills.map { it.id })
 
+        val document = adapter.readSkillDocument(AGENT_ID, "imported-skill") as AgentSkillDocumentReadResult.Ready
+        assertTrue(document.snapshot.writable)
+        val edited = adapter.writeSkillDocument(AgentSkillDocumentWriteRequest(
+            agentId = AGENT_ID,
+            skillId = "imported-skill",
+            expectedRevision = document.snapshot.revision,
+            content = document.snapshot.content.replace("正文", "已编辑"),
+        ))
+        assertTrue(edited is AgentSkillDocumentWriteResult.Applied)
+        assertTrue(File(configDir, "skills/imported-skill/SKILL.md").readText().contains("已编辑"))
+        val editedSnapshot = (adapter.readLive(AGENT_ID) as AgentConfigReadResult.Ready).snapshot
+
         val removed = adapter.apply(
             AgentConfigApplyRequest(
                 agentId = AGENT_ID,
-                expectedRevision = installedSnapshot.revision,
+                expectedRevision = editedSnapshot.revision,
                 changes = listOf(AgentPersistentConfigChange.RemoveSkill("imported-skill"))
             )
         )

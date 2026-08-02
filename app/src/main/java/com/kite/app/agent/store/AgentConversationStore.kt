@@ -11,6 +11,7 @@ import com.kite.app.agent.contract.AgentSessionPhase
 import com.kite.app.agent.contract.AgentToolCall
 import com.kite.app.agent.contract.AgentToolCallPatch
 import com.kite.app.agent.contract.AgentToolContent
+import com.kite.app.agent.sdk.skill.AgentSkillPromptComposer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -501,7 +502,12 @@ object AgentConversationStore {
             }
             retainedTextChars -= message.retainedTextChars
             retainedInlineBytes -= message.retainedInlineBytes
-            message.append(event.content)
+            val visibleBlocks = if (event.role == AgentMessageRole.User && event.content is AgentContent.Text) {
+                AgentSkillPromptComposer.restoreVisibleText(event.content.text) ?: listOf(event.content)
+            } else {
+                listOf(event.content)
+            }
+            visibleBlocks.forEach(message::append)
             retainedTextChars += message.retainedTextChars
             retainedInlineBytes += message.retainedInlineBytes
             trimTimeline()
@@ -779,6 +785,7 @@ object AgentConversationStore {
 
     private fun AgentContent.retainedTextChars(): Long = when (this) {
         is AgentContent.Text -> text.length.toLong()
+        is AgentContent.SkillReference -> displayName.length.toLong()
         is AgentContent.EmbeddedText -> text.length.toLong()
         else -> 0L
     }

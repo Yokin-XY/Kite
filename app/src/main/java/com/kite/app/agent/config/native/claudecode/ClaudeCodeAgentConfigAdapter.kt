@@ -31,6 +31,7 @@ import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
+import com.kite.app.agent.config.NativeAgentManagedOutputFormat
 import com.kite.app.agent.config.native.claudecode.claudeCodeReasoningControl
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigOption
@@ -93,6 +94,7 @@ internal class ClaudeCodeAgentConfigAdapter(
             scope = AgentConfigScope.User,
             semantics = AgentCoreDocumentSemantics.SupplementalInstructions,
             priorityDescription = "所有 Claude Code 项目都会加载的用户级说明",
+            managedOutputFormat = NativeAgentManagedOutputFormat.CreateOrUpdate,
         ))
         projectCoreDocument(
             workspacePath,
@@ -219,6 +221,12 @@ internal class ClaudeCodeAgentConfigAdapter(
     }
 
     override fun nativeRevisionInputs(): List<Pair<String, String>> = skillDirectory.revisionInputs()
+
+    override suspend fun readSkillDocument(agentId: String, skillId: String) =
+        skillDirectory.readDocument(skillId)
+
+    override suspend fun writeSkillDocument(request: com.kite.app.agent.config.AgentSkillDocumentWriteRequest) =
+        skillDirectory.writeDocument(request)
 
     override fun mutate(files: Map<String, ByteArray>, changes: List<AgentPersistentConfigChange>): Map<String, ByteArray> {
         val root = parse(files.getValue(CONFIG_KEY)).clone()

@@ -5,6 +5,10 @@ import com.kite.app.agent.config.AgentConfigScope
 import com.kite.app.agent.config.AgentConfigValidationProblem
 import com.kite.app.agent.config.AgentPersistentConfigChange
 import com.kite.app.agent.config.AgentSkillActivation
+import com.kite.app.agent.config.AgentSkillDocumentReadResult
+import com.kite.app.agent.config.AgentSkillDocumentSnapshot
+import com.kite.app.agent.config.AgentSkillDocumentWriteRequest
+import com.kite.app.agent.config.AgentSkillDocumentWriteResult
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentSkillSummary
 import com.kite.app.agent.config.AtomicConfigFileStore
@@ -92,6 +96,50 @@ internal class NativeAgentSkillDirectory(
 
     fun revisionInputs(): List<Pair<String, String>> = discover().map { entry ->
         "skill:${entry.containerLocation}" to treeRevision(entry.directory)
+    }
+
+    fun readDocument(skillId: String): AgentSkillDocumentReadResult {
+        if (!SAFE_ID.matches(skillId)) return AgentSkillDocumentReadResult.Missing()
+        val entry = discover().firstOrNull { it.id == skillId }
+            ?: return AgentSkillDocumentReadResult.Missing()
+        return runCatching {
+            AgentSkillDocumentReadResult.Ready(snapshot(entry))
+        }.getOrElse {
+            AgentSkillDocumentReadResult.Failed("无法读取 Skill 主文件")
+        }
+    }
+
+    fun writeDocument(request: AgentSkillDocumentWriteRequest): AgentSkillDocumentWriteResult {
+        if (!SAFE_ID.matches(request.skillId)) return documentRejected("skillId", "Skill ID 格式无效")
+        val nextBytes = request.content.toByteArray(Charsets.UTF_8)
+        validateDocumentBytes(nextBytes)?.let { return documentRejected("content", it) }
+        val entry = discover().firstOrNull { it.id == request.skillId }
+            ?: return AgentSkillDocumentWriteResult.Conflict("skill:missing", "Skill 已不存在，请重新读取")
+        if (!entry.removable) return documentRejected("skillId", "当前 Skill 来自共享或只读层，不能编辑")
+        val target = File(entry.directory, SKILL_FILE)
+        val before = runCatching { fileStore.read(target) }.getOrElse {
+            return AgentSkillDocumentWriteResult.Failed("无法读取当前 Skill", restored = true)
+        }
+        if (before.revision.value != request.expectedRevision) {
+            return AgentSkillDocumentWriteResult.Conflict(before.revision.value)
+        }
+        return when (val result = fileStore.replace(
+            target = target,
+            expectedRevision = before.revision,
+            nextBytes = nextBytes,
+            validate = ::validateDocumentBytes,
+        )) {
+            is AtomicConfigFileWriteResult.Applied -> when (val reread = readDocument(request.skillId)) {
+                is AgentSkillDocumentReadResult.Ready ->
+                    AgentSkillDocumentWriteResult.Applied(reread.snapshot, result.backupReference)
+                else -> AgentSkillDocumentWriteResult.Failed("Skill 已写入，但无法重新读取", restored = false)
+            }
+            is AtomicConfigFileWriteResult.Conflict ->
+                AgentSkillDocumentWriteResult.Conflict(result.actualRevision.value)
+            is AtomicConfigFileWriteResult.Rejected -> documentRejected("content", result.message)
+            is AtomicConfigFileWriteResult.Failed ->
+                AgentSkillDocumentWriteResult.Failed(result.message, result.restored)
+        }
     }
 
     fun applyFileChange(change: AgentPersistentConfigChange): AgentConfigApplyResult? = when (change) {
@@ -232,6 +280,26 @@ internal class NativeAgentSkillDirectory(
         requireNotNull(name) to requireNotNull(title)
     }.getOrNull()
 
+    private fun snapshot(entry: Entry): AgentSkillDocumentSnapshot {
+        val file = File(entry.directory, SKILL_FILE)
+        require(isSafeSkillFile(entry.directory, file))
+        val stored = fileStore.read(file)
+        return AgentSkillDocumentSnapshot(
+            skillId = entry.id,
+            displayName = entry.displayName,
+            location = "${entry.containerLocation}/$SKILL_FILE",
+            revision = stored.revision.value,
+            content = stored.bytes.toString(Charsets.UTF_8),
+            writable = entry.removable,
+        )
+    }
+
+    private fun validateDocumentBytes(bytes: ByteArray): String? = when {
+        bytes.size > MAX_SKILL_BYTES -> "SKILL.md 超过大小限制"
+        bytes.any { it == 0.toByte() } -> "SKILL.md 不能包含空字节"
+        else -> null
+    }
+
     private fun copyTree(source: File, destination: File) {
         val files = source.walkTopDown().toList()
         require(files.none { Files.isSymbolicLink(it.toPath()) })
@@ -258,6 +326,10 @@ internal class NativeAgentSkillDirectory(
     }
 
     private fun rejected(field: String, message: String) = AgentConfigApplyResult.Rejected(
+        listOf(AgentConfigValidationProblem(field, message)),
+    )
+
+    private fun documentRejected(field: String, message: String) = AgentSkillDocumentWriteResult.Rejected(
         listOf(AgentConfigValidationProblem(field, message)),
     )
 

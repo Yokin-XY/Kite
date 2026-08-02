@@ -24,6 +24,8 @@ import com.kite.app.agent.config.AgentUserProviderImport
 import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.config.AgentWorkModeCatalog
 import com.kite.app.agent.contract.AgentMode
+import com.kite.app.agent.contract.AgentConfigCategory
+import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentModelSource
 import com.kite.app.agent.runtime.AgentDraftModelSelection
 import com.kite.app.agent.store.AgentCatalogModel
@@ -192,6 +194,118 @@ class AgentProviderCatalogApiTest {
     }
 
     @Test
+    fun `官方登录模型只在发送准备时清除自定义Provider覆盖`() = runTest {
+        api.saveOfficialVersion(
+            target,
+            accountId = "chatgpt",
+            sourceVersion = "login-v1",
+            providers = listOf(
+                AgentCatalogProvider(
+                    id = "openai",
+                    displayName = "OpenAI",
+                    models = listOf(AgentCatalogModel("gpt-5.3-codex", "GPT-5.3 Codex")),
+                    source = AgentModelSource.OfficialLogin,
+                    policy = AgentProviderCatalogPolicy.OfficialLoginVersion,
+                )
+            ),
+        )
+        assertTrue(api.selectModel(target, "openai", "gpt-5.3-codex"))
+        assertEquals(0, adapter.applyCalls)
+
+        val prepared = api.prepareSelectedProvider(
+            target,
+            AgentDraftModelSelection("openai", "gpt-5.3-codex", usesAgentDefault = false),
+        ) as AgentProviderPreparationResult.Ready
+
+        assertEquals(1, adapter.applyCalls)
+        assertEquals(AgentPersistentConfigChange.SetDefaultModel("gpt-5.3-codex", clearProviderOverride = true), adapter.lastChange)
+        assertEquals(AgentSessionConfigurationEffect.Reconnect, prepared.effect)
+        assertTrue(prepared.nativeConfigurationChanged)
+        assertEquals(null, adapter.activeProviderId)
+        assertEquals("gpt-5.3-codex", adapter.defaultModel)
+    }
+
+    @Test
+    fun `同一用户Provider换模型会按所选模型更新原生激活值`() = runTest {
+        api.saveUserProvider(
+            target,
+            AgentProviderDraft(
+                id = "custom",
+                displayName = "用户供应商",
+                baseUrl = "https://example.com/v1",
+                models = listOf(
+                    AgentProviderModelSummary("model-a", "模型 A"),
+                    AgentProviderModelSummary("model-b", "模型 B"),
+                ),
+            ),
+            AgentProviderCredentialChange.replace("new-key"),
+        )
+        assertTrue(api.selectModel(target, "custom", "model-b"))
+        api.prepareSelectedProvider(
+            target,
+            AgentDraftModelSelection("custom", "model-b", usesAgentDefault = false),
+        )
+        val configured = adapter.lastChange as AgentPersistentConfigChange.ConfigureProvider
+        assertEquals("model-b", configured.provider.models.first().id)
+
+        assertTrue(api.selectModel(target, "custom", "model-a"))
+        api.prepareSelectedProvider(
+            target,
+            AgentDraftModelSelection("custom", "model-a", usesAgentDefault = false),
+        )
+
+        assertEquals(2, adapter.applyCalls)
+        assertEquals(AgentPersistentConfigChange.SelectProvider("custom", "model-a"), adapter.lastChange)
+        assertEquals("custom", adapter.activeProviderId)
+        assertEquals("model-a", adapter.defaultModel)
+    }
+
+    @Test
+    fun `官方与用户Provider来回切换不会误用旧准备缓存`() = runTest {
+        api.saveUserProvider(
+            target,
+            AgentProviderDraft(
+                id = "custom",
+                displayName = "用户供应商",
+                baseUrl = "https://example.com/v1",
+                models = listOf(AgentProviderModelSummary("model-a", "模型 A")),
+            ),
+            AgentProviderCredentialChange.replace("new-key"),
+        )
+        api.saveOfficialVersion(
+            target,
+            accountId = "chatgpt",
+            sourceVersion = "login-v1",
+            providers = listOf(
+                AgentCatalogProvider(
+                    id = "openai",
+                    displayName = "OpenAI",
+                    models = listOf(AgentCatalogModel("official-model")),
+                    source = AgentModelSource.OfficialLogin,
+                    policy = AgentProviderCatalogPolicy.OfficialLoginVersion,
+                )
+            ),
+        )
+
+        api.prepareSelectedProvider(
+            target,
+            AgentDraftModelSelection("custom", "model-a", usesAgentDefault = false),
+        )
+        api.prepareSelectedProvider(
+            target,
+            AgentDraftModelSelection("openai", "official-model", usesAgentDefault = false),
+        )
+        api.prepareSelectedProvider(
+            target,
+            AgentDraftModelSelection("custom", "model-a", usesAgentDefault = false),
+        )
+
+        assertEquals(3, adapter.applyCalls)
+        assertEquals(AgentPersistentConfigChange.SelectProvider("custom", "model-a"), adapter.lastChange)
+        assertEquals("custom", adapter.activeProviderId)
+    }
+
+    @Test
     fun `工作模式预设和选择只进入统一目录不会写Agent`() {
         adapter.bundledModes = AgentWorkModeCatalog(
             modes = listOf(AgentMode("build", "Build"), AgentMode("plan", "Plan")),
@@ -212,6 +326,9 @@ class AgentProviderCatalogApiTest {
         var importCalls = 0
         var freeScanCalls = 0
         var applyCalls = 0
+        var lastChange: AgentPersistentConfigChange? = null
+        var activeProviderId: String? = null
+        var defaultModel: String? = null
         var bundled: AgentFreeProviderCatalog? = null
         var bundledModes: AgentWorkModeCatalog? = null
         private var revision = 1
@@ -268,6 +385,13 @@ class AgentProviderCatalogApiTest {
         override fun providerConfigurationEffect(): AgentSessionConfigurationEffect =
             AgentSessionConfigurationEffect.Reconnect
 
+        override fun defaultModelChange(option: AgentConfigOption.Select): AgentPersistentConfigChange.SetDefaultModel? {
+            if (option.category != AgentConfigCategory.Model) return null
+            val choice = option.choices.firstOrNull { it.value == option.currentValue } ?: return null
+            if (choice.modelSource != AgentModelSource.OfficialLogin) return null
+            return AgentPersistentConfigChange.SetDefaultModel(option.currentValue, clearProviderOverride = true)
+        }
+
         override suspend fun discover(agentId: String): AgentConfigDiscovery = AgentConfigDiscovery(
             agentId,
             adapterId,
@@ -282,6 +406,8 @@ class AgentProviderCatalogApiTest {
                 adapterId = adapterId,
                 revision = "r$revision",
                 displayLocation = "/test",
+                activeProviderId = activeProviderId,
+                defaultModel = defaultModel,
                 providers = providers.values.toList(),
             ),
         )
@@ -290,18 +416,34 @@ class AgentProviderCatalogApiTest {
 
         override suspend fun apply(request: AgentConfigApplyRequest): AgentConfigApplyResult {
             applyCalls++
-            val change = request.changes.single() as AgentPersistentConfigChange.ConfigureProvider
-            providers[change.provider.id] = AgentProviderSummary(
-                id = change.provider.id,
-                displayName = change.provider.displayName ?: change.provider.id,
-                baseUrl = change.provider.baseUrl,
-                models = change.provider.models,
-                credentialPresence = when (change.credential) {
-                    AgentProviderCredentialChange.Remove -> AgentCredentialPresence.Missing
-                    AgentProviderCredentialChange.Keep -> AgentCredentialPresence.Unknown
-                    is AgentProviderCredentialChange.Replace -> AgentCredentialPresence.Present
-                },
-            )
+            val change = request.changes.single()
+            lastChange = change
+            when (change) {
+                is AgentPersistentConfigChange.ConfigureProvider -> {
+                    providers[change.provider.id] = AgentProviderSummary(
+                        id = change.provider.id,
+                        displayName = change.provider.displayName ?: change.provider.id,
+                        baseUrl = change.provider.baseUrl,
+                        models = change.provider.models,
+                        credentialPresence = when (change.credential) {
+                            AgentProviderCredentialChange.Remove -> AgentCredentialPresence.Missing
+                            AgentProviderCredentialChange.Keep -> AgentCredentialPresence.Unknown
+                            is AgentProviderCredentialChange.Replace -> AgentCredentialPresence.Present
+                        },
+                    )
+                    activeProviderId = change.provider.id
+                    defaultModel = change.provider.models.first().id
+                }
+                is AgentPersistentConfigChange.SelectProvider -> {
+                    activeProviderId = change.providerId
+                    defaultModel = change.modelId
+                }
+                is AgentPersistentConfigChange.SetDefaultModel -> {
+                    if (change.clearProviderOverride) activeProviderId = null
+                    defaultModel = change.modelId
+                }
+                else -> error("测试 Adapter 不支持 $change")
+            }
             revision++
             return (readLive(request.agentId) as AgentConfigReadResult.Ready).snapshot.let {
                 AgentConfigApplyResult.Applied(it, backupReference = null)

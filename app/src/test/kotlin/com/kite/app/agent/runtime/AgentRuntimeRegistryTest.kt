@@ -9,6 +9,7 @@ import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.contract.AgentContent
+import com.kite.app.agent.contract.AgentDraftConfigurationPreview
 import com.kite.app.agent.contract.AgentExistingSessionRequest
 import com.kite.app.agent.contract.AgentMessageRole
 import com.kite.app.agent.contract.AgentMode
@@ -36,6 +37,9 @@ import com.kite.app.agent.contract.KiteAgentProvider
 import com.kite.app.agent.store.AgentConversationKey
 import com.kite.app.agent.store.AgentConversationHistoryStatus
 import com.kite.app.agent.store.AgentConversationStore
+import com.kite.app.agent.sdk.skill.AgentPromptDraft
+import com.kite.app.agent.sdk.skill.AgentSelectedSkill
+import com.kite.app.agent.sdk.skill.AgentSkillPromptComposer
 import com.kite.app.agent.config.AgentSessionModelSelection
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.sdk.configuration.AgentProviderPreparationResult
@@ -66,6 +70,37 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
+    fun `Skill胶囊留在会话显示而中性提示只进入Agent请求`() = runTest {
+        val provider = FakeProvider(requestPermission = false)
+        start(provider, request("instance-skill-draft"))
+
+        val result = AgentRuntimeRegistry.prompt(
+            "instance-skill-draft",
+            1L,
+            AgentPromptDraft(
+                content = listOf(AgentContent.Text("帮我看看这个 Skill 是干什么的")),
+                skills = listOf(AgentSelectedSkill("document-helper", "文档助手")),
+            ),
+        )
+
+        assertTrue(result is AgentOperationResult.Success)
+        val sent = provider.connection.promptRequests.single().content.filterIsInstance<AgentContent.Text>()
+        assertTrue(sent.first().text.contains("不要仅因关联而强制执行"))
+        assertEquals(
+            listOf(AgentContent.SkillReference("document-helper", "文档助手")),
+            AgentSkillPromptComposer.restoreVisibleText(sent.first().text),
+        )
+        assertEquals("帮我看看这个 Skill 是干什么的", sent.last().text)
+        val local = AgentConversationStore.snapshot(AgentConversationKey("fake", "session-1"))!!
+            .timeline.filterIsInstance<com.kite.app.agent.store.AgentConversationItem.Message>()
+            .single { it.role == AgentMessageRole.User }
+        assertEquals(
+            listOf(AgentContent.SkillReference("document-helper", "文档助手"), AgentContent.Text("帮我看看这个 Skill 是干什么的")),
+            local.content,
+        )
+    }
+
+    @Test
     fun `启动 权限 消息和停止都保持同一实例代次`() = runTest {
         val provider = FakeProvider()
         val phases = mutableListOf<AgentSessionPhase>()
@@ -79,10 +114,10 @@ class AgentRuntimeRegistryTest {
             },
         )
 
-        assertEquals("session-1", session.sessionId)
+        assertEquals(null, session.sessionId)
         assertTrue(session.isDraft)
-        assertEquals(AgentRuntimeSessionState.WarmDraft, session.state)
-        assertEquals(1, provider.connection.newSessionCalls)
+        assertEquals(AgentRuntimeSessionState.ColdDraft, session.state)
+        assertEquals(0, provider.connection.newSessionCalls)
         assertTrue(visibleSessionIds.all { it == null })
 
         val prompt = async {
@@ -119,7 +154,7 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
-    fun `新建草稿 列出和加载会话复用同一 provider connection`() = runTest {
+    fun `冷草稿 列出和加载会话复用同一 provider connection`() = runTest {
         val provider = FakeProvider()
         val started = start(provider, request("instance-sessions", generation = 88L))
 
@@ -132,11 +167,13 @@ class AgentRuntimeRegistryTest {
             "/workspace/old"
         ) as AgentOperationResult.Success
 
-        assertEquals("session-1", started.sessionId)
+        assertEquals(null, started.sessionId)
         assertTrue(started.isDraft)
-        assertEquals("session-2", created.value.sessionId)
+        assertEquals(AgentRuntimeSessionState.ColdDraft, started.state)
+        assertEquals(null, created.value.sessionId)
         assertTrue(created.value.isDraft)
-        assertEquals(2, provider.connection.newSessionCalls)
+        assertEquals(AgentRuntimeSessionState.ColdDraft, created.value.state)
+        assertEquals(0, provider.connection.newSessionCalls)
         assertEquals(listOf("historical-1"), listed.value.sessions.map { it.id })
         assertEquals(null, provider.connection.lastListRequest?.cwd)
         assertEquals("historical-1", loaded.value.sessionId)
@@ -149,10 +186,10 @@ class AgentRuntimeRegistryTest {
             88L,
             AgentRuntimeRegistry.defaultCwd("instance-sessions", 88L)
         ) as AgentOperationResult.Success
-        assertEquals("session-3", defaultDraft.value.sessionId)
+        assertEquals(null, defaultDraft.value.sessionId)
         assertTrue(defaultDraft.value.isDraft)
         assertEquals("/workspace", defaultDraft.value.cwd)
-        assertEquals(3, provider.connection.newSessionCalls)
+        assertEquals(0, provider.connection.newSessionCalls)
     }
 
     @Test
@@ -201,7 +238,7 @@ class AgentRuntimeRegistryTest {
         val provider = FakeProvider(promptFailures = 1, requestPermission = false)
         start(provider, "instance-first-send")
 
-        assertEquals(1, provider.connection.newSessionCalls)
+        assertEquals(0, provider.connection.newSessionCalls)
 
         val first = AgentRuntimeRegistry.prompt(
             "instance-first-send",
@@ -235,7 +272,7 @@ class AgentRuntimeRegistryTest {
 
     @Test
     fun `首发创建失败保持草稿且重试只绑定成功创建的会话`() = runTest {
-        val provider = FakeProvider(newSessionFailures = 2, requestPermission = false)
+        val provider = FakeProvider(newSessionFailures = 1, requestPermission = false)
         start(provider, "instance-create-failure")
 
         val failed = AgentRuntimeRegistry.prompt(
@@ -245,7 +282,7 @@ class AgentRuntimeRegistryTest {
         )
         assertTrue(failed is AgentOperationResult.Failure)
         assertTrue(AgentRuntimeRegistry.session("instance-create-failure")?.isDraft == true)
-        assertEquals(2, provider.connection.newSessionCalls)
+        assertEquals(1, provider.connection.newSessionCalls)
         assertEquals(0, provider.connection.promptCalls)
 
         val retried = AgentRuntimeRegistry.prompt(
@@ -256,7 +293,7 @@ class AgentRuntimeRegistryTest {
 
         assertTrue(retried is AgentOperationResult.Success)
         assertEquals("session-1", AgentRuntimeRegistry.session("instance-create-failure")?.sessionId)
-        assertEquals(3, provider.connection.newSessionCalls)
+        assertEquals(2, provider.connection.newSessionCalls)
         assertEquals(1, provider.connection.promptCalls)
     }
 
@@ -426,7 +463,7 @@ class AgentRuntimeRegistryTest {
     }
 
     @Test
-    fun `草稿复用已公布能力并在首发前应用配置和模式`() = runTest {
+    fun `草稿复用已公布能力并在首个请求前应用配置和模式`() = runTest {
         val thoughtOption = selectOption(
             "thought", "推理强度", AgentConfigCategory.ThoughtLevel, "medium",
             "medium" to "中", "high" to "高",
@@ -470,7 +507,7 @@ class AgentRuntimeRegistryTest {
         assertTrue(configuration is AgentOperationResult.Success)
         assertTrue(mode is AgentOperationResult.Success)
         assertTrue(permission is AgentOperationResult.Success)
-        assertEquals(1, provider.connection.newSessionCalls)
+        assertEquals(0, provider.connection.newSessionCalls)
         assertEquals(0, provider.connection.promptCalls)
         assertTrue(provider.connection.selectedModelValues.isEmpty())
         assertEquals(null, provider.connection.selectedModeId)
@@ -478,7 +515,7 @@ class AgentRuntimeRegistryTest {
         val prompted = AgentRuntimeRegistry.prompt(
             "instance-draft-capabilities",
             1L,
-            listOf(AgentContent.Text("Ping"))
+            listOf(AgentContent.Text("Ping")),
         )
 
         assertTrue(prompted is AgentOperationResult.Success)
@@ -503,7 +540,7 @@ class AgentRuntimeRegistryTest {
 
         assertEquals("plan", AgentRuntimeRegistry.draftPreferences("instance-cached-mode", 1L)?.modeId)
         assertEquals(null, provider.connection.selectedModeId)
-        assertEquals(1, provider.connection.newSessionCalls)
+        assertEquals(0, provider.connection.newSessionCalls)
 
         val prompted = AgentRuntimeRegistry.prompt(
             "instance-cached-mode",
@@ -693,6 +730,192 @@ class AgentRuntimeRegistryTest {
         assertEquals(listOf("zhipu/glm-5.2"), provider.connections.last().selectedModelValues)
     }
 
+    @Test
+    fun `活动会话跨Provider重连时创建新原生会话而不恢复旧线程`() = runTest {
+        val modelOption = selectOption(
+            "model", "模型", AgentConfigCategory.Model, "openai/default",
+            "openai/default" to "Default", "zhipu/glm-5.2" to "GLM-5.2",
+        )
+        val provider = FakeProvider(initialConfiguration = listOf(modelOption), requestPermission = false)
+        start(
+            provider,
+            request("instance-provider-new-session").copy(
+                resolveDraftModelSelection = { target, _ ->
+                    AgentSessionModelSelection("model", "${target.providerId}/${target.modelId}")
+                },
+                prepareDraftModelSelection = {
+                    AgentProviderPreparationResult.Ready(
+                        effect = AgentSessionConfigurationEffect.ReconnectNewSession,
+                        nativeConfigurationChanged = true,
+                    )
+                },
+            ),
+        )
+        AgentRuntimeRegistry.prompt(
+            "instance-provider-new-session",
+            1L,
+            listOf(AgentContent.Text("第一轮")),
+        )
+        AgentRuntimeRegistry.selectDraftModel(
+            "instance-provider-new-session",
+            1L,
+            AgentDraftModelSelection("zhipu", "glm-5.2", usesAgentDefault = false),
+        )
+
+        val result = AgentRuntimeRegistry.prompt(
+            "instance-provider-new-session",
+            1L,
+            listOf(AgentContent.Text("第二轮")),
+        )
+
+        assertTrue(result is AgentOperationResult.Success)
+        assertEquals(2, provider.connections.size)
+        assertEquals(0, provider.connections.last().loadSessionCalls)
+        assertEquals(0, provider.connections.last().resumeSessionCalls)
+        assertEquals(listOf("new", "model", "prompt"), provider.connections.last().callOrder)
+        assertEquals(listOf("zhipu/glm-5.2"), provider.connections.last().selectedModelValues)
+    }
+
+    @Test
+    fun `草稿模型变化会替换关联能力并清除不再支持的推理选择`() = runTest {
+        val modelOption = selectOption(
+            "model", "模型", AgentConfigCategory.Model, "gpt-5.6-sol",
+            "gpt-5.6-sol" to "Sol", "gpt-5.6-terra" to "Terra",
+        ).copy(choices = listOf(
+            AgentConfigChoice("gpt-5.6-sol", "Sol", groupId = "openai"),
+            AgentConfigChoice("gpt-5.6-terra", "Terra", groupId = "openai"),
+        ))
+        val solEffort = selectOption(
+            "effort", "推理强度", AgentConfigCategory.ThoughtLevel, "low",
+            "low" to "低", "high" to "高",
+        )
+        val terraEffort = selectOption(
+            "effort", "推理强度", AgentConfigCategory.ThoughtLevel, "medium",
+            "medium" to "中", "max" to "最高",
+        )
+        val provider = FakeProvider(
+            initialConfiguration = listOf(modelOption, solEffort),
+            requestPermission = false,
+            modelPreviews = mapOf(
+                ("openai" to "gpt-5.6-terra") to AgentDraftConfigurationPreview(
+                    replaceCategories = setOf(AgentConfigCategory.ThoughtLevel),
+                    options = listOf(terraEffort),
+                ),
+                ("custom" to "glm-5") to AgentDraftConfigurationPreview(
+                    replaceCategories = setOf(AgentConfigCategory.ThoughtLevel),
+                    options = emptyList(),
+                ),
+            ),
+        )
+        start(provider, request("instance-model-preview"))
+        AgentRuntimeRegistry.selectDraftConfiguration(
+            "instance-model-preview",
+            1L,
+            "effort",
+            AgentConfigValue.Select("high"),
+        )
+
+        AgentRuntimeRegistry.selectDraftModel(
+            "instance-model-preview",
+            1L,
+            AgentDraftModelSelection("openai", "gpt-5.6-terra", usesAgentDefault = false),
+        )
+
+        val terraCatalog = requireNotNull(
+            AgentRuntimeRegistry.draftCapabilityCatalog("instance-model-preview", 1L)
+        )
+        assertEquals(
+            listOf("medium", "max"),
+            terraCatalog.configuration.filterIsInstance<AgentConfigOption.Select>()
+                .single { it.category == AgentConfigCategory.ThoughtLevel }
+                .choices
+                .map { it.value },
+        )
+        assertFalse(
+            "effort" in requireNotNull(
+                AgentRuntimeRegistry.draftPreferences("instance-model-preview", 1L)
+            ).configuration
+        )
+
+        AgentRuntimeRegistry.selectDraftConfiguration(
+            "instance-model-preview",
+            1L,
+            "effort",
+            AgentConfigValue.Select("max"),
+        )
+        AgentRuntimeRegistry.selectDraftModel(
+            "instance-model-preview",
+            1L,
+            AgentDraftModelSelection("custom", "glm-5", usesAgentDefault = false),
+        )
+
+        val customCatalog = requireNotNull(
+            AgentRuntimeRegistry.draftCapabilityCatalog("instance-model-preview", 1L)
+        )
+        assertTrue(AgentConfigCategory.ThoughtLevel in customCatalog.resolvedConfigurationCategories)
+        assertTrue(customCatalog.configuration.none { it.category == AgentConfigCategory.ThoughtLevel })
+        assertFalse(
+            "effort" in requireNotNull(
+                AgentRuntimeRegistry.draftPreferences("instance-model-preview", 1L)
+            ).configuration
+        )
+    }
+
+    @Test
+    fun `Provider配置已写入但首次重连失败时下次发送仍会继续重连`() = runTest {
+        val modelOption = selectOption(
+            "model", "模型", AgentConfigCategory.Model, "openai/default",
+            "openai/default" to "Default", "zhipu/glm-5.2" to "GLM-5.2",
+        )
+        val provider = FakeProvider(
+            initialConfiguration = listOf(modelOption),
+            requestPermission = false,
+            newSessionFailuresByConnection = listOf(0, 1, 0),
+        )
+        var prepareCalls = 0
+        start(
+            provider,
+            request("instance-provider-retry").copy(
+                resolveDraftModelSelection = { target, _ ->
+                    AgentSessionModelSelection("model", "${target.providerId}/${target.modelId}")
+                },
+                prepareDraftModelSelection = {
+                    prepareCalls++
+                    AgentProviderPreparationResult.Ready(
+                        effect = AgentSessionConfigurationEffect.ReconnectNewSession,
+                        nativeConfigurationChanged = prepareCalls == 1,
+                    )
+                },
+            ),
+        )
+        AgentRuntimeRegistry.selectDraftModel(
+            "instance-provider-retry",
+            1L,
+            AgentDraftModelSelection("zhipu", "glm-5.2", usesAgentDefault = false),
+        )
+
+        val failed = AgentRuntimeRegistry.prompt(
+            "instance-provider-retry",
+            1L,
+            listOf(AgentContent.Text("第一次")),
+        )
+        assertTrue(failed is AgentOperationResult.Failure)
+        assertFalse(provider.connections.first().disconnected.get())
+        assertTrue(provider.connections[1].disconnected.get())
+
+        val retried = AgentRuntimeRegistry.prompt(
+            "instance-provider-retry",
+            1L,
+            listOf(AgentContent.Text("第二次")),
+        )
+
+        assertTrue(retried is AgentOperationResult.Success)
+        assertEquals(2, prepareCalls)
+        assertEquals(3, provider.connections.size)
+        assertTrue(provider.connections.first().disconnected.get())
+        assertEquals(listOf("new", "model", "prompt"), provider.connections.last().callOrder)
+    }
+
     private fun selectOption(
         id: String,
         name: String,
@@ -750,7 +973,9 @@ class AgentRuntimeRegistryTest {
         private val promptFailures: Int = 0,
         private val configurationFailures: Int = 0,
         private val additionalDirectoriesSupported: Boolean = false,
-        private val requestPermission: Boolean = true
+        private val requestPermission: Boolean = true,
+        private val modelPreviews: Map<Pair<String, String>, AgentDraftConfigurationPreview> = emptyMap(),
+        private val newSessionFailuresByConnection: List<Int>? = null,
     ) : KiteAgentProvider {
         lateinit var connection: FakeConnection
         val connections = mutableListOf<FakeConnection>()
@@ -770,11 +995,12 @@ class AgentRuntimeRegistryTest {
                 initialCommands,
                 deleteSupported,
                 renameSupported,
-                newSessionFailures,
+                newSessionFailuresByConnection?.getOrNull(connections.size) ?: newSessionFailures,
                 promptFailures,
                 configurationFailures,
                 additionalDirectoriesSupported,
-                requestPermission
+                requestPermission,
+                modelPreviews,
             )
             connections += connection
             return AgentOperationResult.Success(connection)
@@ -795,13 +1021,15 @@ class AgentRuntimeRegistryTest {
         private var promptFailures: Int,
         private var configurationFailures: Int,
         additionalDirectoriesSupported: Boolean,
-        private val requestPermission: Boolean
+        private val requestPermission: Boolean,
+        private val modelPreviews: Map<Pair<String, String>, AgentDraftConfigurationPreview>,
     ) : KiteAgentConnection {
         val disconnected = AtomicBoolean(false)
         var newSessionCalls = 0
         var loadSessionCalls = 0
         var resumeSessionCalls = 0
         var promptCalls = 0
+        val promptRequests = mutableListOf<AgentPromptRequest>()
         var lastNewSessionRequest: AgentNewSessionRequest? = null
         var lastListRequest: AgentSessionListRequest? = null
         val listRequests = mutableListOf<AgentSessionListRequest>()
@@ -838,6 +1066,7 @@ class AgentRuntimeRegistryTest {
 
         override suspend fun prompt(request: AgentPromptRequest): AgentOperationResult<AgentTurnResult> {
             promptCalls++
+            promptRequests += request
             callOrder += "prompt"
             if (promptFailures > 0) {
                 promptFailures--
@@ -940,6 +1169,11 @@ class AgentRuntimeRegistryTest {
                 )
             )
         }
+
+        override fun previewDraftModelConfiguration(
+            providerId: String,
+            modelId: String,
+        ): AgentDraftConfigurationPreview? = modelPreviews[providerId to modelId]
 
         override suspend fun setMode(sessionId: String, modeId: String): AgentOperationResult<Unit> {
             callOrder += "mode"

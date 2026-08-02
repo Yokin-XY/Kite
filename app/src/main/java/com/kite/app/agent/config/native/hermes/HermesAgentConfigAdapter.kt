@@ -31,6 +31,7 @@ import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentSessionConfigurationEffect
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
+import com.kite.app.agent.config.NativeAgentManagedOutputFormat
 import com.kite.app.agent.config.mediatedSessionPermissionControl
 import com.kite.app.agent.config.native.hermes.hermesReasoningControl
 import com.kite.app.foundation.contracts.ContainerRecord
@@ -100,6 +101,7 @@ internal class HermesAgentConfigAdapter(
             scope = AgentConfigScope.User,
             semantics = AgentCoreDocumentSemantics.Persona,
             priorityDescription = "作为 Hermes 系统提示的第一层身份；非空时替代内置身份",
+            managedOutputFormat = NativeAgentManagedOutputFormat.ExistingNonBlankOnly,
         ))
         add(NativeAgentCoreDocumentSpec(
             id = "hermes-user",
@@ -268,6 +270,12 @@ internal class HermesAgentConfigAdapter(
     }
 
     override fun nativeRevisionInputs(): List<Pair<String, String>> = skillDirectory.revisionInputs()
+
+    override suspend fun readSkillDocument(agentId: String, skillId: String) =
+        skillDirectory.readDocument(skillId)
+
+    override suspend fun writeSkillDocument(request: com.kite.app.agent.config.AgentSkillDocumentWriteRequest) =
+        skillDirectory.writeDocument(request)
 
     override fun mutate(files: Map<String, ByteArray>, changes: List<AgentPersistentConfigChange>): Map<String, ByteArray> {
         val original = files.getValue(CONFIG_KEY).toString(Charsets.UTF_8)

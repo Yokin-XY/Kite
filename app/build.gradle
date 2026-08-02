@@ -107,6 +107,12 @@ dependencies {
     implementation "org.yaml:snakeyaml:2.2"
     // Codex 的用户配置是 TOML；解析器只负责读取和写后校验，定点编辑仍保留未知字段与注释。
     implementation "org.tomlj:tomlj:1.1.1"
+    // Agent 正文统一按 GFM 解析为 AST；显示层只消费结构化节点，不再用正则猜 Markdown。
+    implementation "org.commonmark:commonmark:0.28.0"
+    implementation "org.commonmark:commonmark-ext-autolink:0.28.0"
+    implementation "org.commonmark:commonmark-ext-gfm-strikethrough:0.28.0"
+    implementation "org.commonmark:commonmark-ext-gfm-tables:0.28.0"
+    implementation "org.commonmark:commonmark-ext-task-list-items:0.28.0"
     // ACP 的 JVM transport 通过 kotlin-logging 调用 SLF4J；Android APK 必须显式携带 API。
     implementation "org.slf4j:slf4j-api:2.0.16"
     implementation "org.apache.commons:commons-compress:1.21"

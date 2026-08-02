@@ -61,6 +61,7 @@ internal object AgentPermissionPresentationPolicy {
     private fun contentSummary(content: AgentToolContent): String? = when (content) {
         is AgentToolContent.Content -> when (val value = content.content) {
             is AgentContent.Text -> value.text
+            is AgentContent.SkillReference -> "Skill · ${value.displayName}"
             is AgentContent.Image -> "图片 · ${value.mimeType}"
             is AgentContent.Audio -> "音频 · ${value.mimeType}"
             is AgentContent.ResourceLink -> value.title ?: value.name

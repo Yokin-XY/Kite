@@ -239,6 +239,52 @@ data class AgentSkillSummary(
     val allowedOperations: Set<AgentSkillOperation> = emptySet()
 )
 
+/** Skill 主文件只在用户明确查看时读取；普通列表和会话缓存不保存正文。 */
+data class AgentSkillDocumentSnapshot(
+    val skillId: String,
+    val displayName: String,
+    val location: String,
+    val revision: String,
+    val content: String,
+    val writable: Boolean,
+) {
+    override fun toString(): String =
+        "AgentSkillDocumentSnapshot(skillId=$skillId, displayName=$displayName, " +
+            "location=$location, revision=$revision, contentLength=${content.length}, writable=$writable)"
+}
+
+data class AgentSkillDocumentWriteRequest(
+    val agentId: String,
+    val skillId: String,
+    val expectedRevision: String,
+    val content: String,
+) {
+    override fun toString(): String =
+        "AgentSkillDocumentWriteRequest(agentId=$agentId, skillId=$skillId, " +
+            "expectedRevision=$expectedRevision, contentLength=${content.length})"
+}
+
+sealed interface AgentSkillDocumentReadResult {
+    data class Ready(val snapshot: AgentSkillDocumentSnapshot) : AgentSkillDocumentReadResult
+    data class Missing(val message: String = "Skill 已不存在") : AgentSkillDocumentReadResult
+    data class Unavailable(val discovery: AgentConfigDiscovery) : AgentSkillDocumentReadResult
+    data class Failed(val message: String) : AgentSkillDocumentReadResult
+}
+
+sealed interface AgentSkillDocumentWriteResult {
+    data class Applied(
+        val snapshot: AgentSkillDocumentSnapshot,
+        val backupReference: String?,
+    ) : AgentSkillDocumentWriteResult
+    data class Conflict(
+        val currentRevision: String,
+        val message: String = "Skill 已被其他程序修改，请重新读取",
+    ) : AgentSkillDocumentWriteResult
+    data class Rejected(val problems: List<AgentConfigValidationProblem>) : AgentSkillDocumentWriteResult
+    data class Unavailable(val discovery: AgentConfigDiscovery) : AgentSkillDocumentWriteResult
+    data class Failed(val message: String, val restored: Boolean) : AgentSkillDocumentWriteResult
+}
+
 /** 可安全进入页面状态的供应商模型资料。 */
 data class AgentProviderModelSummary(
     val id: String,
@@ -282,7 +328,9 @@ enum class AgentSessionConfigurationEffect {
     Immediate,
     NextTurn,
     NewSession,
-    Reconnect
+    Reconnect,
+    /** Provider 边界不能安全恢复旧原生线程；重连成功后创建新的暖草稿会话。 */
+    ReconnectNewSession,
 }
 
 /**
@@ -774,6 +822,16 @@ interface AgentConfigAdapter {
 
     suspend fun backfill(agentId: String): AgentConfigReadResult = readLive(agentId)
 
+    /**
+     * Agent 进程连接前，把 Kite 的稳定输出协议同步到该 Agent 已确认的原生持久指令入口。
+     *
+     * 返回值只用于提示非致命同步问题；`null` 表示已同步、无需同步或当前适配器不支持。
+     */
+    suspend fun ensureManagedOutputFormat(
+        agentId: String,
+        workspacePath: String?,
+    ): String? = null
+
     /** 只返回文档元数据；正文不会随普通设置页读取。 */
     suspend fun listCoreDocuments(
         agentId: String,
@@ -792,6 +850,17 @@ interface AgentConfigAdapter {
         request: AgentCoreDocumentWriteRequest
     ): AgentCoreDocumentWriteResult = AgentCoreDocumentWriteResult.Rejected(
         listOf(AgentConfigValidationProblem("documentId", "当前 Agent 不支持管理核心设定"))
+    )
+
+    suspend fun readSkillDocument(
+        agentId: String,
+        skillId: String,
+    ): AgentSkillDocumentReadResult = AgentSkillDocumentReadResult.Missing()
+
+    suspend fun writeSkillDocument(
+        request: AgentSkillDocumentWriteRequest,
+    ): AgentSkillDocumentWriteResult = AgentSkillDocumentWriteResult.Rejected(
+        listOf(AgentConfigValidationProblem("skillId", "当前 Agent 不支持编辑 Skill"))
     )
 
     suspend fun checkMcpServer(agentId: String, serverId: String): AgentMcpConnectionCheckResult =

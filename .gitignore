@@ -18,6 +18,7 @@ captures/
 Thumbs.db
 /references/
 /.codex-remote-attachments/
+/.autotask/
 
 # 构建、诊断和人工验证产物不进入源码仓库。
 *.apk

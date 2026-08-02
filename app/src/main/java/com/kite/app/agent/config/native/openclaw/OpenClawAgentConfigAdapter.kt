@@ -30,6 +30,7 @@ import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
+import com.kite.app.agent.config.NativeAgentManagedOutputFormat
 import com.kite.app.agent.config.NativeAgentCoreDocumentStore
 import com.kite.app.agent.config.native.openclaw.openClawReasoningControl
 import com.kite.app.foundation.contracts.ContainerRecord
@@ -69,6 +70,7 @@ internal class OpenClawAgentConfigAdapter(
             fileName: String,
             semantics: AgentCoreDocumentSemantics,
             priority: String,
+            managedOutputFormat: NativeAgentManagedOutputFormat = NativeAgentManagedOutputFormat.Disabled,
         ) = NativeAgentCoreDocumentSpec(
             id = id,
             displayName = name,
@@ -77,6 +79,7 @@ internal class OpenClawAgentConfigAdapter(
             scope = AgentConfigScope.Workspace,
             semantics = semantics,
             priorityDescription = priority,
+            managedOutputFormat = managedOutputFormat,
         )
         return listOf(
             document(
@@ -85,6 +88,7 @@ internal class OpenClawAgentConfigAdapter(
                 "AGENTS.md",
                 AgentCoreDocumentSemantics.SupplementalInstructions,
                 "每次会话注入的工作区操作说明",
+                NativeAgentManagedOutputFormat.CreateOrUpdate,
             ),
             document(
                 "openclaw-soul",
@@ -247,6 +251,12 @@ internal class OpenClawAgentConfigAdapter(
     }
 
     override fun nativeRevisionInputs(): List<Pair<String, String>> = skillDirectory.revisionInputs()
+
+    override suspend fun readSkillDocument(agentId: String, skillId: String) =
+        skillDirectory.readDocument(skillId)
+
+    override suspend fun writeSkillDocument(request: com.kite.app.agent.config.AgentSkillDocumentWriteRequest) =
+        skillDirectory.writeDocument(request)
 
     override fun mutate(files: Map<String, ByteArray>, changes: List<AgentPersistentConfigChange>): Map<String, ByteArray> {
         val root = parse(files.getValue(CONFIG_KEY)).clone()

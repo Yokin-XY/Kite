@@ -44,6 +44,11 @@ terms:
 - `org.tomlj:tomlj:1.1.1`: TOML parser used to validate Codex native
   `config.toml` while Kite performs narrow text-preserving edits; Apache
   License 2.0. Its declared runtime dependencies retain their own terms.
+- `org.commonmark:*:0.28.0`: CommonMark parser and GFM extensions used to
+  project Agent Markdown into Kite-native Android views; BSD 2-Clause,
+  copyright (c) 2015 Robin Stocker. The autolink extension depends on
+  `org.nibor.autolink:autolink:0.12.0`, MIT License, copyright (c) 2015
+  Robin Stocker.
 - `codex-relay` 0.5.5: optional local Responses API to Chat Completions
   protocol bridge installed from PyPI for compatible Codex providers;
   MIT License, copyright (c) 2025 MetaFARS.

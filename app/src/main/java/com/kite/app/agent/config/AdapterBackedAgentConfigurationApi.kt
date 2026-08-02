@@ -67,6 +67,20 @@ class AdapterBackedAgentConfigurationApi(
         ?.writeCoreDocument(request)
         ?: AgentCoreDocumentWriteResult.Unavailable(target.unsupportedDiscovery())
 
+    override suspend fun readSkillDocument(
+        target: AgentConfigurationTarget,
+        skillId: String,
+    ): AgentSkillDocumentReadResult = adapters.adapter(target.adapterId)
+        ?.readSkillDocument(target.agentId, skillId)
+        ?: AgentSkillDocumentReadResult.Unavailable(target.unsupportedDiscovery())
+
+    override suspend fun writeSkillDocument(
+        target: AgentConfigurationTarget,
+        request: AgentSkillDocumentWriteRequest,
+    ): AgentSkillDocumentWriteResult = adapters.adapter(target.adapterId)
+        ?.writeSkillDocument(request)
+        ?: AgentSkillDocumentWriteResult.Unavailable(target.unsupportedDiscovery())
+
     override suspend fun checkMcp(
         target: AgentConfigurationTarget,
         serverId: String,

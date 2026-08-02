@@ -54,7 +54,6 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.kite.app.R
 import com.kite.app.agent.contract.AgentContent
-import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -91,6 +90,10 @@ import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentProviderPreset
 import com.kite.app.agent.config.AgentProviderSummary
 import com.kite.app.agent.config.AgentSkillActivation
+import com.kite.app.agent.config.AgentSkillDocumentReadResult
+import com.kite.app.agent.config.AgentSkillDocumentSnapshot
+import com.kite.app.agent.config.AgentSkillDocumentWriteRequest
+import com.kite.app.agent.config.AgentSkillDocumentWriteResult
 import com.kite.app.agent.config.AgentSkillImportStager
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AgentSkillSummary
@@ -114,6 +117,9 @@ import com.kite.app.agent.sdk.configuration.toConfigurationProjection
 import com.kite.app.agent.sdk.configuration.AgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.RuntimeBackedAgentSessionControlApi
 import com.kite.app.agent.sdk.configuration.configurationTarget
+import com.kite.app.agent.sdk.skill.AgentPromptDraft
+import com.kite.app.agent.sdk.skill.AgentSelectedSkill
+import com.kite.app.agent.sdk.skill.AgentSkillCatalogCache
 import com.kite.app.agent.runtime.AgentRuntimeRegistry
 import com.kite.app.agent.runtime.AgentRuntimeSession
 import com.kite.app.agent.store.AgentConversationItem
@@ -168,6 +174,7 @@ internal class RunAgentSurfaceBinding(
     private val tokens = AgentSurfaceThemePolicy.project(tokens, isDark)
     private val ui = UiKit(context, this.tokens)
     private val selectionPalette = AgentSelectionVisualPolicy.palette(isDark)
+    private val skillChipPalette = AgentSkillChipVisualPolicy.palette(isDark)
     private val sessionMetadataStore = AgentSessionMetadataStore(context)
     private val draftCapabilityCacheStore = AgentDraftCapabilityCacheStore(context)
     private val modelLibraryStore = AgentModelLibraryStore(context)
@@ -185,6 +192,8 @@ internal class RunAgentSurfaceBinding(
     private val list = RecyclerView(context)
     private val permissionHost = LinearLayout(context)
     private val composerArea = LinearLayout(context)
+    private val skillHost = LinearLayout(context)
+    private val skillScrollHost = HorizontalScrollView(context)
     private val attachmentHost = LinearLayout(context)
     private val composer = LinearLayout(context)
     private val sessionConfigurationOverlay = FrameLayout(context).apply {
@@ -194,10 +203,6 @@ internal class RunAgentSurfaceBinding(
     private val composerExtensionOverlay = FrameLayout(context).apply {
         visibility = View.GONE
         isClickable = true
-    }
-    private val commandPaletteOverlay = FrameLayout(context).apply {
-        visibility = View.GONE
-        isClickable = false
     }
     private val input = EditText(context)
     private val actionButton = ImageButton(context)
@@ -261,6 +266,10 @@ internal class RunAgentSurfaceBinding(
     private var skillPageListAdapter: AgentSkillListAdapter? = null
     private var skillPageListView: RecyclerView? = null
     private var skillPageStatusText: TextView? = null
+    private var skillPageRefreshView: SwipeRefreshLayout? = null
+    private var skillDocumentEditorSnapshot: AgentSkillDocumentSnapshot? = null
+    private var skillDocumentEditorInput: EditText? = null
+    private var skillDocumentLoadRevision: Long = 0L
     private var mcpPageAgentId: String? = null
     private var mcpPageTarget: AgentConfigurationTarget? = null
     private var mcpPageSnapshot: AgentLiveConfigSnapshot? = null
@@ -291,6 +300,7 @@ internal class RunAgentSurfaceBinding(
     private var providerLibraryGroupId: String = AgentModelLibraryStore.ALL_GROUP_ID
     private val expandedProviderIds = linkedSetOf<String>()
     private val selectedProviderIds = linkedSetOf<String>()
+    private val selectedSkillIds = linkedSetOf<String>()
     private val sessionConfigurationPanel by lazy(LazyThreadSafetyMode.NONE) {
         AgentSessionConfigurationPanel(
             context = context,
@@ -326,6 +336,11 @@ internal class RunAgentSurfaceBinding(
     private var permissionSignature: String? = null
     private var composerPresentation: ComposerPresentation? = null
     private val pendingAttachments = mutableListOf<PendingAttachment>()
+    private val selectedSkills = mutableListOf<AgentSelectedSkill>()
+    private var composerSkillLoadJob: Job? = null
+    private var composerSkillLoadRevision: Long = 0L
+    private var composerSkillLoading: Boolean = false
+    private var composerSkillError: String? = null
 
     private val mainContent: View = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -385,10 +400,6 @@ internal class RunAgentSurfaceBinding(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ))
-        addView(commandPaletteOverlay, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ))
         addView(sessionConfigurationOverlay, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
@@ -404,6 +415,8 @@ internal class RunAgentSurfaceBinding(
             draftModelSnapshot = null
             draftProviderCatalogSnapshot = null
             draftModelAgentId = null
+            selectedSkills.clear()
+            renderSelectedSkills()
         }
         agentId = content.agentId
         agentDisplayName = state.title.ifBlank { content.agentId ?: "Agent" }
@@ -428,7 +441,6 @@ internal class RunAgentSurfaceBinding(
     override fun toggleSurfaceToolbar(): Boolean = setSurfaceToolbarVisible(!toolbarVisible)
 
     override fun dispose() {
-        closeCommandPalette(animate = false)
         closeComposerExtensionMenu(animate = false)
         closeSessionConfigurationPanel(animate = false)
         observation?.cancel()
@@ -442,6 +454,8 @@ internal class RunAgentSurfaceBinding(
         providerCatalogRefreshJob = null
         draftModelLoadJob?.cancel()
         draftModelLoadJob = null
+        composerSkillLoadJob?.cancel()
+        composerSkillLoadJob = null
         projectEditorDialog?.dismiss()
         projectEditorDialog = null
         workspaceDirectoryPickerDialog?.dismiss()
@@ -454,10 +468,6 @@ internal class RunAgentSurfaceBinding(
     override fun handleBack(): Boolean {
         if (composerExtensionOverlay.visibility == View.VISIBLE) {
             closeComposerExtensionMenu()
-            return true
-        }
-        if (commandPaletteOverlay.visibility == View.VISIBLE) {
-            closeCommandPalette()
             return true
         }
         if (sessionConfigurationOverlay.visibility == View.VISIBLE) {
@@ -484,6 +494,10 @@ internal class RunAgentSurfaceBinding(
         }
         AgentNavigationScreen.SkillList -> {
             returnToAgentSettings()
+            true
+        }
+        AgentNavigationScreen.SkillDocumentEditor -> {
+            returnFromSkillDocumentEditor()
             true
         }
         AgentNavigationScreen.McpEditor -> {
@@ -697,6 +711,60 @@ internal class RunAgentSurfaceBinding(
         }
     }
 
+    private fun renderSelectedSkills() {
+        skillHost.removeAllViews()
+        skillScrollHost.visibility = if (selectedSkills.isEmpty()) View.GONE else View.VISIBLE
+        selectedSkills.forEach { skill ->
+            skillHost.addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = ui.roundedBox(
+                    skillChipPalette.fill,
+                    skillChipPalette.border,
+                    ui.dp(AgentSkillChipVisualPolicy.HEIGHT_DP / 2).toFloat(),
+                    ui.dp(1),
+                )
+                addView(TextView(context).apply {
+                    text = skill.displayName
+                    textSize = 12.5f
+                    typeface = Typeface.DEFAULT_BOLD
+                    includeFontPadding = false
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    maxWidth = ui.dp(
+                        AgentSkillChipVisualPolicy.MAX_WIDTH_DP -
+                            AgentSkillChipVisualPolicy.REMOVE_ACTION_SIZE_DP
+                    )
+                    ellipsize = TextUtils.TruncateAt.END
+                    setTextColor(skillChipPalette.text)
+                    setPadding(ui.dp(10), 0, ui.dp(4), 0)
+                }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ui.dp(AgentSkillChipVisualPolicy.HEIGHT_DP),
+                ))
+                addView(iconButton(context, R.drawable.ic_close_light, "移除 ${skill.displayName}") {
+                    selectedSkills.removeAll { it.id == skill.id }
+                    renderSelectedSkills()
+                    updateComposer()
+                    if (composerExtensionRoute == ComposerExtensionRoute.Skills) {
+                        rebuildComposerExtensionMenu(animateContent = false)
+                    }
+                }.apply {
+                    imageTintList = ColorStateList.valueOf(skillChipPalette.text)
+                    setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
+                }, LinearLayout.LayoutParams(
+                    ui.dp(AgentSkillChipVisualPolicy.REMOVE_ACTION_SIZE_DP),
+                    ui.dp(AgentSkillChipVisualPolicy.REMOVE_ACTION_SIZE_DP),
+                ))
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ui.dp(AgentSkillChipVisualPolicy.HEIGHT_DP),
+            ).apply {
+                marginEnd = ui.dp(6)
+            })
+        }
+    }
+
     private fun buildTopBar(context: Context): View = topBar.apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -750,6 +818,20 @@ internal class RunAgentSurfaceBinding(
 
     private fun buildComposerArea(context: Context): View = composerArea.apply {
         orientation = LinearLayout.VERTICAL
+        addView(skillScrollHost.apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            visibility = View.GONE
+            addView(skillHost.apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(ui.dp(8), 0, ui.dp(8), ui.dp(6))
+        })
         addView(attachmentHost.apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -817,7 +899,6 @@ internal class RunAgentSurfaceBinding(
                         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                             updateComposer()
-                            syncCommandPalette(s?.toString().orEmpty())
                         }
                         override fun afterTextChanged(s: Editable?) = Unit
                     })
@@ -895,9 +976,6 @@ internal class RunAgentSurfaceBinding(
         if (configurationChanged) renderSessionConfigurationControls()
         if (composerExtensionOverlay.visibility == View.VISIBLE) {
             rebuildComposerExtensionMenu(animateContent = false)
-        }
-        if (commandPaletteOverlay.visibility == View.VISIBLE) {
-            syncCommandPalette(input.text?.toString().orEmpty())
         }
     }
 
@@ -1037,19 +1115,28 @@ internal class RunAgentSurfaceBinding(
             return
         }
         val text = input.text?.toString()?.trim().orEmpty()
-        if ((text.isBlank() && pendingAttachments.isEmpty()) || phase != AgentSessionPhase.Ready) return
+        if ((text.isBlank() && pendingAttachments.isEmpty() && selectedSkills.isEmpty()) ||
+            phase != AgentSessionPhase.Ready
+        ) return
         val attachments = pendingAttachments.toList()
+        val skills = selectedSkills.toList()
         val content = buildList {
             if (text.isNotBlank()) add(AgentContent.Text(text))
             addAll(attachments.map(PendingAttachment::content))
         }
         input.setText("")
         pendingAttachments.clear()
+        selectedSkills.clear()
         renderAttachments()
+        renderSelectedSkills()
         lifecycleOwner.lifecycleScope.launch {
-            val result = AgentRuntimeRegistry.prompt(instanceId, generation, content)
+            val result = AgentRuntimeRegistry.prompt(
+                instanceId,
+                generation,
+                AgentPromptDraft(content = content, skills = skills),
+            )
             if (result !is AgentOperationResult.Success) {
-                restoreComposerAfterFailure(text, attachments)
+                restoreComposerAfterFailure(text, attachments, skills)
             }
             showOperationResult(result, null)
         }
@@ -1059,7 +1146,7 @@ internal class RunAgentSurfaceBinding(
         val phase = composerPhase()
         val cancelling = phase == AgentSessionPhase.Prompting || phase == AgentSessionPhase.Cancelling
         val canSend = phase == AgentSessionPhase.Ready &&
-            (!input.text.isNullOrBlank() || pendingAttachments.isNotEmpty())
+            (!input.text.isNullOrBlank() || pendingAttachments.isNotEmpty() || selectedSkills.isNotEmpty())
         val nextPresentation = ComposerPresentation(phase, cancelling, canSend)
         if (composerPresentation == nextPresentation) return
         composerPresentation = nextPresentation
@@ -1091,6 +1178,7 @@ internal class RunAgentSurfaceBinding(
         val previousSessionId = sessionId
         val previousText = input.text?.toString().orEmpty()
         val previousAttachments = pendingAttachments.toList()
+        val previousSkills = selectedSkills.toList()
         draftPreparationPending = true
         enterDraftUi()
         statusText.text = "正在准备新会话…"
@@ -1107,12 +1195,12 @@ internal class RunAgentSurfaceBinding(
                 }
                 is AgentOperationResult.Unsupported -> {
                     draftPreparationPending = false
-                    restoreSessionUi(previousSessionId, previousText, previousAttachments)
+                    restoreSessionUi(previousSessionId, previousText, previousAttachments, previousSkills)
                     Toast.makeText(root.context, "当前 Agent 不支持新建会话", Toast.LENGTH_SHORT).show()
                 }
                 is AgentOperationResult.Failure -> {
                     draftPreparationPending = false
-                    restoreSessionUi(previousSessionId, previousText, previousAttachments)
+                    restoreSessionUi(previousSessionId, previousText, previousAttachments, previousSkills)
                     Toast.makeText(root.context, result.message, Toast.LENGTH_LONG).show()
                 }
             }
@@ -1168,7 +1256,9 @@ internal class RunAgentSurfaceBinding(
         subscribe(providerId, null)
         input.setText("")
         pendingAttachments.clear()
+        selectedSkills.clear()
         renderAttachments()
+        renderSelectedSkills()
         statusText.text = "可以开始新会话"
         updateComposer()
     }
@@ -1255,7 +1345,8 @@ internal class RunAgentSurfaceBinding(
     private fun restoreSessionUi(
         previousSessionId: String?,
         previousText: String,
-        previousAttachments: List<PendingAttachment>
+        previousAttachments: List<PendingAttachment>,
+        previousSkills: List<AgentSelectedSkill>,
     ) {
         sessionId = previousSessionId
         subscribe(providerId, previousSessionId)
@@ -1263,11 +1354,18 @@ internal class RunAgentSurfaceBinding(
         input.setSelection(input.text?.length ?: 0)
         pendingAttachments.clear()
         pendingAttachments += previousAttachments
+        selectedSkills.clear()
+        selectedSkills += previousSkills
         renderAttachments()
+        renderSelectedSkills()
         updateComposer()
     }
 
-    private fun restoreComposerAfterFailure(text: String, attachments: List<PendingAttachment>) {
+    private fun restoreComposerAfterFailure(
+        text: String,
+        attachments: List<PendingAttachment>,
+        skills: List<AgentSelectedSkill>,
+    ) {
         if (text.isNotBlank()) {
             val current = input.text?.toString().orEmpty()
             when {
@@ -1280,11 +1378,14 @@ internal class RunAgentSurfaceBinding(
             pendingAttachments.addAll(0, attachments.filterNot { it in pendingAttachments })
             renderAttachments()
         }
+        if (skills.isNotEmpty()) {
+            selectedSkills.addAll(0, skills.filterNot { skill -> selectedSkills.any { it.id == skill.id } })
+            renderSelectedSkills()
+        }
         updateComposer()
     }
 
     private fun showSessionDrawer() {
-        closeCommandPalette(animate = false)
         closeComposerExtensionMenu(animate = false)
         closeSessionConfigurationPanel(animate = false)
         navigationJob?.cancel()
@@ -1376,7 +1477,6 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun showSessionSearch() {
-        closeCommandPalette(animate = false)
         closeComposerExtensionMenu(animate = false)
         closeSessionConfigurationPanel(animate = false)
         navigationJob?.cancel()
@@ -1817,7 +1917,6 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun showAgentSettings(returnToDrawer: Boolean) {
-        closeCommandPalette(animate = false)
         closeComposerExtensionMenu(animate = false)
         closeSessionConfigurationPanel(animate = false)
         navigationJob?.cancel()
@@ -1829,6 +1928,7 @@ internal class RunAgentSurfaceBinding(
     private fun returnToAgentSettings() {
         navigationJob?.cancel()
         defaultPermissionPendingProfileId = null
+        selectedSkillIds.clear()
         showSettingsPage(reload = settingsRegistrySnapshot == null)
     }
 
@@ -4161,9 +4261,19 @@ internal class RunAgentSurfaceBinding(
         target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
     ) {
+        selectedSkillIds.clear()
         skillPageAgentId = selected.registration.definition.agentId
         skillPageTarget = target
         skillPageSnapshot = snapshot
+        renderSkillManagerPage(selected, target, snapshot)
+        refreshSkillSnapshot(selected, target)
+    }
+
+    private fun renderSkillManagerPage(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        snapshot: AgentLiveConfigSnapshot,
+    ) {
         navigationScreen = AgentNavigationScreen.SkillList
         navigationHost.removeAllViews()
         navigationHost.addView(
@@ -4175,7 +4285,6 @@ internal class RunAgentSurfaceBinding(
         )
         navigationHost.visibility = View.VISIBLE
         renderSkillSnapshot(snapshot)
-        refreshSkillSnapshot(selected, target)
     }
 
     /** Skill 与 MCP 使用同一刷新边界：进入页面时回填一次，列表只消费完成后的快照。 */
@@ -4185,9 +4294,12 @@ internal class RunAgentSurfaceBinding(
     ) {
         val targetAgentId = selected.registration.definition.agentId
         val requestRevision = ++settingsLoadRevision
+        val refreshView = skillPageRefreshView
+        refreshView?.isRefreshing = true
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) { agentConfigurationApi.read(target) }
+            refreshView?.isRefreshing = false
             if (
                 requestRevision != settingsLoadRevision ||
                 navigationScreen != AgentNavigationScreen.SkillList ||
@@ -4218,7 +4330,14 @@ internal class RunAgentSurfaceBinding(
         val listAdapter = AgentSkillListAdapter(
             context = context,
             tokens = tokens,
-            onClick = { skill -> showSkillActions(selected, target, skill) },
+            onClick = { skill ->
+                if (selectedSkillIds.isEmpty()) {
+                    showSkillDocumentEditor(skill)
+                } else {
+                    toggleSkillBatchSelection(selected, target, skill)
+                }
+            },
+            onLongClick = { skill -> toggleSkillBatchSelection(selected, target, skill) },
         ).also { skillPageListAdapter = it }
         val status = TextView(context).apply {
             textSize = 13.5f
@@ -4245,6 +4364,16 @@ internal class RunAgentSurfaceBinding(
                 Gravity.CENTER,
             ))
         }
+        val refresh = SwipeRefreshLayout(context).apply {
+            setColorSchemeColors(tokens.textPrimary)
+            setProgressBackgroundColorSchemeColor(agentSettingsSurface)
+            addView(viewport, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
+            setOnChildScrollUpCallback { _, _ -> skillList.canScrollVertically(-1) }
+            setOnRefreshListener { refreshSkillSnapshot(selected, target) }
+        }.also { skillPageRefreshView = it }
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(agentPageBackground)
@@ -4267,11 +4396,17 @@ internal class RunAgentSurfaceBinding(
                 setPadding(ui.dp(22), ui.dp(7), ui.dp(22), ui.dp(12))
                 contentDescription = "$targetAgentId 的 Skill"
             })
-            addView(viewport, LinearLayout.LayoutParams(
+            addView(refresh, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
                 1f,
             ))
+            if (selectedSkillIds.isNotEmpty()) {
+                addView(buildSkillBatchBar(selected, target), LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ui.dp(70),
+                ))
+            }
         }
     }
 
@@ -4281,7 +4416,8 @@ internal class RunAgentSurfaceBinding(
         message: String? = null,
     ) {
         skillPageSnapshot = snapshot
-        skillPageListAdapter?.submit(snapshot.skills, pendingSkillId)
+        skillPageTarget?.let { target -> AgentSkillCatalogCache.update(target, snapshot.skills) }
+        skillPageListAdapter?.submit(snapshot.skills, pendingSkillId, selectedSkillIds)
         skillPageListView?.visibility = if (snapshot.skills.isEmpty()) View.GONE else View.VISIBLE
         skillPageStatusText?.apply {
             text = message ?: "尚未安装 Skill"
@@ -4289,117 +4425,273 @@ internal class RunAgentSurfaceBinding(
         }
     }
 
-    private fun showSkillActions(
+    private fun toggleSkillBatchSelection(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
         skill: AgentSkillSummary,
     ) {
-        val actions = buildList {
-            if (AgentSkillOperation.Enable in skill.allowedOperations ||
-                skill.activation == AgentSkillActivation.Enabled
-            ) {
-                add(AgentChoiceAction(
-                    label = "启用",
-                    selected = skill.activation == AgentSkillActivation.Enabled,
-                    onClick = {
-                        applySkillChange(selected, target, skill,
-                            AgentConfigurationIntent.SetSkillActivation(
-                                skill.id,
-                                AgentSkillActivation.Enabled,
-                            ), "已启用 ${skill.displayName}")
-                    },
-                ))
-            }
-            if (AgentSkillOperation.RequireApproval in skill.allowedOperations ||
-                skill.activation == AgentSkillActivation.ApprovalRequired
-            ) {
-                add(AgentChoiceAction(
-                    label = "每次确认",
-                    selected = skill.activation == AgentSkillActivation.ApprovalRequired,
-                    onClick = {
-                        applySkillChange(selected, target, skill,
-                            AgentConfigurationIntent.SetSkillActivation(
-                                skill.id,
-                                AgentSkillActivation.ApprovalRequired,
-                            ), "${skill.displayName} 已设为每次确认")
-                    },
-                ))
-            }
-            if (AgentSkillOperation.ManualOnly in skill.allowedOperations ||
-                skill.activation == AgentSkillActivation.ManualOnly
-            ) {
-                add(AgentChoiceAction(
-                    label = "仅手动",
-                    selected = skill.activation == AgentSkillActivation.ManualOnly,
-                    onClick = {
-                        applySkillChange(selected, target, skill,
-                            AgentConfigurationIntent.SetSkillActivation(
-                                skill.id,
-                                AgentSkillActivation.ManualOnly,
-                            ), "${skill.displayName} 已设为仅手动")
-                    },
-                ))
-            }
-            if (AgentSkillOperation.Disable in skill.allowedOperations ||
-                skill.activation == AgentSkillActivation.Disabled
-            ) {
-                add(AgentChoiceAction(
-                    label = "停用",
-                    selected = skill.activation == AgentSkillActivation.Disabled,
-                    onClick = {
-                        applySkillChange(selected, target, skill,
-                            AgentConfigurationIntent.SetSkillActivation(
-                                skill.id,
-                                AgentSkillActivation.Disabled,
-                            ), "已停用 ${skill.displayName}")
-                    },
-                ))
-            }
-            if (AgentSkillOperation.Remove in skill.allowedOperations) {
-                add(AgentChoiceAction(
-                    label = "移除",
-                    role = UiActionRole.Danger,
-                    onClick = { showSkillRemoveConfirmation(selected, target, skill) },
-                ))
-            }
-        }
-        if (actions.isEmpty()) {
-            showAgentDialogCard(
-                title = skill.displayName,
-                message = "这个 Skill 由 Agent 原生位置管理，当前没有可在 Kite 中执行的操作。",
-                actions = listOf(
-                    AgentDialogAction("知道了", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
-                ),
-            )
+        if (AgentSkillOperation.Remove !in skill.allowedOperations) {
+            Toast.makeText(context, "${skill.displayName} 来自只读位置，不能删除", Toast.LENGTH_SHORT).show()
             return
         }
-        showAgentChoiceCard(
-            title = skill.displayName,
-            message = AgentSkillUiPolicy.summary(skill),
-            actions = actions,
-        )
+        if (!selectedSkillIds.add(skill.id)) selectedSkillIds.remove(skill.id)
+        val snapshot = skillPageSnapshot ?: return
+        renderSkillManagerPage(selected, target, snapshot)
     }
 
-    private fun applySkillChange(
+    private fun buildSkillBatchBar(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
-        skill: AgentSkillSummary,
-        intent: AgentConfigurationIntent,
-        successMessage: String,
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(10))
+        setBackgroundColor(agentSurface)
+        addView(TextView(context).apply {
+            text = "已选 ${selectedSkillIds.size} 项"
+            textSize = 12.5f
+            setTextColor(tokens.textSecondary)
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(providerBatchAction("取消", UiActionRole.Secondary) {
+            selectedSkillIds.clear()
+            skillPageSnapshot?.let { renderSkillManagerPage(selected, target, it) }
+        })
+        addView(providerBatchAction("删除", UiActionRole.Danger) {
+            confirmRemoveSelectedSkills(selected, target)
+        })
+    }
+
+    private fun showSkillDocumentEditor(skill: AgentSkillSummary) {
+        val target = skillPageTarget ?: return
+        val targetAgentId = skillPageAgentId ?: return
+        navigationJob?.cancel()
+        skillDocumentEditorSnapshot = null
+        skillDocumentEditorInput = null
+        navigationScreen = AgentNavigationScreen.SkillDocumentEditor
+        navigationHost.removeAllViews()
+        navigationHost.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+            addView(buildAgentSubpageHeader(
+                title = skill.displayName,
+                backDescription = "返回 Skill",
+                onBack = ::returnFromSkillDocumentEditor,
+            ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+            addView(settingsMessage("正在读取 SKILL.md…"), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            ))
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val requestRevision = ++skillDocumentLoadRevision
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                agentConfigurationApi.readSkillDocument(target, skill.id)
+            }
+            if (requestRevision != skillDocumentLoadRevision ||
+                navigationScreen != AgentNavigationScreen.SkillDocumentEditor ||
+                skillPageAgentId != targetAgentId
+            ) return@launch
+            when (result) {
+                is AgentSkillDocumentReadResult.Ready -> renderSkillDocumentEditor(target, result.snapshot)
+                is AgentSkillDocumentReadResult.Missing -> renderSkillDocumentError(skill, result.message)
+                is AgentSkillDocumentReadResult.Unavailable -> renderSkillDocumentError(
+                    skill,
+                    result.discovery.warnings.firstOrNull() ?: "Skill 当前不可用",
+                )
+                is AgentSkillDocumentReadResult.Failed -> renderSkillDocumentError(skill, result.message)
+            }
+        }
+    }
+
+    private fun renderSkillDocumentEditor(
+        target: AgentConfigurationTarget,
+        snapshot: AgentSkillDocumentSnapshot,
     ) {
-        val snapshot = skillPageSnapshot ?: return
-        val targetAgentId = selected.registration.definition.agentId
-        if (targetAgentId != skillPageAgentId) return
-        val requestRevision = ++settingsLoadRevision
-        renderSkillSnapshot(snapshot, pendingSkillId = skill.id)
+        skillDocumentEditorSnapshot = snapshot
+        val status = TextView(context).apply {
+            textSize = 12.5f
+            setTextColor(tokens.textSecondary)
+            visibility = View.GONE
+            setPadding(ui.dp(2), ui.dp(9), ui.dp(2), 0)
+        }
+        lateinit var saveAction: TextView
+        val editor = EditText(context).apply {
+            setText(snapshot.content)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            gravity = Gravity.TOP or Gravity.START
+            textSize = 14.5f
+            setTextColor(tokens.textPrimary)
+            setHintTextColor(tokens.textTertiary)
+            hint = "SKILL.md"
+            minLines = 16
+            setPadding(ui.dp(16), ui.dp(15), ui.dp(16), ui.dp(15))
+            background = ui.roundedBox(agentSettingsSurface, tokens.border, ui.dp(20).toFloat(), ui.dp(1))
+            isEnabled = snapshot.writable
+        }.also { skillDocumentEditorInput = it }
+        saveAction = TextView(context).apply {
+            text = "保存"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.primaryStrong)
+            isEnabled = snapshot.writable
+            alpha = if (isEnabled) 1f else 0.38f
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { saveSkillDocument(target, this, status) }
+        }
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(28))
+            addView(buildSettingsSection(
+                title = "Skill 主文件",
+                description = snapshot.location,
+                rows = listOf(SettingsRow(
+                    "编辑权限",
+                    if (snapshot.writable) "可编辑" else "当前来源只读",
+                )),
+            ))
+            addView(editor, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+            addView(status)
+        }
+        navigationHost.removeAllViews()
+        navigationHost.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+            addView(buildAgentSubpageHeader(
+                title = snapshot.displayName,
+                backDescription = "返回 Skill",
+                onBack = ::returnFromSkillDocumentEditor,
+                trailingView = saveAction,
+            ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+            addView(ScrollView(context).apply {
+                isFillViewport = true
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(content, ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun saveSkillDocument(
+        target: AgentConfigurationTarget,
+        saveAction: TextView,
+        status: TextView,
+    ) {
+        val snapshot = skillDocumentEditorSnapshot ?: return
+        val content = skillDocumentEditorInput?.text?.toString() ?: return
+        val targetAgentId = skillPageAgentId ?: return
+        saveAction.text = "保存中"
+        saveAction.isEnabled = false
+        saveAction.alpha = 0.42f
+        status.text = "正在写入 Agent 原生 SKILL.md…"
+        status.setTextColor(tokens.textSecondary)
+        status.visibility = View.VISIBLE
+        val requestRevision = ++skillDocumentLoadRevision
         navigationJob?.cancel()
         navigationJob = lifecycleOwner.lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                agentConfigurationApi.apply(target, snapshot.revision, listOf(intent))
+            val result = withContext(Dispatchers.IO) {
+                agentConfigurationApi.writeSkillDocument(
+                    target,
+                    AgentSkillDocumentWriteRequest(
+                        agentId = targetAgentId,
+                        skillId = snapshot.skillId,
+                        expectedRevision = snapshot.revision,
+                        content = content,
+                    ),
+                )
             }
-            if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
-            consumeSkillApplyOutcome(targetAgentId, outcome.result, outcome.current, successMessage)
+            if (requestRevision != skillDocumentLoadRevision ||
+                navigationScreen != AgentNavigationScreen.SkillDocumentEditor
+            ) return@launch
+            when (result) {
+                is AgentSkillDocumentWriteResult.Applied -> {
+                    skillDocumentEditorSnapshot = result.snapshot
+                    saveAction.text = "保存"
+                    saveAction.isEnabled = result.snapshot.writable
+                    saveAction.alpha = if (saveAction.isEnabled) 1f else 0.38f
+                    status.text = "已保存到 Agent 原生 SKILL.md"
+                    status.setTextColor(tokens.textSecondary)
+                }
+                is AgentSkillDocumentWriteResult.Conflict -> {
+                    saveAction.text = "重读"
+                    saveAction.isEnabled = true
+                    saveAction.alpha = 1f
+                    saveAction.setOnClickListener {
+                        skillPageSnapshot?.skills?.firstOrNull { it.id == snapshot.skillId }
+                            ?.let(::showSkillDocumentEditor)
+                    }
+                    status.text = result.message
+                    status.setTextColor(tokens.danger)
+                }
+                else -> {
+                    saveAction.text = "保存"
+                    saveAction.isEnabled = snapshot.writable
+                    saveAction.alpha = if (saveAction.isEnabled) 1f else 0.38f
+                    status.text = result.skillDocumentUserMessage()
+                    status.setTextColor(tokens.danger)
+                }
+            }
         }
+    }
+
+    private fun AgentSkillDocumentWriteResult.skillDocumentUserMessage(): String = when (this) {
+        is AgentSkillDocumentWriteResult.Applied -> "已保存"
+        is AgentSkillDocumentWriteResult.Conflict -> message
+        is AgentSkillDocumentWriteResult.Rejected -> problems.firstOrNull()?.message ?: "内容未通过校验"
+        is AgentSkillDocumentWriteResult.Unavailable -> discovery.warnings.firstOrNull() ?: "Skill 当前不可用"
+        is AgentSkillDocumentWriteResult.Failed -> if (restored) "$message，原文件已保留" else message
+    }
+
+    private fun renderSkillDocumentError(skill: AgentSkillSummary, message: String) {
+        navigationHost.removeAllViews()
+        navigationHost.addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(agentPageBackground)
+            addView(buildAgentSubpageHeader(
+                title = skill.displayName,
+                backDescription = "返回 Skill",
+                onBack = ::returnFromSkillDocumentEditor,
+            ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+            addView(settingsMessage(message), LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f,
+            ))
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun returnFromSkillDocumentEditor() {
+        val targetAgentId = skillPageAgentId ?: run {
+            returnToAgentSettings()
+            return
+        }
+        val selected = settingsRegistrySnapshot?.entry(targetAgentId)
+            ?: agentRegistry.snapshot().entry(targetAgentId)
+        val target = skillPageTarget
+        val snapshot = skillPageSnapshot
+        if (selected == null || target == null || snapshot == null) {
+            returnToAgentSettings()
+            return
+        }
+        navigationJob?.cancel()
+        skillDocumentLoadRevision++
+        skillDocumentEditorSnapshot = null
+        skillDocumentEditorInput = null
+        navigationScreen = AgentNavigationScreen.SkillList
+        navigationHost.removeAllViews()
+        navigationHost.addView(buildSkillListPage(selected, target), FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
+        renderSkillSnapshot(snapshot)
     }
 
     private fun consumeSkillApplyOutcome(
@@ -4429,28 +4721,78 @@ internal class RunAgentSurfaceBinding(
         }
     }
 
-    private fun showSkillRemoveConfirmation(
+    private fun confirmRemoveSelectedSkills(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
-        skill: AgentSkillSummary,
     ) {
+        val snapshot = skillPageSnapshot ?: return
+        val removable = snapshot.skills.filter { skill ->
+            skill.id in selectedSkillIds && AgentSkillOperation.Remove in skill.allowedOperations
+        }
+        if (removable.isEmpty()) return
         showAgentDialogCard(
-            title = "移除 ${skill.displayName}？",
-            message = "Kite 会先把这个 Skill 移入 Agent 的备份目录；工作区中的原始导入文件不会被删除。",
+            title = "删除 ${removable.size} 个 Skill？",
+            message = "这些 Skill 会从当前 Agent 的可写目录中移除；只读或共享 Skill 不会受到影响。",
             actions = listOf(
                 AgentDialogAction("取消", UiActionRole.Secondary) { dialog, _ -> dialog.dismiss() },
-                AgentDialogAction("移除", UiActionRole.Danger) { dialog, _ ->
+                AgentDialogAction("删除", UiActionRole.Danger) { dialog, _ ->
                     dialog.dismiss()
-                    applySkillChange(
-                        selected,
-                        target,
-                        skill,
-                        AgentConfigurationIntent.RemoveSkill(skill.id),
-                        "已移除 ${skill.displayName}",
-                    )
+                    removeSelectedSkills(selected, target, snapshot, removable)
                 },
             ),
         )
+    }
+
+    private fun removeSelectedSkills(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        snapshot: AgentLiveConfigSnapshot,
+        skills: List<AgentSkillSummary>,
+    ) {
+        val targetAgentId = selected.registration.definition.agentId
+        val requestRevision = ++settingsLoadRevision
+        navigationJob?.cancel()
+        navigationJob = lifecycleOwner.lifecycleScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                var current = snapshot
+                var removed = 0
+                var failure: String? = null
+                for (skill in skills) {
+                    val mutation = agentConfigurationApi.apply(
+                        target,
+                        current.revision,
+                        listOf(AgentConfigurationIntent.RemoveSkill(skill.id)),
+                    )
+                    val next = (mutation.current as? AgentConfigReadResult.Ready)?.snapshot
+                        ?: (mutation.result as? AgentConfigApplyResult.Applied)?.snapshot
+                    if (mutation.result is AgentConfigApplyResult.Applied && next != null) {
+                        current = next
+                        removed++
+                    } else {
+                        if (next != null) current = next
+                        failure = mutation.result.userMessage("无法删除 ${skill.displayName}")
+                        break
+                    }
+                }
+                SkillBatchRemoveOutcome(current, removed, failure)
+            }
+            if (
+                requestRevision != settingsLoadRevision ||
+                navigationScreen != AgentNavigationScreen.SkillList ||
+                skillPageAgentId != targetAgentId
+            ) return@launch
+            persistentConfigAgentId = targetAgentId
+            persistentConfigResult = AgentConfigReadResult.Ready(outcome.snapshot)
+            selectedSkillIds.clear()
+            skillPageSnapshot = outcome.snapshot
+            renderSkillManagerPage(selected, target, outcome.snapshot)
+            val message = outcome.failure ?: "已删除 ${outcome.removedCount} 个 Skill"
+            Toast.makeText(
+                context,
+                message,
+                if (outcome.failure == null) Toast.LENGTH_SHORT else Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     private fun showSkillImportPicker(
@@ -6659,13 +7001,16 @@ internal class RunAgentSurfaceBinding(
         val preferences = runtime?.let {
             AgentRuntimeRegistry.draftPreferences(it.instanceId, it.generation)
         }
-        val runtimeOptions = runtime?.let {
+        val runtimeCatalog = runtime?.let {
             AgentRuntimeRegistry.draftCapabilityCatalog(it.instanceId, it.generation)
         }
+        val runtimeOptions = runtimeCatalog
             ?.configuration
             .orEmpty()
             .map { option -> option.withDraftValue(preferences?.configuration?.get(option.id)) }
-        val runtimeCategories = runtimeOptions.mapNotNullTo(hashSetOf(), AgentConfigOption::category)
+        val runtimeCategories = runtimeOptions.mapNotNullTo(hashSetOf(), AgentConfigOption::category).apply {
+            addAll(runtimeCatalog?.resolvedConfigurationCategories.orEmpty())
+        }
         val storedControls = draftProviderCatalogSnapshot
             ?.controls
             .orEmpty()
@@ -6743,13 +7088,51 @@ internal class RunAgentSurfaceBinding(
         return AgentSurfaceNavigationPolicy.permissionOption(configuration)
     }
 
-    private fun composerCommands(): List<AgentCommand> = currentSnapshot?.commands
-        ?: AgentRuntimeRegistry.session(instanceId)
-            ?.takeIf { it.generation == generation && it.isDraft }
-            ?.let { runtime ->
-                AgentRuntimeRegistry.draftCapabilityCatalog(runtime.instanceId, runtime.generation)?.commands
+    private fun composerSkillTarget(): AgentConfigurationTarget? {
+        val currentAgentId = agentId?.takeIf(String::isNotBlank) ?: return null
+        return agentRegistry.snapshot().entry(currentAgentId)?.configurationTarget()
+    }
+
+    private fun composerSupportsSkills(): Boolean = composerSkillTarget()?.let { target ->
+        agentConfigurationApi.capabilities(target)?.supports(AgentPersistentConfigCapability.Skill)
+    } == true
+
+    private fun loadComposerSkills(force: Boolean) {
+        val target = composerSkillTarget() ?: return
+        if (!force && AgentSkillCatalogCache.snapshot(target) != null) {
+            composerSkillError = null
+            if (composerExtensionRoute == ComposerExtensionRoute.Skills) {
+                rebuildComposerExtensionMenu(animateContent = false)
             }
-            .orEmpty()
+            return
+        }
+        if (composerSkillLoadJob?.isActive == true && !force) return
+        val expectedAgentId = target.agentId
+        val requestRevision = ++composerSkillLoadRevision
+        composerSkillLoadJob?.cancel()
+        composerSkillLoading = true
+        composerSkillError = null
+        if (composerExtensionRoute == ComposerExtensionRoute.Skills) {
+            rebuildComposerExtensionMenu(animateContent = false)
+        }
+        composerSkillLoadJob = lifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { agentConfigurationApi.read(target) }
+            if (requestRevision != composerSkillLoadRevision || agentId != expectedAgentId) return@launch
+            composerSkillLoading = false
+            when (result) {
+                is AgentConfigReadResult.Ready -> AgentSkillCatalogCache.update(target, result.snapshot.skills)
+                is AgentConfigReadResult.Failed -> composerSkillError = result.message
+                is AgentConfigReadResult.Unavailable -> {
+                    composerSkillError = result.discovery.warnings.firstOrNull() ?: "当前 Agent 的 Skill 不可用"
+                }
+            }
+            if (composerExtensionRoute == ComposerExtensionRoute.Skills &&
+                composerExtensionOverlay.visibility == View.VISIBLE
+            ) {
+                rebuildComposerExtensionMenu(animateContent = false)
+            }
+        }
+    }
 
     private fun supportsImageAttachments(): Boolean {
         val prompt = AgentRuntimeRegistry.session(instanceId)?.capabilities?.prompt ?: return false
@@ -6766,11 +7149,10 @@ internal class RunAgentSurfaceBinding(
             Toast.makeText(context, "正在准备新会话", Toast.LENGTH_SHORT).show()
             return
         }
-        closeCommandPalette(animate = false)
         closeSessionConfigurationPanel(animate = false)
         val hasEntry = supportsImageAttachments() ||
             supportsFileAttachments() ||
-            composerCommands().isNotEmpty() ||
+            composerSupportsSkills() ||
             composerModeOptions().isNotEmpty()
         if (initialRoute == ComposerExtensionRoute.Main && !hasEntry) {
             Toast.makeText(context, "当前 Agent 没有可用扩展", Toast.LENGTH_SHORT).show()
@@ -6848,20 +7230,27 @@ internal class RunAgentSurfaceBinding(
                             rebuildComposerExtensionMenu(animateContent = true)
                         })
                     }
-                    if (composerCommands().isNotEmpty()) {
+                    if (composerSupportsSkills()) {
                         addView(composerExtensionActionRow(
                             icon = R.drawable.ic_skill_light,
-                            title = "Skill 与命令"
+                            title = "Skill",
+                            value = selectedSkills.size.takeIf { it > 0 }?.let { "已选 $it" },
+                            showChevron = true,
                         ) {
-                            openSlashCommandPalette()
+                            composerExtensionRoute = ComposerExtensionRoute.Skills
+                            rebuildComposerExtensionMenu(animateContent = true)
+                            loadComposerSkills(force = false)
                         })
                     }
                 }
                 ComposerExtensionRoute.Modes -> {
-                    addView(composerExtensionHeader("工作模式") {
-                        composerExtensionRoute = ComposerExtensionRoute.Main
-                        rebuildComposerExtensionMenu(animateContent = true)
-                    })
+                    addView(composerExtensionHeader(
+                        title = "工作模式",
+                        onBack = {
+                            composerExtensionRoute = ComposerExtensionRoute.Main
+                            rebuildComposerExtensionMenu(animateContent = true)
+                        },
+                    ))
                     modes.forEach { mode ->
                         addView(sessionChoiceRow(
                             title = mode.name,
@@ -6896,6 +7285,45 @@ internal class RunAgentSurfaceBinding(
                     }
                     if (permission == null) {
                         addView(settingsMessage("当前 Agent 尚未提供可选权限策略"))
+                    }
+                }
+                ComposerExtensionRoute.Skills -> {
+                    addView(composerExtensionHeader(
+                        title = "Skill",
+                        onBack = null,
+                        onRefresh = { loadComposerSkills(force = true) },
+                        showClose = false,
+                    ))
+                    val target = composerSkillTarget()
+                    val cached = target?.let(AgentSkillCatalogCache::snapshot)
+                    when {
+                        cached == null && composerSkillLoading -> addView(settingsMessage("正在读取 Skill…"))
+                        cached == null && composerSkillError != null -> addView(settingsMessage(composerSkillError.orEmpty()))
+                        cached == null -> addView(settingsMessage("尚未读取 Skill"))
+                        cached.skills.isEmpty() -> addView(settingsMessage("尚未找到 Skill"))
+                        else -> cached.skills.forEach { skill ->
+                            val selected = selectedSkills.any { it.id == skill.id }
+                            val available = skill.activation != AgentSkillActivation.Disabled
+                            addView(sessionChoiceRow(
+                                title = skill.displayName,
+                                description = if (available) AgentSkillUiPolicy.summary(skill) else "已停用，请先在设置中启用",
+                                selected = selected,
+                                contentDescription = "Skill，${skill.displayName}",
+                                onClick = {
+                                    if (selected) {
+                                        selectedSkills.removeAll { it.id == skill.id }
+                                    } else {
+                                        selectedSkills += AgentSelectedSkill(skill.id, skill.displayName)
+                                    }
+                                    renderSelectedSkills()
+                                    updateComposer()
+                                    rebuildComposerExtensionMenu(animateContent = false)
+                                },
+                            ).apply {
+                                isEnabled = available
+                                alpha = if (available) 1f else 0.45f
+                            })
+                        }
                     }
                 }
             }
@@ -6936,6 +7364,7 @@ internal class RunAgentSurfaceBinding(
                         ComposerExtensionRoute.Main -> 218
                         ComposerExtensionRoute.Permissions -> 284
                         ComposerExtensionRoute.Modes -> 286
+                        ComposerExtensionRoute.Skills -> 300
                     }
                 )
             ),
@@ -7016,7 +7445,12 @@ internal class RunAgentSurfaceBinding(
         ).apply { setMargins(ui.dp(1), ui.dp(1), ui.dp(1), ui.dp(1)) }
     }
 
-    private fun composerExtensionHeader(title: String, onBack: (() -> Unit)?): View =
+    private fun composerExtensionHeader(
+        title: String,
+        onBack: (() -> Unit)?,
+        onRefresh: (() -> Unit)? = null,
+        showClose: Boolean = true,
+    ): View =
         LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -7036,149 +7470,17 @@ internal class RunAgentSurfaceBinding(
                 setTextColor(tokens.textSecondary)
                 setPadding(ui.dp(8), 0, ui.dp(8), 0)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(iconButton(context, R.drawable.ic_close_light, "关闭") {
-                closeComposerExtensionMenu()
-            }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-        }
-
-    private fun openSlashCommandPalette() {
-        closeComposerExtensionMenu(animate = false)
-        input.setText("/")
-        input.setSelection(input.text?.length ?: 0)
-        input.requestFocus()
-        context.getSystemService(InputMethodManager::class.java)
-            ?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
-        syncCommandPalette("/")
-    }
-
-    private fun syncCommandPalette(text: String) {
-        val query = AgentSurfaceNavigationPolicy.slashCommandQuery(text)
-        if (query == null) {
-            closeCommandPalette(animate = false)
-            return
-        }
-        val commands = AgentSurfaceNavigationPolicy.filterCommands(
-            composerCommands(),
-            query
-        )
-        if (commands.isEmpty()) {
-            closeCommandPalette(animate = false)
-            return
-        }
-        showCommandPalette(commands)
-    }
-
-    private fun showCommandPalette(commands: List<AgentCommand>) {
-        val wasVisible = commandPaletteOverlay.visibility == View.VISIBLE
-        rebuildCommandPalette(commands)
-        commandPaletteOverlay.apply {
-            visibility = View.VISIBLE
-            if (!wasVisible) {
-                alpha = 0f
-                animate()
-                    .alpha(1f)
-                    .setDuration(120L)
-                    .setInterpolator(DecelerateInterpolator())
-                    .start()
+            if (onRefresh != null) {
+                addView(iconButton(context, R.drawable.ic_refresh_light, "刷新 Skill", onRefresh).apply {
+                    setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10))
+                }, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
+            }
+            if (showClose) {
+                addView(iconButton(context, R.drawable.ic_close_light, "关闭") {
+                    closeComposerExtensionMenu()
+                }, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
             }
         }
-    }
-
-    private fun closeCommandPalette(animate: Boolean = true) {
-        if (commandPaletteOverlay.visibility != View.VISIBLE) return
-        if (!animate) {
-            commandPaletteOverlay.animate().cancel()
-            commandPaletteOverlay.visibility = View.GONE
-            commandPaletteOverlay.removeAllViews()
-            return
-        }
-        commandPaletteOverlay.animate()
-            .alpha(0f)
-            .setDuration(90L)
-            .withEndAction {
-                commandPaletteOverlay.visibility = View.GONE
-                commandPaletteOverlay.removeAllViews()
-            }
-            .start()
-    }
-
-    private fun rebuildCommandPalette(commands: List<AgentCommand>) {
-        val content = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
-            commands.forEach { command -> addView(commandPaletteRow(command)) }
-        }
-        val viewportHeight = root.height.takeIf { it > 0 } ?: context.resources.displayMetrics.heightPixels
-        val maxHeight = AgentSurfaceNavigationPolicy.sessionPanelMaxHeight(
-            viewportHeight = viewportHeight,
-            composerHeight = composerArea.height,
-            topBarHeight = topBar.height,
-            preferredHeight = ui.dp(360),
-            minimumHeight = ui.dp(160),
-            outerSpacing = ui.dp(28)
-        )
-        val panel = MaxHeightScrollView(context, maxHeight).apply {
-            isFillViewport = false
-            isVerticalScrollBarEnabled = true
-            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            isClickable = true
-            elevation = ui.dp(12).toFloat()
-            background = ui.roundedBox(agentSurface, tokens.border, ui.dp(20).toFloat(), ui.dp(1))
-            addView(content, ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ))
-        }
-        val availableWidth = (root.width.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels) - ui.dp(36)
-        commandPaletteOverlay.removeAllViews()
-        commandPaletteOverlay.addView(panel, FrameLayout.LayoutParams(
-            minOf(availableWidth, ui.dp(370)),
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
-        ).apply {
-            bottomMargin = composerArea.height + ui.dp(18)
-        })
-    }
-
-    private fun commandPaletteRow(command: AgentCommand): View = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = ui.dp(48)
-        setPadding(ui.dp(13), ui.dp(7), ui.dp(13), ui.dp(7))
-        addView(TextView(context).apply {
-            text = "/${command.name}"
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textPrimary)
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.42f))
-        addView(TextView(context).apply {
-            text = command.description
-            textSize = 12f
-            gravity = Gravity.END
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setTextColor(tokens.textSecondary)
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.58f))
-        isClickable = true
-        isFocusable = true
-        contentDescription = "/${command.name}，${command.description}"
-        setOnClickListener {
-            input.setText(buildString {
-                append('/').append(command.name)
-                if (!command.inputHint.isNullOrBlank()) append(' ')
-            })
-            input.setSelection(input.text?.length ?: 0)
-            input.requestFocus()
-            closeCommandPalette(animate = false)
-        }
-    }.also { row ->
-        row.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply { setMargins(0, ui.dp(1), 0, ui.dp(1)) }
-    }
 
     private fun showMoreMenu(anchor: View) {
         ui.showAnchoredMenu(
@@ -7206,7 +7508,6 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun showSessionConfigurationPanel() {
-        closeCommandPalette(animate = false)
         closeComposerExtensionMenu(animate = false)
         sessionConfigurationPanel.show()
     }
@@ -7526,6 +7827,12 @@ internal class RunAgentSurfaceBinding(
         val applyResult: AgentConfigApplyResult?,
         val refreshed: AgentConfigReadResult?,
         val errorMessage: String?,
+    )
+
+    private data class SkillBatchRemoveOutcome(
+        val snapshot: AgentLiveConfigSnapshot,
+        val removedCount: Int,
+        val failure: String?,
     )
 
     private data class PendingAttachment(

@@ -26,6 +26,7 @@ import com.kite.app.agent.config.AgentProviderDraft
 import com.kite.app.agent.config.AgentProviderModelSummary
 import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
+import com.kite.app.agent.config.AgentUserProviderImportResult
 import com.kite.app.agent.config.NATIVE_MODEL_CONFIG_ID
 import com.kite.app.agent.config.SESSION_PERMISSION_CONFIG_ID
 import com.kite.app.agent.contract.AgentConfigCategory
@@ -727,6 +728,10 @@ class NativeAgentConfigAdaptersTest {
             .writeText("https://open.bigmodel.cn/api/coding/paas/v4")
         nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").writeText(SECRET)
         val adapter = CodexAgentConfigAdapter(context, ::container)
+        assertEquals(
+            AgentSessionConfigurationEffect.ReconnectNewSession,
+            adapter.providerConfigurationEffect(),
+        )
         val before = (adapter.readLive("codex") as AgentConfigReadResult.Ready).snapshot
         val officialOption = AgentConfigOption.Select(
             id = "model",
@@ -760,6 +765,36 @@ class NativeAgentConfigAdaptersTest {
             nativeFile("workspace/.kf/secrets/kite.codex-relay-upstream").readText(),
         )
         assertEquals(SECRET, nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").readText())
+    }
+
+    @Test
+    fun codexImportsTheActiveLegacyCustomProviderIntoTheUnifiedCatalogShape() = runTest {
+        nativeFile("root/.codex/config.toml").writeText(
+            """
+                model_provider = "zhipu-coding-plan"
+                model = "glm-5.2"
+
+                [model_providers.zhipu-coding-plan]
+                name = "智谱 GLM Coding Plan"
+                base_url = "http://127.0.0.1:4453/v1"
+                wire_api = "responses"
+                requires_openai_auth = false
+            """.trimIndent(),
+        )
+        nativeFile("workspace/.kf/secrets/kite.codex-relay-upstream")
+            .writeText("https://open.bigmodel.cn/api/coding/paas/v4")
+        nativeFile("workspace/.kf/secrets/kite.codex-relay-api-key").writeText(SECRET)
+        val adapter = CodexAgentConfigAdapter(context, ::container)
+
+        val result = adapter.readUserProviderImport("codex") as AgentUserProviderImportResult.Ready
+        val imported = result.import
+
+        assertEquals("zhipu-coding-plan", imported.activeProviderId)
+        assertEquals("zhipu-coding-plan/glm-5.2", imported.defaultModel)
+        assertEquals("https://open.bigmodel.cn/api/coding/paas/v4", imported.providers.single().baseUrl)
+        assertEquals(listOf("glm-5.2"), imported.providers.single().models.map { it.id })
+        assertTrue("zhipu-coding-plan" in imported.credentials)
+        assertFalse(imported.toString().contains(SECRET))
     }
 
     @Test

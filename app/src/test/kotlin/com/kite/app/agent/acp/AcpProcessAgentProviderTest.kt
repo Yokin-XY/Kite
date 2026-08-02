@@ -22,8 +22,16 @@ import com.agentclientprotocol.model.LogoutResponse
 import com.agentclientprotocol.model.ModelId
 import com.agentclientprotocol.model.ModelInfo
 import com.agentclientprotocol.model.PromptResponse
+import com.agentclientprotocol.model.SessionConfigId
+import com.agentclientprotocol.model.SessionConfigOption as AcpSessionConfigOption
+import com.agentclientprotocol.model.SessionConfigOptionCategory
+import com.agentclientprotocol.model.SessionConfigOptionValue
+import com.agentclientprotocol.model.SessionConfigSelectOption
+import com.agentclientprotocol.model.SessionConfigSelectOptions
+import com.agentclientprotocol.model.SessionConfigValueId
 import com.agentclientprotocol.model.SessionId
 import com.agentclientprotocol.model.SessionUpdate
+import com.agentclientprotocol.model.SetSessionConfigOptionResponse
 import com.agentclientprotocol.model.StopReason
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.transport.StdioTransport
@@ -139,6 +147,12 @@ class AcpProcessAgentProviderTest {
                 it.category == AgentConfigCategory.Model
             } as AgentConfigOption.Select).currentValue
         )
+        val mode = created.value.configuration.single { it.category == AgentConfigCategory.Mode }
+            as AgentConfigOption.Select
+        assertEquals("build", mode.currentValue)
+        assertEquals(listOf("build", "plan"), mode.choices.map { it.value })
+        assertTrue(connection.setMode(sessionId, "plan") is AgentOperationResult.Success)
+        assertEquals("plan", fixture.selectedMode)
 
         val prompted = withTimeout(5_000L) {
             connection.prompt(
@@ -182,6 +196,7 @@ class AcpProcessAgentProviderTest {
         @Volatile var authenticated: Boolean = false
         @Volatile var loggedOut: Boolean = false
         @Volatile var selectedModel: String = "fixture-balanced"
+        @Volatile var selectedMode: String = "build"
         @Volatile var createdSessionParameters: SessionCreationParameters? = null
         val promptStarted = CompletableDeferred<Unit>()
         private val releasePrompt = CompletableDeferred<Unit>()
@@ -210,6 +225,7 @@ class AcpProcessAgentProviderTest {
                     onAuthenticate = { authenticated = it == "login" },
                     onLogout = { loggedOut = true },
                     onModelSelected = { selectedModel = it },
+                    onModeSelected = { selectedMode = it },
                     onSessionCreated = { createdSessionParameters = it },
                 )
             )
@@ -234,6 +250,7 @@ class AcpProcessAgentProviderTest {
         private val onAuthenticate: (String) -> Unit,
         private val onLogout: () -> Unit,
         private val onModelSelected: (String) -> Unit,
+        private val onModeSelected: (String) -> Unit,
         private val onSessionCreated: (SessionCreationParameters) -> Unit,
     ) : AgentSupport {
         override suspend fun initialize(clientInfo: ClientInfo): AgentInfo = AgentInfo(
@@ -268,7 +285,8 @@ class AcpProcessAgentProviderTest {
                 onCancel,
                 onPromptStarted,
                 awaitPromptRelease,
-                onModelSelected
+                onModelSelected,
+                onModeSelected,
             )
         }
     }
@@ -278,7 +296,8 @@ class AcpProcessAgentProviderTest {
         private val onCancel: () -> Unit,
         private val onPromptStarted: () -> Unit,
         private val awaitPromptRelease: suspend () -> Unit,
-        private val onModelSelected: (String) -> Unit
+        private val onModelSelected: (String) -> Unit,
+        private val onModeSelected: (String) -> Unit,
     ) : AgentSession {
         override val availableModels: List<ModelInfo> = listOf(
             ModelInfo(ModelId("fixture-balanced"), "Fixture Balanced"),
@@ -286,10 +305,27 @@ class AcpProcessAgentProviderTest {
         )
         override val defaultModel: ModelId = ModelId("fixture-balanced")
 
+        private var selectedMode = "build"
+        override val configOptions: List<AcpSessionConfigOption>
+            get() = listOf(modeOption(selectedMode))
+
         override suspend fun setModel(modelId: ModelId, _meta: JsonElement?) =
             com.agentclientprotocol.model.SetSessionModelResponse().also {
                 onModelSelected(modelId.value)
             }
+
+        override suspend fun setConfigOption(
+            configId: SessionConfigId,
+            value: SessionConfigOptionValue,
+            _meta: JsonElement?,
+        ): SetSessionConfigOptionResponse {
+            check(configId.value == "mode")
+            val next = (value as SessionConfigOptionValue.StringValue).value
+            check(next == "build" || next == "plan")
+            selectedMode = next
+            onModeSelected(next)
+            return SetSessionConfigOptionResponse(configOptions)
+        }
 
         override suspend fun prompt(content: List<ContentBlock>, _meta: JsonElement?): Flow<Event> = flow {
             val text = content.filterIsInstance<ContentBlock.Text>().joinToString(" ") { it.text }
@@ -302,6 +338,19 @@ class AcpProcessAgentProviderTest {
         }
 
         override suspend fun cancel() = onCancel()
+
+        private fun modeOption(current: String): AcpSessionConfigOption.Select = AcpSessionConfigOption.Select(
+            id = SessionConfigId("mode"),
+            name = "Session Mode",
+            category = SessionConfigOptionCategory("mode"),
+            currentValue = SessionConfigValueId(current),
+            options = SessionConfigSelectOptions.Flat(
+                listOf(
+                    SessionConfigSelectOption(SessionConfigValueId("build"), "Build"),
+                    SessionConfigSelectOption(SessionConfigValueId("plan"), "Plan"),
+                )
+            ),
+        )
     }
 
     private class InMemoryAgentProcessChannel(

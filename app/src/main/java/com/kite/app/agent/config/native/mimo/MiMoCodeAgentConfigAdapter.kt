@@ -29,6 +29,7 @@ import com.kite.app.agent.config.AgentSkillActivation
 import com.kite.app.agent.config.AgentSkillOperation
 import com.kite.app.agent.config.AtomicConfigFileStore
 import com.kite.app.agent.config.NativeAgentCoreDocumentSpec
+import com.kite.app.agent.config.NativeAgentManagedOutputFormat
 import com.kite.app.foundation.contracts.ContainerRecord
 import com.kite.app.foundation.workspace.WorkSurfaceRuntimeBridge
 import java.net.URI
@@ -63,6 +64,7 @@ internal class MiMoCodeAgentConfigAdapter(
             scope = AgentConfigScope.User,
             semantics = AgentCoreDocumentSemantics.SupplementalInstructions,
             priorityDescription = "MiMo Code 跨工作区读取的全局说明",
+            managedOutputFormat = NativeAgentManagedOutputFormat.CreateOrUpdate,
         ))
         projectCoreDocument(
             workspacePath,
@@ -169,6 +171,12 @@ internal class MiMoCodeAgentConfigAdapter(
     }
 
     override fun nativeRevisionInputs(): List<Pair<String, String>> = skillDirectory.revisionInputs()
+
+    override suspend fun readSkillDocument(agentId: String, skillId: String) =
+        skillDirectory.readDocument(skillId)
+
+    override suspend fun writeSkillDocument(request: com.kite.app.agent.config.AgentSkillDocumentWriteRequest) =
+        skillDirectory.writeDocument(request)
 
     override fun mutate(files: Map<String, ByteArray>, changes: List<AgentPersistentConfigChange>): Map<String, ByteArray> {
         val root = parse(files.getValue(CONFIG_KEY)).clone()

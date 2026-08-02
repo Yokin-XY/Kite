@@ -13,6 +13,9 @@ internal enum class AgentTextBlockStyle {
     Heading1,
     Heading2,
     Heading3,
+    Heading4,
+    Heading5,
+    Heading6,
     Quote,
     Bullet,
     Ordered
@@ -20,12 +23,26 @@ internal enum class AgentTextBlockStyle {
 
 internal data class AgentInlineTextSegment(
     val text: String,
-    val style: Style,
+    val styles: Set<Style>,
     val link: String? = null,
 ) {
+    constructor(text: String, style: Style, link: String? = null) : this(text, setOf(style), link)
+
+    val style: Style
+        get() = when {
+            Style.Link in styles -> Style.Link
+            Style.Code in styles -> Style.Code
+            Style.Strong in styles -> Style.Strong
+            Style.Emphasis in styles -> Style.Emphasis
+            Style.Strike in styles -> Style.Strike
+            else -> Style.Plain
+        }
+
     internal enum class Style {
         Plain,
         Strong,
+        Emphasis,
+        Strike,
         Code,
         Link
     }
@@ -36,7 +53,8 @@ internal sealed interface AgentConversationDisplayItem {
 
     data class UserMessage(
         override val id: String,
-        val text: String
+        val text: String,
+        val skills: List<String> = emptyList(),
     ) : AgentConversationDisplayItem
 
     data class AssistantText(
@@ -44,7 +62,9 @@ internal sealed interface AgentConversationDisplayItem {
         val text: String,
         val style: AgentTextBlockStyle,
         val inline: List<AgentInlineTextSegment>,
-        val startsAnswer: Boolean
+        val startsAnswer: Boolean,
+        val listDepth: Int = 0,
+        val taskChecked: Boolean? = null,
     ) : AgentConversationDisplayItem
 
     data class Code(
@@ -64,6 +84,11 @@ internal sealed interface AgentConversationDisplayItem {
         val rows: List<List<String>>,
         val copyText: String,
         val startsAnswer: Boolean,
+    ) : AgentConversationDisplayItem
+
+    data class AnswerCopy(
+        override val id: String,
+        val copyText: String,
     ) : AgentConversationDisplayItem
 
     data class Process(
@@ -154,6 +179,18 @@ internal object AgentConversationPresentation {
                             else -> visibleEntries += block
                         }
                     }
+                    if (
+                        source is AgentConversationItem.Message &&
+                        source.role == AgentMessageRole.Assistant &&
+                        sourceIndex > lastProcessSource
+                    ) {
+                        source.content.toAnswerCopyText().takeIf(String::isNotBlank)?.let { copyText ->
+                            visibleEntries += AgentConversationDisplayItem.AnswerCopy(
+                                id = "${source.id}:answer-copy",
+                                copyText = copyText,
+                            )
+                        }
+                    }
                 }
 
                 val process = processEntries.takeIf { it.isNotEmpty() }?.let { entries ->
@@ -185,43 +222,8 @@ internal object AgentConversationPresentation {
             block is AgentConversationDisplayItem.Tool ||
             block is AgentConversationDisplayItem.Plan
 
-    fun parseInlineMarkdown(value: String): List<AgentInlineTextSegment> {
-        if (value.isEmpty()) return emptyList()
-        val result = mutableListOf<AgentInlineTextSegment>()
-        var cursor = 0
-        INLINE_MARKDOWN.findAll(value).forEach { match ->
-            if (match.range.first > cursor) {
-                result += AgentInlineTextSegment(
-                    value.substring(cursor, match.range.first),
-                    AgentInlineTextSegment.Style.Plain
-                )
-            }
-            val strong = match.groups[1]?.value
-            val code = match.groups[2]?.value
-            val linkText = match.groups[3]?.value
-            val linkTarget = match.groups[4]?.value
-            result += when {
-                strong != null -> AgentInlineTextSegment(strong, AgentInlineTextSegment.Style.Strong)
-                code != null -> AgentInlineTextSegment(code, AgentInlineTextSegment.Style.Code)
-                linkText != null && isSafeLink(linkTarget) -> AgentInlineTextSegment(
-                    linkText,
-                    AgentInlineTextSegment.Style.Link,
-                    linkTarget,
-                )
-                else -> AgentInlineTextSegment(match.value, AgentInlineTextSegment.Style.Plain)
-            }
-            cursor = match.range.last + 1
-        }
-        if (cursor < value.length) {
-            result += AgentInlineTextSegment(
-                value.substring(cursor),
-                AgentInlineTextSegment.Style.Plain
-            )
-        }
-        return result.ifEmpty {
-            listOf(AgentInlineTextSegment(value, AgentInlineTextSegment.Style.Plain))
-        }
-    }
+    fun parseInlineMarkdown(value: String): List<AgentInlineTextSegment> =
+        AgentMarkdownParser.parseInline(value)
 
     private fun MutableList<AgentConversationDisplayItem>.addMessage(
         message: AgentConversationItem.Message
@@ -230,7 +232,11 @@ internal object AgentConversationPresentation {
             add(
                 AgentConversationDisplayItem.UserMessage(
                     id = message.id,
-                    text = message.content.joinToString("\n") { it.fallbackText() }
+                    text = message.content
+                        .filterNot { it is AgentContent.SkillReference }
+                        .joinToString("\n") { it.fallbackText() },
+                    skills = message.content.filterIsInstance<AgentContent.SkillReference>()
+                        .map(AgentContent.SkillReference::displayName),
                 )
             )
             return
@@ -262,139 +268,7 @@ internal object AgentConversationPresentation {
         messageId: String,
         contentIndex: Int,
         markdown: String
-    ): List<AgentConversationDisplayItem> {
-        if (markdown.isBlank()) return emptyList()
-        val result = mutableListOf<AgentConversationDisplayItem>()
-        val paragraph = mutableListOf<String>()
-        val code = mutableListOf<String>()
-        var codeLanguage: String? = null
-        var inCode = false
-        var ordinal = 0
-
-        fun nextId(kind: String): String = "$messageId:$contentIndex:$kind:${ordinal++}"
-        fun flushParagraph() {
-            val value = paragraph.joinToString("\n").trimEnd()
-            paragraph.clear()
-            if (value.isNotBlank()) {
-                result += AgentConversationDisplayItem.AssistantText(
-                    id = nextId("text"),
-                    text = value,
-                    style = AgentTextBlockStyle.Paragraph,
-                    inline = parseInlineMarkdown(value),
-                    startsAnswer = false
-                )
-            }
-        }
-        fun flushCode() {
-            result += AgentConversationDisplayItem.Code(
-                id = nextId("code"),
-                language = codeLanguage,
-                code = code.joinToString("\n").trimEnd(),
-                startsAnswer = false
-            )
-            code.clear()
-            codeLanguage = null
-        }
-
-        val lines = markdown.replace("\r\n", "\n").replace('\r', '\n').split('\n')
-        var lineIndex = 0
-        while (lineIndex < lines.size) {
-            val line = lines[lineIndex]
-            val fence = FENCE.matchEntire(line)
-            if (fence != null) {
-                if (inCode) {
-                    flushCode()
-                    inCode = false
-                } else {
-                    flushParagraph()
-                    codeLanguage = fence.groupValues[1].trim().takeIf(String::isNotBlank)
-                    inCode = true
-                }
-                lineIndex += 1
-                continue
-            }
-            if (inCode) {
-                code += line
-                lineIndex += 1
-                continue
-            }
-            if (line.isBlank()) {
-                flushParagraph()
-                lineIndex += 1
-                continue
-            }
-            val table = parseTable(lines, lineIndex)
-            if (table != null) {
-                flushParagraph()
-                result += AgentConversationDisplayItem.Table(
-                    id = nextId("table"),
-                    headers = table.headers,
-                    rows = table.rows,
-                    copyText = table.copyText,
-                    startsAnswer = false,
-                )
-                lineIndex = table.nextLineIndex
-                continue
-            }
-
-            val heading = HEADING.matchEntire(line)
-            val quote = QUOTE.matchEntire(line)
-            val bullet = BULLET.matchEntire(line)
-            val rule = HORIZONTAL_RULE.matchEntire(line)
-            when {
-                heading != null -> {
-                    flushParagraph()
-                    val level = heading.groupValues[1].length
-                    result += AgentConversationDisplayItem.AssistantText(
-                        id = nextId("heading"),
-                        text = heading.groupValues[2].trim(),
-                        style = when (level) {
-                            1 -> AgentTextBlockStyle.Heading1
-                            2 -> AgentTextBlockStyle.Heading2
-                            else -> AgentTextBlockStyle.Heading3
-                        },
-                        inline = parseInlineMarkdown(heading.groupValues[2].trim()),
-                        startsAnswer = false
-                    )
-                }
-                quote != null -> {
-                    flushParagraph()
-                    result += AgentConversationDisplayItem.AssistantText(
-                        id = nextId("quote"),
-                        text = quote.groupValues[1].trim(),
-                        style = AgentTextBlockStyle.Quote,
-                        inline = parseInlineMarkdown(quote.groupValues[1].trim()),
-                        startsAnswer = false
-                    )
-                }
-                bullet != null -> {
-                    flushParagraph()
-                    val marker = bullet.groupValues[1]
-                    val body = bullet.groupValues[2].trim()
-                    val text = if (marker.firstOrNull()?.isDigit() == true) "$marker $body" else "• $body"
-                    result += AgentConversationDisplayItem.AssistantText(
-                        id = nextId("bullet"),
-                        text = text,
-                        style = if (marker.firstOrNull()?.isDigit() == true) {
-                            AgentTextBlockStyle.Ordered
-                        } else {
-                            AgentTextBlockStyle.Bullet
-                        },
-                        inline = parseInlineMarkdown(text),
-                        startsAnswer = false
-                    )
-                }
-                rule != null -> {
-                    flushParagraph()
-                    result += AgentConversationDisplayItem.Rule(nextId("rule"))
-                }
-                else -> paragraph += line
-            }
-            lineIndex += 1
-        }
-        if (inCode) flushCode() else flushParagraph()
-        return result
-    }
+    ): List<AgentConversationDisplayItem> = AgentMarkdownParser.parse(messageId, contentIndex, markdown)
 
     private fun AgentConversationDisplayItem.withAnswerStart(
         startsAnswer: Boolean
@@ -406,52 +280,23 @@ internal object AgentConversationPresentation {
         else -> this
     }
 
-    private fun parseTable(lines: List<String>, start: Int): MarkdownTable? {
-        if (start + 1 >= lines.size || '|' !in lines[start]) return null
-        val headers = parseTableRow(lines[start])
-        val divider = parseTableRow(lines[start + 1])
-        if (headers.size < 2 || divider.size != headers.size || divider.any { !TABLE_DIVIDER.matches(it) }) {
-            return null
+    private fun List<AgentContent>.toAnswerCopyText(): String = mapNotNull { content ->
+        when (content) {
+            is AgentContent.Text -> content.text.trim().takeIf(String::isNotBlank)
+            is AgentContent.EmbeddedText -> content.text.trim().takeIf(String::isNotBlank)
+            is AgentContent.ResourceLink -> markdownLink(content.title ?: content.name, content.uri)
+            is AgentContent.Image -> content.uri?.let { uri -> "![图片]($uri)" }
+            is AgentContent.EmbeddedBlob -> markdownLink(
+                AgentMediaPolicy.safeDisplayName(content.uri, "文件", content.mimeType),
+                content.uri,
+            )
+            is AgentContent.SkillReference -> content.displayName.takeIf(String::isNotBlank)
+            is AgentContent.Audio -> null
         }
-        val rows = mutableListOf<List<String>>()
-        val source = mutableListOf(lines[start], lines[start + 1])
-        var cursor = start + 2
-        while (cursor < lines.size && rows.size < MAX_TABLE_ROWS) {
-            val candidate = lines[cursor]
-            if (candidate.isBlank() || '|' !in candidate) break
-            val cells = parseTableRow(candidate)
-            if (cells.isEmpty()) break
-            rows += List(headers.size) { index -> cells.getOrNull(index).orEmpty() }
-            source += candidate
-            cursor += 1
-        }
-        return MarkdownTable(
-            headers = headers.take(MAX_TABLE_COLUMNS),
-            rows = rows.map { it.take(MAX_TABLE_COLUMNS) },
-            copyText = source.joinToString("\n"),
-            nextLineIndex = cursor,
-        )
-    }
+    }.joinToString("\n\n")
 
-    private fun parseTableRow(line: String): List<String> = line
-        .trim()
-        .removePrefix("|")
-        .removeSuffix("|")
-        .split('|')
-        .map(String::trim)
-
-    private fun isSafeLink(value: String?): Boolean = value
-        ?.trim()
-        ?.lowercase()
-        ?.let { it.startsWith("https://") || it.startsWith("http://") }
-        ?: false
-
-    private data class MarkdownTable(
-        val headers: List<String>,
-        val rows: List<List<String>>,
-        val copyText: String,
-        val nextLineIndex: Int,
-    )
+    private fun markdownLink(label: String, target: String): String =
+        "[${label.replace("[", "\\[").replace("]", "\\]")}]($target)"
 
     private fun AgentConversationItem.Tool.toDisplay(): AgentConversationDisplayItem.Tool {
         val location = call.locations.firstOrNull()?.let { item ->
@@ -527,10 +372,18 @@ internal object AgentConversationPresentation {
             mimeType = "text/plain",
             source = AgentFileSource.InlineText(text)
         )
+        is AgentContent.SkillReference -> AgentConversationDisplayItem.Attachment(
+            id = id,
+            title = displayName,
+            detail = "Skill",
+            mimeType = "text/plain",
+            source = AgentFileSource.InlineText(displayName),
+        )
     }
 
     private fun AgentContent.fallbackText(): String = when (this) {
         is AgentContent.Text -> text
+        is AgentContent.SkillReference -> "Skill · $displayName"
         is AgentContent.Image -> "图片 · $mimeType"
         is AgentContent.Audio -> "音频 · $mimeType"
         is AgentContent.ResourceLink -> title ?: name
@@ -552,14 +405,5 @@ internal object AgentConversationPresentation {
         else -> "$bytes B"
     }
 
-    private val FENCE = Regex("^\\s*```(.*)$")
-    private val HEADING = Regex("^\\s*(#{1,6})\\s+(.+)$")
-    private val QUOTE = Regex("^\\s*>\\s?(.*)$")
-    private val BULLET = Regex("^\\s*((?:[-*+])|(?:\\d+[.)]))\\s+(.+)$")
-    private val HORIZONTAL_RULE = Regex("^\\s*(?:-{3,}|_{3,}|\\*{3,})\\s*$")
-    private val TABLE_DIVIDER = Regex("^:?-{3,}:?$")
-    private val INLINE_MARKDOWN = Regex("\\*\\*(.+?)\\*\\*|`([^`\\n]+)`|\\[([^]\\n]+)]\\(([^)\\s]+)\\)")
     private const val MAX_TOOL_DETAIL = 600
-    private const val MAX_TABLE_COLUMNS = 8
-    private const val MAX_TABLE_ROWS = 40
 }

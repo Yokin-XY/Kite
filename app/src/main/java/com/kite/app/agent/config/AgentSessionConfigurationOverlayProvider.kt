@@ -5,6 +5,7 @@ import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
+import com.kite.app.agent.contract.AgentDraftConfigurationPreview
 import com.kite.app.agent.contract.AgentExistingSessionRequest
 import com.kite.app.agent.contract.AgentNewSessionRequest
 import com.kite.app.agent.contract.AgentOperationResult
@@ -235,6 +236,11 @@ class AgentSessionConfigurationOverlayProvider(
 
         override suspend fun setMode(sessionId: String, modeId: String): AgentOperationResult<Unit> =
             delegate.setMode(sessionId, modeId)
+
+        override fun previewDraftModelConfiguration(
+            providerId: String,
+            modelId: String,
+        ): AgentDraftConfigurationPreview? = delegate.previewDraftModelConfiguration(providerId, modelId)
 
         override suspend fun authenticate(methodId: String): AgentOperationResult<Unit> = delegate.authenticate(methodId)
 

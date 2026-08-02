@@ -1,6 +1,5 @@
 package com.kite.app.feature.runsurface
 
-import com.kite.app.agent.contract.AgentCommand
 import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
@@ -308,22 +307,6 @@ internal object AgentSurfaceNavigationPolicy {
             sequenceOf(session.title, session.id, session.cwd)
                 .filterNotNull()
                 .any { value -> value.lowercase().contains(normalized) }
-        }
-    }
-
-    fun slashCommandQuery(text: String): String? {
-        if (!text.startsWith('/')) return null
-        val query = text.drop(1)
-        if (query.any(Char::isWhitespace)) return null
-        return query.lowercase()
-    }
-
-    fun filterCommands(commands: List<AgentCommand>, query: String): List<AgentCommand> {
-        val normalized = query.trim().lowercase()
-        if (normalized.isEmpty()) return commands
-        return commands.filter { command ->
-            command.name.lowercase().contains(normalized) ||
-                command.description.lowercase().contains(normalized)
         }
     }
 

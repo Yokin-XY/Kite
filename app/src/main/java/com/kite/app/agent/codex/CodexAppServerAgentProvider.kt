@@ -7,6 +7,7 @@ import com.kite.app.agent.contract.AgentConfigCategory
 import com.kite.app.agent.contract.AgentConfigChoice
 import com.kite.app.agent.contract.AgentConfigOption
 import com.kite.app.agent.contract.AgentConfigValue
+import com.kite.app.agent.contract.AgentDraftConfigurationPreview
 import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentContent
 import com.kite.app.agent.contract.AgentExistingSessionRequest
@@ -54,6 +55,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -69,6 +71,20 @@ fun interface CodexAppServerProcessLauncher {
     suspend fun launch(): AgentProcessChannel
 }
 
+data class CodexOfficialModelSummary(
+    val id: String,
+    val displayName: String,
+)
+
+data class CodexOfficialModelCatalog(
+    val sourceVersion: String,
+    val models: List<CodexOfficialModelSummary>,
+)
+
+fun interface CodexOfficialModelCatalogSink {
+    fun onCatalog(catalog: CodexOfficialModelCatalog)
+}
+
 /**
  * Codex 官方 App Server 到 Kite Agent SDK 的专用适配器。
  *
@@ -79,6 +95,7 @@ class CodexAppServerAgentProvider(
     private val launcher: CodexAppServerProcessLauncher,
     private val initializeTimeoutMs: Long = DEFAULT_INITIALIZE_TIMEOUT_MS,
     private val diagnosticSink: (String) -> Unit = {},
+    private val officialModelCatalogSink: CodexOfficialModelCatalogSink? = null,
 ) : KiteAgentProvider {
     override val id: String = descriptor.id
 
@@ -114,6 +131,12 @@ class CodexAppServerAgentProvider(
             }
             rpc.notify("initialized", JSONObject())
             val models = loadModels(rpc)
+            if (models.isNotEmpty() && isChatGptManagedAccount(rpc)) {
+                runCatching { officialModelCatalogSink?.onCatalog(models.toOfficialCatalog()) }
+                    .onFailure { error ->
+                        diagnosticSink("Codex 官方模型目录保存失败: ${error.message}")
+                    }
+            }
             val connection = CodexAppServerConnection(
                 descriptor = descriptor,
                 process = process,
@@ -162,9 +185,32 @@ class CodexAppServerAgentProvider(
         return output.distinctBy(CodexModel::id)
     }
 
+    private suspend fun isChatGptManagedAccount(rpc: CodexAppServerRpc): Boolean = runCatching {
+        rpc.request(
+            "account/read",
+            JSONObject().put("refreshToken", false),
+        ).optJSONObject("account")?.optString("type") == CHATGPT_ACCOUNT_TYPE
+    }.getOrDefault(false)
+
+    private fun List<CodexModel>.toOfficialCatalog(): CodexOfficialModelCatalog {
+        val summaries = map { model -> CodexOfficialModelSummary(model.id, model.displayName) }
+        val digest = MessageDigest.getInstance("SHA-256")
+        summaries.forEach { model ->
+            digest.update(model.id.toByteArray(Charsets.UTF_8))
+            digest.update(0)
+            digest.update(model.displayName.toByteArray(Charsets.UTF_8))
+            digest.update(0)
+        }
+        return CodexOfficialModelCatalog(
+            sourceVersion = "sha256:" + digest.digest().joinToString("") { byte -> "%02x".format(byte) },
+            models = summaries,
+        )
+    }
+
     companion object {
         const val DEFAULT_INITIALIZE_TIMEOUT_MS = 20_000L
         private const val MODEL_PAGE_SIZE = 100
+        private const val CHATGPT_ACCOUNT_TYPE = "chatgpt"
     }
 }
 
@@ -418,6 +464,21 @@ private class CodexAppServerConnection(
         }
     }
 
+    override fun previewDraftModelConfiguration(
+        providerId: String,
+        modelId: String,
+    ): AgentDraftConfigurationPreview {
+        val options = if (providerId == OFFICIAL_PROVIDER_ID) {
+            models[modelId]?.let { model -> listOfNotNull(reasoningOption(model, model.defaultEffort)) }.orEmpty()
+        } else {
+            emptyList()
+        }
+        return AgentDraftConfigurationPreview(
+            replaceCategories = setOf(AgentConfigCategory.ThoughtLevel),
+            options = options,
+        )
+    }
+
     override suspend fun cancel(sessionId: String): AgentOperationResult<Unit> {
         if (sessions[sessionId] == null) return AgentOperationResult.Failure("会话不存在: $sessionId")
         endpoint.eventSink.onEvent(sessionId, AgentSessionEvent.LifecycleChanged(AgentSessionPhase.Cancelling))
@@ -659,28 +720,31 @@ private class CodexAppServerConnection(
             ))
         }
         available.firstOrNull { it.id == session.modelId }
-            ?.efforts
-            ?.takeIf { it.size > 1 }
-            ?.let { efforts ->
-                val current = session.effort?.takeIf { selected -> efforts.any { it.value == selected } }
-                    ?: efforts.first().value
-                add(AgentConfigOption.Select(
-                    id = EFFORT_CONFIG_ID,
-                    name = "推理强度",
-                    description = "只显示当前模型由 Codex 声明支持的强度",
-                    category = AgentConfigCategory.ThoughtLevel,
-                    currentValue = current,
-                    choices = efforts.map { effort ->
-                        AgentConfigChoice(
-                            value = effort.value,
-                            name = effort.semantics.displayName,
-                            description = effort.description ?: effort.semantics.description,
-                            reasoning = effort.semantics,
-                        )
-                    },
-                ))
-            }
+            ?.let { model -> reasoningOption(model, session.effort) }
+            ?.let(::add)
         add(codexPermissionOption(session.permission))
+    }
+
+    private fun reasoningOption(model: CodexModel, selectedEffort: String?): AgentConfigOption.Select? {
+        val efforts = model.efforts.takeIf { it.size > 1 } ?: return null
+        val current = selectedEffort?.takeIf { selected -> efforts.any { it.value == selected } }
+            ?: model.defaultEffort?.takeIf { selected -> efforts.any { it.value == selected } }
+            ?: efforts.first().value
+        return AgentConfigOption.Select(
+            id = EFFORT_CONFIG_ID,
+            name = "推理强度",
+            description = "只显示当前模型由 Codex 声明支持的强度",
+            category = AgentConfigCategory.ThoughtLevel,
+            currentValue = current,
+            choices = efforts.map { effort ->
+                AgentConfigChoice(
+                    value = effort.value,
+                    name = effort.semantics.displayName,
+                    description = effort.description ?: effort.semantics.description,
+                    reasoning = effort.semantics,
+                )
+            },
+        )
     }
 
     private fun availableModels(session: CodexSession): List<CodexModel> {
@@ -895,7 +959,7 @@ private fun codexReasoningSemantics(value: String): AgentReasoningSemantics? = w
     "medium" -> AgentReasoningLevel.Medium
     "high" -> AgentReasoningLevel.High
     "xhigh", "x-high", "x_high", "extra-high" -> AgentReasoningLevel.ExtraHigh
-    "max" -> AgentReasoningLevel.Maximum
+    "max", "ultra" -> AgentReasoningLevel.Maximum
     else -> null
 }
 

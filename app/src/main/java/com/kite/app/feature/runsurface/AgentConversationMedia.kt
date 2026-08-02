@@ -7,14 +7,18 @@ import android.net.Uri
 import android.util.Base64
 import android.util.LruCache
 import androidx.core.content.FileProvider
+import com.kite.app.foundation.workspace.ContainerVisibleFileResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URI
+import java.net.URL
 import java.security.MessageDigest
 
 internal sealed interface AgentImageSource {
     data class InlineBase64(val data: String) : AgentImageSource
+    data class Link(val uri: String) : AgentImageSource
 }
 
 internal sealed interface AgentFileSource {
@@ -77,19 +81,25 @@ internal class AgentConversationMediaRepository(
         cacheKey: String,
         source: AgentImageSource,
         mimeType: String
-    ): Bitmap = withContext(Dispatchers.Default) {
+    ): Bitmap = withContext(Dispatchers.IO) {
         require(mimeType.startsWith("image/")) { "不支持的图片类型" }
-        val data = when (source) {
-            is AgentImageSource.InlineBase64 -> source.data
+        val contentKey = when (source) {
+            is AgentImageSource.InlineBase64 ->
+                "$cacheKey:inline:${source.data.length}:${source.data.take(16)}:${source.data.takeLast(16)}"
+            is AgentImageSource.Link -> "$cacheKey:link:${source.uri}"
         }
-        val contentKey = "$cacheKey:${data.length}:${data.take(16)}:${data.takeLast(16)}"
         bitmaps.get(contentKey)?.let { return@withContext it }
-        require(AgentMediaPolicy.estimatedDecodedBytes(data) <= AgentMediaPolicy.MAX_INLINE_BYTES) {
-            "图片超过 12 MB"
+        val bytes = when (source) {
+            is AgentImageSource.InlineBase64 -> {
+                require(AgentMediaPolicy.estimatedDecodedBytes(source.data) <= AgentMediaPolicy.MAX_INLINE_BYTES) {
+                    "图片超过 12 MB"
+                }
+                val payload = source.data.substringAfter("base64,", source.data)
+                runCatching { Base64.decode(payload, Base64.DEFAULT) }
+                    .getOrElse { error("图片数据无效") }
+            }
+            is AgentImageSource.Link -> readLinkedImage(source.uri)
         }
-        val payload = data.substringAfter("base64,", data)
-        val bytes = runCatching { Base64.decode(payload, Base64.DEFAULT) }
-            .getOrElse { error("图片数据无效") }
         require(bytes.size <= AgentMediaPolicy.MAX_INLINE_BYTES) { "图片超过 12 MB" }
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -106,6 +116,42 @@ internal class AgentConversationMediaRepository(
             ?: error("无法解码图片")
         bitmaps.put(contentKey, bitmap)
         bitmap
+    }
+
+    private fun readLinkedImage(rawUri: String): ByteArray {
+        val scheme = runCatching { URI(rawUri).scheme?.lowercase() }.getOrNull()
+        return when (scheme) {
+            "http", "https" -> URL(rawUri).openConnection().apply {
+                connectTimeout = IMAGE_CONNECT_TIMEOUT_MS
+                readTimeout = IMAGE_READ_TIMEOUT_MS
+                useCaches = true
+            }.getInputStream().use(::readLimited)
+            "content" -> appContext.contentResolver.openInputStream(Uri.parse(rawUri))
+                ?.use(::readLimited)
+                ?: error("无法读取图片")
+            "file", null -> {
+                val file = ContainerVisibleFileResolver.resolve(appContext, rawUri)
+                    ?: error("图片不在 Kite 可访问的工作区或共享存储")
+                require(file.isFile) { "图片不存在" }
+                require(file.length() <= AgentMediaPolicy.MAX_INLINE_BYTES) { "图片超过 12 MB" }
+                file.readBytes()
+            }
+            else -> error("不支持的图片地址")
+        }
+    }
+
+    private fun readLimited(input: java.io.InputStream): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= AgentMediaPolicy.MAX_INLINE_BYTES) { "图片超过 12 MB" }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray()
     }
 
     suspend fun resolveOpenUri(
@@ -179,5 +225,7 @@ internal class AgentConversationMediaRepository(
     private companion object {
         const val BITMAP_CACHE_BYTES = 16 * 1024 * 1024
         const val FILE_CACHE_BYTES = 64L * 1024L * 1024L
+        const val IMAGE_CONNECT_TIMEOUT_MS = 8_000
+        const val IMAGE_READ_TIMEOUT_MS = 15_000
     }
 }
