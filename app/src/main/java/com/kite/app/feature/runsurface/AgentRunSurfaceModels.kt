@@ -40,6 +40,12 @@ internal enum class AgentNavigationScreen {
     ArchivedContent,
 }
 
+internal enum class AgentProviderLibraryMode {
+    Browse,
+    Visibility,
+    Delete,
+}
+
 internal data class AgentSessionProjectGroup(
     val cwd: String,
     val name: String,

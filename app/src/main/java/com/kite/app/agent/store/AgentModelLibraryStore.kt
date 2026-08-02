@@ -145,6 +145,30 @@ class AgentModelLibraryStore(context: Context) {
         }
     }
 
+    fun setModelVisible(
+        agentId: String,
+        providerId: String,
+        modelId: String,
+        visible: Boolean,
+    ): Boolean {
+        val normalizedModelId = modelId.trim()
+        if (agentId.isBlank() || providerId.isBlank() || normalizedModelId.isBlank()) return false
+        return update(agentId) { current ->
+            val existing = current.providers[providerId] ?: AgentModelLibraryProviderPreference()
+            val hidden = existing.hiddenModelIds.toMutableSet()
+            val changed = if (visible) hidden.remove(normalizedModelId) else hidden.add(normalizedModelId)
+            if (!changed) {
+                current to false
+            } else {
+                current.copy(
+                    providers = current.providers + (
+                        providerId to existing.copy(hiddenModelIds = hidden)
+                    )
+                ).normalized() to true
+            }
+        }
+    }
+
     /**
      * 增量更新 Agent 公布的系统模型显示名称。
      *
@@ -242,7 +266,13 @@ class AgentModelLibraryStore(context: Context) {
                                     put(modelId, displayName)
                                 }
                             }
-                        }
+                        },
+                        hiddenModelIds = buildSet {
+                            val hidden = value.optJSONArray(KEY_HIDDEN_MODEL_IDS) ?: JSONArray()
+                            for (index in 0 until hidden.length()) {
+                                hidden.optString(index).trim().takeIf(String::isNotBlank)?.let(::add)
+                            }
+                        },
                     )
                 )
             }
@@ -268,6 +298,11 @@ class AgentModelLibraryStore(context: Context) {
                             }
                         })
                     }
+                    if (preference.hiddenModelIds.isNotEmpty()) {
+                        put(KEY_HIDDEN_MODEL_IDS, JSONArray().apply {
+                            preference.hiddenModelIds.sorted().forEach(::put)
+                        })
+                    }
                 })
             }
         })
@@ -275,7 +310,10 @@ class AgentModelLibraryStore(context: Context) {
 
     private fun AgentModelLibrarySnapshot.normalized(): AgentModelLibrarySnapshot = copy(
         providers = providers.filterValues {
-            it.groupId != null || !it.visibleInConversation || it.modelDisplayNames.isNotEmpty()
+            it.groupId != null ||
+                !it.visibleInConversation ||
+                it.modelDisplayNames.isNotEmpty() ||
+                it.hiddenModelIds.isNotEmpty()
         }
     )
 
@@ -298,6 +336,7 @@ class AgentModelLibraryStore(context: Context) {
         private const val KEY_GROUP_ID = "groupId"
         private const val KEY_VISIBLE = "visibleInConversation"
         private const val KEY_MODEL_DISPLAY_NAMES = "modelDisplayNames"
+        private const val KEY_HIDDEN_MODEL_IDS = "hiddenModelIds"
         private const val MAX_GROUP_NAME = 48
         private const val MAX_MODEL_DISPLAY_NAME = 128
         private const val VERSION = 1
@@ -310,6 +349,9 @@ data class AgentModelLibrarySnapshot(
 ) {
     fun isProviderVisible(providerId: String): Boolean =
         providers[providerId]?.visibleInConversation ?: true
+
+    fun isModelVisible(providerId: String, modelId: String): Boolean =
+        modelId !in providers[providerId]?.hiddenModelIds.orEmpty()
 
     fun providerGroupId(providerId: String): String? = providers[providerId]?.groupId
 
@@ -328,7 +370,8 @@ data class AgentModelLibraryGroup(
 data class AgentModelLibraryProviderPreference(
     val groupId: String? = null,
     val visibleInConversation: Boolean = true,
-    val modelDisplayNames: Map<String, String> = emptyMap()
+    val modelDisplayNames: Map<String, String> = emptyMap(),
+    val hiddenModelIds: Set<String> = emptySet(),
 )
 
 data class AgentModelDisplayName(

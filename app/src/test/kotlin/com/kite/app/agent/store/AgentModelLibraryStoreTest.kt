@@ -30,6 +30,21 @@ class AgentModelLibraryStoreTest {
     @Test
     fun `未保存偏好时供应商默认进入会话选择`() {
         assertTrue(store.snapshot("opencode").isProviderVisible("zhipu"))
+        assertTrue(store.snapshot("opencode").isModelVisible("zhipu", "zhipu/glm-5.2"))
+    }
+
+    @Test
+    fun `单模型显示偏好和供应商显示偏好独立保存`() {
+        assertTrue(store.setModelVisible("opencode", "zhipu", "zhipu/glm-5.0", false))
+        assertTrue(store.setProviderVisible("opencode", "zhipu", false))
+
+        val snapshot = AgentModelLibraryStore(context).snapshot("opencode")
+        assertFalse(snapshot.isProviderVisible("zhipu"))
+        assertTrue(snapshot.isModelVisible("zhipu", "zhipu/glm-5.2"))
+        assertFalse(snapshot.isModelVisible("zhipu", "zhipu/glm-5.0"))
+
+        assertTrue(store.setProviderVisible("opencode", "zhipu", true))
+        assertFalse(store.snapshot("opencode").isModelVisible("zhipu", "zhipu/glm-5.0"))
     }
 
     @Test

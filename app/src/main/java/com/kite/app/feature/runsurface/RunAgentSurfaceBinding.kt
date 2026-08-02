@@ -133,6 +133,7 @@ import com.kite.app.agent.store.AgentDraftCapabilityCacheStore
 import com.kite.app.agent.store.AgentArchivedSessionMetadata
 import com.kite.app.agent.store.AgentArchivedSessionSourceState
 import com.kite.app.agent.store.AgentModelDisplayName
+import com.kite.app.agent.store.AgentModelLibrarySnapshot
 import com.kite.app.agent.store.AgentModelLibraryStore
 import com.kite.app.agent.store.AgentProviderCatalogSnapshot
 import com.kite.app.agent.store.AgentProject
@@ -298,6 +299,7 @@ internal class RunAgentSurfaceBinding(
     private var providerEditorStatusText: TextView? = null
     private var providerEditorSaveAction: TextView? = null
     private var providerLibraryGroupId: String = AgentModelLibraryStore.ALL_GROUP_ID
+    private var providerLibraryMode: AgentProviderLibraryMode = AgentProviderLibraryMode.Browse
     private val expandedProviderIds = linkedSetOf<String>()
     private val selectedProviderIds = linkedSetOf<String>()
     private val selectedSkillIds = linkedSetOf<String>()
@@ -1933,6 +1935,12 @@ internal class RunAgentSurfaceBinding(
     }
 
     private fun returnFromProviderManager() {
+        if (providerLibraryMode != AgentProviderLibraryMode.Browse) {
+            providerLibraryMode = AgentProviderLibraryMode.Browse
+            selectedProviderIds.clear()
+            showCurrentProviderList()
+            return
+        }
         selectedProviderIds.clear()
         returnToAgentSettings()
     }
@@ -3581,6 +3589,7 @@ internal class RunAgentSurfaceBinding(
         val targetAgentId = selected.registration.definition.agentId
         if (providerPageAgentId != null && providerPageAgentId != targetAgentId) {
             providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
+            providerLibraryMode = AgentProviderLibraryMode.Browse
             expandedProviderIds.clear()
             selectedProviderIds.clear()
         }
@@ -4889,7 +4898,8 @@ internal class RunAgentSurfaceBinding(
         actionIcon: Int? = null,
         actionDescription: String? = null,
         onAction: (() -> Unit)? = null,
-        trailingView: View? = null
+        trailingView: View? = null,
+        trailingWidthDp: Int = 56,
     ): View = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -4908,7 +4918,10 @@ internal class RunAgentSurfaceBinding(
             setTextColor(tokens.textPrimary)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         when {
-            trailingView != null -> addView(trailingView, LinearLayout.LayoutParams(ui.dp(56), ui.dp(48)))
+            trailingView != null -> addView(
+                trailingView,
+                LinearLayout.LayoutParams(ui.dp(trailingWidthDp), ui.dp(48)),
+            )
             actionIcon != null && onAction != null -> addView(
                 iconButton(context, actionIcon, actionDescription ?: title, onAction),
                 LinearLayout.LayoutParams(ui.dp(48), ui.dp(48))
@@ -5482,22 +5495,53 @@ internal class RunAgentSurfaceBinding(
             )) {
             providerLibraryGroupId = AgentModelLibraryStore.ALL_GROUP_ID
         }
-        val visibleProviders = when (providerLibraryGroupId) {
-            AgentModelLibraryStore.ALL_GROUP_ID -> providers
-            AgentModelLibraryStore.OFFICIAL_GROUP_ID -> officialProviders
-            AgentModelLibraryStore.FREE_GROUP_ID -> freeProviders
-            else -> providers.filter { it.libraryGroupId == providerLibraryGroupId }
+        val customProviders = providers.filter {
+            it.source == AgentModelSource.UserConfigured && it.editableProvider != null
+        }
+        selectedProviderIds.retainAll(customProviders.mapTo(linkedSetOf()) { it.id })
+        val visibleProviders = when (providerLibraryMode) {
+            AgentProviderLibraryMode.Visibility -> providers
+            AgentProviderLibraryMode.Delete -> customProviders
+            AgentProviderLibraryMode.Browse -> when (providerLibraryGroupId) {
+                AgentModelLibraryStore.ALL_GROUP_ID -> providers
+                AgentModelLibraryStore.OFFICIAL_GROUP_ID -> officialProviders
+                AgentModelLibraryStore.FREE_GROUP_ID -> freeProviders
+                else -> providers.filter { it.libraryGroupId == providerLibraryGroupId }
+            }
+        }
+        val headerAction = when (providerLibraryMode) {
+            AgentProviderLibraryMode.Browse -> modelLibraryHeaderAction("显示管理") {
+                providerLibraryMode = AgentProviderLibraryMode.Visibility
+                selectedProviderIds.clear()
+                showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+            }
+            AgentProviderLibraryMode.Visibility -> modelLibraryHeaderAction("完成") {
+                providerLibraryMode = AgentProviderLibraryMode.Browse
+                showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+            }
+            AgentProviderLibraryMode.Delete -> modelLibraryHeaderAction("取消") {
+                providerLibraryMode = AgentProviderLibraryMode.Browse
+                selectedProviderIds.clear()
+                showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+            }
         }
         addView(buildAgentSubpageHeader(
-            title = "模型库",
+            title = when (providerLibraryMode) {
+                AgentProviderLibraryMode.Browse -> "模型库"
+                AgentProviderLibraryMode.Visibility -> "显示管理"
+                AgentProviderLibraryMode.Delete -> "删除供应商"
+            },
             backDescription = "返回 Agent 设置",
             onBack = ::returnFromProviderManager,
-            actionIcon = R.drawable.ic_add_light.takeIf { canEditProviders },
-            actionDescription = "添加供应商".takeIf { canEditProviders },
-            onAction = if (canEditProviders) ({
-                showProviderEditor(selected, target, snapshot, existing = null, preset = null)
-            }) else null,
+            trailingView = headerAction,
+            trailingWidthDp = 78,
         ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(64)))
+        if (providerLibraryMode == AgentProviderLibraryMode.Delete) {
+            addView(
+                buildProviderDeleteSelectionRow(selected, target, snapshot, customProviders),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            )
+        }
         val providerScroll = ScrollView(context).apply {
             isFillViewport = true
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -5511,19 +5555,28 @@ internal class RunAgentSurfaceBinding(
                     setTextColor(tokens.textPrimary)
                 })
                 addView(TextView(context).apply {
-                    text = "按分组管理供应商；展开卡片选择默认模型，长按可以整理会话选择项。"
+                    text = when (providerLibraryMode) {
+                        AgentProviderLibraryMode.Browse ->
+                            "按供应商折叠模型；右上角管理会话显示，长按自定义供应商可以删除。"
+                        AgentProviderLibraryMode.Visibility ->
+                            "勾选会出现在会话模型选择器；展开供应商可以精细到单个模型。"
+                        AgentProviderLibraryMode.Delete ->
+                            "只删除用户自定义供应商及其模型；免费和官方来源不会进入删除选择。"
+                    }
                     textSize = 13f
                     setTextColor(tokens.textSecondary)
                     setPadding(0, ui.dp(5), 0, ui.dp(13))
                 })
-                addView(buildProviderGroupStrip(
-                    selected,
-                    target,
-                    snapshot,
-                    library,
-                    hasOfficialProviders = officialProviders.isNotEmpty(),
-                    hasFreeProviders = freeProviders.isNotEmpty(),
-                ))
+                if (providerLibraryMode == AgentProviderLibraryMode.Browse) {
+                    addView(buildProviderGroupStrip(
+                        selected,
+                        target,
+                        snapshot,
+                        library,
+                        hasOfficialProviders = officialProviders.isNotEmpty(),
+                        hasFreeProviders = freeProviders.isNotEmpty(),
+                    ))
+                }
                 if (visibleProviders.isEmpty()) {
                     addView(LinearLayout(context).apply {
                         orientation = LinearLayout.VERTICAL
@@ -5535,7 +5588,11 @@ internal class RunAgentSurfaceBinding(
                             ui.dp(24).toFloat()
                         )
                         addView(TextView(context).apply {
-                            text = if (providers.isEmpty()) "还没有供应商配置" else "这个分组还是空的"
+                            text = when {
+                                providers.isEmpty() -> "还没有模型"
+                                providerLibraryMode == AgentProviderLibraryMode.Delete -> "没有可删除的自定义供应商"
+                                else -> "这个分组还是空的"
+                            }
                             textSize = 17f
                             typeface = Typeface.DEFAULT_BOLD
                             setTextColor(tokens.textPrimary)
@@ -5547,11 +5604,6 @@ internal class RunAgentSurfaceBinding(
                             setTextColor(tokens.textSecondary)
                             setPadding(0, ui.dp(7), 0, ui.dp(18))
                         })
-                        if (canEditProviders) {
-                            addView(actionTextButton("添加供应商") {
-                                showProviderEditor(selected, target, snapshot, existing = null, preset = null)
-                            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(48)))
-                        }
                     }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 } else {
                     visibleProviders.forEach { provider ->
@@ -5560,6 +5612,7 @@ internal class RunAgentSurfaceBinding(
                             target = target,
                             snapshot = snapshot,
                             projection = provider,
+                            library = library,
                         ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                             setMargins(0, 0, 0, ui.dp(12))
                         })
@@ -5576,11 +5629,17 @@ internal class RunAgentSurfaceBinding(
             ))
             setOnRefreshListener { refreshProviderCatalog(selected, target, this) }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        if (selectedProviderIds.isNotEmpty()) {
-            addView(buildProviderBatchBar(selected, target, snapshot, providers), LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ui.dp(70)
-            ))
+        when {
+            providerLibraryMode == AgentProviderLibraryMode.Delete -> addView(
+                buildProviderDeleteBar(selected, target, snapshot, customProviders),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            )
+            providerLibraryMode == AgentProviderLibraryMode.Browse && canEditProviders -> addView(
+                buildModelLibraryAddBar {
+                    showProviderEditor(selected, target, snapshot, existing = null, preset = null)
+                },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            )
         }
     }
 
@@ -5662,11 +5721,14 @@ internal class RunAgentSurfaceBinding(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
-        projection: AgentModelProviderProjection
+        projection: AgentModelProviderProjection,
+        library: com.kite.app.agent.store.AgentModelLibrarySnapshot,
     ): View {
         val expanded = projection.id in expandedProviderIds
-        val selectedForBatch = projection.id in selectedProviderIds
+        val selectedForBatch = providerLibraryMode == AgentProviderLibraryMode.Delete &&
+            projection.id in selectedProviderIds
         val isDefault = projection.selectedModelValue != null
+        val visibilityState = providerVisibilityState(projection, library)
         val officialAccount = projection.officialAccount
         val officialState = officialAccount?.let { account ->
             officialAccountManager.state(selected.registration.definition.agentId, account.id)
@@ -5674,20 +5736,59 @@ internal class RunAgentSurfaceBinding(
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = ui.roundedBox(
-                if (isDefault || selectedForBatch) agentSettingsSurface else agentSurface,
-                if (isDefault || selectedForBatch) android.graphics.Color.TRANSPARENT else tokens.border,
+                when {
+                    selectedForBatch -> selectionPalette.selectedRow
+                    providerLibraryMode == AgentProviderLibraryMode.Browse && isDefault -> agentSettingsSurface
+                    else -> agentSurface
+                },
+                if (selectedForBatch || (providerLibraryMode == AgentProviderLibraryMode.Browse && isDefault)) {
+                    android.graphics.Color.TRANSPARENT
+                } else tokens.border,
                 ui.dp(22).toFloat(),
-                if (isDefault || selectedForBatch) 0 else ui.dp(1)
+                if (selectedForBatch || (providerLibraryMode == AgentProviderLibraryMode.Browse && isDefault)) 0
+                else ui.dp(1)
             )
             val header = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 minimumHeight = ui.dp(76)
                 setPadding(ui.dp(13), ui.dp(10), ui.dp(7), ui.dp(10))
-                if (selectedProviderIds.isNotEmpty()) {
-                    addView(providerSelectionDot(selectedForBatch), LinearLayout.LayoutParams(ui.dp(34), ui.dp(34)).apply {
-                        marginEnd = ui.dp(4)
-                    })
+                if (providerLibraryMode != AgentProviderLibraryMode.Browse) {
+                    val selectionState = when (providerLibraryMode) {
+                        AgentProviderLibraryMode.Visibility -> visibilityState
+                        AgentProviderLibraryMode.Delete -> if (selectedForBatch) {
+                            AgentArchivedProjectSelectionState.Checked
+                        } else AgentArchivedProjectSelectionState.Unchecked
+                        AgentProviderLibraryMode.Browse -> AgentArchivedProjectSelectionState.Unchecked
+                    }
+                    addView(modelLibrarySelectionIndicator(
+                        state = selectionState,
+                        description = when (providerLibraryMode) {
+                            AgentProviderLibraryMode.Visibility ->
+                                if (projection.visibleInConversation) "隐藏 ${projection.name}" else "显示 ${projection.name}"
+                            AgentProviderLibraryMode.Delete ->
+                                if (selectedForBatch) "取消选择 ${projection.name}" else "选择删除 ${projection.name}"
+                            AgentProviderLibraryMode.Browse -> projection.name
+                        },
+                        onClick = {
+                            when (providerLibraryMode) {
+                                AgentProviderLibraryMode.Visibility -> {
+                                    modelLibraryStore.setProviderVisible(
+                                        selected.registration.definition.agentId,
+                                        projection.id,
+                                        !projection.visibleInConversation,
+                                    )
+                                    showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+                                }
+                                AgentProviderLibraryMode.Delete ->
+                                    toggleProviderDeleteSelection(selected, target, snapshot, projection.id)
+                                AgentProviderLibraryMode.Browse -> Unit
+                            }
+                        },
+                    ), LinearLayout.LayoutParams(
+                        ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+                        ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+                    ))
                 }
                 addView(ImageView(context).apply {
                     setImageResource(R.drawable.ic_bridge)
@@ -5728,7 +5829,7 @@ internal class RunAgentSurfaceBinding(
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginStart = ui.dp(4)
                 })
-                if (projection.models.isNotEmpty() && selectedProviderIds.isEmpty()) {
+                if (projection.models.isNotEmpty() && providerLibraryMode == AgentProviderLibraryMode.Browse) {
                     addView(iconButton(context, R.drawable.ic_more_vert_light, "编辑 ${projection.name}") {
                         if (projection.editableProvider != null) {
                             showProviderEditor(
@@ -5751,7 +5852,11 @@ internal class RunAgentSurfaceBinding(
                         ui.dp(42)
                     ))
                 }
-                if (officialAccount != null && officialState != null && selectedProviderIds.isEmpty()) {
+                if (
+                    officialAccount != null &&
+                    officialState != null &&
+                    providerLibraryMode == AgentProviderLibraryMode.Browse
+                ) {
                     addView(buildOfficialAccountAction(
                         agentId = selected.registration.definition.agentId,
                         account = officialAccount,
@@ -5761,44 +5866,92 @@ internal class RunAgentSurfaceBinding(
                         marginEnd = ui.dp(2)
                     })
                 }
-                addView(ImageView(context).apply {
-                    setImageResource(R.drawable.ic_chevron_right_light)
-                    imageTintList = ColorStateList.valueOf(tokens.textSecondary)
-                    rotation = if (expanded) 90f else 0f
-                    setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
-                }, LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)))
+                if (
+                    projection.models.isNotEmpty() &&
+                    providerLibraryMode != AgentProviderLibraryMode.Delete
+                ) {
+                    addView(ImageView(context).apply {
+                        setImageResource(R.drawable.ic_chevron_right_light)
+                        imageTintList = ColorStateList.valueOf(tokens.textSecondary)
+                        rotation = if (expanded) 90f else 0f
+                        setPadding(ui.dp(11), ui.dp(11), ui.dp(11), ui.dp(11))
+                    }, LinearLayout.LayoutParams(ui.dp(42), ui.dp(42)))
+                }
                 isClickable = true
                 isFocusable = true
                 setOnClickListener {
-                    if (selectedProviderIds.isNotEmpty()) {
-                        toggleProviderBatchSelection(selected, target, snapshot, projection.id)
-                    } else {
-                        if (!expandedProviderIds.add(projection.id)) expandedProviderIds.remove(projection.id)
-                        showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+                    when (providerLibraryMode) {
+                        AgentProviderLibraryMode.Delete ->
+                            toggleProviderDeleteSelection(selected, target, snapshot, projection.id)
+                        AgentProviderLibraryMode.Browse,
+                        AgentProviderLibraryMode.Visibility -> {
+                            if (!expandedProviderIds.add(projection.id)) expandedProviderIds.remove(projection.id)
+                            showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+                        }
                     }
                 }
                 setOnLongClickListener {
-                    toggleProviderBatchSelection(selected, target, snapshot, projection.id)
-                    true
+                    if (
+                        providerLibraryMode == AgentProviderLibraryMode.Browse &&
+                        projection.source == AgentModelSource.UserConfigured &&
+                        projection.editableProvider != null
+                    ) {
+                        providerLibraryMode = AgentProviderLibraryMode.Delete
+                        selectedProviderIds.clear()
+                        selectedProviderIds += projection.id
+                        showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+                        true
+                    } else {
+                        false
+                    }
                 }
             }
             addView(header)
-            if (expanded && projection.models.isNotEmpty()) {
+            if (
+                expanded &&
+                projection.models.isNotEmpty() &&
+                providerLibraryMode != AgentProviderLibraryMode.Delete
+            ) {
                 addView(View(context).apply { setBackgroundColor(tokens.border) }, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ui.dp(1)
                 ).apply { setMargins(ui.dp(16), 0, ui.dp(16), 0) })
                 projection.models.forEach { model ->
-                    addView(sessionChoiceRow(
-                        title = model.name,
-                        description = model.description ?: model.value.takeIf { it != model.name },
-                        selected = model.value == projection.selectedModelValue,
-                        contentDescription = "设为默认模型 ${model.name}",
-                        useSelectionDot = true,
-                        onClick = {
-                            selectPersistentModel(selected, target, snapshot, projection, model)
-                        }
-                    ), LinearLayout.LayoutParams(
+                    val row = when (providerLibraryMode) {
+                        AgentProviderLibraryMode.Browse -> sessionChoiceRow(
+                            title = model.name,
+                            description = model.description ?: model.value.takeIf { it != model.name },
+                            selected = model.value == projection.selectedModelValue,
+                            contentDescription = "设为默认模型 ${model.name}",
+                            useSelectionDot = true,
+                            onClick = {
+                                selectPersistentModel(selected, target, snapshot, projection, model)
+                            }
+                        )
+                        AgentProviderLibraryMode.Visibility -> modelVisibilityRow(
+                            provider = projection,
+                            model = model,
+                            visible = library.isModelVisible(projection.id, model.value),
+                            onClick = {
+                                modelLibraryStore.setModelVisible(
+                                    selected.registration.definition.agentId,
+                                    projection.id,
+                                    model.value,
+                                    !library.isModelVisible(projection.id, model.value),
+                                )
+                                if (!projection.visibleInConversation) {
+                                    modelLibraryStore.setProviderVisible(
+                                        selected.registration.definition.agentId,
+                                        projection.id,
+                                        true,
+                                    )
+                                }
+                                showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+                            },
+                        )
+                        AgentProviderLibraryMode.Delete -> error("删除模式不展示模型行")
+                    }
+                    addView(row, LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
                     ).apply { setMargins(ui.dp(8), 0, ui.dp(8), ui.dp(4)) })
@@ -6107,20 +6260,92 @@ internal class RunAgentSurfaceBinding(
         AgentOfficialAccountStatus.Failed -> "状态未知"
     }
 
-    private fun providerSelectionDot(selected: Boolean): View = TextView(context).apply {
-        text = if (selected) "●" else ""
-        textSize = 12f
-        gravity = Gravity.CENTER
-        setTextColor(tokens.textPrimary)
-        background = ui.roundedBox(
-            android.graphics.Color.TRANSPARENT,
-            if (selected) tokens.textPrimary else tokens.borderStrong,
-            ui.dp(17).toFloat(),
-            ui.dp(1)
-        )
+    private fun modelLibraryHeaderAction(label: String, onClick: () -> Unit): TextView =
+        TextView(context).apply {
+            text = label
+            textSize = 13.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(tokens.textPrimary)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+
+    private fun modelLibrarySelectionIndicator(
+        state: AgentArchivedProjectSelectionState,
+        description: String,
+        onClick: () -> Unit,
+    ): ImageView = ImageView(context).apply {
+        renderArchivedSelectionIndicator(this, ui, selectionPalette, state)
+        contentDescription = description
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { onClick() }
     }
 
-    private fun toggleProviderBatchSelection(
+    private fun providerVisibilityState(
+        provider: AgentModelProviderProjection,
+        library: AgentModelLibrarySnapshot,
+    ): AgentArchivedProjectSelectionState {
+        if (!provider.visibleInConversation) return AgentArchivedProjectSelectionState.Unchecked
+        val visibleModels = provider.models.count { library.isModelVisible(provider.id, it.value) }
+        return when {
+            provider.models.isEmpty() || visibleModels == provider.models.size ->
+                AgentArchivedProjectSelectionState.Checked
+            else -> AgentArchivedProjectSelectionState.Partial
+        }
+    }
+
+    private fun modelVisibilityRow(
+        provider: AgentModelProviderProjection,
+        model: AgentConfigChoice,
+        visible: Boolean,
+        onClick: () -> Unit,
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        minimumHeight = ui.dp(56)
+        setPadding(ui.dp(4), ui.dp(4), ui.dp(10), ui.dp(4))
+        addView(modelLibrarySelectionIndicator(
+            state = if (visible) AgentArchivedProjectSelectionState.Checked
+            else AgentArchivedProjectSelectionState.Unchecked,
+            description = if (visible) "隐藏 ${model.name}" else "显示 ${model.name}",
+            onClick = onClick,
+        ), LinearLayout.LayoutParams(
+            ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+            ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+        ))
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(context).apply {
+                text = model.name
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textPrimary)
+            })
+            addView(TextView(context).apply {
+                text = listOfNotNull(
+                    model.description ?: model.value.takeIf { it != model.name },
+                    "当前默认".takeIf { model.value == provider.selectedModelValue },
+                ).joinToString(" · ")
+                textSize = 11.5f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(tokens.textSecondary)
+                visibility = if (text.isNullOrBlank()) View.GONE else View.VISIBLE
+                setPadding(0, ui.dp(2), 0, 0)
+            })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        isClickable = true
+        isFocusable = true
+        contentDescription = if (visible) "隐藏模型 ${model.name}" else "显示模型 ${model.name}"
+        setOnClickListener { onClick() }
+    }
+
+    private fun toggleProviderDeleteSelection(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
@@ -6130,7 +6355,7 @@ internal class RunAgentSurfaceBinding(
         showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
     }
 
-    private fun buildProviderBatchBar(
+    private fun buildProviderDeleteSelectionRow(
         selected: AgentRegistryEntry,
         target: AgentConfigurationTarget,
         snapshot: AgentLiveConfigSnapshot,
@@ -6138,41 +6363,65 @@ internal class RunAgentSurfaceBinding(
     ): View = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(ui.dp(16), ui.dp(8), ui.dp(16), ui.dp(10))
-        setBackgroundColor(agentSurface)
+        setPadding(ui.dp(18), 0, ui.dp(18), ui.dp(6))
+        val allSelected = providers.isNotEmpty() && selectedProviderIds.containsAll(providers.map { it.id })
+        addView(modelLibrarySelectionIndicator(
+            state = if (allSelected) AgentArchivedProjectSelectionState.Checked
+            else AgentArchivedProjectSelectionState.Unchecked,
+            description = if (allSelected) "取消全选自定义供应商" else "全选自定义供应商",
+            onClick = {
+                selectedProviderIds.clear()
+                if (!allSelected) selectedProviderIds.addAll(providers.map { it.id })
+                showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+            },
+        ), LinearLayout.LayoutParams(
+            ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+            ui.dp(AgentSelectionVisualPolicy.TOUCH_TARGET_DP),
+        ))
         addView(TextView(context).apply {
-            text = "已选 ${selectedProviderIds.size} 项"
-            textSize = 12.5f
-            setTextColor(tokens.textSecondary)
+            text = "全选自定义供应商"
+            textSize = 14f
+            setTextColor(tokens.textPrimary)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addView(providerBatchAction("取消", UiActionRole.Secondary) {
-            selectedProviderIds.clear()
-            showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
+        addView(TextView(context).apply {
+            text = "已选择 ${selectedProviderIds.size} 项"
+            textSize = 12.5f
+            gravity = Gravity.END
+            setTextColor(tokens.textSecondary)
         })
-        addView(providerBatchAction("会话选择模型", UiActionRole.Primary) {
-            val selectedProviders = providers.filter { it.id in selectedProviderIds }
-            val shouldShow = selectedProviders.any { !it.visibleInConversation }
-            selectedProviders.forEach { provider ->
-                val visible = shouldShow || provider.selectedModelValue != null
-                modelLibraryStore.setProviderVisible(
-                    selected.registration.definition.agentId,
-                    provider.id,
-                    visible
-                )
-            }
-            selectedProviderIds.clear()
-            showProviderManager(selected, target, providerPageSnapshot ?: snapshot)
-        })
-        val removable = providers.filter {
-            it.id in selectedProviderIds &&
-                it.editableProvider != null &&
-                it.selectedModelValue == null
-        }
-        if (removable.isNotEmpty()) {
-            addView(providerBatchAction("删除", UiActionRole.Danger) {
-                confirmRemoveSelectedProviders(selected, target, snapshot, removable)
-            })
-        }
+    }
+
+    private fun buildProviderDeleteBar(
+        selected: AgentRegistryEntry,
+        target: AgentConfigurationTarget,
+        snapshot: AgentLiveConfigSnapshot,
+        providers: List<AgentModelProviderProjection>,
+    ): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(ui.dp(18), ui.dp(8), ui.dp(18), ui.dp(14))
+        setBackgroundColor(agentSurface)
+        val removable = providers.filter { it.id in selectedProviderIds }
+        addView(archiveBatchActionButton("删除所选供应商") {
+            if (removable.isNotEmpty()) confirmRemoveSelectedProviders(selected, target, snapshot, removable)
+        }.apply {
+            isEnabled = removable.isNotEmpty()
+            renderArchiveBatchAction(this, isEnabled, danger = true)
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ui.dp(AgentSelectionVisualPolicy.ACTION_HEIGHT_DP),
+        ))
+    }
+
+    private fun buildModelLibraryAddBar(onClick: () -> Unit): View = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(ui.dp(18), ui.dp(8), ui.dp(18), ui.dp(14))
+        setBackgroundColor(agentSurface)
+        addView(archiveBatchActionButton("添加模型", onClick).apply {
+            renderArchiveBatchAction(this, enabled = true, danger = false)
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ui.dp(AgentSelectionVisualPolicy.ACTION_HEIGHT_DP),
+        ))
     }
 
     private fun providerBatchAction(label: String, role: UiActionRole, onClick: () -> Unit): TextView =
@@ -6987,6 +7236,7 @@ internal class RunAgentSurfaceBinding(
             if (requestRevision != settingsLoadRevision || selectedSettingsAgentId != targetAgentId) return@launch
             val projection = agentProviderCatalogApi.snapshot(target).toConfigurationProjection(target)
             providerPageSnapshot = projection
+            providerLibraryMode = AgentProviderLibraryMode.Browse
             selectedProviderIds.clear()
             expandedProviderIds.retainAll(projection.providers.map { it.id }.toSet())
             showProviderManager(selected, target, projection)

@@ -68,7 +68,7 @@ internal object AgentModelLibraryPolicy {
                     AgentModelSource.OfficialLogin -> AgentModelLibraryStore.OFFICIAL_GROUP_ID
                     AgentModelSource.UserConfigured -> library.providerGroupId(provider.id)
                 },
-                visibleInConversation = selectedModel != null || library.isProviderVisible(provider.id)
+                visibleInConversation = library.isProviderVisible(provider.id)
             )
         }
         val configuredIds = configured.mapTo(linkedSetOf()) { it.id }
@@ -101,7 +101,7 @@ internal object AgentModelLibraryPolicy {
                 officialAccount = account,
                 selectedModelValue = selectedModel,
                 libraryGroupId = AgentModelLibraryStore.OFFICIAL_GROUP_ID,
-                visibleInConversation = selectedModel != null || library.isProviderVisible(providerId),
+                visibleInConversation = library.isProviderVisible(providerId),
             )
         }
         val free = modelOption?.choices.orEmpty()
@@ -120,7 +120,7 @@ internal object AgentModelLibraryPolicy {
                     models = displayChoices,
                     source = AgentModelSource.Free,
                     selectedModelValue = selectedModel,
-                    visibleInConversation = selectedModel != null || library.isProviderVisible(providerId)
+                    visibleInConversation = library.isProviderVisible(providerId)
                 )
             }
         return configured + official + free
@@ -138,12 +138,16 @@ internal object AgentModelLibraryPolicy {
             ?.let { sourceIdForChoice(it, officialAccounts) }
         val filteredChoices = option.choices.filter { choice ->
             val sourceId = sourceIdForChoice(choice, officialAccounts)
-            sourceId == null ||
+            val sourceVisible = sourceId == null ||
                 sourceId == currentSourceId ||
                 sourceId == activeProviderId ||
                 library.isProviderVisible(sourceId)
+            val modelVisible = sourceId == null ||
+                choice.value == option.currentValue ||
+                library.isModelVisible(sourceId, choice.value)
+            sourceVisible && modelVisible
         }.ifEmpty {
-            option.choices.filter { it.value == option.currentValue }.ifEmpty { option.choices }
+            option.choices.filter { it.value == option.currentValue }
         }
         val visibleChoices = filteredChoices.map { choice ->
             val sourceId = sourceIdForChoice(choice, officialAccounts)

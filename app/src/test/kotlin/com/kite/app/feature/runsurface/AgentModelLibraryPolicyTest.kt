@@ -101,6 +101,38 @@ class AgentModelLibraryPolicyTest {
     }
 
     @Test
+    fun `单模型显示偏好只隐藏目标模型并始终保留当前模型`() {
+        val option = modelOption(current = "zhipu/glm-5.2")
+        val hiddenOther = AgentModelLibrarySnapshot(
+            providers = mapOf(
+                "zhipu" to AgentModelLibraryProviderPreference(
+                    hiddenModelIds = setOf("zhipu/glm-5.0")
+                )
+            )
+        )
+        val hiddenCurrent = AgentModelLibrarySnapshot(
+            providers = mapOf(
+                "zhipu" to AgentModelLibraryProviderPreference(
+                    hiddenModelIds = setOf("zhipu/glm-5.2", "zhipu/glm-5.0")
+                )
+            )
+        )
+
+        assertEquals(
+            listOf("zhipu/glm-5.2", "mimo/mimo-v2", "free/free-small"),
+            AgentModelLibraryPolicy.filterConversationModelOption(option, hiddenOther).choices.map { it.value },
+        )
+        assertTrue(
+            AgentModelLibraryPolicy.filterConversationModelOption(option, hiddenCurrent)
+                .choices.any { it.value == option.currentValue }
+        )
+        assertFalse(
+            AgentModelLibraryPolicy.filterConversationModelOption(option, hiddenCurrent)
+                .choices.any { it.value == "zhipu/glm-5.0" }
+        )
+    }
+
+    @Test
     fun `自定义模型名称只替换展示文案而不改变请求值`() {
         val library = AgentModelLibrarySnapshot(
             providers = mapOf(
