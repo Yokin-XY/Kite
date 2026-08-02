@@ -372,12 +372,26 @@ data class AgentSessionPermissionControl(
     val initialProfileId: String = profiles.firstOrNull {
         it.handling == AgentSessionPermissionHandling.AskUser
     }?.id.orEmpty(),
+    /**
+     * ACP Agent 若把权限策略发布成 session mode，在适配层声明原生 mode ID 的对应关系。
+     *
+     * 连接装饰器会把这些 mode 收进统一权限入口，并在发送前通过原生 set_mode 应用；
+     * 未声明的 mode 仍然是普通工作模式。
+     */
+    val nativeModeByProfileId: Map<String, String> = emptyMap(),
 ) {
     init {
         require(profiles.isNotEmpty()) { "当前会话权限至少需要一个可选档位" }
         require(profiles.map { it.id }.distinct().size == profiles.size) { "当前会话权限 ID 不能重复" }
         require(initialProfileId.isNotBlank() && profiles.any { it.id == initialProfileId }) {
             "当前会话权限初始值必须属于可选档位"
+        }
+        require(nativeModeByProfileId.keys.all { profileId -> profiles.any { it.id == profileId } }) {
+            "原生权限 mode 映射只能引用已声明的权限档位"
+        }
+        require(nativeModeByProfileId.values.all(String::isNotBlank)) { "原生权限 mode ID 不能为空" }
+        require(nativeModeByProfileId.values.distinct().size == nativeModeByProfileId.size) {
+            "同一个原生权限 mode 不能映射到多个权限档位"
         }
     }
 
@@ -412,6 +426,12 @@ data class AgentSessionPermissionControl(
         return request.options.firstOrNull { it.kind == preferredKind }
             ?.let { AgentPermissionOutcome.Selected(it.id) }
     }
+
+    fun nativeModeId(profileId: String): String? = nativeModeByProfileId[profileId]
+
+    fun profileIdForNativeMode(modeId: String?): String? = modeId?.let { nativeMode ->
+        nativeModeByProfileId.entries.firstOrNull { it.value == nativeMode }?.key
+    }
 }
 
 fun mediatedSessionPermissionControl(
@@ -443,6 +463,7 @@ fun mediatedSessionPermissionControl(
     profiles: List<AgentPermissionProfileSummary>,
     handlingByProfileId: Map<String, AgentSessionPermissionHandling>,
     initialProfileId: String? = null,
+    nativeModeByProfileId: Map<String, String> = emptyMap(),
 ): AgentSessionPermissionControl {
     require(profiles.isNotEmpty()) { "原生权限目录不能为空" }
     val sessionProfiles = profiles.map { profile ->
@@ -461,7 +482,7 @@ fun mediatedSessionPermissionControl(
     } ?: sessionProfiles.firstOrNull {
         it.handling == AgentSessionPermissionHandling.AskUser
     }?.id ?: sessionProfiles.first().id
-    return AgentSessionPermissionControl(sessionProfiles, safeInitial)
+    return AgentSessionPermissionControl(sessionProfiles, safeInitial, nativeModeByProfileId)
 }
 
 /** API Key 只在本次调用中短暂存在；任何字符串化都必须保持脱敏。 */

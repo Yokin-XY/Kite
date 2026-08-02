@@ -118,10 +118,24 @@ class AgentSessionConfigurationOverlayProvider(
 
         val endpoint = AgentClientEndpoint(
             eventSink = { sessionId, event ->
-                val projected = if (event is AgentSessionEvent.ConfigurationUpdated) {
-                    event.copy(options = merge(event.options, sessionId).also { configurationBySession[sessionId] = it })
-                } else {
-                    event
+                val projected = when (event) {
+                    is AgentSessionEvent.ConfigurationUpdated -> event.copy(
+                        options = merge(event.options, sessionId).also { configurationBySession[sessionId] = it },
+                    )
+                    is AgentSessionEvent.CurrentModeChanged -> {
+                        val permissionProfileId = permissionControl?.profileIdForNativeMode(event.modeId)
+                        if (permissionProfileId == null) {
+                            event
+                        } else {
+                            permissionProfileBySession[sessionId] = permissionProfileId
+                            AgentSessionEvent.ConfigurationUpdated(
+                                merge(configurationBySession[sessionId].orEmpty(), sessionId, false).also {
+                                    configurationBySession[sessionId] = it
+                                },
+                            )
+                        }
+                    }
+                    else -> event
                 }
                 client.eventSink.onEvent(sessionId, projected)
             },
@@ -215,6 +229,13 @@ class AgentSessionConfigurationOverlayProvider(
                 if (control.profiles.none { it.id == selected }) {
                     return AgentOperationResult.Failure("当前 Agent 未提供该会话权限档位")
                 }
+                control.nativeModeId(selected)?.let { nativeModeId ->
+                    when (val changed = delegate.setMode(sessionId, nativeModeId)) {
+                        is AgentOperationResult.Success -> Unit
+                        is AgentOperationResult.Failure -> return changed
+                        is AgentOperationResult.Unsupported -> return changed
+                    }
+                }
                 permissionProfileBySession[sessionId] = selected
                 val current = configurationBySession[sessionId].orEmpty()
                 return AgentOperationResult.Success(
@@ -256,13 +277,26 @@ class AgentSessionConfigurationOverlayProvider(
 
         private fun AgentOperationResult<AgentSessionSnapshot>.project(): AgentOperationResult<AgentSessionSnapshot> =
             when (this) {
-                is AgentOperationResult.Success -> AgentOperationResult.Success(
-                    value.copy(
-                        configuration = merge(value.configuration, value.id, true).also {
-                            configurationBySession[value.id] = it
-                        }
+                is AgentOperationResult.Success -> {
+                    permissionControl?.profileIdForNativeMode(value.currentModeId)?.let { profileId ->
+                        permissionProfileBySession[value.id] = profileId
+                    }
+                    val publishedModes = value.modes.filterNot { mode ->
+                        permissionControl?.profileIdForNativeMode(mode.id) != null
+                    }
+                    val publishedCurrentModeId = value.currentModeId?.takeIf { modeId ->
+                        permissionControl?.profileIdForNativeMode(modeId) == null
+                    }
+                    AgentOperationResult.Success(
+                        value.copy(
+                            configuration = merge(value.configuration, value.id, true).also {
+                                configurationBySession[value.id] = it
+                            },
+                            modes = publishedModes,
+                            currentModeId = publishedCurrentModeId,
+                        )
                     )
-                )
+                }
                 is AgentOperationResult.Failure -> this
                 is AgentOperationResult.Unsupported -> this
             }

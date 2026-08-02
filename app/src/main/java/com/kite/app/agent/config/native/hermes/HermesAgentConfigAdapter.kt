@@ -90,7 +90,15 @@ internal class HermesAgentConfigAdapter(
                 "off" to AgentSessionPermissionHandling.AllowRequest,
             ),
             initialProfileId = DEFAULT_APPROVAL_MODE,
+            nativeModeByProfileId = mapOf(
+                "manual" to HERMES_MODE_DEFAULT,
+                "smart" to HERMES_MODE_ACCEPT_EDITS,
+                "off" to HERMES_MODE_DONT_ASK,
+            ),
         )
+
+    override fun normalizeSessionModes(modes: List<com.kite.app.agent.contract.AgentMode>) =
+        modes.filterNot { it.id in HERMES_PERMISSION_MODE_IDS }
 
     override fun nativeCoreDocuments(workspacePath: String?): List<NativeAgentCoreDocumentSpec> = buildList {
         add(NativeAgentCoreDocumentSpec(
@@ -158,25 +166,13 @@ internal class HermesAgentConfigAdapter(
         val model = root.map("model")
         val providerId = model.string("provider")
         val defaultModel = model.string("default") ?: model.string("model")
-        val customProviders = root.list("custom_providers").mapNotNull { value ->
-            val provider = value as? Map<*, *> ?: return@mapNotNull null
-            val id = provider.string("name")?.takeIf(String::isNotBlank) ?: return@mapNotNull null
-            val models = when (val source = provider["models"]) {
-                is Map<*, *> -> source.keys.mapNotNull { it as? String }.map { AgentProviderModelSummary(it, it) }
-                is List<*> -> source.mapNotNull { it as? String }.map { AgentProviderModelSummary(it, it) }
-                else -> listOfNotNull(provider.string("model")?.let { AgentProviderModelSummary(it, it) })
-            }
-            AgentProviderSummary(
-                id = id,
-                displayName = id,
-                baseUrl = provider.string("base_url"),
-                models = models,
-                credentialPresence = if (!provider.string("api_key").isNullOrBlank() || !provider.string("key_env").isNullOrBlank()) {
-                    AgentCredentialPresence.Present
-                } else AgentCredentialPresence.Missing
-            )
-        }.sortedBy(AgentProviderSummary::id)
-        val providers = if (customProviders.isNotEmpty()) customProviders else providerId?.let { active ->
+        val legacyProviders = root.list(LEGACY_PROVIDERS_KEY).mapNotNull(::legacyProviderSummary)
+        val modernProviders = root.map(PROVIDERS_KEY).mapNotNull { (id, value) ->
+            modernProviderSummary(id, value)
+        }
+        val providers = (legacyProviders.filter { legacy -> modernProviders.none { it.id == legacy.id } } + modernProviders)
+            .sortedBy(AgentProviderSummary::id)
+            .ifEmpty { providerId?.let { active ->
             listOf(
                 AgentProviderSummary(
                     id = active,
@@ -187,7 +183,7 @@ internal class HermesAgentConfigAdapter(
                     else AgentCredentialPresence.Missing
                 )
             )
-        }.orEmpty()
+        }.orEmpty() }
         val approvalMode = root.map(APPROVALS_KEY).string(MODE_KEY)
         val activePermissionProfileId = when {
             approvalMode == null -> DEFAULT_APPROVAL_MODE
@@ -195,9 +191,6 @@ internal class HermesAgentConfigAdapter(
             else -> null
         }
         val warnings = buildList {
-            if (root["providers"] is Map<*, *>) {
-                add("Hermes 原生 providers 字典由 Hermes 自身管理；Kite 只编辑 custom_providers")
-            }
             if (approvalMode != null && activePermissionProfileId == null) {
                 add("Hermes approvals.mode 不是官方支持值，Kite 不会替换或猜测")
             }
@@ -281,27 +274,36 @@ internal class HermesAgentConfigAdapter(
         val original = files.getValue(CONFIG_KEY).toString(Charsets.UTF_8)
         val root = yamlMap(files.getValue(CONFIG_KEY)).toMutableMap()
         val model = root.map("model").toMutableMap()
-        val providers = root.list("custom_providers").mapNotNull { value ->
+        val legacyProviders = root.list(LEGACY_PROVIDERS_KEY).mapNotNull { value ->
             (value as? Map<*, *>)?.entries?.associateTo(linkedMapOf()) { it.key.toString() to it.value }
         }.toMutableList()
+        val providers = root.map(PROVIDERS_KEY).entries.associateTo(linkedMapOf()) { (id, value) ->
+            id to ((value as? Map<*, *>)?.entries?.associateTo(linkedMapOf()) { it.key.toString() to it.value }
+                ?: linkedMapOf())
+        }
         var mcpChanged = false
         var skillsChanged = false
         var approvalsChanged = false
+        var modelChanged = false
+        var providersChanged = false
+        var legacyProvidersChanged = false
         changes.forEach { change ->
             when (change) {
                 is AgentPersistentConfigChange.SetDefaultModel -> {
                     if (change.modelId == null) model.remove("default") else model["default"] = change.modelId
+                    modelChanged = true
                 }
                 is AgentPersistentConfigChange.SelectProvider -> {
                     model["provider"] = change.providerId
                     model["default"] = change.modelId
+                    modelChanged = true
                 }
                 is AgentPersistentConfigChange.ConfigureProvider -> {
                     val draft = change.provider
-                    val index = providers.indexOfFirst { it["name"] == draft.id }
-                    val entry = LinkedHashMap<String, Any?>(providers.getOrNull(index).orEmpty()).apply {
-                        this["name"] = draft.id
-                        this["base_url"] = draft.baseUrl.trim()
+                    val entry = LinkedHashMap<String, Any?>(providers[draft.id].orEmpty()).apply {
+                        this["api"] = draft.baseUrl.trim()
+                        remove("base_url")
+                        remove("url")
                         this["models"] = linkedMapOf<String, Any?>().also { models ->
                             draft.models.forEach { models[it.id.trim()] = linkedMapOf<String, Any?>() }
                         }
@@ -317,17 +319,23 @@ internal class HermesAgentConfigAdapter(
                             }
                         }
                     }
-                    if (index >= 0) providers[index] = entry else providers.add(entry)
+                    providers[draft.id] = entry
+                    providersChanged = true
+                    val removedLegacy = legacyProviders.removeAll { it["name"] == draft.id }
+                    legacyProvidersChanged = legacyProvidersChanged || removedLegacy
                     if (model["default"] == null) {
                         model["provider"] = draft.id
                         model["default"] = draft.models.first().id.trim()
+                        modelChanged = true
                     }
                 }
                 is AgentPersistentConfigChange.RemoveProvider -> {
-                    providers.removeAll { it["name"] == change.providerId }
+                    providersChanged = providers.remove(change.providerId) != null || providersChanged
+                    legacyProvidersChanged = legacyProviders.removeAll { it["name"] == change.providerId } || legacyProvidersChanged
                     if (model["provider"] == change.providerId) {
                         model.remove("provider")
                         model.remove("default")
+                        modelChanged = true
                     }
                 }
                 is AgentPersistentConfigChange.SetPermissionProfile -> {
@@ -361,7 +369,10 @@ internal class HermesAgentConfigAdapter(
                 else -> Unit
             }
         }
-        val sections = linkedMapOf<String, Any?>("model" to model, "custom_providers" to providers)
+        val sections = linkedMapOf<String, Any?>()
+        if (modelChanged) sections["model"] = model
+        if (providersChanged) sections[PROVIDERS_KEY] = providers
+        if (legacyProvidersChanged) sections[LEGACY_PROVIDERS_KEY] = legacyProviders
         if (mcpChanged) sections[MCP_SERVERS_KEY] = root[MCP_SERVERS_KEY]
         if (skillsChanged) sections[SKILLS_KEY] = root[SKILLS_KEY]
         if (approvalsChanged) sections[APPROVALS_KEY] = root[APPROVALS_KEY]
@@ -370,6 +381,58 @@ internal class HermesAgentConfigAdapter(
             sections,
         )
         return mapOf(CONFIG_KEY to next.toByteArray(Charsets.UTF_8))
+    }
+
+    private fun legacyProviderSummary(value: Any?): AgentProviderSummary? {
+        val provider = value as? Map<*, *> ?: return null
+        val id = provider.string("name")?.takeIf(String::isNotBlank) ?: return null
+        return providerSummary(
+            id = id,
+            displayName = id,
+            provider = provider,
+            baseUrl = provider.string("base_url") ?: provider.string("api") ?: provider.string("url"),
+        )
+    }
+
+    private fun modernProviderSummary(id: String, value: Any?): AgentProviderSummary? {
+        val provider = value as? Map<*, *> ?: return null
+        if (provider[ENABLED_KEY] == false) return null
+        return providerSummary(
+            id = id,
+            displayName = provider.string("name")?.takeIf(String::isNotBlank) ?: id,
+            provider = provider,
+            baseUrl = provider.string("api") ?: provider.string("base_url") ?: provider.string("url"),
+        )
+    }
+
+    private fun providerSummary(
+        id: String,
+        displayName: String,
+        provider: Map<*, *>,
+        baseUrl: String?,
+    ): AgentProviderSummary {
+        val models = when (val source = provider["models"]) {
+            is Map<*, *> -> source.keys.mapNotNull { it as? String }
+            is List<*> -> source.mapNotNull { item ->
+                when (item) {
+                    is String -> item
+                    is Map<*, *> -> item.string("id") ?: item.string("name")
+                    else -> null
+                }
+            }
+            else -> listOfNotNull(provider.string("model") ?: provider.string("default_model"))
+        }.filter(String::isNotBlank).distinct().map { AgentProviderModelSummary(it, it) }
+        return AgentProviderSummary(
+            id = id,
+            displayName = displayName,
+            baseUrl = baseUrl,
+            models = models,
+            credentialPresence = if (
+                !provider.string("api_key").isNullOrBlank() ||
+                !provider.string("key_env").isNullOrBlank() ||
+                !provider.string("api_key_env").isNullOrBlank()
+            ) AgentCredentialPresence.Present else AgentCredentialPresence.Missing,
+        )
     }
 
     private fun hermesMcpServers(section: Map<String, Any?>): List<AgentMcpSummary> = section.mapNotNull { (id, value) ->
@@ -588,6 +651,8 @@ internal class HermesAgentConfigAdapter(
         private const val CONFIG_KEY = "config"
         private const val HERMES_HOME_PATH = "/workspace/.kf/software/kite.hermes.core/home"
         private const val CONFIG_PATH = "$HERMES_HOME_PATH/config.yaml"
+        private const val PROVIDERS_KEY = "providers"
+        private const val LEGACY_PROVIDERS_KEY = "custom_providers"
         private const val MCP_SERVERS_KEY = "mcp_servers"
         private const val COMMAND_KEY = "command"
         private const val ARGS_KEY = "args"
@@ -603,6 +668,14 @@ internal class HermesAgentConfigAdapter(
         private const val APPROVALS_KEY = "approvals"
         private const val MODE_KEY = "mode"
         private const val DEFAULT_APPROVAL_MODE = "smart"
+        private const val HERMES_MODE_DEFAULT = "default"
+        private const val HERMES_MODE_ACCEPT_EDITS = "accept_edits"
+        private const val HERMES_MODE_DONT_ASK = "dont_ask"
+        private val HERMES_PERMISSION_MODE_IDS = setOf(
+            HERMES_MODE_DEFAULT,
+            HERMES_MODE_ACCEPT_EDITS,
+            HERMES_MODE_DONT_ASK,
+        )
         private const val SKILL_ROOT = "$HERMES_HOME_PATH/skills"
         private const val AUTHORIZATION_HEADER = "Authorization"
         private val HERMES_PERMISSION_PROFILES = listOf(

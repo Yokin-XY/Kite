@@ -11,6 +11,7 @@ import com.kite.app.agent.contract.AgentConfigValue
 import com.kite.app.agent.contract.AgentConnectionRequest
 import com.kite.app.agent.contract.AgentExistingSessionRequest
 import com.kite.app.agent.contract.AgentNewSessionRequest
+import com.kite.app.agent.contract.AgentMode
 import com.kite.app.agent.contract.AgentOperationResult
 import com.kite.app.agent.contract.AgentPermissionKind
 import com.kite.app.agent.contract.AgentPermissionOption
@@ -214,6 +215,40 @@ class AgentSessionConfigurationOverlayProviderTest {
         assertNull(control.resolve("smart", permissionRequest("session-1")))
     }
 
+    @Test
+    fun policyLikeAcpModesAreProjectedIntoPermissionAndAppliedThroughNativeMode() = runTest {
+        val adapter = FakeAdapter(
+            nativeModeByProfileId = mapOf(
+                APPROVAL_ID to "default",
+                FULL_ID to "dont_ask",
+            ),
+        )
+        val delegate = FakeProvider(
+            configuration = emptyList(),
+            modes = listOf(
+                AgentMode("default", "Default"),
+                AgentMode("dont_ask", "Don't Ask"),
+            ),
+            currentModeId = "default",
+        )
+        val connection = connect(delegate, adapter)
+
+        val opened = (connection.newSession(AgentNewSessionRequest("/workspace")) as AgentOperationResult.Success).value
+        assertTrue(opened.modes.isEmpty())
+        assertNull(opened.currentModeId)
+        assertEquals(APPROVAL_ID, opened.configuration.permissionCurrentValue())
+
+        val selected = connection.setConfiguration(
+            opened.id,
+            SESSION_PERMISSION_CONFIG_ID,
+            AgentConfigValue.Select(FULL_ID),
+        ) as AgentOperationResult.Success
+
+        assertEquals(FULL_ID, selected.value.permissionCurrentValue())
+        assertEquals(1, delegate.connection.setModeCount)
+        assertEquals("dont_ask", delegate.connection.currentModeId)
+    }
+
     private suspend fun connect(
         delegate: FakeProvider,
         adapter: FakeAdapter,
@@ -237,7 +272,9 @@ class AgentSessionConfigurationOverlayProviderTest {
         }
     }
 
-    private class FakeAdapter : AgentConfigAdapter {
+    private class FakeAdapter(
+        private val nativeModeByProfileId: Map<String, String> = emptyMap(),
+    ) : AgentConfigAdapter {
         override val adapterId: String = "fake"
         var persistentApplyCount: Int = 0
 
@@ -246,10 +283,26 @@ class AgentSessionConfigurationOverlayProviderTest {
         )
 
         override fun sessionPermissionControl(): AgentSessionPermissionControl =
-            mediatedSessionPermissionControl(
-                AgentPermissionLevel.Restricted,
-                AgentPermissionLevel.Approval,
-                AgentPermissionLevel.Full,
+            AgentSessionPermissionControl(
+                profiles = listOf(
+                    AgentSessionPermissionProfile(
+                        RESTRICTED_ID,
+                        AgentPermissionLevel.Restricted,
+                        AgentSessionPermissionHandling.RejectRequest,
+                    ),
+                    AgentSessionPermissionProfile(
+                        APPROVAL_ID,
+                        AgentPermissionLevel.Approval,
+                        AgentSessionPermissionHandling.AskUser,
+                    ),
+                    AgentSessionPermissionProfile(
+                        FULL_ID,
+                        AgentPermissionLevel.Full,
+                        AgentSessionPermissionHandling.AllowRequest,
+                    ),
+                ),
+                initialProfileId = APPROVAL_ID,
+                nativeModeByProfileId = nativeModeByProfileId,
             )
 
         override suspend fun readSessionConfiguration(agentId: String): List<AgentConfigOption> =
@@ -271,9 +324,13 @@ class AgentSessionConfigurationOverlayProviderTest {
         }
     }
 
-    private class FakeProvider(configuration: List<AgentConfigOption>) : KiteAgentProvider {
+    private class FakeProvider(
+        configuration: List<AgentConfigOption>,
+        modes: List<AgentMode> = emptyList(),
+        currentModeId: String? = null,
+    ) : KiteAgentProvider {
         override val id: String = "fake"
-        val connection = FakeConnection(configuration)
+        val connection = FakeConnection(configuration, modes, currentModeId)
         private lateinit var endpoint: AgentClientEndpoint
 
         override suspend fun connect(
@@ -290,16 +347,30 @@ class AgentSessionConfigurationOverlayProviderTest {
 
     private class FakeConnection(
         private var configuration: List<AgentConfigOption>,
+        private val modes: List<AgentMode>,
+        var currentModeId: String?,
     ) : KiteAgentConnection {
         override val provider = AgentProviderInfo("fake", "Fake")
         override val capabilities = AgentCapabilities()
         var setConfigurationCount: Int = 0
+        var setModeCount: Int = 0
         private var sessionSequence = 0
 
         override suspend fun newSession(request: AgentNewSessionRequest): AgentOperationResult<AgentSessionSnapshot> =
             AgentOperationResult.Success(
-                AgentSessionSnapshot("session-${++sessionSequence}", configuration = configuration)
+                AgentSessionSnapshot(
+                    "session-${++sessionSequence}",
+                    configuration = configuration,
+                    modes = modes,
+                    currentModeId = currentModeId,
+                )
             )
+
+        override suspend fun setMode(sessionId: String, modeId: String): AgentOperationResult<Unit> {
+            setModeCount += 1
+            currentModeId = modeId
+            return AgentOperationResult.Success(Unit)
+        }
 
         override suspend fun setConfiguration(
             sessionId: String,

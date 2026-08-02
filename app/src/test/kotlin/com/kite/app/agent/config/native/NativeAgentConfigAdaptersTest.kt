@@ -1072,8 +1072,65 @@ class NativeAgentConfigAdaptersTest {
         val text = file.readText()
         assertTrue(text.contains("# 用户说明"))
         assertTrue(text.contains("max_turns: 77"))
-        assertTrue(text.contains("custom_providers:"))
+        assertTrue(text.contains("providers:"))
+        assertTrue(text.contains("api: https://gpu.example.com/v1"))
         assertFalse(applied.snapshot.toString().contains(SECRET))
+    }
+
+    @Test
+    fun hermesReadsAndUpdatesCurrentProviderSchemaWithoutDroppingNativeFields() = runTest {
+        val file = nativeFile("workspace/.kf/software/kite.hermes.core/home/config.yaml")
+        file.writeText(
+            """
+                model:
+                  provider: gateway
+                  default: old-model
+                providers:
+                  gateway:
+                    name: 私有网关
+                    api: https://old.example.com/v1
+                    key_env: GATEWAY_KEY
+                    discover_models: false
+                    extra_headers:
+                      X-Tenant: keep-me
+                    models:
+                      old-model: {}
+                agent:
+                  max_turns: 77
+            """.trimIndent(),
+        )
+        val adapter = HermesAgentConfigAdapter(context, ::container)
+        val before = (adapter.readLive("hermes") as AgentConfigReadResult.Ready).snapshot
+
+        assertEquals("gateway", before.providers.single().id)
+        assertEquals("私有网关", before.providers.single().displayName)
+        assertEquals("old-model", before.providers.single().models.single().id)
+
+        val applied = adapter.apply(
+            AgentConfigApplyRequest(
+                agentId = "hermes",
+                expectedRevision = before.revision,
+                changes = listOf(
+                    AgentPersistentConfigChange.ConfigureProvider(
+                        AgentProviderDraft(
+                            id = "gateway",
+                            displayName = "私有网关",
+                            baseUrl = "https://new.example.com/v1",
+                            models = listOf(AgentProviderModelSummary("new-model", "New Model")),
+                        ),
+                        AgentProviderCredentialChange.Keep,
+                    ),
+                ),
+            ),
+        ) as AgentConfigApplyResult.Applied
+
+        assertEquals("new-model", applied.snapshot.providers.single().models.single().id)
+        val text = file.readText()
+        assertTrue(text.contains("api: https://new.example.com/v1"))
+        assertTrue(text.contains("discover_models: false"))
+        assertTrue(text.contains("X-Tenant: keep-me"))
+        assertTrue(text.contains("max_turns: 77"))
+        assertFalse(text.contains("custom_providers:"))
     }
 
     @Test

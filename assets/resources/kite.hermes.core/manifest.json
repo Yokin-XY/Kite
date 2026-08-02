@@ -108,7 +108,7 @@
             "timeoutMs": 300000
           },
           "logout": {
-            "argv": ["hermes", "logout", "--provider", "nous"],
+            "argv": ["hermes", "auth", "logout", "nous"],
             "timeoutMs": 30000
           }
         }
