@@ -66,6 +66,7 @@ data class KiteResourceAgentProfile(
     val runtimeGuaranteeEvidence: Map<String, String> = emptyMap(),
     val environmentFiles: Map<String, String> = emptyMap(),
     val runtimeDependencies: List<KiteResourceAgentRuntimeDependency> = emptyList(),
+    val initializeTimeoutMs: Long = DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
     val connectionReference: String = "",
     val configurationRequired: Boolean = false,
     val configAdapterId: String = "",
@@ -73,6 +74,8 @@ data class KiteResourceAgentProfile(
     val officialAccounts: List<KiteResourceAgentOfficialAccount> = emptyList(),
     val title: String = ""
 )
+
+private const val DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS = 45_000L
 
 /**
  * Agent 自己拥有的官方账号入口。
@@ -776,6 +779,10 @@ class KiteResourceManifestLoader private constructor(
             runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
             environmentFiles = launch.optJSONObject("environmentFiles").toStringMap(),
             runtimeDependencies = runtimeDependencies,
+            initializeTimeoutMs = launch.optLong(
+                "initializeTimeoutMs",
+                DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
+            ).coerceIn(5_000L, 120_000L),
             connectionReference = connectionReference,
             configurationRequired = configuration?.optBoolean("required", false) == true,
             configAdapterId = configuration?.optString("adapter")?.trim().orEmpty(),

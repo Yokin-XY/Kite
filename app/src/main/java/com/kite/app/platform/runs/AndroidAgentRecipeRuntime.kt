@@ -1,6 +1,7 @@
 package com.kite.app.platform.runs
 
 import android.content.Context
+import android.util.Log
 import com.kite.app.agent.acp.AcpProcessAgentProvider
 import com.kite.app.agent.acp.AcpProcessChannelLauncher
 import com.kite.app.agent.acp.AcpProcessProviderDescriptor
@@ -358,6 +359,7 @@ internal class AndroidAgentRecipeRuntime(
         val runtimeGuaranteeEvidence: Map<String, String>,
         val environmentFiles: Map<String, String>,
         val runtimeDependencies: List<KiteResourceAgentRuntimeDependency>,
+        val initializeTimeoutMs: Long,
         val connectionReference: String?,
         val configAdapterId: String?,
         val sessionAdapterId: String?
@@ -500,6 +502,10 @@ internal class AndroidAgentRecipeRuntime(
                     launcher = AcpProcessChannelLauncher {
                         processFactory.start(processLaunch.process)
                     },
+                    initializeTimeoutMs = resolved.initializeTimeoutMs,
+                    diagnosticSink = { line ->
+                        Log.w(TAG, "Agent ${resolved.providerId}: $line")
+                    },
                     sessionDelete = sessionAdministrationAdapters
                         .adapter(resolved.sessionAdapterId)
                         ?.let { adapter ->
@@ -522,6 +528,10 @@ internal class AndroidAgentRecipeRuntime(
                     ),
                     launcher = CodexAppServerProcessLauncher {
                         processFactory.start(processLaunch.process)
+                    },
+                    initializeTimeoutMs = resolved.initializeTimeoutMs,
+                    diagnosticSink = { line ->
+                        Log.w(TAG, "Agent ${resolved.providerId}: $line")
                     },
                     officialModelCatalogSink = CodexOfficialModelCatalogSink { catalog ->
                         val target = AgentConfigurationTarget(
@@ -906,6 +916,8 @@ internal class AndroidAgentRecipeRuntime(
                     runtimeGuaranteeEvidence = launch.runtimeGuaranteeEvidence,
                     environmentFiles = profile?.environmentFiles.orEmpty(),
                     runtimeDependencies = profile?.runtimeDependencies.orEmpty(),
+                    initializeTimeoutMs = profile?.initializeTimeoutMs
+                        ?: DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
                     connectionReference = null,
                     configAdapterId = entry.registration.configAdapterId,
                     sessionAdapterId = entry.registration.sessionAdapterId
@@ -925,6 +937,7 @@ internal class AndroidAgentRecipeRuntime(
                 runtimeGuaranteeEvidence = emptyMap(),
                 environmentFiles = emptyMap(),
                 runtimeDependencies = emptyList(),
+                initializeTimeoutMs = DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS,
                 connectionReference = launch.connectionReference,
                 configAdapterId = entry.registration.configAdapterId,
                 sessionAdapterId = entry.registration.sessionAdapterId
@@ -948,6 +961,7 @@ internal class AndroidAgentRecipeRuntime(
             runtimeGuaranteeEvidence = runtimeGuaranteeEvidence,
             environmentFiles = environmentFiles,
             runtimeDependencies = runtimeDependencies,
+            initializeTimeoutMs = initializeTimeoutMs,
             connectionReference = connectionReference.takeIf(String::isNotBlank),
             configAdapterId = configAdapterId.takeIf(String::isNotBlank),
             sessionAdapterId = sessionAdapterId.takeIf(String::isNotBlank)
@@ -1126,6 +1140,8 @@ internal class AndroidAgentRecipeRuntime(
     }
 
     private companion object {
+        const val TAG = "KiteAgentRuntime"
+        const val DEFAULT_AGENT_INITIALIZE_TIMEOUT_MS = 45_000L
         const val PROTOCOL_ACP = "acp"
         const val PROTOCOL_CODEX_APP_SERVER = "codex-app-server"
         const val CODEX_CHATGPT_ACCOUNT_ID = "chatgpt"

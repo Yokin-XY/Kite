@@ -31,6 +31,7 @@ class KiteResourceManifestProtocolTest {
         assertEquals("acp", profile.protocol)
         assertEquals("stdio", profile.transport)
         assertEquals(listOf("opencode", "acp"), profile.argv)
+        assertEquals(45_000L, profile.initializeTimeoutMs)
         assertEquals("opencode", profile.configAdapterId)
         assertEquals("opencode", profile.sessionAdapterId)
         val registration = AgentResourceRegistrationMapper.registrations(manifest).single()
